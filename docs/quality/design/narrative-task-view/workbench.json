@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "id": "narrative-task-view",
   "title": "Narrative task view",
-  "summary": "A proactive pipeline-generated reading view for task detail: fixed AHP Deck / Panel v1 presentation, honest PRE/POST state markers, two real-card mock reports, and measured per-card economics.",
+  "summary": "A proactive pipeline-generated reading view for task detail: fixed AHP Deck / Panel v1 presentation, honest PRE/POST state markers, two real-card mock reports, and measured per-card economics. [Curation 2026-08-18 (AGT-2671): DONE CHECK - decision-ready since 2026-07-24, no runner-work task evidence for AGT-2281/2222/2135 and no AHP Deck/Panel v1 narrative-view code found in the frontend tree; no completion claim to verify. Stays active, decision pending, not closable.]",
   "entrypoint": "index.html",
   "status": "active",
   "phase": "decision-ready",
-  "updatedAt": "2026-07-24T00:00:00Z",
+  "updatedAt": "2026-08-18T12:00:00Z",
   "sourceTaskKeys": [
     "AGT-2281",
     "AGT-2222",

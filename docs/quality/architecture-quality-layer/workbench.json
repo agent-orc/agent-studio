@@ -2,19 +2,25 @@
   "schemaVersion": 2,
   "id": "architecture-quality-layer",
   "title": "Architecture and quality layer",
-  "summary": "Explore the Project Map, applicable guides, analysis history, and evidence-backed component grading contracts.",
+  "summary": "Explore the Project Map, applicable guides, analysis history, and evidence-backed component grading contracts. [Curation 2026-08-18 (AGT-2671): DONE CHECK - review-requested since 2026-07-21, no newer lifecycle history entry and no runner-work task evidence for AGT-2126/2127/2128 found; no completion claim to verify. Stays in review, not closable.]",
   "entrypoint": "index.html",
   "pageKind": "workbench",
   "lifecycleState": "review-requested",
   "phase": "decision-ready",
-  "editedBy": "Codex / AGT-2137",
-  "editedAt": "2026-07-21T05:46:33Z",
+  "editedBy": "Claude / AGT-2671",
+  "editedAt": "2026-08-18T12:00:00Z",
   "lifecycleHistory": [
     {
       "state": "review-requested",
       "editedBy": "Codex / AGT-2137",
       "editedAt": "2026-07-21T05:46:33Z",
       "note": "Migrated the active decision-ready state to the shared page lifecycle."
+    },
+    {
+      "state": "review-requested",
+      "editedBy": "Claude / AGT-2671",
+      "editedAt": "2026-08-18T12:00:00Z",
+      "note": "Curation sweep DONE CHECK: still under review, no evidence of a newer decision."
     }
   ],
   "sourceTaskKeys": [
