@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "id": "admin-design-guideline",
   "title": "Admin Surface Design Guideline",
-  "summary": "Binding admin-surface standard: flat full-bleed composition, compact disclosure-first headers, one grid for stream entries, non-redundant sober copy, project identity, operator-grade density, bounded prose width, theme tokens, and locally hosted fonts. Includes a fully specified Activity reference, a screenshot-backed violation audit, an incremental adoption contract, an explicit prohibition on nested outcome-summary boxes, the details-panel addendum, the append-only Navigation citizenship chapter with three light/dark Tree variants, a neutral waiting-decision counter recommendation, state rules, a follow-up slice boundary, visual Dos and Don'ts pairs, and an append-only Applied surfaces register.",
+  "summary": "Binding admin-surface standard: flat full-bleed composition, compact disclosure-first headers, one grid for stream entries, non-redundant sober copy, project identity, operator-grade density, bounded prose width, theme tokens, and locally hosted fonts. Includes a fully specified Activity reference, a screenshot-backed violation audit, an incremental adoption contract, an explicit prohibition on nested outcome-summary boxes, the details-panel addendum, the append-only Navigation citizenship chapter with three light/dark Tree variants, a neutral waiting-decision counter recommendation, state rules, a follow-up slice boundary, visual Dos and Don'ts pairs, and an append-only Applied surfaces register. [Curation 2026-09-07: a standing reference with no operator decision pending. The former status \"living-standard\" and phase \"accepted\" were outside the descriptor vocabulary (status: active | decision-pending | decided | documented | archived) and made this dossier render as \"Descriptor needs repair\". The descriptor repair in develop corrected them to documented/informational, which keeps the standard fully readable under History instead of holding a slot in the active list; this curation pass adopts that value. AGENTS.md keeps the guideline mandatory reading for admin-surface work, so History here means lifecycle placement, not retirement.]",
   "entrypoint": "index.html",
   "status": "documented",
   "phase": "informational",
-  "updatedAt": "2026-08-16T00:00:00Z",
+  "updatedAt": "2026-09-07T00:00:00Z",
   "pages": [
     {
       "title": "Visual dos and don'ts",

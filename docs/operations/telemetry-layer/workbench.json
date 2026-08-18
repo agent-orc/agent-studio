@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "id": "telemetry-layer",
   "title": "Organization-wide telemetry layer",
-  "summary": "Decision-ready dossier for a local-first telemetry layer across organization applications. It inventories current Agent Studio signals, defines a privacy-bounded event envelope and log-level mapping, compares file, push, and hybrid bus options, recommends durable per-app JSONL plus best-effort local push, maps clustered signals to bounded orchestrator actions, establishes Agent Studio as the CI/CD, telemetry, alarm, and orchestration hub, and proposes a Coding Agent Chat error-cluster pilot before broader rollout.",
+  "summary": "Decision-ready dossier for a local-first telemetry layer across organization applications. It inventories current Agent Studio signals, defines a privacy-bounded event envelope and log-level mapping, compares file, push, and hybrid bus options, recommends durable per-app JSONL plus best-effort local push, maps clustered signals to bounded orchestrator actions, establishes Agent Studio as the CI/CD, telemetry, alarm, and orchestration hub, and proposes a Coding Agent Chat error-cluster pilot before broader rollout. [Curation 2026-08-17: stays decision-pending; no operator decision is recorded yet. The durable event contract is now also written up as architecture documentation in docs/concepts/platform-architecture/telemetry-layer.md, clearly marked as proposed.]",
   "entrypoint": "index.html",
   "status": "decision-pending",
   "phase": "decision-ready",
-  "updatedAt": "2026-08-16T00:00:00Z",
+  "updatedAt": "2026-08-17T00:00:00Z",
   "sourceTaskKeys": [
     "AGT-2661"
   ],

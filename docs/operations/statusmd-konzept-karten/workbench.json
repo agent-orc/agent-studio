@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "id": "statusmd-konzept-karten",
   "title": "status.md Finalization for Concept and Planning Cards",
-  "summary": "Decision dossier based on 1,782 unique task records and 485 Result scaffolds. It separates 341 operator backfills from 144 transition-path scaffolds, identifies the remote V1 finalization contract gap as the primary cause, distinguishes the MKT-21 terminal-signal reissue defect, and recommends an awaited application-owned Result-finalization gate with a typed degraded fallback.",
+  "summary": "Decision dossier based on 1,782 unique task records and 485 Result scaffolds. It separates 341 operator backfills from 144 transition-path scaffolds, identifies the remote V1 finalization contract gap as the primary cause, distinguishes the MKT-21 terminal-signal reissue defect, and recommends an awaited application-owned Result-finalization gate with a typed degraded fallback. [Curation 2026-08-17: stays decided. Slices 1, 2 and 4 are delivered (task-server/TaskServerResultFinalizationStore.cs with the Ready and Degraded statuses, ResultFinalizationSummaryGenerator.cs, the post-result-finalization step in contracts/TaskServer.Contracts/HostOrchestratorContracts.cs, and backend/Features/Tasks/ConceptDossierContract.cs). Slice 3, the terminal-evidence parsing fix for the MKT-21 defect, is NOT delivered: backend/Features/Runner/ReviewDecisionParsing.cs still exempts only the marker \"Runner active state cleared:\", so an orchestrator worker-head-advanced line after the done sentinel still resolves that sentinel away. Slice 3 has no owning card. AGT-2355 and AGT-2514 are also still in lane 5-human-review.]",
   "entrypoint": "index.html",
   "status": "decided",
   "phase": "decision-ready",
-  "updatedAt": "2026-08-10T09:30:00Z",
+  "updatedAt": "2026-08-17T00:00:00Z",
   "sourceTaskKeys": [
     "AGT-2555"
   ],

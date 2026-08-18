@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "id": "living-document-naming",
   "title": "Naming the Living Decision-to-Documentation Artifact",
-  "summary": "Accepted naming decision for the artifact that moves from exploration through decisions and live implementation tracking into permanent documentation. The stable product noun remains Dossier, \u0027living dossier\u0027 is explanatory copy, and Living Dossier remains the runner-up. Implementation tracking stays open until every consequence card is terminal.",
+  "summary": "Accepted naming decision for the artifact that moves from exploration through decisions and live implementation tracking into permanent documentation. The stable product noun remains Dossier, \u0027living dossier\u0027 is explanatory copy, and Living Dossier remains the runner-up. Implementation tracking stays open until every consequence card is terminal. [Closed to History 2026-08-17: every consequence card is terminal (AGT-2537, AGT-2539, AGT-2580, AGT-2584, AOW-13, WEB-18, all in lane 7-archive), which is exactly the condition this Dossier set for itself. Verified in code: the Dossier maintenance pipeline step from AGT-2580 exists as post-dossier-maintenance in backend/Features/Pipeline/PipelineCatalogue.cs with backend/Features/Docs/DossierMaintenanceService.cs and prompts/runtime/mode-framing-dossier-maintenance.md; the guarded terminal transition from AGT-2537 exists as backend/Features/Docs/WorkbenchDocumentationPolicy.cs and WorkbenchDecisionService.cs; the visible product noun is Dossier in the Studio activity bar, with the Workbench* identifiers and workbench.json filenames deliberately unchanged as the decision ratified. Status moves decided to documented, so the Dossier leaves the active list and stays readable under History.]",
   "entrypoint": "index.html",
-  "status": "decided",
+  "status": "documented",
   "phase": "decision-ready",
-  "updatedAt": "2026-08-11T12:38:23Z",
+  "updatedAt": "2026-08-17T00:00:00Z",
   "editedBy": "Operator",
   "sourceTaskKeys": [
     "AGT-2584"

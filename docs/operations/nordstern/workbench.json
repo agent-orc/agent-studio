@@ -2,10 +2,11 @@
   "schemaVersion": 1,
   "id": "nordstern",
   "title": "\u2605 Nordstern \u2014 Agent Studio Zielbild \u0026 Umsetzung",
-  "summary": "Der eine Einstiegspunkt fuer das Zielbild-Komplex. Haelt den grossen Bogen (Zielbild in Kuerze, Stand jetzt, die vier Phasen als Schritte, die entschiedenen Leitplanken) und verlinkt als Landkarte in die fokussierten Tiefen-Dokumente: Umsetzungsplan (Detail-Phasen \u002B Kartenzuordnung), Architektur \u0026 Protokolle, Ausfuehrungsmodell Container-Default, Modell-Routing-Policy, Log-Retention. Grosser Bogen hier, Detail im jeweiligen verlinkten Doc. Die Tiefen-Docs stehen auf decided und erscheinen unter History.",
+  "summary": "Der eine Einstiegspunkt fuer das Zielbild-Komplex. Haelt den grossen Bogen (Zielbild in Kuerze, Stand jetzt, die vier Phasen als Schritte, die entschiedenen Leitplanken) und verlinkt als Landkarte in die fokussierten Tiefen-Dokumente: Umsetzungsplan (Detail-Phasen \u002B Kartenzuordnung), Architektur \u0026 Protokolle, Ausfuehrungsmodell Container-Default, Modell-Routing-Policy, Log-Retention. Grosser Bogen hier, Detail im jeweiligen verlinkten Doc. Die Tiefen-Docs stehen auf decided und erscheinen unter History. [Curation 2026-08-17: stays active by design. This is a standing north-star map, not a delivery Dossier. It makes no deliverable promises of its own and delegates every consequence to the eight linked deep documents, all of which exist. Moving the map to History would orphan the entry point it is meant to be. All four source cards are terminal, so what it needs is a refresh rather than a closure: the Stand jetzt table of 28 July predates the lagebild-2026-08 snapshot and the P2 CAR chain around AGT-2373, AGT-2404 and AGT-2262. The missing phase field is set to informational, the vocabulary value for a standing reference with no operator decision pending.]",
   "entrypoint": "index.html",
   "status": "active",
-  "updatedAt": "2026-07-29T20:35:44Z",
+  "phase": "informational",
+  "updatedAt": "2026-08-17T00:00:00Z",
   "sourceTaskKeys": [
     "AGT-2129",
     "AGT-2130",
