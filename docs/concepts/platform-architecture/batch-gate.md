@@ -20,7 +20,7 @@ related-docs:
 # Batch Gate
 
 > **Source dossier:** [Batch Gate: one full suite for a delivery wave](../../operations/batch-gate-concept/index.html)
-> (`AGT-W39`, source card AGT-2648, status `decision-pending`).
+> (`AGT-W41`, source card AGT-2648, status `decision-pending`).
 > Index: [Platform architecture](README.md).
 
 This page records the durable mechanics only. The option comparison, cost

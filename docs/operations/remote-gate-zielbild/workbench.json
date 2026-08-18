@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "id": "remote-gate-zielbild",
   "title": "Remote Gate Target Architecture",
-  "summary": "Decision Dossier for replacing the fast but out-of-band SSH gate bridge with a first-class Tranche 0 execution contract. It compares claimable gate steps, the Review Plane, and capability-only dispatch; recommends a bounded GateAttempt protocol with capability-based admission; and defines the implementation-to-AGT-2262 teardown chain.",
+  "summary": "Decision Dossier for replacing the fast but out-of-band SSH gate bridge with a first-class Tranche 0 execution contract. It compares claimable gate steps, the Review Plane, and capability-only dispatch; recommends a bounded GateAttempt protocol with capability-based admission; and defines the implementation-to-AGT-2262 teardown chain. [Curation 2026-08-18 (AGT-2671): DONE CHECK - design not yet approved by operator sight review and zero implementation exists (verified by code search for GateSubject/GateAttempt/GateLease). AGT-2262 stays parked per its own eight-item cutover acceptance list. Stays active. DOC TRANSFER - GateSubject/GateAttempt/GateLease target model extracted to docs/concepts/platform-architecture/remote-gate.md.]",
   "entrypoint": "index.html",
   "status": "active",
   "phase": "decision-ready",
-  "updatedAt": "2026-07-26T00:00:00Z",
+  "updatedAt": "2026-08-18T12:00:00Z",
   "sourceTaskKeys": [
     "AGT-2369"
   ],

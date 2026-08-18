@@ -2,12 +2,12 @@
   "schemaVersion": 1,
   "id": "escalation-view-information-architecture",
   "title": "Escalation view information architecture",
-  "summary": "Decision-ready information architecture for escalated task details. It assigns the actual blocker to the escalation header, removes duplicate escalation outcome surfaces from Pipeline and Result, preserves the failed-step ATTENTION marker, and flattens Goal and Where it stopped into sibling Result rows with a calm red stopped-state tint.",
+  "summary": "Decision-ready information architecture for escalated task details. It assigns the actual blocker to the escalation header, removes duplicate escalation outcome surfaces from Pipeline and Result, preserves the failed-step ATTENTION marker, and flattens Goal and Where it stopped into sibling Result rows with a calm red stopped-state tint. [Curation 2026-08-18 (AGT-2671): DONE CHECK - stays decision-pending, no completion claims found. This dossier's key AGT-W36 previously collided with batch-gate-concept's key; resolved in this pass by reassigning batch-gate-concept to AGT-W41 (escalation-view claimed AGT-W36 first). Durable single-owner-per-fact IA principle noted, left in dossier as too narrow for a standalone architecture page.]",
   "entrypoint": "index.html",
   "status": "decision-pending",
   "phase": "decision-ready",
   "pattern": "ui",
-  "updatedAt": "2026-08-11T23:19:48Z",
+  "updatedAt": "2026-08-18T12:00:00Z",
   "sourceTaskKeys": [
     "AGT-2643"
   ],

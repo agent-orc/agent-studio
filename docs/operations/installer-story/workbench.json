@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "id": "installer-story",
   "title": "Installer-Story: Guided Steps, Linux all-Docker und Windows",
-  "summary": "Konzept fuer die gefuehrte Einrichtung einer frischen Maschine mit allen Komponenten als Container, je einmal fuer Linux und Windows. Haelt die Sichtung des Bestands (Compose-Stack, Smoke-Test in CI, frische-VM-Harness, gefuehrter Installer mit Demo-only-Docker-Pfad), die Komponenten-Matrix Container gegen Host mit Windows-Annahmen (Docker Desktop, WSL2), die Schrittlisten beider Plattformen mit Fehlerbild und Abhilfe je Schritt, den Stand von Compose und Secrets, eine Testprotokoll-Vorlage und den Schnitt in drei Folgekarten. Kernbefund: die bestehende Beweiskette endet am leeren Studio-Board; Agent-Hosts im Container, Provider-Auth und ein Dummy-Karten-Abschlussbeweis fehlen, und fuer Windows existiert kein Installer. Diese Karte macht ausserdem das runner-Profil erstmals lokal validierbar und schliesst eine Repository-Luecke bei runner.token.",
+  "summary": "Konzept fuer die gefuehrte Einrichtung einer frischen Maschine mit allen Komponenten als Container, je einmal fuer Linux und Windows. Haelt die Sichtung des Bestands (Compose-Stack, Smoke-Test in CI, frische-VM-Harness, gefuehrter Installer mit Demo-only-Docker-Pfad), die Komponenten-Matrix Container gegen Host mit Windows-Annahmen (Docker Desktop, WSL2), die Schrittlisten beider Plattformen mit Fehlerbild und Abhilfe je Schritt, den Stand von Compose und Secrets, eine Testprotokoll-Vorlage und den Schnitt in drei Folgekarten. Kernbefund: die bestehende Beweiskette endet am leeren Studio-Board; Agent-Hosts im Container, Provider-Auth und ein Dummy-Karten-Abschlussbeweis fehlen, und fuer Windows existiert kein Installer. Diese Karte macht ausserdem das runner-Profil erstmals lokal validierbar und schliesst eine Repository-Luecke bei runner.token. [Curation 2026-08-18 (AGT-2671): DONE CHECK - the three planned validation runs (Linux VM, Windows, installer implementation) remain unexecuted as cards; stays active. Spot-checked in code: runner.env.template, scripts/compose-runner-bootstrap.sh and the runner.token .gitignore entry all exist as claimed.]",
   "entrypoint": "index.html",
   "status": "active",
   "phase": "decision-ready",
-  "updatedAt": "2026-08-04T00:00:00Z",
+  "updatedAt": "2026-08-18T12:00:00Z",
   "sourceTaskKeys": [
     "AGT-2503"
   ],

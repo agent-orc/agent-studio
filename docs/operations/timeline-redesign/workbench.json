@@ -2,12 +2,12 @@
   "schemaVersion": 1,
   "id": "timeline-redesign",
   "title": "Task Timeline redesign",
-  "summary": "Decision-ready redesign for the Task Timeline and its shared Activity presentation rules. It defines six event categories in one grid, three structural row registers, acute failure and refusal treatment, explicit recovery links for self-healing incidents, newest-first day and run navigation, explanation-first technical popovers with exact Copy, collapsed gate and raw-frame evidence, one Trace entry point, Codex lifecycle condensation, four light/dark AGT-2577 inline SVG mockups, a central glossary, and seven delivery slices.",
+  "summary": "Decision-ready redesign for the Task Timeline and its shared Activity presentation rules. It defines six event categories in one grid, three structural row registers, acute failure and refusal treatment, explicit recovery links for self-healing incidents, newest-first day and run navigation, explanation-first technical popovers with exact Copy, collapsed gate and raw-frame evidence, one Trace entry point, Codex lifecycle condensation, four light/dark AGT-2577 inline SVG mockups, a central glossary, and seven delivery slices. [Curation 2026-08-18 (AGT-2671): DONE CHECK - the implementation section is an explicit empty stub, stays decision-pending. Durable event-registry contract, incident/banner state model, and surface-boundary content noted as strong candidates for a follow-up docs/concepts page; not transferred this pass given the dossier's own scope (delivery slices T1-T7) is still fully open.]",
   "entrypoint": "index.html",
   "status": "decision-pending",
   "phase": "decision-ready",
   "pattern": "ui",
-  "updatedAt": "2026-08-11T17:10:00Z",
+  "updatedAt": "2026-08-18T12:00:00Z",
   "sourceTaskKeys": [
     "AGT-2631"
   ],

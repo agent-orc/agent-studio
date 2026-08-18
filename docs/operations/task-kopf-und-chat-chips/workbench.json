@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
   "id": "task-kopf-und-chat-chips",
-  "title": "Task-Kopf \u0026 Chat-Chips \u2014 Layout-H\u00E4rtung",
-  "summary": "Drei visuelle Defekte aus dem Operator-Review 08.08., kartiert mit file:line-Belegen: (1) Pane-Tabs \u00FCberlappen bei Platzmangel (fehlendes Ellipsis im pane-tab__label bei shrinkbarem Host, kein Breakpoint ber\u00FChrt die Tab-Leiste) \u2014 zwei Responsive-Varianten nach Operator-Vorgabe (Icon-only vs. Overflow-Men\u00FC) mit Mockups und Empfehlung; (2) Escalation-Banner zeigt \u0027main \u2014 / main \u2014\u0027 als Branch-Chips \u2014 bei Projekten mit Integration==Release-Branch sind beide Segmente identisch und der nackte Gedankenstrich ist als \u0027nicht gemergt\u0027 unlesbar; (3) Chat-Header-Session-Chip \u00FCberlappt (\u0027main@sha\u0027 ohne Overflow-Guard in dreifacher min-width:0-Kette). Zur Umsetzungs-Entscheidung vorgelegt; Implementierungs-Karte liegt im Backlog.",
+  "title": "Task-Kopf & Chat-Chips — Layout-Härtung",
+  "summary": "Drei visuelle Defekte aus dem Operator-Review 08.08., kartiert mit file:line-Belegen: (1) Pane-Tabs überlappen bei Platzmangel (fehlendes Ellipsis im pane-tab__label bei shrinkbarem Host, kein Breakpoint berührt die Tab-Leiste) — zwei Responsive-Varianten nach Operator-Vorgabe (Icon-only vs. Overflow-Menü) mit Mockups und Empfehlung; (2) Escalation-Banner zeigt 'main — / main —' als Branch-Chips — bei Projekten mit Integration==Release-Branch sind beide Segmente identisch und der nackte Gedankenstrich ist als 'nicht gemergt' unlesbar; (3) Chat-Header-Session-Chip überlappt ('main@sha' ohne Overflow-Guard in dreifacher min-width:0-Kette). Zur Umsetzungs-Entscheidung vorgelegt; Implementierungs-Karte liegt im Backlog. [Curation 2026-08-18 (AGT-2671): DONE CHECK - three open GO/NO-GO options, stays decision-pending, no completion claims found. Reviewed for DOC TRANSFER - pure UI/component-fix content, no durable architecture invariant; nothing transferred.]",
   "entrypoint": "index.html",
   "status": "decision-pending",
   "phase": "decision-ready",
-  "updatedAt": "2026-08-08T21:30:00Z",
+  "updatedAt": "2026-08-18T12:00:00Z",
   "sourceTaskKeys": [],
   "relatedTaskKeys": [
     "QS-54",

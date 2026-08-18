@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "id": "project-feed",
   "title": "Projekt-Feed: High-Level-Timeline aus Entscheidungen \u0026 Ereignissen",
-  "summary": "Ein Feed pro Projekt (und projekt\u00FCbergreifend): wichtige Entscheidungen und Ereignisse als verlinkte Timeline. Zwei Publika \u2014 Menschen sehen high-level, was passiert; Tasks/Agenten finden einen Einstieg und den zuletzt relevanten Kontext. Token-Kosten \u00FCberall sichtbar; kostenbewusste, inkrementelle Zusammenstellung; t\u00E4gliche/w\u00F6chentliche Zusammenfassungen als Stakeholder-News. Datenlage-L\u00FCcke: viele Entscheidungen fallen heute in externen Chats au\u00DFerhalb des Tools.",
+  "summary": "Ein Feed pro Projekt (und projekt\u00FCbergreifend): wichtige Entscheidungen und Ereignisse als verlinkte Timeline. Zwei Publika \u2014 Menschen sehen high-level, was passiert; Tasks/Agenten finden einen Einstieg und den zuletzt relevanten Kontext. Token-Kosten \u00FCberall sichtbar; kostenbewusste, inkrementelle Zusammenstellung; t\u00E4gliche/w\u00F6chentliche Zusammenfassungen als Stakeholder-News. Datenlage-L\u00FCcke: viele Entscheidungen fallen heute in externen Chats au\u00DFerhalb des Tools. [Curation 2026-08-18 (AGT-2671): DONE CHECK - still concept-stage with four open operator decisions, stays active/shaping. Durable 'cost-aware composition' pattern (deterministic-first, LLM-only-for-batch-rollup, cache-as-artifact) noted, left in place as too narrow for a standalone page.]",
   "entrypoint": "index.html",
   "status": "active",
   "phase": "shaping",
-  "updatedAt": "2026-07-26T00:00:00Z",
+  "updatedAt": "2026-08-18T12:00:00Z",
   "sourceTaskKeys": [
     "TE-8",
     "MKT-14"
