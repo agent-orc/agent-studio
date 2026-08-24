@@ -35,7 +35,8 @@ under "Proposed event envelope", "Transport", "Level mapping" or "Signal to
 orchestrator action" exists in code today. Those sections describe a contract
 that becomes binding only if and when the decision in the final section is
 approved. "What exists today" is the only part that describes shipped
-behaviour, and every path in it was verified against the checkout.
+behaviour; every path in it was verified against the checkout on 2026-08-17 and
+the ledger row was added and re-verified on 2026-08-24.
 
 Treat this file as the reference for what was proposed and why, not as an
 implementation spec to build against without approval.
@@ -44,8 +45,18 @@ implementation spec to build against without approval.
 
 Agent Studio, Quality Studio, Coding Agent Chat, Coding Agent Runner, Token
 Economy and its website, the Agent Studio website and voice-lint each produce
-operational signal today, but there is no shared event contract between them
+operational signal today, but there is no shared event contract *across* them
 and no loop that turns a repeated signal into visible, reviewable work.
+
+The qualifier matters. Within Agent Studio one such contract already ships: the
+task timeline ledger (`TimelineEvent`, first row of the inventory below) is a
+typed, closed-vocabulary JSONL event stream with a cause taxonomy, and
+[`cycle-time-stage-model.md`](../cycle-time-stage-model.md) is a worked example
+of deriving analysis from it. The gap this page addresses is therefore not
+"no event contract exists" but "the existing contract is task-scoped and
+single-product": it has no organization app identity, no actor or privacy
+class, and no cross-application collection policy. The ledger is the precedent
+to extend, not a competitor to replace.
 
 The proposal adds one thin layer with three properties:
 
@@ -69,6 +80,7 @@ attached.
 
 | Signal | Location | What it does today | Gap |
 |---|---|---|---|
+| **Task timeline ledger** | `backend/Shared/Models/TimelineEvent.cs`, written to task-local `logs/timeline.jsonl` | The unified per-task ledger of the whole task lifetime, and the closest thing the platform already has to the contract this page proposes. Roughly 70 `TimelineEventKinds` constants, a **deliberately closed** `Kind` enum, no free-form kind string and no `extras` bag: a new kind means enum plus writer plus test in one commit. Since 2026-08-23 it also carries a closed lane-change **cause** vocabulary (`LaneChangeCauses`, stamped as `details.cause` / `details.causeDetail` at every automatic lane-change site) plus the `integration_started` and `review_attempt_claimed` kinds. Consumed by the cycle-time stage model. | Task-scoped and Agent-Studio-internal: no organization app identity, no actor or privacy class, no cross-app collection policy. Local post-processing writes pipeline steps without `post_step_*` rows, so the ledger is not yet the single source for both the local and the remote flow. |
 | Product runtime events | `backend/Features/Runtime/ProductRuntimeEventStore.cs`, `RuntimeEventPaths.cs`, `RuntimeEventWriter.cs`, `RuntimeEventValidator.cs`, schema `docs/app/schemas/product-runtime-event.schema.json` | Validated JSONL per day under the job or workspace runtime log folder: level, stable kebab-case event name, subsystem, timing, status, structured error, correlation and trace ids, tags, bounded payload. Read via `GET /api/runtime/{project}/events`. | No organization app identity, no actor, no privacy class, no fingerprint, no cross-app collection policy. Intentionally cannot trigger work. |
 | Agent Message Bus | `backend/Features/Bus/AgentMessageBusStore.cs`, `AgentMessageBusBridge.cs`, `AgentMessageValidator.cs`, schema `docs/app/schemas/agent-message.schema.json` | Typed observation, decision, advisory, intervention, lifecycle, error, heartbeat, token and artifact-reference messages, persisted as JSONL and fanned out as `busMessageAdded`. | Producers are Agent Studio runtime actors only. No generic product-app collector, no telemetry cluster producer. |
 | Runner log ingestion | `backend/Features/Diagnostics/LogIngestionEndpoints.cs` | `POST /api/runner/logs`. A fenced-lease runner ships raw output lines, the server appends them to the task's `logs/cli-output.log` after ANSI stripping and `backend/Features/Security/CredentialRedactor.cs` redaction. | Text log shipping, not structured event ingestion. No event name, no fingerprint, no clustering. |
@@ -326,6 +338,18 @@ move the affected sections from proposed to current, and update
 
 ## Living knowledge log
 
+- **2026-08-24 (AGT-2671):** Re-verified when the curation branch was rebased
+  onto a develop that had meanwhile hardened the task timeline ledger
+  (`integration_started` and `review_attempt_claimed` kinds, the closed
+  `LaneChangeCauses` vocabulary stamped as `details.cause`). The original
+  inventory omitted the ledger entirely, which made the purpose section's
+  "there is no shared event contract" read as broader than the evidence
+  supports: within Agent Studio a typed, closed-vocabulary event contract does
+  ship. Added the ledger as the first inventory row, narrowed the thesis to the
+  cross-application gap that is actually open, and cross-linked
+  [`cycle-time-stage-model.md`](../cycle-time-stage-model.md) as the worked
+  consumer of that ledger. The proposal itself is unchanged and still
+  undecided.
 - **2026-08-17 (AGT-2671):** Page created by the Dossier curation sweep. The
   content is the durable extract of `AGT-W38`, which stays `decision-pending`
   in the Dossiers list. Nothing here is delivered code.

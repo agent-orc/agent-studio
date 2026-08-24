@@ -208,7 +208,7 @@ Serialization has three layers:
   lane folder tree per project, keyed by watch path, with ordered acquisition
   of both lanes on cross-lane moves to avoid deadlock
   (`backend/Features/Tasks/LaneMutexRegistry.cs`,
-  `backend/Features/State/TaskStateMachine.cs`).
+  `backend/Features/Tasks/TaskStateMachine.cs`).
 
 ## Replay and idempotency
 

@@ -205,7 +205,7 @@ pending, batch gate and verified mirror, Human Review.
 | Batch id | `bg-<yyyymmdd>-<seq>`, for example `bg-20260811-0042` | Appears in the batch-run record and in every per-member evidence row. |
 | Integration branch | `develop` | The only publication target of a batch. |
 | Release branch | `main` | Advanced only by the existing auto-main policy or the promotion train, inside the same authority window. |
-| Delivery result ref | `<project>/results/run_<id>/fence-<n>/<result-sha>` | The implemented form, enforced by the regex in `backend/Features/Tasks/RemoteCommitAttributionGuard.cs`. The dossier's `refs/agent-studio/results/...` spelling is illustrative and does not match code. |
+| Delivery result ref | `refs/heads/agent-studio/results/<runAttemptId>/fence-<n>/<result-sha>` | The canonical full ref, built by `contracts/TaskServer.Contracts/FencedGitRefs.cs`. The backend plane also refers to the shorter `<project>/results/run_<id>/fence-<n>/<result-sha>` form; the attribution regex in `backend/Features/Tasks/RemoteCommitAttributionGuard.cs` is suffix-anchored and therefore recognises both. Use the `FencedGitRefs` spelling when constructing a ref. |
 
 Authority is layered. The batch coordinator holds a durable lease keyed by
 project, repository, integration branch and gate profile; every state write and
@@ -287,9 +287,11 @@ the durable batch record after routing is disabled.
 
 ## Delivered versus open
 
-A repository-wide search for `batch-gate`, `BatchGate` and `batchGate` matches
-only `docs/operations/README.md` and `docs/start/README.md`. The dossier
-carries `status: decision-pending` and an empty `implementationTasks` list.
+A code search for `batch-gate`, `BatchGate` and `batchGate` across the source
+trees returns no match: nothing in this repository implements the mechanism.
+The term appears only in documentation (this page, the source dossier, and the
+`docs/` indexes that link them). The dossier carries `status: decision-pending`
+and an empty `implementationTasks` list.
 
 The substrate the mechanism composes on is delivered:
 
@@ -331,8 +333,18 @@ Open, with no implementation:
 
 ## Living knowledge log
 
+- **2026-08-24 (AGT-2671):** Re-verified against `develop` when the curation
+  branch was rebased. Two corrections to the entry below. First, the
+  `refs/agent-studio/results/...` spelling does exist in code - it is the
+  canonical form built by `contracts/TaskServer.Contracts/FencedGitRefs.cs`,
+  and the attribution regex is suffix-anchored, so both it and the shorter
+  backend-plane form are recognised; the ref table now says so instead of
+  declaring one spelling non-existent. Second, the delivered-versus-open
+  section claimed a repository-wide search matched only two files, which was
+  never true (the source dossier always matched) and has drifted further; it
+  is now stated as a code search, which is the claim that actually carries the
+  "not implemented" conclusion.
 - **2026-08-17 (AGT-2671):** Page created by the Dossier curation sweep. During
   extraction the dossier's `refs/agent-studio/results/...` ref spelling was
-  found to disagree with the form enforced in
-  `backend/Features/Tasks/RemoteCommitAttributionGuard.cs`; this page records
-  the implemented form. The dossier stays `decision-pending`.
+  read as disagreeing with `RemoteCommitAttributionGuard.cs`; see the
+  correction above. The dossier stays `decision-pending`.

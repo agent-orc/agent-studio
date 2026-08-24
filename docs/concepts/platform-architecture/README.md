@@ -22,13 +22,15 @@ The durable architecture of the execution and delivery platform: who may write,
 how a delivery reaches the integration branch, which processes own which state,
 and what the organization telemetry contract would be.
 
-Every page here was **extracted from a decision dossier** under
-`docs/operations/`. Dossiers are decision instruments with a lifecycle; they
-move to History once their decision is settled and their slices are delivered.
-Architecture must outlive that lifecycle, so the durable mechanisms, invariants
-and contracts live here and the dossier keeps the decision drama, the option
-comparisons and the approval record. Each page links back to its source
-dossier, and each source dossier carries a pointer to its page.
+Most pages here were **extracted from a decision dossier** under
+`docs/operations/`; one ([Task Server topology](task-server-topology.md)) is
+consolidated from several documents and has no single source dossier. Dossiers
+are decision instruments with a lifecycle; they move to History once their
+decision is settled and their slices are delivered. Architecture must outlive
+that lifecycle, so the durable mechanisms, invariants and contracts live here
+and the dossier keeps the decision drama, the option comparisons and the
+approval record. Each page links back to its source dossier, and each source
+dossier carries a pointer to its page in its `workbench.json` summary.
 
 ## Where this sits
 
@@ -52,7 +54,7 @@ mechanisms.
 | [Task Server topology](task-server-topology.md) | Process topology, state ownership, the three switches that decide a deployment shape, the full `/api/v1` route surface versus the legacy planes, the Git evidence model, and the honest state of the AGT-2663 cutover. | Consolidated from four documents plus the sources | Cutover in progress |
 | [Batch Gate](batch-gate.md) | One suite for a delivery wave: closed manifest, deterministic ordering, mechanical replay, single-candidate authorisation, publish-or-isolate, bounded halving, and the full typed failure table. | [Batch Gate](../../operations/batch-gate-concept/index.html) (`AGT-W41`) | Proposed, decision pending |
 | [Organization-wide telemetry layer](telemetry-layer.md) | The inventory of signals that exist today, the proposed `OrgTelemetryEvent/v1` envelope, the hard privacy boundary, level mapping, the hybrid transport contract, and the bounded signal-to-action vocabulary. | [Telemetry layer](../../operations/telemetry-layer/index.html) (`AGT-W38`) | Proposed, decision pending |
-| [Remote Gate target architecture](remote-gate.md) | The GateSubject/GateAttempt/GateLease/GatePlan/GateReport object model, the capability-based claim model, exact-SHA materialization, the timeout-versus-infra-retry taxonomy, and the AGT-2262 SSH-bridge cutover gate. | [Remote Gate Target Architecture](../../operations/remote-gate-zielbild/index.html) (`AGT-W18`) | Proposed, decision pending |
+| [Remote Gate target architecture](remote-gate.md) | The GateSubject/GateAttempt/GateLease/GatePlan/GateReport object model, the capability-based claim model, exact-SHA materialization, the timeout-versus-infra-retry taxonomy, and the AGT-2262 SSH-bridge cutover gate. | [Remote Gate Target Architecture](../../operations/remote-gate-zielbild/index.html) (`AGT-W18`, `active`/decision-ready) | Proposed, not implemented |
 
 ## How to read a status column
 
@@ -72,7 +74,7 @@ mechanisms.
 2. Verify every cited path, route and symbol against the checkout before
    writing it down. Prefer the code over the dossier when they disagree, and
    note the divergence.
-3. Add the back-link header to the source dossier, add a pointer to this page
-   in that dossier's `workbench.json` summary, add a row to the table above,
-   and add a row to [`docs/start/README.md`](../../start/README.md).
+3. Add a pointer to this page in the source dossier's `workbench.json` summary,
+   add a row to the table above, and add a row to
+   [`docs/start/README.md`](../../start/README.md).
 4. End the page with a **Living knowledge log** section, newest entry on top.
