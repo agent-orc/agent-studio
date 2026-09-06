@@ -587,8 +587,13 @@
       color: var(--notify-warning-icon-fg);
       font-size: 10px;
       font-weight: 650;
+      font-family: inherit;
       line-height: 1.35;
     }
+
+    button.task-card__provider-auth-wait { cursor: pointer; }
+    button.task-card__provider-auth-wait:hover { background: var(--studio-bg-hover); }
+    button.task-card__provider-auth-wait:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
 
     .task-card__provider-auth-dot {
       width: 6px;

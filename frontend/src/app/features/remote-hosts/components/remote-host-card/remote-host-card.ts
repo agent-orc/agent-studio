@@ -1,5 +1,5 @@
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, input, output, signal } from '@angular/core';
 import { cliTypeIcon, cliTypeLabel } from '../../../../services/format.util';
 import type { CliType } from '../../../../models/task.model';
 import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
@@ -36,7 +36,8 @@ import {
   type RemoteHost,
 } from '../../models/remote-host.model';
 import { freshHostTelemetry, latestHostTelemetry } from '../../models/running-truth';
-import { providerAuthBadgesForHost, type ProviderAuthBadge } from '../../models/provider-auth.model';
+import { providerAuthBadgesForHost, signInTarget, type ProviderAuthBadge } from '../../models/provider-auth.model';
+import { CodexSignInDialogService } from '../../services/codex-sign-in-dialog.service';
 
 /** One meter row (RAM / CPU / Disk) resolved for the template. */
 interface Meter {
@@ -82,6 +83,7 @@ interface Meter {
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class RemoteHostCardComponent {
+  private readonly codexSignIn = inject(CodexSignInDialogService);
   readonly host = input.required<RemoteHost>();
   readonly roles = input<readonly RemoteHost[]>([]);
   readonly roleActiveSlots = input<Readonly<Record<string, number>>>({});
@@ -253,6 +255,14 @@ export class RemoteHostCardComponent {
 
   latestAuthTransition(badge: ProviderAuthBadge) {
     return badge.history.at(-1) ?? null;
+  }
+
+  canSignInCodex(badge: ProviderAuthBadge): boolean {
+    return badge.provider === 'codex' && ['unavailable', 'expiring'].includes(badge.state);
+  }
+
+  openCodexSignIn(badge: ProviderAuthBadge): void {
+    this.codexSignIn.open(signInTarget(badge, this.host().address));
   }
 
   cliIcon(t: CliType): string { return cliTypeIcon(t); }

@@ -142,6 +142,7 @@ import { CostBreakdownDialogComponent, type TaskTokenSummary } from './features/
 import { LoadingSurfaceComponent, PendingButtonDirective } from './components/async-feedback';
 import { AuthGateComponent, AuthService } from './components/auth-gate/auth-gate';
 import { ExecutionLocationBadgeComponent } from './components/execution-location-badge/execution-location-badge.component';
+import { CodexSignInDialogComponent } from './features/remote-hosts';
 interface VerboseDebugContext {
   lines: CliOutputLine[];
   runTimeline: RunTimeline | null;
@@ -149,11 +150,7 @@ interface VerboseDebugContext {
   tokenSummary: TaskTokenSummary | null;
   job: TaskInfo | null;
 }
-interface ShellPanesVisible {
-  prompt: boolean;
-  protocol: boolean;
-  git: boolean;
-}
+interface ShellPanesVisible { prompt: boolean; protocol: boolean; git: boolean; }
 const SHELL_PANES_FALLBACK: ShellPanesVisible = {
   prompt: false,
   protocol: false,
@@ -208,6 +205,7 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
     StudioIconComponent,
     AuthGateComponent,
     ExecutionLocationBadgeComponent,
+    CodexSignInDialogComponent,
   ],
   // Cycle 7b: OnPush. The shell mounts kanban + detail panel + many
   // sheets; default (Default) change detection re-checked the whole

@@ -7,6 +7,8 @@ export { RemoteHostsService } from './services/remote-hosts.service';
 export { ReviewQueueService } from './services/review-queue.service';
 export type { ReviewQueueSnapshot } from './services/review-queue.service';
 export { ProviderAuthStatusService } from './services/provider-auth-status.service';
+export { CodexSignInDialogService } from './services/codex-sign-in-dialog.service';
+export { CodexSignInDialogComponent } from './components/codex-sign-in-dialog/codex-sign-in-dialog';
 export * from './models/provider-auth.model';
 export { seedRemoteHosts } from './services/remote-hosts.seed';
 export {

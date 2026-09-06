@@ -1,0 +1,67 @@
+@if (request(); as target) {
+  <app-dialog
+    eyebrow="Execution host authentication"
+    [title]="'Sign in Codex on ' + target.hostName"
+    subtitle="The credential remains in the runner user's Codex store on this host."
+    kind="primary"
+    testid="codex-sign-in-dialog"
+    [closable]="true"
+    (closeRequest)="close()"
+    (backdropClick)="close()">
+    <div class="codex-auth" [attr.data-state]="phase()" aria-live="polite">
+      @if (phase() === 'starting') {
+        <div class="codex-auth__status" data-testid="codex-sign-in-starting">
+          <span class="codex-auth__spinner" aria-hidden="true"></span>
+          <p>{{ detail() }}</p>
+        </div>
+      }
+
+      @if (session(); as activeSession) {
+        @if (phase() === 'pending') {
+          <ol class="codex-auth__steps" data-testid="codex-sign-in-pending">
+            <li>
+              <span>Open the secure Codex sign-in page.</span>
+              <a data-testid="codex-sign-in-url"
+                 [href]="activeSession.verificationUrl"
+                 target="_blank"
+                 rel="noopener noreferrer">{{ activeSession.verificationUrl }}</a>
+            </li>
+            <li>
+              <span>Enter this one-time code.</span>
+              <button type="button"
+                      class="codex-auth__code"
+                      data-testid="codex-sign-in-code"
+                      [attr.aria-label]="'Copy device code ' + activeSession.userCode"
+                      (click)="copyCode()">
+                <strong>{{ activeSession.userCode }}</strong>
+                <small>{{ copyLabel() }}</small>
+              </button>
+            </li>
+          </ol>
+          <p class="codex-auth__privacy">Studio does not receive the resulting token. The one-time code is discarded when this session completes or expires.</p>
+        }
+      }
+
+      @if (phase() === 'verifying') {
+        <div class="codex-auth__status" data-testid="codex-sign-in-verifying">
+          <span class="codex-auth__spinner" aria-hidden="true"></span>
+          <p>{{ detail() }}</p>
+        </div>
+      }
+
+      @if (phase() === 'failed') {
+        <div class="codex-auth__failure" role="alert" data-testid="codex-sign-in-failed">
+          <strong>Codex sign-in needs attention</strong>
+          <p>{{ detail() }}</p>
+        </div>
+      }
+    </div>
+
+    <div footer class="codex-auth__actions">
+      <button type="button" class="codex-auth__secondary" (click)="close()">Close</button>
+      @if (phase() === 'failed') {
+        <button type="button" class="codex-auth__primary" data-testid="codex-sign-in-retry" (click)="retry()">Try again</button>
+      }
+    </div>
+  </app-dialog>
+}

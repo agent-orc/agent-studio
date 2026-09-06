@@ -5,6 +5,8 @@ import { NotificationService } from '../../../services/notification.service';
 import {
   providerAuthBadgesForSnapshot,
   type ProviderAuthBadge,
+  type CodexSignInStartResponse,
+  type CodexSignInStatusResponse,
   type ProviderAuthProvisioningRequest,
   type ProviderAuthProvisioningResponse,
 } from '../models/provider-auth.model';
@@ -98,6 +100,21 @@ export class ProviderAuthStatusService implements OnDestroy {
     );
   }
 
+  startCodexSignIn(hostId: string, sshTarget: string): Observable<CodexSignInStartResponse> {
+    if (!this.http) throw new Error('Codex sign-in requires the Studio HTTP client.');
+    return this.http.post<CodexSignInStartResponse>(
+      `/api/v1/management/remote-hosts/${encodeURIComponent(hostId)}/codex-sign-in`,
+      { sshTarget },
+    );
+  }
+
+  codexSignInStatus(hostId: string, handle: string): Observable<CodexSignInStatusResponse> {
+    if (!this.http) throw new Error('Codex sign-in requires the Studio HTTP client.');
+    return this.http.get<CodexSignInStatusResponse>(
+      `/api/v1/management/remote-hosts/${encodeURIComponent(hostId)}/codex-sign-in/${encodeURIComponent(handle)}`,
+    );
+  }
+
   waitForFreshProbe(
     provider: string,
     aliases: readonly string[],
@@ -112,6 +129,7 @@ export class ProviderAuthStatusService implements OnDestroy {
       tap(snapshots => this.ingest(snapshots ?? [])),
       map(() => this.statuses().find(status =>
         status.provider === provider
+        && status.state === 'ok'
         && status.aliases.some(alias => normalizedAliases.has(alias.toLowerCase()))
         && (status.advertisedAt ? Date.parse(status.advertisedAt) > baseline : false))),
       filter((status): status is ProviderAuthBadge => !!status),

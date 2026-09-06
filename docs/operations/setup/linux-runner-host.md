@@ -179,13 +179,15 @@ The controller is intentionally repeatable after a host wipe:
    from the host.
 2. Install or update the `CodingAgentRunner` NuGet global tool and require
    version `0.5.0` or newer, then install the Codex and Claude CLIs.
-3. Before the visible setup task starts, provision Claude authentication from
-   the Studio dialog. Studio sends `CLAUDE_CODE_OAUTH_TOKEN` or
+3. Before the visible setup task starts, provision provider authentication from
+   the Studio dialog. For Claude, Studio sends `CLAUDE_CODE_OAUTH_TOKEN` or
    `ANTHROPIC_API_KEY` only through SSH stdin. The host atomically writes
    `/etc/agent-runner/provider-auth.env` as `root:agent` mode `640`. The value is
-   never persisted in Studio, a task, or the repository. Codex uses its
-   host-owned `codex login --device-auth` flow; credential files are never
-   copied from the operator workstation.
+   never persisted in Studio, a task, or the repository. For Codex, choose
+   **Sign in Codex** on its provider badge. Studio starts the host-owned
+   `codex login --device-auth` process, shows its browser URL and one-time code,
+   and polls to completion. Credential files are never copied from the operator
+   workstation.
 4. Atomically write `/etc/agent-runner/runner.env` with the Task Server URL,
    stable runner identity, optional `RUNNER_CLIENT_ID`, credential-file path,
    and fallback git origin. Install and start `agent-host.service` through
@@ -226,8 +228,11 @@ seeding.
 
 - **Claude.** For a headless host, use the setup-token flow below. An interactive
   host login remains a diagnostic fallback, not the provisioning contract.
-- **Codex.** Same rule: run `codex login` on the host so it writes the host's own
-  `~/.codex/auth.json`; do not copy the operator's. Verify with `codex --version`.
+- **Codex.** Choose **Sign in Codex** on the affected Execution Hosts badge or
+  Ready-card wait chip. Studio runs `codex login --device-auth` as the runner
+  user over SSH, so Codex writes the host's own credential store. Do not copy
+  the operator's `~/.codex/auth.json`. Use `codex login status` for the
+  authentication check and `codex --version` for the installed CLI check.
 - **Rotation is now per host.** Replace only the affected host's provider-auth
   file and restart its units. Other hosts and the operator's normal Claude login
   remain independent.
@@ -322,6 +327,18 @@ placing the secret in a task. It atomically updates the shared file, restarts
 both installed units, verifies the variable name in each daemon's
 `/proc/<MainPID>/environ`, and waits for a fresh runner probe. It never persists
 the value in the Studio database, repository, task, log, or evidence artifact.
+
+Codex renewal uses the adjacent **Sign in Codex** action when the provider state
+is **Unavailable** or **Expiring**. Studio starts a 15-minute SSH session as the
+runner user and returns only a session handle, the official verification URL,
+and the one-time browser code. After the browser flow, the host runs
+`codex login status`. A successful login best-effort restarts installed runner
+units so their startup probe publishes `provider-auth:codex` promptly; if no
+unit is installed or restart is unavailable, the ordinary probe cadence remains
+the fallback. Studio discards the
+URL and code at terminal completion and emits one `provider_sign_in` operator
+event containing only host, provider, actor, and outcome. The token and Codex
+auth file never leave the host.
 
 Provider capability snapshots refresh every 60 seconds. Execution Hosts shows
 **OK**, **Retrying**, **Limited**, **Expiring**, **Unavailable**, or **Unknown**
