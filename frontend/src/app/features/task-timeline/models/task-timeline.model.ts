@@ -59,6 +59,8 @@ export const TIMELINE_KIND = {
   deliveryUnverified: 'delivery_unverified',
   integrationPendingWarning: 'integration_pending_warning',
   integrationRecoveryQueued: 'integration_recovery_queued',
+  followUpPreserved: 'follow_up_preserved',
+  followUpConsumed: 'follow_up_consumed',
 } as const;
 
 /** The three terminals of the completion loop. */

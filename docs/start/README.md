@@ -62,6 +62,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | CLI | [domains/cli.md](../system/domains/cli.md) |
 | Model routing policy (model, thinking level, risk floors, benchmark evidence) | [domains/model-routing-policy.md](../system/domains/model-routing-policy.md) |
 | Tokens | [domains/tokens.md](../system/domains/tokens.md) |
+| Follow-ups: admission, queueing, preservation (lane table for continue / steer; why a follow-up is queued instead of started) | [domains/tasks.md#follow-ups-admission-queueing-preservation](../system/domains/tasks.md#follow-ups-admission-queueing-preservation) |
 | Remote execution outcome and recovery | [contracts/run-outcome.md](../system/contracts/run-outcome.md#remote-execution-outcome-adapter) |
 | Remote infrastructure scenario result contract | [contracts/remote-run-result.md](../system/contracts/remote-run-result.md) |
 | ADR archive | [architecture/decisions/adr-archive.md](../system/architecture/decisions/adr-archive.md) |

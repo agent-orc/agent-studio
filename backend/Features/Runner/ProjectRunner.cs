@@ -248,6 +248,13 @@ public class ProjectRunner
     private RunPlan? _activePlan => _activeRuns.Single?.Plan;
     private int _activeReissueAttempt => _activeRuns.Single?.ReissueAttempt ?? 0;
     private bool _processing;
+    // AGT-2747: the most recent run this runner KILLED (as opposed to one that
+    // finished on its own). Only ClearActiveJobIfMatches writes it, so its
+    // presence for a just-started job is proof that a watchdog or an external
+    // move took the run down - which is what lets the continue endpoint answer
+    // 409 instead of a lying "started". A single slot is enough: the check runs
+    // immediately after the start it is about.
+    private (string JobId, string Reason, DateTime AtUtc)? _lastClearedRun;
     // ASS-1753: latches the one-shot post-restart slot reconcile. A backend
     // restart clears _activeRuns, but the CLI router can still own live runs
     // for this project (a CLI that reattaches on startup, or a process that
@@ -2323,6 +2330,13 @@ public class ProjectRunner
         var movedToProgressThisCall = false;
         var claimedRunThisCall = false;
         var processStartConfirmed = false;
+        // AGT-2747: true only once THIS call has stashed the card's pending
+        // intent. The rollback sites below are run-scoped on it, because the
+        // consumed copy is now retained as consumption proof - an unguarded
+        // rollback would otherwise resurrect an already-executed follow-up from
+        // a previous run's stash.
+        var stashedPendingIntentThisCall = false;
+        PendingIntent? consumedIntent = null;
         string? acquiredPickupLockFolder = null;
         try
         {
@@ -2405,6 +2419,7 @@ public class ProjectRunner
             if (intent == RunIntent.AutoPickup && info.PendingIntent != null)
             {
                 var stashed = _mutations.ReadAndStashPendingIntent(info.FolderPath);
+                if (stashed != null) stashedPendingIntentThisCall = true;
                 if (stashed != null && !string.IsNullOrWhiteSpace(stashed.Prompt))
                 {
                     _logger.LogInformation(
@@ -2413,6 +2428,38 @@ public class ProjectRunner
                     intent = RunIntent.UserContinue;
                     followupPrompt = stashed.Prompt;
                     mode = stashed.Mode;
+                    consumedIntent = stashed;
+                }
+            }
+            // AGT-2747: the operator sent a fresh follow-up to a card that still
+            // carries an admission-queued one. Admission already appended that
+            // earlier text to prompt.md, so THIS run's context contains it and
+            // the run delivers both. Mark it consumed instead of leaving it to
+            // replay as a second, redundant run later. Deliberately narrow:
+            // intents from other producers (a steer-timeout auto-answer lives
+            // only in pending-intent.json) are left untouched.
+            else if (intent == RunIntent.UserContinue
+                     && FollowUpQueueReasons.IsAdmissionQueued(info.PendingIntent?.SavedReason))
+            {
+                var superseded = _mutations.ReadAndStashPendingIntent(info.FolderPath);
+                // The gate above reads the scanner projection; the stash reads
+                // disk. Re-check the authoritative record so a writer that
+                // slipped in between (a steer-timeout auto-answer, say) is put
+                // straight back instead of being swallowed by this run.
+                if (superseded != null && !FollowUpQueueReasons.IsAdmissionQueued(superseded.SavedReason))
+                {
+                    _mutations.RollbackStashedPendingIntent(info.FolderPath);
+                    _logger.LogInformation(
+                        "[taskboard] left the '{Reason}' intent on {JobId} for a later run; only admission-queued follow-ups ride along",
+                        superseded.SavedReason, jobId);
+                }
+                else if (superseded != null)
+                {
+                    stashedPendingIntentThisCall = true;
+                    consumedIntent = superseded;
+                    _logger.LogInformation(
+                        "[taskboard] user continue on {JobId} also delivers the queued {Mode} intent ({Chars} chars from prompt.md)",
+                        jobId, superseded.Mode, superseded.Prompt.Length);
                 }
             }
 
@@ -2598,6 +2645,7 @@ public class ProjectRunner
                 JobFolder = jobFolder,
                 Intent = intent,
                 Followup = followupPrompt,
+                Mode = mode,
                 Plan = plan,
                 ReissueAttempt = reissueAttempt,
                 IsUiIterationPipeline = isUiIterationPipeline,
@@ -2648,7 +2696,7 @@ public class ProjectRunner
                 const string missingRepository = "No authoritative Git repository is configured for this coding run.";
                 RecordWorktreePreparationFailure(jobId, missingRepository);
                 ReleaseRun(jobId);
-                _mutations.RollbackStashedPendingIntent(info.FolderPath);
+                if (stashedPendingIntentThisCall) _mutations.RollbackStashedPendingIntent(info.FolderPath);
                 if (movedToProgressThisCall)
                     RevertFailedStartFromProgress(jobId, info, intent);
                 NotifyStatus();
@@ -2687,7 +2735,7 @@ public class ProjectRunner
                     // worktree can be prepared/reused.
                     RecordWorktreePreparationFailure(jobId, prep.Error);
                     ReleaseRun(jobId);
-                    _mutations.RollbackStashedPendingIntent(info.FolderPath);
+                    if (stashedPendingIntentThisCall) _mutations.RollbackStashedPendingIntent(info.FolderPath);
                     // The run never started: roll the just-applied 3-progress move
                     // back to 2-ready so the deferred task does not linger as a
                     // zombie in 3-progress while its slot is free.
@@ -2787,7 +2835,7 @@ public class ProjectRunner
                         ["mode"] = info.Mode ?? string.Empty,
                     });
                 ReleaseRun(jobId);
-                _mutations.RollbackStashedPendingIntent(info.FolderPath);
+                if (stashedPendingIntentThisCall) _mutations.RollbackStashedPendingIntent(info.FolderPath);
                 if (movedToProgressThisCall)
                     RevertFailedStartFromProgress(jobId, info, intent);
                 NotifyStatus();
@@ -3009,7 +3057,7 @@ public class ProjectRunner
                 // Roll back the consumed pending-intent on spawn failure so
                 // the next auto-pickup retries instead of losing the user's
                 // input.
-                _mutations.RollbackStashedPendingIntent(info.FolderPath);
+                if (stashedPendingIntentThisCall) _mutations.RollbackStashedPendingIntent(info.FolderPath);
                 // A spawn failure on autopickup is a silent attempt for
                 // dead-letter purposes: the CLI never produced output. The
                 // OnCliFinished path that normally records this never fires
@@ -3119,8 +3167,18 @@ public class ProjectRunner
                     ["resumed"] = effResumeFlag ? "true" : "false",
                 });
 
-            // Spawn succeeded; drop the stashed intent (we've consumed it).
-            _mutations.DiscardStashedPendingIntent(info.FolderPath);
+            // Spawn succeeded, so the saved follow-up is now genuinely running.
+            // AGT-2747: the stash is RETAINED as pending-intent.consumed.json
+            // and paired with a ledger row, so "did my steer actually run, and
+            // in which run?" is answerable without reading process logs. The
+            // rollback sites above are run-scoped so the retained copy can never
+            // be resurrected by a later failing spawn.
+            if (consumedIntent != null)
+                RecordFollowUpConsumed(
+                    info.FolderPath, consumedIntent, effSessionToResume, cli.CliType, execution.StartedAt);
+            else if (stashedPendingIntentThisCall)
+                // An empty intent carried no operator text; there is nothing to prove.
+                _mutations.DiscardStashedPendingIntent(info.FolderPath);
             // Only a confirmed process start ends a visible no-slot wait. Early
             // admission/quota/spawn failures intentionally leave the wait visible.
             SteerPendingMarker.Clear(info.FolderPath, _logger);
@@ -3178,7 +3236,7 @@ public class ProjectRunner
             {
                 try { WriteSpawnFailureDiagnostic(admissionInfo, admissionInfo.CliType ?? "unknown", ex.Message); }
                 catch (Exception diagnosticEx) { _logger.LogDebug(diagnosticEx, "Could not persist admission-fault diagnostic for {JobId}", jobId); }
-                _mutations.RollbackStashedPendingIntent(admissionInfo.FolderPath);
+                if (stashedPendingIntentThisCall) _mutations.RollbackStashedPendingIntent(admissionInfo.FolderPath);
                 if (movedToProgressThisCall)
                     RevertFailedStartFromProgress(jobId, admissionInfo, intent);
             }
@@ -7428,6 +7486,13 @@ public class ProjectRunner
             "Runner '{Project}' clearing active job '{JobId}': {Reason}",
             ProjectName, jobId, reason);
 
+        // AGT-2747: a kill must never discard the operator's follow-up. Persist
+        // it BEFORE the process is stopped, so a crash between Stop and write
+        // cannot lose the steer. Recording the clear also lets the continue
+        // endpoint answer 409 instead of a lying 200 (honest-start contract).
+        PreserveUnconsumedFollowUp(jobId, reason);
+        _lastClearedRun = (jobId, reason, DateTime.UtcNow);
+
         if (_activeCliType != null)
         {
             try
@@ -7470,6 +7535,169 @@ public class ProjectRunner
     }
 
     /// <summary>
+    /// AGT-2747 - "a kill never loses intent". When a run that still owes the
+    /// operator an answer is stopped from the outside (lane watchdog, an API
+    /// move, the boot sweep), re-persist its follow-up as
+    /// <c>pending-intent.json</c> so the next run - local auto-pickup or a
+    /// remote claim - picks the steer up instead of dropping it on the floor.
+    /// Leaves a <c>follow_up_preserved</c> ledger row and a supervisor advisory
+    /// naming the card and the reason.
+    ///
+    /// <para>
+    /// Folder-addressed on purpose: this runs on a filesystem-watcher callback
+    /// where <see cref="TaskScannerService.FindJob"/> would re-enter the
+    /// just-invalidated global index - the same reason
+    /// <see cref="ReconcileActiveJobAgainstDisk"/> skips the chat-log lookup.
+    /// The card has usually just moved lane, so the run's captured folder is
+    /// stale and the bounded lane probe finds the new one.
+    /// </para>
+    ///
+    /// <para>
+    /// Only an unfinished user follow-up qualifies. A run that ended on its own
+    /// goes through <c>OnCliFinishedAsync</c>, which never reaches here, and the
+    /// silence watchdog stops the CLI through the ordinary finish path where
+    /// <see cref="RunOutcomePolicy"/> already owns the retry decision.
+    /// </para>
+    /// </summary>
+    private void PreserveUnconsumedFollowUp(string jobId, string stopReason)
+    {
+        try
+        {
+            var run = _activeRuns.Get(jobId);
+            if (run == null || run.Intent != RunIntent.UserContinue) return;
+            var followup = run.Followup;
+            if (string.IsNullOrWhiteSpace(followup)) return;
+            // One lane move reaches this method twice (OnJobMoved hook + watcher
+            // reconciliation). Preserve once so the card's ledger reads as one
+            // event rather than a duplicated pair.
+            if (!run.TryClaimFollowUpPreservation()) return;
+
+            var folder = run.JobFolder;
+            if (string.IsNullOrWhiteSpace(folder) || !Directory.Exists(folder))
+                folder = FindLegacyActiveFolder(jobId);
+            if (string.IsNullOrWhiteSpace(folder)) return;
+
+            var mode = ContinueModes.Normalize(run.Mode);
+            var saved = _mutations.SavePendingIntentIn(
+                folder!, mode, followup!,
+                reason: $"run-stopped:{stopReason}",
+                activeJobId: jobId);
+            if (saved == null) return;
+
+            _logger.LogWarning(
+                "follow_up_preserved project={Project} job={JobId} mode={Mode} reason={Reason}; " +
+                "the follow-up was re-saved as pending-intent.json and the next run consumes it",
+                ProjectName, jobId, mode, stopReason);
+
+            _timeline?.Append(
+                folder!,
+                TimelineEventKinds.FollowUpPreserved,
+                TimelineActors.System,
+                summary: $"Follow-up ({mode}) preserved: the run was stopped ({stopReason}).",
+                payloadRef: "pending-intent.json",
+                details: new()
+                {
+                    ["mode"] = mode,
+                    ["reason"] = stopReason,
+                    ["fromLane"] = ResolvePhysicalLane(folder) ?? string.Empty,
+                });
+
+            EmitFollowUpPreservedAdvisory(jobId, mode, stopReason);
+        }
+        catch (Exception ex)
+        {
+            // Never let preservation bookkeeping block the kill it protects.
+            _logger.LogWarning(ex, "Could not preserve the follow-up of {JobId} on stop", jobId);
+        }
+    }
+
+    /// <summary>
+    /// Names the card and the reason on the supervisor surface, so a lost steer
+    /// is visible in the operator feed rather than only in the runner log.
+    /// </summary>
+    private void EmitFollowUpPreservedAdvisory(string jobId, string mode, string stopReason)
+    {
+        try
+        {
+            _ = _bus?.EmitAdvisoryAsync(new SupervisorAdvisory(
+                CreatedAt: DateTime.UtcNow,
+                Project: ProjectName,
+                Severity: SupervisorSeverity.Warn,
+                Source: SupervisorSource.HardCheck,
+                Topic: TimelineEventKinds.FollowUpPreserved,
+                Message: $"Task '{jobId}' was stopped ({stopReason}) while a {mode} follow-up was still unanswered. " +
+                         "The follow-up is saved as a pending intent and the next run consumes it.",
+                JobId: jobId));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Advisory mirror of follow_up_preserved failed for {JobId}", jobId);
+        }
+    }
+
+    /// <summary>
+    /// AGT-2747 consumption proof: records that <paramref name="intent"/> is
+    /// genuinely executing in the run identified by <paramref name="runId"/>.
+    /// The stashed <c>pending-intent.consumed.json</c> is deliberately left on
+    /// disk as the payload this ledger row points at.
+    ///
+    /// <para>
+    /// <paramref name="runId"/> follows the same convention as
+    /// <c>agent_run_started</c> - the resumed session id - so the two rows pair
+    /// up. That id is null for a fresh session, which is the common case for a
+    /// consumed follow-up, so <c>runStartedAt</c> carries the run's start marker
+    /// as the always-present correlator: "which run took my steer?" must be
+    /// answerable even when no session was resumed.
+    /// </para>
+    /// </summary>
+    private void RecordFollowUpConsumed(
+        string jobFolder, PendingIntent intent, string? runId, string? cliType, DateTime runStartedAt)
+    {
+        _logger.LogInformation(
+            "follow_up_consumed project={Project} folder={Folder} mode={Mode} savedReason={SavedReason}",
+            ProjectName, jobFolder, intent.Mode, intent.SavedReason);
+        _timeline?.Append(
+            jobFolder,
+            TimelineEventKinds.FollowUpConsumed,
+            TimelineActors.System,
+            summary: $"Follow-up ({intent.Mode}) consumed by this run.",
+            runId: runId,
+            payloadRef: "pending-intent.consumed.json",
+            details: new()
+            {
+                ["mode"] = intent.Mode,
+                ["savedReason"] = intent.SavedReason,
+                ["cli"] = cliType ?? string.Empty,
+                ["executedBy"] = "local",
+                ["runStartedAt"] = runStartedAt.ToString("o", System.Globalization.CultureInfo.InvariantCulture),
+            });
+    }
+
+    /// <summary>
+    /// AGT-2747 honest-start contract. A run is only reported as <c>started</c>
+    /// once it has survived one lane reconciliation: before this existed, the
+    /// endpoint answered <c>200 {"status":"started"}</c> and the lane watchdog
+    /// killed the fresh process a second later, so the operator watched a steer
+    /// that would never run.
+    /// </summary>
+    /// <returns>
+    /// Null when the run is still alive; otherwise the reason it was stopped.
+    /// A run that simply finished very fast is not a failure and returns null -
+    /// only a recorded kill for this job, at or after
+    /// <paramref name="startedAtUtc"/>, counts.
+    /// </returns>
+    public string? ConfirmRunSurvivedStart(string jobId, DateTime startedAtUtc)
+    {
+        if (string.IsNullOrEmpty(jobId)) return null;
+        ReconcileActiveJobAgainstDisk();
+        return _lastClearedRun is { } cleared
+               && string.Equals(cleared.JobId, jobId, StringComparison.Ordinal)
+               && cleared.AtUtc >= startedAtUtc
+            ? cleared.Reason
+            : null;
+    }
+
+    /// <summary>
     /// Defensive watcher reconciliation: if the in-memory active-job latch
     /// points at a job whose folder is no longer in <c>3-progress</c>
     /// (deleted, moved by an external script, archived by the boot-time
@@ -7485,7 +7713,12 @@ public class ProjectRunner
         if (_processing) return false;
 
         var folder = _activeRuns.Get(jobId)?.JobFolder;
-        if (string.IsNullOrWhiteSpace(folder))
+        // A lane move renames the folder, so the path captured at admission is
+        // exactly the one that is stale here. Re-probe the lanes (a bounded
+        // Directory.Exists per lane, never the global task index) so the reason
+        // names the lane the card actually moved to instead of the misleading
+        // "folder no longer exists" (AGT-2747).
+        if (string.IsNullOrWhiteSpace(folder) || !Directory.Exists(folder))
             folder = FindLegacyActiveFolder(jobId);
 
         var physicalLane = ResolvePhysicalLane(folder);

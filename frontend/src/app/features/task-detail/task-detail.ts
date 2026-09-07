@@ -789,6 +789,19 @@ export class TaskDetailComponent implements OnDestroy {
     return this.queuedFollowUp() || !!this.detail().info.pendingIntent;
   });
 
+  /**
+   * One quiet line under the composer. A persisted `pendingIntent` is the
+   * durable case (AGT-2747): the follow-up is on disk and the next run (this
+   * backend's auto-pickup or a remote claim) consumes it. Without one, the
+   * queued state is only this session's optimistic echo of a 202.
+   */
+  readonly queuedFollowUpNote = computed<string>(() => {
+    if (!this.showQueuedFollowUp()) return '';
+    return this.detail().info.pendingIntent
+      ? 'Follow-up waits for the next run.'
+      : 'Message queued. It will send when this task can continue.';
+  });
+
   startJob(): void {
     this.errorMsg.set(null);
     this.starting.set(true);

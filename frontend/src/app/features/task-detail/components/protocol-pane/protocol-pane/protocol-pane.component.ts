@@ -154,6 +154,8 @@ export class ProtocolPaneComponent implements OnDestroy {
   readonly chatSendLabel = input<string>('Send');
   readonly chatError = input<string | null>(null);
   readonly queuedFollowUp = input<boolean>(false);
+  /** The quiet one-liner explaining why the follow-up has not run yet. */
+  readonly queuedFollowUpNote = input<string>('');
   readonly mutationsBlocked = input(false);
 
   readonly regenerating = input(false);

@@ -28,12 +28,20 @@ public record ContinueJobRequest
 /// <summary>
 /// Discriminated response for <c>POST /api/tasks/{id}/continue</c> and
 /// <c>POST /api/tasks/{id}/start</c>. <c>started</c> means the run is
-/// actually live; <c>queued</c> means the project was busy with another
-/// job, the user's intent has been saved as a draft on the target task,
-/// and the target task has been moved to the top of <c>2-ready</c> so the
-/// auto-pickup loop will run it on the next tick. The frontend treats
+/// actually live and has survived its first lane reconciliation;
+/// <c>queued</c> means the follow-up could not run here and now, the user's
+/// intent has been saved as a draft on the target task, and the target task
+/// has been moved to the top of <c>2-ready</c> so the next run - local
+/// auto-pickup or a remote claim - executes it. The frontend treats
 /// queued as success-with-info (no modal); the chat carries the
 /// orchestrator's <c>[queued]</c> meta line for user-facing feedback.
+///
+/// <para>
+/// AGT-2747: there is deliberately no third outcome in which a follow-up is
+/// accepted and then silently discarded. A run that is killed inside the
+/// start window answers <c>409</c> with the reason, and the persisted intent
+/// stays behind for the next run.
+/// </para>
 /// </summary>
 public record ContinueJobResponse
 {
@@ -45,7 +53,11 @@ public record ContinueJobResponse
 
 public record ContinueJobQueuedInfo
 {
-    /// <summary><c>project-busy</c> is the only reason today.</summary>
+    /// <summary>
+    /// One of <see cref="AgentStudio.Runner.FollowUpQueueReasons"/>:
+    /// <c>project-busy</c>, <c>lane-not-runnable</c>,
+    /// <c>delivery-under-review</c>, or <c>remote-execution</c>.
+    /// </summary>
     public string Reason { get; init; } = "project-busy";
     /// <summary>The job that was running when the user's send hit; for context only.</summary>
     public string? ActiveJobId { get; init; }

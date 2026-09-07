@@ -1658,6 +1658,24 @@ public class TaskMutationService
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return null;
+        return SavePendingIntentIn(info.FolderPath, mode, prompt, reason, activeJobId);
+    }
+
+    /// <summary>
+    /// Folder-addressed variant of <see cref="SavePendingIntent"/>. The runner's
+    /// kill path (AGT-2747) reaches this from a filesystem-watcher callback,
+    /// where the global task index has just been invalidated and a
+    /// <see cref="TaskScannerService.FindJob"/> lookup would re-enter it; the
+    /// caller already knows the concrete lane folder, so it passes it directly.
+    /// </summary>
+    public PendingIntent? SavePendingIntentIn(
+        string jobFolder,
+        string mode,
+        string prompt,
+        string reason,
+        string? activeJobId)
+    {
+        if (string.IsNullOrWhiteSpace(jobFolder) || !Directory.Exists(jobFolder)) return null;
         var intent = new PendingIntent
         {
             Mode = ContinueModes.Normalize(mode),
@@ -1668,7 +1686,7 @@ public class TaskMutationService
         };
         try
         {
-            var path = Path.Combine(info.FolderPath, "pending-intent.json");
+            var path = Path.Combine(jobFolder, "pending-intent.json");
             File.WriteAllText(path,
                 JsonSerializer.Serialize(intent, _pendingIntentWriteOpts),
                 Encoding.UTF8);
@@ -1679,7 +1697,7 @@ public class TaskMutationService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to save pending-intent.json for {JobId}", jobId);
+            _logger.LogWarning(ex, "Failed to save pending-intent.json in {Folder}", jobFolder);
             return null;
         }
     }

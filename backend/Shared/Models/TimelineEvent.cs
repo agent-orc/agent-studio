@@ -300,8 +300,7 @@ public static class TimelineEventKinds
     /// carries the classification, repeat count, attempt ids, and the base ref /
     /// base commit / step / command the runner reported.
     /// </summary>
-    public const string ReviewInfrastructureRepeatDiagnosed = "review_infrastructure_repeat_diagnosed";
-    /// AGT-2492: the recall sweep found that a parked card's recorded
+    public const string ReviewInfrastructureRepeatDiagnosed = "review_infrastructure_repeat_diagnosed";    /// AGT-2492: the recall sweep found that a parked card's recorded
     /// precondition no longer holds. <see cref="TimelineEvent.Summary"/> carries
     /// how long the card has been parked and why the blocker is considered gone;
     /// <see cref="TimelineEvent.Details"/> carries the lane, blocker type,
@@ -318,6 +317,27 @@ public static class TimelineEventKinds
     /// executor, host, subject, and source run.
     /// </summary>
     public const string ReviewAttemptClaimed = "review_attempt_claimed";
+    /// <summary>
+    /// AGT-2747: a user follow-up (continue / steer / extend / newTask) was
+    /// persisted as <c>pending-intent.json</c> instead of being executed right
+    /// now - either because lane-aware admission queued it before any spawn, or
+    /// because a kill stopped a run that still owed the operator an answer.
+    /// <see cref="TimelineEvent.Summary"/> names the mode and why;
+    /// <see cref="TimelineEvent.Details"/> carry <c>mode</c>, <c>reason</c>,
+    /// and <c>fromLane</c>. The counterpart is <see cref="FollowUpConsumed"/>;
+    /// a preserved event without a later consumed event is exactly the "the
+    /// operator's steer is still owed" state the card shows.
+    /// </summary>
+    public const string FollowUpPreserved = "follow_up_preserved";
+    /// <summary>
+    /// AGT-2747: a run (local auto-pickup or a remote claim) took the saved
+    /// <c>pending-intent.json</c> and is executing it.
+    /// <see cref="TimelineEvent.RunId"/> identifies the run that consumed it and
+    /// <see cref="TimelineEvent.PayloadRef"/> points at the retained
+    /// <c>pending-intent.consumed.json</c>, so "did my steer actually run?" is
+    /// answerable from the ledger alone.
+    /// </summary>
+    public const string FollowUpConsumed = "follow_up_consumed";
 }
 
 /// <summary>

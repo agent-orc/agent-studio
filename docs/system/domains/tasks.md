@@ -673,6 +673,102 @@ The board and task detail render the complete reason inline. The durable field
 is removed after dispatch succeeds; lane-entry timestamps prevent an older
 refusal from leaking into a later Ready generation.
 
+## Follow-ups: admission, queueing, preservation
+
+A follow-up is anything the operator sends to an existing card through
+`POST /api/tasks/{id}/continue` (`continue`, `steer`, `extend`, `newTask`) or
+an explicit `POST /api/tasks/{id}/start`. The contract is that no follow-up is
+ever accepted and then discarded.
+
+### Admission happens before any process is spawned
+
+`TaskRunnerService.ContinueJobAsync` and `StartJobAsync` evaluate
+`FollowUpAdmissionPolicy.Decide(lane, phase, isLocalExecution)` first. Only a
+card whose lane, delivery state, and configured execution location all permit
+it may start a local CLI run. Everything else is queued.
+
+| Card state | Verdict | `queued.reason` |
+|---|---|---|
+| `2-ready` or `3-progress`, local execution, no delivery under review | starts locally | - |
+| `0-backlog`, `1-preparation`, `1a-orchestrator-prep`, `3a-failed-pickup`, `3b-code-not-complete`, `4-auto-review`, `5-human-review`, `5e-escalated`, `6-completed`, `7-archive`, unknown lane | queued | `lane-not-runnable` |
+| Runnable lane, but `phase` is `awaiting-review` or `integrating` | queued | `delivery-under-review` |
+| Runnable lane, but the project's `executionLocation` names a remote runner | queued | `remote-execution` |
+| Runnable lane and local, but the project is already running another job | queued | `project-busy` |
+
+`steer-pending` is deliberately not a delivery-under-review phase: the
+UI-iteration and concept sight-review gates take the operator's verdict through
+the ordinary continue path, and queueing them would break the human gate they
+implement.
+
+Queueing means: the prompt is persisted as `pending-intent.json`, the card is
+promoted to the top of `2-ready` with transition detail `follow-up-queued-lane`,
+a `follow_up_preserved` ledger row and a `[queued]` chat line are written, and
+the API answers `202 {"status":"queued","queued":{"reason":...}}`. The operator's
+text is also appended to `prompt.md` before admission runs, because a remote
+runner builds its run spec from `prompt.md` and never reads `pending-intent.json`.
+
+### A kill never loses intent
+
+When `ProjectRunner.ClearActiveJobIfMatches` stops a run that still carries an
+unanswered user follow-up - the lane watchdog, the `OnJobMoved` hook, the boot
+sweep - the follow-up is re-saved as `pending-intent.json` **before** the process
+is stopped, the card gets a `follow_up_preserved` timeline row, and a supervisor
+advisory names the card and the reason. The silence watchdog is not part of this
+path: it stops the CLI through the ordinary finish path, where `RunOutcomePolicy`
+already owns the retry decision.
+
+Because admission only starts a run from `2-ready` or `3-progress`, and
+`RunCliAsync` moves a `2-ready` card to `3-progress` before it spawns, a
+user-initiated run is always physically in `3-progress`. The watchdog reason
+"active job moved out of 3-progress" can therefore no longer fire against a run
+this backend just started for an operator.
+
+### Honest response
+
+`started` is only returned once the run has survived its first lane
+reconciliation. If a watchdog took it down inside the start window, the endpoint
+answers `409` with the stop reason and the persisted intent stays behind for the
+next run.
+
+### Consumption proof
+
+When a run consumes `pending-intent.json` it is renamed to
+`pending-intent.consumed.json`, which is **retained** as the payload of a
+`follow_up_consumed` timeline row. Both the local auto-pickup path and the
+remote `POST /api/runner/claim` path record it, so "did my steer actually run,
+and where?" is answerable from the ledger alone. `runId` follows the
+`agent_run_started` convention (the resumed session id, null for a fresh
+session), so `details.runStartedAt` is the always-present correlator. A
+`follow_up_preserved` row with no later `follow_up_consumed` row is exactly the
+"still owed" state; the card detail renders it as one quiet line,
+"Follow-up waits for the next run."
+
+Three rules keep the ledger honest:
+
+- **Rollback is run-scoped.** Only the call that stashed an intent may roll it
+  back, so a retained consumed copy can never be resurrected by a later failing
+  spawn.
+- **A local run also delivers an admission-queued intent.** If the operator
+  sends a second follow-up to a card that already carries one, the new run
+  starts and marks the older intent consumed: admission had appended its text to
+  `prompt.md`, so this run's context already contains it and leaving it queued
+  would replay it as a redundant extra run. This applies **only** to intents
+  whose `savedReason` is one of the four queue reasons. An intent from another
+  producer - a `steer-timeout-auto-answer` lives only in `pending-intent.json` -
+  is left untouched, because consuming it would lose words that exist nowhere
+  else. The check is re-applied to the stashed record, not just the scanner
+  projection, so a writer that slips in between is rolled straight back. The
+  remote claim applies the same rule for the same reason: it builds its prompt
+  from `prompt.md` alone, so it may only consume what admission put there.
+- **Preservation is exactly-once per run.** One lane move reaches the runner
+  twice (the `OnJobMoved` hook and the watcher reconciliation), so the follow-up
+  is preserved under an interlocked latch on the run.
+
+Key code: `backend/Features/Runner/FollowUpAdmissionPolicy.cs`,
+`TaskRunnerService.AdmitFollowUp` / `QueueFollowUp` / `ConfirmHonestStart`,
+`ProjectRunner.PreserveUnconsumedFollowUp` / `RecordFollowUpConsumed` /
+`ConfirmRunSurvivedStart`, `TaskMutationService.SavePendingIntentIn`.
+
 ## Outcome issue presentation contract
 
 Task reads derive `TaskInfo.outcomeIssue` from typed runner markers in

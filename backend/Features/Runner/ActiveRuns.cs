@@ -27,6 +27,13 @@ internal sealed class ActiveRun
     public string? QuotaFallbackReason { get; set; }
     public RunIntent Intent { get; init; }
     public string? Followup { get; init; }
+    /// <summary>
+    /// The <see cref="ContinueModes"/> value the follow-up was sent with. Kept
+    /// next to <see cref="Followup"/> so a kill can re-persist the operator's
+    /// intent with the mode they chose rather than defaulting it to
+    /// <c>continue</c> (AGT-2747).
+    /// </summary>
+    public string? Mode { get; init; }
     public RunPlan? Plan { get; init; }
     public int ReissueAttempt { get; init; }
     public bool IsUiIterationPipeline { get; init; }
@@ -82,6 +89,19 @@ internal sealed class ActiveRun
     /// </summary>
     public bool TryReleaseExecutionSlot()
         => Interlocked.Exchange(ref _holdsExecutionSlot, 0) == 1;
+
+    private int _followUpPreserved;
+
+    /// <summary>
+    /// Exactly-once latch for AGT-2747 follow-up preservation. One lane move
+    /// reaches the runner twice - the transition service's <c>OnJobMoved</c>
+    /// hook and the filesystem watcher's reconciliation both clear the latch,
+    /// and they can interleave before either release lands. The intent write
+    /// itself is latest-wins so a double write is harmless, but the card's
+    /// ledger would show the same preservation twice.
+    /// </summary>
+    public bool TryClaimFollowUpPreservation()
+        => Interlocked.Exchange(ref _followUpPreserved, 1) == 0;
 
     /// <summary>Job folder whose process lease belongs to this run.</summary>
     public string? PickupLockFolder { get; set; }

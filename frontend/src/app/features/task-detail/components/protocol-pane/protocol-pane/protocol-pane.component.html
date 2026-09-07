@@ -497,7 +497,7 @@
                 } @else if (queuedFollowUp()) {
                   <p class="chat-compose__status"
                      data-testid="activity-chat-queued" role="status">
-                    Message queued. It will send when this task can continue.
+                    {{ queuedFollowUpNote() || 'Message queued. It will send when this task can continue.' }}
                   </p>
                 }
               </div>

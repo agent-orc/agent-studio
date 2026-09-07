@@ -157,6 +157,8 @@ public static class LeaseEndpoints
             PromptEnrichmentService promptEnrichment,
             DossierMaintenanceService dossierMaintenance,
             RemoteDispatchRejectionStore dispatchRejections,
+            TaskMutationService mutations,
+            TimelineLog timeline,
             CancellationToken ct) =>
         {
             var logger = loggerFactory.CreateLogger("AgentStudio.Tasks.RemoteRunnerClaim");
@@ -860,6 +862,50 @@ public static class LeaseEndpoints
                     "remote-runner-task-claimed project={Project} projectId={ProjectId} task={TaskKey} runner={Runner} lease={LeaseId} token={FencingToken} repositorySource={RepositorySource} defaultBranch={DefaultBranch}",
                     candidate.ProjectName, repository.ProjectId, taskKey, req.RunnerName, acquire.Lease.LeaseId,
                     acquire.Lease.FencingToken, repository.Source, repository.DefaultBranch);
+
+                // AGT-2747: an admission-queued follow-up is carried into the
+                // remote run by prompt.md (the continuation note the continue
+                // endpoint appends before admission), so the run spec above
+                // already contains the operator's text. What was missing is the
+                // proof: mark that intent consumed by THIS attempt and retain
+                // the consumed copy, otherwise the card keeps claiming a
+                // follow-up is still owed long after the runner picked it up.
+                //
+                // Only admission-queued intents qualify. This dispatch builds
+                // its prompt from prompt.md alone, so an intent from another
+                // producer - a steer-timeout auto-answer exists only inside
+                // pending-intent.json - would be silently dropped. Those stay on
+                // the card for a run that can actually deliver them.
+                var claimedFolder = string.IsNullOrWhiteSpace(move.NewFolderPath)
+                    ? candidate.FolderPath
+                    : move.NewFolderPath!;
+                var remoteIntent = FollowUpQueueReasons.IsAdmissionQueued(candidate.PendingIntent?.SavedReason)
+                    ? mutations.ReadAndStashPendingIntent(claimedFolder)
+                    : null;
+                if (remoteIntent != null && !FollowUpQueueReasons.IsAdmissionQueued(remoteIntent.SavedReason))
+                {
+                    // The gate read the scanner projection; the stash read disk.
+                    // Put a racing writer's intent straight back.
+                    mutations.RollbackStashedPendingIntent(claimedFolder);
+                    remoteIntent = null;
+                }
+                if (remoteIntent != null && !string.IsNullOrWhiteSpace(remoteIntent.Prompt))
+                {
+                    timeline.Append(
+                        claimedFolder,
+                        TimelineEventKinds.FollowUpConsumed,
+                        TimelineActors.System,
+                        summary: $"Follow-up ({remoteIntent.Mode}) consumed by remote runner '{req.RunnerName}'.",
+                        runId: acquire.Lease.AttemptId,
+                        payloadRef: "pending-intent.consumed.json",
+                        details: new()
+                        {
+                            ["mode"] = remoteIntent.Mode,
+                            ["savedReason"] = remoteIntent.SavedReason,
+                            ["executedBy"] = "remote",
+                            ["runnerId"] = acquire.Lease.RunnerId ?? string.Empty,
+                        });
+                }
                 var graceRunsRemaining = settings.ConsumeBuildProfileRevalidationGraceRun(candidate.ProjectName);
                 if (graceRunsRemaining is not null)
                 {
