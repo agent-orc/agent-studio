@@ -77,12 +77,14 @@ public sealed class AdHocUsageService
             totalCacheR += r.CacheReadTokens;
             totalCacheW += r.CacheCreationTokens;
 
-            var cost = TokenPricing.Estimate(r.Model, r.InputTokens, r.OutputTokens, r.CacheReadTokens, r.CacheCreationTokens, r.Ts);
+            var canonicalModel = TokenPricing.CanonicalModelId(r.Model);
+            var modelKey = string.IsNullOrWhiteSpace(canonicalModel) ? "(unknown)" : canonicalModel;
+            var cost = TokenPricing.Estimate(modelKey, r.InputTokens, r.OutputTokens, r.CacheReadTokens, r.CacheCreationTokens, r.Ts);
             totalCost += cost.Total;
             if (!cost.ModelKnown) allPriced = false;
 
             Add(bySource, string.IsNullOrWhiteSpace(r.Source) ? AdHocUsageSources.Unknown : r.Source, r, cost);
-            Add(byModel, string.IsNullOrWhiteSpace(r.Model) ? "(unknown)" : r.Model, r, cost);
+            Add(byModel, modelKey, r, cost);
             Add(byDay, r.Ts.ToUniversalTime().ToString("yyyy-MM-dd"), r, cost);
         }
 
@@ -122,14 +124,15 @@ public sealed class AdHocUsageService
             {
                 var priced = kv.Value.AllPriced;
                 return new AdHocUsageByModel(
-                    Model: kv.Key,
+                    Model: TokenModelDisplay.Label(kv.Key) ?? kv.Key,
                     Calls: kv.Value.Calls,
                     InputTokens: kv.Value.Input,
                     OutputTokens: kv.Value.Output,
                     CacheReadTokens: kv.Value.CacheRead,
                     CacheCreationTokens: kv.Value.CacheCreate,
                     EstimatedApiCostUsd: kv.Value.Cost,
-                    ModelPriced: priced);
+                    ModelPriced: priced,
+                    ModelId: kv.Key);
             })
             .ToList();
 

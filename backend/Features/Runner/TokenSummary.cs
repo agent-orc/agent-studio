@@ -45,7 +45,8 @@ public sealed record TokenSummaryByModel(
     long CacheCreationTokens,
     decimal EstimatedApiCostUsd,
     bool ModelPriced,
-    bool ModelInCatalog);
+    bool ModelInCatalog,
+    string? ModelId = null);
 
 public class TokenSummaryService
 {
@@ -311,10 +312,14 @@ public class TokenSummaryService
 
             foreach (var m in summary.ByModel)
             {
-                if (!perModel.TryGetValue(m.Model, out var bucket))
+                var canonicalModel = TokenPricing.CanonicalModelId(m.ModelId ?? m.Model);
+                var key = string.IsNullOrWhiteSpace(canonicalModel) ? "(unknown)" : canonicalModel;
+                if (!perModel.TryGetValue(key, out var bucket))
                 {
-                    bucket = new ModelBucket(m.Model, m.Model);
-                    perModel[m.Model] = bucket;
+                    bucket = new ModelBucket(
+                        key,
+                        TokenModelDisplay.Label(canonicalModel) ?? m.Model);
+                    perModel[key] = bucket;
                 }
                 bucket.Calls += m.Calls;
                 bucket.Input += m.InputTokens;
@@ -338,7 +343,8 @@ public class TokenSummaryService
                 CacheCreationTokens: b.CacheCreate,
                 EstimatedApiCostUsd: b.Cost,
                 ModelPriced: !b.AnyUnpriced,
-                ModelInCatalog: !b.AnyUnknownModel))
+                ModelInCatalog: !b.AnyUnknownModel,
+                ModelId: b.Model))
             .ToList();
 
         // If we recorded zero LLM calls anywhere, "all priced" is meaningless.
@@ -361,7 +367,9 @@ public class TokenSummaryService
             FetchedAt: DateTime.UtcNow.ToString("o"),
             FirstActivity: firstAt?.ToString("o"),
             LastActivity: lastAt?.ToString("o"),
-            Disclaimer: DefaultDisclaimer);
+            Disclaimer: DefaultDisclaimer,
+            UnknownModelCount: byModel.Count(model => !model.ModelInCatalog),
+            UnpricedModelCount: byModel.Count(model => !model.ModelPriced));
 
         // Persist for next-app-start display. Best-effort.
         try { cache?.Write(aggregate); } catch (Exception __ex) { SilentCatch.Note(__ex, "TokenSummary: swallow; tolerant by design"); /* swallow; tolerant by design */ }
@@ -419,7 +427,7 @@ public class TokenSummaryService
             if (firstAt == null || ts < firstAt) firstAt = ts;
             if (lastAt == null || ts > lastAt) lastAt = ts;
 
-            var canonicalModel = ModelMetadataRegistry.NormalizeId(u.Model);
+            var canonicalModel = TokenPricing.CanonicalModelId(u.Model);
             var key = string.IsNullOrWhiteSpace(canonicalModel) ? "(unknown)" : canonicalModel;
             if (!perModel.TryGetValue(key, out var bucket))
             {
@@ -458,7 +466,8 @@ public class TokenSummaryService
                 CacheCreationTokens: bucket.CacheCreate,
                 EstimatedApiCostUsd: bucket.Cost,
                 ModelPriced: !bucket.AnyUnpriced,
-                ModelInCatalog: !bucket.AnyUnknownModel));
+                ModelInCatalog: !bucket.AnyUnknownModel,
+                ModelId: bucket.Model));
         }
 
         return new TokenSummary(

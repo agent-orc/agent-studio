@@ -5,10 +5,10 @@ internal static class TokenModelDisplay
 {
     public static string? Label(string? modelId)
     {
-        var id = ModelMetadataRegistry.NormalizeId(modelId);
+        var id = TokenPricing.CanonicalModelId(modelId);
         if (string.IsNullOrWhiteSpace(id)) return null;
         if (IsPlaceholder(id)) return null;
-        return ModelMetadataRegistry.Find(id)?.Label ?? id;
+        return TokenPricing.ModelDisplayName(id);
     }
 
     public static bool IsAgentParticipant(string? participantId)

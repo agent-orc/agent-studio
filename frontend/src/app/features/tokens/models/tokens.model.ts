@@ -35,6 +35,8 @@ export interface TaskTokenSummary {
 }
 
 export interface TokenSummaryByModel {
+  /** Canonical price-catalogue id. Added without removing the legacy label. */
+  modelId?: string | null;
   model: string;
   calls: number;
   inputTokens: number;
@@ -89,6 +91,10 @@ export interface TokenSummaryAggregate {
   totalCacheCreationTokens: number;
   estimatedApiCostUsd: number;
   allModelsPriced: boolean;
+  /** Distinct canonical ids absent from the pinned price catalogue. */
+  unknownModelCount?: number;
+  /** Distinct canonical ids with any usage that could not be priced. */
+  unpricedModelCount?: number;
   byModel: TokenSummaryByModel[];
   byProject: TokenSummaryByProject[];
   fetchedAt: string;
@@ -144,6 +150,8 @@ export interface AdHocUsageByDay {
 }
 
 export interface AdHocUsageByModel {
+  /** Canonical price-catalogue id. Added without removing the legacy label. */
+  modelId?: string | null;
   model: string;
   calls: number;
   inputTokens: number;

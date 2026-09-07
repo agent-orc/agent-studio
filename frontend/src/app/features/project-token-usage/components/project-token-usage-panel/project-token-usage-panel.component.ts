@@ -12,6 +12,7 @@ import { TaskService } from '../../../../services/task.service';
 import type { ProjectExpensiveJob, ProjectExpensiveJobsResponse, ProjectJobTokenDetail, ProjectPipelineCostTimeline, ProjectTokenCategory, ProjectTokenDataFreshness, ProjectTokenHeatmap, ProjectTokenHeatmapJob, ProjectTokenUsageSummary } from '../../../../features/project-token-usage';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { ProjectPipelineCostTrendComponent } from '../project-pipeline-cost-trend/project-pipeline-cost-trend.component';
+import { formatUsageTokens } from '../../../tokens';
 interface CardSpec {
   testid: string;
   label: string;
@@ -254,15 +255,7 @@ export class ProjectTokenUsagePanelComponent {
     return max;
   }
 
-  formatTokens(n: number | null | undefined): string {
-    const v = n ?? 0;
-    const sign = v < 0 ? '-' : '';
-    const abs = Math.abs(v);
-    if (abs >= 1_000_000_000) return `${sign}${(abs / 1_000_000_000).toFixed(1)}B`;
-    if (abs >= 1_000_000) return `${sign}${(abs / 1_000_000).toFixed(1)}M`;
-    if (abs >= 1_000) return `${sign}${(abs / 1_000).toFixed(1)}k`;
-    return `${sign}${abs}`;
-  }
+  readonly formatTokens = formatUsageTokens;
 
   formatTs(iso: string): string {
     if (!iso) return '';

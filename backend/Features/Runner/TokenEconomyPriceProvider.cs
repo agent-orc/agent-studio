@@ -20,14 +20,26 @@ public sealed class TokenEconomyPriceProvider : ITokenPriceProvider
         long cacheCreationTokens,
         DateTime? recordedAt = null)
     {
-        var key = modelId?.Trim() ?? "";
+        var key = TokenPricing.CanonicalModelId(modelId);
         var atUtc = (recordedAt ?? DateTime.UtcNow).ToUniversalTime();
+        var listing = Source.Find(key);
+        var normalizedInputTokens = Math.Max(0L, inputTokens);
+        var normalizedCacheReadTokens = Math.Max(0L, cacheReadTokens);
+
+        // OpenAI usage reports cached_input_tokens as a subset of input_tokens,
+        // while TokenEconomy expects fresh input and cache reads separately.
+        // Anthropic and the other adapters already persist separate counters.
+        if (string.Equals(listing?.Vendor, "openai", StringComparison.OrdinalIgnoreCase))
+        {
+            normalizedInputTokens = Math.Max(0L, normalizedInputTokens - normalizedCacheReadTokens);
+        }
+
         var cost = Source.ComputeCost(
             key,
             new EconomyPricing.TokenUsage(
-                inputTokens,
+                normalizedInputTokens,
                 outputTokens,
-                cacheReadTokens,
+                normalizedCacheReadTokens,
                 cacheCreationTokens),
             atUtc);
 
@@ -42,7 +54,8 @@ public sealed class TokenEconomyPriceProvider : ITokenPriceProvider
                 cost.ModelId ?? key,
                 ModelKnown: false,
                 cost.Status,
-                PriceBasis: null);
+                PriceBasis: null,
+                PricedInputTokens: normalizedInputTokens);
         }
 
         var price = cost.Price;
@@ -66,6 +79,7 @@ public sealed class TokenEconomyPriceProvider : ITokenPriceProvider
             cost.ModelId ?? key,
             ModelKnown: true,
             cost.Status,
-            basis);
+            basis,
+            PricedInputTokens: normalizedInputTokens);
     }
 }

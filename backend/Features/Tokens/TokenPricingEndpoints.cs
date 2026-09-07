@@ -47,5 +47,28 @@ public static class TokenPricingEndpoints
             }).ToList();
             return Results.Ok(new { items = rows, provider = "TokenEconomy" });
         });
+
+        app.MapGet("/api/token-pricing/diagnostics/unknown-models",
+            (HttpContext context, TaskScannerService scanner, ITokenAggregator tokens,
+                ProjectRegistry registry) =>
+            {
+                var projects = scanner.GetWatchPaths()
+                    .Where(project => context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is not HumanPrincipal human
+                                      || ProjectAccessAuthorization.Allows(human.User, project.Name, registry))
+                    .Select(project => (project.Name, project.Path))
+                    .ToList();
+                var summaries = projects
+                    .Select(project => (
+                        Project: project.Name,
+                        Summary: tokens.LifetimeSummary(project.Name, project.Path)))
+                    .ToList();
+
+                var human = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal;
+                var mayReadWorkspaceWideUsage = human is null
+                                                || human.User.Role == StudioRoles.Owner
+                                                || human.User.Projects.Count == 0;
+                var adHoc = mayReadWorkspaceWideUsage ? tokens.AdHocAggregate() : null;
+                return Results.Ok(TokenPricingDiagnostics.Build(summaries, adHoc));
+            });
     }
 }

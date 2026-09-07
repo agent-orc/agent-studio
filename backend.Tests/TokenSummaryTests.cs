@@ -125,6 +125,95 @@ public class TokenSummaryTests
     }
 
     [Fact]
+    public void Summarize_DisplayNameAndCanonicalId_CollapseIntoOnePricedModel()
+    {
+        var at = new DateTime(2026, 9, 7, 0, 0, 0, DateTimeKind.Utc);
+        var entries = new[]
+        {
+            Entry("Claude Sonnet 5", 1_000_000, 100_000) with { Ts = at },
+            Entry("claude-sonnet-5", 2_000_000, 200_000) with { Ts = at.AddMinutes(1) },
+        };
+
+        var summary = TokenSummaryService.Summarize("Demo", entries);
+
+        var model = Assert.Single(summary.ByModel);
+        Assert.Equal("Claude Sonnet 5", model.Model);
+        Assert.Equal(ModelIds.ClaudeSonnet5, model.ModelId);
+        Assert.Equal(2, model.Calls);
+        Assert.Equal(3_000_000, model.InputTokens);
+        Assert.Equal(300_000, model.OutputTokens);
+        Assert.True(model.ModelPriced);
+        Assert.True(model.ModelInCatalog);
+        Assert.True(summary.AllModelsPriced);
+    }
+
+    [Fact]
+    public void Summarize_Gpt55DisplayNameAndId_ExposeCanonicalRowIdentity()
+    {
+        var at = new DateTime(2026, 9, 7, 0, 0, 0, DateTimeKind.Utc);
+
+        var summary = TokenSummaryService.Summarize(
+            "Demo",
+            [
+                Entry("GPT-5.5", 1_000_000, 100_000) with { Ts = at },
+                Entry("gpt-5.5", 2_000_000, 200_000) with { Ts = at.AddMinutes(1) },
+            ]);
+
+        var model = Assert.Single(summary.ByModel);
+        Assert.Equal("GPT-5.5", model.Model);
+        Assert.Equal(ModelIds.Gpt55, model.ModelId);
+        Assert.Equal(2, model.Calls);
+        Assert.True(model.ModelPriced);
+        Assert.True(summary.AllModelsPriced);
+    }
+
+    [Fact]
+    public void Summarize_CatalogOnlyDisplayNameAndId_ShareCanonicalRowIdentity()
+    {
+        var at = new DateTime(2026, 9, 7, 0, 0, 0, DateTimeKind.Utc);
+
+        var summary = TokenSummaryService.Summarize(
+            "Demo",
+            [
+                Entry("GPT-5.6 Sol", 1_000_000, 100_000) with { Ts = at },
+                Entry("gpt-5.6-sol", 2_000_000, 200_000) with { Ts = at.AddMinutes(1) },
+            ]);
+
+        var model = Assert.Single(summary.ByModel);
+        Assert.Equal("GPT-5.6 Sol", model.Model);
+        Assert.Equal(ModelIds.Gpt56Sol, model.ModelId);
+        Assert.Equal(2, model.Calls);
+        Assert.True(model.ModelPriced);
+        Assert.True(summary.AllModelsPriced);
+    }
+
+    [Fact]
+    public void AggregateSummaries_UnpricedRowDoesNotHideKnownPriceSubtotal()
+    {
+        var at = new DateTime(2026, 9, 7, 0, 0, 0, DateTimeKind.Utc);
+        var summary = TokenSummaryService.Summarize(
+            "Demo",
+            [
+                Entry("claude-haiku-4-5", 1_000_000, 200_000) with { Ts = at },
+                Entry("unlisted-model", 5_000_000, 500_000) with { Ts = at.AddMinutes(1) },
+                Entry("gpt-5-codex", 2_000_000, 200_000) with { Ts = at.AddMinutes(2) },
+            ]);
+
+        var aggregate = TokenSummaryService.AggregateSummaries([("Demo", summary)]);
+
+        var priced = Assert.Single(aggregate.ByModel, model => model.ModelPriced);
+        var unknown = Assert.Single(aggregate.ByModel, model => !model.ModelInCatalog);
+        Assert.Equal(priced.EstimatedApiCostUsd, aggregate.EstimatedApiCostUsd);
+        Assert.True(aggregate.EstimatedApiCostUsd > 0m);
+        Assert.All(aggregate.ByModel.Where(model => !model.ModelPriced),
+            model => Assert.Equal(0m, model.EstimatedApiCostUsd));
+        Assert.Equal("unlisted-model", unknown.ModelId);
+        Assert.Equal(1, aggregate.UnknownModelCount);
+        Assert.Equal(2, aggregate.UnpricedModelCount);
+        Assert.False(aggregate.AllModelsPriced);
+    }
+
+    [Fact]
     public void Summarize_UnknownModel_FlagsNotAllPriced()
     {
         var entries = new[]

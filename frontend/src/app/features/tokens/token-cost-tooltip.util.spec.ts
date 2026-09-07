@@ -4,6 +4,7 @@ import {
   buildTokenCostTooltip,
   formatTokenCostDisplay,
   incompleteTokenCostLabel,
+  formatTokenCostUsd,
 } from './token-cost-tooltip.util';
 
 describe('token cost tooltip', () => {
@@ -17,6 +18,10 @@ describe('token cost tooltip', () => {
     expect(tooltip).toContain('Estimated cost: $1.23');
     expect(tooltip).toContain('at execution time');
     expect(tooltip).toContain(TOKEN_COST_ESTIMATE_NOTICE);
+  });
+
+  it('groups ordinary currency values through the shared formatter', () => {
+    expect(formatTokenCostUsd(59_996.74, 'en-US')).toBe('$59,996.74');
   });
 
   it('says no price data instead of presenting a silent zero', () => {

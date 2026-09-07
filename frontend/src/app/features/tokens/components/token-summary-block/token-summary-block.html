@@ -64,9 +64,9 @@
               </tr>
             </thead>
             <tbody>
-              @for (m of s.byModel; track m.model) {
+              @for (m of s.byModel; track m.modelId ?? m.model) {
                 <tr>
-                  <td><code>{{ m.model }}</code></td>
+                  <td><code>{{ m.modelId ?? m.model }}</code></td>
                   <td>{{ m.calls }}</td>
                   <td>{{ formatTokens(m.inputTokens) }}</td>
                   <td>{{ formatTokens(m.outputTokens) }}</td>

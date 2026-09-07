@@ -1,3 +1,4 @@
+using System.Reflection;
 using EconomyPricing = TokenEconomy;
 
 namespace AgentStudio.Runner;
@@ -17,7 +18,8 @@ public sealed record TokenCostEstimate(
     string ModelId,
     bool ModelKnown,
     EconomyPricing.PriceStatus Status,
-    TokenPriceBasis? PriceBasis);
+    TokenPriceBasis? PriceBasis,
+    long PricedInputTokens = 0);
 
 /// <summary>The exact historical TokenEconomy catalog entry used for a calculation.</summary>
 public sealed record TokenPriceBasis(
@@ -59,6 +61,53 @@ public static class TokenPricing
     public static IReadOnlyDictionary<string, EconomyPricing.ModelListing> Catalog { get; } =
         Source.Listings.ToDictionary(x => x.ModelId, StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>The exact TokenEconomy package version supplying the catalog.</summary>
+    public static string CatalogVersion { get; } =
+        typeof(EconomyPricing.ModelPriceCatalog).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+            .InformationalVersion
+        ?? typeof(EconomyPricing.ModelPriceCatalog).Assembly.GetName().Version?.ToString()
+        ?? "unknown";
+
+    /// <summary>
+    /// Resolves a persisted model id, alias, or display name to the canonical
+    /// id owned by TokenEconomy. The Studio metadata registry is a fallback for
+    /// models that have not entered the price catalog yet.
+    /// </summary>
+    public static string CanonicalModelId(string? recordedModel)
+    {
+        if (string.IsNullOrWhiteSpace(recordedModel)) return "";
+
+        var recorded = NormalizeDisplayName(recordedModel);
+        var listing = Source.Find(recorded)
+                      ?? Source.Listings.FirstOrDefault(candidate =>
+                          string.Equals(
+                              NormalizeDisplayName(candidate.DisplayName),
+                              recorded,
+                              StringComparison.OrdinalIgnoreCase));
+        if (listing is not null) return listing.ModelId;
+
+        return ModelMetadataRegistry.FindByLabelOrAlias(recorded)?.Id ?? recorded;
+    }
+
+    /// <summary>
+    /// Returns the shared TokenEconomy display name for a recorded model. The
+    /// Studio registry remains a fallback for models not represented there.
+    /// </summary>
+    public static string? ModelDisplayName(string? recordedModel)
+    {
+        var canonical = CanonicalModelId(recordedModel);
+        if (string.IsNullOrWhiteSpace(canonical)) return null;
+
+        return Source.Find(canonical)?.DisplayName
+               ?? ModelMetadataRegistry.FindByLabelOrAlias(canonical)?.Label
+               ?? canonical;
+    }
+
+    /// <summary>True when an id, alias, or display name resolves in TokenEconomy.</summary>
+    public static bool ModelInCatalog(string? recordedModel)
+        => Source.Find(CanonicalModelId(recordedModel)) is not null;
+
     public static TokenCostEstimate Estimate(
         string? modelId,
         long inputTokens,
@@ -70,4 +119,7 @@ public static class TokenPricing
         return Provider.Estimate(modelId, inputTokens, outputTokens, cacheReadTokens,
             cacheCreationTokens, recordedAt);
     }
+
+    private static string NormalizeDisplayName(string? value)
+        => string.Join(' ', (value ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
 }

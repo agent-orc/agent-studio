@@ -32,7 +32,9 @@ public sealed record TokenSummaryAggregate(
     string FetchedAt,
     string? FirstActivity,
     string? LastActivity,
-    string Disclaimer);
+    string Disclaimer,
+    int UnknownModelCount = 0,
+    int UnpricedModelCount = 0);
 
 public sealed record TokenSummaryByProject(
     string Project,

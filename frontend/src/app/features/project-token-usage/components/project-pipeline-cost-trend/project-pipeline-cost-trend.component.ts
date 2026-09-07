@@ -7,6 +7,7 @@ import type {
 import {
   buildTokenCostTooltip,
   formatTokenCostDisplay,
+  formatUsageTokens,
   incompleteTokenCostLabel,
 } from '../../../tokens';
 import { TooltipDirective } from 'coding-agent-chat/shared';
@@ -152,12 +153,7 @@ export class ProjectPipelineCostTrendComponent {
     });
   }
 
-  formatTokens(value: number): string {
-    if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)}B`;
-    if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
-    if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
-    return `${value}`;
-  }
+  readonly formatTokens = formatUsageTokens;
 
   private kindLabel(kind: PipelineStepKindKey): string {
     return KIND_LABELS[kind] ?? kind;

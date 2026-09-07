@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, inject, input, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, input, output, signal } from '@angular/core';
 import type { CliType } from '../../../../models/task.model';
 import type { QuotaWindow } from '../../../../features/quota';
 import { DialogComponent } from '../../../../components/dialog/dialog.component';
@@ -7,20 +7,19 @@ import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.
 import type { CliUsageQuotaRow } from '../../services/cli-usage.store';
 import type { AdHocUsageAggregate, TokenSummaryAggregate } from '../../models/tokens.model';
 import { CostBreakdownService } from '../../services/cost-breakdown.service';
+import { formatUsageCurrency, formatUsageTokens } from '../../usage-number-format.util';
+import {
+  clampThreshold,
+  normalizeModelUsageRows,
+  projectModelUsageRows,
+  readModelUsagePreferences,
+  writeModelUsagePreferences,
+  type ModelUsageRow,
+  type OtherModelUsageRow,
+  type RawModelUsageRow,
+} from '../../model-usage-table.util';
 
-interface ModelUsageRow {
-  model: string;
-  source: string;
-  /** OpenAI reports cached input as a subset of input, while Anthropic
-   *  reports cache-read tokens as a separate category. */
-  cacheIncludedInInput: boolean;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheCreationTokens: number;
-  estimatedApiCostUsd: number;
-  modelPriced: boolean;
-}
+type TableModelUsageRow = ModelUsageRow | OtherModelUsageRow;
 
 type WindowTone = 'ok' | 'warn' | 'hot' | 'unknown';
 
@@ -48,8 +47,7 @@ interface UsageTotals {
   costUsd: number;
   tokens: number;
   models: number;
-  anyPriced: boolean;
-  allPriced: boolean;
+  unpricedModels: number;
 }
 
 /**
@@ -57,7 +55,7 @@ interface UsageTotals {
  * CLI's card in the status-bar quota strip — one modal per CLI type, no
  * shared hover tooltip and no grouped multi-CLI view. Shows every quota
  * window the probe reported (so Claude / Codex surface both their 5h and
- * weekly windows), the plan / freshness header, this CLI's top models,
+ * weekly windows), the plan / freshness header, this CLI's recorded models,
  * and any probe error. The footer drops into the full CLI-Management
  * caps surface or re-probes just this CLI.
  *
@@ -75,11 +73,14 @@ interface UsageTotals {
 })
 export class CliUsageModalComponent {
   private readonly costBreakdown = inject(CostBreakdownService);
+  private readonly initialPreferences = readModelUsagePreferences();
   readonly cliType = input.required<CliType>();
   readonly row = input<CliUsageQuotaRow | null>(null);
   readonly tokens = input<TokenSummaryAggregate | null>(null);
   readonly adhoc = input<AdHocUsageAggregate | null>(null);
   readonly refreshing = input(false);
+  readonly groupingThresholdPercent = signal(this.initialPreferences.thresholdPercent);
+  readonly otherExpanded = signal(this.initialPreferences.expanded);
 
   readonly closeRequest = output<void>();
   readonly refresh = output<void>();
@@ -123,23 +124,6 @@ export class CliUsageModalComponent {
     }),
   );
 
-  /** Summed cost / token totals across the shown model rows — the
-   *  "Summen-Kopf" over the model table. Presentational only. */
-  readonly totals = computed<UsageTotals>(() => {
-    const rows = this.modelRows();
-    let costUsd = 0;
-    let tokens = 0;
-    let anyPriced = false;
-    for (const r of rows) {
-      tokens += this.totalTokens(r);
-      if (r.modelPriced) {
-        costUsd += r.estimatedApiCostUsd;
-        anyPriced = true;
-      }
-    }
-    return { costUsd, tokens, models: rows.length, anyPriced, allPriced: rows.length > 0 && rows.every(r => r.modelPriced) };
-  });
-
   /** Date range of the recorded telemetry, derived from data — not config.
    *  Returns a compact "since <date> · as of <date>" string, or null when
    *  neither tokens nor adhoc carry any activity timestamps. */
@@ -178,18 +162,30 @@ export class CliUsageModalComponent {
 
   readonly modelRows = computed<ModelUsageRow[]>(() => {
     const cli = this.cliType();
-    const rows: ModelUsageRow[] = [];
+    const rows: RawModelUsageRow[] = [];
     for (const m of this.tokens()?.byModel ?? []) {
-      if (!this.modelBelongsToCli(m.model, cli)) continue;
-      const row = { ...m, source: 'project runtime', cacheIncludedInInput: cli === 'codex' };
-      if (this.totalTokens(row) > 0) rows.push(row);
+      if (!this.modelBelongsToCli(m.modelId ?? m.model, cli)) continue;
+      rows.push({ ...m, source: 'project runtime', cacheIncludedInInput: cli === 'codex' });
     }
     for (const m of this.adhoc()?.byModel ?? []) {
-      if (!this.modelBelongsToCli(m.model, cli)) continue;
-      const row = { ...m, source: 'ad-hoc', cacheIncludedInInput: cli === 'codex' };
-      if (this.totalTokens(row) > 0) rows.push(row);
+      if (!this.modelBelongsToCli(m.modelId ?? m.model, cli)) continue;
+      rows.push({ ...m, source: 'ad-hoc', cacheIncludedInInput: cli === 'codex' });
     }
-    return rows.sort((a, b) => this.totalTokens(b) - this.totalTokens(a)).slice(0, 5);
+    return normalizeModelUsageRows(rows);
+  });
+
+  readonly modelProjection = computed(() =>
+    projectModelUsageRows(this.modelRows(), this.groupingThresholdPercent()));
+
+  /** Totals always use the complete normalized source rows, never the collapse. */
+  readonly totals = computed<UsageTotals>(() => {
+    const projection = this.modelProjection();
+    return {
+      costUsd: projection.estimatedApiCostUsd,
+      tokens: projection.totalTokens,
+      models: projection.modelCount,
+      unpricedModels: projection.unpricedModelCount,
+    };
   });
 
   limitText(window: QuotaWindow): string {
@@ -206,20 +202,45 @@ export class CliUsageModalComponent {
     return 'n/a';
   }
 
-  costLabel(value: number, priced: boolean): string {
-    return priced ? this.formatUsd(value) : 'Unknown';
+  readonly formatTokens = formatUsageTokens;
+  readonly formatUsd = formatUsageCurrency;
+
+  totalCostLabel(): string {
+    return this.costWithUnpricedMarker(this.totals().costUsd, this.totals().unpricedModels);
+  }
+
+  rowCostLabel(row: TableModelUsageRow): string {
+    if (row.kind === 'other') {
+      return this.costWithUnpricedMarker(row.estimatedApiCostUsd, row.unpricedModelCount);
+    }
+    if (row.modelPriced) return this.formatUsd(row.estimatedApiCostUsd);
+    return row.estimatedApiCostUsd > 0
+      ? this.costWithUnpricedMarker(row.estimatedApiCostUsd, 1)
+      : 'Unknown';
   }
 
   totalTokens(row: ModelUsageRow): number {
-    return row.inputTokens
-      + row.outputTokens
-      + row.cacheCreationTokens
-      + (row.cacheIncludedInInput ? 0 : row.cacheReadTokens);
+    return row.totalTokens;
+  }
+  /** Read + creation cache tokens folded into one "Cache" column value. */
+  cacheTokens(row: TableModelUsageRow): number {
+    return row.cacheReadTokens + row.cacheCreationTokens;
+  }
+  cacheIncludedInInput(row: TableModelUsageRow): boolean {
+    return row.kind === 'other' ? this.cliType() === 'codex' : row.cacheIncludedInInput;
   }
 
-  /** Read + creation cache tokens folded into one "Cache" column value. */
-  cacheTokens(row: ModelUsageRow): number {
-    return row.cacheReadTokens + row.cacheCreationTokens;
+  setGroupingThreshold(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const threshold = clampThreshold(input.valueAsNumber);
+    input.value = String(threshold);
+    this.groupingThresholdPercent.set(threshold);
+    this.persistModelUsagePreferences();
+  }
+
+  toggleOther(): void {
+    this.otherExpanded.update(expanded => !expanded);
+    this.persistModelUsagePreferences();
   }
 
   showTotalCalculation(): void {
@@ -229,6 +250,10 @@ export class CliUsageModalComponent {
 
   showModelCalculation(row: ModelUsageRow): void {
     this.costBreakdown.show([this.priceItem(row)], `${row.model} cost calculation`);
+  }
+
+  showOtherCalculation(row: OtherModelUsageRow): void {
+    this.costBreakdown.show(row.rows.map(item => this.priceItem(item)), 'Other models cost calculation');
   }
 
   private priceItem(row: ModelUsageRow) {
@@ -249,18 +274,16 @@ export class CliUsageModalComponent {
     return 'hot';
   }
 
-  formatTokens(n: number): string {
-    if (!Number.isFinite(n)) return '0';
-    if (n < 1_000) return n.toString();
-    if (n < 1_000_000) return (n / 1_000).toFixed(n < 10_000 ? 1 : 0) + 'K';
-    return (n / 1_000_000).toFixed(n < 10_000_000 ? 2 : 1) + 'M';
+  private costWithUnpricedMarker(costUsd: number, unpricedModels: number): string {
+    const subtotal = this.formatUsd(costUsd);
+    return unpricedModels > 0 ? `${subtotal} + ${unpricedModels} unpriced` : subtotal;
   }
 
-  formatUsd(n: number): string {
-    if (!Number.isFinite(n) || n === 0) return '$0.00';
-    if (n < 0.1) return '$' + n.toFixed(4);
-    if (n < 1) return '$' + n.toFixed(3);
-    return '$' + n.toFixed(2);
+  private persistModelUsagePreferences(): void {
+    writeModelUsagePreferences({
+      thresholdPercent: this.groupingThresholdPercent(),
+      expanded: this.otherExpanded(),
+    });
   }
 
   private modelBelongsToCli(model: string, cliType: CliType): boolean {

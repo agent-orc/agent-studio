@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures/dev-backend';
 import { mkdirSync } from 'node:fs';
 import { setTheme } from '../helpers/theme';
 
@@ -31,6 +31,7 @@ test.describe('Status bar usage modal', () => {
   test.beforeEach(async ({ page }) => {
     mkdirSync(SCREENSHOT_DIR, { recursive: true });
     await page.setViewportSize({ width: 1600, height: 900 });
+    await page.route('**/api/crash-recovery/pending**', route => route.fulfill({ json: { pending: [] } }));
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
     // Let the first quota poll fire so the strip has cards to render.
@@ -149,7 +150,7 @@ test.describe('Status bar usage modal', () => {
         totalOutputTokens: 164_172,
         totalCacheReadTokens: 48_503_936,
         totalCacheCreationTokens: 0,
-        estimatedApiCostUsd: 0,
+        estimatedApiCostUsd: 10.811829,
         allModelsPriced: false,
         byModel: [
           {
@@ -159,10 +160,10 @@ test.describe('Status bar usage modal', () => {
             estimatedApiCostUsd: 0, modelPriced: false,
           },
           {
-            model: 'GPT-5.5', calls: 8,
+            model: 'GPT-5.5', modelId: 'gpt-5.5', calls: 8,
             inputTokens: 10_782_081, outputTokens: 66_760,
             cacheReadTokens: 10_022_528, cacheCreationTokens: 0,
-            estimatedApiCostUsd: 0, modelPriced: false,
+            estimatedApiCostUsd: 10.811829, modelPriced: true,
           },
         ],
         byProject: [],
@@ -217,5 +218,101 @@ test.describe('Status bar usage modal', () => {
     await modal.screenshot({ path: `${SCREENSHOT_DIR}/status-bar-cli-modal-codex-corrected-light.png` });
     await setTheme(page, 'dark');
     await modal.screenshot({ path: `${SCREENSHOT_DIR}/status-bar-cli-modal-codex-corrected-dark.png` });
+  });
+
+  test('groups low-share models and keeps partial totals readable and remembered', async ({ page, devBackend }) => {
+    void devBackend;
+    await page.evaluate(() => localStorage.removeItem('atp.tokens.modelUsage.v1'));
+    await page.route('**/api/cli/quota**', async route => {
+      if (route.request().method() !== 'GET') return route.continue();
+      await route.fulfill({
+        json: {
+          at: new Date().toISOString(),
+          ttlSeconds: 600,
+          snapshots: [{
+            cliType: 'codex', fetchedAt: new Date().toISOString(), plan: 'Pro', source: '/status', error: null,
+            windows: [
+              { label: '5-hour', usedPct: 3, used: null, limit: null, unit: '%', resetAt: null, resetLabel: '01:49' },
+              { label: 'Weekly', usedPct: 9, used: null, limit: null, unit: '%', resetAt: null, resetLabel: '4d' },
+            ],
+          }],
+        },
+      });
+    });
+    await page.route('**/api/runner/token-summary-aggregate**', route => route.fulfill({
+      json: {
+        projects: 1, orchestratorEntries: 3, orchestratorLlmCalls: 3,
+        totalInputTokens: 9_139_900_000, totalOutputTokens: 1_800_000_000,
+        totalCacheReadTokens: 8_823_111_111, totalCacheCreationTokens: 0,
+        estimatedApiCostUsd: 59_996.74, allModelsPriced: false,
+        unknownModelCount: 1, unpricedModelCount: 1,
+        byModel: [
+          {
+            model: 'GPT-5.5', modelId: 'gpt-5.5', calls: 1,
+            inputTokens: 9_138_800_000, outputTokens: 1_800_000_000,
+            cacheReadTokens: 8_823_111_111, cacheCreationTokens: 0,
+            estimatedApiCostUsd: 59_990, modelPriced: true,
+          },
+          {
+            model: 'gpt-small', calls: 1,
+            inputTokens: 600_000, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0,
+            estimatedApiCostUsd: 4.24, modelPriced: true,
+          },
+          {
+            model: 'GPT-TINY', calls: 1,
+            inputTokens: 500_000, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0,
+            estimatedApiCostUsd: 2.5, modelPriced: false,
+          },
+        ],
+        byProject: [], fetchedAt: new Date().toISOString(), disclaimer: '',
+      },
+    }));
+    await page.route('**/api/adhoc-usage/**', route => route.fulfill({
+      json: {
+        calls: 1, inputTokens: 100_000, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0,
+        estimatedApiCostUsd: 0, allModelsPriced: false, bySource: [], byDay: [],
+        byModel: [{
+          model: 'legacy label', modelId: 'gpt-tiny', calls: 1,
+          inputTokens: 100_000, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0,
+          estimatedApiCostUsd: 0, modelPriced: false,
+        }],
+        logPath: '(bus)', logSizeBytes: 0, logModifiedAt: null, disclaimer: '',
+      },
+    }));
+
+    await page.reload();
+    await page.getByTestId('hquota-card-codex').click();
+    let modal = page.getByTestId('cli-usage-modal-codex');
+    await expect(modal).toBeVisible();
+    await expect(modal.getByTestId('cli-usage-total-cost')).toHaveText('$59,996.74 + 1 unpriced');
+    await expect(modal.getByTestId('cli-usage-footer-cost')).toHaveText('$59,996.74 + 1 unpriced');
+    await expect(modal).toContainText('10,940.0M');
+    await expect(modal.getByText('gpt-5.5', { exact: true })).toBeVisible();
+    await expect(modal.getByTestId('cli-usage-other-summary')).toContainText('Other (2 models)');
+    await expect(modal.getByTestId('cli-usage-other-summary')).toContainText('$6.74 + 1 unpriced');
+    await expect(modal.getByTestId('cli-usage-group-threshold')).toHaveValue('1');
+
+    await setTheme(page, 'light');
+    await modal.screenshot({ path: `${SCREENSHOT_DIR}/agt-2752-recorded-model-usage-collapsed-light--mocked.png` });
+    await setTheme(page, 'dark');
+    await modal.screenshot({ path: `${SCREENSHOT_DIR}/agt-2752-recorded-model-usage-collapsed-dark--mocked.png` });
+
+    await modal.getByTestId('cli-usage-other-toggle').click();
+    await expect(modal.getByTestId('cli-usage-other-toggle')).toHaveAttribute('aria-expanded', 'true');
+    await expect(modal.getByTestId('cli-usage-other-model-rows').getByTestId('cli-usage-model-row')).toHaveCount(3);
+    await expect(modal.getByText('gpt-tiny', { exact: true })).toHaveCount(2);
+    await setTheme(page, 'light');
+    await modal.screenshot({ path: `${SCREENSHOT_DIR}/agt-2752-recorded-model-usage-expanded-light--mocked.png` });
+    await setTheme(page, 'dark');
+    await modal.screenshot({ path: `${SCREENSHOT_DIR}/agt-2752-recorded-model-usage-expanded-dark--mocked.png` });
+
+    const threshold = modal.getByTestId('cli-usage-group-threshold');
+    await threshold.fill('2');
+    await threshold.dispatchEvent('change');
+    await page.keyboard.press('Escape');
+    await page.getByTestId('hquota-card-codex').click();
+    modal = page.getByTestId('cli-usage-modal-codex');
+    await expect(modal.getByTestId('cli-usage-group-threshold')).toHaveValue('2');
+    await expect(modal.getByTestId('cli-usage-other-toggle')).toHaveAttribute('aria-expanded', 'true');
   });
 });

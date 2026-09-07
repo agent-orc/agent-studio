@@ -71,11 +71,24 @@
           <button type="button" class="cum__total cum__total--cost cum__cost-button"
                   (click)="showTotalCalculation()">
             <span class="cum__total-label">Est. cost</span>
-            <span class="cum__total-value">{{ totals().anyPriced ? formatUsd(totals().costUsd) : 'n/a' }}</span>
+            <span class="cum__total-value" data-testid="cli-usage-total-cost">{{ totalCostLabel() }}</span>
           </button>
         </div>
       </div>
-      <p class="cum__scope-note">Lifetime telemetry by model.@if (telemetryRange(); as range) { <span class="cum__scope-range">{{ range }}</span>} Independent of the active quota windows above.</p>
+      <div class="cum__scope-row">
+        <p class="cum__scope-note">Lifetime telemetry by model.@if (telemetryRange(); as range) { <span class="cum__scope-range">{{ range }}</span>} Independent of the active quota windows above.</p>
+        <label class="cum__threshold">
+          <span>Group below</span>
+          <input type="number"
+                 min="0"
+                 max="100"
+                 step="0.1"
+                 data-testid="cli-usage-group-threshold"
+                 [value]="groupingThresholdPercent()"
+                 (change)="setGroupingThreshold($event)" />
+          <span>% of tokens</span>
+        </label>
+      </div>
       @if (modelRows().length === 0) {
         <p class="cum__empty">No model usage attributed.</p>
       } @else {
@@ -90,8 +103,8 @@
             </tr>
           </thead>
           <tbody>
-            @for (m of modelRows(); track m.source + ':' + m.model) {
-              <tr>
+            @for (m of modelProjection().primaryRows; track m.id) {
+              <tr data-testid="cli-usage-model-row">
                 <td>
                   <code>{{ m.model }}</code>
                   <span class="cum__src" [attr.data-src]="m.source">{{ m.source }}</span>
@@ -99,24 +112,87 @@
                 <td class="cum__num">{{ formatTokens(m.inputTokens) }}</td>
                 <td class="cum__num">{{ formatTokens(m.outputTokens) }}</td>
                 <td class="cum__num cum__num--muted"
-                    [cacTooltip]="m.cacheIncludedInInput ? 'Cached input is already included in the Input column for Codex' : 'Cache tokens are separate from the Input column'">
+                    [cacTooltip]="cacheIncludedInInput(m) ? 'Cached input is already included in the Input column for Codex' : 'Cache tokens are separate from the Input column'">
                   {{ formatTokens(cacheTokens(m)) }}
                 </td>
                 <td class="cum__num cum__num--cost">
-                  @if (m.modelPriced) {
-                    <button type="button" class="cum__inline-cost" (click)="showModelCalculation(m)">{{ costLabel(m.estimatedApiCostUsd, true) }}</button>
+                  @if (m.modelPriced || m.estimatedApiCostUsd > 0) {
+                    <button type="button" class="cum__inline-cost" (click)="showModelCalculation(m)">{{ rowCostLabel(m) }}</button>
                   } @else { Unknown }
                 </td>
               </tr>
             }
+            @if (modelProjection().otherRow; as other) {
+              @if (otherExpanded()) {
+                <tr class="cum__other-heading">
+                  <td colspan="5">
+                    <button type="button"
+                            class="cum__other-toggle"
+                            data-testid="cli-usage-other-toggle"
+                            aria-expanded="true"
+                            aria-controls="cli-usage-other-model-rows"
+                            (click)="toggleOther()">
+                      <span aria-hidden="true">▾</span>
+                      Other ({{ other.modelCount }} model{{ other.modelCount === 1 ? '' : 's' }})
+                    </button>
+                  </td>
+                </tr>
+              } @else {
+                <tr class="cum__other-summary" data-testid="cli-usage-other-summary">
+                  <td>
+                    <button type="button"
+                            class="cum__other-toggle"
+                            data-testid="cli-usage-other-toggle"
+                            aria-expanded="false"
+                            aria-controls="cli-usage-other-model-rows"
+                            (click)="toggleOther()">
+                      <span aria-hidden="true">▸</span>
+                      Other ({{ other.modelCount }} model{{ other.modelCount === 1 ? '' : 's' }})
+                    </button>
+                    <span class="cum__src">below {{ groupingThresholdPercent() }}% each</span>
+                  </td>
+                  <td class="cum__num">{{ formatTokens(other.inputTokens) }}</td>
+                  <td class="cum__num">{{ formatTokens(other.outputTokens) }}</td>
+                  <td class="cum__num cum__num--muted">{{ formatTokens(cacheTokens(other)) }}</td>
+                  <td class="cum__num cum__num--cost">
+                    <button type="button" class="cum__inline-cost" (click)="showOtherCalculation(other)">{{ rowCostLabel(other) }}</button>
+                  </td>
+                </tr>
+              }
+            }
           </tbody>
+          @if (modelProjection().otherRow; as other) {
+            <tbody id="cli-usage-other-model-rows"
+                   data-testid="cli-usage-other-model-rows"
+                   [hidden]="!otherExpanded()">
+              @for (m of other.rows; track m.id) {
+                <tr class="cum__other-child" data-testid="cli-usage-model-row">
+                  <td>
+                    <code>{{ m.model }}</code>
+                    <span class="cum__src" [attr.data-src]="m.source">{{ m.source }}</span>
+                  </td>
+                  <td class="cum__num">{{ formatTokens(m.inputTokens) }}</td>
+                  <td class="cum__num">{{ formatTokens(m.outputTokens) }}</td>
+                  <td class="cum__num cum__num--muted"
+                      [cacTooltip]="cacheIncludedInInput(m) ? 'Cached input is already included in the Input column for Codex' : 'Cache tokens are separate from the Input column'">
+                    {{ formatTokens(cacheTokens(m)) }}
+                  </td>
+                  <td class="cum__num cum__num--cost">
+                    @if (m.modelPriced || m.estimatedApiCostUsd > 0) {
+                      <button type="button" class="cum__inline-cost" (click)="showModelCalculation(m)">{{ rowCostLabel(m) }}</button>
+                    } @else { Unknown }
+                  </td>
+                </tr>
+              }
+            </tbody>
+          }
           @if (modelRows().length > 1) {
             <tfoot>
               <tr>
                 <td>Total · {{ totals().models }} models</td>
                 <td class="cum__num" colspan="3">{{ formatTokens(totals().tokens) }}</td>
                 <td class="cum__num cum__num--cost">
-                  <button type="button" class="cum__inline-cost" (click)="showTotalCalculation()">{{ totals().allPriced ? formatUsd(totals().costUsd) : 'Unknown' }}</button>
+                  <button type="button" class="cum__inline-cost" data-testid="cli-usage-footer-cost" (click)="showTotalCalculation()">{{ totalCostLabel() }}</button>
                 </td>
               </tr>
             </tfoot>

@@ -23,7 +23,7 @@ public class TokenPricingTests
             .InformationalVersion;
 
         Assert.Equal("TokenEconomy", assembly.GetName().Name);
-        Assert.StartsWith("0.3.1", informationalVersion, StringComparison.Ordinal);
+        Assert.StartsWith("0.3.3", informationalVersion, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -50,6 +50,49 @@ public class TokenPricingTests
         Assert.Equal(expectedPrice.InputPerMTok, c.PriceBasis.InputPerMillion);
         Assert.Equal(expectedPrice.OutputPerMTok, c.PriceBasis.OutputPerMillion);
     }
+
+    [Fact]
+    public void Estimate_Gpt55DisplayName_SeparatesCachedInputSubsetBeforePricing()
+    {
+        var at = new DateTime(2026, 9, 7, 0, 0, 0, DateTimeKind.Utc);
+
+        var estimate = _provider.Estimate(
+            "GPT-5.5",
+            inputTokens: 10_782_081,
+            outputTokens: 66_760,
+            cacheReadTokens: 10_022_528,
+            cacheCreationTokens: 0,
+            recordedAt: at);
+
+        Assert.True(estimate.ModelKnown);
+        Assert.Equal(ModelIds.Gpt55, estimate.ModelId);
+        Assert.Equal(759_553, estimate.PricedInputTokens);
+        Assert.Equal(3.797765m, estimate.InputUsd);
+        Assert.Equal(2.0028m, estimate.OutputUsd);
+        Assert.Equal(5.011264m, estimate.CacheReadUsd);
+        Assert.Equal(10.811829m, estimate.Total);
+        Assert.Equal(5m, estimate.PriceBasis!.InputPerMillion);
+        Assert.Equal(30m, estimate.PriceBasis.OutputPerMillion);
+        Assert.Equal(0.5m, estimate.PriceBasis.CacheReadPerMillion);
+        Assert.Contains("OpenAI", estimate.PriceBasis.Source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Estimate_AnthropicInputAndCacheReadRemainSeparateCounters()
+    {
+        var estimate = _provider.Estimate(
+            "claude-sonnet-4-6",
+            inputTokens: 1_000_000,
+            outputTokens: 0,
+            cacheReadTokens: 2_000_000,
+            cacheCreationTokens: 0);
+
+        Assert.Equal(3m, estimate.InputUsd);
+        Assert.Equal(0.6m, estimate.CacheReadUsd);
+        Assert.Equal(3.6m, estimate.Total);
+        Assert.Equal(1_000_000, estimate.PricedInputTokens);
+    }
+
     [Fact]
     public void Estimate_OpusPrices_MatchAnthropicListed()
     {

@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { CliUsageModalComponent } from './cli-usage-modal';
 import type { CliUsageQuotaRow } from '../../services/cli-usage.store';
 import type { AdHocUsageAggregate, TokenSummaryAggregate } from '../../models/tokens.model';
+import { MODEL_USAGE_PREFERENCES_KEY } from '../../model-usage-table.util';
 
 /**
  * Smoke + contract for the per-CLI usage modal. Confirms it instantiates,
@@ -12,6 +13,9 @@ import type { AdHocUsageAggregate, TokenSummaryAggregate } from '../../models/to
  * — requirement: show all windows, no grouped collapse).
  */
 describe('CliUsageModalComponent', () => {
+  beforeEach(() => localStorage.removeItem(MODEL_USAGE_PREFERENCES_KEY));
+  afterEach(() => localStorage.removeItem(MODEL_USAGE_PREFERENCES_KEY));
+
   async function build(
     row: CliUsageQuotaRow | null,
     cliType: 'claude' | 'codex' = 'claude',
@@ -143,7 +147,7 @@ describe('CliUsageModalComponent', () => {
       totalOutputTokens: 164_172,
       totalCacheReadTokens: 48_503_936,
       totalCacheCreationTokens: 0,
-      estimatedApiCostUsd: 0,
+      estimatedApiCostUsd: 10.811829,
       allModelsPriced: false,
       byModel: [
         {
@@ -153,10 +157,10 @@ describe('CliUsageModalComponent', () => {
           estimatedApiCostUsd: 0, modelPriced: false,
         },
         {
-          model: 'GPT-5.5', calls: 8,
+          model: 'GPT-5.5', modelId: 'gpt-5.5', calls: 8,
           inputTokens: 10_782_081, outputTokens: 66_760,
           cacheReadTokens: 10_022_528, cacheCreationTokens: 0,
-          estimatedApiCostUsd: 0, modelPriced: false,
+          estimatedApiCostUsd: 10.811829, modelPriced: true,
         },
       ],
       byProject: [],
@@ -194,7 +198,7 @@ describe('CliUsageModalComponent', () => {
     const fixture = await build(codexRow, 'codex', tokens, adhoc);
     const component = fixture.componentInstance;
 
-    expect(component.modelRows().map(r => r.model)).toEqual(['gpt-5.6-sol', 'GPT-5.5']);
+    expect(component.modelRows().map(r => r.model)).toEqual(['gpt-5.6-sol', 'gpt-5.5']);
     expect(component.modelRows().every(r => r.source === 'project runtime')).toBe(true);
     expect(component.totals().tokens).toBe(50_592_284);
   });
@@ -205,5 +209,104 @@ describe('CliUsageModalComponent', () => {
     expect(
       c.limitText({ label: 'x', usedPct: null, used: null, limit: null, unit: null, resetAt: null, resetLabel: null }),
     ).toBe('n/a');
+  });
+
+  it('renders grouped low-share models with complete totals and remembers its controls', async () => {
+    const tokens: TokenSummaryAggregate = {
+      projects: 1,
+      orchestratorEntries: 4,
+      orchestratorLlmCalls: 4,
+      totalInputTokens: 9_139_900_000,
+      totalOutputTokens: 1_800_000_000,
+      totalCacheReadTokens: 8_823_111_111,
+      totalCacheCreationTokens: 0,
+      estimatedApiCostUsd: 59_996.74,
+      allModelsPriced: false,
+      byModel: [
+        {
+          model: 'GPT-5.5', modelId: 'gpt-5.5', calls: 1,
+          inputTokens: 9_138_800_000, outputTokens: 1_800_000_000,
+          cacheReadTokens: 8_823_111_111, cacheCreationTokens: 0,
+          estimatedApiCostUsd: 59_990, modelPriced: true,
+        },
+        {
+          model: 'gpt-small', calls: 1,
+          inputTokens: 600_000, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0,
+          estimatedApiCostUsd: 4.24, modelPriced: true,
+        },
+        {
+          model: 'GPT-TINY', calls: 1,
+          inputTokens: 500_000, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0,
+          estimatedApiCostUsd: 2.5, modelPriced: false,
+        },
+      ],
+      byProject: [],
+      fetchedAt: '2026-09-07T10:00:00Z',
+      disclaimer: '',
+    };
+    const adhoc: AdHocUsageAggregate = {
+      calls: 1,
+      inputTokens: 100_000,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      estimatedApiCostUsd: 0,
+      allModelsPriced: false,
+      bySource: [],
+      byDay: [],
+      byModel: [{
+        model: 'legacy label', modelId: 'gpt-tiny', calls: 1,
+        inputTokens: 100_000, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0,
+        estimatedApiCostUsd: 0, modelPriced: false,
+      }],
+      logPath: '(bus)',
+      logSizeBytes: 0,
+      logModifiedAt: null,
+      disclaimer: '',
+    };
+
+    const fixture = await build(codexRow, 'codex', tokens, adhoc);
+    const component = fixture.componentInstance;
+    const modal = document.querySelector<HTMLElement>('[data-testid="cli-usage-modal-codex"]')!;
+
+    expect(component.groupingThresholdPercent()).toBe(1);
+    expect(component.modelRows()).toHaveLength(4);
+    expect(component.modelProjection().otherRow).toMatchObject({
+      modelCount: 2,
+      inputTokens: 1_200_000,
+      estimatedApiCostUsd: 6.74,
+      unpricedModelCount: 1,
+    });
+    expect(modal.querySelector('[data-testid="cli-usage-total-cost"]')?.textContent)
+      .toContain('$59,996.74 + 1 unpriced');
+    expect(modal.textContent).toContain('10,940.0M');
+    expect(modal.querySelector('[data-testid="cli-usage-footer-cost"]')?.textContent)
+      .toContain('$59,996.74 + 1 unpriced');
+    expect(modal.querySelector('[data-testid="cli-usage-other-summary"]')?.textContent)
+      .toContain('Other (2 models)');
+    expect(modal.querySelector('[data-testid="cli-usage-other-summary"]')?.textContent)
+      .toContain('$6.74 + 1 unpriced');
+
+    (modal.querySelector('[data-testid="cli-usage-other-toggle"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    expect(modal.querySelector('[data-testid="cli-usage-other-toggle"]')?.getAttribute('aria-expanded')).toBe('true');
+    expect(modal.querySelector('[data-testid="cli-usage-other-model-rows"]')?.hasAttribute('hidden')).toBe(false);
+    expect(modal.querySelectorAll('[data-testid="cli-usage-model-row"]')).toHaveLength(4);
+    expect(JSON.parse(localStorage.getItem(MODEL_USAGE_PREFERENCES_KEY) ?? '{}')).toEqual({
+      thresholdPercent: 1,
+      expanded: true,
+    });
+
+    const threshold = modal.querySelector('[data-testid="cli-usage-group-threshold"]') as HTMLInputElement;
+    threshold.value = '0';
+    threshold.dispatchEvent(new Event('change', { bubbles: true }));
+    fixture.detectChanges();
+    expect(component.modelProjection().otherRow).toBeNull();
+    expect(modal.querySelector('[data-testid="cli-usage-other-toggle"]')).toBeNull();
+    expect(modal.querySelectorAll('[data-testid="cli-usage-model-row"]')).toHaveLength(4);
+    expect(JSON.parse(localStorage.getItem(MODEL_USAGE_PREFERENCES_KEY) ?? '{}')).toEqual({
+      thresholdPercent: 0,
+      expanded: true,
+    });
   });
 });

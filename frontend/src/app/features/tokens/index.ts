@@ -12,6 +12,8 @@ export { CostBreakdownDialogComponent } from './components/cost-breakdown-dialog
 export { CostBreakdownTriggerDirective } from './components/cost-breakdown-trigger.directive';
 export { CostBreakdownService } from './services/cost-breakdown.service';
 export type { CostBreakdownRequestItem } from './services/cost-breakdown.service';
+export { formatUsageCurrency, formatUsageTokens } from './usage-number-format.util';
+export type { UsageNumberFormatOptions, UsageTokenUnit } from './usage-number-format.util';
 export {
   TOKEN_COST_ESTIMATE_NOTICE,
   buildTokenCostTooltip,

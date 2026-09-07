@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, input, output, signal } f
 import type { CliUsageQuotaRow } from '../../services/cli-usage.store';
 import type { AdHocUsageAggregate, TokenSummaryAggregate, TokenTimeline } from '../../models/tokens.model';
 import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
+import { formatUsageTokens } from '../../usage-number-format.util';
 
 type AnalysisPeriod = '1h' | '24h' | '7d';
 
@@ -30,7 +31,8 @@ export class CliWindowAnalysisComponent {
   readonly periods: readonly AnalysisPeriod[] = ['1h', '24h', '7d'];
   readonly row = computed(() => this.quotaRows().find(row => row.cliType === this.cliType()) ?? null);
   readonly label = computed(() => this.cliType() === 'claude' ? 'Claude' : 'Codex');
-  readonly cliModels = computed(() => (this.tokens()?.byModel ?? []).filter(row => this.modelMatches(row.model)));
+  readonly cliModels = computed(() =>
+    (this.tokens()?.byModel ?? []).filter(row => this.modelMatches(row.modelId ?? row.model)));
   readonly capturedTokens = computed(() => this.cliModels().reduce((sum, model) => sum + this.modelTotal(model), 0)
     + (this.cliType() === 'claude' ? this.adhocTotal() : 0));
   readonly streamParts = computed<StreamPart[]>(() => {
@@ -82,11 +84,7 @@ export class CliWindowAnalysisComponent {
     if (match) return Number(match[1]);
     return /week|7\s*d/i.test(label) ? 168 : 24;
   }
-  formatTokens(value: number): string {
-    if (value < 1_000) return value.toLocaleString();
-    if (value < 1_000_000) return `${(value / 1_000).toFixed(value < 10_000 ? 1 : 0)}K`;
-    return `${(value / 1_000_000).toFixed(2)}M`;
-  }
+  readonly formatTokens = formatUsageTokens;
   formatPct(value: number | null): string { return value == null ? 'Unknown' : `${value.toFixed(1)}% / h`; }
 
   private adhocTotal(): number {

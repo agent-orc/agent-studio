@@ -10,6 +10,8 @@ import type {
   TokenTimeline,
   WorkspaceExpensiveJob,
 } from '../../models/tokens.model';
+import { canonicalUsageModelId } from '../../model-usage-table.util';
+import { formatUsageCurrency, formatUsageTokens } from '../../usage-number-format.util';
 
 interface SparkPoint {
   label: string;
@@ -127,26 +129,16 @@ export class CliUsageDetailComponent {
     return priced ? this.formatUsd(value) : 'Unknown';
   }
 
-  formatTokens(n: number): string {
-    if (!Number.isFinite(n)) return '0';
-    if (n < 1_000) return n.toString();
-    if (n < 1_000_000) return (n / 1_000).toFixed(n < 10_000 ? 1 : 0) + 'K';
-    return (n / 1_000_000).toFixed(n < 10_000_000 ? 2 : 1) + 'M';
-  }
-
-  formatUsd(n: number): string {
-    if (!Number.isFinite(n) || n === 0) return '$0.00';
-    if (n < 0.1) return '$' + n.toFixed(4);
-    if (n < 1) return '$' + n.toFixed(3);
-    return '$' + n.toFixed(2);
-  }
+  readonly formatTokens = formatUsageTokens;
+  readonly formatUsd = formatUsageCurrency;
 
   modelRowsFor(cliType: CliType): ModelUsageRow[] {
     const rows: ModelUsageRow[] = [];
     for (const m of this.tokens()?.byModel ?? []) {
-      if (!this.modelBelongsToCli(m.model, cliType)) continue;
+      const model = canonicalUsageModelId(m.modelId ?? m.model);
+      if (!this.modelBelongsToCli(model, cliType)) continue;
       rows.push({
-        model: m.model,
+        model,
         source: 'orchestrator',
         calls: m.calls,
         inputTokens: m.inputTokens,
@@ -158,9 +150,10 @@ export class CliUsageDetailComponent {
       });
     }
     for (const m of this.adhoc()?.byModel ?? []) {
-      if (!this.modelBelongsToCli(m.model, cliType)) continue;
+      const model = canonicalUsageModelId(m.modelId ?? m.model);
+      if (!this.modelBelongsToCli(model, cliType)) continue;
       rows.push({
-        model: m.model,
+        model,
         source: 'ad-hoc',
         calls: m.calls,
         inputTokens: m.inputTokens,

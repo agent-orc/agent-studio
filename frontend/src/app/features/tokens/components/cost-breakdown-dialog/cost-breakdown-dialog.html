@@ -34,11 +34,19 @@
             }
 
             <div class="cost-breakdown__tokens" aria-label="Actual token counters">
-              <span><small>Input</small>{{ formatNumber(item.inputTokens) }}</span>
+              <span><small>Recorded input</small>{{ formatNumber(item.inputTokens) }}</span>
               <span><small>Output</small>{{ formatNumber(item.outputTokens) }}</span>
               <span><small>Cache read</small>{{ formatNumber(item.cacheReadTokens) }}</span>
               <span><small>Cache write</small>{{ formatNumber(item.cacheWriteTokens) }}</span>
             </div>
+
+            @if (inputWasNormalized(item)) {
+              <p class="cost-breakdown__note">
+                Recorded input includes cache reads. Pricing uses
+                {{ formatNumber(pricedInputTokens(item)) }} fresh input tokens and charges
+                {{ formatNumber(item.cacheReadTokens) }} cached tokens once at the cache-read rate.
+              </p>
+            }
 
             <p class="cost-breakdown__formula" data-testid="cost-breakdown-formula">{{ formula(item) }}</p>
 

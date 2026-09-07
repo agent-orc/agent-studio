@@ -43,7 +43,7 @@ const rules = [
 // published", not "this is the latest version", so a new release does not turn
 // the check red.
 const registryClaims = [
-  { registry: 'NuGet', id: 'TokenEconomy', version: '0.3.1' },
+  { registry: 'NuGet', id: 'TokenEconomy', version: '0.3.3' },
   { registry: 'NuGet', id: 'CodingAgentRunner', version: '0.7.0' },
   { registry: 'npm', id: 'coding-agent-chat', version: '0.3.2' },
 ];
