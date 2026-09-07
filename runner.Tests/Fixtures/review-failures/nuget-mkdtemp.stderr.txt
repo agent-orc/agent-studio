@@ -1,0 +1,5 @@
+  Determining projects to restore...
+Assertion failed: mkdtemp("/tmp/.dotnet.XXXXXX") == nullptr; errno == ENOENT
+   at NuGet.Common.MigrationRunner.Run()
+   at NuGet.CommandLine.XPlat.Program.MainInternal(String[] args, CommandOutputLogger log)
+error: Unable to create the NuGet migrations mutex directory.

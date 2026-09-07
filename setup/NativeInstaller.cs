@@ -402,7 +402,13 @@ internal sealed class NativeInstaller(
             StandardOutput=journal
             StandardError=journal
             NoNewPrivileges=true
-            PrivateTmp=true
+            # Deliberately no PrivateTmp. It is lifecycle-bound: a restart unmounts the
+            # unit's /tmp while KillMode=process leaves detached workers running on the
+            # deleted mount, after which MSBuild cannot create its node pipe under
+            # /tmp/MSBuild<pid> and NuGet cannot create its migrations mutex directory.
+            # Worker scratch space is isolated by the per-slot TMPDIR the runner owns,
+            # not by the unit namespace.
+            PrivateTmp=false
             ProtectSystem=full
             ReadWritePaths={workRoot} {stateRoot} {configuration.HomeDirectory}
             CPUQuota={quota}%

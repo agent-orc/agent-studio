@@ -804,6 +804,11 @@ public sealed partial class TaskServerStore
             return ("ReviewInfra", "CommandSubjectMismatch");
         if (ReviewToolchainFailurePolicy.IsUnavailable(request.Commands, request.Artifacts))
             return ("ReviewInfra", "ToolUnavailable");
+        // A command that lost the host temp namespace exits non-zero without a
+        // single parsed test result. Grading that as a new test failure sent
+        // whole cards to human review after a runner daemon restart (AGT-2750).
+        if (ReviewHostEnvironmentFailurePolicy.IsHostEnvironmentLoss(request.Commands, request.Artifacts))
+            return ("ReviewInfra", ReviewHostEnvironmentFailurePolicy.Classification);
         if (string.Equals(request.Outcome, "ReviewInfra", StringComparison.Ordinal)
             && request.FailureClassification is "PreparationFailed")
             return ClassifyPreparationFailure(subject, request);

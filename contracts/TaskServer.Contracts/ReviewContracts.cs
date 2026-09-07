@@ -238,25 +238,9 @@ public static class ReviewToolchainFailurePolicy
     private static bool ArtifactsContainMissingAngularToolchain(
         IReadOnlyList<ReviewArtifactEvidenceDto> artifacts,
         ReviewCommandEvidenceDto command)
-        => artifacts.Any(artifact =>
-        {
-            if (artifact.ContentBase64 is null
-                || (!string.Equals(artifact.Sha256, command.StdoutSha256, StringComparison.OrdinalIgnoreCase)
-                    && !string.Equals(artifact.Sha256, command.StderrSha256, StringComparison.OrdinalIgnoreCase)))
-                return false;
-            try
-            {
-                var text = System.Text.Encoding.UTF8.GetString(
-                    Convert.FromBase64String(artifact.ContentBase64));
-                return text.Replace('\\', '/').Contains(
-                    "node_modules/@angular/cli/bin/ng.js",
-                    StringComparison.OrdinalIgnoreCase);
-            }
-            catch (FormatException)
-            {
-                return false;
-            }
-        });
+        => ReviewCommandOutputEvidence.Decode(artifacts, command)
+            .Replace('\\', '/')
+            .Contains("node_modules/@angular/cli/bin/ng.js", StringComparison.OrdinalIgnoreCase);
 }
 
 public sealed record ReviewReportRequest(

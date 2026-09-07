@@ -663,6 +663,11 @@ public sealed class RemoteReviewExecutor
             "VisionUnavailable" => CapabilityProtocol.Vision,
             "DiskFull" => CapabilityProtocol.Disk,
             "LeaseAuthorityInvalid" => CapabilityProtocol.LeaseAuthority,
+            // Deliberately retracts nothing. A lost host temp namespace is a
+            // one-shot consequence of a daemon restart, not a standing property
+            // of the host, so quarantining a capability would take a healthy
+            // executor out of rotation for the rest of its life.
+            ReviewHostEnvironmentFailurePolicy.Classification => null,
             _ => null,
         };
 

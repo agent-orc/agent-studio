@@ -89,6 +89,12 @@ public sealed class RemoteReviewWorkspace
             ["GIT_CONFIG_NOSYSTEM"] = "1",
             ["GIT_TERMINAL_PROMPT"] = "0",
             ["GIT_OPTIONAL_LOCKS"] = "0",
+            // Reusable MSBuild nodes outlive the review that started them and
+            // are reached through the host path /tmp/MSBuild<pid>, which no
+            // per-slot TMPDIR covers. A node left over from a differently
+            // namespaced run answers the next build with MSB1025 and
+            // SocketException (99). A review is hermetic anyway, so no reuse.
+            ["MSBUILDDISABLENODEREUSE"] = "1",
         };
         if (OperatingSystem.IsWindows())
         {
@@ -218,8 +224,10 @@ public sealed class RemoteReviewWorkspace
                 var execution = ReviewCommandKinds.IsAgent(command.ExecutionKind)
                     ? await _agentCommands.RunAsync(command, ct)
                     : await RunCommandAsync(command, RepositoryPath, ct);
-                if (MissingToolchain(execution.Process)
-                    || AgentCommandUnavailable(command, execution.Process))
+                var fault = InfrastructureFault(
+                    execution.Process,
+                    AgentCommandUnavailable(command, execution.Process));
+                if (fault is not null)
                 {
                     commands.Add(await AddCommandEvidenceAsync(
                         command.StepId,
@@ -246,8 +254,8 @@ public sealed class RemoteReviewWorkspace
                         execution.AgentUsage));
                     SaveCaches(candidateCache);
                     throw await InfrastructureFailureAsync(
-                        "ToolUnavailable",
-                        $"Review command '{command.StepId}' could not use its declared toolchain: " +
+                        fault.Value.Classification,
+                        $"Review command '{command.StepId}' {fault.Value.Detail}: " +
                         $"{CommandLine(command)}; exit={execution.Process.ExitCode}; " +
                         $"budget={BudgetSummary(command.TimeoutSeconds, execution)}.",
                         commands,
@@ -276,7 +284,8 @@ public sealed class RemoteReviewWorkspace
                             artifacts,
                             ct);
                         execution = await RunCommandAsync(command, RepositoryPath, ct);
-                        if (MissingToolchain(execution.Process))
+                        var retryFault = InfrastructureFault(execution.Process);
+                        if (retryFault is not null)
                         {
                             commands.Add(await AddCommandEvidenceAsync(
                                 command.StepId,
@@ -301,8 +310,8 @@ public sealed class RemoteReviewWorkspace
                                 ct));
                             SaveCaches(candidateCache);
                             throw await InfrastructureFailureAsync(
-                                "ToolUnavailable",
-                                $"Review retry '{command.StepId}' lost its declared toolchain; " +
+                                retryFault.Value.Classification,
+                                $"Review retry '{command.StepId}' {retryFault.Value.Detail}; " +
                                 $"exit={execution.Process.ExitCode}; budget={BudgetSummary(command.TimeoutSeconds, execution)}.",
                                 commands,
                                 artifacts,
@@ -707,6 +716,46 @@ public sealed class RemoteReviewWorkspace
                    "node_modules/@angular/cli/bin/ng.js",
                    StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>
+    /// A command failure the host caused, carrying the reported classification
+    /// and the sentence fragment that names it in the infrastructure summary.
+    /// </summary>
+    private readonly record struct CommandInfrastructureFault(string Classification, string Detail);
+
+    /// <param name="agentUnavailable">
+    /// Only the candidate run of an agent command can judge a missing aspect
+    /// verdict. A baseline or retry invocation runs the plain tool, so its
+    /// caller passes false.
+    /// </param>
+    private static CommandInfrastructureFault? InfrastructureFault(
+        ProcessResult process,
+        bool agentUnavailable = false)
+    {
+        if (MissingToolchain(process) || agentUnavailable)
+            return new CommandInfrastructureFault(
+                "ToolUnavailable",
+                "could not use its declared toolchain");
+        if (HostEnvironmentLost(process))
+            return new CommandInfrastructureFault(
+                ReviewHostEnvironmentFailurePolicy.Classification,
+                "lost the host temp namespace and produced no test result");
+        return null;
+    }
+
+    /// <summary>
+    /// True when the command died on a vanished host temp namespace instead of
+    /// on the reviewed change. Requiring an empty parse result keeps a product
+    /// test that merely mentions one of the signatures out of this branch.
+    /// </summary>
+    internal static bool HostEnvironmentLost(ProcessResult process)
+        // Both operands are pure, so the cheap substring scan runs first. The
+        // multi-regex parse then costs nothing for an ordinary test failure,
+        // which is the common case on this path.
+        => !process.Success
+           && ReviewHostEnvironmentFailurePolicy.MatchesSignature(
+               $"{process.StdOut}\n{process.StdErr}")
+           && ParsedTestFailures(process).Count == 0;
+
     private static string FailureDetail(ProcessResult process)
     {
         var source = !string.IsNullOrWhiteSpace(process.StdErr)
@@ -853,12 +902,13 @@ public sealed class RemoteReviewWorkspace
                 dependencyCache: null,
                 artifacts,
                 ct));
-            if (MissingToolchain(execution.Process))
+            var baselineFault = InfrastructureFault(execution.Process);
+            if (baselineFault is not null)
             {
                 SaveCaches(baselineCache, candidateCache);
                 throw await InfrastructureFailureAsync(
-                    "ToolUnavailable",
-                    $"Baseline review command '{command.StepId}' could not use its declared toolchain: " +
+                    baselineFault.Value.Classification,
+                    $"Baseline review command '{command.StepId}' {baselineFault.Value.Detail}: " +
                     $"{CommandLine(command)}; exit={execution.Process.ExitCode}; " +
                     $"budget={BudgetSummary(command.TimeoutSeconds, execution)}.",
                     commands,
@@ -1292,7 +1342,9 @@ public sealed class RemoteReviewWorkspace
     {
         var failures = ParsedTestFailures(result);
         if (!result.Success && failures.Count == 0)
-            return [$"<unparsed failure in {command.StepId}>"];
+            // The authority recognises this sentinel through the same constant,
+            // so producer and consumer cannot drift apart silently.
+            return [$"{ReviewHostEnvironmentFailurePolicy.UnparsedFailurePrefix} in {command.StepId}>"];
         return failures;
     }
 

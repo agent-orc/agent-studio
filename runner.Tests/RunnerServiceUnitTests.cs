@@ -21,6 +21,37 @@ public sealed class RunnerServiceUnitTests
         Assert.Contains("RestartSec=10s", content);
     }
 
+    /// <summary>
+    /// AGT-2750. PrivateTmp is lifecycle-bound: a daemon restart unmounts it
+    /// while KillMode=process keeps detached workers alive on the deleted mount,
+    /// which breaks every MSBuild node pipe and NuGet mutex they still need. No
+    /// runner unit template may reintroduce it.
+    /// </summary>
+    [Theory]
+    [InlineData("deploy/systemd/agent-host.service")]
+    [InlineData("scripts/remote-runner-onboard.sh")]
+    [InlineData("setup/NativeInstaller.cs")]
+    [InlineData("deploy/agent-host/systemd/10-agent-runner-hardening.conf")]
+    public void Runner_units_never_bind_a_private_tmp_namespace_to_the_daemon_lifecycle(
+        string relativePath)
+    {
+        var content = File.ReadAllText(Path.Combine(RepoRoot(), relativePath));
+
+        Assert.Contains("PrivateTmp=false", content);
+        Assert.DoesNotContain("PrivateTmp=true", content);
+        Assert.DoesNotContain("PrivateTmp=yes", content);
+    }
+
+    [Fact]
+    public void Host_hardening_verifies_the_shared_tmp_namespace_and_drops_the_interim_override()
+    {
+        var content = File.ReadAllText(
+            Path.Combine(RepoRoot(), "scripts", "harden-agent-runner-host.sh"));
+
+        Assert.Contains("--property=PrivateTmp --value", content);
+        Assert.Contains("20-no-private-tmp.conf", content);
+    }
+
     [Fact]
     public void Agent_host_unit_uses_the_atomic_current_release_path()
     {

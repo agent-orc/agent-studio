@@ -115,6 +115,45 @@ public sealed class ReviewSlotReconcilerTests : IDisposable
         Assert.Single(state.LoadAll());
     }
 
+    /// <summary>
+    /// AGT-2750. The worker is still running, but a daemon restart took its
+    /// /tmp away, so every build and test it has left is guaranteed to fail.
+    /// The slot must settle as infrastructure at startup instead of being
+    /// reattached and graded an hour later.
+    /// </summary>
+    [Fact]
+    public async Task Worker_that_lost_its_temp_namespace_settles_instead_of_reattaching()
+    {
+        var now = DateTime.UtcNow;
+        var state = new ReviewStateStore(_root);
+        var slot = state.Save(state.Create(
+            Claim("review-lost-tmp", now, now.AddHours(1)),
+            Workspace("review-lost-tmp")) with
+        {
+            ProcessId = 404,
+            ProcessStartedAtUtc = now.AddMinutes(-30),
+            Phase = "running",
+        });
+        var reconciler = new ReviewSlotReconciler(
+            state,
+            (_, _) => Task.FromResult<ReviewAttemptDto?>(slot.Claim.Attempt),
+            // What DurableReviewProcess.VerifyLive reports once
+            // DetachedWorkerTempNamespace sees the deleted /tmp mount.
+            _ => new ReviewProcessObservation(
+                false,
+                "review process is unusable: worker holds a deleted /tmp mount after a "
+                + "daemon restart; builds and tests in this namespace cannot succeed"));
+
+        var result = await reconciler.ReconcileAsync(
+            new HashSet<string>(StringComparer.Ordinal),
+            now,
+            CancellationToken.None);
+
+        var continuation = Assert.Single(result.Continuations);
+        Assert.Equal(ReviewSlotContinuationKind.SettleNonAdoptable, continuation.Kind);
+        Assert.Contains("deleted /tmp mount", continuation.Reason);
+    }
+
     [Fact]
     public async Task Dormant_record_older_than_the_safety_limit_is_purged_without_server_lookup()
     {

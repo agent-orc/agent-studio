@@ -1,0 +1,10 @@
+MSBUILD : error MSB1025: An internal failure occurred while running MSBuild.
+System.Net.Sockets.SocketException (99): Cannot assign requested address
+   at System.Net.Sockets.Socket.UpdateStatusAfterSocketErrorAndThrowException(SocketError error, Boolean disconnectOnFailure, String callerName)
+   at System.Net.Sockets.Socket.DoBind(EndPoint endPointSnapshot, SocketAddress socketAddress)
+   at System.Net.Sockets.Socket.Bind(EndPoint localEP)
+   at Microsoft.Build.BackEnd.NodeEndpointOutOfProcBase.InternalConstruct(String pipeName)
+   at Microsoft.Build.BackEnd.NodeEndpointOutOfProcBase.Listen(INodePacketFactory factory)
+   at Microsoft.Build.Execution.OutOfProcNode.Run(Boolean enableReuse, Boolean lowPriority, Exception& shutdownException)
+   at Microsoft.Build.CommandLine.MSBuildApp.StartLocalNode(CommandLineSwitches commandLineSwitches, Boolean lowPriority)
+   at Microsoft.Build.CommandLine.MSBuildApp.Execute(String[] commandLine)

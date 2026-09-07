@@ -727,6 +727,147 @@ public sealed class RemoteReviewAuthorityTests
         Assert.Equal(expectedOutcome, report.Outcome);
     }
 
+    /// <summary>
+    /// AGT-2750. A daemon restart unmounted the review unit's private /tmp, so
+    /// dotnet test died on its MSBuild node pipe without running a single test.
+    /// That graded as ProductFailure and pushed AGT-2709, AGT-2711, QS-82 and
+    /// QS-96 into human review. It is infrastructure, and it must retry.
+    /// </summary>
+    [Theory]
+    [InlineData(
+        "MSBUILD : error MSB1025: An internal failure occurred while running MSBuild.\n"
+        + "System.Net.Sockets.SocketException (99): Cannot assign requested address\n")]
+    [InlineData("Assertion failed: mkdtemp(\"/tmp/.dotnet.XXXXXX\") == nullptr; errno == ENOENT\n")]
+    public async Task A_command_that_lost_the_host_temp_namespace_is_infrastructure(string log)
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var plan = new ReviewPlanDto(
+            [new ReviewCommandDto(
+                "verify-2",
+                "build-tests",
+                "dotnet",
+                ["test"],
+                CompareToBaseline: true)],
+            ["build-tests"],
+            IntegrationRef: "refs/heads/develop");
+        await SeedReviewSubjectAsync(store, plan: plan);
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        var claim = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+        var request = PassingReport(claim);
+        request = request with
+        {
+            Commands = request.Commands.Select(command => command.Phase == "verification"
+                ? command with
+                {
+                    ExitCode = 1,
+                    BaselineSha = new string('c', 40),
+                    // The fail-closed sentinel the workspace substitutes when a
+                    // failing command produced no parseable test result at all.
+                    NewFailures = ["<unparsed failure in verify-2>"],
+                    PreExistingFailures = [],
+                    RetryPerformed = true,
+                }
+                : command).ToArray(),
+            Verdicts =
+            [
+                new ReviewVerdictDto(
+                    "build-tests",
+                    "block",
+                    "NewTestFailures",
+                    "1 new failures: <unparsed failure in verify-2>; 0 pre-existing failures."),
+            ],
+        };
+        request = WithInlineStderr(request, log);
+
+        var report = await store.ReportReviewAsync(
+            claim.Attempt!.AttemptId,
+            request,
+            "review-a",
+            default);
+
+        Assert.Equal("ReviewInfra", report.Outcome);
+        Assert.Equal("HostTempUnavailable", report.FailureClassification);
+    }
+
+    /// <summary>
+    /// AGT-2750 guard. A repository with a pre-existing test that prints one of
+    /// the signatures still passes review. Only an empty parse RECORD counts as
+    /// "no test result"; an empty NEW-failure list means the parser ran and
+    /// found nothing new, which is how every passing baseline comparison looks.
+    /// </summary>
+    [Fact]
+    public async Task A_passing_baseline_comparison_is_not_flipped_by_a_signature_in_the_log()
+    {
+        const string log =
+            "  Failed Product.Tests.Network.BindsToLoopback [3 ms]\n"
+            + "  Error Message:\n"
+            + "   System.Net.Sockets.SocketException (99): Cannot assign requested address\n";
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var plan = new ReviewPlanDto(
+            [new ReviewCommandDto("verify-2", "build-tests", "dotnet", ["test"], CompareToBaseline: true)],
+            ["build-tests"],
+            IntegrationRef: "refs/heads/develop");
+        await SeedReviewSubjectAsync(store, plan: plan);
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        var claim = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+        var request = PassingReport(claim);
+        request = request with
+        {
+            Commands = request.Commands.Select(command => command.Phase == "verification"
+                ? command with
+                {
+                    ExitCode = 1,
+                    BaselineSha = new string('c', 40),
+                    NewFailures = [],
+                    PreExistingFailures = ["Product.Tests.Network.BindsToLoopback"],
+                }
+                : command).ToArray(),
+            Verdicts =
+            [
+                new ReviewVerdictDto(
+                    "build-tests",
+                    "pass",
+                    "BaselineCompared",
+                    "0 new failures; 1 pre-existing failures."),
+            ],
+        };
+        request = WithInlineStderr(request, log);
+
+        var report = await store.ReportReviewAsync(
+            claim.Attempt!.AttemptId, request, "review-a", default);
+
+        Assert.Equal("Pass", report.Outcome);
+    }
+
+    [Fact]
+    public void A_real_test_failure_keeps_its_product_grade_even_beside_a_build_engine_error()
+    {
+        var log = "MSBUILD : error MSB1025: An internal failure occurred while running MSBuild.\n";
+        var command = new ReviewCommandEvidenceDto(
+            "verify-2", "build-tests", "dotnet", ["test"],
+            ResultSha, ResultSha, TreeSha,
+            DateTime.UtcNow.AddSeconds(-1), DateTime.UtcNow, 1, null,
+            new string('a', 64), new string('b', 64),
+            BaselineSha: new string('c', 40),
+            NewFailures: ["Product.Tests.CartService.CalculatesTotal"],
+            PreExistingFailures: [],
+            RetryPerformed: true);
+        var artifacts = new[]
+        {
+            new ReviewArtifactEvidenceDto(
+                "verify-2.stderr.log", "text/plain", new string('b', 64), log.Length,
+                Convert.ToBase64String(Encoding.UTF8.GetBytes(log))),
+        };
+
+        Assert.False(ReviewHostEnvironmentFailurePolicy.IsHostEnvironmentLoss([command], artifacts));
+    }
+
     [Fact]
     public async Task Baseline_evidence_treats_a_nonreproduced_review_flaky_failure_as_quarantine_not_product_failure()
     {
@@ -1329,6 +1470,39 @@ public sealed class RemoteReviewAuthorityTests
 
     private static string Hash(string value)
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
+
+    /// <summary>
+    /// Attaches <paramref name="log"/> as the inline stderr evidence of every
+    /// verification command, keeping the digest and size self-consistent so the
+    /// report survives <c>ValidArtifact</c> and reaches the classifier.
+    /// </summary>
+    private static ReviewReportRequest WithInlineStderr(ReviewReportRequest request, string log)
+    {
+        var bytes = Encoding.UTF8.GetBytes(log);
+        var digest = Hash(log);
+        var replaced = request.Commands
+            .Where(command => command.Phase == "verification")
+            .Select(command => command.StderrSha256)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return request with
+        {
+            Commands = request.Commands
+                .Select(command => command.Phase == "verification"
+                    ? command with { StderrSha256 = digest }
+                    : command)
+                .ToArray(),
+            Artifacts = request.Artifacts
+                .Select(artifact => replaced.Contains(artifact.Sha256)
+                    ? artifact with
+                    {
+                        Sha256 = digest,
+                        SizeBytes = bytes.LongLength,
+                        ContentBase64 = Convert.ToBase64String(bytes),
+                    }
+                    : artifact)
+                .ToArray(),
+        };
+    }
 
     private static async Task<string> ReviewAttemptIdAsync(TaskServerStore store, string taskId)
     {

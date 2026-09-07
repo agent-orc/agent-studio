@@ -75,6 +75,9 @@ install -d -o root -g root -m 0700 "$backup_root"
 for unit in agent-runner.service agent-runner-review.service; do
   drop_in="/etc/systemd/system/$unit.d/10-agent-runner-hardening.conf"
   [[ ! -e "$drop_in" ]] || cp -a "$drop_in" "$backup_root/previous-$unit-handoff.conf"
+  interim_drop_in="/etc/systemd/system/$unit.d/20-no-private-tmp.conf"
+  [[ ! -e "$interim_drop_in" ]] \
+    || cp -a "$interim_drop_in" "$backup_root/previous-$unit-no-private-tmp.conf"
 done
 
 install -d -o root -g root -m 0755 /usr/local/sbin /usr/local/libexec
@@ -90,11 +93,15 @@ for unit in agent-runner.service agent-runner-review.service; do
   install -d -o root -g root -m 0755 "$drop_in_directory"
   install -o root -g root -m 0644 \
     "$handoff_source" "$drop_in_directory/10-agent-runner-hardening.conf"
+  # The interim operator drop-in is superseded by the versioned one above.
+  rm -f -- "$drop_in_directory/20-no-private-tmp.conf"
 done
 systemctl daemon-reload
 for unit in agent-runner.service agent-runner-review.service; do
   [[ "$(systemctl show "$unit" --property=KillMode --value)" == "process" ]] \
     || die "$unit did not adopt KillMode=process"
+  [[ "$(systemctl show "$unit" --property=PrivateTmp --value)" == "no" ]] \
+    || die "$unit still owns a lifecycle-bound PrivateTmp namespace"
 done
 
 for privileged_group in sudo docker; do

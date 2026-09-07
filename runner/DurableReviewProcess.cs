@@ -168,6 +168,11 @@ internal sealed class DurableReviewProcess
                     reason = $"review process cwd '{target ?? "unavailable"}' does not match workspace '{slot.WorkspacePath}'";
                     return false;
                 }
+                if (DetachedWorkerTempNamespace.IsLost(process, out var lostTemp))
+                {
+                    reason = $"review process is unusable: {lostTemp}";
+                    return false;
+                }
             }
             reason = "live review process generation and workspace match";
             return true;

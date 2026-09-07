@@ -315,6 +315,11 @@ internal sealed class DurableAgentProcess
                     reason = $"process cwd '{target ?? "unavailable"}' does not match worktree '{slot.WorktreePath}'";
                     return false;
                 }
+                if (DetachedWorkerTempNamespace.IsLost(process, out var lostTemp))
+                {
+                    reason = $"process is unusable: {lostTemp}";
+                    return false;
+                }
             }
 
             reason = "live process and worktree match";

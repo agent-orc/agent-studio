@@ -158,6 +158,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Workflow arguments become unbounded fan-out | [common-problems/workflow-args-json-string-fanout/](../operations/common-problems/workflow-args-json-string-fanout/) |
 | Workflow-sized task cutting and Dossier slice acceptance | [operations/workflow-sized-task-cutting.md](../operations/workflow-sized-task-cutting.md) |
 | Services killed by a harness sweep | [common-problems/services-killed-by-harness-sweep/](../operations/common-problems/services-killed-by-harness-sweep/) |
+| Runner daemon restart unmounts PrivateTmp and breaks every surviving worker's build (AGT-2750) | [common-problems/private-tmp-unmounted-by-daemon-restart/](../operations/common-problems/private-tmp-unmounted-by-daemon-restart/) |
 | api.sh restart reports success while the old backend keeps serving | [common-problems/hollow-api-restart/](../operations/common-problems/hollow-api-restart/) |
 | Integration push blocked on main lineage starves origin/develop, causing infinite reclaim loops (AGT-2688) | [common-problems/lineage-blocked-integration-push/](../operations/common-problems/lineage-blocked-integration-push/) |
 | Orchestrator drive-to-conclusion & CLI-crash resilience | [concepts/orchestrator-drive-to-conclusion.html](../concepts/orchestrator-drive-to-conclusion.html) |

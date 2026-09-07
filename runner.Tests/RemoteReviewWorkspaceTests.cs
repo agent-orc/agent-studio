@@ -60,17 +60,64 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         string fixtureName,
         string[] expected)
     {
-        var output = File.ReadAllText(Path.Combine(
-            AppContext.BaseDirectory,
-            "Fixtures",
-            "review-failures",
-            fixtureName));
+        var output = Fixture(fixtureName);
         var result = fixtureName.Contains("stderr", StringComparison.Ordinal)
             ? new ProcessResult(1, string.Empty, output)
             : new ProcessResult(1, output, string.Empty);
 
         Assert.Equal(expected, RemoteReviewWorkspace.ParsedTestFailures(result));
     }
+
+    /// <summary>
+    /// AGT-2750. The signatures a worker emits after a daemon restart unmounted
+    /// the unit's private /tmp. Reconstructed from the incident report on
+    /// agent-runner-01 (2026-09-07 03:10-04:55 CEST); the original captures live
+    /// with the AGT-2711 review report on the task server.
+    /// </summary>
+    public static TheoryData<string> HostEnvironmentFixtures =>
+    [
+        "msbuild-node-pipe.stderr.txt",
+        "nuget-mkdtemp.stderr.txt",
+    ];
+
+    [Theory]
+    [MemberData(nameof(HostEnvironmentFixtures))]
+    public void A_lost_host_temp_namespace_is_infrastructure_not_a_test_failure(string fixtureName)
+    {
+        var result = new ProcessResult(1, string.Empty, Fixture(fixtureName));
+
+        Assert.Empty(RemoteReviewWorkspace.ParsedTestFailures(result));
+        Assert.True(RemoteReviewWorkspace.HostEnvironmentLost(result));
+    }
+
+    [Fact]
+    public void A_command_that_parsed_test_failures_is_never_a_host_environment_loss()
+    {
+        // A product test may legitimately fail while MSBuild also complains.
+        var result = new ProcessResult(
+            1,
+            "  Failed Product.Tests.CartService.CalculatesTotal [12 ms]",
+            Fixture("msbuild-node-pipe.stderr.txt"));
+
+        Assert.False(RemoteReviewWorkspace.HostEnvironmentLost(result));
+    }
+
+    [Fact]
+    public void A_passing_command_is_never_a_host_environment_loss()
+        => Assert.False(RemoteReviewWorkspace.HostEnvironmentLost(
+            new ProcessResult(0, string.Empty, Fixture("msbuild-node-pipe.stderr.txt"))));
+
+    [Fact]
+    public void An_ordinary_test_failure_is_not_a_host_environment_loss()
+        => Assert.False(RemoteReviewWorkspace.HostEnvironmentLost(
+            new ProcessResult(1, Fixture("npm-jest.stdout.txt"), string.Empty)));
+
+    private static string Fixture(string fixtureName)
+        => File.ReadAllText(Path.Combine(
+            AppContext.BaseDirectory,
+            "Fixtures",
+            "review-failures",
+            fixtureName));
 
     [Fact]
     public void Parsed_test_failures_ignores_failure_text_when_process_succeeds()
@@ -177,6 +224,9 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.Equal("review-attempt-a-f1", evidence.Workspace.ResourceNamespace);
         Assert.Equal("24000", workspace.ProcessEnvironment()["PORT"]);
         Assert.StartsWith(workspace.AttemptRoot, workspace.ProcessEnvironment()["XDG_CACHE_HOME"]);
+        // A reusable MSBuild node would outlive the review and be reached over
+        // the host /tmp path, which the per-slot TMPDIR does not cover.
+        Assert.Equal("1", workspace.ProcessEnvironment()["MSBUILDDISABLENODEREUSE"]);
         var environment = workspace.EnvironmentEvidence();
         Assert.Contains("sha256=", environment.Toolchain["git"], StringComparison.Ordinal);
         Assert.Contains("sha256=", environment.Toolchain["command:verify"], StringComparison.Ordinal);

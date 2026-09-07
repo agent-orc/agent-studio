@@ -870,6 +870,36 @@ impossible. `StartLimitIntervalSec=300`, `StartLimitBurst=5`, and
 recovery. Installing or changing the unit requires root, followed by
 `systemctl daemon-reload`.
 
+For the same reason the managed units deliberately set `PrivateTmp=false`.
+`PrivateTmp` is bound to the unit lifecycle: a restart unmounts the unit's
+`/tmp` while the detached workers keep running on the now deleted mount, which
+`/proc/<pid>/mountinfo` shows as
+`/tmp/systemd-private-...-<unit>-XXXXXX/tmp//deleted /tmp`. In that namespace
+MSBuild can no longer create its node pipe under `/tmp/MSBuild<pid>` and NuGet
+can no longer create its migrations mutex directory, so every remaining build
+and test of that worker fails. Worker scratch space is isolated by the per-slot
+`TMPDIR` the runner owns, not by the unit namespace. Verify with:
+
+```bash
+systemctl show agent-runner.service --property=PrivateTmp --value        # no
+systemctl show agent-runner-review.service --property=PrivateTmp --value # no
+```
+
+A host that still reports `yes` predates this change. Re-run
+`scripts/harden-agent-runner-host.sh --apply`, which installs the versioned
+`10-agent-runner-hardening.conf` drop-in carrying `PrivateTmp=false`, removes
+any hand-made `20-no-private-tmp.conf`, and verifies the effective value.
+
+`scripts/verify-runner-tmp-namespace.sh` runs both assertions and additionally
+lists every live process of these units that still holds a deleted `/tmp` mount.
+Expect leftover MSBuild node daemons (`/nodemode:1 /nodeReuse:true`) from before
+the fix; they outlive their build, and a later build in the fresh namespace
+still tries to reach them through `/tmp/MSBuild<pid>`. Terminate them once the
+unit has no busy slot. Review commands now run with `MSBUILDDISABLENODEREUSE=1`
+and no longer create them. Add `--restart-probe` on a host you may interrupt to
+restart the review unit with a busy slot and assert that the slot still
+completes with parsed results.
+
 ### Planned daemon restart and deploy
 
 A planned Runner deploy no longer waits for host idle. On a hardened host, stage

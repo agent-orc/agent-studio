@@ -441,6 +441,24 @@ public static class V1ReviewPlaneEndpoints
                               ?? "A verification command could not use its declared toolchain.",
                 };
             }
+            // Only when the toolchain policy did not fire, so this endpoint
+            // agrees with TaskServerStore.ClassifyReviewReport and with
+            // RemoteReviewWorkspace.InfrastructureFault, which both give
+            // ToolUnavailable precedence over a host-environment signature.
+            else if (Contract.ReviewHostEnvironmentFailurePolicy.IsHostEnvironmentLoss(
+                    request.Commands,
+                    request.Artifacts))
+            {
+                request = request with
+                {
+                    Outcome = "ReviewInfra",
+                    FailureClassification =
+                        Contract.ReviewHostEnvironmentFailurePolicy.Classification,
+                    Summary = request.Summary
+                              ?? "A verification command lost the host temp namespace and "
+                              + "produced no parsed test result.",
+                };
+            }
 
             if (!TryOutcome(request.Outcome, out var outcome))
                 return Results.BadRequest(new Contract.ApiError(

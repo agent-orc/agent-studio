@@ -601,7 +601,12 @@ state.
   returned to Ready. A non-adoptable review is settled as `ReviewInfra` with
   classification `ExecutorRestarted`, the completed-command count and duration,
   the failed process proof, and the retry reason. DB lease presence alone is
-  never process-liveness evidence. systemd must use `KillMode=process`.
+  never process-liveness evidence. systemd must use `KillMode=process` and must
+  not use `PrivateTmp`: the private namespace is bound to the unit lifecycle, so
+  a restart leaves the surviving workers on a deleted `/tmp` mount. Liveness
+  verification therefore also reads `/proc/<pid>/mountinfo`; a re-adopted worker
+  whose `/tmp` mount root ends in `//deleted` is not adoptable and settles
+  immediately instead of running an hour of builds that cannot succeed.
 - A Task Server restart is also not an attempt boundary. The server reloads the
   persisted RunAttempt and ReviewAttempt ledger; the surviving runner includes
   positively proven active slots in its next registration and the server

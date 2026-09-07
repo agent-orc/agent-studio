@@ -524,8 +524,14 @@ steer the pipeline in this policy version.
   report retains its identity as `FlakyQuarantine` and does not classify the
   card as `ProductFailure`. A reproduced marked failure remains a blocking new
   failure. A command with unparseable failing-test output stays fail-closed as a
-  new failure. This comparison does not weaken the absolute full-suite boundary
-  before advancing `main`.
+  new failure, unless that output also carries a host-environment signature.
+  `MSB1025`, `SocketException (99): Cannot assign requested address`, and
+  `mkdtemp ... ENOENT` mean the worker lost the host temp namespace, not that
+  the change is broken; combined with no parsed test result at all they settle
+  as `ReviewInfra / HostTempUnavailable` and retry. Both the Review Executor and
+  the Task Server apply that rule, so an unclassified report is still corrected
+  at the authority. This comparison does not weaken the absolute full-suite
+  boundary before advancing `main`.
 - Remote Review command execution survives a planned Review daemon restart.
   Recovered attempts retain their original fence and containment namespace and
   resume before load-aware admission evaluates any fresh slot. Completed
