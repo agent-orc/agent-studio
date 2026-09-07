@@ -128,7 +128,9 @@
         @if (entry.reasoning) {
           <section class="orch-feed__detail-section"><h4>Why</h4><p>{{ entry.reasoning }}</p></section>
         }
-        @if (entry.kind === 'decision' && entry.jobId) {
+        @if (isWatcherDecision(entry)) {
+          <app-watcher-decision-panel [entry]="entry" (decided)="refresh(true)" />
+        } @else if (entry.kind === 'decision' && entry.jobId) {
           @if (overridingTs() === entry.ts) {
             <div class="orch-feed__override-form">
               <textarea class="orch-feed__override-input" placeholder="Your direction. Will be sent as a Steer follow-up."

@@ -499,6 +499,42 @@ New generations use `scripts/generate-project-proposals.mjs`. The generator is
 idempotent: an existing proposal document is preserved so a repeated survey run
 cannot erase an operator decision.
 
+## Watcher ticket proposals
+
+A second, unrelated proposal mechanism: the Global Orchestrator Watcher
+(`AgentStudio.Watcher`, [orchestrator-waechter dossier](../../operations/orchestrator-waechter/index.html)
+§10) drafts a **ticket proposal** for a case that persists across two
+detector sweeps. Unlike the Markdown-backed Project proposals above, a
+Watcher proposal is a real task card created through
+`TaskMutationService.CreateJob` in lane `1-preparation`, tagged
+`watcher-proposal` plus one `watcher-<detector-class>` tag (`watcher-repetition`,
+`watcher-contradiction`, `watcher-silence`, `watcher-drift`, `watcher-hygiene`).
+The card never advances to `2-ready` by itself; `POST /api/watcher/proposals/{id}/decision`
+is the only path that moves it, and only in response to an explicit operator
+decision (`approved`, `edited`, `merged`, or `rejected` - the confirmed and
+recorded outcomes stay in `AgentStudio.Watcher.WatcherProposalStore` under
+`logs/watcher/`, keyed to the durable `WatcherCase` that produced the
+proposal). A fingerprint that recurs against an already-open proposal card
+appends a `watcher_case_linked` `TimelineEvent` instead of drafting a second
+card. Rejecting a proposal suppresses its fingerprint for a configurable
+window (`Watcher:SuppressionDays`).
+
+`WatcherHostedService` runs the detector sweep at backend startup (after a
+15-second boot delay) and every `Watcher:IntervalSeconds` (default `300`)
+thereafter, gated by the `Watcher:Enabled` kill switch (default `false` -
+disabled until a workspace opts in, because W2 creates real task cards).
+`Watcher:PersistenceSweepsBeforeProposal` (default `2`) is how many distinct
+sweeps a fingerprint must recur in before a proposal drafts. The
+`Watcher:Contingent` section (`DailyTokenBudget`, `WeeklyTokenBudget`,
+`DailyProposalBudget`, `WeeklyProposalBudget`, `DailyModelCallBudget`,
+`WeeklyModelCallBudget`) is the per-day/per-week spend ledger; a budget of
+`0` disables that category while the sweep keeps detecting and counting.
+Usage is shown in Workspace CLI Management next to the CLI quota strips
+(`GET /api/watcher/status`). Each sweep writes a structured `watcher-run` log
+line (observations, cases updated, proposals created, comments appended,
+contingent-blocked count, analysis calls, last-run timestamp), the same shape
+as `acceptance-rail-run`.
+
 ## Epic lifecycle
 
 - Epics are `kind=epic` task records; membership is the child's `epicId`.

@@ -1,0 +1,50 @@
+<div class="watcher-strip" data-testid="watcher-contingent-strip">
+  @if (errorMsg(); as err) {
+    <div class="watcher-strip__error" data-testid="watcher-contingent-error">{{ err }}</div>
+  } @else if (!enabled()) {
+    <div class="watcher-strip__disabled" data-testid="watcher-contingent-disabled">
+      Watcher is disabled for this workspace (Watcher:Enabled).
+    </div>
+  } @else if (contingent(); as c) {
+    <div class="watcher-strip__row" data-testid="watcher-contingent-tokens">
+      <span class="watcher-strip__label">Tokens (day)</span>
+      <span class="watcher-strip__value">{{ formatTokens(c.day.tokensUsed, c.budgets.dailyTokenBudget) }}</span>
+      <div class="watcher-strip__bar">
+        <span class="watcher-strip__bar-fill"
+              [class.watcher-strip__bar-fill--over]="c.modelCallsExhausted"
+              [style.width.%]="usedPct(c.day.tokensUsed, c.budgets.dailyTokenBudget)"></span>
+      </div>
+    </div>
+    <div class="watcher-strip__row" data-testid="watcher-contingent-model-calls">
+      <span class="watcher-strip__label">Model calls (day)</span>
+      <span class="watcher-strip__value">{{ formatCount(c.day.modelCalls, c.budgets.dailyModelCallBudget) }}</span>
+      <div class="watcher-strip__bar">
+        <span class="watcher-strip__bar-fill"
+              [class.watcher-strip__bar-fill--over]="c.modelCallsExhausted"
+              [style.width.%]="usedPct(c.day.modelCalls, c.budgets.dailyModelCallBudget)"></span>
+      </div>
+    </div>
+    <div class="watcher-strip__row" data-testid="watcher-contingent-proposals">
+      <span class="watcher-strip__label">Proposals (day)</span>
+      <span class="watcher-strip__value">{{ formatCount(c.day.proposalsCreated, c.budgets.dailyProposalBudget) }}</span>
+      <div class="watcher-strip__bar">
+        <span class="watcher-strip__bar-fill"
+              [class.watcher-strip__bar-fill--over]="c.proposalsExhausted"
+              [style.width.%]="usedPct(c.day.proposalsCreated, c.budgets.dailyProposalBudget)"></span>
+      </div>
+      @if (c.proposalsExhausted) {
+        <span class="watcher-strip__backlog" data-testid="watcher-contingent-backlog">Backlog visible - contingent exhausted</span>
+      }
+    </div>
+    <div class="watcher-strip__row watcher-strip__row--week">
+      <span class="watcher-strip__label">This week</span>
+      <span class="watcher-strip__value">
+        {{ formatTokens(c.week.tokensUsed, c.budgets.weeklyTokenBudget) }} tokens ·
+        {{ formatCount(c.week.modelCalls, c.budgets.weeklyModelCallBudget) }} calls ·
+        {{ formatCount(c.week.proposalsCreated, c.budgets.weeklyProposalBudget) }} proposals
+      </span>
+    </div>
+  } @else {
+    <div class="watcher-strip__empty">No contingent data yet.</div>
+  }
+</div>

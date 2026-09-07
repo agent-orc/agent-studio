@@ -35,6 +35,9 @@ public sealed class AgentMessageBusBridge
     public const string ParticipantOrchestrator = "orchestrator";
     public const string ParticipantSystemReview = "system-review";
 
+    /// <summary>Bus producer id for the Global Orchestrator Watcher (orchestrator-waechter dossier §4a).</summary>
+    public const string ParticipantWatcher = "orchestrator:global-watcher";
+
     private static readonly JsonSerializerOptions PayloadOptions = new(JsonSerializerDefaults.Web);
 
     private readonly AgentMessageBusStore _store;
@@ -255,6 +258,40 @@ public sealed class AgentMessageBusBridge
                 pauseTtlSeconds = intervention.PauseTtl?.TotalSeconds,
             },
             tags: new[] { "supervisor-intervention", intervention.Kind.ToString().ToLowerInvariant() });
+        return EmitAsync(msg, ct);
+    }
+
+    /// <summary>
+    /// Mirror one Global Orchestrator Watcher monitoring event (§4a "Watcher
+    /// as bus producer"): <c>watcher-finding-raised</c>,
+    /// <c>watcher-analysis-complete</c>, or <c>watcher-decision-required</c>.
+    /// <paramref name="project"/> is null for workspace-wide findings (quota
+    /// probe silence/drift) that are not attributable to one project.
+    /// </summary>
+    public Task EmitWatcherEventAsync(
+        string kind,
+        string topic,
+        string? project,
+        string? jobId,
+        string summary,
+        string? severity = null,
+        object? payload = null,
+        string? correlationId = null,
+        CancellationToken ct = default)
+    {
+        var msg = NewMessage(
+            participantId: ParticipantWatcher,
+            role: "system",
+            kind: kind,
+            severity: severity,
+            project: project,
+            jobId: jobId,
+            topic: topic,
+            summary: TruncateSummary(summary),
+            body: summary,
+            payload: payload,
+            correlationId: correlationId,
+            tags: new[] { "watcher" });
         return EmitAsync(msg, ct);
     }
 

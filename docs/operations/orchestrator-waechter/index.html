@@ -937,6 +937,49 @@ that card, not a new card.</p>
   <li><b>W2 Analysis</b> gains the proposal draft as its output and the contingent as its budget. The proposal is written through the normal task API in the proposal state; the Activity Decision entry is the operator's entry point.</li>
   <li><b>W3 Safe rescue</b> is unchanged; auto-approval of proposal classes is a separate, later promotion with its own evidence.</li>
 </ul>
+
+<h3>§10.6 Implementation state: W1+W2 delivered (AGT-2721)</h3>
+<p><b>AGT-2721 cuts W1 and W2 as one card chain</b>, exactly as this dossier recommended. The Watcher runs as a
+hosted service (<code>AgentStudio.Watcher.WatcherHostedService</code>) in the Task Server process on a five-minute
+sweep, behind the <code>Watcher:Enabled</code> kill switch (default <code>false</code> - a workspace opts in
+explicitly, the same convention as <code>Supervisor:SoftReasoningEnabled</code>, because W2 drafts real task cards).
+Cases persist under <code>logs/watcher/</code>, restart-safe and deduplicated by fingerprint; proposals are created
+through <code>TaskMutationService.CreateJob</code> into <code>1-preparation</code> with tag <code>watcher-proposal</code>
+plus a per-class tag, and never move to Ready except through an explicit operator decision recorded by
+<code>POST /api/watcher/proposals/{id}/decision</code>.</p>
+
+<table>
+  <thead><tr><th>Detector class</th><th>Real production wiring shipped</th></tr></thead>
+  <tbody>
+    <tr><td><b>Hygiene</b></td><td>Fully wired to <code>WorkbenchCatalogueService</code>'s already-computed descriptor validation, gated on a configurable grace period.</td></tr>
+    <tr><td><b>Repetition</b></td><td>Wired to the durable per-task integration-failure fingerprint (<code>TaskIntegrationFailure.Code</code>) across cards in one project - the real signal behind the QS-102 finding.</td></tr>
+    <tr><td><b>Contradiction</b></td><td>Wired to the lane-versus-integration-status projection (a card in a completed/reviewed lane whose Git-proven integration says otherwise).</td></tr>
+    <tr><td><b>Silence</b></td><td>Wired to CLI quota probe staleness (<code>QuotaSnapshot.ProbeFailedAt</code>) - the real signal behind the AGT-2705/AGT-2706 findings. Workspace-wide, not project-scoped; projects to Activity with <code>project: null</code> per §4a.</td></tr>
+    <tr><td><b>Drift</b></td><td>Wired to the same quota cache: a CLI version change (<code>QuotaSnapshot.CliVersion</code>) followed by a probe that keeps failing.</td></tr>
+  </tbody>
+</table>
+
+<p>Scoping call made during implementation: the eight 06.09. findings are the <b>fixture matrix</b> the dossier asked
+for (§10.1) - replayed directly as normalized signal observations against the case/evidence/proposal pipeline in
+tests, proving the pipeline's behavior end to end (eight cases, eight proposals, none in Ready) without requiring a
+bespoke live scraper for every historical source (gate transcripts, escalation-banner-versus-artifact-count,
+runner-capability-snapshot age). The five detector probes above are real and run on the live sweep; further probes
+for the remaining historical signal shapes are natural follow-ups that reuse the same case engine and evidence pack
+without any further shape.</p>
+
+<p>Analysis (§5) runs only for Contradiction and Drift cases - the classes with declared uncertainty - through the
+existing <code>ICliOneShot</code> one-shot call boundary, gated by the contingent and configurable independently of
+the repository's live CLI catalogue (a background sweep must not depend on a live CLI subprocess succeeding just to
+attach a display recommendation). Repetition and Hygiene proposals draft straight from the deterministic evidence
+pack, matching §5's "no model" row for exact recipe matching.</p>
+
+<h3>Delivered slices</h3>
+<ul>
+<!-- agent-studio:implementation-log:start -->
+  <li data-implementation-entry="" data-task-key="AGT-2721" data-delivered-at="2026-09-07" data-slice="w1-w2-watcher-detectors-and-proposals"><b>W1+W2: detector sweep and ticket proposals.</b> Shipped the five §10.2 detector classes as a hosted sweep with durable, restart-safe case dedup; the bounded evidence pack and declared-uncertainty analysis call; ticket-proposal drafting through the task API into the proposal state with a routing-policy model recommendation; the per-day/per-week contingent with a visible backlog on exhaustion; and the review-mode Decision entry (approve/edit/merge/reject, with reject feeding an expiring suppression list). Fixture-replay tests cover all eight 06.09. findings end to end.</li>
+<!-- agent-studio:implementation-log:end -->
+</ul>
+
 <div class="box accent">
   <h4>Decision request, extended 06.09.</h4>
   <ol>

@@ -14,9 +14,14 @@
  * intervention. Topics group entries in the UI feed.
  */
 export interface OrchestratorLogEntry {
-  /** Present on workspace-wide feed responses. */
-  project?: string;
-  watchPath?: string;
+  /**
+   * Present on workspace-wide feed responses. Null for a Watcher finding
+   * that is not attributable to one project (e.g. a CLI-wide quota probe
+   * issue) - see orchestrator-waechter dossier §4a "workspace health events
+   * alone use project: null".
+   */
+  project?: string | null;
+  watchPath?: string | null;
   ts: string;
   kind: 'alert' | 'decision' | 'action' | 'observation' | 'intervention';
   topic: string;
