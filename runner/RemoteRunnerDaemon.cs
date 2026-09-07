@@ -94,6 +94,13 @@ public sealed class RemoteRunnerDaemon
         var hostJournal = new HostOrchestratorJournal(
             Path.Combine(_options.StateDir, "host-orchestrator.json"));
         var persistedAtStartup = state.LoadAll();
+        var startupReaped = await CliProcessReaper.Shared.SweepCodingAsync(
+            persistedAtStartup,
+            DateTime.UtcNow,
+            _log,
+            shutdown);
+        if (startupReaped > 0)
+            _log($"cli-process-startup-sweep reaped={startupReaped} maximumBudgetSeconds={CliProcessReaper.MaximumReviewBudget.TotalSeconds:0}");
         using var startupAuthorityWatch = CancellationTokenSource.CreateLinkedTokenSource(
             shutdown);
         var startupAuthorityTasks = persistedAtStartup

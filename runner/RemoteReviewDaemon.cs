@@ -58,6 +58,27 @@ public sealed class RemoteReviewDaemon
         var nextSlotHygieneLog = DateTime.MinValue;
         var nextSlotReconciliation = DateTime.MinValue;
 
+        var startupReaped = await CliProcessReaper.Shared.SweepReviewAsync(
+            persistedAtStartup,
+            DateTime.UtcNow,
+            _log,
+            shutdown);
+        if (startupReaped > 0)
+            _log($"cli-process-startup-sweep reaped={startupReaped} maximumBudgetSeconds={CliProcessReaper.MaximumReviewBudget.TotalSeconds:0}");
+
+        var providerAuthChecks = await Task.WhenAll(
+            RunnerCapabilityProbe.CodingCliBinaries(_options)
+                .GroupBy(item => item.Binary, StringComparer.Ordinal)
+                .Select(async group =>
+                {
+                    var status = await ProviderAuthProbe.Shared.RefreshAsync(group.Key, shutdown);
+                    return (Binary: group.Key, Status: status);
+                }));
+        foreach (var check in providerAuthChecks)
+            _log(
+                $"runner-provider-auth status={(check.Status.IsReady ? "ok" : check.Status.Status)} " +
+                $"binary={check.Binary} detail={check.Status.Detail}");
+
         void LogSlotHygiene(bool force = false)
         {
             var now = DateTime.UtcNow;

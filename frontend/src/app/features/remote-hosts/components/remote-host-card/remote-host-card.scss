@@ -187,8 +187,12 @@
 }
 .provider-auth__badge strong { color: var(--studio-fg-strong); }
 .provider-auth__dot { width: 6px; height: 6px; border-radius: 50%; background: var(--studio-fg-dim); }
-.provider-auth__badge[data-state='unavailable'] { background: var(--notify-error-tint); color: var(--notify-error-icon-fg); }
-.provider-auth__badge[data-state='unavailable'] .provider-auth__dot { background: var(--severity-high); }
+.provider-auth__badge[data-state='unavailable'],
+.provider-auth__badge[data-state='logged-out'],
+.provider-auth__badge[data-state='expired'] { background: var(--notify-error-tint); color: var(--notify-error-icon-fg); }
+.provider-auth__badge[data-state='unavailable'] .provider-auth__dot,
+.provider-auth__badge[data-state='logged-out'] .provider-auth__dot,
+.provider-auth__badge[data-state='expired'] .provider-auth__dot { background: var(--severity-high); }
 .provider-auth__badge[data-state='retrying'],
 .provider-auth__badge[data-state='limited'],
 .provider-auth__badge[data-state='expiring'] { background: var(--notify-warning-icon-bg); color: var(--notify-warning-icon-fg); }
@@ -197,6 +201,19 @@
 .provider-auth__badge[data-state='expiring'] .provider-auth__dot { background: var(--severity-medium); }
 .provider-auth__expiry { color: var(--notify-warning-icon-fg); font-size: 10px; }
 .provider-auth__history { color: var(--studio-fg-muted); font-size: 10px; }
+.provider-auth__sign-in {
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
+  border: 1px solid var(--studio-accent);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--studio-accent-strong);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.provider-auth__sign-in:hover { background: var(--studio-bg-hover); }
+.provider-auth__sign-in:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
 
 .chips {
   flex-wrap: wrap;

@@ -18,7 +18,7 @@ describe('provider auth projection', () => {
     const unknown = providerAuthBadgesForSnapshot(snapshot('ready', 'healthy', false), NOW)[0];
 
     expect(ok.state).toBe('ok');
-    expect(unavailable.state).toBe('unavailable');
+    expect(unavailable.state).toBe('logged-out');
     expect(unavailable.detail).toContain('Not logged in');
     expect(unknown.state).toBe('unknown');
     expect(unknown.detail).toContain('expired');
@@ -34,6 +34,17 @@ describe('provider auth projection', () => {
     expect(badge.expiresSoon).toBe(true);
     expect(badge.state).toBe('expiring');
     expect(badge.expiryLabel).toBe('Expires in 13 days');
+  });
+
+  it('projects elapsed credential metadata as expired and blocks routing', () => {
+    const expiresAt = new Date(NOW - 60_000).toISOString();
+    const badge = providerAuthBadgesForSnapshot(
+      snapshot('unavailable', 'healthy', true, 'Credential expired', expiresAt, 'credentials-expired'),
+      NOW,
+    )[0];
+
+    expect(badge.state).toBe('expired');
+    expect(badge.expiryLabel).toBe('Expired');
   });
 
   it('distinguishes transient retry, provider limit, and genuine sign-out', () => {
@@ -54,7 +65,7 @@ describe('provider auth projection', () => {
     expect(retrying.state).toBe('retrying');
     expect(limited.state).toBe('limited');
     expect(limited.limitedUntil).toBe(limitedUntil);
-    expect(signedOut.state).toBe('unavailable');
+    expect(signedOut.state).toBe('logged-out');
   });
 
   it('holds a Ready card on its configured host until usable auth is advertised', () => {
@@ -124,7 +135,7 @@ describe('provider auth projection', () => {
     expect(limited?.label).not.toContain('sign-in');
   });
 
-  it('uses runner link loss for an unknown badge and reserves sign-in for two logout probes', () => {
+  it('uses runner link loss for an unknown badge and offers sign-in after one explicit logout', () => {
     const task = {
       state: '2-ready', cliType: 'claude',
       executionLocation: {
@@ -144,8 +155,27 @@ describe('provider auth projection', () => {
       snapshot('unavailable', 'healthy', true, 'Not logged in', null, 'signed-out'), NOW,
     );
     const oneLogoutProbe = signedOut.map(status => ({ ...status, consecutiveFailures: 1 }));
-    expect(providerAuthWaitReason(task, oneLogoutProbe)?.label).toContain('unreachable since');
+    expect(providerAuthWaitReason(task, oneLogoutProbe)?.label).toBe('Waiting for Claude sign-in on runner-berlin');
     expect(providerAuthWaitReason(task, signedOut)?.label).toBe('Waiting for Claude sign-in on runner-berlin');
+  });
+
+  it('attaches a Codex device sign-in target to an unavailable Ready-card wait', () => {
+    const task = {
+      state: '2-ready',
+      cliType: 'codex',
+      executionLocation: { configuredRunnerId: 'agent-runner-01' },
+    } as TaskInfo;
+    const waiting = providerAuthWaitReason(task, providerAuthBadgesForSnapshot(
+      snapshot('unavailable', 'healthy', true, 'Not logged in', null, 'signed-out', null, 'codex'),
+      NOW,
+    ));
+
+    expect(waiting?.signInTarget).toMatchObject({
+      provider: 'codex',
+      hostId: 'host-berlin',
+      runnerId: 'agent-runner-01',
+      hostName: 'runner-berlin',
+    });
   });
 });
 
@@ -155,8 +185,9 @@ function snapshot(
   isFresh: boolean,
   detail = 'Active session confirmed',
   expiresAt: string | null = null,
-  signal: 'ok' | 'transient-auth-error' | 'rate-limited' | 'signed-out' | 'credentials-expiring' = 'ok',
+  signal: 'ok' | 'transient-auth-error' | 'rate-limited' | 'signed-out' | 'credentials-expiring' | 'credentials-expired' = 'ok',
   limitedUntil: string | null = null,
+  provider = 'claude',
 ): TaskServerRunnerCapabilitySnapshot {
   return {
     runnerId: 'agent-runner-01',
@@ -170,7 +201,7 @@ function snapshot(
     lastSeenAt: '2026-08-04T11:59:50Z',
     hostAdmission: { hostId: 'host-berlin', admissionState: 'open' },
     capabilities: [{
-      key: 'cli-execution:claude',
+      key: `cli-execution:${provider}`,
       category: 'cli-execution',
       advertisedStatus: 'ready',
       healthState: 'healthy',
@@ -181,7 +212,7 @@ function snapshot(
       affectedClaims: [],
       recoveryHistory: [],
     }, {
-      key: 'provider-auth:claude',
+      key: `provider-auth:${provider}`,
       category: 'provider-auth',
       advertisedStatus,
       healthState,

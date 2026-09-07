@@ -612,6 +612,7 @@ function telemetryStats(telemetry: TaskServerTelemetrySnapshot): NonNullable<Rem
     cpuLoadPct: telemetry.cpuPercent ?? 0,
     diskTotalGb: (telemetry.diskTotalBytes ?? 0) / 1024 / 1024 / 1024,
     diskFreeGb: (telemetry.diskFreeBytes ?? 0) / 1024 / 1024 / 1024,
+    cliProcessesReaped: telemetry.cliProcessesReaped ?? 0,
   };
 }
 

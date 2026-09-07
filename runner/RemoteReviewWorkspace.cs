@@ -218,8 +218,10 @@ public sealed class RemoteReviewWorkspace
                 var execution = ReviewCommandKinds.IsAgent(command.ExecutionKind)
                     ? await _agentCommands.RunAsync(command, ct)
                     : await RunCommandAsync(command, RepositoryPath, ct);
-                if (MissingToolchain(execution.Process)
-                    || AgentCommandUnavailable(command, execution.Process))
+                var infrastructureClassification = ReviewCommandInfrastructureClassification(
+                    command,
+                    execution.Process);
+                if (infrastructureClassification is not null)
                 {
                     commands.Add(await AddCommandEvidenceAsync(
                         command.StepId,
@@ -245,9 +247,14 @@ public sealed class RemoteReviewWorkspace
                         command,
                         execution.AgentUsage));
                     SaveCaches(candidateCache);
+                    var providerAuthenticationUnavailable =
+                        infrastructureClassification == "ProviderAuthenticationUnavailable";
                     throw await InfrastructureFailureAsync(
-                        "ToolUnavailable",
-                        $"Review command '{command.StepId}' could not use its declared toolchain: " +
+                        infrastructureClassification,
+                        providerAuthenticationUnavailable
+                            ? $"Review command '{command.StepId}' was not run because its declared " +
+                              $"{command.CliType} toolchain is logged out; re-authenticate the host and requeue the review."
+                            : $"Review command '{command.StepId}' could not use its declared toolchain: " +
                         $"{CommandLine(command)}; exit={execution.Process.ExitCode}; " +
                         $"budget={BudgetSummary(command.TimeoutSeconds, execution)}.",
                         commands,
@@ -1461,6 +1468,27 @@ public sealed class RemoteReviewWorkspace
         => ReviewCommandKinds.IsAgent(command.ExecutionKind)
            && !result.Success
            && !result.StdOut.Contains("[[ASPECT_VERDICT:", StringComparison.Ordinal);
+
+    private static bool ProviderAuthenticationUnavailable(
+        ReviewCommandDto command,
+        ProcessResult result)
+        => ReviewCommandKinds.IsAgent(command.ExecutionKind)
+           && ProviderAccessClassifier.Classify(
+                   result.ExitCode,
+                   result.StdOut,
+                   result.StdErr)
+               .Kind == ProviderAccessEvidenceKind.AuthenticationFailure;
+
+    internal static string? ReviewCommandInfrastructureClassification(
+        ReviewCommandDto command,
+        ProcessResult result)
+    {
+        if (ProviderAuthenticationUnavailable(command, result))
+            return "ProviderAuthenticationUnavailable";
+        if (MissingToolchain(result) || AgentCommandUnavailable(command, result))
+            return "ToolUnavailable";
+        return null;
+    }
 
     private static string HashText(string value)
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();

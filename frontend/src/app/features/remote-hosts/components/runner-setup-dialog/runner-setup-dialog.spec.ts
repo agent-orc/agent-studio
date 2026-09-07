@@ -1,10 +1,11 @@
 import { provideHttpClient } from '@angular/common/http';
-import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
+import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { describe, expect, it } from 'vitest';
 import type { RemoteHost } from '../../models/remote-host.model';
+import { ProviderSignInDialogService } from '../../services/codex-sign-in-dialog.service';
 import { RunnerSetupDialogComponent } from './runner-setup-dialog';
 
 const HOST: RemoteHost = {
@@ -23,7 +24,7 @@ const HOST: RemoteHost = {
 };
 
 describe('RunnerSetupDialogComponent', () => {
-  it('blocks loopback until tunnel mode and every required value are explicit', async () => {
+  it('blocks loopback until tunnel mode and connection values are explicit', async () => {
     await TestBed.configureTestingModule({
       imports: [RunnerSetupDialogComponent],
       providers: [
@@ -55,42 +56,17 @@ describe('RunnerSetupDialogComponent', () => {
     component.setConnectionMode('tunnel');
     fixture.detectChanges();
     expect(component.taskServerUrl()).toBe('http://127.0.0.1:15031');
-    expect(component.ready()).toBe(false);
-    expect(el.querySelector('[data-testid="visible-cli-task-card"]')).toBeNull();
+    expect(component.ready()).toBe(true);
+    expect(el.querySelector('[data-testid="visible-cli-task-card"]')).toBeTruthy();
 
-    const secret = 'sk-ant-oat01-provider-auth-fixture';
-    component.providerAuthSecret.set(secret);
-    component.provisionProviderAuth();
-    const request = TestBed.inject(HttpTestingController).expectOne(
-      '/api/v1/management/remote-hosts/provider-auth',
-    );
-    expect(request.request.body).toEqual({
-      sshTarget: 'agent-runner',
-      runnerId: 'agent-runner-01',
-      environmentVariable: 'CLAUDE_CODE_OAUTH_TOKEN',
-      secret,
-    });
-    request.flush({
-      provider: 'claude',
-      environmentVariable: 'CLAUDE_CODE_OAUTH_TOKEN',
-      host: 'agent-runner',
-      state: 'installed-awaiting-runner',
-      detail: 'The protected EnvironmentFile was installed.',
-      requestedAt: '2026-08-04T12:00:00Z',
-      restartedServices: [],
-      processEnvironmentVerified: false,
-    });
-    fixture.detectChanges();
-
-    expect(component.providerAuthSecret()).toBe('');
     expect(component.ready()).toBe(true);
     expect(el.querySelector('[data-testid="runner-setup-loopback-block"]')).toBeNull();
     expect(el.querySelector('[data-testid="visible-cli-task-card"]')).toBeTruthy();
-    expect(component.request().prompt).toContain('/etc/agent-runner/provider-auth.env');
-    expect(component.request().prompt).not.toContain(secret);
+    expect(component.request().prompt).toContain('provider re-auth action in Execution Hosts');
+    expect(component.request().prompt).not.toContain('/etc/agent-runner/provider-auth.env');
   });
 
-  it('keeps setup blocked while an active runner still owes a successful fresh probe', async () => {
+  it('opens a host-owned Claude sign-in without collecting a credential', async () => {
     await TestBed.configureTestingModule({
       imports: [RunnerSetupDialogComponent],
       providers: [
@@ -108,24 +84,14 @@ describe('RunnerSetupDialogComponent', () => {
     component.setConnectionMode('tunnel');
     component.gitRemote.set('git@github.com:example/agent-studio.git');
     component.gitPushRemote.set('git@github.com:example/agent-studio.git');
-    component.providerAuthSecret.set('sk-ant-oat01-active-runner-fixture');
-    component.provisionProviderAuth();
+    component.openProviderSignIn('claude');
 
-    TestBed.inject(HttpTestingController).expectOne(
-      '/api/v1/management/remote-hosts/provider-auth',
-    ).flush({
+    const dialog = TestBed.inject(ProviderSignInDialogService);
+    expect(dialog.request()).toMatchObject({
       provider: 'claude',
-      environmentVariable: 'CLAUDE_CODE_OAUTH_TOKEN',
-      host: 'agent-runner',
-      state: 'awaiting-probe',
-      detail: 'The daemon received the provider variable. Waiting for the runner probe.',
-      requestedAt: '2026-08-04T12:00:00Z',
-      restartedServices: ['agent-runner.service'],
-      processEnvironmentVerified: true,
+      hostId: 'agent-runner-01',
+      sshTarget: 'agent-runner',
     });
-
-    expect(component.providerAuthSecret()).toBe('');
-    expect(component.providerAuthBootstrapReady()).toBe(false);
-    expect(component.ready()).toBe(false);
+    expect(component.ready()).toBe(true);
   });
 });

@@ -53,34 +53,40 @@ public static class ManagementEndpoints
                     ? Results.Ok(result)
                     : Results.Json(result, statusCode: 502);
         });
-        group.MapPost("/remote-hosts/provider-auth", async (
+        group.MapPost("/remote-hosts/{id}/provider-sign-in", async (
             HttpContext context,
-            ProviderAuthProvisioningRequest request,
-            IProviderAuthProvisioner provisioner,
+            string id,
+            ProviderSignInRequest request,
+            ProviderSignInCoordinator coordinator,
             IConfiguration configuration,
             CancellationToken ct) =>
         {
             context.Response.Headers.CacheControl = "no-store";
-            if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
-            var validation = ProviderAuthProvisioningPolicy.Validate(request);
-            if (validation is not null)
-                return Results.Json(new { error = "invalid-provider-auth-request", message = validation }, statusCode: 400);
+            if (!TryAuthorize(context, configuration, out var denied, out var actor, out _)) return denied!;
             try
             {
-                return Results.Ok(await provisioner.ProvisionAsync(request, ct));
+                return Results.Ok(await coordinator.StartAsync(id, request, actor!, ct));
             }
-            catch (ArgumentException ex)
+            catch (ProviderSignInException ex)
             {
-                return Results.Json(
-                    new { error = "invalid-provider-auth-request", message = ex.Message },
-                    statusCode: 400);
+                return Results.Json(new { error = ex.Code, message = ex.Message }, statusCode: ex.StatusCode);
             }
-            catch (ProviderAuthProvisioningException ex)
-            {
-                return Results.Json(
-                    new { error = "provider-auth-provisioning-failed", message = ex.Message },
-                    statusCode: 502);
-            }
+        });
+        group.MapGet("/remote-hosts/{id}/provider-sign-in/{handle}", (
+            HttpContext context,
+            string id,
+            string handle,
+            ProviderSignInCoordinator coordinator,
+            IConfiguration configuration) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
+            var status = coordinator.Get(id, handle);
+            return status is null
+                ? Results.Json(
+                    new { error = "provider-sign-in-session-not-found", message = "The provider sign-in session was not found for this host." },
+                    statusCode: 404)
+                : Results.Ok(status);
         });
         group.MapPost("/commands", (HttpContext context, ManagementCommandRequest request, ManagementService service, IConfiguration configuration) =>
         {

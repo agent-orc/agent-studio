@@ -175,10 +175,26 @@ public sealed class RemoteReviewExecutor
             var attached = DurableReviewProcess.Attach(slot);
             while (true)
             {
+                if (heartbeat.IsCompleted && !await heartbeat)
+                {
+                    await ReapAttemptAsync(slot, CancellationToken.None);
+                    _state.Save(slot with
+                    {
+                        Phase = "lease-lost",
+                        AdoptionFailure = "Review lease authority was lost while the CLI was running.",
+                    });
+                    return 3;
+                }
                 var result = attached.ReadResult();
                 if (result is not null)
                 {
                     slot = _state.Save(slot with { Phase = "finalizing" });
+                    await ReapAttemptAsync(slot, CancellationToken.None);
+                    slot = _state.Save(slot with
+                    {
+                        ProcessId = null,
+                        ProcessStartedAtUtc = null,
+                    });
                     return await FinalizeResultAsync(slot, workspace, result, shutdown);
                 }
                 if (!DurableReviewProcess.VerifyLive(slot, out var processProof))
@@ -220,7 +236,7 @@ public sealed class RemoteReviewExecutor
         finally
         {
             heartbeatStop.Cancel();
-            try { await heartbeat; }
+            try { _ = await heartbeat; }
             catch (OperationCanceledException) { }
             catch (Exception exception)
             {
@@ -513,6 +529,7 @@ public sealed class RemoteReviewExecutor
         PersistedReviewSlot slot,
         RemoteReviewWorkspace currentWorkspace)
     {
+        await ReapAttemptAsync(slot, CancellationToken.None);
         if (PathsEqual(slot.WorkspacePath, currentWorkspace.RepositoryPath))
             return await currentWorkspace.CleanupAsync();
 
@@ -536,7 +553,7 @@ public sealed class RemoteReviewExecutor
         return !Directory.Exists(target);
     }
 
-    private async Task RenewLoopAsync(
+    private async Task<bool> RenewLoopAsync(
         string attemptId,
         string taskId,
         ReviewLeaseDto lease,
@@ -591,7 +608,7 @@ public sealed class RemoteReviewExecutor
                 _log(
                     $"review lease authority lost attempt={attemptId} ({dead.StatusCode}); " +
                     $"stopping heartbeat: {dead.Message}");
-                return;
+                return false;
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
@@ -600,7 +617,21 @@ public sealed class RemoteReviewExecutor
                     $"retrying next tick: {exception.Message}");
             }
         }
+        return true;
     }
+
+    private Task<int> ReapAttemptAsync(
+        PersistedReviewSlot slot,
+        CancellationToken cancellationToken)
+        => slot.ProcessId is { } pid && slot.ProcessStartedAtUtc is { } startedAt
+            ? CliProcessReaper.Shared.ReapAsync(
+                pid,
+                startedAt,
+                slot.AttemptId,
+                slot.WorkspacePath,
+                _log,
+                cancellationToken)
+            : Task.FromResult(0);
 
     private static string LostWorkSummary(PersistedReviewSlot slot, string reason)
     {
@@ -659,7 +690,7 @@ public sealed class RemoteReviewExecutor
             "SnapshotUnavailable" or "RepositoryMismatch" or "ShaMismatch"
                 => CapabilityProtocol.RepositoryAccess,
             "PreparationFailed" => ReviewCapabilities.DependencyPreparation,
-            "ToolUnavailable" => ReviewCapabilities.SemanticReview,
+            "ToolUnavailable" or "ProviderAuthenticationUnavailable" => ReviewCapabilities.SemanticReview,
             "VisionUnavailable" => CapabilityProtocol.Vision,
             "DiskFull" => CapabilityProtocol.Disk,
             "LeaseAuthorityInvalid" => CapabilityProtocol.LeaseAuthority,

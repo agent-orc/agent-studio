@@ -772,6 +772,13 @@ public sealed class RemoteTaskRunner
                 if (observation.Result is { } result)
                 {
                     _state.Save(slot with { Phase = "finalizing", LastOutputSequence = sequence });
+                    await CliProcessReaper.Shared.ReapAsync(
+                        slot.ProcessId!.Value,
+                        slot.ProcessStartedAtUtc!.Value,
+                        slot.AttemptId,
+                        slot.WorktreePath,
+                        _log,
+                        CancellationToken.None);
                     var processResult = new ProcessResult(result.ExitCode, result.StdOut, result.StdErr);
                     var invocation = AgentCliProcess.Resolve(_options, slot.RunSpec);
                     var providerAccess = ProviderAccessClassifier.Classify(
@@ -904,9 +911,11 @@ public sealed class RemoteTaskRunner
         }
         catch (OperationCanceledException)
         {
-            process.Kill();
-            await WorktreeProcessReaper.ReapAsync(
-                workspace.RepoPath,
+            await CliProcessReaper.Shared.ReapAsync(
+                slot.ProcessId!.Value,
+                slot.ProcessStartedAtUtc!.Value,
+                slot.AttemptId,
+                slot.WorktreePath,
                 _log,
                 CancellationToken.None);
             throw;

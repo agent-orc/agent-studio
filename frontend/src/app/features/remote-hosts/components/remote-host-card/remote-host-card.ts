@@ -1,5 +1,5 @@
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, input, output, signal } from '@angular/core';
 import { cliTypeIcon, cliTypeLabel } from '../../../../services/format.util';
 import type { CliType } from '../../../../models/task.model';
 import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
@@ -36,7 +36,8 @@ import {
   type RemoteHost,
 } from '../../models/remote-host.model';
 import { freshHostTelemetry, latestHostTelemetry } from '../../models/running-truth';
-import { providerAuthBadgesForHost, type ProviderAuthBadge } from '../../models/provider-auth.model';
+import { providerAuthBadgesForHost, signInTarget, type ProviderAuthBadge } from '../../models/provider-auth.model';
+import { ProviderSignInDialogService } from '../../services/codex-sign-in-dialog.service';
 
 /** One meter row (RAM / CPU / Disk) resolved for the template. */
 interface Meter {
@@ -82,6 +83,7 @@ interface Meter {
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class RemoteHostCardComponent {
+  private readonly providerSignIn = inject(ProviderSignInDialogService);
   readonly host = input.required<RemoteHost>();
   readonly roles = input<readonly RemoteHost[]>([]);
   readonly roleActiveSlots = input<Readonly<Record<string, number>>>({});
@@ -248,11 +250,23 @@ export class RemoteHostCardComponent {
     if (!policy || policy.allowAllProjects) return 'All registered projects allowed';
     return `${policy.allowedProjectIds.length} selected projects allowed`;
   });
-  readonly hostWorkSummary = computed(() => this.runSlotsLabel());
+  readonly hostWorkSummary = computed(() => {
+    const reaped = this.host().stats?.cliProcessesReaped ?? 0;
+    return `${this.runSlotsLabel()} · ${reaped} CLI ${reaped === 1 ? 'process' : 'processes'} reaped`;
+  });
   readonly systemLoadSummary = computed(() => this.loadLabel() ?? 'System load not reported');
 
   latestAuthTransition(badge: ProviderAuthBadge) {
     return badge.history.at(-1) ?? null;
+  }
+
+  canSignInProvider(badge: ProviderAuthBadge): boolean {
+    return ['claude', 'codex'].includes(badge.provider)
+      && ['logged-out', 'expired', 'unavailable', 'expiring'].includes(badge.state);
+  }
+
+  openProviderSignIn(badge: ProviderAuthBadge): void {
+    this.providerSignIn.open(signInTarget(badge, this.host().address));
   }
 
   cliIcon(t: CliType): string { return cliTypeIcon(t); }

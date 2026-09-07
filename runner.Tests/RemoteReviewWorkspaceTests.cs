@@ -239,6 +239,30 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     [Fact]
+    public void LoggedOutAgentToolchain_IsReviewInfrastructure()
+    {
+        var command = new ReviewCommandDto(
+            "aspect-requirement-fit",
+            "requirement-fit",
+            "claude",
+            [],
+            TimeoutSeconds: 30,
+            ExecutionKind: ReviewCommandKinds.AgentAspect,
+            Prompt: "Inspect the exact result and return the required aspect sentinel.",
+            CliType: AgentCliProcess.ClaudeCli,
+            Model: "claude-sonnet-4-6",
+            ThinkingLevel: "high");
+        var classification = RemoteReviewWorkspace.ReviewCommandInfrastructureClassification(
+            command,
+            new ProcessResult(
+                1,
+                string.Empty,
+                "Not logged in. Run claude auth login to sign in."));
+
+        Assert.Equal("ProviderAuthenticationUnavailable", classification);
+    }
+
+    [Fact]
     public async Task Node_fixture_without_node_modules_prepares_before_angular_style_build()
     {
         var sha = await SeedOriginWithFilesAsync(new Dictionary<string, string>
@@ -887,7 +911,8 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         string? integrationRef = null,
         IReadOnlyList<ReviewPreparationCommandDto>? preparation = null,
         IReadOnlyList<string>? preserveGlobs = null,
-        string? codexCliBin = null)
+        string? codexCliBin = null,
+        string? claudeCliBin = null)
     {
         var repositoryId = TaskServerClient.RepositoryIdentity(_origin)!;
         var subject = new ReviewSubjectDto(
@@ -936,6 +961,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             CliBin = "unused",
             CliArgs = "",
             CodexCliBin = codexCliBin ?? "codex",
+            ClaudeCliBin = claudeCliBin ?? "claude",
             TtlSeconds = 120,
             HeartbeatSeconds = 30,
         };

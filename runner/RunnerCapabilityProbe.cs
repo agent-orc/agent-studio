@@ -188,7 +188,8 @@ internal static class RunnerCapabilityProbe
                 sample.TaskServerConnectionConsecutiveFailures,
                 sample.TaskServerConnectionEscalatedAt,
                 sample.TaskServerConnectionLastError,
-                sample.TaskServerConnectionLastRecoveredAt);
+                sample.TaskServerConnectionLastRecoveredAt,
+                CliProcessReaper.ReapedCount);
 
     private static string ConnectivityDetail(TaskServerConnectivitySnapshot? connectivity)
     {
@@ -377,7 +378,7 @@ public delegate Task<ProcessResult> ProviderAuthLauncher(
 /// read the cached value. An expired entry is refreshed behind the last known
 /// verdict, so no daemon loop ever waits on a child process.</para>
 ///
-/// <para><b>Last-good with negative confirmation.</b> Only repeated, explicit
+/// <para><b>Last-good with explicit evidence.</b> Only explicit
 /// logout output may replace a ready verdict with <c>unavailable</c>. A timeout,
 /// empty output, launch failure, or unsupported command is indeterminate: the
 /// probe retains its last verdict and emits a degraded diagnostic. A later
@@ -399,8 +400,9 @@ public sealed class ProviderAuthProbe
     public const string SignalTransient = "transient-auth-error";
     public const string SignalLimited = "rate-limited";
     public const string SignalSignedOut = "signed-out";
+    public const string SignalExpired = "credentials-expired";
     public const string SignalExpiring = "credentials-expiring";
-    public const string ConceptPath = "docs/operations/token-refresh-ohne-tunnel.md";
+    public const string ConceptPath = "docs/operations/remote-hosts.md#provider-auth";
 
     /// <summary>Idle cost is one child process per host per five minutes.</summary>
     public static readonly TimeSpan DefaultTtl = TimeSpan.FromMinutes(5);
@@ -408,8 +410,8 @@ public sealed class ProviderAuthProbe
     /// <summary>Node-based CLIs may need this long to start on a saturated review host.</summary>
     public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(30);
 
-    /// <summary>Two explicit logout answers are required before claim admission closes.</summary>
-    public const int DefaultNegativeConfirmations = 2;
+    /// <summary>An explicit CLI logout closes claim admission on the first observed probe.</summary>
+    public const int DefaultNegativeConfirmations = 1;
 
     /// <summary>The instance the advertisement reads from when no probe is passed in.</summary>
     public static ProviderAuthProbe Shared { get; } = new();
@@ -601,11 +603,19 @@ public sealed class ProviderAuthProbe
 
         var freshness = _credentialFreshness(cliBinary);
         var expiresAt = freshness.ExpiresAt;
+        var expired = expiresAt is not null && expiresAt <= _clock();
         var expiring = expiresAt is not null
                        && expiresAt <= _clock().Add(ProviderCredentialMonitor.ExpiryWarningWindow);
         var freshnessDetail = freshness.ModifiedAt is null
             ? freshness.Detail
             : $"{freshness.Detail} Credential file last changed {freshness.ModifiedAt:o}.";
+        if (expired)
+            return new ProviderAuthObservation(
+                ProviderAuthObservationKind.LoggedOut,
+                $"'{command}' confirmed a session, but its credential metadata expired at {expiresAt:o}. Re-authenticate this host. {freshnessDetail}",
+                SignalExpired,
+                expiresAt,
+                CredentialModifiedAt: freshness.ModifiedAt);
         return observation with
         {
             Detail = expiring
@@ -788,7 +798,9 @@ public sealed class ProviderAuthProbe
                 Unavailable,
                 observation.Detail,
                 observedAt,
-                Signal: SignalSignedOut),
+                Signal: observation.Signal == SignalExpired ? SignalExpired : SignalSignedOut,
+                ExpiresAt: observation.ExpiresAt,
+                CredentialModifiedAt: observation.CredentialModifiedAt),
             failures);
     }
 

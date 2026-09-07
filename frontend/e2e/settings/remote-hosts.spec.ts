@@ -1,6 +1,6 @@
 import type { Locator, Page } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { dismissDevErrorDialog, setTheme } from '../helpers/theme';
 import { test, expect } from '../fixtures/dev-backend';
 
@@ -308,6 +308,7 @@ test.describe('Execution Hosts settings section', () => {
   });
 
   test('captures the compact host table in light and dark themes', async ({ page, devBackend: _devBackend }) => {
+    void _devBackend;
     await stubGroupedHostApis(page);
     await page.setViewportSize({ width: EVIDENCE_VIEWPORT_WIDTH, height: 950 });
     await page.goto('/#/workspace/settings/execution-hosts');
@@ -319,6 +320,7 @@ test.describe('Execution Hosts settings section', () => {
   });
 
   test('groups roles by physical machine, preserves role capacity, release, and retired filtering', async ({ page, devBackend: _devBackend }) => {
+    void _devBackend;
     await stubGroupedHostApis(page);
     await page.goto('/#/workspace/settings/execution-hosts');
 
@@ -348,6 +350,7 @@ test.describe('Execution Hosts settings section', () => {
   });
 
   test('narrow tables collapse complete actions into the row overflow menu', async ({ page, devBackend: _devBackend }) => {
+    void _devBackend;
     await page.setViewportSize({ width: 900, height: 820 });
     await stubGroupedHostApis(page);
     await page.goto('/#/workspace/settings/execution-hosts');
@@ -369,6 +372,7 @@ test.describe('Execution Hosts settings section', () => {
   });
 
   test('expanded machine starts with compact section summaries and reveals one section at a time', async ({ page, devBackend: _devBackend }) => {
+    void _devBackend;
     await stubGroupedHostApis(page);
     await page.goto('/#/workspace/settings/execution-hosts');
 
@@ -636,7 +640,6 @@ test.describe('Execution Hosts settings section', () => {
 
   test('configures one host and starts setup on the durable CLI task substrate', async ({ page }) => {
     let createBody: Record<string, unknown> | null = null;
-    const providerSecret = 'sk-ant-oat01-playwright-provider-secret';
     await page.unroute('**/api/tasks');
     await page.route('**/api/tasks', async route => {
       if (route.request().method() !== 'POST') {
@@ -651,17 +654,6 @@ test.describe('Execution Hosts settings section', () => {
       contentType: 'application/json',
       body: JSON.stringify({ error: 'mocked-task-detail-not-mounted' }),
     }));
-    await page.route('**/api/v1/management/remote-hosts/provider-auth', route => route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        provider: 'claude', environmentVariable: 'CLAUDE_CODE_OAUTH_TOKEN',
-        host: 'agent-runner', state: 'installed-awaiting-runner',
-        detail: 'The protected EnvironmentFile was installed.', requestedAt: new Date().toISOString(),
-        restartedServices: [], processEnvironmentVerified: false,
-      }),
-    }));
-
     await page.goto('/#/workspace/settings/remote-hosts');
     const remote = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
     await expandHost(remote);
@@ -674,15 +666,10 @@ test.describe('Execution Hosts settings section', () => {
     await page.getByTestId('runner-setup-git-remote').fill('https://github.com/example/agent-studio.git');
     await page.getByTestId('runner-setup-git-push-remote').fill('git@github.com:example/agent-studio.git');
     await page.getByTestId('runner-setup-connection-mode').selectOption('tunnel');
-    await page.getByTestId('runner-setup-provider-auth-secret').fill(providerSecret);
-    await page.getByTestId('runner-setup-provider-auth-provision').click();
-    await expect(page.getByTestId('runner-setup-provider-auth-secret')).toHaveValue('');
-    await expect(page.getByTestId('runner-setup-provider-auth-status')).toHaveAttribute('data-state', 'waiting');
-
     await expect(page.getByTestId('visible-cli-task-card')).toBeVisible();
     await expect(page.getByTestId('visible-cli-task-prompt')).toContainText('Reachability gate (must run first)');
-    await expect(page.getByTestId('visible-cli-task-prompt')).toContainText('/etc/agent-runner/provider-auth.env');
-    await expect(page.getByTestId('visible-cli-task-prompt')).not.toContainText(providerSecret);
+    await expect(page.getByTestId('visible-cli-task-prompt')).toContainText('provider re-auth action in Execution Hosts');
+    await expect(page.getByTestId('visible-cli-task-prompt')).not.toContainText('/etc/agent-runner/provider-auth.env');
     await expect(page.getByTestId('visible-cli-task-duration')).toContainText('10 to 20 minutes');
     await page.screenshot({ path: join(SHOT_DIR, 'remote-host-runner-setup--mocked.png'), fullPage: false });
     await page.getByTestId('visible-cli-task-start').click();
@@ -698,8 +685,7 @@ test.describe('Execution Hosts settings section', () => {
     expect(String(createBody?.['promptMarkdown'])).toContain('bash scripts/remote-runner-onboard.sh');
     expect(String(createBody?.['promptMarkdown'])).toContain("--host 'agent-runner'");
     expect(String(createBody?.['promptMarkdown'])).toContain('X-Client-Id: agent-runner-01');
-    expect(String(createBody?.['promptMarkdown'])).toContain('Provider credentials were already delivered by Studio through SSH stdin');
-    expect(String(createBody?.['promptMarkdown'])).not.toContain(providerSecret);
+    expect(String(createBody?.['promptMarkdown'])).toContain('Do not copy credential files');
   });
 
   test('shows provider auth retrying, limited, expiring, signed-out, and unknown states', async ({ page }) => {
@@ -755,7 +741,8 @@ test.describe('Execution Hosts settings section', () => {
     await page.goto('/#/workspace/settings/remote-hosts');
     const remote = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
     await expandHost(remote);
-    await expect(remote.getByTestId('remote-host-provider-auth-claude')).toHaveAttribute('data-state', 'unavailable');
+    await expect(remote.getByTestId('remote-host-provider-auth-claude')).toHaveAttribute('data-state', 'logged-out');
+    await expect(remote.getByTestId('remote-host-provider-auth-observed-claude')).toContainText('Observed');
     await expect(remote.getByTestId('remote-host-provider-auth-codex')).toHaveAttribute('data-state', 'retrying');
     await expect(remote.getByTestId('remote-host-provider-auth-copilot')).toHaveAttribute('data-state', 'limited');
     await expect(remote.getByTestId('remote-host-provider-auth-antigravity')).toHaveAttribute('data-state', 'expiring');
@@ -769,6 +756,97 @@ test.describe('Execution Hosts settings section', () => {
     await remote.screenshot({ path: join(SHOT_DIR, 'provider-auth-states-dark--mocked.png') });
     await setTheme(page, 'light');
     await remote.screenshot({ path: join(SHOT_DIR, 'provider-auth-states-light--mocked.png') });
+  });
+
+  test('completes host-owned Claude browser sign-in and waits for the fresh provider probe', async ({ page, devBackend }) => {
+    void devBackend;
+    const now = Date.now();
+    let allowCompletion = false;
+    let signInCompleted = false;
+    let requestedBody: Record<string, unknown> | null = null;
+    const authCapability = (ready: boolean) => ({
+      key: 'provider-auth:claude', category: 'provider-auth',
+      advertisedStatus: ready ? 'ready' : 'unavailable', healthState: 'healthy',
+      signal: ready ? 'ok' : 'signed-out',
+      reason: null, detail: ready ? 'Active session confirmed.' : 'Not logged in',
+      advertisedAt: new Date(now + (ready ? 30_000 : 0)).toISOString(),
+      freshUntil: new Date(now + 180_000).toISOString(), isFresh: true,
+      firstFailureAt: null, lastFailureAt: null, cooldownUntil: null, canaryClaimId: null,
+      consecutiveFailures: ready ? 0 : 2, version: null, identity: 'claude', affectedClaims: [], recoveryHistory: [],
+    });
+    const snapshot = () => [{
+      runnerId: 'agent-runner-01', name: 'agent-runner-01', hostId: 'agent-runner-01',
+      instanceId: 'coding', runnerVersion: '1.2.0', protocolVersion: 2, status: 'active',
+      registeredAt: new Date(now - 86_400_000).toISOString(), lastSeenAt: new Date().toISOString(),
+      hostAdmission: { hostId: 'agent-runner-01', admissionState: 'open' },
+      capabilities: [{
+        key: 'cli-execution:claude', category: 'cli-execution', advertisedStatus: 'ready',
+        healthState: 'healthy', advertisedAt: new Date(now).toISOString(),
+        freshUntil: new Date(now + 180_000).toISOString(), isFresh: true,
+        consecutiveFailures: 0, affectedClaims: [], recoveryHistory: [],
+      }, authCapability(signInCompleted)], telemetry: null,
+    }];
+
+    await page.unroute('**/api/v1/management/remote-hosts');
+    await page.route('**/api/v1/management/remote-hosts', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify(snapshot()),
+    }));
+    await page.route('**/api/v1/management/remote-hosts/*/provider-sign-in', async route => {
+      requestedBody = route.request().postDataJSON() as Record<string, unknown>;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          handle: 'claude_fake_session', state: 'pending', provider: 'claude',
+          verificationUrl: 'https://claude.ai/oauth/authorize',
+          userCode: null, expiresAt: new Date(now + 900_000).toISOString(),
+        }),
+      });
+    });
+    await page.route('**/api/v1/management/remote-hosts/*/provider-sign-in/*', route => {
+      signInCompleted = allowCompletion;
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          handle: 'claude_fake_session', state: allowCompletion ? 'completed' : 'pending', provider: 'claude',
+          detail: allowCompletion ? 'Claude sign-in completed.' : 'Waiting for browser sign-in.',
+          requestedAt: new Date(now).toISOString(), expiresAt: new Date(now + 900_000).toISOString(),
+          completedAt: allowCompletion ? new Date().toISOString() : null,
+        }),
+      });
+    });
+
+    await page.goto('/#/workspace/settings/remote-hosts');
+    const remote = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
+    const evidenceDir = resolve(process.env.JOB_RESULTS_DIR ?? '../results', 'claude-sign-in');
+    mkdirSync(evidenceDir, { recursive: true });
+    await expandHost(remote);
+    await expect(remote.getByTestId('remote-host-provider-auth-claude')).toHaveAttribute('data-state', 'logged-out');
+    await setTheme(page, 'dark');
+    await remote.getByTestId('remote-host-provider-auth').screenshot({
+      path: join(evidenceDir, 'claude-sign-in-action-dark--mocked.png'),
+    });
+    await setTheme(page, 'light');
+    await remote.getByTestId('remote-host-provider-auth').screenshot({
+      path: join(evidenceDir, 'claude-sign-in-action-light--mocked.png'),
+    });
+    await remote.getByTestId('remote-host-provider-sign-in-claude').click();
+    const dialog = page.getByTestId('codex-sign-in-dialog');
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByTestId('codex-sign-in-url')).toHaveAttribute('href', 'https://claude.ai/oauth/authorize');
+    await expect(dialog.getByTestId('codex-sign-in-code')).toBeHidden();
+    await expect.poll(() => requestedBody).not.toBeNull();
+    expect(requestedBody).toEqual({ provider: 'claude', sshTarget: 'agent-runner' });
+
+    await setTheme(page, 'dark');
+    await dialog.screenshot({ path: join(evidenceDir, 'claude-browser-sign-in-dark--mocked.png') });
+    await setTheme(page, 'light');
+    await dialog.screenshot({ path: join(evidenceDir, 'claude-browser-sign-in-light--mocked.png') });
+
+    allowCompletion = true;
+    await expect(dialog).toBeHidden({ timeout: 10_000 });
+    await expect(remote.getByTestId('remote-host-provider-auth-claude')).toHaveAttribute('data-state', 'ok');
   });
 
   test('surfaces a failed startup push probe as a read-only host', async ({ page }) => {
@@ -1103,36 +1181,10 @@ test.describe('Execution Hosts settings section', () => {
   });
 
   test('adds a host through the guided five-step setup including deploy key', async ({ page }) => {
-    let providerInstalled = false;
     await page.unroute('**/api/v1/management/remote-hosts');
-    await page.route('**/api/v1/management/remote-hosts/provider-auth', route => {
-      providerInstalled = true;
-      return route.fulfill({
-        status: 200, contentType: 'application/json', body: JSON.stringify({
-          provider: 'claude', environmentVariable: 'CLAUDE_CODE_OAUTH_TOKEN',
-          host: 'runner@host.example.com', state: 'awaiting-probe',
-          detail: 'Daemon environment verified.', requestedAt: new Date().toISOString(),
-          restartedServices: ['agent-host.service'], processEnvironmentVerified: true,
-        }),
-      });
-    });
     await page.route('**/api/v1/management/remote-hosts', route => {
-      const now = new Date();
       return route.fulfill({
-        status: 200, contentType: 'application/json', body: JSON.stringify(providerInstalled ? [{
-          runnerId: 'agent-runner-02', name: 'agent-runner-02', hostId: 'agent-runner-02',
-          instanceId: 'coding', runnerVersion: '1.2.0', protocolVersion: 2, status: 'active',
-          registeredAt: now.toISOString(), lastSeenAt: now.toISOString(),
-          hostAdmission: { hostId: 'agent-runner-02', admissionState: 'open' },
-          capabilities: [{
-            key: 'provider-auth:claude', category: 'provider-auth', advertisedStatus: 'ready',
-            healthState: 'healthy', reason: null, advertisedAt: now.toISOString(),
-            freshUntil: new Date(now.getTime() + 120_000).toISOString(), isFresh: true,
-            firstFailureAt: null, lastFailureAt: null, cooldownUntil: null, canaryClaimId: null,
-            consecutiveFailures: 0, version: null, identity: 'claude', detail: 'Active session confirmed',
-            affectedClaims: [], recoveryHistory: [],
-          }], telemetry: null,
-        }] : []),
+        status: 200, contentType: 'application/json', body: '[]',
       });
     });
     await page.goto('/#/workspace/settings/remote-hosts');
@@ -1147,9 +1199,8 @@ test.describe('Execution Hosts settings section', () => {
     await expect(page.getByTestId('add-host-wizard')).toContainText('write-enabled repository deploy key');
     await page.getByTestId('add-host-deploy-key-check').check();
     await page.getByTestId('add-host-next').click();
-    await page.getByTestId('add-host-provider-auth-secret').fill('sk-ant-oat01-playwright-provider-secret');
-    await page.getByTestId('add-host-provider-auth-provision').click();
-    await expect(page.getByTestId('add-host-provider-auth-status')).toHaveAttribute('data-state', 'ok');
+    await expect(page.getByTestId('add-host-wizard')).toContainText('Do not copy');
+    await page.getByTestId('add-host-claude-check').check();
     await page.getByTestId('add-host-codex-check').check();
     await setTheme(page, 'dark');
     await page.screenshot({ path: join(SHOT_DIR, 'remote-host-add-wizard-provider-auth-dark--mocked.png'), fullPage: false });

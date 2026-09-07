@@ -6,6 +6,10 @@
     <div class="cli-wm__notice" data-testid="cli-wm-notice">{{ note }}</div>
   }
 
+  <p class="cli-wm__notice" data-testid="cli-wm-host-auth-note">
+    Remote-host credentials are host-owned. Copying Claude or Codex credential files from an operator device is unsupported; use the re-auth action in Execution Hosts.
+  </p>
+
   @if (loading() && !reportFor('claude')) {
     <div class="cli-wm__empty">Loading working memory…</div>
   }

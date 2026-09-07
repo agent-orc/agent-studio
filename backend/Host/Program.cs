@@ -274,9 +274,11 @@ if (!underTestHost)
 builder.Services.AddSingleton<ClientIdentityStore>();
 builder.Services.AddSingleton<AccessSecurityStore>();
 builder.Services.AddSingleton<ManagementService>();
-builder.Services.AddSingleton<IProviderAuthProvisioner, SshProviderAuthProvisioner>();
 builder.Services.AddSingleton<ITunnelKeeperManager, WindowsTunnelKeeperManager>();
 builder.Services.AddSingleton<RemoteRunnerLinkService>();
+builder.Services.AddSingleton<IProviderDeviceAuthTransport, SshProviderDeviceAuthTransport>();
+builder.Services.AddSingleton<IProviderSignInAudit, ProviderSignInOperatorFeed>();
+builder.Services.AddSingleton<ProviderSignInCoordinator>();
 builder.Services.AddSingleton<MigrationStateStore>();
 builder.Services.AddSingleton<HostTelemetryStore>();
 builder.Services.AddSingleton<AgentStudio.Persistence.IAtomicJsonFileWriter, AgentStudio.Persistence.AtomicJsonFileWriter>();

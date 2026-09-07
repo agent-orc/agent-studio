@@ -140,14 +140,13 @@ differences live in the
 **Contract.** `TestCliPath()` returns `(Available, Version, ResolvedPath)`. Availability and quota probes remain Studio services because they also feed settings and routing surfaces outside an active CAR run.
 
 **Authentication.** Studio-local CLIs may still authenticate out of band.
-Remote hosts use the protected provider-auth provisioning flow. Environment
-credentials live only in `/etc/agent-runner/provider-auth.env` on the selected
-host, owned by `root:agent` with mode `640`. Studio sends a replacement through
-SSH stdin and does not persist it. Both remote units load the file after their
-normal runner EnvironmentFile. The probe uses the resulting process environment
-and CLI status as authentication authority. A metadata-only freshness monitor
-may read native Claude and Codex credential files for modification and expiry
-timestamps, but never returns token values.
+Remote hosts use a browser-login flow started from Execution Hosts. The selected
+provider CLI runs through SSH on that host and writes only to the runner user's
+native Claude or Codex store. Studio retains the short-lived URL or device code,
+but never receives the resulting credential. A metadata-only freshness monitor
+may read native credential files for modification and expiry timestamps, but
+never returns token values. Copying credentials from an operator device is not
+supported.
 
 **Remote coding hosts.** The standalone host keeps one primary
 `RUNNER_CLI_BIN` plus `RUNNER_CLAUDE_CLI_BIN` and `RUNNER_CODEX_CLI_BIN`.
@@ -163,14 +162,15 @@ Indeterminate observations emit
 `runner-provider-auth-probe-degraded` for host diagnosis. A card requires the
 matching `cli-execution:<cliType>` and `provider-auth:<cliType>` keys. The CAR
 worker receives the matching provider path, so a Claude pin on a Codex-primary
-host cannot fall through to `codex -m <claude-model>`. On headless Linux hosts,
-both runner units load `/etc/agent-runner/provider-auth.env`; the Claude worker
-explicitly admits `CLAUDE_CODE_OAUTH_TOKEN` from the process environment after
-clean-context preparation. Credential paths are never an authentication source;
-the optional native-file read is freshness metadata only.
+host cannot fall through to `codex -m <claude-model>`. Clean-context workers
+link the matching host-owned credential into their isolated home so provider
+refreshes update the host session. Credential paths are never inferred as
+authenticated; the CLI status probe remains authoritative and native-file reads
+provide freshness metadata only.
 
-Execution Hosts renders `OK`, `Retrying`, `Limited`, `Expiring`, `Unavailable`,
-or `Unknown` for each advertised CLI and exposes the probe detail as a tooltip.
+Execution Hosts renders `OK`, `Retrying`, `Limited`, `Expiring`, `Expired`,
+`Logged out`, `Unavailable`, or `Unknown` for each advertised CLI and exposes
+the probe detail as a tooltip.
 Provider-auth state changes are retained in capability recovery history. Only
 two consecutive explicit sign-out results can create the blocking
 `OK -> Unavailable` transition and operator notification. Generic non-zero and
@@ -205,8 +205,8 @@ Clean context is implemented with a relocated config home, not a CLI flag. The h
 
 | CLI | Support | Host environment | Seed policy |
 |---|---|---|---|
-| Claude | clean or shared | `CLAUDE_CONFIG_DIR` | Link `.credentials.json`; copy `settings.json`; exclude user memory and project history. |
-| Codex | clean or shared | `CODEX_HOME` | Link `auth.json`; copy `config.toml`; exclude history and prior rollouts. |
+| Claude | clean or shared | `CLAUDE_CONFIG_DIR` | Link the same host's native `.credentials.json`; copy `settings.json`; exclude user memory and project history. Never seed it from another device. |
+| Codex | clean or shared | `CODEX_HOME` | Link the same host's native `auth.json`; copy `config.toml`; exclude history and prior rollouts. Never seed it from another device. |
 | Antigravity, persisted as `gemini` | shared only | none documented for `agentapi` | No isolated-home claim is made. |
 
 **Storage and resume boundary.** [`TaskCleanContextStore`](../../../cli-hosting/TaskCleanContextStore.cs) is the one path and seed implementation used by the local backend and standalone Agent Host. Windows homes live under `%USERPROFILE%\.atp\clean-context\`; Linux homes live under `$XDG_STATE_HOME/agent-studio/clean-context/`, falling back to `~/.local/state/agent-studio/clean-context/`. `AGENT_STUDIO_CLEAN_CONTEXT_ROOT` or backend `CleanContext:Root` may select another persistent, non-temporary root. Each CLI/task pair receives a SHA-256-keyed directory with an ownership marker. The task id is not exposed in the path, and another task cannot adopt a home whose marker does not match.

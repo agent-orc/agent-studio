@@ -204,7 +204,8 @@ public sealed record HostTelemetrySample(
     int TaskServerConnectionConsecutiveFailures = 0,
     DateTime? TaskServerConnectionEscalatedAt = null,
     string? TaskServerConnectionLastError = null,
-    DateTime? TaskServerConnectionLastRecoveredAt = null);
+    DateTime? TaskServerConnectionLastRecoveredAt = null,
+    long CliProcessesReaped = 0);
 
 public enum RunnerClaimStatus { Claimed, Empty, PreflightRequired, PreflightFailed, Invalid }
 

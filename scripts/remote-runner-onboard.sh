@@ -19,7 +19,6 @@ git_push_remote=""
 package_id="CodingAgentRunner"
 runner_command="agent-host"
 minimum_version="0.5.0"
-provider_auth_file="/etc/agent-runner/provider-auth.env"
 skip_auth=0
 
 usage() {
@@ -246,35 +245,10 @@ then
 fi
 
 printf '[onboarding] phase=provider-auth Checking the Studio-provisioned provider EnvironmentFile.\n'
-"${ssh_base[@]}" -T "$host" bash -s -- "$provider_auth_file" <<'REMOTE_PROVIDER_AUTH'
-set -euo pipefail
-provider_auth_file="$1"
-sudo test -f "$provider_auth_file" || {
-  printf '[remote] Provider authentication is not provisioned at %s. Use the Execution Hosts auth step first.\n' "$provider_auth_file" >&2
-  exit 35
-}
-metadata="$(sudo stat -c '%U:%G:%a' "$provider_auth_file")"
-[[ "$metadata" == "root:agent:640" ]] || {
-  printf '[remote] Provider EnvironmentFile must be root:agent:640; found %s.\n' "$metadata" >&2
-  exit 36
-}
-variables="$(sudo awk -F= '/^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY)=/ { print $1 }' "$provider_auth_file")"
-[[ -n "$variables" ]] || {
-  echo '[remote] Provider EnvironmentFile contains no supported provider variable.' >&2
-  exit 37
-}
-printf '[remote] provider-auth-file=%s metadata=%s variables=%s\n' \
-  "$provider_auth_file" "$metadata" "$(printf '%s' "$variables" | paste -sd, -)"
-REMOTE_PROVIDER_AUTH
-
 remote_login_status() {
-  "${ssh_base[@]}" -T "$host" bash -s -- "$provider_auth_file" <<'REMOTE_AUTH_STATUS'
+  "${ssh_base[@]}" -T "$host" bash -s <<'REMOTE_AUTH_STATUS'
 set -uo pipefail
 export PATH="$HOME/.dotnet/tools:$HOME/.local/bin:$PATH"
-provider_auth_file="$1"
-while IFS= read -r provider_auth_entry; do
-  export "$provider_auth_entry"
-done < <(sudo awk '/^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY)=/' "$provider_auth_file")
 codex_ok=0
 claude_ok=0
 echo '[remote] Codex authentication status:'
@@ -287,14 +261,7 @@ REMOTE_AUTH_STATUS
 
 printf '[onboarding] phase=oauth Checking host-owned CLI authentication.\n'
 if ! remote_login_status; then
-  ((skip_auth == 0)) || die "One or more agent CLIs are not authenticated and --skip-auth was selected."
-
-  printf '[onboarding] oauth=codex Open the URL shown below in the operator browser and enter the one-time device code.\n'
-  "${ssh_base[@]}" -tt "$host" "export PATH=\"\$HOME/.dotnet/tools:\$HOME/.local/bin:\$PATH\"; codex login status || codex login --device-auth; codex login status"
-
-  printf '[onboarding] oauth=claude A headless setup token must already be provisioned through SSH stdin at /etc/agent-runner/provider-auth.env.\n'
-
-  remote_login_status || die "Authentication did not verify. Provision Claude through provider-auth.env as documented; never copy credential files from another host."
+  printf '[onboarding] provider-auth=logged-out Install continues without claim eligibility. Use the host-owned re-auth action in Execution Hosts after registration; never copy credential files from another device.\n'
 fi
 
 printf '[onboarding] phase=systemd Writing configuration and enabling the OS-owned service.\n'
@@ -305,7 +272,7 @@ resource_governance_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/agent-
   'helper_tmp="$(mktemp)"; trap '"'"'rm -f "$helper_tmp"'"'"' EXIT; cat >"$helper_tmp"; chmod 0755 "$helper_tmp"; sudo install -d -m 0755 /usr/local/libexec; sudo install -m 0755 "$helper_tmp" /usr/local/libexec/agent-host-resource-governance' \
   <"$resource_governance_script"
 "${ssh_base[@]}" -T "$host" bash -s -- \
-  "$server_url" "$client_id" "$runner_id" "$runner_name" "$role" "$git_remote" "$git_push_remote" "$runner_command" "$auth_token_file" "$service_auth" "$provider_auth_file" <<'REMOTE_SYSTEMD'
+  "$server_url" "$client_id" "$runner_id" "$runner_name" "$role" "$git_remote" "$git_push_remote" "$runner_command" "$auth_token_file" "$service_auth" <<'REMOTE_SYSTEMD'
 set -euo pipefail
 server_url="$1"
 client_id="$2"
@@ -317,7 +284,6 @@ git_push_remote="$7"
 runner_command="$8"
 auth_token_file="$9"
 service_auth="${10}"
-provider_auth_file="${11}"
 export PATH="$HOME/.dotnet/tools:$HOME/.local/bin:$PATH"
 runner_user="$(id -un)"
 runner_group="$(id -gn)"
@@ -382,9 +348,6 @@ WorkingDirectory=$service_root
 Environment=HOME=$runner_home
 Environment="PATH=$runner_home/.dotnet/tools:$runner_home/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 EnvironmentFile=$env_file
-# One shared provider credential file for coding and review units. Keeping it
-# after the role-specific file gives the centrally rotated value precedence.
-EnvironmentFile=$provider_auth_file
 ExecStart=$agent_host_root/current/$runner_command --poll
 Restart=always
 RestartSec=10s
@@ -410,12 +373,6 @@ if [[ "$role" == "review" ]]; then
   sudo install -d -m 0750 "$service_root/review-work"
 fi
 sudo chown -R "$runner_user:$runner_group" "$service_root"
-provider_auth_metadata="$(sudo stat -c '%U:%G:%a' "$provider_auth_file")"
-[[ "$provider_auth_metadata" == "root:agent:640" ]] || {
-  printf '[remote] Provider EnvironmentFile changed during setup; expected root:agent:640, found %s.\n' \
-    "$provider_auth_metadata" >&2
-  exit 46
-}
 sudo install -d -m 0755 "$agent_host_root"
 # Preserve the release boundary below the stable /opt path. The compatibility
 # command links point through current, never into files that an update mutates.
@@ -452,15 +409,6 @@ main_pid="$(sudo systemctl show --property=MainPID --value "$service_name")"
   printf '[remote] Service %s did not expose a running MainPID.\n' "$service_name" >&2
   exit 43
 }
-provider_variables="$(sudo cat "/proc/${main_pid}/environ" | tr '\0' '\n' \
-  | sed -n -E 's/^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY)=.*/\1/p')"
-[[ -n "$provider_variables" ]] || {
-  printf '[remote] Service %s did not receive provider authentication through %s.\n' \
-    "$service_name" "$provider_auth_file" >&2
-  exit 44
-}
-printf '[remote] provider-auth-process-environment=%s variables=%s\n' \
-  "$service_name" "$(printf '%s' "$provider_variables" | paste -sd, -)"
 RUNNER_AUTH_TOKEN_FILE="$([[ "$service_auth" == 1 ]] && printf '%s' "$auth_token_file")" \
   "$agent_host_root/current/$runner_command" --health-check --server "$server_url"
 

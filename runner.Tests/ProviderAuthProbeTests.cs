@@ -40,48 +40,56 @@ public sealed class ProviderAuthProbeTests
                 "Credential metadata fixture has no expiry.")));
 
     [Theory]
-    [InlineData(0, "Not logged in. Run `claude auth login` to sign in.")]
-    [InlineData(1, "Error: login required")]
-    [InlineData(1, "HTTP 401 Unauthorized")]
-    [InlineData(1, "OAuth token expired")]
-    public async Task Two_explicit_dead_session_answers_are_unavailable_whatever_the_exit_code(
+    [InlineData("claude", 0, "Not logged in. Run `claude auth login` to sign in.")]
+    [InlineData("codex", 1, "Error: login required")]
+    [InlineData("claude", 1, "HTTP 401 Unauthorized")]
+    [InlineData("codex", 1, "OAuth token expired")]
+    public async Task One_explicit_dead_session_answer_is_unavailable_whatever_the_exit_code(
+        string provider,
         int exitCode,
         string output)
     {
         var probe = Probe(Answers(exitCode, output));
 
-        var first = await probe.RefreshAsync("claude", CancellationToken.None);
-        var status = await probe.RefreshAsync("claude", CancellationToken.None);
+        var status = await probe.RefreshAsync(provider, CancellationToken.None);
 
-        Assert.Equal(ProviderAuthProbe.Ready, first.Status);
-        Assert.True(first.ProbeDegraded);
         Assert.Equal(ProviderAuthProbe.Unavailable, status.Status);
         Assert.Equal(ProviderAuthProbe.SignalSignedOut, status.Signal);
         Assert.Contains("no usable session", status.Detail, StringComparison.Ordinal);
-        Assert.Contains("claude auth status --text", status.Detail, StringComparison.Ordinal);
+        Assert.Contains(
+            provider == "claude" ? "claude auth status --text" : "codex login status",
+            status.Detail,
+            StringComparison.Ordinal);
     }
 
-    [Fact]
-    public async Task A_live_session_is_the_only_thing_that_earns_ready()
+    [Theory]
+    [InlineData("claude")]
+    [InlineData("codex")]
+    public async Task A_live_session_is_the_only_thing_that_earns_ready(string provider)
     {
         var status = await Probe(Answers(0, "Logged in as Agent Studio (subscription)"))
-            .RefreshAsync("codex", CancellationToken.None);
+            .RefreshAsync(provider, CancellationToken.None);
 
         Assert.Equal(ProviderAuthProbe.Ready, status.Status);
         Assert.True(status.IsReady);
-        Assert.Contains("codex login status", status.Detail, StringComparison.Ordinal);
+        Assert.Contains(
+            provider == "claude" ? "claude auth status --text" : "codex login status",
+            status.Detail,
+            StringComparison.Ordinal);
         Assert.DoesNotContain("unverified", status.Detail, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public async Task A_missing_binary_is_unavailable_and_nothing_is_launched()
+    [Theory]
+    [InlineData("claude")]
+    [InlineData("codex")]
+    public async Task A_missing_binary_is_unavailable_and_nothing_is_launched(string provider)
     {
         var launched = false;
         var probe = Probe(
             (_, _, _) => { launched = true; return Task.FromResult(new ProcessResult(0, "", "")); },
             binaryExists: false);
 
-        var status = await probe.RefreshAsync("claude", CancellationToken.None);
+        var status = await probe.RefreshAsync(provider, CancellationToken.None);
 
         Assert.Equal(ProviderAuthProbe.Unavailable, status.Status);
         Assert.Contains("was not found", status.Detail, StringComparison.Ordinal);
@@ -266,7 +274,7 @@ public sealed class ProviderAuthProbeTests
             diagnosticLog: logs.Add);
 
         Assert.Equal(
-            ProviderAuthProbe.Ready,
+            ProviderAuthProbe.Unavailable,
             (await probe.RefreshAsync("claude", CancellationToken.None)).Status);
         Assert.Equal(
             ProviderAuthProbe.Unavailable,
@@ -365,6 +373,29 @@ public sealed class ProviderAuthProbeTests
         Assert.Contains("re-authentication may be needed soon", status.Detail, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("claude")]
+    [InlineData("codex")]
+    public async Task Expired_credential_metadata_blocks_claims_even_when_status_output_is_stale(string provider)
+    {
+        var now = new DateTimeOffset(2026, 9, 7, 12, 0, 0, TimeSpan.Zero);
+        var expiresAt = now.AddMinutes(-1);
+        var probe = Probe(
+            Answers(0, "Logged in"),
+            clock: () => now,
+            credentialFreshness: _ => new ProviderCredentialFreshness(
+                expiresAt,
+                now.AddDays(-30),
+                "Credential expiry metadata was read."));
+
+        var status = await probe.RefreshAsync(provider, CancellationToken.None);
+
+        Assert.Equal(ProviderAuthProbe.Unavailable, status.Status);
+        Assert.Equal(ProviderAuthProbe.SignalExpired, status.Signal);
+        Assert.Equal(expiresAt, status.ExpiresAt);
+        Assert.Contains("expired", status.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void Codex_auth_json_jwt_expiry_is_read_without_exposing_the_token()
     {
@@ -456,7 +487,9 @@ public sealed class ProviderAuthProbeTests
             new ProcessResult(1, "", "ordinary startup failure"),
             new ProcessResult(1, "Not logged in", ""),
         ]);
-        var probe = Probe((_, _, _) => Task.FromResult(answers.Dequeue()));
+        var probe = Probe(
+            (_, _, _) => Task.FromResult(answers.Dequeue()),
+            negativeConfirmations: 2);
 
         await probe.RefreshAsync("claude", CancellationToken.None);
         await probe.RefreshAsync("claude", CancellationToken.None);

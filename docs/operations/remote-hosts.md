@@ -19,12 +19,33 @@ npm i -g @anthropic-ai/claude-code @openai/codex
 npx playwright install --with-deps chromium
 ```
 
-Provision Claude authentication in the wizard. Studio sends
-`CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` through SSH stdin and installs
-`/etc/agent-runner/provider-auth.env` as `root:agent` mode `640`. The value is
-never retained in Studio, a task, or the repository. Both runner units load the
-same file; the runner probe verifies only the process environment and CLI
-status. Do not copy credential files from the operator workstation.
+Create the host first, then sign in each CLI with its **Re-authenticate** action
+in Execution Hosts. Studio starts the CLI over SSH and shows its browser URL or
+one-time code, while the resulting credential stays in the remote runner user's
+native store. Do not copy credential files or sessions from the operator
+workstation.
+
+## Provider auth
+
+Provider availability is live host state, not a consequence of the CLI binary
+being installed. Coding and Review roles advertise `provider-auth:claude` and
+`provider-auth:codex` from cached `claude auth status --text` and
+`codex login status` probes. Results are refreshed within five minutes and
+carry their observation time.
+
+- **OK** admits matching coding claims and review commands.
+- **Retrying** retains a last-good verdict after an indeterminate probe.
+- **Limited** pauses only the affected provider until its reset.
+- **Expiring** warns while the current login still works.
+- **Expired** or **Logged out** blocks matching routing and exposes the
+  re-authentication action.
+- **Unknown** means the runner or its capability snapshot is not current.
+
+The browser flow runs `claude auth login --claudeai` or
+`codex login --device-auth` on the selected host, verifies the provider's status
+command, restarts installed runner roles, and waits for a newer OK probe. The
+Task Server requeues a logged-out review as infrastructure; it never grades the
+product change from that failure.
 
 ## Give the host push identity
 

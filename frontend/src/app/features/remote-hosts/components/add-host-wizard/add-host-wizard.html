@@ -41,42 +41,10 @@
           }
           @case (3) {
             <div class="auth-grid">
-              <label class="auth-field">
-                <span>Claude credential type</span>
-                <select data-testid="add-host-provider-auth-kind"
-                        [ngModel]="providerAuthEnvironmentVariable()"
-                        (ngModelChange)="setProviderAuthEnvironmentVariable($event)">
-                  <option value="CLAUDE_CODE_OAUTH_TOKEN">CLAUDE_CODE_OAUTH_TOKEN</option>
-                  <option value="ANTHROPIC_API_KEY">ANTHROPIC_API_KEY</option>
-                </select>
-              </label>
-              <label class="auth-field">
-                <span>Provider credential</span>
-                <input data-testid="add-host-provider-auth-secret"
-                       type="password"
-                       autocomplete="new-password"
-                       autocapitalize="none"
-                       spellcheck="false"
-                       [ngModel]="providerAuthSecret()"
-                       (ngModelChange)="providerAuthSecret.set($event)" />
-              </label>
-              <button class="button button--primary auth-provision"
-                      type="button"
-                      data-testid="add-host-provider-auth-provision"
-                      [disabled]="providerAuthPhase() === 'provisioning' || providerAuthSecret().length < 16 || !address().trim()"
-                      (click)="provisionProviderAuth()">
-                {{ providerAuthPhase() === 'provisioning' ? 'Provisioning…' : 'Provision and verify' }}
-              </button>
-              <div class="auth-result"
-                   data-testid="add-host-provider-auth-status"
-                   [attr.data-state]="claudeAuthed() ? 'ok' : providerAuthPhase()"
-                   role="status">
-                <strong>{{ claudeAuthed() ? 'Claude probe: OK' : 'Claude probe: ' + providerAuthPhase() }}</strong>
-                <small>{{ providerAuthDetail() }}</small>
-              </div>
-              <label class="check-card"><input type="checkbox" data-testid="add-host-codex-check" [ngModel]="codexAuthed()" (ngModelChange)="codexAuthed.set($event)" /><span><strong>Codex authenticated</strong><small>Host-owned auth.json verified</small></span></label>
+              <label class="check-card"><input type="checkbox" data-testid="add-host-claude-check" [ngModel]="claudeAuthed()" (ngModelChange)="claudeAuthed.set($event)" /><span><strong>Claude host login planned</strong><small>Use the browser re-auth action on the created Execution Host</small></span></label>
+              <label class="check-card"><input type="checkbox" data-testid="add-host-codex-check" [ngModel]="codexAuthed()" (ngModelChange)="codexAuthed.set($event)" /><span><strong>Codex host login planned</strong><small>Use the browser re-auth action on the created Execution Host</small></span></label>
             </div>
-            <p class="callout">Studio sends the value once through SSH stdin. The shared <code>/etc/agent-runner/provider-auth.env</code> file stays on the host as <code>root:agent</code> mode <code>640</code>; the value is never stored in Studio, a task, or the repository.</p>
+            <p class="callout">Each provider login is created by its CLI on the remote host. Do not copy <code>.credentials.json</code>, <code>auth.json</code>, or a session from the operator device.</p>
           }
           @case (4) {
             <ul class="smoke-list">

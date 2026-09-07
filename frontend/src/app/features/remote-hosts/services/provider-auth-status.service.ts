@@ -5,8 +5,8 @@ import { NotificationService } from '../../../services/notification.service';
 import {
   providerAuthBadgesForSnapshot,
   type ProviderAuthBadge,
-  type ProviderAuthProvisioningRequest,
-  type ProviderAuthProvisioningResponse,
+  type ProviderSignInStartResponse,
+  type ProviderSignInStatusResponse,
 } from '../models/provider-auth.model';
 import type { RemoteRunnerLinkHealth, TaskServerRunnerCapabilitySnapshot } from '../models/remote-host.model';
 
@@ -66,9 +66,9 @@ export class ProviderAuthStatusService implements OnDestroy {
       for (const [id, current] of next) {
         const prior = this.previous.get(id);
         if (prior?.state === 'ok'
-          && current.state === 'unavailable'
-          && current.consecutiveFailures >= 2
-          && (!current.signal || current.signal === 'signed-out')) {
+          && ['logged-out', 'expired', 'unavailable'].includes(current.state)
+          && current.consecutiveFailures >= 1
+          && (!current.signal || current.signal === 'signed-out' || current.signal === 'credentials-expired')) {
           this.notifications.warning(
             `${current.providerLabel} authentication changed from OK to unavailable on ${current.hostName}. Ready cards assigned to this host are waiting. ${current.detail}`,
             `${current.providerLabel} sign-in required`,
@@ -90,11 +90,18 @@ export class ProviderAuthStatusService implements OnDestroy {
     this.loaded.set(true);
   }
 
-  provision(request: ProviderAuthProvisioningRequest): Observable<ProviderAuthProvisioningResponse> {
-    if (!this.http) throw new Error('Provider-auth provisioning requires the Studio HTTP client.');
-    return this.http.post<ProviderAuthProvisioningResponse>(
-      '/api/v1/management/remote-hosts/provider-auth',
-      request,
+  startProviderSignIn(hostId: string, provider: 'claude' | 'codex', sshTarget: string): Observable<ProviderSignInStartResponse> {
+    if (!this.http) throw new Error('Provider sign-in requires the Studio HTTP client.');
+    return this.http.post<ProviderSignInStartResponse>(
+      `/api/v1/management/remote-hosts/${encodeURIComponent(hostId)}/provider-sign-in`,
+      { provider, sshTarget },
+    );
+  }
+
+  providerSignInStatus(hostId: string, handle: string): Observable<ProviderSignInStatusResponse> {
+    if (!this.http) throw new Error('Provider sign-in requires the Studio HTTP client.');
+    return this.http.get<ProviderSignInStatusResponse>(
+      `/api/v1/management/remote-hosts/${encodeURIComponent(hostId)}/provider-sign-in/${encodeURIComponent(handle)}`,
     );
   }
 
@@ -112,6 +119,7 @@ export class ProviderAuthStatusService implements OnDestroy {
       tap(snapshots => this.ingest(snapshots ?? [])),
       map(() => this.statuses().find(status =>
         status.provider === provider
+        && status.state === 'ok'
         && status.aliases.some(alias => normalizedAliases.has(alias.toLowerCase()))
         && (status.advertisedAt ? Date.parse(status.advertisedAt) > baseline : false))),
       filter((status): status is ProviderAuthBadge => !!status),

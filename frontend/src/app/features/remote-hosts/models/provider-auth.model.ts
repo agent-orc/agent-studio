@@ -7,7 +7,7 @@ import type {
   RemoteRunnerLinkHealth,
 } from './remote-host.model';
 
-export type ProviderAuthDisplayState = 'ok' | 'retrying' | 'limited' | 'expiring' | 'unavailable' | 'unknown';
+export type ProviderAuthDisplayState = 'ok' | 'retrying' | 'limited' | 'expiring' | 'expired' | 'logged-out' | 'unavailable' | 'unknown';
 
 export interface ProviderAuthBadge {
   id: string;
@@ -36,24 +36,36 @@ export interface ProviderAuthWaitReason {
   label: string;
   tooltip: string;
   hostNames: readonly string[];
+  signInTarget: ProviderSignInTarget | null;
 }
 
-export interface ProviderAuthProvisioningRequest {
-  sshTarget: string;
+export interface ProviderSignInTarget {
+  provider: 'claude' | 'codex';
+  hostId: string;
   runnerId: string;
-  environmentVariable: 'CLAUDE_CODE_OAUTH_TOKEN' | 'ANTHROPIC_API_KEY';
-  secret: string;
+  hostName: string;
+  aliases: readonly string[];
+  sshTarget?: string | null;
+  baselineAdvertisedAt: string | null;
 }
 
-export interface ProviderAuthProvisioningResponse {
-  provider: string;
-  environmentVariable: string;
-  host: string;
-  state: 'awaiting-probe' | 'installed-awaiting-runner';
+export interface ProviderSignInStartResponse {
+  handle: string;
+  state: 'pending';
+  provider: 'claude' | 'codex';
+  verificationUrl: string;
+  userCode: string | null;
+  expiresAt: string;
+}
+
+export interface ProviderSignInStatusResponse {
+  handle: string;
+  state: 'pending' | 'completed' | 'failed';
+  provider: 'claude' | 'codex';
   detail: string;
   requestedAt: string;
-  restartedServices: readonly string[];
-  processEnvironmentVerified: boolean;
+  expiresAt: string;
+  completedAt: string | null;
 }
 
 const PROVIDER_AUTH_PREFIX = 'provider-auth:';
@@ -121,9 +133,9 @@ export function providerAuthWaitReason(
     : configuredRunner ?? 'an execution host';
   const limited = candidates.find(status => status.state === 'limited');
   const unavailable = candidates.filter(status => status.reachable
-    && status.state === 'unavailable'
-    && status.signal === 'signed-out'
-    && status.consecutiveFailures >= 2);
+    && ['logged-out', 'expired', 'unavailable'].includes(status.state)
+    && (status.state === 'expired'
+      || (status.signal === 'signed-out' && status.consecutiveFailures >= 1)));
   const matchingLinks = links.filter(link => !configuredRunner
     || link.runnerId.toLowerCase() === configuredRunner.toLowerCase()
     || link.name.toLowerCase() === configuredRunner.toLowerCase());
@@ -148,9 +160,24 @@ export function providerAuthWaitReason(
     tooltip: limited
       ? `${limited.detail}\nThe task stays Ready and retries automatically after the provider limit.`
       : unavailable.length > 0
-        ? `${detail}\nTwo consecutive provider probes reported an explicit logout. The task stays Ready until sign-in is restored.`
+        ? `${detail}\nThe provider probe reported an expired session or an explicit logout. The task stays Ready until sign-in is restored.`
         : `${detail}\nNo fresh runner heartbeat is available. Check the Task Server link and runner services.`,
     hostNames: hostNames.length > 0 ? hostNames : configuredRunner ? [configuredRunner] : [],
+    signInTarget: (provider === 'claude' || provider === 'codex') && unavailable.length > 0
+      ? signInTarget(unavailable[0])
+      : null,
+  };
+}
+
+export function signInTarget(badge: ProviderAuthBadge, sshTarget?: string | null): ProviderSignInTarget {
+  return {
+    provider: badge.provider === 'claude' ? 'claude' : 'codex',
+    hostId: badge.hostId || badge.runnerId,
+    runnerId: badge.runnerId,
+    hostName: badge.hostName,
+    aliases: badge.aliases,
+    sshTarget,
+    baselineAdvertisedAt: badge.advertisedAt,
   };
 }
 
@@ -186,6 +213,8 @@ function badgeFromCapability(
   let state: ProviderAuthDisplayState;
   if (!capability || !capability.isFresh || !runnerReachable) state = 'unknown';
   else if (capability.signal === 'rate-limited' || capability.advertisedStatus === 'limited') state = 'limited';
+  else if (capability.signal === 'credentials-expired' || expired) state = 'expired';
+  else if (capability.signal === 'signed-out') state = 'logged-out';
   else if (capability.advertisedStatus !== 'ready'
     || capability.healthState !== 'healthy') state = 'unavailable';
   else if (capability.signal === 'transient-auth-error') state = 'retrying';

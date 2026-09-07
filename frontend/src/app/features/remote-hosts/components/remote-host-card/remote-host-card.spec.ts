@@ -6,6 +6,7 @@ import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.
 import { HostTelemetryHistoryComponent } from '../host-telemetry-history/host-telemetry-history';
 import { RemoteHostCardComponent } from './remote-host-card';
 import type { RemoteHost } from '../../models/remote-host.model';
+import { ProviderSignInDialogService } from '../../services/codex-sign-in-dialog.service';
 
 const HOST: RemoteHost = {
   id: 'hetzner',
@@ -162,7 +163,7 @@ describe('RemoteHostCardComponent', () => {
         key: 'provider-auth:claude', category: 'provider-auth', advertisedStatus: 'unavailable',
         healthState: 'healthy', advertisedAt: '2026-07-10T11:59:30Z',
         freshUntil: '2026-07-10T12:02:30Z', isFresh: true, consecutiveFailures: 0,
-        detail: 'Not logged in', expiresAt: '2026-07-20T12:00:00Z', affectedClaims: [],
+        detail: 'Not logged in', signal: 'signed-out', expiresAt: '2026-07-20T12:00:00Z', affectedClaims: [],
         recoveryHistory: [{
           occurredAt: '2026-07-10T11:59:30Z', fromState: 'ready', toState: 'unavailable',
           reason: 'Provider authentication probe changed from ready to unavailable.',
@@ -174,8 +175,8 @@ describe('RemoteHostCardComponent', () => {
     ) as HTMLElement;
 
     expect(badge.textContent).toContain('Claude');
-    expect(badge.textContent).toContain('unavailable');
-    expect(badge.getAttribute('data-state')).toBe('unavailable');
+    expect(badge.textContent).toContain('logged-out');
+    expect(badge.getAttribute('data-state')).toBe('logged-out');
     expect(fixture.debugElement
       .query(By.css('[data-testid="remote-host-provider-auth-claude"]'))
       .injector.get(AppTooltipDirective).appTooltip()).toContain('Not logged in');
@@ -183,6 +184,30 @@ describe('RemoteHostCardComponent', () => {
       .toContain('Expires in 10 days');
     expect(fixture.nativeElement.querySelector('[data-testid="remote-host-provider-auth-history-claude"]')?.textContent)
       .toContain('ready → unavailable');
+  });
+
+  it('offers Codex sign-in for an expiring host badge and keeps the SSH target host-owned', () => {
+    const fixture = mount({
+      ...HOST,
+      capabilityHealth: [{
+        key: 'provider-auth:codex', category: 'provider-auth', advertisedStatus: 'ready',
+        healthState: 'healthy', advertisedAt: '2026-07-10T11:59:30Z',
+        freshUntil: '2026-07-10T12:02:30Z', isFresh: true, consecutiveFailures: 0,
+        detail: 'Credentials expire soon', signal: 'credentials-expiring',
+        affectedClaims: [], recoveryHistory: [],
+      }],
+    });
+    const signIn = fixture.nativeElement.querySelector(
+      '[data-testid="remote-host-provider-sign-in-codex"]',
+    ) as HTMLButtonElement;
+
+    expect(signIn).toBeTruthy();
+    signIn.click();
+    expect(TestBed.inject(ProviderSignInDialogService).request()).toMatchObject({
+      provider: 'codex',
+      hostId: 'hetzner',
+      sshTarget: 'agent@runner.hetzner',
+    });
   });
 
   it('shows contents ready, workflow missing, and the documentation fix without blocking inflow', () => {

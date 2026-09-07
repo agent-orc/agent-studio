@@ -118,7 +118,11 @@ public sealed class RunnerCapabilityProbeTests
                 Path.GetFileName(binary) == "claude"
                     ? new ProcessResult(1, "", "Not logged in")
                     : new ProcessResult(0, "Logged in", "")),
-            File.Exists);
+            File.Exists,
+            credentialFreshness: _ => new ProviderCredentialFreshness(
+                null,
+                null,
+                "Credential metadata fixture has no expiry."));
         await probe.RefreshAsync(claude, CancellationToken.None);
         await probe.RefreshAsync(claude, CancellationToken.None);
         await probe.RefreshAsync(codex, CancellationToken.None);

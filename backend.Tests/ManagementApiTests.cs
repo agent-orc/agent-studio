@@ -250,64 +250,6 @@ public sealed class ManagementApiTests : IDisposable
     }
 
     [Fact]
-    public async Task ProviderAuthProvisioning_RequiresOperator_AndDoesNotEchoTheSecret()
-    {
-        const string secret = "sk-ant-oat01-provider-secret-fixture";
-        var provisioner = new RecordingProviderAuthProvisioner();
-        await using var factory = BuildFactory(provisioner: provisioner);
-        using var client = factory.CreateClient();
-        var request = new ProviderAuthProvisioningRequest(
-            "agent@runner-01",
-            "agent-runner-01",
-            "CLAUDE_CODE_OAUTH_TOKEN",
-            secret);
-
-        var denied = await client.PostAsJsonAsync(
-            "/api/v1/management/remote-hosts/provider-auth",
-            request);
-        Assert.Equal(HttpStatusCode.Unauthorized, denied.StatusCode);
-        Assert.Null(provisioner.LastRequest);
-
-        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
-        var accepted = await client.PostAsJsonAsync(
-            "/api/v1/management/remote-hosts/provider-auth",
-            request);
-
-        accepted.EnsureSuccessStatusCode();
-        Assert.Equal(secret, provisioner.LastRequest?.Secret);
-        var body = await accepted.Content.ReadAsStringAsync();
-        Assert.DoesNotContain(secret, body, StringComparison.Ordinal);
-        Assert.Contains("awaiting-probe", body, StringComparison.Ordinal);
-        Assert.Contains("no-store", accepted.Headers.CacheControl?.ToString() ?? "");
-    }
-
-    [Theory]
-    [InlineData("runner;touch /tmp/x", "CLAUDE_CODE_OAUTH_TOKEN", "valid-provider-secret-fixture")]
-    [InlineData("agent@runner", "UNSUPPORTED_TOKEN", "valid-provider-secret-fixture")]
-    [InlineData("agent@runner", "ANTHROPIC_API_KEY", "secret with whitespace")]
-    public async Task ProviderAuthProvisioning_RejectsUnsafeInputBeforeTransport(
-        string sshTarget,
-        string environmentVariable,
-        string secret)
-    {
-        var provisioner = new RecordingProviderAuthProvisioner();
-        await using var factory = BuildFactory(provisioner: provisioner);
-        using var client = factory.CreateClient();
-        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
-
-        var response = await client.PostAsJsonAsync(
-            "/api/v1/management/remote-hosts/provider-auth",
-            new ProviderAuthProvisioningRequest(
-                sshTarget,
-                "agent-runner-01",
-                environmentVariable,
-                secret));
-
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        Assert.Null(provisioner.LastRequest);
-    }
-
-    [Fact]
     public async Task BackupCreate_VerifiesRealArchive_OutsideDataDirectory()
     {
         await using var factory = BuildFactory(Environments.Production);
@@ -494,7 +436,6 @@ public sealed class ManagementApiTests : IDisposable
 
     private WebApplicationFactory<Program> BuildFactory(
         string environment = "Test",
-        IProviderAuthProvisioner? provisioner = null,
         ITunnelKeeperManager? keeper = null) =>
         new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
     {
@@ -513,11 +454,6 @@ public sealed class ManagementApiTests : IDisposable
         builder.ConfigureTestServices(services =>
         {
             services.RemoveAll<IHostedService>();
-            if (provisioner is not null)
-            {
-                services.RemoveAll<IProviderAuthProvisioner>();
-                services.AddSingleton(provisioner);
-            }
             if (keeper is not null)
             {
                 services.RemoveAll<ITunnelKeeperManager>();
@@ -544,27 +480,6 @@ public sealed class ManagementApiTests : IDisposable
                 State = "healthy", Enabled = true, Running = true, SshRunning = true, Cause = null,
             };
             return new(true, true, true, status, "Enabled and started AgentRunner-TunnelKeeper.");
-        }
-    }
-
-    private sealed class RecordingProviderAuthProvisioner : IProviderAuthProvisioner
-    {
-        public ProviderAuthProvisioningRequest? LastRequest { get; private set; }
-
-        public Task<ProviderAuthProvisioningResponse> ProvisionAsync(
-            ProviderAuthProvisioningRequest request,
-            CancellationToken cancellationToken)
-        {
-            LastRequest = request;
-            return Task.FromResult(new ProviderAuthProvisioningResponse(
-                "claude",
-                request.EnvironmentVariable,
-                request.SshTarget,
-                "awaiting-probe",
-                "Credential installed and daemon environment verified.",
-                DateTime.UtcNow,
-                ["agent-runner.service"],
-                true));
         }
     }
 

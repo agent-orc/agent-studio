@@ -99,51 +99,27 @@
           <span class="setup__step">2</span>
           <div>
             <h3 id="runner-setup-auth-title">Provider authentication</h3>
-            <p>Studio sends this value once through SSH stdin to <code>/etc/agent-runner/provider-auth.env</code>. It is not stored in the Studio database, repository, or setup task.</p>
+            <p>Each CLI signs in on this host and keeps its own native session. Credential files are never copied from the operator device.</p>
           </div>
-        </div>
-
-        <div class="setup__fields">
-          <label>
-            <span>Claude credential type</span>
-            <select data-testid="runner-setup-provider-auth-kind"
-                    [ngModel]="providerAuthEnvironmentVariable()"
-                    (ngModelChange)="setProviderAuthEnvironmentVariable($event)">
-              <option value="CLAUDE_CODE_OAUTH_TOKEN">CLAUDE_CODE_OAUTH_TOKEN</option>
-              <option value="ANTHROPIC_API_KEY">ANTHROPIC_API_KEY</option>
-            </select>
-            <small>Choose exactly one. Updating Claude authentication replaces the other Claude entry but preserves future provider entries in the shared file.</small>
-          </label>
-
-          <label>
-            <span>Provider credential</span>
-            <input data-testid="runner-setup-provider-auth-secret"
-                   type="password"
-                   autocomplete="new-password"
-                   autocapitalize="none"
-                   spellcheck="false"
-                   [ngModel]="providerAuthSecret()"
-                   (ngModelChange)="providerAuthSecret.set($event)" />
-            <small>The field is cleared as soon as provisioning succeeds or fails.</small>
-          </label>
         </div>
 
         <div class="setup__auth-actions">
           <button type="button"
                   class="setup__provision"
-                  data-testid="runner-setup-provider-auth-provision"
-                  [disabled]="providerAuthPhase() === 'provisioning' || !sshTarget().trim() || providerAuthSecret().length < 16"
-                  (click)="provisionProviderAuth()">
-            {{ providerAuthPhase() === 'provisioning' ? 'Provisioning…' : 'Provision and verify' }}
+                  data-testid="runner-setup-provider-sign-in-claude"
+                  [disabled]="!sshTarget().trim()"
+                  (click)="openProviderSignIn('claude')">
+            Sign in Claude on host
           </button>
-          <span class="setup__auth-status"
-                data-testid="runner-setup-provider-auth-status"
-                [attr.data-state]="providerAuthVerified() ? 'ok' : providerAuthPhase()">
-            <span class="setup__auth-dot" aria-hidden="true"></span>
-            {{ providerAuthVerified() ? 'Latest runner probe: OK' : providerAuthPhase() === 'idle' ? 'Not provisioned' : providerAuthPhase() }}
-          </span>
+          <button type="button"
+                  class="setup__provision"
+                  data-testid="runner-setup-provider-sign-in-codex"
+                  [disabled]="!sshTarget().trim()"
+                  (click)="openProviderSignIn('codex')">
+            Sign in Codex on host
+          </button>
         </div>
-        <p class="setup__auth-detail">{{ providerAuthVerified() ? currentProviderAuth()?.detail : providerAuthDetail() }}</p>
+        <p class="setup__auth-detail">A logged-out host can be installed, but the Task Server will not route matching cards or review commands until a fresh probe reports OK.</p>
       </section>
 
       <section class="setup__execution" aria-labelledby="runner-setup-execution-title">
@@ -166,9 +142,6 @@
             <ul>
               @for (issue of issues(); track issue) {
                 <li>{{ issue }}</li>
-              }
-              @if (!providerAuthGateSatisfied()) {
-                <li>Provision provider authentication through the protected SSH channel.</li>
               }
             </ul>
           </div>

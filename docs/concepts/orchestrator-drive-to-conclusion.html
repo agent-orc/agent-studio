@@ -2243,6 +2243,26 @@
             <code>error</code> frame is typed. Operator requeued the card on 2026-09-06 after the runner link was restored.
           </td>
         </tr>
+        <tr id="case-agt-2759-provider-auth-and-cli-orphans">
+          <td>2026-09-07</td>
+          <td><code>AGT-2759</code><br><span class="small">shared Claude login expired and review processes outlived attempts</span></td>
+          <td>
+            The remote host lost Claude authentication twice in one day after its credential file was copied from the
+            operator device. Claude coding claims and review commands failed while five stale CLI processes continued to
+            occupy review slots, including one process seven days old.
+          </td>
+          <td>
+            The workstation and runner shared one OAuth refresh-token lineage, capability badges represented installed
+            binaries rather than current provider status, and detached review workers did not enforce process death when
+            their attempt became terminal or lost lease authority.
+          </td>
+          <td>
+            <span class="pill ok">fixed in dev</span> Claude and Codex now sign in through a host-owned browser flow,
+            five-minute status probes gate coding and review admission, logged-out review commands return typed
+            infrastructure outcomes for requeue, and bounded terminal, lease-loss, and startup reapers publish
+            <code>cli-process-reaped</code> telemetry. Credential copies from operator devices are unsupported.
+          </td>
+        </tr>
         <tr id="case-cac-18-review-preparation-plan-loop">
           <td>2026-09-01</td>
           <td><code>CAC-18</code><br><span class="small">untracked review preparation plan loop</span></td>

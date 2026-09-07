@@ -109,6 +109,7 @@ export interface HostSystemStats {
   cpuLoadPct: number;
   diskTotalGb: number;
   diskFreeGb: number;
+  cliProcessesReaped?: number;
 }
 
 export interface HostTelemetryPoint {
@@ -186,7 +187,7 @@ export interface RemoteHostCapabilityHealth {
   identity?: string | null;
   detail?: string | null;
   /** Typed provider condition. A ready transient state retains last-good admission. */
-  signal?: 'ok' | 'transient-auth-error' | 'rate-limited' | 'signed-out' | 'credentials-expiring' | 'binary-missing' | null;
+  signal?: 'ok' | 'transient-auth-error' | 'rate-limited' | 'signed-out' | 'credentials-expiring' | 'credentials-expired' | 'binary-missing' | null;
   /** Optional provider-reported credential expiry. Older runners omit it. */
   expiresAt?: string | null;
   limitedUntil?: string | null;
@@ -212,6 +213,7 @@ export interface TaskServerTelemetrySnapshot {
   taskServerConnectionEscalatedAt?: string | null;
   taskServerConnectionLastError?: string | null;
   taskServerConnectionLastRecoveredAt?: string | null;
+  cliProcessesReaped?: number;
 }
 
 /** Wire shape returned by GET /api/v1/management/remote-hosts. */

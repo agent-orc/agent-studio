@@ -71,12 +71,11 @@ describe('runner setup model', () => {
     expect(request.prompt).toContain('systemd');
     expect(request.prompt).toContain('agent-host.service');
     expect(request.prompt).toContain('Preserve the existing runner identity `agent-runner-01`');
-    expect(request.prompt).toContain('/etc/agent-runner/provider-auth.env');
-    expect(request.prompt).toContain('root:agent');
-    expect(request.prompt).toContain('Provider credentials were already delivered by Studio through SSH stdin');
-    expect(request.prompt).toContain('/proc/<main-pid>/environ');
-    expect(request.prompt).toContain('process environment plus CLI status');
-    expect(request.prompt).toContain('never token values');
+    expect(request.prompt).toContain('Authentication belongs to this host and runner user');
+    expect(request.prompt).toContain('provider re-auth action in Execution Hosts');
+    expect(request.prompt).toContain('claude auth status --text');
+    expect(request.prompt).toContain('codex login status');
+    expect(request.prompt).toContain('never print credential-file contents or token values');
     expect(request.prompt).not.toContain('codex login --device-auth');
     expect(request.prompt).not.toContain('claude auth login');
     expect(request.prompt).toContain('one real smoke task');
