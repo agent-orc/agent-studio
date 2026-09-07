@@ -1,6 +1,6 @@
 # CLI Domain Map
 
-Version: 2026-09-01
+Version: 2026-09-07
 Status: System-of-record map for CLI adapter and quota changes.
 
 Use this when a change touches Claude, Codex, Copilot, Gemini, prompt handoff,
@@ -29,6 +29,9 @@ CLI execution tests.
 
 - [Model Routing Policy](./model-routing-policy.md) is the canonical selection
   policy above the live model catalog and quota fallback machinery.
+- `backend/Features/ModelMigrations/` reads and validates the versioned Token
+  Economy migration catalog from the registered `PROJ-015` repository, retains
+  a last-known-good snapshot, and produces migration proposals.
 - `backend/Services/Cli/`: CLI drivers and shared execution base.
 - `backend/Services/Cli/CliRouter.cs`: `cliType` routing.
 - `backend/Services/Quota/*QuotaProbe.cs`: per-CLI quota probes.
@@ -116,8 +119,8 @@ CLI execution tests.
 - Codex Spark quota windows are independent windows. Keep their labels and burn
   percentages separate from the standard 5-hour and weekly windows; never fold
   a Spark-only snapshot into the main-window admission signal.
-- Review-decision and supporting aspect calls default to Codex with
-  `gpt-5.4-mini`. The configured `ReviewDecisionOrchestrator:Cli` must be passed
+- Review-decision and supporting aspect calls default to the newest available
+  Codex mini-family model. The configured `ReviewDecisionOrchestrator:Cli` must be passed
   through to `CliOneShotRegistry`; never replace it with an implicit Claude
   lookup. Project pipeline-step overrides and Token Economy recommendations may
   select another compatible GPT model explicitly.
@@ -130,6 +133,24 @@ CLI execution tests.
   A registry model that the installed CLI does not report remains visible and
   disabled with an availability note. Generation age is separate from
   deprecation: advertised older models remain selectable under `Older models`.
+- Runtime defaults use a family id and resolve against the current merged CLI
+  catalog. Registry generation order chooses the newest generation and live
+  discovery decides whether it is available. An exact configuration value,
+  project pipeline-step override, or operator-selected card value remains a
+  pin. See [Model families and migrations](./model-routing-policy.md#model-families-and-migrations).
+- The Token Economy migration catalog is external repository data at the fixed
+  versioned path `src/TokenEconomy/catalog/model-migrations.v1.json`. Cache it
+  by resolved source path and last-write time, retain the last-known-good value
+  after a failed refresh, and expose the active version and stale error in
+  Workspace CLI Management. Do not silently substitute an embedded copy.
+- A migration proposal and an automatic migration are different decisions.
+  Explicit pins only receive proposals. A non-explicit route can be changed at
+  admission only when the catalog marks the rule `safeAuto`, its same-family,
+  generation, cost, ladder, and evidence gates validate, the target is offered
+  by the local selected CLI, a dated target price resolves, and the workspace switch
+  is enabled. Remote claims retain the stored model until the runner protocol
+  advertises a verified model catalog. Record each application as `model_migrated` in the timeline and
+  as an operator-feed line with the catalog version.
 - A quota fallback is run-scoped and must never be silent. Keep the
   `quota_fallback_activated` timeline event, task chat note, task-card badge,
   and status-bar warning aligned. When the primary is below its cap again, the

@@ -12,7 +12,7 @@ namespace AgentStudio.Docs;
 /// <c>cli-quota-caps.json</c>, since that is where operators reason about which
 /// model runs which class of work.
 ///
-/// <para>The default is a relatively strong model (Sonnet 5) rather than the
+/// <para>The default is the newest available Sonnet rather than the
 /// cheap Haiku the automatic drift post-step uses, because a maintenance grade
 /// is a low-frequency, high-value judgement. Operators can raise it to Opus or
 /// lower it. The value is the default pre-filled at the trigger; the operator
@@ -23,7 +23,8 @@ public sealed class WikiMaintenanceModelService
     public const string FileName = "wiki-maintenance-model.json";
 
     /// <summary>Platform strong default when no workspace value is stored.</summary>
-    public const string DefaultModel = ModelIds.ClaudeSonnet5;
+    public static string DefaultModel =>
+        ModelFamilyResolver.Resolve(ModelFamilies.ClaudeSonnet);
     public const string DefaultCli = "claude";
 
     private static readonly JsonSerializerOptions JsonOpts = new()

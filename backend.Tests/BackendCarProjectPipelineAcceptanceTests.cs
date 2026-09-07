@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using AgentStudio.ModelMigrations;
 using AgentStudio.TestSupport;
 using CodingAgentRunner.Abstractions;
 using Microsoft.Extensions.Configuration;
@@ -148,10 +149,50 @@ public sealed class BackendCarProjectPipelineAcceptanceTests : IDisposable
         Assert.True(pipelineCost.TotalCostUsd > 0m);
     }
 
+    [SkippableFact]
+    public async Task Local_admission_launches_the_model_selected_by_a_safe_migration()
+    {
+        RequireNode();
+        WriteReadyCard(ModelIds.ClaudeOpus48, modelExplicit: false);
+        WriteMigrationCatalog();
+        var fixturePath = CliCaptureFixtureLocator.Resolve(
+            RepoRoot(),
+            "p1-happy-done.claude.fixture");
+        var spawner = new FixtureSpawner(fixturePath);
+        var harness = BuildHarness(
+            spawner,
+            fixturePath,
+            CliExecutionEngines.Car,
+            enableSafeModelMigration: true);
+        var liveOutput = new ConcurrentQueue<CliOutputLine>();
+        harness.Router.OnOutput += (_, _, line) => liveOutput.Enqueue(line);
+
+        harness.Runner.SetMode("auto-continuous");
+        await harness.Runner.TickAsync(CancellationToken.None);
+
+        var autoReviewFolder = Path.Combine(_watchPath, TaskStates.AutoReview, Slug);
+        await WaitUntilAsync(
+            () => Directory.Exists(autoReviewFolder),
+            "The migrated fixture-backed run did not reach AutoReview.");
+        Assert.Contains(liveOutput, line =>
+            line.Stream == "system"
+            && line.Text.Contains("model=claude-opus-5", StringComparison.Ordinal));
+        var migrated = harness.Scanner.FindJob(Slug, _watchPath);
+        Assert.NotNull(migrated);
+        Assert.Equal(ModelIds.ClaudeOpus5, migrated.Model);
+        Assert.False(migrated.ModelExplicit);
+        var audit = Assert.Single(
+            harness.Timeline.ReadAll(autoReviewFolder),
+            item => item.Kind == TimelineEventKinds.ModelMigrated);
+        Assert.Equal(ModelIds.ClaudeOpus48, audit.Details?["from"]);
+        Assert.Equal(ModelIds.ClaudeOpus5, audit.Details?["to"]);
+    }
+
     private Harness BuildHarness(
         FixtureSpawner spawner,
         string fixturePath,
-        string executionEngine)
+        string executionEngine,
+        bool enableSafeModelMigration = false)
     {
         var rulesPath = Path.Combine(_workspace, "agent-rules.md");
         File.WriteAllText(rulesPath, "Follow the task and finish with one terminal sentinel.\n");
@@ -214,6 +255,7 @@ public sealed class BackendCarProjectPipelineAcceptanceTests : IDisposable
         var bus = new AgentMessageBusBridge(
             busStore, config, NullLogger<AgentMessageBusBridge>.Instance);
         var pipelineLog = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
         var quotaCache = new QuotaCacheStore(config, NullLogger<QuotaCacheStore>.Instance);
         var quota = new QuotaService(
             NullLogger<QuotaService>.Instance, [], config, quotaCache);
@@ -230,6 +272,27 @@ public sealed class BackendCarProjectPipelineAcceptanceTests : IDisposable
             BackendName = "car-acceptance-test",
             BackendPort = 0,
         };
+        ModelMigrationCoordinator? modelMigrations = null;
+        if (enableSafeModelMigration)
+        {
+            var catalog = new ModelMigrationCatalogService(
+                () => _workspace,
+                NullLogger<ModelMigrationCatalogService>.Instance);
+            var policyState = new ModelRoutingPolicyStateStore(
+                config,
+                NullLogger<ModelRoutingPolicyStateStore>.Instance);
+            modelMigrations = new ModelMigrationCoordinator(
+                catalog,
+                policyState,
+                mutations,
+                timeline,
+                bus,
+                config,
+                configurationWriter: null!,
+                NullLogger<ModelMigrationCoordinator>.Instance,
+                isModelAvailable: _ => true,
+                hasDatedPrice: _ => true);
+        }
 
         var runner = new ProjectRunner(
             Project,
@@ -263,11 +326,13 @@ public sealed class BackendCarProjectPipelineAcceptanceTests : IDisposable
             bus,
             pickupLock: new PickupLockFile(NullLogger<PickupLockFile>.Instance),
             pickupLockOwner: pickupOwner,
-            pipelineLog: pipelineLog);
+            pipelineLog: pipelineLog,
+            timeline: timeline,
+            modelMigrations: modelMigrations);
 
         return new Harness(
             config, summary, scanner, states, chatLog, prompts, mutations, git,
-            settings, transitions, taskAccess, router, busStore, pipelineLog, runner);
+            settings, transitions, taskAccess, router, busStore, pipelineLog, timeline, runner);
     }
 
     private static ReviewDecisionOrchestrator BuildReviewOrchestrator(
@@ -309,7 +374,9 @@ public sealed class BackendCarProjectPipelineAcceptanceTests : IDisposable
             buildTestGateRunner: buildGate);
     }
 
-    private void WriteReadyCard()
+    private void WriteReadyCard(
+        string model = "claude-sonnet-4-5",
+        bool modelExplicit = true)
     {
         var folder = Path.Combine(_watchPath, TaskStates.Ready, Slug);
         Directory.CreateDirectory(folder);
@@ -324,10 +391,53 @@ public sealed class BackendCarProjectPipelineAcceptanceTests : IDisposable
               "order": 1,
               "agent": "claude",
               "cliType": "claude",
-              "model": "claude-sonnet-4-5",
+              "model": "{{model}}",
+              "modelExplicit": {{modelExplicit.ToString().ToLowerInvariant()}},
               "ownerClientId": "local-default"
             }
             """);
+    }
+
+    private void WriteMigrationCatalog()
+    {
+        var path = Path.Combine(_workspace, ModelMigrationCatalogService.CatalogRelativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, """
+        {
+          "$schema": "model-migrations.v1.schema.json",
+          "schemaVersion": 1,
+          "catalogVersion": "2026-09-06",
+          "evidenceAsOfDate": "2026-09-06",
+          "defaultStrategy": "latestInFamily",
+          "authority": {
+            "rules": "docs/model-migrations.md",
+            "routingPolicy": "docs/system/domains/model-routing-policy.md",
+            "priceCatalog": "src/TokenEconomy/catalog/model-prices.json"
+          },
+          "costClassOrder": ["economy", "standard", "premium"],
+          "migrations": [{
+            "from": "claude-opus-4-8",
+            "to": "claude-opus-5",
+            "family": "claude-opus",
+            "vendor": "anthropic",
+            "generationOrder": { "from": 408, "to": 500 },
+            "costClassFrom": "premium",
+            "costClassTo": "premium",
+            "ladderCompatible": true,
+            "contextChange": "increase",
+            "evidence": {
+              "kind": "controlledBenchmark",
+              "reference": "benchmarks/result.json",
+              "conclusion": "noRegression",
+              "summary": "Both models passed the same cases."
+            },
+            "safeAuto": true,
+            "since": "2026-09-06",
+            "note": "Fixture migration rule."
+          }],
+          "taskClassRecommendations": [{}, {}, {}, {}, {}]
+        }
+        """);
     }
 
     private void InitializeGitRepository()
@@ -535,5 +645,6 @@ public sealed class BackendCarProjectPipelineAcceptanceTests : IDisposable
         CliRouter Router,
         AgentMessageBusStore BusStore,
         PipelineExecutionLog PipelineLog,
+        TimelineLog Timeline,
         ProjectRunner Runner);
 }

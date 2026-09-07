@@ -82,6 +82,12 @@ public static class TimelineEventKinds
     /// <summary>A run switched to its configured fallback because primary quota was exhausted.</summary>
     public const string QuotaFallbackActivated = "quota_fallback_activated";
     /// <summary>
+    /// Run admission replaced an unpinned model through a safe, versioned
+    /// Token Economy migration rule. Details carry from, to, rule, and the
+    /// migration catalog version.
+    /// </summary>
+    public const string ModelMigrated = "model_migrated";
+    /// <summary>
     /// AGT-2055: the algorithmic pre-launch quota check made a load-steering
     /// decision for a card before any launch was attempted - switch model,
     /// throttle, or wait for the next reset. <see cref="TimelineEvent.Details"/>

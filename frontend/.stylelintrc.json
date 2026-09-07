@@ -188,6 +188,7 @@
       "files": [
         "src/app/components/async-feedback/loading-surface/loading-surface.component.scss",
         "src/app/components/cli-model-selector/cli-model-selector.component.scss",
+        "src/app/components/model-migration-offer/model-migration-offer.component.scss",
         "src/app/components/model-level-indicator/model-level-indicator.component.scss",
         "src/app/components/copyable-task-key/copyable-task-key.component.scss",
         "src/app/components/task-reference-microcard/task-reference-microcard.scss",
@@ -200,6 +201,7 @@
         "src/app/features/board/components/post-processing-activity/post-processing-activity.component.scss",
         "src/app/features/board/components/post-processing-summary/post-processing-summary.component.scss",
         "src/app/features/board/components/task-card-quota-wait/task-card-quota-wait.component.scss",
+        "src/app/features/board/components/task-model-migration-control/task-model-migration-control.component.scss",
         "src/app/features/board/components/task-column/task-column.scss",
         "src/app/features/orchestrator/components/orchestrator-feed-entry/orchestrator-feed-entry.scss",
         "src/app/features/orchestrator/components/prompt-catalogue-nav/prompt-catalogue-nav.component.scss",
@@ -218,6 +220,7 @@
         "src/app/features/project-detail/components/project-git-history/project-git-history.component.scss",
         "src/app/features/project-detail/components/project-git-panel/project-git-panel.component.scss",
         "src/app/features/project-detail/components/project-git-tree/project-git-tree.component.scss",
+        "src/app/features/project-detail/components/project-pipeline-panel/pipeline-model-setting/pipeline-model-setting.component.scss",
         "src/app/features/project-detail/components/project-url-context-header/project-url-context-header.scss",
         "src/app/features/project-detail/components/project-overview-dashboard/project-overview-dashboard.scss",
         "src/app/features/project-detail/components/project-overview-urls/project-overview-urls.scss",

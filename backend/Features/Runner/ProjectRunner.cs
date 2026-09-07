@@ -103,6 +103,7 @@ public class ProjectRunner
     private readonly AgentStudio.Pipeline.PipelineExecutionLog? _pipelineLog;
     private readonly AgentStudio.Pipeline.IConceptWorkbenchPublisher? _conceptWorkbenchPublisher;
     private readonly AgentStudio.Pipeline.ModelQualificationService? _modelQualification;
+    private readonly AgentStudio.ModelMigrations.ModelMigrationCoordinator? _modelMigrations;
     private readonly AgentStudio.Pipeline.IntegrationPushQueue? _integrationPushQueue;
     private readonly PromptEnrichmentService? _promptEnrichment;
     private readonly DossierMaintenanceService? _dossierMaintenance;
@@ -455,7 +456,8 @@ public class ProjectRunner
         PromptEnrichmentService? promptEnrichment = null,
         DossierMaintenanceService? dossierMaintenance = null,
         VisualQaService? visualQa = null,
-        ProviderLimitRegistry? providerLimits = null)
+        ProviderLimitRegistry? providerLimits = null,
+        AgentStudio.ModelMigrations.ModelMigrationCoordinator? modelMigrations = null)
     {
         ProjectName = projectName;
         Entry = entry;
@@ -498,6 +500,7 @@ public class ProjectRunner
         _timeline = timeline;
         _pipelineLog = pipelineLog;
         _modelQualification = modelQualification;
+        _modelMigrations = modelMigrations;
         _integrationPushQueue = integrationPushQueue;
         _conceptWorkbenchPublisher = conceptWorkbenchPublisher;
         _promptEnrichment = promptEnrichment;
@@ -2366,6 +2369,18 @@ public class ProjectRunner
                 await _quotaService.RefreshAsync(dueWait.CliType, ct);
                 ClearQuotaWait(info);
                 info = _scanner.FindJob(jobId, Entry.Path) ?? info;
+                admissionInfo = info;
+            }
+
+            // Resolve safe model migrations before quota routing, model
+            // qualification, or prompt shaping observes the task. In
+            // particular, the primary quota route carries the requested model
+            // into the launch command, so calculating it from the old card
+            // value would persist an audit event while still launching the
+            // superseded model for this admission.
+            if (_modelMigrations != null)
+            {
+                info = await _modelMigrations.ApplyAtAdmissionAsync(info, ct);
                 admissionInfo = info;
             }
 

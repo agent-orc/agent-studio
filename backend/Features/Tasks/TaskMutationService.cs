@@ -614,6 +614,77 @@ public class TaskMutationService
     }
 
     /// <summary>
+    /// Compare-and-set used only by run-admission model migrations. The write
+    /// is refused when the operator pinned the model or when the source model
+    /// changed after the proposal was calculated. Unlike
+    /// <see cref="SetJobModel"/>, this preserves non-explicit provenance so an
+    /// automatic policy decision never masquerades as an operator pin.
+    /// </summary>
+    public TaskInfo? MigrateNonExplicitModel(
+        string jobId,
+        string? watchPath,
+        string expectedFrom,
+        string targetModel,
+        Func<TaskInfo, bool>? writeAudit = null)
+    {
+        using var _ = _laneMutex.Acquire(watchPath);
+        _scanner.InvalidateCache();
+        var info = _scanner.FindJob(jobId, watchPath);
+        if (info is null || info.ModelExplicit) return null;
+
+        var current = ModelMetadataRegistry.NormalizeId(info.Model);
+        var expected = ModelMetadataRegistry.NormalizeId(expectedFrom);
+        if (!string.Equals(current, expected, StringComparison.OrdinalIgnoreCase)) return null;
+
+        var normalizedTarget = ModelMetadataRegistry.NormalizeForCli(info.CliType, targetModel);
+        if (string.IsNullOrWhiteSpace(normalizedTarget)) return null;
+
+        var resolvedThinkingLevel = ModelMetadataRegistry.ResolveThinkingLevel(
+            info.CliType,
+            normalizedTarget,
+            info.ThinkingLevel);
+        TaskJsonFile.UpdateFieldsOrThrow(
+            info.FolderPath,
+            new Dictionary<string, object>
+            {
+                ["model"] = normalizedTarget,
+                ["modelExplicit"] = false,
+                ["thinkingLevel"] = resolvedThinkingLevel ?? "",
+            });
+
+        var migrated = info with
+        {
+            Model = normalizedTarget,
+            ModelExplicit = false,
+            ThinkingLevel = resolvedThinkingLevel,
+        };
+        if (writeAudit is not null && !writeAudit(migrated))
+        {
+            try
+            {
+                TaskJsonFile.UpdateFieldsOrThrow(
+                    info.FolderPath,
+                    new Dictionary<string, object>
+                    {
+                        ["model"] = info.Model ?? "",
+                        ["modelExplicit"] = false,
+                        ["thinkingLevel"] = info.ThinkingLevel ?? "",
+                    });
+                _scanner.InvalidateCache();
+                return null;
+            }
+            catch (Exception rollbackError)
+            {
+                throw new InvalidOperationException(
+                    $"Model migration audit failed and task '{info.TaskKey}' could not be rolled back.",
+                    rollbackError);
+            }
+        }
+        Updated(migrated);
+        return migrated;
+    }
+
+    /// <summary>
     /// Appends one stable integration bookkeeping record without changing any
     /// existing row. The record id is the idempotency key: a repeated sweep is
     /// a successful no-op, even if its wall clock or evidence text differs.

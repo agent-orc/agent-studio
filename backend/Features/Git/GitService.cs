@@ -2513,7 +2513,7 @@ public class GitService
 
     /// <summary>
     /// Sends the inspected candidate manifest and working-tree diff summary to
-    /// Codex gpt-5.4-mini for additive semantic review and commit-message text.
+    /// the latest available Codex mini for additive semantic review and commit-message text.
     /// <para>
     /// Beyond the diff, the prompt is anchored on the task's stated intent so
     /// the resulting subject line reflects *why* the change is being recorded,
@@ -2550,7 +2550,7 @@ public class GitService
 
         var intent = ReadTaskIntent(jobId, watchPath);
         var codexPath = _config["CodexCli:Path"] ?? "codex";
-        var model = ModelIds.Gpt54Mini;
+        var model = ModelFamilyResolver.Resolve(ModelFamilies.GptMini);
         var prompt = _prompts.Render(RuntimePromptService.CommitMessage,
             new Dictionary<string, string?>
             {

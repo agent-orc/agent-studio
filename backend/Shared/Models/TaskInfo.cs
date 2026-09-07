@@ -63,6 +63,12 @@ public record TaskInfo
     /// execution model unexpectedly.
     /// </summary>
     public bool ModelExplicit { get; init; } = true;
+    /// <summary>
+    /// Read-time Token Economy proposal for this concrete model pin. This is
+    /// never persisted to task.json; list/detail projections populate it from
+    /// the current versioned migration catalog.
+    /// </summary>
+    public AgentStudio.ModelMigrations.ModelMigrationProposal? ModelMigration { get; init; }
     /// <summary>Optional thinking / reasoning effort level for the selected CLI model.</summary>
     public string? ThinkingLevel { get; init; }
     /// <summary>True when the card explicitly pins its reasoning level.</summary>

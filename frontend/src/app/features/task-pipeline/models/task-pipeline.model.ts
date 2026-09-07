@@ -4,6 +4,7 @@
  * shapes (System.Text.Json camelCases property names and serialises the
  * enums as camelCase strings via the global `JsonStringEnumConverter`).
  */
+import type { ModelMigrationProposal } from '../../../models/model-migration.model';
 
 export type StepKind = 'module' | 'core' | 'aspect' | 'orchestrator' | 'tool' | 'analysis' | 'drift';
 export type StepRunMode = 'sequential' | 'parallel';
@@ -282,6 +283,8 @@ export interface PipelineCatalogueStep {
   modelSource?: string | null;
   resolvedThinkingLevel?: string | null;
   thinkingLevelSource?: string | null;
+  /** Token Economy proposal when this project step pins a superseded model. */
+  modelMigration?: ModelMigrationProposal | null;
   usesModel: boolean;
   supportsEconomyModel?: boolean;
   usesPrompt: boolean;

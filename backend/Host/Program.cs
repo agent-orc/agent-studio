@@ -295,6 +295,7 @@ builder.Services.AddSingleton<CliOutputLogMaintenanceService>();
 builder.Services.AddSingleton<AgentStudio.Registry.WorkspaceRegistry>();
 builder.Services.AddSingleton<AgentStudio.Registry.ProjectRegistry>();
 builder.Services.AddSingleton<AgentStudio.Registry.ComponentRoutingService>();
+builder.Services.AddSingleton<AgentStudio.ModelMigrations.ModelMigrationCatalogService>();
 // AGT-1812: per-workspace default settings store + the two-tier orchestrator
 // resolver (project override -> workspace default -> platform constant default).
 builder.Services.AddSingleton<AgentStudio.Registry.WorkspaceSettingsService>();
@@ -619,6 +620,7 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.IModelEconomyAdvisor,
     AgentStudio.Pipeline.CatalogueModelEconomyAdvisor>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ModelRoutingPolicyRegistry>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ModelRoutingPolicyStateStore>();
+builder.Services.AddSingleton<AgentStudio.ModelMigrations.ModelMigrationCoordinator>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.IModelRoutingModeProvider>(sp =>
     sp.GetRequiredService<AgentStudio.Pipeline.ModelRoutingPolicyStateStore>());
 builder.Services.AddSingleton<AgentStudio.Pipeline.ModelQualificationService>();
@@ -1463,6 +1465,36 @@ if (!app.Environment.IsEnvironment("Test")
         {
             codexWarmupLogger.LogInformation(
                 "codex-model-warmup-skipped reason={Reason}", ex.GetType().Name + ": " + ex.Message);
+        }
+    });
+}
+
+// Best-effort Claude catalog warm-up. Family-backed defaults can use the
+// registry immediately, while this probe publishes the installed CLI's
+// availability and any newly discovered generation through the shared catalog
+// access path. It follows the same non-blocking and test-host rules as Codex.
+if (!app.Environment.IsEnvironment("Test")
+    && !app.Environment.IsEnvironment("Testing")
+    && !publicDemoExecutionProfile
+    && app.Configuration.GetValue("ClaudeModels:WarmupOnBoot", true))
+{
+    _ = Task.Run(async () =>
+    {
+        var claudeWarmupLogger = app.Services.GetRequiredService<ILogger<Program>>();
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var router = app.Services.GetRequiredService<CliRouter>();
+            var catalog = await router.Get(CliTypes.Claude).GetModelCatalogAsync(false, cts.Token);
+            claudeWarmupLogger.LogInformation(
+                "claude-model-warmup-complete models={ModelCount} source={Source}",
+                catalog.Models?.Count ?? 0,
+                catalog.Source);
+        }
+        catch (Exception ex)
+        {
+            claudeWarmupLogger.LogInformation(
+                "claude-model-warmup-skipped reason={Reason}", ex.GetType().Name + ": " + ex.Message);
         }
     });
 }

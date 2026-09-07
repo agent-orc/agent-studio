@@ -48,6 +48,7 @@ public class TaskRunnerService : BackgroundService
     private readonly TimelineLog? _timeline;
     private readonly AgentStudio.Pipeline.PipelineExecutionLog? _pipelineLog;
     private readonly AgentStudio.Pipeline.ModelQualificationService? _modelQualification;
+    private readonly AgentStudio.ModelMigrations.ModelMigrationCoordinator? _modelMigrations;
     private readonly AgentStudio.Pipeline.IntegrationPushQueue? _integrationPushQueue;
     private readonly AgentStudio.Pipeline.IConceptWorkbenchPublisher? _conceptWorkbenchPublisher;
     private readonly PromptEnrichmentService? _promptEnrichment;
@@ -154,7 +155,8 @@ public class TaskRunnerService : BackgroundService
         DossierMaintenanceService? dossierMaintenance = null,
         VisualQaService? visualQa = null,
         StartupExecutionAdmission? executionAdmission = null,
-        ProviderLimitRegistry? providerLimits = null)
+        ProviderLimitRegistry? providerLimits = null,
+        AgentStudio.ModelMigrations.ModelMigrationCoordinator? modelMigrations = null)
     {
         _config = config;
         _logger = logger;
@@ -188,6 +190,7 @@ public class TaskRunnerService : BackgroundService
         _timeline = timeline;
         _pipelineLog = pipelineLog;
         _modelQualification = modelQualification;
+        _modelMigrations = modelMigrations;
         _integrationPushQueue = integrationPushQueue;
         _conceptWorkbenchPublisher = conceptWorkbenchPublisher;
         _promptEnrichment = promptEnrichment;
@@ -378,7 +381,8 @@ public class TaskRunnerService : BackgroundService
                 promptEnrichment: _promptEnrichment,
                 dossierMaintenance: _dossierMaintenance,
                 visualQa: _visualQa,
-                providerLimits: _providerLimits);
+                providerLimits: _providerLimits,
+                modelMigrations: _modelMigrations);
             runner.ConfigureWatchdog(LoadWatchdogConfig(_config), PhaseBudgetTable.FromConfig(_config));
             runner.ConfigureCircuitBreaker(RunnerCircuitBreakerOptions.FromConfig(_config));
             _stuckLoopBudget = LoadStuckLoopBudget(_config);
@@ -1524,7 +1528,8 @@ public class TaskRunnerService : BackgroundService
             promptEnrichment: _promptEnrichment,
             dossierMaintenance: _dossierMaintenance,
             visualQa: _visualQa,
-            providerLimits: _providerLimits);
+            providerLimits: _providerLimits,
+            modelMigrations: _modelMigrations);
         runner.ConfigureWatchdog(LoadWatchdogConfig(_config), PhaseBudgetTable.FromConfig(_config));
         runner.ConfigureCircuitBreaker(RunnerCircuitBreakerOptions.FromConfig(_config));
         runner.ConfigureStuckLoopBudget(LoadStuckLoopBudget(_config));

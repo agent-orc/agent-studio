@@ -87,6 +87,7 @@ export interface BatchMoveJobResponse {
 import type { TaskCommitInfo, TaskProvenanceRecord, TaskMergeSignal, TaskIntegrationStatus } from '../features/git';
 import type { TaskTokenSummary } from '../features/tokens';
 import type { OrchestratorLogEntry, OrchestratorSession } from '../features/orchestrator';
+import type { ModelMigrationProposal } from './model-migration.model';
 
 /** One row in `logs/session-events.jsonl` for a job. */
 // (SessionEvent + SessionEventsResponse now in features/session-events/models; re-exported below)
@@ -301,6 +302,8 @@ export interface TaskInfo {
   model: string | null;
   /** False when model qualification derives the route from task type + policy. */
   modelExplicit?: boolean;
+  /** Token Economy proposal for an explicit superseded model pin. */
+  modelMigration?: ModelMigrationProposal | null;
   thinkingLevel?: string | null;
   /** False when the policy supplies the reasoning level together with the model tier. */
   thinkingLevelExplicit?: boolean;

@@ -5,11 +5,22 @@ namespace AgentStudio.Pipeline;
 public sealed record ModelRoutingPolicyState
 {
     public bool EconomyMode { get; init; }
+    /// <summary>
+    /// Whether safe Token Economy model migrations may be applied at run
+    /// admission. The switch is default-on; older state files that predate the
+    /// field therefore retain the automatic policy without a migration.
+    /// </summary>
+    public bool AutoModelMigrationsEnabled { get; init; } = true;
 }
 
 public sealed record SetModelRoutingEconomyModeRequest
 {
     public bool EconomyMode { get; init; }
+}
+
+public sealed record SetAutoModelMigrationsRequest
+{
+    public bool Enabled { get; init; }
 }
 
 /// <summary>
@@ -34,6 +45,7 @@ public sealed class ModelRoutingPolicyStateStore : IModelRoutingModeProvider
     }
 
     public bool EconomyMode => Get().EconomyMode;
+    public bool AutoModelMigrationsEnabled => Get().AutoModelMigrationsEnabled;
 
     public ModelRoutingPolicyState Get()
     {
@@ -61,21 +73,37 @@ public sealed class ModelRoutingPolicyStateStore : IModelRoutingModeProvider
     {
         lock (_lock)
         {
-            var previous = _state;
-            _state = new ModelRoutingPolicyState { EconomyMode = enabled };
-            var path = ResolvePath();
-            try
-            {
-                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-                File.WriteAllText(path, JsonSerializer.Serialize(_state, new JsonSerializerOptions { WriteIndented = true }));
-            }
-            catch (Exception ex)
-            {
-                _state = previous;
-                _logger.LogError(ex, "Failed to write model routing state to {Path}", path);
-                throw;
-            }
+            var previous = Get();
+            _state = previous with { EconomyMode = enabled };
+            Persist(previous);
             return _state;
+        }
+    }
+
+    public ModelRoutingPolicyState SetAutoModelMigrations(bool enabled)
+    {
+        lock (_lock)
+        {
+            var previous = Get();
+            _state = previous with { AutoModelMigrationsEnabled = enabled };
+            Persist(previous);
+            return _state;
+        }
+    }
+
+    private void Persist(ModelRoutingPolicyState? previous)
+    {
+        var path = ResolvePath();
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, JsonSerializer.Serialize(_state, new JsonSerializerOptions { WriteIndented = true }));
+        }
+        catch (Exception ex)
+        {
+            _state = previous;
+            _logger.LogError(ex, "Failed to write model routing state to {Path}", path);
+            throw;
         }
     }
 

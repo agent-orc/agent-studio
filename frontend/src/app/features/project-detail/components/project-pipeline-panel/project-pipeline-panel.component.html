@@ -159,24 +159,10 @@
                          [attr.data-testid]="'pipeline-step-setting-model-' + step.id">
                       <span class="pp__settings-label" role="cell">Model</span>
                       <span class="pp__settings-value pp__setting-stack" role="cell">
-                      <app-cli-model-selector
-                        [cliType]="asCliType(step.effectiveCliType)"
-                        [model]="step.effectiveModel || step.model"
-                        [thinkingLevel]="step.effectiveThinkingLevel || null"
-                        [disabled]="!step.enabled || !!stepBusy[step.id]"
-                        [disabledReason]="!step.enabled ? 'Enable this step before changing its agent.' : 'Pipeline step update in progress.'"
-                        [tooltipOverride]="'CLI, model, and thinking level for this step LLM call. Current value is resolved from ' + modelSourceLabel(step.effectiveModelSource) + '.'"
-                        eyebrow="Pipeline step"
-                        [triggerTestid]="'pipeline-step-agent-' + step.id"
-                        [pickerTestidPrefix]="'pipeline-step-agent-picker-' + step.id"
-                        (commit)="onStepAgentCommit(step.id, $event)" />
-                      @if (step.model || step.thinkingLevel || step.cliType) {
-                        <button type="button" class="pp__link"
-                                [attr.data-testid]="'pipeline-step-agent-reset-' + step.id"
-                                [disabled]="!step.enabled || stepBusy[step.id]"
-                                [cacTooltip]="'Clear this step agent override and fall back to the project / runtime default.'"
-                                (click)="resetStepAgent(step.id)">Use default</button>
-                      }
+                        <app-pipeline-model-setting [step]="step"
+                          [sourceLabel]="modelSourceLabel(step.effectiveModelSource)" [busy]="!!stepBusy[step.id]"
+                          (commitSelection)="onStepAgentCommit(step.id, $event)" (resetRequested)="resetStepAgent(step.id)"
+                          (migrationRequested)="writeStep(step.id, { model: $event })" />
                       </span>
                       <span class="pp__settings-note" role="cell">{{ modelExplanation(step) }}</span>
                     </div>

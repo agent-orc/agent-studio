@@ -16,6 +16,7 @@ export interface TimelineSourceDisclosure {
 const KIND_LABELS: Readonly<Record<string, string>> = {
   [TIMELINE_KIND.promptCreated]: 'Prompt created',
   [TIMELINE_KIND.agentRunStarted]: 'Run started',
+  [TIMELINE_KIND.modelMigrated]: 'Model updated automatically',
   [TIMELINE_KIND.quotaFallbackActivated]: 'Quota fallback activated',
   [TIMELINE_KIND.quotaAdmissionDecision]: 'Quota admission decision',
   [TIMELINE_KIND.loadThrottleDecision]: 'Run deferred for host load',
@@ -52,6 +53,7 @@ const HIDDEN_DETAILS = new Set([
 
 const HIDDEN_BY_KIND: Readonly<Record<string, ReadonlySet<string>>> = {
   [TIMELINE_KIND.agentRunFinished]: new Set(['cli', 'status', 'durationSeconds']),
+  [TIMELINE_KIND.modelMigrated]: new Set(['from', 'to']),
   [TIMELINE_KIND.runnerSlotAdmission]: new Set(['slot', 'maxParallelism']),
   [TIMELINE_KIND.executionContext]: new Set([
     'cli', 'source', 'sources', 'sourceItems', 'mcp', 'model', 'thinkingLevel', 'permissionMode',
@@ -69,6 +71,12 @@ export function timelineKindLabel(kind: string): string {
 }
 
 export function timelineEventTitle(event: TaskTimelineEvent): string {
+  if (event.kind === TIMELINE_KIND.modelMigrated) {
+    const from = clean(event.details?.['from']);
+    const to = clean(event.details?.['to']);
+    return from && to ? `Model updated automatically · ${from} to ${to}` : 'Model updated automatically';
+  }
+
   if (event.kind === TIMELINE_KIND.agentRunStarted) {
     return 'Run started';
   }
@@ -159,6 +167,7 @@ export function timelineEventSummary(event: TaskTimelineEvent): string | null {
   const summary = clean(event.summary);
   if (!summary) return null;
   if (event.kind === TIMELINE_KIND.executionContext
+    || event.kind === TIMELINE_KIND.modelMigrated
     || event.kind === TIMELINE_KIND.laneChanged
     || event.kind === TIMELINE_KIND.taskSpawned
     || event.kind === TIMELINE_KIND.externalCompletion

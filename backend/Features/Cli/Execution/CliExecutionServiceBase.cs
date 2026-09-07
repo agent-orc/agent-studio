@@ -108,13 +108,15 @@ public partial class GenericCliExecutionService : ICliExecutionService
     }
 
     /// <summary>
-    /// Quality-first default for the code-review grade pass: Claude Opus 4.8.
+    /// Quality-first default for the code-review grade pass: the newest
+    /// available Claude Opus generation.
     /// Lives on the engine (the old <c>ClaudeCliService.DefaultOpusModel</c>
     /// home was deleted with the shim) so
     /// <c>CodeReviewGradeModelSelector</c> + <c>TaskCodeReviewEndpoints</c>
-    /// keep a single named constant.
+    /// keep a single named default.
     /// </summary>
-    public const string DefaultOpusModel = ModelIds.ClaudeOpus48;
+    public static string DefaultOpusModel =>
+        ModelFamilyResolver.Resolve(ModelFamilies.ClaudeOpus);
 
     // ── Built-in CLI factory helpers ────────────────────────────────────
     //
@@ -364,8 +366,16 @@ public partial class GenericCliExecutionService : ICliExecutionService
     public IEnumerable<CliOutputLine> TransformReadLine(CliOutputLine raw)
         => _behavior.TransformReadLine?.Invoke(this, raw) ?? new[] { raw };
 
-    public Task<CliModelCatalog> GetModelCatalogAsync(bool forceRefresh = false, CancellationToken ct = default)
-        => _behavior.GetModelCatalog?.Invoke(this, forceRefresh, ct) ?? DefaultModelCatalogAsync();
+    public async Task<CliModelCatalog> GetModelCatalogAsync(
+        bool forceRefresh = false,
+        CancellationToken ct = default)
+    {
+        var catalog = _behavior.GetModelCatalog != null
+            ? await _behavior.GetModelCatalog(this, forceRefresh, ct).ConfigureAwait(false)
+            : await DefaultModelCatalogAsync().ConfigureAwait(false);
+        ModelFamilyResolver.PublishCatalog(CliType, catalog);
+        return catalog;
+    }
 
     internal Task<CliModelCatalog> DefaultModelCatalogAsync()
     {

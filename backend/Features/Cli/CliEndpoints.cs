@@ -76,8 +76,10 @@ public static class CliEndpoints
 
         cliGroup.MapGet("/model-routing/policy", (
             ModelRoutingPolicyRegistry registry,
-            ModelRoutingPolicyStateStore state) =>
+            ModelRoutingPolicyStateStore state,
+            AgentStudio.ModelMigrations.ModelMigrationCoordinator modelMigrations) =>
         {
+            var migrationStatus = modelMigrations.GetStatus();
             return Results.Ok(new
             {
                 version = registry.Policy.Version,
@@ -86,6 +88,12 @@ public static class CliEndpoints
                 economyModeLabel = registry.Policy.EconomyMode.Label,
                 tiers = registry.Policy.Tiers,
                 taskTypeDefaults = registry.Policy.TaskTypeDefaults,
+                migrationCatalogVersion = migrationStatus.CatalogVersion,
+                migrationCatalogAvailable = migrationStatus.IsAvailable,
+                migrationCatalogStale = migrationStatus.IsStale,
+                migrationCatalogError = migrationStatus.Error,
+                autoModelMigrationsEnabled = state.AutoModelMigrationsEnabled,
+                configurationPins = modelMigrations.GetConfigurationPins(),
             });
         });
 
@@ -93,6 +101,25 @@ public static class CliEndpoints
             SetModelRoutingEconomyModeRequest request,
             ModelRoutingPolicyStateStore state) =>
             Results.Ok(state.SetEconomyMode(request.EconomyMode)));
+
+        cliGroup.MapPut("/model-routing/auto-migrations", (
+            SetAutoModelMigrationsRequest request,
+            ModelRoutingPolicyStateStore state) =>
+            Results.Ok(state.SetAutoModelMigrations(request.Enabled)));
+
+        cliGroup.MapPut("/model-routing/configuration-pins/{id}/apply", (
+            string id,
+            AgentStudio.ModelMigrations.ApplyConfigurationPinRequest request,
+            AgentStudio.ModelMigrations.ModelMigrationCoordinator modelMigrations) =>
+        {
+            var result = modelMigrations.ApplyConfigurationPin(id, request);
+            return result.Status switch
+            {
+                "applied" => Results.Ok(result.Pin),
+                "not-found" => Results.NotFound(new { error = result.Error }),
+                _ => Results.Conflict(new { error = result.Error, pin = result.Pin }),
+            };
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         cliGroup.MapGet("/model-routing/recommendation", async (
             string taskType,

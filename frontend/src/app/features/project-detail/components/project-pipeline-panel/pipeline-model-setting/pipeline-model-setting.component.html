@@ -1,0 +1,27 @@
+<app-cli-model-selector
+  [cliType]="asCliType(step().effectiveCliType)"
+  [model]="step().effectiveModel || step().model"
+  [thinkingLevel]="step().effectiveThinkingLevel || null"
+  [disabled]="!step().enabled || busy()"
+  [disabledReason]="!step().enabled ? 'Enable this step before changing its agent.' : 'Pipeline step update in progress.'"
+  [tooltipOverride]="'CLI, model, and thinking level for this step LLM call. Current value is resolved from ' + sourceLabel() + '.'"
+  eyebrow="Pipeline step"
+  [triggerTestid]="'pipeline-step-agent-' + step().id"
+  [pickerTestidPrefix]="'pipeline-step-agent-picker-' + step().id"
+  (commit)="commitSelection.emit($event)" />
+@if (step().model || step().thinkingLevel || step().cliType) {
+  <button type="button"
+          class="pipeline-model-setting__reset"
+          [attr.data-testid]="'pipeline-step-agent-reset-' + step().id"
+          [disabled]="!step().enabled || busy()"
+          [cacTooltip]="'Clear this step agent override and fall back to the project / runtime default.'"
+          (click)="resetRequested.emit()">Use default</button>
+}
+@if (step().modelMigration; as proposal) {
+  <app-model-migration-offer
+    [proposal]="proposal"
+    [busy]="busy()"
+    [disabled]="!step().enabled"
+    [testId]="'pipeline-step-model-migration-' + step().id"
+    (applyRequested)="migrationRequested.emit($event.to)" />
+}

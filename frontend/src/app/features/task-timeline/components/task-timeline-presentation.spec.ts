@@ -40,6 +40,27 @@ describe('task timeline presentation', () => {
     expect(timelineDetailEntries(completed)).toEqual([]);
   });
 
+  it('presents automatic model migration as a calm audit event', () => {
+    const migrated = event({
+      kind: TIMELINE_KIND.modelMigrated,
+      summary: 'Model migrated from claude-sonnet-4-6 to claude-sonnet-5.',
+      details: {
+        from: 'claude-sonnet-4-6',
+        to: 'claude-sonnet-5',
+        rule: 'latestInFamily:claude-sonnet',
+        catalogVersion: '2026-09-06',
+      },
+    });
+
+    expect(timelineEventTitle(migrated))
+      .toBe('Model updated automatically · claude-sonnet-4-6 to claude-sonnet-5');
+    expect(timelineEventSummary(migrated)).toBeNull();
+    expect(timelineDetailEntries(migrated)).toEqual([
+      { key: 'rule', label: 'Rule', value: 'latestInFamily:claude-sonnet' },
+      { key: 'catalogVersion', label: 'Catalog Version', value: '2026-09-06' },
+    ]);
+  });
+
   it('removes generated lifecycle wording already carried by the title', () => {
     const started = event({
       kind: TIMELINE_KIND.agentRunStarted,

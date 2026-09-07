@@ -236,17 +236,8 @@
           <app-studio-icon [name]="taskTypeIconName(tt.kind)" [size]="11" [strokeWidth]="2"></app-studio-icon>
         </span>
       }
-      <app-model-level-indicator
-        [model]="effectiveModelChip().fullModel"
-        [cliType]="effectiveModelChip().cliType"
-        [thinkingLevel]="effectiveModelChip().thinkingLevel?.effective ?? null"
-        [thinkingLevelOverride]="(effectiveModelChip().thinkingLevel?.differsFromDefault || effectiveModelChip().thinkingLevel?.differsFromConfigured) ?? false"
-        [fallbackLabel]="effectiveModelChip().label"
-        [tooltip]="effectiveModelChip().tooltip"
-        [source]="effectiveModelChip().source"
-        [isDefault]="effectiveModelChip().isDefault"
-        testId="task-card-effective-model"
-        levelTestId="task-card-thinking-level" />
+      <app-task-model-migration-control
+        [task]="job()" [chip]="effectiveModelChip()" [mutationsBlocked]="mutationsBlocked()" />
       <app-execution-location-badge [execution]="displayedExecutionLocation()" />
       @if (integrationStatus(); as integ) {
         <app-integration-status-badge

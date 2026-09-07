@@ -421,6 +421,34 @@ public sealed class AgentMessageBusBridge
     }
 
     /// <summary>
+    /// Mirrors an admission-time safe model migration into the operator feed.
+    /// The task timeline remains the per-card audit source; this workspace
+    /// projection makes automatic policy changes visible without opening it.
+    /// </summary>
+    public Task EmitModelMigratedAsync(
+        TaskInfo info,
+        string fromModel,
+        string toModel,
+        string rule,
+        string catalogVersion,
+        CancellationToken ct = default)
+    {
+        if (info is null) return Task.CompletedTask;
+        var msg = NewMessage(
+            participantId: ParticipantRuntime,
+            role: "system",
+            kind: "action",
+            severity: "Info",
+            project: info.ProjectName,
+            jobId: info.Id,
+            topic: TimelineEventKinds.ModelMigrated,
+            summary: TruncateSummary($"Model migrated from {fromModel} to {toModel} by {rule} ({catalogVersion})"),
+            payload: new { from = fromModel, to = toModel, rule, catalogVersion },
+            tags: new[] { "model-migration", "safe-auto", $"catalog:{catalogVersion}" });
+        return EmitAsync(msg, ct);
+    }
+
+    /// <summary>
     /// Emits the final failure of a platform-owned repository push. Producers
     /// call this only after their retry budget is exhausted so the operator
     /// feed stays useful instead of receiving one message per retry attempt.

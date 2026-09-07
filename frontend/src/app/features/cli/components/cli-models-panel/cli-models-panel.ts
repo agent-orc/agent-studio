@@ -4,6 +4,8 @@ import type { CliModelInfo } from '../../models/cli.model';
 import { CliCatalogStore } from '../../services/cli-catalog.store';
 import { cliTypeIcon, cliTypeLabel } from '../../../../services/format.util';
 import { QuotaApiService, type CliModelRouteProfile, type ModelRoutingPolicyView } from '../../../quota';
+import { ModelMigrationOfferComponent } from '../../../../components/model-migration-offer';
+import type { ModelConfigurationPin } from '../../../../models/model-migration.model';
 
 interface CliModelGroup {
   cliType: CliType;
@@ -27,7 +29,7 @@ interface CliModelGroup {
 @Component({
   selector: 'app-cli-models-panel',
   standalone: true,
-  imports: [],
+  imports: [ModelMigrationOfferComponent],
   templateUrl: './cli-models-panel.html',
   styleUrl: './cli-models-panel.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -39,7 +41,10 @@ export class CliModelsPanelComponent implements OnInit {
   readonly savingCli = signal<string | null>(null);
   readonly policy = signal<ModelRoutingPolicyView | null>(null);
   readonly savingEconomyMode = signal(false);
+  readonly savingAutoMigrations = signal(false);
+  readonly applyingConfigurationPin = signal<string | null>(null);
   readonly cliTypes = CLI_TYPES;
+  readonly configurationPins = computed(() => this.policy()?.configurationPins ?? []);
 
   /** CLIs whose per-row details (route editor + full model list) are expanded.
    *  Collapsed rows still answer "what's present" via the summary line. */
@@ -163,6 +168,49 @@ export class CliModelsPanelComponent implements OnInit {
         if (latest) this.policy.set({ ...latest, economyMode: current.economyMode });
         this.savingEconomyMode.set(false);
       },
+    });
+  }
+
+  setAutoMigrations(enabled: boolean): void {
+    const current = this.policy();
+    if (!current || this.savingAutoMigrations()) return;
+    this.policy.set({ ...current, autoModelMigrationsEnabled: enabled });
+    this.savingAutoMigrations.set(true);
+    this.routesApi.setAutoModelMigrations(enabled).subscribe({
+      next: (state) => {
+        const latest = this.policy();
+        if (latest) this.policy.set({ ...latest, autoModelMigrationsEnabled: state.autoModelMigrationsEnabled });
+        this.savingAutoMigrations.set(false);
+      },
+      error: () => {
+        const latest = this.policy();
+        if (latest) this.policy.set({ ...latest, autoModelMigrationsEnabled: current.autoModelMigrationsEnabled });
+        this.savingAutoMigrations.set(false);
+      },
+    });
+  }
+
+  applyConfigurationPin(pin: ModelConfigurationPin): void {
+    const proposal = pin.modelMigration;
+    if (!proposal || this.applyingConfigurationPin()) return;
+    this.applyingConfigurationPin.set(pin.id);
+    this.routesApi.applyConfigurationPinMigration(pin.id, {
+      expectedFrom: proposal.from,
+      toModel: proposal.to,
+      catalogVersion: proposal.catalogVersion,
+      rule: proposal.rule,
+    }).subscribe({
+      next: () => {
+        const current = this.policy();
+        if (current) this.policy.set({
+          ...current,
+          configurationPins: current.configurationPins.map((candidate) => candidate.id === pin.id
+            ? { ...candidate, currentModel: proposal.to, modelMigration: null }
+            : candidate),
+        });
+        this.applyingConfigurationPin.set(null);
+      },
+      error: () => this.applyingConfigurationPin.set(null),
     });
   }
 

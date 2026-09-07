@@ -35,7 +35,15 @@ const CATALOGUE = {
     { id: 'pre-context-scan', displayName: 'Pre: Context scan', kind: 'module', usesModel: true, usesPrompt: true, supportsMode: false, promptTemplate: 'pre-context-scan', canDisable: true, defaultEnabled: true, supportsCondition: false },
     { id: 'core-run', displayName: 'Core: Agent run', kind: 'core', usesModel: false, usesPrompt: false, supportsMode: false, canDisable: false, defaultEnabled: true, supportsCondition: false },
     { id: 'aspect-requirement-fit', displayName: 'Aspect: Requirement fit', kind: 'aspect', usesModel: true, usesPrompt: true, supportsMode: false, promptTemplate: 'aspect-requirement-fit', canDisable: true, defaultEnabled: true, supportsCondition: false },
-    { id: 'aspect-code-quality', displayName: 'Aspect: Code quality', kind: 'aspect', usesModel: true, usesPrompt: true, supportsMode: false, promptTemplate: 'aspect-code-quality', canDisable: true, defaultEnabled: true, supportsCondition: false },
+    { id: 'aspect-code-quality', displayName: 'Aspect: Code quality', kind: 'aspect', usesModel: true, usesPrompt: true, supportsMode: false, promptTemplate: 'aspect-code-quality', canDisable: true, defaultEnabled: true, supportsCondition: false,
+      resolvedModel: 'claude-sonnet-4-6', modelSource: 'step', modelMigration: {
+        from: 'claude-sonnet-4-6', to: 'claude-sonnet-5', family: 'claude-sonnet',
+        rule: 'latestInFamily:claude-sonnet', catalogVersion: '2026-09-06',
+        safeAuto: true, targetAvailable: true, safeAutoCandidate: true,
+        costClassFrom: 'standard', costClassTo: 'standard',
+        fromReasoningLevels: ['medium'], toReasoningLevels: ['medium', 'high'],
+        ladderCompatible: true, note: 'Latest Sonnet generation with a compatible reasoning ladder.',
+      } },
     { id: 'aspect-security', displayName: 'Aspect: Security', kind: 'aspect', usesModel: true, usesPrompt: true, supportsMode: false, promptTemplate: 'aspect-security', canDisable: true, defaultEnabled: true, supportsCondition: false },
     { id: 'decision-gate', displayName: 'Decision: Lint gate', kind: 'tool', usesModel: false, usesPrompt: false, supportsMode: true, canDisable: true, defaultEnabled: true, supportsCondition: false },
     { id: 'post-abort-review', displayName: 'Post: Abort review', kind: 'orchestrator', usesModel: true, usesPrompt: true, supportsMode: false, promptTemplate: 'post-abort-review', canDisable: true, defaultEnabled: true, supportsCondition: true },
@@ -45,7 +53,7 @@ const CATALOGUE = {
 
 const SETTINGS_PROJECTION = {
   pipelineSteps: {
-    'aspect-code-quality': { enabled: true, cliType: 'claude', model: 'claude-haiku-4-5', thinkingLevel: null },
+    'aspect-code-quality': { enabled: true, cliType: 'claude', model: 'claude-sonnet-4-6', thinkingLevel: null },
     // A legacy inline prompt override -> renders the "inline override" badge + Clear.
     'aspect-security': { enabled: true, prompt: 'Project-specific security checklist (legacy inline).' },
     // Opt-out step (default on) with a run condition set.
@@ -106,6 +114,7 @@ test('pipeline page: reworked panel shows health, steps, models, prompt bindings
   })));
   await page.route('**/api/clients**', r => r.fulfill(json([])));
   await page.route('**/api/v1/management/remote-hosts', r => r.fulfill(json([])));
+  await page.route('**/api/v1/management/remote-hosts/link-health', r => r.fulfill(json([])));
   await page.route('**/api/tags', r => r.fulfill(json([])));
   await page.route('**/api/orchestrator/sessions', r => r.fulfill(json({ sessions: [] })));
   await page.route('**/api/crash-recovery/pending', r => r.fulfill(json({ pending: [] })));
@@ -138,6 +147,12 @@ test('pipeline page: reworked panel shows health, steps, models, prompt bindings
   await page.route('**/api/tasks/archive**', r => r.fulfill(json({ items: [], total: 0 })));
   await page.route('**/api/runner/status', r => r.fulfill(json({ projects: {} })));
   await page.route('**/api/bus/*/messages**', r => r.fulfill(json([])));
+  await page.route('**/api/projects/*/workbenches**', r => r.fulfill(json({
+    projectName,
+    includesHistory: true,
+    count: 0,
+    items: [],
+  })));
   await page.route('**/api/projects/pipeline-catalogue**', r => r.fulfill(json(CATALOGUE)));
   await page.route('**/api/projects/settings', r => r.fulfill(json({ [projectName]: SETTINGS_PROJECTION })));
   await page.route('**/token-usage/pipeline-cost*', r => r.fulfill(json(fakeCost(projectName))));
@@ -209,6 +224,11 @@ test('pipeline page: reworked panel shows health, steps, models, prompt bindings
   await expect(codeQualityRow.getByTestId('pipeline-step-setting-run-aspect-code-quality')).toBeVisible();
   await expect(codeQualityRow.getByTestId('pipeline-step-setting-run-aspect-code-quality')).toContainText('sequential');
   await expect(codeQualityRow.getByTestId('pipeline-step-setting-model-aspect-code-quality')).toBeVisible();
+  const migration = page.getByTestId('pipeline-step-model-migration-aspect-code-quality');
+  await expect(migration).toContainText('Update available:');
+  await expect(migration).toContainText('claude-sonnet-4-6');
+  await expect(migration).toContainText('claude-sonnet-5');
+  await expect(migration.getByTestId('model-migration-impact')).toContainText('standard to standard');
   await expect(page.getByTestId('pipeline-step-prompt-open-aspect-code-quality')).toBeVisible();
   await expect(page.getByTestId('pipeline-step-agent-aspect-code-quality')).toBeVisible();
   await page.getByTestId('pipeline-step-row-aspect-requirement-fit').evaluate(el => { (el as HTMLDetailsElement).open = true; });
@@ -231,11 +251,13 @@ test('pipeline page: reworked panel shows health, steps, models, prompt bindings
   await expect(page.getByTestId('pipeline-step-probe-output-post-lint-scss')).toContainText('stylelint passed');
 
   await setTheme(page, 'light');
+  await migration.screenshot({ path: path.join(SCREENSHOT_DIR, 'pipeline-model-migration--light--mocked.png') });
   await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'pipeline-page-full--mocked.png'), fullPage: true });
   await section.screenshot({ path: path.join(SCREENSHOT_DIR, 'pipeline-page-section--mocked.png') });
   await health.screenshot({ path: path.join(SCREENSHOT_DIR, 'pipeline-health-night-alarms--light--mocked.png') });
 
   await setTheme(page, 'dark');
+  await migration.screenshot({ path: path.join(SCREENSHOT_DIR, 'pipeline-model-migration--dark--mocked.png') });
   await health.screenshot({ path: path.join(SCREENSHOT_DIR, 'pipeline-health-night-alarms--dark--mocked.png') });
   await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'pipeline-page-full-dark--mocked.png'), fullPage: true });
   await setTheme(page, 'light');
@@ -279,6 +301,7 @@ test('pipeline page: pure dotnet project keeps Angular stylelint visible but ina
   })));
   await page.route('**/api/clients**', r => r.fulfill(json([])));
   await page.route('**/api/v1/management/remote-hosts', r => r.fulfill(json([])));
+  await page.route('**/api/v1/management/remote-hosts/link-health', r => r.fulfill(json([])));
   await page.route('**/api/tags', r => r.fulfill(json([])));
   await page.route('**/api/orchestrator/sessions', r => r.fulfill(json({ sessions: [] })));
   await page.route('**/api/crash-recovery/pending', r => r.fulfill(json({ pending: [] })));
@@ -311,6 +334,12 @@ test('pipeline page: pure dotnet project keeps Angular stylelint visible but ina
   await page.route('**/api/tasks/archive**', r => r.fulfill(json({ items: [], total: 0 })));
   await page.route('**/api/runner/status', r => r.fulfill(json({ projects: {} })));
   await page.route('**/api/bus/*/messages**', r => r.fulfill(json([])));
+  await page.route('**/api/projects/*/workbenches**', r => r.fulfill(json({
+    projectName,
+    includesHistory: true,
+    count: 0,
+    items: [],
+  })));
   await page.route('**/api/projects/pipeline-catalogue**', r => r.fulfill(json(dotnetCatalogue)));
   await page.route('**/api/projects/settings', r => r.fulfill(json({ [projectName]: SETTINGS_PROJECTION })));
   await page.route('**/token-usage/pipeline-cost*', r => r.fulfill(json(fakeCost(projectName))));

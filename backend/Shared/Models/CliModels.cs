@@ -164,7 +164,9 @@ public sealed record ModelMetadata(
     long? ContextWindow,
     string[]? Aliases = null,
     string[]? ThinkingLevels = null,
-    string? DefaultThinkingLevel = null)
+    string? DefaultThinkingLevel = null,
+    string? Family = null,
+    int GenerationOrder = 0)
 {
     // Pricing is intentionally a live catalog pass-through. Studio owns no
     // rates; callers that need historical cost use TokenPricing.Estimate.
@@ -185,19 +187,26 @@ public static class ModelMetadataRegistry
 {
     private static readonly ModelMetadata[] Entries =
     [
-        Claude(ModelIds.ClaudeOpus5, "Claude Opus 5", isDefault: true, context: 1_000_000,
+        Claude(ModelIds.ClaudeOpus5, "Claude Opus 5", ModelFamilies.ClaudeOpus, 50_000,
+            isDefault: true, context: 1_000_000,
             thinkingLevels: ["low", "medium", "high", "xhigh", "max"], defaultThinkingLevel: "high"),
         Claude(ModelIds.ClaudeFable51, "Claude Fable 5.1", context: 200_000,
             aliases: ["claude-fable-5.1"],
             thinkingLevels: ["low", "medium", "high", "xhigh", "max"], defaultThinkingLevel: "high"),
-        Claude(ModelIds.ClaudeSonnet5, "Claude Sonnet 5", context: 200_000),
-        Claude(ModelIds.ClaudeOpus48, "Claude Opus 4.8", context: 200_000, aliases: ["claude-opus-4.8"]),
-        Claude(ModelIds.ClaudeOpus47, "Claude Opus 4.7", context: 200_000, aliases: ["claude-opus-4.7"]),
-        Claude(ModelIds.ClaudeOpus46, "Claude Opus 4.6", context: 200_000, aliases: ["claude-opus-4.6"]),
-        Claude(ModelIds.ClaudeOpus45, "Claude Opus 4.5", context: 200_000, aliases: ["claude-opus-4.5"]),
-        Claude(ModelIds.ClaudeSonnet46, "Claude Sonnet 4.6", context: 200_000, aliases: ["claude-sonnet-4.6"]),
-        Claude(ModelIds.ClaudeSonnet45, "Claude Sonnet 4.5", context: 200_000, aliases: ["claude-sonnet-4.5"]),
-        Claude(ModelIds.ClaudeHaiku45, "Claude Haiku 4.5", context: 200_000,
+        Claude(ModelIds.ClaudeSonnet5, "Claude Sonnet 5", ModelFamilies.ClaudeSonnet, 50_000),
+        Claude(ModelIds.ClaudeOpus48, "Claude Opus 4.8", ModelFamilies.ClaudeOpus, 40_800,
+            aliases: ["claude-opus-4.8"]),
+        Claude(ModelIds.ClaudeOpus47, "Claude Opus 4.7", ModelFamilies.ClaudeOpus, 40_700,
+            aliases: ["claude-opus-4.7"]),
+        Claude(ModelIds.ClaudeOpus46, "Claude Opus 4.6", ModelFamilies.ClaudeOpus, 40_600,
+            aliases: ["claude-opus-4.6"]),
+        Claude(ModelIds.ClaudeOpus45, "Claude Opus 4.5", ModelFamilies.ClaudeOpus, 40_500,
+            aliases: ["claude-opus-4.5"]),
+        Claude(ModelIds.ClaudeSonnet46, "Claude Sonnet 4.6", ModelFamilies.ClaudeSonnet, 40_600,
+            aliases: ["claude-sonnet-4.6"]),
+        Claude(ModelIds.ClaudeSonnet45, "Claude Sonnet 4.5", ModelFamilies.ClaudeSonnet, 40_500,
+            aliases: ["claude-sonnet-4.5"]),
+        Claude(ModelIds.ClaudeHaiku45, "Claude Haiku 4.5", ModelFamilies.ClaudeHaiku, 40_500,
             aliases: ["claude-haiku-4.5", "claude-haiku-4-5-20251001"]),
         // gpt-5.5 is the current Codex/OpenAI default. codex-cli 0.143 on a
         // ChatGPT account rejects gpt-5-codex with a 400 invalid_request, so
@@ -205,7 +214,7 @@ public static class ModelMetadataRegistry
         // left null until authoritative numbers are confirmed (same posture as
         // the GPT-4.1 / GPT-4o entries) so no invented cost is asserted.
         new(ModelIds.Gpt55, "GPT-5.5", "openai", IsDefault: true, Deprecated: false, Available: true,
-            ContextWindow: 400_000),
+            ContextWindow: 400_000, Family: ModelFamilies.GptFlagship, GenerationOrder: 50_500),
         // gpt-6-astra is onboarded as a known model so the picker can show it
         // disabled-with-a-reason on a codex-cli that does not offer it yet
         // (AGT-2707). Its reasoning ladder and default level are deliberately
@@ -213,15 +222,20 @@ public static class ModelMetadataRegistry
         // that stays correct across CLI releases. Pricing is left null (no
         // invented rates), same posture as the GPT-4.1 / GPT-4o entries.
         new(ModelIds.Gpt6Astra, "GPT-6 Astra", "openai", IsDefault: false, Deprecated: false, Available: true,
-            ContextWindow: 272_000),
+            ContextWindow: 272_000, Family: ModelFamilies.GptFlagship, GenerationOrder: 60_000),
+        // Registered so the mini family has a safe answer when live discovery
+        // is unavailable. A fresh CLI catalog still controls whether it can be
+        // selected on the installed Codex version.
+        new(ModelIds.Gpt54Mini, "GPT-5.4 Mini", "openai", IsDefault: false, Deprecated: false, Available: true,
+            ContextWindow: 272_000, Family: ModelFamilies.GptMini, GenerationOrder: 50_400),
         // gpt-5-codex is retained (API-key accounts still accept it) but is no
         // longer the default: a ChatGPT-account spawn rejects it outright.
         new(ModelIds.Gpt5Codex, "GPT-5 Codex", "openai", IsDefault: false, Deprecated: false, Available: true,
-            ContextWindow: 272_000),
+            ContextWindow: 272_000, Family: ModelFamilies.GptFlagship, GenerationOrder: 50_000),
         new(ModelIds.Gpt41, "GPT-4.1", "openai", IsDefault: false, Deprecated: false, Available: true,
-            ContextWindow: 1_000_000),
+            ContextWindow: 1_000_000, Family: ModelFamilies.GptFlagship, GenerationOrder: 40_100),
         new(ModelIds.Gpt4o, "GPT-4o", "openai", IsDefault: false, Deprecated: false, Available: true,
-            ContextWindow: 128_000),
+            ContextWindow: 128_000, Family: ModelFamilies.GptFlagship, GenerationOrder: 40_000),
         new(ModelIds.Gemini25Pro, "Gemini 2.5 Pro", "google", IsDefault: false, Deprecated: false, Available: true,
             ContextWindow: 2_000_000),
         new(ModelIds.Gemini25Flash, "Gemini 2.5 Flash", "google", IsDefault: false, Deprecated: false, Available: true,
@@ -315,6 +329,9 @@ public static class ModelMetadataRegistry
 
     public static IReadOnlyList<ModelMetadata> ForVendor(string vendor)
         => Entries.Where(e => string.Equals(e.Vendor, vendor, StringComparison.OrdinalIgnoreCase)).ToList();
+
+    public static IReadOnlyList<ModelMetadata> ForFamily(string family)
+        => Entries.Where(e => string.Equals(e.Family, family, StringComparison.OrdinalIgnoreCase)).ToList();
 
     public static string? DefaultForCli(string? cliType)
     {
@@ -578,6 +595,8 @@ public static class ModelMetadataRegistry
     private static ModelMetadata Claude(
         string id,
         string label,
+        string? family = null,
+        int generationOrder = 0,
         bool isDefault = false,
         long context = 200_000,
         string[]? aliases = null,
@@ -585,7 +604,8 @@ public static class ModelMetadataRegistry
         string? defaultThinkingLevel = null)
         => new(id, label, "anthropic", isDefault, Deprecated: false, Available: true,
             ContextWindow: context, Aliases: aliases,
-            ThinkingLevels: thinkingLevels, DefaultThinkingLevel: defaultThinkingLevel);
+            ThinkingLevels: thinkingLevels, DefaultThinkingLevel: defaultThinkingLevel,
+            Family: family, GenerationOrder: generationOrder);
 
     private static string? VendorForCli(string? cliType)
     {

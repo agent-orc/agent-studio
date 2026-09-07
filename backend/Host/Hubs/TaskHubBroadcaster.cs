@@ -37,6 +37,7 @@ public sealed class TaskHubBroadcaster
     private readonly ILogger<TaskHubBroadcaster> _logger;
     private readonly CliRouter? _router;
     private readonly TaskRunnerService? _runners;
+    private readonly AgentStudio.ModelMigrations.ModelMigrationCoordinator? _modelMigrations;
 
     public TaskHubBroadcaster(
         IHubContext<TaskHub> hub,
@@ -45,7 +46,8 @@ public sealed class TaskHubBroadcaster
         TaskChangeNotifier notifier,
         ILogger<TaskHubBroadcaster> logger,
         CliRouter? router = null,
-        TaskRunnerService? runners = null)
+        TaskRunnerService? runners = null,
+        AgentStudio.ModelMigrations.ModelMigrationCoordinator? modelMigrations = null)
     {
         _hub = hub;
         _scanner = scanner;
@@ -53,6 +55,7 @@ public sealed class TaskHubBroadcaster
         _logger = logger;
         _router = router;
         _runners = runners;
+        _modelMigrations = modelMigrations;
 
         notifier.TaskCreated += OnCreated;
         notifier.TaskUpdated += OnUpdated;
@@ -98,6 +101,8 @@ public sealed class TaskHubBroadcaster
             var projected = _router is not null && _runners is not null
                 ? AgentStudio.Tasks.TaskEndpointHelpers.WithRuntime(info, _router, _runners)
                 : info;
+            if (_modelMigrations is not null)
+                projected = _modelMigrations.WithProposal(projected);
             SendProject(projected.ProjectName, method, projected);
         }
         else Send("jobsBulkChanged");

@@ -5,7 +5,7 @@ import { CLI_TYPES, type CliType } from '../../../../models/task.model';
 import type { PipelineCatalogueStep, PipelineStepSetting, PipelineStepCondition,
   PipelineStepConditionToken, PipelineType } from '../../../task-pipeline';
 import type { ProjectPipelineCostTimeline } from '../../../project-token-usage';
-import { CliModelSelectorComponent } from '../../../../components/cli-model-selector';
+import { PipelineModelSettingComponent } from './pipeline-model-setting/pipeline-model-setting.component';
 import { TooltipDirective, type StructuredTooltip } from 'coding-agent-chat/shared';
 import {
   PIPELINE_GATE_MODES,
@@ -33,7 +33,7 @@ import { PipelineStepRowStateComponent } from './pipeline-step-row-state/pipelin
 /** Per-type project pipeline editor for ordering, activation, agents, prompts, gates, and usage. */
 @Component({
   selector: 'app-project-pipeline-panel', standalone: true,
-  imports: [FormsModule, CliModelSelectorComponent, TooltipDirective, PipelineHealthBlockComponent, PipelineStepExecutionComponent,
+  imports: [FormsModule, PipelineModelSettingComponent, TooltipDirective, PipelineHealthBlockComponent, PipelineStepExecutionComponent,
     PipelineTypePickerComponent, PipelineStepRowStateComponent],
   hostDirectives: [{ directive: PipelineStepFocusDirective, inputs: ['focusStepId'] }],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -116,6 +116,7 @@ export class ProjectPipelinePanelComponent {
         effectiveModel: ov?.model ?? step.resolvedModel ?? step.model ?? '',
         effectiveModelSource: ov?.model ? 'step' : (step.modelSource ?? ''),
         effectiveThinkingLevel: ov?.thinkingLevel ?? step.resolvedThinkingLevel ?? '',
+        modelMigration: step.modelMigration ?? null,
         prompt: ov?.prompt ?? '',
         promptTemplate: step.promptTemplate ?? '',
         mode: ov?.mode ?? '',
@@ -429,6 +430,7 @@ export class ProjectPipelinePanelComponent {
         this.stepBusy[stepId] = false;
         if (this.pipelineType() !== pipelineType) return;
         this.overrides.set(res.pipelineSteps ?? {});
+        if (patch.model !== undefined) this.catalogue.update(steps => steps.map(step => step.id === stepId ? { ...step, modelMigration: null } : step));
         this.clearConditionDraft(stepId);
       },
       error: () => {
@@ -437,10 +439,6 @@ export class ProjectPipelinePanelComponent {
         if (this.pipelineType() === pipelineType) this.clearConditionDraft(stepId);
       },
     });
-  }
-
-  asCliType(value: string | null | undefined): CliType | null {
-    return value && (CLI_TYPES as readonly string[]).includes(value) ? value as CliType : null;
   }
 
   groupSummary(group: PipelineGroup): string {

@@ -64,10 +64,12 @@ public class PromptEnhancementService
             ? trimmed[..MaxInputChars]
             : trimmed;
 
-        var fallbackModel = _configuration["PromptEnhancement:Model"]
-                            ?? _configuration["TitleGeneration:Model"]
-                            ?? _configuration["ClaudeCli:SummaryModel"]
-                            ?? ModelIds.ClaudeHaiku45;
+        var fallbackModel = ModelFamilyResolver.ResolveConfigured(
+            _configuration,
+            ModelFamilies.ClaudeHaiku,
+            "PromptEnhancement:Model",
+            "TitleGeneration:Model",
+            "ClaudeCli:SummaryModel");
         var prompt = _prompts.Render(TemplateName,
             new Dictionary<string, string?> { ["input"] = bounded },
             new PromptCallContext(Step: "prompt-enhancement", Model: fallbackModel));
@@ -204,10 +206,12 @@ public class PromptEnhancementService
     protected virtual async Task<(bool Ok, string? Raw, string? Error)> InvokeAsync(
         string prompt, CancellationToken ct)
     {
-        var model = _configuration["PromptEnhancement:Model"]
-                    ?? _configuration["TitleGeneration:Model"]
-                    ?? _configuration["ClaudeCli:SummaryModel"]
-                    ?? ModelIds.ClaudeHaiku45;
+        var model = ModelFamilyResolver.ResolveConfigured(
+            _configuration,
+            ModelFamilies.ClaudeHaiku,
+            "PromptEnhancement:Model",
+            "TitleGeneration:Model",
+            "ClaudeCli:SummaryModel");
 
         var oneShot = _oneShotRegistry?.Get("claude");
         if (oneShot != null)

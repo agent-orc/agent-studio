@@ -5,13 +5,22 @@ import { dismissDevErrorDialog, setTheme } from '../helpers/theme';
 
 const PROJECT = 'Thinking level indicator';
 const WATCH_PATH = 'C:/fixtures/thinking-level-indicator';
+const MIGRATION = {
+  from: 'claude-sonnet-4-6', to: 'claude-sonnet-5', family: 'claude-sonnet',
+  rule: 'latestInFamily:claude-sonnet', catalogVersion: '2026-09-06',
+  safeAuto: true, targetAvailable: true, safeAutoCandidate: true,
+  costClassFrom: 'standard', costClassTo: 'standard',
+  fromReasoningLevels: ['low', 'medium'], toReasoningLevels: ['low', 'medium', 'high'],
+  ladderCompatible: true, note: 'Latest Sonnet generation with a compatible reasoning ladder.',
+};
 
-function task(id: string, title: string, model: string, cliType: 'claude' | 'codex' | 'gemini', configured: string, effective?: string) {
+function task(id: string, title: string, model: string, cliType: 'claude' | 'codex' | 'gemini', configured: string, effective?: string, migration = false) {
   return {
     id, key: id, displayKey: id, taskKey: `${WATCH_PATH}::${id}`, title, state: '2-ready', order: Number(id.split('-').at(-1)) || 1,
     agent: cliType, cliType, createdAt: '2026-07-11T00:00:00Z', watchPath: WATCH_PATH,
     projectName: PROJECT, folderPath: `${WATCH_PATH}/${id}`, lastActivity: '2026-07-11T00:01:00Z',
     sessionName: null, model, thinkingLevel: configured, useOwnSession: null,
+    ...(migration ? { modelExplicit: true, modelMigration: MIGRATION } : {}),
     lastUsage: null, commit: null, ownerClientId: 'local-default', tags: [],
     execution: {
       jobId: id, taskKey: `${WATCH_PATH}::${id}`, processId: 7, startedAt: '2026-07-11T00:00:30Z',
@@ -25,13 +34,14 @@ const modelFixtures = [
   ['gpt-5.6-sol', 'codex', 'Sol family'],
   ['gpt-5.6-ter', 'codex', 'Ter family'],
   ['claude-opus-4-8', 'claude', 'Opus family'],
-  ['claude-sonnet-5', 'claude', 'Sonnet family'],
+  ['claude-sonnet-4-6', 'claude', 'Sonnet family'],
   ['claude-haiku-4-5', 'claude', 'Haiku family'],
   ['gemini-2.5-pro', 'gemini', 'Gemini family'],
 ] as const;
 const levels = ['low', 'medium', 'high', 'xhigh'] as const;
 const tasks = levels.flatMap((level, levelIndex) => modelFixtures.map(([model, cli, label], modelIndex) =>
-  task(`AGT-${9001 + levelIndex * modelFixtures.length + modelIndex}`, `${label} at ${level}`, model, cli, level, levelIndex === 3 ? 'medium' : level),
+  task(`AGT-${9001 + levelIndex * modelFixtures.length + modelIndex}`, `${label} at ${level}`, model, cli, level, levelIndex === 3 ? 'medium' : level,
+    levelIndex === 0 && modelIndex === 3),
 ));
 const grouped = {
   backlog: [], preparation: [], orchestratorPrep: [], ready: tasks, progress: [], failedPickup: [],
@@ -96,6 +106,11 @@ test('keeps 24 mixed-model cards scannable and exposes full execution context', 
   const heights = await indicators.evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().height));
   expect(Math.max(...heights)).toBeLessThanOrEqual(22);
 
+  const migration = page.getByTestId('task-card-model-migration');
+  await expect(migration).toHaveCount(1);
+  await expect(migration).toContainText('Update available:');
+  await expect(migration).toContainText('claude-sonnet-4-6');
+  await expect(migration).toContainText('claude-sonnet-5');
   await dismissDevErrorDialog(page);
   // The ng-serve-only NG0919 dialog can be re-raised by mocked polling after
   // Escape closes it. Suppress only that dev artifact so the real pointer
@@ -125,4 +140,9 @@ test('keeps 24 mixed-model cards scannable and exposes full execution context', 
       fullPage: true,
     });
   }
+
+  const applyRequest = page.waitForRequest(request =>
+    /\/api\/tasks\/AGT-9004\/model/.test(request.url()) && request.method() === 'PUT');
+  await migration.getByTestId('task-card-model-migration-apply').click();
+  expect((await applyRequest).postDataJSON()).toEqual({ model: 'claude-sonnet-5' });
 });

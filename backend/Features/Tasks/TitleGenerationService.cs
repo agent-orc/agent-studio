@@ -59,9 +59,11 @@ public class TitleGenerationService
             ? trimmed[..MaxInputChars]
             : trimmed;
 
-        var fallbackModel = _configuration["TitleGeneration:Model"]
-                            ?? _configuration["ClaudeCli:SummaryModel"]
-                            ?? ModelIds.ClaudeHaiku45;
+        var fallbackModel = ModelFamilyResolver.ResolveConfigured(
+            _configuration,
+            ModelFamilies.ClaudeHaiku,
+            "TitleGeneration:Model",
+            "ClaudeCli:SummaryModel");
         var prompt = _prompts.Render(TemplateName,
             new Dictionary<string, string?> { ["input"] = bounded },
             new PromptCallContext(Step: "title-generation", Model: fallbackModel));
@@ -134,9 +136,11 @@ public class TitleGenerationService
     protected virtual async Task<(bool Ok, string? Raw, string? Error)> InvokeAsync(
         string prompt, CancellationToken ct)
     {
-        var model = _configuration["TitleGeneration:Model"]
-                    ?? _configuration["ClaudeCli:SummaryModel"]
-                    ?? ModelIds.ClaudeHaiku45;
+        var model = ModelFamilyResolver.ResolveConfigured(
+            _configuration,
+            ModelFamilies.ClaudeHaiku,
+            "TitleGeneration:Model",
+            "ClaudeCli:SummaryModel");
 
         var oneShot = _oneShotRegistry?.Get("claude");
         if (oneShot != null)

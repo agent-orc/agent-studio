@@ -52,7 +52,7 @@ public sealed class OrchestratorPrepHostedService : BackgroundService
     /// The project's selection still wins via
     /// <see cref="PipelineStepConfigResolver.ResolveModel(ProjectSettings?, PipelineStep, string)"/>.
     /// </summary>
-    public const string PrepFallbackModel = PipelineStepModelDefaults.SupportModel;
+    public static string PrepFallbackModel => PipelineStepModelDefaults.SupportModel;
 
     /// <summary>The catalogue prep step, resolved once for config + recording.</summary>
     private static readonly PipelineStep PrepStep =

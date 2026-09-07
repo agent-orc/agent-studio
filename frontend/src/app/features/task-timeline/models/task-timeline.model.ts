@@ -31,6 +31,7 @@ export interface TaskTimelineEvent {
 export const TIMELINE_KIND = {
   promptCreated: 'prompt_created',
   agentRunStarted: 'agent_run_started',
+  modelMigrated: 'model_migrated',
   quotaFallbackActivated: 'quota_fallback_activated',
   quotaAdmissionDecision: 'quota_admission_decision',
   loadThrottleDecision: 'load_throttle_decision',

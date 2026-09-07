@@ -74,6 +74,31 @@ The frontend's model dropdown reads `/api/cli/{cliType}/models`. No CLI-specific
 
 **Selected model.** Studio first qualifies the chosen model against its live catalog. Claude and Codex then pass the qualified model and thinking level to CAR, which applies its common normalization and descriptor flags. The legacy Antigravity adapter maps the model to its `agentapi` vocabulary.
 
+**Latest-in-family defaults and migrations.** Supporting calls name a stable
+family (`claude-haiku`, `claude-sonnet`, `claude-opus`, `gpt-mini`, or
+`gpt-flagship`) instead of a concrete generation. `ModelFamilyResolver` picks
+the newest available member from a fresh live catalog and falls back to the
+registry when discovery is stale. A configured concrete model remains an
+explicit pin.
+
+Workspace CLI Management shows the active Token Economy migration catalog
+version and the workspace switch for safe admission-time migrations. It also
+lists an update offer for each superseded configuration pin, including the
+cost-class and reasoning-ladder diff. The same offer appears on an explicitly
+pinned task card and on a project pipeline-step override. Applying an offer is
+always an operator action for explicit pins.
+
+The workspace switch governs persisted, non-explicit task model ids. A
+catalog rule is applied only when it is marked `safeAuto`, its target is
+available on the executing host, it is a newer same-family generation with a
+compatible ladder and the same or lower known cost class, and dated pricing is
+available. The resulting `model_migrated` timeline event and operator-feed
+entry carry the source, target, rule, and catalog version. Resolving a
+family-backed supporting default is baseline selection rather than a persisted
+model migration, so it does not rewrite a card or create a task timeline event.
+Remote claims retain the stored model until runner capability advertisements
+can prove the target model is available on that execution host.
+
 ### 2.4 Quota probe
 
 **Contract.** A `QuotaProbeBase` subclass returns a `QuotaSnapshot` with:

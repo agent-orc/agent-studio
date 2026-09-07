@@ -31,6 +31,20 @@ describe('CliModelsPanelComponent', () => {
       economyModeLabel: 'Economy mode',
       tiers: [],
       taskTypeDefaults: {},
+      migrationCatalogVersion: '2026-09-06',
+      autoModelMigrationsEnabled: true,
+      configurationPins: [{
+        id: 'summary', label: 'Summary generation', configKey: 'ClaudeCli:SummaryModel',
+        currentModel: 'claude-sonnet-4-6',
+        modelMigration: {
+          from: 'claude-sonnet-4-6', to: 'claude-sonnet-5', family: 'claude-sonnet',
+          rule: 'latestInFamily:claude-sonnet', catalogVersion: '2026-09-06',
+          safeAuto: true, targetAvailable: true, safeAutoCandidate: true,
+          costClassFrom: 'standard', costClassTo: 'standard',
+          fromReasoningLevels: ['medium'], toReasoningLevels: ['medium', 'high'],
+          ladderCompatible: true, note: 'Compatible upgrade.',
+        },
+      }],
     });
     fixture.detectChanges();
 
@@ -50,9 +64,35 @@ describe('CliModelsPanelComponent', () => {
     economy.click();
     const save = http.expectOne('/api/cli/model-routing/economy-mode');
     expect(save.request.method).toBe('PUT');
-    expect(save.request.body).toEqual({ enabled: true });
+    expect(save.request.body).toEqual({ economyMode: true });
     save.flush({ economyMode: true });
     fixture.detectChanges();
     expect(fixture.componentInstance.policy()?.economyMode).toBe(true);
+
+    const auto = fixture.nativeElement.querySelector(
+      '[data-testid="model-routing-auto-migrations"]',
+    ) as HTMLInputElement;
+    expect(auto.checked).toBe(true);
+    auto.click();
+    const autoSave = http.expectOne('/api/cli/model-routing/auto-migrations');
+    expect(autoSave.request.body).toEqual({ enabled: false });
+    autoSave.flush({ economyMode: true, autoModelMigrationsEnabled: false });
+    fixture.detectChanges();
+    expect(fixture.componentInstance.policy()?.autoModelMigrationsEnabled).toBe(false);
+
+    expect(fixture.nativeElement.querySelector('[data-testid="model-migration-catalog-version"]')?.textContent)
+      .toContain('2026-09-06');
+    fixture.nativeElement.querySelector('[data-testid="configuration-pin-migration-summary-apply"]')?.click();
+    const apply = http.expectOne('/api/cli/model-routing/configuration-pins/summary/apply');
+    expect(apply.request.body).toEqual({
+      expectedFrom: 'claude-sonnet-4-6',
+      toModel: 'claude-sonnet-5',
+      catalogVersion: '2026-09-06',
+      rule: 'latestInFamily:claude-sonnet',
+    });
+    apply.flush({ id: 'summary', currentModel: 'claude-sonnet-5', modelMigration: null });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="model-configuration-pin-summary"]')?.textContent)
+      .toContain('Current: claude-sonnet-5');
   });
 });

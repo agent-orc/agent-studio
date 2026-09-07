@@ -1,0 +1,113 @@
+:host {
+  display: block;
+  min-width: 0;
+}
+
+.model-migration {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--studio-spacing-2) var(--studio-spacing-3);
+  min-width: 0;
+  padding-block: var(--studio-spacing-2);
+  color: var(--studio-fg);
+}
+
+.model-migration__summary {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--studio-spacing-1);
+  min-width: 0;
+  font-size: 11px;
+}
+
+.model-migration__summary strong {
+  color: var(--studio-accent-warn-strong);
+  font-weight: 700;
+}
+
+.model-migration__summary code {
+  color: var(--studio-fg-strong);
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+}
+
+.model-migration__impact {
+  display: flex;
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+  gap: var(--studio-spacing-2) var(--studio-spacing-4);
+  margin: 0;
+  color: var(--studio-fg-muted);
+  font-size: 10px;
+}
+
+.model-migration__impact div {
+  display: flex;
+  gap: var(--studio-spacing-1);
+}
+
+.model-migration__impact dt {
+  color: var(--studio-fg-dim);
+  font-weight: 700;
+}
+
+.model-migration__impact dd {
+  margin: 0;
+}
+
+.model-migration__note {
+  grid-column: 1 / -1;
+  color: var(--studio-fg-muted);
+  font-size: 10px;
+}
+
+.model-migration__action {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+  min-height: var(--studio-card-pill-height);
+  padding: 0 var(--studio-spacing-2);
+  border: 1px solid var(--studio-accent-warn-strong);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--studio-accent-warn) 14%, var(--studio-bg-surface));
+  color: var(--studio-fg-strong);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.model-migration__action:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--studio-accent-warn) 24%, var(--studio-bg-surface));
+}
+
+.model-migration__action:focus-visible {
+  outline: 2px solid var(--studio-accent);
+  outline-offset: 2px;
+}
+
+.model-migration__action:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.model-migration--compact {
+  display: inline-flex;
+  gap: var(--studio-spacing-1);
+  padding: 0;
+}
+
+.model-migration--compact .model-migration__summary {
+  font-size: 9px;
+}
+
+.model-migration--compact .model-migration__summary code {
+  font-size: 9px;
+}
+
+.model-migration--compact .model-migration__action {
+  min-height: var(--studio-card-pill-height);
+  border-radius: 999px;
+}

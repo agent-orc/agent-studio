@@ -71,7 +71,7 @@ public static class TaskCrudEndpoints
             return Results.Ok(new TaskReferenceStatusResponse(items!));
         });
 
-        group.MapGet("/", (string? project, bool? includeFixtures, HttpContext ctx, TaskScannerService scanner, CliRouter router, TaskRunnerService runners, ITokenAggregator tokens, IConfiguration configuration, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, AgentStudio.Registry.ProjectRegistry projects, ILoggerFactory loggerFactory) =>
+        group.MapGet("/", (string? project, bool? includeFixtures, HttpContext ctx, TaskScannerService scanner, CliRouter router, TaskRunnerService runners, ITokenAggregator tokens, IConfiguration configuration, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, AgentStudio.Registry.ProjectRegistry projects, AgentStudio.ModelMigrations.ModelMigrationCoordinator modelMigrations, ILoggerFactory loggerFactory) =>
         {
             using var gitTelemetry = GitProcessTelemetry.BeginRequest(
                 "tasks/list",
@@ -91,7 +91,7 @@ public static class TaskCrudEndpoints
             var dependencyLookups = BuildDependencyGraphLookups(raw, scanner);
             var gitLookup = gitProjection.ReadCacheOnly(raw, scanner.SnapshotGeneration);
             var liveLookup = liveStatus.BuildLookup(raw);
-            var jobs = raw.Select(job => WithRuntime(job, router, runners, tokenLookup, verdictLookup, dependencyLookups.WaitsOn, dependencyLookups.TransitiveWaiters))
+            var jobs = raw.Select(job => modelMigrations.WithProposal(WithRuntime(job, router, runners, tokenLookup, verdictLookup, dependencyLookups.WaitsOn, dependencyLookups.TransitiveWaiters)))
                           .WithLiveStatus(liveLookup)
                           .WithMergeSignal(gitLookup.Merge)
                           .WithIntegrationStatus(gitLookup.Integration)
@@ -112,7 +112,7 @@ public static class TaskCrudEndpoints
             return Results.Ok(jobs);
         });
 
-        group.MapGet("/grouped", (bool? includeFixtures, HttpContext context, TaskScannerService scanner, CliRouter router, TaskRunnerService runners, ITokenAggregator tokens, IConfiguration configuration, ProjectSettingsService projectSettings, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, AgentStudio.Registry.ProjectRegistry projects, ILoggerFactory loggerFactory) =>
+        group.MapGet("/grouped", (bool? includeFixtures, HttpContext context, TaskScannerService scanner, CliRouter router, TaskRunnerService runners, ITokenAggregator tokens, IConfiguration configuration, ProjectSettingsService projectSettings, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, AgentStudio.Registry.ProjectRegistry projects, AgentStudio.ModelMigrations.ModelMigrationCoordinator modelMigrations, ILoggerFactory loggerFactory) =>
         {
             using var gitTelemetry = GitProcessTelemetry.BeginRequest(
                 "tasks/grouped",
@@ -125,7 +125,7 @@ public static class TaskCrudEndpoints
             var dependencyLookups = BuildDependencyGraphLookups(raw, scanner);
             var gitLookup = gitProjection.ReadCacheOnly(raw, scanner.SnapshotGeneration);
             var liveLookup = liveStatus.BuildLookup(raw);
-            var jobs = raw.Select(job => WithRuntime(job, router, runners, tokenLookup, verdictLookup, dependencyLookups.WaitsOn, dependencyLookups.TransitiveWaiters))
+            var jobs = raw.Select(job => modelMigrations.WithProposal(WithRuntime(job, router, runners, tokenLookup, verdictLookup, dependencyLookups.WaitsOn, dependencyLookups.TransitiveWaiters)))
                           .WithLiveStatus(liveLookup)
                           .WithMergeSignal(gitLookup.Merge)
                           .WithIntegrationStatus(gitLookup.Integration)
@@ -277,7 +277,7 @@ public static class TaskCrudEndpoints
             });
         });
 
-        group.MapGet("/{jobId}", (string jobId, string? project, string? watchPath, HttpContext context, TaskScannerService scanner, AgentStudio.Registry.ProjectRegistry projects, CliRouter router, TaskRunnerService runners, ITokenAggregator tokens, IConfiguration configuration, GitService git, TaskSessionLog sessions, BoardMergeStatusService mergeStatus, TaskIntegrationStatusService integrationStatus, TaskPublishableService publishStatus, TestRunService testRuns, TaskLiveStatusProjection liveStatus) =>
+        group.MapGet("/{jobId}", (string jobId, string? project, string? watchPath, HttpContext context, TaskScannerService scanner, AgentStudio.Registry.ProjectRegistry projects, CliRouter router, TaskRunnerService runners, ITokenAggregator tokens, IConfiguration configuration, GitService git, TaskSessionLog sessions, BoardMergeStatusService mergeStatus, TaskIntegrationStatusService integrationStatus, TaskPublishableService publishStatus, TestRunService testRuns, TaskLiveStatusProjection liveStatus, AgentStudio.ModelMigrations.ModelMigrationCoordinator modelMigrations) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             var detail = scanner.GetJobDetail(jobId, watchPath);
@@ -296,6 +296,7 @@ public static class TaskCrudEndpoints
                 .Where(job => !job.Fixture);
             var dependencyLookups = BuildDependencyGraphLookups(new[] { detail.Info }, scanner, eligibleWaiters);
             var withRuntime = WithRuntime(detail, router, runners, tokenLookup, verdictLookup, dependencyLookups.WaitsOn, dependencyLookups.TransitiveWaiters);
+            withRuntime = withRuntime with { Info = modelMigrations.WithProposal(withRuntime.Info) };
             var liveLookup = liveStatus.BuildLookup(new[] { withRuntime.Info });
             if (liveLookup.TryGetValue(withRuntime.Info.TaskKey, out var currentLiveStatus))
                 withRuntime = withRuntime with { Info = withRuntime.Info with { LiveStatus = currentLiveStatus } };

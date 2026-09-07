@@ -1,0 +1,21 @@
+<app-model-level-indicator
+  [model]="chip().fullModel"
+  [cliType]="chip().cliType"
+  [thinkingLevel]="chip().thinkingLevel?.effective ?? null"
+  [thinkingLevelOverride]="(chip().thinkingLevel?.differsFromDefault || chip().thinkingLevel?.differsFromConfigured) ?? false"
+  [fallbackLabel]="chip().label"
+  [tooltip]="chip().tooltip"
+  [source]="chip().source"
+  [isDefault]="chip().isDefault"
+  testId="task-card-effective-model"
+  levelTestId="task-card-thinking-level" />
+@if (task().modelMigration; as proposal) {
+  <app-model-migration-offer
+    [proposal]="proposal"
+    [compact]="true"
+    [busy]="applying()"
+    [disabled]="mutationsBlocked()"
+    actionLabel="Update"
+    testId="task-card-model-migration"
+    (applyRequested)="applyMigration()" />
+}

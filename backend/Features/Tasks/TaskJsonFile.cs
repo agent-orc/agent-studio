@@ -141,6 +141,36 @@ internal static class TaskJsonFile
     }
 
     /// <summary>
+    /// Strict multi-field counterpart for a mutation that must not report
+    /// success after a failed atomic rewrite.
+    /// </summary>
+    internal static void UpdateFieldsOrThrow(
+        string jobDir,
+        IReadOnlyDictionary<string, object> values)
+    {
+        var jobJsonPath = Path.Combine(jobDir, "task.json");
+        if (!File.Exists(jobJsonPath))
+            throw new FileNotFoundException("task.json was not found", jobJsonPath);
+
+        var json = File.ReadAllText(jobJsonPath);
+        var doc = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json, ReadOpts)
+                  ?? new Dictionary<string, JsonElement>();
+        var updated = new Dictionary<string, object>();
+        foreach (var kv in doc)
+        {
+            updated[kv.Key] = values.TryGetValue(kv.Key, out var replacement)
+                ? replacement
+                : kv.Value;
+        }
+        foreach (var kv in values)
+        {
+            if (!updated.ContainsKey(kv.Key)) updated[kv.Key] = kv.Value;
+        }
+
+        Write(jobJsonPath, updated);
+    }
+
+    /// <summary>
     /// Remove a top-level key from <c>task.json</c> if present. No-op when the
     /// file or key is absent. Used to clean up obsolete fields after a feature
     /// is removed (e.g. the operator-override <c>excludedCommits</c> array).

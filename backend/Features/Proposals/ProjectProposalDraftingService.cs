@@ -93,8 +93,9 @@ public class ProjectProposalDraftingService
         return string.IsNullOrWhiteSpace(result.ParsedText) ? result.Stdout : result.ParsedText;
     }
 
-    private string Model() =>
-        _configuration["ProposalManagement:Model"]
-        ?? _configuration["PromptEnhancement:Model"]
-        ?? ModelIds.ClaudeHaiku45;
+    private string Model() => ModelFamilyResolver.ResolveConfigured(
+        _configuration,
+        ModelFamilies.ClaudeHaiku,
+        "ProposalManagement:Model",
+        "PromptEnhancement:Model");
 }

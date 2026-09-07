@@ -1,0 +1,25 @@
+:host {
+  display: grid;
+  gap: var(--studio-spacing-2);
+  min-width: 0;
+}
+
+.pipeline-model-setting__reset {
+  justify-self: start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--studio-accent);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.pipeline-model-setting__reset:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.pipeline-model-setting__reset:disabled {
+  color: var(--studio-fg-dim);
+  cursor: not-allowed;
+}

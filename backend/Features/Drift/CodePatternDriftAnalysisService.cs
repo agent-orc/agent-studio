@@ -354,11 +354,14 @@ public sealed class CodePatternDriftAnalysisService
     public async Task<CodePatternDriftReport> EnrichWithLlmVerdictsAsync(
         CodePatternDriftReport report,
         ICliOneShot oneShot,
-        string model = ModelIds.ClaudeHaiku45,
+        string? model = null,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(report);
         ArgumentNullException.ThrowIfNull(oneShot);
+        var modelId = string.IsNullOrWhiteSpace(model)
+            ? ModelFamilyResolver.Resolve(ModelFamilies.ClaudeHaiku)
+            : model.Trim();
 
         var enrichedFindings = new List<CodePatternFinding>(report.Findings.Count);
         foreach (var finding in report.Findings)
@@ -371,7 +374,7 @@ public sealed class CodePatternDriftAnalysisService
 
             var prompt = BuildLlmPrompt(finding, report.RepoRoot);
             var result = await oneShot.RunAsync(new CliOneShotRequest(
-                CliType: "claude", Model: model, Prompt: prompt)
+                CliType: "claude", Model: modelId, Prompt: prompt)
             {
                 Timeout = TimeSpan.FromSeconds(30),
                 Source = AdHocUsageSources.ReviewDecision,

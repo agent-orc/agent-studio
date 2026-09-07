@@ -1,0 +1,42 @@
+<div class="model-migration"
+     [class.model-migration--compact]="compact()"
+     [attr.data-testid]="testId()"
+     [attr.data-family]="proposal().family"
+     [attr.data-catalog-version]="proposal().catalogVersion"
+     [cacTooltip]="compact() ? impactTooltip() : ''"
+     [attr.aria-label]="compact() ? impactTooltip().title + '. ' + impactTooltip().body : null">
+  <span class="model-migration__summary">
+    <strong>Update available:</strong>
+    <code>{{ proposal().from }}</code>
+    <span>to</span>
+    <code>{{ proposal().to }}</code>
+  </span>
+  @if (!compact()) {
+    <dl class="model-migration__impact" data-testid="model-migration-impact">
+      <div>
+        <dt>Cost</dt>
+        <dd>{{ proposal().costClassFrom }} to {{ proposal().costClassTo }}</dd>
+      </div>
+      <div>
+        <dt>Reasoning</dt>
+        <dd>{{ fromReasoning() }} to {{ toReasoning() }}</dd>
+      </div>
+      <div>
+        <dt>Compatibility</dt>
+        <dd>{{ proposal().ladderCompatible ? 'Ladder compatible' : 'Review required' }}</dd>
+      </div>
+    </dl>
+    @if (proposal().note) {
+      <span class="model-migration__note">{{ proposal().note }}</span>
+    }
+  }
+  <button type="button"
+          class="model-migration__action"
+          [appPendingButton]="busy()"
+          pendingLabel="Applying..."
+          [disabled]="applyDisabled()"
+          [attr.data-testid]="testId() + '-apply'"
+          (click)="requestApply($event)">
+    {{ proposal().targetAvailable === true ? actionLabel() : (proposal().targetAvailable === false ? 'Unavailable' : 'Check availability') }}
+  </button>
+</div>

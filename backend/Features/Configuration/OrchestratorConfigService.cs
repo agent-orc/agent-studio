@@ -19,6 +19,28 @@ namespace AgentStudio.Configuration;
 /// </summary>
 public sealed class OrchestratorConfigService
 {
+    /// <summary>
+    /// Configuration values that are concrete model pins. The migration API
+    /// may update only this allowlist, never an arbitrary configuration path.
+    /// </summary>
+    public static readonly IReadOnlySet<string> ModelOverrideKeys =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "ClaudeCli:SummaryModel",
+            "TitleGeneration:Model",
+            "PromptEnhancement:Model",
+            "WikiSearch:Model",
+            "Supervisor:SoftReasoningModel",
+            "ProposalManagement:Model",
+            "ReviewDecisionOrchestrator:Model",
+            "ReviewDecisionOrchestrator:AspectModel",
+            "GlobalOrchestrator:Model",
+            "CodexCli:Model",
+            "CodexCli:DefaultModel",
+            "CodeReviewStep:DefaultModel",
+            "TaskSpawnerStep:DefaultModel",
+        };
+
     private readonly IConfiguration _configuration;
     private readonly IHostEnvironment _env;
     private readonly ILogger<OrchestratorConfigService> _logger;
@@ -71,6 +93,64 @@ public sealed class OrchestratorConfigService
             coerced[def.Key] = CoerceToNode(def, pair.Value);
         }
 
+        WriteOverrides(coerced, "orchestrator/supervisor");
+
+        return GetSnapshot();
+    }
+
+    /// <summary>
+    /// Applies one model migration to a known configuration pin. Callers must
+    /// still compare the catalog version and source model before invoking this
+    /// method; this boundary only enforces the finite writable-key contract.
+    /// </summary>
+    public bool ApplyModelOverride(string key, string model)
+    {
+        if (!ModelOverrideKeys.Contains(key))
+            throw new ArgumentException($"Unknown model configuration key '{key}'.", nameof(key));
+        if (string.IsNullOrWhiteSpace(model))
+            throw new ArgumentException("A concrete target model is required.", nameof(model));
+
+        lock (FileLock)
+        {
+            var path = OverrideFilePath;
+            var existed = File.Exists(path);
+            var previous = existed ? File.ReadAllText(path) : null;
+            var target = model.Trim();
+            WriteOverrides(
+                new Dictionary<string, JsonNode?>(StringComparer.Ordinal)
+                {
+                    [key] = JsonValue.Create(target),
+                },
+                "model pin");
+
+            if (string.Equals(
+                    ModelMetadataRegistry.NormalizeId(_configuration[key]),
+                    ModelMetadataRegistry.NormalizeId(target),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            // A command-line or environment provider can outrank the local
+            // file. Restore the prior file so a rejected click cannot become
+            // an unexpected latent override after that provider disappears.
+            if (existed)
+                File.WriteAllText(path, previous!);
+            else if (File.Exists(path))
+                File.Delete(path);
+            if (_configuration is IConfigurationRoot rootConfig)
+                rootConfig.Reload();
+            _logger.LogWarning(
+                "Model pin override {Key} was not effective after reload; the previous local file was restored",
+                key);
+            return false;
+        }
+    }
+
+    private void WriteOverrides(
+        IReadOnlyDictionary<string, JsonNode?> values,
+        string category)
+    {
         lock (FileLock)
         {
             var path = OverrideFilePath;
@@ -87,29 +167,24 @@ public sealed class OrchestratorConfigService
                 root = new JsonObject();
             }
 
-            foreach (var (key, value) in coerced)
-            {
+            foreach (var (key, value) in values)
                 SetNodeAtPath(root, key, value);
-            }
 
             var serialized = root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
-            // Atomic-ish write: write to a sibling tempfile, then move.
             var temp = path + ".tmp";
             File.WriteAllText(temp, serialized);
             try { File.Replace(temp, path, destinationBackupFileName: null); }
             catch (FileNotFoundException) { File.Move(temp, path); }
 
             if (_configuration is IConfigurationRoot rootConfig)
-            {
                 rootConfig.Reload();
-            }
 
             _logger.LogInformation(
-                "Wrote {Count} orchestrator/supervisor override(s) to {Path} and reloaded configuration",
-                coerced.Count, path);
+                "Wrote {Count} {Category} override(s) to {Path} and reloaded configuration",
+                values.Count,
+                category,
+                path);
         }
-
-        return GetSnapshot();
     }
 
     private OrchestratorConfigOption BuildOption(OrchestratorConfigDefinition def)

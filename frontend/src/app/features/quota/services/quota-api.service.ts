@@ -1,5 +1,6 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
+import type { ModelConfigurationPin } from '../../../models/model-migration.model';
 import type { QuotaReport, QuotaSnapshot } from '../models/quota.model';
 
 export interface CliModelRouteProfile {
@@ -45,9 +46,22 @@ export interface ModelRoutingRecommendation {
 
 /** The active routing policy shown in the CLI-models panel. */
 export interface ModelRoutingPolicyView {
+  version: string;
+  wikiPath: string;
   economyMode: boolean;
-  policyVersion: string;
-  rows: { tier: string; model: string; thinkingLevel: string | null }[];
+  economyModeLabel?: string;
+  tiers: unknown[];
+  taskTypeDefaults: Record<string, unknown>;
+  migrationCatalogVersion: string | null;
+  autoModelMigrationsEnabled: boolean;
+  configurationPins: ModelConfigurationPin[];
+}
+
+export interface ApplyConfigurationPinMigrationRequest {
+  expectedFrom: string;
+  toModel: string;
+  catalogVersion: string;
+  rule: string;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -157,7 +171,19 @@ export class QuotaApiService {
 
   setModelRoutingEconomyMode(enabled: boolean) {
     return this.http.put<{ economyMode: boolean }>(
-      `${this.baseUrl}/cli/model-routing/economy-mode`, { enabled },
+      `${this.baseUrl}/cli/model-routing/economy-mode`, { economyMode: enabled },
+    );
+  }
+
+  setAutoModelMigrations(enabled: boolean) {
+    return this.http.put<{ autoModelMigrationsEnabled: boolean }>(
+      `${this.baseUrl}/cli/model-routing/auto-migrations`, { enabled },
+    );
+  }
+
+  applyConfigurationPinMigration(id: string, request: ApplyConfigurationPinMigrationRequest) {
+    return this.http.put<void>(
+      `${this.baseUrl}/cli/model-routing/configuration-pins/${encodeURIComponent(id)}/apply`, request,
     );
   }
 }

@@ -93,6 +93,7 @@ export interface PipelineAdminRow {
   effectiveModel: string;
   effectiveModelSource: string;
   effectiveThinkingLevel: string;
+  modelMigration?: PipelineCatalogueStep['modelMigration'];
   /** Inline prompt override text (legacy). Empty = bound to the registry template. */
   prompt: string;
   /** Registry template this step renders from, when the catalogue declares one. */

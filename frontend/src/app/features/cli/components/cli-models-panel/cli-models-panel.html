@@ -4,11 +4,15 @@
       <div class="cli-models__policy-copy">
         <span class="cli-models__policy-title">Automatic task routing</span>
         <span class="cli-models__policy-detail">
-          Policy {{ routingPolicy.policyVersion }} derives the default tier from task type.
+          Policy {{ routingPolicy.version }} derives the default tier from task type.
           Correctness floors still apply.
         </span>
+        <span class="cli-models__policy-detail" data-testid="model-migration-catalog-version">
+          Migration catalog {{ routingPolicy.migrationCatalogVersion || 'unavailable' }}
+        </span>
       </div>
-      <label class="cli-models__economy">
+      <div class="cli-models__policy-controls">
+      <label class="cli-models__switch">
         <input type="checkbox"
                data-testid="model-routing-economy-mode"
                [checked]="routingPolicy.economyMode"
@@ -17,7 +21,44 @@
         <span>Economy mode {{ routingPolicy.economyMode ? 'on' : 'off' }}</span>
         <small>Lower eligible tiers by one step</small>
       </label>
+      <label class="cli-models__switch">
+        <input type="checkbox"
+               data-testid="model-routing-auto-migrations"
+               [checked]="routingPolicy.autoModelMigrationsEnabled"
+               [disabled]="savingAutoMigrations()"
+               (change)="setAutoMigrations($any($event.target).checked)" />
+        <span>Safe migrations {{ routingPolicy.autoModelMigrationsEnabled ? 'on' : 'off' }}</span>
+        <small>Apply qualified updates at admission</small>
+      </label>
+      </div>
     </section>
+    @if (configurationPins().length > 0) {
+      <section class="cli-models__pins" data-testid="model-configuration-pins">
+        <header>
+          <strong>Configuration pins</strong>
+          <span>Explicit settings stay pinned until you apply an offered update.</span>
+        </header>
+        @for (pin of configurationPins(); track pin.id) {
+          <div class="cli-models__pin" [attr.data-testid]="'model-configuration-pin-' + pin.id">
+            <span class="cli-models__pin-identity">
+              <strong>{{ pin.label }}</strong>
+              <code>{{ pin.configKey }}</code>
+              <span>Current: <code>{{ pin.currentModel }}</code></span>
+            </span>
+            @if (pin.modelMigration; as proposal) {
+              <app-model-migration-offer
+                [proposal]="proposal"
+                [busy]="applyingConfigurationPin() === pin.id"
+                [disabled]="applyingConfigurationPin() !== null && applyingConfigurationPin() !== pin.id"
+                [testId]="'configuration-pin-migration-' + pin.id"
+                (applyRequested)="applyConfigurationPin(pin)" />
+            } @else {
+              <span class="cli-models__pin-current">No update offered</span>
+            }
+          </div>
+        }
+      </section>
+    }
   }
   @for (g of groups(); track g.cliType) {
     <article class="cli-models__row"

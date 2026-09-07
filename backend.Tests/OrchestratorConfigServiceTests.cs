@@ -42,6 +42,8 @@ public class OrchestratorConfigServiceTests : IDisposable
         }
 
         var config = new ConfigurationBuilder()
+            .SetBasePath(_contentRoot)
+            .AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: false)
             .AddInMemoryCollection(settings ?? new Dictionary<string, string?>())
             .Build();
 
@@ -158,6 +160,59 @@ public class OrchestratorConfigServiceTests : IDisposable
         Assert.True(meta.HasOverride);
         Assert.Equal(true, meta.CurrentValue);
         Assert.Equal(true, meta.ActiveValue);
+    }
+
+    [Fact]
+    public void ApplyModelOverride_WritesOnlyAnAllowlistedModelPin()
+    {
+        var svc = Build(localFileContent: """
+        {
+          "Environment": { "IsDev": true },
+          "ClaudeCli": { "SummaryModel": "claude-opus-4-8" }
+        }
+        """);
+
+        Assert.True(svc.ApplyModelOverride("ClaudeCli:SummaryModel", "claude-opus-5"));
+
+        var written = JsonDocument.Parse(
+            File.ReadAllText(Path.Combine(_contentRoot, "appsettings.Local.json"))).RootElement;
+        Assert.True(written.GetProperty("Environment").GetProperty("IsDev").GetBoolean());
+        Assert.Equal(
+            "claude-opus-5",
+            written.GetProperty("ClaudeCli").GetProperty("SummaryModel").GetString());
+    }
+
+    [Fact]
+    public void ApplyModelOverride_RejectsAnArbitraryConfigurationPath()
+    {
+        var svc = Build();
+
+        Assert.Throws<ArgumentException>(() =>
+            svc.ApplyModelOverride("WatchPaths:0:RepositoryPath", "/tmp/other"));
+        Assert.False(File.Exists(Path.Combine(_contentRoot, "appsettings.Local.json")));
+    }
+
+    [Fact]
+    public void ApplyModelOverride_RestoresTheFileWhenAHigherPrecedenceProviderWins()
+    {
+        var svc = Build(
+            new Dictionary<string, string?>
+            {
+                ["ClaudeCli:SummaryModel"] = "claude-opus-4-8",
+            },
+            """
+            {
+              "ClaudeCli": { "SummaryModel": "claude-opus-4-8" }
+            }
+            """);
+
+        Assert.False(svc.ApplyModelOverride("ClaudeCli:SummaryModel", "claude-opus-5"));
+
+        var written = JsonDocument.Parse(
+            File.ReadAllText(Path.Combine(_contentRoot, "appsettings.Local.json"))).RootElement;
+        Assert.Equal(
+            "claude-opus-4-8",
+            written.GetProperty("ClaudeCli").GetProperty("SummaryModel").GetString());
     }
 
     private static JsonElement ParseElem(string json) => JsonDocument.Parse(json).RootElement.Clone();

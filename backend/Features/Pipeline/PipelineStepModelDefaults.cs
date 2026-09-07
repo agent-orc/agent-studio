@@ -8,7 +8,7 @@ namespace AgentStudio.Pipeline;
 /// override is set. It mirrors the exact constant each runtime call site already
 /// passes to <see cref="PipelineStepConfigResolver.ResolveModel(ProjectSettings?, PipelineStep, string, string?)"/>,
 /// so the pre-run pipeline view can show the same effective model the run would
-/// actually use. Bounded supporting steps use Codex gpt-5.4-mini/high; the
+/// actually use. Bounded supporting steps use the newest Codex mini/high; the
 /// operator-facing grade and task-spawner judgments use the live-discovered
 /// Codex flagship and its top advertised reasoning level.
 ///
@@ -24,7 +24,8 @@ namespace AgentStudio.Pipeline;
 public static class PipelineStepModelDefaults
 {
     public const string DefaultCli = CliTypes.Codex;
-    public const string SupportModel = ModelIds.Gpt54Mini;
+    public static string SupportModel =>
+        ModelFamilyResolver.Resolve(ModelFamilies.GptMini);
     public const string SupportThinkingLevel = "high";
 
     public static string QualityModel =>

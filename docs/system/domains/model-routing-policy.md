@@ -1,6 +1,6 @@
 # Model Routing Policy
 
-Version: 2026-07-24
+Version: 2026-09-07
 
 Status: Canonical policy, initial hypothesis based on the 2026-07-23 historical benchmark
 
@@ -38,6 +38,70 @@ it, but it has no routing tier, is not the product default, and has no cohort
 in the benchmark below. Whether it becomes a tier or the default is a separate
 operator decision; until then it is selectable only as an explicit pin, and an
 explicit pin is not evidence that it clears any correctness floor.
+
+## Model families and migrations
+
+Runtime defaults name a model family, not a generation-specific model. The
+supported family ids are `claude-haiku`, `claude-sonnet`, `claude-opus`,
+`gpt-mini`, and `gpt-flagship`. At each call, Agent Studio resolves the newest
+available member in the installed CLI catalog. Registry generation order is
+the ordering authority, live discovery is the availability authority, and the
+registry is the fallback when discovery is stale. A family default therefore
+moves from Opus 4.8 to Opus 5 or Sonnet 4.6 to Sonnet 5 when the installed CLI
+offers the successor. Haiku 4.5 remains the current Haiku default until a newer
+Haiku exists. Leaving Haiku for Sonnet is a Token Economy routing decision, not
+a latest-in-family resolution.
+
+An explicit configuration value remains an exact pin. The same rule applies to
+an operator-selected card model and a project pipeline-step override. Exact
+pins are never rewritten merely because a newer generation exists. When Token
+Economy declares a successor, Studio may show a proposal with the source and
+target model, catalog rule and version, cost-class change, context change, and
+reasoning-ladder comparison. Applying that proposal is an explicit mutation
+and must use the owning API for the setting or card.
+
+The migration authority is the versioned
+`src/TokenEconomy/catalog/model-migrations.v1.json` file in the registered Token
+Economy project repository, currently `PROJ-015`. Agent Studio reads that fixed
+path from the registered checkout and does not vendor a copy. It caches a
+validated catalog by source path and last-write time. A malformed or temporarily
+missing refresh retains the last-known-good catalog, marks it stale, and exposes
+the error and retained version in Workspace CLI Management. With no valid
+catalog, migrations are unavailable and ordinary model selection continues.
+
+`safeAuto: true` is necessary but not sufficient for automatic application.
+Catalog validation requires all of these gates:
+
+1. Source and target belong to the declared family and the target generation is
+   strictly newer.
+2. The target has the same or a lower known cost class. An unknown price class
+   cannot pass.
+3. The target reasoning ladder is compatible.
+4. A controlled benchmark or A/B test reports `noRegression` for comparable
+   cases.
+5. At local admission, the installed CLI currently reports the target as
+   available and the effective dated price catalog resolves its price.
+
+The orchestrator may apply a qualifying migration only to a non-explicit card
+and only while the workspace automatic-migration switch is enabled. It must
+still preserve the task's correctness floor and quota rules. At local
+admission, Agent Studio persists the derived card model with compare-and-set protection while preserving
+`modelExplicit=false`. This makes the migration idempotent across later
+admissions and leaves the inherited choice eligible for a later safe migration.
+Supporting-agent family defaults resolve per call as baseline selection and do
+not create or mutate a pin. Remote claims do not auto-migrate until runner
+capability advertisements include a verified model catalog; server-local
+discovery cannot prove model availability on another host. Operator-selected
+models and all other explicit pins receive a proposal only. Every automatic application emits a `model_migrated` task timeline event
+containing `from`, `to`, `rule`, and `catalogVersion`, plus an operator-feed
+line. A project override or explicit configuration setting changes only when
+the operator applies its proposal.
+
+A same-model entry is a retention rule, not an update. The 2026-09-06 Token
+Economy catalog therefore keeps `claude-haiku-4-5` and `gpt-5.4-mini` in their
+families without displaying a false update. Cross-family moves, higher or
+unknown cost, incompatible ladders, and missing or inconclusive evidence remain
+proposal-only even if the target happens to be installed.
 
 ## Weighted decision
 

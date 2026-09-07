@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
-import { provideHttpClientTesting } from '@angular/common/http/testing';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { ProjectPipelinePanelComponent } from './project-pipeline-panel.component';
@@ -56,7 +56,14 @@ describe('ProjectPipelinePanelComponent (render)', () => {
       {
         id: 'aspect-requirement-fit', displayName: 'Requirement fit', kind: 'aspect', phase: 'aspect',
         runMode: 'parallel', dependsOn: ['core-run'], idempotent: true, stub: false,
-        resolvedModel: 'claude-opus-4.8', modelSource: 'runtime', resolvedThinkingLevel: 'medium',
+        resolvedModel: 'claude-sonnet-4-6', modelSource: 'step', resolvedThinkingLevel: 'medium',
+        modelMigration: {
+          from: 'claude-sonnet-4-6', to: 'claude-sonnet-5', family: 'claude-sonnet',
+          rule: 'latestInFamily:claude-sonnet', catalogVersion: '2026-09-06', safeAuto: true,
+          targetAvailable: true, safeAutoCandidate: true, costClassFrom: 'standard', costClassTo: 'standard',
+          fromReasoningLevels: ['medium'], toReasoningLevels: ['medium', 'high'], ladderCompatible: true,
+          note: 'Compatible upgrade.',
+        },
         usesModel: true, supportsEconomyModel: true, usesPrompt: true, supportsMode: true, cliType: 'claude',
         promptTemplate: 'aspect-requirement-fit', canDisable: true, defaultEnabled: true, supportsCondition: true,
       },
@@ -79,7 +86,7 @@ describe('ProjectPipelinePanelComponent (render)', () => {
 
   function overrides(): Record<string, PipelineStepSetting> {
     return {
-      'aspect-requirement-fit': { enabled: true, mode: 'warn', prompt: 'legacy inline text' },
+      'aspect-requirement-fit': { enabled: true, mode: 'warn', prompt: 'legacy inline text', cliType: 'claude', model: 'claude-sonnet-4-6' },
     };
   }
 
@@ -144,7 +151,7 @@ describe('ProjectPipelinePanelComponent (render)', () => {
     expect(aspectRow?.getAttribute('aria-current')).toBe('location');
     expect((aspectRow as HTMLDetailsElement | null)?.open).toBe(true);
     expect(aspectRow?.getAttribute('data-kind')).toBe('aspect');
-    expect(aspectRow?.textContent).toContain('claude-opus-4.8');
+    expect(aspectRow?.textContent).toContain('claude-sonnet-4-6');
     expect(host.querySelector('[data-testid="pipeline-step-info-aspect-requirement-fit"]')).toBeTruthy();
     expect(host.querySelector('[data-testid="pipeline-step-drag-aspect-requirement-fit"]')?.getAttribute('draggable')).toBe('true');
     expect(host.querySelector('[data-testid="pipeline-step-prompt-open-aspect-requirement-fit"]')?.textContent).toContain('Prompt');
@@ -211,6 +218,20 @@ describe('ProjectPipelinePanelComponent (render)', () => {
     expect(host.querySelector('[data-testid="pipeline-step-kind-core-run"]')?.textContent?.trim()).toBe('COR');
     expect(host.querySelector('[data-testid="pipeline-step-kind-aspect-requirement-fit"]')?.textContent?.trim()).toBe('ASP');
     expect(host.querySelector('[data-testid="pipeline-step-kind-post-build-test-gate"]')?.textContent?.trim()).toBe('TOO');
+
+    const apply = host.querySelector<HTMLButtonElement>(
+      '[data-testid="pipeline-step-model-migration-aspect-requirement-fit-apply"]',
+    );
+    expect(apply).toBeTruthy();
+    apply?.click();
+    const write = TestBed.inject(HttpTestingController).expectOne('/api/projects/demo/pipeline-step');
+    expect(write.request.body.model).toBe('claude-sonnet-5');
+    write.flush({ pipelineSteps: {
+      'aspect-requirement-fit': { enabled: true, cliType: 'claude', model: 'claude-sonnet-5' },
+    } });
+    fixture.detectChanges();
+    expect(fixture.componentInstance.rows().find(row => row.id === 'aspect-requirement-fit')?.modelMigration).toBeNull();
+    expect(host.querySelector('[data-testid="pipeline-step-model-migration-aspect-requirement-fit"]')).toBeNull();
   });
 
   it('emits openPrompts from the summary prompt chip and Manage in Prompts', async () => {

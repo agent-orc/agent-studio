@@ -182,6 +182,98 @@ public class ModelChangeMarkerTests : IDisposable
         Assert.DoesNotContain("to=default", log); // claude has a concrete default id
     }
 
+    [Fact]
+    public void MigrateNonExplicitModel_Updates_model_without_creating_a_pin()
+    {
+        var (machine, scanner, mutations) = Build();
+        machine.EnsureStateFoldersAndMigrate();
+        mutations.CreateJob(new CreateTaskRequest
+        {
+            Id = "auto-migrate",
+            Title = "Auto migrate",
+            WatchPath = _watchPath,
+            Agent = "claude",
+            CliType = "claude",
+            Model = "claude-opus-4-8",
+            ModelExplicit = false,
+            TargetState = TaskStates.Ready,
+        });
+
+        var migrated = mutations.MigrateNonExplicitModel(
+            "auto-migrate",
+            _watchPath,
+            "claude-opus-4-8",
+            "claude-opus-5");
+
+        Assert.NotNull(migrated);
+        Assert.Equal("claude-opus-5", migrated.Model);
+        Assert.False(migrated.ModelExplicit);
+        var persisted = scanner.FindJob("auto-migrate", _watchPath)!;
+        Assert.Equal("claude-opus-5", persisted.Model);
+        Assert.False(persisted.ModelExplicit);
+    }
+
+    [Fact]
+    public void MigrateNonExplicitModel_Refuses_an_explicit_pin()
+    {
+        var (machine, scanner, mutations) = Build();
+        machine.EnsureStateFoldersAndMigrate();
+        mutations.CreateJob(new CreateTaskRequest
+        {
+            Id = "pinned",
+            Title = "Pinned",
+            WatchPath = _watchPath,
+            Agent = "claude",
+            CliType = "claude",
+            Model = "claude-opus-4-8",
+            ModelExplicit = true,
+            TargetState = TaskStates.Ready,
+        });
+
+        var migrated = mutations.MigrateNonExplicitModel(
+            "pinned",
+            _watchPath,
+            "claude-opus-4-8",
+            "claude-opus-5");
+
+        Assert.Null(migrated);
+        var persisted = scanner.FindJob("pinned", _watchPath)!;
+        Assert.Equal("claude-opus-4-8", persisted.Model);
+        Assert.True(persisted.ModelExplicit);
+    }
+
+    [Fact]
+    public void MigrateNonExplicitModel_Rolls_back_when_the_required_audit_cannot_be_written()
+    {
+        var (machine, scanner, mutations) = Build();
+        machine.EnsureStateFoldersAndMigrate();
+        mutations.CreateJob(new CreateTaskRequest
+        {
+            Id = "audit-failure",
+            Title = "Audit failure",
+            WatchPath = _watchPath,
+            Agent = "claude",
+            CliType = "claude",
+            Model = "claude-opus-4-8",
+            ModelExplicit = false,
+            ThinkingLevel = "high",
+            TargetState = TaskStates.Ready,
+        });
+
+        var migrated = mutations.MigrateNonExplicitModel(
+            "audit-failure",
+            _watchPath,
+            "claude-opus-4-8",
+            "claude-opus-5",
+            writeAudit: _ => false);
+
+        Assert.Null(migrated);
+        var persisted = scanner.FindJob("audit-failure", _watchPath)!;
+        Assert.Equal("claude-opus-4-8", persisted.Model);
+        Assert.False(persisted.ModelExplicit);
+        Assert.Equal("high", persisted.ThinkingLevel);
+    }
+
     private (TaskStateMachine machine, TaskScannerService scanner, TaskMutationService mutations) Build()
     {
         var config = BuildConfig();

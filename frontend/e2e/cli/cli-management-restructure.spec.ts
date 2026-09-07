@@ -1,4 +1,5 @@
-import { test, expect, Page } from '@playwright/test';
+import { test, expect } from '../fixtures/dev-backend';
+import type { Page } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTheme, dismissDevErrorDialog } from '../helpers/theme';
@@ -19,7 +20,9 @@ import { setTheme, dismissDevErrorDialog } from '../helpers/theme';
  * screenshots are labelled --mocked.
  */
 
-const SHOT_DIR = process.env.RESTRUCTURE_SHOT_DIR ?? 'test-results';
+const SHOT_DIR = process.env.JOB_RESULTS_DIR
+  ? join(process.env.JOB_RESULTS_DIR, 'model-migrations')
+  : (process.env.RESTRUCTURE_SHOT_DIR ?? 'test-results');
 
 const json = (body: unknown) => async (route: import('@playwright/test').Route) =>
   route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
@@ -75,6 +78,10 @@ function contracts() {
 }
 
 async function stub(page: Page) {
+  await page.route('**/api/auth/status', json({
+    profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
+  }));
+  await page.route('**/api/crash-recovery/pending', json({ pending: [] }));
   await page.route('**/api/tasks', json([]));
   await page.route('**/api/tasks/grouped*', json({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
   await page.route('**/api/watch-paths', json([]));
@@ -105,10 +112,34 @@ async function stub(page: Page) {
       claude: { cliType: 'claude', primaryModel: 'claude-pro', primaryThinkingLevel: null, fallbackCliType: 'codex', fallbackModel: 'codex-pro', fallbackThinkingLevel: null },
     },
   };
+  const migration = {
+    from: 'claude-sonnet-4-6', to: 'claude-sonnet-5', family: 'claude-sonnet',
+    rule: 'latestInFamily:claude-sonnet', catalogVersion: '2026-09-06',
+    safeAuto: true, targetAvailable: true, safeAutoCandidate: true,
+    costClassFrom: 'standard', costClassTo: 'standard',
+    fromReasoningLevels: ['low', 'medium'], toReasoningLevels: ['low', 'medium', 'high'],
+    ladderCompatible: true, note: 'Latest Sonnet generation with a compatible reasoning ladder.',
+  };
   await page.route('**/api/cli/**', async (route) => {
     const p = new URL(route.request().url()).pathname;
     let body: unknown = {};
-    if (p.endsWith('/quota/model-routes')) body = modelRoutes;
+    if (p.endsWith('/model-routing/policy')) body = {
+      version: '2026-09-06', wikiPath: 'docs/system/domains/model-routing-policy.md',
+      economyMode: false, tiers: [], taskTypeDefaults: {},
+      migrationCatalogVersion: '2026-09-06', autoModelMigrationsEnabled: true,
+      configurationPins: [{
+        id: 'summary', label: 'Summary generation', configKey: 'ClaudeCli:SummaryModel',
+        currentModel: migration.from, modelMigration: migration,
+      }],
+    };
+    else if (p.endsWith('/model-routing/auto-migrations')) body = {
+      autoModelMigrationsEnabled: route.request().postDataJSON().enabled,
+    };
+    else if (p.endsWith('/configuration-pins/summary/apply')) body = {
+      id: 'summary', label: 'Summary generation', configKey: 'ClaudeCli:SummaryModel',
+      currentModel: migration.to, modelMigration: null,
+    };
+    else if (p.endsWith('/quota/model-routes')) body = modelRoutes;
     else if (p.endsWith('/quota/caps')) body = { defaultCapPct: 95, caps: {} };
     else if (p.endsWith('/quota')) body = quotaReport;
     else if (p.endsWith('/usage')) body = usageReport();
@@ -224,5 +255,37 @@ test.describe('CLI Management restructure (AGT-2101)', () => {
       await setTheme(page, theme);
       await page.getByTestId('cli-paths-overlay').screenshot({ path: join(SHOT_DIR, `cli-paths-page--mocked-${theme}.png`) });
     }
+  });
+
+  test('shows catalog-backed configuration updates and applies explicit choices', async ({ page, devBackend }) => {
+    expect(devBackend.port).toBe(5030);
+    await openHome(page);
+    await page.getByTestId('workspace-settings-rail-caps').click();
+    const overlay = page.getByTestId('cli-admin-overlay');
+    await expect(overlay.getByTestId('model-migration-catalog-version')).toContainText('2026-09-06');
+
+    const offer = overlay.getByTestId('configuration-pin-migration-summary');
+    await expect(offer).toContainText('Update available:');
+    await expect(offer).toContainText('claude-sonnet-4-6');
+    await expect(offer).toContainText('claude-sonnet-5');
+    await expect(offer.getByTestId('model-migration-impact')).toContainText('standard to standard');
+
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await overlay.screenshot({ path: join(SHOT_DIR, `model-migrations-cli--mocked-${theme}.png`) });
+    }
+    await setTheme(page, 'light');
+
+    const autoRequest = page.waitForRequest('**/api/cli/model-routing/auto-migrations');
+    await overlay.getByTestId('model-routing-auto-migrations').click();
+    expect((await autoRequest).postDataJSON()).toEqual({ enabled: false });
+
+    const applyRequest = page.waitForRequest('**/api/cli/model-routing/configuration-pins/summary/apply');
+    await offer.getByTestId('configuration-pin-migration-summary-apply').click();
+    expect((await applyRequest).postDataJSON()).toEqual({
+      expectedFrom: 'claude-sonnet-4-6', toModel: 'claude-sonnet-5',
+      catalogVersion: '2026-09-06', rule: 'latestInFamily:claude-sonnet',
+    });
+    await expect(overlay.getByTestId('model-configuration-pin-summary')).toContainText('Current: claude-sonnet-5');
   });
 });

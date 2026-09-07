@@ -49,7 +49,7 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 import { TaskStatusPopoverDirective } from '../../../../components/task-status-card';
 import { MenuComponent, MenuItemClickEvent } from '../../../../components/menu';
 import { StudioIconComponent, type StudioIconName } from '../../../../components/studio-icon/studio-icon.component';
-import { ModelLevelIndicatorComponent } from '../../../../components/model-level-indicator/model-level-indicator.component';
+import { TaskModelMigrationControlComponent } from '../task-model-migration-control/task-model-migration-control.component';
 import { ExecutionLocationBadgeComponent } from '../../../../components/execution-location-badge/execution-location-badge.component';
 import { IntegrationStatusBadgeComponent } from '../../../../components/integration-status-badge/integration-status-badge.component';
 import { ReviewDecisionBadgesComponent } from '../review-decision-badges/review-decision-badges.component';
@@ -78,7 +78,7 @@ if (typeof window !== 'undefined') {
 @Component({
   selector: 'app-task-card, app-job-card',
   standalone: true,
-  imports: [TooltipDirective, TaskStatusPopoverDirective, MenuComponent, StudioIconComponent, TokenPopoverDirective, TaskTokenUsagePopoverComponent, ModelLevelIndicatorComponent, ExecutionLocationBadgeComponent, IntegrationStatusBadgeComponent, ReviewDecisionBadgesComponent, PostProcessingActivityComponent, TestEvidenceStatusComponent, TaskLiveStatusComponent, TaskCardQuotaWaitComponent, CopyableTaskKeyComponent],
+  imports: [TooltipDirective, TaskStatusPopoverDirective, MenuComponent, StudioIconComponent, TokenPopoverDirective, TaskTokenUsagePopoverComponent, TaskModelMigrationControlComponent, ExecutionLocationBadgeComponent, IntegrationStatusBadgeComponent, ReviewDecisionBadgesComponent, PostProcessingActivityComponent, TestEvidenceStatusComponent, TaskLiveStatusComponent, TaskCardQuotaWaitComponent, CopyableTaskKeyComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './task-card.component.html',
   styleUrl: './task-card.component.scss',
