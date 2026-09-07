@@ -434,7 +434,7 @@ public sealed class SummaryGenerationService
     }
 
     private string SummaryModel() =>
-        _configuration["ClaudeCli:SummaryModel"] ?? ModelIds.ClaudeHaiku45;
+        _configuration["ClaudeCli:SummaryModel"] ?? ModelFamilyResolver.Resolve(ModelFamilies.ClaudeHaiku);
 
     private void RegisterGeneratedStatus(TaskInfo info, HaikuSummaryResult result, int? runIndex)
     {

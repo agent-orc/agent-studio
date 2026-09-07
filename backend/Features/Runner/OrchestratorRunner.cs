@@ -47,7 +47,7 @@ public sealed record OrchestratorDecisionResult(
 /// </summary>
 public class OrchestratorRunner
 {
-    public const string DefaultModel = ModelIds.ClaudeHaiku45;
+    public static string DefaultModel => ModelFamilyResolver.Resolve(ModelFamilies.ClaudeHaiku);
 
     private readonly GenericCliExecutionService _claude;
     private readonly ILogger<OrchestratorRunner> _logger;

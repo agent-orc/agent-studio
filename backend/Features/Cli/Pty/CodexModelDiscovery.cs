@@ -362,6 +362,11 @@ public sealed class CodexModelDiscovery
         ModelMetadataRegistry.SetDetectedCodexLadders(cat.Models);
         var detected = PickDetectedDefault(cat);
         ModelMetadataRegistry.SetDetectedCodexDefault(detected);
+        // AGT-2716: also publish the plain available-id set so
+        // ModelFamilyResolver can resolve non-flagship Codex families
+        // (gpt-mini today) against what the CLI actually reports.
+        ModelMetadataRegistry.SetDetectedVendorAvailability(
+            "openai", cat.Models.Where(m => m.Available).Select(m => m.Id));
         _logger.LogDebug("Codex detected default published: {Detected} (source={Source})",
             detected ?? "<none>", cat.Source);
         return WithKnownButUnavailableModels(cat, _versionTracker?.CurrentVersion(CliTypes.Codex));

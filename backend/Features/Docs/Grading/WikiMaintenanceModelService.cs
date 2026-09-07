@@ -22,8 +22,9 @@ public sealed class WikiMaintenanceModelService
 {
     public const string FileName = "wiki-maintenance-model.json";
 
-    /// <summary>Platform strong default when no workspace value is stored.</summary>
-    public const string DefaultModel = ModelIds.ClaudeSonnet5;
+    /// <summary>Platform strong default when no workspace value is stored: the
+    /// newest available member of the claude-sonnet family (AGT-2716).</summary>
+    public static string DefaultModel => ModelFamilyResolver.Resolve(ModelFamilies.ClaudeSonnet);
     public const string DefaultCli = "claude";
 
     private static readonly JsonSerializerOptions JsonOpts = new()

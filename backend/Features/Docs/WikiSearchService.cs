@@ -517,7 +517,7 @@ public class WikiSearchService
         try
         {
             var cli = _configuration["WikiSearch:Cli"] ?? "claude";
-            var model = _configuration["WikiSearch:Model"] ?? ModelIds.ClaudeHaiku45;
+            var model = _configuration["WikiSearch:Model"] ?? ModelFamilyResolver.Resolve(ModelFamilies.ClaudeHaiku);
             var impl = _oneShots.Get(cli);
             if (impl == null) return null;
 

@@ -116,16 +116,23 @@ CLI execution tests.
 - Codex Spark quota windows are independent windows. Keep their labels and burn
   percentages separate from the standard 5-hour and weekly windows; never fold
   a Spark-only snapshot into the main-window admission signal.
-- Review-decision and supporting aspect calls default to Codex with
-  `gpt-5.4-mini`. The configured `ReviewDecisionOrchestrator:Cli` must be passed
-  through to `CliOneShotRegistry`; never replace it with an implicit Claude
-  lookup. Project pipeline-step overrides and Token Economy recommendations may
-  select another compatible GPT model explicitly.
+- Review-decision and supporting aspect calls default to Codex with the
+  gpt-mini family's current member (`gpt-5.4-mini` today, resolved through
+  `ModelFamilyResolver.Resolve(ModelFamilies.GptMini)` rather than a pinned
+  literal - see [model-routing-policy.md](model-routing-policy.md#model-families-and-migrations)).
+  The configured `ReviewDecisionOrchestrator:Cli` must be passed through to
+  `CliOneShotRegistry`; never replace it with an implicit Claude lookup.
+  Project pipeline-step overrides and Token Economy recommendations may select
+  another compatible GPT model explicitly.
 - Workspace CLI Management owns the model-routing policy. Each CLI has one
   primary model and may have a fallback CLI, model, and thinking level in
   `cli-model-routing.json`. `CliQuotaFallbackService` resolves that policy
   against the latest quota snapshot for every new run; it must not rewrite the
-  task's configured CLI or model.
+  task's configured CLI or model. The same page also shows the model-migration
+  catalog version (`GET /api/cli/model-migrations`) and the workspace's
+  auto-apply-model-migrations switch (AGT-2716); see
+  [model-routing-policy.md](model-routing-policy.md#model-families-and-migrations)
+  for the full family/migration contract.
 - A model catalog is the union of registry knowledge and live CLI discovery.
   A registry model that the installed CLI does not report remains visible and
   disabled with an availability note. Generation age is separate from

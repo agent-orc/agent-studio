@@ -71,6 +71,12 @@
               [source]="info().execution?.model ? 'run' : 'explicit'"
               testId="detail-model-chip"
               levelTestId="detail-thinking-level" />
+            <app-model-migration-badge
+              [model]="info().model"
+              [explicit]="info().modelExplicit === true"
+              [jobId]="info().id"
+              [watchPath]="info().watchPath"
+              testId="detail-model-migration" />
           }
           <span class="detail__meta-item"
                 data-testid="detail-created-at"

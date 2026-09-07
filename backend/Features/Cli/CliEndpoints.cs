@@ -89,6 +89,21 @@ public static class CliEndpoints
             });
         });
 
+        // AGT-2716: the migration catalog (version + known-safe "from -> to"
+        // model replacements). The card model badge, project pipeline settings,
+        // and Workspace CLI Management all look a pinned model id up against
+        // this list client-side to decide whether to show "update available" -
+        // no per-card backend computation needed.
+        cliGroup.MapGet("/model-migrations", (AgentStudio.Pipeline.ModelMigrationCatalogRegistry registry) =>
+        {
+            return Results.Ok(new
+            {
+                version = registry.Catalog.Version,
+                wikiPath = registry.Catalog.WikiPath,
+                migrations = registry.Catalog.Migrations,
+            });
+        });
+
         cliGroup.MapPut("/model-routing/economy-mode", (
             SetModelRoutingEconomyModeRequest request,
             ModelRoutingPolicyStateStore state) =>

@@ -1,0 +1,36 @@
+@if (proposal(); as p) {
+  <span class="model-migration" [attr.data-testid]="testId()">
+    <button #trigger type="button"
+            class="model-migration__dot"
+            [class.model-migration__dot--open]="open()"
+            [attr.data-testid]="testId() + '-dot'"
+            aria-haspopup="dialog"
+            [attr.aria-expanded]="open()"
+            [attr.aria-label]="'Model update available: ' + p.to"
+            [cacTooltip]="'Model update available: ' + p.from + ' -> ' + p.to"
+            (click)="toggle($event)">
+      <span class="model-migration__dot-glyph" aria-hidden="true">↑</span>
+    </button>
+    @if (open()) {
+      <div #panel
+           class="model-migration__panel"
+           role="dialog"
+           [attr.aria-label]="'Model migration to ' + p.to"
+           [attr.data-testid]="testId() + '-panel'"
+           (click)="onPanelClick($event)">
+        <div class="model-migration__row">
+          <span class="model-migration__from" [attr.data-testid]="testId() + '-from'">{{ p.from }}</span>
+          <span class="model-migration__arrow" aria-hidden="true">→</span>
+          <span class="model-migration__to" [attr.data-testid]="testId() + '-to'">{{ p.to }}</span>
+        </div>
+        <p class="model-migration__reason">{{ p.reason }}</p>
+        <button type="button"
+                class="model-migration__apply"
+                [attr.data-testid]="testId() + '-apply'"
+                [appPendingButton]="isPending()"
+                pendingLabel="Applying…"
+                (click)="onApply($event)">Apply</button>
+      </div>
+    }
+  </span>
+}

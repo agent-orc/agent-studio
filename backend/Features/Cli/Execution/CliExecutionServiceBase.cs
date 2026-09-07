@@ -108,13 +108,11 @@ public partial class GenericCliExecutionService : ICliExecutionService
     }
 
     /// <summary>
-    /// Quality-first default for the code-review grade pass: Claude Opus 4.8.
-    /// Lives on the engine (the old <c>ClaudeCliService.DefaultOpusModel</c>
-    /// home was deleted with the shim) so
-    /// <c>CodeReviewGradeModelSelector</c> + <c>TaskCodeReviewEndpoints</c>
-    /// keep a single named constant.
+    /// Quality-first Claude Opus default: the newest available member of the
+    /// claude-opus family (AGT-2716). Lives on the engine (the old
+    /// <c>ClaudeCliService.DefaultOpusModel</c> home was deleted with the shim).
     /// </summary>
-    public const string DefaultOpusModel = ModelIds.ClaudeOpus48;
+    public static string DefaultOpusModel => ModelFamilyResolver.Resolve(ModelFamilies.ClaudeOpus);
 
     // ── Built-in CLI factory helpers ────────────────────────────────────
     //

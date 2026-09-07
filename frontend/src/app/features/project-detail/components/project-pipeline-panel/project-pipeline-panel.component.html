@@ -82,6 +82,7 @@
                           [cacTooltip]="'Effective model: ' + modelSummary(step) + ' (' + modelSourceLabel(step.effectiveModelSource) + ')'">
                       {{ modelSummary(step) }}
                     </span>
+                    <app-model-migration-badge [model]="step.effectiveModel" [pending]="!!stepBusy[step.id]" testId="pipeline-step-model-migration" (apply)="onStepAgentCommit(step.id, { cliType: asCliType(step.effectiveCliType) ?? 'claude', model: $event, thinkingLevel: step.effectiveThinkingLevel || null })" />
                   }
                   @if (step.usesPrompt) {
                     <button type="button"
@@ -281,7 +282,6 @@
                     </span>
                     <span class="pp__settings-note" role="cell">{{ retryExplanation(step) }}</span>
                   </div>
-
                   @if (step.deferred || step.stub) {
                     <div class="pp__settings-row"
                          role="row"

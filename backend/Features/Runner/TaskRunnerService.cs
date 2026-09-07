@@ -48,6 +48,7 @@ public class TaskRunnerService : BackgroundService
     private readonly TimelineLog? _timeline;
     private readonly AgentStudio.Pipeline.PipelineExecutionLog? _pipelineLog;
     private readonly AgentStudio.Pipeline.ModelQualificationService? _modelQualification;
+    private readonly AgentStudio.Pipeline.ModelMigrationCatalogRegistry? _modelMigrationCatalog;
     private readonly AgentStudio.Pipeline.IntegrationPushQueue? _integrationPushQueue;
     private readonly AgentStudio.Pipeline.IConceptWorkbenchPublisher? _conceptWorkbenchPublisher;
     private readonly PromptEnrichmentService? _promptEnrichment;
@@ -146,6 +147,7 @@ public class TaskRunnerService : BackgroundService
         CliQuotaFallbackService? quotaFallback = null,
         ILoadThrottleGate? loadThrottle = null,
         AgentStudio.Pipeline.ModelQualificationService? modelQualification = null,
+        AgentStudio.Pipeline.ModelMigrationCatalogRegistry? modelMigrationCatalog = null,
         AgentStudio.Pipeline.IntegrationPushQueue? integrationPushQueue = null,
         AgentStudio.Clients.ClientIdentityStore? clients = null,
         CliQuotaWaitPolicyService? quotaWaitPolicy = null,
@@ -188,6 +190,7 @@ public class TaskRunnerService : BackgroundService
         _timeline = timeline;
         _pipelineLog = pipelineLog;
         _modelQualification = modelQualification;
+        _modelMigrationCatalog = modelMigrationCatalog;
         _integrationPushQueue = integrationPushQueue;
         _conceptWorkbenchPublisher = conceptWorkbenchPublisher;
         _promptEnrichment = promptEnrichment;
@@ -373,6 +376,7 @@ public class TaskRunnerService : BackgroundService
                 quotaWaitPolicy: _quotaWaitPolicy,
                 loadThrottle: _loadThrottle,
                 modelQualification: _modelQualification,
+                modelMigrationCatalog: _modelMigrationCatalog,
                 integrationPushQueue: _integrationPushQueue,
                 conceptWorkbenchPublisher: _conceptWorkbenchPublisher,
                 promptEnrichment: _promptEnrichment,
@@ -1520,6 +1524,7 @@ public class TaskRunnerService : BackgroundService
             quotaFallback: _quotaFallback,
             quotaWaitPolicy: _quotaWaitPolicy,
             loadThrottle: _loadThrottle,
+            modelMigrationCatalog: _modelMigrationCatalog,
             conceptWorkbenchPublisher: _conceptWorkbenchPublisher,
             promptEnrichment: _promptEnrichment,
             dossierMaintenance: _dossierMaintenance,

@@ -843,7 +843,10 @@ operator changes cause the step to fail before its writer runs.
   model is quality-first: it defaults to the
   live-discovered Codex flagship with the top supported reasoning level
   (`CodeReviewStep:DefaultModel`, CLI `CodeReviewStep:DefaultCli`), while the four
-  bounded aspect reviews use Codex `gpt-5.4-mini` at `high`. Opt out per deployment
+  bounded aspect reviews use Codex's gpt-mini family (`gpt-5.4-mini` today,
+  resolved through `ModelFamilyResolver` rather than a pinned literal - see
+  [model-routing-policy.md](model-routing-policy.md#model-families-and-migrations))
+  at `high`. Opt out per deployment
   with `CodeReviewStep:AutoGrade=false`. An
   unparseable reply degrades to grade C, never silently A.
 - The grade is reporting evidence, not a success gate. It therefore runs before

@@ -618,6 +618,9 @@ builder.Services.AddSingleton<AgentStudio.Tasks.TaskLiveStatusProjection>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.IModelEconomyAdvisor,
     AgentStudio.Pipeline.CatalogueModelEconomyAdvisor>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ModelRoutingPolicyRegistry>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.IModelMigrationCatalogSource,
+    AgentStudio.Pipeline.EmbeddedModelMigrationCatalogSource>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.ModelMigrationCatalogRegistry>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ModelRoutingPolicyStateStore>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.IModelRoutingModeProvider>(sp =>
     sp.GetRequiredService<AgentStudio.Pipeline.ModelRoutingPolicyStateStore>());
