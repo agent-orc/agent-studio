@@ -8,6 +8,7 @@ import { App } from './app';
 import { TaskService } from './services/task.service';
 import type { TaskDetail, TaskInfo } from './models/task.model';
 import { studioTabKey } from './features/studio-shell';
+import { BoardFiltersService } from './features/board/state/board-filters.service';
 import { ensureBrowserStorage } from '../testing/browser-storage';
 
 ensureBrowserStorage();
@@ -424,5 +425,117 @@ describe('App studio-tab mirror (pager reuse)', () => {
       'task:C:/watch::task-b',
     ]);
     expect(app.studioTabState.activeKey()).toBe('task:C:/watch::task-a');
+  });
+});
+
+describe('App studio-tab project-scope mirror (AGT-2692)', () => {
+  const TAB_STORAGE_KEY = 'atp.studio.tabs.v1';
+  const VSCODE_FLAG_KEY = 'atp.flag.vsCodeLayout';
+  const ACTIVE_PROJECTS_KEY = 'activeProjects';
+
+  afterEach(() => {
+    TestBed.resetTestingModule();
+    localStorage.removeItem(TAB_STORAGE_KEY);
+    localStorage.removeItem(VSCODE_FLAG_KEY);
+    localStorage.removeItem(ACTIVE_PROJECTS_KEY);
+  });
+
+  async function configure(): Promise<{ app: App; boardFilters: BoardFiltersService; taskService: TaskService }> {
+    TestBed.resetTestingModule();
+    localStorage.removeItem(TAB_STORAGE_KEY);
+    localStorage.removeItem(ACTIVE_PROJECTS_KEY);
+    localStorage.setItem(VSCODE_FLAG_KEY, '1');
+    TestBed.configureTestingModule({
+      providers: [
+        App,
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+      ],
+    });
+    return {
+      app: TestBed.inject(App),
+      boardFilters: TestBed.inject(BoardFiltersService),
+      taskService: TestBed.inject(TaskService),
+    };
+  }
+
+  function task(over: Partial<TaskInfo>): TaskInfo {
+    return {
+      id: 'task-b',
+      taskKey: 'C:/watch-b::task-b',
+      title: 'Task B',
+      state: '2-ready',
+      order: 1,
+      agent: 'codex',
+      createdAt: '2026-01-01T00:00:00Z',
+      watchPath: 'C:/watch-b',
+      projectName: 'Project B',
+      folderPath: 'C:/watch-b/.orchestrator/jobs/task-b',
+      lastActivity: '2026-01-01T00:00:00Z',
+      sessionName: null,
+      model: null,
+      cliType: 'codex',
+      useOwnSession: null,
+      lastUsage: null,
+      execution: null,
+      commit: null,
+      ...over,
+    } as TaskInfo;
+  }
+
+  it('opening a task from the All-projects board leaves the active project scope untouched', async () => {
+    const { app, boardFilters, taskService } = await configure();
+    // The opened task is a live board job resolvable to "Project B" — the
+    // regression this guards against only reproduces when the tab-mirror
+    // effect's `jobService.jobs().find(...)` lookup actually resolves a
+    // project for the task tab.
+    taskService.jobs.set([task({})]);
+    TestBed.tick();
+    expect(app.studioTabState.activeKey()).toBe('board:__all__');
+    expect(boardFilters.hasExplicitProjectFilter()).toBe(false);
+
+    // Sanity check that the mirror effect actually runs in this harness:
+    // narrow the scope to a project via a Hub tab first...
+    app.studioTabState.open({ kind: 'hub', projectName: 'Project A', section: 'overview' });
+    TestBed.tick();
+    expect([...boardFilters.activeProjects()]).toEqual(['Project A']);
+
+    // ...then open the "Project B" task. If the task tab still mirrored into
+    // the board scope, activeProjects would flip to ['Project B']; it must
+    // stay untouched at ['Project A'] instead.
+    app.studioTabState.open({ kind: 'task', taskKey: 'C:/watch-b::task-b' });
+    TestBed.tick();
+
+    expect(app.studioTabState.activeKey()).toBe('task:C:/watch-b::task-b');
+    // The task belongs to a single project, but the board/sidebar scope
+    // must stay whatever it already was: it is a data concern of the
+    // detail view, not the app's active-project selection.
+    expect([...boardFilters.activeProjects()]).toEqual(['Project A']);
+  });
+
+  it('closing the task tab returns to the All-projects board with the scope still workspace-wide', async () => {
+    const { app, boardFilters, taskService } = await configure();
+    taskService.jobs.set([task({})]);
+    TestBed.tick();
+    app.studioTabState.open({ kind: 'task', taskKey: 'C:/watch-b::task-b' });
+    TestBed.tick();
+    expect(boardFilters.activeProjects().size).toBe(0);
+
+    app.studioTabState.close('task:C:/watch-b::task-b');
+    TestBed.tick();
+
+    expect(app.studioTabState.activeTab()).toEqual({ kind: 'board', projectName: '__all__' });
+    expect(boardFilters.activeProjects().size).toBe(0);
+  });
+
+  it('still narrows the scope for a project-bound Hub tab', async () => {
+    const { app, boardFilters } = await configure();
+
+    app.studioTabState.open({ kind: 'hub', projectName: 'Project A', section: 'overview' });
+    TestBed.tick();
+
+    expect([...boardFilters.activeProjects()]).toEqual(['Project A']);
   });
 });
