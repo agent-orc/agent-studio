@@ -1,6 +1,6 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures/dev-backend';
 import { mkdirSync } from 'node:fs';
-import { setTheme } from '../helpers/theme';
+import { dismissDevErrorDialog, setTheme } from '../helpers/theme';
 
 /**
  * The bottom status-bar's quota strip now follows a single model:
@@ -24,7 +24,9 @@ import { setTheme } from '../helpers/theme';
  * Plus screenshots so the visual change is reviewable in chat.
  */
 
-const SCREENSHOT_DIR = process.env.STATUS_BAR_RESULTS_DIR?.trim() || 'test-results';
+const SCREENSHOT_DIR = process.env.STATUS_BAR_RESULTS_DIR?.trim()
+  || process.env.JOB_RESULTS_DIR?.trim()
+  || 'test-results';
 const CLIS = ['copilot', 'claude', 'codex'] as const;
 
 test.describe('Status bar usage modal', () => {
@@ -201,6 +203,7 @@ test.describe('Status bar usage modal', () => {
     }));
 
     await page.reload();
+    await dismissDevErrorDialog(page);
     await page.getByTestId('hquota-card-codex').click();
 
     const modal = page.getByTestId('cli-usage-modal-codex');
@@ -217,5 +220,154 @@ test.describe('Status bar usage modal', () => {
     await modal.screenshot({ path: `${SCREENSHOT_DIR}/status-bar-cli-modal-codex-corrected-light.png` });
     await setTheme(page, 'dark');
     await modal.screenshot({ path: `${SCREENSHOT_DIR}/status-bar-cli-modal-codex-corrected-dark.png` });
+  });
+
+  test('groups low-share models, keeps partial totals readable, and remembers the disclosure', async ({ page, devBackend }) => {
+    expect(devBackend.port).toBeGreaterThan(0);
+    // Keep this mocked rendering proof independent of the host's active
+    // security profile and boot data so reloads cannot raise a blocking error
+    // dialog before the status-bar assertions run.
+    await page.route('**/api/**', route => {
+      const url = route.request().url();
+      const json = (body: unknown) => route.fulfill({ json: body });
+      if (url.includes('/api/auth/status')) {
+        return json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
+      }
+      if (url.includes('/api/tasks/grouped')) return json({
+        backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [],
+        failedPickup: [], review: [], autoReview: [], humanReview: [], completed: [], archive: [],
+      });
+      if (url.includes('/api/runner/status')) return json({ projects: {} });
+      if (/\/api\/tasks(\?|$)/.test(url)) return json([]);
+      if (url.includes('/api/watch-paths')) return json([]);
+      return route.continue();
+    });
+    // This worktree is intentionally dirty while the proof runs. Keep the
+    // unrelated recovery inventory from covering the status-bar controls on
+    // either reload.
+    await page.route('**/api/crash-recovery/pending', route => route.fulfill({
+      json: { pending: [] },
+    }));
+    await page.evaluate(() => {
+      localStorage.removeItem('tokenUsage.modelGroupingThresholdPct');
+      localStorage.removeItem('tokenUsage.otherModelsExpanded');
+    });
+    await page.route('**/api/cli/quota**', async route => {
+      if (route.request().method() !== 'GET') return route.continue();
+      await route.fulfill({
+        json: {
+          at: new Date().toISOString(),
+          ttlSeconds: 600,
+          snapshots: [{
+            cliType: 'codex',
+            fetchedAt: new Date().toISOString(),
+            plan: 'Pro',
+            source: '/status',
+            error: null,
+            windows: [
+              { label: '5-hour', usedPct: 3, used: null, limit: null, unit: '%', resetAt: null, resetLabel: '01:49' },
+              { label: 'Weekly', usedPct: 8, used: null, limit: null, unit: '%', resetAt: null, resetLabel: 'Friday' },
+            ],
+          }],
+        },
+      });
+    });
+    await page.route('**/api/runner/token-summary-aggregate**', route => route.fulfill({
+      json: {
+        projects: 4,
+        orchestratorEntries: 12,
+        orchestratorLlmCalls: 12,
+        totalInputTokens: 11_446_000_000,
+        totalOutputTokens: 67_000,
+        totalCacheReadTokens: 0,
+        totalCacheCreationTokens: 0,
+        estimatedApiCostUsd: 59_996.74,
+        allModelsPriced: false,
+        byModel: [
+          {
+            model: 'gpt-5.5', calls: 5,
+            inputTokens: 10_940_000_000, outputTokens: 67_000,
+            cacheReadTokens: 0, cacheCreationTokens: 0,
+            estimatedApiCostUsd: 50_000, modelPriced: true,
+          },
+          {
+            model: 'gpt-5.6-sol', calls: 3,
+            inputTokens: 500_000_000, outputTokens: 0,
+            cacheReadTokens: 0, cacheCreationTokens: 0,
+            estimatedApiCostUsd: 9_990, modelPriced: true,
+          },
+          {
+            model: 'gpt-5.4-mini', calls: 2,
+            inputTokens: 5_000_000, outputTokens: 0,
+            cacheReadTokens: 0, cacheCreationTokens: 0,
+            estimatedApiCostUsd: 6.74, modelPriced: true,
+          },
+          {
+            model: 'gpt-future', calls: 2,
+            inputTokens: 1_000_000, outputTokens: 0,
+            cacheReadTokens: 0, cacheCreationTokens: 0,
+            estimatedApiCostUsd: 0, modelPriced: false,
+          },
+        ],
+        byProject: [],
+        fetchedAt: new Date().toISOString(),
+        disclaimer: 'Theoretical API cost.',
+      },
+    }));
+    await page.route('**/api/adhoc-usage/**', route => route.fulfill({
+      json: {
+        calls: 0, inputTokens: 0, outputTokens: 0,
+        cacheReadTokens: 0, cacheCreationTokens: 0,
+        estimatedApiCostUsd: 0, allModelsPriced: true,
+        bySource: [], byDay: [], byModel: [],
+        logPath: '(bus)', logSizeBytes: 0, logModifiedAt: null, disclaimer: '',
+      },
+    }));
+
+    await page.reload();
+    await dismissDevErrorDialog(page);
+    await page.getByTestId('hquota-card-codex').click();
+
+    let modal = page.getByTestId('cli-usage-modal-codex');
+    await expect(modal).toBeVisible();
+    await expect(modal.getByTestId('cli-usage-model-threshold')).toHaveValue('1');
+    await expect(modal.getByTestId('cli-usage-model-row')).toHaveCount(2);
+    await expect(modal.getByTestId('cli-usage-model-other')).toContainText('Other (2 models)');
+    await expect(modal.getByTestId('cli-usage-model-other-child')).toHaveCount(0);
+    await expect(modal.getByTestId('cli-usage-model-total-cost'))
+      .toHaveText('$59,996.74 + 1 unpriced');
+    await expect(modal.getByTestId('cli-usage-model-footer-cost'))
+      .toHaveText('$59,996.74 + 1 unpriced');
+    await expect(modal.getByText('10,940.0M', { exact: true })).toBeVisible();
+
+    await setTheme(page, 'light');
+    await modal.screenshot({ path: `${SCREENSHOT_DIR}/agt2752-model-group-collapsed-light--mocked.png` });
+
+    const otherToggle = modal.getByTestId('cli-usage-model-other-toggle');
+    await otherToggle.click();
+    await expect(otherToggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(modal.getByTestId('cli-usage-model-other-child')).toHaveCount(2);
+    await modal.screenshot({ path: `${SCREENSHOT_DIR}/agt2752-model-group-expanded-light--mocked.png` });
+    await setTheme(page, 'dark');
+    await modal.screenshot({ path: `${SCREENSHOT_DIR}/agt2752-model-group-expanded-dark--mocked.png` });
+
+    const threshold = modal.getByTestId('cli-usage-model-threshold');
+    await threshold.fill('2.5');
+    await threshold.press('Tab');
+    await expect.poll(() => page.evaluate(() =>
+      localStorage.getItem('tokenUsage.modelGroupingThresholdPct'))).toBe('2.5');
+
+    await page.keyboard.press('Escape');
+    await page.getByTestId('hquota-card-codex').click();
+    modal = page.getByTestId('cli-usage-modal-codex');
+    await expect(modal.getByTestId('cli-usage-model-threshold')).toHaveValue('2.5');
+    await expect(modal.getByTestId('cli-usage-model-other-toggle')).toHaveAttribute('aria-expanded', 'true');
+
+    await page.reload();
+    await dismissDevErrorDialog(page);
+    await page.getByTestId('hquota-card-codex').click();
+    modal = page.getByTestId('cli-usage-modal-codex');
+    await expect(modal.getByTestId('cli-usage-model-threshold')).toHaveValue('2.5');
+    await expect(modal.getByTestId('cli-usage-model-other-toggle')).toHaveAttribute('aria-expanded', 'true');
   });
 });

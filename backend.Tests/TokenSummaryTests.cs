@@ -125,6 +125,51 @@ public class TokenSummaryTests
     }
 
     [Fact]
+    public void AggregateSummaries_MergesDisplayNameAndCanonicalId()
+    {
+        var at = new DateTime(2026, 9, 7, 0, 0, 0, DateTimeKind.Utc);
+        var displayNameSummary = TokenSummaryService.Summarize(
+            "One",
+            [Entry("Claude Sonnet 5", 1_000_000, 10_000) with { Ts = at }]);
+        var canonicalIdSummary = TokenSummaryService.Summarize(
+            "Two",
+            [Entry(ModelIds.ClaudeSonnet5, 2_000_000, 20_000) with { Ts = at }]);
+
+        var aggregate = TokenSummaryService.AggregateSummaries(
+            [("One", displayNameSummary), ("Two", canonicalIdSummary)]);
+
+        var model = Assert.Single(aggregate.ByModel);
+        Assert.Equal(ModelIds.ClaudeSonnet5, model.Model);
+        Assert.Equal(2, model.Calls);
+        Assert.Equal(3_000_000, model.InputTokens);
+        Assert.Equal(30_000, model.OutputTokens);
+        Assert.True(model.ModelPriced);
+    }
+
+    [Fact]
+    public void AggregateSummaries_UnpricedRowKeepsKnownSubtotalAndAllTokens()
+    {
+        var at = new DateTime(2026, 9, 7, 0, 0, 0, DateTimeKind.Utc);
+        var known = TokenSummaryService.Summarize(
+            "Known",
+            [Entry(ModelIds.Gpt55, 1_000_000, 100_000) with { Ts = at }]);
+        var unpriced = TokenSummaryService.Summarize(
+            "Unknown",
+            [Entry("future-model-without-price", 20_000, 2_000) with { Ts = at }]);
+
+        var aggregate = TokenSummaryService.AggregateSummaries(
+            [("Known", known), ("Unknown", unpriced)]);
+
+        Assert.False(aggregate.AllModelsPriced);
+        Assert.Equal(1, aggregate.UnpricedModelCount);
+        Assert.Equal(1, aggregate.UnknownModelCount);
+        Assert.Equal(known.EstimatedApiCostUsd, aggregate.EstimatedApiCostUsd);
+        Assert.Equal(1_020_000, aggregate.TotalInputTokens);
+        Assert.Equal(102_000, aggregate.TotalOutputTokens);
+        Assert.Equal(2, aggregate.ByModel.Count);
+    }
+
+    [Fact]
     public void Summarize_UnknownModel_FlagsNotAllPriced()
     {
         var entries = new[]

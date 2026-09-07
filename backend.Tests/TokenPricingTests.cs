@@ -23,7 +23,7 @@ public class TokenPricingTests
             .InformationalVersion;
 
         Assert.Equal("TokenEconomy", assembly.GetName().Name);
-        Assert.StartsWith("0.3.1", informationalVersion, StringComparison.Ordinal);
+        Assert.StartsWith("0.3.3", informationalVersion, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -49,6 +49,45 @@ public class TokenPricingTests
         Assert.Equal(expectedPrice.ValidFrom, c.PriceBasis.ValidFrom);
         Assert.Equal(expectedPrice.InputPerMTok, c.PriceBasis.InputPerMillion);
         Assert.Equal(expectedPrice.OutputPerMTok, c.PriceBasis.OutputPerMillion);
+    }
+
+    [Fact]
+    public void Estimate_Gpt55HistoricalRun_UsesPublishedCatalogPrice()
+    {
+        var at = new DateTime(2026, 9, 7, 0, 0, 0, DateTimeKind.Utc);
+
+        var estimate = _provider.Estimate(
+            "GPT-5.5",
+            inputTokens: 10_782_081,
+            outputTokens: 66_760,
+            cacheReadTokens: 10_022_528,
+            cacheCreationTokens: 0,
+            recordedAt: at);
+
+        Assert.True(estimate.ModelKnown);
+        Assert.Equal(TokenEconomy.PriceStatus.Resolved, estimate.Status);
+        Assert.Equal(ModelIds.Gpt55, estimate.ModelId);
+        Assert.Equal(3.797765m, estimate.InputUsd);
+        Assert.Equal(2.0028m, estimate.OutputUsd);
+        Assert.Equal(5.011264m, estimate.CacheReadUsd);
+        Assert.Equal(10.811829m, estimate.Total);
+        Assert.Equal(new DateTime(2026, 4, 24, 0, 0, 0, DateTimeKind.Utc), estimate.PriceBasis?.ValidFrom);
+    }
+
+    [Fact]
+    public void Estimate_AnthropicInputRemainsSeparateFromCacheRead()
+    {
+        var estimate = _provider.Estimate(
+            ModelIds.ClaudeOpus47,
+            inputTokens: 1_000_000,
+            outputTokens: 0,
+            cacheReadTokens: 1_000_000,
+            cacheCreationTokens: 0,
+            recordedAt: new DateTime(2026, 9, 7, 0, 0, 0, DateTimeKind.Utc));
+
+        Assert.Equal(5m, estimate.InputUsd);
+        Assert.Equal(0.5m, estimate.CacheReadUsd);
+        Assert.Equal(5.5m, estimate.Total);
     }
     [Fact]
     public void Estimate_OpusPrices_MatchAnthropicListed()
@@ -184,5 +223,17 @@ public class TokenPricingTests
         Assert.True(dotted.ModelKnown);
         Assert.Equal(dashed.Total, dotted.Total);
         Assert.Equal(ModelIds.ClaudeOpus47, dotted.ModelId);
+    }
+
+    [Fact]
+    public void NormalizeModelId_ResolvesEveryCatalogDisplayName()
+    {
+        foreach (var listing in TokenPricing.Catalog.Values)
+        {
+            Assert.False(string.IsNullOrWhiteSpace(listing.DisplayName));
+            Assert.Equal(
+                listing.ModelId,
+                TokenPricing.NormalizeModelId(listing.DisplayName!.ToUpperInvariant()));
+        }
     }
 }

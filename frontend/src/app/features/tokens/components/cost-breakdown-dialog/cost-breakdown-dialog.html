@@ -41,6 +41,12 @@
             </div>
 
             <p class="cost-breakdown__formula" data-testid="cost-breakdown-formula">{{ formula(item) }}</p>
+            @if (hasAdjustedInput(item)) {
+              <p class="cost-breakdown__note">
+                The reported input includes cache reads. Pricing uses
+                {{ formatNumber(item.billableInputTokens!) }} fresh input tokens.
+              </p>
+            }
 
             @if (item.estimate.priceBasis; as price) {
               <dl class="cost-breakdown__provenance">

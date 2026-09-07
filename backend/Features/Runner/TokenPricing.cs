@@ -48,6 +48,16 @@ public interface ITokenPriceProvider
 public static class TokenPricing
 {
     private static readonly EconomyPricing.ModelPriceCatalog Source = EconomyPricing.ModelPriceCatalog.Default;
+    private static readonly IReadOnlyDictionary<string, string> CatalogIdsByDisplayName =
+        Source.Listings
+            .Where(listing => !string.IsNullOrWhiteSpace(listing.DisplayName))
+            .GroupBy(listing => listing.DisplayName!.Trim(), StringComparer.OrdinalIgnoreCase)
+            .Where(group => group.Select(listing => listing.ModelId)
+                .Distinct(StringComparer.OrdinalIgnoreCase).Count() == 1)
+            .ToDictionary(
+                group => group.Key,
+                group => group.First().ModelId,
+                StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Configured pricing provider. Internal visibility lets focused tests pin
@@ -59,6 +69,40 @@ public static class TokenPricing
     public static IReadOnlyDictionary<string, EconomyPricing.ModelListing> Catalog { get; } =
         Source.Listings.ToDictionary(x => x.ModelId, StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Resolve an id, alias, or catalog display name to its canonical model id.
+    /// Durable receipts written before AGT-2740 may contain the display name,
+    /// so all aggregate readers use this catalog-owned reverse lookup.
+    /// </summary>
+    public static string NormalizeModelId(string? modelId)
+    {
+        var candidate = modelId?.Trim() ?? "";
+        if (candidate.Length == 0) return "";
+
+        var listing = Source.Find(candidate);
+        if (listing is not null) return listing.ModelId;
+
+        return CatalogIdsByDisplayName.TryGetValue(candidate, out var canonicalId)
+            ? canonicalId
+            : ModelMetadataRegistry.NormalizeId(candidate);
+    }
+
+    /// <summary>
+    /// Translate provider-reported input into TokenEconomy's fresh-input
+    /// contract. Codex/OpenAI includes cached input in its input total;
+    /// Anthropic reports input and cache as separate counters.
+    /// </summary>
+    public static long BillableInputTokens(string? modelId, long inputTokens, long cacheReadTokens)
+    {
+        var canonicalId = NormalizeModelId(modelId);
+        var listing = Source.Find(canonicalId);
+        var input = Math.Max(0, inputTokens);
+        if (!string.Equals(listing?.Vendor, "openai", StringComparison.OrdinalIgnoreCase))
+            return input;
+
+        return Math.Max(0, input - Math.Max(0, cacheReadTokens));
+    }
+
     public static TokenCostEstimate Estimate(
         string? modelId,
         long inputTokens,
@@ -67,7 +111,7 @@ public static class TokenPricing
         long cacheCreationTokens,
         DateTime? recordedAt = null)
     {
-        return Provider.Estimate(modelId, inputTokens, outputTokens, cacheReadTokens,
+        return Provider.Estimate(NormalizeModelId(modelId), inputTokens, outputTokens, cacheReadTokens,
             cacheCreationTokens, recordedAt);
     }
 }

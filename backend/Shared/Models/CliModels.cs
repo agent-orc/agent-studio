@@ -179,8 +179,8 @@ public static class ModelMetadataRegistry
         // gpt-5.5 is the current Codex/OpenAI default. codex-cli 0.143 on a
         // ChatGPT account rejects gpt-5-codex with a 400 invalid_request, so
         // the default must be the account-valid model (AGT-1941). Pricing is
-        // left null until authoritative numbers are confirmed (same posture as
-        // the GPT-4.1 / GPT-4o entries) so no invented cost is asserted.
+        // resolved from the exactly pinned TokenEconomy catalog rather than
+        // duplicated in this registry.
         new(ModelIds.Gpt55, "GPT-5.5", "openai", IsDefault: true, Deprecated: false, Available: true,
             ContextWindow: 400_000),
         // gpt-5-codex is retained (API-key accounts still accept it) but is no

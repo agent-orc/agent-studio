@@ -69,6 +69,8 @@ export interface TokenSummary {
   allModelsPriced: boolean;
   /** Distinct actively used model ids absent from the pinned price catalog. */
   unknownModelCount?: number;
+  coverageStatus?: 'complete' | 'partial' | 'unavailable';
+  coverageWarning?: string | null;
   byModel: TokenSummaryByModel[];
   disclaimer: string;
 }
@@ -89,6 +91,10 @@ export interface TokenSummaryAggregate {
   totalCacheCreationTokens: number;
   estimatedApiCostUsd: number;
   allModelsPriced: boolean;
+  unpricedModelCount?: number;
+  unknownModelCount?: number;
+  coverageStatus?: 'complete' | 'partial' | 'unavailable';
+  coverageWarnings?: string[] | null;
   byModel: TokenSummaryByModel[];
   byProject: TokenSummaryByProject[];
   fetchedAt: string;

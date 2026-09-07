@@ -32,7 +32,11 @@ public sealed record TokenSummaryAggregate(
     string FetchedAt,
     string? FirstActivity,
     string? LastActivity,
-    string Disclaimer);
+    string Disclaimer,
+    int UnpricedModelCount = 0,
+    int UnknownModelCount = 0,
+    string CoverageStatus = "complete",
+    IReadOnlyList<string>? CoverageWarnings = null);
 
 public sealed record TokenSummaryByProject(
     string Project,

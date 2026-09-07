@@ -25,6 +25,13 @@ export type {
   TokenCostTooltipOptions,
   TokenPricingGap,
 } from './token-cost-tooltip.util';
+export {
+  formatTokenCostTotal,
+  formatTokenCount,
+  formatTokenCurrencyUsd,
+  formatTokenExactCount,
+} from './token-number-format.util';
+export type { TokenCountFormatOptions, TokenCountUnit } from './token-number-format.util';
 export type {
   TaskTokenCall,
   TaskTokenSummary,

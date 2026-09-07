@@ -17,6 +17,7 @@ public sealed record TokenPriceCalculationResult(
     string? Label,
     DateTime CalculatedAt,
     long InputTokens,
+    long BillableInputTokens,
     long OutputTokens,
     long CacheReadTokens,
     long CacheWriteTokens,
@@ -26,7 +27,9 @@ public static class TokenPricingEndpoints
 {
     public static void MapTokenPricingEndpoints(this WebApplication app)
     {
-        app.MapPost("/api/token-pricing/calculate", (TokenPriceCalculationRequest request) =>
+        var group = app.MapGroup("/api/token-pricing");
+
+        group.MapPost("/calculate", (TokenPriceCalculationRequest request) =>
         {
             if (request.Items.Count is < 1 or > 100)
                 return Results.BadRequest(new { error = "Provide between 1 and 100 pricing items." });
@@ -39,6 +42,7 @@ public static class TokenPricingEndpoints
                     item.Label,
                     at,
                     Math.Max(0, item.InputTokens),
+                    TokenPricing.BillableInputTokens(item.Model, item.InputTokens, item.CacheReadTokens),
                     Math.Max(0, item.OutputTokens),
                     Math.Max(0, item.CacheReadTokens),
                     Math.Max(0, item.CacheWriteTokens),
@@ -47,5 +51,28 @@ public static class TokenPricingEndpoints
             }).ToList();
             return Results.Ok(new { items = rows, provider = "TokenEconomy" });
         });
+
+        group.MapGet("/diagnostics",
+            (HttpContext context, TaskScannerService scanner, ITokenAggregator tokens,
+                AgentStudio.Registry.ProjectRegistry registry) =>
+            {
+                var human = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal;
+                var projects = scanner.GetWatchPaths(includeArchived: true)
+                    .Where(project => human is null
+                                      || ProjectAccessAuthorization.Allows(human.User, project.Name, registry))
+                    .Select(project => (project.Name, project.Path))
+                    .ToList();
+
+                var includeWorkspaceAdHoc = human is null
+                    || human.User.Role == StudioRoles.Owner
+                    || human.User.Projects.Count == 0;
+                var summaries = projects
+                    .Select(project => (project.Name, tokens.LifetimeSummary(project.Name, project.Path)))
+                    .ToList();
+                var diagnostics = TokenPricingDiagnostics.Build(
+                    TokenSummaryService.AggregateSummaries(summaries),
+                    includeWorkspaceAdHoc ? tokens.AdHocAggregate() : null);
+                return Results.Ok(diagnostics);
+            });
     }
 }

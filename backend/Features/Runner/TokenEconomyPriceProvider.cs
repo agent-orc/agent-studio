@@ -20,12 +20,13 @@ public sealed class TokenEconomyPriceProvider : ITokenPriceProvider
         long cacheCreationTokens,
         DateTime? recordedAt = null)
     {
-        var key = modelId?.Trim() ?? "";
+        var key = TokenPricing.NormalizeModelId(modelId);
+        var billableInputTokens = TokenPricing.BillableInputTokens(key, inputTokens, cacheReadTokens);
         var atUtc = (recordedAt ?? DateTime.UtcNow).ToUniversalTime();
         var cost = Source.ComputeCost(
             key,
             new EconomyPricing.TokenUsage(
-                inputTokens,
+                billableInputTokens,
                 outputTokens,
                 cacheReadTokens,
                 cacheCreationTokens),

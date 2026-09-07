@@ -1,3 +1,5 @@
+import { formatTokenCurrencyUsd } from './token-number-format.util';
+
 /** Mandatory caveat shown on every token-to-money tooltip. */
 export const TOKEN_COST_ESTIMATE_NOTICE =
   'Estimated - historical list prices; discounts and provider-side caching adjustments are not considered.';
@@ -31,8 +33,7 @@ export interface TokenCostDisplayOptions {
 /** Consistent compact USD formatting for token-cost tooltips and popovers. */
 export function formatTokenCostUsd(costUsd: number): string {
   if (!Number.isFinite(costUsd)) return 'no price data';
-  const digits = Math.abs(costUsd) > 0 && Math.abs(costUsd) < 0.01 ? 4 : 2;
-  return `$${costUsd.toFixed(digits)}`;
+  return formatTokenCurrencyUsd(costUsd);
 }
 
 /** Visible compact label. A real zero is reserved for zero-token usage. */

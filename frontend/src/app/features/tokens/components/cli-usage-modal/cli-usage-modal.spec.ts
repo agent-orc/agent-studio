@@ -1,9 +1,16 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { CliUsageModalComponent } from './cli-usage-modal';
 import type { CliUsageQuotaRow } from '../../services/cli-usage.store';
 import type { AdHocUsageAggregate, TokenSummaryAggregate } from '../../models/tokens.model';
+import { ensureBrowserStorage } from '../../../../../testing/browser-storage';
+import {
+  MODEL_GROUP_THRESHOLD_STORAGE_KEY,
+  OTHER_MODELS_EXPANDED_STORAGE_KEY,
+} from './cli-usage-model-rows.util';
+
+ensureBrowserStorage();
 
 /**
  * Smoke + contract for the per-CLI usage modal. Confirms it instantiates,
@@ -12,6 +19,11 @@ import type { AdHocUsageAggregate, TokenSummaryAggregate } from '../../models/to
  * — requirement: show all windows, no grouped collapse).
  */
 describe('CliUsageModalComponent', () => {
+  beforeEach(() => {
+    localStorage.removeItem(MODEL_GROUP_THRESHOLD_STORAGE_KEY);
+    localStorage.removeItem(OTHER_MODELS_EXPANDED_STORAGE_KEY);
+  });
+
   async function build(
     row: CliUsageQuotaRow | null,
     cliType: 'claude' | 'codex' = 'claude',
@@ -205,5 +217,79 @@ describe('CliUsageModalComponent', () => {
     expect(
       c.limitText({ label: 'x', usedPct: null, used: null, limit: null, unit: null, resetAt: null, resetLabel: null }),
     ).toBe('n/a');
+  });
+
+  it('groups every row below the token-share threshold without dropping it from totals', async () => {
+    const tokens: TokenSummaryAggregate = {
+      projects: 4,
+      orchestratorEntries: 12,
+      orchestratorLlmCalls: 12,
+      totalInputTokens: 11_446_000_000,
+      totalOutputTokens: 67_000,
+      totalCacheReadTokens: 0,
+      totalCacheCreationTokens: 0,
+      estimatedApiCostUsd: 59_996.74,
+      allModelsPriced: false,
+      byModel: [
+        {
+          model: 'gpt-5.5', calls: 5, inputTokens: 10_940_000_000, outputTokens: 67_000,
+          cacheReadTokens: 0, cacheCreationTokens: 0, estimatedApiCostUsd: 50_000, modelPriced: true,
+        },
+        {
+          model: 'gpt-5.6-sol', calls: 3, inputTokens: 500_000_000, outputTokens: 0,
+          cacheReadTokens: 0, cacheCreationTokens: 0, estimatedApiCostUsd: 9_990, modelPriced: true,
+        },
+        {
+          model: 'gpt-5.4-mini', calls: 2, inputTokens: 5_000_000, outputTokens: 0,
+          cacheReadTokens: 0, cacheCreationTokens: 0, estimatedApiCostUsd: 6.74, modelPriced: true,
+        },
+        {
+          model: 'gpt-future', calls: 2, inputTokens: 1_000_000, outputTokens: 0,
+          cacheReadTokens: 0, cacheCreationTokens: 0, estimatedApiCostUsd: 0, modelPriced: false,
+        },
+      ],
+      byProject: [],
+      fetchedAt: new Date().toISOString(),
+      disclaimer: '',
+    };
+
+    const fixture = await build(codexRow, 'codex', tokens);
+    const component = fixture.componentInstance;
+
+    expect(component.modelRows()).toHaveLength(4);
+    expect(component.groupedModelRows().primaryRows.map(row => row.model))
+      .toEqual(['gpt-5.5', 'gpt-5.6-sol']);
+    expect(component.groupedModelRows().otherRows.map(row => row.model))
+      .toEqual(['gpt-5.4-mini', 'gpt-future']);
+    expect(component.totals().tokens).toBe(11_446_067_000);
+    expect(component.totals().costUsd).toBe(59_996.74);
+    expect(component.totals().unpricedModels).toBe(1);
+    expect(component.groupedModelRows().otherTotals.costUsd).toBe(6.74);
+    expect(component.costLabel(1.25, false)).toContain('$1.25 + 1 unpriced');
+    expect(component.costLabel(0, false)).toBe('Unpriced');
+    const totalCost = document.querySelector('[data-testid="cli-usage-model-total-cost"]');
+    expect(totalCost).not.toBeNull();
+    expect(totalCost!.closest('button')).toBeNull();
+  });
+
+  it('persists the grouping threshold and Other disclosure state for the viewer', async () => {
+    const fixture = await build(codexRow, 'codex');
+    const component = fixture.componentInstance;
+
+    component.setGroupingThreshold('2.5');
+    component.toggleOtherModels();
+
+    expect(localStorage.getItem(MODEL_GROUP_THRESHOLD_STORAGE_KEY)).toBe('2.5');
+    expect(localStorage.getItem(OTHER_MODELS_EXPANDED_STORAGE_KEY)).toBe('1');
+  });
+
+  it('restores persisted grouping preferences when the modal is recreated', async () => {
+    localStorage.setItem(MODEL_GROUP_THRESHOLD_STORAGE_KEY, '3.5');
+    localStorage.setItem(OTHER_MODELS_EXPANDED_STORAGE_KEY, '1');
+
+    const fixture = await build(codexRow, 'codex');
+
+    expect(fixture.componentInstance.groupingThresholdPct()).toBe(3.5);
+    expect(fixture.componentInstance.otherModelsExpanded()).toBe(true);
   });
 });

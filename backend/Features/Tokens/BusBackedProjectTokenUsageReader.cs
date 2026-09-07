@@ -134,7 +134,14 @@ public sealed class BusBackedProjectTokenUsageReader
     }
 
     public TokenSummary BuildLifetimeSummary(string projectName, string watchPath)
-        => TokenSummaryService.Summarize(projectName, LoadSnapshot(projectName, watchPath).Entries);
+    {
+        var snapshot = LoadSnapshot(projectName, watchPath);
+        return TokenSummaryService.Summarize(projectName, snapshot.Entries) with
+        {
+            CoverageStatus = snapshot.Freshness.Status,
+            CoverageWarning = snapshot.Freshness.Warning,
+        };
+    }
 
     public Dictionary<string, TaskTokenSummary> BuildPerJob(string projectName, string watchPath)
         => TokenSummaryService.SummarizePerJob(LoadSnapshot(projectName, watchPath).Entries);

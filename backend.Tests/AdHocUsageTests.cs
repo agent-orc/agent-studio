@@ -96,6 +96,25 @@ public class AdHocUsageTests
     }
 
     [Fact]
+    public void Aggregate_MergesCatalogDisplayNameWithCanonicalModelId()
+    {
+        var at = new DateTime(2026, 9, 7, 0, 0, 0, DateTimeKind.Utc);
+        var records = new[]
+        {
+            Rec("title-generation", "Claude Sonnet 5", 1_000_000, 100_000, at),
+            Rec("summary-generation", ModelIds.ClaudeSonnet5, 2_000_000, 200_000, at),
+        };
+
+        var aggregate = AdHocUsageService.Aggregate(records, "/log", 0, null);
+
+        var model = Assert.Single(aggregate.ByModel);
+        Assert.Equal(ModelIds.ClaudeSonnet5, model.Model);
+        Assert.Equal(2, model.Calls);
+        Assert.Equal(3_000_000, model.InputTokens);
+        Assert.True(model.ModelPriced);
+    }
+
+    [Fact]
     public void Aggregate_EmptyLog_ReturnsZeroes()
     {
         var agg = AdHocUsageService.Aggregate(Array.Empty<AdHocUsageRecord>(), "/log", 0, null);

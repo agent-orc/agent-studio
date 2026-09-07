@@ -138,7 +138,7 @@ public class TaskScannerService : ITaskScanner
         _statsMetadataCache?.Invalidate();
     }
 
-    public List<WatchPathEntry> GetWatchPaths()
+    public List<WatchPathEntry> GetWatchPaths(bool includeArchived = false)
     {
         var raw = _config.GetSection("WatchPaths").Get<List<WatchPathEntry>>() ?? [];
         var resolved = new List<WatchPathEntry>(raw.Count);
@@ -153,7 +153,9 @@ public class TaskScannerService : ITaskScanner
         // registry records and must be readable without a settings edit or restart.
         if (_projectRegistry != null)
         {
-            var registryProjects = _projectRegistry.List().Where(p => !p.Archived).ToList();
+            var registryProjects = _projectRegistry.List()
+                .Where(project => includeArchived || !project.Archived)
+                .ToList();
             for (var i = 0; i < resolved.Count; i++)
             {
                 var project = registryProjects.FirstOrDefault(p => string.Equals(

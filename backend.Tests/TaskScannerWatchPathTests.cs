@@ -82,6 +82,43 @@ public class TaskScannerWatchPathTests
     }
 
     [Fact]
+    public void GetWatchPaths_IncludeArchived_ReturnsArchivedRegistryProjectsForAudits()
+    {
+        var testRoot = Path.Combine(Path.GetTempPath(), "atp-archived-watch-" + Guid.NewGuid().ToString("N"));
+        var taskRepository = Path.Combine(testRoot, "task-repository");
+        var projectStore = Path.Combine(testRoot, "archived-project");
+        Directory.CreateDirectory(projectStore);
+
+        try
+        {
+            var config = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["TaskRepository"] = taskRepository,
+                })
+                .Build();
+            var registry = new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance);
+            var project = registry.EnsureProjectForStorage(projectStore, "Archived Project", "ws-default");
+            registry.SetArchived(project.Id, archived: true);
+            var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
+            var scanner = new TaskScannerService(
+                config,
+                NullLogger<TaskScannerService>.Instance,
+                summary,
+                projectRegistry: registry);
+
+            Assert.Empty(scanner.GetWatchPaths());
+            var archived = Assert.Single(scanner.GetWatchPaths(includeArchived: true));
+            Assert.Equal("Archived Project", archived.Name);
+            Assert.Equal(projectStore, archived.Path);
+        }
+        finally
+        {
+            if (Directory.Exists(testRoot)) Directory.Delete(testRoot, recursive: true);
+        }
+    }
+
+    [Fact]
     public void ScanAllJobsRaw_MissingWatchPath_WarnsOnlyOnceAcrossManyScans()
     {
         var missing = Path.Combine(Path.GetTempPath(), "atp-missing-" + Guid.NewGuid().ToString("N"));

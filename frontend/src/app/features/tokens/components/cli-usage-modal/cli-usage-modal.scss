@@ -146,10 +146,40 @@
 // ---------------------------------------------------------------------------
 // Summary head over the model table — token + cost totals as stat tiles.
 // ---------------------------------------------------------------------------
-.cum__scope-note {
+.cum__scope-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--studio-spacing-2);
   margin: calc(var(--studio-spacing-2) * -1) 0 var(--studio-spacing-3);
+}
+
+.cum__scope-note {
+  margin: 0;
   color: var(--studio-fg-dim);
   font-size: 11px;
+}
+
+.cum__grouping-control {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--studio-spacing-1);
+  color: var(--studio-fg-dim);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.cum__grouping-control input {
+  width: 4.5rem;
+  border: 1px solid var(--studio-border-strong);
+  border-radius: 4px;
+  background: var(--studio-bg-elevated);
+  color: var(--studio-fg);
+  padding: var(--studio-spacing-1);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 .cum__scope-range {
@@ -194,17 +224,10 @@
   color: var(--studio-fg-strong);
 }
 .cum__total--cost .cum__total-value { color: var(--studio-accent-success-strong); }
-.cum__cost-button { color: inherit; font: inherit; cursor: pointer; }
-.cum__inline-cost {
-  padding: 0;
-  border: 0;
-  background: transparent;
+.cum__cost-value {
   color: inherit;
   font: inherit;
   font-variant-numeric: tabular-nums;
-  text-decoration: underline dotted;
-  text-underline-offset: 3px;
-  cursor: pointer;
 }
 
 // ---------------------------------------------------------------------------
@@ -234,6 +257,24 @@
 
 .cum__table tbody tr:hover { background: color-mix(in srgb, var(--studio-fg-dim) 6%, transparent); }
 .cum__table tbody tr:last-child td { border-bottom: 0; }
+
+.cum__other-row {
+  background: color-mix(in srgb, var(--studio-fg-dim) 6%, transparent);
+}
+
+.cum__other-toggle {
+  border: 0;
+  background: transparent;
+  color: var(--studio-fg);
+  padding: 0;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.cum__other-child td:first-child {
+  padding-inline-start: var(--studio-spacing-5);
+}
 
 .cum__table tfoot td {
   border-top: 1px solid var(--studio-border-strong);

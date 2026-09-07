@@ -1,8 +1,8 @@
 # Token pricing
 
-> **Status (2026-08-10):** Live on exactly pinned `TokenEconomy` 0.3.1,
-> including historical prices for the GPT-5.6 family. Studio contains no model
-> rates.
+> **Status (2026-09-07):** Live on exactly pinned `TokenEconomy` 0.3.3,
+> including historical prices for the GPT-5.5 and GPT-5.6 families. Studio
+> contains no model rates.
 
 ## Contract
 
@@ -13,7 +13,7 @@ in `backend/Features/Runner/TokenEconomyPriceProvider.cs` adapts
 
 The adapter is exposed through `ITokenPriceProvider`; the active
 `TokenPricing.Provider` configuration selects `TokenEconomyPriceProvider`, the
-package-specific implementation from the exactly pinned `TokenEconomy` 0.3.1
+package-specific implementation from the exactly pinned `TokenEconomy` 0.3.3
 dependency. Aggregators and frontend contracts do not depend on the provider
 package directly.
 
@@ -22,10 +22,24 @@ whose `ValidFrom` applies at that time. Repricing old usage with today's rate is
 not allowed. Model metadata in `CliModels.cs` exposes current rates only as a
 catalog pass-through for discovery consumers; it owns no price numbers.
 
+`TokenPricing.NormalizeModelId` resolves catalog ids, aliases, and catalog-owned
+display names to the canonical id. This keeps historical receipts written with
+a display label in the same aggregate bucket as current id-based receipts. The
+display-name reverse lookup is built from `TokenEconomy` listings rather than a
+second Studio-owned pricing map.
+
+Studio pricing inputs keep the raw counters reported by each CLI. Codex/OpenAI
+reports cached input as a subset of `inputTokens`, while TokenEconomy accepts
+fresh input and cache-read tokens separately. The adapter therefore subtracts
+cache reads from OpenAI input before pricing. Anthropic counters are already
+separate and pass through unchanged. The calculation endpoint returns this
+derived `billableInputTokens` value so its displayed formula reconciles with
+the component costs.
+
 TokenEconomy distinguishes `Resolved`, `UnknownModel`, and `NoPriceForDate`.
 Studio maps only `Resolved` to a dollar value. The other states keep the token
 count and set the existing unknown-price flags so UI surfaces render an explicit
-missing-price state, never a silent `$0.00`.
+missing-price state rather than using numeric zero as the sentinel.
 
 Active `UnknownModel` usage also increments `unknownModelCount` in the project
 Token Summary, renders an acute `N models without price data` badge, and emits
@@ -37,7 +51,8 @@ Pipeline cost contracts also carry `unpricedRuns` and grouped `pricingGaps`
 with the original display model id, resolver status, and affected-run count.
 An entirely unpriced non-empty amount renders `- no price data`; a mixed
 aggregate renders its priced subtotal plus
-`incomplete (n runs without price)`. `$0.00` is reserved for zero-token usage.
+`incomplete (n runs without price)`. Zero-token usage renders `$0.00`, while
+missing pricing remains an explicit non-numeric state.
 Tooltips expose the model id and resolver reason, including `NoPriceForDate`.
 
 Missing token telemetry is a different state from missing catalog pricing.
@@ -69,10 +84,11 @@ The shared adapter feeds:
 - prompt-registry call history, where the rendered prompt's estimated input
   tokens are priced at the event timestamp and grouped by content hash.
 
-These surfaces may aggregate resolved costs, but an aggregate containing an
-unpriced call remains explicitly marked unavailable or incomplete according to
-its wire contract. A per-model row with a missing price always renders
-`no price data`.
+These surfaces may aggregate resolved costs. The CLI Usage workspace total
+keeps the known-price subtotal and appends the number of unpriced models;
+other aggregates remain explicitly unavailable or incomplete according to
+their wire contract. A per-model row with missing pricing renders an explicit
+`Unpriced` label or its known historical subtotal plus an unpriced marker.
 
 Prompt-registry cost is a narrower estimate than a completed model call. It
 prices only the rendered prompt input, uses the existing four characters per
@@ -88,7 +104,20 @@ input, output, cache-read, and cache-write rates per million tokens, component
 costs, currency, price source, and effective date. The shared frontend cost
 breakdown dialog is the only renderer for this contract. Cost launchers pass
 the recorded run timestamp where one exists so the dialog and aggregate use
-the same historical period.
+the same historical period. Lifetime model aggregates do not retain per-call
+timestamps, so their formatted historical subtotals remain static rather than
+opening a misleading current-rate recalculation.
+
+`GET /api/token-pricing/diagnostics` audits recorded workspace and ad-hoc model
+rows against the pinned catalog, including receipts in archived projects. It
+lists all unpriced rows and separately lists ids absent from the catalog. Known
+models with no price for their recorded date remain distinct from
+catalog-unknown ids, and zero-token calls remain in the diagnostic so gaps
+cannot disappear silently. Project-scoped viewers see only their allowed
+project receipts and do not receive workspace-wide ad-hoc usage.
+The response also carries `coverageStatus` and `coverageWarnings`; receipt or
+historical-bus read failures therefore mark the audit as partial or unavailable
+instead of silently presenting an incomplete model inventory as exhaustive.
 
 The dialog is mounted once at app level and opened through
 `CostBreakdownService` / `CostBreakdownTriggerDirective`. New theoretical-cost

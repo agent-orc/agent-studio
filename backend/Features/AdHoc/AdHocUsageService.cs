@@ -77,12 +77,14 @@ public sealed class AdHocUsageService
             totalCacheR += r.CacheReadTokens;
             totalCacheW += r.CacheCreationTokens;
 
-            var cost = TokenPricing.Estimate(r.Model, r.InputTokens, r.OutputTokens, r.CacheReadTokens, r.CacheCreationTokens, r.Ts);
+            var canonicalModel = TokenPricing.NormalizeModelId(r.Model);
+            var modelKey = string.IsNullOrWhiteSpace(canonicalModel) ? "(unknown)" : canonicalModel;
+            var cost = TokenPricing.Estimate(modelKey, r.InputTokens, r.OutputTokens, r.CacheReadTokens, r.CacheCreationTokens, r.Ts);
             totalCost += cost.Total;
             if (!cost.ModelKnown) allPriced = false;
 
             Add(bySource, string.IsNullOrWhiteSpace(r.Source) ? AdHocUsageSources.Unknown : r.Source, r, cost);
-            Add(byModel, string.IsNullOrWhiteSpace(r.Model) ? "(unknown)" : r.Model, r, cost);
+            Add(byModel, modelKey, r, cost);
             Add(byDay, r.Ts.ToUniversalTime().ToString("yyyy-MM-dd"), r, cost);
         }
 

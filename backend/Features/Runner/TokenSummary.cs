@@ -34,7 +34,9 @@ public sealed record TokenSummary(
     IReadOnlyList<TokenSummaryByModel> ByModel,
     string? FirstActivity,
     string? LastActivity,
-    string Disclaimer);
+    string Disclaimer,
+    string CoverageStatus = "complete",
+    string? CoverageWarning = null);
 
 public sealed record TokenSummaryByModel(
     string Model,
@@ -277,9 +279,9 @@ public class TokenSummaryService
         var perModel = new Dictionary<string, ModelBucket>(StringComparer.OrdinalIgnoreCase);
         long totalInput = 0, totalOutput = 0, totalCacheRead = 0, totalCacheCreate = 0;
         int totalEntries = 0, totalCalls = 0, projectCount = 0;
-        decimal grandTotal = 0;
-        bool allPriced = true;
-        bool anyPricedAtAll = false;
+        int unavailableCoverageProjects = 0;
+        bool hasPartialCoverage = false;
+        var coverageWarnings = new List<string>();
         DateTime? firstAt = null;
         DateTime? lastAt = null;
 
@@ -296,10 +298,12 @@ public class TokenSummaryService
             totalOutput += summary.TotalOutputTokens;
             totalCacheRead += summary.TotalCacheReadTokens;
             totalCacheCreate += summary.TotalCacheCreationTokens;
-            grandTotal += summary.EstimatedApiCostUsd;
-            if (summary.OrchestratorLlmCalls > 0 && !summary.AllModelsPriced) allPriced = false;
-            if (summary.OrchestratorLlmCalls > 0) anyPricedAtAll = anyPricedAtAll || summary.AllModelsPriced;
-
+            if (string.Equals(summary.CoverageStatus, "unavailable", StringComparison.OrdinalIgnoreCase))
+                unavailableCoverageProjects++;
+            else if (!string.Equals(summary.CoverageStatus, "complete", StringComparison.OrdinalIgnoreCase))
+                hasPartialCoverage = true;
+            if (!string.IsNullOrWhiteSpace(summary.CoverageWarning))
+                coverageWarnings.Add($"{name}: {summary.CoverageWarning}");
             perProject.Add(new TokenSummaryByProject(
                 Project: name,
                 OrchestratorLlmCalls: summary.OrchestratorLlmCalls,
@@ -311,10 +315,12 @@ public class TokenSummaryService
 
             foreach (var m in summary.ByModel)
             {
-                if (!perModel.TryGetValue(m.Model, out var bucket))
+                var canonicalModel = TokenPricing.NormalizeModelId(m.Model);
+                var key = string.IsNullOrWhiteSpace(canonicalModel) ? "(unknown)" : canonicalModel;
+                if (!perModel.TryGetValue(key, out var bucket))
                 {
-                    bucket = new ModelBucket(m.Model, m.Model);
-                    perModel[m.Model] = bucket;
+                    bucket = new ModelBucket(key, key);
+                    perModel[key] = bucket;
                 }
                 bucket.Calls += m.Calls;
                 bucket.Input += m.InputTokens;
@@ -323,7 +329,7 @@ public class TokenSummaryService
                 bucket.CacheCreate += m.CacheCreationTokens;
                 bucket.Cost += m.EstimatedApiCostUsd;
                 if (!m.ModelPriced) bucket.AnyUnpriced = true;
-                if (!m.ModelInCatalog) bucket.AnyUnknownModel = true;
+                if (!TokenPricing.Catalog.ContainsKey(key)) bucket.AnyUnknownModel = true;
             }
         }
 
@@ -340,9 +346,13 @@ public class TokenSummaryService
                 ModelPriced: !b.AnyUnpriced,
                 ModelInCatalog: !b.AnyUnknownModel))
             .ToList();
-
-        // If we recorded zero LLM calls anywhere, "all priced" is meaningless.
-        if (totalCalls == 0) allPriced = false;
+        var grandTotal = byModel.Sum(model => model.EstimatedApiCostUsd);
+        var allPriced = totalCalls > 0 && byModel.All(model => model.ModelPriced);
+        var coverageStatus = projectCount > 0 && unavailableCoverageProjects == projectCount
+            ? "unavailable"
+            : unavailableCoverageProjects > 0 || hasPartialCoverage
+                ? "partial"
+                : "complete";
 
         var aggregate = new TokenSummaryAggregate(
             Projects: projectCount,
@@ -361,7 +371,11 @@ public class TokenSummaryService
             FetchedAt: DateTime.UtcNow.ToString("o"),
             FirstActivity: firstAt?.ToString("o"),
             LastActivity: lastAt?.ToString("o"),
-            Disclaimer: DefaultDisclaimer);
+            Disclaimer: DefaultDisclaimer,
+            UnpricedModelCount: byModel.Count(model => !model.ModelPriced),
+            UnknownModelCount: byModel.Count(model => !model.ModelInCatalog),
+            CoverageStatus: coverageStatus,
+            CoverageWarnings: coverageWarnings);
 
         // Persist for next-app-start display. Best-effort.
         try { cache?.Write(aggregate); } catch (Exception __ex) { SilentCatch.Note(__ex, "TokenSummary: swallow; tolerant by design"); /* swallow; tolerant by design */ }
@@ -419,7 +433,7 @@ public class TokenSummaryService
             if (firstAt == null || ts < firstAt) firstAt = ts;
             if (lastAt == null || ts > lastAt) lastAt = ts;
 
-            var canonicalModel = ModelMetadataRegistry.NormalizeId(u.Model);
+            var canonicalModel = TokenPricing.NormalizeModelId(u.Model);
             var key = string.IsNullOrWhiteSpace(canonicalModel) ? "(unknown)" : canonicalModel;
             if (!perModel.TryGetValue(key, out var bucket))
             {

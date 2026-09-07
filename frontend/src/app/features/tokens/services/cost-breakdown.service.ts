@@ -25,6 +25,9 @@ export interface TokenPriceBasis {
 
 export interface CostBreakdownResultItem extends CostBreakdownRequestItem {
   calculatedAt: string;
+  /** Fresh input priced by TokenEconomy. Differs from inputTokens when a
+   * provider reports cached input as a subset of its input counter. */
+  billableInputTokens?: number;
   estimate: {
     inputUsd: number;
     outputUsd: number;

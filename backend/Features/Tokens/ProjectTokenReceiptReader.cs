@@ -161,6 +161,23 @@ public sealed class ProjectTokenReceiptReader
             entries = entries.OrderBy(call => call.Ts).ToList();
         }
 
+        // A completed invocation can identify its model before emitting any
+        // tokens. Preserve that durable attribution so pricing diagnostics can
+        // still expose catalog gaps for zero-token receipts.
+        if (entries.Count == 0
+            && summary.Calls > 0
+            && summary.LastUpdate.HasValue
+            && !string.IsNullOrWhiteSpace(summary.LastModel))
+        {
+            entries.Add(new TaskTokenCall
+            {
+                Ts = summary.LastUpdate.Value,
+                Model = summary.LastModel,
+                ParticipantId = "agent:task-receipt",
+                ModelPriced = summary.AllModelsPriced,
+            });
+        }
+
         return summary with { Entries = entries };
     }
 
@@ -168,8 +185,7 @@ public sealed class ProjectTokenReceiptReader
     {
         foreach (var call in summary.Entries ?? [])
         {
-            var total = call.InputTokens + call.OutputTokens + call.CacheReadTokens + call.CacheCreationTokens;
-            if (call.Ts == default || total <= 0) continue;
+            if (call.Ts == default) continue;
             yield return new OrchestratorLogEntry
             {
                 Ts = call.Ts,

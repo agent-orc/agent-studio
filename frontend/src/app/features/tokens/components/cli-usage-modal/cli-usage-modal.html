@@ -68,14 +68,29 @@
             <span class="cum__total-label">Tokens</span>
             <span class="cum__total-value">{{ formatTokens(totals().tokens) }}</span>
           </span>
-          <button type="button" class="cum__total cum__total--cost cum__cost-button"
-                  (click)="showTotalCalculation()">
+          <span class="cum__total cum__total--cost">
             <span class="cum__total-label">Est. cost</span>
-            <span class="cum__total-value">{{ totals().anyPriced ? formatUsd(totals().costUsd) : 'n/a' }}</span>
-          </button>
+            <span class="cum__total-value" data-testid="cli-usage-model-total-cost">
+              {{ formatCostTotal(totals().costUsd, totals().unpricedModels) }}
+            </span>
+          </span>
         </div>
       </div>
-      <p class="cum__scope-note">Lifetime telemetry by model.@if (telemetryRange(); as range) { <span class="cum__scope-range">{{ range }}</span>} Independent of the active quota windows above.</p>
+      <div class="cum__scope-row">
+        <p class="cum__scope-note">Lifetime telemetry by model.@if (telemetryRange(); as range) { <span class="cum__scope-range">{{ range }}</span>} Independent of the active quota windows above.</p>
+        <label class="cum__grouping-control">
+          <span>Group below</span>
+          <input type="number"
+                 min="0"
+                 max="100"
+                 step="0.1"
+                 inputmode="decimal"
+                 data-testid="cli-usage-model-threshold"
+                 [value]="groupingThresholdPct()"
+                 (change)="setGroupingThreshold($any($event.target).value)">
+          <span>%</span>
+        </label>
+      </div>
       @if (modelRows().length === 0) {
         <p class="cum__empty">No model usage attributed.</p>
       } @else {
@@ -90,8 +105,8 @@
             </tr>
           </thead>
           <tbody>
-            @for (m of modelRows(); track m.source + ':' + m.model) {
-              <tr>
+            @for (m of groupedModelRows().primaryRows; track m.source + ':' + m.model) {
+              <tr data-testid="cli-usage-model-row">
                 <td>
                   <code>{{ m.model }}</code>
                   <span class="cum__src" [attr.data-src]="m.source">{{ m.source }}</span>
@@ -103,20 +118,72 @@
                   {{ formatTokens(cacheTokens(m)) }}
                 </td>
                 <td class="cum__num cum__num--cost">
-                  @if (m.modelPriced) {
-                    <button type="button" class="cum__inline-cost" (click)="showModelCalculation(m)">{{ costLabel(m.estimatedApiCostUsd, true) }}</button>
-                  } @else { Unknown }
+                  <span class="cum__cost-value">
+                    {{ costLabel(m.estimatedApiCostUsd, m.modelPriced) }}
+                  </span>
                 </td>
               </tr>
+            }
+            @if (groupedModelRows().otherRows.length > 0) {
+              <tr class="cum__other-row" data-testid="cli-usage-model-other">
+                <td>
+                  <button type="button"
+                          class="cum__other-toggle"
+                          data-testid="cli-usage-model-other-toggle"
+                          [attr.aria-expanded]="otherModelsExpanded()"
+                          (click)="toggleOtherModels()">
+                    <span aria-hidden="true">{{ otherModelsExpanded() ? '▾' : '▸' }}</span>
+                    {{ otherModelsLabel() }}
+                  </button>
+                </td>
+                @if (otherModelsExpanded()) {
+                  <td class="cum__num cum__num--muted" aria-label="Input shown in expanded rows">–</td>
+                  <td class="cum__num cum__num--muted" aria-label="Output shown in expanded rows">–</td>
+                  <td class="cum__num cum__num--muted" aria-label="Cache shown in expanded rows">–</td>
+                  <td class="cum__num cum__num--muted" aria-label="Cost shown in expanded rows">–</td>
+                } @else {
+                  <td class="cum__num">{{ formatTokens(groupedModelRows().otherTotals.inputTokens) }}</td>
+                  <td class="cum__num">{{ formatTokens(groupedModelRows().otherTotals.outputTokens) }}</td>
+                  <td class="cum__num cum__num--muted">{{ formatTokens(groupedModelRows().otherTotals.cacheTokens) }}</td>
+                  <td class="cum__num cum__num--cost">
+                    <span class="cum__cost-value">
+                      {{ formatCostTotal(groupedModelRows().otherTotals.costUsd, groupedModelRows().otherTotals.unpricedModels) }}
+                    </span>
+                  </td>
+                }
+              </tr>
+              @if (otherModelsExpanded()) {
+                @for (m of groupedModelRows().otherRows; track m.source + ':' + m.model) {
+                  <tr class="cum__other-child" data-testid="cli-usage-model-other-child">
+                    <td>
+                      <code>{{ m.model }}</code>
+                      <span class="cum__src" [attr.data-src]="m.source">{{ m.source }}</span>
+                    </td>
+                    <td class="cum__num">{{ formatTokens(m.inputTokens) }}</td>
+                    <td class="cum__num">{{ formatTokens(m.outputTokens) }}</td>
+                    <td class="cum__num cum__num--muted"
+                        [cacTooltip]="m.cacheIncludedInInput ? 'Cached input is already included in the Input column for Codex' : 'Cache tokens are separate from the Input column'">
+                      {{ formatTokens(cacheTokens(m)) }}
+                    </td>
+                    <td class="cum__num cum__num--cost">
+                      <span class="cum__cost-value">
+                        {{ costLabel(m.estimatedApiCostUsd, m.modelPriced) }}
+                      </span>
+                    </td>
+                  </tr>
+                }
+              }
             }
           </tbody>
           @if (modelRows().length > 1) {
             <tfoot>
               <tr>
                 <td>Total · {{ totals().models }} models</td>
-                <td class="cum__num" colspan="3">{{ formatTokens(totals().tokens) }}</td>
+                <td class="cum__num" colspan="3" data-testid="cli-usage-model-total-tokens">{{ formatTokens(totals().tokens) }}</td>
                 <td class="cum__num cum__num--cost">
-                  <button type="button" class="cum__inline-cost" (click)="showTotalCalculation()">{{ totals().allPriced ? formatUsd(totals().costUsd) : 'Unknown' }}</button>
+                  <span class="cum__cost-value" data-testid="cli-usage-model-footer-cost">
+                    {{ formatCostTotal(totals().costUsd, totals().unpricedModels) }}
+                  </span>
                 </td>
               </tr>
             </tfoot>

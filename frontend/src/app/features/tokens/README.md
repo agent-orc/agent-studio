@@ -20,6 +20,10 @@ Imports via `from './features/tokens'`. See [`index.ts`](./index.ts).
 - `TokenTimeline`, `TokenTimelineProject`, `TokenTimelineCell` — workspace timeline shape.
 - `AdHocUsageAggregate`, `AdHocUsageBySource`, `AdHocUsageByDay`, `AdHocUsageByModel` — ad-hoc CLI usage outside jobs (developer's `claude` / `codex` shells).
 
+**Formatting**:
+
+- `formatTokenCount`, `formatTokenCurrencyUsd`, `formatTokenCostTotal`: locale-aware token and USD labels shared with project Token Usage views.
+
 ## Notable
 
 - Numbers come straight from the JSONL logs (per-turn token usage) — they're authoritative, not estimates.

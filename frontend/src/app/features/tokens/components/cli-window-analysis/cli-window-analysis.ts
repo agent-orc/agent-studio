@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, input, output, signal } f
 import type { CliUsageQuotaRow } from '../../services/cli-usage.store';
 import type { AdHocUsageAggregate, TokenSummaryAggregate, TokenTimeline } from '../../models/tokens.model';
 import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
+import { formatTokenCount } from '../../token-number-format.util';
 
 type AnalysisPeriod = '1h' | '24h' | '7d';
 
@@ -82,11 +83,7 @@ export class CliWindowAnalysisComponent {
     if (match) return Number(match[1]);
     return /week|7\s*d/i.test(label) ? 168 : 24;
   }
-  formatTokens(value: number): string {
-    if (value < 1_000) return value.toLocaleString();
-    if (value < 1_000_000) return `${(value / 1_000).toFixed(value < 10_000 ? 1 : 0)}K`;
-    return `${(value / 1_000_000).toFixed(2)}M`;
-  }
+  readonly formatTokens = formatTokenCount;
   formatPct(value: number | null): string { return value == null ? 'Unknown' : `${value.toFixed(1)}% / h`; }
 
   private adhocTotal(): number {

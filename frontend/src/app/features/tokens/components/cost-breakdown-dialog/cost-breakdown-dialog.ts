@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { DialogComponent } from '../../../../components/dialog/dialog.component';
 import { CostBreakdownService, type CostBreakdownResultItem } from '../../services/cost-breakdown.service';
+import { formatTokenCurrencyUsd, formatTokenExactCount } from '../../token-number-format.util';
 
 @Component({
   selector: 'app-cost-breakdown-dialog',
@@ -18,7 +19,7 @@ export class CostBreakdownDialogComponent {
   readonly allPriced = computed(() => this.breakdown.items().every(item => item.estimate.modelKnown));
 
   formatNumber(value: number): string {
-    return new Intl.NumberFormat('en-US').format(value);
+    return formatTokenExactCount(value);
   }
 
   formatRate(value: number): string {
@@ -26,8 +27,7 @@ export class CostBreakdownDialogComponent {
   }
 
   formatUsd(value: number): string {
-    if (value === 0) return '$0.00';
-    return `$${value.toFixed(value < 0.1 ? 6 : value < 1 ? 4 : 2)}`;
+    return formatTokenCurrencyUsd(value);
   }
 
   formatDate(value: string): string {
@@ -39,12 +39,18 @@ export class CostBreakdownDialogComponent {
   formula(item: CostBreakdownResultItem): string {
     const price = item.estimate.priceBasis;
     if (!price) return 'No price was available for this model and calculation date.';
-    return `(${this.formatNumber(item.inputTokens)} / 1M × ${this.formatRate(price.inputPerMillion)}) + `
+    const billableInput = item.billableInputTokens ?? item.inputTokens;
+    return `(${this.formatNumber(billableInput)} / 1M × ${this.formatRate(price.inputPerMillion)}) + `
       + `(${this.formatNumber(item.outputTokens)} / 1M × ${this.formatRate(price.outputPerMillion)}) + `
       + `(${this.formatNumber(item.cacheReadTokens)} / 1M × ${this.formatRate(price.cacheReadPerMillion)}) + `
       + `(${this.formatNumber(item.cacheWriteTokens)} / 1M × ${this.formatRate(price.cacheWritePerMillion)}) = `
       + `${this.formatUsd(item.estimate.inputUsd)} + ${this.formatUsd(item.estimate.outputUsd)} + `
       + `${this.formatUsd(item.estimate.cacheReadUsd)} + ${this.formatUsd(item.estimate.cacheWriteUsd)} = `
       + this.formatUsd(item.estimate.total);
+  }
+
+  hasAdjustedInput(item: CostBreakdownResultItem): boolean {
+    return item.billableInputTokens !== undefined
+      && item.billableInputTokens !== item.inputTokens;
   }
 }

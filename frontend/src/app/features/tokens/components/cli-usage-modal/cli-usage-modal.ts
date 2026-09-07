@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, inject, input, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
 import type { CliType } from '../../../../models/task.model';
 import type { QuotaWindow } from '../../../../features/quota';
 import { DialogComponent } from '../../../../components/dialog/dialog.component';
@@ -6,21 +6,22 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
 import type { CliUsageQuotaRow } from '../../services/cli-usage.store';
 import type { AdHocUsageAggregate, TokenSummaryAggregate } from '../../models/tokens.model';
-import { CostBreakdownService } from '../../services/cost-breakdown.service';
-
-interface ModelUsageRow {
-  model: string;
-  source: string;
-  /** OpenAI reports cached input as a subset of input, while Anthropic
-   *  reports cache-read tokens as a separate category. */
-  cacheIncludedInInput: boolean;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheCreationTokens: number;
-  estimatedApiCostUsd: number;
-  modelPriced: boolean;
-}
+import {
+  formatTokenCostTotal,
+  formatTokenCount,
+  formatTokenCurrencyUsd,
+} from '../../token-number-format.util';
+import {
+  type ModelUsageRow,
+  groupModelUsageRows,
+  modelUsageTokenTotal,
+  normalizeModelGroupThreshold,
+  readModelGroupThreshold,
+  readOtherModelsExpanded,
+  sumModelUsageRows,
+  writeModelGroupThreshold,
+  writeOtherModelsExpanded,
+} from './cli-usage-model-rows.util';
 
 type WindowTone = 'ok' | 'warn' | 'hot' | 'unknown';
 
@@ -28,7 +29,7 @@ type WindowTone = 'ok' | 'warn' | 'hot' | 'unknown';
  * Presentational projection of a reported quota window: the raw
  * {@link QuotaWindow} plus the derived percentage, traffic-light tone,
  * clamped bar width, and the reset / limit strings the card renders.
- * No mapping or refresh logic lives here — it only reshapes the input
+ * No mapping or refresh logic lives here - it only reshapes the input
  * row into what the template draws.
  */
 interface WindowView {
@@ -43,18 +44,9 @@ interface WindowView {
   reset: string | null;
 }
 
-/** Summary head over the model table: totals shown as stat tiles. */
-interface UsageTotals {
-  costUsd: number;
-  tokens: number;
-  models: number;
-  anyPriced: boolean;
-  allPriced: boolean;
-}
-
 /**
  * One detail modal for a single CLI's usage. Opened by clicking that
- * CLI's card in the status-bar quota strip — one modal per CLI type, no
+ * CLI's card in the status-bar quota strip - one modal per CLI type, no
  * shared hover tooltip and no grouped multi-CLI view. Shows every quota
  * window the probe reported (so Claude / Codex surface both their 5h and
  * weekly windows), the plan / freshness header, this CLI's top models,
@@ -74,12 +66,14 @@ interface UsageTotals {
   styleUrl: './cli-usage-modal.scss',
 })
 export class CliUsageModalComponent {
-  private readonly costBreakdown = inject(CostBreakdownService);
   readonly cliType = input.required<CliType>();
   readonly row = input<CliUsageQuotaRow | null>(null);
   readonly tokens = input<TokenSummaryAggregate | null>(null);
   readonly adhoc = input<AdHocUsageAggregate | null>(null);
   readonly refreshing = input(false);
+
+  readonly groupingThresholdPct = signal(readModelGroupThreshold());
+  readonly otherModelsExpanded = signal(readOtherModelsExpanded());
 
   readonly closeRequest = output<void>();
   readonly refresh = output<void>();
@@ -123,24 +117,7 @@ export class CliUsageModalComponent {
     }),
   );
 
-  /** Summed cost / token totals across the shown model rows — the
-   *  "Summen-Kopf" over the model table. Presentational only. */
-  readonly totals = computed<UsageTotals>(() => {
-    const rows = this.modelRows();
-    let costUsd = 0;
-    let tokens = 0;
-    let anyPriced = false;
-    for (const r of rows) {
-      tokens += this.totalTokens(r);
-      if (r.modelPriced) {
-        costUsd += r.estimatedApiCostUsd;
-        anyPriced = true;
-      }
-    }
-    return { costUsd, tokens, models: rows.length, anyPriced, allPriced: rows.length > 0 && rows.every(r => r.modelPriced) };
-  });
-
-  /** Date range of the recorded telemetry, derived from data — not config.
+  /** Date range of the recorded telemetry, derived from data - not config.
    *  Returns a compact "since <date> · as of <date>" string, or null when
    *  neither tokens nor adhoc carry any activity timestamps. */
   readonly telemetryRange = computed<string | null>(() => {
@@ -189,8 +166,31 @@ export class CliUsageModalComponent {
       const row = { ...m, source: 'ad-hoc', cacheIncludedInInput: cli === 'codex' };
       if (this.totalTokens(row) > 0) rows.push(row);
     }
-    return rows.sort((a, b) => this.totalTokens(b) - this.totalTokens(a)).slice(0, 5);
+    return rows.sort((a, b) => this.totalTokens(b) - this.totalTokens(a));
   });
+
+  /** Grand totals always include every row, independent of grouping state. */
+  readonly totals = computed(() => sumModelUsageRows(this.modelRows()));
+
+  readonly groupedModelRows = computed(() =>
+    groupModelUsageRows(this.modelRows(), this.groupingThresholdPct()));
+
+  setGroupingThreshold(value: unknown): void {
+    const threshold = normalizeModelGroupThreshold(value);
+    this.groupingThresholdPct.set(threshold);
+    writeModelGroupThreshold(threshold);
+  }
+
+  toggleOtherModels(): void {
+    const expanded = !this.otherModelsExpanded();
+    this.otherModelsExpanded.set(expanded);
+    writeOtherModelsExpanded(expanded);
+  }
+
+  otherModelsLabel(): string {
+    const count = this.groupedModelRows().otherTotals.models;
+    return `Other (${count} model${count === 1 ? '' : 's'})`;
+  }
 
   limitText(window: QuotaWindow): string {
     if (window.used !== null && window.limit !== null) {
@@ -207,39 +207,17 @@ export class CliUsageModalComponent {
   }
 
   costLabel(value: number, priced: boolean): string {
-    return priced ? this.formatUsd(value) : 'Unknown';
+    if (priced) return this.formatUsd(value);
+    return value === 0 ? 'Unpriced' : this.formatCostTotal(value, 1);
   }
 
   totalTokens(row: ModelUsageRow): number {
-    return row.inputTokens
-      + row.outputTokens
-      + row.cacheCreationTokens
-      + (row.cacheIncludedInInput ? 0 : row.cacheReadTokens);
+    return modelUsageTokenTotal(row);
   }
 
   /** Read + creation cache tokens folded into one "Cache" column value. */
   cacheTokens(row: ModelUsageRow): number {
     return row.cacheReadTokens + row.cacheCreationTokens;
-  }
-
-  showTotalCalculation(): void {
-    this.costBreakdown.show(this.modelRows().map(row => this.priceItem(row)),
-      `${this.title()} recorded usage cost`);
-  }
-
-  showModelCalculation(row: ModelUsageRow): void {
-    this.costBreakdown.show([this.priceItem(row)], `${row.model} cost calculation`);
-  }
-
-  private priceItem(row: ModelUsageRow) {
-    return {
-      model: row.model,
-      label: row.source,
-      inputTokens: row.inputTokens,
-      outputTokens: row.outputTokens,
-      cacheReadTokens: row.cacheReadTokens,
-      cacheWriteTokens: row.cacheCreationTokens,
-    };
   }
 
   private toneForPct(pct: number | null): WindowTone {
@@ -250,17 +228,15 @@ export class CliUsageModalComponent {
   }
 
   formatTokens(n: number): string {
-    if (!Number.isFinite(n)) return '0';
-    if (n < 1_000) return n.toString();
-    if (n < 1_000_000) return (n / 1_000).toFixed(n < 10_000 ? 1 : 0) + 'K';
-    return (n / 1_000_000).toFixed(n < 10_000_000 ? 2 : 1) + 'M';
+    return formatTokenCount(n, { maximumUnit: 'M' });
   }
 
   formatUsd(n: number): string {
-    if (!Number.isFinite(n) || n === 0) return '$0.00';
-    if (n < 0.1) return '$' + n.toFixed(4);
-    if (n < 1) return '$' + n.toFixed(3);
-    return '$' + n.toFixed(2);
+    return formatTokenCurrencyUsd(n);
+  }
+
+  formatCostTotal(costUsd: number, unpricedModels: number): string {
+    return formatTokenCostTotal(costUsd, unpricedModels);
   }
 
   private modelBelongsToCli(model: string, cliType: CliType): boolean {

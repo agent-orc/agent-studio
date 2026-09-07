@@ -13,7 +13,8 @@ describe('CostBreakdownDialogComponent', () => {
       close: () => fake.open.set(false),
       items: signal([{
         model: 'claude-opus-4-7', label: 'Core agent', calculatedAt: '2026-07-11T10:00:00Z',
-        inputTokens: 1_000_000, outputTokens: 200_000, cacheReadTokens: 100_000, cacheWriteTokens: 50_000,
+        inputTokens: 1_000_000, billableInputTokens: 1_000_000,
+        outputTokens: 200_000, cacheReadTokens: 100_000, cacheWriteTokens: 50_000,
         estimate: {
           inputUsd: 5, outputUsd: 5, cacheReadUsd: 0.05, cacheWriteUsd: 0.3125,
           total: 10.3625, modelId: 'claude-opus-4-7', modelKnown: true, status: 'resolved',
@@ -38,6 +39,25 @@ describe('CostBreakdownDialogComponent', () => {
     expect(text).toContain('Anthropic published pricing');
     expect(text).toContain('Price effective date');
     expect(text).toContain('$10.36');
+
+    fake.items.set([{
+      ...fake.items()[0],
+      model: 'gpt-5.5',
+      inputTokens: 10_782_081,
+      billableInputTokens: 759_553,
+      cacheReadTokens: 10_022_528,
+      estimate: {
+        ...fake.items()[0].estimate,
+        modelId: 'gpt-5.5',
+        inputUsd: 3.797765,
+        cacheReadUsd: 5.011264,
+        total: 10.811829,
+      },
+    }]);
+    fixture.detectChanges();
+    const adjustedText = document.body.textContent ?? '';
+    expect(adjustedText).toContain('759,553 / 1M × $5.00');
+    expect(adjustedText).toContain('Pricing uses 759,553 fresh input tokens.');
     fixture.destroy();
   });
 });
