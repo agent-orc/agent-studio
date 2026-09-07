@@ -258,6 +258,16 @@ public record ProjectSettings
     public BuildProfile? BuildProfile { get; init; }
 
     /// <summary>
+    /// AGT-2749: budget for one pre-develop gate run, in minutes. Null uses
+    /// <see cref="GateRunBudgetPolicy.DefaultMinutes"/>. The previous fixed
+    /// 30 minutes parked two cards on 2026-09-06 whose suite needed a few
+    /// seconds more than the budget; a budget overrun is an infrastructure
+    /// failure, not a statement about the change. Persisted in
+    /// <c>project-settings.json</c>.
+    /// </summary>
+    public int? GateRunBudgetMinutes { get; init; }
+
+    /// <summary>
     /// Staged test policy. Unlike the pipeline step's global warn/fail switch,
     /// this selects the amount of test coverage per lane. The default for
     /// post-processing is <c>work-package</c>; a pre-main caller always overrides

@@ -15,6 +15,12 @@ namespace AgentStudio.Tests;
 /// </summary>
 public sealed class VerifyCommandPlannerTests : IDisposable
 {
+    /// <summary>
+    /// The derived bare .NET test command, including the canonical gate category
+    /// exclusion (AGT-2749).
+    /// </summary>
+    private const string DotNetTestCommand = "dotnet test" + GateTestCategoryFilter.DotNetSuffix;
+
     private readonly string _root;
 
     public VerifyCommandPlannerTests()
@@ -66,7 +72,7 @@ public sealed class VerifyCommandPlannerTests : IDisposable
         Assert.Equal(VerifyPlan.SourceAutoDiscovery, plan.Source);
         Assert.Collection(plan.Commands,
             c => AssertCommand(c, VerifyEcosystem.DotNet, VerifyCommandKind.Build, "", "dotnet build"),
-            c => AssertCommand(c, VerifyEcosystem.DotNet, VerifyCommandKind.Test, "", "dotnet test"));
+            c => AssertCommand(c, VerifyEcosystem.DotNet, VerifyCommandKind.Test, "", DotNetTestCommand));
     }
 
     [Fact]
@@ -95,7 +101,7 @@ public sealed class VerifyCommandPlannerTests : IDisposable
         Assert.Equal(VerifyPlan.SourceAutoDiscovery, plan.Source);
         Assert.Collection(plan.Commands,
             c => AssertCommandAtRepositoryRoot(c, VerifyCommandKind.Build, "dotnet build"),
-            c => AssertCommandAtRepositoryRoot(c, VerifyCommandKind.Test, "dotnet test"));
+            c => AssertCommandAtRepositoryRoot(c, VerifyCommandKind.Test, DotNetTestCommand));
     }
 
     [Fact]
@@ -242,7 +248,7 @@ public sealed class VerifyCommandPlannerTests : IDisposable
         Assert.Equal(VerifyPlan.SourceAutoDiscovery, plan.Source);
         Assert.Collection(plan.Commands,
             c => AssertCommand(c, VerifyEcosystem.DotNet, VerifyCommandKind.Build, "", "dotnet build"),
-            c => AssertCommand(c, VerifyEcosystem.DotNet, VerifyCommandKind.Test, "", "dotnet test"),
+            c => AssertCommand(c, VerifyEcosystem.DotNet, VerifyCommandKind.Test, "", DotNetTestCommand),
             c => AssertCommand(c, VerifyEcosystem.Node, VerifyCommandKind.Build, "frontend", "npm run build"),
             c => AssertCommand(c, VerifyEcosystem.Node, VerifyCommandKind.Test, "frontend", "npm test"),
             c => AssertCommand(c, VerifyEcosystem.Node, VerifyCommandKind.Lint, "frontend", "npm run lint"));
@@ -464,7 +470,7 @@ public sealed class VerifyCommandPlannerTests : IDisposable
         Assert.Contains(plan.Commands, c =>
             c.Ecosystem == VerifyEcosystem.DotNet && c.Kind == VerifyCommandKind.Build && c.Command == "dotnet build");
         Assert.Contains(plan.Commands, c =>
-            c.Ecosystem == VerifyEcosystem.DotNet && c.Kind == VerifyCommandKind.Test && c.Command == "dotnet test");
+            c.Ecosystem == VerifyEcosystem.DotNet && c.Kind == VerifyCommandKind.Test && c.Command == DotNetTestCommand);
         // frontend/package.json declares build/test/lint scripts.
         Assert.Contains(plan.Commands, c =>
             c.Ecosystem == VerifyEcosystem.Node && c.WorkingSubdir == "frontend" && c.Command == "npm run build");

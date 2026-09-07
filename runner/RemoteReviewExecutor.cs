@@ -461,7 +461,8 @@ public sealed class RemoteReviewExecutor
                 $"terminalOutcome={report.Outcome}");
         }
 
-        return report.Outcome == "Pass" ? 0 : report.Outcome == "ProductFailure" ? 2 : 3;
+        if (ReviewOutcomes.IsAccepting(report.Outcome)) return 0;
+        return report.Outcome == ReviewOutcomes.ProductFailure ? 2 : 3;
     }
 
     private async Task<int> FinalizeTerminalReportRejectionAsync(

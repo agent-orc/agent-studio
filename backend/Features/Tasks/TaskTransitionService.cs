@@ -264,6 +264,17 @@ public sealed class TaskTransitionService
             : MoveCore();
         var operatorRequeue = outcome.Status == MoveJobStatus.Success
             && OperatorReviewRequeueService.IsOperatorRequeue(fromState, targetState, cause);
+        // AGT-2749: the acceptance rail replays a card whose failure was the
+        // host's, not the change's. That is the same lane move an operator used
+        // to make by hand, so it must re-drive the review the same way. Without
+        // this the card lands in 4-auto-review and nothing picks it up again.
+        var railInfrastructureRequeue = outcome.Status == MoveJobStatus.Success
+            && targetState == TaskStates.AutoReview
+            && fromState is TaskStates.HumanReview or TaskStates.Escalated
+            && string.Equals(
+                transitionCause,
+                LaneChangeCauses.ReviewInfrastructure,
+                StringComparison.Ordinal);
         var supersedeFailedDelivery = operatorRequeue && HasFailedIntegrationRound(
             outcome.NewFolderPath ?? info.FolderPath);
         if (operatorRequeue && _operatorReviewRequeue != null)
@@ -381,7 +392,7 @@ public sealed class TaskTransitionService
         // same result out, so re-running is a no-op.
         if (outcome.Status == MoveJobStatus.Success
             && targetState == TaskStates.AutoReview
-            && (info.State == TaskStates.Progress || operatorRequeue)
+            && (info.State == TaskStates.Progress || operatorRequeue || railInfrastructureRequeue)
             && (!suppressProductExecution || settledRunRecovery.Run is not null))
         {
             var attributed = _scanner.FindJob(jobId, watchPath);

@@ -190,7 +190,11 @@ public static class VerifyCommandPlanner
         if (HasDotNetEntryPoint(repositoryPath, trackedFiles))
         {
             cmds.Add(new VerifyCommand(VerifyEcosystem.DotNet, VerifyCommandKind.Build, "", "dotnet build"));
-            cmds.Add(new VerifyCommand(VerifyEcosystem.DotNet, VerifyCommandKind.Test, "", "dotnet test"));
+            cmds.Add(new VerifyCommand(
+                VerifyEcosystem.DotNet,
+                VerifyCommandKind.Test,
+                "",
+                "dotnet test" + GateTestCategoryFilter.DotNetSuffix));
         }
 
         // Node: derive whichever of build / test / lint scripts the manifest

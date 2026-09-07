@@ -559,6 +559,57 @@ public sealed class TaskTransitionAutoCommitAttributionTests : IDisposable
             e => e.Kind == TimelineEventKinds.OperatorRequeued);
     }
 
+    /// <summary>
+    /// AGT-2749: the acceptance rail replays a card whose failure was the host's,
+    /// not the change's. Landing it in <c>4-auto-review</c> is not enough, because
+    /// nothing would pick it up again: the replay has to re-drive the review the
+    /// same way an operator's manual <c>POST /move 4-auto-review</c> did.
+    /// </summary>
+    [Theory]
+    [InlineData(TaskStates.HumanReview)]
+    [InlineData(TaskStates.Escalated)]
+    public async Task RailInfrastructureRequeueToAutoReview_EnqueuesAutoReviewPostProcessing(string fromState)
+    {
+        var slug = $"infra-replay-{fromState}";
+        WriteJob(fromState, slug);
+        var queue = new RecordingAutoReviewQueue();
+        var deps = BuildDeps(queue);
+
+        var outcome = await deps.Transitions.MoveAsync(
+            slug,
+            TaskStates.AutoReview,
+            _watchPath,
+            cause: TimelineActors.System,
+            reason: "The last integration failure is infrastructure, not a verdict on the change.",
+            transitionCause: LaneChangeCauses.ReviewInfrastructure);
+
+        Assert.Equal(MoveJobStatus.Success, outcome.Status);
+        var request = Assert.Single(queue.Requests);
+        Assert.Equal(slug, request.JobId);
+        Assert.Equal(ProjectName, request.ProjectName);
+    }
+
+    /// <summary>
+    /// The counterpart: an ordinary system move into the review lane that is not
+    /// an infrastructure replay must not queue a review round.
+    /// </summary>
+    [Fact]
+    public async Task SystemMoveToAutoReviewWithoutTheInfrastructureCause_DoesNotEnqueue()
+    {
+        WriteJob(TaskStates.HumanReview, "plain-system-move");
+        var queue = new RecordingAutoReviewQueue();
+        var deps = BuildDeps(queue);
+
+        var outcome = await deps.Transitions.MoveAsync(
+            "plain-system-move",
+            TaskStates.AutoReview,
+            _watchPath,
+            cause: TimelineActors.System);
+
+        Assert.Equal(MoveJobStatus.Success, outcome.Status);
+        Assert.Empty(queue.Requests);
+    }
+
     private Deps BuildDeps(IAutoReviewPostProcessingQueue? autoReviewQueue = null)
     {
         var config = new ConfigurationBuilder()

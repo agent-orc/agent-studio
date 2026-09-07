@@ -1,3 +1,5 @@
+using AgentStudio.TaskServer.Contracts;
+
 namespace AgentStudio.Pipeline;
 
 /// <summary>
@@ -28,12 +30,22 @@ public static class AcceptedIntegrationFailureCodes
 
 /// <summary>
 /// Card-safe classification of one terminal accepted-integration failure.
+/// <para>
+/// <see cref="Code"/> answers "which integration step said no";
+/// <see cref="FailureClass"/> answers "was the reviewed change at fault at all".
+/// The two are independent: the same <c>build-gate-failed</c> code carries
+/// <see cref="RunFailureClass.Product"/> for a failing test and
+/// <see cref="RunFailureClass.Infrastructure"/> for a git network timeout
+/// (AGT-2749).
+/// </para>
 /// </summary>
 public sealed record AcceptedIntegrationFailure(
     string Code,
     string Label,
     string Reason,
-    bool RebaseRecoveryAvailable);
+    bool RebaseRecoveryAvailable,
+    RunFailureClass FailureClass = RunFailureClass.Unknown,
+    string FailureSignature = RunFailureSignatures.Unclassified);
 
 /// <summary>
 /// Pure policy that turns a durable merge-step verdict into an operator-facing
@@ -58,6 +70,19 @@ public static class AcceptedIntegrationFailurePolicy
 
         var code = NormalizePersistedCode(persistedCode)
             ?? InferCode(verdict, reason);
+
+        // AGT-2749: classify the raw step evidence once against the shared
+        // taxonomy so a failure that describes the host or the provider account
+        // can be requeued instead of parked. The code keeps its own recovery
+        // semantics: merge-conflict and source-needs-rebase stay
+        // rebase-recoverable whatever the class says.
+        var verdictClass = RunFailureClassifier.Classify(new RunFailureEvidence
+        {
+            Text = Evidence(reason, verdictSummary),
+        });
+        var failureClass = verdictClass.Class;
+        var signature = verdictClass.Signature;
+
         return code switch
         {
             AcceptedIntegrationFailureCodes.MergeConflict => new(
@@ -67,7 +92,9 @@ public static class AcceptedIntegrationFailurePolicy
                     verdictSummary,
                     reason,
                     "The delivery conflicts with the current integration branch."),
-                RebaseRecoveryAvailable: true),
+                RebaseRecoveryAvailable: true,
+                failureClass,
+                signature),
             AcceptedIntegrationFailureCodes.BuildGateFailed => new(
                 code,
                 "Build gate failed",
@@ -75,7 +102,9 @@ public static class AcceptedIntegrationFailurePolicy
                     reason,
                     verdictSummary,
                     "The build gate rejected the merged result."),
-                RebaseRecoveryAvailable: false),
+                RebaseRecoveryAvailable: false,
+                failureClass,
+                signature),
             AcceptedIntegrationFailureCodes.DeliveryGateFailed => new(
                 code,
                 "Delivery gate failed",
@@ -83,12 +112,16 @@ public static class AcceptedIntegrationFailurePolicy
                     reason,
                     verdictSummary,
                     "The Remote delivery gate rejected the reviewed result before integration."),
-                RebaseRecoveryAvailable: false),
+                RebaseRecoveryAvailable: false,
+                failureClass,
+                signature),
             AcceptedIntegrationFailureCodes.SourceNeedsRebase => new(
                 code,
                 "Rebase required",
                 "The reviewed delivery is behind the current integration branch and must be rebased before acceptance.",
-                RebaseRecoveryAvailable: true),
+                RebaseRecoveryAvailable: true,
+                failureClass,
+                signature),
             AcceptedIntegrationFailureCodes.DeliveryAttributionAmbiguous => new(
                 code,
                 "Delivery attribution needs a new round",
@@ -96,17 +129,23 @@ public static class AcceptedIntegrationFailurePolicy
                     reason,
                     verdictSummary,
                     "Automatic integration could not retain a one-to-one delivery commit mapping."),
-                RebaseRecoveryAvailable: false),
+                RebaseRecoveryAvailable: false,
+                failureClass,
+                signature),
             AcceptedIntegrationFailureCodes.ReviewSubjectTaskKeyUnavailable => new(
                 code,
                 "Task key unavailable",
                 "The task key could not be resolved while validating the reviewed delivery. Retry acceptance after task storage is available.",
-                RebaseRecoveryAvailable: false),
+                RebaseRecoveryAvailable: false,
+                failureClass,
+                signature),
             AcceptedIntegrationFailureCodes.ReviewSubjectInvalid => new(
                 code,
                 "Review subject invalid",
                 "The reviewed delivery no longer matches the task's current authoritative run.",
-                RebaseRecoveryAvailable: false),
+                RebaseRecoveryAvailable: false,
+                failureClass,
+                signature),
             AcceptedIntegrationFailureCodes.NoTaskBranch => new(
                 code,
                 "No task branch",
@@ -114,7 +153,9 @@ public static class AcceptedIntegrationFailurePolicy
                     reason,
                     verdictSummary,
                     "The accepted coding card had no delivery branch to integrate."),
-                RebaseRecoveryAvailable: false),
+                RebaseRecoveryAvailable: false,
+                failureClass,
+                signature),
             AcceptedIntegrationFailureCodes.IntegrationPushBlocked => new(
                 code,
                 "Integration push blocked",
@@ -122,12 +163,16 @@ public static class AcceptedIntegrationFailurePolicy
                     reason,
                     verdictSummary,
                     "The delivery merged into the integration branch locally but the push to origin is blocked."),
-                RebaseRecoveryAvailable: false),
+                RebaseRecoveryAvailable: false,
+                failureClass,
+                signature),
             _ => new(
                 AcceptedIntegrationFailureCodes.IntegrationError,
                 "Integration failed",
                 FirstNonBlank(reason, verdictSummary, "Integration failed without a diagnostic."),
-                RebaseRecoveryAvailable: false),
+                RebaseRecoveryAvailable: false,
+                failureClass,
+                signature),
         };
     }
 
@@ -185,6 +230,16 @@ public static class AcceptedIntegrationFailurePolicy
             _ => null,
         };
     }
+
+    /// <summary>
+    /// Both evidence fields, one per line. The classifier reads line by line, so
+    /// a host signature in the reason is not hidden by a generic verdict summary
+    /// (or the other way round).
+    /// </summary>
+    private static string Evidence(string? reason, string? verdictSummary)
+        => string.Join(
+            '\n',
+            new[] { reason, verdictSummary }.Where(value => !string.IsNullOrWhiteSpace(value)));
 
     private static string FirstNonBlank(params string?[] values)
         => values.First(value => !string.IsNullOrWhiteSpace(value))!.Trim();

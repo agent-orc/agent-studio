@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 using AgentStudio.Pipeline;
 using AgentStudio.Shared;
+using AgentStudio.TaskServer.Contracts;
 using AgentStudio.Tasks;
 
 using Xunit;
@@ -647,6 +648,119 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         Assert.DoesNotContain("review-subject", status.Detail ?? string.Empty, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// AGT-2749: the run-failure class travels from the pipeline step onto the
+    /// card and survives the JSON round trip as its camelCase slug. A payload
+    /// written before the taxonomy carries no class and stays Unknown, so it is
+    /// <summary>
+    /// AGT-2749: the lane shows "retry N/M" next to the class, so the
+    /// projection has to carry the rail's own replay receipts. A product
+    /// failure was never replayed and must not claim a counter.
+    /// </summary>
+    [Fact]
+    public void BuildLookup_HostFailure_CarriesTheRailReplayCounter()
+    {
+        var repo = SeedDevelopMainRepo();
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "checkout -q -b task/retry-counter");
+        File.WriteAllText(Path.Combine(repo, "retry-counter.txt"), "wip");
+        Commit(repo, "feat: retry counter");
+        var anchor = RunGit(repo, "rev-parse task/retry-counter").Out.Trim();
+
+        var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
+        var svc = BuildService(repo, out var project, out var log, timeline);
+        var job = Job(
+            "retry-counter",
+            "AGT-2749",
+            project,
+            repo,
+            log,
+            commits: [Commit(anchor)],
+            prov: Prov(branch: "task/retry-counter"));
+        log.EnsureRun(job.FolderPath, PipelineCatalogue.Standard, project, job.Id);
+        log.RecordStep(job.FolderPath, new PipelineStepExecution
+        {
+            StepId = PipelineCatalogue.MergeIntoDevelopStepId,
+            Kind = StepKind.Tool,
+            Status = PipelineStepStatus.Failed,
+            Verdict = "gate-failed",
+            Reason = "Integration branch 'develop' could not be fetched from origin: "
+                     + "git operation timed out after 30 seconds",
+        });
+        for (var replay = 0; replay < 2; replay++)
+        {
+            timeline.Append(
+                job.FolderPath,
+                TimelineEventKinds.AcceptanceRailActed,
+                TimelineActors.System,
+                "Replayed after a host fault.",
+                details: new Dictionary<string, string>
+                {
+                    ["action"] = AcceptanceRailReceipts.InfrastructureRequeueAction,
+                });
+        }
+
+        var status = svc.BuildLookup([job])[job.TaskKey];
+
+        Assert.Equal(2, status.Failure?.RetryAttempt);
+        Assert.Equal(AcceptanceRailDefaults.MaxInfrastructureRequeues, status.Failure?.RetryBudget);
+    }
+
+    /// routed exactly like before.
+    /// </summary>
+    [Fact]
+    public void BuildLookup_HostFailure_ProjectsAndRoundTripsTheFailureClass()
+    {
+        var repo = SeedDevelopMainRepo();
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "checkout -q -b task/host-failure");
+        File.WriteAllText(Path.Combine(repo, "host-failure.txt"), "wip");
+        Commit(repo, "feat: host failure");
+        var anchor = RunGit(repo, "rev-parse task/host-failure").Out.Trim();
+
+        var svc = BuildService(repo, out var project, out var log);
+        var job = Job(
+            "host-failure",
+            "AGT-2749",
+            project,
+            repo,
+            log,
+            commits: [Commit(anchor)],
+            prov: Prov(branch: "task/host-failure"));
+        log.EnsureRun(job.FolderPath, PipelineCatalogue.Standard, project, job.Id);
+        log.RecordStep(job.FolderPath, new PipelineStepExecution
+        {
+            StepId = PipelineCatalogue.MergeIntoDevelopStepId,
+            Kind = StepKind.Tool,
+            Status = PipelineStepStatus.Failed,
+            Verdict = "gate-failed",
+            Reason = "Integration branch 'develop' could not be fetched from origin: "
+                     + "git operation timed out after 30 seconds",
+        });
+
+        var status = svc.BuildLookup([job])[job.TaskKey];
+
+        Assert.Equal(RunFailureClass.Infrastructure, status.Failure?.FailureClass);
+        Assert.Equal(RunFailureSignatures.GitNetworkTimeout, status.Failure?.FailureSignature);
+
+        var json = System.Text.Json.JsonSerializer.Serialize(
+            status.Failure,
+            new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+        Assert.Contains("\"failureClass\":\"infrastructure\"", json, StringComparison.Ordinal);
+        Assert.Equal(
+            RunFailureClass.Infrastructure,
+            System.Text.Json.JsonSerializer.Deserialize<TaskIntegrationFailure>(
+                json,
+                new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web))!
+                .FailureClass);
+        Assert.Equal(
+            RunFailureClass.Unknown,
+            System.Text.Json.JsonSerializer.Deserialize<TaskIntegrationFailure>(
+                "{\"code\":\"build-gate-failed\"}",
+                new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web))!
+                .FailureClass);
+    }
+
     [Fact]
     public void BuildLookup_MergePassedButPushBlocked_IsConflictSkippedNotPending()
     {
@@ -739,7 +853,11 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
 
     // --- helpers -----------------------------------------------------------
 
-    private TaskIntegrationStatusService BuildService(string repo, out string projectName, out PipelineExecutionLog log)
+    private TaskIntegrationStatusService BuildService(
+        string repo,
+        out string projectName,
+        out PipelineExecutionLog log,
+        TimelineLog? timeline = null)
     {
         projectName = "Fixture";
         var config = ConfigFor(repo, projectName);
@@ -750,7 +868,7 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         settings.SetIntegrationBranch(projectName, "develop");
         log = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
         return new TaskIntegrationStatusService(
-            git, settings, log, NullLogger<TaskIntegrationStatusService>.Instance);
+            git, settings, log, NullLogger<TaskIntegrationStatusService>.Instance, timeline);
     }
 
     private static IConfiguration ConfigFor(string repo, string projectName)

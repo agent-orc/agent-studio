@@ -36,7 +36,9 @@ public static class RemoteDeliveryIntegrationPolicy
                 "The source run has no settled immutable Result-Envelope.");
         }
 
-        if (!string.Equals(reviewOutcome, "Pass", StringComparison.OrdinalIgnoreCase))
+        // PassWithConcerns clears integration: the reviewers accepted the change
+        // and recorded reservations against it (AGT-2749).
+        if (!Contract.ReviewOutcomes.IsAccepting(reviewOutcome))
         {
             return new RemoteDeliveryIntegrationDecision(
                 false,

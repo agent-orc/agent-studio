@@ -1,3 +1,4 @@
+using AgentStudio.TaskServer.Contracts;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -93,6 +94,69 @@ public sealed class AcceptedIntegrationFailurePolicyTests
         Assert.Equal(recoveryAvailable, failure.RebaseRecoveryAvailable);
         Assert.False(string.IsNullOrWhiteSpace(failure.Label));
         Assert.False(string.IsNullOrWhiteSpace(failure.Reason));
+    }
+
+    /// <summary>
+    /// AGT-2749: the same code carries different classes. The 2026-09-06 reasons
+    /// below parked cards as product failures although no verdict about the
+    /// change existed.
+    /// </summary>
+    [Theory]
+    [InlineData(
+        "gate-failed",
+        "Integration branch 'develop' could not be fetched from origin: git operation timed out after 30 seconds",
+        RunFailureClass.Infrastructure,
+        RunFailureSignatures.GitNetworkTimeout)]
+    [InlineData(
+        "gate-failed",
+        "dotnet test agent-taskboard.sln violated gate-run budget (limit=1800000ms, consumed=1800488ms)",
+        RunFailureClass.Infrastructure,
+        RunFailureSignatures.GateBudgetExceeded)]
+    [InlineData(
+        "error",
+        "The Codex weekly quota is exhausted.",
+        RunFailureClass.Quota,
+        RunFailureSignatures.CliQuotaExhausted)]
+    [InlineData(
+        "gate-failed",
+        "TaskStateMachineTests.MoveJob_RejectsUnknownLane failed: error CS0103 in the fixture",
+        RunFailureClass.Product,
+        RunFailureSignatures.CompilerError)]
+    [InlineData(
+        "conflict",
+        "Merge conflict in shared.txt.",
+        RunFailureClass.Unknown,
+        RunFailureSignatures.Unclassified)]
+    public void Classify_AttributesTheFailureToTheChangeOrToTheHost(
+        string verdict,
+        string reason,
+        RunFailureClass expectedClass,
+        string expectedSignature)
+    {
+        var failure = AcceptedIntegrationFailurePolicy.Classify(
+            PipelineStepStatus.Failed,
+            verdict,
+            reason,
+            verdictSummary: null);
+
+        Assert.NotNull(failure);
+        Assert.Equal(expectedClass, failure.FailureClass);
+        Assert.Equal(expectedSignature, failure.FailureSignature);
+    }
+
+    [Fact]
+    public void Classify_KeepsRebaseRecoveryForAHostClassifiedConflict()
+    {
+        var failure = AcceptedIntegrationFailurePolicy.Classify(
+            PipelineStepStatus.Failed,
+            "conflict",
+            "Merge conflict in shared.txt after git operation timed out after 30 seconds.",
+            verdictSummary: null);
+
+        Assert.NotNull(failure);
+        Assert.Equal(AcceptedIntegrationFailureCodes.MergeConflict, failure.Code);
+        Assert.True(failure.RebaseRecoveryAvailable);
+        Assert.Equal(RunFailureClass.Infrastructure, failure.FailureClass);
     }
 
     [Fact]

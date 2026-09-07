@@ -1,6 +1,7 @@
 import { TaskState } from '../../../../models/task.model';
 import type { TaskInfo, ClientSummary, CliType, TagRegistryEntry, EpicRollup, AutoLoopSnapshot, PendingIntent, TaskMode } from '../../../../models/task.model';
-import type { TaskCommitInfo } from '../../../../features/git';
+import type { RunFailureClassSlug, TaskCommitInfo } from '../../../../features/git';
+import { normalizeRunFailureClass } from '../../../../features/git';
 import type { StructuredTooltip } from 'coding-agent-chat/shared';
 import type { MenuItem } from '../../../../components/menu';
 import type { AutoReviewStatusView } from '../../../../services/auto-review-status.store';
@@ -1412,6 +1413,77 @@ export function buildHumanReviewBadge(job: TaskInfo): HumanReviewBadge | null {
     label: 'Escalated',
     tone: 'attention',
     tooltip: 'This task is currently in the Escalated lane and needs an operator decision.'
+  };
+}
+
+/** Lanes where an operator reads a parked card and needs to know why it parked. */
+const FAILURE_CLASS_LANES = new Set<string>([TaskState.HumanReview, TaskState.Escalated]);
+
+const FAILURE_CLASS_LABEL: Record<Exclude<RunFailureClassSlug, 'product'>, string> = {
+  infrastructure: 'Infrastructure',
+  quota: 'Quota',
+  unknown: 'Unclassified',
+};
+
+export interface FailureClassBadge {
+  /** Class slug, mirrored onto `data-failure-class`. Never `product`. */
+  failureClass: Exclude<RunFailureClassSlug, 'product'>;
+  /** Stated fact, e.g. `Infrastructure · retry 2/3`. */
+  label: string;
+  /** Requeue counter; null when the class carries no requeue budget. */
+  retry: { attempt: number; budget: number } | null;
+  tooltip: string;
+}
+
+/**
+ * AGT-2749 failure-class badge for a card parked in `5-human-review` /
+ * `5e-escalated`. On 2026-09-06 thirteen cards were parked as product failures
+ * when every one of them was a host or account fault, and the lane showed no
+ * reason and no retry counter. The badge states the class the backend
+ * classified (`failureClass`) plus the bounded requeue counter, so an operator
+ * reads "this did not fail on the change" without opening the card.
+ *
+ * Quiet by construction:
+ *  - `product` and a card carrying no class at all render nothing (a product
+ *    failure IS the reviewed change, which the rest of the card already says);
+ *  - `unknown` states the class without a counter, because an unrecognized
+ *    signature is never requeued and has no attempts to count;
+ *  - a class without a `retryAttempt` states the class only, instead of
+ *    inventing a count.
+ */
+export function buildFailureClassBadge(job: TaskInfo): FailureClassBadge | null {
+  if (!FAILURE_CLASS_LANES.has(job.state)) return null;
+  const failure = job.integration?.failure;
+  const raw = failure?.failureClass;
+  if (raw === null || raw === undefined || `${raw}`.trim() === '') return null;
+
+  const failureClass = normalizeRunFailureClass(`${raw}`);
+  if (failureClass === 'product') return null;
+
+  const requeueable = failureClass === 'infrastructure' || failureClass === 'quota';
+  const attempt = failure?.retryAttempt;
+  const budget = failure?.retryBudget;
+  const retry = requeueable && typeof attempt === 'number' && Number.isFinite(attempt)
+    ? {
+      attempt: Math.max(0, Math.round(attempt)),
+      budget: typeof budget === 'number' && budget > 0 ? Math.round(budget) : INFRA_RETRY_BUDGET,
+    }
+    : null;
+
+  const name = FAILURE_CLASS_LABEL[failureClass];
+  const signature = (failure?.failureSignature ?? '').trim();
+  const tooltipLines = [
+    retry
+      ? `Retry ${retry.attempt} of ${retry.budget} against the requeue budget.`
+      : 'No requeue budget applies to this class.',
+  ];
+  if (signature) tooltipLines.unshift(`Signature: ${signature}`);
+
+  return {
+    failureClass,
+    label: retry ? `${name} · retry ${retry.attempt}/${retry.budget}` : name,
+    retry,
+    tooltip: tooltipLines.join('\n'),
   };
 }
 

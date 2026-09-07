@@ -51,6 +51,7 @@ public sealed record ReviewAttemptChainEntry(
             ReviewTerminalOutcome.Inconclusive => "Inconclusive",
             ReviewTerminalOutcome.Cancellation => "Cancellation",
             ReviewTerminalOutcome.Pass => "Pass",
+            ReviewTerminalOutcome.PassWithConcerns => "PassWithConcerns",
             ReviewTerminalOutcome.Superseded => "Superseded",
             _ => "Ungraded",
         };

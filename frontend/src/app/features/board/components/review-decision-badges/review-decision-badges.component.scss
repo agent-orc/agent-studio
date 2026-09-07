@@ -21,6 +21,19 @@
   line-height: 1;
 }
 
+/* AGT-2749 failure-class chip: why a Review / Escalated card parked. Warn tint
+   (both themes read from the semantic tokens), calmer than the acute
+   `--attention` badges beside it, because the class is a fact about the host or
+   the account and not a decision the operator owes. Background tint + chip only,
+   never an accent bar (style-guide R1). */
+.review-decision-badge--failure-class {
+  /* The retry counter is compared across stacked cards, so keep digits aligned. */
+  font-variant-numeric: tabular-nums;
+  color: var(--studio-accent-warn-strong);
+  background: color-mix(in srgb, var(--studio-accent-warn) 16%, var(--studio-bg-elevated));
+  border-color: color-mix(in srgb, var(--studio-accent-warn) 40%, transparent);
+}
+
 .review-decision-badge--attention {
   color: var(--studio-accent-6-strong);
   background: color-mix(in srgb, var(--studio-accent-6) 18%, var(--studio-bg-elevated));

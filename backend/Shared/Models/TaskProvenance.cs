@@ -1,3 +1,5 @@
+using AgentStudio.TaskServer.Contracts;
+
 namespace AgentStudio.Shared;
 
 /// <summary>
@@ -286,6 +288,71 @@ public sealed record TaskIntegrationFailure
     public string Label { get; init; } = "Integration failed";
     public string Reason { get; init; } = "Integration failed without a diagnostic.";
     public bool RebaseRecoveryAvailable { get; init; }
+
+    /// <summary>
+    /// Whether the failure describes the reviewed change at all (AGT-2749). The
+    /// acceptance rail requeues an <see cref="RunFailureClass.Infrastructure"/>
+    /// or <see cref="RunFailureClass.Quota"/> failure instead of parking it.
+    /// Written as its camelCase slug (<c>infrastructure</c>) so the card and the
+    /// lane render it directly; the default is
+    /// <see cref="RunFailureClass.Unknown"/>, so a card persisted before this
+    /// field existed deserializes to today's park behaviour.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonConverter(typeof(RunFailureClassJsonConverter))]
+    public RunFailureClass FailureClass { get; init; } = RunFailureClass.Unknown;
+
+    /// <summary>
+    /// Stable taxonomy slug behind <see cref="FailureClass"/>, for example
+    /// <c>git-network-timeout</c>. Operator evidence only; the rail routes on
+    /// the class.
+    /// </summary>
+    public string FailureSignature { get; init; } = RunFailureSignatures.Unclassified;
+
+    /// <summary>
+    /// AGT-2749: infrastructure replays the acceptance rail has already spent
+    /// on this card, and the budget it may spend. Null on a card the rail never
+    /// replayed. The lane renders them as "retry 2/3" next to the class so an
+    /// operator can see whether a parked card ran out of retries or never had
+    /// any.
+    /// </summary>
+    public int? RetryAttempt { get; init; }
+
+    /// <summary>Requeue budget the rail applies to this failure class.</summary>
+    public int? RetryBudget { get; init; }
+}
+
+/// <summary>
+/// Serializes <see cref="RunFailureClass"/> as its camelCase slug, matching the
+/// signature slugs next to it on the same object and the lane's own vocabulary
+/// (AGT-2749). Reading stays tolerant: an unknown or numeric value falls back to
+/// <see cref="RunFailureClass.Unknown"/> rather than failing the whole card.
+/// </summary>
+public sealed class RunFailureClassJsonConverter
+    : System.Text.Json.Serialization.JsonConverter<RunFailureClass>
+{
+    public override RunFailureClass Read(
+        ref System.Text.Json.Utf8JsonReader reader,
+        Type typeToConvert,
+        System.Text.Json.JsonSerializerOptions options)
+    {
+        if (reader.TokenType == System.Text.Json.JsonTokenType.Number
+            && reader.TryGetInt32(out var numeric)
+            && Enum.IsDefined(typeof(RunFailureClass), numeric))
+        {
+            return (RunFailureClass)numeric;
+        }
+
+        return reader.TokenType == System.Text.Json.JsonTokenType.String
+               && Enum.TryParse<RunFailureClass>(reader.GetString(), ignoreCase: true, out var parsed)
+            ? parsed
+            : RunFailureClass.Unknown;
+    }
+
+    public override void Write(
+        System.Text.Json.Utf8JsonWriter writer,
+        RunFailureClass value,
+        System.Text.Json.JsonSerializerOptions options)
+        => writer.WriteStringValue(value.ToString().ToLowerInvariant());
 }
 
 /// <summary>

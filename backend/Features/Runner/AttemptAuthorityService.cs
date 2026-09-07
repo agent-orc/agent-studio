@@ -907,7 +907,8 @@ public sealed class AttemptAuthorityService
             review.TerminalReason = NormalizeNull(request.Reason);
             review.State = request.Outcome switch
             {
-                ReviewTerminalOutcome.Pass => AttemptLifecycleState.Completed,
+                ReviewTerminalOutcome.Pass or ReviewTerminalOutcome.PassWithConcerns
+                    => AttemptLifecycleState.Completed,
                 ReviewTerminalOutcome.Cancellation => AttemptLifecycleState.Cancelled,
                 ReviewTerminalOutcome.Superseded => AttemptLifecycleState.Superseded,
                 _ => AttemptLifecycleState.Failed,

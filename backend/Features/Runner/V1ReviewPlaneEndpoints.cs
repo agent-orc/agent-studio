@@ -478,7 +478,8 @@ public static class V1ReviewPlaneEndpoints
                     StringComparison.Ordinal))
                 ?.ReceivedAt
                 ?? DateTime.UtcNow;
-            if (settled.ReviewAttempt.Outcome == ReviewTerminalOutcome.Pass)
+            if (settled.ReviewAttempt.Outcome
+                is ReviewTerminalOutcome.Pass or ReviewTerminalOutcome.PassWithConcerns)
             {
                 settings.MarkBuildProfileRemotelyValidated(
                     task.ProjectName,
@@ -1278,6 +1279,7 @@ public static class V1ReviewPlaneEndpoints
         outcome = value.Trim().ToLowerInvariant() switch
         {
             "pass" => ReviewTerminalOutcome.Pass,
+            "passwithconcerns" => ReviewTerminalOutcome.PassWithConcerns,
             "productfailure" => ReviewTerminalOutcome.ProductFailure,
             "reviewinfra" => ReviewTerminalOutcome.InfrastructureFailure,
             "inconclusive" => ReviewTerminalOutcome.Inconclusive,

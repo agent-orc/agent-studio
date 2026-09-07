@@ -353,10 +353,11 @@ public static class TestSelectionPlanner
             if (match.Success) return " " + match.Value.Trim();
         }
         // Repository-wide routine gates exclude machine-bound and Windows-host
-        // process/timing families. Preserve an explicit project filter when one
-        // exists; otherwise apply the canonical exclusion to every generated
-        // work-package test-project command.
-        return " --filter Category!=MachineBound";
+        // process/timing families, and live-CLI tests that spend account quota.
+        // Preserve an explicit project filter when one exists; otherwise apply
+        // the canonical exclusion to every generated work-package test-project
+        // command.
+        return GateTestCategoryFilter.DotNetSuffix;
     }
 
     private static string? OwningProject(string root, string changedFile, IReadOnlyList<string> projects)

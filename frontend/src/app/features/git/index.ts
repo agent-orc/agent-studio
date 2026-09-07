@@ -16,7 +16,9 @@ export type {
   TaskProvenanceRecord,
   TaskMergeSignal,
   TaskIntegrationStatus,
+  TaskIntegrationFailure,
   IntegrationStatusValue,
+  RunFailureClassSlug,
   // Project Hub Git View inventory.
   GitBranchCategory,
   GitWorktreeEntry,
@@ -45,6 +47,9 @@ export type {
   CleanupActionOutcome,
   GitCleanupResult,
 } from './models/git.model';
+
+// AGT-2749 run-failure taxonomy helpers (values, not types).
+export { RUN_FAILURE_CLASSES, normalizeRunFailureClass } from './models/git.model';
 
 // Project Hub Git View tree model (pure builder + node types).
 export {

@@ -879,17 +879,24 @@ public sealed partial class TaskServerStore
                    || command.NewFailures is null
                    || command.NewFailures.Count > 0;
         });
-        if (commandFailures
-            || request.Verdicts.Any(verdict => verdict.Status is "concerns" or "block" or "fail"))
-            return ("ProductFailure", request.FailureClassification ?? "ReviewFinding");
-        if (string.Equals(request.Outcome, "ReviewInfra", StringComparison.Ordinal))
-            return ("ReviewInfra", string.IsNullOrWhiteSpace(request.FailureClassification)
+        // The authority grades the aspect verdicts itself instead of trusting the
+        // reported outcome. A `concerns` verdict is a recorded reservation about a
+        // change that was reviewed, not a refusal of it (AGT-2749); only `block`,
+        // `fail`, or a real command failure refuse the change.
+        var grade = ReviewGradingPolicy.Grade(
+            request.Verdicts.Select(verdict => verdict.Status),
+            commandFailures);
+        if (grade == ReviewGrade.ProductFailure)
+            return (ReviewOutcomes.ProductFailure, request.FailureClassification ?? "ReviewFinding");
+        if (string.Equals(request.Outcome, ReviewOutcomes.ReviewInfra, StringComparison.Ordinal))
+            return (ReviewOutcomes.ReviewInfra, string.IsNullOrWhiteSpace(request.FailureClassification)
                 ? "UnclassifiedReviewInfrastructure"
                 : request.FailureClassification);
-        if (string.Equals(request.Outcome, "Pass", StringComparison.Ordinal)
-            || string.Equals(request.Outcome, "ProductFailure", StringComparison.Ordinal))
+        if (string.Equals(request.Outcome, ReviewOutcomes.ProductFailure, StringComparison.Ordinal))
             return (request.Outcome, request.FailureClassification);
-        return ("ReviewInfra", "InvalidReviewOutcome");
+        if (ReviewOutcomes.IsAccepting(request.Outcome))
+            return (ReviewGradingPolicy.ToOutcome(grade), request.FailureClassification);
+        return (ReviewOutcomes.ReviewInfra, "InvalidReviewOutcome");
     }
 
     private static (string Outcome, string? Classification) ClassifyPreparationFailure(

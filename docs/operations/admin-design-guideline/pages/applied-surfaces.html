@@ -210,6 +210,38 @@
           <td><span class="card-key">AGT-2606</span></td>
           <td><span class="status-badge status-applied">Applied</span></td>
         </tr>
+        <tr>
+          <td>07 Sep 2026</td>
+          <td>
+            <p><strong>Human Review lane</strong></p>
+            <p><code>#/board</code></p>
+          </td>
+          <td class="thumb-cell">
+            <div class="thumb-wrap">
+              <svg viewBox="0 0 240 90" aria-label="Human Review card before/after thumbnails">
+                <!-- Before: parked card states no cause -->
+                <rect width="240" height="42" fill="var(--bad-soft)" rx="3"/>
+                <text x="6" y="12" font-size="8" font-weight="700" fill="var(--bad)">BEFORE</text>
+                <rect x="6" y="17" width="228" height="20" rx="4" fill="var(--surface)" stroke="var(--line)" stroke-width="1"/>
+                <text x="12" y="30" font-size="8" fill="var(--ink)">AGT-2707</text>
+                <rect x="150" y="20" width="60" height="12" rx="6" fill="var(--bad-soft)"/>
+                <text x="155" y="29" font-size="7" fill="var(--bad)">build gate failed</text>
+                <!-- After: class and retry counter stated once -->
+                <rect y="48" width="240" height="42" fill="var(--good-soft)" rx="3"/>
+                <text x="6" y="60" font-size="8" font-weight="700" fill="var(--good)">AFTER</text>
+                <rect x="6" y="65" width="228" height="20" rx="4" fill="var(--surface)" stroke="var(--line)" stroke-width="1"/>
+                <text x="12" y="78" font-size="8" fill="var(--ink)">AGT-2707</text>
+                <circle cx="146" cy="75" r="3" fill="var(--muted)"/>
+                <text x="153" y="78" font-size="7" fill="var(--muted)">Infrastructure &#183; retry 3/3</text>
+              </svg>
+            </div>
+          </td>
+          <td>
+            <p>A card parked after an infrastructure or quota failure states its failure class and its exhausted retry counter once, as a neutral badge in the existing badge strip. No accent bar and no second restatement elsewhere on the card. A product failure shows no class badge, because the existing outcome text already carries that fact.</p>
+          </td>
+          <td><span class="card-key">AGT-2749</span></td>
+          <td><span class="status-badge status-applied">Applied</span></td>
+        </tr>
       </tbody>
     </table>
   </div>

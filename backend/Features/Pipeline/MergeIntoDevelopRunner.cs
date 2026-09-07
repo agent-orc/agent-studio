@@ -69,7 +69,7 @@ public sealed class MergeIntoDevelopRunner
             : TimeSpan.FromHours(1);
         _preDevelopTimeout = preDevelopTimeout is { } configuredDevelop && configuredDevelop > TimeSpan.Zero
             ? configuredDevelop
-            : TimeSpan.FromMinutes(30);
+            : GateRunBudgetPolicy.Default;
         // Default to the AGT-1944 environmental backoff (30s, 120s, cap 5min); a
         // test injects a zero backoff so it does not sleep between retries.
         _environmentalBackoff = environmentalBackoff ?? PostProcessingOutcomeTaxonomy.RetryBackoff;
@@ -674,7 +674,7 @@ public sealed class MergeIntoDevelopRunner
                     },
                     changedPaths,
                     profile,
-                    _preDevelopTimeout,
+                    PreDevelopBudgetFor(project),
                     // Deliberately NOT the caller's token: once the background worker
                     // starts a merge, its gate and possible rollback must reach a
                     // consistent terminal state. The gate stays bounded by its timeout.
@@ -745,6 +745,29 @@ public sealed class MergeIntoDevelopRunner
         {
             SilentCatch.Note(ex, "MergeIntoDevelopRunner: build-profile read is best-effort");
             return null;
+        }
+    }
+
+    /// <summary>
+    /// AGT-2749: the pre-develop gate budget is per project. An explicit setting
+    /// wins; otherwise the injected default applies. A budget overrun is
+    /// classified as infrastructure and requeued, never parked as a product
+    /// failure.
+    /// </summary>
+    private TimeSpan PreDevelopBudgetFor(string project)
+    {
+        if (_projectSettings == null) return _preDevelopTimeout;
+        try
+        {
+            var configured = _projectSettings.Get(project).GateRunBudgetMinutes;
+            return configured is null
+                ? _preDevelopTimeout
+                : GateRunBudgetPolicy.Resolve(configured);
+        }
+        catch (Exception ex)
+        {
+            SilentCatch.Note(ex, "MergeIntoDevelopRunner: gate-run budget read is best-effort");
+            return _preDevelopTimeout;
         }
     }
 

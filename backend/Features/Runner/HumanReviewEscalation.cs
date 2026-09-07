@@ -1,3 +1,4 @@
+using AgentStudio.TaskServer.Contracts;
 using Microsoft.Extensions.Configuration;
 
 namespace AgentStudio.Runner;
@@ -327,7 +328,7 @@ public sealed class HumanReviewEscalation
         }
         try
         {
-            var pass = string.Equals(outcome, "Pass", StringComparison.OrdinalIgnoreCase);
+            var pass = ReviewOutcomes.IsAccepting(outcome);
             var chain = attemptChain is null ? string.Empty : " " + attemptChain.Headline;
             ReviewDecisionLog.Append(_workspaceRoot!, new ReviewDecisionRecord(
                 CreatedAt: DateTime.UtcNow,

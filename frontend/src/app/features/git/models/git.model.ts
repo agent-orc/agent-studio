@@ -522,4 +522,44 @@ export interface TaskIntegrationFailure {
   reason: string;
   /** Whether the focused rebase recovery action can resolve this class. */
   rebaseRecoveryAvailable: boolean;
+  /**
+   * AGT-2749 run-failure class. Absent on payloads written before the taxonomy;
+   * read it through {@link normalizeRunFailureClass} rather than directly.
+   */
+  failureClass?: RunFailureClassSlug | string | null;
+  /** Stable signature slug, e.g. `gate-budget-exceeded`. Null when unclassified. */
+  failureSignature?: string | null;
+  /** Requeue attempts already spent against the bounded retry budget. */
+  retryAttempt?: number | null;
+  /** Bounded requeue budget this counter runs against (backend default 3). */
+  retryBudget?: number | null;
+}
+
+/**
+ * AGT-2749 - class of one gate or review failure, mirroring backend
+ * `RunFailureClass` (serialized camelCase as `failureClass`). Only `product`
+ * describes the reviewed change and may park a card in Human Review;
+ * `infrastructure` and `quota` describe the host or the provider account and
+ * are requeued to Post Processing under a bounded retry budget. `unknown` means
+ * no signature matched, so the card is routed like before the taxonomy existed.
+ */
+export type RunFailureClassSlug = 'product' | 'infrastructure' | 'quota' | 'unknown';
+
+export const RUN_FAILURE_CLASSES: readonly RunFailureClassSlug[] = [
+  'product',
+  'infrastructure',
+  'quota',
+  'unknown',
+];
+
+/**
+ * Safe default for a payload that carries no class (or an additive slug this
+ * frontend does not know yet): treat it as `unknown` instead of guessing a
+ * routing-relevant class.
+ */
+export function normalizeRunFailureClass(value: string | null | undefined): RunFailureClassSlug {
+  const slug = (value ?? '').trim().toLowerCase();
+  return RUN_FAILURE_CLASSES.includes(slug as RunFailureClassSlug)
+    ? (slug as RunFailureClassSlug)
+    : 'unknown';
 }

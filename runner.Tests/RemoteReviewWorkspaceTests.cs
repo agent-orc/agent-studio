@@ -861,6 +861,69 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             facts[ReviewInfrastructureDiagnosis.RefKey]);
     }
 
+    /// <summary>
+    /// AGT-2749 / 2026-09-07 addendum: the review daemon's private /tmp was
+    /// unmounted under the running workers, so every <c>dotnet test</c> died in
+    /// <c>OutOfProcNode.Run</c> before a single test could start. Both the
+    /// subject and the baseline fail the same way, which is exactly what proves
+    /// the host and not the change decided the outcome. This used to settle as
+    /// <c>ProductFailure</c> with "1 new failures: &lt;unparsed failure in verify-2&gt;".
+    /// </summary>
+    [Fact]
+    public async Task Msbuild_node_crash_on_both_sides_is_review_infrastructure_not_a_product_failure()
+    {
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var command = BaselineCommand(
+            "printf 'MSBUILD : error MSB1025: An internal failure occurred while running MSBuild.\\n" +
+            "System.Net.Sockets.SocketException (99): Cannot assign requested address\\n" +
+            "   at Microsoft.Build.Execution.OutOfProcNode.Run(Exception& shutdownException)\\n'; exit 1");
+        var (workspace, _) = Workspace(
+            "attempt-msbuild-node-crash",
+            subjectSha,
+            [command],
+            26060,
+            resultRef: "refs/heads/task/new-failure",
+            integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+
+        var exception = await Assert.ThrowsAsync<ReviewInfrastructureException>(
+            () => workspace.ExecutePlanAsync(default));
+
+        Assert.Equal(
+            RemoteReviewWorkspace.UnparsableSubjectResultClassification,
+            exception.Classification);
+        Assert.Equal("ReviewInfra", exception.Evidence!.Outcome);
+        Assert.DoesNotContain("unparsed failure", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The counterpart: the command fails only on the change and the baseline is
+    /// clean, so the host is cleared and the card must still be graded as a
+    /// product failure even though no test name could be parsed.
+    /// </summary>
+    [Fact]
+    public async Task Build_failure_only_on_the_change_stays_a_product_failure()
+    {
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var command = BaselineCommand(
+            "if grep -q subject product.txt; then " +
+            "printf 'Board.cs(42,17): error CS0103: The name is not in scope\\n'; exit 1; fi; exit 0");
+        var (workspace, _) = Workspace(
+            "attempt-build-failure",
+            subjectSha,
+            [command],
+            26062,
+            resultRef: "refs/heads/task/new-failure",
+            integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        Assert.Equal("ProductFailure", evidence.Outcome);
+        var commandEvidence = CandidateVerification(evidence);
+        Assert.Equal(["<build failure in verify-2>"], commandEvidence.NewFailures);
+    }
+
     private static ReviewCommandDto BaselineCommand(string shell)
         => new(
             "verify-2",

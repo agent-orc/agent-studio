@@ -7,6 +7,16 @@
     {{ dam.label }}
   </span>
 }
+@if (failureClassBadge(); as failure) {
+  <span class="review-decision-badge review-decision-badge--failure-class"
+        [cacTooltip]="failure.tooltip"
+        data-testid="task-card-failure-class"
+        [attr.data-failure-class]="failure.failureClass"
+        [attr.data-retry-attempt]="failure.retry?.attempt ?? null"
+        [attr.data-retry-budget]="failure.retry?.budget ?? null">
+    {{ failure.label }}
+  </span>
+}
 @if (humanReviewBadge(); as review) {
   <span class="review-decision-badge"
         [class]="'review-decision-badge--' + review.tone"

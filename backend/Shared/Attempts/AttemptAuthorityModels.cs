@@ -18,6 +18,13 @@ public enum ReviewTerminalOutcome
     Pass,
     Cancellation,
     Superseded,
+
+    /// <summary>
+    /// Every aspect either passed or returned <c>concerns</c>. The change is
+    /// accepted and the reservations are recorded (AGT-2749). Treat this like
+    /// <see cref="Pass"/> everywhere acceptance is decided.
+    /// </summary>
+    PassWithConcerns,
 }
 
 public sealed record AttemptLeaseDto(

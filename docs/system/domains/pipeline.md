@@ -1,6 +1,6 @@
 # Pipeline Domain Map
 
-Version: 2026-08-27
+Version: 2026-09-07
 Status: System-of-record map for task-processing pipeline changes.
 
 Use this when a change touches pre/core/post steps, pipeline catalog entries,
@@ -47,6 +47,12 @@ pipeline view.
   recommendation layer for cheap pipeline work. It passes only live-discovered
   Spark candidates to `IModelEconomyAdvisor`, preserves explicit step pins, and
   falls back to the normal runtime model when no qualified Spark model exists.
+- `contracts/TaskServer.Contracts/RunFailureTaxonomy.cs`: the shared
+  `product | infrastructure | quota | unknown` classifier for gate and review
+  failures. See "Failure classes and requeue" below.
+- `contracts/TaskServer.Contracts/ReviewGradingPolicy.cs`: the table that maps
+  aspect verdict tokens onto `Pass`, `PassWithConcerns`, or `ProductFailure`,
+  plus `ReviewOutcomes.IsAccepting` as the single acceptance predicate.
 - `backend/Features/Pipeline/PipelineCatalogue.cs`: standard, report-only,
   concept, and UI pipeline definitions, step ids, default ordering, step run
   modes, and display names.
@@ -420,6 +426,74 @@ steer the pipeline in this policy version.
   activity time. It reads the current execution root only.
 - `frontend/src/app/features/task-pipeline/` and the task-detail Overview:
   pipeline presentation.
+
+## Failure classes and requeue
+
+Every gate and review failure carries a class:
+`product | infrastructure | quota | unknown`. The class decides routing, so a
+host fault never reads as a broken change.
+
+- `contracts/TaskServer.Contracts/RunFailureTaxonomy.cs` is the single
+  classifier. `RunFailureClassifier.Classify(RunFailureEvidence)` returns a
+  class, a stable signature slug, and an operator sentence. Backend, runner,
+  and task server all call it, so a class cannot drift between planes.
+- Only three things are `product`: a parsed failing test name, a compiler
+  diagnostic once the host is cleared, and a reviewer verdict on the diff.
+  Everything else that stopped a verdict from forming is `infrastructure` or
+  `quota`: gate-run budget overrun, command timeout, git network timeout,
+  MSBuild node crash (`MSB1025`, named-pipe `SocketException (99)`),
+  `mkdtemp` against an unmounted private `/tmp`, runner disconnect, host memory
+  or disk exhaustion, and CLI quota exhaustion.
+- The classifier reads facts before text, and proof of a verdict before a hint
+  that no verdict exists. A suite whose own assertion message contains
+  "timed out after" stays a product failure, because a parsed failing test name
+  outranks a text hint. `unknown` is not requeued: it keeps the conservative
+  park behaviour.
+- `<unparsed failure in <step>>` no longer exists. A verify command that exits
+  non-zero without one parsable test result is decided against its baseline: if
+  the same command failed the same way on the unchanged code the host is at
+  fault and the review ends `ReviewInfra/UnparsableTestOutput`; if the baseline
+  was clean the change is implicated and the failure is named
+  `<build failure in <step>>`. It is never counted as a new failing test.
+- A review whose aspects are all `pass` or `concerns` settles as
+  `PassWithConcerns`, not `ProductFailure`. `ReviewGradingPolicy` owns that
+  table and `ReviewOutcomes.IsAccepting` is the single acceptance predicate;
+  concerns are recorded reservations about a reviewed change, not a refusal of
+  it. Only `block`, `fail`, or a real command failure refuse.
+- An `infrastructure` or `quota` outcome sends the card back to
+  `4-auto-review` with a bounded retry counter and a backoff instead of parking
+  it in `5-human-review`. Only once the retries are exhausted does the card
+  reach Human Review, with the class and the reason visible in the lane and in
+  the card header.
+- `AcceptanceRailPolicy` owns that decision. Rebase-recoverable codes are
+  matched first, so `merge-conflict` and `source-needs-rebase` keep their
+  existing rebase-steer path. Everything else with class `infrastructure` or
+  `quota` becomes `RequeueInfrastructure`, bounded by
+  `AcceptanceRail:MaxInfrastructureRequeues` (default 3). The backoff is
+  exponential from 60 s to a 30-minute ceiling, except for `quota`, which waits
+  for the reset time the quota service already knows. `product` and `unknown`
+  keep the conservative `not-recoverable` behaviour.
+- The replay carries `LaneChangeCauses.ReviewInfrastructure` and writes no
+  rebase steer: the delivery is unchanged, only the verification has to run
+  again. `TaskTransitionService` treats that cause like an operator requeue and
+  enqueues auto-review post-processing, so the card is genuinely re-driven
+  instead of sitting in `4-auto-review` with nothing to pick it up.
+- The pre-develop gate-run budget is a per-project setting
+  (`ProjectSettings.GateRunBudgetMinutes`) sized by `GateRunBudgetPolicy`:
+  60 minutes by default, or the p95 of the last 20 runs plus 50 percent where
+  that history exists. History only ever raises the budget. The previous fixed
+  30 minutes parked two cards whose suite ran 488 ms long.
+- Generated .NET gate commands exclude `Category=MachineBound` and
+  `Category=LiveCli` through `GateTestCategoryFilter`. Live-CLI tests spend
+  account quota and fail for reasons unrelated to the change. The expression is
+  single-quoted because gate commands run through `sh -lc`, where an unquoted
+  `&` would background the run instead of filtering it.
+
+Recorded cause: on 2026-09-06 the Studio host was overloaded for hours and
+thirteen cards were parked in Human Review as product failures. Replaying those
+recorded messages through the classifier is a test
+(`backend.Tests/RunFailureClassifierTests.cs`); it must yield twelve
+`infrastructure|quota` verdicts and zero `product`.
 
 ## Invariants
 

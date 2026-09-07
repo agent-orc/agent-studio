@@ -71,7 +71,8 @@ public sealed class TestSelectionPlannerTests : IDisposable
 
         Assert.Contains(result.Commands, command =>
             command.Command ==
-            "dotnet test \"tests/App.Tests/App.Tests.csproj\" --filter Category!=MachineBound");
+            "dotnet test \"tests/App.Tests/App.Tests.csproj\""
+            + GateTestCategoryFilter.DotNetSuffix);
         Assert.DoesNotContain(result.Commands, command => command.Command == "dotnet test");
     }
 

@@ -56,6 +56,7 @@ public sealed class TaskIntegrationStatusService
     private readonly ProjectSettingsService _settings;
     private readonly PipelineExecutionLog _pipelineLog;
     private readonly ILogger<TaskIntegrationStatusService> _logger;
+    private readonly TimelineLog? _timeline;
 
     /// <summary>The delivered lanes this verdict applies to. Cards outside get no entry.</summary>
     internal static readonly HashSet<string> DeliveredLanes = new(StringComparer.Ordinal)
@@ -78,8 +79,9 @@ public sealed class TaskIntegrationStatusService
         GitService git,
         ProjectSettingsService settings,
         PipelineExecutionLog pipelineLog,
-        ILogger<TaskIntegrationStatusService> logger)
-        : this(git, settings, pipelineLog, logger, TimeProvider.System)
+        ILogger<TaskIntegrationStatusService> logger,
+        TimelineLog? timeline = null)
+        : this(git, settings, pipelineLog, logger, TimeProvider.System, timeline)
     {
     }
 
@@ -88,12 +90,14 @@ public sealed class TaskIntegrationStatusService
         ProjectSettingsService settings,
         PipelineExecutionLog pipelineLog,
         ILogger<TaskIntegrationStatusService> logger,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        TimelineLog? timeline = null)
     {
         _git = git;
         _settings = settings;
         _pipelineLog = pipelineLog;
         _logger = logger;
+        _timeline = timeline;
         _cache = new GenerationSingleFlightCache<RepoIntegration>(timeProvider);
     }
 
@@ -357,6 +361,10 @@ public sealed class TaskIntegrationStatusService
                     Label = failure.Label,
                     Reason = visibleReason,
                     RebaseRecoveryAvailable = failure.RebaseRecoveryAvailable,
+                    FailureClass = failure.FailureClass,
+                    FailureSignature = failure.FailureSignature,
+                    RetryAttempt = RetryAttemptFor(job, failure),
+                    RetryBudget = RetryBudgetFor(failure),
                 },
             };
         }
@@ -431,6 +439,36 @@ public sealed class TaskIntegrationStatusService
     /// git spawn); best-effort. Legacy steps without a persisted failure code
     /// are classified from their stable verdict and reason vocabulary.
     /// </summary>
+    /// <summary>
+    /// AGT-2749: how many infrastructure replays the acceptance rail already
+    /// spent on this card. Only meaningful for a requeueable class; a product
+    /// failure was never replayed and must not claim a counter.
+    /// </summary>
+    private int? RetryAttemptFor(TaskInfo job, AcceptedIntegrationFailure failure)
+    {
+        if (_timeline is null || !IsRequeueable(failure.FailureClass)) return null;
+        try
+        {
+            return AcceptanceRailReceipts
+                .CountInfrastructureRequeues(_timeline, job.FolderPath)
+                .Count;
+        }
+        catch (Exception ex)
+        {
+            SilentCatch.Note(ex, "TaskIntegrationStatusService: retry-counter read is best-effort");
+            return null;
+        }
+    }
+
+    private static int? RetryBudgetFor(AcceptedIntegrationFailure failure)
+        => IsRequeueable(failure.FailureClass)
+            ? AcceptanceRailDefaults.MaxInfrastructureRequeues
+            : null;
+
+    private static bool IsRequeueable(AgentStudio.TaskServer.Contracts.RunFailureClass failureClass)
+        => failureClass is AgentStudio.TaskServer.Contracts.RunFailureClass.Infrastructure
+            or AgentStudio.TaskServer.Contracts.RunFailureClass.Quota;
+
     private AcceptedIntegrationFailure? ReadIntegrationFailure(TaskInfo job)
     {
         if (!AcceptanceIntegrationPolicy.IsIntegrationRequired(job)) return null;

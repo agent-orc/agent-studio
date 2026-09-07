@@ -308,6 +308,18 @@ public sealed class RemoteReviewWorkspace
                                 artifacts,
                                 ct);
                         }
+                        // The retry may itself have been cut off by the host. Grading
+                        // its empty output would resurrect the placeholder failure.
+                        // The baseline is already resolved, so reuse its verdict as
+                        // the discriminator: a baseline with no failures was clean.
+                        await GuardUnparsableSubjectResultAsync(
+                            command,
+                            execution.Process,
+                            comparison.BaselineFailures.Count == 0 ? 0 : 1,
+                            comparison.BaselineFailures,
+                            commands,
+                            artifacts,
+                            ct);
                         comparison = comparison.Reclassify(
                             SubjectFailures(command, execution.Process),
                             reviewFlakyTests);
@@ -360,10 +372,7 @@ public sealed class RemoteReviewWorkspace
         }
 
         var proof = await CurrentProofAsync(ct);
-        var outcome = verdicts.Any(verdict =>
-            verdict.Status is "block" or "concerns" or "fail")
-            ? "ProductFailure"
-            : "Pass";
+        var outcome = ReviewGradingPolicy.Outcome(verdicts.Select(verdict => verdict.Status));
         return new ReviewExecutionEvidence(outcome, proof, commands, artifacts, verdicts);
     }
 
@@ -773,6 +782,8 @@ public sealed class RemoteReviewWorkspace
         if (cached is not null)
         {
             _log($"review baseline cache hit repository={_subject.RepositoryId} baseline={baselineSha} step={command.StepId}");
+            await GuardUnparsableSubjectResultAsync(
+                command, subjectResult, cached.ExitCode, cached.Failures, commands, artifacts, ct);
             return BaselineComparison.Create(
                 baselineSha,
                 cached.Failures,
@@ -786,6 +797,8 @@ public sealed class RemoteReviewWorkspace
         if (cached is not null)
         {
             _log($"review baseline cache hit after wait repository={_subject.RepositoryId} baseline={baselineSha} step={command.StepId}");
+            await GuardUnparsableSubjectResultAsync(
+                command, subjectResult, cached.ExitCode, cached.Failures, commands, artifacts, ct);
             return BaselineComparison.Create(
                 baselineSha,
                 cached.Failures,
@@ -895,6 +908,8 @@ public sealed class RemoteReviewWorkspace
             DateTime.UtcNow);
         await WriteBaselineCacheAsync(cachePath, entry, ct);
         _log($"review baseline cache fill repository={_subject.RepositoryId} baseline={baselineSha} step={command.StepId} failures={failures.Count}");
+        await GuardUnparsableSubjectResultAsync(
+            command, subjectResult, execution.Process.ExitCode, failures, commands, artifacts, ct);
         return BaselineComparison.Create(
             baselineSha,
             failures,
@@ -1286,15 +1301,93 @@ public sealed class RemoteReviewWorkspace
             $"{newFailures}; {preExisting}; {quarantined}. Baseline {comparison.BaselineSha} ({(comparison.CacheHit ? "cache hit" : "cache fill")}).");
     }
 
+    /// <summary>
+    /// Failing test names the subject run actually produced.
+    /// <para>
+    /// This used to synthesize <c>&lt;unparsed failure in {stepId}&gt;</c> whenever a
+    /// verify command failed without a parsable result, and the grader counted
+    /// that placeholder as a new failing test. On 2026-09-06 five cards were
+    /// parked as product failures that way while their <c>dotnet test</c> stdout
+    /// held nothing but <c>MSB1025</c>: no test had run at all. The placeholder
+    /// is gone. A subject run with no parsable result is either a build fault
+    /// named as such, or an infrastructure failure raised by
+    /// <see cref="GuardUnparsableSubjectResultAsync"/> before this point.
+    /// </para>
+    /// </summary>
     private static IReadOnlyList<string> SubjectFailures(
         ReviewCommandDto command,
         ProcessResult result)
     {
         var failures = ParsedTestFailures(result);
-        if (!result.Success && failures.Count == 0)
-            return [$"<unparsed failure in {command.StepId}>"];
-        return failures;
+        if (failures.Count > 0 || result.Success) return failures;
+        // Reaching here means GuardUnparsableSubjectResultAsync already cleared
+        // the host: the command failed on the change, it just failed before any
+        // test could report. Name it for what it is.
+        return [$"<build failure in {command.StepId}>"];
     }
+
+    /// <summary>
+    /// Classifies a subject run without the "a test command that exited non-zero
+    /// produced no results" fallback, so <see cref="RunFailureClass.Unknown"/>
+    /// means exactly one thing: the output carries no signature either way.
+    /// </summary>
+    private static RunFailureVerdict ClassifySubjectResult(ProcessResult result)
+        => RunFailureClassifier.Classify(new RunFailureEvidence
+        {
+            Text = $"{result.StdOut}\n{result.StdErr}",
+            ExitCode = result.ExitCode,
+            ParsedTestFailures = ParsedTestFailures(result).Count,
+            ExpectsTestResults = false,
+        });
+
+    /// <summary>
+    /// Refuses to grade a subject run that produced no test result at all when
+    /// the host, rather than the change, decided the outcome. Such a review ends
+    /// as <c>ReviewInfra</c> and is retried instead of parking the card.
+    /// <para>
+    /// Where the output carries no signature either way, the baseline run is the
+    /// discriminator the review plane already pays for: the same command against
+    /// the unchanged code. If the baseline failed blind too, the host is at fault
+    /// (this is the 2026-09-06 shape, where every run died in
+    /// <c>OutOfProcNode.Run</c> before a test could start). If the baseline was
+    /// clean, the change is implicated and the failure stays a product failure.
+    /// </para>
+    /// </summary>
+    private async Task GuardUnparsableSubjectResultAsync(
+        ReviewCommandDto command,
+        ProcessResult result,
+        int baselineExitCode,
+        IReadOnlyList<string> baselineFailures,
+        ICollection<ReviewCommandEvidenceDto> commands,
+        ICollection<ReviewArtifactEvidenceDto> artifacts,
+        CancellationToken ct)
+    {
+        if (result.Success || ParsedTestFailures(result).Count > 0) return;
+        var verdict = ClassifySubjectResult(result);
+        if (verdict.Class == RunFailureClass.Product) return;
+
+        var baselineFailedBlind = baselineExitCode != 0 && baselineFailures.Count == 0;
+        if (verdict.Class == RunFailureClass.Unknown && !baselineFailedBlind) return;
+
+        var cause = verdict.Class == RunFailureClass.Unknown
+            ? $"The same command failed the same way against the baseline (exit {baselineExitCode}), " +
+              "so the host, not the change, decided the outcome."
+            : $"Class={verdict.Class.ToString().ToLowerInvariant()}; " +
+              $"signature={verdict.Signature}; {verdict.Detail}";
+        throw await InfrastructureFailureAsync(
+            UnparsableSubjectResultClassification,
+            $"Review command '{command.StepId}' exited {result.ExitCode} without producing a single " +
+            $"parsable test result, so no verdict about the change exists. {cause}",
+            commands,
+            artifacts,
+            ct);
+    }
+
+    /// <summary>
+    /// Review-infrastructure classification for a verify command that ran but
+    /// emitted no gradable test result.
+    /// </summary>
+    internal const string UnparsableSubjectResultClassification = "UnparsableTestOutput";
 
     internal static IReadOnlyList<string> ParsedTestFailures(ProcessResult result)
     {
