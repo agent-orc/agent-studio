@@ -14,6 +14,7 @@ import { FormsModule } from '@angular/forms';
 import { BoardFiltersService } from '../../../../features/board';
 import { ProjectLookupService } from '../../../../services/project-lookup.service';
 import { TaskService } from '../../../../services/task.service';
+import { WatcherDecisionPanelComponent } from '../../../../features/watcher';
 import type { OrchestratorLogEntry } from '../../models/orchestrator.model';
 import { GlobalOrchestratorCardComponent } from '../global-orchestrator-card/global-orchestrator-card';
 import { LoadDistributionComponent } from '../load-distribution/load-distribution.component';
@@ -22,11 +23,15 @@ import { OrchestratorFeedStore } from '../../state/orchestrator-feed.store';
 import { OrchestratorFeedWindow } from './orchestrator-feed-windowing';
 
 import { TooltipDirective } from 'coding-agent-chat/shared';
+
+/** Topic name the Watcher stamps on the Activity entry that carries a review-mode decision (orchestrator-waechter dossier §10.4). */
+export const WATCHER_DECISION_TOPIC = 'watcher-decision-required';
+
 /** Workspace feed shared by the embedded main route and quick-access modal. */
 @Component({
   selector: 'app-orchestrator-feed',
   standalone: true,
-  imports: [FormsModule, GlobalOrchestratorCardComponent, LoadDistributionComponent, OrchestratorFeedEntryComponent, TooltipDirective],
+  imports: [FormsModule, GlobalOrchestratorCardComponent, LoadDistributionComponent, OrchestratorFeedEntryComponent, TooltipDirective, WatcherDecisionPanelComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './orchestrator-feed.html',
   styleUrl: './orchestrator-feed.scss'
@@ -133,6 +138,10 @@ export class OrchestratorFeedComponent {
 
   refresh(silent = false): void {
     this.feedStore.refresh(silent);
+  }
+
+  isWatcherDecision(entry: OrchestratorLogEntry): boolean {
+    return entry.kind === 'decision' && entry.topic === WATCHER_DECISION_TOPIC;
   }
 
   kindLabel(kind: string): string {

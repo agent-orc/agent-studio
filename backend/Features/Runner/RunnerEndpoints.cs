@@ -50,15 +50,16 @@ public static class RunnerEndpoints
         // force every other project out before timestamps are compared.
         runnerGroup.MapGet("/orchestrator-feed",
             (HttpContext context, TaskScannerService scanner, OrchestratorLog log,
-                AgentStudio.Registry.ProjectRegistry projects) =>
+                AgentStudio.Registry.ProjectRegistry projects,
+                AgentStudio.Watcher.WatcherActivityProjector? watcherActivity) =>
             {
-                var entries = scanner.GetWatchPaths()
+                var perProject = scanner.GetWatchPaths()
                     .Where(project => context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is not HumanPrincipal human
                                       || ProjectAccessAuthorization.Allows(human.User, project.Name, projects))
                     .SelectMany(project => log.Read(project.Path).Select(entry => new
                     {
-                        project = project.Name,
-                        watchPath = project.Path,
+                        project = (string?)project.Name,
+                        watchPath = (string?)project.Path,
                         entry.Ts,
                         entry.Kind,
                         entry.Topic,
@@ -68,7 +69,32 @@ public static class RunnerEndpoints
                         entry.ParticipantId,
                         entry.TokenUsage,
                         entry.UserOverride
-                    }))
+                    }));
+
+                // Workspace-wide Watcher findings (e.g. quota probe silence/drift)
+                // are not attributable to one project; they merge with
+                // project: null, matching the dossier's §4a workspace health
+                // event convention. Visible to every authorized viewer since
+                // they carry no per-project access boundary of their own.
+                var workspacePath = watcherActivity?.WorkspaceWatchPath();
+                var workspaceEntries = string.IsNullOrWhiteSpace(workspacePath)
+                    ? []
+                    : log.Read(workspacePath).Select(entry => new
+                    {
+                        project = (string?)null,
+                        watchPath = (string?)null,
+                        entry.Ts,
+                        entry.Kind,
+                        entry.Topic,
+                        entry.Summary,
+                        entry.Reasoning,
+                        entry.JobId,
+                        entry.ParticipantId,
+                        entry.TokenUsage,
+                        entry.UserOverride
+                    });
+
+                var entries = perProject.Concat(workspaceEntries)
                     .OrderByDescending(entry => entry.Ts)
                     .Take(500)
                     .ToList();
