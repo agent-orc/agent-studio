@@ -2,6 +2,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import type { TaskInfo } from '../../../../models/task.model';
+import { StudioTabStateService } from '../../services/studio-tab-state.service';
 import { GlobalSearchComponent } from './global-search.component';
 import { GlobalSearchFrame, GlobalSearchItem, GlobalSearchService } from './global-search.service';
 
@@ -176,6 +177,45 @@ describe('GlobalSearchComponent', () => {
 
     expect(component.domains().commits.error).toBe('Runner could not be searched.');
     expect(component.domains().files.error).toBeNull();
+  });
+
+  it('reports Dossier matches in their own group alongside tasks', async () => {
+    vi.useFakeTimers();
+    const dossier: GlobalSearchItem = {
+      domain: 'dossiers', projectName: 'P', projectColor: '#fff', title: 'Global Orchestrator Watcher',
+      subtitle: 'Triggers, recovery authority, and observe-first slices.', dossierKey: 'AGT-W15',
+      workbenchId: 'orchestrator-waechter', lane: 'active', phase: 'shaping',
+    };
+    api.frames = [
+      TASKS_FRAME,
+      { event: 'dossiers', data: { items: [dossier], durationMs: 6, error: null } },
+      { event: 'progress', data: { completed: 0, total: 0 } },
+      { event: 'done', data: { durationMs: 10, tasksMs: 8, repositoriesMs: 0, repositories: 0 } },
+    ];
+
+    component.onQuery('AGT-W15');
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS + FRAME_MS * 2);
+
+    expect(component.domains().dossiers.status).toBe('done');
+    expect(component.remote().dossiers).toEqual([dossier]);
+    const group = component.groups().find(g => g.domain === 'dossiers')!;
+    expect(group.items).toEqual([dossier]);
+  });
+
+  it('opens the Dossier viewer tab when a Dossier result is chosen', () => {
+    const tabs = TestBed.inject(StudioTabStateService);
+    const open = vi.spyOn(tabs, 'open');
+    const dossier: GlobalSearchItem = {
+      domain: 'dossiers', projectName: 'P', projectColor: '#fff', title: 'Global Orchestrator Watcher',
+      subtitle: 'Summary.', dossierKey: 'AGT-W15', workbenchId: 'orchestrator-waechter',
+    };
+
+    component.choose(dossier);
+
+    expect(open).toHaveBeenCalledWith({
+      kind: 'workbench', projectName: 'P', workbenchId: 'orchestrator-waechter',
+      title: 'Global Orchestrator Watcher', key: 'AGT-W15',
+    });
   });
 
   it('merges indexed task matches the board snapshot does not carry', async () => {

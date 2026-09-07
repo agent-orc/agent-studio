@@ -1,10 +1,10 @@
 @if (open()) {
   <div class="search-backdrop" data-testid="global-search-backdrop" (mousedown)="close()">
-    <section class="search-palette" role="dialog" aria-modal="true" aria-label="Search tasks, commits, and files" (mousedown)="$event.stopPropagation()">
+    <section class="search-palette" role="dialog" aria-modal="true" aria-label="Search tasks, dossiers, commits, and files" (mousedown)="$event.stopPropagation()">
       <label class="search-input-row">
         <span aria-hidden="true">⌕</span>
         <input #searchInput data-testid="global-search-input" type="search" autocomplete="off"
-               placeholder="Search tasks, commits, files…" [ngModel]="query()" (ngModelChange)="onQuery($event)" />
+               placeholder="Search tasks, dossiers, commits, files…" [ngModel]="query()" (ngModelChange)="onQuery($event)" />
         @if (searching()) { <span class="search-elapsed" data-testid="global-search-elapsed">{{ elapsedLabel() }}</span> }
         <kbd>Esc</kbd>
       </label>
@@ -38,7 +38,9 @@
                           (mouseenter)="activeIndex.set(resultIndex(item))" (click)="choose(item)">
                     <span class="search-project-dot" [style.background]="item.projectColor" aria-hidden="true"></span>
                     <span class="search-result-copy"><strong>{{ item.title }}</strong><small>{{ item.projectName }} · {{ item.subtitle }}</small></span>
+                    @if (item.dossierKey) { <span class="search-badge">{{ item.dossierKey }}</span> }
                     @if (item.lane) { <span class="search-badge">{{ item.lane }}</span> }
+                    @if (item.phase) { <span class="search-badge">{{ item.phase }}</span> }
                     @if (item.isWiki) { <span class="search-badge">Wiki</span> }
                   </button>
                 }
@@ -46,7 +48,7 @@
               </section>
             }
           }
-          @if (!flatResults().length && !searching()) { <p class="search-hint">No matching tasks, commits, or files.</p> }
+          @if (!flatResults().length && !searching()) { <p class="search-hint">No matching tasks, dossiers, commits, or files.</p> }
           @if (showSlowNotice()) {
             <p class="search-loading" data-testid="global-search-slow-notice">Repository search can take a moment on large histories.</p>
           }

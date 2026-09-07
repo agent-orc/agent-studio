@@ -103,3 +103,52 @@ test('palette shows task results and repository progress before repository resul
   await page.getByTestId('studio-global-search-trigger').dispatchEvent('click');
   await expect(page.getByTestId('global-search-input')).toBeVisible();
 });
+
+const DOSSIER_MATCH = {
+  domain: 'dossiers', projectName: 'Agent Studio', projectColor: '#569cd6',
+  title: 'Global Orchestrator Watcher',
+  subtitle: 'Triggers, recovery authority, and observe-first slices.',
+  dossierKey: 'AGT-W15', workbenchId: 'orchestrator-waechter', lane: 'active', phase: 'shaping',
+};
+
+const DOSSIER_STREAM_BODY = [
+  frame('tasks', { items: [], durationMs: 4, error: null }),
+  frame('dossiers', { items: [DOSSIER_MATCH], durationMs: 5, error: null }),
+  frame('progress', { completed: 0, total: 0 }),
+  frame('done', { durationMs: 9, tasksMs: 4, repositoriesMs: 0, repositories: 0 }),
+].join('');
+
+test('typing a Dossier key opens the Dossier viewer from the palette', async ({ page }) => {
+  await page.route('**/api/search/stream?**', route => route.fulfill({
+    contentType: 'text/event-stream', body: DOSSIER_STREAM_BODY,
+  }));
+  await page.route('**/api/projects/Agent%20Studio/workbenches/orchestrator-waechter', route => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({
+      workbench: {
+        id: 'orchestrator-waechter', key: 'AGT-W15', title: 'Global Orchestrator Watcher',
+        summary: DOSSIER_MATCH.subtitle, status: 'active', phase: 'shaping',
+        updatedAtUtc: '2026-08-01T10:00:00Z', entryPath: 'docs/operations/orchestrator-waechter/index.html',
+        valid: true, error: null, sourceTaskKeys: [], relatedTaskKeys: [],
+      },
+      html: '<!doctype html><html><body><h1>Global Orchestrator Watcher</h1></body></html>',
+      branch: 'main', revision: 'a'.repeat(40), workingTreeModified: false, fingerprint: 'b'.repeat(64),
+    }),
+  }));
+
+  await page.addInitScript(() => localStorage.setItem('atp.studio.theme', 'light'));
+  await page.goto('/');
+  await page.getByTestId('studio-global-search-trigger').dispatchEvent('click');
+  const input = page.getByTestId('global-search-input');
+  await expect(input).toBeFocused();
+  await input.fill('AGT-W15');
+
+  const dossierGroup = page.getByTestId('global-search-group-dossiers');
+  await expect(dossierGroup).toContainText('Global Orchestrator Watcher');
+  await expect(dossierGroup).toContainText('AGT-W15');
+  await dossierGroup.getByRole('option').click();
+
+  await expect(page).toHaveURL(/#\/projects\/agent-studio\/workbenches\/orchestrator-waechter(?:&|$)/);
+  await expect(page.frameLocator('[data-testid="workbench-viewer-frame"]')
+    .getByRole('heading', { name: 'Global Orchestrator Watcher' })).toBeVisible({ timeout: 30_000 });
+});
