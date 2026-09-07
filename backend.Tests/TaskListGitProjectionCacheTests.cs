@@ -1,142 +1,106 @@
-using System.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Time.Testing;
 
 using Xunit;
 
 namespace AgentStudio.Tests;
 
+/// <summary>
+/// AGT-2726: <see cref="TaskListGitProjectionCache"/> is now a pure
+/// per-repository snapshot store. It never spawns Git and never starts a
+/// background refresh itself - that is <c>GitStateIndexService</c>'s job.
+/// These tests pin the store's read/merge/freshness contract in isolation.
+/// </summary>
 public sealed class TaskListGitProjectionCacheTests
 {
-    [Theory]
-    [InlineData(false, false, false, false, true)]
-    [InlineData(true, false, true, false, true)]
-    [InlineData(true, false, false, true, true)]
-    [InlineData(true, false, false, false, false)]
-    [InlineData(false, true, true, true, false)]
-    [InlineData(true, true, true, true, false)]
-    public void RefreshPolicy_QueuesOnlyColdChangedOrDueIdleEntry(
-        bool hasSnapshot,
-        bool refreshing,
-        bool inputChanged,
-        bool refreshDue,
-        bool expected)
+    [Fact]
+    public void ReadCacheOnly_BeforeAnySnapshot_ReturnsEmptyAndSpawnsNoGit()
     {
-        Assert.Equal(
-            expected,
-            TaskListGitRefreshPolicy.ShouldQueue(
-                hasSnapshot,
-                refreshing,
-                inputChanged,
-                refreshDue));
+        var cache = new TaskListGitProjectionCache();
+        using var telemetry = GitProcessTelemetry.BeginRequest(
+            "tasks/list", NullLogger.Instance, includeNested: true);
+
+        var result = cache.ReadCacheOnly([Job("task-1", "watch-a")]);
+
+        Assert.Same(TaskListGitProjection.Empty, result);
+        Assert.Equal(0, GitProcessTelemetry.CurrentTally()!.Value.Spawns);
     }
 
     [Fact]
-    public void ReadCacheOnly_DetachesGitWorkAndReturnsWithoutWaiting()
+    public void ReadCacheOnly_AfterSetSnapshot_ReturnsWrittenProjectionWithoutGitWork()
     {
-        using var started = new ManualResetEventSlim();
-        using var release = new ManualResetEventSlim();
-        var task = Job("task-1");
+        var cache = new TaskListGitProjectionCache();
+        var task = Job("task-1", "watch-a");
         var signal = new TaskMergeSignal { Branch = "task/task-1" };
         var projection = new TaskListGitProjection(
-            new Dictionary<string, TaskMergeSignal>(StringComparer.Ordinal)
-            {
-                [task.TaskKey] = signal,
-            },
+            new Dictionary<string, TaskMergeSignal>(StringComparer.Ordinal) { [task.TaskKey] = signal },
             new Dictionary<string, TaskIntegrationStatus>(StringComparer.Ordinal),
             new Dictionary<string, TaskPublishSignal>(StringComparer.Ordinal),
             new Dictionary<string, TaskTestRunEvidence>(StringComparer.Ordinal));
-        var cache = new TaskListGitProjectionCache(
-            _ =>
-            {
-                started.Set();
-                release.Wait(TimeSpan.FromSeconds(5));
-                GitProcessTelemetry.Record("rev-list", 25, 0);
-                return projection;
-            },
-            NullLogger<TaskListGitProjectionCache>.Instance,
-            new FakeTimeProvider(DateTimeOffset.Parse("2026-08-03T12:00:00Z")));
+        var stateAt = DateTimeOffset.Parse("2026-09-06T12:00:00Z");
 
-        using (GitProcessTelemetry.BeginRequest(
-                   "tasks/list",
-                   NullLogger.Instance,
-                   includeNested: true))
-        {
-            var stopwatch = Stopwatch.StartNew();
-            var cold = cache.ReadCacheOnly([task]);
-            stopwatch.Stop();
+        cache.SetSnapshot("watch-a", projection, stateAt);
 
-            Assert.Same(TaskListGitProjection.Empty, cold);
-            Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(1));
-            Assert.True(started.Wait(TimeSpan.FromSeconds(5)));
-            release.Set();
-            Assert.True(SpinWait.SpinUntil(
-                () => !ReferenceEquals(cache.ReadCacheOnly([task]), TaskListGitProjection.Empty),
-                TimeSpan.FromSeconds(5)));
-            Assert.Equal(0, GitProcessTelemetry.CurrentTally()!.Value.Spawns);
-        }
+        using var telemetry = GitProcessTelemetry.BeginRequest(
+            "tasks/list", NullLogger.Instance, includeNested: true);
+        var result = cache.ReadCacheOnly([task]);
 
-        var warm = cache.ReadCacheOnly([task]);
-        Assert.Same(signal, warm.Merge[task.TaskKey]);
+        Assert.Same(signal, result.Merge[task.TaskKey]);
+        Assert.Equal(0, GitProcessTelemetry.CurrentTally()!.Value.Spawns);
+
+        var freshness = cache.ReadFreshness([task]);
+        Assert.Equal(stateAt, freshness.GitStateAt);
+        Assert.False(freshness.Stale);
     }
 
     [Fact]
-    public void ReadCacheOnly_OverThreeHundredTasksUnderConcurrentLoad_RemainsMemoryOnlyAndUnderBudget()
+    public void ReadCacheOnly_AcrossMultipleRepositories_MergesEachRepositorysSnapshot()
     {
-        using var started = new ManualResetEventSlim();
-        using var release = new ManualResetEventSlim();
-        var tasks = Enumerable.Range(0, 300).Select(index => Job($"task-{index:D3}")).ToArray();
-        var refreshCalls = 0;
-        var refreshed = new TaskListGitProjection(
-            new Dictionary<string, TaskMergeSignal>(StringComparer.Ordinal)
-            {
-                [tasks[0].TaskKey] = new TaskMergeSignal { Branch = "task/task-000" },
-            },
-            new Dictionary<string, TaskIntegrationStatus>(StringComparer.Ordinal),
-            new Dictionary<string, TaskPublishSignal>(StringComparer.Ordinal),
-            new Dictionary<string, TaskTestRunEvidence>(StringComparer.Ordinal));
-        var cache = new TaskListGitProjectionCache(
-            _ =>
-            {
-                Interlocked.Increment(ref refreshCalls);
-                started.Set();
-                release.Wait(TimeSpan.FromSeconds(5));
-                return refreshed;
-            },
-            NullLogger<TaskListGitProjectionCache>.Instance,
-            new FakeTimeProvider(DateTimeOffset.Parse("2026-08-03T12:00:00Z")));
+        var cache = new TaskListGitProjectionCache();
+        var taskA = Job("task-a", "watch-a");
+        var taskB = Job("task-b", "watch-b");
+        cache.SetSnapshot("watch-a", ProjectionFor(taskA, "task/a"), DateTimeOffset.UtcNow);
+        cache.SetSnapshot("watch-b", ProjectionFor(taskB, "task/b"), DateTimeOffset.UtcNow);
 
-        try
-        {
-            using var telemetry = GitProcessTelemetry.BeginRequest(
-                "tasks/list",
-                NullLogger.Instance,
-                includeNested: true);
-            _ = cache.ReadCacheOnly(tasks);
-            Assert.True(started.Wait(TimeSpan.FromSeconds(5)));
-            var stopwatch = Stopwatch.StartNew();
-            Parallel.For(0, 64, _ => cache.ReadCacheOnly(tasks));
-            stopwatch.Stop();
+        var merged = cache.ReadCacheOnly([taskA, taskB]);
 
-            Assert.Equal(1, Volatile.Read(ref refreshCalls));
-            Assert.Equal(0, GitProcessTelemetry.CurrentTally()!.Value.Spawns);
-            Assert.True(
-                stopwatch.Elapsed < TimeSpan.FromSeconds(1),
-                $"64 concurrent cache-only Git reads over 300 tasks took {stopwatch.ElapsedMilliseconds}ms.");
-        }
-        finally
-        {
-            release.Set();
-            Assert.True(SpinWait.SpinUntil(
-                () => ReferenceEquals(cache.ReadCacheOnly(tasks), refreshed),
-                TimeSpan.FromSeconds(5)));
-        }
+        Assert.Equal("task/a", merged.Merge[taskA.TaskKey].Branch);
+        Assert.Equal("task/b", merged.Merge[taskB.TaskKey].Branch);
+    }
+
+    [Fact]
+    public void ReadFreshness_WhenOneOfSeveralRepositoriesNeverIndexed_IsStale()
+    {
+        var cache = new TaskListGitProjectionCache();
+        var taskA = Job("task-a", "watch-a");
+        var taskB = Job("task-b", "watch-b");
+        cache.SetSnapshot("watch-a", ProjectionFor(taskA, "task/a"), DateTimeOffset.UtcNow);
+        // watch-b never indexed.
+
+        var freshness = cache.ReadFreshness([taskA, taskB]);
+
+        Assert.True(freshness.Stale);
+    }
+
+    [Fact]
+    public void ReadFreshness_WhileMarkedRefreshing_IsStaleButKeepsServingThePriorSnapshot()
+    {
+        var cache = new TaskListGitProjectionCache();
+        var task = Job("task-1", "watch-a");
+        var signal = new TaskMergeSignal { Branch = "task/task-1" };
+        cache.SetSnapshot("watch-a", ProjectionFor(task, "task/task-1"), DateTimeOffset.UtcNow);
+
+        cache.MarkRefreshing("watch-a");
+
+        var freshness = cache.ReadFreshness([task]);
+        Assert.True(freshness.Stale);
+        var stillServed = cache.ReadCacheOnly([task]);
+        Assert.Equal("task/task-1", stillServed.Merge[task.TaskKey].Branch);
     }
 
     [Fact]
     public async Task BuildProjectionAsync_StartsAllLookupsBeforeWaitingForCompletion()
     {
-        var task = Job("task-1");
+        var task = Job("task-1", "watch-a");
         var started = 0;
         var merge = new TaskCompletionSource<Dictionary<string, TaskMergeSignal>>(
             TaskCreationOptions.RunContinuationsAsynchronously);
@@ -174,15 +138,25 @@ public sealed class TaskListGitProjectionCacheTests
         Assert.Empty(projection.TestRuns);
     }
 
-    private static TaskInfo Job(string id)
+    private static TaskListGitProjection ProjectionFor(TaskInfo task, string branch)
+        => new(
+            new Dictionary<string, TaskMergeSignal>(StringComparer.Ordinal)
+            {
+                [task.TaskKey] = new TaskMergeSignal { Branch = branch },
+            },
+            new Dictionary<string, TaskIntegrationStatus>(StringComparer.Ordinal),
+            new Dictionary<string, TaskPublishSignal>(StringComparer.Ordinal),
+            new Dictionary<string, TaskTestRunEvidence>(StringComparer.Ordinal));
+
+    private static TaskInfo Job(string id, string watchPath)
         => new()
         {
             Id = id,
-            TaskKey = $"watch::{id}",
+            TaskKey = $"{watchPath}::{id}",
             Title = id,
             State = TaskStates.Completed,
             ProjectName = "project",
-            WatchPath = "watch",
+            WatchPath = watchPath,
             Commits =
             [
                 new TaskCommitInfo

@@ -24,6 +24,7 @@ export interface JobsHubHandlers {
   jobDeleted?: (e: { id: string; watchPath: string }) => void;
   jobsReordered?: (e: { projectName: string; lane: string | null }) => void;
   jobsBulkChanged?: () => void;
+  gitStateChanged?: (e: { projectName: string; gitStateAt: string }) => void;
   runnerStatusChanged?: () => void;
   cliStarted?: () => void;
   cliFinished?: () => void;
@@ -102,6 +103,7 @@ export class JobsHubClient {
     if (handlers.jobDeleted) conn.on('jobDeleted', handlers.jobDeleted);
     if (handlers.jobsReordered) conn.on('jobsReordered', handlers.jobsReordered);
     if (handlers.jobsBulkChanged) conn.on('jobsBulkChanged', handlers.jobsBulkChanged);
+    if (handlers.gitStateChanged) conn.on('gitStateChanged', handlers.gitStateChanged);
     if (handlers.runnerStatusChanged) conn.on('runnerStatusChanged', handlers.runnerStatusChanged);
     if (handlers.cliStarted) conn.on('cliStarted', handlers.cliStarted);
     if (handlers.cliFinished) conn.on('cliFinished', handlers.cliFinished);

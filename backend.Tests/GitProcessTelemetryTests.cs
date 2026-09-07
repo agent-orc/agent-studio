@@ -97,4 +97,89 @@ public class GitProcessTelemetryTests
             Assert.Equal(48, tally.Value.GitMs);
         }
     }
+
+    [Fact]
+    public void CurrentSlowestCommand_ReturnsTheHighestWallTimeCommand()
+    {
+        using (GitProcessTelemetry.BeginRequest("test/slowest", NullLogger.Instance))
+        {
+            GitProcessTelemetry.Record("rev-parse", 5, 0);
+            GitProcessTelemetry.Record("for-each-ref", 40, 0);
+            GitProcessTelemetry.Record("rev-parse", 5, 0);
+
+            var slowest = GitProcessTelemetry.CurrentSlowestCommand();
+            Assert.NotNull(slowest);
+            Assert.Equal("for-each-ref", slowest!.Value.Command);
+            Assert.Equal(1, slowest.Value.Count);
+            Assert.Equal(40, slowest.Value.Ms);
+        }
+    }
+
+    /// <summary>
+    /// AGT-2726: <see cref="GitProcessTelemetry.GetStatsSnapshot"/> backs the
+    /// Admin git-telemetry surface's p50/p95/spawn-rate. Uses a unique label
+    /// per test so concurrently running test classes recording their own real
+    /// rollups under other labels cannot affect these assertions.
+    /// </summary>
+    [Fact]
+    public void GetStatsSnapshot_ComputesPercentilesAndSpawnRateForALabel()
+    {
+        // WallMs is the scope's real elapsed time (Stopwatch), independent of
+        // the TimeProvider used only to stamp when each sample was recorded -
+        // so this test uses small real sleeps to produce distinct, ordered
+        // wall times instead of asserting exact millisecond values (which
+        // would be scheduler-timing-flaky).
+        var label = "test/stats-" + Guid.NewGuid();
+        var clock = new FakeTimeProviderStep(DateTimeOffset.Parse("2026-09-06T20:00:00Z"));
+
+        foreach (var sleepMs in new[] { 1, 2, 4, 8, 16 })
+        {
+            using (GitProcessTelemetry.BeginRequest(label, NullLogger.Instance, timeProvider: clock))
+            {
+                Thread.Sleep(sleepMs);
+                GitProcessTelemetry.Record("rev-parse", sleepMs, 0);
+                GitProcessTelemetry.Record("rev-parse", 0, 0);
+            }
+        }
+
+        var stats = GitProcessTelemetry.GetStatsSnapshot(TimeSpan.FromHours(1), clock)
+            .Single(s => s.Label == label);
+
+        Assert.Equal(5, stats.SampleCount);
+        Assert.Equal(10, stats.TotalSpawns); // 5 samples * 2 spawns each
+        // p95 must be at least as large as p50, and both must reflect real
+        // elapsed time (not the constant zero WallMs a bug would produce).
+        Assert.True(stats.P50Ms > 0, $"expected a positive p50, got {stats.P50Ms}");
+        Assert.True(stats.P95Ms >= stats.P50Ms, $"expected p95 ({stats.P95Ms}) >= p50 ({stats.P50Ms})");
+        Assert.True(stats.SpawnsPerMinute > 0);
+    }
+
+    [Fact]
+    public void GetStatsSnapshot_ExcludesSamplesOutsideTheWindow()
+    {
+        var label = "test/stats-window-" + Guid.NewGuid();
+        var now = DateTimeOffset.Parse("2026-09-06T20:00:00Z");
+        var clock = new FakeTimeProviderStep(now);
+
+        using (GitProcessTelemetry.BeginRequest(label, NullLogger.Instance, timeProvider: clock))
+            GitProcessTelemetry.Record("rev-parse", 5, 0);
+
+        clock.Advance(TimeSpan.FromHours(2));
+        using (GitProcessTelemetry.BeginRequest(label, NullLogger.Instance, timeProvider: clock))
+            GitProcessTelemetry.Record("rev-parse", 5, 0);
+
+        var stats = GitProcessTelemetry.GetStatsSnapshot(TimeSpan.FromHours(1), clock)
+            .SingleOrDefault(s => s.Label == label);
+
+        Assert.NotNull(stats);
+        Assert.Equal(1, stats!.SampleCount);
+    }
+
+    /// <summary>Minimal step-able <see cref="TimeProvider"/> so these tests do not depend on <c>Microsoft.Extensions.Time.Testing</c>.</summary>
+    private sealed class FakeTimeProviderStep(DateTimeOffset start) : TimeProvider
+    {
+        private DateTimeOffset _now = start;
+        public void Advance(TimeSpan by) => _now += by;
+        public override DateTimeOffset GetUtcNow() => _now;
+    }
 }

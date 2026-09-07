@@ -51,7 +51,10 @@ public sealed partial class ProjectGitGraphService
         {
             if (_cache.TryGetValue(projectName, out var cached)
                 && cached.ComputedAt == inventory.ComputedAt)
-                return cached;
+                // The enriched copy was built from this same generation, but
+                // Stale (queued/refreshing) can flip between calls without a
+                // new ComputedAt yet - always take the freshly read bit.
+                return cached.Stale == inventory.Stale ? cached : cached with { Stale = inventory.Stale };
         }
 
         // The raw snapshot can become visible immediately before its

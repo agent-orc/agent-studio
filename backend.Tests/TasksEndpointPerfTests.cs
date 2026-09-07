@@ -281,14 +281,29 @@ public class JobsEndpointPerfTests : IDisposable
                             ["WatchPaths:0:Path"] = jobs,
                             ["WatchPaths:0:RootPath"] = repo,
                             ["WatchPaths:0:RepositoryPath"] = repo,
+                            // Fast debounce so the change-driven index run
+                            // after HEAD churn lands well inside the test
+                            // timeout without weakening the production default.
+                            ["GitStateIndex:DebounceMs"] = "50",
                         });
                     });
                 });
 
             using var client = factory.CreateClient();
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
             using var readiness = await client.GetAsync("/healthz", timeout.Token);
             readiness.EnsureSuccessStatusCode();
+
+            // AGT-2726: GitStateIndexService runs its own "startup" index pass
+            // for every known repository the moment the host starts, entirely
+            // independent of any HTTP request. Wait for that first background
+            // run to complete before asserting on the request path.
+            var initialIndexRun = await telemetry.WaitForRollupAsync(
+                "git-index-run",
+                expectedCount: 1,
+                timeout.Token);
+            Assert.True(initialIndexRun[0].Spawns > 0);
+
             var stopwatch = Stopwatch.StartNew();
             using var response = await client.GetAsync("/api/tasks", timeout.Token);
             stopwatch.Stop();
@@ -299,17 +314,27 @@ public class JobsEndpointPerfTests : IDisposable
             Assert.True(
                 stopwatch.Elapsed < TimeSpan.FromSeconds(1),
                 $"GET /api/tasks took {stopwatch.ElapsedMilliseconds}ms; the list budget is under 1000ms.");
-
-            var initialRefresh = await telemetry.WaitForRollupAsync(
-                "tasks/list-refresh",
-                expectedCount: 1,
-                timeout.Token);
-            Assert.True(initialRefresh[0].Spawns > 0);
+            // AGT-2726: the freshness stamp rides along as headers on this
+            // bare-array response (the body stays TaskInfo[], a wire-contract
+            // break would follow from wrapping it in an object).
+            Assert.True(response.Headers.TryGetValues("X-Git-State-At", out var gitStateAtHeader));
+            Assert.True(DateTimeOffset.TryParse(Assert.Single(gitStateAtHeader!), out _));
+            Assert.True(response.Headers.TryGetValues("X-Git-State-Stale", out var staleHeader));
+            Assert.Equal("false", Assert.Single(staleHeader!));
 
             File.WriteAllText(Path.Combine(repo, "head-churn.txt"), "new HEAD\n");
             RunGit(repo, "add", "head-churn.txt");
             RunGit(repo, "commit", "-q", "-m", "test: move HEAD");
-            await Task.Delay(TaskListGitProjectionCache.RefreshInterval + TimeSpan.FromMilliseconds(250), timeout.Token);
+
+            // The commit touches .git/HEAD and .git/refs, which the indexer's
+            // FileSystemWatcher (plus, as a safety net, its periodic sweep)
+            // treats as a change-driven trigger - no request needs to land for
+            // this second run to happen.
+            var churnIndexRun = await telemetry.WaitForRollupAsync(
+                "git-index-run",
+                expectedCount: 2,
+                timeout.Token);
+            Assert.True(churnIndexRun[1].Spawns > 0);
 
             stopwatch.Restart();
             using var churnResponse = await client.GetAsync("/api/tasks", timeout.Token);
@@ -325,12 +350,11 @@ public class JobsEndpointPerfTests : IDisposable
             using var groupedResponse = await client.GetAsync("/api/tasks/grouped", timeout.Token);
             groupedResponse.EnsureSuccessStatusCode();
             Assert.Equal(0, Assert.Single(telemetry.Rollups("tasks/grouped")).Spawns);
-
-            var refreshes = await telemetry.WaitForRollupAsync(
-                "tasks/list-refresh",
-                expectedCount: 2,
-                timeout.Token);
-            Assert.True(refreshes[1].Spawns > 0);
+            var groupedBody = await groupedResponse.Content.ReadFromJsonAsync<JsonElement>(timeout.Token);
+            Assert.True(groupedBody.TryGetProperty("gitStateAt", out var groupedGitStateAt));
+            Assert.True(DateTimeOffset.TryParse(groupedGitStateAt.GetString(), out _));
+            Assert.True(groupedBody.TryGetProperty("stale", out var groupedStale));
+            Assert.False(groupedStale.GetBoolean());
         }
         finally
         {

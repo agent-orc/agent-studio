@@ -1127,6 +1127,20 @@ export interface GroupedJobs {
 }
 
 /**
+ * AGT-2726 — wire shape of `GET /api/tasks/grouped`: the lanes plus the
+ * background Git-index freshness stamp folded into every card's merge/
+ * integration/publish/test-run signal. `gitStateAt` is the oldest index
+ * timestamp among the repositories represented on the board; `stale` is true
+ * while at least one of them has never been indexed yet or is mid-refresh.
+ * Kept separate from {@link GroupedJobs} so `Object.values(grouped)` (used to
+ * flatten every lane into one job list) never has to skip non-array fields.
+ */
+export interface GroupedJobsResponse extends GroupedJobs {
+  gitStateAt: string | null;
+  stale: boolean;
+}
+
+/**
  * ASS-1727 — one row in the paged Archive read endpoint
  * (`GET /api/tasks/archive`). The board `grouped.archive` lane is
  * intentionally empty (the cache-backed board scan excludes the terminal

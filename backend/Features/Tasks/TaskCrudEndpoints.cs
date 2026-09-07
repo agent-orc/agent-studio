@@ -89,7 +89,8 @@ public static class TaskCrudEndpoints
             var tokenLookup = BuildTokenLookup(raw, tokens);
             var verdictLookup = BuildOrchestratorVerdictLookup(raw, configuration);
             var dependencyLookups = BuildDependencyGraphLookups(raw, scanner);
-            var gitLookup = gitProjection.ReadCacheOnly(raw, scanner.SnapshotGeneration);
+            var gitLookup = gitProjection.ReadCacheOnly(raw);
+            ApplyGitStateHeaders(ctx, gitProjection.ReadFreshness(raw));
             var liveLookup = liveStatus.BuildLookup(raw);
             var jobs = raw.Select(job => WithRuntime(job, router, runners, tokenLookup, verdictLookup, dependencyLookups.WaitsOn, dependencyLookups.TransitiveWaiters))
                           .WithLiveStatus(liveLookup)
@@ -123,7 +124,9 @@ public static class TaskCrudEndpoints
             var tokenLookup = BuildTokenLookup(raw, tokens);
             var verdictLookup = BuildOrchestratorVerdictLookup(raw, configuration);
             var dependencyLookups = BuildDependencyGraphLookups(raw, scanner);
-            var gitLookup = gitProjection.ReadCacheOnly(raw, scanner.SnapshotGeneration);
+            var gitLookup = gitProjection.ReadCacheOnly(raw);
+            var gitFreshness = gitProjection.ReadFreshness(raw);
+            ApplyGitStateHeaders(context, gitFreshness);
             var liveLookup = liveStatus.BuildLookup(raw);
             var jobs = raw.Select(job => WithRuntime(job, router, runners, tokenLookup, verdictLookup, dependencyLookups.WaitsOn, dependencyLookups.TransitiveWaiters))
                           .WithLiveStatus(liveLookup)
@@ -195,7 +198,15 @@ public static class TaskCrudEndpoints
                 // dedicated GET /api/tasks/archive endpoint instead. The key is
                 // kept (always []) so pre-existing clients that read
                 // grouped.archive don't NPE on a missing field.
-                Archive = Array.Empty<TaskInfo>()
+                Archive = Array.Empty<TaskInfo>(),
+                // AGT-2726: the board-wide Git derived state (merge/integration/
+                // publish/test-run signals folded into the cards above) is a
+                // background-index snapshot, not something this request
+                // computed. GitStateAt is the oldest index timestamp among the
+                // repositories represented on the board; Stale is true while at
+                // least one of them has never been indexed yet or is mid-refresh.
+                GitStateAt = gitFreshness.GitStateAt,
+                Stale = gitFreshness.Stale,
             };
             return Results.Ok(grouped);
         });
@@ -1068,6 +1079,20 @@ public static class TaskCrudEndpoints
         }
 
         return Results.BadRequest($"Invalid state. Allowed: {string.Join(", ", TaskStates.All)}");
+    }
+
+    /// <summary>
+    /// Surfaces the background Git-index freshness stamp on a response whose
+    /// body shape is a bare array (<c>GET /api/tasks</c>) or otherwise not
+    /// worth widening, so a client can still show "as of" without a wire
+    /// contract change. <c>GET /api/tasks/grouped</c> carries the same values
+    /// as body fields as well, since its response is already an object.
+    /// </summary>
+    private static void ApplyGitStateHeaders(HttpContext context, GitProjectionFreshness freshness)
+    {
+        if (freshness.GitStateAt is { } at)
+            context.Response.Headers["X-Git-State-At"] = at.ToString("O");
+        context.Response.Headers["X-Git-State-Stale"] = freshness.Stale ? "true" : "false";
     }
 }
 

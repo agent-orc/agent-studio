@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 
@@ -52,9 +53,10 @@ public static class GitProcessTelemetry
     public static IDisposable BeginRequest(
         string label,
         ILogger logger,
-        bool includeNested = false)
+        bool includeNested = false,
+        TimeProvider? timeProvider = null)
     {
-        var scope = new GitRequestScope(label, logger, _current.Value, includeNested);
+        var scope = new GitRequestScope(label, logger, _current.Value, includeNested, timeProvider ?? TimeProvider.System);
         _current.Value = scope;
         return scope;
     }
@@ -95,12 +97,89 @@ public static class GitProcessTelemetry
     internal static (int Spawns, long GitMs, int FileReads)? CurrentTally()
         => _current.Value is { } s ? (s.Spawns, s.GitMs, s.FileReads) : null;
 
+    /// <summary>
+    /// Diagnostic hook for a long-running scope (the git-state indexer's
+    /// per-repository run): the single subcommand that has accumulated the
+    /// most wall-time so far in the ambient scope, or null when nothing is
+    /// measuring or no spawn has been recorded yet.
+    /// </summary>
+    internal static (string Command, int Count, long Ms)? CurrentSlowestCommand()
+        => _current.Value?.SlowestCommand();
+
+    /// <summary>
+    /// Rolling per-label request stats (AGT-2726): every scope rollup is also
+    /// recorded here, bounded to <see cref="RollupHistoryLimit"/> entries per
+    /// label, so an Admin surface can compute p50/p95 and a spawn rate without
+    /// a second counter. This is purely additive bookkeeping over the same
+    /// <see cref="GitRequestScope.Dispose"/> rollup already logged; nothing
+    /// about the log line changes.
+    /// </summary>
+    private const int RollupHistoryLimit = 2000;
+
+    private static readonly ConcurrentDictionary<string, ConcurrentQueue<RollupSample>> _rollups =
+        new(StringComparer.Ordinal);
+
+    private readonly record struct RollupSample(DateTimeOffset At, int Spawns, long GitMs, long WallMs);
+
+    private static void RecordRollup(string label, int spawns, long gitMs, long wallMs, TimeProvider timeProvider)
+    {
+        var queue = _rollups.GetOrAdd(label, static _ => new ConcurrentQueue<RollupSample>());
+        queue.Enqueue(new RollupSample(timeProvider.GetUtcNow(), spawns, gitMs, wallMs));
+        while (queue.Count > RollupHistoryLimit && queue.TryDequeue(out _)) { }
+    }
+
+    /// <summary>
+    /// Per-label rollup stats over the requested trailing <paramref name="window"/>,
+    /// used by the Admin git-telemetry surface. p50/p95 are computed over wall
+    /// time; <c>SpawnsPerMinute</c> normalizes the summed spawn count in the
+    /// window to a per-minute rate so windows of different length compare
+    /// evenly.
+    /// </summary>
+    public static IReadOnlyList<EndpointStats> GetStatsSnapshot(TimeSpan window, TimeProvider? timeProvider = null)
+    {
+        var now = (timeProvider ?? TimeProvider.System).GetUtcNow();
+        var cutoff = now - window;
+        var results = new List<EndpointStats>();
+        foreach (var (label, queue) in _rollups)
+        {
+            var samples = queue.Where(s => s.At >= cutoff).ToArray();
+            if (samples.Length == 0) continue;
+            var wallTimes = samples.Select(s => (double)s.WallMs).OrderBy(v => v).ToArray();
+            var totalSpawns = samples.Sum(s => s.Spawns);
+            var minutes = Math.Max(window.TotalMinutes, 1.0 / 60);
+            results.Add(new EndpointStats(
+                label,
+                samples.Length,
+                Percentile(wallTimes, 0.50),
+                Percentile(wallTimes, 0.95),
+                totalSpawns,
+                totalSpawns / minutes));
+        }
+        return results.OrderByDescending(r => r.P95Ms).ToArray();
+    }
+
+    /// <summary>Test/diagnostic hook: clears all recorded rollup history.</summary>
+    internal static void ResetStats() => _rollups.Clear();
+
+    private static double Percentile(double[] sortedAscending, double p)
+    {
+        if (sortedAscending.Length == 0) return 0;
+        if (sortedAscending.Length == 1) return sortedAscending[0];
+        var rank = p * (sortedAscending.Length - 1);
+        var lower = (int)Math.Floor(rank);
+        var upper = (int)Math.Ceiling(rank);
+        if (lower == upper) return sortedAscending[lower];
+        var fraction = rank - lower;
+        return sortedAscending[lower] + (sortedAscending[upper] - sortedAscending[lower]) * fraction;
+    }
+
     private sealed class GitRequestScope : IDisposable
     {
         private readonly string _label;
         private readonly ILogger _logger;
         private readonly GitRequestScope? _parent;
         private readonly bool _includeNested;
+        private readonly TimeProvider _timeProvider;
         private readonly Stopwatch _wall = Stopwatch.StartNew();
         private readonly object _gate = new();
         private readonly Dictionary<string, (int Count, long Ms)> _byCommand = new(StringComparer.Ordinal);
@@ -113,12 +192,24 @@ public static class GitProcessTelemetry
             string label,
             ILogger logger,
             GitRequestScope? parent,
-            bool includeNested)
+            bool includeNested,
+            TimeProvider timeProvider)
         {
             _label = label;
             _logger = logger;
             _parent = parent;
             _includeNested = includeNested;
+            _timeProvider = timeProvider;
+        }
+
+        public (string Command, int Count, long Ms)? SlowestCommand()
+        {
+            lock (_gate)
+            {
+                if (_byCommand.Count == 0) return null;
+                var top = _byCommand.OrderByDescending(kv => kv.Value.Ms).First();
+                return (top.Key, top.Value.Count, top.Value.Ms);
+            }
         }
 
         public void Add(string command, long elapsedMs)
@@ -183,6 +274,21 @@ public static class GitProcessTelemetry
             _logger.LogInformation(
                 "git-info request={Label} spawns={Spawns} gitMs={GitMs} files={FileReads} wallMs={WallMs} breakdown=[{Breakdown}]",
                 _label, spawns, gitMs, fileReads, _wall.ElapsedMilliseconds, breakdown);
+            RecordRollup(_label, spawns, gitMs, _wall.ElapsedMilliseconds, _timeProvider);
         }
     }
 }
+
+/// <summary>
+/// One request label's rollup stats over a trailing window, read by the Admin
+/// git-telemetry surface. <see cref="P50Ms"/>/<see cref="P95Ms"/> are wall-time
+/// percentiles; <see cref="SpawnsPerMinute"/> is the summed spawn count in the
+/// window normalized to a per-minute rate.
+/// </summary>
+public sealed record EndpointStats(
+    string Label,
+    int SampleCount,
+    double P50Ms,
+    double P95Ms,
+    int TotalSpawns,
+    double SpawnsPerMinute);

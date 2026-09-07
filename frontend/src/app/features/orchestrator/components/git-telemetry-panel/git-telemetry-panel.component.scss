@@ -1,0 +1,76 @@
+:host { display: block; }
+
+.git-telemetry {
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-3);
+  border: 1px solid var(--studio-border);
+  border-radius: 8px;
+  background: var(--studio-surface-muted);
+  padding: var(--studio-spacing-3);
+  color: var(--studio-fg);
+}
+
+.git-telemetry__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--studio-spacing-3);
+}
+
+.git-telemetry__head h3 { margin: 0; color: var(--studio-fg-strong); font-size: 13px; }
+.git-telemetry__head p { margin: var(--studio-spacing-1) 0 0; color: var(--studio-fg-muted); font-size: 11px; }
+
+.git-telemetry__refresh {
+  border: 1px solid var(--studio-border);
+  border-radius: 6px;
+  background: var(--studio-bg-surface);
+  color: var(--studio-fg);
+  font-size: 11px;
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
+  cursor: pointer;
+}
+
+.git-telemetry__muted { color: var(--studio-fg-muted); font-size: 11px; }
+
+.git-telemetry__banner {
+  border-radius: 6px;
+  padding: var(--studio-spacing-2);
+  font-size: 11px;
+  background: var(--studio-surface-muted);
+  border: 1px solid var(--studio-border);
+}
+
+.git-telemetry__banner--warn {
+  color: var(--studio-fg);
+  border-color: color-mix(in srgb, var(--studio-accent-warn) 34%, transparent);
+  background: color-mix(in srgb, var(--studio-accent-warn) 10%, var(--studio-bg-surface));
+}
+
+.git-telemetry__banner--err {
+  color: var(--studio-accent-6-strong);
+  border-color: color-mix(in srgb, var(--studio-accent-6) 34%, transparent);
+  background: color-mix(in srgb, var(--studio-accent-6) 10%, var(--studio-bg-surface));
+}
+
+.git-telemetry__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.git-telemetry__table th {
+  color: var(--studio-fg-muted);
+  font-size: 9.5px;
+  text-align: left;
+  text-transform: uppercase;
+  padding: var(--studio-spacing-1);
+}
+
+.git-telemetry__table td {
+  padding: var(--studio-spacing-1);
+  border-top: 1px solid var(--studio-border);
+  font-variant-numeric: tabular-nums;
+}
+
+.git-telemetry__table td:first-child { font-variant-numeric: normal; }

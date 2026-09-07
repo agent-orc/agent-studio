@@ -593,6 +593,17 @@
           (toggleAuto)="onToggleAuto($event)"
           (openShell)="openProjectShell($event)" />
         <div class="header__actions">
+          @if (gitStateAgeLabel(); as age) {
+            <span class="git-state-stamp"
+                  data-testid="git-state-stamp"
+                  [attr.data-git-state-at]="jobService.gitStateAt()"
+                  [attr.data-stale]="jobService.gitStateStale()"
+                  [cacTooltip]="jobService.gitStateStale()
+                    ? 'Git-derived board state (merge/integration/publish/test-run) is updating - as of ' + age
+                    : 'Git-derived board state (merge/integration/publish/test-run) as of ' + age">
+              Git state: {{ age }}
+            </span>
+          }
           <app-auto-review-indicator />
           <app-update-version-badge />
           <label class="client-filter" data-testid="client-filter">

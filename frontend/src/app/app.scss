@@ -126,6 +126,15 @@
     }
     .header__subtitle { font-size: 11px; color: var(--studio-fg-muted); }
     .header__actions { display: flex; gap: 6px; flex: 0 0 auto; align-items: center; }
+    // AGT-2726: quiet freshness stamp for the board's background Git index.
+    // Text only - no accent bar or dot, per the design hard rules.
+    .git-state-stamp {
+      font-size: 11px;
+      color: var(--studio-fg-muted);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      &[data-stale='true'] { color: var(--studio-fg-dim); font-style: italic; }
+    }
     .client-filter {
       display: inline-flex;
       align-items: center;

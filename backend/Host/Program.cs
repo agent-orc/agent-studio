@@ -704,6 +704,14 @@ if (!publicDemoExecutionProfile)
 builder.Services.AddSingleton<GitService>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService<GitInventoryRefreshHostedService>();
+// AGT-2726: one background Git-derived-state index per repository, change-
+// driven (ref-file watcher + Task Server events) with a debounce and a slow
+// periodic sweep as a safety net. Request paths (tasks/list, tasks/grouped,
+// git/inventory) only ever read this service's last snapshot through
+// TaskListGitProjectionCache and GitService.GetProjectInventory.
+builder.Services.AddSingleton<GitStateIndexService>();
+if (!publicDemoExecutionProfile)
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<GitStateIndexService>());
 builder.Services.AddSingleton<ProjectIntegrationViewService>();
 builder.Services.AddSingleton<AgentStudio.Search.GlobalSearchIndexes>();
 builder.Services.AddSingleton<AgentStudio.Search.GlobalSearchService>();
@@ -912,6 +920,7 @@ builder.Services.AddSignalR();
 // below so the notifier subscriptions are live before the first mutation.
 builder.Services.AddSingleton<AgentStudio.Host.TaskHubBroadcaster>();
 builder.Services.AddSingleton<AgentStudio.Host.WorkbenchHubBroadcaster>();
+builder.Services.AddSingleton<AgentStudio.Host.GitStateHubBroadcaster>();
 if (SecurityProfiles.IsLocal(builder.Configuration))
 {
     builder.Services.AddCors(options =>
@@ -1337,6 +1346,9 @@ var workbenchHubBroadcaster = app.Services.GetRequiredService<AgentStudio.Host.W
 workbenchHubBroadcaster.Attach(
     watcher,
     app.Services.GetRequiredService<WorkbenchChangeNotifier>());
+// gitStateChanged push (AGT-2726): resolving the singleton attaches it to
+// GitStateIndexService.RepositoryIndexed. See backend/Host/Hubs/GitStateHubBroadcaster.cs.
+app.Services.GetRequiredService<AgentStudio.Host.GitStateHubBroadcaster>();
 
 // Cycle 1: bind the in-memory snapshot cache. TaskScannerService.ScanAllJobs
 // now serves from cache; TaskWatcherService.OnJobChanged invalidates it on

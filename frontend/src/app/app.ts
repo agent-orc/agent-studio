@@ -2560,6 +2560,22 @@ export class App implements OnInit, OnDestroy {
   readonly nowMs = signal(Date.now());
   private nowMsTickHandle: ReturnType<typeof setInterval> | null = null;
 
+  /**
+   * AGT-2726 — quiet "as of Xs ago" label for the board's Git-derived state
+   * (merge/integration/publish/test-run signals), reusing the same 1 Hz
+   * `nowMs` tick the RUNNING pill already ticks off so this needs no extra
+   * timer. Null before the background index has produced its first snapshot
+   * for any project on the board.
+   */
+  readonly gitStateAgeLabel = computed(() => {
+    const at = this.jobService.gitStateAt();
+    if (!at) return null;
+    const seconds = Math.max(0, Math.round((this.nowMs() - new Date(at).getTime()) / 1000));
+    if (seconds < 60) return `${seconds}s ago`;
+    if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
+    return `${Math.round(seconds / 3600)}h ago`;
+  });
+
   onFileSaved() {
     this.boardMutations.refreshAfterFileSave();
   }
