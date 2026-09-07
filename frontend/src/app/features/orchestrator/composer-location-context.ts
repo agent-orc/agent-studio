@@ -10,7 +10,7 @@ import type { StudioTab } from '../studio-shell';
  * optional identity detail (task key, URL id, commit…).
  *
  * The side sheet maps this host-owned location shape to the chat library's
- * `composerContext` input. Keeping the shell contract separate preserves
+ * automatic context chip. Keeping the shell contract separate preserves
  * nullable navigation state at the application boundary.
  */
 export interface ComposerLocationContext {
@@ -86,9 +86,8 @@ function taskContext(surface: string, tabKey: string, tasks: readonly TaskInfo[]
 }
 
 /**
- * Project the canonical active Studio tab into CAC's presentational context
- * contract. The composer receives this value and does not inspect tabs or
- * re-derive navigation state itself.
+ * Project the canonical active Studio tab into the side sheet's context-chip
+ * contract. The composer does not inspect tabs or re-derive navigation state.
  */
 export function buildComposerLocationContext(
   tab: StudioTab | null,

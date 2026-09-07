@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures/dev-backend';
 
 /**
  * Orchestrator side sheet — Phase 2 visual + behavioural smoke.
@@ -12,7 +12,15 @@ import { test, expect } from '@playwright/test';
 const SHOTS = 'screenshots/orch-side-sheet';
 
 test.describe('Orchestrator side sheet', () => {
-  test('opens via toolbar, shows chat surface, closes again', async ({ page }) => {
+  test('opens via toolbar, shows chat surface, closes again', async ({ page, devBackend: _ }) => {
+    await page.route(/\/api\/tasks\/grouped(?:\?.*)?$/, route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [],
+        failedPickup: [], autoReview: [], humanReview: [], review: [], completed: [], archive: [],
+      }),
+    }));
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
 
@@ -68,7 +76,7 @@ test.describe('Orchestrator side sheet', () => {
     await expect(composer).toBeEnabled();
     await expect(composer).toHaveAttribute(
       'placeholder',
-      /Ask the orchestrator/
+      /Ask about this project.*\/bug/
     );
 
     // Studio uses the standard CAC composer/footer with no host-only task
@@ -77,6 +85,8 @@ test.describe('Orchestrator side sheet', () => {
     await expect(page.getByText('Make a task from your message', { exact: true })).toHaveCount(0);
     await expect(page.getByText('Make a task from this reply', { exact: true })).toHaveCount(0);
     await expect(page.getByTestId('chat-toolbar-task')).toHaveCount(0);
+    await expect(page.getByTestId('chat-toolbar')).toHaveCount(0);
+    await expect(page.getByTestId('chat-attach')).toHaveCount(0);
 
     // Compact-bubble polish demo: type into the composer so the layout
     // captures show the active state with text in the input.
@@ -95,38 +105,6 @@ test.describe('Orchestrator side sheet', () => {
           height: sheetBoxComposer.height + 8
         }
       });
-    }
-
-    // Verify the project switcher renders as a searchable typeahead
-    // combobox so it scales past a handful of projects (typing filters
-    // the list), and picking an option swaps the active thread. The
-    // hidden <select> stays in the DOM as an a11y / scripting fallback.
-    const combo = page.getByTestId('orch-side-sheet-project-combo');
-    await expect(combo).toBeVisible();
-    const projectSelect = page.getByTestId('orch-side-sheet-project-select');
-    const optionValues = await projectSelect.locator('option').evaluateAll((opts) =>
-      (opts as HTMLOptionElement[]).map((o) => o.value)
-    );
-    if (optionValues.length >= 2) {
-      const current = await projectSelect.inputValue();
-      const next = optionValues.find((v) => v && v !== current) ?? optionValues[1];
-      await combo.click();
-      await combo.fill(next.slice(0, 2));
-      await page.waitForTimeout(150);
-      await page.screenshot({ path: `${SHOTS}/04a-combo-filtering.png`, fullPage: false });
-      // Pressing Enter commits the highlighted match. We avoid clicking
-      // the floating <li> directly because Playwright's click sequence
-      // (mousemove -> mousedown -> mouseup -> click) interleaves with
-      // input-blur in ways that make tests flaky on the first run.
-      await combo.press('Enter');
-      await page.waitForTimeout(400);
-      // The combo input is cleared after selection; the placeholder shows
-      // the new active project so the user sees what is in front. The
-      // hidden <select> mirrors the same signal and is also asserted as
-      // a redundant guard against placeholder-binding races.
-      await expect(combo).toHaveAttribute('placeholder', next);
-      await expect(projectSelect).toHaveValue(next);
-      await page.screenshot({ path: `${SHOTS}/04-side-sheet-other-project.png`, fullPage: false });
     }
 
     // 2026-05-16 sidesheet restructure: the sidesheet is Chat-centric.

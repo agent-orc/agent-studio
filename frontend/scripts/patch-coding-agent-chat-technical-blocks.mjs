@@ -3,10 +3,10 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 
 /**
- * Compatibility bridge for coding-agent-chat 0.3.2.
+ * Compatibility bridge for coding-agent-chat 0.4.1.
  *
  * The published markdown renderer is the canonical chat and activity surface,
- * but 0.3.2 sends unfenced CLI diffs and raw markup through the complete GFM
+ * but 0.4.1 sends unfenced CLI diffs and raw markup through the complete GFM
  * pipeline. Protect those conservative technical shapes before Marked sees
  * them. Keep the exact-version and occurrence guards so a package upgrade must
  * deliberately retire or update this bridge.
@@ -16,9 +16,9 @@ const packageJsonPath = require.resolve('coding-agent-chat/package.json');
 const packageRoot = dirname(packageJsonPath);
 const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
 
-if (packageJson.version !== '0.3.2') {
+if (packageJson.version !== '0.4.1') {
   throw new Error(
-    `The coding-agent-chat technical-block compatibility patch expects 0.3.2, found ${packageJson.version}.`,
+    `The coding-agent-chat technical-block compatibility patch expects 0.4.1, found ${packageJson.version}.`,
   );
 }
 

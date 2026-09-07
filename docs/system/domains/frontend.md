@@ -367,8 +367,9 @@ without a parallel surface.
   catalog cache.
 - `frontend/src/app/features/orchestrator/state/orchestrator-composer-model.service.ts`:
   workspace-persistent GPT model and reasoning selection for the canonical
-  coding-agent-chat footer. It projects the complete live Codex catalogue and
-  distinguishes an explicit operator choice from an inherited default.
+  coding-agent-chat footer. The side-sheet host uses the library's compact
+  context-chip, textarea, and single-footer composer without a host picker row,
+  toolbar, breadcrumb, or upload action.
 - `frontend/src/app/components/menu/`: text-only menu component.
 - `frontend/src/app/components/cli-model-selector/`: shared CLI/model picker.
 - `frontend/src/app/components/task-reference-microcard/`: compact, accessible

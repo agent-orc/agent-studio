@@ -311,6 +311,10 @@
   background: var(--orch-panel-bg);
 }
 
+:host ::ng-deep .sheet__composer .chat__composer {
+  padding-block: var(--studio-spacing-2);
+}
+
 .sheet__event-action {
   align-self: flex-start;
 }

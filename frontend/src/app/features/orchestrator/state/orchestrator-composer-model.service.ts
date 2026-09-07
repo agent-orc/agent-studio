@@ -46,10 +46,6 @@ export class OrchestratorComposerModelService {
       : 'inherited';
   });
 
-  readonly sourceLabel = computed(() => this.selectionSource() === 'explicit'
-    ? 'Operator choice'
-    : 'Inherited Codex default');
-
   readonly control = computed<ChatModelControl>(() => ({
     // Keep the complete task-agent CLI vocabulary visible. This chat route is
     // intentionally GPT-only, so non-Codex choices explain the host policy

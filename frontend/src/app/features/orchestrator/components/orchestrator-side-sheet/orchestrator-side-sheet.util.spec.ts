@@ -123,7 +123,6 @@ describe('orchestrator-side-sheet.util', () => {
           ts: '2026-07-08T00:01:00Z',
           role: 'user',
           text: 'hello',
-          attachments: [{ alt: 'local shot', relativePath: 'chat-attachments/local.png' }],
         },
         {
           id: 'reply',
@@ -149,7 +148,6 @@ describe('orchestrator-side-sheet.util', () => {
         role: 'user' as const,
         text: 'hello',
         pending: true,
-        localAttachments: [{ alt: 'local shot', previewUrl: 'blob:local-shot' }],
       }];
       const inline: ChatEvent[] = [{
         id: 'memory',
@@ -169,7 +167,6 @@ describe('orchestrator-side-sheet.util', () => {
       expect(events.map(event => event.id)).toEqual([
         'memory',
         'local-user',
-        'local-user:attachment:0',
         'reply',
         'reply:attachment:0',
       ]);
@@ -184,19 +181,14 @@ describe('orchestrator-side-sheet.util', () => {
         body: 'hello',
       });
       expect(events[2]).toMatchObject({
-        kind: 'artifact.image',
-        caption: 'local shot',
-        url: 'blob:local-shot',
-      });
-      expect(events[3]).toMatchObject({
         kind: 'message.orchestrator',
         actor: 'Orchestrator',
         severity: 'error',
         model: 'claude-opus-4-8',
         thinkingLevel: 'high',
       });
-      expect((events[3] as { body: string }).body).toContain('**Error:** connection closed');
-      expect(events[4]).toMatchObject({
+      expect((events[2] as { body: string }).body).toContain('**Error:** connection closed');
+      expect(events[3]).toMatchObject({
         kind: 'artifact.image',
         caption: 'reply shot',
         url: '/api/runner/Agent%20Studio/orchestrator-chat/attachments/reply%20image.png',

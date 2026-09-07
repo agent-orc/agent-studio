@@ -97,31 +97,76 @@ describe('OrchestratorSideSheetComponent context badge and menu', () => {
       kind: 'page', reference: 'page:demo-project/concepts/context.md', projectId: 'demo-project',
     });
     const root = fixture.nativeElement as HTMLElement;
-    root.querySelector<HTMLButtonElement>('[data-testid="orch-add-context"]')!.click();
+    root.querySelector<HTMLButtonElement>('[data-testid="chat-context-attachment-add"]')!.click();
     fixture.detectChanges();
     expect(root.querySelector('[data-testid="orch-context-current-source"]')?.textContent)
       .toContain('Context model');
   });
 
-  it('renders the standard composer footer once and removes both host task workflows', async () => {
+  it('renders CAC context chips above a compact footer without toolbar, breadcrumb, or image upload', async () => {
     const fixture = await makeFixture();
-    fixture.componentRef.setInput('composerContext', { project: 'Agent Studio', surface: 'Board' });
+    fixture.componentRef.setInput('composerContext', { project: 'demo-project', surface: 'Board' });
     fixture.detectChanges();
     const root = fixture.nativeElement as HTMLElement;
 
     expect(root.querySelectorAll('[data-testid="chat-composer-foot"]')).toHaveLength(1);
-    expect(root.querySelector('[data-testid="chat-composer-context-project"]')?.textContent?.trim())
-      .toBe('Agent Studio');
-    expect(root.querySelector('[data-testid="chat-composer-context-surface"]')?.textContent?.trim())
-      .toBe('Board');
+    expect(root.querySelector('[data-testid="chat-toolbar"]')).toBeNull();
+    expect(root.querySelector('[data-testid="chat-composer-context-project"]')).toBeNull();
+    expect(root.querySelector('[data-testid="chat-attach"]')).toBeNull();
+    expect(root.querySelector('input[type="file"]')).toBeNull();
+    expect(root.querySelector('[data-testid="chat-context-attachments"]')?.textContent)
+      .toContain('Board · ~1.6k');
     expect(root.textContent).not.toContain('Make a task from your message');
     expect(root.textContent).not.toContain('Make a task from this reply');
     expect(root.querySelector('[data-testid="orch-side-sheet-draft-actions"]')).toBeNull();
     expect(root.querySelector('[data-testid="chat-toolbar-task"]')).toBeNull();
   });
 
+  it('adds context through the CAC chip row, updates the estimate, and removes the attachment', async () => {
+    const fixture = await makeFixture();
+    fixture.componentRef.setInput('composerContext', { project: 'demo-project', surface: 'Board' });
+    fixture.detectChanges();
+    const component = fixture.componentInstance;
+    const root = fixture.nativeElement as HTMLElement;
+    const source = {
+      id: 'repository-file:demo-project:docs/context.md',
+      category: 'files' as const,
+      label: 'docs/context.md',
+      detail: 'Repository file',
+      estimateTokens: 700,
+      reference: {
+        kind: 'repository-file' as const,
+        reference: 'docs/context.md',
+        projectId: 'demo-project',
+      },
+    };
+
+    expect(root.querySelector('[data-testid="chat-context-attachments"]')?.textContent)
+      .toContain('Board · ~1.6k');
+    root.querySelector<HTMLButtonElement>('[data-testid="chat-context-attachment-add"]')!.click();
+    fixture.detectChanges();
+    expect(root.querySelector('[data-testid="orch-context-source-picker"]')).not.toBeNull();
+
+    component.addContextAttachment(source);
+    fixture.detectChanges();
+    expect(root.querySelector('[data-testid="chat-context-attachments"]')?.textContent)
+      .toContain('Board · ~2.3k');
+    expect(root.querySelector('[data-testid="chat-context-attachments"]')?.textContent)
+      .toContain('docs/context.md');
+
+    root.querySelector<HTMLButtonElement>(
+      `[data-testid="chat-context-attachment-remove-${source.id}"]`,
+    )!.click();
+    fixture.detectChanges();
+    expect(component.contextAttachments()).toEqual([]);
+    expect(root.querySelector('[data-testid="chat-context-attachments"]')?.textContent)
+      .toContain('Board · ~1.6k');
+  });
+
   it('forwards live active-tab context without remounting CAC or losing its draft', async () => {
     const fixture = await makeFixture();
+    fixture.componentRef.setInput('projects', ['Agent Studio']);
+    fixture.componentInstance.activeProject.set('Agent Studio');
     fixture.componentRef.setInput('composerContext', { project: 'Agent Studio', surface: 'Board' });
     fixture.detectChanges();
     const firstChat = fixture.debugElement.query(By.directive(ChatComponent)).componentInstance as ChatComponent;
@@ -142,9 +187,7 @@ describe('OrchestratorSideSheetComponent context badge and menu', () => {
     expect(secondChat).toBe(firstChat);
     expect(textarea.value).toBe('Draft survives navigation');
     expect((fixture.nativeElement as HTMLElement)
-      .querySelector('[data-testid="chat-composer-context-surface"]')?.textContent?.trim()).toBe('Task');
-    expect((fixture.nativeElement as HTMLElement)
-      .querySelector('[data-testid="chat-composer-context-detail"]')?.textContent?.trim()).toBe('AGT-2162');
+      .querySelector('[data-testid="chat-context-attachments"]')?.textContent).toContain('AGT-2162 · ~1.6k');
   });
 
   it('shows the persisted context receipt for the latest orchestrator answer', async () => {

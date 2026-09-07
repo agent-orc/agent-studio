@@ -230,6 +230,10 @@ test('Task detail uses the Orchestrator side sheet for task context without a Ch
   await expect(sideSheet.getByTestId('orch-task-context-note')).toContainText(
     'Answers do not start, pause, or continue the task agent.',
   );
+  await expect(sideSheet.getByTestId('chat-context-attachment-automatic-context'))
+    .toContainText(`${TASK_KEY} · ~1.6k`);
+  await expect(sideSheet.getByTestId('chat-toolbar')).toHaveCount(0);
+  await expect(sideSheet.getByTestId('chat-attach')).toHaveCount(0);
   await expect(page.getByTestId('activity-chat-compose')).toBeVisible();
 
   await sideSheet.getByTestId('chat-input').fill('What is the current verification status?');

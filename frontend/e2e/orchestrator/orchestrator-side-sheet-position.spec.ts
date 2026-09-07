@@ -22,6 +22,17 @@ import { test, expect } from '../fixtures/dev-backend';
 const SHOTS = 'screenshots/orch-side-sheet-position';
 
 test.describe('Orchestrator side sheet position', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.route(/\/api\/tasks\/grouped(?:\?.*)?$/, route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [],
+        failedPickup: [], autoReview: [], humanReview: [], review: [], completed: [], archive: [],
+      }),
+    }));
+  });
+
   test('opens as a right-side panel that leaves the board visible', async ({ page, devBackend: _ }) => {
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
@@ -265,7 +276,9 @@ test.describe('Orchestrator side sheet position', () => {
     await page.reload();
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(300);
-    await page.getByTestId('orch-side-sheet-toggle').click();
+    const reloadedToggle = page.getByTestId('orch-side-sheet-toggle');
+    if (await reloadedToggle.getAttribute('aria-pressed') !== 'true') await reloadedToggle.click();
+    await expect(reloadedToggle).toHaveAttribute('aria-pressed', 'true');
     await host.waitFor({ state: 'visible' });
     await page.waitForTimeout(400);
     const widthAfterReload = (await host.boundingBox())!.width;

@@ -13,12 +13,9 @@ import type { ChatEvent, ConversationEvent, RawLineRange } from 'coding-agent-ch
  * Hide any server user turn that an in-flight local turn already represents.
  *
  * After the operator hits Send we render a local "optimistic" turn so the
- * bubble shows up immediately (including the inline blob preview of any
- * attached image). When the round-trip to the orchestrator finishes the
- * server now reports the same user turn back, but the local turn is still
- * on screen until the persisted attachment URL has been pre-decoded into
- * the browser image cache. Without this dedup, the user would see the
- * bubble briefly duplicate during that pre-decode window.
+ * bubble shows up immediately. When the round-trip to the orchestrator
+ * finishes the server reports the same user turn back before the local turn
+ * is cleared. Without this dedup, the user would briefly see two bubbles.
  *
  * Match strategy: walk local user turns newest-to-oldest and pair each
  * with the newest unmatched server user turn that has the same text and
@@ -28,14 +25,14 @@ import type { ChatEvent, ConversationEvent, RawLineRange } from 'coding-agent-ch
  */
 export function suppressLocalDuplicates(
   server: readonly OrchestratorChatTurn[],
-  local: readonly (OrchestratorChatTurn & { localAttachments?: { alt: string; previewUrl: string }[] })[]
+  local: readonly OrchestratorChatTurn[]
 ): OrchestratorChatTurn[] {
   if (local.length === 0) return [...server];
   const localUsers = local.filter((t) => t.role === 'user');
   if (localUsers.length === 0) return [...server];
   const suppress = new Set<string>();
   for (const lt of localUsers) {
-    const ltAttCount = lt.localAttachments?.length ?? lt.attachments?.length ?? 0;
+    const ltAttCount = lt.attachments?.length ?? 0;
     for (let i = server.length - 1; i >= 0; i--) {
       const st = server[i];
       if (suppress.has(st.id)) continue;
@@ -52,7 +49,6 @@ export function suppressLocalDuplicates(
 
 export type OptimisticOrchestratorChatTurn = OrchestratorChatTurn & {
   pending?: boolean;
-  localAttachments?: { alt: string; previewUrl: string }[];
 };
 
 /**
@@ -152,15 +148,10 @@ export function buildOrchestratorConversationEvents(
   const projected: { event: ConversationEvent; inputIndex: number }[] = [];
 
   turns.forEach((turn, index) => {
-    const localAttachments = turn.localAttachments?.map(attachment => ({
-      alt: attachment.alt,
-      url: attachment.previewUrl,
-    })) ?? [];
     const persistedAttachments = (turn.attachments ?? []).map(attachment => ({
       alt: attachment.alt,
       url: resolveAttachmentUrl(projectName, attachment.relativePath),
     }));
-    const attachments = localAttachments.length > 0 ? localAttachments : persistedAttachments;
     const error = turn.errorMessage?.trim();
     const body = error
       ? `${turn.text ? `${turn.text}\n\n` : ''}**Error:** ${error}`
@@ -181,9 +172,9 @@ export function buildOrchestratorConversationEvents(
       },
     });
 
-    attachments.forEach((attachment, attachmentIndex) => {
+    persistedAttachments.forEach((attachment, attachmentIndex) => {
       projected.push({
-        inputIndex: index + (attachmentIndex + 1) / (attachments.length + 1),
+        inputIndex: index + (attachmentIndex + 1) / (persistedAttachments.length + 1),
         event: {
           id: `${turn.id}:attachment:${attachmentIndex}`,
           kind: 'artifact.image',

@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 
 /**
- * Compatibility bridge for coding-agent-chat 0.3.1.
+ * Compatibility bridge for coding-agent-chat 0.4.1.
  *
  * Studio consumes the published package, while the selector source is owned by
  * that package rather than this host. Keep the canonical component in place and
@@ -17,15 +17,14 @@ const packageJsonPath = require.resolve('coding-agent-chat/package.json');
 const packageRoot = dirname(packageJsonPath);
 const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
 
-// 0.3.2 changed only the conversation/shared modules (structured runner
-// activity, AGT-2316); its composer output is byte-identical to 0.3.1, so the
-// same rewrites apply. Any other version fails loudly below - either here or
-// via the occurrence guards.
-const supportedVersions = new Set(['0.3.1', '0.3.2']);
-if (!supportedVersions.has(packageJson.version)) {
+// CAC 0.4.1 supplies the context-attachment composer contract, but the
+// disabled CLI reasons and balanced picker layout are not part of that release.
+// Any other version fails loudly so the bridge is inspected at every upgrade.
+const supportedVersion = '0.4.1';
+if (packageJson.version !== supportedVersion) {
   throw new Error(
-    `The coding-agent-chat model-selector compatibility patch expects one of `
-    + `${[...supportedVersions].join(', ')}, found ${packageJson.version}.`,
+    `The coding-agent-chat model-selector compatibility patch expects `
+    + `${supportedVersion}, found ${packageJson.version}.`,
   );
 }
 
@@ -195,4 +194,4 @@ composerTypes = replaceExact(
 );
 writeFileSync(composerTypesPath, composerTypes);
 
-console.log('Applied the coding-agent-chat 0.3.1 model-selector compatibility patch.');
+console.log('Applied the coding-agent-chat 0.4.1 model-selector compatibility patch.');

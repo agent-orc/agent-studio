@@ -27,6 +27,13 @@ async function installContextFixtures(page: Page) {
   const captured: CapturedSend[] = [];
   const turns: any[] = [];
 
+  await page.route('**/api/cli/codex/models', route => json(route, {
+    models: [{
+      id: 'gpt-5.4-mini', label: 'GPT-5.4 Mini', isDefault: true, available: true,
+      thinkingLevels: ['low', 'medium', 'high'], defaultThinkingLevel: 'high',
+    }],
+    source: 'composer-fixture',
+  }));
   await page.route('**/api/orchestrator/sessions', route => json(route, {
     sessions: [{
       contextKey: `project:${PROJECT}`,
@@ -98,16 +105,21 @@ async function installContextFixtures(page: Page) {
 
 async function openChat(page: Page) {
   await page.goto('/', { waitUntil: 'domcontentloaded' });
-  await page.getByTestId('orch-side-sheet-toggle').click();
+  const toggle = page.getByTestId('orch-side-sheet-toggle');
+  if (await toggle.getAttribute('aria-pressed') !== 'true') await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByTestId('chat-input')).toBeVisible();
 }
 
 test('project chat attaches known sources, inspects the persisted receipt, and keeps one permanent project chat', async ({ page }) => {
   const captured = await installContextFixtures(page);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   await openChat(page);
 
-  await expect(page.getByTestId('orch-current-tab-chip')).toContainText('Current tab · Board');
-  await page.getByTestId('orch-add-context').click();
+  await expect(page.getByTestId('chat-context-attachment-automatic-context')).toContainText('Board · ~1.6k');
+  const composer = page.getByTestId('orch-composer');
+  await setTheme(page, 'light');
+  await page.getByTestId('chat-context-attachment-add').click();
   await expect(page.getByTestId('orch-context-current-automatic')).toContainText('already included');
   await page.getByTestId('orch-context-source-search').fill('context');
 
@@ -117,9 +129,45 @@ test('project chat attaches known sources, inspects the persisted receipt, and k
   await expect(page.getByTestId('orch-context-group-commits')).toContainText('persist context receipts');
 
   await page.getByTestId('orch-context-group-wiki').getByRole('button', { name: /Context workbench/ }).click();
+  await page.getByRole('button', { name: 'Close context picker' }).click();
+  await setTheme(page, 'light');
+  await composer.screenshot({ path: resolve(RESULTS, 'orchestrator-composer-two-chips--light--mocked.png') });
+  await setTheme(page, 'dark');
+  await composer.screenshot({ path: resolve(RESULTS, 'orchestrator-composer-two-chips--dark--mocked.png') });
+  await setTheme(page, 'light');
+  await page.getByTestId('chat-context-attachment-add').click();
+  await page.getByTestId('orch-context-source-search').fill('context');
   await page.getByTestId('orch-context-group-files').getByRole('button', { name: /context-envelope.ts/ }).click();
   await page.getByTestId('orch-context-group-commits').getByRole('button', { name: /persist context receipts/ }).click();
-  await expect(page.getByTestId('orch-context-estimate')).toContainText('4 sources');
+  await expect(page.getByTestId('chat-context-attachment-automatic-context')).toContainText('~4.9k');
+
+  const automaticRemove = page.getByTestId('chat-context-attachment-remove-automatic-context');
+  await page.getByRole('button', { name: 'Close context picker' }).click();
+  await automaticRemove.click();
+  await expect(automaticRemove).toHaveCount(0);
+  const removalButtons = composer.getByRole('button', { name: /^Remove .* from context$/ });
+  let remainingAttachments = await removalButtons.count();
+  while (remainingAttachments > 0) {
+    await removalButtons.last().click();
+    remainingAttachments -= 1;
+    await expect(removalButtons).toHaveCount(remainingAttachments);
+  }
+  await expect(page.getByTestId('chat-context-attachments')).toHaveCount(0);
+  await setTheme(page, 'light');
+  await composer.screenshot({ path: resolve(RESULTS, 'orchestrator-composer-empty--light--mocked.png') });
+  await setTheme(page, 'dark');
+  await composer.screenshot({ path: resolve(RESULTS, 'orchestrator-composer-empty--dark--mocked.png') });
+  const compactHeight = (await composer.boundingBox())?.height ?? Number.POSITIVE_INFINITY;
+  const previousHeight = 216.796875;
+  expect(compactHeight).toBeLessThanOrEqual(previousHeight * 0.6);
+
+  await openChat(page);
+  await expect(page.getByTestId('chat-context-attachment-automatic-context')).toBeVisible();
+  await page.getByTestId('chat-context-attachment-add').click();
+  await page.getByTestId('orch-context-source-search').fill('context');
+  await page.getByTestId('orch-context-group-wiki').getByRole('button', { name: /Context workbench/ }).click();
+  await page.getByTestId('orch-context-group-files').getByRole('button', { name: /context-envelope.ts/ }).click();
+  await page.getByTestId('orch-context-group-commits').getByRole('button', { name: /persist context receipts/ }).click();
 
   await setTheme(page, 'light');
   await page.screenshot({ path: resolve(RESULTS, 'project-chat-context-picker--mocked-light.png'), fullPage: false });
@@ -144,8 +192,7 @@ test('project chat attaches known sources, inspects the persisted receipt, and k
   await setTheme(page, 'dark');
   await page.screenshot({ path: resolve(RESULTS, 'project-chat-context-inspector--mocked-dark.png'), fullPage: false });
 
-  await page.reload({ waitUntil: 'domcontentloaded' });
-  await page.getByTestId('orch-side-sheet-toggle').click();
+  await openChat(page);
   await expect(page.getByTestId('orch-context-inspect-toggle')).toBeVisible();
   await page.getByTestId('orch-context-badge').click();
   await expect(page.getByRole('heading', { name: 'Chat history' })).toBeVisible();
