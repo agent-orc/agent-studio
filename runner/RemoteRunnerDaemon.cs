@@ -545,7 +545,10 @@ public sealed class RemoteRunnerDaemon
                 {
                     var chatClaim = await _client.ClaimProjectChatWorkAsync(
                         new RemoteChatWorkClaimRequest(
-                            _options.RunnerId, _options.RunnerName, _options.Hostname),
+                            _options.RunnerId,
+                            _options.RunnerName,
+                            _options.Hostname,
+                            _client.RunnerInstanceId),
                         shutdown);
                     if (chatClaim.Status == RemoteChatWorkClaimStatuses.Claimed
                         && chatClaim.Work is not null)

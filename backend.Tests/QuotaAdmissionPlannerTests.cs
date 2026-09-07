@@ -75,6 +75,29 @@ public sealed class QuotaAdmissionPlannerTests : IDisposable
     }
 
     [Fact]
+    public void OverlappingBlockedWindows_WaitsForLastBlockingReset()
+    {
+        var fallback = Routing(new CliModelRouteProfile
+        {
+            CliType = "claude", PrimaryModel = "claude-opus",
+            FallbackCliType = "codex", FallbackModel = "gpt-5.3-codex",
+        });
+        Snapshot(
+            "claude",
+            ("5-hour", 100, Now.AddMinutes(12)),
+            ("Weekly", 100, Now.AddHours(4)));
+        Snapshot("codex", ("Weekly", 10, Now.AddDays(3)));
+
+        var plan = Plan(
+            "claude", fallback, occupiedSlots: 1,
+            new ResolvedCliQuotaWaitPolicy(true, 30, "global", null, null, true, 30));
+
+        Assert.Equal(QuotaAdmissionOutcome.LaunchFallback, plan.Outcome);
+        Assert.Equal(Now.AddHours(4), plan.NextResetAt);
+        Assert.Contains("primary reset 16:00 UTC", plan.Reason);
+    }
+
+    [Fact]
     public void DistantReset_UsesFallbackBeforeThrottle()
     {
         var fallback = Routing(new CliModelRouteProfile
@@ -92,6 +115,91 @@ public sealed class QuotaAdmissionPlannerTests : IDisposable
         Assert.Equal(QuotaAdmissionOutcome.LaunchFallback, plan.Outcome);
         Assert.False(plan.NearbyResetWait);
         Assert.Equal("codex", plan.CliType);
+    }
+
+    [Fact]
+    public void NearbyReset_StandardCost_SwitchesInsteadOfWaiting()
+    {
+        var fallback = Routing(new CliModelRouteProfile
+        {
+            CliType = "claude", PrimaryModel = "claude-opus",
+            FallbackCliType = "codex", FallbackModel = "gpt-5.3-codex",
+        });
+        Snapshot("claude", ("5-hour", 100, Now.AddMinutes(12)));
+        Snapshot("codex", ("5-hour", 10, Now.AddHours(3)));
+
+        var plan = QuotaAdmissionPlanner.Plan(
+            "claude", requestedModel: null, requestedThinking: "high",
+            fallback, _caps,
+            c => c != null && _snapshots.TryGetValue(c, out var s) ? s : null,
+            Now, occupiedSlots: 1,
+            new ResolvedCliQuotaWaitPolicy(true, 30, "global", null, null, true, 30),
+            new QuotaAdmissionContext(
+                QuotaExecutionPath.CodingRun,
+                QuotaExpectedCostClass.Standard,
+                TaskTypes.Feature));
+
+        Assert.Equal(QuotaAdmissionOutcome.LaunchFallback, plan.Outcome);
+        Assert.False(plan.NearbyResetWait);
+        Assert.Equal(QuotaExpectedCostClass.Standard, plan.Context!.ExpectedCostClass);
+    }
+
+    [Fact]
+    public void FallbackDecision_ExplainsFallbackProviderHeadroomAndBurnRate()
+    {
+        var fallback = Routing(new CliModelRouteProfile
+        {
+            CliType = "claude", PrimaryModel = "claude-opus",
+            FallbackCliType = "codex", FallbackModel = "gpt-5.3-codex",
+        });
+        Snapshot("claude", ("5-hour", 100, Now.AddHours(2.5)));
+        Snapshot("codex", ("5-hour", 20, Now.AddHours(2.5)));
+
+        var plan = Plan("claude", fallback, occupiedSlots: 0);
+        var text = QuotaAdmissionPlanner.DescribeLoadNumbers(plan);
+
+        Assert.Equal(QuotaAdmissionOutcome.LaunchFallback, plan.Outcome);
+        Assert.NotNull(plan.FallbackProjection);
+        Assert.Contains("fallback burn", text);
+        Assert.Contains("budget left", text);
+    }
+
+    [Theory]
+    [InlineData(QuotaExecutionPath.CodingRun, "feature", "high", QuotaExpectedCostClass.Standard)]
+    [InlineData(QuotaExecutionPath.ReviewAspect, "feature", "medium", QuotaExpectedCostClass.Cheap)]
+    [InlineData(QuotaExecutionPath.PipelineStep, "bug", "high", QuotaExpectedCostClass.Cheap)]
+    [InlineData(QuotaExecutionPath.OrchestratorChat, null, "high", QuotaExpectedCostClass.Standard)]
+    [InlineData(QuotaExecutionPath.CodingRun, "feature", "xhigh", QuotaExpectedCostClass.Expensive)]
+    public void AdmissionContext_ClassifiesEveryExecutionPath(
+        QuotaExecutionPath path,
+        string? taskType,
+        string thinkingLevel,
+        QuotaExpectedCostClass expected)
+    {
+        var context = QuotaAdmissionContext.ForTask(path, taskType, thinkingLevel);
+
+        Assert.Equal(path, context.ExecutionPath);
+        Assert.Equal(expected, context.ExpectedCostClass);
+    }
+
+    [Fact]
+    public void PlanningFallback_DoesNotPublishActiveRouteUntilLaunchCommits()
+    {
+        var fallback = Routing(new CliModelRouteProfile
+        {
+            CliType = "claude",
+            FallbackCliType = "codex",
+            FallbackModel = "gpt-5.3-codex",
+        });
+        Snapshot("claude", ("Weekly", 100, Now.AddDays(3)));
+        Snapshot("codex", ("Weekly", 10, Now.AddDays(3)));
+
+        var plan = Plan("claude", fallback, occupiedSlots: 0);
+
+        Assert.True(plan.IsFallback);
+        Assert.Null(fallback.GetAll()["claude"].ActiveFallback);
+        fallback.RecordAdmission("claude", null, null, plan, Now);
+        Assert.NotNull(fallback.GetAll()["claude"].ActiveFallback);
     }
 
     // ── acceptance scenario 2: both exhausted -> quiet wait + reason + reset ──
@@ -112,6 +220,21 @@ public sealed class QuotaAdmissionPlannerTests : IDisposable
         Assert.StartsWith("waiting: all quotas exhausted", plan.Reason);
         Assert.Contains("next reset", plan.Reason);
         Assert.NotNull(plan.NextResetAt);
+    }
+
+    [Fact]
+    public void ExhaustedPrimary_ReportsWhenAllBlockingWindowsHaveReset()
+    {
+        Snapshot(
+            "claude",
+            ("5-hour", 100, Now.AddMinutes(12)),
+            ("Weekly", 100, Now.AddHours(4)));
+
+        var plan = Plan("claude", fallback: null, occupiedSlots: 0);
+
+        Assert.Equal(QuotaAdmissionOutcome.Wait, plan.Outcome);
+        Assert.Equal(Now.AddHours(4), plan.NextResetAt);
+        Assert.Contains("16:00 UTC", plan.Reason);
     }
 
     // ── acceptance scenario 3: after reset -> normal start on primary ──

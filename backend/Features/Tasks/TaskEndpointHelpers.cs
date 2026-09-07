@@ -208,7 +208,13 @@ internal static class TaskEndpointHelpers
         {
             Execution = exec,
             QuotaFallback = job.State == TaskStates.Progress
-                ? runners.GetQuotaFallbackForJob(job.Id, job.ProjectName)
+                ? runners.GetQuotaFallbackForJob(
+                    job.Id,
+                    job.ProjectName,
+                    job.WatchPath,
+                    job.CliType,
+                    job.Model,
+                    job.Key ?? job.TaskKey)
                 : null,
             OutcomeIssue = outcomeIssue,
             RunActivity = runActivity,

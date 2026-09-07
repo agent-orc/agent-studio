@@ -1,0 +1,22 @@
+@if (presentation() === 'summary') {
+  <span class="route-chip"
+        [class.route-chip--fallback]="isFallback()"
+        [class.route-chip--wait]="isWait()"
+        [attr.data-testid]="'pipeline-step-effective-route-' + step().id"
+        [attr.data-quota-outcome]="step().quotaAdmission?.outcome ?? null"
+        [cacTooltip]="explanation()">
+    {{ summary() }}
+  </span>
+} @else if (showDetail()) {
+  <div class="route-row"
+       [class.route-row--fallback]="isFallback()"
+       [class.route-row--wait]="isWait()"
+       role="row"
+       [attr.data-testid]="'pipeline-step-setting-effective-route-' + step().id">
+    <span class="route-row__label" role="cell">Effective now</span>
+    <span class="route-row__value" role="cell">
+      <span class="route-row__route">{{ summary() }}</span>
+    </span>
+    <span class="route-row__note" role="cell">{{ explanation() }}</span>
+  </div>
+}

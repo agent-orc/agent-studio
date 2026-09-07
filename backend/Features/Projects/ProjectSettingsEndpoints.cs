@@ -158,7 +158,11 @@ public static class ProjectSettingsEndpoints
             string? projectName,
             string? pipelineType,
             ProjectSettingsService settings,
-            TaskScannerService scanner) =>
+            TaskScannerService scanner,
+            QuotaService quota,
+            CliQuotaCapsService quotaCaps,
+            CliQuotaFallbackService quotaFallback,
+            CliQuotaWaitPolicyService quotaWaitPolicy) =>
         {
             if (!string.IsNullOrWhiteSpace(pipelineType) && !PipelineTypes.IsValid(pipelineType))
                 return Results.BadRequest(new { error = $"Unknown pipeline type '{pipelineType}'" });
@@ -216,6 +220,24 @@ public static class ProjectSettingsEndpoints
                         cliType,
                         resolved.Model,
                         PipelineStepModelDefaults.RuntimeDefaultThinkingLevelFor(s));
+                var decidedAt = DateTime.UtcNow;
+                var quotaAdmission = resolved is null || string.IsNullOrWhiteSpace(cliType)
+                    ? null
+                    : QuotaAdmissionPlanner.Plan(
+                        cliType,
+                        resolved.Model,
+                        thinking?.ThinkingLevel,
+                        quotaFallback,
+                        quotaCaps,
+                        candidateCli => string.IsNullOrWhiteSpace(candidateCli)
+                            ? null
+                            : quota.GetCachedFor(candidateCli),
+                        decidedAt,
+                        occupiedSlots: 0,
+                        quotaWaitPolicy.Resolve(projectSettings),
+                        new QuotaAdmissionContext(
+                            QuotaExecutionPath.PipelineStep,
+                            QuotaExpectedCostClass.Cheap));
                 var execution = PipelineStepExecutionResolver.Resolve(s, repositoryPath, projectSettings);
                 return new
                 {
@@ -237,6 +259,19 @@ public static class ProjectSettingsEndpoints
                     modelSource = resolved?.Source,
                     resolvedThinkingLevel = thinking?.ThinkingLevel,
                     thinkingLevelSource = thinking?.Source,
+                    effectiveCliType = quotaAdmission?.CliType,
+                    effectiveModel = quotaAdmission?.Model,
+                    effectiveThinkingLevel = quotaAdmission?.ThinkingLevel,
+                    quotaAdmission = quotaAdmission is null
+                        ? null
+                        : new
+                        {
+                            outcome = quotaAdmission.Outcome.ToString(),
+                            quotaAdmission.IsFallback,
+                            quotaAdmission.Reason,
+                            decidedAt,
+                            quotaAdmission.NextResetAt,
+                        },
                     // The core agent run cannot be disabled or model-overridden
                     // here (it uses the task's own CLI + model). Only steps that
                     // the runtime actually resolves through PipelineStepConfigResolver

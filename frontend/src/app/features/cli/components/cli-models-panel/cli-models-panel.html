@@ -22,6 +22,7 @@
   @for (g of groups(); track g.cliType) {
     <article class="cli-models__row"
              [class.cli-models__row--open]="isExpanded(g.cliType)"
+             [class.cli-models__row--fallback-active]="!!activeFallback(g.cliType)"
              [attr.data-cli]="g.cliType"
              [attr.data-testid]="'cli-models-card-' + g.cliType">
       <div class="cli-models__head">
@@ -48,8 +49,35 @@
                 [attr.aria-label]="'Refresh ' + g.label + ' model catalog'">↻</button>
       </div>
 
+      @if (activeFallback(g.cliType); as active) {
+        <div class="cli-models__active-fallback"
+             role="status"
+             [attr.data-testid]="'cli-models-active-fallback-' + g.cliType">
+          <span class="cli-models__active-title">Active quota fallback</span>
+          <strong class="cli-models__active-route">{{ activeFallbackSummary(g.cliType) }}</strong>
+          <span class="cli-models__active-reason">{{ activeFallbackReason(g.cliType) }}</span>
+          <span class="cli-models__active-meta">
+            @if (routeSourceLabel(g.cliType); as source) {
+              <span [attr.data-testid]="'cli-models-route-source-' + g.cliType">{{ source }}</span>
+            }
+            @if (activeFallbackSince(g.cliType); as since) {
+              <time [attr.datetime]="active.activatedAt">since {{ since }}</time>
+            }
+            @if (activeFallbackReset(g.cliType); as reset) {
+              <time [attr.datetime]="active.resetAt">reset {{ reset }}</time>
+            }
+          </span>
+        </div>
+      }
+
       @if (isExpanded(g.cliType)) {
         <div class="cli-models__body">
+          @if (catalogueRouteHelp(g.cliType); as help) {
+            <p class="cli-models__catalogue-help"
+               [attr.data-testid]="'cli-models-catalogue-route-source-' + g.cliType">
+              {{ help }}
+            </p>
+          }
           @if (g.defaultModel) {
             <div class="cli-models__route" [attr.data-testid]="'cli-models-default-' + g.cliType">
               <label class="cli-models__route-line cli-models__route-line--primary">
@@ -85,7 +113,21 @@
                 }
                 @if (savingCli() === g.cliType) { <span class="cli-models__saving">saving...</span> }
               </div>
-              <p class="cli-models__route-help">Quota fallback is recorded on the task timeline and applies to this run only.</p>
+              <div class="cli-models__route-footer">
+                <p class="cli-models__route-help">
+                  @if (routeSourceLabel(g.cliType); as source) { Route source: {{ source }}. }
+                  Quota fallback is recorded on the task timeline and applies to this run only.
+                </p>
+                @if (canUseCatalogueFallback(g.cliType)) {
+                  <button class="cli-models__catalogue-reset"
+                          type="button"
+                          [disabled]="savingCli() === g.cliType"
+                          [attr.data-testid]="'cli-models-use-catalogue-' + g.cliType"
+                          (click)="useCatalogueFallback(g.cliType)">
+                    Use catalogue fallback
+                  </button>
+                }
+              </div>
             </div>
           } @else {
             <div class="cli-models__empty">No catalog loaded yet.</div>

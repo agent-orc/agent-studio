@@ -777,4 +777,6 @@ public record SetCliModelRouteRequest
     public string? FallbackCliType { get; init; }
     public string? FallbackModel { get; init; }
     public string? FallbackThinkingLevel { get; init; }
+    /// <summary>"catalogue" keeps tier-derived fallback; omitted means an explicit operator override.</summary>
+    public string? RouteSource { get; init; }
 }

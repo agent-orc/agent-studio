@@ -87,7 +87,8 @@ public sealed class ReviewAttemptTaskLifecycleService
         string executorId,
         string hostId,
         string instanceId,
-        int? requestedTtlSeconds)
+        int? requestedTtlSeconds,
+        Func<ReviewAttemptDto, AgentStudio.TaskServer.Contracts.ReviewPlanDto?>? resolveEffectivePlan = null)
     {
         lock (_gate)
         {
@@ -97,7 +98,8 @@ public sealed class ReviewAttemptTaskLifecycleService
                 executorId,
                 hostId,
                 instanceId,
-                requestedTtlSeconds);
+                requestedTtlSeconds,
+                resolveEffectivePlan);
             AppendClaimEntry(claimed, tasks);
             return claimed;
         }

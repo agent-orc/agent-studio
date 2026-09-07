@@ -209,9 +209,12 @@ steer the pipeline in this policy version.
 - `runner/RemoteReviewWorkspace.cs` and
   `contracts/TaskServer.Contracts/ReviewContracts.cs`: exact-subject remote
   verification. A frozen command is either a deterministic tool command or a
-  read-only semantic aspect call. Agent calls use the configured CLI, model,
-  and thinking level only when the Review Host advertises matching CLI and
-  provider-authentication capabilities. Test commands marked
+  semantic aspect identity keyed by stable step id and aspect. At claim time,
+  the Task Server resolves each agent identity from current settings and quota,
+  persists the executable CLI, model, and thinking level in the attempt-local
+  effective plan, and checks that the Review Host advertises matching CLI and
+  provider-authentication capabilities. Retries and adoption of that fenced
+  attempt reuse its effective plan. Test commands marked
   `CompareToBaseline` compare their parsed
   failing-test set with the merge-base on the plan's integration ref. The
   parser recognizes .NET, Jest, Karma, Vitest, native Node test, and npm
@@ -221,7 +224,8 @@ steer the pipeline in this policy version.
   command hash. Only failures still new after one subject retry block the
   review.
 - `backend/Features/Runner/RemoteReviewPlanBuilder.cs` freezes the effective
-  build profile and enabled pipeline aspects into the initial ReviewSubject.
+  build profile and enabled pipeline aspect identities into the initial
+  ReviewSubject, then resolves agent routes when the attempt is claimed.
   Auto-discovery reads only Git-tracked entry points, manifests, and
   conventional lockfiles, never working-tree-only folders. A
   `ReviewInfra / PreparationFailed` retry rebuilds the plan from the current

@@ -75,6 +75,9 @@ function contracts() {
 }
 
 async function stub(page: Page) {
+  await page.route('**/api/auth/status', json({
+    profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
+  }));
   await page.route('**/api/tasks', json([]));
   await page.route('**/api/tasks/grouped*', json({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
   await page.route('**/api/watch-paths', json([]));
@@ -102,8 +105,38 @@ async function stub(page: Page) {
   };
   const modelRoutes = {
     profiles: {
-      claude: { cliType: 'claude', primaryModel: 'claude-pro', primaryThinkingLevel: null, fallbackCliType: 'codex', fallbackModel: 'codex-pro', fallbackThinkingLevel: null },
+      claude: {
+        cliType: 'claude', primaryModel: 'claude-pro', primaryThinkingLevel: null,
+        fallbackCliType: 'codex', fallbackModel: 'codex-pro', fallbackThinkingLevel: null,
+        routeSource: 'operator-override',
+      },
+      codex: {
+        cliType: 'codex', primaryModel: 'codex-pro', primaryThinkingLevel: 'high',
+        fallbackCliType: 'claude', fallbackModel: 'claude-pro', fallbackThinkingLevel: 'high',
+        routeSource: 'catalogue',
+        activeFallback: {
+          requestedCliType: 'codex', requestedModel: 'codex-pro', requestedThinkingLevel: 'high',
+          effectiveCliType: 'claude', effectiveModel: 'claude-pro', effectiveThinkingLevel: 'high',
+          reason: 'Codex is at 98% until its weekly reset.',
+          activatedAt: '2026-09-07T02:37:00Z', resetAt: '2026-09-07T06:38:00Z',
+          routeSource: 'catalogue', equivalentTier: 'strong',
+        },
+      },
     },
+    catalogueRoutes: [
+      {
+        tierId: 'balanced', primaryCliType: 'gemini', primaryModel: 'gemini-pro',
+        primaryThinkingLevel: 'high', fallbackCliType: 'claude', fallbackModel: 'claude-pro',
+        fallbackThinkingLevel: 'high', evidenceStatus: 'verified', provisional: false,
+        policyVersion: '2026-09-07', reason: 'Equivalent correctness tier.',
+      },
+      {
+        tierId: 'strong', primaryCliType: 'claude', primaryModel: 'claude-pro',
+        primaryThinkingLevel: 'high', fallbackCliType: 'codex', fallbackModel: 'codex-pro',
+        fallbackThinkingLevel: 'high', evidenceStatus: 'verified', provisional: false,
+        policyVersion: '2026-09-07', reason: 'Equivalent correctness tier.',
+      },
+    ],
   };
   await page.route('**/api/cli/**', async (route) => {
     const p = new URL(route.request().url()).pathname;
@@ -170,6 +203,12 @@ test.describe('CLI Management restructure (AGT-2101)', () => {
     await expect(claudeRow).toContainText('3 models');
     await expect(claudeRow.getByTestId('cli-models-primary-summary-claude')).toContainText('Claude Pro');
     await expect(claudeRow).toContainText('→ Codex · Codex Pro');
+    const codexRow = overlay.getByTestId('cli-models-card-codex');
+    const activeFallback = codexRow.getByTestId('cli-models-active-fallback-codex');
+    await expect(activeFallback).toContainText('Codex · Codex Pro · high → Claude Code · Claude Pro · high');
+    await expect(activeFallback).toContainText('Codex is at 98% until its weekly reset.');
+    await expect(activeFallback).toContainText('catalogue-derived');
+    await expect(activeFallback.getByText(/since/)).toBeVisible();
     // No unexpected app error dialog (would mean an unstubbed endpoint).
     await expect(page.getByTestId('error-dialog-overlay')).toHaveCount(0);
 
@@ -184,10 +223,18 @@ test.describe('CLI Management restructure (AGT-2101)', () => {
     // Expand a row to reveal the route editor + full model list.
     await claudeRow.getByTestId('cli-models-toggle-claude').click();
     await expect(claudeRow.getByTestId('cli-primary-claude')).toBeVisible();
+    await expect(claudeRow.getByTestId('cli-models-use-catalogue-claude')).toBeVisible();
+    const geminiRow = overlay.getByTestId('cli-models-card-gemini');
+    await expect(geminiRow).toContainText('catalogue-derived · 1 equivalence tier');
+    await geminiRow.getByTestId('cli-models-toggle-gemini').click();
+    await expect(geminiRow.getByTestId('cli-models-catalogue-route-source-gemini'))
+      .toContainText('Catalogue-derived by equivalence tier · 1 eligible route');
 
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);
       await overlay.screenshot({ path: join(SHOT_DIR, `cli-management-hub--mocked-${theme}.png`) });
+      await codexRow.screenshot({ path: join(SHOT_DIR, `quota-active-fallback--mocked-${theme}.png`) });
+      await geminiRow.screenshot({ path: join(SHOT_DIR, `quota-catalogue-equivalence--mocked-${theme}.png`) });
     }
   });
 

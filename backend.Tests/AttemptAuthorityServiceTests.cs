@@ -36,8 +36,27 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
         var review = first.CreateReviewAttempt(new CreateReviewAttemptRequest(
             "AGT-1", "PROJ-1", "589c462f", run.RunAttempt.AttemptId,
             "requirements-hash", "policy-hash", ["artifact:abc"], "review-create-1"));
+        var effectivePlan = new AgentStudio.TaskServer.Contracts.ReviewPlanDto(
+            [
+                new AgentStudio.TaskServer.Contracts.ReviewCommandDto(
+                    "aspect-code-quality",
+                    "code-quality",
+                    "claude",
+                    [],
+                    ExecutionKind: AgentStudio.TaskServer.Contracts.ReviewCommandKinds.AgentAspect,
+                    Prompt: "Review the claimed result.",
+                    CliType: "claude",
+                    Model: "claude-sonnet-5",
+                    ThinkingLevel: "medium"),
+            ],
+            ["code-quality"]);
         var reviewLease = first.ClaimReview(
-            review.ReviewAttempt!.AttemptId, "reviewer", "review-host", 120, "review-claim-1").ReviewAttempt!;
+            review.ReviewAttempt!.AttemptId,
+            "reviewer",
+            "review-host",
+            120,
+            "review-claim-1",
+            effectivePlan: effectivePlan).ReviewAttempt!;
 
         var restarted = NewService(() => now.AddSeconds(30));
         var projection = restarted.GetTaskProjection("agt-1");
@@ -52,6 +71,9 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
         Assert.Equal(review.ReviewAttempt!.AttemptId, projection.CurrentReviewAttempt!.AttemptId);
         Assert.Equal(reviewLease.LastFence, projection.CurrentReviewAttempt.LastFence);
         Assert.Equal(reviewLease.Lease!.ExpiresAt, projection.CurrentReviewAttempt.Lease!.ExpiresAt);
+        Assert.Equal(
+            "claude-sonnet-5",
+            Assert.Single(projection.CurrentReviewAttempt.EffectivePlan!.Commands).Model);
         Assert.Equal(AttemptWriteStatus.Duplicate, restarted.ClaimReview(
             review.ReviewAttempt.AttemptId, "reviewer", "review-host", 120, "review-claim-1").Status);
 

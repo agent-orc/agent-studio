@@ -316,6 +316,9 @@ public record OrchestratorChatTurn
     public string Role { get; init; } = OrchestratorChatRoles.User;
     public string Text { get; init; } = "";
     public string? Model { get; init; }
+    /// <summary>Actual provider CLI used for this reply.</summary>
+    public string? CliType { get; init; }
+    public bool QuotaFallback { get; init; }
     public OrchestratorTokenUsage? TokenUsage { get; init; }
     public string? ErrorMessage { get; init; }
     /// <summary>
@@ -436,13 +439,13 @@ public sealed record ChatNavigationContext(
 
 /// <summary>
 /// Service that turns a user message into an orchestrator reply with the
-/// operator-selected Codex model and reasoning level, then persists both
+/// operator-selected model and reasoning level, then persists both
 /// turns to the Task Server-owned context transcript.
 ///
 /// <para>
-/// This operating mode is GPT-only. Each request carries the effective model
-/// selection from the live Codex catalogue. A non-GPT model is rejected and
-/// the runner has no Claude fallback.
+/// The configured route comes from the live Codex catalogue. Quota admission
+/// may select an evidence-equivalent provider for one turn without rewriting
+/// that configuration.
 /// </para>
 /// </summary>
 public class OrchestratorChatService
@@ -617,7 +620,11 @@ public class OrchestratorChatService
                         string.IsNullOrWhiteSpace(remote.Model) ? requestedModel : remote.Model,
                         remote.TokenUsage,
                         CapturedSessionId: null,
-                        remote.ErrorMessage);
+                        remote.ErrorMessage)
+                    {
+                        CliType = remote.CliType ?? CliTypes.Codex,
+                        QuotaAdmission = remote.QuotaAdmission,
+                    };
                 }
                 else
                 {
@@ -659,12 +666,16 @@ public class OrchestratorChatService
                 _logger.LogError(
                     "Orchestrator chat call failed for project {Project} (model={Model}): {Raw}",
                     projectName, result.Model, result.ErrorMessage ?? "(no error message)");
-                var translation = OrchestratorChatErrorTranslator.Translate(result.ErrorMessage, CliTypes.Codex);
+                var translation = OrchestratorChatErrorTranslator.Translate(
+                    result.ErrorMessage,
+                    result.CliType ?? CliTypes.Codex);
                 var failure = new OrchestratorChatTurn
                 {
                     Role = OrchestratorChatRoles.Orchestrator,
                     Text = result.ReplyText ?? "",
                     Model = result.Model,
+                    CliType = result.CliType,
+                    QuotaFallback = result.QuotaAdmission?.IsFallback == true,
                     TokenUsage = result.TokenUsage,
                     ErrorMessage = translation.FriendlyMessage,
                     ErrorDetail = translation.RawDetail,
@@ -679,6 +690,8 @@ public class OrchestratorChatService
                 Role = OrchestratorChatRoles.Orchestrator,
                 Text = result.ReplyText,
                 Model = result.Model,
+                CliType = result.CliType,
+                QuotaFallback = result.QuotaAdmission?.IsFallback == true,
                 TokenUsage = result.TokenUsage,
                 ContextReceipt = contextReceipt
             };
@@ -1638,7 +1651,8 @@ public class OrchestratorChatService
             repository.ProjectId,
             projectName,
             repository.RepositoryUrl,
-            repository.DefaultBranch);
+            repository.DefaultBranch,
+            watchPath);
     }
 
     /// <summary>

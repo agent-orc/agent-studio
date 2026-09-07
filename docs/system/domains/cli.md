@@ -94,11 +94,13 @@ CLI execution tests.
   through to `CliOneShotRegistry`; never replace it with an implicit Claude
   lookup. Project pipeline-step overrides and Token Economy recommendations may
   select another compatible GPT model explicitly.
-- Workspace CLI Management owns the model-routing policy. Each CLI has one
-  primary model and may have a fallback CLI, model, and thinking level in
-  `cli-model-routing.json`. `CliQuotaFallbackService` resolves that policy
-  against the latest quota snapshot for every new run; it must not rewrite the
-  task's configured CLI or model.
+- Workspace CLI Management owns quota-route overrides, while Token Economy's
+  evidence-qualified catalogue owns the default cross-provider equivalence
+  tiers. `cli-model-routing.json` contains only explicit operator overrides and
+  migrated legacy rows. An empty legacy row uses catalogue routing; a newly
+  saved empty override intentionally disables fallback. `CliQuotaFallbackService`
+  resolves the requested model and thinking level against this policy for each
+  new admission and never rewrites the task's configured route.
 - A quota fallback is run-scoped and must never be silent. Keep the
   `quota_fallback_activated` timeline event, task chat note, task-card badge,
   and status-bar warning aligned. When the primary is below its cap again, the
@@ -117,13 +119,25 @@ CLI execution tests.
   data source for the load-distribution view). A healthy primary launch stays a
   log-only normal path. The planner reuses the AGT-2040 routing map; it does not
   duplicate "which model replaces which".
+- Local coding launch, remote coding claim, Remote Review claim, model-backed
+  pipeline and aspect calls, and orchestrator or project-chat calls all use the
+  same planner immediately before execution. Remote coding sends the resolved
+  run specification over the lease wire and stores it in the attempt's session
+  receipt; idempotent replay therefore cannot change route after a quota reset.
+  Remote Review stores a fenced attempt-local effective plan at claim time.
+- Situation-aware admission classifies the expected call cost from execution
+  path, task type, and thinking level. It considers time to the primary reset
+  and the fallback provider's projected burn and remaining budget. Only cheap
+  work can take the bounded nearby-reset wait; costlier work prefers an
+  equivalent provider with headroom. Missing catalogue evidence is a wait, not
+  permission to lower the model floor.
 - Wait-on-quota is opt-in and bounded (CodingAgentRunner 0.6.0). The global
   policy lives in `cli-quota-wait-policy.json`; project settings may override
   enabled state and threshold independently. For a strictly capped primary,
   the decision order is nearby-reset wait, fallback model switch, then
   parallelism throttle. Unknown, suspicious, elapsed, or distant reset data
   cannot enter the nearby wait branch. Every branch emits a
-  `quota_admission_decision`; library `QuotaWaitStarted` and `QuotaWaitEnded`
+  `quota_admission_decision`; local library waits and remote claim deferrals
   events additionally maintain the visible `quota-waiting` task substate and
   durable `quota-wait.json` marker.
 - Quota-window projection keeps the first trusted start of an active window as

@@ -49,13 +49,14 @@ async function hideRecoveryOverlay(page: Page): Promise<void> {
 }
 
 async function installQuotaWaitCardRoutes(page: Page): Promise<void> {
+  const observedAt = new Date().toISOString();
   const resetAt = new Date(Date.now() + 12 * 60_000).toISOString();
   const task = {
     id: 'quota-wait-visible',
     taskKey: 'C:/fixtures/quota-wait::quota-wait-visible',
     key: 'QUOTA-WAIT',
     title: 'Keep the requested model after quota reset',
-    state: '3-progress',
+    state: '2-ready',
     phase: 'quota-waiting',
     order: 1,
     agent: 'codex',
@@ -63,7 +64,7 @@ async function installQuotaWaitCardRoutes(page: Page): Promise<void> {
     model: 'gpt-5.4',
     watchPath: 'C:/fixtures/quota-wait',
     projectName: 'Quota wait fixture',
-    folderPath: 'C:/fixtures/quota-wait/.orchestrator/tasks/3-progress/quota-wait-visible',
+    folderPath: 'C:/fixtures/quota-wait/.orchestrator/tasks/2-ready/quota-wait-visible',
     createdAt: new Date(Date.now() - 30 * 60_000).toISOString(),
     lastActivity: new Date(Date.now() - 60_000).toISOString(),
     execution: null,
@@ -80,8 +81,8 @@ async function installQuotaWaitCardRoutes(page: Page): Promise<void> {
     },
   };
   const grouped = {
-    backlog: [], preparation: [], orchestratorPrep: [], ready: [],
-    progress: [task], failedPickup: [], codeNotComplete: [], review: [],
+    backlog: [], preparation: [], orchestratorPrep: [], ready: [task],
+    progress: [], failedPickup: [], codeNotComplete: [], review: [],
     autoReview: [], humanReview: [], completed: [], archive: [],
   };
 
@@ -99,6 +100,27 @@ async function installQuotaWaitCardRoutes(page: Page): Promise<void> {
   }));
   await page.route('**/api/git/summary**', route =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
+  await page.route('**/api/v1/management/remote-hosts', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify([{
+      runnerId: 'quota-fixture-runner', name: 'quota-fixture-host', hostId: 'quota-fixture-host',
+      instanceId: 'quota-fixture-instance', runnerVersion: '1.0.0', protocolVersion: 2,
+      status: 'active', registeredAt: observedAt, lastSeenAt: observedAt,
+      hostAdmission: { hostId: 'quota-fixture-host', admissionState: 'open' },
+      capabilities: [{
+        key: 'provider-auth:codex', category: 'provider-auth', advertisedStatus: 'ready',
+        healthState: 'healthy', advertisedAt: observedAt,
+        freshUntil: new Date(Date.now() + 120_000).toISOString(), isFresh: true,
+        consecutiveFailures: 0, affectedClaims: [], recoveryHistory: [],
+      }],
+    }]),
+  }));
+  await page.route('**/api/v1/management/remote-hosts/link-health', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: '[]',
+  }));
   await page.route(/\/api\/runner\/status(\?|$)/, route => route.fulfill({
     status: 200,
     contentType: 'application/json',
@@ -198,7 +220,7 @@ test.describe('wait on nearby quota reset', () => {
     }
   });
 
-  test('shows the quota-reset countdown on the card in both themes', async ({ page, devBackend }) => {
+  test('shows the remote-admission quota wait on a Ready card in both themes', async ({ page, devBackend }) => {
     fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
     await api<WaitPolicy>(devBackend.baseUrl, '/api/cli/quota/wait-policy');
     await page.addInitScript(() => {
@@ -221,7 +243,7 @@ test.describe('wait on nearby quota reset', () => {
     for (const theme of ['dark', 'light'] as const) {
       await setTheme(page, theme);
       await card.screenshot({
-        path: path.join(SCREENSHOT_DIR, `quota-wait-card-${theme}.png`),
+        path: path.join(SCREENSHOT_DIR, `quota-wait-ready-card-${theme}.png`),
       });
     }
   });

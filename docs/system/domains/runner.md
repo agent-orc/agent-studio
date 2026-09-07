@@ -444,6 +444,14 @@ state.
   instance, workspace root, cache, port block, container/database namespace,
   read-only credentials, and quota. A ReviewPlan may require a different host
   failure domain.
+- A remote coding claim runs quota admission before provider-capability
+  matching and lease acquisition. A capped configured family can therefore be
+  matched against an equivalent provider advertised by the same host. The
+  claim carries the effective CLI, model, thinking level, permission mode, and
+  context mode, while `task.json` remains unchanged. The attempt's start
+  session receipt fences this route for idempotent replay and marks fallback
+  attribution. A wait decision leaves the card Ready, writes its reset marker,
+  and grants no lease.
 - Every review command records the expected Result-SHA and the actual HEAD
   immediately before process start. The Task Server accepts evidence only when
   the repository identity, expected SHA, tested SHA, tree, executable-digest

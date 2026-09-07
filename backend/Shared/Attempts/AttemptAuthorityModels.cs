@@ -83,7 +83,8 @@ public sealed record ReviewAttemptDto(
     string? FailureClassification,
     string? TestedResultSha,
     string? TerminalReason,
-    IReadOnlyList<ReviewReportDeliveryDto> Reports);
+    IReadOnlyList<ReviewReportDeliveryDto> Reports,
+    AgentStudio.TaskServer.Contracts.ReviewPlanDto? EffectivePlan = null);
 
 public sealed record ReviewReportDeliveryDto(
     string IdempotencyKey,

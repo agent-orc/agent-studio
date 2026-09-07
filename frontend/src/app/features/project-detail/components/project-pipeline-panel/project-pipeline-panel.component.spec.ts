@@ -213,6 +213,94 @@ describe('ProjectPipelinePanelComponent (render)', () => {
     expect(host.querySelector('[data-testid="pipeline-step-kind-post-build-test-gate"]')?.textContent?.trim()).toBe('TOO');
   });
 
+  it('shows quota-effective routes without feeding temporary fallbacks into the editor', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ProjectPipelinePanelComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+      ],
+    }).compileComponents();
+
+    const steps = catalogue();
+    Object.assign(steps[1], {
+      cliType: 'codex',
+      resolvedModel: 'gpt-5.6-sol',
+      resolvedThinkingLevel: 'high',
+      effectiveCliType: 'claude',
+      effectiveModel: 'claude-opus-5',
+      effectiveThinkingLevel: 'high',
+      quotaAdmission: {
+        outcome: 'fallback',
+        isFallback: true,
+        reason: 'Codex is at 98% until its weekly reset.',
+        decidedAt: '2026-09-07T02:37:00Z',
+        nextResetAt: '2026-09-07T06:38:00Z',
+      },
+    });
+    Object.assign(steps[2], {
+      cliType: 'codex',
+      resolvedModel: 'gpt-5.4-mini',
+      resolvedThinkingLevel: 'high',
+      effectiveCliType: 'codex',
+      effectiveModel: 'gpt-5.4-mini',
+      effectiveThinkingLevel: 'high',
+      quotaAdmission: {
+        outcome: 'wait',
+        isFallback: false,
+        reason: 'The Codex weekly reset is close and this step is cheap.',
+        decidedAt: '2026-09-07T06:30:00Z',
+        nextResetAt: '2026-09-07T06:38:00Z',
+      },
+    });
+
+    const fixture = TestBed.createComponent(ProjectPipelinePanelComponent);
+    fixture.componentRef.setInput('projectName', 'demo');
+    try { fixture.detectChanges(); } catch { /* pending HTTP, ignore */ }
+    fixture.componentInstance.catalogue.set(steps);
+    fixture.componentInstance.overrides.set({
+      ...overrides(),
+      'aspect-requirement-fit': {
+        ...overrides()['aspect-requirement-fit'],
+        cliType: 'codex', model: 'gpt-5.6-sol', thinkingLevel: 'high',
+      },
+      'aspect-code-quality': {
+        enabled: true, cliType: 'codex', model: 'gpt-5.4-mini', thinkingLevel: 'high',
+      },
+    });
+    fixture.detectChanges();
+
+    const rendered = host(fixture);
+    const fallback = rendered.querySelector<HTMLElement>(
+      '[data-testid="pipeline-step-effective-route-aspect-requirement-fit"]',
+    );
+    expect(fallback?.textContent).toContain('Codex → Claude Code');
+    expect(fallback?.textContent).toContain('claude-opus-5');
+    expect(fallback?.classList.contains('route-chip--fallback')).toBe(true);
+    const fallbackDetail = rendered.querySelector<HTMLElement>(
+      '[data-testid="pipeline-step-setting-effective-route-aspect-requirement-fit"]',
+    );
+    expect(fallbackDetail?.textContent).toContain('Codex is at 98%');
+    expect(fallbackDetail?.textContent).toContain('Next reset:');
+
+    const configuredSelector = rendered.querySelector<HTMLElement>(
+      '[data-testid="pipeline-step-agent-aspect-requirement-fit"]',
+    );
+    expect(configuredSelector?.getAttribute('aria-label')).toContain('Codex · gpt-5.6-sol · high');
+    expect(configuredSelector?.getAttribute('aria-label')).not.toContain('claude-opus-5');
+
+    const wait = rendered.querySelector<HTMLElement>(
+      '[data-testid="pipeline-step-effective-route-aspect-code-quality"]',
+    );
+    expect(wait?.textContent).toContain('Waiting for Codex reset at');
+    expect(wait?.classList.contains('route-chip--wait')).toBe(true);
+    expect(rendered.querySelector(
+      '[data-testid="pipeline-step-setting-effective-route-aspect-code-quality"]',
+    )?.textContent).toContain('The Codex weekly reset is close');
+  });
+
   it('emits openPrompts from the summary prompt chip and Manage in Prompts', async () => {
     await TestBed.configureTestingModule({
       imports: [ProjectPipelinePanelComponent],

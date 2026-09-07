@@ -9,6 +9,46 @@ export interface CliModelRouteProfile {
   fallbackCliType: string | null;
   fallbackModel: string | null;
   fallbackThinkingLevel: string | null;
+  /** Whether the effective fallback route comes from the catalogue or an operator override. */
+  routeSource?: string | null;
+  /** Current server-side admission substitution, omitted when this family is running normally. */
+  activeFallback?: CliQuotaActiveFallback | null;
+}
+
+/** Read-only admission state returned with a model-route profile. */
+export interface CliQuotaActiveFallback {
+  requestedCliType: string;
+  requestedModel: string | null;
+  requestedThinkingLevel: string | null;
+  effectiveCliType: string;
+  effectiveModel: string | null;
+  effectiveThinkingLevel: string | null;
+  reason: string | null;
+  activatedAt: string;
+  resetAt: string | null;
+  routeSource?: string | null;
+  equivalentTier?: string | null;
+}
+
+/** One evidence-qualified cross-family substitution from the Token Economy catalogue. */
+export interface CliCatalogueEquivalentRoute {
+  tierId: string;
+  primaryCliType: string;
+  primaryModel: string;
+  primaryThinkingLevel: string;
+  fallbackCliType: string;
+  fallbackModel: string;
+  fallbackThinkingLevel: string;
+  evidenceStatus: string;
+  provisional: boolean;
+  policyVersion: string;
+  reason: string;
+}
+
+export interface CliModelRoutesResponse {
+  profiles: Record<string, CliModelRouteProfile>;
+  /** Optional during a rolling backend/frontend deployment. */
+  catalogueRoutes?: CliCatalogueEquivalentRoute[];
 }
 
 export interface CliQuotaWaitPolicy {
@@ -131,7 +171,7 @@ export class QuotaApiService {
   }
 
   getModelRoutes() {
-    return this.http.get<{ profiles: Record<string, CliModelRouteProfile> }>(
+    return this.http.get<CliModelRoutesResponse>(
       `${this.baseUrl}/cli/quota/model-routes`,
     );
   }

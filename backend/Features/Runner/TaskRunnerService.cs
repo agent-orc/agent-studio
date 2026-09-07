@@ -1074,12 +1074,40 @@ public class TaskRunnerService : BackgroundService
     private static DateTime? Max(params DateTime?[] values)
         => values.Where(v => v.HasValue).Select(v => v!.Value).DefaultIfEmpty().Max() is var max && max != default ? max : null;
 
-    public QuotaFallbackStatus? GetQuotaFallbackForJob(string jobId, string projectName)
+    public QuotaFallbackStatus? GetQuotaFallbackForJob(
+        string jobId,
+        string projectName,
+        string? watchPath = null,
+        string? requestedCliType = null,
+        string? requestedModel = null,
+        string? taskKey = null)
     {
         if (string.IsNullOrEmpty(projectName)) return null;
-        return _runners.TryGetValue(projectName, out var runner)
+        var local = _runners.TryGetValue(projectName, out var runner)
             ? runner.GetQuotaFallback(jobId)
             : null;
+        if (local is not null) return local;
+        if (string.IsNullOrWhiteSpace(watchPath)) return null;
+        var leaseKey = string.IsNullOrWhiteSpace(taskKey) ? jobId : taskKey;
+        if (_runLeases?.Peek(leaseKey!).Lease is null) return null;
+
+        // Remote claims persist the effective route before returning the wire
+        // response. This read-time projection makes the same fallback marker
+        // visible on cards without relying on an in-process ProjectRunner.
+        var run = _sessions.ReadSessionEvents(jobId, watchPath)
+            .LastOrDefault(item => string.Equals(item.Kind, "start", StringComparison.OrdinalIgnoreCase));
+        if (run?.QuotaFallback != true || string.IsNullOrWhiteSpace(run.Cli)) return null;
+        return new QuotaFallbackStatus(
+            run.Cli!,
+            run.Model,
+            run.QuotaFallbackReason ?? "Quota admission selected an equivalent provider for this attempt.",
+            run.ThinkingLevel,
+            run.Ts,
+            run.QuotaFallbackFromCliType ?? requestedCliType,
+            run.QuotaFallbackFromModel ?? requestedModel,
+            run.QuotaFallbackResetAt,
+            run.QuotaFallbackRouteSource,
+            run.QuotaFallbackEquivalentTier);
     }
 
     private static WatchdogConfig LoadWatchdogConfig(IConfiguration cfg)

@@ -89,10 +89,17 @@ export interface PipelineAdminRow {
   cliType: string;
   model: string;
   thinkingLevel: string;
+  /** Route resolved from project/catalogue settings and used by the editor. */
+  configuredCliType: string;
+  configuredModel: string;
+  configuredThinkingLevel: string;
+  /** Launch route after the quota planner has made its current admission decision. */
   effectiveCliType: string;
   effectiveModel: string;
   effectiveModelSource: string;
   effectiveThinkingLevel: string;
+  quotaAdmission: PipelineCatalogueStep['quotaAdmission'];
+  effectiveRouteChanged: boolean;
   /** Inline prompt override text (legacy). Empty = bound to the registry template. */
   prompt: string;
   /** Registry template this step renders from, when the catalogue declares one. */
@@ -113,6 +120,34 @@ export interface PipelineAdminRow {
   tokenUnpricedRuns?: number;
   /** Concrete model and resolver reasons for the missing historical prices. */
   tokenPricingGaps?: TokenPricingGap[];
+}
+
+/** Keep configured editor inputs separate from the quota-admitted launch route. */
+export function resolvePipelineAdminRoute(
+  step: PipelineCatalogueStep,
+  override: PipelineStepSetting | undefined,
+): Pick<PipelineAdminRow, 'configuredCliType' | 'configuredModel' | 'configuredThinkingLevel' |
+  'effectiveCliType' | 'effectiveModel' | 'effectiveModelSource' | 'effectiveThinkingLevel' |
+  'quotaAdmission' | 'effectiveRouteChanged'> {
+  const configuredCliType = override?.cliType ?? step.cliType ?? (step.usesModel ? 'claude' : '');
+  const configuredModel = override?.model ?? step.resolvedModel ?? step.model ?? '';
+  const configuredThinkingLevel = override?.thinkingLevel ?? step.resolvedThinkingLevel ?? '';
+  const effectiveCliType = step.effectiveCliType ?? configuredCliType;
+  const effectiveModel = step.effectiveModel ?? configuredModel;
+  const effectiveThinkingLevel = step.effectiveThinkingLevel ?? configuredThinkingLevel;
+  return {
+    configuredCliType,
+    configuredModel,
+    configuredThinkingLevel,
+    effectiveCliType,
+    effectiveModel,
+    effectiveModelSource: override?.model ? 'step' : (step.modelSource ?? ''),
+    effectiveThinkingLevel,
+    quotaAdmission: step.quotaAdmission ?? null,
+    effectiveRouteChanged: effectiveCliType !== configuredCliType
+      || effectiveModel !== configuredModel
+      || effectiveThinkingLevel !== configuredThinkingLevel,
+  };
 }
 
 export interface PipelineStepTokenCost {
@@ -234,6 +269,76 @@ export function formatTokens(n: number | null | undefined): string {
   if (abs >= 1_000_000) return `${sign}${(abs / 1_000_000).toFixed(1)}M`;
   if (abs >= 1_000) return `${sign}${(abs / 1_000).toFixed(1)}k`;
   return `${sign}${abs}`;
+}
+
+/** Whether the current pipeline admission decision waits for quota to reset. */
+export function pipelineQuotaAdmissionIsWait(row: Pick<PipelineAdminRow, 'quotaAdmission'>): boolean {
+  return (row.quotaAdmission?.outcome ?? '').trim().toLowerCase().includes('wait');
+}
+
+/** Current read-only route, including a provider switch or reset wait when applicable. */
+export function pipelineEffectiveRouteSummary(row: Pick<PipelineAdminRow,
+  'configuredCliType' | 'configuredModel' | 'configuredThinkingLevel' |
+  'effectiveCliType' | 'effectiveModel' | 'effectiveThinkingLevel' | 'quotaAdmission'>): string {
+  const admission = row.quotaAdmission;
+  if (pipelineQuotaAdmissionIsWait(row)) {
+    const reset = formatPipelineRouteTime(admission?.nextResetAt, true);
+    return `Waiting for ${pipelineCliLabel(row.configuredCliType)} reset${reset ? ` at ${reset}` : ''}`;
+  }
+
+  const effective = pipelineRouteEndpoint(
+    row.effectiveCliType,
+    row.effectiveModel,
+    row.effectiveThinkingLevel,
+  );
+  if (!admission?.isFallback) return effective;
+  const effectiveDetail = [row.effectiveModel || 'runtime default', row.effectiveThinkingLevel]
+    .filter(Boolean)
+    .join(' · ');
+  return `${pipelineCliLabel(row.configuredCliType)} → ${pipelineCliLabel(row.effectiveCliType)} · ${effectiveDetail}`;
+}
+
+/** Human explanation accompanying the launch-effective route. */
+export function pipelineQuotaAdmissionExplanation(row: Pick<PipelineAdminRow,
+  'configuredCliType' | 'effectiveCliType' | 'quotaAdmission'>): string {
+  const admission = row.quotaAdmission;
+  if (!admission) {
+    return `Quota admission currently resolves this step to ${pipelineCliLabel(row.effectiveCliType)}.`;
+  }
+
+  const fallback = admission.isFallback
+    ? `Switched from ${pipelineCliLabel(row.configuredCliType)} to ${pipelineCliLabel(row.effectiveCliType)}.`
+    : pipelineQuotaAdmissionIsWait(row)
+      ? `Waiting for ${pipelineCliLabel(row.configuredCliType)} quota to reset.`
+      : 'The configured route is currently admitted.';
+  const decision = formatPipelineRouteTime(admission.decidedAt, false);
+  const reset = formatPipelineRouteTime(admission.nextResetAt, false);
+  return [admission.reason?.trim() || fallback, decision ? `Decision: ${decision}.` : '',
+    reset ? `Next reset: ${reset}.` : ''].filter(Boolean).join(' ');
+}
+
+function pipelineRouteEndpoint(cliType: string, model: string, thinkingLevel: string): string {
+  return [pipelineCliLabel(cliType), model || 'runtime default', thinkingLevel]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+function pipelineCliLabel(cliType: string): string {
+  switch (cliType.trim().toLowerCase()) {
+    case 'claude': return 'Claude Code';
+    case 'codex': return 'Codex';
+    case 'gemini': return 'Gemini';
+    default: return cliType || 'Runtime';
+  }
+}
+
+function formatPipelineRouteTime(value: string | null | undefined, timeOnly: boolean): string {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return timeOnly
+    ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : date.toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
 /** Read-only label for a step's window token sum, e.g. "12.3k tokens / 90d". */

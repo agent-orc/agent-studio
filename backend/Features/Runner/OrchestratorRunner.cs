@@ -26,6 +26,9 @@ public sealed record OrchestratorDecisionResult(
 {
     public ParsedTurnUsage? ParsedUsage { get; init; }
     public AgentMessageLatency? Latency { get; init; }
+    /// <summary>Actual CLI family after quota admission.</summary>
+    public string? CliType { get; init; }
+    public QuotaAdmissionPlan? QuotaAdmission { get; init; }
 }
 
 /// <summary>
@@ -97,9 +100,9 @@ public class OrchestratorRunner
         => InvokeAsync(prompt, model, workingDirectory, resumeSessionId: null, inlineImages, ct);
 
     /// <summary>
-    /// Run an operator-selected Codex model for the GPT-only Orchestrator
-    /// composer. This path deliberately has no Claude fallback. The model and
-    /// reasoning values come from the live Codex catalogue exposed by the UI.
+    /// Run an operator-selected model for the Orchestrator composer. Quota
+    /// admission may move the invocation to an evidence-equivalent provider;
+    /// the configured model remains unchanged.
     /// </summary>
     public virtual async Task<OrchestratorDecisionResult> DecideCodexAsync(
         string prompt,
@@ -121,23 +124,28 @@ public class OrchestratorRunner
             Source = "orchestrator-chat",
             RecordUsage = false,
         }, ct).ConfigureAwait(false);
+        var effectiveModel = result.EffectiveModel ?? model;
 
         if (!result.Ok)
         {
             var error = !string.IsNullOrWhiteSpace(result.Stderr)
                 ? result.Stderr.Trim()
                 : result.Error ?? result.Stdout.Trim();
-            return new OrchestratorDecisionResult(false, result.ParsedText, model, result.Usage, null, error)
+            return new OrchestratorDecisionResult(false, result.ParsedText, effectiveModel, result.Usage, null, error)
             {
                 Latency = result.Latency,
                 ParsedUsage = result.RichUsage,
+                CliType = result.EffectiveCliType ?? CliTypes.Codex,
+                QuotaAdmission = result.QuotaAdmission,
             };
         }
 
-        return new OrchestratorDecisionResult(true, result.ParsedText, model, result.Usage, null, null)
+        return new OrchestratorDecisionResult(true, result.ParsedText, effectiveModel, result.Usage, null, null)
         {
             Latency = result.Latency,
             ParsedUsage = result.RichUsage,
+            CliType = result.EffectiveCliType ?? CliTypes.Codex,
+            QuotaAdmission = result.QuotaAdmission,
         };
     }
 
@@ -283,8 +291,10 @@ public class OrchestratorRunner
                 Timeout = DefaultTimeout,
                 ExtraArgs = extras,
                 InlineImages = inlineImages,
+                Source = "orchestrator-decision",
                 RecordUsage = false, // The orchestrator path has its own bookkeeping
             }, ct).ConfigureAwait(false);
+            var effectiveModel = r.EffectiveModel ?? modelId;
 
             if (!r.Ok)
             {
@@ -296,19 +306,41 @@ public class OrchestratorRunner
                 _logger.LogWarning(
                     "Orchestrator decision failed via OneShot: exit={Exit}, stdout={Stdout}, stderr={Stderr}",
                     r.ExitCode, r.Stdout?.Trim(), r.Stderr?.Trim());
-                return new OrchestratorDecisionResult(false, "", modelId, null, null, combined)
+                return new OrchestratorDecisionResult(false, "", effectiveModel, null, null, combined)
                 {
                     Latency = r.Latency,
+                    CliType = r.EffectiveCliType ?? CliTypes.Claude,
+                    QuotaAdmission = r.QuotaAdmission,
                 };
             }
 
-            var parsed = ParseResult(r.Stdout, modelId);
+            if (!string.IsNullOrWhiteSpace(r.EffectiveCliType)
+                && !string.Equals(r.EffectiveCliType, CliTypes.Claude, StringComparison.OrdinalIgnoreCase))
+            {
+                return new OrchestratorDecisionResult(
+                    true,
+                    r.ParsedText,
+                    effectiveModel,
+                    r.Usage,
+                    CapturedSessionId: null,
+                    ErrorMessage: null)
+                {
+                    Latency = r.Latency,
+                    ParsedUsage = r.RichUsage,
+                    CliType = r.EffectiveCliType,
+                    QuotaAdmission = r.QuotaAdmission,
+                };
+            }
+
+            var parsed = ParseResult(r.Stdout, effectiveModel);
             // OneShot already produced ParsedTurnUsage with the context-window
             // snapshot from the same parser. Prefer that over a re-derivation.
             return parsed with
             {
                 Latency = r.Latency,
                 ParsedUsage = r.RichUsage ?? parsed.ParsedUsage,
+                CliType = r.EffectiveCliType ?? CliTypes.Claude,
+                QuotaAdmission = r.QuotaAdmission,
             };
         }
 

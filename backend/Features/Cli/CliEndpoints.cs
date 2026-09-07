@@ -228,7 +228,11 @@ public static class CliEndpoints
         });
 
         cliGroup.MapGet("/quota/model-routes", (CliQuotaFallbackService routes) =>
-            Results.Ok(new { profiles = routes.GetAll() }));
+            Results.Ok(new
+            {
+                profiles = routes.GetAll(),
+                catalogueRoutes = routes.GetCatalogueRoutes(),
+            }));
 
         cliGroup.MapPut("/quota/model-routes", (SetCliModelRouteRequest req, CliQuotaFallbackService routes) =>
         {
@@ -244,6 +248,7 @@ public static class CliEndpoints
                 FallbackCliType = req.FallbackCliType,
                 FallbackModel = req.FallbackModel,
                 FallbackThinkingLevel = req.FallbackThinkingLevel,
+                RouteSource = req.RouteSource ?? string.Empty,
             });
             return Results.Ok(saved);
         });

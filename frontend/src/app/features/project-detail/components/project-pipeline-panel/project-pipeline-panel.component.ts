@@ -24,17 +24,19 @@ import {
   stepTokenLabel,
   stepTokenTooltip,
   pipelineTokenCostByStep,
+  resolvePipelineAdminRoute,
 } from './pipeline-config.util';
 import { PipelineStepFocusDirective } from './pipeline-step-focus.directive';
 import { PipelineHealthBlockComponent } from '../pipeline-health-block/pipeline-health-block';
 import { PipelineStepExecutionComponent } from './pipeline-step-execution/pipeline-step-execution.component';
 import { PipelineTypePickerComponent } from './pipeline-type-picker/pipeline-type-picker.component';
 import { PipelineStepRowStateComponent } from './pipeline-step-row-state/pipeline-step-row-state.component';
+import { PipelineQuotaRouteComponent } from './pipeline-quota-route/pipeline-quota-route.component';
 /** Per-type project pipeline editor for ordering, activation, agents, prompts, gates, and usage. */
 @Component({
   selector: 'app-project-pipeline-panel', standalone: true,
   imports: [FormsModule, CliModelSelectorComponent, TooltipDirective, PipelineHealthBlockComponent, PipelineStepExecutionComponent,
-    PipelineTypePickerComponent, PipelineStepRowStateComponent],
+    PipelineTypePickerComponent, PipelineStepRowStateComponent, PipelineQuotaRouteComponent],
   hostDirectives: [{ directive: PipelineStepFocusDirective, inputs: ['focusStepId'] }],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-pipeline-panel.component.html',
@@ -112,10 +114,7 @@ export class ProjectPipelinePanelComponent {
         cliType: ov?.cliType ?? step.cliType ?? '',
         model: ov?.model ?? '',
         thinkingLevel: ov?.thinkingLevel ?? '',
-        effectiveCliType: ov?.cliType ?? step.cliType ?? (step.usesModel ? 'claude' : ''),
-        effectiveModel: ov?.model ?? step.resolvedModel ?? step.model ?? '',
-        effectiveModelSource: ov?.model ? 'step' : (step.modelSource ?? ''),
-        effectiveThinkingLevel: ov?.thinkingLevel ?? step.resolvedThinkingLevel ?? '',
+        ...resolvePipelineAdminRoute(step, ov),
         prompt: ov?.prompt ?? '',
         promptTemplate: step.promptTemplate ?? '',
         mode: ov?.mode ?? '',
@@ -459,12 +458,6 @@ export class ProjectPipelinePanelComponent {
     const kind = this.kindKey(step.kind);
     return kind !== 'tool'
       && (step.usesModel || kind === 'core' || kind === 'orchestrator');
-  }
-
-  modelSummary(step: PipelineAdminRow): string {
-    if (!step.usesModel) return 'no model';
-    if (step.economyModel && !step.model) return 'Spark auto';
-    return step.effectiveModel || 'runtime default';
   }
 
   modelSourceLabel(source: string | null | undefined): string {

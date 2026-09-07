@@ -78,10 +78,7 @@
                     </span>
                   }
                   @if (step.usesModel) {
-                    <span class="pp__chip"
-                          [cacTooltip]="'Effective model: ' + modelSummary(step) + ' (' + modelSourceLabel(step.effectiveModelSource) + ')'">
-                      {{ modelSummary(step) }}
-                    </span>
+                    <app-pipeline-quota-route [step]="step" />
                   }
                   @if (step.usesPrompt) {
                     <button type="button"
@@ -160,12 +157,12 @@
                       <span class="pp__settings-label" role="cell">Model</span>
                       <span class="pp__settings-value pp__setting-stack" role="cell">
                       <app-cli-model-selector
-                        [cliType]="asCliType(step.effectiveCliType)"
-                        [model]="step.effectiveModel || step.model"
-                        [thinkingLevel]="step.effectiveThinkingLevel || null"
+                        [cliType]="asCliType(step.configuredCliType)"
+                        [model]="step.configuredModel || step.model"
+                        [thinkingLevel]="step.configuredThinkingLevel || null"
                         [disabled]="!step.enabled || !!stepBusy[step.id]"
                         [disabledReason]="!step.enabled ? 'Enable this step before changing its agent.' : 'Pipeline step update in progress.'"
-                        [tooltipOverride]="'CLI, model, and thinking level for this step LLM call. Current value is resolved from ' + modelSourceLabel(step.effectiveModelSource) + '.'"
+                        [tooltipOverride]="'Configured CLI, model, and thinking level for this step. Current value is resolved from ' + modelSourceLabel(step.effectiveModelSource) + '. Quota admission is shown separately.'"
                         eyebrow="Pipeline step"
                         [triggerTestid]="'pipeline-step-agent-' + step.id"
                         [pickerTestidPrefix]="'pipeline-step-agent-picker-' + step.id"
@@ -180,6 +177,7 @@
                       </span>
                       <span class="pp__settings-note" role="cell">{{ modelExplanation(step) }}</span>
                     </div>
+                    <app-pipeline-quota-route [step]="step" presentation="detail" />
                   }
 
                   @if (step.usesPrompt) {

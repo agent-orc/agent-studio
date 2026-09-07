@@ -824,6 +824,7 @@ if (!builder.Environment.IsEnvironment("Test") && !underTestHost)
     builder.Services.AddHostedService<CliVersionMonitorHostedService>();
 builder.Services.AddSingleton<CliQuotaCapsService>();
 builder.Services.AddSingleton<CliQuotaWaitPolicyService>();
+builder.Services.AddSingleton<ModelEquivalenceRouteCatalog>();
 builder.Services.AddSingleton<CliQuotaFallbackService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<TaskWatcherService>());
 if (!publicDemoExecutionProfile)

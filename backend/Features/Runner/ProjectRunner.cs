@@ -801,11 +801,15 @@ public class ProjectRunner
             c => string.IsNullOrWhiteSpace(c) ? null : _quotaService.GetCachedFor(c!),
             DateTime.UtcNow,
             _activeRuns.Count,
-            _quotaWaitPolicy?.Resolve(_projectSettings.Get(ProjectName)));
+            _quotaWaitPolicy?.Resolve(_projectSettings.Get(ProjectName)),
+            QuotaAdmissionContext.ForTask(
+                QuotaExecutionPath.CodingRun,
+                info.TaskType,
+                info.ThinkingLevel));
 
     private void RecordNearbyQuotaWait(TaskInfo info, QuotaAdmissionPlan plan)
     {
-        if (!plan.NearbyResetWait || plan.NextResetAt is not { } resetAt) return;
+        if (plan.Outcome != QuotaAdmissionOutcome.Wait || plan.NextResetAt is not { } resetAt) return;
         var policy = _quotaWaitPolicy?.Resolve(_projectSettings.Get(ProjectName));
         var existing = QuotaWaitMarker.TryRead(info.FolderPath, _logger);
         QuotaWaitMarker.Write(info.FolderPath, new QuotaWaitRecord
@@ -1378,7 +1382,7 @@ public class ProjectRunner
             var qplan = PlanQuotaAdmission(candidate.Info);
             if (qplan.Outcome is QuotaAdmissionOutcome.Wait or QuotaAdmissionOutcome.Throttle)
             {
-                if (qplan.NearbyResetWait) RecordNearbyQuotaWait(candidate.Info, qplan);
+                if (qplan.Outcome == QuotaAdmissionOutcome.Wait) RecordNearbyQuotaWait(candidate.Info, qplan);
                 else ClearQuotaWait(candidate.Info);
                 EmitQuotaAdmissionDecision(candidate.Info, qplan);
                 _lastPickReason = $"quota-defer: {candidate.Info.Id}: {qplan.Reason}";
@@ -1997,6 +2001,46 @@ public class ProjectRunner
             resolverCliType,
             resolverModel,
             AgentStudio.Pipeline.PipelineStepModelDefaults.SupportThinkingLevel);
+        var quotaAdmission = QuotaAdmissionPlanner.Plan(
+            resolverCliType,
+            resolverModel,
+            resolverThinkingLevel,
+            _quotaFallback,
+            _quotaCaps,
+            cli => string.IsNullOrWhiteSpace(cli) ? null : _quotaService.GetCachedFor(cli),
+            DateTime.UtcNow,
+            _activeRuns.Count,
+            _quotaWaitPolicy?.Resolve(_projectSettings.Get(ProjectName)),
+            QuotaAdmissionContext.ForTask(
+                QuotaExecutionPath.PipelineStep,
+                info.TaskType,
+                resolverThinkingLevel));
+        EmitQuotaAdmissionDecision(info, quotaAdmission);
+        if (!quotaAdmission.ShouldLaunch)
+        {
+            var deferred = new IntegrationResult(
+                IntegrationOutcome.Conflict,
+                null,
+                $"Conflict resolution deferred by quota admission: {quotaAdmission.Reason}",
+                conflict.ConflictedFiles);
+            RecordConflictResolutionStep(
+                info,
+                PipelineStepStatus.Failed,
+                "quota-wait",
+                IntegrationSummary(deferred.Error!, run, workBranch, deferred),
+                started,
+                model: resolverModel);
+            return deferred;
+        }
+        _quotaFallback?.RecordAdmission(
+            resolverCliType,
+            resolverModel,
+            resolverThinkingLevel,
+            quotaAdmission,
+            DateTime.UtcNow);
+        resolverCliType = quotaAdmission.CliType;
+        resolverModel = quotaAdmission.Model ?? resolverModel;
+        resolverThinkingLevel = quotaAdmission.ThinkingLevel ?? resolverThinkingLevel;
         RecordConflictResolutionStep(info, PipelineStepStatus.Running, "running",
             IntegrationSummary($"Starting managed {resolverCliType} conflict-resolution run.", run, workBranch, conflict),
             started,
@@ -2361,32 +2405,35 @@ public class ProjectRunner
                 admissionInfo = info;
             }
 
-            // Resolve the workspace route from the latest cached quota. The
-            // decision is per-run and never mutates job.json, so a reset makes
-            // the next invocation return to primary automatically.
-            //
-            // AGT-2055: route against the PROJECTION-AWARE admission view so a
-            // primary that is about to breach its window switches to the AGT-2040
-            // fallback pre-emptively (before the wall), not after a burned launch.
-            // The hard block below stays on the STRICT cap so a manual start is
-            // never refused purely on a projection - only when a model is truly
-            // exhausted and no fallback saved it.
-            var route = _quotaFallback?.Resolve(
-                info.CliType, info.Model, info.ThinkingLevel, EvaluateAdmissionQuota);
-            var strictCap = EvaluateQuotaCap(info.CliType);
             // AGT-2055: the algorithmic pre-launch decision for THIS run, computed
             // once here - before the run claims a slot, so its projected-throttle
             // slot count matches the pickup gate's view. Reused for the quiet-wait
             // reject just below and emitted at the commit point further down, so
             // every launch (a healthy primary or a pre-emptive model switch) is
             // documented with its burn-rate / projection numbers.
-            var admissionPlan = PlanQuotaAdmission(info);
-            if (admissionPlan.Outcome == QuotaAdmissionOutcome.Wait)
+            // Epic decomposition has its own configured model and thinking
+            // level. Those values are the requested route for admission, not
+            // a post-admission override: otherwise a cross-family fallback can
+            // be paired with the primary provider's planning model.
+            var isEpicPlanningRun = EpicRunPolicy.IsPlanningRun(info.Kind, intent);
+            var quotaRouteInfo = info;
+            if (isEpicPlanningRun)
+            {
+                var projectSettings = _projectSettings.Get(ProjectName);
+                quotaRouteInfo = info with
+                {
+                    Model = string.IsNullOrWhiteSpace(projectSettings.EpicPlanningModel)
+                        ? info.Model
+                        : projectSettings.EpicPlanningModel,
+                    ThinkingLevel = projectSettings.EpicPlanningThinkingLevel ?? info.ThinkingLevel,
+                };
+            }
+            var admissionPlan = PlanQuotaAdmission(quotaRouteInfo);
+            if (!admissionPlan.ShouldLaunch)
             {
                 // Everything is exhausted: wait quietly with a reason + next
                 // reset, and record the decision. No spawn, no reissue burn.
-                if (admissionPlan.NearbyResetWait) RecordNearbyQuotaWait(info, admissionPlan);
-                else ClearQuotaWait(info);
+                RecordNearbyQuotaWait(info, admissionPlan);
                 EmitQuotaAdmissionDecision(info, admissionPlan);
                 _logger.LogInformation(
                     "[taskboard] {Intent} for job {JobId} deferred by quota admission: {Reason}",
@@ -2416,7 +2463,7 @@ public class ProjectRunner
                 }
             }
 
-            var cli = route == null ? GetCliFor(info) : _router.Get(route.CliType);
+            var cli = _router.Get(admissionPlan.CliType);
             ClearQuotaWait(info);
             var initialState = info.State;
             var promptPath = Path.Combine(info.FolderPath, "prompt.md");
@@ -2494,7 +2541,6 @@ public class ProjectRunner
             // authors a sub-task list) and, optionally, the planning model.
             // A user continue on an epic is the user steering the plan, not a
             // fresh decomposition, so it is left on the normal path.
-            var isEpicPlanningRun = EpicRunPolicy.IsPlanningRun(info.Kind, intent);
             ModelQualificationDecision? qualification = null;
             if (_modelQualification != null)
             {
@@ -2503,16 +2549,11 @@ public class ProjectRunner
                 // and may still replace this selection for the one run below.
                 qualification = await QualifyModelAsync(info, promptPath, GetCliFor(info), ct);
             }
-            var runModel = route?.Model ?? qualification?.SelectedModel ?? info.Model;
-            var runThinkingLevel = route?.ThinkingLevel ?? qualification?.SelectedThinkingLevel ?? info.ThinkingLevel;
+            var runModel = admissionPlan.Model ?? qualification?.SelectedModel ?? info.Model;
+            var runThinkingLevel = admissionPlan.ThinkingLevel ?? qualification?.SelectedThinkingLevel ?? info.ThinkingLevel;
             if (isEpicPlanningRun)
             {
                 plan = plan with { PromptTemplate = RuntimePromptService.EpicDecomposition, PromptOverride = null };
-                var projectSettings = _projectSettings.Get(ProjectName);
-                var planningModel = projectSettings.EpicPlanningModel;
-                if (!string.IsNullOrWhiteSpace(planningModel)) runModel = planningModel;
-                if (projectSettings.EpicPlanningThinkingLevel is not null)
-                    runThinkingLevel = projectSettings.EpicPlanningThinkingLevel;
                 _logger.LogInformation(
                     "[taskboard] epic {JobId} -> planning/decomposition run (model={Model}, thinkingLevel={ThinkingLevel})",
                     jobId, runModel ?? "<task-default>", runThinkingLevel ?? "<model-default>");
@@ -2714,19 +2755,25 @@ public class ProjectRunner
             // healthy primary launch stays a silent log-only line (the planner's
             // LaunchPrimary outcome early-returns before the task-facing tee), so
             // only genuine load-steering reaches the timeline and feed.
+            _quotaFallback?.RecordAdmission(
+                quotaRouteInfo.CliType ?? CliTypes.Claude,
+                quotaRouteInfo.Model,
+                quotaRouteInfo.ThinkingLevel,
+                admissionPlan,
+                DateTime.UtcNow);
             EmitQuotaAdmissionDecision(info, admissionPlan);
 
-            if (route?.IsFallback == true)
+            if (admissionPlan.IsFallback)
             {
                 if (_activeRuns.Get(jobId) is { } fallbackRun)
                 {
                     fallbackRun.FallbackFromCliType = info.CliType ?? CliTypes.Claude;
-                    fallbackRun.QuotaFallbackReason = route.Reason;
+                    fallbackRun.QuotaFallbackReason = admissionPlan.Reason;
                 }
-                var fallbackNote = $"Fallback: {route.CliType}/{route.Model}; reason: quota ({route.Reason})";
+                var fallbackNote = $"Fallback: {admissionPlan.CliType}/{admissionPlan.Model}; reason: quota ({admissionPlan.Reason})";
                 _logger.LogWarning(
                     "cli_quota_fallback_activated jobId={JobId} primaryCli={PrimaryCli} fallbackCli={FallbackCli} fallbackModel={FallbackModel} reason={Reason}",
-                    jobId, info.CliType, route.CliType, route.Model, route.Reason);
+                    jobId, info.CliType, admissionPlan.CliType, admissionPlan.Model, admissionPlan.Reason);
                 _chatLog.Append(info, OrchestratorMessageKind.Decision, "[quota-fallback] " + fallbackNote);
                 _timeline?.Append(
                     info.FolderPath,
@@ -2737,10 +2784,12 @@ public class ProjectRunner
                     {
                         ["primaryCli"] = info.CliType ?? string.Empty,
                         ["primaryModel"] = info.Model ?? string.Empty,
-                        ["fallbackCli"] = route.CliType,
-                        ["fallbackModel"] = route.Model ?? string.Empty,
+                        ["fallbackCli"] = admissionPlan.CliType,
+                        ["fallbackModel"] = admissionPlan.Model ?? string.Empty,
                         ["reason"] = "quota",
-                        ["quotaDetail"] = route.Reason ?? string.Empty,
+                        ["quotaDetail"] = admissionPlan.Reason,
+                        ["routeSource"] = admissionPlan.RouteSource ?? string.Empty,
+                        ["equivalentTier"] = admissionPlan.EquivalentTier ?? string.Empty,
                     });
             }
 
@@ -3078,6 +3127,13 @@ public class ProjectRunner
                 Cli = cli.CliType,
                 Model = execution.Model ?? runModel,
                 ThinkingLevel = execution.ThinkingLevel ?? runThinkingLevel,
+                QuotaFallback = admissionPlan.IsFallback,
+                QuotaFallbackFromCliType = admissionPlan.IsFallback ? info.CliType : null,
+                QuotaFallbackFromModel = admissionPlan.IsFallback ? info.Model : null,
+                QuotaFallbackReason = admissionPlan.IsFallback ? admissionPlan.Reason : null,
+                QuotaFallbackResetAt = admissionPlan.IsFallback ? admissionPlan.NextResetAt : null,
+                QuotaFallbackRouteSource = admissionPlan.IsFallback ? admissionPlan.RouteSource : null,
+                QuotaFallbackEquivalentTier = admissionPlan.IsFallback ? admissionPlan.EquivalentTier : null,
                 ExecutionLocation = new TaskExecutionLocation
                 {
                     State = TaskExecutionStates.LocalRunning,
@@ -3113,8 +3169,8 @@ public class ProjectRunner
                 {
                     ["cli"] = cli.CliType ?? string.Empty,
                     ["model"] = runModel ?? string.Empty,
-                    ["quotaFallback"] = route?.IsFallback == true ? "true" : "false",
-                    ["fallbackReason"] = route?.Reason ?? string.Empty,
+                    ["quotaFallback"] = admissionPlan.IsFallback ? "true" : "false",
+                    ["fallbackReason"] = admissionPlan.IsFallback ? admissionPlan.Reason : string.Empty,
                     ["intent"] = plan.EventKind ?? string.Empty,
                     ["resumed"] = effResumeFlag ? "true" : "false",
                 });
@@ -3839,7 +3895,19 @@ public class ProjectRunner
         var run = _activeRuns.Get(jobId);
         if (run?.FallbackFromCliType == null || string.IsNullOrWhiteSpace(run.CliType)) return null;
         var execution = _router.Get(run.CliType).GetExecution(GetJobKey(jobId));
-        return new QuotaFallbackStatus(run.CliType, execution?.Model, run.QuotaFallbackReason);
+        var receipt = _sessions.ReadSessionEvents(jobId, Entry.Path)
+            .LastOrDefault(item => item.QuotaFallback);
+        return new QuotaFallbackStatus(
+            run.CliType,
+            execution?.Model,
+            run.QuotaFallbackReason ?? receipt?.QuotaFallbackReason,
+            execution?.ThinkingLevel,
+            receipt?.Ts,
+            receipt?.QuotaFallbackFromCliType ?? run.FallbackFromCliType,
+            receipt?.QuotaFallbackFromModel,
+            receipt?.QuotaFallbackResetAt,
+            receipt?.QuotaFallbackRouteSource,
+            receipt?.QuotaFallbackEquivalentTier);
     }
 
     /// <summary>

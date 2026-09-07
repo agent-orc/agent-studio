@@ -1,6 +1,6 @@
 # Model Routing Policy
 
-Version: 2026-07-24
+Version: 2026-09-07
 
 Status: Canonical policy, initial hypothesis based on the 2026-07-23 historical benchmark
 
@@ -186,6 +186,40 @@ and new-card suggestions without rewriting existing cards or turning a
 suggestion into an explicit pin. The decision log must retain the policy
 version, recommended tier and route, selected route, selection source, score,
 economy state, correctness floor, and reason.
+
+`QuotaAdmissionPlanner` is the shared pre-launch authority for coding runs,
+remote coding claims, semantic review aspects, model-backed pipeline steps, and
+orchestrator or project-chat calls. It compares the primary window and reset,
+the fallback window's remaining budget and burn projection, and the call's
+expected cost class. A cheap call may wait when the primary reset is inside the
+configured wait threshold. Standard and expensive calls switch when a qualified
+equivalent route has headroom. If neither provider is safe, the call waits or is
+throttled instead of consuming a failed attempt. Reading the pipeline catalogue
+is a preview only and must not change live fallback state.
+
+Provider equivalence comes from Token Economy's evidence-qualified model
+catalogue, not a second pair of manually maintained family defaults in Studio.
+Studio adapts catalogue CLI names and may traverse a qualified edge in reverse,
+but it never invents a missing equivalence or crosses a correctness floor. An
+operator can persist an explicit route override, including an intentionally
+disabled fallback. Legacy profiles with a concrete fallback migrate as
+overrides; legacy empty profiles migrate to catalogue routing. When the current
+catalogue has no qualified counterpart for a requested model and thinking
+level, admission waits unless an operator supplies an override.
+
+Review subjects retain stable step and aspect identities. At claim time, the
+Task Server joins those identities to current project settings, runs quota
+admission, and persists the resulting CLI, model, and thinking level as the
+fenced attempt's `EffectivePlan`. Replays and daemon adoption use that exact
+effective plan, while a later open attempt can follow a new provider state
+without being superseded.
+
+Every actual fallback launch records its effective route and reason in task
+timeline and load-distribution evidence. Coding session receipts also retain a
+`quotaFallback` marker, so usage attribution follows the provider that executed
+the attempt while the card's configured route stays unchanged. A provider
+recovery affects only later admissions; an active run is never switched back
+mid-attempt.
 
 ## Roadmap: what happens next
 

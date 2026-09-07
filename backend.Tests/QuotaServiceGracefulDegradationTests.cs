@@ -90,6 +90,36 @@ public sealed class QuotaServiceGracefulDegradationTests : IDisposable
     }
 
     [Fact]
+    public async Task GetCachedFor_ElapsedReset_QueuesAutonomousBackgroundRefresh()
+    {
+        var resetAt = DateTime.UtcNow.AddMinutes(-1);
+        var probe = new ScriptedProbe(call => call == 1
+            ? new QuotaSnapshot
+            {
+                CliType = "codex",
+                FetchedAt = resetAt.AddMinutes(-1),
+                Windows = [new QuotaWindow { Label = "Weekly", UsedPct = 98, ResetAt = resetAt }],
+            }
+            : new QuotaSnapshot
+            {
+                CliType = "codex",
+                FetchedAt = DateTime.UtcNow,
+                Windows = [new QuotaWindow { Label = "Weekly", UsedPct = 0, ResetAt = DateTime.UtcNow.AddDays(7) }],
+            });
+        var service = NewService(probe);
+        await service.RefreshAsync("codex");
+
+        var stale = service.GetCachedFor("codex");
+
+        Assert.Equal(98, Assert.Single(stale!.Windows).UsedPct);
+        var deadline = DateTime.UtcNow.AddSeconds(2);
+        while (probe.Calls < 2 && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+        Assert.Equal(2, probe.Calls);
+        Assert.Equal(0, Assert.Single(service.GetCachedFor("codex")!.Windows).UsedPct);
+    }
+
+    [Fact]
     public void CliVersionTracker_LogsOneAttributableChange()
     {
         var logger = new RecordingLogger<CliVersionTracker>();
@@ -120,6 +150,7 @@ public sealed class QuotaServiceGracefulDegradationTests : IDisposable
     private sealed class ScriptedProbe(Func<int, QuotaSnapshot> script) : IQuotaProbe
     {
         private int _calls;
+        public int Calls => Volatile.Read(ref _calls);
         public string CliType => "codex";
         public Task<QuotaSnapshot> ProbeAsync(CancellationToken ct)
             => Task.FromResult(script(Interlocked.Increment(ref _calls)));

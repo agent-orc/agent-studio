@@ -75,6 +75,18 @@ public record SessionEvent
     public string? Model { get; init; }
     /// <summary>Effective thinking / reasoning level resolved for this run.</summary>
     public string? ThinkingLevel { get; init; }
+    /// <summary>
+    /// True when quota admission launched this run on a provider/model other
+    /// than the task's configured route. The task configuration remains the
+    /// primary route; this marker attributes only the effective run.
+    /// </summary>
+    public bool QuotaFallback { get; init; }
+    public string? QuotaFallbackFromCliType { get; init; }
+    public string? QuotaFallbackFromModel { get; init; }
+    public string? QuotaFallbackReason { get; init; }
+    public DateTime? QuotaFallbackResetAt { get; init; }
+    public string? QuotaFallbackRouteSource { get; init; }
+    public string? QuotaFallbackEquivalentTier { get; init; }
     /// <summary>Runtime-backed execution owner captured at run start for durable history.</summary>
     public TaskExecutionLocation? ExecutionLocation { get; init; }
     /// <summary>

@@ -1,3 +1,5 @@
+using Contract = AgentStudio.TaskServer.Contracts;
+
 namespace AgentStudio.Runner;
 
 /// <summary>
@@ -17,10 +19,29 @@ public sealed class RemoteChatWorkBroker
     private readonly Dictionary<string, CachedChatExecutionContext> _contexts =
         new(StringComparer.OrdinalIgnoreCase);
     private readonly ILogger<RemoteChatWorkBroker> _logger;
+    private readonly QuotaService? _quota;
+    private readonly CliQuotaCapsService? _quotaCaps;
+    private readonly CliQuotaFallbackService? _quotaFallback;
+    private readonly CliQuotaWaitPolicyService? _quotaWaitPolicy;
+    private readonly OrchestratorLog? _orchestratorLog;
+    private readonly V1ReviewExecutorRegistry? _capabilityRegistry;
 
-    public RemoteChatWorkBroker(ILogger<RemoteChatWorkBroker> logger)
+    public RemoteChatWorkBroker(
+        ILogger<RemoteChatWorkBroker> logger,
+        QuotaService? quota = null,
+        CliQuotaCapsService? quotaCaps = null,
+        CliQuotaFallbackService? quotaFallback = null,
+        CliQuotaWaitPolicyService? quotaWaitPolicy = null,
+        OrchestratorLog? orchestratorLog = null,
+        V1ReviewExecutorRegistry? capabilityRegistry = null)
     {
         _logger = logger;
+        _quota = quota;
+        _quotaCaps = quotaCaps;
+        _quotaFallback = quotaFallback;
+        _quotaWaitPolicy = quotaWaitPolicy;
+        _orchestratorLog = orchestratorLog;
+        _capabilityRegistry = capabilityRegistry;
     }
 
     public async Task<RemoteChatWorkResult> EnqueueTurnAsync(
@@ -31,7 +52,12 @@ public sealed class RemoteChatWorkBroker
         CancellationToken ct)
     {
         var pending = PendingRemoteChatWork.Create(
-            RemoteChatWorkKinds.Turn, route, prompt, model, thinkingLevel);
+            RemoteChatWorkKinds.Turn,
+            route,
+            prompt,
+            CliTypes.Codex,
+            model,
+            thinkingLevel);
         lock (_gate)
         {
             _work.Add(pending);
@@ -68,7 +94,12 @@ public sealed class RemoteChatWorkBroker
                 && item.State is PendingRemoteChatWorkState.Pending or PendingRemoteChatWorkState.Claimed);
             if (alreadyPending) return;
             _work.Add(PendingRemoteChatWork.Create(
-                RemoteChatWorkKinds.Inspect, route, prompt: null, model: null, thinkingLevel: null));
+                RemoteChatWorkKinds.Inspect,
+                route,
+                prompt: null,
+                cliType: null,
+                model: null,
+                thinkingLevel: null));
         }
     }
 
@@ -84,38 +115,123 @@ public sealed class RemoteChatWorkBroker
 
     public RemoteChatWorkClaimResponse TryClaim(RemoteChatWorkClaimRequest request)
     {
+        PendingRemoteChatWork? claimed = null;
+        var deferredDecisions = new List<(RemoteChatWorkRoute Route, QuotaAdmissionPlan Admission)>();
+        var capabilityBlocks = new List<(PendingRemoteChatWork Work, string Reason)>();
         lock (_gate)
         {
             RequeueExpiredClaimsLocked();
-            var item = _work
+            var candidates = _work
                 .Where(candidate => candidate.State == PendingRemoteChatWorkState.Pending)
                 .Where(candidate => RunnerMatches(candidate.Route.RunnerId, request.RunnerId, request.RunnerName))
                 .OrderBy(candidate => candidate.Kind == RemoteChatWorkKinds.Turn ? 0 : 1)
                 .ThenBy(candidate => candidate.CreatedAt)
-                .FirstOrDefault();
-            if (item == null)
-                return new RemoteChatWorkClaimResponse(RemoteChatWorkClaimStatuses.Empty);
+                .ToArray();
+            foreach (var item in candidates)
+            {
+                var admission = item.Kind == RemoteChatWorkKinds.Turn
+                    ? PlanAdmission(
+                        item.RequestedCliType ?? CliTypes.Codex,
+                        item.RequestedModel ?? string.Empty,
+                        item.RequestedThinkingLevel)
+                    : null;
+                if (admission is { ShouldLaunch: false })
+                {
+                    var fingerprint = AdmissionFingerprint(admission);
+                    if (!string.Equals(item.LastDeferredAdmission, fingerprint, StringComparison.Ordinal))
+                    {
+                        item.LastDeferredAdmission = fingerprint;
+                        deferredDecisions.Add((item.Route, admission));
+                    }
+                    continue;
+                }
 
-            item.State = PendingRemoteChatWorkState.Claimed;
-            item.ClaimedBy = request.RunnerId;
-            item.ClaimToken = Guid.NewGuid().ToString("N");
-            item.ClaimExpiresAt = DateTime.UtcNow + ClaimTtl;
-            return new RemoteChatWorkClaimResponse(
-                RemoteChatWorkClaimStatuses.Claimed,
-                new RemoteChatWorkItem(
-                    item.Id,
-                    item.ClaimToken,
-                    item.Kind,
-                    item.Route.ProjectId,
-                    item.Route.ProjectName,
-                    item.Route.RepositoryUrl,
-                    item.Route.DefaultBranch,
-                    item.Prompt,
-                    item.Model,
-                    item.ThinkingLevel,
-                    item.CreatedAt,
-                    item.ClaimExpiresAt.Value));
+                var effectiveCli = admission?.CliType ?? item.RequestedCliType;
+                var effectiveModel = admission?.Model ?? item.RequestedModel;
+                var effectiveThinking = admission?.ThinkingLevel ?? item.RequestedThinkingLevel;
+                if (item.Kind == RemoteChatWorkKinds.Turn
+                    && _capabilityRegistry is not null)
+                {
+                    var cliType = CliTypes.Normalize(effectiveCli);
+                    var required = new[]
+                    {
+                        Contract.ReviewCapabilities.CodingExecutor,
+                        Contract.CapabilityProtocol.CliExecution(cliType),
+                        Contract.CapabilityProtocol.ProviderAuthentication(cliType),
+                    };
+                    var capabilityAdmission = _capabilityRegistry.EvaluateCodingAdmission(
+                        request.RunnerId.Trim(),
+                        request.CapabilityInstanceId,
+                        required);
+                    if (!capabilityAdmission.Eligible)
+                    {
+                        if (!string.Equals(
+                                item.LastCapabilityBlock,
+                                capabilityAdmission.Message,
+                                StringComparison.Ordinal))
+                        {
+                            item.LastCapabilityBlock = capabilityAdmission.Message;
+                            capabilityBlocks.Add((item, capabilityAdmission.Message ?? "Capability admission failed."));
+                        }
+                        continue;
+                    }
+                }
+
+                item.LastDeferredAdmission = null;
+                item.LastCapabilityBlock = null;
+                item.CliType = effectiveCli;
+                item.Model = effectiveModel;
+                item.ThinkingLevel = effectiveThinking;
+                item.QuotaAdmission = admission;
+                item.State = PendingRemoteChatWorkState.Claimed;
+                item.ClaimedBy = request.RunnerId;
+                item.ClaimToken = Guid.NewGuid().ToString("N");
+                item.ClaimExpiresAt = DateTime.UtcNow + ClaimTtl;
+                claimed = item;
+                break;
+            }
         }
+
+        foreach (var (route, admission) in deferredDecisions)
+            RecordAdmission(route, admission);
+        foreach (var (work, reason) in capabilityBlocks)
+        {
+            _logger.LogWarning(
+                "remote-chat-work-claim-skipped-capability workId={WorkId} project={Project} runner={Runner} reason={Reason}",
+                work.Id,
+                work.Route.ProjectName,
+                request.RunnerId,
+                reason);
+        }
+        if (claimed is null)
+            return new RemoteChatWorkClaimResponse(RemoteChatWorkClaimStatuses.Empty);
+
+        if (claimed.QuotaAdmission is not null)
+        {
+            _quotaFallback!.RecordAdmission(
+                claimed.RequestedCliType ?? CliTypes.Codex,
+                claimed.RequestedModel,
+                claimed.RequestedThinkingLevel,
+                claimed.QuotaAdmission,
+                DateTime.UtcNow);
+            RecordAdmission(claimed.Route, claimed.QuotaAdmission);
+        }
+        return new RemoteChatWorkClaimResponse(
+            RemoteChatWorkClaimStatuses.Claimed,
+            new RemoteChatWorkItem(
+                claimed.Id,
+                claimed.ClaimToken!,
+                claimed.Kind,
+                claimed.Route.ProjectId,
+                claimed.Route.ProjectName,
+                claimed.Route.RepositoryUrl,
+                claimed.Route.DefaultBranch,
+                claimed.Prompt,
+                claimed.Model,
+                claimed.ThinkingLevel,
+                claimed.CreatedAt,
+                claimed.ClaimExpiresAt!.Value,
+                claimed.CliType));
     }
 
     public bool Renew(RemoteChatWorkRenewRequest request)
@@ -149,7 +265,9 @@ public sealed class RemoteChatWorkBroker
             request.Model ?? item.Model ?? "",
             request.TokenUsage,
             request.ErrorMessage,
-            request.ExecutionContext);
+            request.ExecutionContext,
+            item.CliType,
+            item.QuotaAdmission);
         item.Completion.TrySetResult(result);
         _logger.LogInformation(
             "remote-chat-work-completed workId={WorkId} project={Project} runner={Runner} kind={Kind} success={Success} path={Path}",
@@ -186,6 +304,54 @@ public sealed class RemoteChatWorkBroker
         => string.Equals(assigned, runnerId, StringComparison.OrdinalIgnoreCase)
            || string.Equals(assigned, runnerName, StringComparison.OrdinalIgnoreCase);
 
+    private QuotaAdmissionPlan? PlanAdmission(
+        string cliType,
+        string model,
+        string? thinkingLevel)
+    {
+        if (_quota is null || _quotaCaps is null || _quotaFallback is null) return null;
+        return QuotaAdmissionPlanner.Plan(
+            cliType,
+            model,
+            thinkingLevel,
+            _quotaFallback,
+            _quotaCaps,
+            cli => string.IsNullOrWhiteSpace(cli) ? null : _quota.GetCachedFor(cli),
+            DateTime.UtcNow,
+            occupiedSlots: 0,
+            _quotaWaitPolicy?.Resolve(project: null),
+            QuotaAdmissionContext.ForTask(
+                QuotaExecutionPath.OrchestratorChat,
+                taskType: null,
+                thinkingLevel));
+    }
+
+    private static string AdmissionFingerprint(QuotaAdmissionPlan admission) =>
+        $"{admission.Outcome}|{admission.CliType}|{admission.Model}|{admission.ThinkingLevel}|" +
+        $"{admission.NextResetAt:O}|{admission.Reason}";
+
+    private void RecordAdmission(RemoteChatWorkRoute route, QuotaAdmissionPlan admission)
+    {
+        _logger.Log(
+            admission.IsFallback || admission.IsDeferred ? LogLevel.Warning : LogLevel.Information,
+            "cli_quota_admission_decision path=remote-project-chat project={Project} outcome={Outcome} requestedCli=codex effectiveCli={EffectiveCli} model={Model} isFallback={IsFallback} reason={Reason}",
+            route.ProjectName,
+            admission.Outcome,
+            admission.CliType,
+            admission.Model,
+            admission.IsFallback,
+            admission.Reason);
+        if (admission.Outcome == QuotaAdmissionOutcome.LaunchPrimary
+            || string.IsNullOrWhiteSpace(route.WatchPath)) return;
+        _orchestratorLog?.Append(route.WatchPath!, new OrchestratorLogEntry
+        {
+            Kind = OrchestratorLogKinds.Decision,
+            Topic = OrchestratorLogTopics.LoadDistribution,
+            Summary = admission.Reason,
+            Reasoning = QuotaAdmissionPlanner.DescribeLoadNumbers(admission),
+        });
+    }
+
     private enum PendingRemoteChatWorkState
     {
         Pending,
@@ -199,19 +365,27 @@ public sealed class RemoteChatWorkBroker
         public required string Kind { get; init; }
         public required RemoteChatWorkRoute Route { get; init; }
         public string? Prompt { get; init; }
-        public string? Model { get; init; }
-        public string? ThinkingLevel { get; init; }
+        public string? RequestedCliType { get; init; }
+        public string? RequestedModel { get; init; }
+        public string? RequestedThinkingLevel { get; init; }
+        public string? CliType { get; set; }
+        public string? Model { get; set; }
+        public string? ThinkingLevel { get; set; }
+        public QuotaAdmissionPlan? QuotaAdmission { get; set; }
         public required DateTime CreatedAt { get; init; }
         public required TaskCompletionSource<RemoteChatWorkResult> Completion { get; init; }
         public PendingRemoteChatWorkState State { get; set; }
         public string? ClaimedBy { get; set; }
         public string? ClaimToken { get; set; }
         public DateTime? ClaimExpiresAt { get; set; }
+        public string? LastDeferredAdmission { get; set; }
+        public string? LastCapabilityBlock { get; set; }
 
         public static PendingRemoteChatWork Create(
             string kind,
             RemoteChatWorkRoute route,
             string? prompt,
+            string? cliType,
             string? model,
             string? thinkingLevel) =>
             new()
@@ -220,8 +394,9 @@ public sealed class RemoteChatWorkBroker
                 Kind = kind,
                 Route = route,
                 Prompt = prompt,
-                Model = model,
-                ThinkingLevel = thinkingLevel,
+                RequestedCliType = cliType,
+                RequestedModel = model,
+                RequestedThinkingLevel = thinkingLevel,
                 CreatedAt = DateTime.UtcNow,
                 Completion = new TaskCompletionSource<RemoteChatWorkResult>(
                     TaskCreationOptions.RunContinuationsAsynchronously),
@@ -251,12 +426,14 @@ public sealed record RemoteChatWorkRoute(
     string ProjectId,
     string ProjectName,
     string RepositoryUrl,
-    string DefaultBranch);
+    string DefaultBranch,
+    string? WatchPath = null);
 
 public sealed record RemoteChatWorkClaimRequest(
     string RunnerId,
     string RunnerName,
-    string Hostname);
+    string Hostname,
+    string? CapabilityInstanceId = null);
 
 public sealed record RemoteChatWorkClaimResponse(
     string Status,
@@ -274,7 +451,8 @@ public sealed record RemoteChatWorkItem(
     string? Model,
     string? ThinkingLevel,
     DateTime CreatedAt,
-    DateTime ClaimExpiresAt);
+    DateTime ClaimExpiresAt,
+    string? CliType = null);
 
 public sealed record RemoteChatWorkRenewRequest(
     string WorkId,
@@ -298,7 +476,9 @@ public sealed record RemoteChatWorkResult(
     string Model,
     OrchestratorTokenUsage? TokenUsage,
     string? ErrorMessage,
-    ChatExecutionContext? ExecutionContext);
+    ChatExecutionContext? ExecutionContext,
+    string? CliType = null,
+    QuotaAdmissionPlan? QuotaAdmission = null);
 
 public sealed record ChatExecutionContext(
     string ExecutionKind,

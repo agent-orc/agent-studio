@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AgentStudio.TaskServer.Contracts;
 using CodingAgentRunner;
 using CodingAgentRunner.Abstractions;
 using CodingAgentRunner.Delegation;
@@ -77,13 +78,18 @@ public sealed class RemoteProjectChatRunner
                 """;
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(shutdown);
             timeout.CancelAfter(TimeSpan.FromSeconds(_options.RunTimeoutSeconds));
-            _log($"project-chat-codex-start engine=car path={checkout.RepoPath} model={work.Model} thinking={work.ThinkingLevel ?? "default"}");
-            // T1c (AGT-2370): the fourth CLI start path runs through CAR with
-            // PermissionMode=read-only - the same `codex exec --experimental-json
-            // --sandbox read-only` posture as before, now descriptor-built. The
-            // reply parsing below is unchanged and still reads the raw frames.
-            var process = await RunCodexThroughCarAsync(work, checkout, contextPrompt, timeout.Token, shutdown);
-            var parsed = ParseCodex(process, work.Model!);
+            var cliType = AgentCliProcess.NormalizeCliType(work.CliType) ?? AgentCliProcess.CodexCli;
+            EnsureRequestedProviderIsAvailable(work, cliType);
+            _log($"project-chat-agent-start engine=car cli={cliType} path={checkout.RepoPath} model={work.Model} thinking={work.ThinkingLevel ?? "default"}");
+            // Quota admission happens when the server grants this claim. The
+            // attempt-local CLI travels with the claim and CAR applies the same
+            // read-only posture for either provider.
+            var process = string.Equals(cliType, AgentCliProcess.CodexCli, StringComparison.Ordinal)
+                ? await RunCodexThroughCarAsync(work, checkout, contextPrompt, timeout.Token, shutdown)
+                : await RunAgentThroughCarAsync(work, checkout, contextPrompt, cliType, shutdown);
+            var parsed = string.Equals(cliType, AgentCliProcess.CodexCli, StringComparison.Ordinal)
+                ? ParseCodex(process, work.Model!)
+                : ParseProvider(process, work.Model!);
             return await CompleteAsync(
                 work, parsed.Success, parsed.ReplyText, parsed.ErrorMessage,
                 work.Model, parsed.TokenUsage, executionContext, shutdown);
@@ -106,6 +112,28 @@ public sealed class RemoteProjectChatRunner
             catch (OperationCanceledException) { }
             catch (Exception ex) { _log($"project-chat-renew-loop-ended error={ex.Message}"); }
         }
+    }
+
+    private void EnsureRequestedProviderIsAvailable(RemoteChatWorkItem work, string requestedCliType)
+    {
+        // AgentCliProcess.Resolve intentionally falls back to the configured
+        // provider for legacy card compatibility. A claim-time quota route is
+        // authoritative, so project chat must fail closed instead of silently
+        // running the exhausted provider and reporting the fallback provider.
+        if (string.IsNullOrWhiteSpace(work.CliType)) return;
+        var invocation = AgentCliProcess.Resolve(
+            _options,
+            new RunSpecDto(
+                requestedCliType,
+                work.Model,
+                work.ThinkingLevel,
+                CliPermissionModes.ReadOnly,
+                CliContextModes.Shared));
+        if (string.Equals(invocation.CliType, requestedCliType, StringComparison.Ordinal)) return;
+
+        throw new InvalidOperationException(
+            $"Project-chat claim requires cli={requestedCliType}, but this host resolved " +
+            $"cli={invocation.CliType}. Refusing to substitute providers.");
     }
 
     /// <summary>
@@ -193,6 +221,53 @@ public sealed class RemoteProjectChatRunner
             driver.OnFinished -= OnFinished;
             driver.Forget(work.WorkId);
             try { if (Directory.Exists(logDirectory)) Directory.Delete(logDirectory, recursive: true); }
+            catch { /* per-turn log hygiene is best effort */ }
+        }
+    }
+
+    private async Task<ProcessResult> RunAgentThroughCarAsync(
+        RemoteChatWorkItem work,
+        ProjectChatCheckout checkout,
+        string contextPrompt,
+        string cliType,
+        CancellationToken shutdown)
+    {
+        var invocation = AgentCliProcess.Resolve(
+            _options,
+            new RunSpecDto(
+                cliType,
+                work.Model,
+                work.ThinkingLevel,
+                CliPermissionModes.ReadOnly,
+                CliContextModes.Shared));
+        var workerDirectory = Path.Combine(Path.GetTempPath(), "agent-chat-car", work.WorkId);
+        Directory.CreateDirectory(workerDirectory);
+        try
+        {
+            var spec = new DetachedJobSpec(
+                invocation.FileName,
+                invocation.Arguments,
+                checkout.RepoPath,
+                contextPrompt,
+                workerDirectory,
+                Math.Max(1, _options.RunTimeoutSeconds),
+                invocation.CliType,
+                invocation.Model,
+                invocation.ThinkingLevel,
+                CliPermissionModes.ReadOnly,
+                CliContextModes.Shared,
+                RunnerOptions.ExecEngineCar,
+                work.WorkId);
+            var (result, _, _) = await CarWorkerExecution.RunAsync(
+                spec,
+                workerDirectory,
+                (stream, line) => _log($"project-chat-{cliType} stream={stream} {line}"));
+            shutdown.ThrowIfCancellationRequested();
+            return result;
+        }
+        finally
+        {
+            try { if (Directory.Exists(workerDirectory)) Directory.Delete(workerDirectory, recursive: true); }
             catch { /* per-turn log hygiene is best effort */ }
         }
     }
@@ -305,6 +380,63 @@ public sealed class RemoteProjectChatRunner
             string.Join("\n", replies),
             errorMessage,
             usage);
+    }
+
+    internal static RemoteProjectChatResult ParseProvider(ProcessResult process, string model)
+    {
+        var provider = ProviderOutputEvidenceExtractor.Extract(process.StdOut);
+        var reply = string.IsNullOrWhiteSpace(provider.FinalAssistantOutput)
+            ? process.StdOut.Trim()
+            : provider.FinalAssistantOutput!;
+        OrchestratorTokenUsage? usage = null;
+        foreach (var line in process.StdOut.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(line);
+                if (!TryJsonProperty(document.RootElement, "usage", out var node)
+                    || node.ValueKind != JsonValueKind.Object) continue;
+                usage = new OrchestratorTokenUsage
+                {
+                    Model = model,
+                    InputTokens = ReadInt(node, "input_tokens"),
+                    OutputTokens = ReadInt(node, "output_tokens"),
+                    CacheReadTokens = Math.Max(
+                        ReadInt(node, "cached_input_tokens"),
+                        ReadInt(node, "cache_read_input_tokens")),
+                    CacheCreationTokens = ReadInt(node, "cache_creation_input_tokens"),
+                };
+            }
+            catch (JsonException)
+            {
+                // A non-protocol line remains reply evidence.
+            }
+        }
+        var success = process.ExitCode == 0;
+        return new RemoteProjectChatResult(
+            success,
+            reply,
+            success ? null : string.IsNullOrWhiteSpace(process.StdErr)
+                ? $"exitCode={process.ExitCode}"
+                : process.StdErr.Trim(),
+            usage);
+    }
+
+    private static bool TryJsonProperty(JsonElement element, string name, out JsonElement value)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in element.EnumerateObject())
+            {
+                if (string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = property.Value;
+                    return true;
+                }
+            }
+        }
+        value = default;
+        return false;
     }
 
     private static int ReadInt(JsonElement node, string property)

@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Text.Json;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -61,7 +62,7 @@ public sealed class CliQuotaFallbackServiceTests : IDisposable
     }
 
     [Fact]
-    public void Resolve_QuotaFull_SupportsModelFallbackWithinSameCli()
+    public void Resolve_QuotaFull_DoesNotBypassProviderCapWithinSameCli()
     {
         var service = NewService();
         service.Set(new CliModelRouteProfile
@@ -75,10 +76,10 @@ public sealed class CliQuotaFallbackServiceTests : IDisposable
         var decision = service.Resolve("codex", null, null, _ =>
             new CapEvaluation(true, "codex", "Model window", 95, 100));
 
-        Assert.True(decision.IsFallback);
+        Assert.False(decision.IsFallback);
         Assert.Equal("codex", decision.CliType);
-        Assert.Equal("gpt-5.3-codex", decision.Model);
-        Assert.Equal("medium", decision.ThinkingLevel);
+        Assert.Equal("gpt-5.6-sol", decision.Model);
+        Assert.Contains("same-family", decision.Reason);
     }
 
     [Fact]
@@ -107,6 +108,106 @@ public sealed class CliQuotaFallbackServiceTests : IDisposable
         var profile = NewService().GetAll()["codex"];
         Assert.Equal("gpt-5.3", profile.PrimaryModel);
         Assert.Equal("gpt-5.2", profile.FallbackModel);
+    }
+
+    [Fact]
+    public void Resolve_WithoutOverride_UsesTokenEconomyQualifiedEquivalentTier()
+    {
+        var service = NewService();
+
+        var decision = service.Resolve("codex", "gpt-5.6-terra", "medium", cli =>
+            cli == "codex"
+                ? new CapEvaluation(true, "codex", "Weekly", 98, 98)
+                : CapEvaluation.NotBlocked);
+
+        Assert.True(decision.IsFallback);
+        Assert.Equal("claude", decision.CliType);
+        Assert.Equal("claude-sonnet-5", decision.Model);
+        Assert.Equal("high", decision.ThinkingLevel);
+        Assert.Equal(CliModelRouteSources.Catalogue, decision.RouteSource);
+        Assert.Equal("terra-medium", decision.EquivalentTier);
+    }
+
+    [Fact]
+    public void Resolve_ExplicitEmptyOverride_DisablesCatalogueFallback()
+    {
+        var service = NewService();
+        service.Set(new CliModelRouteProfile
+        {
+            CliType = "codex",
+            PrimaryModel = "gpt-5.6-terra",
+            PrimaryThinkingLevel = "medium",
+        });
+
+        var decision = service.Resolve("codex", "gpt-5.6-terra", "medium", _ =>
+            new CapEvaluation(true, "codex", "Weekly", 98, 98));
+
+        Assert.False(decision.IsFallback);
+        Assert.Equal(CliModelRouteSources.OperatorOverride, decision.RouteSource);
+    }
+
+    [Fact]
+    public void Resolve_LegacyEmptyProfile_MigratesToCatalogueFallback()
+    {
+        File.WriteAllText(
+            Path.Combine(_root, "cli-model-routing.json"),
+            JsonSerializer.Serialize(new[]
+            {
+                new
+                {
+                    cliType = "codex",
+                    primaryModel = "gpt-5.6-terra",
+                    primaryThinkingLevel = "medium",
+                    fallbackCliType = (string?)null,
+                    fallbackModel = (string?)null,
+                    fallbackThinkingLevel = (string?)null,
+                },
+            }));
+
+        var service = NewService();
+        var decision = service.Resolve("codex", "gpt-5.6-terra", "medium", cli =>
+            cli == "codex"
+                ? new CapEvaluation(true, "codex", "Weekly", 98, 98)
+                : CapEvaluation.NotBlocked);
+
+        Assert.True(decision.IsFallback);
+        Assert.Equal(CliModelRouteSources.Catalogue, decision.RouteSource);
+        Assert.Equal("claude-sonnet-5", decision.Model);
+    }
+
+    [Fact]
+    public void Resolve_PrimaryOnlyCatalogueEdit_PreservesDerivedFallback()
+    {
+        var service = NewService();
+        service.Set(new CliModelRouteProfile
+        {
+            CliType = "codex",
+            PrimaryModel = "gpt-5.6-terra",
+            PrimaryThinkingLevel = "medium",
+            RouteSource = CliModelRouteSources.Catalogue,
+        });
+
+        var reloaded = NewService();
+        var decision = reloaded.Resolve("codex", null, null, cli =>
+            cli == "codex"
+                ? new CapEvaluation(true, "codex", "Weekly", 98, 98)
+                : CapEvaluation.NotBlocked);
+
+        Assert.True(decision.IsFallback);
+        Assert.Equal(CliModelRouteSources.Catalogue, reloaded.GetAll()["codex"].RouteSource);
+        Assert.Equal("claude-sonnet-5", decision.Model);
+    }
+
+    [Fact]
+    public void Resolve_UnqualifiedTier_DoesNotCrossCorrectnessFloor()
+    {
+        var service = NewService();
+
+        var decision = service.Resolve("codex", "gpt-5.6-sol", "xhigh", _ =>
+            new CapEvaluation(true, "codex", "Weekly", 98, 98));
+
+        Assert.False(decision.IsFallback);
+        Assert.Equal("codex", decision.CliType);
     }
 
     private CliQuotaFallbackService NewService() =>

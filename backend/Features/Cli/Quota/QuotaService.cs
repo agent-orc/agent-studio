@@ -76,14 +76,26 @@ public sealed class QuotaService
     }
 
     /// <summary>
-    /// Returns the in-memory snapshot for one CLI without triggering any
-    /// refresh. Used by the cap-enforcement code path which must be cheap and
-    /// non-blocking - it runs on every pickup tick.
+    /// Returns the in-memory snapshot for one CLI without blocking. When the
+    /// snapshot still describes a window whose reset has elapsed, it queues one
+    /// coalesced background probe. Admission remains conservative for the
+    /// current call and automatically sees the refreshed window on a later
+    /// pickup without depending on an operator opening the quota UI.
     /// </summary>
     public QuotaSnapshot? GetCachedFor(string cliType)
     {
         if (string.IsNullOrWhiteSpace(cliType)) return null;
-        return _cache.TryGetValue(cliType, out var s) ? s : null;
+        if (!_cache.TryGetValue(cliType, out var snapshot)) return null;
+        var now = DateTime.UtcNow;
+        var resetElapsedSinceSnapshot = snapshot.Windows.Any(window =>
+            window.ResetAt is { } resetAt
+            && resetAt <= now
+            && snapshot.FetchedAt < resetAt);
+        var retryDue = snapshot.ProbeFailedAt is null
+                       || now - snapshot.ProbeFailedAt.Value >= _ttl;
+        if (resetElapsedSinceSnapshot && retryDue)
+            QueueBackgroundRefresh(cliType);
+        return snapshot;
     }
 
     /// <summary>

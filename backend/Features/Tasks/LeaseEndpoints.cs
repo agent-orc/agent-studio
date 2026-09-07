@@ -145,6 +145,13 @@ public static class LeaseEndpoints
             TaskTransitionService transitions,
             RunLeaseService leases,
             TaskSessionLog sessions,
+            QuotaService quotaService,
+            CliQuotaCapsService quotaCaps,
+            CliQuotaWaitPolicyService quotaWaitPolicy,
+            CliQuotaFallbackService quotaFallback,
+            OrchestratorChatLog quotaChatLog,
+            TimelineLog timeline,
+            OrchestratorLog orchestratorLog,
             HttpContext context,
             AgentStudio.Clients.ClientIdentityStore clients,
             AgentStudio.Clients.HostTelemetryStore telemetry,
@@ -414,9 +421,16 @@ public static class LeaseEndpoints
                             DefaultBranch: replayedRepository.DefaultBranch,
                             TaskKind: replayedTask.Kind,
                             // A replay must describe the same run as the original
-                            // claim, including the persisted enrichment framing.
+                            // claim, including its quota-resolved route and the
+                            // persisted enrichment framing.
                             RunSpec: AddPersistedPromptEnrichment(
-                                BuildRunSpec(replayedTask, settings, prompts, dossierMaintenance),
+                                BuildReplayRunSpec(
+                                    replayedTask,
+                                    replay.Lease.AttemptId,
+                                    settings,
+                                    prompts,
+                                    dossierMaintenance,
+                                    sessions),
                                 replayedTask))));
                     }
                 }
@@ -566,8 +580,12 @@ public static class LeaseEndpoints
                 TaskInfo? failedPreflightCandidate = null;
                 RemoteProjectRepository? failedPreflightRepository = null;
                 RunnerProjectPreflight? failedProjectPreflight = null;
+                RunSpecDto? candidateConfiguredRunSpec = null;
+                RunSpecDto? candidateRunSpec = null;
+                QuotaAdmissionPlan? candidateQuotaAdmission = null;
                 string? nonRemoteCapableProject = null;
                 string? capabilityMismatch = null;
+                string? quotaDeferred = null;
                 foreach (var task in eligible)
                 {
                     var taskProjectSettings = settings.Get(task.ProjectName);
@@ -582,7 +600,48 @@ public static class LeaseEndpoints
                             buildProfileGate.Reason);
                         continue;
                     }
-                    var cliType = CliTypes.Normalize(task.CliType);
+                    var configuredRunSpec = BuildRunSpec(task, settings, prompts, dossierMaintenance);
+                    var quotaAdmission = QuotaAdmissionPlanner.Plan(
+                        configuredRunSpec.CliType,
+                        configuredRunSpec.Model,
+                        configuredRunSpec.ThinkingLevel,
+                        quotaFallback,
+                        quotaCaps,
+                        cli => quotaService.GetCachedFor(cli ?? string.Empty),
+                        now,
+                        hostActiveRuns,
+                        quotaWaitPolicy.Resolve(taskProjectSettings),
+                        QuotaAdmissionContext.ForTask(
+                            QuotaExecutionPath.CodingRun,
+                            task.TaskType,
+                            configuredRunSpec.ThinkingLevel));
+                    UpdateRemoteQuotaWaitMarker(task, quotaAdmission, quotaWaitPolicy.Resolve(taskProjectSettings), scanner, logger);
+                    if (quotaAdmission.IsDeferred)
+                    {
+                        RecordRemoteQuotaAdmissionDecision(
+                            task,
+                            configuredRunSpec,
+                            quotaAdmission,
+                            logger,
+                            quotaChatLog,
+                            timeline,
+                            orchestratorLog);
+                        quotaDeferred ??= quotaAdmission.Reason;
+                        RecordRejection(
+                            task,
+                            quotaAdmission.Outcome == QuotaAdmissionOutcome.Wait
+                                ? "quota-wait"
+                                : "quota-throttle",
+                            quotaAdmission.Reason);
+                        continue;
+                    }
+
+                    var effectiveRunSpec = ApplyQuotaAdmission(
+                        task,
+                        configuredRunSpec,
+                        quotaAdmission,
+                        settings);
+                    var cliType = CliTypes.Normalize(effectiveRunSpec.CliType);
                     var requiredCapabilities = (req.RequiredCapabilities ?? [])
                         .Append(CapabilityProtocol.CodingExecutor)
                         .Append(CapabilityProtocol.CliExecution(cliType))
@@ -633,6 +692,9 @@ public static class LeaseEndpoints
                             continue;
                         }
                         candidate = task;
+                        candidateConfiguredRunSpec = configuredRunSpec;
+                        candidateRunSpec = effectiveRunSpec;
+                        candidateQuotaAdmission = quotaAdmission;
                         break;
                     }
 
@@ -696,7 +758,7 @@ public static class LeaseEndpoints
                         RunnerClaimStatus.Empty,
                         Message: nonRemoteCapableProject is not null
                             ? $"project '{nonRemoteCapableProject}' is not remote-capable: repository URL is not configured"
-                            : capabilityMismatch)));
+                            : capabilityMismatch ?? quotaDeferred)));
 
                 if (string.IsNullOrWhiteSpace(clientId))
                     return Results.Ok(WithCapacity(new RunnerClaimResponse(
@@ -780,7 +842,7 @@ public static class LeaseEndpoints
 
                 var taskKey = candidate.Key ?? candidate.TaskKey;
                 if (string.IsNullOrWhiteSpace(taskKey)) taskKey = candidate.Id;
-                var runSpec = BuildRunSpec(candidate, settings, prompts, dossierMaintenance);
+                var runSpec = candidateRunSpec!;
                 PromptEnrichmentPreparation? enrichmentPreparation = null;
                 try
                 {
@@ -856,6 +918,28 @@ public static class LeaseEndpoints
                     return Results.Ok(WithCapacity(new RunnerClaimResponse(
                         RunnerClaimStatus.Empty, Message: $"claim move refused: {move.Status} {move.Message}")));
                 }
+                candidate = scanner.FindJob(candidate.Id, candidate.WatchPath)
+                            ?? (!string.IsNullOrWhiteSpace(move.NewFolderPath)
+                                ? candidate with
+                                {
+                                    State = TaskStates.Progress,
+                                    FolderPath = move.NewFolderPath!,
+                                }
+                                : candidate);
+                RecordRemoteQuotaAdmissionDecision(
+                    candidate,
+                    candidateConfiguredRunSpec!,
+                    candidateQuotaAdmission!,
+                    logger,
+                    quotaChatLog,
+                    timeline,
+                    orchestratorLog);
+                quotaFallback.RecordAdmission(
+                    candidateConfiguredRunSpec!.CliType ?? CliTypes.Claude,
+                    candidateConfiguredRunSpec.Model,
+                    candidateConfiguredRunSpec.ThinkingLevel,
+                    candidateQuotaAdmission!,
+                    acquire.Lease.AcquiredAt);
                 logger.LogInformation(
                     "remote-runner-task-claimed project={Project} projectId={ProjectId} task={TaskKey} runner={Runner} lease={LeaseId} token={FencingToken} repositorySource={RepositorySource} defaultBranch={DefaultBranch}",
                     candidate.ProjectName, repository.ProjectId, taskKey, req.RunnerName, acquire.Lease.LeaseId,
@@ -871,10 +955,29 @@ public static class LeaseEndpoints
                 {
                     Ts = acquire.Lease.AcquiredAt,
                     Kind = "start",
-                    Cli = "remote-runner",
+                    Cli = runSpec.CliType,
                     RunAttemptId = acquire.Lease.AttemptId,
-                    Model = candidate.Model,
-                    ThinkingLevel = candidate.ThinkingLevel,
+                    Model = runSpec.Model,
+                    ThinkingLevel = runSpec.ThinkingLevel,
+                    QuotaFallback = candidateQuotaAdmission!.IsFallback,
+                    QuotaFallbackFromCliType = candidateQuotaAdmission.IsFallback
+                        ? candidateConfiguredRunSpec!.CliType
+                        : null,
+                    QuotaFallbackFromModel = candidateQuotaAdmission.IsFallback
+                        ? candidateConfiguredRunSpec!.Model
+                        : null,
+                    QuotaFallbackReason = candidateQuotaAdmission.IsFallback
+                        ? candidateQuotaAdmission.Reason
+                        : null,
+                    QuotaFallbackResetAt = candidateQuotaAdmission.IsFallback
+                        ? candidateQuotaAdmission.NextResetAt
+                        : null,
+                    QuotaFallbackRouteSource = candidateQuotaAdmission.IsFallback
+                        ? candidateQuotaAdmission.RouteSource
+                        : null,
+                    QuotaFallbackEquivalentTier = candidateQuotaAdmission.IsFallback
+                        ? candidateQuotaAdmission.EquivalentTier
+                        : null,
                     Cwd = candidate.FolderPath,
                     ExecutionLocation = new TaskExecutionLocation
                     {
@@ -1979,6 +2082,206 @@ public static class LeaseEndpoints
             ceiling = Math.Max(ceiling, project.MaxParallelism);
         }
         return ceiling > 0 ? ceiling : null;
+    }
+
+    private static void UpdateRemoteQuotaWaitMarker(
+        TaskInfo task,
+        QuotaAdmissionPlan admission,
+        ResolvedCliQuotaWaitPolicy waitPolicy,
+        TaskScannerService scanner,
+        ILogger logger)
+    {
+        if (admission.Outcome == QuotaAdmissionOutcome.Wait
+            && admission.NextResetAt is { } resetAt)
+        {
+            var existing = QuotaWaitMarker.TryRead(task.FolderPath, logger);
+            var marker = new QuotaWaitRecord
+            {
+                CliType = admission.CliType,
+                StartedAt = existing?.StartedAt ?? DateTime.UtcNow,
+                ResetAt = resetAt,
+                ThresholdMinutes = waitPolicy.ThresholdMinutes,
+                Reason = admission.Reason,
+            };
+            if (existing is not null
+                && existing.CliType == marker.CliType
+                && existing.ResetAt == marker.ResetAt
+                && existing.ThresholdMinutes == marker.ThresholdMinutes
+                && string.Equals(existing.Scope, marker.Scope, StringComparison.Ordinal)
+                && existing.Reason == marker.Reason)
+                return;
+            QuotaWaitMarker.Write(task.FolderPath, marker, logger);
+            scanner.InvalidateCache();
+            return;
+        }
+
+        if (QuotaWaitMarker.Clear(task.FolderPath, logger))
+            scanner.InvalidateCache();
+    }
+
+    private static RunSpecDto ApplyQuotaAdmission(
+        TaskInfo task,
+        RunSpecDto configured,
+        QuotaAdmissionPlan admission,
+        ProjectSettingsService settings)
+    {
+        var cliType = CliTypes.Normalize(admission.CliType);
+        var model = string.IsNullOrWhiteSpace(admission.Model) ? null : admission.Model.Trim();
+        var thinkingLevel = string.IsNullOrWhiteSpace(admission.ThinkingLevel)
+            ? null
+            : CliThinkingLevels.Normalize(cliType, model, admission.ThinkingLevel);
+        return configured with
+        {
+            CliType = cliType,
+            Model = model,
+            ThinkingLevel = thinkingLevel,
+            PermissionMode = settings.ResolveCliMode(task.ProjectName, cliType).Mode,
+            ContextMode = settings.ResolveContextMode(task.ProjectName, cliType, task.ContextMode).Mode,
+        };
+    }
+
+    private static RunSpecDto BuildReplayRunSpec(
+        TaskInfo task,
+        string? attemptId,
+        ProjectSettingsService settings,
+        AgentStudio.Prompts.RuntimePromptService prompts,
+        DossierMaintenanceService? dossierMaintenance,
+        TaskSessionLog sessions)
+    {
+        var configured = BuildRunSpec(task, settings, prompts, dossierMaintenance);
+        if (string.IsNullOrWhiteSpace(attemptId)) return configured;
+
+        // The original claim records the resolved route before returning it.
+        // Replays use that attempt-scoped receipt so a quota reset or route
+        // edit cannot change the CLI/model behind an already granted lease.
+        var claimed = sessions.ReadSessionEvents(task.Id, task.WatchPath)
+            .LastOrDefault(item =>
+                string.Equals(item.RunAttemptId, attemptId, StringComparison.OrdinalIgnoreCase));
+        if (claimed is null
+            || string.IsNullOrWhiteSpace(claimed.Cli)
+            || string.Equals(claimed.Cli, "remote-runner", StringComparison.OrdinalIgnoreCase))
+            return configured;
+
+        var cliType = CliTypes.Normalize(claimed.Cli);
+        var model = string.IsNullOrWhiteSpace(claimed.Model) ? null : claimed.Model.Trim();
+        var thinkingLevel = string.IsNullOrWhiteSpace(claimed.ThinkingLevel)
+            ? null
+            : CliThinkingLevels.Normalize(cliType, model, claimed.ThinkingLevel);
+        return configured with
+        {
+            CliType = cliType,
+            Model = model,
+            ThinkingLevel = thinkingLevel,
+            PermissionMode = settings.ResolveCliMode(task.ProjectName, cliType).Mode,
+            ContextMode = settings.ResolveContextMode(task.ProjectName, cliType, task.ContextMode).Mode,
+        };
+    }
+
+    private static void RecordRemoteQuotaAdmissionDecision(
+        TaskInfo task,
+        RunSpecDto configured,
+        QuotaAdmissionPlan admission,
+        ILogger logger,
+        OrchestratorChatLog chatLog,
+        TimelineLog timeline,
+        OrchestratorLog orchestratorLog)
+    {
+        var projection = admission.Projection;
+        var warning = admission.ProjectionWarning;
+        logger.Log(
+            warning is null ? LogLevel.Information : LogLevel.Warning,
+            "cli_quota_admission_decision path=remote-claim jobId={JobId} project={Project} outcome={Outcome} configuredCli={ConfiguredCli} cli={Cli} model={Model} isFallback={IsFallback} projectedPct={Projected} burnPctPerHour={Burn} hoursRemaining={Hours} resetAt={ResetAt} projectionWarning={ProjectionWarning} reason={Reason}",
+            task.Id,
+            task.ProjectName,
+            admission.Outcome,
+            configured.CliType,
+            admission.CliType,
+            admission.Model ?? "<default>",
+            admission.IsFallback,
+            projection?.ProjectedUsedPct ?? warning?.ProjectedUsedPct,
+            projection?.BurnRatePctPerHour,
+            projection?.HoursRemaining,
+            projection?.ResetAt ?? warning?.ResetAt ?? admission.NextResetAt,
+            warning?.Reason,
+            admission.Reason);
+
+        if (admission.Outcome == QuotaAdmissionOutcome.LaunchPrimary && warning is null) return;
+
+        var signature = string.Join(
+            '|',
+            admission.Outcome,
+            configured.CliType,
+            admission.CliType,
+            admission.Model,
+            admission.ThinkingLevel,
+            admission.Reason);
+        var alreadyRecorded = timeline.ReadAll(task.FolderPath).Any(item =>
+            string.Equals(item.Kind, TimelineEventKinds.QuotaAdmissionDecision, StringComparison.Ordinal)
+            && item.Details is not null
+            && item.Details.TryGetValue("admissionSignature", out var prior)
+            && string.Equals(prior, signature, StringComparison.Ordinal));
+        if (alreadyRecorded) return;
+
+        chatLog.Append(
+            task,
+            OrchestratorMessageKind.Decision,
+            "[quota-admission] " + admission.Reason);
+        timeline.Append(
+            task.FolderPath,
+            TimelineEventKinds.QuotaAdmissionDecision,
+            TimelineActors.System,
+            summary: "[quota-admission] " + admission.Reason,
+            details: new()
+            {
+                ["outcome"] = admission.Outcome.ToString(),
+                ["configuredCli"] = configured.CliType ?? string.Empty,
+                ["cli"] = admission.CliType,
+                ["model"] = admission.Model ?? string.Empty,
+                ["thinkingLevel"] = admission.ThinkingLevel ?? string.Empty,
+                ["isFallback"] = admission.IsFallback ? "true" : "false",
+                ["quotaFallback"] = admission.IsFallback ? "true" : "false",
+                ["projectedPct"] = projection?.ProjectedUsedPct.ToString(
+                    "0.#", System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
+                ["burnPctPerHour"] = projection?.BurnRatePctPerHour.ToString(
+                    "0.##", System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
+                ["hoursRemaining"] = projection?.HoursRemaining.ToString(
+                    "0.##", System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
+                ["nextReset"] = admission.NextResetAt?.ToString("o") ?? string.Empty,
+                ["projectionWarning"] = warning?.Reason ?? string.Empty,
+                ["admissionSignature"] = signature,
+            });
+
+        if (admission.IsFallback)
+        {
+            var fallbackNote =
+                $"Fallback: {admission.CliType}/{admission.Model ?? "<default>"}; reason: quota ({admission.Reason})";
+            chatLog.Append(
+                task,
+                OrchestratorMessageKind.Decision,
+                "[quota-fallback] " + fallbackNote);
+            timeline.Append(
+                task.FolderPath,
+                TimelineEventKinds.QuotaFallbackActivated,
+                TimelineActors.System,
+                summary: "[quota-fallback] " + fallbackNote,
+                details: new()
+                {
+                    ["configuredCli"] = configured.CliType ?? string.Empty,
+                    ["fallbackCli"] = admission.CliType,
+                    ["fallbackModel"] = admission.Model ?? string.Empty,
+                    ["fallbackThinkingLevel"] = admission.ThinkingLevel ?? string.Empty,
+                    ["reason"] = admission.Reason,
+                });
+        }
+
+        orchestratorLog.Append(task.WatchPath, new OrchestratorLogEntry
+        {
+            Kind = OrchestratorLogKinds.Decision,
+            Topic = OrchestratorLogTopics.LoadDistribution,
+            JobId = task.Id,
+            Summary = admission.Reason,
+            Reasoning = QuotaAdmissionPlanner.DescribeLoadNumbers(admission),
+        });
     }
 
     /// T0b (CAR migration plan §3 T0b / §7 AP3) — resolve the claimed card's

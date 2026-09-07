@@ -149,8 +149,8 @@ public class TitleGenerationService
             }, ct).ConfigureAwait(false);
             if (!r.Ok) return (false, null, r.Error);
             _logger.LogInformation("Title generated in {Elapsed}ms ({Bytes} bytes)",
-                (long)r.Duration.TotalMilliseconds, r.Stdout.Length);
-            return (true, r.Stdout, null);
+                (long)r.Duration.TotalMilliseconds, r.ParsedText.Length);
+            return (true, r.ToLegacyResultEnvelope(model), null);
         }
 
         // Fallback for tests that build the service without DI. Still

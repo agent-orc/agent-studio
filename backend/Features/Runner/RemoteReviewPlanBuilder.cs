@@ -4,10 +4,11 @@ using Contract = AgentStudio.TaskServer.Contracts;
 namespace AgentStudio.Runner;
 
 /// <summary>
-/// Freezes deterministic tool gates and read-only semantic aspect calls into the
-/// ReviewSubject before a remote executor claims it. The Task Server still owns
-/// admission and the final lane decision. The runner receives only immutable
-/// commands for the exact result SHA covered by the ReviewAttempt lease.
+/// Freezes deterministic tool gates and semantic aspect identities into the
+/// ReviewSubject. Immediately before claim it rebuilds each aspect's current
+/// route intent and resolves quota admission into an attempt-local executable
+/// command. The runner receives only commands for the exact Result-SHA and
+/// fenced ReviewAttempt lease it owns.
 /// </summary>
 public sealed class RemoteReviewPlanBuilder
 {
@@ -113,6 +114,101 @@ public sealed class RemoteReviewPlanBuilder
         };
     }
 
+    /// <summary>
+    /// Resolves the executable route for every semantic command immediately
+    /// before a ReviewAttempt is leased. The persisted subject remains the
+    /// immutable description of what must be reviewed; its stable step/aspect
+    /// identity is joined to current project settings, then quota admission
+    /// selects the attempt-local CLI/model/thinking tuple.
+    /// </summary>
+    public RemoteReviewPlanAdmission ResolveForClaim(
+        Contract.ReviewPlanDto authoredPlan,
+        TaskInfo? task,
+        string? repositoryPath,
+        ProjectSettings? projectSettings,
+        string? integrationRef,
+        CliQuotaFallbackService? quotaFallback,
+        CliQuotaCapsService quotaCaps,
+        Func<string?, QuotaSnapshot?> snapshotFor,
+        DateTime nowUtc,
+        int occupiedSlots,
+        ResolvedCliQuotaWaitPolicy? waitPolicy)
+    {
+        ArgumentNullException.ThrowIfNull(authoredPlan);
+        ArgumentNullException.ThrowIfNull(quotaCaps);
+        ArgumentNullException.ThrowIfNull(snapshotFor);
+
+        // Rebuild only the route intent. Command membership remains owned by
+        // the immutable subject, so disabling or adding an aspect later cannot
+        // silently change what an already-open review is required to cover.
+        var currentIntents = Build(task, repositoryPath, projectSettings, integrationRef)
+            .Commands
+            .Where(command => Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind))
+            .GroupBy(CommandIdentity, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.Last(), StringComparer.OrdinalIgnoreCase);
+        var decisions = new List<RemoteReviewCommandAdmission>();
+        var commands = new List<Contract.ReviewCommandDto>(authoredPlan.Commands.Count);
+        var deferred = false;
+
+        foreach (var command in authoredPlan.Commands)
+        {
+            if (!Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind))
+            {
+                commands.Add(command);
+                continue;
+            }
+
+            var intent = currentIntents.GetValueOrDefault(CommandIdentity(command)) ?? command;
+            var requestedCli = string.IsNullOrWhiteSpace(intent.CliType)
+                ? intent.FileName
+                : intent.CliType!;
+            var admission = QuotaAdmissionPlanner.Plan(
+                requestedCli,
+                intent.Model,
+                intent.ThinkingLevel,
+                quotaFallback,
+                quotaCaps,
+                snapshotFor,
+                nowUtc,
+                occupiedSlots,
+                waitPolicy,
+                QuotaAdmissionContext.ForTask(
+                    QuotaExecutionPath.ReviewAspect,
+                    task?.TaskType,
+                    intent.ThinkingLevel));
+            decisions.Add(new RemoteReviewCommandAdmission(
+                command.StepId,
+                command.Aspect,
+                requestedCli,
+                intent.Model,
+                intent.ThinkingLevel,
+                admission));
+
+            if (!admission.ShouldLaunch)
+            {
+                deferred = true;
+                commands.Add(command);
+                continue;
+            }
+
+            commands.Add(command with
+            {
+                FileName = admission.CliType,
+                // Claim-time admission may change only the execution route.
+                // Keep the authored prompt frozen with the immutable subject
+                // so edits to task files cannot change an open review.
+                Prompt = command.Prompt,
+                CliType = admission.CliType,
+                Model = admission.Model ?? intent.Model,
+                ThinkingLevel = admission.ThinkingLevel ?? intent.ThinkingLevel,
+            });
+        }
+
+        return new RemoteReviewPlanAdmission(
+            deferred ? null : authoredPlan with { Commands = commands },
+            decisions);
+    }
+
     private IReadOnlySet<string> ConfiguredAspectIds()
     {
         var section = _configuration.GetSection("ReviewDecisionOrchestrator:AspectRunners");
@@ -161,4 +257,26 @@ public sealed class RemoteReviewPlanBuilder
             ? value
             : value[^maximumCharacters..];
     }
+
+    private static string CommandIdentity(Contract.ReviewCommandDto command)
+        => $"{command.StepId}\u001f{command.Aspect}";
 }
+
+public sealed record RemoteReviewPlanAdmission(
+    Contract.ReviewPlanDto? EffectivePlan,
+    IReadOnlyList<RemoteReviewCommandAdmission> Commands)
+{
+    public bool ShouldLaunch => EffectivePlan is not null;
+
+    public QuotaAdmissionPlan? DeferredDecision => Commands
+        .Select(command => command.Decision)
+        .FirstOrDefault(decision => !decision.ShouldLaunch);
+}
+
+public sealed record RemoteReviewCommandAdmission(
+    string StepId,
+    string Aspect,
+    string RequestedCliType,
+    string? RequestedModel,
+    string? RequestedThinkingLevel,
+    QuotaAdmissionPlan Decision);

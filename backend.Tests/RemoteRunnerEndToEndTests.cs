@@ -1979,6 +1979,189 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Null(factory.Services.GetRequiredService<RunLeaseService>().Peek("AGT-CLI-BLOCKED").Lease);
     }
 
+    [Fact]
+    public async Task Capped_codex_card_claims_claude_fallback_without_mutating_its_configured_route()
+    {
+        const string taskKey = "AGT-QUOTA-FALLBACK";
+        SeedTask(
+            TaskStates.Ready,
+            taskKey,
+            "Quota-routed remote card",
+            "Run after quota admission.",
+            cliType: "codex",
+            model: "gpt-5.6-sol",
+            thinkingLevel: "high");
+        SeedQuotaState(
+            new CliModelRouteProfile
+            {
+                CliType = "codex",
+                FallbackCliType = "claude",
+                FallbackModel = "claude-opus-5",
+                FallbackThinkingLevel = "high",
+            },
+            codexUsedPct: 98,
+            claudeUsedPct: 34);
+        QuotaWaitMarker.Write(
+            Path.Combine(_watchPath, TaskStates.Ready, taskKey),
+            new QuotaWaitRecord
+            {
+                CliType = "codex",
+                StartedAt = DateTime.UtcNow.AddMinutes(-5),
+                ResetAt = DateTime.UtcNow.AddMinutes(5),
+                ThresholdMinutes = 30,
+                Reason = "stale admission wait",
+            });
+
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(
+            client,
+            http,
+            cliStatuses: new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["codex"] = "ready",
+            });
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/agent-orc/agent-studio.git");
+
+        var request = new RClaim(
+            RunnerId,
+            ProjectName,
+            "hetzner-test",
+            4242,
+            "remote-runner",
+            IdempotencyKey: "quota-fallback-claim");
+        var incompatible = await client.ClaimAsync(request, CancellationToken.None);
+        Assert.Equal(RClaimStatus.Empty, incompatible.Status);
+        Assert.Contains("cli-execution:claude", incompatible.Message, StringComparison.Ordinal);
+
+        await AdvertiseCodingCapabilitiesAsync(
+            http,
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["claude"] = "ready",
+            });
+        var claim = await ClaimWithSuccessfulPreflightAsync(client, request);
+
+        Assert.Equal(RClaimStatus.Claimed, claim.Status);
+        Assert.Equal(taskKey, claim.JobId);
+        Assert.NotNull(claim.RunSpec);
+        Assert.Equal("claude", claim.RunSpec!.CliType);
+        Assert.Equal("claude-opus-5", claim.RunSpec.Model);
+        Assert.Equal("high", claim.RunSpec.ThinkingLevel);
+
+        var progressFolder = Path.Combine(_watchPath, TaskStates.Progress, taskKey);
+        Assert.False(File.Exists(Path.Combine(progressFolder, QuotaWaitMarker.FileName)));
+        using (var configuredTask = JsonDocument.Parse(
+                   await File.ReadAllTextAsync(Path.Combine(progressFolder, "task.json"))))
+        {
+            Assert.Equal("codex", configuredTask.RootElement.GetProperty("cliType").GetString());
+            Assert.Equal("gpt-5.6-sol", configuredTask.RootElement.GetProperty("model").GetString());
+        }
+
+        var sessionEvent = JsonSerializer.Deserialize<SessionEvent>(
+            Assert.Single(File.ReadLines(TaskPaths.SessionEventsLog(progressFolder))),
+            TaskJsonFile.ReadOpts)!;
+        Assert.Equal(claim.Lease!.AttemptId, sessionEvent.RunAttemptId);
+        Assert.Equal("claude", sessionEvent.Cli);
+        Assert.Equal("claude-opus-5", sessionEvent.Model);
+        Assert.Equal("high", sessionEvent.ThinkingLevel);
+        Assert.True(sessionEvent.QuotaFallback);
+        Assert.Equal("codex", sessionEvent.QuotaFallbackFromCliType);
+        Assert.Equal("gpt-5.6-sol", sessionEvent.QuotaFallbackFromModel);
+        Assert.Contains("model switched pre-launch", sessionEvent.QuotaFallbackReason, StringComparison.Ordinal);
+        Assert.NotNull(sessionEvent.QuotaFallbackResetAt);
+        Assert.Equal(CliModelRouteSources.OperatorOverride, sessionEvent.QuotaFallbackRouteSource);
+
+        var timeline = File.ReadAllText(TaskPaths.TimelineLog(progressFolder));
+        Assert.Contains($"\"kind\":\"{TimelineEventKinds.QuotaAdmissionDecision}\"", timeline, StringComparison.Ordinal);
+        Assert.Contains($"\"kind\":\"{TimelineEventKinds.QuotaFallbackActivated}\"", timeline, StringComparison.Ordinal);
+        Assert.Contains("\"configuredCli\":\"codex\"", timeline, StringComparison.Ordinal);
+        Assert.Contains("\"fallbackCli\":\"claude\"", timeline, StringComparison.Ordinal);
+        var activity = File.ReadAllText(TaskPaths.CliOutputLog(progressFolder));
+        Assert.Contains("[quota-admission]", activity, StringComparison.Ordinal);
+        Assert.Contains("[quota-fallback]", activity, StringComparison.Ordinal);
+        Assert.Contains(
+            factory.Services.GetRequiredService<OrchestratorLog>().Read(_watchPath),
+            item => item.Topic == OrchestratorLogTopics.LoadDistribution
+                    && item.JobId == taskKey
+                    && item.Summary.Contains("codex -> claude", StringComparison.Ordinal));
+
+        // A replay is the same lease delivery, not a new admission. Changing
+        // the route after the first response must not change its execution spec.
+        factory.Services.GetRequiredService<CliQuotaFallbackService>().Set(new CliModelRouteProfile
+        {
+            CliType = "codex",
+            FallbackCliType = "claude",
+            FallbackModel = "claude-sonnet-5",
+            FallbackThinkingLevel = "medium",
+        });
+        var replay = await client.ClaimAsync(request, CancellationToken.None);
+        Assert.Equal(RClaimStatus.Claimed, replay.Status);
+        Assert.Equal(claim.Lease.LeaseId, replay.Lease!.LeaseId);
+        Assert.Equal(claim.RunSpec, replay.RunSpec);
+    }
+
+    [Fact]
+    public async Task Capped_remote_card_without_fallback_is_deferred_before_lease_acquisition()
+    {
+        const string taskKey = "AGT-QUOTA-WAIT";
+        SeedTask(
+            TaskStates.Ready,
+            taskKey,
+            "Quota-held remote card",
+            "Do not launch while capped.",
+            cliType: "codex",
+            model: "gpt-5.6-sol",
+            thinkingLevel: "high");
+        SeedQuotaState(
+            new CliModelRouteProfile
+            {
+                CliType = "codex",
+                PrimaryModel = "gpt-5.6-sol",
+                PrimaryThinkingLevel = "high",
+            },
+            codexUsedPct: 98,
+            claudeUsedPct: 34);
+
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/agent-orc/agent-studio.git");
+
+        var claim = await client.ClaimAsync(
+            new RClaim(
+                RunnerId,
+                ProjectName,
+                "hetzner-test",
+                4242,
+                "remote-runner",
+                IdempotencyKey: "quota-wait-claim"),
+            CancellationToken.None);
+
+        Assert.Equal(RClaimStatus.Empty, claim.Status);
+        Assert.Contains("waiting", claim.Message, StringComparison.OrdinalIgnoreCase);
+        var readyFolder = Path.Combine(_watchPath, TaskStates.Ready, taskKey);
+        Assert.True(Directory.Exists(readyFolder));
+        Assert.False(File.Exists(TaskPaths.SessionEventsLog(readyFolder)));
+        Assert.Null(factory.Services.GetRequiredService<RunLeaseService>().Peek(taskKey).Lease);
+        var waitMarker = QuotaWaitMarker.TryRead(readyFolder);
+        Assert.NotNull(waitMarker);
+        Assert.Equal("codex", waitMarker!.CliType);
+        Assert.Contains("waiting", waitMarker.Reason, StringComparison.OrdinalIgnoreCase);
+        Assert.True(waitMarker.ResetAt > waitMarker.StartedAt);
+        var timeline = File.ReadAllText(TaskPaths.TimelineLog(readyFolder));
+        Assert.Contains($"\"kind\":\"{TimelineEventKinds.QuotaAdmissionDecision}\"", timeline, StringComparison.Ordinal);
+        Assert.Contains("\"outcome\":\"Wait\"", timeline, StringComparison.Ordinal);
+        Assert.Contains(
+            factory.Services.GetRequiredService<OrchestratorLog>().Read(_watchPath),
+            item => item.Topic == OrchestratorLogTopics.LoadDistribution
+                    && item.JobId == taskKey);
+    }
+
     /// <summary>
     /// T0b (CAR migration plan §3 T0b / §7 AP3): the claim carries the card's
     /// execution specification, and the runner turns it into the CLI invocation.
@@ -3317,6 +3500,67 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         File.WriteAllText(Path.Combine(dir, "status.md"), "Result: pending.");
     }
 
+    private void SeedQuotaState(
+        CliModelRouteProfile route,
+        double codexUsedPct,
+        double claudeUsedPct)
+    {
+        var now = DateTime.UtcNow;
+        var resetAt = now.AddDays(3);
+        var observedStartAt = now.AddDays(-4);
+        var quotaDirectory = Path.Combine(_workspace, ".runtime");
+        Directory.CreateDirectory(quotaDirectory);
+        File.WriteAllText(
+            Path.Combine(quotaDirectory, "quota-cache.json"),
+            JsonSerializer.Serialize(
+                new[]
+                {
+                    new QuotaSnapshot
+                    {
+                        CliType = "codex",
+                        FetchedAt = now,
+                        Windows =
+                        [
+                            new QuotaWindow
+                            {
+                                Label = "Weekly",
+                                UsedPct = codexUsedPct,
+                                ResetAt = resetAt,
+                                ObservedStartAt = observedStartAt,
+                            },
+                        ],
+                    },
+                    new QuotaSnapshot
+                    {
+                        CliType = "claude",
+                        FetchedAt = now,
+                        Windows =
+                        [
+                            new QuotaWindow
+                            {
+                                Label = "Weekly",
+                                UsedPct = claudeUsedPct,
+                                ResetAt = resetAt,
+                                ObservedStartAt = observedStartAt,
+                            },
+                        ],
+                    },
+                },
+                ApiJson));
+        File.WriteAllText(
+            Path.Combine(_workspace, "cli-quota-caps.json"),
+            JsonSerializer.Serialize(
+                new Dictionary<string, Dictionary<string, int>>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["codex"] = new(StringComparer.OrdinalIgnoreCase) { ["Weekly"] = 98 },
+                    ["claude"] = new(StringComparer.OrdinalIgnoreCase) { ["Weekly"] = 98 },
+                },
+                ApiJson));
+        File.WriteAllText(
+            Path.Combine(_workspace, "cli-model-routing.json"),
+            JsonSerializer.Serialize(new[] { route }, ApiJson));
+    }
+
     private async Task<string> SeedOriginAsync()
     {
         var origin = Path.Combine(_workspace, "origin.git");
@@ -3395,6 +3639,140 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
                     $"while [ ! -f '{awaitedFile}' ]; do sleep 0.05; done; "
                     + $"printf '{line}\\n' >> '{path}'",
                 ]);
+
+    [Fact]
+    public async Task Review_claim_resolves_frozen_codex_aspect_to_claude_when_codex_is_capped()
+    {
+        const string reviewRunnerId = "review-runner-quota-fallback";
+        const string reviewInstanceId = "review-host:quota-fallback";
+        var origin = await SeedOriginAsync();
+        var resultSha = (await GitAsync(origin, "rev-parse", "refs/heads/main")).StdOut.Trim();
+        SeedTask(
+            TaskStates.AutoReview,
+            TaskKey,
+            "Resolve the remote review route at claim",
+            "Keep the open review attempt but use the provider with remaining quota.");
+
+        SeedQuotaState(
+            new CliModelRouteProfile
+            {
+                CliType = CliTypes.Codex,
+                FallbackCliType = CliTypes.Claude,
+                FallbackModel = "claude-sonnet-5",
+                FallbackThinkingLevel = CliThinkingLevels.Medium,
+            },
+            codexUsedPct: 98,
+            claudeUsedPct: 34);
+
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var repositoryId = Contract.RepositoryIdentityContract.FromUrl(origin)!;
+        var run = authority.AcquireRun(
+            TaskKey,
+            repositoryId,
+            null,
+            RunnerId,
+            "coding-host",
+            120,
+            "review-quota-run").RunAttempt!;
+        var completed = authority.SettleRun(new SettleRunAttemptRequest
+        {
+            Write = new AttemptWriteReference(
+                run.AttemptId,
+                run.LastFence,
+                run.AuthorityEpoch,
+                "review-quota-run-complete"),
+            Outcome = "done",
+            ResultSha = resultSha,
+            ResultEnvelope = new Contract.ImmutableResultEnvelope(
+                repositoryId,
+                run.AttemptId,
+                resultSha,
+                resultSha,
+                "refs/heads/main",
+                null,
+                new string('d', 64),
+                RepositoryUrl: origin),
+        });
+        Assert.True(completed.Accepted);
+
+        var task = factory.Services.GetRequiredService<TaskScannerService>()
+            .FindJob(TaskKey, _watchPath)!;
+        var frozenPlan = factory.Services.GetRequiredService<RemoteReviewPlanBuilder>()
+            .Build(task, repositoryPath: null, projectSettings: null, "refs/heads/main");
+        var frozenAspect = Assert.Single(frozenPlan.Commands, command =>
+            command.ExecutionKind == Contract.ReviewCommandKinds.AgentAspect
+            && command.StepId == "aspect-code-quality");
+        Assert.Equal(CliTypes.Codex, frozenAspect.CliType);
+        Assert.Equal("gpt-5.4-mini", frozenAspect.Model);
+        var created = authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
+            TaskKey,
+            repositoryId,
+            resultSha,
+            run.AttemptId,
+            "requirements",
+            "review-quota-policy",
+            [],
+            "review-quota-create",
+            RepositoryUrl: origin,
+            ResultRef: "refs/heads/main",
+            Plan: frozenPlan));
+        Assert.True(created.Accepted);
+        await File.WriteAllTextAsync(
+            Path.Combine(task.FolderPath, "prompt.md"),
+            "This mutable prompt was changed after the ReviewSubject was frozen.");
+
+        var options = ReviewRunnerOptions(reviewRunnerId);
+        using var client = new RClient(
+            http,
+            reviewRunnerId,
+            usesDurableTaskServer: true,
+            options: options,
+            runnerInstanceId: reviewInstanceId);
+        await client.EnsureCompatibleAsync(CancellationToken.None);
+        await client.RegisterAsync(
+            "quota-aware review host",
+            "review-executor",
+            CancellationToken.None);
+
+        var claim = await client.ClaimReviewAsync(
+            new Contract.ReviewClaimRequest(
+                reviewRunnerId,
+                reviewInstanceId,
+                120,
+                AvailableSlots: 1),
+            CancellationToken.None);
+
+        Assert.Equal("claimed", claim.Status);
+        var effectiveAspect = Assert.Single(claim.Subject!.Plan.Commands, command =>
+            command.ExecutionKind == Contract.ReviewCommandKinds.AgentAspect
+            && command.StepId == "aspect-code-quality");
+        Assert.Equal(CliTypes.Claude, effectiveAspect.CliType);
+        Assert.Equal(CliTypes.Claude, effectiveAspect.FileName);
+        Assert.Equal("claude-sonnet-5", effectiveAspect.Model);
+        Assert.Equal(CliThinkingLevels.Medium, effectiveAspect.ThinkingLevel);
+        Assert.Equal(frozenAspect.Prompt, effectiveAspect.Prompt);
+        Assert.DoesNotContain("mutable prompt was changed", effectiveAspect.Prompt);
+
+        var persisted = authority.GetReview(created.ReviewAttempt!.AttemptId)!;
+        Assert.Equal(CliTypes.Codex, Assert.Single(
+            persisted.Subject.Plan!.Commands,
+            command => command.StepId == "aspect-code-quality").CliType);
+        Assert.Equal(CliTypes.Claude, Assert.Single(
+            persisted.EffectivePlan!.Commands,
+            command => command.StepId == "aspect-code-quality").CliType);
+        Assert.Contains(
+            factory.Services.GetRequiredService<TimelineLog>().ReadAll(task.FolderPath),
+            item => item.Kind == TimelineEventKinds.QuotaFallbackActivated
+                    && item.RunId == created.ReviewAttempt.AttemptId
+                    && item.Summary.StartsWith("[quota-fallback]", StringComparison.Ordinal));
+        Assert.Contains(
+            factory.Services.GetRequiredService<OrchestratorLog>().Read(task.WatchPath),
+            item => item.Topic == OrchestratorLogTopics.LoadDistribution
+                    && item.JobId == task.Id
+                    && item.Summary.StartsWith("[quota-fallback]", StringComparison.Ordinal));
+    }
 
     [Fact]
     public async Task Review_host_runs_tool_and_agent_aspect_end_to_end_with_honest_step_location()

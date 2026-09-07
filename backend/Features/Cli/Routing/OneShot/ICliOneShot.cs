@@ -146,6 +146,34 @@ public sealed record CliOneShotResult(
     AgentMessageLatency Latency,
     string? Error)
 {
+    /// <summary>Attempt-local route selected by quota admission.</summary>
+    public string? EffectiveCliType { get; init; }
+    public string? EffectiveModel { get; init; }
+    public string? EffectiveThinkingLevel { get; init; }
+    public QuotaAdmissionPlan? QuotaAdmission { get; init; }
+
+    /// <summary>
+    /// Compatibility envelope for older consumers that still pass one-shot
+    /// output through the Claude JSON parser. The payload is built from the
+    /// provider-neutral parsed result, so a cross-family fallback never leaks
+    /// Codex JSONL into a Claude-only parser.
+    /// </summary>
+    public string ToLegacyResultEnvelope(string fallbackModel) =>
+        System.Text.Json.JsonSerializer.Serialize(new
+        {
+            type = "result",
+            result = ParsedText,
+            usage = Usage is null ? null : new
+            {
+                input_tokens = Usage.InputTokens,
+                output_tokens = Usage.OutputTokens,
+                cache_read_input_tokens = Usage.CacheReadTokens,
+                cache_creation_input_tokens = Usage.CacheCreationTokens,
+            },
+            model = Usage?.Model ?? EffectiveModel ?? fallbackModel,
+            cliType = EffectiveCliType,
+        });
+
     /// <summary>Convenience: zero-token empty failure used when a child
     /// could not be started at all.</summary>
     public static CliOneShotResult SpawnFailure(string error, DateTime requestedAt, DateTime completedAt) => new(
@@ -169,10 +197,32 @@ public sealed record CliOneShotResult(
 public sealed class CliOneShotRegistry
 {
     private readonly Dictionary<string, ICliOneShot> _byCli;
+    private readonly QuotaService? _quota;
+    private readonly CliQuotaCapsService? _caps;
+    private readonly CliQuotaFallbackService? _fallback;
+    private readonly CliQuotaWaitPolicyService? _waitPolicy;
+    private readonly AgentStudio.Tasks.TimelineLog? _timeline;
+    private readonly AgentStudio.Runner.OrchestratorLog? _orchestratorLog;
+    private readonly ILogger<CliOneShotRegistry>? _logger;
 
-    public CliOneShotRegistry(IEnumerable<ICliOneShot> implementations)
+    public CliOneShotRegistry(
+        IEnumerable<ICliOneShot> implementations,
+        QuotaService? quota = null,
+        CliQuotaCapsService? caps = null,
+        CliQuotaFallbackService? fallback = null,
+        CliQuotaWaitPolicyService? waitPolicy = null,
+        AgentStudio.Tasks.TimelineLog? timeline = null,
+        AgentStudio.Runner.OrchestratorLog? orchestratorLog = null,
+        ILogger<CliOneShotRegistry>? logger = null)
     {
         _byCli = implementations.ToDictionary(i => i.CliType, StringComparer.OrdinalIgnoreCase);
+        _quota = quota;
+        _caps = caps;
+        _fallback = fallback;
+        _waitPolicy = waitPolicy;
+        _timeline = timeline;
+        _orchestratorLog = orchestratorLog;
+        _logger = logger;
     }
 
     /// <summary>Returns the implementation for the given CLI type, or null
@@ -181,7 +231,9 @@ public sealed class CliOneShotRegistry
     public ICliOneShot? Get(string? cliType)
     {
         if (string.IsNullOrWhiteSpace(cliType)) return null;
-        return _byCli.TryGetValue(cliType, out var v) ? v : null;
+        if (!_byCli.TryGetValue(cliType, out var implementation)) return null;
+        if (_quota is null || _caps is null || _fallback is null) return implementation;
+        return new QuotaAwareCliOneShot(this, implementation.CliType);
     }
 
     /// <summary>Convenience: get the implementation or throw a clear
@@ -192,5 +244,147 @@ public sealed class CliOneShotRegistry
         var impl = Get(cliType);
         if (impl == null) throw new InvalidOperationException($"No ICliOneShot registered for CLI '{cliType}'");
         return impl;
+    }
+
+    private async Task<CliOneShotResult> RunQuotaAwareAsync(
+        string requestedCli,
+        CliOneShotRequest request,
+        CancellationToken ct)
+    {
+        var path = request.Source?.Trim().ToLowerInvariant() switch
+        {
+            "review-decision" or "code-review-step" or "post-abort-review-step" =>
+                QuotaExecutionPath.ReviewAspect,
+            "orchestrator-chat" or "orchestrator-decision" =>
+                QuotaExecutionPath.OrchestratorChat,
+            _ when !string.IsNullOrWhiteSpace(request.StepId) =>
+                QuotaExecutionPath.PipelineStep,
+            _ => QuotaExecutionPath.OrchestratorChat,
+        };
+        var context = QuotaAdmissionContext.ForTask(path, taskType: null, request.ThinkingLevel);
+        var plan = QuotaAdmissionPlanner.Plan(
+            requestedCli,
+            request.Model,
+            request.ThinkingLevel,
+            _fallback,
+            _caps!,
+            cli => string.IsNullOrWhiteSpace(cli) ? null : _quota!.GetCachedFor(cli),
+            DateTime.UtcNow,
+            occupiedSlots: 0,
+            _waitPolicy?.Resolve(project: null),
+            context);
+
+        _logger?.Log(
+            plan.IsFallback || plan.IsDeferred ? LogLevel.Warning : LogLevel.Information,
+            "cli_quota_admission_decision path={Path} project={Project} jobId={JobId} stepId={StepId} outcome={Outcome} requestedCli={RequestedCli} effectiveCli={EffectiveCli} model={Model} reason={Reason}",
+            path, request.Project, request.JobId, request.StepId, plan.Outcome,
+            requestedCli, plan.CliType, plan.Model, plan.Reason);
+        RecordTaskDecision(request, plan);
+
+        if (!plan.ShouldLaunch)
+        {
+            var at = DateTime.UtcNow;
+            return CliOneShotResult.SpawnFailure("Quota admission deferred: " + plan.Reason, at, at) with
+            {
+                EffectiveCliType = plan.CliType,
+                EffectiveModel = plan.Model,
+                EffectiveThinkingLevel = plan.ThinkingLevel,
+                QuotaAdmission = plan,
+            };
+        }
+
+        _fallback!.RecordAdmission(
+            requestedCli,
+            request.Model,
+            request.ThinkingLevel,
+            plan,
+            DateTime.UtcNow);
+
+        if (!_byCli.TryGetValue(plan.CliType, out var effective))
+        {
+            var at = DateTime.UtcNow;
+            return CliOneShotResult.SpawnFailure(
+                $"Quota fallback selected CLI '{plan.CliType}', but no one-shot implementation is registered.",
+                at,
+                at) with
+            {
+                EffectiveCliType = plan.CliType,
+                EffectiveModel = plan.Model,
+                EffectiveThinkingLevel = plan.ThinkingLevel,
+                QuotaAdmission = plan,
+            };
+        }
+
+        var effectiveRequest = request with
+        {
+            CliType = plan.CliType,
+            Model = plan.Model ?? request.Model,
+            ThinkingLevel = plan.ThinkingLevel ?? request.ThinkingLevel,
+            // Session identifiers are provider-owned. A cross-family fallback
+            // is always a new invocation and must never reuse another CLI's id.
+            ExtraArgs = string.Equals(plan.CliType, requestedCli, StringComparison.OrdinalIgnoreCase)
+                ? request.ExtraArgs
+                : null,
+        };
+        var result = await effective.RunAsync(effectiveRequest, ct).ConfigureAwait(false);
+        return result with
+        {
+            EffectiveCliType = plan.CliType,
+            EffectiveModel = plan.Model ?? request.Model,
+            EffectiveThinkingLevel = plan.ThinkingLevel ?? request.ThinkingLevel,
+            QuotaAdmission = plan,
+        };
+    }
+
+    private void RecordTaskDecision(CliOneShotRequest request, QuotaAdmissionPlan plan)
+    {
+        if (plan.Outcome == QuotaAdmissionOutcome.LaunchPrimary || string.IsNullOrWhiteSpace(request.JobFolderPath))
+            return;
+
+        var prefix = plan.IsFallback ? "[quota-fallback] " : "[quota-admission] ";
+        _timeline?.Append(
+            request.JobFolderPath!,
+            AgentStudio.Shared.TimelineEventKinds.QuotaAdmissionDecision,
+            AgentStudio.Shared.TimelineActors.System,
+            prefix + plan.Reason,
+            details: new Dictionary<string, string>
+            {
+                ["outcome"] = plan.Outcome.ToString(),
+                ["requestedCli"] = request.CliType,
+                ["effectiveCli"] = plan.CliType,
+                ["model"] = plan.Model ?? string.Empty,
+                ["thinkingLevel"] = plan.ThinkingLevel ?? string.Empty,
+                ["routeSource"] = plan.RouteSource ?? string.Empty,
+                ["equivalentTier"] = plan.EquivalentTier ?? string.Empty,
+                ["nextReset"] = plan.NextResetAt?.ToString("o") ?? string.Empty,
+            });
+
+        var stateDirectory = Directory.GetParent(request.JobFolderPath!);
+        var watchPath = stateDirectory?.Parent?.FullName;
+        if (string.IsNullOrWhiteSpace(watchPath)) return;
+        _orchestratorLog?.Append(watchPath, new AgentStudio.Runner.OrchestratorLogEntry
+        {
+            Kind = AgentStudio.Runner.OrchestratorLogKinds.Decision,
+            Topic = AgentStudio.Runner.OrchestratorLogTopics.LoadDistribution,
+            JobId = request.JobId,
+            Summary = plan.Reason,
+            Reasoning = QuotaAdmissionPlanner.DescribeLoadNumbers(plan),
+        });
+    }
+
+    private sealed class QuotaAwareCliOneShot : ICliOneShot
+    {
+        private readonly CliOneShotRegistry _owner;
+
+        public QuotaAwareCliOneShot(CliOneShotRegistry owner, string cliType)
+        {
+            _owner = owner;
+            CliType = cliType;
+        }
+
+        public string CliType { get; }
+
+        public Task<CliOneShotResult> RunAsync(CliOneShotRequest request, CancellationToken ct = default)
+            => _owner.RunQuotaAwareAsync(CliType, request, ct);
     }
 }

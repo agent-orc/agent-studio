@@ -229,9 +229,14 @@ public static class V1ReviewPlaneEndpoints
             AgentStudio.Registry.ProjectRegistry projects,
             AgentStudio.Projects.ProjectSettingsService settings,
             RemoteReviewPlanBuilder remoteReviewPlans,
+            QuotaService quota,
+            CliQuotaCapsService quotaCaps,
+            CliQuotaFallbackService quotaFallback,
+            CliQuotaWaitPolicyService quotaWaitPolicy,
             HumanReviewEscalation escalation,
             TaskMutationService mutations,
             TimelineLog timeline,
+            OrchestratorLog orchestratorLog,
             ILoggerFactory loggerFactory,
             CancellationToken ct) =>
         {
@@ -294,14 +299,65 @@ public static class V1ReviewPlaneEndpoints
                 }
             }
 
+            RemoteReviewPlanAdmission? claimedAdmission = null;
+            ReviewDeferredAdmission? deferredAdmission = null;
+            var decisionAt = DateTime.UtcNow;
             var claimed = reviewAttemptLifecycle.ClaimNextReview(
                 runnerId,
                 executor.HostId,
                 request.InstanceId,
-                request.RequestedTtlSeconds);
+                request.RequestedTtlSeconds,
+                candidate =>
+                {
+                    var resolution = ResolvePlanForClaim(
+                        candidate,
+                        scanner,
+                        projects,
+                        settings,
+                        remoteReviewPlans,
+                        quota,
+                        quotaCaps,
+                        quotaFallback,
+                        quotaWaitPolicy,
+                        decisionAt);
+                    if (!resolution.ShouldLaunch)
+                    {
+                        var deferred = resolution.Commands.FirstOrDefault(command =>
+                            !command.Decision.ShouldLaunch);
+                        if (deferred is not null)
+                        {
+                            deferredAdmission ??= new ReviewDeferredAdmission(
+                                candidate.AttemptId,
+                                FindTask(scanner, candidate.TaskKey),
+                                deferred);
+                        }
+                        return null;
+                    }
+                    if (!ReviewExecutorSupportsPlan(executor, resolution.EffectivePlan!, out var capabilityReason))
+                    {
+                        deferredAdmission ??= new ReviewDeferredAdmission(
+                            candidate.AttemptId,
+                            FindTask(scanner, candidate.TaskKey),
+                            resolution.Commands.FirstOrDefault(),
+                            capabilityReason);
+                        return null;
+                    }
+                    claimedAdmission = resolution;
+                    return resolution.EffectivePlan;
+                });
             if (claimed.Status == AttemptWriteStatus.NotFound)
+            {
+                if (deferredAdmission is not null)
+                    RecordDeferredReviewAdmission(
+                        deferredAdmission,
+                        timeline,
+                        orchestratorLog,
+                        loggerFactory.CreateLogger(LoggerName));
                 return Results.Ok(new Contract.ReviewClaimResponse(
-                    "empty", Message: "No current immutable ReviewAttempt is queued."));
+                    "empty",
+                    Message: deferredAdmission?.Reason
+                             ?? "No current immutable ReviewAttempt is queued."));
+            }
             if (!claimed.Accepted || claimed.ReviewAttempt is null)
                 return AttemptError(claimed);
 
@@ -314,6 +370,17 @@ public static class V1ReviewPlaneEndpoints
                 remoteReviewPlans,
                 out var subjectTask,
                 out var baseline);
+            if (subjectTask is not null && claimedAdmission is not null)
+            {
+                RecordReviewQuotaAdmissions(
+                    subjectTask,
+                    review.AttemptId,
+                    claimedAdmission.Commands,
+                    quotaFallback,
+                    timeline,
+                    orchestratorLog,
+                    loggerFactory.CreateLogger(LoggerName));
+            }
             CorrectOutdatedIntegrationBranch(
                 subjectTask,
                 baseline,
@@ -881,17 +948,17 @@ public static class V1ReviewPlaneEndpoints
         baseline = task is null ? null : ResolveBaselineBranch(task, project, settings);
         var integrationRef = baseline?.IntegrationRef;
         var taskSettings = task is null ? null : settings.Get(task.ProjectName);
-        var plan = review.Subject.Plan
+        var plan = review.EffectivePlan
+                   ?? review.Subject.Plan
                    ?? remoteReviewPlans.Build(
                        task,
                        project?.RepositoryPath,
                        taskSettings,
                        integrationRef);
-        // The plan is frozen with the subject, so a retry inherits whatever ref
-        // the first attempt was handed. AGT-2220 replayed a stale
-        // refs/heads/main through four attempts that way. Re-stamping the ref at
-        // hand-out time is what lets a corrected integration line reach the
-        // runner instead of the snapshot taken when the card was created.
+        // Deterministic subject inputs retain the integration ref even though
+        // aspect routes are resolved per attempt. AGT-2220 replayed a stale
+        // refs/heads/main through four attempts, so re-stamp project truth at
+        // hand-out time as a final compatibility guard.
         if (integrationRef is not null
             && !string.Equals(plan.IntegrationRef, integrationRef, StringComparison.Ordinal))
         {
@@ -912,6 +979,231 @@ public static class V1ReviewPlaneEndpoints
             review.Subject.ReviewPolicyHash,
             plan,
             review.Subject.CreatedAt);
+    }
+
+    private static RemoteReviewPlanAdmission ResolvePlanForClaim(
+        ReviewAttemptDto review,
+        TaskScannerService scanner,
+        AgentStudio.Registry.ProjectRegistry projects,
+        AgentStudio.Projects.ProjectSettingsService settings,
+        RemoteReviewPlanBuilder remoteReviewPlans,
+        QuotaService quota,
+        CliQuotaCapsService quotaCaps,
+        CliQuotaFallbackService quotaFallback,
+        CliQuotaWaitPolicyService quotaWaitPolicy,
+        DateTime nowUtc)
+    {
+        var task = FindTask(scanner, review.TaskKey);
+        var project = task is null
+            ? null
+            : projects.FindByStorageLocation(task.WatchPath)
+              ?? projects.FindByIdOrDisplayName(task.ProjectName);
+        var taskSettings = task is null ? null : settings.Get(task.ProjectName);
+        var integrationRef = task is null
+            ? null
+            : ResolveBaselineBranch(task, project, settings).IntegrationRef;
+        var authoredPlan = review.Subject.Plan
+                           ?? remoteReviewPlans.Build(
+                               task,
+                               project?.RepositoryPath,
+                               taskSettings,
+                               integrationRef);
+        if (integrationRef is not null
+            && !string.Equals(authoredPlan.IntegrationRef, integrationRef, StringComparison.Ordinal))
+        {
+            authoredPlan = authoredPlan with { IntegrationRef = integrationRef };
+        }
+        authoredPlan = Contract.ReviewPlanResourcePolicy.Apply(authoredPlan);
+        return remoteReviewPlans.ResolveForClaim(
+            authoredPlan,
+            task,
+            project?.RepositoryPath,
+            taskSettings,
+            integrationRef,
+            quotaFallback,
+            quotaCaps,
+            cli => string.IsNullOrWhiteSpace(cli) ? null : quota.GetCachedFor(cli),
+            nowUtc,
+            occupiedSlots: 0,
+            quotaWaitPolicy.Resolve(taskSettings));
+    }
+
+    private static bool ReviewExecutorSupportsPlan(
+        V1ReviewExecutorRegistry.ReviewExecutor executor,
+        Contract.ReviewPlanDto plan,
+        out string? reason)
+    {
+        // Older review daemons registered only the broad semantic-review
+        // capability. Treat that legacy shape as unknown rather than incapable;
+        // current daemons advertise per-provider execution/authentication pairs,
+        // which lets us reject a fallback they explicitly cannot launch.
+        var advertisesProviderCapabilities = executor.Capabilities.Any(capability =>
+            capability.StartsWith("cli-execution:", StringComparison.Ordinal)
+            || capability.StartsWith("provider-auth:", StringComparison.Ordinal));
+        if (!advertisesProviderCapabilities)
+        {
+            reason = null;
+            return true;
+        }
+
+        foreach (var command in plan.Commands.Where(command =>
+                     Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind)))
+        {
+            var cli = string.IsNullOrWhiteSpace(command.CliType)
+                ? command.FileName
+                : command.CliType!;
+            var execution = Contract.CapabilityProtocol.CliExecution(cli);
+            var authentication = Contract.CapabilityProtocol.ProviderAuthentication(cli);
+            if (!executor.Capabilities.Contains(execution)
+                || !executor.Capabilities.Contains(authentication))
+            {
+                reason = $"Review executor cannot launch {cli}: required capabilities "
+                         + $"'{execution}' and '{authentication}' were not registered.";
+                return false;
+            }
+        }
+        reason = null;
+        return true;
+    }
+
+    private static void RecordReviewQuotaAdmissions(
+        TaskInfo task,
+        string attemptId,
+        IReadOnlyList<RemoteReviewCommandAdmission> commands,
+        CliQuotaFallbackService quotaFallback,
+        TimelineLog timeline,
+        OrchestratorLog orchestratorLog,
+        ILogger logger)
+    {
+        foreach (var command in commands)
+        {
+            var plan = command.Decision;
+            if (plan.ShouldLaunch)
+            {
+                quotaFallback.RecordAdmission(
+                    command.RequestedCliType,
+                    command.RequestedModel,
+                    command.RequestedThinkingLevel,
+                    plan,
+                    DateTime.UtcNow);
+            }
+            logger.LogInformation(
+                "cli_quota_admission_decision path=remote-review task={TaskId} attempt={AttemptId} step={StepId} outcome={Outcome} requestedCli={RequestedCli} effectiveCli={EffectiveCli} model={Model} isFallback={IsFallback} reason={Reason}",
+                task.Id,
+                attemptId,
+                command.StepId,
+                plan.Outcome,
+                command.RequestedCliType,
+                plan.CliType,
+                plan.Model ?? "<default>",
+                plan.IsFallback,
+                plan.Reason);
+            if (!plan.IsFallback) continue;
+
+            var summary = $"[quota-fallback] {command.StepId}: switched from "
+                          + $"{command.RequestedCliType}/{command.RequestedModel ?? "<default>"} to "
+                          + $"{plan.CliType}/{plan.Model ?? "<default>"}; {plan.Reason}";
+            try
+            {
+                timeline.Append(
+                    task.FolderPath,
+                    TimelineEventKinds.QuotaFallbackActivated,
+                    TimelineActors.System,
+                    summary,
+                    runId: attemptId,
+                    details: new Dictionary<string, string>
+                    {
+                        ["path"] = "remote-review",
+                        ["stepId"] = command.StepId,
+                        ["aspect"] = command.Aspect,
+                        ["primaryCli"] = command.RequestedCliType,
+                        ["primaryModel"] = command.RequestedModel ?? string.Empty,
+                        ["fallbackCli"] = plan.CliType,
+                        ["fallbackModel"] = plan.Model ?? string.Empty,
+                        ["reason"] = plan.Reason,
+                    });
+                orchestratorLog.Append(task.WatchPath, new OrchestratorLogEntry
+                {
+                    Kind = OrchestratorLogKinds.Decision,
+                    Topic = OrchestratorLogTopics.LoadDistribution,
+                    JobId = task.Id,
+                    Summary = summary,
+                    Reasoning = QuotaAdmissionPlanner.DescribeLoadNumbers(plan),
+                });
+            }
+            catch (Exception exception)
+            {
+                // Admission and the fenced effective plan are already durable.
+                // An observability write must never hide the granted claim.
+                logger.LogWarning(
+                    exception,
+                    "Failed to record remote-review quota fallback for {TaskId} attempt {AttemptId} step {StepId}",
+                    task.Id,
+                    attemptId,
+                    command.StepId);
+            }
+        }
+    }
+
+    private static void RecordDeferredReviewAdmission(
+        ReviewDeferredAdmission deferred,
+        TimelineLog timeline,
+        OrchestratorLog orchestratorLog,
+        ILogger logger)
+    {
+        logger.LogInformation(
+            "cli_quota_admission_decision path=remote-review attempt={AttemptId} outcome=deferred reason={Reason}",
+            deferred.AttemptId,
+            deferred.Reason);
+        if (deferred.Task is null) return;
+        try
+        {
+            var alreadyRecorded = timeline.ReadAll(deferred.Task.FolderPath).Any(item =>
+                item.Kind == TimelineEventKinds.QuotaAdmissionDecision
+                && item.RunId == deferred.AttemptId
+                && string.Equals(item.Summary, deferred.Reason, StringComparison.Ordinal));
+            if (alreadyRecorded) return;
+            timeline.Append(
+                deferred.Task.FolderPath,
+                TimelineEventKinds.QuotaAdmissionDecision,
+                TimelineActors.System,
+                deferred.Reason,
+                runId: deferred.AttemptId,
+                details: new Dictionary<string, string>
+                {
+                    ["path"] = "remote-review",
+                    ["outcome"] = deferred.Command?.Decision.Outcome.ToString() ?? "capability-deferred",
+                    ["stepId"] = deferred.Command?.StepId ?? string.Empty,
+                    ["aspect"] = deferred.Command?.Aspect ?? string.Empty,
+                });
+            orchestratorLog.Append(deferred.Task.WatchPath, new OrchestratorLogEntry
+            {
+                Kind = OrchestratorLogKinds.Decision,
+                Topic = OrchestratorLogTopics.LoadDistribution,
+                JobId = deferred.Task.Id,
+                Summary = deferred.Reason,
+                Reasoning = deferred.Command is null
+                    ? "Review claim deferred because the executor lacks the effective route capability."
+                    : QuotaAdmissionPlanner.DescribeLoadNumbers(deferred.Command.Decision),
+            });
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                exception,
+                "Failed to record deferred remote-review admission for {AttemptId}",
+                deferred.AttemptId);
+        }
+    }
+
+    private sealed record ReviewDeferredAdmission(
+        string AttemptId,
+        TaskInfo? Task,
+        RemoteReviewCommandAdmission? Command,
+        string? CapabilityReason = null)
+    {
+        public string Reason => CapabilityReason ?? Command?.Decision.Reason
+            ?? "The effective review command cannot be launched by this executor.";
     }
 
     private static (string RepositoryId, string? RepositoryUrl) MaterializableRepository(

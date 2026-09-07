@@ -1953,6 +1953,39 @@ describe('buildQuotaWaitBadge', () => {
   });
 });
 
+describe('TaskCardComponent quota-wait lanes', () => {
+  it('keeps a remote-admission wait visible while the card remains Ready', async () => {
+    await TestBed.configureTestingModule({
+      imports: [TaskCardComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(TaskCardComponent);
+    const quotaWait = {
+      cliType: 'codex',
+      startedAt: '2026-09-07T02:37:00Z',
+      resetAt: '2099-09-07T06:38:00Z',
+      thresholdMinutes: 30,
+      reason: 'Confirmed nearby quota reset',
+    };
+    fixture.componentRef.setInput('job', makeJob({ state: '2-ready', quotaWait }));
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.currentQuotaWait()).toEqual(quotaWait);
+    expect(fixture.nativeElement.querySelector(
+      '[data-testid="task-card-quota-wait"]',
+    )?.textContent).toContain('Waiting for quota reset');
+
+    fixture.componentRef.setInput('job', makeJob({ state: '5-human-review', quotaWait }));
+    fixture.detectChanges();
+    expect(fixture.componentInstance.currentQuotaWait()).toBeNull();
+  });
+});
+
 describe('formatSteerWait', () => {
   it('formats sub-hour waits as m:ss', () => {
     expect(formatSteerWait(0)).toBe('0:00');

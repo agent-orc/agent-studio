@@ -282,6 +282,12 @@ export interface PipelineCatalogueStep {
   modelSource?: string | null;
   resolvedThinkingLevel?: string | null;
   thinkingLevelSource?: string | null;
+  /** Launch-effective route after quota admission. Configured fields remain the editor source. */
+  effectiveCliType?: string | null;
+  effectiveModel?: string | null;
+  effectiveThinkingLevel?: string | null;
+  /** Read-only explanation for the launch-effective route. */
+  quotaAdmission?: PipelineQuotaAdmission | null;
   usesModel: boolean;
   supportsEconomyModel?: boolean;
   usesPrompt: boolean;
@@ -304,6 +310,15 @@ export interface PipelineCatalogueStep {
   supportsCondition: boolean;
   supportsMaxIterations?: boolean;
   defaultMaxIterations?: number | null;
+}
+
+/** Quota planner decision attached to a pipeline catalogue row. */
+export interface PipelineQuotaAdmission {
+  outcome: string;
+  isFallback: boolean;
+  reason?: string | null;
+  decidedAt?: string | null;
+  nextResetAt?: string | null;
 }
 
 /**

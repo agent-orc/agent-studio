@@ -274,7 +274,8 @@ public static class RemoteChatWorkClaimStatuses
 public sealed record RemoteChatWorkClaimRequest(
     string RunnerId,
     string RunnerName,
-    string Hostname);
+    string Hostname,
+    string? CapabilityInstanceId = null);
 
 public sealed record RemoteChatWorkClaimResponse(
     string Status,
@@ -292,7 +293,8 @@ public sealed record RemoteChatWorkItem(
     string? Model,
     string? ThinkingLevel,
     DateTime CreatedAt,
-    DateTime ClaimExpiresAt);
+    DateTime ClaimExpiresAt,
+    string? CliType = null);
 
 public sealed record RemoteChatWorkRenewRequest(
     string WorkId,

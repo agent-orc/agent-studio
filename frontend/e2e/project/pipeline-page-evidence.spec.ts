@@ -35,7 +35,18 @@ const CATALOGUE = {
     { id: 'pre-context-scan', displayName: 'Pre: Context scan', kind: 'module', usesModel: true, usesPrompt: true, supportsMode: false, promptTemplate: 'pre-context-scan', canDisable: true, defaultEnabled: true, supportsCondition: false },
     { id: 'core-run', displayName: 'Core: Agent run', kind: 'core', usesModel: false, usesPrompt: false, supportsMode: false, canDisable: false, defaultEnabled: true, supportsCondition: false },
     { id: 'aspect-requirement-fit', displayName: 'Aspect: Requirement fit', kind: 'aspect', usesModel: true, usesPrompt: true, supportsMode: false, promptTemplate: 'aspect-requirement-fit', canDisable: true, defaultEnabled: true, supportsCondition: false },
-    { id: 'aspect-code-quality', displayName: 'Aspect: Code quality', kind: 'aspect', usesModel: true, usesPrompt: true, supportsMode: false, promptTemplate: 'aspect-code-quality', canDisable: true, defaultEnabled: true, supportsCondition: false },
+    {
+      id: 'aspect-code-quality', displayName: 'Aspect: Code quality', kind: 'aspect',
+      usesModel: true, usesPrompt: true, supportsMode: false, promptTemplate: 'aspect-code-quality',
+      canDisable: true, defaultEnabled: true, supportsCondition: false,
+      cliType: 'codex', resolvedModel: 'gpt-5.4-mini', resolvedThinkingLevel: 'high', modelSource: 'step',
+      effectiveCliType: 'claude', effectiveModel: 'claude-sonnet-5', effectiveThinkingLevel: 'medium',
+      quotaAdmission: {
+        outcome: 'LaunchFallback', isFallback: true,
+        reason: 'Codex is at 98% until its weekly reset.',
+        decidedAt: '2026-09-07T02:37:00Z', nextResetAt: '2026-09-07T06:38:00Z',
+      },
+    },
     { id: 'aspect-security', displayName: 'Aspect: Security', kind: 'aspect', usesModel: true, usesPrompt: true, supportsMode: false, promptTemplate: 'aspect-security', canDisable: true, defaultEnabled: true, supportsCondition: false },
     { id: 'decision-gate', displayName: 'Decision: Lint gate', kind: 'tool', usesModel: false, usesPrompt: false, supportsMode: true, canDisable: true, defaultEnabled: true, supportsCondition: false },
     { id: 'post-abort-review', displayName: 'Post: Abort review', kind: 'orchestrator', usesModel: true, usesPrompt: true, supportsMode: false, promptTemplate: 'post-abort-review', canDisable: true, defaultEnabled: true, supportsCondition: true },
@@ -45,7 +56,7 @@ const CATALOGUE = {
 
 const SETTINGS_PROJECTION = {
   pipelineSteps: {
-    'aspect-code-quality': { enabled: true, cliType: 'claude', model: 'claude-haiku-4-5', thinkingLevel: null },
+    'aspect-code-quality': { enabled: true, cliType: 'codex', model: 'gpt-5.4-mini', thinkingLevel: 'high' },
     // A legacy inline prompt override -> renders the "inline override" badge + Clear.
     'aspect-security': { enabled: true, prompt: 'Project-specific security checklist (legacy inline).' },
     // Opt-out step (default on) with a run condition set.
@@ -106,6 +117,7 @@ test('pipeline page: reworked panel shows health, steps, models, prompt bindings
   })));
   await page.route('**/api/clients**', r => r.fulfill(json([])));
   await page.route('**/api/v1/management/remote-hosts', r => r.fulfill(json([])));
+  await page.route('**/api/v1/management/remote-hosts/link-health', r => r.fulfill(json([])));
   await page.route('**/api/tags', r => r.fulfill(json([])));
   await page.route('**/api/orchestrator/sessions', r => r.fulfill(json({ sessions: [] })));
   await page.route('**/api/crash-recovery/pending', r => r.fulfill(json({ pending: [] })));
@@ -138,6 +150,7 @@ test('pipeline page: reworked panel shows health, steps, models, prompt bindings
   await page.route('**/api/tasks/archive**', r => r.fulfill(json({ items: [], total: 0 })));
   await page.route('**/api/runner/status', r => r.fulfill(json({ projects: {} })));
   await page.route('**/api/bus/*/messages**', r => r.fulfill(json([])));
+  await page.route('**/api/projects/*/workbenches**', r => r.fulfill(json({ items: [] })));
   await page.route('**/api/projects/pipeline-catalogue**', r => r.fulfill(json(CATALOGUE)));
   await page.route('**/api/projects/settings', r => r.fulfill(json({ [projectName]: SETTINGS_PROJECTION })));
   await page.route('**/token-usage/pipeline-cost*', r => r.fulfill(json(fakeCost(projectName))));
@@ -209,6 +222,13 @@ test('pipeline page: reworked panel shows health, steps, models, prompt bindings
   await expect(codeQualityRow.getByTestId('pipeline-step-setting-run-aspect-code-quality')).toBeVisible();
   await expect(codeQualityRow.getByTestId('pipeline-step-setting-run-aspect-code-quality')).toContainText('sequential');
   await expect(codeQualityRow.getByTestId('pipeline-step-setting-model-aspect-code-quality')).toBeVisible();
+  const effectiveRoute = codeQualityRow.getByTestId('pipeline-step-effective-route-aspect-code-quality');
+  await expect(effectiveRoute).toHaveAttribute('data-quota-outcome', 'LaunchFallback');
+  await expect(effectiveRoute).toContainText('Codex → Claude Code · claude-sonnet-5 · medium');
+  await expect(codeQualityRow.getByTestId('pipeline-step-setting-effective-route-aspect-code-quality'))
+    .toContainText('Codex is at 98% until its weekly reset.');
+  await expect(codeQualityRow.getByTestId('pipeline-step-agent-aspect-code-quality'))
+    .toHaveAttribute('aria-label', /Codex · gpt-5\.4-mini · high/);
   await expect(page.getByTestId('pipeline-step-prompt-open-aspect-code-quality')).toBeVisible();
   await expect(page.getByTestId('pipeline-step-agent-aspect-code-quality')).toBeVisible();
   await page.getByTestId('pipeline-step-row-aspect-requirement-fit').evaluate(el => { (el as HTMLDetailsElement).open = true; });
@@ -231,11 +251,13 @@ test('pipeline page: reworked panel shows health, steps, models, prompt bindings
   await expect(page.getByTestId('pipeline-step-probe-output-post-lint-scss')).toContainText('stylelint passed');
 
   await setTheme(page, 'light');
+  await codeQualityRow.screenshot({ path: path.join(SCREENSHOT_DIR, 'pipeline-quota-fallback--light--mocked.png') });
   await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'pipeline-page-full--mocked.png'), fullPage: true });
   await section.screenshot({ path: path.join(SCREENSHOT_DIR, 'pipeline-page-section--mocked.png') });
   await health.screenshot({ path: path.join(SCREENSHOT_DIR, 'pipeline-health-night-alarms--light--mocked.png') });
 
   await setTheme(page, 'dark');
+  await codeQualityRow.screenshot({ path: path.join(SCREENSHOT_DIR, 'pipeline-quota-fallback--dark--mocked.png') });
   await health.screenshot({ path: path.join(SCREENSHOT_DIR, 'pipeline-health-night-alarms--dark--mocked.png') });
   await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'pipeline-page-full-dark--mocked.png'), fullPage: true });
   await setTheme(page, 'light');
