@@ -96,5 +96,5 @@ public class ProjectProposalDraftingService
     private string Model() =>
         _configuration["ProposalManagement:Model"]
         ?? _configuration["PromptEnhancement:Model"]
-        ?? ModelIds.ClaudeHaiku45;
+        ?? ModelFamilyResolver.ResolveCurrent(ModelFamilies.ClaudeHaiku);
 }

@@ -1,6 +1,6 @@
 # Model Routing Policy
 
-Version: 2026-07-24
+Version: 2026-09-07
 
 Status: Canonical policy, initial hypothesis based on the 2026-07-23 historical benchmark
 
@@ -187,6 +187,82 @@ suggestion into an explicit pin. The decision log must retain the policy
 version, recommended tier and route, selected route, selection source, score,
 economy state, correctness floor, and reason.
 
+## Model families and migrations
+
+Runtime defaults refer to a stable model family instead of pinning one model
+generation. The five supported family references are:
+
+| Family reference | Provider line | Default ownership |
+|---|---|---|
+| `claude-haiku` | Claude Haiku | Economical Claude supporting calls |
+| `claude-sonnet` | Claude Sonnet | General Claude calls |
+| `claude-opus` | Claude Opus | Strongest Claude calls |
+| `gpt-mini` | Codex Mini | Bounded Codex supporting decisions |
+| `gpt-flagship` | Codex flagship | Core Codex routes |
+
+A family reference is not a concrete model pin. At call time,
+`ModelFamilyResolver` selects the newest available, non-deprecated member from
+a fresh live CLI catalog. It compares candidates with the registry generation
+order instead of trusting picker display order. Synchronous supporting defaults
+fall back to the newest available member in `ModelMetadataRegistry` when the
+published discovery snapshot is absent, stale, or partial. Availability checks
+for migration targets use direct discovery and fail closed when a fresh catalog
+has no member of the target family. Configuration values that name a concrete
+model remain explicit pins for compatibility.
+
+### Token Economy migration catalog
+
+Token Economy owns the versioned migration evidence at
+`src/TokenEconomy/catalog/model-migrations.v1.json` in the registered Token
+Economy project. Agent Studio reads and validates that project data through a
+bounded cache. It does not keep a second migration catalog in this repository.
+The catalog version and load state are visible in Workspace CLI Management.
+
+Catalog loading fails closed. If the first read is missing or invalid, Studio
+does not propose or apply a migration. Once a valid catalog has been loaded, a
+later refresh failure retains that last-good snapshot as stale and reports the
+error. A stale snapshot never waives the runtime check for target availability.
+
+Token Economy calls the non-Mini GPT line `gpt`; Studio maps it to the stable
+`gpt-flagship` family reference. The other four family names are shared.
+
+### Proposals and automatic application
+
+Studio derives migration proposals for these persisted concrete-model pins:
+
+- explicit task card models;
+- project pipeline-step overrides; and
+- supported workspace configuration pins.
+
+Each offer names the current and target model and shows the catalog's cost-class
+and reasoning-ladder comparison. Applying an offer is an explicit operator
+action. The server revalidates the current value and catalog version before it
+writes the target, so a stale browser proposal cannot overwrite a newer choice.
+
+Automatic application is narrower. At run admission, a catalog rule marked
+`safeAuto` may update a non-explicit task/default selection or a supporting-agent
+default only when all catalog gates still hold: same family, a newer generation,
+the same or a lower known cost class, a compatible reasoning ladder, supporting
+catalog evidence, and a target available in the installed CLI. The routing score and
+correctness floors in this document still apply. Explicit task, pipeline, and
+configuration pins are never changed silently; they remain proposals until an
+operator applies them.
+
+The workspace `autoApplySafeModelMigrations` setting defaults to enabled and
+can disable automatic application without hiding manual proposals. Workspace
+CLI Management exposes this switch through `PUT
+/api/model-migrations/auto-apply`. Its other migration operations are `GET
+/api/model-migrations` for the catalog state and scoped proposals, and `POST
+/api/model-migrations/apply` for compare-and-set manual application.
+
+Every automatic change appends a `model_migrated` task timeline event with
+`from`, `to`, `rule`, and `catalogVersion`, and writes a corresponding action to
+the operator feed. This preserves the model choice and the evidence version
+that authorized it after the catalog changes.
+
+See [Workspace CLI Management](../../concepts/workspace-cli-management.md) for
+the operator-facing workflow and failure states.
+
 ## Roadmap: what happens next
 
 1. **Policy visible now.** This page is canonical, linked from the documentation
@@ -202,10 +278,11 @@ economy state, correctness floor, and reason.
    defaults only after enough controlled runs meet declared correctness,
    reissue, duration, and token thresholds. Until then the UI labels them
    provisional.
-5. **Automation follows evidence.** Align `ModelQualificationService` and the
-   Token Economy advisor with this score, hard floors, quota rule, and
-   reissue behavior. Emit the complete worksheet in
-   `model-qualification.jsonl`.
+5. **Automation stays evidence-gated.** Family resolution and catalog-backed
+   migrations keep defaults current without crossing this policy's correctness
+   floors. Continue aligning `ModelQualificationService` and the Token Economy
+   advisor with the score, quota rule, and reissue behavior. Emit the complete
+   worksheet in `model-qualification.jsonl`.
 6. **Quarterly calibration.** Recompute the benchmark, inspect cohort drift,
    review false promotions and unsafe downgrades, and version this page when a
    threshold or default route changes.
@@ -214,6 +291,7 @@ economy state, correctness floor, and reason.
 
 - [Pipeline domain](pipeline.md)
 - [CLI domain](cli.md)
+- [Workspace CLI Management](../../concepts/workspace-cli-management.md)
 - [Token aggregation](tokens.md)
 - [Quota snapshot run events](../../concepts/quota-snapshot-run-events.md)
 - [Model qualification event schema](../../app/schemas/model-qualification-event.schema.json)

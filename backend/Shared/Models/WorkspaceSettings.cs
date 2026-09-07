@@ -55,6 +55,14 @@ public record WorkspaceSettings
     /// platform default (balanced, level 2).
     /// </summary>
     public int? AutonomyLevel { get; init; }
+
+    /// <summary>
+    /// Whether admission may apply Token Economy migrations marked
+    /// <c>safeAuto</c> to non-explicit task models. Null keeps the platform
+    /// default enabled. Explicit task, project, and configuration pins are
+    /// always proposal-only regardless of this setting.
+    /// </summary>
+    public bool? AutoApplySafeModelMigrations { get; init; }
 }
 
 /// <summary>

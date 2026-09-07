@@ -614,6 +614,44 @@ public class TaskMutationService
     }
 
     /// <summary>
+    /// Applies an admission-time model migration without turning a policy-owned
+    /// model into an explicit operator pin. The expected source and
+    /// <see cref="TaskInfo.ModelExplicit"/> checks make the write conditional,
+    /// so a concurrent operator edit wins instead of being overwritten.
+    /// </summary>
+    public bool ApplyAutomaticModelMigration(
+        string jobId,
+        string expectedFromModel,
+        string targetModel,
+        string? watchPath = null)
+    {
+        var info = _scanner.FindJob(jobId, watchPath);
+        if (info == null || info.ModelExplicit) return false;
+        if (!string.Equals(
+                ModelMetadataRegistry.NormalizeId(info.Model),
+                ModelMetadataRegistry.NormalizeId(expectedFromModel),
+                StringComparison.OrdinalIgnoreCase)) return false;
+        if (!ModelMetadataRegistry.IsCompatibleWithCli(info.CliType, targetModel)) return false;
+
+        var normalizedTarget = ModelMetadataRegistry.NormalizeForCli(info.CliType, targetModel);
+        if (string.IsNullOrWhiteSpace(normalizedTarget)) return false;
+
+        TaskJsonFile.UpdateField(info.FolderPath, "model", normalizedTarget, _logger);
+        TaskJsonFile.UpdateField(info.FolderPath, "modelExplicit", false, _logger);
+        if (!info.ThinkingLevelExplicit)
+        {
+            TaskJsonFile.UpdateField(
+                info.FolderPath,
+                "thinkingLevel",
+                ModelMetadataRegistry.DefaultThinkingLevelForCli(info.CliType, normalizedTarget) ?? "",
+                _logger);
+            TaskJsonFile.UpdateField(info.FolderPath, "thinkingLevelExplicit", false, _logger);
+        }
+        AppendModelChangeMarker(info, info.Model, normalizedTarget);
+        return Updated(info);
+    }
+
+    /// <summary>
     /// Appends one stable integration bookkeeping record without changing any
     /// existing row. The record id is the idempotency key: a repeated sweep is
     /// a successful no-op, even if its wall clock or evidence text differs.

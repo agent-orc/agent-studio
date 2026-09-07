@@ -1,0 +1,4 @@
+@if (proposal(); as migration) {
+  <app-model-migration-offer [proposal]="migration" [compact]="true"
+    [busy]="blocked() || isBusy(migration)" (apply)="apply($event)" />
+}

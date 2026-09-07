@@ -20,6 +20,7 @@ const KIND_LABELS: Readonly<Record<string, string>> = {
   [TIMELINE_KIND.quotaAdmissionDecision]: 'Quota admission decision',
   [TIMELINE_KIND.loadThrottleDecision]: 'Run deferred for host load',
   [TIMELINE_KIND.runnerSlotAdmission]: 'Slot admitted',
+  [TIMELINE_KIND.modelMigrated]: 'Model migrated',
   [TIMELINE_KIND.integrationLease]: 'Integration lease',
   [TIMELINE_KIND.agentRunFinished]: 'Run finished',
   [TIMELINE_KIND.preStepStarted]: 'Pre-step started',

@@ -19,6 +19,44 @@
       </label>
     </section>
   }
+  @if (migrationState(); as migrations) {
+    <section class="cli-models__migrations" data-testid="model-migration-settings">
+      <header class="cli-models__migration-head">
+        <span>
+          <strong>Model migrations</strong>
+          <small>
+            Catalog <span data-testid="model-migration-catalog-version">{{ migrations.catalogVersion }}</span>
+            · {{ migrations.catalogSource }}
+            · <span data-testid="model-migration-catalog-state">{{ catalogState(migrations) }}</span>
+          </small>
+        </span>
+        <label class="cli-models__auto-migrations">
+          <input type="checkbox"
+                 data-testid="model-migration-auto-apply"
+                 [checked]="migrations.autoApplySafe"
+                 [disabled]="savingAutoMigrations()"
+                 (change)="setAutomaticMigrations($any($event.target).checked)" />
+          <span>Apply safe migrations automatically</span>
+          <small>Defaults only. Explicit pins are never changed automatically.</small>
+        </label>
+      </header>
+      @if (configurationMigrations().length) {
+        <div class="cli-models__migration-list" data-testid="configuration-model-migrations">
+          @for (proposal of configurationMigrations(); track migrationKey(proposal)) {
+            <div class="cli-models__migration-row">
+              <span class="cli-models__migration-key">{{ proposal.configKey || 'Configuration pin' }}</span>
+              <app-model-migration-offer
+                [proposal]="proposal"
+                [busy]="migrationBusy(proposal)"
+                (apply)="applyConfigurationMigration($event)" />
+            </div>
+          }
+        </div>
+      } @else {
+        <p class="cli-models__migration-empty">No configuration pins need an update.</p>
+      }
+    </section>
+  }
   @for (g of groups(); track g.cliType) {
     <article class="cli-models__row"
              [class.cli-models__row--open]="isExpanded(g.cliType)"

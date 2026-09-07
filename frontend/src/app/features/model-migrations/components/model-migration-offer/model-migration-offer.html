@@ -1,0 +1,22 @@
+<span class="model-migration"
+      [class.model-migration--compact]="compact()"
+      role="status"
+      [attr.data-testid]="'model-migration-' + proposal().scope"
+      [attr.data-migration-rule]="proposal().rule"
+      [attr.data-catalog-version]="proposal().catalogVersion">
+  <span class="model-migration__summary">
+    Update available: <strong>{{ proposal().fromModel }}</strong> to <strong>{{ proposal().toModel }}</strong>
+  </span>
+  <span class="model-migration__diff" data-testid="model-migration-diff">
+    <span>Cost {{ costClass(proposal().costClassFrom) }} → {{ costClass(proposal().costClassTo) }}</span>
+    <span>Reasoning {{ reasoningLadder(proposal().reasoningLadderFrom) }} → {{ reasoningLadder(proposal().reasoningLadderTo) }}</span>
+  </span>
+  <button type="button"
+          class="model-migration__apply"
+          data-testid="model-migration-apply"
+          [disabled]="busy()"
+          [attr.aria-label]="'Apply model update from ' + proposal().fromModel + ' to ' + proposal().toModel"
+          (click)="applyUpdate($event)">
+    {{ busy() ? 'Applying…' : 'Apply' }}
+  </button>
+</span>

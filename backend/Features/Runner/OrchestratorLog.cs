@@ -177,6 +177,7 @@ public static class OrchestratorLogTopics
     public const string Watchdog = "watchdog";
     public const string Recovery = "recovery";
     public const string TaskPicked = "task-picked";
+    public const string ModelMigration = "model-migration";
     public const string General = "general";
     /// <summary>
     /// AGT-2055: the algorithmic pre-launch quota / load-steering decisions

@@ -100,6 +100,13 @@ public static class TimelineEventKinds
     /// </summary>
     public const string RunnerSlotAdmission = "runner_slot_admission";
     /// <summary>
+    /// A Token Economy <c>safeAuto</c> rule updated a non-explicit model at
+    /// run admission. Details carry <c>from</c>, <c>to</c>, <c>rule</c>, and
+    /// <c>catalogVersion</c> so the decision remains auditable after catalog
+    /// updates.
+    /// </summary>
+    public const string ModelMigrated = "model_migrated";
+    /// <summary>
     /// ADR-0052 multi-system follow-up: the Task Server granted, rejected, or
     /// released the fenced integration lease that serializes direct merges into
     /// a project's integration branch across runner machines.

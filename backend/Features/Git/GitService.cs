@@ -2513,7 +2513,8 @@ public class GitService
 
     /// <summary>
     /// Sends the inspected candidate manifest and working-tree diff summary to
-    /// Codex gpt-5.4-mini for additive semantic review and commit-message text.
+    /// the latest Codex GPT Mini family model for additive semantic review and
+    /// commit-message text.
     /// <para>
     /// Beyond the diff, the prompt is anchored on the task's stated intent so
     /// the resulting subject line reflects *why* the change is being recorded,
@@ -2550,7 +2551,7 @@ public class GitService
 
         var intent = ReadTaskIntent(jobId, watchPath);
         var codexPath = _config["CodexCli:Path"] ?? "codex";
-        var model = ModelIds.Gpt54Mini;
+        var model = ModelFamilyResolver.ResolveCurrent(ModelFamilies.GptMini);
         var prompt = _prompts.Render(RuntimePromptService.CommitMessage,
             new Dictionary<string, string?>
             {
@@ -2946,7 +2947,7 @@ public class GitService
             : reason.Length > 500 ? reason[..500] : reason;
         var findings = gate.Findings.Concat([
             new CommitGateFinding("semantic-suspicious", CommitGateSeverities.Warning, ".",
-                safeReason, "codex-gpt-5.4-mini")
+                safeReason, "codex-gpt-mini-family")
         ]).ToArray();
         var updated = gate with { Decision = CommitGateDecisions.Warn, CanCommit = false, Findings = findings };
         if (!string.IsNullOrWhiteSpace(updated.EvidencePath))

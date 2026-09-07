@@ -55,4 +55,63 @@ describe('CliModelsPanelComponent', () => {
     fixture.detectChanges();
     expect(fixture.componentInstance.policy()?.economyMode).toBe(true);
   });
+
+  it('shows the migration catalog, automatic switch, and configuration pin proposal', async () => {
+    await TestBed.configureTestingModule({
+      imports: [CliModelsPanelComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(CliModelsPanelComponent);
+    fixture.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/model-migrations').flush({
+      catalogVersion: '2026-09-06',
+      catalogSource: 'Token Economy',
+      catalogStale: true,
+      catalogError: 'fixture path deliberately hidden',
+      autoApplySafe: true,
+      proposals: [{
+        scope: 'configuration', configKey: 'ClaudeCli:SummaryModel',
+        fromModel: 'claude-sonnet-4-6', toModel: 'claude-sonnet-5',
+        rule: 'same-family-current', catalogVersion: '2026-09-06', explicit: true,
+        costClassFrom: 'standard', costClassTo: 'standard',
+        reasoningLadderFrom: ['low', 'high'], reasoningLadderTo: ['low', 'high'],
+      }],
+    });
+    fixture.detectChanges();
+
+    const host: HTMLElement = fixture.nativeElement;
+    expect(host.querySelector('[data-testid="model-migration-catalog-version"]')?.textContent)
+      .toContain('2026-09-06');
+    expect(host.querySelector('[data-testid="model-migration-catalog-state"]')?.textContent)
+      .toContain('Stale');
+    expect(host.textContent).not.toContain('fixture path deliberately hidden');
+    expect(host.querySelector('[data-testid="configuration-model-migrations"]')?.textContent)
+      .toContain('ClaudeCli:SummaryModel');
+    expect(host.querySelector('[data-testid="configuration-model-migrations"]')?.textContent)
+      .toContain('Update available: claude-sonnet-4-6 to claude-sonnet-5');
+
+    host.querySelector<HTMLButtonElement>('[data-testid="model-migration-apply"]')?.click();
+    const apply = http.expectOne('/api/model-migrations/apply');
+    expect(apply.request.body).toEqual({
+      scope: 'configuration', configKey: 'ClaudeCli:SummaryModel',
+      expectedFromModel: 'claude-sonnet-4-6', catalogVersion: '2026-09-06',
+    });
+    apply.flush({});
+    fixture.detectChanges();
+    expect(host.querySelector('[data-testid="configuration-model-migrations"]')).toBeNull();
+
+    const automatic = host.querySelector<HTMLInputElement>('[data-testid="model-migration-auto-apply"]');
+    expect(automatic?.checked).toBe(true);
+    automatic?.click();
+    const save = http.expectOne('/api/model-migrations/auto-apply');
+    expect(save.request.body).toEqual({ enabled: false });
+    save.flush({ autoApplySafe: false });
+    fixture.detectChanges();
+    expect(fixture.componentInstance.migrationState()?.autoApplySafe).toBe(false);
+  });
 });

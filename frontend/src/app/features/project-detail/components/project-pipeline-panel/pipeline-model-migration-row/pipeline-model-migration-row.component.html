@@ -1,0 +1,13 @@
+@if (proposal(); as migration) {
+  <div class="pipeline-model-migration" role="row"
+       [attr.data-testid]="'pipeline-step-model-migration-' + stepId()">
+    <span class="pipeline-model-migration__label" role="cell">Model update</span>
+    <span class="pipeline-model-migration__value" role="cell">
+      <app-model-migration-offer [proposal]="migration" [busy]="isBusy(migration)"
+        (apply)="apply($event)" />
+    </span>
+    <span class="pipeline-model-migration__note" role="cell">
+      Rule {{ migration.rule }} from migration catalog {{ migration.catalogVersion }}.
+    </span>
+  </div>
+}

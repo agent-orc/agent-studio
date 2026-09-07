@@ -180,6 +180,9 @@
                       </span>
                       <span class="pp__settings-note" role="cell">{{ modelExplanation(step) }}</span>
                     </div>
+                    <app-pipeline-model-migration-row [projectName]="projectName()" [pipelineType]="pipelineType()"
+                      [stepId]="step.id" [currentModel]="step.model"
+                      (applied)="refreshOverrides(projectName(), pipelineType())" />
                   }
 
                   @if (step.usesPrompt) {

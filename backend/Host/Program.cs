@@ -466,6 +466,12 @@ builder.Services.AddSingleton<CliRouter>(sp => new CliRouter(
     sp.GetRequiredKeyedService<GenericCliExecutionService>(CliTypes.Claude),
     sp.GetRequiredKeyedService<GenericCliExecutionService>(CliTypes.Codex),
     sp.GetRequiredKeyedService<GenericCliExecutionService>(CliTypes.Gemini)));
+builder.Services.AddSingleton<ModelFamilyResolver>();
+builder.Services.AddSingleton<TokenEconomyMigrationCatalogService>();
+builder.Services.AddSingleton<IModelMigrationCatalogProvider>(sp =>
+    sp.GetRequiredService<TokenEconomyMigrationCatalogService>());
+builder.Services.AddSingleton<ModelConfigurationPinStore>();
+builder.Services.AddSingleton<ModelMigrationService>();
 builder.Services.AddSingleton<SessionToTaskIndex>();
 builder.Services.AddSingleton<SessionRegistry>();
 builder.Services.AddSingleton<ContextUsageParser>();
@@ -1459,6 +1465,35 @@ if (!app.Environment.IsEnvironment("Test")
         {
             codexWarmupLogger.LogInformation(
                 "codex-model-warmup-skipped reason={Reason}", ex.GetType().Name + ": " + ex.Message);
+        }
+    });
+}
+
+// Publish the installed Claude catalogue for the same latest-in-family
+// resolution path. Registry metadata remains the bounded fallback, so this is
+// best effort and never delays host startup.
+if (!app.Environment.IsEnvironment("Test")
+    && !app.Environment.IsEnvironment("Testing")
+    && !publicDemoExecutionProfile
+    && app.Configuration.GetValue("ClaudeModels:WarmupOnBoot", true))
+{
+    _ = Task.Run(async () =>
+    {
+        var claudeWarmupLogger = app.Services.GetRequiredService<ILogger<Program>>();
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var router = app.Services.GetRequiredService<CliRouter>();
+            var catalog = await router.Get(CliTypes.Claude).GetModelCatalogAsync(false, cts.Token);
+            claudeWarmupLogger.LogInformation(
+                "claude-model-warmup-complete models={ModelCount} source={Source}",
+                catalog.Models?.Count ?? 0,
+                catalog.Source);
+        }
+        catch (Exception ex)
+        {
+            claudeWarmupLogger.LogInformation(
+                "claude-model-warmup-skipped reason={Reason}", ex.GetType().Name + ": " + ex.Message);
         }
     });
 }

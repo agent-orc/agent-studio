@@ -4,6 +4,14 @@ import type { CliModelInfo } from '../../models/cli.model';
 import { CliCatalogStore } from '../../services/cli-catalog.store';
 import { cliTypeIcon, cliTypeLabel } from '../../../../services/format.util';
 import { QuotaApiService, type CliModelRouteProfile, type ModelRoutingPolicyView } from '../../../quota';
+import {
+  ModelMigrationOfferComponent,
+  ModelMigrationService,
+  proposalKey,
+  type ModelMigrationProposal,
+  type ModelMigrationSnapshot,
+} from '../../../model-migrations';
+import { NotificationService } from '../../../../services/notification.service';
 
 interface CliModelGroup {
   cliType: CliType;
@@ -27,7 +35,7 @@ interface CliModelGroup {
 @Component({
   selector: 'app-cli-models-panel',
   standalone: true,
-  imports: [],
+  imports: [ModelMigrationOfferComponent],
   templateUrl: './cli-models-panel.html',
   styleUrl: './cli-models-panel.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -35,11 +43,16 @@ interface CliModelGroup {
 export class CliModelsPanelComponent implements OnInit {
   private readonly catalog = inject(CliCatalogStore);
   private readonly routesApi = inject(QuotaApiService);
+  private readonly modelMigrations = inject(ModelMigrationService);
+  private readonly notifications = inject(NotificationService);
   readonly routes = signal<Record<string, CliModelRouteProfile>>({});
   readonly savingCli = signal<string | null>(null);
   readonly policy = signal<ModelRoutingPolicyView | null>(null);
   readonly savingEconomyMode = signal(false);
   readonly cliTypes = CLI_TYPES;
+  readonly migrationState = this.modelMigrations.workspace;
+  readonly configurationMigrations = this.modelMigrations.configurationProposals;
+  readonly savingAutoMigrations = this.modelMigrations.savingAutoApply;
 
   /** CLIs whose per-row details (route editor + full model list) are expanded.
    *  Collapsed rows still answer "what's present" via the summary line. */
@@ -67,6 +80,7 @@ export class CliModelsPanelComponent implements OnInit {
     this.routesApi.getModelRoutingPolicy().subscribe({
       next: (policy) => this.policy.set(policy),
     });
+    this.modelMigrations.ensureWorkspaceLoaded();
   }
 
   refresh(cliType: CliType): void {
@@ -163,6 +177,46 @@ export class CliModelsPanelComponent implements OnInit {
         if (latest) this.policy.set({ ...latest, economyMode: current.economyMode });
         this.savingEconomyMode.set(false);
       },
+    });
+  }
+
+  setAutomaticMigrations(enabled: boolean): void {
+    this.modelMigrations.setAutoApply(enabled).subscribe({
+      next: () => this.notifications.success(
+        enabled ? 'Automatic safe model migrations enabled.' : 'Automatic model migrations disabled.',
+      ),
+      error: () => this.notifications.error('Could not update automatic model migrations.'),
+    });
+  }
+
+  migrationKey(proposal: ModelMigrationProposal): string {
+    return proposalKey(proposal);
+  }
+
+  migrationBusy(proposal: ModelMigrationProposal): boolean {
+    return this.modelMigrations.isApplying(proposal);
+  }
+
+  catalogState(snapshot: ModelMigrationSnapshot): 'Fresh' | 'Stale' | 'Unavailable' {
+    if (snapshot.catalogStale) return 'Stale';
+    if (snapshot.catalogError || snapshot.catalogVersion === 'unavailable') return 'Unavailable';
+    return 'Fresh';
+  }
+
+  applyConfigurationMigration(proposal: ModelMigrationProposal): void {
+    if (this.modelMigrations.isApplying(proposal)) return;
+    this.modelMigrations.apply(proposal).subscribe({
+      next: () => {
+        this.notifications.success(`Model updated to ${proposal.toModel}`);
+        this.reloadRoutes();
+      },
+      error: () => this.notifications.error('Could not apply the configuration model update.'),
+    });
+  }
+
+  private reloadRoutes(): void {
+    this.routesApi.getModelRoutes().subscribe({
+      next: (response) => this.routes.set(response.profiles ?? {}),
     });
   }
 

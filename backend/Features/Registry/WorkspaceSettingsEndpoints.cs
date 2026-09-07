@@ -32,6 +32,7 @@ public static class WorkspaceSettingsEndpoints
                 cliExecutionEngineSource = OrchestratorSettingsResolver
                     .ResolveCliExecutionEngine(null, s).Source,
                 autonomyLevel = s.AutonomyLevel,
+                autoApplySafeModelMigrations = s.AutoApplySafeModelMigrations ?? true,
                 // Platform fallbacks so the UI can render the effective "inherited"
                 // value without hardcoding it or a second round-trip.
                 defaultOrchestratorModel = OrchestratorRunner.DefaultModel,

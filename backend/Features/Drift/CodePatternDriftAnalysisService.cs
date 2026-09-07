@@ -354,11 +354,14 @@ public sealed class CodePatternDriftAnalysisService
     public async Task<CodePatternDriftReport> EnrichWithLlmVerdictsAsync(
         CodePatternDriftReport report,
         ICliOneShot oneShot,
-        string model = ModelIds.ClaudeHaiku45,
+        string? model = null,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(report);
         ArgumentNullException.ThrowIfNull(oneShot);
+        model = string.IsNullOrWhiteSpace(model)
+            ? ModelFamilyResolver.ResolveCurrent(ModelFamilies.ClaudeHaiku)
+            : model.Trim();
 
         var enrichedFindings = new List<CodePatternFinding>(report.Findings.Count);
         foreach (var finding in report.Findings)

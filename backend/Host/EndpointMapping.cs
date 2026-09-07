@@ -60,6 +60,7 @@ public static class EndpointMapping
         app.MapRegistryEndpoints();
         app.MapWorkspaceEndpoints();
         app.MapWorkspaceSettingsEndpoints();
+        app.MapModelMigrationEndpoints();
         app.MapProjectSettingsEndpoints();
         app.MapCrashRecoveryEndpoints();
         app.MapProjectRegressionRadarEndpoints();

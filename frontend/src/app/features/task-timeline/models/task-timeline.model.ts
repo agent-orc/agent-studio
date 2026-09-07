@@ -35,6 +35,7 @@ export const TIMELINE_KIND = {
   quotaAdmissionDecision: 'quota_admission_decision',
   loadThrottleDecision: 'load_throttle_decision',
   runnerSlotAdmission: 'runner_slot_admission',
+  modelMigrated: 'model_migrated',
   integrationLease: 'integration_lease',
   agentRunFinished: 'agent_run_finished',
   preStepStarted: 'pre_step_started',

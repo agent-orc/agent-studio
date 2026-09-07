@@ -5,8 +5,8 @@ namespace AgentStudio.Pipeline;
 /// (AGT-2028) uses to judge relevance and generate the follow-up task prompt.
 /// The spawn evaluation is quality-first by design: it defaults to the catalogue's
 /// best available Codex model at its top advertised effort, mirroring the ASS-1657
-/// code-review-grade asymmetry (the bounded aspect verdicts use gpt-5.4-mini while an
-/// operator-facing judgment gets the strong model).
+/// code-review-grade asymmetry (the bounded aspect verdicts use the GPT Mini
+/// family while an operator-facing judgment gets the strong model).
 ///
 /// <para>
 /// "Best available" is not a hard-coded id: it reads

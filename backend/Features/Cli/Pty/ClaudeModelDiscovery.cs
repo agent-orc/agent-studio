@@ -62,13 +62,13 @@ public sealed class ClaudeModelDiscovery
     {
         if (!forceRefresh)
         {
-            if (_memCache != null && DateTime.UtcNow - _memCacheAt < Ttl) return _memCache;
+            if (_memCache != null && DateTime.UtcNow - _memCacheAt < Ttl) return Publish(_memCache);
             var fromDisk = TryLoadDisk();
             if (fromDisk != null && DateTime.UtcNow - fromDisk.FetchedAt < Ttl)
             {
                 _memCache = fromDisk;
                 _memCacheAt = fromDisk.FetchedAt;
-                return fromDisk;
+                return Publish(fromDisk);
             }
         }
 
@@ -76,7 +76,7 @@ public sealed class ClaudeModelDiscovery
         try
         {
             if (!forceRefresh && _memCache != null && DateTime.UtcNow - _memCacheAt < Ttl)
-                return _memCache;
+                return Publish(_memCache);
 
             try
             {
@@ -84,20 +84,20 @@ public sealed class ClaudeModelDiscovery
                 _memCache = fresh;
                 _memCacheAt = fresh.FetchedAt;
                 TrySaveDisk(fresh);
-                return fresh;
+                return Publish(fresh);
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Claude PTY model discovery failed; falling back to registry catalog");
-                if (_memCache != null) return WithSource(_memCache, "pty-failed-mem-cache");
+                if (_memCache != null) return Publish(WithSource(_memCache, "pty-failed-mem-cache"));
                 var fromDisk = TryLoadDisk();
                 if (fromDisk != null)
                 {
                     _memCache = fromDisk;
                     _memCacheAt = fromDisk.FetchedAt;
-                    return WithSource(fromDisk, "pty-failed-disk-cache");
+                    return Publish(WithSource(fromDisk, "pty-failed-disk-cache"));
                 }
-                return FallbackCatalog("pty-failed-registry-fallback");
+                return Publish(FallbackCatalog("pty-failed-registry-fallback"));
             }
         }
         finally { _gate.Release(); }
@@ -314,6 +314,12 @@ public sealed class ClaudeModelDiscovery
 
     private static CliModelCatalog WithSource(CliModelCatalog cat, string source)
         => cat with { Source = source };
+
+    private static CliModelCatalog Publish(CliModelCatalog catalog)
+    {
+        ModelFamilyResolver.PublishCatalog(CliTypes.Claude, catalog);
+        return catalog;
+    }
 
     private CliModelCatalog? TryLoadDisk()
     {

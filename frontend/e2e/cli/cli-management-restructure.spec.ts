@@ -75,6 +75,51 @@ function contracts() {
 }
 
 async function stub(page: Page) {
+  let autoApplySafe = true;
+  let migrationProposals: unknown[] = [{
+    scope: 'configuration',
+    configKey: 'ClaudeCli:SummaryModel',
+    fromModel: 'claude-sonnet-4-6',
+    toModel: 'claude-sonnet-5',
+    rule: 'same-family-current',
+    catalogVersion: '2026-09-06',
+    explicit: true,
+    costClassFrom: 'standard',
+    costClassTo: 'standard',
+    reasoningLadderFrom: ['low', 'high'],
+    reasoningLadderTo: ['low', 'high'],
+  }];
+  await page.route('**/api/model-migrations**', async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (pathname.endsWith('/apply') && request.method() === 'POST') {
+      migrationProposals = [];
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+      return;
+    }
+    if (pathname.endsWith('/auto-apply') && request.method() === 'PUT') {
+      autoApplySafe = Boolean((request.postDataJSON() as { enabled?: boolean } | null)?.enabled);
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ autoApplySafe }),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        catalogVersion: '2026-09-06',
+        catalogSource: 'Token Economy',
+        autoApplySafe,
+        proposals: migrationProposals,
+      }),
+    });
+  });
+  await page.route('**/api/auth/status', json({
+    profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
+  }));
   await page.route('**/api/tasks', json([]));
   await page.route('**/api/tasks/grouped*', json({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
   await page.route('**/api/watch-paths', json([]));
@@ -163,6 +208,13 @@ test.describe('CLI Management restructure (AGT-2101)', () => {
 
     // Leads with the catalog rows (what CLIs / models / routes).
     await expect(overlay.getByTestId('cli-admin-models')).toBeVisible();
+    await expect(overlay.getByTestId('model-migration-catalog-version')).toHaveText('2026-09-06');
+    await expect(overlay.getByTestId('model-migration-catalog-state')).toHaveText('Fresh');
+    await expect(overlay).toContainText('Explicit pins are never changed automatically.');
+    const migration = overlay.getByTestId('model-migration-configuration');
+    await expect(migration).toContainText('Update available: claude-sonnet-4-6 to claude-sonnet-5');
+    await expect(migration.getByTestId('model-migration-diff')).toContainText('Cost standard → standard');
+    await expect(migration.getByTestId('model-migration-diff')).toContainText('Reasoning low / high → low / high');
     const claudeRow = overlay.getByTestId('cli-models-card-claude');
     await expect(claudeRow).toBeVisible();
     // Collapsed row answers "what's present" at a glance: model count + primary
@@ -189,6 +241,14 @@ test.describe('CLI Management restructure (AGT-2101)', () => {
       await setTheme(page, theme);
       await overlay.screenshot({ path: join(SHOT_DIR, `cli-management-hub--mocked-${theme}.png`) });
     }
+
+    const autoApply = overlay.getByTestId('model-migration-auto-apply');
+    await expect(autoApply).toBeChecked();
+    await autoApply.uncheck();
+    await expect(autoApply).not.toBeChecked();
+
+    await migration.getByTestId('model-migration-apply').click();
+    await expect(overlay.getByTestId('configuration-model-migrations')).toHaveCount(0);
   });
 
   test('CLI sessions and CLI paths are their own encapsulated rail pages', async ({ page }) => {

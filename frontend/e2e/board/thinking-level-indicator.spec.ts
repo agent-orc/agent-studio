@@ -12,6 +12,7 @@ function task(id: string, title: string, model: string, cliType: 'claude' | 'cod
     agent: cliType, cliType, createdAt: '2026-07-11T00:00:00Z', watchPath: WATCH_PATH,
     projectName: PROJECT, folderPath: `${WATCH_PATH}/${id}`, lastActivity: '2026-07-11T00:01:00Z',
     sessionName: null, model, thinkingLevel: configured, useOwnSession: null,
+    modelExplicit: true,
     lastUsage: null, commit: null, ownerClientId: 'local-default', tags: [],
     execution: {
       jobId: id, taskKey: `${WATCH_PATH}::${id}`, processId: 7, startedAt: '2026-07-11T00:00:30Z',
@@ -25,7 +26,7 @@ const modelFixtures = [
   ['gpt-5.6-sol', 'codex', 'Sol family'],
   ['gpt-5.6-ter', 'codex', 'Ter family'],
   ['claude-opus-4-8', 'claude', 'Opus family'],
-  ['claude-sonnet-5', 'claude', 'Sonnet family'],
+  ['claude-sonnet-4-6', 'claude', 'Sonnet family'],
   ['claude-haiku-4-5', 'claude', 'Haiku family'],
   ['gemini-2.5-pro', 'gemini', 'Gemini family'],
 ] as const;
@@ -43,8 +44,23 @@ function json(route: Route, body: unknown) {
 }
 
 async function installRoutes(page: Page): Promise<void> {
+  let migrationAvailable = true;
   await page.route('**/api/**', route => {
     const url = route.request().url();
+    if (url.includes('/api/model-migrations/apply')) {
+      migrationAvailable = false;
+      return json(route, {});
+    }
+    if (url.includes('/api/model-migrations')) return json(route, {
+      catalogVersion: '2026-09-06', catalogSource: 'Token Economy', autoApplySafe: true,
+      proposals: migrationAvailable ? [{
+        scope: 'task', projectName: PROJECT, taskId: 'AGT-9004',
+        fromModel: 'claude-sonnet-4-6', toModel: 'claude-sonnet-5',
+        rule: 'same-family-current', catalogVersion: '2026-09-06', explicit: true,
+        costClassFrom: 'standard', costClassTo: 'standard',
+        reasoningLadderFrom: ['low', 'high'], reasoningLadderTo: ['low', 'high'],
+      }] : [],
+    });
     if (url.includes('/api/auth/status')) return json(route, { profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
     if (url.includes('/api/tasks/archive')) return json(route, { items: [], total: 0, offset: 0, limit: 50 });
     if (url.includes('/api/tasks/grouped')) return json(route, grouped);
@@ -92,6 +108,10 @@ test('keeps 24 mixed-model cards scannable and exposes full execution context', 
   await expect(thinkingLevels.nth(6)).toHaveText('m');
   await expect(thinkingLevels.nth(12)).toHaveText('h');
   await expect(thinkingLevels.nth(18)).toHaveAttribute('data-thinking-level-override', 'true');
+  const migrationCard = page.locator('[data-testid="task-card"]', { hasText: 'Sonnet family at low' });
+  const migration = migrationCard.getByTestId('model-migration-task');
+  await expect(migration).toContainText('Update available: claude-sonnet-4-6 to claude-sonnet-5');
+  await expect(migration.getByTestId('model-migration-diff')).toContainText('Cost standard → standard');
 
   const heights = await indicators.evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().height));
   expect(Math.max(...heights)).toBeLessThanOrEqual(22);
@@ -125,4 +145,14 @@ test('keeps 24 mixed-model cards scannable and exposes full execution context', 
       fullPage: true,
     });
   }
+
+  const applyRequest = page.waitForRequest(request =>
+    request.url().includes('/api/model-migrations/apply') && request.method() === 'POST');
+  await migration.getByTestId('model-migration-apply').click();
+  const applied = await applyRequest;
+  expect(applied.postDataJSON()).toEqual({
+    scope: 'task', projectName: PROJECT, taskId: 'AGT-9004',
+    expectedFromModel: 'claude-sonnet-4-6', catalogVersion: '2026-09-06',
+  });
+  await expect(migrationCard.getByTestId('model-migration-task')).toHaveCount(0);
 });

@@ -1,7 +1,7 @@
 import { test, expect } from '../fixtures/dev-backend';
 import * as fs from 'fs';
 import * as path from 'path';
-import { setTheme } from '../helpers/theme';
+import { dismissDevErrorDialog, setTheme } from '../helpers/theme';
 
 /**
  * T4a evidence — the reworked project-level Pipeline page.
@@ -99,6 +99,7 @@ test('pipeline page: reworked panel shows health, steps, models, prompt bindings
   const preferred: WatchPath = { name: 'Agent Studio Worktree', path: '/fixtures/agent-studio-worktree' };
   projectName = preferred.name;
   projectSlug = slugFor(projectName);
+  let pipelineMigrationAvailable = true;
 
   await page.route('**/api/**', r => r.fulfill(json({})));
   await page.route('**/api/auth/status', r => r.fulfill(json({
@@ -140,6 +141,28 @@ test('pipeline page: reworked panel shows health, steps, models, prompt bindings
   await page.route('**/api/bus/*/messages**', r => r.fulfill(json([])));
   await page.route('**/api/projects/pipeline-catalogue**', r => r.fulfill(json(CATALOGUE)));
   await page.route('**/api/projects/settings', r => r.fulfill(json({ [projectName]: SETTINGS_PROJECTION })));
+  await page.route('**/api/model-migrations**', async route => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (pathname.endsWith('/apply') && request.method() === 'POST') {
+      pipelineMigrationAvailable = false;
+      await route.fulfill(json({}));
+      return;
+    }
+    await route.fulfill(json({
+      catalogVersion: '2026-09-06',
+      catalogSource: 'Token Economy',
+      autoApplySafe: true,
+      proposals: pipelineMigrationAvailable ? [{
+        scope: 'pipelineStep', projectName, pipelineType: 'task',
+        stepId: 'aspect-code-quality', fromModel: 'claude-haiku-4-5',
+        toModel: 'claude-sonnet-5', rule: 'token-economy-recommendation',
+        catalogVersion: '2026-09-06', explicit: true,
+        costClassFrom: 'economy', costClassTo: 'standard',
+        reasoningLadderFrom: ['low', 'high'], reasoningLadderTo: ['low', 'high'],
+      }] : [],
+    }));
+  });
   await page.route('**/token-usage/pipeline-cost*', r => r.fulfill(json(fakeCost(projectName))));
   await page.route('**/token-usage/summary', r => r.fulfill(json({
     project: projectName, hasData: true,
@@ -189,6 +212,8 @@ test('pipeline page: reworked panel shows health, steps, models, prompt bindings
 
   await page.goto(`/#/projects/${projectSlug}/pipeline`, { waitUntil: 'domcontentloaded' });
   await expect(page.getByTestId('project-shell')).toBeVisible({ timeout: 15_000 });
+  await dismissDevErrorDialog(page);
+  await page.addStyleTag({ content: 'app-error-dialog, app-offline-banner { display: none !important; }' });
 
   const section = page.getByTestId('project-detail-pipeline');
   await expect(section).toBeVisible();
@@ -209,6 +234,10 @@ test('pipeline page: reworked panel shows health, steps, models, prompt bindings
   await expect(codeQualityRow.getByTestId('pipeline-step-setting-run-aspect-code-quality')).toBeVisible();
   await expect(codeQualityRow.getByTestId('pipeline-step-setting-run-aspect-code-quality')).toContainText('sequential');
   await expect(codeQualityRow.getByTestId('pipeline-step-setting-model-aspect-code-quality')).toBeVisible();
+  const modelMigration = codeQualityRow.getByTestId('pipeline-step-model-migration-aspect-code-quality');
+  await expect(modelMigration).toBeVisible();
+  await expect(modelMigration).toContainText('Update available: claude-haiku-4-5 to claude-sonnet-5');
+  await expect(modelMigration.getByTestId('model-migration-diff')).toContainText('Cost economy → standard');
   await expect(page.getByTestId('pipeline-step-prompt-open-aspect-code-quality')).toBeVisible();
   await expect(page.getByTestId('pipeline-step-agent-aspect-code-quality')).toBeVisible();
   await page.getByTestId('pipeline-step-row-aspect-requirement-fit').evaluate(el => { (el as HTMLDetailsElement).open = true; });
@@ -240,6 +269,18 @@ test('pipeline page: reworked panel shows health, steps, models, prompt bindings
   await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'pipeline-page-full-dark--mocked.png'), fullPage: true });
   await setTheme(page, 'light');
   await section.screenshot({ path: path.join(SCREENSHOT_DIR, 'pipeline-page-section-light--mocked.png') });
+
+  const applyRequest = page.waitForRequest(request =>
+    new URL(request.url()).pathname === '/api/model-migrations/apply'
+    && request.method() === 'POST');
+  await modelMigration.getByTestId('model-migration-apply').click();
+  const applied = await applyRequest;
+  expect(applied.postDataJSON()).toEqual({
+    scope: 'pipelineStep', projectName, pipelineType: 'task',
+    stepId: 'aspect-code-quality', expectedFromModel: 'claude-haiku-4-5',
+    catalogVersion: '2026-09-06',
+  });
+  await expect(codeQualityRow.getByTestId('pipeline-step-model-migration-aspect-code-quality')).toHaveCount(0);
 
   await page.goto(`/#/projects/${projectSlug}/token-usage`, { waitUntil: 'domcontentloaded' });
   const projectTotal = page.getByTestId('pipeline-cost-total');

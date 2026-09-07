@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
-import { provideHttpClientTesting } from '@angular/common/http/testing';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { ProjectPipelinePanelComponent } from './project-pipeline-panel.component';
 import type { PipelineCatalogueStep, PipelineStepSetting } from '../../../task-pipeline';
 import type { ProjectPipelineCostTimeline } from '../../../project-token-usage';
+import { ModelMigrationService } from '../../../model-migrations';
 
 /**
  * Nav-rebuild T4a smoke. Compiles + instantiates the standalone component so a
@@ -246,6 +247,68 @@ describe('ProjectPipelinePanelComponent (render)', () => {
     );
     manage?.click();
     expect(opened).toBe(2);
+  });
+
+  it('shows and applies a migration for an explicit project step override', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ProjectPipelinePanelComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+      ],
+    }).compileComponents();
+
+    const fixture = TestBed.createComponent(ProjectPipelinePanelComponent);
+    fixture.componentRef.setInput('projectName', 'demo');
+    fixture.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    fixture.componentInstance.catalogue.set(catalogue());
+    fixture.componentInstance.overrides.set({
+      'aspect-code-quality': {
+        enabled: true, cliType: 'claude', model: 'claude-sonnet-4-6',
+      },
+    });
+    fixture.detectChanges();
+    http.expectOne((request) => request.url === '/api/model-migrations'
+      && request.params.get('project') === 'demo').flush({
+      catalogVersion: '2026-09-06', catalogSource: 'Token Economy', autoApplySafe: true,
+      proposals: [{
+        scope: 'pipelineStep', projectName: 'demo', pipelineType: 'task',
+        stepId: 'aspect-code-quality', fromModel: 'claude-sonnet-4-6',
+        toModel: 'claude-sonnet-5', rule: 'same-family-current',
+        catalogVersion: '2026-09-06', explicit: true,
+        costClassFrom: 'standard', costClassTo: 'standard',
+        reasoningLadderFrom: ['low', 'high'], reasoningLadderTo: ['low', 'high'],
+      }],
+    });
+    const migrations = TestBed.inject(ModelMigrationService);
+    expect(migrations.proposalForPipelineStep(
+      'demo', 'task', 'aspect-code-quality', 'claude-sonnet-4-6',
+    )?.toModel).toBe('claude-sonnet-5');
+    await fixture.whenStable();
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    const offer = host(fixture).querySelector(
+      '[data-testid="pipeline-step-model-migration-aspect-code-quality"]',
+    );
+    expect(offer?.textContent).toContain('claude-sonnet-4-6');
+    expect(offer?.textContent).toContain('claude-sonnet-5');
+    offer?.querySelector<HTMLButtonElement>('[data-testid="model-migration-apply"]')?.click();
+
+    const apply = http.expectOne('/api/model-migrations/apply');
+    expect(apply.request.body).toEqual({
+      scope: 'pipelineStep', projectName: 'demo', pipelineType: 'task',
+      stepId: 'aspect-code-quality', expectedFromModel: 'claude-sonnet-4-6',
+      catalogVersion: '2026-09-06',
+    });
+    apply.flush({});
+    fixture.detectChanges();
+    expect(host(fixture).querySelector(
+      '[data-testid="pipeline-step-model-migration-aspect-code-quality"]',
+    )).toBeNull();
   });
 });
 

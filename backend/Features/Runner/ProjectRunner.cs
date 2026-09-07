@@ -107,6 +107,7 @@ public class ProjectRunner
     private readonly PromptEnrichmentService? _promptEnrichment;
     private readonly DossierMaintenanceService? _dossierMaintenance;
     private readonly VisualQaService? _visualQa;
+    private readonly ModelMigrationService? _modelMigrations;
     private readonly CliRouter _router;
     private readonly SummaryGenerationService _summaryService;
     private readonly RuntimePromptService _prompts;
@@ -455,7 +456,8 @@ public class ProjectRunner
         PromptEnrichmentService? promptEnrichment = null,
         DossierMaintenanceService? dossierMaintenance = null,
         VisualQaService? visualQa = null,
-        ProviderLimitRegistry? providerLimits = null)
+        ProviderLimitRegistry? providerLimits = null,
+        ModelMigrationService? modelMigrations = null)
     {
         ProjectName = projectName;
         Entry = entry;
@@ -503,6 +505,7 @@ public class ProjectRunner
         _promptEnrichment = promptEnrichment;
         _dossierMaintenance = dossierMaintenance;
         _visualQa = visualQa;
+        _modelMigrations = modelMigrations;
         _postAbortReview = postAbortReview;
         _sessionInspector = sessionInspector;
 
@@ -2336,6 +2339,25 @@ public class ProjectRunner
         {
             var info = _scanner.FindJob(jobId, Entry.Path);
             if (info == null) return RunOutcome.Reject(new RunRejection(RunRejectReason.TaskNotFound, "Job not found"));
+            if (_modelMigrations is not null)
+            {
+                try
+                {
+                    info = await _modelMigrations.ApplySafeAtAdmissionAsync(info, ct);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(
+                        ex,
+                        "model-migration-admission-skipped project={Project} taskId={TaskId}",
+                        ProjectName,
+                        info.Id);
+                }
+            }
             admissionInfo = info;
 
             // Part 2 will submit human feedback through the ordinary Continue

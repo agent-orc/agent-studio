@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
-import { provideHttpClientTesting } from '@angular/common/http/testing';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TaskCardComponent } from './task-card.component';
@@ -1343,6 +1343,49 @@ describe('TaskCardComponent (smoke)', () => {
     expect(indicator.dataset['modelFamily']).toBe('opus');
     expect(indicator.dataset['modelId']).toBe('claude-opus-4-8');
     expect(indicator.dataset['cli']).toBe('claude');
+  });
+
+  it('offers a superseded explicit model on the card and applies it in one click', async () => {
+    const fixture = await renderCard(makeJob({
+      state: '2-ready',
+      projectName: 'Test',
+      cliType: 'claude',
+      model: 'claude-sonnet-4-6',
+      modelExplicit: true,
+    }));
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/model-migrations').flush({
+      catalogVersion: '2026-09-06',
+      catalogSource: 'Token Economy',
+      autoApplySafe: true,
+      proposals: [{
+        scope: 'task', projectName: 'Test', taskId: 'task-1',
+        fromModel: 'claude-sonnet-4-6', toModel: 'claude-sonnet-5',
+        rule: 'same-family-current', catalogVersion: '2026-09-06', explicit: true,
+        costClassFrom: 'standard', costClassTo: 'standard',
+        reasoningLadderFrom: ['low', 'high'], reasoningLadderTo: ['low', 'high'],
+      }],
+    });
+    fixture.detectChanges();
+
+    const offer = fixture.nativeElement.querySelector(
+      '[data-testid="model-migration-task"]',
+    ) as HTMLElement | null;
+    expect(offer?.textContent).toContain(
+      'Update available: claude-sonnet-4-6 to claude-sonnet-5',
+    );
+    expect(offer?.querySelector('[data-testid="model-migration-diff"]')?.textContent)
+      .toContain('Cost standard → standard');
+
+    offer?.querySelector<HTMLButtonElement>('[data-testid="model-migration-apply"]')?.click();
+    const apply = http.expectOne('/api/model-migrations/apply');
+    expect(apply.request.body).toEqual({
+      scope: 'task', projectName: 'Test', taskId: 'task-1',
+      expectedFromModel: 'claude-sonnet-4-6', catalogVersion: '2026-09-06',
+    });
+    apply.flush({});
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="model-migration-task"]')).toBeNull();
   });
 });
 

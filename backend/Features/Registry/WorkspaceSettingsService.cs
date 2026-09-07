@@ -131,6 +131,26 @@ public sealed class WorkspaceSettingsService
             clamped, workspaceId);
     }
 
+    /// <summary>
+    /// Enables or disables safe model migrations at run admission for one
+    /// workspace. Null is not exposed by the API because the operator switch
+    /// always records an explicit choice.
+    /// </summary>
+    public void SetAutoApplySafeModelMigrations(string workspaceId, bool enabled)
+    {
+        if (string.IsNullOrWhiteSpace(workspaceId)) return;
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var current = _cache.TryGetValue(workspaceId, out var s) ? s : new WorkspaceSettings();
+            _cache[workspaceId] = current with { AutoApplySafeModelMigrations = enabled };
+            Persist();
+        }
+        _logger.LogInformation(
+            "workspace-settings safe model migration auto-apply set to {Enabled} for workspace {Workspace}",
+            enabled, workspaceId);
+    }
+
     private void EnsureLoaded()
     {
         lock (_lock)

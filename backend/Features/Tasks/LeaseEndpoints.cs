@@ -157,6 +157,7 @@ public static class LeaseEndpoints
             PromptEnrichmentService promptEnrichment,
             DossierMaintenanceService dossierMaintenance,
             RemoteDispatchRejectionStore dispatchRejections,
+            ModelMigrationService modelMigrations,
             CancellationToken ct) =>
         {
             var logger = loggerFactory.CreateLogger("AgentStudio.Tasks.RemoteRunnerClaim");
@@ -776,6 +777,23 @@ public static class LeaseEndpoints
                         DefaultBranch: repository.DefaultBranch,
                         TaskKind: candidate.Kind,
                         RegistrationFingerprint: registrationFingerprint)));
+                }
+
+                try
+                {
+                    candidate = await modelMigrations.ApplySafeAtAdmissionAsync(candidate, ct);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(
+                        ex,
+                        "model-migration-admission-skipped project={Project} taskId={TaskId} path=remote-claim",
+                        candidate.ProjectName,
+                        candidate.Id);
                 }
 
                 var taskKey = candidate.Key ?? candidate.TaskKey;

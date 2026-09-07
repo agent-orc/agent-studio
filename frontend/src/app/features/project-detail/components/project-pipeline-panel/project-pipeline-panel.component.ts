@@ -30,10 +30,11 @@ import { PipelineHealthBlockComponent } from '../pipeline-health-block/pipeline-
 import { PipelineStepExecutionComponent } from './pipeline-step-execution/pipeline-step-execution.component';
 import { PipelineTypePickerComponent } from './pipeline-type-picker/pipeline-type-picker.component';
 import { PipelineStepRowStateComponent } from './pipeline-step-row-state/pipeline-step-row-state.component';
+import { PipelineModelMigrationRowComponent } from './pipeline-model-migration-row/pipeline-model-migration-row.component';
 /** Per-type project pipeline editor for ordering, activation, agents, prompts, gates, and usage. */
 @Component({
   selector: 'app-project-pipeline-panel', standalone: true,
-  imports: [FormsModule, CliModelSelectorComponent, TooltipDirective, PipelineHealthBlockComponent, PipelineStepExecutionComponent,
+  imports: [FormsModule, CliModelSelectorComponent, PipelineModelMigrationRowComponent, TooltipDirective, PipelineHealthBlockComponent, PipelineStepExecutionComponent,
     PipelineTypePickerComponent, PipelineStepRowStateComponent],
   hostDirectives: [{ directive: PipelineStepFocusDirective, inputs: ['focusStepId'] }],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -51,7 +52,6 @@ export class ProjectPipelinePanelComponent {
   readonly order = signal<readonly string[]>([]);
   readonly pipelineCost = signal<ProjectPipelineCostTimeline | null>(null);
   readonly loadError = signal<string | null>(null);
-
   readonly cliTypes = CLI_TYPES;
   readonly gateModes = PIPELINE_GATE_MODES;
   readonly conditions = PIPELINE_CONDITIONS;
@@ -166,7 +166,7 @@ export class ProjectPipelinePanelComponent {
     });
   }
 
-  private refreshOverrides(project: string, pipelineType: PipelineType = this.pipelineType()): void {
+  refreshOverrides(project: string, pipelineType: PipelineType = this.pipelineType()): void {
     this.jobService.getAllProjectSettings().subscribe({
       next: (all) => {
         if (this.pipelineType() !== pipelineType) return;

@@ -103,6 +103,7 @@
     <Using Include="AgentStudio.Git" />
     <Using Include="AgentStudio.Host" />
     <Using Include="AgentStudio.Management" />
+    <Using Include="AgentStudio.ModelMigrations" />
     <Using Include="AgentStudio.Orchestrator" />
     <Using Include="AgentStudio.Persistence" />
     <Using Include="AgentStudio.Pipeline" />

@@ -139,7 +139,8 @@ public static class ModelIds
     /// discovery has detected it, otherwise it falls back to <see cref="Gpt55"/>.</summary>
     public const string Gpt56Sol = "gpt-5.6-sol";
     /// <summary>Economy Codex model for bounded supporting-agent and pipeline work.
-    /// Availability still comes from live CLI discovery.</summary>
+    /// Normal availability comes from live CLI discovery; registry metadata is
+    /// retained for the bounded stale-discovery fallback.</summary>
     public const string Gpt54Mini = "gpt-5.4-mini";
     public const string Gpt5Codex = "gpt-5-codex";
     public const string Gpt41 = "gpt-4.1";
@@ -158,7 +159,9 @@ public sealed record ModelMetadata(
     long? ContextWindow,
     string[]? Aliases = null,
     string[]? ThinkingLevels = null,
-    string? DefaultThinkingLevel = null)
+    string? DefaultThinkingLevel = null,
+    string? FamilyId = null,
+    long GenerationOrder = 0)
 {
     // Pricing is intentionally a live catalog pass-through. Studio owns no
     // rates; callers that need historical cost use TokenPricing.Estimate.
@@ -180,34 +183,45 @@ public static class ModelMetadataRegistry
     private static readonly ModelMetadata[] Entries =
     [
         Claude(ModelIds.ClaudeOpus5, "Claude Opus 5", isDefault: true, context: 1_000_000,
-            thinkingLevels: ["low", "medium", "high", "xhigh", "max"], defaultThinkingLevel: "high"),
+            thinkingLevels: ["low", "medium", "high", "xhigh", "max"], defaultThinkingLevel: "high",
+            familyId: ModelFamilies.ClaudeOpus, generationOrder: 5_000_000),
         Claude(ModelIds.ClaudeFable51, "Claude Fable 5.1", context: 200_000,
             aliases: ["claude-fable-5.1"],
             thinkingLevels: ["low", "medium", "high", "xhigh", "max"], defaultThinkingLevel: "high"),
-        Claude(ModelIds.ClaudeSonnet5, "Claude Sonnet 5", context: 200_000),
-        Claude(ModelIds.ClaudeOpus48, "Claude Opus 4.8", context: 200_000, aliases: ["claude-opus-4.8"]),
-        Claude(ModelIds.ClaudeOpus47, "Claude Opus 4.7", context: 200_000, aliases: ["claude-opus-4.7"]),
-        Claude(ModelIds.ClaudeOpus46, "Claude Opus 4.6", context: 200_000, aliases: ["claude-opus-4.6"]),
-        Claude(ModelIds.ClaudeOpus45, "Claude Opus 4.5", context: 200_000, aliases: ["claude-opus-4.5"]),
-        Claude(ModelIds.ClaudeSonnet46, "Claude Sonnet 4.6", context: 200_000, aliases: ["claude-sonnet-4.6"]),
-        Claude(ModelIds.ClaudeSonnet45, "Claude Sonnet 4.5", context: 200_000, aliases: ["claude-sonnet-4.5"]),
+        Claude(ModelIds.ClaudeSonnet5, "Claude Sonnet 5", context: 200_000,
+            familyId: ModelFamilies.ClaudeSonnet, generationOrder: 5_000_000),
+        Claude(ModelIds.ClaudeOpus48, "Claude Opus 4.8", context: 200_000, aliases: ["claude-opus-4.8"],
+            familyId: ModelFamilies.ClaudeOpus, generationOrder: 4_008_000),
+        Claude(ModelIds.ClaudeOpus47, "Claude Opus 4.7", context: 200_000, aliases: ["claude-opus-4.7"],
+            familyId: ModelFamilies.ClaudeOpus, generationOrder: 4_007_000),
+        Claude(ModelIds.ClaudeOpus46, "Claude Opus 4.6", context: 200_000, aliases: ["claude-opus-4.6"],
+            familyId: ModelFamilies.ClaudeOpus, generationOrder: 4_006_000),
+        Claude(ModelIds.ClaudeOpus45, "Claude Opus 4.5", context: 200_000, aliases: ["claude-opus-4.5"],
+            familyId: ModelFamilies.ClaudeOpus, generationOrder: 4_005_000),
+        Claude(ModelIds.ClaudeSonnet46, "Claude Sonnet 4.6", context: 200_000, aliases: ["claude-sonnet-4.6"],
+            familyId: ModelFamilies.ClaudeSonnet, generationOrder: 4_006_000),
+        Claude(ModelIds.ClaudeSonnet45, "Claude Sonnet 4.5", context: 200_000, aliases: ["claude-sonnet-4.5"],
+            familyId: ModelFamilies.ClaudeSonnet, generationOrder: 4_005_000),
         Claude(ModelIds.ClaudeHaiku45, "Claude Haiku 4.5", context: 200_000,
-            aliases: ["claude-haiku-4.5", "claude-haiku-4-5-20251001"]),
+            aliases: ["claude-haiku-4.5", "claude-haiku-4-5-20251001"],
+            familyId: ModelFamilies.ClaudeHaiku, generationOrder: 4_005_000),
         // gpt-5.5 is the current Codex/OpenAI default. codex-cli 0.143 on a
         // ChatGPT account rejects gpt-5-codex with a 400 invalid_request, so
         // the default must be the account-valid model (AGT-1941). Pricing is
         // left null until authoritative numbers are confirmed (same posture as
         // the GPT-4.1 / GPT-4o entries) so no invented cost is asserted.
         new(ModelIds.Gpt55, "GPT-5.5", "openai", IsDefault: true, Deprecated: false, Available: true,
-            ContextWindow: 400_000),
+            ContextWindow: 400_000, FamilyId: ModelFamilies.GptFlagship, GenerationOrder: 5_005_000),
+        new(ModelIds.Gpt54Mini, "GPT-5.4 Mini", "openai", IsDefault: false, Deprecated: false, Available: true,
+            ContextWindow: 400_000, FamilyId: ModelFamilies.GptMini, GenerationOrder: 5_004_000),
         // gpt-5-codex is retained (API-key accounts still accept it) but is no
         // longer the default: a ChatGPT-account spawn rejects it outright.
         new(ModelIds.Gpt5Codex, "GPT-5 Codex", "openai", IsDefault: false, Deprecated: false, Available: true,
-            ContextWindow: 272_000),
+            ContextWindow: 272_000, FamilyId: ModelFamilies.GptFlagship, GenerationOrder: 5_000_000),
         new(ModelIds.Gpt41, "GPT-4.1", "openai", IsDefault: false, Deprecated: false, Available: true,
-            ContextWindow: 1_000_000),
+            ContextWindow: 1_000_000, FamilyId: ModelFamilies.GptFlagship, GenerationOrder: 4_001_000),
         new(ModelIds.Gpt4o, "GPT-4o", "openai", IsDefault: false, Deprecated: false, Available: true,
-            ContextWindow: 128_000),
+            ContextWindow: 128_000, FamilyId: ModelFamilies.GptFlagship, GenerationOrder: 4_000_000),
         new(ModelIds.Gemini25Pro, "Gemini 2.5 Pro", "google", IsDefault: false, Deprecated: false, Available: true,
             ContextWindow: 2_000_000),
         new(ModelIds.Gemini25Flash, "Gemini 2.5 Flash", "google", IsDefault: false, Deprecated: false, Available: true,
@@ -240,6 +254,74 @@ public static class ModelMetadataRegistry
 
     public static IReadOnlyList<ModelMetadata> ForVendor(string vendor)
         => Entries.Where(e => string.Equals(e.Vendor, vendor, StringComparison.OrdinalIgnoreCase)).ToList();
+
+    /// <summary>Known registry models in newest-first order for one logical family.</summary>
+    public static IReadOnlyList<ModelMetadata> ForFamily(string familyId)
+    {
+        var normalized = ModelFamilies.Normalize(familyId);
+        return Entries
+            .Where(entry => string.Equals(entry.FamilyId, normalized, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(entry => entry.GenerationOrder)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Returns the logical family for a known or conventionally named model id.
+    /// Registry metadata wins; the naming fallback lets live discovery surface
+    /// a newer CLI model before Studio ships metadata for that exact id.
+    /// </summary>
+    public static string? FamilyFor(string? modelId)
+    {
+        if (string.IsNullOrWhiteSpace(modelId)) return null;
+
+        var metadata = Find(modelId);
+        if (!string.IsNullOrWhiteSpace(metadata?.FamilyId)) return metadata.FamilyId;
+
+        var normalized = modelId.Trim().ToLowerInvariant().Replace('.', '-');
+        if (normalized.StartsWith("claude-haiku-", StringComparison.Ordinal))
+            return ModelFamilies.ClaudeHaiku;
+        if (normalized.StartsWith("claude-sonnet-", StringComparison.Ordinal))
+            return ModelFamilies.ClaudeSonnet;
+        if (normalized.StartsWith("claude-opus-", StringComparison.Ordinal))
+            return ModelFamilies.ClaudeOpus;
+        if (!normalized.StartsWith("gpt-", StringComparison.Ordinal)) return null;
+
+        return Regex.IsMatch(normalized, @"(?:^|-)mini(?:-|$)", RegexOptions.CultureInvariant)
+            ? ModelFamilies.GptMini
+            : ModelFamilies.GptFlagship;
+    }
+
+    /// <summary>
+    /// Comparable generation order for a registry or live-discovered model.
+    /// Explicit registry metadata is authoritative. Conventional numeric ids
+    /// are parsed only for newly discovered models that the registry does not
+    /// know yet.
+    /// </summary>
+    public static long? GenerationOrderFor(string? modelId)
+    {
+        if (string.IsNullOrWhiteSpace(modelId)) return null;
+
+        var metadata = Find(modelId);
+        if (metadata?.GenerationOrder > 0) return metadata.GenerationOrder;
+
+        var normalized = modelId.Trim().ToLowerInvariant();
+        var match = Regex.Match(
+            normalized,
+            @"^(?:claude-(?:haiku|sonnet|opus)-|gpt-)(?<major>\d+)(?:[.-](?<minor>\d+))?",
+            RegexOptions.CultureInvariant);
+        var minor = 0L;
+        if (!match.Success
+            || !long.TryParse(match.Groups["major"].Value, out var major)
+            || (match.Groups["minor"].Success
+                && !long.TryParse(match.Groups["minor"].Value, out minor)))
+        {
+            return null;
+        }
+
+        if (major > (long.MaxValue - Math.Min(minor, 999) * 1_000) / 1_000_000)
+            return null;
+        return major * 1_000_000 + Math.Min(minor, 999) * 1_000;
+    }
 
     public static string? DefaultForCli(string? cliType)
     {
@@ -407,10 +489,13 @@ public static class ModelMetadataRegistry
         long context = 200_000,
         string[]? aliases = null,
         string[]? thinkingLevels = null,
-        string? defaultThinkingLevel = null)
+        string? defaultThinkingLevel = null,
+        string? familyId = null,
+        long generationOrder = 0)
         => new(id, label, "anthropic", isDefault, Deprecated: false, Available: true,
             ContextWindow: context, Aliases: aliases,
-            ThinkingLevels: thinkingLevels, DefaultThinkingLevel: defaultThinkingLevel);
+            ThinkingLevels: thinkingLevels, DefaultThinkingLevel: defaultThinkingLevel,
+            FamilyId: familyId, GenerationOrder: generationOrder);
 
     private static string? VendorForCli(string? cliType)
     {
