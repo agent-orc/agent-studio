@@ -89,16 +89,25 @@ CLI execution tests.
 - Codex Spark quota windows are independent windows. Keep their labels and burn
   percentages separate from the standard 5-hour and weekly windows; never fold
   a Spark-only snapshot into the main-window admission signal.
-- Review-decision and supporting aspect calls default to Codex with
-  `gpt-5.4-mini`. The configured `ReviewDecisionOrchestrator:Cli` must be passed
-  through to `CliOneShotRegistry`; never replace it with an implicit Claude
-  lookup. Project pipeline-step overrides and Token Economy recommendations may
-  select another compatible GPT model explicitly.
+- Review-decision and supporting aspect calls default to the Codex mini family
+  (`ModelFamilies.GptMini`), resolved per call against the installed CLI rather
+  than pinned to an id. The configured `ReviewDecisionOrchestrator:Cli` must be
+  passed through to `CliOneShotRegistry`; never replace it with an implicit
+  Claude lookup. Project pipeline-step overrides and Token Economy
+  recommendations may select another compatible GPT model explicitly.
+- No runtime default names a model id. Every default is a family reference
+  resolved at call time; configuration keys remain explicit pins. See
+  [Model families and migrations](model-routing-policy.md) for the ranking, the
+  staleness fallback, and the migration catalog.
 - Workspace CLI Management owns the model-routing policy. Each CLI has one
   primary model and may have a fallback CLI, model, and thinking level in
   `cli-model-routing.json`. `CliQuotaFallbackService` resolves that policy
   against the latest quota snapshot for every new run; it must not rewrite the
   task's configured CLI or model.
+- Workspace CLI Management also shows the migration-catalog version and source
+  and owns the `autoApplyModelMigrations` switch. Superseded pins are offered an
+  update there and on the card and project pipeline rows, all from the same
+  `GET /api/cli/model-migrations` lookup so the surfaces cannot disagree.
 - A model catalog is the union of registry knowledge and live CLI discovery.
   A registry model that the installed CLI does not report remains visible and
   disabled with an availability note. Generation age is separate from

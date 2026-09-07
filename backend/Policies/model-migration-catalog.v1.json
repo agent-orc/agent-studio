@@ -1,0 +1,27 @@
+{
+  "version": "2026-09-06",
+  "wikiPath": "docs/system/domains/model-routing-policy.md",
+  "familyRule": {
+    "id": "same-family-newer-generation",
+    "safeAuto": true,
+    "requireSameOrLowerCostClass": true,
+    "requireLadderCompatible": true,
+    "reason": "Same family, newer generation, same or lower cost class, reasoning ladder preserved."
+  },
+  "migrations": [
+    {
+      "from": "claude-haiku-4-5",
+      "to": "claude-sonnet-5",
+      "rule": "token-economy-value-tier",
+      "safeAuto": false,
+      "reason": "Token Economy rates Sonnet 5 as the better value tier for bounded supporting work. Leaving the Haiku family is a cost decision, not a family rule, so it is offered and never applied automatically."
+    },
+    {
+      "from": "gpt-5-codex",
+      "to": "gpt-5.5",
+      "rule": "token-economy-account-validity",
+      "safeAuto": false,
+      "reason": "codex-cli rejects gpt-5-codex on a ChatGPT account with a 400 invalid_request (AGT-1941). API-key accounts still accept it, so the switch stays operator-confirmed."
+    }
+  ]
+}

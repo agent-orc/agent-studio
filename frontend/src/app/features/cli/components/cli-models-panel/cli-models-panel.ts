@@ -2,6 +2,8 @@ import { ChangeDetectionStrategy, Component, OnInit, computed, inject, signal } 
 import { CLI_TYPES, type CliType } from '../../../../models/task.model';
 import type { CliModelInfo } from '../../models/cli.model';
 import { CliCatalogStore } from '../../services/cli-catalog.store';
+import { ModelMigrationStore } from '../../services/model-migration.store';
+import { ModelMigrationHintComponent } from '../model-migration-hint/model-migration-hint.component';
 import { cliTypeIcon, cliTypeLabel } from '../../../../services/format.util';
 import { QuotaApiService, type CliModelRouteProfile, type ModelRoutingPolicyView } from '../../../quota';
 
@@ -27,7 +29,7 @@ interface CliModelGroup {
 @Component({
   selector: 'app-cli-models-panel',
   standalone: true,
-  imports: [],
+  imports: [ModelMigrationHintComponent],
   templateUrl: './cli-models-panel.html',
   styleUrl: './cli-models-panel.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -35,10 +37,13 @@ interface CliModelGroup {
 export class CliModelsPanelComponent implements OnInit {
   private readonly catalog = inject(CliCatalogStore);
   private readonly routesApi = inject(QuotaApiService);
+  /** Public so the template can look up a proposal per pinned model. */
+  readonly migrations = inject(ModelMigrationStore);
   readonly routes = signal<Record<string, CliModelRouteProfile>>({});
   readonly savingCli = signal<string | null>(null);
   readonly policy = signal<ModelRoutingPolicyView | null>(null);
   readonly savingEconomyMode = signal(false);
+  readonly savingAutoApply = signal(false);
   readonly cliTypes = CLI_TYPES;
 
   /** CLIs whose per-row details (route editor + full model list) are expanded.
@@ -67,6 +72,7 @@ export class CliModelsPanelComponent implements OnInit {
     this.routesApi.getModelRoutingPolicy().subscribe({
       next: (policy) => this.policy.set(policy),
     });
+    this.migrations.ensure().subscribe({ error: () => void 0 });
   }
 
   refresh(cliType: CliType): void {
@@ -163,6 +169,15 @@ export class CliModelsPanelComponent implements OnInit {
         if (latest) this.policy.set({ ...latest, economyMode: current.economyMode });
         this.savingEconomyMode.set(false);
       },
+    });
+  }
+
+  setAutoApply(enabled: boolean): void {
+    if (this.savingAutoApply()) return;
+    this.savingAutoApply.set(true);
+    this.migrations.setAutoApply(enabled).subscribe({
+      next: () => this.savingAutoApply.set(false),
+      error: () => this.savingAutoApply.set(false),
     });
   }
 

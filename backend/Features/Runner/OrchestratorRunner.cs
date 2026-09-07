@@ -47,7 +47,13 @@ public sealed record OrchestratorDecisionResult(
 /// </summary>
 public class OrchestratorRunner
 {
-    public const string DefaultModel = ModelIds.ClaudeHaiku45;
+    /// <summary>
+    /// Platform default for orchestrator decision calls: the newest Haiku the
+    /// installed CLI offers, resolved per call so a new release becomes the
+    /// default without a code change. Workspace and project settings still
+    /// override it (<c>OrchestratorSettingsResolver</c>).
+    /// </summary>
+    public static string DefaultModel => ModelFamilyResolver.Resolve(ModelFamilies.ClaudeHaiku);
 
     private readonly GenericCliExecutionService _claude;
     private readonly ILogger<OrchestratorRunner> _logger;

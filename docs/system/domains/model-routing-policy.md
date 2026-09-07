@@ -170,6 +170,87 @@ silently used to rewrite the initial estimate.
 For every one of these cards, bounded supporting aspect and orchestrator calls
 may still use Mini/high. The table selects the core implementation route.
 
+## Model families and migrations
+
+Version: 2026-09-06 (AGT-2716)
+
+A **family** is the product line an operator reasons about, not a vendor and not
+a single release: `claude-haiku`, `claude-sonnet`, `claude-opus`, `claude-fable`,
+`gpt-mini`, `gpt-flagship`. Membership is derived from the model id
+(`ModelFamilies.Of`), never from a maintained table, so a model the installed CLI
+introduces belongs to its family the moment discovery sees it.
+
+### Family references replace pinned defaults
+
+Every runtime default is a family reference resolved at call time through
+`ModelFamilyResolver`, not a pinned id. Ranking inside a family is:
+
+1. generation, most significant segment first (`claude-opus-5` beats
+   `claude-opus-4-8`, `gpt-5.6` beats `gpt-5.5`);
+2. at the same generation, the CLI's own default, then catalog order, which is
+   the order the installed CLI advertises (Codex `priority`, Claude picker
+   position). This is why `gpt-5.6-sol` wins over its same-generation siblings
+   without Studio maintaining a ranking table.
+
+The live catalog is the snapshot each discovery publishes into
+`ModelMetadataRegistry`. Older than 24 hours, or never probed, and resolution
+falls back to the registry, which always contains one available member per
+family. A family neither source knows throws rather than substituting a foreign
+model.
+
+"Latest in family" is a family rule, not a cost opinion. As of the 06.09.2026
+catalogs it keeps `claude-haiku-4-5` (the picker offers no Haiku 5) and moves
+`claude-opus-4-8` to `claude-opus-5` and `claude-sonnet-4-6` to
+`claude-sonnet-5`. Whether a cheap step should leave the Haiku family for Sonnet
+5 is a Token Economy decision, expressed as an explicit migration below.
+
+### Migration catalog
+
+`ModelMigrationCatalogService` reads a versioned JSON catalog and caches it for
+15 minutes. Token Economy owns the rules, exactly as it owns the price catalog:
+a TE-published file (`TokenEconomy:MigrationCatalogPath`, else
+`<TaskRepository>/.metadata/model-migration-catalog.json`) wins, otherwise the
+repository baseline `backend/Policies/model-migration-catalog.v1.json` applies.
+The resolved version and source are shown in Workspace CLI Management, so an
+operator can always tell which rule set produced a proposal.
+
+The catalog has two parts:
+
+- a **family rule**, which needs no per-model entry: inside one family the newest
+  generation supersedes the older ones;
+- **explicit migrations**, for what the family rule cannot derive: leaving a
+  family for a better value tier, or a model an account can no longer run.
+
+Explicit entries win over the family rule.
+
+### Proposals and automatic application
+
+A proposal carries both sides of the diff (cost per Mtok and reasoning ladder),
+the rule that produced it, and the catalog version. Studio shows it on the card
+model badge, in the project pipeline settings rows, and in Workspace CLI
+Management, all from the same `GET /api/cli/model-migrations` lookup so the three
+surfaces cannot disagree.
+
+`safeAuto` is deliberately conservative. It requires the same family, a newer
+generation, a cost class that is not higher, and a reasoning ladder that keeps
+every level the current model offers. Cost has to be known on both sides to be
+judged, so an unpriced target blocks the automatic path and leaves an offer.
+Cross-family moves are never automatic: changing family changes the capability
+floor, which is an operator decision.
+
+Run admission applies a `safeAuto` migration only when the card's model is not
+an explicit pin (`modelExplicit=false`) and the workspace switch
+`autoApplyModelMigrations` is on. The card keeps `modelExplicit=false` after the
+change, so it stays policy-routed. Every application writes a `model_migrated`
+timeline event (`from`, `to`, `rule`, `catalogVersion`, `catalogSource`,
+`costClass`) and one operator-feed line on the `model-migrated` topic. An
+explicit pin is never changed silently and therefore never emits the event;
+accepting its offer through the UI is an operator action that makes the new model
+the pin.
+
+Supporting-agent defaults need no separate mechanism: they are family references
+already, so they follow the newest family member without a migration.
+
 ## Quota and provider handling
 
 1. Establish the correctness floor and score before consulting quota.

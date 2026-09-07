@@ -86,6 +86,7 @@ import { OverviewRunsComponent } from './overview-runs/overview-runs.component';
 import { distinctStepVerdict } from './pipeline-status-verdict.util';
 import type { ProtocolVerdict } from '../../protocol-pane/protocol-verdict';
 import { outcomeDecisionBadge, type DecisionBadgeVm } from './outcome-decision-badge.util';
+import { ModelMigrationHintComponent } from '../../../../cli';
 
 interface PipelineRowVm {
   id: string;
@@ -500,7 +501,7 @@ function buildStepExplanation(stepId: string, label: string, kind: StepKind): St
   selector: 'app-overview-pane',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, DialogComponent, CliModelSelectorComponent, RegressionRadarComponent, AgentWorkDetailComponent, ReferencesSectionComponent, PlanningSpawnPanelComponent, ConceptDossierNoticeComponent, TooltipDirective, CompletionLoopIndicatorComponent, TaskPromptPopoverComponent, PipelineRunHistoryComponent, PipelineTokenUsageComponent, PipelineStepDetailsComponent, PipelineStepToggleComponent, PostStepControlsComponent, StudioIconComponent, CostBreakdownTriggerDirective, ExecutionLocationBadgeComponent, PipelineHistoryNoticeComponent, OverviewRunsComponent, CopyableTaskKeyComponent],
+  imports: [FormsModule, DialogComponent, CliModelSelectorComponent, RegressionRadarComponent, AgentWorkDetailComponent, ReferencesSectionComponent, PlanningSpawnPanelComponent, ConceptDossierNoticeComponent, TooltipDirective, CompletionLoopIndicatorComponent, TaskPromptPopoverComponent, PipelineRunHistoryComponent, PipelineTokenUsageComponent, PipelineStepDetailsComponent, PipelineStepToggleComponent, PostStepControlsComponent, StudioIconComponent, CostBreakdownTriggerDirective, ExecutionLocationBadgeComponent, PipelineHistoryNoticeComponent, OverviewRunsComponent, CopyableTaskKeyComponent, ModelMigrationHintComponent],
   templateUrl: './overview-pane.component.html',
   styleUrl: './overview-pane.component.scss',
 })
@@ -695,6 +696,17 @@ export class OverviewPaneComponent {
     return override !== undefined ? override : (this.job().thinkingLevel ?? null);
   });
   readonly agentConfigReadOnly = computed(() => this.job().state === TaskState.Completed || this.job().state === TaskState.Archive);
+
+  /**
+   * Accepting an offered update is an operator decision, so it goes through the
+   * same commit the picker uses: the card becomes an explicit pin and keeps its
+   * CLI and reasoning level.
+   */
+  applyModelMigration(model: string): void {
+    const cliType = this.effectiveCliType();
+    if (cliType === null) return;
+    this.agentConfigCommit.emit({ cliType, model, thinkingLevel: this.effectiveThinkingLevel() });
+  }
   /** Clear the optimistic override once the real `job().title` catches up
    *  to the saved value (parent re-fetched the detail after PUT). */
   private clearOptimisticOnSync = effect(() => {

@@ -421,6 +421,42 @@ public sealed class AgentMessageBusBridge
     }
 
     /// <summary>
+    /// Emits the automatic application of a model migration at run admission.
+    /// Only <c>safeAuto</c> migrations of a non-explicit model reach here, so an
+    /// operator reading the feed sees every route change Studio made on its own
+    /// and never has to diff a card to notice one (AGT-2716).
+    /// </summary>
+    public Task EmitModelMigratedAsync(
+        string? project,
+        string? jobId,
+        string fromModel,
+        string toModel,
+        string rule,
+        string catalogVersion,
+        string catalogSource,
+        string costClass,
+        CancellationToken ct = default)
+    {
+        var msg = NewMessage(
+            participantId: string.IsNullOrWhiteSpace(project)
+                ? ParticipantOrchestrator
+                : ParticipantOrchestratorFor(project),
+            role: "system",
+            kind: "decision",
+            severity: "Info",
+            project: project,
+            jobId: jobId,
+            topic: "model-migrated",
+            summary: TruncateSummary(
+                $"Model updated {fromModel} -> {toModel} ({rule}, {costClass}) by migration catalog {catalogVersion}"),
+            body: $"From: {fromModel}\nTo: {toModel}\nRule: {rule}\nCost class: {costClass}\n"
+                  + $"Catalog: {catalogVersion} ({catalogSource})",
+            payload: new { fromModel, toModel, rule, catalogVersion, catalogSource, costClass },
+            tags: new[] { "model-routing", "model-migrated", $"rule:{rule}" });
+        return EmitAsync(msg, ct);
+    }
+
+    /// <summary>
     /// Emits the final failure of a platform-owned repository push. Producers
     /// call this only after their retry budget is exhausted so the operator
     /// feed stays useful instead of receiving one message per retry attempt.

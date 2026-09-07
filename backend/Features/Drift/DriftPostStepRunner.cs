@@ -35,7 +35,7 @@ public sealed class DriftPostStepRunner
 {
     /// <summary>Model used when neither the step nor the project sets one.</summary>
     public const string DefaultCli = CliTypes.Codex;
-    public const string DefaultModel = ModelIds.Gpt54Mini;
+    public static string DefaultModel => ModelFamilyResolver.Resolve(ModelFamilies.GptMini);
     public const string DefaultThinkingLevel = "high";
 
     private static readonly TimeSpan PerDimensionTimeout = TimeSpan.FromMinutes(5);

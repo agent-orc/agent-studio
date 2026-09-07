@@ -5,11 +5,25 @@ namespace AgentStudio.Pipeline;
 public sealed record ModelRoutingPolicyState
 {
     public bool EconomyMode { get; init; }
+
+    /// <summary>
+    /// Whether run admission may apply a <c>safeAuto</c> model migration to a
+    /// non-explicit model on its own. Defaults to on: the whole point of the
+    /// migration catalog is that a superseded default does not survive a new
+    /// release. Turning it off leaves the proposals visible and makes every
+    /// application a deliberate click. Explicit pins are unaffected either way.
+    /// </summary>
+    public bool AutoApplyModelMigrations { get; init; } = true;
 }
 
 public sealed record SetModelRoutingEconomyModeRequest
 {
     public bool EconomyMode { get; init; }
+}
+
+public sealed record SetAutoApplyModelMigrationsRequest
+{
+    public bool AutoApply { get; init; }
 }
 
 /// <summary>
@@ -35,6 +49,8 @@ public sealed class ModelRoutingPolicyStateStore : IModelRoutingModeProvider
 
     public bool EconomyMode => Get().EconomyMode;
 
+    public bool AutoApplyModelMigrations => Get().AutoApplyModelMigrations;
+
     public ModelRoutingPolicyState Get()
     {
         lock (_lock)
@@ -58,11 +74,22 @@ public sealed class ModelRoutingPolicyStateStore : IModelRoutingModeProvider
     }
 
     public ModelRoutingPolicyState SetEconomyMode(bool enabled)
+        => Mutate(state => state with { EconomyMode = enabled });
+
+    public ModelRoutingPolicyState SetAutoApplyModelMigrations(bool enabled)
+        => Mutate(state => state with { AutoApplyModelMigrations = enabled });
+
+    /// <summary>
+    /// Applies one switch and persists the whole state. Going through a single
+    /// mutator keeps the other switches intact; writing a fresh record per
+    /// setter would silently reset them to their defaults.
+    /// </summary>
+    private ModelRoutingPolicyState Mutate(Func<ModelRoutingPolicyState, ModelRoutingPolicyState> change)
     {
         lock (_lock)
         {
-            var previous = _state;
-            _state = new ModelRoutingPolicyState { EconomyMode = enabled };
+            var previous = Get();
+            _state = change(previous);
             var path = ResolvePath();
             try
             {

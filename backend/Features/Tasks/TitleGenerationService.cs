@@ -59,9 +59,7 @@ public class TitleGenerationService
             ? trimmed[..MaxInputChars]
             : trimmed;
 
-        var fallbackModel = _configuration["TitleGeneration:Model"]
-                            ?? _configuration["ClaudeCli:SummaryModel"]
-                            ?? ModelIds.ClaudeHaiku45;
+        var fallbackModel = ResolveModel();
         var prompt = _prompts.Render(TemplateName,
             new Dictionary<string, string?> { ["input"] = bounded },
             new PromptCallContext(Step: "title-generation", Model: fallbackModel));
@@ -128,15 +126,23 @@ public class TitleGenerationService
     }
 
     /// <summary>
+    /// Configured pin, else the newest model in the Haiku family. Shared by the
+    /// caller that prices the call and the one that spawns it, so the two can
+    /// never disagree about which model ran.
+    /// </summary>
+    private string ResolveModel()
+        => _configuration["TitleGeneration:Model"]
+           ?? _configuration["ClaudeCli:SummaryModel"]
+           ?? ModelFamilyResolver.Resolve(ModelFamilies.ClaudeHaiku);
+
+    /// <summary>
     /// Spawn the Haiku subprocess and return its stdout. Override in tests
     /// to substitute a deterministic response without billing tokens.
     /// </summary>
     protected virtual async Task<(bool Ok, string? Raw, string? Error)> InvokeAsync(
         string prompt, CancellationToken ct)
     {
-        var model = _configuration["TitleGeneration:Model"]
-                    ?? _configuration["ClaudeCli:SummaryModel"]
-                    ?? ModelIds.ClaudeHaiku45;
+        var model = ResolveModel();
 
         var oneShot = _oneShotRegistry?.Get("claude");
         if (oneShot != null)

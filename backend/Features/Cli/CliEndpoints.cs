@@ -94,6 +94,49 @@ public static class CliEndpoints
             ModelRoutingPolicyStateStore state) =>
             Results.Ok(state.SetEconomyMode(request.EconomyMode)));
 
+        // Every model update the catalog currently offers, keyed by the id a pin
+        // would carry. Surfaces resolve a proposal by lookup instead of
+        // recomputing migration policy client-side, so the card badge, the
+        // project pipeline rows, and CLI Management always agree.
+        cliGroup.MapGet("/model-migrations", async (
+            ModelMigrationCatalogService catalogService,
+            ModelRoutingPolicyStateStore state,
+            CliRouter router,
+            CancellationToken ct) =>
+        {
+            var (catalog, source) = catalogService.Load();
+            var live = new List<CliModelInfo>();
+            foreach (var cliType in new[] { CliTypes.Claude, CliTypes.Codex })
+            {
+                // A CLI that cannot be probed simply contributes no live labels
+                // or ladders; the registry still describes both sides, so the
+                // proposals stay useful instead of the whole surface 503-ing.
+                try { live.AddRange((await router.Get(cliType).GetModelCatalogAsync(false, ct)).Models); }
+                catch (Exception ex) { SilentCatch.Note(ex, $"CliEndpoints:model-migrations:{cliType}"); }
+            }
+
+            var proposals = new Dictionary<string, ModelMigrationProposal>(StringComparer.OrdinalIgnoreCase);
+            foreach (var modelId in CandidateModelIds(catalog, live))
+            {
+                if (ModelMigrationPlanner.Propose(modelId, catalog, live) is { } proposal)
+                    proposals[modelId] = proposal;
+            }
+
+            return Results.Ok(new
+            {
+                catalogVersion = catalog.Version,
+                catalogSource = source,
+                wikiPath = catalog.WikiPath,
+                autoApply = state.AutoApplyModelMigrations,
+                proposals,
+            });
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
+
+        cliGroup.MapPut("/model-migrations/auto-apply", (
+            SetAutoApplyModelMigrationsRequest request,
+            ModelRoutingPolicyStateStore state) =>
+            Results.Ok(state.SetAutoApplyModelMigrations(request.AutoApply)));
+
         cliGroup.MapGet("/model-routing/recommendation", async (
             string taskType,
             string cliType,
@@ -314,6 +357,21 @@ public static class CliEndpoints
             }
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
     }
+
+    /// <summary>
+    /// Every model id a pin could plausibly name: what the registry knows, what
+    /// the installed CLIs advertise, and every explicit migration source. The
+    /// union matters because a pin can outlive both catalogs - a card pinned to
+    /// a model the CLI stopped advertising must still be offered its update.
+    /// </summary>
+    private static IEnumerable<string> CandidateModelIds(
+        ModelMigrationCatalogDocument catalog,
+        IReadOnlyList<CliModelInfo> live)
+        => ModelMetadataRegistry.All.Select(entry => entry.Id)
+            .Concat(live.Select(model => model.Id))
+            .Concat(catalog.Migrations.Select(entry => entry.From))
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase);
 }
 
 public sealed record SetCliQuotaWaitPolicyRequest

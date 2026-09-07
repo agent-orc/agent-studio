@@ -164,6 +164,9 @@
   margin-bottom: var(--studio-spacing-2);
 }
 .cli-models__route-line--fallback { grid-template-columns: 58px 80px minmax(0, 1fr); }
+// The hint has no tag column of its own; it lines up under the model select.
+.cli-models__route-line--migration { grid-template-columns: 58px minmax(0, 1fr); }
+.cli-models__route-line--migration > * { grid-column: 2; }
 .cli-models__route select {
   min-width: 0;
   border: 1px solid var(--studio-border-strong);

@@ -618,6 +618,8 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.ModelRoutingPolicyRegistry>()
 builder.Services.AddSingleton<AgentStudio.Pipeline.ModelRoutingPolicyStateStore>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.IModelRoutingModeProvider>(sp =>
     sp.GetRequiredService<AgentStudio.Pipeline.ModelRoutingPolicyStateStore>());
+builder.Services.AddSingleton<AgentStudio.Pipeline.ModelMigrationCatalogService>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.ModelMigrationApplier>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ModelQualificationService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.IPipelineModelCatalogueProvider,
     AgentStudio.Pipeline.CliPipelineModelCatalogueProvider>();

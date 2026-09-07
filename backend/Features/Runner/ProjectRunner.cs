@@ -103,6 +103,7 @@ public class ProjectRunner
     private readonly AgentStudio.Pipeline.PipelineExecutionLog? _pipelineLog;
     private readonly AgentStudio.Pipeline.IConceptWorkbenchPublisher? _conceptWorkbenchPublisher;
     private readonly AgentStudio.Pipeline.ModelQualificationService? _modelQualification;
+    private readonly AgentStudio.Pipeline.ModelMigrationApplier? _modelMigrations;
     private readonly AgentStudio.Pipeline.IntegrationPushQueue? _integrationPushQueue;
     private readonly PromptEnrichmentService? _promptEnrichment;
     private readonly DossierMaintenanceService? _dossierMaintenance;
@@ -449,6 +450,7 @@ public class ProjectRunner
         CliQuotaFallbackService? quotaFallback = null,
         ILoadThrottleGate? loadThrottle = null,
         AgentStudio.Pipeline.ModelQualificationService? modelQualification = null,
+        AgentStudio.Pipeline.ModelMigrationApplier? modelMigrations = null,
         AgentStudio.Pipeline.IntegrationPushQueue? integrationPushQueue = null,
         CliQuotaWaitPolicyService? quotaWaitPolicy = null,
         AgentStudio.Pipeline.IConceptWorkbenchPublisher? conceptWorkbenchPublisher = null,
@@ -498,6 +500,7 @@ public class ProjectRunner
         _timeline = timeline;
         _pipelineLog = pipelineLog;
         _modelQualification = modelQualification;
+        _modelMigrations = modelMigrations;
         _integrationPushQueue = integrationPushQueue;
         _conceptWorkbenchPublisher = conceptWorkbenchPublisher;
         _promptEnrichment = promptEnrichment;
@@ -2504,6 +2507,13 @@ public class ProjectRunner
             // A user continue on an epic is the user steering the plan, not a
             // fresh decomposition, so it is left on the normal path.
             var isEpicPlanningRun = EpicRunPolicy.IsPlanningRun(info.Kind, intent);
+
+            // Before qualification reads the card: retire a superseded model the
+            // operator never pinned. Doing it here (and persisting it) means the
+            // qualification decision, the run, and the card all agree on one
+            // model, and the audit trail is written once.
+            info = ApplySafeModelMigration(info);
+
             ModelQualificationDecision? qualification = null;
             if (_modelQualification != null)
             {
@@ -4593,6 +4603,19 @@ public class ProjectRunner
         {
             _logger.LogDebug(ex, "MarkSteerPending failed for {JobId}", jobId);
         }
+    }
+
+    /// <summary>
+    /// Retires a superseded model the operator never pinned, so the run, the
+    /// qualification decision, and the card all agree on one model. The applier
+    /// owns the decision and its audit trail; the runner only supplies the live
+    /// catalog for the card's CLI so the cost and ladder diff is accurate.
+    /// </summary>
+    private TaskInfo ApplySafeModelMigration(TaskInfo info)
+    {
+        if (_modelMigrations == null) return info;
+        var live = ModelMetadataRegistry.DiscoveredCatalogFor(GetCliFor(info).CliType)?.Models;
+        return _modelMigrations.Apply(info, ProjectName, live);
     }
 
     private async Task<ModelQualificationDecision?> QualifyModelAsync(

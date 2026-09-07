@@ -89,6 +89,15 @@ public static class TimelineEventKinds
     /// has a stable data source.
     /// </summary>
     public const string QuotaAdmissionDecision = "quota_admission_decision";
+    /// <summary>
+    /// AGT-2716: run admission replaced a superseded, non-explicit model with
+    /// the newer one the migration catalog marks safe to apply automatically.
+    /// <see cref="TimelineEvent.Details"/> carries <c>from</c>, <c>to</c>,
+    /// <c>rule</c>, <c>catalogVersion</c>, <c>catalogSource</c>, and
+    /// <c>costClass</c>, so an automatic route change is always auditable.
+    /// An explicit pin is never migrated and therefore never emits this event.
+    /// </summary>
+    public const string ModelMigrated = "model_migrated";
     /// <summary>Sustained host CPU saturation deferred a new runner slot.</summary>
     public const string LoadThrottleDecision = "load_throttle_decision";
     /// <summary>

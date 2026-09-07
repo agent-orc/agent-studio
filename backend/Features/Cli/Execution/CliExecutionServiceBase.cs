@@ -107,14 +107,11 @@ public partial class GenericCliExecutionService : ICliExecutionService
         _configuration = configuration;
     }
 
-    /// <summary>
-    /// Quality-first default for the code-review grade pass: Claude Opus 4.8.
-    /// Lives on the engine (the old <c>ClaudeCliService.DefaultOpusModel</c>
-    /// home was deleted with the shim) so
-    /// <c>CodeReviewGradeModelSelector</c> + <c>TaskCodeReviewEndpoints</c>
-    /// keep a single named constant.
-    /// </summary>
-    public const string DefaultOpusModel = ModelIds.ClaudeOpus48;
+    // The quality-first grade default used to be pinned here as
+    // DefaultOpusModel. Both named consumers (CodeReviewGradeModelSelector,
+    // TaskCodeReviewEndpoints) moved to the live Codex default long ago and the
+    // constant had no callers left, so it was removed rather than converted to
+    // a family reference (AGT-2716).
 
     // ── Built-in CLI factory helpers ────────────────────────────────────
     //

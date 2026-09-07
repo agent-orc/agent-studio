@@ -351,14 +351,21 @@ public sealed class CodePatternDriftAnalysisService
     /// LLM verdict. Token spend lands on the AdHocUsageRecorder via the
     /// OneShot pipeline.
     /// </remarks>
+    /// <param name="model">
+    /// Null resolves to the newest model in the Haiku family, which cannot be a
+    /// parameter default because it is decided per call from the live catalog.
+    /// </param>
     public async Task<CodePatternDriftReport> EnrichWithLlmVerdictsAsync(
         CodePatternDriftReport report,
         ICliOneShot oneShot,
-        string model = ModelIds.ClaudeHaiku45,
+        string? model = null,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(report);
         ArgumentNullException.ThrowIfNull(oneShot);
+        model = string.IsNullOrWhiteSpace(model)
+            ? ModelFamilyResolver.Resolve(ModelFamilies.ClaudeHaiku)
+            : model;
 
         var enrichedFindings = new List<CodePatternFinding>(report.Findings.Count);
         foreach (var finding in report.Findings)

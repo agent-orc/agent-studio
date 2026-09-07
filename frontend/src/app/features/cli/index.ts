@@ -6,6 +6,7 @@ export { CliPathsPanelComponent } from './components/cli-paths-panel/cli-paths-p
 export { CliModelsPanelComponent } from './components/cli-models-panel/cli-models-panel';
 export { CliContractsPanelComponent } from './components/cli-contracts-panel/cli-contracts-panel';
 export { CliWorkingMemoryPanelComponent } from './components/cli-working-memory-panel/cli-working-memory-panel';
+export { ModelMigrationHintComponent } from './components/model-migration-hint/model-migration-hint.component';
 export type {
   CliModelInfo,
   CliModelCatalog,
@@ -24,3 +25,4 @@ export type {
 export { CLAUDE_FALLBACK_MODEL_ID, MODEL_IDS } from './models/model-ids';
 export { orderModelCatalog } from './models/model-catalog-ordering';
 export { CliCatalogStore } from './services/cli-catalog.store';
+export { ModelMigrationStore } from './services/model-migration.store';

@@ -34,6 +34,16 @@ describe('CliModelsPanelComponent', () => {
     });
     fixture.detectChanges();
 
+    // The migration catalog hydrates alongside the routing policy.
+    http.expectOne('/api/cli/model-migrations').flush({
+      catalogVersion: '2026-09-06',
+      catalogSource: 'repository-baseline',
+      wikiPath: 'docs/system/domains/model-routing-policy.md',
+      autoApply: true,
+      proposals: {},
+    });
+    fixture.detectChanges();
+
     const groups = fixture.componentInstance.groups();
     expect(groups.length).toBe(CLI_TYPES.length);
     expect(groups.map((g) => g.cliType)).toContain('claude');
@@ -50,9 +60,27 @@ describe('CliModelsPanelComponent', () => {
     economy.click();
     const save = http.expectOne('/api/cli/model-routing/economy-mode');
     expect(save.request.method).toBe('PUT');
-    expect(save.request.body).toEqual({ enabled: true });
+    expect(save.request.body).toEqual({ economyMode: true });
     save.flush({ economyMode: true });
     fixture.detectChanges();
     expect(fixture.componentInstance.policy()?.economyMode).toBe(true);
+
+    // The catalog version has to be visible: it is how an operator tells which
+    // rule set produced the proposals they are being offered.
+    expect(
+      fixture.nativeElement.querySelector('[data-testid="model-migration-catalog-version"]').textContent,
+    ).toContain('2026-09-06');
+
+    const autoApply = fixture.nativeElement.querySelector(
+      '[data-testid="model-migration-auto-apply"]',
+    ) as HTMLInputElement;
+    expect(autoApply.checked).toBe(true);
+    autoApply.click();
+    const switched = http.expectOne('/api/cli/model-migrations/auto-apply');
+    expect(switched.request.method).toBe('PUT');
+    expect(switched.request.body).toEqual({ autoApply: false });
+    switched.flush({ autoApplyModelMigrations: false });
+    fixture.detectChanges();
+    expect(fixture.componentInstance.migrations.autoApply()).toBe(false);
   });
 });

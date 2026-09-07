@@ -2,8 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, effect, inject, input, ou
 import { FormsModule } from '@angular/forms';
 import { TaskService } from '../../../../services/task.service';
 import { CLI_TYPES, type CliType } from '../../../../models/task.model';
-import type { PipelineCatalogueStep, PipelineStepSetting, PipelineStepCondition,
-  PipelineStepConditionToken, PipelineType } from '../../../task-pipeline';
+import type { PipelineCatalogueStep, PipelineStepSetting, PipelineStepCondition, PipelineStepConditionToken, PipelineType } from '../../../task-pipeline';
 import type { ProjectPipelineCostTimeline } from '../../../project-token-usage';
 import { CliModelSelectorComponent } from '../../../../components/cli-model-selector';
 import { TooltipDirective, type StructuredTooltip } from 'coding-agent-chat/shared';
@@ -30,11 +29,12 @@ import { PipelineHealthBlockComponent } from '../pipeline-health-block/pipeline-
 import { PipelineStepExecutionComponent } from './pipeline-step-execution/pipeline-step-execution.component';
 import { PipelineTypePickerComponent } from './pipeline-type-picker/pipeline-type-picker.component';
 import { PipelineStepRowStateComponent } from './pipeline-step-row-state/pipeline-step-row-state.component';
+import { ModelMigrationHintComponent } from '../../../cli';
 /** Per-type project pipeline editor for ordering, activation, agents, prompts, gates, and usage. */
 @Component({
   selector: 'app-project-pipeline-panel', standalone: true,
   imports: [FormsModule, CliModelSelectorComponent, TooltipDirective, PipelineHealthBlockComponent, PipelineStepExecutionComponent,
-    PipelineTypePickerComponent, PipelineStepRowStateComponent],
+    PipelineTypePickerComponent, PipelineStepRowStateComponent, ModelMigrationHintComponent],
   hostDirectives: [{ directive: PipelineStepFocusDirective, inputs: ['focusStepId'] }],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-pipeline-panel.component.html',

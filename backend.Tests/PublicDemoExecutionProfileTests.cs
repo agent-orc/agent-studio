@@ -125,7 +125,10 @@ public sealed class PublicDemoExecutionProfileTests : IDisposable
             var routes = ExecutionRoutes(factory.Services);
             // Security inventory tripwire: adding, removing, or reclassifying an
             // executable endpoint requires an explicit update to this matrix.
-            Assert.Equal(78, routes.Count);
+            // 79 since AGT-2716: GET /api/cli/model-migrations probes the live
+            // CLI catalogs to build the cost and ladder diff, so it is a Preview
+            // execution route like the other catalog readers beside it.
+            Assert.Equal(79, routes.Count);
             Assert.Equal(
                 ExecutionAdmissionPolicy.AllPaths.OrderBy(path => path),
                 routes.Select(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)
@@ -139,7 +142,7 @@ public sealed class PublicDemoExecutionProfileTests : IDisposable
                     [ExecutionAdmissionPath.Continue] = 11,
                     [ExecutionAdmissionPath.Review] = 8,
                     [ExecutionAdmissionPath.Chat] = 7,
-                    [ExecutionAdmissionPath.Preview] = 24,
+                    [ExecutionAdmissionPath.Preview] = 25,
                     [ExecutionAdmissionPath.PostStep] = 10,
                 },
                 routes.GroupBy(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)

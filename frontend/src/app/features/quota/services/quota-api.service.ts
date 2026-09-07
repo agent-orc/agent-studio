@@ -50,6 +50,42 @@ export interface ModelRoutingPolicyView {
   rows: { tier: string; model: string; thinkingLevel: string | null }[];
 }
 
+/** One side of a migration diff: what the model costs and how it thinks. */
+export interface ModelMigrationSide {
+  modelId: string;
+  label: string;
+  inputPricePerMillion: number | null;
+  outputPricePerMillion: number | null;
+  thinkingLevels: readonly string[];
+  defaultThinkingLevel: string | null;
+}
+
+/**
+ * "This pin is superseded, here is what replacing it changes." The backend
+ * computes the whole diff so every surface renders the same answer instead of
+ * re-deriving migration policy client-side.
+ */
+export interface ModelMigrationProposal {
+  from: ModelMigrationSide;
+  to: ModelMigrationSide;
+  rule: string;
+  catalogVersion: string;
+  safeAuto: boolean;
+  costClass: 'cheaper' | 'same' | 'more-expensive' | 'unknown';
+  ladderCompatible: boolean;
+  reason: string;
+  safeAutoBlockedBy: string | null;
+}
+
+/** Every update the migration catalog currently offers, keyed by pinned model id. */
+export interface ModelMigrationCatalogView {
+  catalogVersion: string;
+  catalogSource: string;
+  wikiPath: string;
+  autoApply: boolean;
+  proposals: Record<string, ModelMigrationProposal>;
+}
+
 @Injectable({ providedIn: 'root' })
 export class QuotaApiService {
   private readonly http = inject(HttpClient);
@@ -156,8 +192,20 @@ export class QuotaApiService {
   }
 
   setModelRoutingEconomyMode(enabled: boolean) {
+    // The field name is the wire contract (SetModelRoutingEconomyModeRequest);
+    // sending `enabled` bound to the default and silently disabled the switch.
     return this.http.put<{ economyMode: boolean }>(
-      `${this.baseUrl}/cli/model-routing/economy-mode`, { enabled },
+      `${this.baseUrl}/cli/model-routing/economy-mode`, { economyMode: enabled },
+    );
+  }
+
+  getModelMigrations() {
+    return this.http.get<ModelMigrationCatalogView>(`${this.baseUrl}/cli/model-migrations`);
+  }
+
+  setModelMigrationAutoApply(autoApply: boolean) {
+    return this.http.put<{ autoApplyModelMigrations: boolean }>(
+      `${this.baseUrl}/cli/model-migrations/auto-apply`, { autoApply },
     );
   }
 }

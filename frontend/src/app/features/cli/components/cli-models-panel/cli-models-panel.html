@@ -19,6 +19,26 @@
       </label>
     </section>
   }
+  <section class="cli-models__policy" data-testid="model-migration-policy">
+    <div class="cli-models__policy-copy">
+      <span class="cli-models__policy-title">Model updates</span>
+      <span class="cli-models__policy-detail">
+        Migration catalog
+        <span data-testid="model-migration-catalog-version">{{ migrations.catalogVersion() || 'unavailable' }}</span>
+        @if (migrations.catalogSource(); as source) { <span>({{ source }})</span> }
+        decides which superseded pins are offered an update. Explicit pins are never changed automatically.
+      </span>
+    </div>
+    <label class="cli-models__economy">
+      <input type="checkbox"
+             data-testid="model-migration-auto-apply"
+             [checked]="migrations.autoApply()"
+             [disabled]="savingAutoApply()"
+             (change)="setAutoApply($any($event.target).checked)" />
+      <span>Automatic updates {{ migrations.autoApply() ? 'on' : 'off' }}</span>
+      <small>Apply safe same-family updates at run admission</small>
+    </label>
+  </section>
   @for (g of groups(); track g.cliType) {
     <article class="cli-models__row"
              [class.cli-models__row--open]="isExpanded(g.cliType)"
@@ -60,6 +80,13 @@
                   @for (m of g.models; track m.id) { <option [value]="m.id">{{ m.label }}</option> }
                 </select>
               </label>
+              <div class="cli-models__route-line cli-models__route-line--migration">
+                <app-model-migration-hint
+                  [model]="primaryModel(g.cliType)"
+                  [busy]="savingCli() === g.cliType"
+                  [testId]="'cli-primary-migration-' + g.cliType"
+                  (apply)="setPrimary(g.cliType, $event)" />
+              </div>
               <div class="cli-models__route-line cli-models__route-line--fallback">
                 <span class="cli-models__fallback-tag">fallback</span>
                 <select [value]="fallbackCli(g.cliType)"

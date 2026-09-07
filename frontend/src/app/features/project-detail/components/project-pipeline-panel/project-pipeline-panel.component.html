@@ -154,8 +154,7 @@
                       <span class="pp__settings-note" role="cell">Opt-in Spark recommendation; falls back to the normal model when unavailable.</span>
                     </div>
                     }
-                    <div class="pp__settings-row"
-                         role="row"
+                    <div class="pp__settings-row" role="row"
                          [attr.data-testid]="'pipeline-step-setting-model-' + step.id">
                       <span class="pp__settings-label" role="cell">Model</span>
                       <span class="pp__settings-value pp__setting-stack" role="cell">
@@ -177,6 +176,7 @@
                                 [cacTooltip]="'Clear this step agent override and fall back to the project / runtime default.'"
                                 (click)="resetStepAgent(step.id)">Use default</button>
                       }
+                      <app-model-migration-hint [model]="step.effectiveModel || step.model" [busy]="!!stepBusy[step.id]" [testId]="'pipeline-step-migration-' + step.id" (apply)="writeStep(step.id, { model: $event })" />
                       </span>
                       <span class="pp__settings-note" role="cell">{{ modelExplanation(step) }}</span>
                     </div>

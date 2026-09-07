@@ -109,6 +109,11 @@
           } @else {
             <span class="ov-dim">CLI not set</span>
           }
+          <app-model-migration-hint
+            [model]="effectiveModel()"
+            [applyable]="!isRunning() && !agentConfigReadOnly()"
+            testId="task-model-migration"
+            (apply)="applyModelMigration($event)" />
         </span>
       </div>
 

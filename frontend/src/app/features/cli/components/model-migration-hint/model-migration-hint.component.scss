@@ -1,0 +1,76 @@
+:host {
+  display: inline-flex;
+  min-width: 0;
+}
+
+// Status is carried by a background tint plus a dot, never by an accent bar or
+// colour alone, so it reads the same in both themes.
+.migration-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--studio-spacing-2);
+  min-width: 0;
+  padding: 0 var(--studio-spacing-2);
+  height: var(--studio-card-pill-height);
+  border: 1px solid var(--studio-border);
+  border-radius: 6px;
+  background: var(--studio-bg-elevated);
+  color: var(--studio-text-secondary);
+  font-size: 11px;
+  line-height: 1;
+  cursor: help;
+}
+
+.migration-hint--auto {
+  border-color: color-mix(in srgb, var(--studio-accent) 45%, var(--studio-border));
+  background: color-mix(in srgb, var(--studio-accent) 10%, var(--studio-bg-elevated));
+  color: var(--studio-text-primary);
+}
+
+.migration-hint__dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--studio-text-muted);
+}
+
+.migration-hint--auto .migration-hint__dot {
+  background: var(--studio-accent);
+}
+
+.migration-hint__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.migration-hint__state {
+  flex: 0 0 auto;
+  color: var(--studio-text-muted);
+  font-size: 10px;
+  text-transform: lowercase;
+}
+
+.migration-hint__apply {
+  flex: 0 0 auto;
+  padding: 0 var(--studio-spacing-2);
+  height: 18px;
+  border: 1px solid var(--studio-border);
+  border-radius: 4px;
+  background: var(--studio-bg-surface);
+  color: var(--studio-text-primary);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.migration-hint__apply:hover:not(:disabled) {
+  border-color: var(--studio-accent);
+}
+
+.migration-hint__apply:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

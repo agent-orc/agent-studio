@@ -1,0 +1,23 @@
+@if (proposal(); as offer) {
+  <span class="migration-hint"
+        [class.migration-hint--auto]="offer.safeAuto"
+        [cacTooltip]="detail()"
+        [attr.data-testid]="testId()"
+        [attr.data-from-model]="offer.from.modelId"
+        [attr.data-to-model]="offer.to.modelId"
+        [attr.data-cost-class]="offer.costClass"
+        [attr.data-safe-auto]="offer.safeAuto"
+        [attr.aria-label]="summary() + ', ' + autoLabel()">
+    <span class="migration-hint__dot" aria-hidden="true"></span>
+    <span class="migration-hint__text">{{ summary() }}</span>
+    <span class="migration-hint__state" aria-hidden="true">{{ autoLabel() }}</span>
+    @if (applyable()) {
+      <button type="button"
+              class="migration-hint__apply"
+              [disabled]="busy()"
+              [attr.data-testid]="testId() + '-apply'"
+              [attr.aria-label]="'Apply update to ' + offer.to.modelId"
+              (click)="onApply()">{{ busy() ? 'applying' : 'apply' }}</button>
+    }
+  </span>
+}

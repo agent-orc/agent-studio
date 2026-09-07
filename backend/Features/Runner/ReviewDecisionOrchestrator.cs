@@ -436,7 +436,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     {
         var maxPerHour = _configuration.GetValue("ReviewDecisionOrchestrator:CallsPerHour", DefaultCallsPerHour);
         var cliBinary = _configuration.GetValue("ReviewDecisionOrchestrator:Cli", CliTypes.Codex);
-        var model = _configuration.GetValue("ReviewDecisionOrchestrator:Model", ModelIds.Gpt54Mini);
+        var model = _configuration["ReviewDecisionOrchestrator:Model"]
+            ?? PipelineStepModelDefaults.SupportModel;
         var aspectModel = _configuration.GetValue("ReviewDecisionOrchestrator:AspectModel", model);
         var aspectTimeoutSeconds = _configuration.GetValue("ReviewDecisionOrchestrator:AspectTimeoutSeconds", 60);
         var maxReissues = _configuration.GetValue("ReviewDecisionOrchestrator:MaxAutoReissueAttempts", MaxAutoReissueAttempts);
@@ -680,7 +681,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             return PostProcessingCardResult.Blocked("review-decision-orchestrator-disabled");
 
         var cliBinary = _configuration.GetValue("ReviewDecisionOrchestrator:Cli", CliTypes.Codex);
-        var model = _configuration.GetValue("ReviewDecisionOrchestrator:Model", ModelIds.Gpt54Mini);
+        var model = _configuration["ReviewDecisionOrchestrator:Model"]
+            ?? PipelineStepModelDefaults.SupportModel;
         var aspectModel = _configuration.GetValue("ReviewDecisionOrchestrator:AspectModel", model);
         var aspectTimeoutSeconds = _configuration.GetValue("ReviewDecisionOrchestrator:AspectTimeoutSeconds", 60);
         var maxPerHour = _configuration.GetValue("ReviewDecisionOrchestrator:CallsPerHour", DefaultCallsPerHour);

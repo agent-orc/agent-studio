@@ -139,7 +139,9 @@ public static class ModelIds
     /// discovery has detected it, otherwise it falls back to <see cref="Gpt55"/>.</summary>
     public const string Gpt56Sol = "gpt-5.6-sol";
     /// <summary>Economy Codex model for bounded supporting-agent and pipeline work.
-    /// Availability still comes from live CLI discovery.</summary>
+    /// Availability still comes from live CLI discovery; the registry entry only
+    /// gives <see cref="ModelFamilies.GptMini"/> a baseline to resolve against
+    /// when discovery is stale.</summary>
     public const string Gpt54Mini = "gpt-5.4-mini";
     public const string Gpt5Codex = "gpt-5-codex";
     public const string Gpt41 = "gpt-4.1";
@@ -147,6 +149,18 @@ public static class ModelIds
     public const string Gemini25Pro = "gemini-2.5-pro";
     public const string Gemini25Flash = "gemini-2.5-flash";
 }
+
+/// <summary>
+/// A CLI model catalog as it was last discovered, plus when. Consumers decide
+/// for themselves whether <see cref="FetchedAt"/> is fresh enough to trust; a
+/// stale snapshot falls back to <see cref="ModelMetadataRegistry"/> knowledge
+/// rather than to a pinned literal.
+/// </summary>
+public sealed record DiscoveredModelCatalog(
+    string CliType,
+    IReadOnlyList<CliModelInfo> Models,
+    string Source,
+    DateTime FetchedAt);
 
 public sealed record ModelMetadata(
     string Id,
@@ -202,6 +216,11 @@ public static class ModelMetadataRegistry
             ContextWindow: 400_000),
         // gpt-5-codex is retained (API-key accounts still accept it) but is no
         // longer the default: a ChatGPT-account spawn rejects it outright.
+        // The bounded supporting tier. It is not a picker default anywhere, but
+        // it must be in the registry so ModelFamilies.GptMini still resolves to
+        // a real id when live discovery is unavailable or stale.
+        new(ModelIds.Gpt54Mini, "GPT-5.4 mini", "openai", IsDefault: false, Deprecated: false, Available: true,
+            ContextWindow: 400_000),
         new(ModelIds.Gpt5Codex, "GPT-5 Codex", "openai", IsDefault: false, Deprecated: false, Available: true,
             ContextWindow: 272_000),
         new(ModelIds.Gpt41, "GPT-4.1", "openai", IsDefault: false, Deprecated: false, Available: true,
@@ -235,6 +254,42 @@ public static class ModelMetadataRegistry
 
     /// <summary>The last Codex default detected from the installed CLI, or null.</summary>
     public static string? DetectedCodexDefault => _detectedCodexDefaultId;
+
+    // Last catalog each CLI's discovery produced, keyed by normalized cli type.
+    // Same posture as _detectedCodexDefaultId: a volatile publish from the
+    // discovery gate, read from request and runner threads. It exists so
+    // synchronous call sites (ModelFamilyResolver, the migration planner) can
+    // consult the installed CLI without an await; nobody may treat it as the
+    // authoritative catalog - GetModelCatalogAsync stays the read path for UI.
+    private static volatile IReadOnlyDictionary<string, DiscoveredModelCatalog> _discoveredCatalogs =
+        new Dictionary<string, DiscoveredModelCatalog>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Publish the catalog a CLI's discovery just produced. Called on every path
+    /// that yields a catalog (fresh, memory cache, disk cache, registry
+    /// fallback) so a snapshot never outlives the discovery that made it.
+    /// </summary>
+    public static void PublishDiscoveredCatalog(string? cliType, CliModelCatalog? catalog)
+    {
+        if (!CliTypes.IsValid(cliType) || catalog?.Models is not { Count: > 0 }) return;
+        var key = CliTypes.Normalize(cliType);
+        var next = new Dictionary<string, DiscoveredModelCatalog>(_discoveredCatalogs, StringComparer.OrdinalIgnoreCase)
+        {
+            [key] = new(key, catalog.Models.ToList(), catalog.Source ?? "", catalog.FetchedAt)
+        };
+        _discoveredCatalogs = next;
+    }
+
+    /// <summary>The last published catalog for a CLI, or null when it has never been discovered.</summary>
+    public static DiscoveredModelCatalog? DiscoveredCatalogFor(string? cliType)
+    {
+        if (!CliTypes.IsValid(cliType)) return null;
+        return _discoveredCatalogs.TryGetValue(CliTypes.Normalize(cliType), out var snapshot) ? snapshot : null;
+    }
+
+    /// <summary>Drops every published snapshot. Test seam only.</summary>
+    public static void ClearDiscoveredCatalogs()
+        => _discoveredCatalogs = new Dictionary<string, DiscoveredModelCatalog>(StringComparer.OrdinalIgnoreCase);
 
     public static IReadOnlyList<ModelMetadata> All => Entries;
 

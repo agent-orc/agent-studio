@@ -5,11 +5,12 @@ namespace AgentStudio.Pipeline;
 /// <summary>
 /// Maps a catalogue <see cref="PipelineStep"/> to the runtime-default model its
 /// LLM-backed work falls back to when neither a per-step nor a per-project
-/// override is set. It mirrors the exact constant each runtime call site already
+/// override is set. It mirrors the exact value each runtime call site already
 /// passes to <see cref="PipelineStepConfigResolver.ResolveModel(ProjectSettings?, PipelineStep, string, string?)"/>,
 /// so the pre-run pipeline view can show the same effective model the run would
-/// actually use. Bounded supporting steps use Codex gpt-5.4-mini/high; the
-/// operator-facing grade and task-spawner judgments use the live-discovered
+/// actually use. Bounded supporting steps use the Codex mini family at
+/// <c>high</c>; the operator-facing grade and task-spawner judgments use the
+/// live-discovered
 /// Codex flagship and its top advertised reasoning level.
 ///
 /// <para>
@@ -24,11 +25,19 @@ namespace AgentStudio.Pipeline;
 public static class PipelineStepModelDefaults
 {
     public const string DefaultCli = CliTypes.Codex;
-    public const string SupportModel = ModelIds.Gpt54Mini;
     public const string SupportThinkingLevel = "high";
 
+    /// <summary>
+    /// Bounded supporting tier: the newest member of the Codex mini family the
+    /// installed CLI offers. Resolved per read (not a const) for the same reason
+    /// <see cref="QualityModel"/> is - the pre-run pipeline view must show the
+    /// model the run would actually use.
+    /// </summary>
+    public static string SupportModel => ModelFamilyResolver.Resolve(ModelFamilies.GptMini);
+
     public static string QualityModel =>
-        ModelMetadataRegistry.DefaultForCli(DefaultCli) ?? ModelIds.Gpt55;
+        ModelMetadataRegistry.DefaultForCli(DefaultCli)
+        ?? ModelFamilyResolver.Resolve(ModelFamilies.GptFlagship);
 
     public static string QualityThinkingLevel =>
         ModelMetadataRegistry.DefaultThinkingLevelForCli(DefaultCli, QualityModel) ?? "high";

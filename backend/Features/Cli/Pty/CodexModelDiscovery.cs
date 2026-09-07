@@ -253,12 +253,15 @@ public sealed class CodexModelDiscovery
     /// creation, cli-type switches, and client-default materialization all
     /// follow the CLI, then return the catalog unchanged. Called on every path
     /// that yields a catalog (fresh, mem-cache, disk-cache) so a null result
-    /// (no gpt-5.6) correctly clears back to the gpt-5.5 baseline.
+    /// (no gpt-5.6) correctly clears back to the gpt-5.5 baseline. The same gate
+    /// publishes the whole catalog so <see cref="ModelFamilyResolver"/> can rank
+    /// a family without an await.
     /// </summary>
     private CliModelCatalog Publish(CliModelCatalog cat)
     {
         var detected = PickDetectedDefault(cat);
         ModelMetadataRegistry.SetDetectedCodexDefault(detected);
+        ModelMetadataRegistry.PublishDiscoveredCatalog(CliTypes.Codex, cat);
         _logger.LogDebug("Codex detected default published: {Detected} (source={Source})",
             detected ?? "<none>", cat.Source);
         return cat;
