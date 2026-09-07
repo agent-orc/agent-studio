@@ -713,6 +713,86 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
     }
 
     [Fact]
+    public void BuildLookup_GateEnvironmentHold_IsPendingWithTheReasonNotAFailure()
+    {
+        // AGT-2720: CAC-18's pre-main gate died inside vite before the first test
+        // ran, on a dependency tree it had restored from its own cache. The gate
+        // judged nothing, so the card must stay pending with that reason and be
+        // retried, never carry a typed integration failure.
+        var repo = SeedDevelopMainRepo();
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "checkout -q -b task/gate-environment");
+        File.WriteAllText(Path.Combine(repo, "gate-environment.txt"), "wip");
+        Commit(repo, "feat: delivery blocked by a broken gate environment");
+        var anchor = RunGit(repo, "rev-parse task/gate-environment").Out.Trim();
+
+        var svc = BuildService(repo, out var project, out var log);
+        var job = Job(
+            "gate-environment",
+            "AGT-2720",
+            project,
+            repo,
+            log,
+            commits: [Commit(anchor)],
+            prov: Prov(branch: "task/gate-environment"));
+        log.EnsureRun(job.FolderPath, PipelineCatalogue.Standard, project, job.Id);
+        log.RecordStep(job.FolderPath, new PipelineStepExecution
+        {
+            StepId = PipelineCatalogue.MergeIntoDevelopStepId,
+            Kind = StepKind.Tool,
+            Status = PipelineStepStatus.Skipped,
+            Verdict = IntegrationStepVerdicts.GateEnvironment,
+            Reason = "The pre-main gate environment failed before the first test: "
+                     + "vite case-insensitive FS probe failed.",
+        });
+
+        var status = svc.BuildLookup([job])[job.TaskKey];
+
+        Assert.Equal(IntegrationStatuses.Pending, status.Status);
+        Assert.Null(status.Failure);
+        Assert.Contains("Gate environment:", status.Detail);
+        Assert.Contains("vite case-insensitive FS probe failed", status.Detail);
+    }
+
+    [Fact]
+    public void BuildLookup_GateEnvironmentHoldRecordedAsFailed_IsStillPending()
+    {
+        // Fail closed on the writer side too: even if a caller persists the hold
+        // as a Failed step, the verdict alone keeps it out of the typed failure
+        // path that produces conflict-skipped.
+        var repo = SeedDevelopMainRepo();
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "checkout -q -b task/gate-environment-failed");
+        File.WriteAllText(Path.Combine(repo, "gate-environment-failed.txt"), "wip");
+        Commit(repo, "feat: hold recorded as failed");
+        var anchor = RunGit(repo, "rev-parse task/gate-environment-failed").Out.Trim();
+
+        var svc = BuildService(repo, out var project, out var log);
+        var job = Job(
+            "gate-environment-failed",
+            "AGT-2721",
+            project,
+            repo,
+            log,
+            commits: [Commit(anchor)],
+            prov: Prov(branch: "task/gate-environment-failed"));
+        log.EnsureRun(job.FolderPath, PipelineCatalogue.Standard, project, job.Id);
+        log.RecordStep(job.FolderPath, new PipelineStepExecution
+        {
+            StepId = PipelineCatalogue.MergeIntoDevelopStepId,
+            Kind = StepKind.Tool,
+            Status = PipelineStepStatus.Failed,
+            Verdict = IntegrationStepVerdicts.GateEnvironment,
+            Reason = "The gate environment failed before the first test.",
+        });
+
+        var status = svc.BuildLookup([job])[job.TaskKey];
+
+        Assert.Equal(IntegrationStatuses.Pending, status.Status);
+        Assert.Null(status.Failure);
+    }
+
+    [Fact]
     public void BuildLookup_MergePassedButPushBlocked_IsConflictSkippedNotPending()
     {
         // AGT-2688: the merge into develop succeeded (Passed), but the deferred

@@ -58,6 +58,14 @@ internal sealed class GateDependencyCacheSession
 
     public IReadOnlyList<string> Save() => _session.Save();
 
+    /// <summary>
+    /// Drops the cached trees of the named scopes and keeps the following
+    /// <see cref="Save"/> from writing them back. The gate calls this when a
+    /// failure proved the restored tree unusable.
+    /// </summary>
+    public IReadOnlyList<string> Evict(string reason, IReadOnlyList<string> workingSubdirs)
+        => _session.Evict(reason, workingSubdirs);
+
     internal static string CachePath(string reviewWorkspaceRoot, string repositoryPath)
         => DependencyCacheSession.CachePath(
             Path.Combine(reviewWorkspaceRoot, BuildTestGateRunner.DependencyCacheDirectoryName),

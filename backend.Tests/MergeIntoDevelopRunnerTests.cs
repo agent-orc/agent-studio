@@ -708,6 +708,72 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
     }
 
     [Fact]
+    public async Task RunAsync_MainTarget_GateEnvironmentFailureStaysUndecidedAndRetryable()
+    {
+        // AGT-2720: the CAC-18 shape. The gate died inside vite on a cached
+        // dependency tree before the first test, so it judged nothing. `main` must
+        // stay put, but the attempt must not be recorded as a decided failure -
+        // that is what left the card partial across 412 green reviews.
+        var repo = SeedRepo("runner-main-gate-environment");
+        RunGit(repo, "checkout -q -b task/52");
+        File.WriteAllText(Path.Combine(repo, "task.txt"), "release work behind a broken gate");
+        Commit(repo, "feat: release work behind a broken gate");
+        var mainBefore = RunGit(repo, "rev-parse main").Out.Trim();
+        RunGit(repo, "checkout -q main");
+
+        var (git, log, settings) = BuildWithSettings(repo);
+        var gateRunner = new CapturingBuildTestGateRunner(new BuildTestGateResult(
+            BuildTestGateVerdict.Fail,
+            1,
+            20,
+            "at testCaseInsensitiveFS (node_modules/vite/dist/node/chunks/config.js:1911:42)",
+            "vite case-insensitive FS probe failed [dependency-cache .=hit/lock-unchanged cached]",
+            false,
+            true)
+        {
+            FailureKind = BuildTestGateFailureKind.GateEnvironment,
+            DependencyCache =
+            [
+                new BuildTestGateDependencyCacheEvidence(
+                    ".", "hit", "lock-unchanged", "abc123", ["package-lock.json"], false),
+            ],
+        });
+        var runner = new MergeIntoDevelopRunner(
+            git,
+            log,
+            NullLogger<MergeIntoDevelopRunner>.Instance,
+            projectSettings: settings,
+            preMainTestGate: new PreMainTestGate(gateRunner));
+        var jobFolder = BeginRun(log, repo, jobId: "52");
+
+        var outcome = await runner.RunAsync(
+            "Fixture",
+            "52",
+            jobFolder,
+            repo,
+            "main",
+            CancellationToken.None);
+
+        Assert.Equal(MergeIntoIntegrationOutcome.GateEnvironmentBlocked, outcome.Outcome);
+        Assert.Equal(mainBefore, RunGit(repo, "rev-parse main").Out.Trim());
+
+        var step = ReadMergeStep(log, jobFolder);
+        Assert.NotNull(step);
+        Assert.Equal(PipelineStepStatus.Skipped, step!.Status);
+        Assert.Equal(IntegrationStepVerdicts.GateEnvironment, step.Verdict);
+        Assert.Contains("vite case-insensitive FS probe failed", step.Reason);
+        Assert.Contains("dependency-cache .=hit/lock-unchanged cached", step.Reason);
+        Assert.Null(step.FailureCode);
+        Assert.Null(AcceptedIntegrationFailurePolicy.Classify(
+            step.Status, step.Verdict, step.Reason, step.VerdictSummary));
+
+        var evidencePath = Assert.Single(
+            Directory.GetFiles(Path.Combine(jobFolder, "post-steps"), "pre-main-test-gate-*.log"));
+        var evidence = File.ReadAllText(evidencePath);
+        Assert.Contains("failureKind=GateEnvironment infrastructure=True", evidence);
+    }
+
+    [Fact]
     public async Task RunAsync_MainTarget_SourceMovesDuringSuiteLeavesMainUnchanged()
     {
         var repo = SeedRepo("runner-main-source-moved");

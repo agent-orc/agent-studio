@@ -103,6 +103,15 @@ public enum MergeIntoIntegrationOutcome
     /// needs a steer round - never silently "delivered".
     /// </summary>
     GateFailed,
+    /// <summary>
+    /// AGT-2720 - the gate could not judge the subject at all: it died inside the
+    /// bundler or type checker before the first test, on a dependency tree the
+    /// gate had restored from its cache. Nothing was merged and nothing was
+    /// pushed, but the delivery was never found red either. The integration stays
+    /// pending with this reason and the backstop retries it; it must never be
+    /// recorded as a product failure.
+    /// </summary>
+    GateEnvironmentBlocked,
     /// <summary>A precondition failed (dirty tree, missing branch, checkout failure) or git errored.</summary>
     Error,
     /// <summary>

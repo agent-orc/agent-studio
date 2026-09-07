@@ -74,7 +74,12 @@ internal static class IntegrationQueueClassificationPolicy
                 facts.IntegrationDetail ?? "No integrable change set.");
         }
 
+        // AGT-2720: a pending card can carry a real diagnosis of its own - a gate
+        // that died in its bundler before the first test names that environment in
+        // the detail. Prefer the recorded detail whenever one exists, so the queue
+        // shows the cause instead of restating that the change is not there.
         var reason = facts.IntegrationStatus == IntegrationStatuses.Partial
+                     || !string.IsNullOrWhiteSpace(facts.IntegrationDetail)
             ? facts.IntegrationDetail
             : $"Accepted change is not present in {facts.IntegrationRef}.";
         return new(IntegrationQueueStates.Waiting, null, reason);

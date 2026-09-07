@@ -744,7 +744,15 @@ public sealed class MergeIntoDevelopRunner
             : $"The build gate blocked the merge into {integrationBranch}: {gate.Reason}. " +
               $"Rolling {integrationBranch} back to {Short(preMergeTip!)} FAILED ({reset.Error ?? "unknown error"}); " +
               "the unverified merge is still on the local integration branch and needs manual repair.";
-        return (MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.GateFailed, error: error), gate);
+        return (
+            gate.FailureKind == BuildTestGateFailureKind.GateEnvironment
+                ? MergeIntoIntegrationResult.Of(
+                    MergeIntoIntegrationOutcome.GateEnvironmentBlocked,
+                    error: $"The pre-develop gate environment failed before the first test: {gate.Reason} "
+                           + $"{integrationBranch} was left at its pre-merge tip, the dependency cache "
+                           + "entry it used was evicted, and the integration retries on the next rail run.")
+                : MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.GateFailed, error: error),
+            gate);
     }
 
     /// <summary>
@@ -862,9 +870,9 @@ public sealed class MergeIntoDevelopRunner
             if (gate.Verdict != BuildTestGateVerdict.Ok)
             {
                 return (
-                    MergeIntoIntegrationResult.Of(
-                        MergeIntoIntegrationOutcome.Error,
-                        error: $"Pre-main full suite blocked the develop-to-main fast-forward: {gate.Reason}"),
+                    PreMainGateRefusal(
+                        gate,
+                        $"Pre-main full suite blocked the develop-to-main fast-forward: {gate.Reason}"),
                     gate);
             }
         }
@@ -1021,9 +1029,7 @@ public sealed class MergeIntoDevelopRunner
         if (gate.Verdict != BuildTestGateVerdict.Ok)
         {
             return (
-                MergeIntoIntegrationResult.Of(
-                    MergeIntoIntegrationOutcome.Error,
-                    error: $"Pre-main full suite blocked the merge: {gate.Reason}"),
+                PreMainGateRefusal(gate, $"Pre-main full suite blocked the merge: {gate.Reason}"),
                 gate);
         }
 
@@ -1035,6 +1041,25 @@ public sealed class MergeIntoDevelopRunner
             targetSha);
         return (merge, gate);
     }
+
+    /// <summary>
+    /// AGT-2720 - separates the two ways a pre-main gate can withhold `main`. A
+    /// red or incomplete suite is a decided refusal the operator must resolve. A
+    /// gate that never reached the first test because its own dependency tree was
+    /// broken decided nothing: the gate has already evicted the cache entry it
+    /// used, so the honest state is "not integrated yet, retry", not a product
+    /// failure recorded against the delivery.
+    /// </summary>
+    private static MergeIntoIntegrationResult PreMainGateRefusal(
+        BuildTestGateResult gate,
+        string error)
+        => gate.FailureKind == BuildTestGateFailureKind.GateEnvironment
+            ? MergeIntoIntegrationResult.Of(
+                MergeIntoIntegrationOutcome.GateEnvironmentBlocked,
+                error: $"The pre-main gate environment failed before the first test: {gate.Reason} "
+                       + "The dependency cache entry it used was evicted; the integration retries "
+                       + "on the next rail run and the delivery was not judged.")
+            : MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error, error: error);
 
     private static bool IsReleaseBranch(string branch)
         => string.Equals(branch, "main", StringComparison.OrdinalIgnoreCase);
@@ -1458,6 +1483,12 @@ public sealed class MergeIntoDevelopRunner
                 var reason = reasonLine.StartsWith("reason=", StringComparison.Ordinal)
                     ? reasonLine["reason=".Length..]
                     : "Recovered durable gate verdict.";
+                // AGT-2720: a recovered receipt keeps its classification, so a
+                // replayed gate-environment failure is still not a product verdict.
+                // Receipts written before this line existed recover as None.
+                var kindValue = HeaderValue(reader.ReadLine() ?? string.Empty, "failureKind=");
+                _ = Enum.TryParse<BuildTestGateFailureKind>(
+                    kindValue, ignoreCase: true, out var failureKind);
                 return new BuildTestGateResult(
                     verdict,
                     exitCode,
@@ -1469,6 +1500,7 @@ public sealed class MergeIntoDevelopRunner
                 {
                     ExpectedSha = recordedExpected,
                     TestedSha = recordedTested == "n/a" ? null : recordedTested,
+                    FailureKind = failureKind,
                 };
             }
             catch (Exception ex)
@@ -1527,6 +1559,11 @@ public sealed class MergeIntoDevelopRunner
             $"verdict={result.Verdict} exit={result.ExitCode?.ToString() ?? "n/a"} durationMs={result.DurationMs}\n" +
             $"expectedSha={result.ExpectedSha ?? "n/a"} testedSha={result.TestedSha ?? "n/a"}\n" +
             $"reason={result.Reason}\n" +
+            // AGT-2720: the Evidence tab renders this receipt and BP-02 recovery
+            // reads it back. Without the classification neither an operator nor a
+            // replay can tell a red suite from a gate that never reached the first
+            // test. It stays below the reason line the reader parses positionally.
+            $"failureKind={result.FailureKind} infrastructure={result.IsInfrastructureFailure}\n" +
             budget + "\n" +
             "--- dependency-cache.json ---\n" +
             dependencyCache + "\n" +
@@ -1568,6 +1605,18 @@ public sealed class MergeIntoDevelopRunner
                     "gate-failed",
                     result.Error ?? $"The build gate blocked the merge into {integrationBranch}.",
                     preDevelopResult?.Reason);
+            case MergeIntoIntegrationOutcome.GateEnvironmentBlocked:
+                // Deliberately not Failed: the gate never judged the delivery, so
+                // no typed integration failure may be projected onto the card.
+                // Skipped keeps the attempt undecided, which is what makes the
+                // accepted-integration backstop retry it instead of parking a
+                // conflict nobody can resolve (AGT-2720).
+                return (
+                    PipelineStepStatus.Skipped,
+                    IntegrationStepVerdicts.GateEnvironment,
+                    result.Error
+                        ?? $"The gate environment failed before the first test; {integrationBranch} is unchanged.",
+                    preMainResult?.Reason ?? preDevelopResult?.Reason);
             case MergeIntoIntegrationOutcome.MergedAfterRebase:
                 var replacementCount = result.RebasedCommits.Count;
                 var rebaseGate = preDevelopResult is null

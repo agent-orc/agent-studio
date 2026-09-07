@@ -245,6 +245,8 @@ public sealed class AcceptedIntegrationBackstopHostedService : BackgroundService
             "no-branch" => nameof(MergeIntoIntegrationOutcome.NoTaskBranch),
             "conflict" => nameof(MergeIntoIntegrationOutcome.Conflict),
             "gate-failed" => nameof(MergeIntoIntegrationOutcome.GateFailed),
+            IntegrationStepVerdicts.GateEnvironment
+                => nameof(MergeIntoIntegrationOutcome.GateEnvironmentBlocked),
             "pushed-for-review" => nameof(MergeIntoIntegrationOutcome.PushedForReview),
             "error" => nameof(MergeIntoIntegrationOutcome.Error),
             null or "" => null,

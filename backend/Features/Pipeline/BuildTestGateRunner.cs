@@ -29,6 +29,13 @@ public enum BuildTestGateFailureKind
     Cancellation,
     MissingSource,
     ReviewModel,
+    /// <summary>
+    /// AGT-2720 - the verify command died inside the bundler or type checker
+    /// before the runner reported a single test, while the gate was using a
+    /// cached dependency tree it had not installed itself. The subject was never
+    /// judged, so this is infrastructure, not a product verdict.
+    /// </summary>
+    GateEnvironment,
 }
 
 public sealed record BuildTestGateRequest(
@@ -403,7 +410,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                         }
                         : await RunCommandsAsync(
                             workspace!, preparation, commands, plan.Source, mode, timeout,
-                            cacheRestoreMessages, ct)
+                            cacheRestoreMessages, dependencyCache, ct)
                             .ConfigureAwait(false);
                     var completedAudit = CompleteAudit(staged.Audit, commands, completed.Processes);
                     completed = completed with
@@ -549,6 +556,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         PostStepMode mode,
         TimeSpan timeout,
         IReadOnlyList<string> cacheRestoreMessages,
+        GateDependencyCacheSession? cacheSession,
         CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
@@ -620,7 +628,12 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
             if (process.ExitCode != 0 || process.TimedOut || process.Cancelled || process.LaunchError is not null)
             {
                 sw.Stop();
-                var kind = ClassifyFailure(process);
+                var preparationCache = decisions
+                    .Select(item => ToCacheEvidence(item, installRan: true))
+                    .Concat(dependencyCache)
+                    .ToArray();
+                var kind = ClassifyFailure(process, CacheDecisions(preparationCache));
+                Evict(kind, cacheSession, preparationCache, output);
                 var verdict = kind == BuildTestGateFailureKind.Code && mode != PostStepMode.Fail
                     ? BuildTestGateVerdict.Warn
                     : BuildTestGateVerdict.Fail;
@@ -631,10 +644,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 {
                     Processes = evidence,
                     Findings = findings,
-                    DependencyCache = decisions
-                        .Select(item => ToCacheEvidence(item, installRan: true))
-                        .Concat(dependencyCache)
-                        .ToArray(),
+                    DependencyCache = preparationCache,
                     TerminationSignal = process.TerminationSignal,
                     ViolatedBudget = process.ViolatedBudget,
                 }, kind);
@@ -683,7 +693,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
             evidence.Add(process);
             if (process.ExitCode != 0 || process.TimedOut || process.Cancelled || process.LaunchError is not null)
             {
-                var kind = ClassifyFailure(process);
+                var kind = ClassifyFailure(process, CacheDecisions(dependencyCache));
                 if (kind == BuildTestGateFailureKind.Code && !command.BlocksWorkPackage)
                 {
                     findings.Add(new BuildTestGateFinding(
@@ -697,6 +707,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                     continue;
                 }
                 sw.Stop();
+                Evict(kind, cacheSession, dependencyCache, output);
                 var verdict = kind == BuildTestGateFailureKind.Code && mode != PostStepMode.Fail
                     ? BuildTestGateVerdict.Warn
                     : BuildTestGateVerdict.Fail;
@@ -747,6 +758,55 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
 
     private static string DisplayScope(string workingSubdir)
         => string.IsNullOrWhiteSpace(workingSubdir) ? "." : workingSubdir;
+
+    /// <summary>
+    /// Reduces the recorded cache evidence to what the environment policy reads:
+    /// which scope, and whether the gate trusted a cached tree instead of
+    /// installing it.
+    /// </summary>
+    private static IReadOnlyList<GateDependencyCacheDecision> CacheDecisions(
+        IReadOnlyList<BuildTestGateDependencyCacheEvidence> evidence)
+        => evidence
+            .Select(item => new GateDependencyCacheDecision(
+                item.WorkingSubdir == "." ? string.Empty : item.WorkingSubdir,
+                !item.InstallRan && string.Equals(item.State, "hit", StringComparison.Ordinal)))
+            .ToArray();
+
+    /// <summary>
+    /// Drops the cached trees the gate trusted when the failure was classified as
+    /// a repairable environment failure, so the retry installs fresh instead of
+    /// restoring the same broken tree. The eviction is named in the transcript.
+    /// </summary>
+    private static void Evict(
+        BuildTestGateFailureKind kind,
+        GateDependencyCacheSession? session,
+        IReadOnlyList<BuildTestGateDependencyCacheEvidence> evidence,
+        RingOutput output)
+    {
+        if (kind != BuildTestGateFailureKind.GateEnvironment || session is null) return;
+        var scopes = GateEnvironmentFailurePolicy.ScopesToEvict(CacheDecisions(evidence));
+        if (scopes.Count == 0) return;
+        foreach (var message in session.Evict("toolchain-failed-before-test-discovery", scopes))
+            output.AppendLine($"# {message}");
+    }
+
+    /// <summary>
+    /// Appends the cache decision to a failed gate reason so the reason that
+    /// reaches the integration step names the tree the run used. A
+    /// <c>hit</c> beside a toolchain failure is the CAC-18 signature and must not
+    /// stay buried in the transcript.
+    /// </summary>
+    private static string ReasonWithCacheDecision(
+        string reason,
+        IReadOnlyList<BuildTestGateDependencyCacheEvidence> evidence)
+    {
+        if (evidence.Count == 0) return reason;
+        var decisions = string.Join(", ", evidence
+            .Select(item =>
+                $"{item.WorkingSubdir}={item.State}/{item.Reason}" +
+                (item.InstallRan ? " installed" : " cached")));
+        return $"{reason} [dependency-cache {decisions}]";
+    }
 
     private static string CoverageReason(string reason, TestSelectionAudit audit)
     {
@@ -1524,6 +1584,11 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
     }
 
     internal static BuildTestGateFailureKind ClassifyFailure(BuildTestGateProcessEvidence process)
+        => ClassifyFailure(process, []);
+
+    internal static BuildTestGateFailureKind ClassifyFailure(
+        BuildTestGateProcessEvidence process,
+        IReadOnlyList<GateDependencyCacheDecision> dependencyCache)
     {
         if (process.LaunchError is not null) return BuildTestGateFailureKind.ProcessLaunch;
         if (process.Cancelled) return BuildTestGateFailureKind.Cancellation;
@@ -1531,6 +1596,12 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         if (process.ExitCode == 137 || string.Equals(process.TerminationSignal, "SIGKILL", StringComparison.Ordinal))
             return BuildTestGateFailureKind.OutOfMemory;
         var evidence = process.StandardError + "\n" + process.StandardOutput;
+        // AGT-2720: a bundler or type-checker death before the runner reported a
+        // single test never judged the subject. It is infrastructure while the
+        // gate still holds a cached dependency tree it can drop; once the scope
+        // installed fresh, the same frame is an honest product failure.
+        if (GateEnvironmentFailurePolicy.IsRepairableEnvironmentFailure(evidence, dependencyCache))
+            return BuildTestGateFailureKind.GateEnvironment;
         var classified = ClassifyFailure(evidence);
         if (classified == BuildTestGateFailureKind.None)
             return BuildTestGateFailureKind.Code;
@@ -1653,6 +1724,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
             $"\nbudget={p.ViolatedBudget?.Name}\n{p.StandardOutput}\n{p.StandardError}"));
         return result with
         {
+            Reason = ReasonWithCacheDecision(result.Reason, result.DependencyCache),
             FailureKind = kind,
             FailureFingerprint = Fingerprint(kind, result.Reason + "\n" + result.Output + "\n" + processEvidence),
             TerminationSignal = result.TerminationSignal

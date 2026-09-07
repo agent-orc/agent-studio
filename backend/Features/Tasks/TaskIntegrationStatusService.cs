@@ -616,11 +616,28 @@ public sealed class TaskIntegrationStatusService
             Status = IntegrationStatuses.Pending,
             DeliveryRef = deliveryRef,
             IntegrationBranch = branchName,
-            Detail = deliveryRef is null
-                ? $"Accepted work is not yet in {branchName}."
-                : $"Delivery ref '{deliveryRef}' is not yet integrated into {branchName}.",
+            Detail = GateEnvironmentHoldDetail(job)
+                ?? (deliveryRef is null
+                    ? $"Accepted work is not yet in {branchName}."
+                    : $"Delivery ref '{deliveryRef}' is not yet integrated into {branchName}."),
             Repositories = repositories ?? [],
         };
+    }
+
+    /// <summary>
+    /// AGT-2720 - the pending detail for a card whose last integration attempt was
+    /// held by a broken gate environment. Without it the operator sees a bare
+    /// "not integrated yet" and cannot tell an untried delivery from one whose
+    /// gate died inside its own bundler. Returns null for every other attempt.
+    /// </summary>
+    private string? GateEnvironmentHoldDetail(TaskInfo job)
+    {
+        var step = ReadLatestMergeStep(job);
+        if (!AcceptedIntegrationFailurePolicy.IsGateEnvironmentHold(step?.Verdict)) return null;
+        var reason = string.IsNullOrWhiteSpace(step!.Reason) ? step.VerdictSummary : step.Reason;
+        return string.IsNullOrWhiteSpace(reason)
+            ? "Gate environment: the gate failed before the first test; the integration retries."
+            : $"Gate environment: {reason!.Trim()}";
     }
 
     private static TaskIntegrationStatus Integrated(

@@ -104,4 +104,22 @@ public sealed class AcceptedIntegrationFailurePolicyTests
             "No merge needed.",
             verdictSummary: null));
     }
+
+    [Theory]
+    [InlineData(PipelineStepStatus.Skipped)]
+    [InlineData(PipelineStepStatus.Failed)]
+    public void Classify_GateEnvironmentHold_IsNeverACardFailure(PipelineStepStatus status)
+    {
+        // AGT-2720: a gate that never reached the first test judged nothing, so no
+        // status and no persisted code may turn it into a typed card failure.
+        Assert.Null(AcceptedIntegrationFailurePolicy.Classify(
+            status,
+            IntegrationStepVerdicts.GateEnvironment,
+            "The pre-main gate environment failed before the first test.",
+            verdictSummary: null,
+            persistedCode: AcceptedIntegrationFailureCodes.BuildGateFailed));
+        Assert.True(AcceptedIntegrationFailurePolicy.IsGateEnvironmentHold(
+            IntegrationStepVerdicts.GateEnvironment));
+        Assert.False(AcceptedIntegrationFailurePolicy.IsGateEnvironmentHold("gate-failed"));
+    }
 }

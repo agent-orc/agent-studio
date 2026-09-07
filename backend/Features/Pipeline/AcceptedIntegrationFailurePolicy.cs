@@ -1,6 +1,21 @@
 namespace AgentStudio.Pipeline;
 
 /// <summary>
+/// Durable verdict tokens of the accepted-integration step that other policies
+/// key on. Only the tokens with cross-component meaning live here.
+/// </summary>
+public static class IntegrationStepVerdicts
+{
+    /// <summary>
+    /// AGT-2720 - the gate could not judge the merge subject because its own
+    /// environment failed before the first test. The attempt is undecided: the
+    /// card stays <c>pending</c> with this reason and the backstop retries it.
+    /// It is never a typed integration failure.
+    /// </summary>
+    public const string GateEnvironment = "gate-environment";
+}
+
+/// <summary>
 /// Stable failure codes projected from the accepted-integration step. The raw
 /// pipeline reason remains evidence; cards consume these codes and concise
 /// operator copy instead of treating every failure as an undifferentiated
@@ -50,6 +65,11 @@ public static class AcceptedIntegrationFailurePolicy
         string? verdictSummary,
         string? persistedCode = null)
     {
+        // AGT-2720: a gate that never reached the first test judged nothing. Even
+        // if a caller records it as Failed, it must not become a card failure -
+        // that is exactly how CAC-18 was marked partial for 412 green reviews.
+        if (IsGateEnvironmentHold(verdict)) return null;
+
         var isNoTaskBranch = string.Equals(
             verdict,
             "no-branch",
@@ -130,6 +150,17 @@ public static class AcceptedIntegrationFailurePolicy
                 RebaseRecoveryAvailable: false),
         };
     }
+
+    /// <summary>
+    /// True when the recorded attempt is an undecided gate-environment hold. Both
+    /// the card projection and the merge-queue projection use this so the pending
+    /// state and its reason cannot drift apart.
+    /// </summary>
+    public static bool IsGateEnvironmentHold(string? verdict)
+        => string.Equals(
+            verdict,
+            IntegrationStepVerdicts.GateEnvironment,
+            StringComparison.OrdinalIgnoreCase);
 
     private static string InferCode(string? verdict, string? reason)
     {
