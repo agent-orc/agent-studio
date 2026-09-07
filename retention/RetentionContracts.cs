@@ -81,6 +81,24 @@ public sealed record ArchiveManifest
 
 public sealed record ArchiveManifestFile(string RelativePath, long Size, string Sha256);
 
+/// <summary>A task directory located by structure: <c>projects/&lt;project&gt;/tasks/&lt;bucket&gt;/&lt;task&gt;</c>.</summary>
+public sealed record TaskFolder(string ProjectPath, string BucketPath, string TaskPath);
+
+public sealed record ReExcerptResult(
+    string Project,
+    string TaskKey,
+    int Stage,
+    string? ExcerptPath,
+    long PreviousBytes,
+    long Bytes,
+    string? Error)
+{
+    public bool Succeeded => Error is null;
+
+    public static ReExcerptResult Failed(RetentionTaskInventory task, string error)
+        => new(task.Project, task.TaskKey, -1, null, 0, 0, error);
+}
+
 public sealed record ArchivePointer
 {
     public int SchemaVersion { get; init; } = 1;

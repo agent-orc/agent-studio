@@ -29,6 +29,7 @@ public sealed record TaskServerCommandLine(
           task-server retention plan --workspace <path> [--policy <file|default>] [--archive <path>] [--project <project>] [--task <key>] [--json]
           task-server retention apply --workspace <path> [--policy <file|default>] [--archive <path>] [--project <project>] [--task <key>] [--json]
           task-server retention restore --workspace <path> --task <key> [--archive <path>] [--json]
+          task-server retention re-excerpt --workspace <path> [--archive <path>] [--task <key>] [--json]
           task-server retention backup-full --workspace <path> --out <backup-root> [--json]
           task-server retention verify-full --out <backup-directory> [--json]
           task-server retention restore-full --workspace <empty-path> --out <backup-directory> [--json]
@@ -68,7 +69,7 @@ public sealed record TaskServerCommandLine(
             return new TaskServerCommandLine(TaskServerCommandKind.Retention, null, [],
                 new RetentionCommandLine("help", null, "default", null, null, null, null, false));
         var operation = args[1].ToLowerInvariant();
-        if (operation is not ("plan" or "apply" or "restore" or "backup-full" or "verify-full" or "restore-full"))
+        if (operation is not ("plan" or "apply" or "restore" or "re-excerpt" or "backup-full" or "verify-full" or "restore-full"))
             throw new ArgumentException($"Unknown retention operation '{args[1]}'.");
         string? workspace = null, archive = null, project = null, task = null, output = null;
         var policy = "default";
@@ -90,7 +91,7 @@ public sealed record TaskServerCommandLine(
                 default: throw new ArgumentException($"Unknown retention option '{args[index - 1]}'.");
             }
         }
-        if (operation is ("plan" or "apply" or "restore" or "backup-full") && string.IsNullOrWhiteSpace(workspace))
+        if (operation is ("plan" or "apply" or "restore" or "re-excerpt" or "backup-full") && string.IsNullOrWhiteSpace(workspace))
             throw new ArgumentException($"retention {operation} requires --workspace.");
         if (operation == "restore" && string.IsNullOrWhiteSpace(task))
             throw new ArgumentException("retention restore requires --task.");

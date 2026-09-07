@@ -49,6 +49,82 @@ public sealed class RetentionCliTests : IDisposable
         Assert.Throws<ArgumentException>(() => TaskServerCommandLine.Parse(["retention", "backup-full", "--workspace", "x"]));
     }
 
+    /// <summary>The pseudo task carries workspace-wide runtime data and belongs to no project.</summary>
+    [Fact]
+    public async Task ProjectScopedPlanExcludesTheWorkspaceRuntimePseudoTask()
+    {
+        _fixture.SeedTask("P", "7-archive", "P-9", DateTimeOffset.UtcNow.AddDays(-1));
+        SeedOldBusLog();
+
+        Assert.Equal(0, await RunAsync("plan"));
+        Assert.Contains(LatestReport().ByProject, group => group.Name == RetentionCommand.RuntimePseudoProject);
+
+        Assert.Equal(0, await RunAsync("plan", "--project", "P"));
+        var scoped = LatestReport();
+        Assert.DoesNotContain(scoped.ByProject, group => group.Name == RetentionCommand.RuntimePseudoProject);
+        Assert.DoesNotContain(scoped.TopTasks, item => item.TaskKey == "_runtime");
+    }
+
+    /// <summary>
+    /// The first apply report showed hotTaskBytes rising from 7.7 GB to 9.0 GB because the excerpts it had
+    /// just written were counted as hot task data. The excerpt cost is now its own figure.
+    /// </summary>
+    [Fact]
+    public async Task ApplyReportsExcerptBytesSeparatelyFromHotTaskBytes()
+    {
+        var root = _fixture.SeedTask("P", "7-archive", "P-9", DateTimeOffset.UtcNow.AddDays(-60));
+        Directory.CreateDirectory(Path.Combine(root, "logs"));
+        await File.WriteAllLinesAsync(Path.Combine(root, "logs", "cli-output.log"),
+            Enumerable.Range(1, 4000).Select(index => $"[12:00:00] line {index}"));
+
+        Assert.Equal(0, await RunAsync("apply"));
+
+        var report = LatestReport();
+        var excerpt = Path.Combine(root, "retention-excerpt-stage-1.md");
+        Assert.True(File.Exists(excerpt));
+        Assert.Equal(new FileInfo(excerpt).Length, report.After.ExcerptBytes);
+        Assert.True(report.After.HotTaskBytes < report.Before.HotTaskBytes,
+            $"hot task bytes must shrink: {report.Before.HotTaskBytes} -> {report.After.HotTaskBytes}");
+        Assert.True(report.After.ColdBytes > 0);
+    }
+
+    [Fact]
+    public async Task ReExcerptRebuildsBoundedExcerptsFromTheColdPayload()
+    {
+        var root = _fixture.SeedTask("P", "7-archive", "P-9", DateTimeOffset.UtcNow.AddDays(-60));
+        Directory.CreateDirectory(Path.Combine(root, "logs"));
+        await File.WriteAllLinesAsync(Path.Combine(root, "logs", "cli-output.log"),
+            Enumerable.Range(1, 4000).Select(index => $"[12:00:00] ERROR failed step {index}"));
+        Assert.Equal(0, await RunAsync("apply"));
+
+        // Stand in for the bloated excerpts the operator withheld; the originals are only in the archive now.
+        var excerpt = Path.Combine(root, "retention-excerpt-stage-1.md");
+        await File.WriteAllTextAsync(excerpt, new string('x', 1024 * 1024));
+
+        Assert.Equal(0, await RunAsync("re-excerpt"));
+
+        var rebuilt = await File.ReadAllTextAsync(excerpt);
+        Assert.StartsWith("# Retention excerpt", rebuilt, StringComparison.Ordinal);
+        Assert.True(new FileInfo(excerpt).Length <= RetentionExcerptWriter.MaxExcerptBytes);
+        Assert.Contains("ERROR failed step", rebuilt, StringComparison.Ordinal);
+        Assert.False(File.Exists(Path.Combine(root, "logs", "cli-output.log")), "originals stay cold");
+    }
+
+    private void SeedOldBusLog()
+    {
+        var path = Path.Combine(_fixture.Workspace, "logs", "bus", "old.jsonl");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, "{}\n");
+        File.SetLastWriteTimeUtc(path, DateTime.UtcNow.AddDays(-200));
+    }
+
+    private async Task<int> RunAsync(string operation, params string[] extra)
+    {
+        string[] args = ["retention", operation, "--workspace", _fixture.Workspace, "--archive", _fixture.Archive,
+            "--policy", "default", "--json", .. extra];
+        return await RetentionCommand.RunAsync(TaskServerCommandLine.Parse(args).Retention!, default);
+    }
+
     private RetentionCliReport LatestReport()
     {
         var path = Directory.EnumerateFiles(Path.Combine(_fixture.Workspace, ".metadata", "retention-runs"), "*.json")

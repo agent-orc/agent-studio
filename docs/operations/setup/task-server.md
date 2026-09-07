@@ -195,16 +195,30 @@ workspace, never a directory inside the Git repository.
 dotnet task-server.dll retention plan --workspace /srv/agent-taskboard-workspace --policy default
 dotnet task-server.dll retention apply --workspace /srv/agent-taskboard-workspace --policy retention-policy.json --json
 dotnet task-server.dll retention restore --workspace /srv/agent-taskboard-workspace --policy default --task AGT-2743
+dotnet task-server.dll retention re-excerpt --workspace /srv/agent-taskboard-workspace
 dotnet task-server.dll retention --help
 ```
 
 Use `--archive <path>` to override the sibling cold-store path. `--project`
-and `--task` narrow a plan or apply run. `plan` never moves or deletes an
-artifact. It writes a versioned report under
+and `--task` narrow a plan or apply run; a scoped run excludes the
+workspace-wide `_workspace/_runtime` pseudo task. `plan` never moves or deletes
+an artifact. It writes a versioned report under
 `.metadata/retention-runs/<timestamp>-plan.json`. `apply` writes the same
 before/after metrics, appends `.metadata/retention-audit.jsonl`, and records
 each project's hot-tree deletions in one commit. The report groups action
 counts and bytes by rule and project and lists the largest affected tasks.
+
+`before` and `after` report `hotTaskBytes` without the excerpts and carry the
+excerpt cost as its own `excerptBytes` figure, so an archive run does not read
+as growth. Runtime rotation is committed separately: only tracked paths are
+staged, untracked and ignored ones are skipped, and a rotation problem is a
+warning that leaves the exit code at 0 rather than losing the archive commit.
+
+`re-excerpt` rebuilds the hot excerpts from the cold payloads and stages them.
+Use it after an excerpt-writer change, when the originals have already left the
+hot tree. Excerpts are bounded: at most 20 error windows, a summarised timestamp
+section (first, last, duration, and gaps over a minute), 100 commands, and
+256 KB in total with a truncation marker.
 
 The built-in policy keeps authority data hot, retains active and review lanes,
 creates content-aware Markdown excerpts when heavy class-C originals become
@@ -227,7 +241,12 @@ manifests and payloads, then `inventory.json`, and writes `complete.json` last.
 `inventory.json` schema version 1 contains `createdAt`, `workspaceName`,
 `taskCount`, `coldPayloadCount`, `totalBytes`, a sorted `files[]` list
 (`relativePath`, `size`, `sha256`), and `setSha256`, the SHA-256 of the stable
-path/size/hash sequence. Verification checks every file and both set hashes.
+path/size/hash sequence, plus `warnings[]` and per-step `steps[]` timings
+(`bundle`, `evidence-copy`, `manifests`, `hashing`). Archive pointers are read
+only where they sit next to a `task.json`, so foreign copies a task carries
+under `results/` or `attachments/` are ignored; pointers are validated before
+the bundle step, and an unreadable one is a warning rather than an abort.
+Verification checks every file and both set hashes.
 Restore refuses a non-empty destination, clones the bundle, overlays untracked
 evidence, restores the sibling cold tree, and rewrites archive pointers to that
 new cold location.

@@ -47,6 +47,8 @@ public static class RetentionCommand
 
             var policy = await LoadPolicyAsync(command.Policy, cancellationToken);
             var store = new FileTreeRetentionStore(command.Workspace!, command.ArchivePath);
+            if (command.Operation == "re-excerpt")
+                return await ReExcerptAsync(command, store, cancellationToken);
             if (command.Operation == "restore")
             {
                 await store.RestoreAsync(command.Task!, cancellationToken);
@@ -72,7 +74,8 @@ public static class RetentionCommand
                 result = new RetentionExecutor(store).ApplyAsync(plan, policy, cancellationToken).GetAwaiter().GetResult();
                 try
                 {
-                    CommitAppliedChanges(command.Workspace!, plan, result);
+                    var warnings = CommitAppliedChanges(command.Workspace!, plan, result);
+                    result = result with { Warnings = [.. result.Warnings, .. warnings] };
                 }
                 catch (Exception exception)
                 {
@@ -93,13 +96,64 @@ public static class RetentionCommand
         }
     }
 
+    /// <summary>
+    /// Rebuilds hot excerpts from the cold payloads and stages them, so a corrected excerpt writer can be
+    /// applied to tasks whose originals already left the hot tree.
+    /// </summary>
+    private static async Task<int> ReExcerptAsync(
+        RetentionCommandLine command,
+        FileTreeRetentionStore store,
+        CancellationToken cancellationToken)
+    {
+        IReadOnlyList<ReExcerptResult> results = [];
+        var staged = 0;
+        var warnings = new List<string>();
+        RepositoryWriteGate.Run(command.Workspace!, () =>
+        {
+            results = store.ReExcerptAsync(command.Task, cancellationToken).GetAwaiter().GetResult();
+            var paths = results.Where(item => item.Succeeded).Select(item => item.ExcerptPath!).ToList();
+            foreach (var chunk in paths.Chunk(200))
+            {
+                var add = RetentionGitCommand.Run(command.Workspace!, ["add", "--", .. chunk]);
+                if (add.Code == 0) staged += chunk.Length;
+                else warnings.Add($"re-excerpt: could not stage {chunk.Length} excerpts: {add.Error.Trim()}");
+            }
+        });
+
+        var rebuilt = results.Where(item => item.Succeeded).ToList();
+        var failed = results.Where(item => !item.Succeeded).ToList();
+        var summary = new
+        {
+            rebuilt = rebuilt.Count,
+            failed = failed.Count,
+            staged,
+            previousBytes = rebuilt.Sum(item => item.PreviousBytes),
+            bytes = rebuilt.Sum(item => item.Bytes),
+            largestBytes = rebuilt.Count == 0 ? 0 : rebuilt.Max(item => item.Bytes),
+            warnings,
+            errors = failed.Select(item => $"{item.Project}/{item.TaskKey}: {item.Error}").ToList(),
+            results = rebuilt,
+        };
+        Write(command.Json, summary,
+            $"Re-excerpt: {rebuilt.Count} excerpts rebuilt ({summary.previousBytes} -> {summary.bytes} bytes), "
+            + $"{staged} staged, {failed.Count} failed.");
+        return failed.Count == 0 ? 0 : 1;
+    }
+
+    /// <summary>The workspace-wide runtime pseudo task belongs to no project; a scoped run must not report it.</summary>
+    public const string RuntimePseudoProject = "_workspace";
+
     private static IReadOnlyList<RetentionTaskInventory> Filter(
         IReadOnlyList<RetentionTaskInventory> inventory,
         RetentionCommandLine command)
-        => inventory.Where(item =>
-                (string.IsNullOrWhiteSpace(command.Project) || string.Equals(item.Project, command.Project, StringComparison.OrdinalIgnoreCase))
+    {
+        var scoped = !string.IsNullOrWhiteSpace(command.Project) || !string.IsNullOrWhiteSpace(command.Task);
+        return inventory.Where(item =>
+                (!scoped || !string.Equals(item.Project, RuntimePseudoProject, StringComparison.OrdinalIgnoreCase))
+                && (string.IsNullOrWhiteSpace(command.Project) || string.Equals(item.Project, command.Project, StringComparison.OrdinalIgnoreCase))
                 && (string.IsNullOrWhiteSpace(command.Task) || string.Equals(item.TaskKey, command.Task, StringComparison.OrdinalIgnoreCase)))
             .ToList();
+    }
 
     private static async Task<RetentionPolicy> LoadPolicyAsync(string value, CancellationToken cancellationToken)
     {
@@ -130,7 +184,10 @@ public static class RetentionCommand
             plan.Actions.GroupBy(action => new { action.Task.Project, action.Task.TaskKey })
                 .Select(group => new RetentionTopTask(group.Key.Project, group.Key.TaskKey, group.Count(), group.Sum(action => action.Bytes)))
                 .OrderByDescending(item => item.Bytes).Take(20).ToList(),
-            before, after, run?.AppliedActions ?? 0, run?.AppliedBytes ?? 0, run?.Errors ?? []);
+            before, after, run?.AppliedActions ?? 0, run?.AppliedBytes ?? 0, run?.Errors ?? [])
+        {
+            Warnings = run?.Warnings ?? [],
+        };
     }
 
     private static RetentionWorkspaceMetrics Measure(FileTreeRetentionStore store)
@@ -143,13 +200,21 @@ public static class RetentionCommand
         var coldFiles = Directory.Exists(store.ArchivePath)
             ? Directory.EnumerateFiles(store.ArchivePath, "*", SearchOption.AllDirectories).ToList() : [];
         var gitPath = Path.Combine(store.WorkspacePath, ".git");
+
+        // Excerpts are what retention adds, not what it leaves behind: reporting them inside hotTaskBytes
+        // made an archive run look like growth. They are counted on their own line instead.
+        var excerpts = taskFiles.Where(IsExcerptPath).ToList();
         return new RetentionWorkspaceMetrics(
             taskFiles.Count(path => string.Equals(Path.GetFileName(path), "task.json", StringComparison.OrdinalIgnoreCase)),
-            taskFiles.Sum(path => new FileInfo(path).Length),
+            taskFiles.Where(path => !IsExcerptPath(path)).Sum(path => new FileInfo(path).Length),
+            excerpts.Sum(path => new FileInfo(path).Length),
             coldFiles.Sum(path => new FileInfo(path).Length),
             workspaceFiles.Sum(path => new FileInfo(path).Length),
             Directory.Exists(gitPath) ? Directory.EnumerateFiles(gitPath, "*", SearchOption.AllDirectories).Sum(path => new FileInfo(path).Length) : 0);
     }
+
+    private static bool IsExcerptPath(string path)
+        => Path.GetFileName(path).StartsWith("retention-excerpt", StringComparison.OrdinalIgnoreCase);
 
     private static void EnsureRuntimeIgnores(string workspace)
     {
@@ -166,9 +231,14 @@ public static class RetentionCommand
             _ = RetentionGitCommand.Run(workspace, ["rm", "-r", "--cached", "--ignore-unmatch", "--", "logs/bus"]);
     }
 
-    private static void CommitAppliedChanges(string workspace, RetentionPlan plan, RetentionRunResult run)
+    /// <summary>
+    /// Commits the archive evidence per project, then the runtime rotation. Runtime failures are warnings:
+    /// the archive commit is the valuable part and must never be lost because a rotation path was untracked.
+    /// </summary>
+    private static IReadOnlyList<string> CommitAppliedChanges(string workspace, RetentionPlan plan, RetentionRunResult run)
     {
-        if (!Directory.Exists(Path.Combine(workspace, ".git"))) return;
+        if (!Directory.Exists(Path.Combine(workspace, ".git"))) return [];
+        var warnings = new List<string>();
         var archived = plan.Actions.Where(action => action.Kind is RetentionActionKind.ArchiveHeavy or RetentionActionKind.ArchiveTask)
             .GroupBy(action => action.Task.Project, StringComparer.OrdinalIgnoreCase);
         foreach (var project in archived)
@@ -182,15 +252,69 @@ public static class RetentionCommand
                 "commit", "-m", $"retention: archived {count} tasks, {bytes} bytes", "--", path]);
             if (commit.Code != 0) throw new InvalidOperationException($"Retention evidence commit failed for {project.Key}: {commit.Error}");
         }
-        var runtimePaths = new[] { ".gitignore", "logs/bus", ".metadata/attempt-authority.archive-*.json" };
-        _ = RetentionGitCommand.Run(workspace, ["add", "-A", "--", .. runtimePaths]);
-        if (RetentionGitCommand.Run(workspace, ["diff", "--cached", "--quiet", "--", .. runtimePaths]).Code == 1)
+
+        try
         {
-            var commit = RetentionGitCommand.Run(workspace, ["-c", "user.name=agent-orchestrator", "-c", "user.email=agent-orchestrator@local",
-                "commit", "-m", "retention: rotate runtime artifacts", "--", .. runtimePaths]);
-            if (commit.Code != 0) throw new InvalidOperationException($"Runtime retention commit failed: {commit.Error}");
+            warnings.AddRange(CommitRuntimeRotation(workspace));
         }
+        catch (Exception exception)
+        {
+            warnings.Add($"runtime-commit: {exception.Message}");
+        }
+        return warnings;
     }
+
+    /// <summary>
+    /// Stages the runtime rotation by tracked path. Git pathspecs are literal, so a glob like
+    /// <c>attempt-authority.archive-*.json</c> aborts the commit; ignored and untracked paths carry
+    /// nothing to commit at all. Both are resolved through <c>git ls-files</c> instead.
+    /// </summary>
+    private static IReadOnlyList<string> CommitRuntimeRotation(string workspace)
+    {
+        var warnings = new List<string>();
+
+        var ignoreAdd = RetentionGitCommand.Run(workspace, ["add", "--", ".gitignore"]);
+        if (ignoreAdd.Code != 0)
+            warnings.Add($"runtime-commit: could not stage .gitignore: {ignoreAdd.Error.Trim()}");
+
+        // Only tracked files can carry a deletion into a commit; untracked and ignored paths are skipped.
+        var tracked = TrackedFiles(workspace).Where(IsRotatableRuntimePath).ToList();
+        foreach (var chunk in tracked.Chunk(200))
+        {
+            var add = RetentionGitCommand.Run(workspace, ["add", "-A", "--", .. chunk]);
+            if (add.Code != 0)
+                warnings.Add($"runtime-commit: could not stage {chunk.Length} runtime paths: {add.Error.Trim()}");
+        }
+
+        // Read the staged set back rather than re-deriving pathspecs: EnsureRuntimeIgnores already staged
+        // the logs/bus index removal, so those paths are no longer tracked but still need committing.
+        var staged = StagedFiles(workspace)
+            .Where(path => IsRotatableRuntimePath(path) || string.Equals(path, ".gitignore", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (staged.Count == 0) return warnings;
+
+        var commit = RetentionGitCommand.Run(workspace, ["-c", "user.name=agent-orchestrator", "-c", "user.email=agent-orchestrator@local",
+            "commit", "-m", $"retention: rotate runtime artifacts ({staged.Count} paths)", "--", .. staged]);
+        if (commit.Code != 0)
+            warnings.Add($"runtime-commit: rotation commit failed: {commit.Error.Trim()}");
+        return warnings;
+    }
+
+    private static bool IsRotatableRuntimePath(string path)
+        => path.StartsWith("logs/bus/", StringComparison.OrdinalIgnoreCase)
+           || path.StartsWith(".metadata/attempt-authority", StringComparison.OrdinalIgnoreCase);
+
+    private static IReadOnlyList<string> TrackedFiles(string workspace)
+        => NulSeparated(RetentionGitCommand.Run(workspace, ["ls-files", "-z"]));
+
+    private static IReadOnlyList<string> StagedFiles(string workspace)
+        => NulSeparated(RetentionGitCommand.Run(workspace, ["diff", "--cached", "--name-only", "-z"]));
+
+    private static IReadOnlyList<string> NulSeparated(RetentionGitResult result)
+        => result.Code != 0
+            ? []
+            : result.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries)
+                .Select(path => path.Trim()).Where(path => path.Length > 0).ToList();
 
     private static async Task<string> WriteReportAsync(string workspace, RetentionCliReport report, CancellationToken cancellationToken)
     {
@@ -234,8 +358,18 @@ public sealed record RetentionCliReport(
     RetentionWorkspaceMetrics After,
     int AppliedActions,
     long AppliedBytes,
-    IReadOnlyList<string> Errors);
+    IReadOnlyList<string> Errors)
+{
+    public IReadOnlyList<string> Warnings { get; init; } = [];
+}
 
 public sealed record RetentionReportGroup(string Name, int Count, long Bytes);
 public sealed record RetentionTopTask(string Project, string TaskKey, int Actions, long Bytes);
-public sealed record RetentionWorkspaceMetrics(int Tasks, long HotTaskBytes, long ColdBytes, long WorkspaceBytes, long GitDirectoryBytes);
+
+public sealed record RetentionWorkspaceMetrics(
+    int Tasks,
+    long HotTaskBytes,
+    long ExcerptBytes,
+    long ColdBytes,
+    long WorkspaceBytes,
+    long GitDirectoryBytes);
