@@ -75,6 +75,71 @@ public sealed class QuotaAdmissionPlannerTests : IDisposable
     }
 
     [Fact]
+    public void NearbyReset_ExpensiveCardSwitchesInsteadOfWaiting()
+    {
+        var fallback = Routing(new CliModelRouteProfile
+        {
+            CliType = "codex",
+            PrimaryModel = ModelIds.Gpt56Sol,
+        });
+        Snapshot("codex", ("Weekly", 98, Now.AddMinutes(12)));
+        Snapshot("claude", ("Weekly", 34, Now.AddHours(4)));
+
+        var plan = QuotaAdmissionPlanner.Plan(
+            "codex",
+            ModelIds.Gpt56Sol,
+            "high",
+            fallback,
+            _caps,
+            c => c != null && _snapshots.TryGetValue(c, out var snapshot) ? snapshot : null,
+            Now,
+            occupiedSlots: 1,
+            new ResolvedCliQuotaWaitPolicy(true, 30, "global", null, null, true, 30),
+            QuotaExpectedCostClass.Expensive,
+            "remote-coding-claim");
+
+        Assert.Equal(QuotaAdmissionOutcome.LaunchFallback, plan.Outcome);
+        Assert.Equal(CliTypes.Claude, plan.CliType);
+        Assert.Equal(ModelIds.ClaudeOpus5, plan.Model);
+        Assert.Equal("high", plan.ThinkingLevel);
+        Assert.Contains("cost expensive", plan.Reason);
+        Assert.Contains("headroom", plan.Reason);
+    }
+
+    [Fact]
+    public void LowFallbackHeadroom_AdmitsCheapCallButReservesCapacityFromExpensiveCard()
+    {
+        var fallback = Routing(new CliModelRouteProfile
+        {
+            CliType = "codex",
+            PrimaryModel = ModelIds.Gpt56Sol,
+        });
+        Snapshot("codex", ("Weekly", 98, Now.AddHours(1)));
+        Snapshot("claude", ("Weekly", 92, Now.AddHours(1)));
+
+        QuotaAdmissionPlan Decide(QuotaExpectedCostClass cost) => QuotaAdmissionPlanner.Plan(
+            "codex",
+            ModelIds.Gpt56Sol,
+            "medium",
+            fallback,
+            _caps,
+            c => c != null && _snapshots.TryGetValue(c, out var snapshot) ? snapshot : null,
+            Now,
+            occupiedSlots: 0,
+            waitPolicy: null,
+            cost,
+            "cost-aware-test");
+
+        var cheap = Decide(QuotaExpectedCostClass.Cheap);
+        var expensive = Decide(QuotaExpectedCostClass.Expensive);
+
+        Assert.Equal(QuotaAdmissionOutcome.LaunchFallback, cheap.Outcome);
+        Assert.Equal(QuotaAdmissionOutcome.Wait, expensive.Outcome);
+        Assert.Contains("reserve required for expensive", expensive.Reason);
+        Assert.Equal(QuotaExpectedCostClass.Expensive, expensive.ExpectedCost);
+    }
+
+    [Fact]
     public void DistantReset_UsesFallbackBeforeThrottle()
     {
         var fallback = Routing(new CliModelRouteProfile
@@ -183,7 +248,7 @@ public sealed class QuotaAdmissionPlannerTests : IDisposable
     [Fact]
     public void ProjectedBreach_NoFallback_SlotBusy_Throttles()
     {
-        var fallback = Routing(new CliModelRouteProfile { CliType = "claude", PrimaryModel = "claude-opus" });
+        var fallback = Routing(new CliModelRouteProfile { CliType = "claude", PrimaryModel = "claude-opus", FallbackDisabled = true });
         Snapshot("claude", ("5-hour", 60, Now.AddHours(2.5)));
 
         var plan = Plan("claude", fallback, occupiedSlots: 1);
@@ -196,7 +261,7 @@ public sealed class QuotaAdmissionPlannerTests : IDisposable
     [Fact]
     public void ProjectedBreach_NoFallback_NoSlotBusy_LaunchesPrimaryFlagged()
     {
-        var fallback = Routing(new CliModelRouteProfile { CliType = "claude", PrimaryModel = "claude-opus" });
+        var fallback = Routing(new CliModelRouteProfile { CliType = "claude", PrimaryModel = "claude-opus", FallbackDisabled = true });
         Snapshot("claude", ("5-hour", 60, Now.AddHours(2.5)));
 
         var plan = Plan("claude", fallback, occupiedSlots: 0);
@@ -227,7 +292,7 @@ public sealed class QuotaAdmissionPlannerTests : IDisposable
     [Fact]
     public void NoSnapshot_LaunchesPrimary()
     {
-        var fallback = Routing(new CliModelRouteProfile { CliType = "claude", PrimaryModel = "claude-opus" });
+        var fallback = Routing(new CliModelRouteProfile { CliType = "claude", PrimaryModel = "claude-opus", FallbackDisabled = true });
         var plan = Plan("claude", fallback, occupiedSlots: 0);
         Assert.Equal(QuotaAdmissionOutcome.LaunchPrimary, plan.Outcome);
     }
@@ -236,7 +301,7 @@ public sealed class QuotaAdmissionPlannerTests : IDisposable
     [Fact]
     public void DescribeLoadNumbers_CarriesBurnRateBudgetAndTime()
     {
-        var fallback = Routing(new CliModelRouteProfile { CliType = "claude", PrimaryModel = "claude-opus" });
+        var fallback = Routing(new CliModelRouteProfile { CliType = "claude", PrimaryModel = "claude-opus", FallbackDisabled = true });
         // 60% at the halfway point of a 5-hour window -> projects to 120%.
         Snapshot("claude", ("5-hour", 60, Now.AddHours(2.5)));
         var plan = Plan("claude", fallback, occupiedSlots: 1);   // throttle: projected, no fallback, slot busy

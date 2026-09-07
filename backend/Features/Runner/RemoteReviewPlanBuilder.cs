@@ -4,10 +4,11 @@ using Contract = AgentStudio.TaskServer.Contracts;
 namespace AgentStudio.Runner;
 
 /// <summary>
-/// Freezes deterministic tool gates and read-only semantic aspect calls into the
-/// ReviewSubject before a remote executor claims it. The Task Server still owns
-/// admission and the final lane decision. The runner receives only immutable
-/// commands for the exact result SHA covered by the ReviewAttempt lease.
+/// Builds deterministic tool gates and declarative read-only semantic aspects
+/// for a ReviewSubject. Agent aspects retain their step and aspect identities;
+/// their CLI route is resolved from current settings immediately before claim.
+/// The runner receives only the resulting immutable effective command plan for
+/// the exact result SHA covered by the ReviewAttempt lease.
 /// </summary>
 public sealed class RemoteReviewPlanBuilder
 {
@@ -56,10 +57,6 @@ public sealed class RemoteReviewPlanBuilder
         var defaultModel = _configuration.GetValue(
             "ReviewDecisionOrchestrator:AspectModel",
             PipelineStepModelDefaults.SupportModel);
-        var defaultCli = ReviewDecisionOrchestrator.NormalizeReviewCliType(
-            _configuration.GetValue(
-                "ReviewDecisionOrchestrator:Cli",
-                PipelineStepModelDefaults.DefaultCli));
         var timeoutSeconds = Math.Clamp(
             _configuration.GetValue("ReviewDecisionOrchestrator:AspectTimeoutSeconds", 60),
             1,
@@ -77,13 +74,6 @@ public sealed class RemoteReviewPlanBuilder
                 continue;
 
             var model = PipelineStepConfigResolver.ResolveModel(settings, step, defaultModel);
-            var cliType = PipelineStepConfigResolver.ResolveCliType(settings, step) ?? defaultCli;
-            var thinking = PipelineStepConfigResolver.ResolveThinkingLevel(
-                settings,
-                step,
-                cliType,
-                model,
-                PipelineStepModelDefaults.SupportThinkingLevel);
             var prompt = _aspects.BuildAspectPrompt(
                 definition,
                 inputs,
@@ -93,14 +83,11 @@ public sealed class RemoteReviewPlanBuilder
             commands.Add(new Contract.ReviewCommandDto(
                 step.Id,
                 aspectId,
-                cliType,
+                string.Empty,
                 [],
                 TimeoutSeconds: timeoutSeconds,
                 ExecutionKind: Contract.ReviewCommandKinds.AgentAspect,
-                Prompt: prompt,
-                CliType: cliType,
-                Model: model,
-                ThinkingLevel: thinking));
+                Prompt: prompt));
         }
 
         return toolPlan with
@@ -110,6 +97,79 @@ public sealed class RemoteReviewPlanBuilder
                 .Select(command => command.Aspect)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray(),
+        };
+    }
+
+    /// <summary>
+    /// Re-resolves every agent-aspect command from current project settings.
+    /// Stored CLI fields are deliberately ignored, which makes review attempts
+    /// created by older servers follow a provider switch without being
+    /// superseded. Deterministic tool commands remain exactly as authored.
+    /// </summary>
+    public Contract.ReviewPlanDto ResolveAgentCommandsForClaim(
+        TaskInfo task,
+        ProjectSettings? projectSettings,
+        Contract.ReviewPlanDto sourcePlan,
+        string? integrationRef)
+    {
+        ArgumentNullException.ThrowIfNull(task);
+        ArgumentNullException.ThrowIfNull(sourcePlan);
+
+        var settings = PipelineTypeSettings.ForTask(projectSettings, task);
+        var pipeline = PipelineCatalogue.ForTask(task);
+        var defaultModel = _configuration.GetValue(
+            "ReviewDecisionOrchestrator:AspectModel",
+            PipelineStepModelDefaults.SupportModel);
+        var defaultCli = ReviewDecisionOrchestrator.NormalizeReviewCliType(
+            _configuration.GetValue(
+                "ReviewDecisionOrchestrator:Cli",
+                PipelineStepModelDefaults.DefaultCli));
+
+        var commands = sourcePlan.Commands.Select(command =>
+        {
+            if (!Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind))
+                return command;
+
+            var stepId = string.IsNullOrWhiteSpace(command.StepId)
+                ? $"aspect-{command.Aspect}"
+                : command.StepId.Trim();
+            var catalogueStep = pipeline.Post.FirstOrDefault(step =>
+                string.Equals(step.Id, stepId, StringComparison.OrdinalIgnoreCase));
+            var model = catalogueStep is null
+                ? PipelineStepConfigResolver.ResolveModel(settings, stepId, defaultModel)
+                : PipelineStepConfigResolver.ResolveModel(settings, catalogueStep, defaultModel);
+            var cliType = catalogueStep is null
+                ? PipelineStepConfigResolver.ResolveCliType(settings, stepId) ?? defaultCli
+                : PipelineStepConfigResolver.ResolveCliType(settings, catalogueStep) ?? defaultCli;
+            var thinking = catalogueStep is null
+                ? PipelineStepConfigResolver.ResolveThinkingLevel(
+                    settings,
+                    stepId,
+                    cliType,
+                    model,
+                    PipelineStepModelDefaults.SupportThinkingLevel)
+                : PipelineStepConfigResolver.ResolveThinkingLevel(
+                    settings,
+                    catalogueStep,
+                    cliType,
+                    model,
+                    PipelineStepModelDefaults.SupportThinkingLevel);
+
+            return command with
+            {
+                StepId = stepId,
+                FileName = cliType,
+                Arguments = [],
+                CliType = cliType,
+                Model = model,
+                ThinkingLevel = thinking,
+            };
+        }).ToArray();
+
+        return sourcePlan with
+        {
+            Commands = commands,
+            IntegrationRef = integrationRef ?? sourcePlan.IntegrationRef,
         };
     }
 

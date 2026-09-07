@@ -227,8 +227,14 @@ public static class CliEndpoints
             return Results.Ok(policy.SetGlobal(req.Enabled, req.ThresholdMinutes));
         });
 
-        cliGroup.MapGet("/quota/model-routes", (CliQuotaFallbackService routes) =>
-            Results.Ok(new { profiles = routes.GetAll() }));
+        cliGroup.MapGet("/quota/model-routes", (
+            CliQuotaFallbackService routes,
+            QuotaAdmissionService admission) =>
+            Results.Ok(new
+            {
+                profiles = routes.GetAll(),
+                activeFallbacks = admission.RefreshActiveFallbacks(),
+            }));
 
         cliGroup.MapPut("/quota/model-routes", (SetCliModelRouteRequest req, CliQuotaFallbackService routes) =>
         {
@@ -244,6 +250,8 @@ public static class CliEndpoints
                 FallbackCliType = req.FallbackCliType,
                 FallbackModel = req.FallbackModel,
                 FallbackThinkingLevel = req.FallbackThinkingLevel,
+                FallbackDisabled = req.FallbackDisabled,
+                FallbackSource = req.FallbackSource,
             });
             return Results.Ok(saved);
         });

@@ -548,7 +548,8 @@ public sealed class AttemptAuthorityService
         string hostId,
         int? requestedTtlSeconds,
         string idempotencyKey,
-        string? instanceId = null)
+        string? instanceId = null,
+        AgentStudio.TaskServer.Contracts.ReviewPlanDto? effectivePlan = null)
     {
         if (Blank(attemptId) || Blank(executorId) || Blank(hostId) || Blank(idempotencyKey))
             return new AttemptWriteResult(
@@ -598,6 +599,7 @@ public sealed class AttemptAuthorityService
                 requestedTtlSeconds,
                 now,
                 clientId: NormalizeNull(instanceId));
+            review.EffectivePlan = effectivePlan ?? review.Subject.Plan;
             review.CurrentClaimDeliveryKey = deliveryKey;
             review.IdempotencyKeys.Add(deliveryKey);
             PersistLocked();
@@ -614,7 +616,8 @@ public sealed class AttemptAuthorityService
         string executorId,
         string hostId,
         string instanceId,
-        int? requestedTtlSeconds)
+        int? requestedTtlSeconds,
+        Func<ReviewAttemptDto, ReviewClaimPreparation>? prepare = null)
     {
         if (Blank(executorId) || Blank(hostId) || Blank(instanceId))
             return new AttemptWriteResult(
@@ -625,7 +628,7 @@ public sealed class AttemptAuthorityService
         lock (_gate)
         {
             var now = _utcNow();
-            var candidate = _state.ReviewAttempts
+            var candidates = _state.ReviewAttempts
                 .Where(review => IsCurrentReview(review) && !Terminal(review.State))
                 .Where(review => review.Lease is null || review.Lease.ExpiresAt <= now)
                 // A subject whose source run carries no Result-Envelope cannot be
@@ -637,17 +640,31 @@ public sealed class AttemptAuthorityService
                 // executor provably cannot check out.
                 .Where(review => !IsUnmaterializableWithinGrace(review, now))
                 .OrderBy(review => review.CreatedAt)
-                .FirstOrDefault();
-            if (candidate is null)
-                return new AttemptWriteResult(AttemptWriteStatus.NotFound, string.Empty);
+                .ToList();
+            string? deferredMessage = null;
+            foreach (var candidate in candidates)
+            {
+                var preparation = prepare?.Invoke(ToDto(candidate));
+                if (preparation is { CanClaim: false })
+                {
+                    deferredMessage ??= preparation.Message;
+                    continue;
+                }
 
-            return ClaimReview(
-                candidate.AttemptId,
-                executorId,
-                hostId,
-                requestedTtlSeconds,
-                $"v1-review-claim:{executorId}:{instanceId}:{candidate.AttemptId}",
-                instanceId);
+                return ClaimReview(
+                    candidate.AttemptId,
+                    executorId,
+                    hostId,
+                    requestedTtlSeconds,
+                    $"v1-review-claim:{executorId}:{instanceId}:{candidate.AttemptId}",
+                    instanceId,
+                    preparation?.EffectivePlan);
+            }
+
+            return new AttemptWriteResult(
+                AttemptWriteStatus.NotFound,
+                string.Empty,
+                deferredMessage);
         }
     }
 
@@ -1809,7 +1826,8 @@ public sealed class AttemptAuthorityService
         FailureClassification: review.FailureClassification,
         TestedResultSha: review.TestedResultSha,
         TerminalReason: review.TerminalReason,
-        Reports: review.Reports.Select(ToDto).ToList());
+        Reports: review.Reports.Select(ToDto).ToList(),
+        EffectivePlan: review.EffectivePlan);
     private static ReviewReportDeliveryDto ToDto(ReviewReportDeliveryRecord report) => new(
         IdempotencyKey: report.IdempotencyKey,
         Fence: report.Fence,
@@ -1919,6 +1937,7 @@ public sealed class AttemptAuthorityService
         public string? FailureClassification { get; set; }
         public string? TestedResultSha { get; set; }
         public string? TerminalReason { get; set; }
+        public AgentStudio.TaskServer.Contracts.ReviewPlanDto? EffectivePlan { get; set; }
         public string? CurrentClaimDeliveryKey { get; set; }
         public HashSet<string> IdempotencyKeys { get; set; } = [];
         public List<ReviewReportDeliveryRecord> Reports { get; set; } = [];

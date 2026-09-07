@@ -777,4 +777,6 @@ public record SetCliModelRouteRequest
     public string? FallbackCliType { get; init; }
     public string? FallbackModel { get; init; }
     public string? FallbackThinkingLevel { get; init; }
+    public bool FallbackDisabled { get; init; }
+    public string? FallbackSource { get; init; }
 }

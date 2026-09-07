@@ -75,6 +75,9 @@ function contracts() {
 }
 
 async function stub(page: Page) {
+  await page.route('**/api/auth/status', json({
+    profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
+  }));
   await page.route('**/api/tasks', json([]));
   await page.route('**/api/tasks/grouped*', json({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
   await page.route('**/api/watch-paths', json([]));
@@ -102,8 +105,23 @@ async function stub(page: Page) {
   };
   const modelRoutes = {
     profiles: {
-      claude: { cliType: 'claude', primaryModel: 'claude-pro', primaryThinkingLevel: null, fallbackCliType: 'codex', fallbackModel: 'codex-pro', fallbackThinkingLevel: null },
+      claude: {
+        cliType: 'claude', primaryModel: 'claude-pro', primaryThinkingLevel: null,
+        fallbackCliType: 'codex', fallbackModel: 'codex-pro', fallbackThinkingLevel: null,
+        fallbackDisabled: false, fallbackSource: 'override',
+      },
+      codex: {
+        cliType: 'codex', primaryModel: 'codex-pro', primaryThinkingLevel: 'high',
+        fallbackCliType: 'claude', fallbackModel: 'claude-pro', fallbackThinkingLevel: 'high',
+        fallbackDisabled: false, fallbackSource: 'catalogue',
+      },
     },
+    activeFallbacks: [{
+      primaryCliType: 'codex', effectiveCliType: 'claude', effectiveModel: 'claude-pro',
+      effectiveThinkingLevel: 'high', outcome: 'LaunchFallback',
+      reason: 'Codex Weekly is at its 98% cap until the 08:38 reset.',
+      activatedAt: '2026-09-07T02:16:00Z', resetAt: '2026-09-07T06:38:00Z',
+    }],
   };
   await page.route('**/api/cli/**', async (route) => {
     const p = new URL(route.request().url()).pathname;
@@ -170,6 +188,10 @@ test.describe('CLI Management restructure (AGT-2101)', () => {
     await expect(claudeRow).toContainText('3 models');
     await expect(claudeRow.getByTestId('cli-models-primary-summary-claude')).toContainText('Claude Pro');
     await expect(claudeRow).toContainText('→ Codex · Codex Pro');
+    const activeFallback = overlay.getByTestId('cli-models-active-fallback-codex');
+    await expect(activeFallback).toContainText('Codex → Claude Code · Claude Pro · high');
+    await expect(activeFallback).toContainText('Codex Weekly is at its 98% cap until the 08:38 reset.');
+    await expect(activeFallback).toContainText('Since');
     // No unexpected app error dialog (would mean an unstubbed endpoint).
     await expect(page.getByTestId('error-dialog-overlay')).toHaveCount(0);
 
@@ -184,6 +206,7 @@ test.describe('CLI Management restructure (AGT-2101)', () => {
     // Expand a row to reveal the route editor + full model list.
     await claudeRow.getByTestId('cli-models-toggle-claude').click();
     await expect(claudeRow.getByTestId('cli-primary-claude')).toBeVisible();
+    await expect(claudeRow.getByTestId('cli-fallback-mode-claude')).toHaveValue('override');
 
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);
@@ -203,9 +226,9 @@ test.describe('CLI Management restructure (AGT-2101)', () => {
     await expect(page.getByTestId('cli-sessions-overlay')).toBeVisible();
     const sessions = page.getByTestId('cli-sessions-panel');
     await expect(sessions).toBeVisible();
-    await expect(sessions.getByText('Loading native CLI session stores...')).toHaveCount(0, { timeout: 10_000 });
     // The stubbed inventory renders (confirms the usage report loaded).
-    await expect(sessions.getByText('Claude Code', { exact: true }).first()).toBeVisible();
+    await expect(sessions.getByTestId('cli-sessions-summary')).toContainText('Showing 4 of 4 sessions');
+    await expect(sessions.getByTestId('cli-filter-claude')).toContainText('3');
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);
       await page.getByTestId('cli-sessions-overlay').screenshot({ path: join(SHOT_DIR, `cli-sessions-page--mocked-${theme}.png`) });

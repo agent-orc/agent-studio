@@ -1093,7 +1093,7 @@ export function buildQuotaWaitBadge(wait: TaskInfo['quotaWait'], nowMs: number):
   const resetLabel = new Date(resetMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const remaining = minutesLeft > 0 ? `${minutesLeft} min remaining` : 'reset due · refreshing';
   return {
-    label: `Waiting for quota reset ${resetLabel} · ${remaining}`,
+    label: `Waiting for ${wait.cliType} reset ${resetLabel} · ${remaining}`,
     minutesLeft,
     tooltip: `${wait.reason}. The runner keeps this state visible and retries admission after refreshing ${wait.cliType} quota.`,
   };

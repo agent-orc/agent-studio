@@ -138,6 +138,8 @@ public static class ModelIds
     /// tests; <see cref="ModelMetadataRegistry.DefaultForCli"/> returns it when
     /// discovery has detected it, otherwise it falls back to <see cref="Gpt55"/>.</summary>
     public const string Gpt56Sol = "gpt-5.6-sol";
+    public const string Gpt56Terra = "gpt-5.6-terra";
+    public const string Gpt56Luna = "gpt-5.6-luna";
     /// <summary>Economy Codex model for bounded supporting-agent and pipeline work.
     /// Availability still comes from live CLI discovery.</summary>
     public const string Gpt54Mini = "gpt-5.4-mini";
@@ -177,6 +179,25 @@ public sealed record ModelMetadata(
 /// </summary>
 public static class ModelMetadataRegistry
 {
+    private static readonly ModelEquivalence[] Equivalences =
+    [
+        // Cross-family substitutions are deliberately conservative. A route
+        // may move sideways or up, never below the model-routing correctness
+        // floor. Token Economy owns additions to this catalogue.
+        new(CliTypes.Codex, ModelIds.Gpt56Sol, "high", CliTypes.Claude, ModelIds.ClaudeOpus5, "high", "sol-opus"),
+        new(CliTypes.Codex, ModelIds.Gpt56Sol, "xhigh", CliTypes.Claude, ModelIds.ClaudeOpus5, "xhigh", "sol-opus"),
+        new(CliTypes.Codex, ModelIds.Gpt56Sol, "ultra", CliTypes.Claude, ModelIds.ClaudeOpus5, "max", "sol-opus"),
+        new(CliTypes.Codex, ModelIds.Gpt56Terra, "medium", CliTypes.Claude, ModelIds.ClaudeSonnet5, "medium", "terra-sonnet"),
+        new(CliTypes.Codex, ModelIds.Gpt56Luna, "medium", CliTypes.Claude, ModelIds.ClaudeSonnet5, "medium", "luna-sonnet"),
+        new(CliTypes.Codex, ModelIds.Gpt54Mini, "high", CliTypes.Claude, ModelIds.ClaudeSonnet5, "medium", "mini-sonnet"),
+        new(CliTypes.Codex, ModelIds.Gpt55, "xhigh", CliTypes.Claude, ModelIds.ClaudeOpus5, "high", "flagship-opus"),
+        new(CliTypes.Codex, ModelIds.Gpt55, "high", CliTypes.Claude, ModelIds.ClaudeOpus5, "high", "flagship-opus"),
+        new(CliTypes.Claude, ModelIds.ClaudeOpus5, "high", CliTypes.Codex, ModelIds.Gpt56Sol, "high", "opus-sol"),
+        new(CliTypes.Claude, ModelIds.ClaudeOpus5, "xhigh", CliTypes.Codex, ModelIds.Gpt56Sol, "xhigh", "opus-sol"),
+        new(CliTypes.Claude, ModelIds.ClaudeOpus5, "max", CliTypes.Codex, ModelIds.Gpt56Sol, "ultra", "opus-sol"),
+        new(CliTypes.Claude, ModelIds.ClaudeSonnet5, "medium", CliTypes.Codex, ModelIds.Gpt56Terra, "medium", "sonnet-terra"),
+    ];
+
     private static readonly ModelMetadata[] Entries =
     [
         Claude(ModelIds.ClaudeOpus5, "Claude Opus 5", isDefault: true, context: 1_000_000,
@@ -255,6 +276,28 @@ public static class ModelMetadataRegistry
         if (vendor == null) return null;
         var models = ForVendor(vendor).Where(e => e.Available && !e.Deprecated).ToList();
         return models.FirstOrDefault(e => e.IsDefault)?.Id ?? models.FirstOrDefault()?.Id;
+    }
+
+    /// <summary>
+    /// Returns the catalogue-owned equivalent in another CLI family. Only an
+    /// explicit model and thinking-level entry is eligible. Unknown variants
+    /// fail closed so quota routing cannot silently lower the correctness tier.
+    /// </summary>
+    public static ModelEquivalence? EquivalentFor(
+        string? cliType,
+        string? model,
+        string? thinkingLevel)
+    {
+        var cli = CliTypes.Normalize(cliType);
+        var resolvedModel = string.IsNullOrWhiteSpace(model) ? DefaultForCli(cli) : model!.Trim();
+        var resolvedThinking = string.IsNullOrWhiteSpace(thinkingLevel)
+            ? DefaultThinkingLevelForCli(cli, resolvedModel)
+            : thinkingLevel!.Trim().ToLowerInvariant();
+
+        return Equivalences.FirstOrDefault(entry =>
+            string.Equals(entry.SourceCliType, cli, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(entry.SourceModel, resolvedModel, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(entry.SourceThinkingLevel, resolvedThinking, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>
@@ -423,4 +466,20 @@ public static class ModelMetadataRegistry
             _ => null
         };
     }
+
+    private static bool IsHighReasoning(string? level)
+        => level is not null
+           && (level.Equals("xhigh", StringComparison.OrdinalIgnoreCase)
+               || level.Equals("max", StringComparison.OrdinalIgnoreCase)
+               || level.Equals("ultra", StringComparison.OrdinalIgnoreCase));
 }
+
+/// <summary>A correctness-preserving model substitution across CLI families.</summary>
+public sealed record ModelEquivalence(
+    string SourceCliType,
+    string? SourceModel,
+    string? SourceThinkingLevel,
+    string TargetCliType,
+    string TargetModel,
+    string? TargetThinkingLevel,
+    string Tier);

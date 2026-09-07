@@ -83,7 +83,19 @@ public sealed record ReviewAttemptDto(
     string? FailureClassification,
     string? TestedResultSha,
     string? TerminalReason,
-    IReadOnlyList<ReviewReportDeliveryDto> Reports);
+    IReadOnlyList<ReviewReportDeliveryDto> Reports,
+    AgentStudio.TaskServer.Contracts.ReviewPlanDto? EffectivePlan = null);
+
+/// <summary>
+/// Result of resolving a queued review immediately before the authority mints
+/// its lease. A deferred result leaves the attempt pending and lets the claim
+/// scan consider another eligible attempt. An admitted plan is persisted with
+/// the new fence, so the executor sees one fixed command set for that lease.
+/// </summary>
+public sealed record ReviewClaimPreparation(
+    bool CanClaim,
+    AgentStudio.TaskServer.Contracts.ReviewPlanDto? EffectivePlan = null,
+    string? Message = null);
 
 public sealed record ReviewReportDeliveryDto(
     string IdempotencyKey,

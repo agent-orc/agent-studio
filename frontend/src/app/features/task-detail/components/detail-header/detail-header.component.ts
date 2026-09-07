@@ -4,7 +4,6 @@ import {
   formatDateTime as fmtDateTime,
   formatRelativeShort as fmtRelativeShort,
   stateLabel as fmtStateLabel,
-  cliTypeLabel,
   taskModeIcon,
   taskModeLabel,
 } from '../../../../services/format.util';
@@ -25,12 +24,18 @@ import {
   primaryActionFor,
 } from '../../state/triage-actions.model';
 import type { LandedState } from '../../../git';
-import { buildThinkingLevelIndicator } from '../../../../services/thinking-level.util';
 import { ModelLevelIndicatorComponent } from '../../../../components/model-level-indicator/model-level-indicator.component';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
 import { ExecutionLocationBadgeComponent } from '../../../../components/execution-location-badge/execution-location-badge.component';
 import { CopyableTaskKeyComponent } from '../../../../components/copyable-task-key/copyable-task-key.component';
 import { RemoteDispatchRejectionComponent } from '../../../../components/remote-dispatch-rejection/remote-dispatch-rejection.component';
+import {
+  buildHeaderModelTooltip,
+  resolveHeaderCliType,
+  resolveHeaderModel,
+  resolveHeaderModelSource,
+  resolveHeaderThinkingLevel,
+} from './detail-header-execution.util';
 /** Top header of the job-detail view: back button, editable title, state pill,
  * and the lane's primary triage action plus
  * an overflow menu of the remaining lane actions. The bottom-of-detail
@@ -49,17 +54,13 @@ import { RemoteDispatchRejectionComponent } from '../../../../components/remote-
 export class DetailHeaderComponent {
   readonly info = input.required<TaskInfo>();
   readonly defaultThinkingLevel = input<string | null>(null);
-  readonly headerModel = computed(() => {
-    const info = this.info();
-    return info.execution?.model ?? info.model ?? null;
-  });
-  readonly thinkingLevelIndicator = computed(() => buildThinkingLevelIndicator(
-    this.info().execution, this.info().thinkingLevel, this.defaultThinkingLevel(), this.headerModel(),
+  readonly headerModel = computed(() => resolveHeaderModel(this.info()));
+  readonly headerCliType = computed(() => resolveHeaderCliType(this.info()));
+  readonly headerModelSource = computed(() => resolveHeaderModelSource(this.info()));
+  readonly thinkingLevelIndicator = computed(() => resolveHeaderThinkingLevel(this.info(), this.defaultThinkingLevel()));
+  readonly headerModelTooltip = computed(() => buildHeaderModelTooltip(
+    this.info(), this.headerModel(), this.headerCliType(), this.thinkingLevelIndicator(),
   ));
-  readonly headerModelTooltip = computed(() => [
-    `Model ID: ${this.headerModel() ?? 'Not set'}`, `Thinking level: ${this.thinkingLevelIndicator()?.effective ?? 'CLI default'}`,
-    `CLI: ${this.info().cliType ? cliTypeLabel(this.info().cliType!) : 'Not set'}`,
-  ].join('\n'));
   readonly editingTitle = input(false);
   readonly titleDraft = input<string>('');
   readonly savingTitle = input(false);

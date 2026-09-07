@@ -309,6 +309,14 @@ export interface TaskInfo {
     cliType: string;
     model: string | null;
     reason: string | null;
+    thinkingLevel?: string | null;
+    startedAt?: string | null;
+    primaryCliType?: string | null;
+    primaryModel?: string | null;
+    primaryThinkingLevel?: string | null;
+    resetAt?: string | null;
+    executionPath?: string | null;
+    attemptId?: string | null;
   } | null;
   /** Intentional, bounded wait for a confirmed nearby CLI quota reset. */
   quotaWait?: {

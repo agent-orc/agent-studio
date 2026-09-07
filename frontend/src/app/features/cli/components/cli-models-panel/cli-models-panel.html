@@ -48,6 +48,19 @@
                 [attr.aria-label]="'Refresh ' + g.label + ' model catalog'">↻</button>
       </div>
 
+      @if (activeFallback(g.cliType); as fallback) {
+        <div class="cli-models__active-fallback"
+             role="status"
+             [attr.data-testid]="'cli-models-active-fallback-' + g.cliType">
+          <span class="cli-models__active-label">Active fallback</span>
+          <span class="cli-models__active-route">{{ activeFallbackSummary(fallback) }}</span>
+          <span class="cli-models__active-detail">
+            <span class="cli-models__active-reason">{{ fallback.reason }}</span>
+            <span class="cli-models__active-since">Since {{ activeFallbackSince(fallback) }}</span>
+          </span>
+        </div>
+      }
+
       @if (isExpanded(g.cliType)) {
         <div class="cli-models__body">
           @if (g.defaultModel) {
@@ -62,30 +75,62 @@
               </label>
               <div class="cli-models__route-line cli-models__route-line--fallback">
                 <span class="cli-models__fallback-tag">fallback</span>
-                <select [value]="fallbackCli(g.cliType)"
-                        [attr.aria-label]="'Fallback CLI for ' + g.label"
-                        (change)="setFallbackCli(g.cliType, $any($event.target).value)">
-                  @for (t of cliTypes; track t) {
-                    <option [value]="t">{{ t }}</option>
-                  }
-                </select>
-                <select [value]="routes()[g.cliType]?.fallbackModel ?? ''"
-                        [attr.data-testid]="'cli-fallback-' + g.cliType"
-                        (change)="setFallbackModel(g.cliType, $any($event.target).value)">
-                  <option value="">Disabled</option>
-                  @for (m of fallbackModels(g.cliType); track m.id) { <option [value]="m.id">{{ m.label }}</option> }
-                </select>
-                @if (fallbackThinkingLevels(g.cliType).length) {
-                  <select [value]="routes()[g.cliType]?.fallbackThinkingLevel ?? ''"
-                          aria-label="Fallback thinking level"
-                          (change)="setFallbackThinking(g.cliType, $any($event.target).value)">
-                    <option value="">Model default</option>
-                    @for (level of fallbackThinkingLevels(g.cliType); track level) { <option [value]="level">{{ level }}</option> }
+                <div class="cli-models__fallback-controls">
+                  <select [value]="fallbackMode(g.cliType)"
+                          [attr.data-testid]="'cli-fallback-mode-' + g.cliType"
+                          [attr.aria-label]="'Fallback behavior for ' + g.label"
+                          (change)="setFallbackMode(g.cliType, $any($event.target).value)">
+                    <option value="catalogue">Catalogue equivalent</option>
+                    <option value="override">Explicit override</option>
+                    <option value="disabled">Disabled</option>
                   </select>
-                }
-                @if (savingCli() === g.cliType) { <span class="cli-models__saving">saving...</span> }
+
+                  @if (fallbackMode(g.cliType) === 'override') {
+                    <span class="cli-models__fallback-override">
+                      <select [value]="fallbackCli(g.cliType)"
+                              [attr.data-testid]="'cli-fallback-cli-' + g.cliType"
+                              [attr.aria-label]="'Fallback CLI for ' + g.label"
+                              (change)="setFallbackCli(g.cliType, $any($event.target).value)">
+                        @for (t of cliTypes; track t) {
+                          <option [value]="t">{{ t }}</option>
+                        }
+                      </select>
+                      <select [value]="routes()[g.cliType]?.fallbackModel ?? ''"
+                              [attr.data-testid]="'cli-fallback-' + g.cliType"
+                              [attr.aria-label]="'Fallback model for ' + g.label"
+                              (change)="setFallbackModel(g.cliType, $any($event.target).value)">
+                        @if (!fallbackModels(g.cliType).length) {
+                          <option value="">No models available</option>
+                        }
+                        @for (m of fallbackModels(g.cliType); track m.id) { <option [value]="m.id">{{ m.label }}</option> }
+                      </select>
+                      @if (fallbackThinkingLevels(g.cliType).length) {
+                        <select [value]="routes()[g.cliType]?.fallbackThinkingLevel ?? ''"
+                                [attr.aria-label]="'Fallback thinking level for ' + g.label"
+                                (change)="setFallbackThinking(g.cliType, $any($event.target).value)">
+                          <option value="">Model default</option>
+                          @for (level of fallbackThinkingLevels(g.cliType); track level) { <option [value]="level">{{ level }}</option> }
+                        </select>
+                      }
+                    </span>
+                  } @else if (fallbackMode(g.cliType) === 'catalogue') {
+                    <span class="cli-models__fallback-readonly"
+                          [attr.data-testid]="'cli-fallback-catalogue-' + g.cliType">{{ fallbackSummary(g.cliType) }}</span>
+                  } @else {
+                    <span class="cli-models__fallback-readonly"
+                          [attr.data-testid]="'cli-fallback-disabled-' + g.cliType">No automatic fallback</span>
+                  }
+                  @if (savingCli() === g.cliType) { <span class="cli-models__saving">saving...</span> }
+                </div>
               </div>
-              <p class="cli-models__route-help">Quota fallback is recorded on the task timeline and applies to this run only.</p>
+              <p class="cli-models__route-help">
+                @switch (fallbackMode(g.cliType)) {
+                  @case ('catalogue') { Uses the equally strong model maintained in the model catalogue. }
+                  @case ('override') { Uses this operator override when quota admission switches provider. }
+                  @case ('disabled') { No automatic provider switch; quota admission may wait or throttle. }
+                }
+                Every switch is recorded on the task timeline and applies to that run only.
+              </p>
             </div>
           } @else {
             <div class="cli-models__empty">No catalog loaded yet.</div>

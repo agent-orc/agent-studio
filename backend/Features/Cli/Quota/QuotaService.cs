@@ -105,8 +105,14 @@ public sealed class QuotaService
         return GetCached();
     }
 
-    private void QueueBackgroundRefresh(string cliType)
+    /// <summary>
+    /// Schedules a non-blocking refresh for one CLI. Concurrent requests for the
+    /// same family share one probe so admission polling cannot create a spawn
+    /// wave while a cached reset boundary is being refreshed.
+    /// </summary>
+    public void QueueBackgroundRefresh(string cliType)
     {
+        if (string.IsNullOrWhiteSpace(cliType) || !_probes.ContainsKey(cliType)) return;
         if (!_backgroundRefreshes.TryAdd(cliType, 0)) return;
 
         _ = Task.Run(async () =>

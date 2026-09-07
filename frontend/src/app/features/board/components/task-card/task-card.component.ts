@@ -321,8 +321,14 @@ export class TaskCardComponent implements OnInit, OnDestroy {
     this.job().state === TaskState.Progress ? this.job().pendingIntent ?? null : null);
   readonly currentAutoLoop = computed(() =>
     this.job().state === TaskState.Progress ? this.job().autoLoop ?? null : null);
-  readonly currentQuotaWait = computed(() =>
-    this.job().state === TaskState.Progress ? this.job().quotaWait ?? null : null);
+  readonly currentQuotaWait = computed(() => {
+    const job = this.job();
+    return job.state === TaskState.Ready
+      || job.state === TaskState.Progress
+      || job.state === TaskState.AutoReview
+      ? job.quotaWait ?? null
+      : null;
+  });
   /**
    * Card-level "code review running" flag. Reads the shared
    * {@link CodeReviewActivityStore} singleton the detail-pane panel marks

@@ -1934,6 +1934,7 @@ describe('buildQuotaWaitBadge', () => {
     }, now);
 
     expect(badge?.label).toContain('12 min remaining');
+    expect(badge?.label).toContain('Waiting for codex reset');
     expect(badge?.minutesLeft).toBe(12);
     expect(badge?.tooltip).toContain('retries admission');
   });

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using AgentStudio.Cli;
 using AgentStudio.Git;
 using AgentStudio.Pipeline;
 using AgentStudio.Security;
@@ -229,6 +230,9 @@ public static class V1ReviewPlaneEndpoints
             AgentStudio.Registry.ProjectRegistry projects,
             AgentStudio.Projects.ProjectSettingsService settings,
             RemoteReviewPlanBuilder remoteReviewPlans,
+            QuotaAdmissionService quotaAdmission,
+            QuotaAdmissionRecorder quotaAdmissionRecorder,
+            CliQuotaWaitPolicyService quotaWaitPolicy,
             HumanReviewEscalation escalation,
             TaskMutationService mutations,
             TimelineLog timeline,
@@ -294,14 +298,40 @@ public static class V1ReviewPlaneEndpoints
                 }
             }
 
+            var observedAdmissions = new List<ReviewClaimRoutingResolution>();
             var claimed = reviewAttemptLifecycle.ClaimNextReview(
                 runnerId,
                 executor.HostId,
                 request.InstanceId,
-                request.RequestedTtlSeconds);
+                request.RequestedTtlSeconds,
+                review =>
+                {
+                    var resolved = ResolveReviewClaimRouting(
+                        review,
+                        scanner,
+                        projects,
+                        settings,
+                        remoteReviewPlans,
+                        quotaAdmission,
+                        executor.ActiveSlots,
+                        executor.Capabilities);
+                    observedAdmissions.Add(resolved);
+                    return new ReviewClaimPreparation(
+                        resolved.CanClaim,
+                        resolved.EffectivePlan,
+                        resolved.Message);
+                });
+            RecordReviewClaimAdmissions(
+                observedAdmissions,
+                claimed,
+                quotaAdmissionRecorder,
+                settings,
+                quotaWaitPolicy,
+                loggerFactory.CreateLogger(LoggerName));
             if (claimed.Status == AttemptWriteStatus.NotFound)
                 return Results.Ok(new Contract.ReviewClaimResponse(
-                    "empty", Message: "No current immutable ReviewAttempt is queued."));
+                    "empty",
+                    Message: claimed.Message ?? "No current immutable ReviewAttempt is queued."));
             if (!claimed.Accepted || claimed.ReviewAttempt is null)
                 return AttemptError(claimed);
 
@@ -881,17 +911,16 @@ public static class V1ReviewPlaneEndpoints
         baseline = task is null ? null : ResolveBaselineBranch(task, project, settings);
         var integrationRef = baseline?.IntegrationRef;
         var taskSettings = task is null ? null : settings.Get(task.ProjectName);
-        var plan = review.Subject.Plan
+        var plan = review.EffectivePlan
+                   ?? review.Subject.Plan
                    ?? remoteReviewPlans.Build(
                        task,
                        project?.RepositoryPath,
                        taskSettings,
                        integrationRef);
-        // The plan is frozen with the subject, so a retry inherits whatever ref
-        // the first attempt was handed. AGT-2220 replayed a stale
-        // refs/heads/main through four attempts that way. Re-stamping the ref at
-        // hand-out time is what lets a corrected integration line reach the
-        // runner instead of the snapshot taken when the card was created.
+        // The source plan is declarative and the claimed effective plan is
+        // fixed to its lease. Older attempts can still carry a stale baseline,
+        // so retain the existing integration-ref correction at hand-out.
         if (integrationRef is not null
             && !string.Equals(plan.IntegrationRef, integrationRef, StringComparison.Ordinal))
         {
@@ -913,6 +942,217 @@ public static class V1ReviewPlaneEndpoints
             plan,
             review.Subject.CreatedAt);
     }
+
+    private static ReviewClaimRoutingResolution ResolveReviewClaimRouting(
+        ReviewAttemptDto review,
+        TaskScannerService scanner,
+        AgentStudio.Registry.ProjectRegistry projects,
+        AgentStudio.Projects.ProjectSettingsService settings,
+        RemoteReviewPlanBuilder remoteReviewPlans,
+        QuotaAdmissionService quotaAdmission,
+        int occupiedSlots,
+        IReadOnlySet<string> executorCapabilities)
+    {
+        var task = FindTask(scanner, review.TaskKey);
+        if (task is null)
+        {
+            return new ReviewClaimRoutingResolution(
+                review.AttemptId,
+                null,
+                null,
+                [],
+                CanClaim: false,
+                "The owning task is unavailable, so the ReviewAttempt cannot be claimed.");
+        }
+
+        var project = projects.FindByStorageLocation(task.WatchPath)
+                      ?? projects.FindByIdOrDisplayName(task.ProjectName);
+        var projectSettings = settings.Get(task.ProjectName);
+        var baseline = ResolveBaselineBranch(task, project, settings);
+        var sourcePlan = review.Subject.Plan
+                         ?? remoteReviewPlans.Build(
+                             task,
+                             project?.RepositoryPath,
+                             projectSettings,
+                             baseline.IntegrationRef);
+        var configuredPlan = remoteReviewPlans.ResolveAgentCommandsForClaim(
+            task,
+            projectSettings,
+            sourcePlan,
+            baseline.IntegrationRef);
+
+        var decisions = new List<QuotaAdmissionPlan>();
+        var effectiveCommands = new List<Contract.ReviewCommandDto>(configuredPlan.Commands.Count);
+        var deferredRequired = new List<(Contract.ReviewCommandDto Command, QuotaAdmissionPlan Plan)>();
+        foreach (var command in configuredPlan.Commands)
+        {
+            if (!Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind))
+            {
+                effectiveCommands.Add(command);
+                continue;
+            }
+
+            var executionPath = $"remote-review-claim:{command.StepId}";
+            var decision = quotaAdmission.Plan(new QuotaAdmissionRequest(
+                command.CliType,
+                command.Model,
+                command.ThinkingLevel,
+                task.ProjectName,
+                OccupiedSlots: Math.Max(0, occupiedSlots),
+                QuotaExpectedCostClassifier.For(
+                    task.TaskType,
+                    task.Mode,
+                    command.Model,
+                    command.ThinkingLevel,
+                    executionPath),
+                executionPath));
+            decisions.Add(decision);
+
+            if (decision.IsDeferred)
+            {
+                var required = command.Required
+                               || configuredPlan.RequiredAspects.Contains(
+                                   command.Aspect,
+                                   StringComparer.OrdinalIgnoreCase);
+                if (required)
+                    deferredRequired.Add((command, decision));
+                continue;
+            }
+
+            var requiredRouteCapabilities = new[]
+            {
+                Contract.ReviewCapabilities.SemanticReview,
+                Contract.CapabilityProtocol.CliExecution(decision.CliType),
+                Contract.CapabilityProtocol.ProviderAuthentication(decision.CliType),
+            };
+            var missingRouteCapabilities = requiredRouteCapabilities
+                .Where(capability => !executorCapabilities.Contains(capability))
+                .ToArray();
+            if (missingRouteCapabilities.Length > 0)
+            {
+                var required = command.Required
+                               || configuredPlan.RequiredAspects.Contains(
+                                   command.Aspect,
+                                   StringComparer.OrdinalIgnoreCase);
+                if (required)
+                {
+                    deferredRequired.Add((
+                        command,
+                        decision with
+                        {
+                            Reason = $"effective route {decision.CliType}/{decision.Model ?? "<default>"} "
+                                     + $"requires runner capabilities {string.Join(", ", missingRouteCapabilities)}",
+                        }));
+                }
+                continue;
+            }
+
+            effectiveCommands.Add(command with
+            {
+                FileName = decision.CliType,
+                Arguments = [],
+                CliType = decision.CliType,
+                Model = decision.Model,
+                ThinkingLevel = decision.ThinkingLevel,
+            });
+        }
+
+        if (deferredRequired.Count > 0)
+        {
+            var message = string.Join(
+                "; ",
+                deferredRequired.Select(item =>
+                    $"{item.Command.StepId}: {item.Plan.Reason}"));
+            return new ReviewClaimRoutingResolution(
+                review.AttemptId,
+                task,
+                null,
+                decisions,
+                CanClaim: false,
+                $"ReviewAttempt is waiting for quota admission ({message}).");
+        }
+
+        var effectivePlan = Contract.ReviewPlanResourcePolicy.Apply(configuredPlan with
+        {
+            Commands = effectiveCommands,
+            RequiredAspects = configuredPlan.RequiredAspects
+                .Where(aspect => effectiveCommands.Any(command =>
+                    string.Equals(command.Aspect, aspect, StringComparison.OrdinalIgnoreCase)))
+                .ToArray(),
+        });
+        return new ReviewClaimRoutingResolution(
+            review.AttemptId,
+            task,
+            effectivePlan,
+            decisions,
+            CanClaim: true,
+            Message: null);
+    }
+
+    private static void RecordReviewClaimAdmissions(
+        IReadOnlyList<ReviewClaimRoutingResolution> observed,
+        AttemptWriteResult claimed,
+        QuotaAdmissionRecorder recorder,
+        AgentStudio.Projects.ProjectSettingsService settings,
+        CliQuotaWaitPolicyService waitPolicy,
+        ILogger logger)
+    {
+        foreach (var resolution in observed)
+        {
+            if (resolution.Task is null || resolution.Decisions.Count == 0)
+                continue;
+
+            var committed = claimed.Accepted
+                            && string.Equals(
+                                resolution.AttemptId,
+                                claimed.AttemptId,
+                                StringComparison.OrdinalIgnoreCase);
+            if (!committed)
+            {
+                foreach (var decision in resolution.Decisions)
+                    recorder.Record(resolution.Task, decision);
+                var waiting = resolution.Decisions.FirstOrDefault(decision =>
+                    decision.Outcome == QuotaAdmissionOutcome.Wait && decision.NextResetAt is not null);
+                if (waiting?.NextResetAt is { } resetAt)
+                {
+                    var policy = waitPolicy.Resolve(settings.Get(resolution.Task.ProjectName));
+                    QuotaWaitMarker.Write(resolution.Task.FolderPath, new QuotaWaitRecord
+                    {
+                        CliType = waiting.CliType,
+                        StartedAt = QuotaWaitMarker.TryRead(resolution.Task.FolderPath, logger)?.StartedAt
+                                    ?? DateTime.UtcNow,
+                        ResetAt = resetAt,
+                        ThresholdMinutes = policy.ThresholdMinutes,
+                        Reason = waiting.Reason,
+                    }, logger);
+                }
+                else
+                {
+                    QuotaWaitMarker.Clear(resolution.Task.FolderPath, logger);
+                }
+                continue;
+            }
+
+            var markerDecision = resolution.Decisions.FirstOrDefault(decision => decision.IsFallback)
+                                 ?? resolution.Decisions[0];
+            foreach (var decision in resolution.Decisions.Where(decision => !ReferenceEquals(decision, markerDecision)))
+                recorder.Record(resolution.Task, decision);
+            recorder.Record(
+                resolution.Task,
+                markerDecision,
+                committedLaunch: true,
+                attemptId: claimed.AttemptId,
+                startedAt: claimed.ReviewAttempt?.Lease?.AcquiredAt);
+        }
+    }
+
+    private sealed record ReviewClaimRoutingResolution(
+        string AttemptId,
+        TaskInfo? Task,
+        Contract.ReviewPlanDto? EffectivePlan,
+        IReadOnlyList<QuotaAdmissionPlan> Decisions,
+        bool CanClaim,
+        string? Message);
 
     private static (string RepositoryId, string? RepositoryUrl) MaterializableRepository(
         ReviewAttemptDto review,
@@ -1898,12 +2138,19 @@ public sealed class V1ReviewExecutorRegistry
 
     public bool TryGetReviewExecutor(string runnerId, string instanceId, out ReviewExecutor executor)
     {
-        if (_registrations.TryGetValue(runnerId, out var registration)
-            && string.Equals(registration.InstanceId, instanceId, StringComparison.Ordinal)
-            && registration.Capabilities.Contains(Contract.ReviewCapabilities.ReviewExecutor))
+        lock (_gate)
         {
-            executor = new ReviewExecutor(registration.HostId, registration.Capabilities);
-            return true;
+            if (_registrations.TryGetValue(runnerId, out var registration)
+                && string.Equals(registration.InstanceId, instanceId, StringComparison.Ordinal)
+                && registration.Capabilities.Contains(Contract.ReviewCapabilities.ReviewExecutor))
+            {
+                _capabilityStates.TryGetValue(runnerId, out var capabilityState);
+                executor = new ReviewExecutor(
+                    registration.HostId,
+                    registration.Capabilities,
+                    Math.Max(0, capabilityState?.Telemetry?.ActiveSlots ?? 0));
+                return true;
+            }
         }
         executor = default!;
         return false;
@@ -2128,5 +2375,8 @@ public sealed class V1ReviewExecutorRegistry
             => new(false, message, required);
     }
 
-    public sealed record ReviewExecutor(string HostId, IReadOnlySet<string> Capabilities);
+    public sealed record ReviewExecutor(
+        string HostId,
+        IReadOnlySet<string> Capabilities,
+        int ActiveSlots);
 }

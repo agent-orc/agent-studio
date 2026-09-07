@@ -106,11 +106,49 @@ public static class LeaseEndpoints
         // runner; the host claims, renews and completes it with a claim token.
         // No central process reaches into the runner over SSH.
         app.MapPost("/api/runner/project-chat/claim",
-            (RemoteChatWorkClaimRequest req, HttpContext context, RemoteChatWorkBroker broker) =>
+            (RemoteChatWorkClaimRequest req,
+                HttpContext context,
+                RemoteChatWorkBroker broker,
+                AgentStudio.Runner.V1ReviewExecutorRegistry capabilityRegistry,
+                ILoggerFactory loggerFactory) =>
             {
                 if (!RunnerMatches(context, req.RunnerId, req.RunnerName))
                     return Results.Unauthorized();
-                return Results.Ok(broker.TryClaim(req));
+                var logger = loggerFactory.CreateLogger("AgentStudio.Tasks.RemoteProjectChatClaim");
+                return Results.Ok(broker.TryClaim(req, candidate =>
+                {
+                    if (!string.Equals(
+                            candidate.Kind,
+                            RemoteChatWorkKinds.Turn,
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        return new RemoteChatWorkClaimPreparation(true);
+                    }
+
+                    var cliType = CliTypes.Normalize(candidate.CliType);
+                    var requiredCapabilities = new[]
+                    {
+                        CapabilityProtocol.CliExecution(cliType),
+                        CapabilityProtocol.ProviderAuthentication(cliType),
+                    };
+                    var admission = capabilityRegistry.EvaluateCodingAdmission(
+                        req.RunnerId.Trim(),
+                        req.CapabilityInstanceId,
+                        requiredCapabilities);
+                    if (admission.Eligible)
+                        return new RemoteChatWorkClaimPreparation(true);
+
+                    logger.LogInformation(
+                        "remote-project-chat-claim-skipped-capability runner={Runner} workId={WorkId} project={Project} cli={CliType} reason={Reason}",
+                        req.RunnerName,
+                        candidate.WorkId,
+                        candidate.ProjectName,
+                        cliType,
+                        admission.Message);
+                    return new RemoteChatWorkClaimPreparation(
+                        false,
+                        $"Project chat requires a healthy {cliType} CLI and provider login on this runner: {admission.Message}");
+                }));
             }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
 
         app.MapPost("/api/runner/project-chat/renew",
@@ -157,6 +195,9 @@ public static class LeaseEndpoints
             PromptEnrichmentService promptEnrichment,
             DossierMaintenanceService dossierMaintenance,
             RemoteDispatchRejectionStore dispatchRejections,
+            AgentStudio.Cli.QuotaAdmissionService quotaAdmission,
+            AgentStudio.Cli.QuotaAdmissionRecorder quotaAdmissionRecorder,
+            AgentStudio.Cli.CliQuotaWaitPolicyService quotaWaitPolicy,
             CancellationToken ct) =>
         {
             var logger = loggerFactory.CreateLogger("AgentStudio.Tasks.RemoteRunnerClaim");
@@ -416,7 +457,10 @@ public static class LeaseEndpoints
                             // A replay must describe the same run as the original
                             // claim, including the persisted enrichment framing.
                             RunSpec: AddPersistedPromptEnrichment(
-                                BuildRunSpec(replayedTask, settings, prompts, dossierMaintenance),
+                                ApplyPersistedQuotaFallback(
+                                    BuildRunSpec(replayedTask, settings, prompts, dossierMaintenance),
+                                    replayedTask,
+                                    replay.Lease.AttemptId),
                                 replayedTask))));
                     }
                 }
@@ -562,12 +606,14 @@ public static class LeaseEndpoints
                     .ThenBy(t => t.CreatedAt);
 
                 TaskInfo? candidate = null;
+                AgentStudio.Cli.QuotaAdmissionPlan? candidateQuotaPlan = null;
                 RemoteProjectRepository? repository = null;
                 TaskInfo? failedPreflightCandidate = null;
                 RemoteProjectRepository? failedPreflightRepository = null;
                 RunnerProjectPreflight? failedProjectPreflight = null;
                 string? nonRemoteCapableProject = null;
                 string? capabilityMismatch = null;
+                string? quotaHoldReason = null;
                 foreach (var task in eligible)
                 {
                     var taskProjectSettings = settings.Get(task.ProjectName);
@@ -582,7 +628,40 @@ public static class LeaseEndpoints
                             buildProfileGate.Reason);
                         continue;
                     }
-                    var cliType = CliTypes.Normalize(task.CliType);
+                    var configuredSpec = BuildRunSpec(task, settings, prompts, dossierMaintenance);
+                    var quotaPlan = quotaAdmission.Plan(new AgentStudio.Cli.QuotaAdmissionRequest(
+                        configuredSpec.CliType,
+                        configuredSpec.Model,
+                        configuredSpec.ThinkingLevel,
+                        task.ProjectName,
+                        hostActiveRuns,
+                        AgentStudio.Cli.QuotaExpectedCostClassifier.ForTask(task),
+                        "remote-coding-claim"));
+                    if (!quotaPlan.ShouldLaunch)
+                    {
+                        quotaHoldReason ??= quotaPlan.Reason;
+                        quotaAdmissionRecorder.Record(task, quotaPlan);
+                        if (quotaPlan.Outcome == AgentStudio.Cli.QuotaAdmissionOutcome.Wait
+                            && quotaPlan.NextResetAt is { } resetAt)
+                        {
+                            var wait = quotaWaitPolicy.Resolve(taskProjectSettings);
+                            QuotaWaitMarker.Write(task.FolderPath, new QuotaWaitRecord
+                            {
+                                CliType = quotaPlan.CliType,
+                                StartedAt = QuotaWaitMarker.TryRead(task.FolderPath, logger)?.StartedAt ?? now,
+                                ResetAt = resetAt,
+                                ThresholdMinutes = wait.ThresholdMinutes,
+                                Reason = quotaPlan.Reason,
+                            }, logger);
+                        }
+                        else
+                        {
+                            QuotaWaitMarker.Clear(task.FolderPath, logger);
+                        }
+                        continue;
+                    }
+
+                    var cliType = CliTypes.Normalize(quotaPlan.CliType);
                     var requiredCapabilities = (req.RequiredCapabilities ?? [])
                         .Append(CapabilityProtocol.CodingExecutor)
                         .Append(CapabilityProtocol.CliExecution(cliType))
@@ -633,6 +712,7 @@ public static class LeaseEndpoints
                             continue;
                         }
                         candidate = task;
+                        candidateQuotaPlan = quotaPlan;
                         break;
                     }
 
@@ -696,7 +776,7 @@ public static class LeaseEndpoints
                         RunnerClaimStatus.Empty,
                         Message: nonRemoteCapableProject is not null
                             ? $"project '{nonRemoteCapableProject}' is not remote-capable: repository URL is not configured"
-                            : capabilityMismatch)));
+                            : capabilityMismatch ?? quotaHoldReason)));
 
                 if (string.IsNullOrWhiteSpace(clientId))
                     return Results.Ok(WithCapacity(new RunnerClaimResponse(
@@ -780,7 +860,12 @@ public static class LeaseEndpoints
 
                 var taskKey = candidate.Key ?? candidate.TaskKey;
                 if (string.IsNullOrWhiteSpace(taskKey)) taskKey = candidate.Id;
-                var runSpec = BuildRunSpec(candidate, settings, prompts, dossierMaintenance);
+                var runSpec = BuildRunSpec(
+                    candidate,
+                    settings,
+                    prompts,
+                    dossierMaintenance,
+                    candidateQuotaPlan);
                 PromptEnrichmentPreparation? enrichmentPreparation = null;
                 try
                 {
@@ -857,9 +942,22 @@ public static class LeaseEndpoints
                         RunnerClaimStatus.Empty, Message: $"claim move refused: {move.Status} {move.Message}")));
                 }
                 logger.LogInformation(
-                    "remote-runner-task-claimed project={Project} projectId={ProjectId} task={TaskKey} runner={Runner} lease={LeaseId} token={FencingToken} repositorySource={RepositorySource} defaultBranch={DefaultBranch}",
+                    "remote-runner-task-claimed project={Project} projectId={ProjectId} task={TaskKey} runner={Runner} lease={LeaseId} token={FencingToken} cli={CliType} model={Model} quotaFallback={QuotaFallback} repositorySource={RepositorySource} defaultBranch={DefaultBranch}",
                     candidate.ProjectName, repository.ProjectId, taskKey, req.RunnerName, acquire.Lease.LeaseId,
-                    acquire.Lease.FencingToken, repository.Source, repository.DefaultBranch);
+                    acquire.Lease.FencingToken, runSpec.CliType, runSpec.Model,
+                    candidateQuotaPlan?.IsFallback == true, repository.Source, repository.DefaultBranch);
+                var claimedTask = FindTask(scanner, taskKey)
+                                  ?? candidate with
+                                  {
+                                      State = TaskStates.Progress,
+                                      FolderPath = move.NewFolderPath ?? candidate.FolderPath,
+                                  };
+                quotaAdmissionRecorder.Record(
+                    claimedTask,
+                    candidateQuotaPlan!,
+                    committedLaunch: true,
+                    attemptId: acquire.Lease.AttemptId,
+                    startedAt: acquire.Lease.AcquiredAt);
                 var graceRunsRemaining = settings.ConsumeBuildProfileRevalidationGraceRun(candidate.ProjectName);
                 if (graceRunsRemaining is not null)
                 {
@@ -867,15 +965,15 @@ public static class LeaseEndpoints
                         "build-profile-revalidation-grace-consumed project={Project} task={TaskKey} remainingRuns={RemainingRuns}",
                         candidate.ProjectName, taskKey, graceRunsRemaining);
                 }
-                sessions.AppendSessionEvent(candidate.Id, new SessionEvent
+                sessions.AppendSessionEvent(claimedTask.Id, new SessionEvent
                 {
                     Ts = acquire.Lease.AcquiredAt,
                     Kind = "start",
-                    Cli = "remote-runner",
+                    Cli = runSpec.CliType,
                     RunAttemptId = acquire.Lease.AttemptId,
-                    Model = candidate.Model,
-                    ThinkingLevel = candidate.ThinkingLevel,
-                    Cwd = candidate.FolderPath,
+                    Model = runSpec.Model,
+                    ThinkingLevel = runSpec.ThinkingLevel,
+                    Cwd = claimedTask.FolderPath,
                     ExecutionLocation = new TaskExecutionLocation
                     {
                         State = TaskExecutionStates.RemoteRunning,
@@ -888,13 +986,13 @@ public static class LeaseEndpoints
                         LastHeartbeat = acquire.Lease.LastHeartbeatAt,
                         LastActivityAt = acquire.Lease.LastHeartbeatAt,
                         ProcessId = acquire.Lease.Pid > 0 ? acquire.Lease.Pid : null,
-                        Branch = candidate.Provenance?.Branch,
-                        WorktreePath = candidate.FolderPath,
+                        Branch = claimedTask.Provenance?.Branch,
+                        WorktreePath = claimedTask.FolderPath,
                         ConnectionState = "connected",
                         LeaseState = "active",
                         TrustReason = "Captured from the fenced run lease granted by the task server.",
                     },
-                }, candidate.WatchPath);
+                }, claimedTask.WatchPath);
                 // One more lease is now held by this host. Free slots follow from
                 // the central ceiling, not from the daemon's reported headroom.
                 var occupiedAfterClaim = hostActiveRuns + 1;
@@ -2012,7 +2110,8 @@ public static class LeaseEndpoints
         TaskInfo task,
         ProjectSettingsService settings,
         AgentStudio.Prompts.RuntimePromptService prompts,
-        DossierMaintenanceService? dossierMaintenance)
+        DossierMaintenanceService? dossierMaintenance,
+        AgentStudio.Cli.QuotaAdmissionPlan? quotaPlan = null)
     {
         var cliType = CliTypes.Normalize(task.CliType);
         var projectSettings = settings.Get(task.ProjectName);
@@ -2024,6 +2123,13 @@ public static class LeaseEndpoints
         var thinkingLevel = isEpicPlanning && projectSettings.EpicPlanningThinkingLevel is not null
             ? projectSettings.EpicPlanningThinkingLevel
             : task.ThinkingLevel;
+
+        if (quotaPlan is not null)
+        {
+            cliType = CliTypes.Normalize(quotaPlan.CliType);
+            model = quotaPlan.Model;
+            thinkingLevel = quotaPlan.ThinkingLevel;
+        }
 
         model = string.IsNullOrWhiteSpace(model) ? null : model.Trim();
         // Resolve the requested rung against what this CLI + model can actually
@@ -2042,6 +2148,25 @@ public static class LeaseEndpoints
             settings.ResolveCliMode(task.ProjectName, cliType).Mode,
             settings.ResolveContextMode(task.ProjectName, cliType, task.ContextMode).Mode,
             modeFraming);
+    }
+
+    private static RunSpecDto ApplyPersistedQuotaFallback(
+        RunSpecDto configured,
+        TaskInfo task,
+        string? attemptId)
+    {
+        var marker = QuotaFallbackMarker.TryRead(task.FolderPath);
+        if (marker is null
+            || string.IsNullOrWhiteSpace(attemptId)
+            || !string.Equals(marker.AttemptId, attemptId, StringComparison.OrdinalIgnoreCase))
+            return configured;
+
+        return configured with
+        {
+            CliType = marker.EffectiveCliType,
+            Model = marker.EffectiveModel,
+            ThinkingLevel = marker.EffectiveThinkingLevel,
+        };
     }
 
     internal static string? BuildModeFraming(

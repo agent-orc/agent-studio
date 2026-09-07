@@ -339,7 +339,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 "Review-decision CLI call failed: exit={ExitCode} duration={Duration}ms error={Error}",
                 result.ExitCode, result.Duration.TotalMilliseconds, result.Error);
         }
-        return result.Stdout;
+        return AgentStudio.Cli.CliOneShotCompatibility.ToClaudeResultEnvelope(result, model);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

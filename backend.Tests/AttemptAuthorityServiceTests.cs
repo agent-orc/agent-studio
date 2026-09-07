@@ -1371,6 +1371,92 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
             archivedRun.GetProperty("idempotencyKeys").EnumerateArray().Select(key => key.GetString()));
     }
 
+    [Fact]
+    public void ClaimNextReview_DeferredPreparationLeavesAttemptPendingAndUnfenced()
+    {
+        var service = NewService();
+        var (_, review) = CompletedRunWithReview(service, "sha-deferred");
+        service.AgeReviewForTests(review.AttemptId, TimeSpan.FromMinutes(16));
+
+        var result = service.ClaimNextReview(
+            "reviewer",
+            "review-host",
+            "review-instance",
+            60,
+            _ => new ReviewClaimPreparation(
+                CanClaim: false,
+                Message: "waiting for codex quota reset"));
+
+        Assert.Equal(AttemptWriteStatus.NotFound, result.Status);
+        Assert.Equal("waiting for codex quota reset", result.Message);
+        var unchanged = service.GetReview(review.AttemptId)!;
+        Assert.Equal(AttemptLifecycleState.Pending, unchanged.State);
+        Assert.Null(unchanged.Lease);
+        Assert.Equal(0, unchanged.LastFence);
+        Assert.Null(unchanged.EffectivePlan);
+    }
+
+    [Fact]
+    public void ClaimNextReview_PersistsEffectivePlanWithClaimFenceAcrossRestart()
+    {
+        var service = NewService();
+        var run = service.AcquireRun(
+            "AGT-1", "PROJ-1", null, "runner", "host", 60, "run-create").RunAttempt!;
+        service.SettleRun(new SettleRunAttemptRequest
+        {
+            Write = new AttemptWriteReference(
+                run.AttemptId,
+                run.LastFence,
+                run.AuthorityEpoch,
+                "run-complete"),
+            Outcome = "done",
+            ResultSha = "sha-effective",
+        });
+        var sourcePlan = new AgentStudio.TaskServer.Contracts.ReviewPlanDto(
+            [new AgentStudio.TaskServer.Contracts.ReviewCommandDto(
+                "aspect-code-quality",
+                "code-quality",
+                "codex",
+                [],
+                ExecutionKind: AgentStudio.TaskServer.Contracts.ReviewCommandKinds.AgentAspect,
+                Prompt: "Review this result.",
+                CliType: "codex",
+                Model: "gpt-5.4-mini",
+                ThinkingLevel: "high")],
+            ["code-quality"]);
+        var review = service.CreateReviewAttempt(new CreateReviewAttemptRequest(
+            "AGT-1", "PROJ-1", "sha-effective", run.AttemptId,
+            "req", "policy", [], "review-create", Plan: sourcePlan)).ReviewAttempt!;
+        service.AgeReviewForTests(review.AttemptId, TimeSpan.FromMinutes(16));
+        var effectivePlan = sourcePlan with
+        {
+            Commands = [sourcePlan.Commands[0] with
+            {
+                FileName = "claude",
+                CliType = "claude",
+                Model = "claude-sonnet-5",
+                ThinkingLevel = "medium",
+            }],
+        };
+
+        var claimed = service.ClaimNextReview(
+            "reviewer",
+            "review-host",
+            "review-instance",
+            60,
+            _ => new ReviewClaimPreparation(true, effectivePlan)).ReviewAttempt!;
+
+        Assert.Equal(AttemptLifecycleState.Leased, claimed.State);
+        Assert.NotNull(claimed.Lease);
+        Assert.Equal("claude", Assert.Single(claimed.EffectivePlan!.Commands).CliType);
+        Assert.Equal("codex", Assert.Single(claimed.Subject.Plan!.Commands).CliType);
+        var restarted = NewService();
+        var durable = restarted.GetReview(review.AttemptId)!;
+        Assert.Equal(claimed.LastFence, durable.LastFence);
+        Assert.Equal("claude-sonnet-5", Assert.Single(durable.EffectivePlan!.Commands).Model);
+        Assert.Equal("gpt-5.4-mini", Assert.Single(durable.Subject.Plan!.Commands).Model);
+    }
+
     private (RunAttemptDto Run, ReviewAttemptDto Review) CompletedRunWithReview(AttemptAuthorityService service, string sha)
     {
         var run = service.AcquireRun("AGT-1", "PROJ-1", null, "runner", "host", 60, "run-create").RunAttempt!;

@@ -63,8 +63,14 @@ describe('ProjectPipelinePanelComponent (render)', () => {
       {
         id: 'aspect-code-quality', displayName: 'Code quality', kind: 'aspect', phase: 'aspect',
         runMode: 'parallel', dependsOn: ['core-run'], idempotent: true, stub: false,
-        resolvedModel: 'claude-sonnet-4.5', modelSource: 'project',
-        usesModel: true, usesPrompt: true, supportsMode: true, cliType: 'claude',
+        resolvedModel: 'gpt-5.4-mini', modelSource: 'project',
+        effectiveExecutionSpec: {
+          cliType: 'claude', model: 'claude-sonnet-5', thinkingLevel: 'medium',
+          outcome: 'LaunchFallback', isFallback: true, primaryCliType: 'codex',
+          reason: 'codex is at 98% until 08:38; fallback has 66% headroom',
+          activatedAt: '2026-09-07T02:37:00Z', resetAt: '2026-09-07T06:38:00Z',
+        },
+        usesModel: true, usesPrompt: true, supportsMode: true, cliType: 'codex',
         framework: 'Angular', promptTemplate: 'aspect-code-quality',
         canDisable: true, defaultEnabled: true, supportsCondition: true,
       },
@@ -175,6 +181,11 @@ describe('ProjectPipelinePanelComponent (render)', () => {
     expect(aspectToggle?.closest('summary')).toBeTruthy();
     expect(host.querySelector('[data-testid="pipeline-step-framework-aspect-code-quality"]')?.textContent)
       .toContain('Angular');
+    const fallbackAgent = host.querySelector('[data-testid="pipeline-step-effective-agent-aspect-code-quality"]');
+    expect(fallbackAgent?.textContent).toContain('claude / claude-sonnet-5');
+    expect(fallbackAgent?.classList.contains('pp__chip--fallback')).toBe(true);
+    const effectiveSetting = host.querySelector('[data-testid="pipeline-step-setting-effective-agent-aspect-code-quality"]');
+    expect(effectiveSetting?.textContent).toContain('Quota fallback for the next launch');
 
     // Prompt binding cell: registry template reference + legacy inline override + Clear.
     const promptCell = host.querySelector('[data-testid="pipeline-step-prompt-aspect-requirement-fit"]');

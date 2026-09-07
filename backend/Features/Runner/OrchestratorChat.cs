@@ -316,6 +316,9 @@ public record OrchestratorChatTurn
     public string Role { get; init; } = OrchestratorChatRoles.User;
     public string Text { get; init; } = "";
     public string? Model { get; init; }
+    public string? CliType { get; init; }
+    public string? ConfiguredModel { get; init; }
+    public string? QuotaFallbackReason { get; init; }
     public OrchestratorTokenUsage? TokenUsage { get; init; }
     public string? ErrorMessage { get; init; }
     /// <summary>
@@ -462,6 +465,8 @@ public class OrchestratorChatService
     private readonly OrchestratorTaskPromptContextComposer? _taskPromptContext;
     private readonly IOrchestratorChatPersistence? _persistence;
     private readonly StartupExecutionAdmission? _executionAdmission;
+    private readonly QuotaAdmissionService? _quotaAdmission;
+    private readonly QuotaAdmissionRecorder? _quotaAdmissionRecorder;
 
     /// <summary>
     /// Serializes concurrent <see cref="SendAsync"/> calls so multiple Codex
@@ -494,7 +499,9 @@ public class OrchestratorChatService
         GitService? git = null,
         OrchestratorTaskPromptContextComposer? taskPromptContext = null,
         IOrchestratorChatPersistence? persistence = null,
-        StartupExecutionAdmission? executionAdmission = null)
+        StartupExecutionAdmission? executionAdmission = null,
+        QuotaAdmissionService? quotaAdmission = null,
+        QuotaAdmissionRecorder? quotaAdmissionRecorder = null)
     {
         _chat = chat;
         _runner = runner;
@@ -511,6 +518,8 @@ public class OrchestratorChatService
         _taskPromptContext = taskPromptContext;
         _persistence = persistence;
         _executionAdmission = executionAdmission;
+        _quotaAdmission = quotaAdmission;
+        _quotaAdmissionRecorder = quotaAdmissionRecorder;
     }
 
     public List<OrchestratorChatTurn> Read(string watchPath) => _chat.Read(watchPath);
@@ -609,15 +618,67 @@ public class OrchestratorChatService
                 var remoteRoute = ResolveRemoteRoute(projectName, watchPath);
                 if (remoteRoute != null && _remoteWork != null)
                 {
-                    var remote = await _remoteWork.EnqueueTurnAsync(
-                        remoteRoute, fullPrompt, requestedModel, thinkingLevel, ct).ConfigureAwait(false);
-                    result = new OrchestratorDecisionResult(
-                        remote.Success,
-                        remote.ReplyText,
-                        string.IsNullOrWhiteSpace(remote.Model) ? requestedModel : remote.Model,
-                        remote.TokenUsage,
-                        CapturedSessionId: null,
-                        remote.ErrorMessage);
+                    var quotaPlan = _quotaAdmission?.Plan(new QuotaAdmissionRequest(
+                        CliTypes.Codex,
+                        requestedModel,
+                        thinkingLevel,
+                        projectName,
+                        OccupiedSlots: 0,
+                        QuotaExpectedCostClassifier.For(
+                            taskType: null,
+                            taskMode: null,
+                            model: requestedModel,
+                            thinkingLevel: thinkingLevel,
+                            executionPath: "remote-project-chat"),
+                        "remote-project-chat"));
+                    if (quotaPlan is not null && !quotaPlan.ShouldLaunch)
+                    {
+                        _quotaAdmissionRecorder?.RecordProject(
+                            watchPath, projectName, "remote-project-chat", quotaPlan);
+                        result = new OrchestratorDecisionResult(
+                            false,
+                            "",
+                            requestedModel,
+                            null,
+                            CapturedSessionId: null,
+                            quotaPlan.Reason)
+                        {
+                            CliType = CliTypes.Codex,
+                            ConfiguredModel = requestedModel,
+                        };
+                    }
+                    else
+                    {
+                        var effectiveCli = quotaPlan?.CliType ?? CliTypes.Codex;
+                        var effectiveModel = quotaPlan?.Model ?? requestedModel;
+                        var effectiveThinking = quotaPlan?.ThinkingLevel ?? thinkingLevel;
+                        if (quotaPlan?.IsFallback == true)
+                            _quotaAdmissionRecorder?.RecordProject(
+                                watchPath, projectName, "remote-project-chat", quotaPlan);
+                        var remote = await _remoteWork.EnqueueTurnAsync(
+                            remoteRoute,
+                            fullPrompt,
+                            effectiveModel,
+                            effectiveThinking,
+                            ct,
+                            effectiveCli,
+                            CliTypes.Codex,
+                            requestedModel,
+                            quotaPlan?.IsFallback == true ? quotaPlan.Reason : null).ConfigureAwait(false);
+                        result = new OrchestratorDecisionResult(
+                            remote.Success,
+                            remote.ReplyText,
+                            string.IsNullOrWhiteSpace(remote.Model) ? effectiveModel : remote.Model,
+                            remote.TokenUsage,
+                            CapturedSessionId: null,
+                            remote.ErrorMessage)
+                        {
+                            CliType = remote.CliType ?? effectiveCli,
+                            ConfiguredModel = remote.ConfiguredModel ?? requestedModel,
+                            QuotaFallback = !string.IsNullOrWhiteSpace(remote.QuotaFallbackReason),
+                            QuotaFallbackReason = remote.QuotaFallbackReason,
+                        };
+                    }
                 }
                 else
                 {
@@ -659,12 +720,17 @@ public class OrchestratorChatService
                 _logger.LogError(
                     "Orchestrator chat call failed for project {Project} (model={Model}): {Raw}",
                     projectName, result.Model, result.ErrorMessage ?? "(no error message)");
-                var translation = OrchestratorChatErrorTranslator.Translate(result.ErrorMessage, CliTypes.Codex);
+                var translation = OrchestratorChatErrorTranslator.Translate(
+                    result.ErrorMessage,
+                    result.CliType ?? CliTypes.Codex);
                 var failure = new OrchestratorChatTurn
                 {
                     Role = OrchestratorChatRoles.Orchestrator,
                     Text = result.ReplyText ?? "",
                     Model = result.Model,
+                    CliType = result.CliType,
+                    ConfiguredModel = result.ConfiguredModel,
+                    QuotaFallbackReason = result.QuotaFallbackReason,
                     TokenUsage = result.TokenUsage,
                     ErrorMessage = translation.FriendlyMessage,
                     ErrorDetail = translation.RawDetail,
@@ -679,6 +745,9 @@ public class OrchestratorChatService
                 Role = OrchestratorChatRoles.Orchestrator,
                 Text = result.ReplyText,
                 Model = result.Model,
+                CliType = result.CliType,
+                ConfiguredModel = result.ConfiguredModel,
+                QuotaFallbackReason = result.QuotaFallbackReason,
                 TokenUsage = result.TokenUsage,
                 ContextReceipt = contextReceipt
             };

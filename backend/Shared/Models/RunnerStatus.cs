@@ -179,7 +179,18 @@ public sealed record LocalCliRepairStatus
     public string Detail { get; init; } = "";
 }
 
-public sealed record QuotaFallbackStatus(string CliType, string? Model, string? Reason);
+public sealed record QuotaFallbackStatus(
+    string CliType,
+    string? Model,
+    string? Reason,
+    string? ThinkingLevel = null,
+    DateTime? StartedAt = null,
+    string? PrimaryCliType = null,
+    string? PrimaryModel = null,
+    string? PrimaryThinkingLevel = null,
+    DateTime? ResetAt = null,
+    string? ExecutionPath = null,
+    string? AttemptId = null);
 
 /// <summary>Read-time projection of a task's intentional quota-reset wait.</summary>
 public sealed record QuotaWaitStatus(

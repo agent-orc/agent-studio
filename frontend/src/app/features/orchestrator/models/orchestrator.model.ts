@@ -134,6 +134,9 @@ export interface OrchestratorChatTurn {
   role: 'user' | 'orchestrator';
   text: string;
   model?: string | null;
+  cliType?: string | null;
+  configuredModel?: string | null;
+  quotaFallbackReason?: string | null;
   tokenUsage?: OrchestratorTokenUsage | null;
   errorMessage?: string | null;
   contextReceipt?: OrchestratorContextReceipt | null;

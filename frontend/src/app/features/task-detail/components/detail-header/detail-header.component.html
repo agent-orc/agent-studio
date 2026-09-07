@@ -61,14 +61,14 @@
               <span aria-hidden="true">{{ mb.icon }}</span> {{ mb.label }}
             </span>
           }
-          @if (headerModel(); as model) {
+          @if (headerModel() || headerModelSource() === 'fallback') {
             <app-model-level-indicator
-              [model]="model"
-              [cliType]="info().cliType"
+              [model]="headerModel()"
+              [cliType]="headerCliType()"
               [thinkingLevel]="thinkingLevelIndicator()?.effective ?? null"
               [thinkingLevelOverride]="(thinkingLevelIndicator()?.differsFromDefault || thinkingLevelIndicator()?.differsFromConfigured) ?? false"
               [tooltip]="headerModelTooltip()"
-              [source]="info().execution?.model ? 'run' : 'explicit'"
+              [source]="headerModelSource()"
               testId="detail-model-chip"
               levelTestId="detail-thinking-level" />
           }

@@ -92,6 +92,10 @@ export class ProjectPipelinePanelComponent {
       const tok = tokenByStep.get(step.id);
       const conditionWhen = draft?.when ?? ov?.condition?.when ?? '';
       const conditionValue = draft?.value ?? ov?.condition?.value ?? '';
+      const configuredCliType = ov?.cliType ?? step.cliType ?? (step.usesModel ? 'claude' : '');
+      const configuredModel = ov?.model ?? step.resolvedModel ?? step.model ?? '';
+      const configuredThinkingLevel = ov?.thinkingLevel ?? step.resolvedThinkingLevel ?? '';
+      const admitted = step.effectiveExecutionSpec;
       return {
         id: step.id, displayName: step.displayName, kind: step.kind,
         appliesTo: step.appliesTo ?? 'any', applicable: step.applicable ?? true,
@@ -112,10 +116,18 @@ export class ProjectPipelinePanelComponent {
         cliType: ov?.cliType ?? step.cliType ?? '',
         model: ov?.model ?? '',
         thinkingLevel: ov?.thinkingLevel ?? '',
-        effectiveCliType: ov?.cliType ?? step.cliType ?? (step.usesModel ? 'claude' : ''),
-        effectiveModel: ov?.model ?? step.resolvedModel ?? step.model ?? '',
+        effectiveCliType: configuredCliType,
+        effectiveModel: configuredModel,
         effectiveModelSource: ov?.model ? 'step' : (step.modelSource ?? ''),
-        effectiveThinkingLevel: ov?.thinkingLevel ?? step.resolvedThinkingLevel ?? '',
+        effectiveThinkingLevel: configuredThinkingLevel,
+        activeCliType: admitted?.cliType ?? configuredCliType,
+        activeModel: admitted?.model ?? configuredModel,
+        activeThinkingLevel: admitted?.thinkingLevel ?? configuredThinkingLevel,
+        quotaFallback: admitted?.isFallback ?? false,
+        quotaOutcome: admitted?.outcome ?? 'LaunchPrimary',
+        quotaReason: admitted?.reason ?? '',
+        quotaActivatedAt: admitted?.activatedAt ?? '',
+        quotaResetAt: admitted?.resetAt ?? '',
         prompt: ov?.prompt ?? '',
         promptTemplate: step.promptTemplate ?? '',
         mode: ov?.mode ?? '',
@@ -464,7 +476,33 @@ export class ProjectPipelinePanelComponent {
   modelSummary(step: PipelineAdminRow): string {
     if (!step.usesModel) return 'no model';
     if (step.economyModel && !step.model) return 'Spark auto';
-    return step.effectiveModel || 'runtime default';
+    return step.activeModel || 'runtime default';
+  }
+
+  effectiveAgentSummary(step: PipelineAdminRow): string {
+    const model = step.activeModel || 'runtime default';
+    const thinking = step.activeThinkingLevel ? ` · ${step.activeThinkingLevel}` : '';
+    return `${step.activeCliType || 'runtime'} / ${model}${thinking}`;
+  }
+
+  effectiveAgentTooltip(step: PipelineAdminRow): StructuredTooltip {
+    const lines = [
+      `Next launch: ${this.effectiveAgentSummary(step)}`,
+      `Configured family: ${step.effectiveCliType || 'runtime'}`,
+      `Admission: ${step.quotaOutcome}`,
+    ];
+    if (step.quotaActivatedAt) lines.push(`Active since: ${this.formatAdmissionTime(step.quotaActivatedAt)}`);
+    if (step.quotaResetAt) lines.push(`Primary reset: ${this.formatAdmissionTime(step.quotaResetAt)}`);
+    if (step.quotaReason) lines.push('', step.quotaReason);
+    return {
+      title: step.quotaFallback ? 'Quota fallback active' : 'Effective agent',
+      body: lines.join('\n'),
+    };
+  }
+
+  private formatAdmissionTime(value: string): string {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.valueOf()) ? value : parsed.toLocaleString();
   }
 
   modelSourceLabel(source: string | null | undefined): string {

@@ -26,6 +26,10 @@ public sealed record OrchestratorDecisionResult(
 {
     public ParsedTurnUsage? ParsedUsage { get; init; }
     public AgentMessageLatency? Latency { get; init; }
+    public string? CliType { get; init; }
+    public string? ConfiguredModel { get; init; }
+    public bool QuotaFallback { get; init; }
+    public string? QuotaFallbackReason { get; init; }
 }
 
 /// <summary>
@@ -119,6 +123,7 @@ public class OrchestratorRunner
             WorkingDirectory = workingDirectory,
             Timeout = DefaultTimeout,
             Source = "orchestrator-chat",
+            Project = ProjectNameFromWorkingDirectory(workingDirectory),
             RecordUsage = false,
         }, ct).ConfigureAwait(false);
 
@@ -127,17 +132,37 @@ public class OrchestratorRunner
             var error = !string.IsNullOrWhiteSpace(result.Stderr)
                 ? result.Stderr.Trim()
                 : result.Error ?? result.Stdout.Trim();
-            return new OrchestratorDecisionResult(false, result.ParsedText, model, result.Usage, null, error)
+            return new OrchestratorDecisionResult(
+                false,
+                result.ParsedText,
+                result.EffectiveModel ?? model,
+                result.Usage,
+                null,
+                error)
             {
                 Latency = result.Latency,
                 ParsedUsage = result.RichUsage,
+                CliType = result.EffectiveCliType ?? CliTypes.Codex,
+                ConfiguredModel = model,
+                QuotaFallback = result.QuotaAdmission?.IsFallback == true,
+                QuotaFallbackReason = result.QuotaAdmission?.IsFallback == true ? result.QuotaAdmission.Reason : null,
             };
         }
 
-        return new OrchestratorDecisionResult(true, result.ParsedText, model, result.Usage, null, null)
+        return new OrchestratorDecisionResult(
+            true,
+            result.ParsedText,
+            result.EffectiveModel ?? model,
+            result.Usage,
+            null,
+            null)
         {
             Latency = result.Latency,
             ParsedUsage = result.RichUsage,
+            CliType = result.EffectiveCliType ?? CliTypes.Codex,
+            ConfiguredModel = model,
+            QuotaFallback = result.QuotaAdmission?.IsFallback == true,
+            QuotaFallbackReason = result.QuotaAdmission?.IsFallback == true ? result.QuotaAdmission.Reason : null,
         };
     }
 
@@ -283,6 +308,8 @@ public class OrchestratorRunner
                 Timeout = DefaultTimeout,
                 ExtraArgs = extras,
                 InlineImages = inlineImages,
+                Source = "orchestrator-decision",
+                Project = ProjectNameFromWorkingDirectory(workingDirectory),
                 RecordUsage = false, // The orchestrator path has its own bookkeeping
             }, ct).ConfigureAwait(false);
 
@@ -296,19 +323,43 @@ public class OrchestratorRunner
                 _logger.LogWarning(
                     "Orchestrator decision failed via OneShot: exit={Exit}, stdout={Stdout}, stderr={Stderr}",
                     r.ExitCode, r.Stdout?.Trim(), r.Stderr?.Trim());
-                return new OrchestratorDecisionResult(false, "", modelId, null, null, combined)
+                return new OrchestratorDecisionResult(
+                    false,
+                    "",
+                    r.EffectiveModel ?? modelId,
+                    null,
+                    null,
+                    combined)
                 {
                     Latency = r.Latency,
+                    CliType = r.EffectiveCliType ?? CliTypes.Claude,
+                    ConfiguredModel = modelId,
+                    QuotaFallback = r.QuotaAdmission?.IsFallback == true,
+                    QuotaFallbackReason = r.QuotaAdmission?.IsFallback == true ? r.QuotaAdmission.Reason : null,
                 };
             }
 
-            var parsed = ParseResult(r.Stdout, modelId);
+            var effectiveCli = r.EffectiveCliType ?? CliTypes.Claude;
+            var effectiveModel = r.EffectiveModel ?? modelId;
+            var parsed = string.Equals(effectiveCli, CliTypes.Claude, StringComparison.OrdinalIgnoreCase)
+                ? ParseResult(r.Stdout, effectiveModel)
+                : new OrchestratorDecisionResult(
+                    true,
+                    r.ParsedText,
+                    effectiveModel,
+                    r.Usage,
+                    CapturedSessionId: null,
+                    ErrorMessage: null);
             // OneShot already produced ParsedTurnUsage with the context-window
             // snapshot from the same parser. Prefer that over a re-derivation.
             return parsed with
             {
                 Latency = r.Latency,
                 ParsedUsage = r.RichUsage ?? parsed.ParsedUsage,
+                CliType = effectiveCli,
+                ConfiguredModel = modelId,
+                QuotaFallback = r.QuotaAdmission?.IsFallback == true,
+                QuotaFallbackReason = r.QuotaAdmission?.IsFallback == true ? r.QuotaAdmission.Reason : null,
             };
         }
 
@@ -420,6 +471,13 @@ public class OrchestratorRunner
             _logger.LogError(ex, "Orchestrator decision call failed to spawn or read");
             return new OrchestratorDecisionResult(false, "", modelId, null, null, ex.Message);
         }
+    }
+
+    private static string? ProjectNameFromWorkingDirectory(string workingDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(workingDirectory)) return null;
+        var trimmed = Path.TrimEndingDirectorySeparator(workingDirectory);
+        return Path.GetFileName(trimmed);
     }
 
     /// <summary>

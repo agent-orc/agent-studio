@@ -78,9 +78,10 @@
                     </span>
                   }
                   @if (step.usesModel) {
-                    <span class="pp__chip"
-                          [cacTooltip]="'Effective model: ' + modelSummary(step) + ' (' + modelSourceLabel(step.effectiveModelSource) + ')'">
-                      {{ modelSummary(step) }}
+                    <span class="pp__chip" [class.pp__chip--fallback]="step.quotaFallback"
+                          [attr.data-testid]="'pipeline-step-effective-agent-' + step.id"
+                          [cacTooltip]="effectiveAgentTooltip(step)">
+                      {{ effectiveAgentSummary(step) }}
                     </span>
                   }
                   @if (step.usesPrompt) {
@@ -143,6 +144,24 @@
                     </div>
                   }
                   @if (step.usesModel) {
+                    <div class="pp__settings-row"
+                         role="row"
+                         [attr.data-testid]="'pipeline-step-setting-effective-agent-' + step.id">
+                      <span class="pp__settings-label" role="cell">Effective now</span>
+                      <span class="pp__settings-value" role="cell">
+                        <span class="pp__setting-readonly" [class.pp__setting-readonly--fallback]="step.quotaFallback"
+                              [cacTooltip]="effectiveAgentTooltip(step)">
+                          {{ effectiveAgentSummary(step) }}
+                        </span>
+                      </span>
+                      <span class="pp__settings-note" role="cell">
+                        @if (step.quotaFallback) {
+                          Quota fallback for the next launch. The saved step setting is unchanged.
+                        } @else {
+                          Quota admission currently resolves to the configured family.
+                        }
+                      </span>
+                    </div>
                     @if (step.supportsEconomyModel) {
                     <div class="pp__settings-row" role="row" [attr.data-testid]="'pipeline-step-setting-economy-' + step.id">
                       <span class="pp__settings-label" role="cell">Economy model</span>

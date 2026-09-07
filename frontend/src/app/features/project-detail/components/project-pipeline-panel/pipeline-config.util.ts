@@ -93,6 +93,14 @@ export interface PipelineAdminRow {
   effectiveModel: string;
   effectiveModelSource: string;
   effectiveThinkingLevel: string;
+  activeCliType: string;
+  activeModel: string;
+  activeThinkingLevel: string;
+  quotaFallback: boolean;
+  quotaOutcome: string;
+  quotaReason: string;
+  quotaActivatedAt: string;
+  quotaResetAt: string;
   /** Inline prompt override text (legacy). Empty = bound to the registry template. */
   prompt: string;
   /** Registry template this step renders from, when the catalogue declares one. */

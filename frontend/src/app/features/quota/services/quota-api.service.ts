@@ -9,6 +9,25 @@ export interface CliModelRouteProfile {
   fallbackCliType: string | null;
   fallbackModel: string | null;
   fallbackThinkingLevel: string | null;
+  fallbackDisabled: boolean;
+  fallbackSource: 'catalogue' | 'override' | 'disabled' | 'none' | null;
+}
+
+/** Current provider switch observed by quota admission for one primary CLI family. */
+export interface ActiveQuotaFallback {
+  primaryCliType: string;
+  effectiveCliType: string;
+  effectiveModel: string | null;
+  effectiveThinkingLevel: string | null;
+  outcome: string;
+  reason: string;
+  activatedAt: string;
+  resetAt: string | null;
+}
+
+export interface CliModelRoutesResponse {
+  profiles: Record<string, CliModelRouteProfile>;
+  activeFallbacks: ActiveQuotaFallback[];
 }
 
 export interface CliQuotaWaitPolicy {
@@ -131,7 +150,7 @@ export class QuotaApiService {
   }
 
   getModelRoutes() {
-    return this.http.get<{ profiles: Record<string, CliModelRouteProfile> }>(
+    return this.http.get<CliModelRoutesResponse>(
       `${this.baseUrl}/cli/quota/model-routes`,
     );
   }

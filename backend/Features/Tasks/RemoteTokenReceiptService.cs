@@ -37,10 +37,6 @@ public sealed class RemoteTokenReceiptService
         string runAttemptId,
         string runnerId)
     {
-        var parser = _parsers.Get(task.CliType ?? task.Agent);
-        if (parser is null)
-            return new RemoteTokenReceiptResult(false, 0, "No usage parser is registered for the task CLI.");
-
         var path = TaskPaths.CliOutputLog(task.FolderPath);
         var lines = CliOutputLogParser.ParseFile(path);
         var run = _sessions.ReadSessionEvents(task.Id, task.WatchPath)
@@ -48,6 +44,11 @@ public sealed class RemoteTokenReceiptService
                 entry.RunAttemptId,
                 runAttemptId,
                 StringComparison.OrdinalIgnoreCase));
+        var effectiveCli = run?.Cli ?? task.CliType ?? task.Agent;
+        var effectiveModel = run?.Model ?? task.Model;
+        var parser = _parsers.Get(effectiveCli);
+        if (parser is null)
+            return new RemoteTokenReceiptResult(false, 0, "No usage parser is registered for the effective run CLI.");
         if (run is not null)
         {
             // One task log can contain several continuation attempts. Restrict
@@ -67,7 +68,7 @@ public sealed class RemoteTokenReceiptService
             try
             {
                 using var document = JsonDocument.Parse(line.Text);
-                if (!parser.TryParse(document.RootElement, task.Model, _models, out var usage)) continue;
+                if (!parser.TryParse(document.RootElement, effectiveModel, _models, out var usage)) continue;
                 if (usage.Input + usage.Output + usage.CacheRead + usage.CacheWrite <= 0) continue;
                 entries.Add(new OrchestratorLogEntry
                 {
@@ -79,7 +80,7 @@ public sealed class RemoteTokenReceiptService
                     ParticipantId = $"agent:remote-runner:{runAttemptId}",
                     TokenUsage = new OrchestratorTokenUsage
                     {
-                        Model = usage.Model ?? task.Model,
+                        Model = usage.Model ?? effectiveModel,
                         InputTokens = SafeInt(usage.Input),
                         OutputTokens = SafeInt(usage.Output),
                         CacheReadTokens = SafeInt(usage.CacheRead),

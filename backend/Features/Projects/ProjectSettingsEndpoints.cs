@@ -158,7 +158,8 @@ public static class ProjectSettingsEndpoints
             string? projectName,
             string? pipelineType,
             ProjectSettingsService settings,
-            TaskScannerService scanner) =>
+            TaskScannerService scanner,
+            AgentStudio.Cli.QuotaAdmissionService quotaAdmission) =>
         {
             if (!string.IsNullOrWhiteSpace(pipelineType) && !PipelineTypes.IsValid(pipelineType))
                 return Results.BadRequest(new { error = $"Unknown pipeline type '{pipelineType}'" });
@@ -217,6 +218,36 @@ public static class ProjectSettingsEndpoints
                         resolved.Model,
                         PipelineStepModelDefaults.RuntimeDefaultThinkingLevelFor(s));
                 var execution = PipelineStepExecutionResolver.Resolve(s, repositoryPath, projectSettings);
+                object? effectiveExecutionSpec = null;
+                if (PipelineStepModelDefaults.UsesModel(s) && resolved is not null)
+                {
+                    var admission = quotaAdmission.Plan(new AgentStudio.Cli.QuotaAdmissionRequest(
+                        cliType,
+                        resolved.Model,
+                        thinking?.ThinkingLevel,
+                        projectName,
+                        OccupiedSlots: 0,
+                        AgentStudio.Cli.QuotaExpectedCostClassifier.For(
+                            taskType: null,
+                            taskMode: null,
+                            model: resolved.Model,
+                            thinkingLevel: thinking?.ThinkingLevel,
+                            executionPath: $"pipeline-step-{s.Id}"),
+                        $"pipeline-step-{s.Id}"));
+                    var activeFallback = quotaAdmission.ActiveFor(cliType);
+                    effectiveExecutionSpec = new
+                    {
+                        cliType = admission.CliType,
+                        model = admission.Model,
+                        thinkingLevel = admission.ThinkingLevel,
+                        outcome = admission.Outcome.ToString(),
+                        isFallback = admission.IsFallback,
+                        primaryCliType = cliType,
+                        reason = admission.Reason,
+                        activatedAt = admission.IsFallback ? activeFallback?.ActivatedAt : null,
+                        resetAt = admission.NextResetAt,
+                    };
+                }
                 return new
                 {
                     id = s.Id,
@@ -226,6 +257,7 @@ public static class ProjectSettingsEndpoints
                     appliesTo = s.AppliesTo,
                     applicable = ProjectStackDetector.Applies(s.AppliesTo, detectedStacks),
                     effectiveExecution = execution,
+                    effectiveExecutionSpec,
                     phase,
                     runMode = s.RunMode.ToString(),
                     dependsOn = s.DependsOn,

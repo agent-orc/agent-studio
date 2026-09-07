@@ -659,6 +659,7 @@ public class TaskScannerService : ITaskScanner
                 ThinkingLevelExplicit = !raw.TryGetProperty("thinkingLevelExplicit", out var thinkingExplicit)
                     || thinkingExplicit.ValueKind != JsonValueKind.False,
                 CliType = raw.TryGetProperty("cliType", out var ct) ? ct.GetString() : null,
+                QuotaFallback = QuotaFallbackMarker.ToStatus(QuotaFallbackMarker.TryRead(jobDir, _logger)),
                 QuotaWait = QuotaWaitMarker.ToStatus(QuotaWaitMarker.TryRead(jobDir, _logger)),
                 Kind = TaskKinds.Normalize(raw.TryGetProperty("kind", out var kd) ? kd.GetString() : null),
                 EpicId = raw.TryGetProperty("epicId", out var ep) && !string.IsNullOrWhiteSpace(ep.GetString()) ? ep.GetString() : null,
@@ -2047,6 +2048,7 @@ public class TaskScannerService : ITaskScanner
     private TaskInfo ApplyVolatileMarkers(TaskInfo cached, string jobDir)
         => cached with
         {
+            QuotaFallback = QuotaFallbackMarker.ToStatus(QuotaFallbackMarker.TryRead(jobDir, _logger)),
             QuotaWait = QuotaWaitMarker.ToStatus(QuotaWaitMarker.TryRead(jobDir, _logger)),
             PendingIntent = ReadPendingIntent(jobDir),
             PostProcessingChecks = ReadPostProcessingChecks(jobDir, cached.State),

@@ -2070,6 +2070,80 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
     }
 
     [Fact]
+    public async Task Codex_cap_reached_mid_queue_routes_next_remote_claim_to_catalogue_equivalent()
+    {
+        SeedTask(TaskStates.Ready, "AGT-QUOTA-FIRST", "First Codex card", "Prompt.",
+            cliType: CliTypes.Codex, model: ModelIds.Gpt56Sol, thinkingLevel: "high", order: 1);
+        SeedTask(TaskStates.Ready, "AGT-QUOTA-NEXT", "Fallback Codex card", "Prompt.",
+            cliType: CliTypes.Codex, model: ModelIds.Gpt56Sol, thinkingLevel: "high", order: 2);
+        var resetAt = DateTime.UtcNow.AddHours(4);
+        var codexProbe = new MutableQuotaProbe(CliTypes.Codex, 10, resetAt);
+        var claudeProbe = new MutableQuotaProbe(CliTypes.Claude, 34, resetAt);
+
+        using var factory = BuildFactory(quotaProbes: [codexProbe, claudeProbe]);
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId, options: RunnerOptions("codex", hostMaxParallelism: 2));
+        await factory.Services.GetRequiredService<QuotaService>().RefreshAllAsync();
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/agent-orc/agent-studio.git");
+
+        var first = await ClaimWithSuccessfulPreflightAsync(client, new RClaim(
+            RunnerId, ProjectName, "hetzner-test", 4242, "remote-runner",
+            IdempotencyKey: "quota-first"));
+        Assert.Equal(RClaimStatus.Claimed, first.Status);
+        Assert.Equal(CliTypes.Codex, first.RunSpec!.CliType);
+        await client.ReleaseLeaseAsync(new RRelease(
+            first.TaskKey!, first.Lease!.LeaseId, first.Lease.FencingToken, RunnerId,
+            first.Lease.AttemptId, first.Lease.AuthorityEpoch, "quota-first-release"),
+            CancellationToken.None);
+
+        codexProbe.SetUsed(98);
+        await factory.Services.GetRequiredService<QuotaService>().RefreshAsync(CliTypes.Codex);
+        var second = await client.ClaimAsync(new RClaim(
+            RunnerId, ProjectName, "hetzner-test", 4242, "remote-runner",
+            IdempotencyKey: "quota-fallback-claim"), CancellationToken.None);
+
+        Assert.Equal(RClaimStatus.Claimed, second.Status);
+        Assert.Equal("AGT-QUOTA-NEXT", second.JobId);
+        Assert.Equal(CliTypes.Claude, second.RunSpec!.CliType);
+        Assert.Equal(ModelIds.ClaudeOpus5, second.RunSpec.Model);
+        Assert.Equal("high", second.RunSpec.ThinkingLevel);
+
+        var progressFolder = Path.Combine(_watchPath, TaskStates.Progress, "AGT-QUOTA-NEXT");
+        using (var taskJson = JsonDocument.Parse(File.ReadAllText(Path.Combine(progressFolder, "task.json"))))
+            Assert.Equal(CliTypes.Codex, taskJson.RootElement.GetProperty("cliType").GetString());
+        var marker = QuotaFallbackMarker.TryRead(progressFolder);
+        Assert.NotNull(marker);
+        Assert.Equal(second.Lease!.AttemptId, marker!.AttemptId);
+        Assert.Equal(CliTypes.Codex, marker.PrimaryCliType);
+        Assert.Equal(CliTypes.Claude, marker.EffectiveCliType);
+        Assert.Contains("model switched pre-launch", marker.Reason);
+
+        var session = factory.Services.GetRequiredService<TaskSessionLog>()
+            .ReadSessionEvents("AGT-QUOTA-NEXT", _watchPath)
+            .Single(entry => entry.RunAttemptId == second.Lease.AttemptId);
+        Assert.Equal(CliTypes.Claude, session.Cli);
+        Assert.Equal(ModelIds.ClaudeOpus5, session.Model);
+        Assert.Contains(
+            factory.Services.GetRequiredService<TimelineLog>().ReadAll(progressFolder),
+            entry => entry.Kind == TimelineEventKinds.QuotaFallbackActivated);
+        Assert.Contains(
+            factory.Services.GetRequiredService<OrchestratorLog>().Read(_watchPath),
+            entry => entry.Topic == OrchestratorLogTopics.LoadDistribution
+                     && entry.JobId == "AGT-QUOTA-NEXT");
+
+        codexProbe.SetUsed(10);
+        await factory.Services.GetRequiredService<QuotaService>().RefreshAsync(CliTypes.Codex);
+        var replay = await client.ClaimAsync(new RClaim(
+            RunnerId, ProjectName, "hetzner-test", 4242, "remote-runner",
+            IdempotencyKey: "quota-fallback-claim"), CancellationToken.None);
+        Assert.Equal(RClaimStatus.Claimed, replay.Status);
+        Assert.Equal(CliTypes.Claude, replay.RunSpec!.CliType);
+        Assert.Equal(ModelIds.ClaudeOpus5, replay.RunSpec.Model);
+    }
+
+    [Fact]
     public async Task Remote_assigned_ready_epic_completes_planning_with_children_and_no_runner_branch()
     {
         const string epicKey = "AGT-EPIC-REMOTE";
@@ -2803,7 +2877,8 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         string? repositoryPath = null,
         string? primaryProjectName = null,
         string? primaryWatchPath = null,
-        Func<DateTime>? authorityNow = null) =>
+        Func<DateTime>? authorityNow = null,
+        IReadOnlyList<IQuotaProbe>? quotaProbes = null) =>
         new WebApplicationFactory<Program>()
             .WithWebHostBuilder(b =>
             {
@@ -2832,7 +2907,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
                     }
                     cfg.AddInMemoryCollection(values);
                 });
-                if (writer is not null || summaryOneShot is not null || authorityNow is not null)
+                if (writer is not null || summaryOneShot is not null || authorityNow is not null || quotaProbes is not null)
                 {
                     b.ConfigureTestServices(services =>
                     {
@@ -2852,9 +2927,58 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
                                 authorityNow,
                                 sp.GetRequiredService<IAtomicJsonFileWriter>()));
                         }
+                        if (quotaProbes is not null)
+                        {
+                            services.RemoveAll<IQuotaProbe>();
+                            foreach (var probe in quotaProbes)
+                                services.AddSingleton<IQuotaProbe>(probe);
+                        }
                     });
                 }
             });
+
+    private sealed class MutableQuotaProbe : IQuotaProbe
+    {
+        private readonly object _gate = new();
+        private double _usedPct;
+        private readonly DateTime _resetAt;
+
+        public MutableQuotaProbe(string cliType, double usedPct, DateTime resetAt)
+        {
+            CliType = cliType;
+            _usedPct = usedPct;
+            _resetAt = resetAt;
+        }
+
+        public string CliType { get; }
+
+        public void SetUsed(double usedPct)
+        {
+            lock (_gate) _usedPct = usedPct;
+        }
+
+        public Task<QuotaSnapshot> ProbeAsync(CancellationToken ct)
+        {
+            double used;
+            lock (_gate) used = _usedPct;
+            return Task.FromResult(new QuotaSnapshot
+            {
+                CliType = CliType,
+                FetchedAt = DateTime.UtcNow,
+                Source = "mutable-test-probe",
+                Windows =
+                [
+                    new QuotaWindow
+                    {
+                        Label = "Weekly",
+                        UsedPct = used,
+                        ResetAt = _resetAt,
+                        ObservedStartAt = DateTime.UtcNow.AddDays(-3),
+                    },
+                ],
+            });
+        }
+    }
 
     private sealed class StubSummaryOneShot : ICliOneShot
     {
@@ -3005,6 +3129,10 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
                     Contract.ReviewCapabilities.DependencyPreparation,
                     Contract.ReviewCapabilities.GitMaterialization,
                     Contract.ReviewCapabilities.SemanticReview,
+                    Contract.CapabilityProtocol.CliExecution(CliTypes.Codex),
+                    Contract.CapabilityProtocol.ProviderAuthentication(CliTypes.Codex),
+                    Contract.CapabilityProtocol.CliExecution(CliTypes.Claude),
+                    Contract.CapabilityProtocol.ProviderAuthentication(CliTypes.Claude),
                 ]));
         registration.EnsureSuccessStatusCode();
     }
@@ -3056,6 +3184,154 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             capability => capability.Key == Contract.CapabilityProtocol.ReviewExecutor
                           && capability.HealthState == Contract.CapabilityHealthStates.Healthy
                           && capability.IsFresh);
+    }
+
+    [Fact]
+    public async Task Open_review_attempt_is_late_bound_to_healthy_provider_when_codex_is_capped()
+    {
+        const string reviewRunnerId = "review-runner-quota-fallback";
+        const string reviewInstance = "review-host:quota-fallback";
+        const string resultSha = "589c462f589c462f589c462f589c462f589c462f";
+        const string baseSha = "4136f00d4136f00d4136f00d4136f00d4136f00d";
+        const string repositoryUrl = "https://example.invalid/quota-review.git";
+        var repositoryId = Contract.RepositoryIdentityContract.FromUrl(repositoryUrl)!;
+        var now = DateTime.UtcNow;
+
+        SeedTask(
+            TaskStates.AutoReview,
+            TaskKey,
+            "Review through quota fallback",
+            "Run the queued semantic review on an equivalent healthy provider.");
+        var quotaConfiguration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["TaskRepository"] = _workspace,
+            })
+            .Build();
+        new QuotaCacheStore(
+                quotaConfiguration,
+                NullLogger<QuotaCacheStore>.Instance)
+            .Write(
+            [
+                new QuotaSnapshot
+                {
+                    CliType = "codex",
+                    FetchedAt = now,
+                    Windows =
+                    [
+                        new QuotaWindow
+                        {
+                            Label = "Weekly",
+                            UsedPct = 98,
+                            ObservedStartAt = now.AddDays(-5),
+                            ResetAt = now.AddHours(4),
+                        },
+                    ],
+                },
+                new QuotaSnapshot
+                {
+                    CliType = "claude",
+                    FetchedAt = now,
+                    Windows =
+                    [
+                        new QuotaWindow
+                        {
+                            Label = "Weekly",
+                            UsedPct = 34,
+                            ObservedStartAt = now.AddDays(-5),
+                            ResetAt = now.AddHours(4),
+                        },
+                    ],
+                },
+            ]);
+
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var run = authority.AcquireRun(
+            TaskKey,
+            repositoryId,
+            null,
+            RunnerId,
+            "coding-host",
+            120,
+            "quota-review-run").RunAttempt!;
+        var envelope = new Contract.ImmutableResultEnvelope(
+            repositoryId,
+            run.AttemptId,
+            baseSha,
+            resultSha,
+            "refs/heads/agent-studio/results/quota-review",
+            null,
+            new string('a', 64),
+            RepositoryUrl: repositoryUrl);
+        Assert.True(authority.SettleRun(new SettleRunAttemptRequest
+        {
+            Write = new AttemptWriteReference(
+                run.AttemptId,
+                run.LastFence,
+                run.AuthorityEpoch,
+                "quota-review-complete"),
+            Outcome = "done",
+            ResultSha = resultSha,
+            ResultEnvelope = envelope,
+            ResultEnvelopeDigest = Contract.ResultEnvelopeDigest.Compute(envelope),
+        }).Accepted);
+        var frozenPlan = new Contract.ReviewPlanDto(
+            [new Contract.ReviewCommandDto(
+                "aspect-code-quality",
+                "code-quality",
+                "codex",
+                [],
+                ExecutionKind: Contract.ReviewCommandKinds.AgentAspect,
+                Prompt: "Review the immutable result.",
+                CliType: "codex",
+                Model: "gpt-5.4-mini",
+                ThinkingLevel: "high")],
+            ["code-quality"],
+            IntegrationRef: "refs/heads/main");
+        var created = authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
+            TaskKey,
+            repositoryId,
+            resultSha,
+            run.AttemptId,
+            "requirements",
+            "quota-review-policy",
+            [],
+            "quota-review-create",
+            RepositoryUrl: repositoryUrl,
+            ResultRef: envelope.ImmutableRemoteRef,
+            Plan: frozenPlan));
+        Assert.True(created.Accepted);
+
+        await RegisterReviewExecutorAsync(http, reviewRunnerId, reviewInstance);
+        var response = await http.PostAsJsonAsync(
+            $"/api/v1/runners/{reviewRunnerId}/review-claims",
+            new Contract.ReviewClaimRequest(
+                reviewRunnerId,
+                reviewInstance,
+                120,
+                AvailableSlots: 1));
+        response.EnsureSuccessStatusCode();
+        var claim = await response.Content.ReadFromJsonAsync<Contract.ReviewClaimResponse>();
+
+        Assert.NotNull(claim);
+        Assert.Equal("claimed", claim.Status);
+        var effectiveCommand = Assert.Single(claim.Subject!.Plan.Commands);
+        Assert.Equal("claude", effectiveCommand.CliType);
+        Assert.Equal("claude", effectiveCommand.FileName);
+        Assert.Equal("claude-sonnet-5", effectiveCommand.Model);
+        Assert.Equal("medium", effectiveCommand.ThinkingLevel);
+        var durable = authority.GetReview(created.AttemptId)!;
+        Assert.Equal("claude", Assert.Single(durable.EffectivePlan!.Commands).CliType);
+        Assert.Equal("codex", Assert.Single(durable.Subject.Plan!.Commands).CliType);
+        var marker = QuotaFallbackMarker.TryRead(
+            factory.Services.GetRequiredService<TaskScannerService>()
+                .FindJob(TaskKey, _watchPath)!.FolderPath);
+        Assert.NotNull(marker);
+        Assert.Equal(claim.Attempt!.AttemptId, marker.AttemptId);
+        Assert.Equal("codex", marker.PrimaryCliType);
+        Assert.Equal("claude", marker.EffectiveCliType);
     }
 
     [Fact]

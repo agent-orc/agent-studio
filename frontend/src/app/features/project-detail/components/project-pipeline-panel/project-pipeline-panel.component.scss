@@ -294,6 +294,13 @@
   text-overflow: ellipsis;
 }
 
+.pp__chip--fallback,
+.pp__setting-readonly.pp__setting-readonly--fallback {
+  border-color: var(--notify-warning-border);
+  background: var(--notify-warning-tint);
+  color: var(--notify-warning-icon-fg);
+}
+
 .pp__chip--muted {
   color: var(--studio-fg-dim);
 }

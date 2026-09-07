@@ -75,6 +75,63 @@ describe('DetailHeaderComponent (smoke)', () => {
     expect(fixture.componentInstance.headerModelTooltip()).toContain('CLI: Codex');
   });
 
+  it('renders the active quota fallback instead of the stored task and previous execution spec', async () => {
+    await TestBed.configureTestingModule({
+      imports: [DetailHeaderComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(DetailHeaderComponent);
+    fixture.componentRef.setInput('info', {
+      ...taskInfo,
+      model: 'gpt-5.6-sol',
+      thinkingLevel: 'ultra',
+      execution: {
+        jobId: taskInfo.id, taskKey: taskInfo.taskKey, processId: 7, startedAt: '2026-09-07T01:00:00Z',
+        status: 'completed', exitCode: 0, durationSeconds: 10,
+        model: 'gpt-5.4-mini', thinkingLevel: 'medium', runOutcome: 'success',
+      },
+      quotaFallback: {
+        cliType: 'claude',
+        model: 'claude-opus-5',
+        thinkingLevel: 'high',
+        reason: 'Codex weekly quota reached its 98% cap',
+        startedAt: '2026-09-07T02:16:00Z',
+        resetAt: '2026-09-07T06:38:00Z',
+        primaryCliType: 'codex',
+        primaryModel: 'gpt-5.6-sol',
+        primaryThinkingLevel: 'ultra',
+      },
+    });
+    fixture.componentRef.setInput('defaultThinkingLevel', 'ultra');
+    fixture.detectChanges();
+
+    const model = fixture.nativeElement.querySelector('[data-testid="detail-model-chip"]') as HTMLElement;
+    expect(model.dataset['modelId']).toBe('claude-opus-5');
+    expect(model.dataset['modelFamily']).toBe('opus');
+    expect(model.dataset['cli']).toBe('claude');
+    expect(model.dataset['modelSource']).toBe('fallback');
+
+    const level = fixture.nativeElement.querySelector('[data-testid="detail-thinking-level"]') as HTMLElement;
+    expect(level.textContent?.trim()).toBe('h');
+    expect(level.dataset['thinkingLevel']).toBe('high');
+    expect(level.dataset['thinkingLevelOverride']).toBe('true');
+
+    expect(fixture.componentInstance.headerModel()).toBe('claude-opus-5');
+    expect(fixture.componentInstance.headerCliType()).toBe('claude');
+    expect(fixture.componentInstance.headerModelSource()).toBe('fallback');
+    const tooltip = fixture.componentInstance.headerModelTooltip();
+    expect(tooltip).toContain('Model ID: claude-opus-5');
+    expect(tooltip).toContain('Thinking level: high');
+    expect(tooltip).toContain('CLI: Claude Code');
+    expect(tooltip).toContain('Original model ID: gpt-5.6-sol');
+    expect(tooltip).toContain('Original thinking level: ultra');
+    expect(tooltip).toContain('Original CLI: Codex');
+    expect(tooltip).toContain('Reason: Codex weekly quota reached its 98% cap');
+    expect(tooltip).toContain('Active since:');
+    expect(tooltip).toContain('Provider reset:');
+    expect(tooltip).not.toContain('Model ID: gpt-5.4-mini');
+  });
+
   it('compiles + instantiates without throwing', async () => {
     await TestBed.configureTestingModule({
       imports: [DetailHeaderComponent],

@@ -383,7 +383,7 @@ public sealed class PostAbortReviewStepService
                 "post-abort-review: CLI '{Cli}' returned exit={Exit} duration={DurationMs}ms error={Error}",
                 cliType, result.ExitCode, result.Duration.TotalMilliseconds, result.Error);
         }
-        return result.Stdout;
+        return CliOneShotCompatibility.ToClaudeResultEnvelope(result, model);
     }
 
     private static Task<string> DefaultRunCliAsync(

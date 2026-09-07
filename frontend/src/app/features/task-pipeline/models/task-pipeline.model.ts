@@ -271,6 +271,8 @@ export interface PipelineCatalogueStep {
   appliesTo?: 'angular' | 'dotnet' | 'node' | 'any';
   applicable?: boolean;
   effectiveExecution?: EffectivePipelineStepExecution;
+  /** Live quota admission preview for the next launch of this model-backed step. */
+  effectiveExecutionSpec?: EffectivePipelineAgentSpec | null;
   phase?: string | null;
   runMode?: StepRunMode | null;
   dependsOn?: string[] | null;
@@ -304,6 +306,18 @@ export interface PipelineCatalogueStep {
   supportsCondition: boolean;
   supportsMaxIterations?: boolean;
   defaultMaxIterations?: number | null;
+}
+
+export interface EffectivePipelineAgentSpec {
+  cliType: string;
+  model?: string | null;
+  thinkingLevel?: string | null;
+  outcome: string;
+  isFallback: boolean;
+  primaryCliType: string;
+  reason: string;
+  activatedAt?: string | null;
+  resetAt?: string | null;
 }
 
 /**
