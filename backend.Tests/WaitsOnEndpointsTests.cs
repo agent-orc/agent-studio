@@ -424,7 +424,60 @@ public sealed class WaitsOnEndpointsTests : IDisposable
         Assert.False(waitsOn.GetProperty("blocked").GetBoolean());
     }
 
+    [Fact]
+    public async Task PutRelease_AppendsTaskReleasedTimelineRow_WithOperatorActorAndGatedDependents()
+    {
+        // AGT-2709: completion never sets the flag, so the release decision is
+        // only auditable if the endpoint records who made it and what it frees.
+        WriteJob(_libWatch, TaskStates.Completed, "dep", "LIB-1");
+        WriteJob(_appWatch, TaskStates.Ready, "consumer", "APP-1",
+            dependsOn: new[] { "LIB-1" }, releaseGate: true);
+        // A second, ungated dependent must not appear in the released-for list.
+        WriteJob(_appWatch, TaskStates.Ready, "bystander", "APP-2", dependsOn: new[] { "LIB-1" });
+
+        using var factory = BuildFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var libWatchPath = Uri.EscapeDataString(_libWatch);
+
+        using var granted = await client.PutAsJsonAsync(
+            $"/api/tasks/dep/release?watchPath={libWatchPath}", new { released = true });
+        granted.EnsureSuccessStatusCode();
+
+        var timelinePath = TaskPaths.TimelineLog(Path.Combine(_libWatch, TaskStates.Completed, "dep"));
+        var events = ReadTimeline(timelinePath);
+        var release = Assert.Single(events, e =>
+            e.GetProperty("kind").GetString() == TimelineEventKinds.TaskReleased);
+        Assert.Equal("human:local-default", release.GetProperty("actor").GetString());
+        Assert.Equal("Released for dependents: APP-1", release.GetProperty("summary").GetString());
+        var details = release.GetProperty("details");
+        Assert.Equal("true", details.GetProperty("released").GetString());
+        Assert.Equal("APP-1", details.GetProperty("dependents").GetString());
+
+        // The action is reversible and the withdrawal is audited the same way.
+        using var withdrawn = await client.PutAsJsonAsync(
+            $"/api/tasks/dep/release?watchPath={libWatchPath}", new { released = false });
+        withdrawn.EnsureSuccessStatusCode();
+
+        var afterWithdraw = ReadTimeline(timelinePath)
+            .Where(e => e.GetProperty("kind").GetString() == TimelineEventKinds.TaskReleased)
+            .ToList();
+        Assert.Equal(2, afterWithdraw.Count);
+        Assert.Equal("Release withdrawn: APP-1", afterWithdraw[1].GetProperty("summary").GetString());
+        Assert.Equal("false", afterWithdraw[1].GetProperty("details").GetProperty("released").GetString());
+    }
+
     // ---- helpers --------------------------------------------------------
+
+    private static List<JsonElement> ReadTimeline(string path)
+    {
+        Assert.True(File.Exists(path), $"expected a timeline ledger at {path}");
+        return File.ReadAllLines(path)
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .Select(line => JsonDocument.Parse(line).RootElement.Clone())
+            .ToList();
+    }
+
 
     private static JsonElement FindCard(JsonElement lane, string id)
     {

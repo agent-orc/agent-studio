@@ -85,10 +85,12 @@
           [hitCount]="filteredTaskCount()"
           [totalCount]="totalTaskCount()"
           [hasAnyFilter]="hasActiveFiltersOrSearch()"
+          [waitingForRelease]="waitingForReleaseOnly()"
           (queryChange)="setSearchQuery($event)"
           (setType)="onSetType($event)"
           (toggleTag)="toggleTagFilter($event)"
           (setOwner)="setClientFilter($event)"
+          (toggleWaitingForRelease)="toggleWaitingForReleaseFilter()"
           (clearAll)="onSidesheetClearAll()" />
         <!-- Per-tab actions land in the tab bar via this slot. The board
              tab gets filter + compact + add-task; task tabs reuse the

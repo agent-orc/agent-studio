@@ -44,6 +44,7 @@ const KIND_LABELS: Readonly<Record<string, string>> = {
   [TIMELINE_KIND.deliveryUnverified]: 'Delivery unverified - stamp refused',
   [TIMELINE_KIND.integrationPendingWarning]: 'Delivery not integrated',
   [TIMELINE_KIND.integrationRecoveryQueued]: 'Integration recovery queued',
+  [TIMELINE_KIND.taskReleased]: 'Release decided',
 };
 
 const HIDDEN_DETAILS = new Set([

@@ -40,6 +40,15 @@
                       (click)="remove(kind, key)">×</button>
                   }
                 </span>
+                <!-- AGT-2709: a release-gated target that is complete but not
+                     released is unblockable from here, so the operator does not
+                     have to navigate to the target card first. -->
+                @if (releaseTargetFor(kind, key); as releaseTarget) {
+                  <app-release-gate-action
+                    [target]="releaseTarget"
+                    [dependents]="selfKeyList()"
+                    (releasedChange)="onReleased()" />
+                }
               }
               @if (adding()) {
                 <span class="refs__add">
@@ -82,6 +91,24 @@
                 </button>
               </span>
             }
+          </div>
+        </div>
+      }
+
+      <!-- AGT-2709 target side: completion alone never releases a gated
+           dependent, so the terminal card carries the explicit decision plus
+           the list of cards it unblocks. Reversible by design. -->
+      @if (ownReleaseTarget(); as releaseTarget) {
+        <div class="refs__row" data-testid="references-row-release">
+          <span class="refs__label"
+                [cacTooltip]="'These dependents require an explicit release; reaching a terminal lane is not enough.'">
+            Release
+          </span>
+          <div class="refs__chips">
+            <app-release-gate-action
+              [target]="releaseTarget"
+              [dependents]="releaseGatedDependentKeys()"
+              (releasedChange)="onReleased()" />
           </div>
         </div>
       }

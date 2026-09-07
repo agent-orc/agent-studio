@@ -945,17 +945,58 @@ public class TaskMutationService
     /// Sets the explicit content-release approval consumed by release-gated
     /// dependsOn edges. Terminal lane movement intentionally does not call this
     /// method: approval must come from an operator or a dedicated release step.
+    /// AGT-2709: the decision is therefore the only unattributed step in the
+    /// gate, so it appends one <c>task_released</c> row naming the actor and the
+    /// dependents it affects.
     /// </summary>
-    public bool SetJobReleased(string jobId, bool released, string? watchPath = null)
+    /// <param name="actor">
+    /// Timeline actor of the deciding party (<see cref="TimelineActors"/>);
+    /// falls back to <c>system</c> for callers without an operator identity.
+    /// </param>
+    public bool SetJobReleased(string jobId, bool released, string? watchPath = null, string? actor = null)
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return false;
+        var dependents = ReleaseGatedDependentKeys(info.Key);
         TaskJsonFile.UpdateField(info.FolderPath, "released", released, _logger);
         _logger.LogInformation(
-            "task-release-set job={JobId} released={Released}",
-            jobId, released);
+            "task-release-set job={JobId} released={Released} dependents={Dependents}",
+            jobId, released, dependents.Count);
+        _timeline?.Append(
+            info.FolderPath,
+            TimelineEventKinds.TaskReleased,
+            string.IsNullOrWhiteSpace(actor) ? TimelineActors.System : actor!,
+            summary: released
+                ? $"Released for dependents{FormatDependents(dependents)}"
+                : $"Release withdrawn{FormatDependents(dependents)}",
+            details: new()
+            {
+                ["released"] = released ? "true" : "false",
+                ["dependents"] = string.Join(", ", dependents),
+            });
         return Updated();
     }
+
+    /// <summary>
+    /// Keys of the tasks whose <c>dependsOn</c> edge to <paramref name="key"/>
+    /// opts into <c>releaseGate</c> - exactly the cards an explicit release
+    /// unblocks. Sorted so the ledger row is stable, empty when the task has no
+    /// stable key or nothing gates on it.
+    /// </summary>
+    private List<string> ReleaseGatedDependentKeys(string? key)
+    {
+        if (string.IsNullOrWhiteSpace(key)) return [];
+        return _scanner.GetReferenceIndex()
+            .Dependents(key, TaskReferenceKinds.DependsOn)
+            .Where(link => link.ReleaseGate && !string.IsNullOrWhiteSpace(link.SourceKey))
+            .Select(link => link.SourceKey!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(k => k, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static string FormatDependents(IReadOnlyList<string> keys) =>
+        keys.Count == 0 ? " (none gated)" : $": {string.Join(", ", keys)}";
 
     private static List<TaskCommitInfo>? ReadPersistedCommitChain(string folderPath)
     {

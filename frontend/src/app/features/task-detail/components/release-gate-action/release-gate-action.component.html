@@ -1,0 +1,18 @@
+<span class="release"
+      [class.release--pending]="!released()"
+      data-testid="release-gate-action">
+  <span class="release__state"
+        [attr.data-released]="released()"
+        data-testid="release-gate-state">{{ stateLabel() }}</span>
+  @if (dependentsLabel()) {
+    <span class="release__dependents"
+          data-testid="release-gate-dependents">{{ dependentsLabel() }}</span>
+  }
+  <button type="button"
+          class="release__action"
+          data-testid="release-gate-toggle"
+          [appPendingButton]="busy()"
+          pendingLabel="Saving…"
+          [appTooltip]="tooltip()"
+          (click)="toggle()">{{ actionLabel() }}</button>
+</span>

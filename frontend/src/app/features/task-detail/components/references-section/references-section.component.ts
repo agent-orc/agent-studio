@@ -15,12 +15,22 @@ import {
   TaskReferenceLink,
   TaskReferences,
   TASK_REFERENCE_KINDS,
-  TaskState,
   taskDependencyKey,
   taskDependencyRequiresRelease,
 } from '../../../../models/task.model';
 import { TaskService } from '../../../../services/task.service';
 import { NotificationService } from '../../../../services/notification.service';
+import {
+  ReleaseGateActionComponent,
+  type ReleaseGateTarget,
+} from '../release-gate-action/release-gate-action.component';
+import {
+  dependentKey,
+  isTerminalState,
+  ownReleaseTarget,
+  pendingReleaseTargets,
+  releaseGatedDependents,
+} from '../release-gate-action/release-gate.util';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { TaskSelectionService } from '../../state/task-selection.service';
 import { StudioTabStateService } from '../../../studio-shell/services/studio-tab-state.service';
@@ -42,7 +52,7 @@ import type { WorkbenchListItem } from '../../../../models/project-docs.model';
   selector: 'app-references-section',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, TooltipDirective],
+  imports: [FormsModule, ReleaseGateActionComponent, TooltipDirective],
   templateUrl: './references-section.component.html',
   styleUrl: './references-section.component.scss',
 })
@@ -150,6 +160,33 @@ export class ReferencesSectionComponent {
         if (this.lastSeededKey === forKey) this.workbenchIndex.set(new Map());
       },
     });
+  }
+
+  // AGT-2709 release gate, both directions. The pure derivations live in
+  // release-gate.util.ts; this component only wires them to the template.
+  readonly releaseGatedDependentKeys = computed(() =>
+    releaseGatedDependents(this.blocking()).map(dependentKey));
+
+  readonly ownReleaseTarget = computed(() =>
+    ownReleaseTarget(this.info(), releaseGatedDependents(this.blocking())));
+
+  private readonly releasableTargets = computed(() => pendingReleaseTargets(this.info()));
+
+  releaseTargetFor(kind: TaskReferenceKind, key: string): ReleaseGateTarget | null {
+    if (kind !== 'dependsOn') return null;
+    return this.releasableTargets().get(key.trim().toUpperCase()) ?? null;
+  }
+
+  /** This task's own key, as the dependent an inline release unblocks. */
+  readonly selfKeyList = computed(() => (this.selfKey() ? [this.selfKey()] : []));
+
+  /**
+   * A release changes the waits-on truth of both cards, so the board snapshot
+   * is re-pulled alongside the detail re-fetch the parent triggers.
+   */
+  onReleased(): void {
+    this.tasks.refresh(true);
+    this.changed.emit();
   }
 
   /** Short label for an incoming dependent chip: its key (or id) + title. */
@@ -389,10 +426,6 @@ function cloneRefs(r: TaskReferences): TaskReferences {
     supersedes: [...r.supersedes],
     workbenches: [...(r.workbenches ?? [])],
   };
-}
-
-function isTerminalState(state: string): boolean {
-  return state === TaskState.Completed || state === TaskState.Archive;
 }
 
 function truncate(text: string, max: number): string {

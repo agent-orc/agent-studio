@@ -27,7 +27,7 @@ import { kvValueOf, withKvSegment } from '../../../services/url-hash.util';
  */
 
 export interface ActiveFilterPill {
-  kind: 'search' | 'owner' | 'project' | 'type' | 'tag' | 'dependsOn' | 'integration';
+  kind: 'search' | 'owner' | 'project' | 'type' | 'tag' | 'dependsOn' | 'integration' | 'release';
   kindLabel: string;
   /** Identifier used by the remove handler. */
   value: string;
@@ -77,6 +77,30 @@ export class BoardFiltersService {
   readonly stalledIntegrationOnly = signal(false);
   private readonly stalledIntegrationTaskRefs = signal<ReadonlySet<string>>(new Set());
 
+  /**
+   * AGT-2709: show only the two sides of a pending release gate - the cards
+   * whose waits-on overlay reports `waitingForRelease`, plus the terminal
+   * targets they wait on. Without it a target pending release is invisible:
+   * it sits in Delivered looking finished while its dependents stall.
+   */
+  readonly waitingForReleaseOnly = signal(false);
+
+  /**
+   * Keys of the terminal targets some card is waiting on for an explicit
+   * release. Derived from the UNFILTERED board feed so the target side of a
+   * gate stays discoverable even when its dependent is filtered out by
+   * another facet.
+   */
+  private readonly pendingReleaseTargetKeys = computed(() => {
+    const keys = new Set<string>();
+    for (const job of everyJob(this.jobService.grouped())) {
+      for (const item of job.waitsOn?.items ?? []) {
+        if (item.waitingForRelease) keys.add(item.key.trim().toUpperCase());
+      }
+    }
+    return keys;
+  });
+
   /** Single-select view of the type filter. Null = no type filter. */
   readonly activeType = computed<string | null>(() => {
     const s = this.activeTypeFilter();
@@ -93,7 +117,8 @@ export class BoardFiltersService {
     || this.activeTagFilter().size > 0
     || !!this.activeClientFilter()
     || !!this.activeDependsOnFilter()
-    || this.stalledIntegrationOnly());
+    || this.stalledIntegrationOnly()
+    || this.waitingForReleaseOnly());
 
   readonly hasActiveFiltersOrSearch = computed(() =>
     this.searchQuery().trim().length > 0
@@ -101,7 +126,8 @@ export class BoardFiltersService {
     || this.activeDependsOnFilter() !== null
     || this.activeType() !== null
     || this.activeTagFilter().size > 0
-    || this.stalledIntegrationOnly());
+    || this.stalledIntegrationOnly()
+    || this.waitingForReleaseOnly());
 
   readonly activeFilterCount = computed(() => {
     let n = 0;
@@ -111,6 +137,7 @@ export class BoardFiltersService {
     if (this.activeType()) n += 1;
     n += this.activeTagFilter().size;
     if (this.stalledIntegrationOnly()) n += 1;
+    if (this.waitingForReleaseOnly()) n += 1;
     return n;
   });
 
@@ -137,9 +164,13 @@ export class BoardFiltersService {
     const tagIds = this.activeTagFilter();
     const stalledIntegrationOnly = this.stalledIntegrationOnly();
     const stalledIntegrationTaskRefs = this.stalledIntegrationTaskRefs();
+    const waitingForReleaseOnly = this.waitingForReleaseOnly();
+    const pendingReleaseTargetKeys = waitingForReleaseOnly
+      ? this.pendingReleaseTargetKeys()
+      : new Set<string>();
     const query = this.searchQuery().trim().toLowerCase();
     const noFilters = active.size === 0 && !ownerId && !dependsOnKey && types.size === 0
-      && tagIds.size === 0 && !stalledIntegrationOnly && !query;
+      && tagIds.size === 0 && !stalledIntegrationOnly && !waitingForReleaseOnly && !query;
     if (noFilters) return grouped;
     const matchesQuery = (j: TaskInfo) => {
       if (!query) return true;
@@ -168,6 +199,7 @@ export class BoardFiltersService {
       }
       if (stalledIntegrationOnly
           && !stalledIntegrationTaskRefs.has(integrationAlertTaskRef(j.projectName, j.id))) return false;
+      if (waitingForReleaseOnly && !sitsOnPendingReleaseGate(j, pendingReleaseTargetKeys)) return false;
       if (!matchesQuery(j)) return false;
       return true;
     });
@@ -283,6 +315,12 @@ export class BoardFiltersService {
         label: 'integration:stalled', swatch: null,
       });
     }
+    if (this.waitingForReleaseOnly()) {
+      pills.push({
+        kind: 'release', kindLabel: 'Release', value: 'waiting',
+        label: 'release:waiting', swatch: null,
+      });
+    }
     return pills;
   });
 
@@ -310,6 +348,9 @@ export class BoardFiltersService {
         this.stalledIntegrationOnly.set(false);
         this.writeFilterHash();
         break;
+      case 'release':
+        this.setWaitingForReleaseOnly(false);
+        break;
     }
   }
 
@@ -334,6 +375,16 @@ export class BoardFiltersService {
   setDependsOnFilter(key: string | null): void {
     this.activeDependsOnFilter.set(key ? key.trim() : null);
     this.writeFilterHash();
+  }
+
+  /** Show only the pending release gates (both sides), or clear with false. */
+  setWaitingForReleaseOnly(value: boolean): void {
+    this.waitingForReleaseOnly.set(value);
+    this.writeFilterHash();
+  }
+
+  toggleWaitingForReleaseOnly(): void {
+    this.setWaitingForReleaseOnly(!this.waitingForReleaseOnly());
   }
 
   /** Toggle the dependents filter for `key`: re-selecting the active key clears it. */
@@ -454,6 +505,7 @@ export class BoardFiltersService {
     this.activeClientFilter.set(null);
     this.activeDependsOnFilter.set(null);
     this.stalledIntegrationOnly.set(false);
+    this.waitingForReleaseOnly.set(false);
     this.activeProjects.set(new Set());
     this.explicitProjectFilter.set(false);
     localStorage.setItem('activeProjects', '[]');
@@ -522,6 +574,7 @@ export class BoardFiltersService {
     this.activeTypeFilter.set(new Set());
     this.activeTagFilter.set(new Set());
     this.stalledIntegrationOnly.set(false);
+    this.waitingForReleaseOnly.set(false);
 
     const rawFilters = kvValueOf(hash, 'filters');
     if (rawFilters != null) {
@@ -533,6 +586,7 @@ export class BoardFiltersService {
       const types = new Set<string>();
       const tags = new Set<string>();
       let stalledIntegrationOnly = false;
+      let waitingForReleaseOnly = false;
       for (const p of parts) {
         const idx = p.indexOf(':');
         if (idx <= 0) continue;
@@ -545,6 +599,7 @@ export class BoardFiltersService {
         else if (k === 'type') types.add(v);
         else if (k === 'tags') v.split(',').filter(Boolean).forEach(x => tags.add(x));
         else if (k === 'integration' && v === 'stalled') stalledIntegrationOnly = true;
+        else if (k === 'release' && v === 'waiting') waitingForReleaseOnly = true;
       }
       this.activeClientFilter.set(owner);
       this.activeDependsOnFilter.set(dependsOn);
@@ -555,6 +610,7 @@ export class BoardFiltersService {
       this.activeTypeFilter.set(oneType);
       this.activeTagFilter.set(tags);
       this.stalledIntegrationOnly.set(stalledIntegrationOnly);
+      this.waitingForReleaseOnly.set(waitingForReleaseOnly);
       return;
     }
     const rawLegacy = kvValueOf(hash, 'filter');
@@ -587,6 +643,7 @@ export class BoardFiltersService {
     const tags = [...this.activeTagFilter()];
     if (tags.length > 0) segments.push(`tags:${tags.join(',')}`);
     if (this.stalledIntegrationOnly()) segments.push('integration:stalled');
+    if (this.waitingForReleaseOnly()) segments.push('release:waiting');
     // Segment-aware upsert: the route segment of an open overlay (workspace
     // settings, project shell, epics) and legacy segments survive; only the
     // filters= segment is owned here. See url-hash.util.ts for the contract.
@@ -652,6 +709,35 @@ function safeParseStringArray(raw: string | null): string[] {
 
 function integrationAlertTaskRef(projectName: string, taskId: string): string {
   return `${projectName}\u0000${taskId}`.toLowerCase();
+}
+
+/** Every card of a grouped feed; `review` mirrors `autoReview`, so it is skipped. */
+function everyJob(grouped: GroupedJobs): TaskInfo[] {
+  return [
+    ...(grouped.backlog ?? []),
+    ...(grouped.preparation ?? []),
+    ...(grouped.orchestratorPrep ?? []),
+    ...(grouped.ready ?? []),
+    ...(grouped.progress ?? []),
+    ...(grouped.failedPickup ?? []),
+    ...(grouped.autoReview ?? grouped.review ?? []),
+    ...(grouped.humanReview ?? []),
+    ...(grouped.escalated ?? []),
+    ...(grouped.completed ?? []),
+    ...(grouped.archive ?? []),
+  ];
+}
+
+/**
+ * AGT-2709: true for either side of a pending release gate - a card that is
+ * itself waiting for a release, or a target some card is waiting on. Both are
+ * needed: releasing happens on the target, so the operator has to reach it
+ * from the same filtered view that shows who is stuck behind it.
+ */
+function sitsOnPendingReleaseGate(job: TaskInfo, pendingTargetKeys: ReadonlySet<string>): boolean {
+  if ((job.waitsOn?.items ?? []).some(item => item.waitingForRelease === true)) return true;
+  const key = (job.key ?? '').trim().toUpperCase();
+  return key.length > 0 && pendingTargetKeys.has(key);
 }
 
 function typeFilterLabel(value: string): string {

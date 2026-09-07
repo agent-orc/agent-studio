@@ -520,6 +520,7 @@ export class App implements OnInit, OnDestroy {
   readonly activeTypeFilter = this.boardFilters.activeTypeFilter;
   readonly activeTagFilter = this.boardFilters.activeTagFilter;
   readonly activeType = this.boardFilters.activeType;
+  readonly waitingForReleaseOnly = this.boardFilters.waitingForReleaseOnly;
   readonly hasActiveFilters = this.boardFilters.hasActiveFilters;
   /** Workspace tag registry, refreshed on init via `loadTagRegistry`. */
   readonly tagRegistry = this.tagRegistryStore.tags;
@@ -549,6 +550,9 @@ export class App implements OnInit, OnDestroy {
   }
   toggleTagFilter(id: string): void {
     this.boardFilters.toggleTagFilter(id);
+  }
+  toggleWaitingForReleaseFilter(): void {
+    this.boardFilters.toggleWaitingForReleaseOnly();
   }
   loadTagRegistry(): void {
     this.jobService.listTags().subscribe({

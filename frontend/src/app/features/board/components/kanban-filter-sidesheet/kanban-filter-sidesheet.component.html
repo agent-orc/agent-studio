@@ -142,6 +142,26 @@
     }
   </section>
 
+  <!-- AGT-2709: the release gate is the one dependency state an operator has
+       to act on, and its target looks finished on the board. Both sides of a
+       pending gate are reachable from this one toggle. -->
+  <section class="sheet__section">
+    <h3 class="sheet__section-title">Dependencies</h3>
+    <ul class="sheet__list" data-testid="kanban-filter-dependency-list">
+      <li>
+        <label class="sheet__checkbox"
+               data-testid="kanban-filter-waiting-for-release"
+               [cacTooltip]="'Tasks held back by a release gate, plus the terminal targets that still need an explicit release.'">
+          <input type="checkbox"
+                 [checked]="waitingForRelease()"
+                 (change)="onToggleWaitingForRelease()" />
+          <span class="sheet__swatch sheet__swatch--blank" aria-hidden="true"></span>
+          <span class="sheet__checkbox-label">Waiting for release</span>
+        </label>
+      </li>
+    </ul>
+  </section>
+
   <!-- Inline-mode footer rendered as a normal section row (the right-
        sidesheet mode renders its own footer via the @else branch
        above, projected into <app-sidesheet>[footer]). -->

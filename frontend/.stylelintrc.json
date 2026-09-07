@@ -263,6 +263,7 @@
         "src/app/features/studio-shell/components/studio-welcome/studio-welcome.component.scss",
         "src/app/features/task-detail/components/prompt-pane/files-pane/document-details-menu/document-details-menu.component.scss",
         "src/app/features/task-detail/components/detail-load-error/detail-load-error.component.scss",
+        "src/app/features/task-detail/components/release-gate-action/release-gate-action.component.scss",
         "src/app/features/task-detail/components/decision-surface/decision-surface.component.scss",
         "src/app/features/task-detail/components/concept-dossier-notice/concept-dossier-notice.component.scss",
         "src/app/features/task-detail/components/escalation-summary/_escalation-summary-actions.scss",

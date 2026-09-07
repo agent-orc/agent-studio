@@ -60,11 +60,14 @@ export class KanbanFilterSidesheetComponent {
   readonly hitCount = input<number>(0);
   readonly totalCount = input<number>(0);
   readonly hasAnyFilter = input<boolean>(false);
+  /** AGT-2709: narrow the board to the two sides of a pending release gate. */
+  readonly waitingForRelease = input<boolean>(false);
 
   readonly queryChange = output<string>();
   readonly setType = output<string | null>();
   readonly toggleTag = output<string>();
   readonly setOwner = output<string | null>();
+  readonly toggleWaitingForRelease = output<void>();
   readonly closed = output<void>();
   readonly clearAll = output<void>();
 
@@ -132,6 +135,10 @@ export class KanbanFilterSidesheetComponent {
 
   onSetOwner(id: string | null): void {
     this.setOwner.emit(id);
+  }
+
+  onToggleWaitingForRelease(): void {
+    this.toggleWaitingForRelease.emit();
   }
 
   onClearAll(): void {

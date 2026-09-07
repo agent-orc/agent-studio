@@ -1,0 +1,58 @@
+:host {
+  display: contents;
+}
+
+.release {
+  display: inline-flex;
+  max-width: 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--studio-spacing-2);
+  border: 1px solid var(--studio-border);
+  border-radius: 999px;
+  background: var(--studio-bg-elevated);
+  color: var(--studio-fg);
+  padding: var(--studio-spacing-1) var(--studio-spacing-3);
+  font-size: 0.6875rem;
+}
+
+// R1/R4: a terminal card that still blocks somebody is the acute state, so the
+// whole surface takes a warn tint. A released card renders quietly.
+.release--pending {
+  border-color: color-mix(in srgb, var(--studio-accent-warn) 55%, var(--studio-border));
+  background: color-mix(in srgb, var(--studio-accent-warn) 14%, var(--studio-bg-elevated));
+}
+
+.release__state {
+  font-weight: 700;
+  color: var(--studio-fg-strong);
+}
+
+.release__dependents {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--studio-fg-dim);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.release__action {
+  border: 0;
+  background: transparent;
+  color: var(--studio-accent-3-strong);
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 0.16em;
+}
+
+.release__action:disabled {
+  color: var(--studio-fg-muted);
+  cursor: default;
+}
+
+.release__action:focus-visible {
+  outline: 2px solid var(--studio-accent-3-strong);
+  outline-offset: 2px;
+}

@@ -300,7 +300,7 @@ public static class TimelineEventKinds
     /// carries the classification, repeat count, attempt ids, and the base ref /
     /// base commit / step / command the runner reported.
     /// </summary>
-    public const string ReviewInfrastructureRepeatDiagnosed = "review_infrastructure_repeat_diagnosed";
+    public const string ReviewInfrastructureRepeatDiagnosed = "review_infrastructure_repeat_diagnosed";
     /// AGT-2492: the recall sweep found that a parked card's recorded
     /// precondition no longer holds. <see cref="TimelineEvent.Summary"/> carries
     /// how long the card has been parked and why the blocker is considered gone;
@@ -318,6 +318,15 @@ public static class TimelineEventKinds
     /// executor, host, subject, and source run.
     /// </summary>
     public const string ReviewAttemptClaimed = "review_attempt_claimed";
+    /// <summary>
+    /// AGT-2709: the explicit content release of a terminal task was granted or
+    /// withdrawn through <c>PUT /api/tasks/{id}/release</c>. Terminal completion
+    /// never sets the flag, so this row is the only audit record of who decided
+    /// that release-gated dependents may proceed. <see cref="TimelineEvent.Actor"/>
+    /// is the operator; <see cref="TimelineEvent.Details"/> carries
+    /// <c>released</c> and the <c>dependents</c> keys the decision affects.
+    /// </summary>
+    public const string TaskReleased = "task_released";
 }
 
 /// <summary>

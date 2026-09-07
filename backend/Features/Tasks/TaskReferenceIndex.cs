@@ -145,6 +145,15 @@ public sealed class TaskReferenceIndex
             if (!string.IsNullOrEmpty(sourceKey))
                 dependsOn[sourceKey] = refs.DependsOn.Select(edge => edge.Key).ToList();
 
+            // AGT-2709: Enumerate() flattens an edge to its key, so the
+            // release-gate opt-in is recovered here for the reverse link. The
+            // target card needs it to know which dependents its explicit
+            // release would actually unblock.
+            var gatedTargets = refs.DependsOn
+                .Where(edge => edge.ReleaseGate)
+                .Select(edge => edge.Key)
+                .ToHashSet(KeyComparer);
+
             foreach (var (kind, target) in refs.Enumerate())
             {
                 if (string.IsNullOrWhiteSpace(target)) continue;
@@ -156,7 +165,8 @@ public sealed class TaskReferenceIndex
                     SourceTitle: t.Title,
                     SourceState: t.State,
                     SourceWatchPath: t.WatchPath,
-                    Kind: kind));
+                    Kind: kind,
+                    ReleaseGate: kind == TaskReferenceKinds.DependsOn && gatedTargets.Contains(target)));
 
                 if (kind == TaskReferenceKinds.DependsOn && sourceKey.Length > 0)
                 {
@@ -197,4 +207,10 @@ public record TaskReferenceLink(
     string SourceTitle,
     string SourceState,
     string SourceWatchPath,
-    string Kind);
+    string Kind,
+    /// <summary>
+    /// AGT-2709: true when this is a <c>dependsOn</c> edge that opts into
+    /// <c>releaseGate</c>, so the queried task's terminal completion alone does
+    /// not fulfil it. Always false for the other relation kinds.
+    /// </summary>
+    bool ReleaseGate = false);

@@ -177,6 +177,12 @@ export interface TaskReferenceLink {
   sourceState: string;
   sourceWatchPath: string;
   kind: TaskReferenceKind | string;
+  /**
+   * AGT-2709: the incoming `dependsOn` edge opts into `releaseGate`, so the
+   * queried task's terminal completion alone does not unblock this dependent -
+   * it also needs the explicit `released` flag. False for other relation kinds.
+   */
+  releaseGate?: boolean;
 }
 
 /**
