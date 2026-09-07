@@ -593,7 +593,7 @@ public class ProjectSettingsService
                     ? current.OrchestratorThinkingLevel
                     : (string.IsNullOrWhiteSpace(thinkingLevel)
                         ? null
-                        : CliThinkingLevels.Normalize(CliTypes.Claude, normalizedModel, thinkingLevel))
+                        : ModelMetadataRegistry.ResolveThinkingLevel(CliTypes.Claude, normalizedModel, thinkingLevel))
             };
             Persist();
         }
@@ -642,7 +642,7 @@ public class ProjectSettingsService
                     ? current.EpicPlanningThinkingLevel
                     : (string.IsNullOrWhiteSpace(thinkingLevel)
                         ? null
-                        : CliThinkingLevels.Normalize(CliTypes.Claude, normalizedModel, thinkingLevel)),
+                        : ModelMetadataRegistry.ResolveThinkingLevel(CliTypes.Claude, normalizedModel, thinkingLevel)),
                 EpicSubTasksToReady = subTasksToReady ?? current.EpicSubTasksToReady,
             };
             Persist();

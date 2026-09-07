@@ -268,11 +268,11 @@ public static class PipelineStepConfigResolver
         var modelDefault = ModelMetadataRegistry.DefaultThinkingLevelForCli(cliType, resolvedModel);
 
         if (step is not null)
-            return new(CliThinkingLevels.Normalize(cliType, resolvedModel, step), ModelSourceStep, step, project, global, modelDefault);
+            return new(ModelMetadataRegistry.ResolveThinkingLevel(cliType, resolvedModel, step), ModelSourceStep, step, project, global, modelDefault);
         if (project is not null)
-            return new(CliThinkingLevels.Normalize(cliType, resolvedModel, project), ModelSourceProject, null, project, global, modelDefault);
+            return new(ModelMetadataRegistry.ResolveThinkingLevel(cliType, resolvedModel, project), ModelSourceProject, null, project, global, modelDefault);
         if (global is not null)
-            return new(CliThinkingLevels.Normalize(cliType, resolvedModel, global), ModelSourceGlobal, null, null, global, modelDefault);
+            return new(ModelMetadataRegistry.ResolveThinkingLevel(cliType, resolvedModel, global), ModelSourceGlobal, null, null, global, modelDefault);
         return new(modelDefault, ModelSourceCatalogue, null, null, null, modelDefault);
     }
 

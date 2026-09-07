@@ -99,6 +99,10 @@ CLI execution tests.
   `cli-model-routing.json`. `CliQuotaFallbackService` resolves that policy
   against the latest quota snapshot for every new run; it must not rewrite the
   task's configured CLI or model.
+- A model catalog is the union of registry knowledge and live CLI discovery.
+  A registry model that the installed CLI does not report remains visible and
+  disabled with an availability note. Generation age is separate from
+  deprecation: advertised older models remain selectable under `Older models`.
 - A quota fallback is run-scoped and must never be silent. Keep the
   `quota_fallback_activated` timeline event, task chat note, task-card badge,
   and status-bar warning aligned. When the primary is below its cap again, the

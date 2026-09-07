@@ -278,7 +278,7 @@ public static class ClientEndpoints
             var existing = store.Find(id);
             var normalizedThinkingLevel = thinkingLevel is null
                 ? null
-                : CliThinkingLevels.Normalize(cli ?? existing?.DefaultCliType, model ?? existing?.DefaultModel, thinkingLevel);
+                : ModelMetadataRegistry.ResolveThinkingLevel(cli ?? existing?.DefaultCliType, model ?? existing?.DefaultModel, thinkingLevel);
 
             var updated = store.SetDefaults(id, cli, model, clearCli, clearModel, normalizedThinkingLevel, clearThinkingLevel);
             if (updated is null) return Results.NotFound(new { error = "client-not-found" });

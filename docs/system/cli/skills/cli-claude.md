@@ -185,11 +185,38 @@ older downstream consumers continue to work.
 
 ## Model handling
 
-`GetModelCatalogAsync` returns a hardcoded list (Opus 4.7, Sonnet 4.6 default, Haiku 4.5). No live discovery yet — the CLI doesn't expose a `claude models list` command at the time of writing.
+Claude has no machine-readable model-list command. Studio opens the interactive
+`/model` picker in a PTY, parses the installed CLI's entries, and merges them
+with `ModelMetadataRegistry`. Models reported by the picker are selectable.
+Known registry models missing from the picker remain visible but disabled with
+an availability note. This keeps an existing model pin legible without claiming
+that the installed CLI can run it.
+
+Claude Code 2.1.26x renders numbered entries with a short name followed by the
+display name, a middle dot, and a description. It then renders the effort
+selector after the model list. PTY snapshots can collapse that entire surface
+into one line and remove inter-word spaces, for example
+`3.Fable✔Fable5.1·Mostcapable...4.SonnetSonnet5·Efficient...●Higheffort`.
+The discovery parser therefore recognizes numbered entry boundaries and the
+display-name/version token without relying on whitespace, stops before the
+effort selector, and treats the check mark as the current default. The older
+one-model-per-line parser remains as a compatibility fallback.
+
+The registry contains the Claude 5 family currently exposed by the picker:
+Opus 5 (`claude-opus-5`, 1 million context), Fable 5.1
+(`claude-fable-5-1`, 200,000 context), Sonnet 5, and Haiku 4.5. The dated Haiku
+id `claude-haiku-4-5-20251001` resolves through the short registry alias.
+Opus 5 and Fable 5.1 expose `low`, `medium`, `high`, `xhigh`, and `max` in
+Studio, with `high` as the default. Fable is a Studio compatibility entry until
+CodingAgentRunner's `CliThinkingLevels` includes that family. The related
+library work is tracked by `model-catalog-availability-discovery-gpt-6-astra`
+in the Coding Agent Runner project.
 
 `NormalizeModelId` coerces dotted forms (`claude-opus-4.7`) into the dashed form (`claude-opus-4-7`) the CLI requires. Unknown ids pass through unchanged so non-standard ids still flow.
 
-To add a new model, append it to the list in `GetModelCatalogAsync` and add a test row in `claude-model-normalize.spec.ts` if the dotted form is realistic.
+To add a new known model, update `ModelMetadataRegistry`, its aliases and
+thinking metadata, plus the picker parser fixture when the display shape is
+new. Do not make registry presence imply installed-CLI availability.
 
 ## Quirks (and what to do about them)
 

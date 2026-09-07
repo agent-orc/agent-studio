@@ -20,6 +20,8 @@ export interface CliModelInfo {
   defaultThinkingLevel?: string | null;
   available?: boolean;
   deprecated?: boolean;
+  /** Client-side catalog projection used to group an earlier generation without deprecating it. */
+  olderGeneration?: boolean;
   availabilityNote?: string | null;
 }
 

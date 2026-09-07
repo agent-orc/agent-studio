@@ -2027,10 +2027,10 @@ public static class LeaseEndpoints
         model = string.IsNullOrWhiteSpace(model) ? null : model.Trim();
         // Resolve the requested rung against what this CLI + model can actually
         // select. An unsupported value would otherwise reach the CLI verbatim and
-        // fail the spawn; CliThinkingLevels falls back to the supported default.
+        // fail the spawn; the registry-aware resolver falls back to the supported default.
         thinkingLevel = string.IsNullOrWhiteSpace(thinkingLevel)
             ? null
-            : CliThinkingLevels.Normalize(cliType, model, thinkingLevel);
+            : ModelMetadataRegistry.ResolveThinkingLevel(cliType, model, thinkingLevel);
 
         var modeFraming = BuildModeFraming(task, prompts, dossierMaintenance);
 

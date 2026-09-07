@@ -119,15 +119,16 @@ describe('CliModelSelectorComponent', () => {
     expect(component.draftAvailableModels().slice(1)).toEqual([
       expect.objectContaining({
         id: 'claude-opus-4-8',
-        deprecated: true,
+        olderGeneration: true,
         availabilityNote: 'Older generation',
       }),
       expect.objectContaining({
         id: 'claude-opus-4-7',
-        deprecated: true,
+        olderGeneration: true,
         availabilityNote: 'Older generation',
       }),
     ]);
+    expect(component.draftAvailableModels().slice(1).every((item) => !item.deprecated)).toBe(true);
     expect(component.draftAvailableModels().every((item) => item.available !== false)).toBe(true);
 
     const olderHeading = document.querySelector(
@@ -138,7 +139,7 @@ describe('CliModelSelectorComponent', () => {
     );
     expect(olderHeading?.textContent).toContain('Older models');
     expect(olderRows).toHaveLength(2);
-    expect(olderRows[0].getAttribute('data-deprecated')).toBe('true');
+    expect(olderRows[0].getAttribute('data-deprecated')).toBeNull();
     expect(olderRows[0].textContent).toContain('Older generation');
     expect(olderRows[0].disabled).toBe(false);
 
@@ -148,13 +149,78 @@ describe('CliModelSelectorComponent', () => {
     expect(commits).toEqual(['claude-opus-4-8']);
   });
 
+  it('orders the Claude 5 family above 4.x and exposes the Fable ladder', async () => {
+    const models: CliModelInfo[] = [
+      { ...claudeModels[0], id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5', isDefault: false },
+      { ...claudeModels[0], id: 'claude-sonnet-5', label: 'Claude Sonnet 5', isDefault: false },
+      { ...claudeModels[0], id: 'claude-fable-5-1', label: 'Claude Fable 5.1', isDefault: true,
+        thinkingLevels: ['low', 'medium', 'high', 'xhigh', 'max'], defaultThinkingLevel: 'high' },
+      { ...claudeModels[0], id: 'claude-opus-5', label: 'Claude Opus 5', isDefault: false },
+      { ...claudeModels[0], id: 'claude-opus-4-8', label: 'Claude Opus 4.8', isDefault: false },
+    ];
+    const store = createStoreMock();
+    store.modelsFor.mockReturnValue(models);
+    store.ensure.mockReturnValue(of(models));
+    const { fixture, component } = await create(
+      { cliType: 'claude', model: 'claude-fable-5-1', thinkingLevel: 'high' },
+      store,
+    );
+
+    openPicker(fixture);
+    await fixture.whenStable();
+
+    expect(component.currentModels().map((model) => model.id)).toEqual([
+      'claude-fable-5-1',
+      'claude-sonnet-5',
+      'claude-opus-5',
+    ]);
+    expect(component.olderModels().map((model) => model.id)).toEqual([
+      'claude-opus-4-8',
+      'claude-haiku-4-5',
+    ]);
+    expect(component.draftThinkingLevels()).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
+  });
+
+  it('keeps a pinned unavailable model visible but disabled with its catalog note', async () => {
+    const note = 'Known in registry but not reported by the installed Claude CLI.';
+    const models: CliModelInfo[] = [
+      { ...claudeModels[0], id: 'claude-opus-5', label: 'Claude Opus 5', isDefault: true },
+      { ...claudeModels[0], id: 'claude-fable-5-1', label: 'Claude Fable 5.1',
+        isDefault: false, available: false, availabilityNote: note },
+    ];
+    const store = createStoreMock();
+    store.modelsFor.mockReturnValue(models);
+    store.ensure.mockReturnValue(of(models));
+    const { fixture, component } = await create(
+      { cliType: 'claude', model: 'claude-fable-5-1' },
+      store,
+    );
+
+    openPicker(fixture);
+    await fixture.whenStable();
+
+    const unavailable = document.querySelector<HTMLButtonElement>(
+      '[data-testid="cli-model-selector-picker-model-claude-fable-5-1"]',
+    );
+    expect(component.draftModel()).toBe('claude-fable-5-1');
+    expect(unavailable?.disabled).toBe(true);
+    expect(unavailable?.getAttribute('aria-disabled')).toBe('true');
+    expect(unavailable?.textContent).toContain(note);
+    unavailable?.click();
+    expect(component.pickerOpen()).toBe(true);
+  });
+
   it('serves a fresh catalog from the store and schedules the silent picker-open refresh', async () => {
     const { fixture, component, store } = await create({ cliType: 'claude', model: 'claude-opus-4-7' });
     openPicker(fixture);
     expect(store.modelsFor).toHaveBeenCalledWith('claude');
     expect(store.refreshForPickerOpen).toHaveBeenCalledWith('claude');
     await fixture.whenStable();
-    expect(component.draftAvailableModels().map((m) => m.id)).toEqual(['claude-opus-4-7', 'claude-sonnet-4-6']);
+    expect(component.draftAvailableModels().map((m) => m.id)).toEqual([
+      'claude-opus-4-7',
+      'claude-sonnet-4-6',
+      'claude-retired',
+    ]);
   });
 
   it('loads via ensure() when the store has no fresh catalog', async () => {
@@ -172,7 +238,7 @@ describe('CliModelSelectorComponent', () => {
     pendingCatalog.complete();
     await fixture.whenStable();
     expect(fixture.componentInstance.catalogLoading()).toBe(false);
-    expect(component.draftAvailableModels().length).toBe(2);
+    expect(component.draftAvailableModels().length).toBe(3);
   });
 
   it('surfaces a catalog error when ensure() fails', async () => {

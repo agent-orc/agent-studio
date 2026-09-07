@@ -454,7 +454,7 @@ public partial class GenericCliExecutionService : ICliExecutionService
         }
 
         var invocationModel = NormalizeModelForInvocation(model);
-        var invocationThinkingLevel = CliThinkingLevels.Normalize(CliType, invocationModel, thinkingLevel);
+        var invocationThinkingLevel = ModelMetadataRegistry.ResolveThinkingLevel(CliType, invocationModel, thinkingLevel);
         var psi = BuildStartInfo(prompt, workingDirectory, sessionName, resumeSession, invocationModel, invocationThinkingLevel, permissionMode);
         psi.RedirectStandardOutput = true;
         psi.RedirectStandardError  = true;

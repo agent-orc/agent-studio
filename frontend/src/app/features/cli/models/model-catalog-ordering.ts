@@ -5,6 +5,7 @@ const OLDER_GENERATION_NOTE = 'Older generation';
 interface ParsedModelGeneration {
   family: string;
   generation: readonly number[];
+  age: readonly number[];
 }
 
 interface RankedModel {
@@ -22,10 +23,9 @@ interface RankedModel {
  * - gpt-5-6 > gpt-5-5
  *
  * An available, non-deprecated model establishes the leading generation for
- * its family. Lower available generations remain selectable, but receive the
- * existing deprecated signal plus a calm explanatory note so picker consumers
- * can place them in an "Older models" section. Explicit backend deprecation
- * always wins and is never made unavailable here.
+ * its family. Lower generations remain distinct from backend deprecation: the
+ * client projects `olderGeneration` plus a calm explanatory note so picker
+ * consumers can group them without changing their availability or lifecycle.
  */
 export function orderModelCatalog(models: readonly CliModelInfo[]): readonly CliModelInfo[] {
   const ranked: RankedModel[] = models.map((model, index) => ({
@@ -38,8 +38,8 @@ export function orderModelCatalog(models: readonly CliModelInfo[]): readonly Cli
   for (const item of ranked) {
     if (item.model.available === false || item.model.deprecated || item.parsed === null) continue;
     const current = leadingGeneration.get(item.parsed.family);
-    if (current === undefined || compareGeneration(item.parsed.generation, current) > 0) {
-      leadingGeneration.set(item.parsed.family, item.parsed.generation);
+    if (current === undefined || compareGeneration(item.parsed.age, current) > 0) {
+      leadingGeneration.set(item.parsed.family, item.parsed.age);
     }
   }
 
@@ -47,14 +47,13 @@ export function orderModelCatalog(models: readonly CliModelInfo[]): readonly Cli
     const leading = item.parsed === null
       ? undefined
       : leadingGeneration.get(item.parsed.family);
-    const superseded = item.model.available !== false
-      && !item.model.deprecated
+    const superseded = !item.model.deprecated
       && leading !== undefined
-      && compareGeneration(item.parsed!.generation, leading) < 0;
+      && compareGeneration(item.parsed!.age, leading) < 0;
     const model = superseded
       ? {
           ...item.model,
-          deprecated: true,
+          olderGeneration: true,
           availabilityNote: item.model.availabilityNote?.trim() || OLDER_GENERATION_NOTE,
         }
       : item.model;
@@ -67,8 +66,9 @@ export function orderModelCatalog(models: readonly CliModelInfo[]): readonly Cli
       const availability = Number(left.model.available === false) - Number(right.model.available === false);
       if (availability !== 0) return availability;
 
-      const deprecation = Number(Boolean(left.model.deprecated)) - Number(Boolean(right.model.deprecated));
-      if (deprecation !== 0) return deprecation;
+      const lifecycle = Number(Boolean(left.model.deprecated || left.model.olderGeneration))
+        - Number(Boolean(right.model.deprecated || right.model.olderGeneration));
+      if (lifecycle !== 0) return lifecycle;
 
       if (left.parsed !== null && right.parsed !== null) {
         const generation = compareGeneration(right.parsed.generation, left.parsed.generation);
@@ -86,6 +86,18 @@ export function orderModelCatalog(models: readonly CliModelInfo[]): readonly Cli
 
 function parseModelGeneration(id: string): ParsedModelGeneration | null {
   const normalized = id.trim().toLowerCase().replaceAll('.', '-');
+  const claude = normalized.match(/^claude-[a-z]+-(\d+)(?:-(\d+))?/);
+  if (claude !== null) {
+    const generation = claude.slice(1).filter((part): part is string => part !== undefined).map(Number);
+    return {
+      family: 'claude',
+      generation,
+      // Claude's named families share a product generation: Fable 5.1,
+      // Opus 5, and Sonnet 5 are peers above every 4.x entry.
+      age: generation.slice(0, 1),
+    };
+  }
+
   const firstNumber = normalized.search(/\d/);
   if (firstNumber <= 0) return null;
 
@@ -97,6 +109,7 @@ function parseModelGeneration(id: string): ParsedModelGeneration | null {
   return {
     family,
     generation: match.slice(1).filter((part): part is string => part !== undefined).map(Number),
+    age: match.slice(1).filter((part): part is string => part !== undefined).map(Number),
   };
 }
 

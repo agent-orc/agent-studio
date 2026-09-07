@@ -81,7 +81,7 @@ public sealed class WorkspaceSettingsService
                     ? current.OrchestratorThinkingLevel
                     : (string.IsNullOrWhiteSpace(thinkingLevel)
                         ? null
-                        : CliThinkingLevels.Normalize(CliTypes.Claude, normalizedModel, thinkingLevel)),
+                        : ModelMetadataRegistry.ResolveThinkingLevel(CliTypes.Claude, normalizedModel, thinkingLevel)),
             };
             Persist();
         }

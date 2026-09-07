@@ -21,7 +21,27 @@ const MODELS = [
     thinkingLevels: ['low', 'medium', 'high'], defaultThinkingLevel: 'high' },
 ];
 
-async function stubWorkspace(page: Page, sent: Record<string, unknown>[] = []) {
+const CLAUDE_MODELS = [
+  { id: 'claude-opus-4-8', label: 'Claude Opus 4.8', available: true,
+    thinkingLevels: ['low', 'medium', 'high', 'xhigh', 'max'], defaultThinkingLevel: 'high' },
+  { id: 'claude-opus-5', label: 'Claude Opus 5', available: true,
+    thinkingLevels: ['low', 'medium', 'high', 'xhigh', 'max'], defaultThinkingLevel: 'high' },
+  { id: 'claude-fable-5-1', label: 'Claude Fable 5.1', isDefault: true, available: true,
+    thinkingLevels: ['low', 'medium', 'high', 'xhigh', 'max'], defaultThinkingLevel: 'high' },
+  { id: 'claude-sonnet-5', label: 'Claude Sonnet 5', available: true,
+    thinkingLevels: ['low', 'medium', 'high', 'xhigh', 'max'], defaultThinkingLevel: 'high' },
+  { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5', available: true,
+    thinkingLevels: ['low', 'medium', 'high'], defaultThinkingLevel: 'high' },
+  { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6', available: false,
+    availabilityNote: 'Known in registry but not reported by the installed Claude CLI.',
+    thinkingLevels: ['low', 'medium', 'high'], defaultThinkingLevel: 'high' },
+];
+
+async function stubWorkspace(
+  page: Page,
+  sent: Record<string, unknown>[] = [],
+  claudeModels: readonly Record<string, unknown>[] = [],
+) {
   await page.route(/\/api\//, route => {
     const requestPath = new URL(route.request().url()).pathname;
     let body = '{}';
@@ -57,7 +77,11 @@ async function stubWorkspace(page: Page, sent: Record<string, unknown>[] = []) {
     status: 200, contentType: 'application/json',
     body: JSON.stringify({ models: MODELS, source: 'live-codex-fixture' }),
   }));
-  await page.route(/\/api\/cli\/(?:claude|gemini)\/models(?:\?.*)?$/, route => route.fulfill({
+  await page.route(/\/api\/cli\/claude\/models(?:\?.*)?$/, route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ models: claudeModels, source: 'claude-picker-fixture' }),
+  }));
+  await page.route(/\/api\/cli\/gemini\/models(?:\?.*)?$/, route => route.fulfill({
     status: 200, contentType: 'application/json', body: JSON.stringify({ models: [], source: 'fixture' }),
   }));
   await page.route(/\/api\/(?:tags|workspaces|clients)\/?$/, route => route.fulfill({
@@ -318,4 +342,52 @@ test('Studio Board picker leads with the latest generation and keeps older model
   await deprecatedModel.click();
   await page.getByTestId('create-agent-picker-done').click();
   await expect(page.getByTestId('create-agent')).toContainText('gpt-5.5');
+});
+
+test('Claude picker keeps the 5 family above 4.x and shows unavailable registry models disabled', async ({ page }, testInfo) => {
+  await stubWorkspace(page, [], CLAUDE_MODELS);
+  await page.addInitScript(({ project }) => localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({
+    v: 1,
+    tabs: [{ kind: 'board', projectName: project }],
+    activeKey: `board:${project}`,
+  })), { project: PROJECT });
+  await page.goto('/');
+  await page.addStyleTag({
+    content: 'app-error-dialog, app-offline-banner, [data-testid="error-dialog-overlay"] { display: none !important; }',
+  });
+
+  await page.getByTestId('studio-board-add-task').click();
+  await page.getByTestId('create-agent').click();
+  await page.getByTestId('create-agent-picker-cli-claude').click();
+
+  const rows = page.getByTestId('create-agent-picker-model-pills').getByRole('radio');
+  expect(await rows.evaluateAll(elements => elements.map(element => element.getAttribute('data-testid')))).toEqual([
+    'create-agent-picker-model-default',
+    'create-agent-picker-model-claude-fable-5-1',
+    'create-agent-picker-model-claude-opus-5',
+    'create-agent-picker-model-claude-sonnet-5',
+    'create-agent-picker-model-claude-opus-4-8',
+    'create-agent-picker-model-claude-haiku-4-5',
+    'create-agent-picker-model-claude-sonnet-4-6',
+  ]);
+  await expect(page.getByTestId('create-agent-picker-older-heading')).toContainText('Older models');
+  const opusFour = page.getByTestId('create-agent-picker-model-claude-opus-4-8');
+  const haikuFour = page.getByTestId('create-agent-picker-model-claude-haiku-4-5');
+  await expect(opusFour).toBeEnabled();
+  await expect(opusFour).not.toHaveAttribute('data-deprecated');
+  await expect(haikuFour).toBeEnabled();
+  await expect(haikuFour).not.toHaveAttribute('data-deprecated');
+  const unavailable = page.getByTestId('create-agent-picker-model-claude-sonnet-4-6');
+  await expect(unavailable).toBeDisabled();
+  await expect(unavailable).toHaveAttribute('aria-disabled', 'true');
+  await expect(unavailable).toContainText('Known in registry but not reported by the installed Claude CLI.');
+  await expect(unavailable).toHaveAttribute('data-generation', 'older');
+
+  const results = process.env.JOB_RESULTS_DIR ?? testInfo.outputPath('evidence');
+  mkdirSync(results, { recursive: true });
+  const picker = page.getByTestId('create-agent-picker');
+  await setTheme(page, 'light');
+  await picker.screenshot({ path: path.join(results, 'claude-model-picker-unavailable-light--mocked.png') });
+  await setTheme(page, 'dark');
+  await picker.screenshot({ path: path.join(results, 'claude-model-picker-unavailable-dark--mocked.png') });
 });

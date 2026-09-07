@@ -25,7 +25,8 @@ import { ModalStackService } from '../../services/modal-stack.service';
 import { ConnectedOverlayDirective } from '../../directives/connected-overlay.directive';
 import { OverlayPortalDirective } from '../../directives/overlay-portal.directive';
 import { AppTooltipDirective } from '../tooltip/app-tooltip.directive';
-import { moveRadioSelection, normalizeThinkingLevel } from './cli-model-selector.util';
+import { modelAriaLabel, modelAvailabilityNote, moveRadioSelection, normalizeThinkingLevel,
+  olderModelAriaLabel, olderModelNote } from './cli-model-selector.util';
 
 interface CliOption {
   id: CliType;
@@ -41,8 +42,7 @@ interface CliOption {
  * - the catalog data source (`CliCatalogStore`, hydrated per ADR-0046):
  *   the picker refreshes on open and keeps cached data visible,
  * - generation projection: current models lead while deprecated and
- *   convention-derived superseded generations stay selectable in a quieter
- *   "Older models" group,
+ *   convention-derived older generations stay selectable in a quieter group,
  * - the modal stack (Escape/close coordination with app dialogs).
  *
  * Selecting a model or level auto-commits while the CLI is unchanged. A CLI
@@ -113,10 +113,10 @@ export class CliModelSelectorComponent {
   );
   readonly draftAvailableModels = computed(() => this.draftModels());
   readonly currentModels = computed(() =>
-    this.draftModels().filter((model) => !model.deprecated),
+    this.draftModels().filter((model) => !model.deprecated && !model.olderGeneration),
   );
   readonly olderModels = computed(() =>
-    this.draftModels().filter((model) => Boolean(model.deprecated)),
+    this.draftModels().filter((model) => Boolean(model.deprecated || model.olderGeneration)),
   );
   readonly draftSelectedModel = computed(() => {
     const id = this.draftModel();
@@ -254,7 +254,7 @@ export class CliModelSelectorComponent {
     this.draftCliType.set(this.cliType());
     this.draftModel.set(currentModel);
     this.draftModelPinned.set(true);
-    this.draftModels.set(this.selectableModels(this.effectiveModels()));
+    this.draftModels.set(this.effectiveModels());
     this.draftThinkingLevel.set(
       normalizeThinkingLevel(this.draftModels(), currentModel, this.thinkingLevel()),
     );
@@ -294,6 +294,7 @@ export class CliModelSelectorComponent {
   }
 
   onModelPillClick(modelId: string): void {
+    if (this.draftModels().find((model) => model.id === modelId)?.available === false) return;
     const previousLevel = this.draftThinkingLevel();
     this.draftModel.set(modelId);
     this.draftModelPinned.set(true);
@@ -313,7 +314,7 @@ export class CliModelSelectorComponent {
   onModelPillKeydown(modelId: string, event: KeyboardEvent): void {
     moveRadioSelection(
       event,
-      ['', ...this.draftModels().map((model) => model.id)],
+      ['', ...this.draftModels().filter((model) => model.available !== false).map((model) => model.id)],
       modelId,
       (next) => next === '' ? this.onDefaultModelClick() : this.onModelPillClick(next),
     );
@@ -363,16 +364,12 @@ export class CliModelSelectorComponent {
     if (cli) this.onRefreshRequested(cli);
   }
 
-  olderModelNote(model: CliModelInfo): string {
-    return model.availabilityNote?.trim() || 'Older generation';
-  }
-
-  olderModelAriaLabel(model: CliModelInfo): string {
-    return `${model.label || model.id}. Older generation. ${this.olderModelNote(model)}`;
-  }
-
+  readonly modelAvailabilityNote = modelAvailabilityNote;
+  readonly modelAriaLabel = modelAriaLabel;
+  readonly olderModelNote = olderModelNote;
+  readonly olderModelAriaLabel = olderModelAriaLabel;
   private applyCatalog(models: readonly CliModelInfo[]): void {
-    const selectable = this.selectableModels(models);
+    const selectable = models;
     this.draftModels.set(selectable);
     const current = this.draftModel();
     const stillValid = current === '' || selectable.some((model) => model.id === current);
@@ -382,13 +379,10 @@ export class CliModelSelectorComponent {
       );
       return;
     }
-    const defaultModel = selectable.find((model) => model.isDefault);
+    const defaultModel = selectable.find((model) => model.available !== false && model.isDefault)
+      ?? selectable.find((model) => model.available !== false);
     this.draftModel.set(defaultModel?.id ?? '');
     this.draftThinkingLevel.set(defaultModel?.defaultThinkingLevel ?? null);
-  }
-
-  private selectableModels(models: readonly CliModelInfo[]): readonly CliModelInfo[] {
-    return models.filter((model) => model.available !== false);
   }
 
   private badgeText(

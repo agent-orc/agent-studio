@@ -13,6 +13,25 @@ export function normalizeThinkingLevel(
   return model?.defaultThinkingLevel ?? levels[0] ?? null;
 }
 
+export function modelAvailabilityNote(model: CliModelInfo): string | null {
+  if (model.available !== false) return null;
+  return model.availabilityNote?.trim() || 'Not offered by the installed CLI.';
+}
+
+export function modelAriaLabel(model: CliModelInfo): string {
+  const note = modelAvailabilityNote(model);
+  return note ? `${model.label || model.id}. Unavailable. ${note}` : model.label || model.id;
+}
+
+export function olderModelNote(model: CliModelInfo): string {
+  return model.availabilityNote?.trim() || 'Older generation';
+}
+
+export function olderModelAriaLabel(model: CliModelInfo): string {
+  const unavailable = model.available === false ? ' Unavailable.' : '';
+  return `${model.label || model.id}. Older generation.${unavailable} ${olderModelNote(model)}`;
+}
+
 export function moveRadioSelection<T>(
   event: KeyboardEvent,
   items: readonly T[],

@@ -141,7 +141,7 @@ public class TaskMutationService
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return false;
-        var normalized = CliThinkingLevels.Normalize(info.CliType, info.Model, thinkingLevel);
+        var normalized = ModelMetadataRegistry.ResolveThinkingLevel(info.CliType, info.Model, thinkingLevel);
         TaskJsonFile.UpdateField(info.FolderPath, "thinkingLevel", normalized ?? "", _logger);
         TaskJsonFile.UpdateField(info.FolderPath, "thinkingLevelExplicit", !string.IsNullOrWhiteSpace(thinkingLevel), _logger);
         return Updated();

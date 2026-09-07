@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace AgentStudio.Shared;
 
 public record StartJobRequest
@@ -112,6 +114,8 @@ public static class ContinueModes
 /// <summary>Canonical model id constants. Call sites should reference these instead of repeated literals.</summary>
 public static class ModelIds
 {
+    public const string ClaudeOpus5 = "claude-opus-5";
+    public const string ClaudeFable51 = "claude-fable-5-1";
     public const string ClaudeOpus48 = "claude-opus-4-8";
     public const string ClaudeOpus47 = "claude-opus-4-7";
     public const string ClaudeOpus46 = "claude-opus-4-6";
@@ -152,7 +156,9 @@ public sealed record ModelMetadata(
     bool Deprecated,
     bool Available,
     long? ContextWindow,
-    string[]? Aliases = null)
+    string[]? Aliases = null,
+    string[]? ThinkingLevels = null,
+    string? DefaultThinkingLevel = null)
 {
     // Pricing is intentionally a live catalog pass-through. Studio owns no
     // rates; callers that need historical cost use TokenPricing.Estimate.
@@ -173,14 +179,20 @@ public static class ModelMetadataRegistry
 {
     private static readonly ModelMetadata[] Entries =
     [
-        Claude(ModelIds.ClaudeOpus48, "Claude Opus 4.8", isDefault: true, context: 200_000, aliases: ["claude-opus-4.8"]),
+        Claude(ModelIds.ClaudeOpus5, "Claude Opus 5", isDefault: true, context: 1_000_000,
+            thinkingLevels: ["low", "medium", "high", "xhigh", "max"], defaultThinkingLevel: "high"),
+        Claude(ModelIds.ClaudeFable51, "Claude Fable 5.1", context: 200_000,
+            aliases: ["claude-fable-5.1"],
+            thinkingLevels: ["low", "medium", "high", "xhigh", "max"], defaultThinkingLevel: "high"),
+        Claude(ModelIds.ClaudeSonnet5, "Claude Sonnet 5", context: 200_000),
+        Claude(ModelIds.ClaudeOpus48, "Claude Opus 4.8", context: 200_000, aliases: ["claude-opus-4.8"]),
         Claude(ModelIds.ClaudeOpus47, "Claude Opus 4.7", context: 200_000, aliases: ["claude-opus-4.7"]),
         Claude(ModelIds.ClaudeOpus46, "Claude Opus 4.6", context: 200_000, aliases: ["claude-opus-4.6"]),
         Claude(ModelIds.ClaudeOpus45, "Claude Opus 4.5", context: 200_000, aliases: ["claude-opus-4.5"]),
-        Claude(ModelIds.ClaudeSonnet5, "Claude Sonnet 5", context: 200_000),
         Claude(ModelIds.ClaudeSonnet46, "Claude Sonnet 4.6", context: 200_000, aliases: ["claude-sonnet-4.6"]),
         Claude(ModelIds.ClaudeSonnet45, "Claude Sonnet 4.5", context: 200_000, aliases: ["claude-sonnet-4.5"]),
-        Claude(ModelIds.ClaudeHaiku45, "Claude Haiku 4.5", context: 200_000, aliases: ["claude-haiku-4.5"]),
+        Claude(ModelIds.ClaudeHaiku45, "Claude Haiku 4.5", context: 200_000,
+            aliases: ["claude-haiku-4.5", "claude-haiku-4-5-20251001"]),
         // gpt-5.5 is the current Codex/OpenAI default. codex-cli 0.143 on a
         // ChatGPT account rejects gpt-5-codex with a 400 invalid_request, so
         // the default must be the account-valid model (AGT-1941). Pricing is
@@ -254,9 +266,16 @@ public static class ModelMetadataRegistry
     /// </summary>
     public static string? DefaultThinkingLevelForCli(string? cliType, string? model)
     {
+        var metadata = Find(model);
+        if (!string.IsNullOrWhiteSpace(metadata?.DefaultThinkingLevel)
+            && IsCompatibleWithCli(cliType, metadata.Id))
+        {
+            return metadata.DefaultThinkingLevel;
+        }
+
         if (CliTypes.IsValid(cliType) && CliTypes.Normalize(cliType) == CliTypes.Codex)
         {
-            var top = CliThinkingLevels.For(cliType, model).LastOrDefault();
+            var top = ThinkingLevelsFor(cliType, model).LastOrDefault();
             if (!string.IsNullOrWhiteSpace(top)) return top;
         }
         return CliThinkingLevels.DefaultFor(cliType, model);
@@ -270,7 +289,7 @@ public static class ModelMetadataRegistry
     public static string? ResolveThinkingLevel(string? cliType, string? model, string? requested)
         => string.IsNullOrWhiteSpace(requested)
             ? DefaultThinkingLevelForCli(cliType, model)
-            : CliThinkingLevels.Normalize(cliType, model, requested);
+            : NormalizeThinkingLevel(cliType, model, requested);
 
     public static bool IsCompatibleWithCli(string? cliType, string? model)
     {
@@ -299,6 +318,17 @@ public static class ModelMetadataRegistry
         return ById.TryGetValue(id.Trim(), out var metadata) ? metadata : null;
     }
 
+    public static ModelMetadata? FindByLabelOrAlias(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var normalized = Regex.Replace(value.Trim(), @"\s+", " ");
+        return Find(normalized)
+               ?? Entries.FirstOrDefault(entry =>
+                   string.Equals(entry.Label, normalized, StringComparison.OrdinalIgnoreCase)
+                   || (entry.Aliases?.Any(alias =>
+                       string.Equals(alias, normalized, StringComparison.OrdinalIgnoreCase)) ?? false));
+    }
+
     public static string NormalizeId(string? id)
         => Find(id)?.Id ?? id?.Trim() ?? "";
 
@@ -325,7 +355,7 @@ public static class ModelMetadataRegistry
             IsDefault = isDefault ?? metadata.IsDefault,
             Available = metadata.Available && !metadata.Deprecated,
             Deprecated = metadata.Deprecated,
-            ThinkingLevels = CliThinkingLevels.For(cliType, metadata.Id).ToList(),
+            ThinkingLevels = ThinkingLevelsFor(cliType, metadata.Id).ToList(),
             DefaultThinkingLevel = DefaultThinkingLevelForCli(cliType, metadata.Id)
         };
 
@@ -339,18 +369,48 @@ public static class ModelMetadataRegistry
             Available = true,
             Deprecated = false,
             AvailabilityNote = "Discovered from CLI; missing registry metadata.",
-            ThinkingLevels = CliThinkingLevels.For(cliType, id).ToList(),
+            ThinkingLevels = ThinkingLevelsFor(cliType, id).ToList(),
             DefaultThinkingLevel = DefaultThinkingLevelForCli(cliType, id)
         };
+
+    public static IReadOnlyList<string> ThinkingLevelsFor(string? cliType, string? model)
+    {
+        var metadata = Find(model);
+        if (metadata?.ThinkingLevels is { Length: > 0 }
+            && IsCompatibleWithCli(cliType, metadata.Id))
+        {
+            return metadata.ThinkingLevels;
+        }
+
+        return CliThinkingLevels.For(cliType, model);
+    }
+
+    public static string? NormalizeThinkingLevel(string? cliType, string? model, string? requested)
+    {
+        var metadata = Find(model);
+        if (metadata?.ThinkingLevels is not { Length: > 0 }
+            || !IsCompatibleWithCli(cliType, metadata.Id))
+        {
+            return CliThinkingLevels.Normalize(cliType, model, requested);
+        }
+
+        var levels = metadata.ThinkingLevels;
+        var match = levels.FirstOrDefault(level =>
+            string.Equals(level, requested?.Trim(), StringComparison.OrdinalIgnoreCase));
+        return match ?? DefaultThinkingLevelForCli(cliType, model);
+    }
 
     private static ModelMetadata Claude(
         string id,
         string label,
         bool isDefault = false,
         long context = 200_000,
-        string[]? aliases = null)
+        string[]? aliases = null,
+        string[]? thinkingLevels = null,
+        string? defaultThinkingLevel = null)
         => new(id, label, "anthropic", isDefault, Deprecated: false, Available: true,
-            ContextWindow: context, Aliases: aliases);
+            ContextWindow: context, Aliases: aliases,
+            ThinkingLevels: thinkingLevels, DefaultThinkingLevel: defaultThinkingLevel);
 
     private static string? VendorForCli(string? cliType)
     {

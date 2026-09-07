@@ -204,6 +204,26 @@ public sealed class BackendCarExecutionParityTests : IDisposable
     }
 
     [SkippableFact]
+    public async Task Claude_fable_launch_keeps_the_studio_registry_thinking_level()
+    {
+        RequireNode();
+        var fixture = Fixture.Load("p1-happy-done.claude.fixture");
+        var run = await StartFixtureAsync(fixture, new RunSettings
+        {
+            Model = ModelIds.ClaudeFable51,
+            ThinkingLevel = "max",
+        });
+
+        var final = await run.Finished.WaitAsync(TimeSpan.FromSeconds(20));
+        var argv = Assert.IsAssignableFrom<IReadOnlyList<string>>(run.Spawner.PreparedArgv);
+
+        Assert.Equal(ModelIds.ClaudeFable51, final.Model);
+        Assert.Equal("max", final.ThinkingLevel);
+        AssertOption(argv, "--model", ModelIds.ClaudeFable51);
+        AssertOption(argv, "--effort", "max");
+    }
+
+    [SkippableFact]
     public async Task Claude_car_transports_a_200_kib_prompt_on_stdin_not_argv()
     {
         RequireNode();

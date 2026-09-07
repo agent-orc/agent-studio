@@ -11,8 +11,20 @@ namespace AgentStudio.Cli;
 public sealed class ClaudeModelDiscovery
 {
     private static readonly Regex ModelLineRegex = new(
-        @"^\s*(?:[\u276F>\?\*\u2713\u2714\u2705]\s*)?(?<label>(?:Claude\s+)?(?:Opus|Sonnet|Haiku)\s+[A-Za-z0-9 .\-_]+?)(?:\s+\((?:default|selected)\))?\s*$",
+        @"^\s*(?<marker>[\u276F>\?\*\u2713\u2714\u2705])?\s*(?<label>(?:Claude\s+)?(?:Opus|Fable|Sonnet|Haiku)\s+[A-Za-z0-9 .\-_]+?)(?<default>\s+\((?:default|selected)\))?\s*$",
         RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.IgnoreCase);
+
+    private static readonly Regex NumberedEntryStartRegex = new(
+        @"(?:[\u276F>]\s*)?(?<number>\d+)\.(?=(?:Default(?:\(recommended\))?|Opus|Fable|Sonnet|Haiku))",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex CollapsedDisplayNameRegex = new(
+        @"(?<family>Opus|Fable|Sonnet|Haiku)(?<version>\d+(?:\.\d+)*)(?=(?:with\d+[MK]?context)?\u00B7)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex EffortSelectorRegex = new(
+        @"[\u25CF\u2022]?\s*(?:Low|Medium|High|Xhigh|Max)\s*effort",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     private static readonly Regex TrustPromptRegex = new(
         @"\btrust(?:ed)?\b|do you want to proceed",
@@ -146,23 +158,66 @@ public sealed class ClaudeModelDiscovery
     {
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var result = new List<CliModelInfo>();
-        foreach (Match match in ModelLineRegex.Matches(snapshot))
+
+        var pickerText = snapshot ?? "";
+        var effort = EffortSelectorRegex.Match(pickerText);
+        if (effort.Success) pickerText = pickerText[..effort.Index];
+
+        var entryStarts = NumberedEntryStartRegex.Matches(pickerText);
+        for (var index = 0; index < entryStarts.Count; index++)
+        {
+            var start = entryStarts[index].Index + entryStarts[index].Length;
+            var end = index + 1 < entryStarts.Count ? entryStarts[index + 1].Index : pickerText.Length;
+            var entry = pickerText[start..end];
+            var displayName = CollapsedDisplayNameRegex.Match(entry);
+            if (!displayName.Success) continue;
+
+            var label = $"Claude {displayName.Groups["family"].Value} {displayName.Groups["version"].Value}";
+            var isCurrent = entry[..displayName.Index].IndexOfAny(['\u2713', '\u2714', '\u2705']) >= 0;
+            AddParsedModel(result, seen, label, isCurrent);
+        }
+
+        // Older Claude Code versions rendered one model per terminal line.
+        // Keep that parser after the collapsed numbered layout so mixed PTY
+        // snapshots deduplicate to the first, richer match.
+        foreach (Match match in ModelLineRegex.Matches(pickerText))
         {
             var label = Regex.Replace(match.Groups["label"].Value.Trim(), @"\s+", " ");
-            var id = LabelToId(label);
-            if (string.IsNullOrWhiteSpace(id) || !seen.Add(id)) continue;
-
-            var metadata = ModelMetadataRegistry.Find(id);
-            result.Add(metadata != null
-                ? ModelMetadataRegistry.ToCliModelInfo(metadata, CliTypes.Claude)
-                : ModelMetadataRegistry.UnknownCliModel(id, label, "anthropic", CliTypes.Claude));
+            var marker = match.Groups["marker"].Value;
+            var isCurrent = marker.IndexOfAny(['\u2713', '\u2714', '\u2705']) >= 0
+                            || match.Groups["default"].Success;
+            AddParsedModel(result, seen, label, isCurrent);
         }
         return result;
+    }
+
+    private static void AddParsedModel(
+        List<CliModelInfo> result,
+        HashSet<string> seen,
+        string label,
+        bool isCurrent)
+    {
+        var normalizedLabel = Regex.Replace(label.Trim(), @"\s+", " ");
+        if (!normalizedLabel.StartsWith("Claude ", StringComparison.OrdinalIgnoreCase)
+            && Regex.IsMatch(normalizedLabel, @"^(?:Opus|Fable|Sonnet|Haiku)\s", RegexOptions.IgnoreCase))
+        {
+            normalizedLabel = "Claude " + normalizedLabel;
+        }
+
+        var metadata = ModelMetadataRegistry.FindByLabelOrAlias(normalizedLabel);
+        var id = metadata?.Id ?? LabelToId(normalizedLabel);
+        if (string.IsNullOrWhiteSpace(id) || !seen.Add(id)) return;
+
+        var model = metadata != null
+            ? ModelMetadataRegistry.ToCliModelInfo(metadata, CliTypes.Claude)
+            : ModelMetadataRegistry.UnknownCliModel(id, normalizedLabel, "anthropic", CliTypes.Claude);
+        result.Add(model with { IsDefault = isCurrent });
     }
 
     public static List<CliModelInfo> Reconcile(IReadOnlyList<CliModelInfo> discovered)
     {
         var discoveredIds = new HashSet<string>(discovered.Select(m => m.Id), StringComparer.OrdinalIgnoreCase);
+        var currentId = discovered.FirstOrDefault(m => m.Available && m.IsDefault)?.Id;
         var result = discovered
             .Where(m => m.Available)
             .Select(m => m with { IsDefault = false })
@@ -175,12 +230,12 @@ public sealed class ClaudeModelDiscovery
             {
                 IsDefault = false,
                 Available = false,
-                Deprecated = true,
+                Deprecated = known.Deprecated,
                 AvailabilityNote = "Known in registry but not reported by the installed Claude CLI."
             });
         }
 
-        MarkDefault(result);
+        MarkDefault(result, currentId);
         return result;
     }
 
@@ -199,10 +254,12 @@ public sealed class ClaudeModelDiscovery
         };
     }
 
-    private static void MarkDefault(List<CliModelInfo> models)
+    private static void MarkDefault(List<CliModelInfo> models, string? preferredId = null)
     {
         var defaultId = ModelMetadataRegistry.ForVendor("anthropic").FirstOrDefault(m => m.IsDefault)?.Id;
-        var defaultIndex = models.FindIndex(m => m.Available && string.Equals(m.Id, defaultId, StringComparison.OrdinalIgnoreCase));
+        var defaultIndex = models.FindIndex(m => m.Available && string.Equals(m.Id, preferredId, StringComparison.OrdinalIgnoreCase));
+        if (defaultIndex < 0)
+            defaultIndex = models.FindIndex(m => m.Available && string.Equals(m.Id, defaultId, StringComparison.OrdinalIgnoreCase));
         if (defaultIndex < 0) defaultIndex = models.FindIndex(m => m.Available);
         for (var i = 0; i < models.Count; i++)
             models[i] = models[i] with { IsDefault = i == defaultIndex };

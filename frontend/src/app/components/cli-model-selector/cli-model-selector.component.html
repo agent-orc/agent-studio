@@ -113,12 +113,18 @@
               [class.model-picker__pill--active]="draftModel() === modelOption.id"
               role="radio"
               [attr.aria-checked]="draftModel() === modelOption.id"
+              [attr.aria-disabled]="modelOption.available === false"
+              [attr.aria-label]="modelAriaLabel(modelOption)"
               [attr.data-testid]="pickerTestidPrefix() + '-model-' + modelOption.id"
+              [disabled]="modelOption.available === false"
+              [appTooltip]="modelAvailabilityNote(modelOption)"
               (keydown)="onModelPillKeydown(modelOption.id, $event)"
               (click)="onModelPillClick(modelOption.id)">
               <span class="model-picker__pill-label">{{ modelOption.label || modelOption.id }}</span>
               @if (modelOption.isDefault) {
                 <span class="model-picker__pill-hint">default</span>
+              } @else if (modelAvailabilityNote(modelOption); as unavailableNote) {
+                <span class="model-picker__pill-note">{{ unavailableNote }}</span>
               }
             </button>
           }
@@ -137,10 +143,12 @@
                 [class.model-picker__pill--active]="draftModel() === modelOption.id"
                 role="radio"
                 data-generation="older"
-                [attr.data-deprecated]="true"
+                [attr.data-deprecated]="modelOption.deprecated ? 'true' : null"
                 [attr.aria-label]="olderModelAriaLabel(modelOption)"
                 [attr.aria-checked]="draftModel() === modelOption.id"
+                [attr.aria-disabled]="modelOption.available === false"
                 [attr.data-testid]="pickerTestidPrefix() + '-model-' + modelOption.id"
+                [disabled]="modelOption.available === false"
                 [appTooltip]="olderModelNote(modelOption)"
                 (keydown)="onModelPillKeydown(modelOption.id, $event)"
                 (click)="onModelPillClick(modelOption.id)">

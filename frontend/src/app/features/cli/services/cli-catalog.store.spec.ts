@@ -71,9 +71,10 @@ describe('CliCatalogStore', () => {
       'claude-opus-4-7',
     ]);
     expect(store.modelsFor('claude').slice(1)).toEqual([
-      expect.objectContaining({ id: 'claude-opus-4-8', deprecated: true }),
-      expect.objectContaining({ id: 'claude-opus-4-7', deprecated: true }),
+      expect.objectContaining({ id: 'claude-opus-4-8', olderGeneration: true }),
+      expect.objectContaining({ id: 'claude-opus-4-7', olderGeneration: true }),
     ]);
+    expect(store.modelsFor('claude').slice(1).every((item) => !item.deprecated)).toBe(true);
     expect(store.modelsFor('claude').every((item) => item.available !== false)).toBe(true);
   });
 

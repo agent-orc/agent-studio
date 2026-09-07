@@ -48,7 +48,7 @@ public sealed class CodexDetectedDefaultTests : IDisposable
     {
         ModelMetadataRegistry.SetDetectedCodexDefault(ModelIds.Gpt56Sol);
         // A codex-only override must never bleed into the Claude/Gemini defaults.
-        Assert.Equal(ModelIds.ClaudeOpus48, ModelMetadataRegistry.DefaultForCli(CliTypes.Claude));
+        Assert.Equal(ModelIds.ClaudeOpus5, ModelMetadataRegistry.DefaultForCli(CliTypes.Claude));
         Assert.Equal(ModelIds.Gemini25Pro, ModelMetadataRegistry.DefaultForCli(CliTypes.Gemini));
     }
 

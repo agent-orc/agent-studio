@@ -61,8 +61,10 @@ public partial class GenericCliExecutionService
         // then performs the common trim/thinking normalization when it builds
         // the descriptor launch.
         var invocationModel = NormalizeModelForInvocation(model);
-        var invocationThinkingLevel = CliThinkingLevels.Normalize(
+        var invocationThinkingLevel = ModelMetadataRegistry.ResolveThinkingLevel(
             CliType, invocationModel, thinkingLevel);
+        var usesStudioThinkingCompatibility = RequiresStudioThinkingCompatibility(
+            CliType, invocationModel, invocationThinkingLevel);
 
         // Studio's shared host library owns the longer task boundary so Codex
         // rollouts remain resumable across attempts and backend restarts. Hand
@@ -128,7 +130,12 @@ public partial class GenericCliExecutionService
         // and public-hardened-spawner-composition record the missing library APIs.
         TaskProcessReaper? processReaper = null;
         var processSpawner = new DecoratingCliProcessSpawner(
-            startInfo => AddClaudeRulesArgument(startInfo, rulesPath),
+            startInfo =>
+            {
+                AddClaudeRulesArgument(startInfo, rulesPath);
+                if (usesStudioThinkingCompatibility)
+                    AddClaudeThinkingArgument(startInfo, invocationThinkingLevel);
+            },
             baseOptions.Spawner,
             process =>
             {
@@ -219,7 +226,8 @@ public partial class GenericCliExecutionService
                 StartedAt = carRun.StartedAt,
                 Status = "running",
                 Model = carRun.Model,
-                ThinkingLevel = carRun.ThinkingLevel,
+                ThinkingLevel = carRun.ThinkingLevel
+                                ?? (usesStudioThinkingCompatibility ? invocationThinkingLevel : null),
             };
 
             var logDir = GetOutputLogDir(jobKey);
@@ -386,6 +394,25 @@ public partial class GenericCliExecutionService
         if (startInfo.ArgumentList.Contains("--append-system-prompt-file")) return;
         startInfo.ArgumentList.Add("--append-system-prompt-file");
         startInfo.ArgumentList.Add(rulesPath);
+    }
+
+    private static bool RequiresStudioThinkingCompatibility(
+        string cliType,
+        string? model,
+        string? thinkingLevel)
+        => string.Equals(cliType, CliTypes.Claude, StringComparison.OrdinalIgnoreCase)
+           && !string.IsNullOrWhiteSpace(thinkingLevel)
+           && ModelMetadataRegistry.Find(model)?.ThinkingLevels is { Length: > 0 }
+           && CliThinkingLevels.For(cliType, model).Count == 0;
+
+    private static void AddClaudeThinkingArgument(
+        ProcessStartInfo startInfo,
+        string? thinkingLevel)
+    {
+        if (string.IsNullOrWhiteSpace(thinkingLevel)) return;
+        if (startInfo.ArgumentList.Contains("--effort")) return;
+        startInfo.ArgumentList.Add("--effort");
+        startInfo.ArgumentList.Add(thinkingLevel);
     }
 
     private void HandleCarOutput(string jobKey, ProcInfo info, CliOutputLine rawLine)

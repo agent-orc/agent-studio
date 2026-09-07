@@ -19,22 +19,28 @@ describe('orderModelCatalog', () => {
   it('sorts leading family generations first and older generations newest-first', () => {
     const ordered = orderModelCatalog([
       model('claude-opus-4-7'),
+      model('claude-haiku-4-5'),
       model('claude-sonnet-4-6'),
       model('claude-opus-5'),
+      model('claude-fable-5-1'),
       model('claude-opus-4-8'),
       model('claude-sonnet-5'),
     ]);
 
     expect(ordered.map((item) => item.id)).toEqual([
+      'claude-fable-5-1',
       'claude-opus-5',
       'claude-sonnet-5',
       'claude-opus-4-8',
       'claude-opus-4-7',
       'claude-sonnet-4-6',
+      'claude-haiku-4-5',
     ]);
+    expect(ordered.slice(0, 3).every((item) => !item.deprecated)).toBe(true);
+    expect(ordered.slice(3).every((item) => item.olderGeneration && !item.deprecated)).toBe(true);
   });
 
-  it('marks superseded generations deprecated with an older-generation note', () => {
+  it('marks superseded generations older without deprecating them', () => {
     const ordered = orderModelCatalog([
       model('claude-opus-4-7'),
       model('claude-opus-5'),
@@ -44,12 +50,14 @@ describe('orderModelCatalog', () => {
     expect(ordered[0]).toMatchObject({ id: 'claude-opus-5', deprecated: false });
     expect(ordered[1]).toMatchObject({
       id: 'claude-opus-4-8',
-      deprecated: true,
+      deprecated: false,
+      olderGeneration: true,
       availabilityNote: 'Older generation',
     });
     expect(ordered[2]).toMatchObject({
       id: 'claude-opus-4-7',
-      deprecated: true,
+      deprecated: false,
+      olderGeneration: true,
       availabilityNote: 'Older generation',
     });
   });
@@ -85,6 +93,24 @@ describe('orderModelCatalog', () => {
     ]);
     expect(ordered[1].available).toBe(true);
     expect(ordered[2].available).toBe(false);
+  });
+
+  it('classifies unavailable Claude 4.x entries as older without making them selectable', () => {
+    const ordered = orderModelCatalog([
+      model('claude-opus-5'),
+      model('claude-sonnet-4-6', {
+        available: false,
+        availabilityNote: 'Known in registry but not reported by the installed Claude CLI.',
+      }),
+    ]);
+
+    expect(ordered[1]).toMatchObject({
+      id: 'claude-sonnet-4-6',
+      available: false,
+      deprecated: false,
+      olderGeneration: true,
+      availabilityNote: 'Known in registry but not reported by the installed Claude CLI.',
+    });
   });
 
   it('keeps discovery order for ids without a conventional numeric generation', () => {
