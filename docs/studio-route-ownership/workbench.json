@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "id": "studio-route-ownership",
   "title": "Studio route ownership and local connector",
-  "summary": "Route-counted ownership for the Angular Studio, a constrained local connector, and the remote Task Server, including the D4b migration estimate and Robert's decision gate.",
+  "summary": "Route-counted ownership for the Angular Studio, a constrained local connector, and the remote Task Server, including the D4b migration estimate and Robert\u0027s decision gate.",
   "entrypoint": "index.html",
   "status": "decided",
   "phase": "decision-ready",
-  "updatedAt": "2026-09-07T03:10:31+02:00",
+  "updatedAt": "2026-09-07T03:10:31\u002B02:00",
   "sourceTaskKeys": [
     "AGT-2731"
   ],
@@ -14,27 +14,28 @@
     {
       "title": "Create the OrchestratorApi connector profile",
       "acceptanceScope": "Loopback listener, strict route allowlist, Studio credential injection, Origin and CSRF enforcement, health, and atomic upstream selection. No local task authority is hosted.",
-      "promptMarkdown": "Add an OrchestratorApi `connector` profile that binds only to `[::1]:5031`. Map only the 95 `dev-seat` operations in `docs/studio-route-ownership/routes.json`, proxy the Task Server operations, and fail startup if any unclassified `/api` or `/hubs` endpoint is exposed. Inject the Studio bearer from Windows Credential Manager in native mode or a read-only secret file in Docker mode. Enforce the Origin, Host, session, CSRF, header-stripping, health, protocol, and atomic upstream-switch contracts in the dossier. Add route-surface and security tests. Do not host task storage, schedulers, or Runner authority."
+      "promptMarkdown": "Add an OrchestratorApi \u0060connector\u0060 profile that binds only to \u0060[::1]:5031\u0060. Map only the 95 \u0060dev-seat\u0060 operations in \u0060docs/studio-route-ownership/routes.json\u0060, proxy the Task Server operations, and fail startup if any unclassified \u0060/api\u0060 or \u0060/hubs\u0060 endpoint is exposed. Inject the Studio bearer from Windows Credential Manager in native mode or a read-only secret file in Docker mode. Enforce the Origin, Host, session, CSRF, header-stripping, health, protocol, and atomic upstream-switch contracts in the dossier. Add route-surface and security tests. Do not host task storage, schedulers, or Runner authority."
     },
     {
       "title": "Move the core attach routes to Task Server v1",
       "acceptanceScope": "The 27 P0 operations in the core-attach bundle work through the remote connector, including resumable live updates.",
-      "promptMarkdown": "Implement the `core-attach` route IDs from `docs/studio-route-ownership/routes.json` in the standalone Task Server v1 API. Preserve stable workspace, project, task, and run identities; remove `watchPath` as authority; and provide the `/hubs/jobs` compatibility path through a replayable Task Server event stream. Prove login/session bootstrap, board load, task create/move/start/stop/continue, orchestrator chat, reconnect from a cursor, and Studio-detached execution through the connector."
+      "promptMarkdown": "Implement the \u0060core-attach\u0060 route IDs from \u0060docs/studio-route-ownership/routes.json\u0060 in the standalone Task Server v1 API. Preserve stable workspace, project, task, and run identities; remove \u0060watchPath\u0060 as authority; and provide the \u0060/hubs/jobs\u0060 compatibility path through a replayable Task Server event stream. Prove login/session bootstrap, board load, task create/move/start/stop/continue, orchestrator chat, reconnect from a cursor, and Studio-detached execution through the connector."
     },
     {
       "title": "Move task detail and host control routes",
       "acceptanceScope": "The 111 P1 operations use Task Server resources and Runner evidence without direct Studio access to a Runner or task workspace.",
-      "promptMarkdown": "Implement the `task-detail-and-hosts` route IDs from `docs/studio-route-ownership/routes.json`. Add versioned task history, attempts, artifacts, pipeline, host, workspace, and policy contracts. Split `GET /api/tasks/{taskId}/files/{path*}` so Task Server task files remain remote while `scope=code` becomes a separately named dev-seat route. Keep authorization, optimistic concurrency, idempotency, and artifact content tests at the versioned boundary."
+      "promptMarkdown": "Implement the \u0060task-detail-and-hosts\u0060 route IDs from \u0060docs/studio-route-ownership/routes.json\u0060. Add versioned task history, attempts, artifacts, pipeline, host, workspace, and policy contracts. Split \u0060GET /api/tasks/{taskId}/files/{path*}\u0060 so Task Server task files remain remote while \u0060scope=code\u0060 becomes a separately named dev-seat route. Keep authorization, optimistic concurrency, idempotency, and artifact content tests at the versioned boundary."
     },
     {
       "title": "Move operations and insight routes",
       "acceptanceScope": "The 102 P2 operations read durable Task Server projections and dispatch execution through fenced Runner contracts.",
-      "promptMarkdown": "Implement the `operations-and-insight` route IDs from `docs/studio-route-ownership/routes.json`. Move bus, runtime, cycle-time, token, deployment, security-review, analysis, drift, supervisor, and recovery projections into Task Server v1. Where computation needs a checkout or CLI, dispatch a fenced Runner operation and persist the resulting events and artifacts in the Task Server. Do not let the connector become a workflow engine."
+      "promptMarkdown": "Implement the \u0060operations-and-insight\u0060 route IDs from \u0060docs/studio-route-ownership/routes.json\u0060. Move bus, runtime, cycle-time, token, deployment, security-review, analysis, drift, supervisor, and recovery projections into Task Server v1. Where computation needs a checkout or CLI, dispatch a fenced Runner operation and persist the resulting events and artifacts in the Task Server. Do not let the connector become a workflow engine."
     },
     {
       "title": "Move administration and long-tail routes",
       "acceptanceScope": "The 24 P3 operations have explicit v1 contracts or are removed from Angular before cutover.",
-      "promptMarkdown": "Resolve every `administration-and-tail` route ID in `docs/studio-route-ownership/routes.json`. Implement the route in Task Server v1 when it represents current product behavior; otherwise remove the Angular call and reclassify it as retired with evidence. Split mixed global search so task results are Task Server-owned and repository commit/file search has an explicit dev-seat boundary. Update the inventory and keep every frontend operation classified exactly once."
+      "promptMarkdown": "Resolve every \u0060administration-and-tail\u0060 route ID in \u0060docs/studio-route-ownership/routes.json\u0060. Implement the route in Task Server v1 when it represents current product behavior; otherwise remove the Angular call and reclassify it as retired with evidence. Split mixed global search so task results are Task Server-owned and repository commit/file search has an explicit dev-seat boundary. Update the inventory and keep every frontend operation classified exactly once."
     }
-  ]
+  ],
+  "key": "AGT-W47"
 }
