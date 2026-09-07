@@ -8,7 +8,7 @@ import {
   type ProviderAuthProvisioningRequest,
   type ProviderAuthProvisioningResponse,
 } from '../models/provider-auth.model';
-import type { TaskServerRunnerCapabilitySnapshot } from '../models/remote-host.model';
+import type { RemoteRunnerLinkHealth, TaskServerRunnerCapabilitySnapshot } from '../models/remote-host.model';
 
 @Injectable({ providedIn: 'root' })
 export class ProviderAuthStatusService implements OnDestroy {
@@ -16,6 +16,7 @@ export class ProviderAuthStatusService implements OnDestroy {
   private readonly http = inject(HttpClient, { optional: true });
   private readonly notifications = inject(NotificationService);
   private readonly snapshots = signal<readonly TaskServerRunnerCapabilitySnapshot[]>([]);
+  readonly links = signal<readonly RemoteRunnerLinkHealth[]>([]);
   private timer: ReturnType<typeof setInterval> | null = null;
   private previous = new Map<string, ProviderAuthBadge>();
   private expiryWarnings = new Set<string>();
@@ -42,7 +43,17 @@ export class ProviderAuthStatusService implements OnDestroy {
   refresh(): void {
     if (!this.http) return;
     this.http.get<TaskServerRunnerCapabilitySnapshot[]>('/api/v1/management/remote-hosts').subscribe({
-      next: snapshots => this.ingest(snapshots ?? []),
+      next: snapshots => {
+        this.ingest(snapshots ?? []);
+        this.refreshLinks();
+      },
+      error: () => undefined,
+    });
+  }
+
+  private refreshLinks(): void {
+    this.http?.get<RemoteRunnerLinkHealth[]>('/api/v1/management/remote-hosts/link-health').subscribe({
+      next: links => this.links.set(links ?? []),
       error: () => undefined,
     });
   }
@@ -56,6 +67,7 @@ export class ProviderAuthStatusService implements OnDestroy {
         const prior = this.previous.get(id);
         if (prior?.state === 'ok'
           && current.state === 'unavailable'
+          && current.consecutiveFailures >= 2
           && (!current.signal || current.signal === 'signed-out')) {
           this.notifications.warning(
             `${current.providerLabel} authentication changed from OK to unavailable on ${current.hostName}. Ready cards assigned to this host are waiting. ${current.detail}`,

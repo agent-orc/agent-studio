@@ -27,6 +27,32 @@ public static class ManagementEndpoints
             if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
             return Results.Ok(registry.ListCapabilitySnapshots());
         });
+        group.MapGet("/remote-hosts/link-health", async (
+            HttpContext context,
+            RemoteRunnerLinkService links,
+            IConfiguration configuration,
+            CancellationToken ct) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
+            return Results.Ok(await links.SnapshotAsync(ct));
+        });
+        group.MapPost("/remote-hosts/{id}/reconnect", async (
+            HttpContext context,
+            string id,
+            RemoteRunnerLinkService links,
+            IConfiguration configuration,
+            CancellationToken ct) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
+            var result = await links.ReconnectAsync(id, ct);
+            return result is null
+                ? Results.Json(new { error = "runner-not-found" }, statusCode: 404)
+                : result.Succeeded
+                    ? Results.Ok(result)
+                    : Results.Json(result, statusCode: 502);
+        });
         group.MapPost("/remote-hosts/provider-auth", async (
             HttpContext context,
             ProviderAuthProvisioningRequest request,

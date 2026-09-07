@@ -5,12 +5,15 @@ import type {
   HostActionKind,
   HostRampStrategy,
   HostTelemetrySeries,
+  RemoteRunnerLinkHealth,
+  RemoteRunnerReconnectResponse,
   RemoteHost,
   TaskServerTelemetrySnapshot,
   TaskServerRunnerCapabilitySnapshot,
 } from '../models/remote-host.model';
 import { seedRemoteHosts } from './remote-hosts.seed';
 import { ProviderAuthStatusService } from './provider-auth-status.service';
+import { NotificationService } from '../../../services/notification.service';
 
 /**
  * Registry + action service for the Remote-Hosts page (AGT-1921).
@@ -36,6 +39,8 @@ export class RemoteHostsService {
   /** Optional keeps direct-constructor pure tests and non-HTTP previews viable. */
   private readonly http = tryInjectHttpClient();
   private readonly providerAuth = tryInjectProviderAuthStatus();
+  private readonly notifications = tryInjectNotificationService();
+  private readonly notifiedLinkFailures = new Set<string>();
 
   /** Every mount revalidates live state; cached cards are never authoritative. */
   ensureLoaded(): void {
@@ -141,6 +146,7 @@ export class RemoteHostsService {
           this.hydrateTelemetry(host.id, host.clientId, telemetryWindow, preserveLongTelemetry);
         }
         this.hydrateCapabilityRegistry();
+        this.hydrateLinkHealth();
       },
       error: error => {
         this.identityDiagnostics.set([]);
@@ -267,6 +273,50 @@ export class RemoteHostsService {
     });
   }
 
+  private hydrateLinkHealth(): void {
+    if (!this.http) return;
+    this.http.get<RemoteRunnerLinkHealth[]>('/api/v1/management/remote-hosts/link-health').subscribe({
+      next: links => {
+        this.providerAuth?.links.set(links ?? []);
+        this.hosts.update(hosts => hosts.map(host => {
+          const link = (links ?? []).find(item => item.runnerId.toLowerCase() === host.clientId.toLowerCase());
+          if (!link) return host;
+          const status = host.status === 'retired' || host.status === 'draining'
+            ? host.status
+            : link.linkState === 'down' ? 'offline'
+              : link.linkState === 'stale' ? 'degraded'
+                : host.status === 'offline' ? 'online' : host.status;
+          return { ...host, status, runnerLink: link, lastHeartbeatAt: link.lastSnapshotAt ?? host.lastHeartbeatAt };
+        }));
+        for (const link of links ?? []) this.notifyLinkFailure(link);
+      },
+      error: error => this.log('link-health-hydrate-failed', { message: error?.message ?? 'unknown' }),
+    });
+  }
+
+  private notifyLinkFailure(link: RemoteRunnerLinkHealth): void {
+    const keeper = link.keeper;
+    if (link.linkState !== 'down' || !link.readyCardsTargetHost || !keeper?.supported || !keeper.cause) {
+      if (link.linkState === 'connected') this.notifiedLinkFailures.delete(link.runnerId);
+      return;
+    }
+    if (this.notifiedLinkFailures.has(link.runnerId) || !this.notifications) return;
+    this.notifiedLinkFailures.add(link.runnerId);
+    const cause = keeperCauseLabel(keeper.cause);
+    this.notifications.notify({
+      kind: 'warning',
+      title: `${link.name} link is down`,
+      message: `${cause}. Ready cards targeting this host cannot be claimed.`,
+      details: [`Last runner snapshot: ${link.lastSnapshotAt ?? 'never'}`, keeper.detail ?? 'No keeper detail reported.'],
+      actions: [{
+        label: 'Reconnect',
+        testId: 'remote-host-reconnect-notification',
+        primary: true,
+        callback: () => this.reconnect(link.runnerId),
+      }],
+    });
+  }
+
   private hydrateTelemetry(
     hostId: string,
     clientId: string,
@@ -342,6 +392,28 @@ export class RemoteHostsService {
     this.http.post(`/api/clients/${encodeURIComponent(host.clientId)}/runner-project-preflights/invalidate`, {}).subscribe({
       next: () => this.reload(),
       error: error => this.actionFailed(id, error),
+    });
+  }
+
+  reconnect(id: string): void {
+    const host = this.hosts().find(item => item.id === id || item.clientId === id);
+    if (!host || host.busyAction || !this.http) return;
+    this.patch(host.id, item => ({ ...item, busyAction: 'reconnect' }));
+    this.http.post<RemoteRunnerReconnectResponse>(
+      `/api/v1/management/remote-hosts/${encodeURIComponent(host.clientId)}/reconnect`,
+      {},
+    ).subscribe({
+      next: result => {
+        this.patch(host.id, item => ({ ...item, busyAction: null }));
+        if (result.succeeded) {
+          this.notifications?.success(
+            `${result.detail} Current runner link state: ${result.linkState}; snapshot age: ${formatSnapshotAge(result.nextSnapshotAgeSeconds)}.`,
+            `${host.name} reconnect started`,
+          );
+          this.reload();
+        }
+      },
+      error: error => this.actionFailed(host.id, error),
     });
   }
 
@@ -671,4 +743,28 @@ function tryInjectProviderAuthStatus(): ProviderAuthStatusService | null {
   } catch {
     return null;
   }
+}
+
+function tryInjectNotificationService(): NotificationService | null {
+  try {
+    return inject(NotificationService, { optional: true });
+  } catch {
+    return null;
+  }
+}
+
+function keeperCauseLabel(cause: NonNullable<RemoteRunnerLinkHealth['keeper']>['cause']): string {
+  switch (cause) {
+    case 'task-disabled': return 'The tunnel keeper Scheduled Task is disabled';
+    case 'not-running': return 'The tunnel keeper Scheduled Task is not running';
+    case 'ssh-not-running': return 'The tunnel keeper has no SSH reverse-forward process';
+    case 'probe-failing': return 'The tunnel keeper functional probe is failing';
+    default: return 'The tunnel keeper is unhealthy';
+  }
+}
+
+function formatSnapshotAge(seconds: number | null): string {
+  if (seconds === null) return 'not available';
+  if (seconds < 60) return `${Math.round(seconds)} seconds`;
+  return `${Math.round(seconds / 60)} minutes`;
 }

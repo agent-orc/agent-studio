@@ -71,6 +71,7 @@ async function stubBackgroundApis(page: Page) {
       runnerGitStatus: 'ready', runnerGitCheckedAt: now, runnerDaemonState: 'running', runnerActiveSlots: 0, runnerAvailableSlots: 2 },
   ]));
   await page.route('**/api/v1/management/remote-hosts', json([]));
+  await page.route('**/api/v1/management/remote-hosts/link-health', json([]));
   await page.route('**/api/clients/*/telemetry?window=*', json({ clientId: 'mock', window: '14d', points: [{
     timestamp: now, cpuPercent: 7, load1: 0.1, load5: 0.1, load15: 0.1,
     memoryUsedBytes: 4_000_000_000, memoryTotalBytes: 16_000_000_000,
@@ -1195,6 +1196,53 @@ test.describe('Execution Hosts settings section', () => {
     await expect(remote.getByTestId('remote-host-vitals')).toHaveCount(0);
     await expect(remote).not.toContainText('54%');
     await page.screenshot({ path: join(SHOT_DIR, 'remote-hosts-stale-dark.png'), fullPage: false });
+  });
+
+  test('shows a down runner link, raises one keeper notification, and reconnects it', async ({ page }) => {
+    const lastSnapshotAt = '2026-09-06T08:00:00Z';
+    let reconnectCalls = 0;
+    const downLink = {
+      runnerId: 'agent-runner-01', name: 'agent-runner-01', linkState: 'down',
+      lastSnapshotAt, stateSince: '2026-09-06T08:03:00Z', snapshotAgeSeconds: 7200,
+      readyCardsTargetHost: true,
+      keeper: {
+        supported: true, taskName: 'AgentRunner-TunnelKeeper', state: 'unhealthy',
+        enabled: false, running: false, sshRunning: false, cause: 'task-disabled',
+        observedAt: '2026-09-06T08:00:00Z',
+        logTail: ['2026-09-06T08:00:00Z status=unreachable'],
+        detail: 'The Scheduled Task is disabled.',
+      },
+    };
+    await page.unroute('**/api/v1/management/remote-hosts/link-health');
+    await page.route('**/api/v1/management/remote-hosts/link-health', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify([downLink]),
+    }));
+    await page.route('**/api/v1/management/remote-hosts/agent-runner-01/reconnect', route => {
+      reconnectCalls++;
+      return route.fulfill({
+        status: 200, contentType: 'application/json', body: JSON.stringify({
+          runnerId: 'agent-runner-01', succeeded: true, enabled: true, started: true,
+          detail: 'Enabled and started AgentRunner-TunnelKeeper.', linkState: 'down',
+          nextSnapshotAgeSeconds: 7201,
+          keeper: { ...downLink.keeper, state: 'healthy', enabled: true, running: true, sshRunning: true, cause: null },
+        }),
+      });
+    });
+
+    await page.goto('/#/workspace/settings/remote-hosts');
+    const runnerRole = page.getByTestId('remote-host-role-row').filter({ hasText: 'agent-runner-01' }).first();
+    await expect(runnerRole.getByTestId('remote-host-link-state')).toContainText('Down since 2026-09-06T08:03:00Z');
+    const warning = page.getByTestId('notification-warning').filter({ hasText: 'agent-runner-01 link is down' });
+    await expect(warning).toContainText('Scheduled Task is disabled');
+    await expect(page.getByTestId('notification-warning')).toHaveCount(1);
+    await expect(page.getByTestId('remote-host-link-notification')).toBeVisible();
+    await expect(page.getByTestId('remote-host-link-notification')).toContainText('Scheduled Task is disabled');
+    await setTheme(page, 'dark');
+    await page.screenshot({ path: join(SHOT_DIR, 'remote-host-link-down-notification--mocked.png'), fullPage: false });
+
+    await page.getByTestId('remote-host-link-reconnect').click();
+    await expect.poll(() => reconnectCalls).toBe(1);
+    await expect(page.getByTestId('notification-success')).toContainText('reconnect started');
   });
 
   test('dims a stale active-slot sample while a fresh heartbeat remains online', async ({ page }) => {

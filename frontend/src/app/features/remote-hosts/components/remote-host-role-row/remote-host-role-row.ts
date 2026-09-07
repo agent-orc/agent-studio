@@ -25,6 +25,7 @@ import {
 export class RemoteHostRoleRowComponent {
   readonly host = input.required<RemoteHost>();
   readonly activeSlots = input(0);
+  readonly now = input(Date.now());
   readonly action = output<{ kind: HostActionKind; id: string }>();
 
   readonly retired = computed(() => this.host().status === 'retired');
@@ -35,11 +36,35 @@ export class RemoteHostRoleRowComponent {
     : hostStatusLabel(this.host().status));
   readonly roleLabel = computed(() => runnerServiceRoleLabel(this.host().serviceRole));
   readonly slotTotal = computed(() => roleSlotTotal(this.host()));
+  readonly linkLabel = computed(() => runnerLinkLabel(this.host(), this.now()));
+  readonly linkTooltip = computed(() => runnerLinkTooltip(this.host()));
 
   emit(kind: HostActionKind): void {
     if (this.host().busyAction) return;
     this.action.emit({ kind, id: this.host().id });
   }
+}
+
+function runnerLinkLabel(host: RemoteHost, now: number): string | null {
+  const link = host.runnerLink;
+  if (!link) return null;
+  const age = link.lastSnapshotAt ? Math.max(0, now - Date.parse(link.lastSnapshotAt)) : null;
+  const ageLabel = age === null || !Number.isFinite(age)
+    ? 'no snapshot'
+    : age < 60_000 ? `${Math.floor(age / 1000)}s ago`
+      : age < 3_600_000 ? `${Math.floor(age / 60_000)}m ago`
+        : `${Math.floor(age / 3_600_000)}h ago`;
+  if (link.linkState === 'connected') return `Connected · snapshot ${ageLabel}`;
+  return `${link.linkState === 'stale' ? 'Stale' : 'Down'} since ${link.stateSince} · snapshot ${ageLabel}`;
+}
+
+function runnerLinkTooltip(host: RemoteHost): string | null {
+  const link = host.runnerLink;
+  if (!link) return null;
+  const base = `Runner link ${link.linkState}. Last capability snapshot: ${link.lastSnapshotAt ?? 'never'}.`;
+  const keeper = link.keeper;
+  if (!keeper) return base;
+  return `${base} Keeper ${keeper.taskName}: ${keeper.cause ?? keeper.state}. ${keeper.detail ?? ''}`.trim();
 }
 
 export function roleSlotTotal(host: RemoteHost): number | null {

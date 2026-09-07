@@ -4,6 +4,7 @@ import type {
   RemoteHost,
   RemoteHostCapabilityHealth,
   TaskServerRunnerCapabilitySnapshot,
+  RemoteRunnerLinkHealth,
 } from './remote-host.model';
 
 export type ProviderAuthDisplayState = 'ok' | 'retrying' | 'limited' | 'expiring' | 'unavailable' | 'unknown';
@@ -20,6 +21,8 @@ export interface ProviderAuthBadge {
   signal: RemoteHostCapabilityHealth['signal'];
   detail: string;
   advertisedAt: string | null;
+  lastSeenAt: string | null;
+  consecutiveFailures: number;
   reachable: boolean;
   expiresAt: string | null;
   expiresSoon: boolean;
@@ -73,6 +76,7 @@ export function providerAuthBadgesForSnapshot(
       snapshot.name,
       [snapshot.runnerId, snapshot.hostId, snapshot.name],
       snapshot.status === 'active' && isRecent(snapshot.lastSeenAt, nowMs),
+      snapshot.lastSeenAt,
       nowMs,
     );
   });
@@ -88,6 +92,7 @@ export function providerAuthBadgesForHost(host: RemoteHost, nowMs: number): Prov
     host.name,
     [host.id, host.clientId, host.capacityHostId ?? '', host.name],
     host.status !== 'offline' && host.status !== 'retired' && isRecent(host.lastHeartbeatAt, nowMs),
+    host.runnerLink?.lastSnapshotAt ?? host.lastHeartbeatAt,
     nowMs,
   ));
 }
@@ -95,6 +100,7 @@ export function providerAuthBadgesForHost(host: RemoteHost, nowMs: number): Prov
 export function providerAuthWaitReason(
   task: TaskInfo,
   statuses: readonly ProviderAuthBadge[],
+  links: readonly RemoteRunnerLinkHealth[] = [],
 ): ProviderAuthWaitReason | null {
   if (task.state !== '2-ready' || !task.cliType) return null;
   const configuredRunner = task.executionLocation?.configuredRunnerId
@@ -114,7 +120,17 @@ export function providerAuthWaitReason(
     ? hostNames.join(', ')
     : configuredRunner ?? 'an execution host';
   const limited = candidates.find(status => status.state === 'limited');
-  const unavailable = candidates.filter(status => status.state === 'unavailable');
+  const unavailable = candidates.filter(status => status.reachable
+    && status.state === 'unavailable'
+    && status.signal === 'signed-out'
+    && status.consecutiveFailures >= 2);
+  const matchingLinks = links.filter(link => !configuredRunner
+    || link.runnerId.toLowerCase() === configuredRunner.toLowerCase()
+    || link.name.toLowerCase() === configuredRunner.toLowerCase());
+  const lastSeenAt = [...candidates.map(status => status.lastSeenAt), ...matchingLinks.map(link => link.lastSnapshotAt)]
+    .filter((value): value is string => !!value)
+    .sort()
+    .at(-1) ?? null;
   const detail = unavailable.length > 0
     ? unavailable.map(status => `${status.hostName}: ${status.detail}`).join('\n')
     : candidates.length > 0
@@ -126,10 +142,14 @@ export function providerAuthWaitReason(
     provider,
     label: limited
       ? `${providerLabel} rate-limited on ${target}${limited.limitedUntil ? ` until ${limited.limitedUntil}` : ''}`
-      : `Waiting for ${providerLabel} sign-in on ${target}`,
+      : unavailable.length > 0
+        ? `Waiting for ${providerLabel} sign-in on ${target}`
+        : `${target} unreachable since ${lastSeenAt ?? 'no heartbeat was recorded'} (no runner heartbeat; Task Server link or runner service down)`,
     tooltip: limited
       ? `${limited.detail}\nThe task stays Ready and retries automatically after the provider limit.`
-      : `${detail}\nThe task stays Ready until a fresh provider probe reports OK.`,
+      : unavailable.length > 0
+        ? `${detail}\nTwo consecutive provider probes reported an explicit logout. The task stays Ready until sign-in is restored.`
+        : `${detail}\nNo fresh runner heartbeat is available. Check the Task Server link and runner services.`,
     hostNames: hostNames.length > 0 ? hostNames : configuredRunner ? [configuredRunner] : [],
   };
 }
@@ -153,6 +173,7 @@ function badgeFromCapability(
   hostName: string,
   aliases: readonly string[],
   runnerReachable: boolean,
+  runnerLastSeenAt: string | null,
   nowMs: number,
 ): ProviderAuthBadge {
   const expiresAt = capability?.expiresAt ?? null;
@@ -190,6 +211,8 @@ function badgeFromCapability(
     signal: capability?.signal ?? null,
     detail,
     advertisedAt: capability?.advertisedAt ?? null,
+    lastSeenAt: runnerLastSeenAt,
+    consecutiveFailures: capability?.consecutiveFailures ?? 0,
     reachable: runnerReachable && !!capability?.isFresh,
     expiresAt,
     expiresSoon,

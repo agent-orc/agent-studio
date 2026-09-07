@@ -36,6 +36,7 @@ export type HostHeartbeatStatus =
 /** Operator actions offered per host row. */
 export type HostActionKind =
   | 'reprobe'
+  | 'reconnect'
   | 'drain'
   | 'retire'
   | 'revive'
@@ -236,6 +237,41 @@ export interface TaskServerRunnerCapabilitySnapshot {
   roleMaxParallelism?: number | null;
 }
 
+export interface TunnelKeeperHealth {
+  supported: boolean;
+  taskName: string;
+  state: 'healthy' | 'unhealthy' | 'unsupported';
+  enabled: boolean;
+  running: boolean;
+  sshRunning: boolean;
+  cause: 'task-disabled' | 'not-running' | 'ssh-not-running' | 'probe-failing' | null;
+  observedAt: string | null;
+  logTail: readonly string[];
+  detail: string | null;
+}
+
+export interface RemoteRunnerLinkHealth {
+  runnerId: string;
+  name: string;
+  linkState: 'connected' | 'stale' | 'down';
+  lastSnapshotAt: string | null;
+  stateSince: string;
+  snapshotAgeSeconds: number | null;
+  readyCardsTargetHost: boolean;
+  keeper: TunnelKeeperHealth | null;
+}
+
+export interface RemoteRunnerReconnectResponse {
+  runnerId: string;
+  succeeded: boolean;
+  enabled: boolean;
+  started: boolean;
+  detail: string;
+  linkState: RemoteRunnerLinkHealth['linkState'];
+  nextSnapshotAgeSeconds: number | null;
+  keeper: TunnelKeeperHealth;
+}
+
 export interface RemoteHostAdmission {
   hostId: string;
   admissionState: 'open' | 'automatic-draining' | 'operator-draining';
@@ -266,6 +302,8 @@ export interface RemoteHost {
   os: string;
   /** ISO timestamp of the last heartbeat, or null if never seen. */
   lastHeartbeatAt: string | null;
+  /** Capability-snapshot freshness, separate from generic client activity. */
+  runnerLink?: RemoteRunnerLinkHealth | null;
   /** Human uptime label reported by the host (e.g. "2d 9h"). */
   uptimeLabel: string | null;
   /** General capability chips: OS, runtimes, features. */

@@ -43,6 +43,19 @@
     }
   </div>
 
+  @for (host of linkFailures(); track host.id) {
+    <app-notification kind="warning" layout="banner" [closable]="false"
+                      [title]="host.name + ' link is down'" testid="remote-host-link-notification">
+      {{ linkFailureMessage(host) }} Ready cards targeting this host cannot be claimed.
+      <div notification-actions>
+        <button type="button" class="rh__refresh" data-testid="remote-host-link-reconnect"
+                [disabled]="!!host.busyAction" (click)="reconnect(host.id)">
+          {{ host.busyAction === 'reconnect' ? 'Reconnecting…' : 'Reconnect' }}
+        </button>
+      </div>
+    </app-notification>
+  }
+
   @if (reviewQueueSnapshot(); as review) {
     <section class="rh__review"
              data-testid="auto-review-queue-summary"

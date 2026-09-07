@@ -4,6 +4,10 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { TestBed } from '@angular/core/testing';
 import { RemoteHostsService } from './remote-hosts.service';
 
+function flushLinkHealth(http: HttpTestingController): void {
+  for (const request of http.match('/api/v1/management/remote-hosts/link-health')) request.flush([]);
+}
+
 describe('RemoteHostsService', () => {
   let svc: RemoteHostsService;
 
@@ -111,6 +115,7 @@ describe('RemoteHostsService client registry hydration', () => {
       telemetryLoading: false,
     });
     http.expectNone('/api/clients/agent-runner-01/telemetry?window=14d');
+    flushLinkHealth(http);
     http.verify();
   });
 
@@ -187,6 +192,7 @@ describe('RemoteHostsService client registry hydration', () => {
       findings: [{ kind: 'oversubscribed', since: older, until: latest, isActive: true }],
     });
     expect(svc.hosts().find(host => host.id === client.id)?.telemetry?.findings).toHaveLength(1);
+    flushLinkHealth(http);
     http.verify();
   });
 
@@ -266,6 +272,7 @@ describe('RemoteHostsService client registry hydration', () => {
     }]);
     expect(svc.hosts().find(host => host.id === 'agent-runner-01')?.status).toBe('retired');
     http.expectOne('/api/v1/management/remote-hosts').flush([]);
+    flushLinkHealth(http);
     http.verify();
   });
 
@@ -331,6 +338,7 @@ describe('RemoteHostsService client registry hydration', () => {
       runnerInstanceId: 'runner-host:42',
       runnerProtocolVersion: 2,
     });
+    flushLinkHealth(http);
     http.verify();
   });
 
@@ -350,6 +358,7 @@ describe('RemoteHostsService client registry hydration', () => {
     http.expectOne('/api/clients/agent-runner-01/telemetry?window=14d').flush({ clientId: 'agent-runner-01', window: '14d', points: [], findings: [] });
     http.expectOne('/api/v1/management/remote-hosts').flush([]);
     expect(svc.hosts().find(host => host.id === 'agent-runner-01')?.status).toBe('draining');
+    flushLinkHealth(http);
     http.verify();
   });
 
@@ -395,6 +404,7 @@ describe('RemoteHostsService client registry hydration', () => {
       roleMaxParallelism: 8,
       serviceRole: 'coding',
     });
+    flushLinkHealth(http);
     http.verify();
   });
 
@@ -494,6 +504,7 @@ describe('RemoteHostsService client registry hydration', () => {
     });
     expect(svc.hosts().find(host => host.id === 'agent-runner-01')?.projectPolicy)
       .toMatchObject({ version: 3, allowedProjectIds: ['PROJ-002'] });
+    flushLinkHealth(http);
     http.verify();
   });
 
@@ -563,6 +574,7 @@ describe('RemoteHostsService client registry hydration', () => {
       availableSlots: 4,
       busyAction: null,
     });
+    flushLinkHealth(http);
     http.verify();
   });
 
@@ -652,6 +664,7 @@ describe('RemoteHostsService client registry hydration', () => {
     const request = http.expectOne('/api/v1/hosts/host-a/runtime-capacity');
     expect(request.request.body).toMatchObject({ expectedVersion: 3 });
     request.flush({ ...snapshot.runtimeCapacity, maxParallelism: 7, version: 4 });
+    flushLinkHealth(http);
     http.verify();
   });
 
@@ -703,6 +716,7 @@ describe('RemoteHostsService client registry hydration', () => {
       availableSlots: 3,
       busyAction: null,
     });
+    flushLinkHealth(http);
     http.verify();
   });
 
@@ -719,6 +733,7 @@ describe('RemoteHostsService client registry hydration', () => {
     http.expectOne('/api/clients/agent-runner-01/runner-project-preflights/invalidate').flush({ id: 'agent-runner-01' });
     http.expectOne('/api/clients').flush([]);
     http.expectOne('/api/v1/management/remote-hosts').flush([]);
+    flushLinkHealth(http);
     http.verify();
   });
 });

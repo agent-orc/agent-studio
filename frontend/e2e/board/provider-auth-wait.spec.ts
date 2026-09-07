@@ -48,6 +48,7 @@ async function installRoutes(page: Page): Promise<void> {
     if (url.includes('/api/tasks/grouped')) return json(route, grouped);
     if (/\/api\/(?:tasks|jobs)(\?|$)/.test(url)) return json(route, [task]);
     if (url.includes('/api/watch-paths')) return json(route, [{ name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH }]);
+    if (url.includes('/api/v1/management/remote-hosts/link-health')) return json(route, []);
     if (url.includes('/api/v1/management/remote-hosts')) return json(route, [{
       runnerId: 'agent-runner-01', name: 'runner-berlin', hostId: 'host-berlin',
       instanceId: 'coding', runnerVersion: '1.2.0', protocolVersion: 2, status: 'active',
@@ -55,7 +56,7 @@ async function installRoutes(page: Page): Promise<void> {
       hostAdmission: { hostId: 'host-berlin', admissionState: 'open' },
       capabilities: [
         capability('cli-execution:claude', 'ready'),
-        capability('provider-auth:claude', 'unavailable', 'Not logged in'),
+        { ...capability('provider-auth:claude', 'unavailable', 'Not logged in'), signal: 'signed-out', consecutiveFailures: 2 },
       ], telemetry: null,
     }]);
     if (url.includes('/api/clients')) return json(route, [{

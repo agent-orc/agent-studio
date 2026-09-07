@@ -433,7 +433,7 @@ export class TaskCardComponent implements OnInit, OnDestroy {
    */
   readonly dependencyChip = computed(() => buildVisibleDependencyChip(this.job()));
   readonly providerAuthWait = computed(() => this.providerAuthStatus.loaded()
-    ? providerAuthWaitReason(this.job(), this.providerAuthStatus.statuses())
+    ? providerAuthWaitReason(this.job(), this.providerAuthStatus.statuses(), this.providerAuthStatus.links())
     : null);
 
   readonly relativeActivity = computed(() => {

@@ -39,6 +39,7 @@ $periodicTrigger = New-ScheduledTaskTrigger `
     -RepetitionInterval (New-TimeSpan -Minutes $IntervalMinutes) `
     -RepetitionDuration (New-TimeSpan -Days 3650)
 $startupTrigger = New-ScheduledTaskTrigger -AtStartup
+$logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $userId
 $principal = New-ScheduledTaskPrincipal `
     -UserId $userId `
     -LogonType S4U `
@@ -46,6 +47,8 @@ $principal = New-ScheduledTaskPrincipal `
 $settings = New-ScheduledTaskSettingsSet `
     -MultipleInstances IgnoreNew `
     -StartWhenAvailable `
+    -AllowStartIfOnBatteries `
+    -DontStopIfGoingOnBatteries `
     -ExecutionTimeLimit ([TimeSpan]::Zero)
 
 if ($PSCmdlet.ShouldProcess($TaskName, 'Register or update the tunnel keeper scheduled task')) {
@@ -53,7 +56,7 @@ if ($PSCmdlet.ShouldProcess($TaskName, 'Register or update the tunnel keeper sch
         -TaskName $TaskName `
         -Description 'Functionally probes and repairs the private Agent Host reverse tunnel.' `
         -Action $action `
-        -Trigger @($startupTrigger, $periodicTrigger) `
+        -Trigger @($startupTrigger, $logonTrigger, $periodicTrigger) `
         -Principal $principal `
         -Settings $settings `
         -Force | Out-Null

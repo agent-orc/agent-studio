@@ -10,6 +10,9 @@
     <span class="role__dot" [attr.data-tone]="tone()" aria-hidden="true"></span>
     <span>{{ statusLabel() }}</span>
   </span>
+  @if (linkLabel(); as link) {
+    <span class="role__link" data-testid="remote-host-link-state" [attr.title]="linkTooltip()">{{ link }}</span>
+  }
 </td>
 <td class="role__number" data-testid="remote-host-slots-summary">
   {{ activeSlots() }} / {{ slotTotal() ?? 'n/a' }}
@@ -27,6 +30,14 @@
         {{ h.busyAction === 'revive' ? 'Reviving…' : 'Revive' }}
       </button>
     } @else {
+      @if (h.runnerLink?.linkState === 'down' && h.runnerLink?.keeper?.supported) {
+        <button class="role__btn role__btn--primary" type="button"
+                data-testid="remote-host-action-reconnect"
+                [disabled]="!!h.busyAction"
+                (click)="emit('reconnect')">
+          {{ h.busyAction === 'reconnect' ? 'Reconnecting…' : 'Reconnect' }}
+        </button>
+      }
       <button class="role__btn" type="button"
               data-testid="remote-host-action-drain"
               title="Stop new leases. Running work continues until it finishes."
@@ -54,6 +65,11 @@
           {{ h.busyAction === 'revive' ? 'Reviving…' : 'Revive' }}
         </button>
       } @else {
+        @if (h.runnerLink?.linkState === 'down' && h.runnerLink?.keeper?.supported) {
+          <button type="button" role="menuitem" [disabled]="!!h.busyAction" (click)="emit('reconnect')">
+            {{ h.busyAction === 'reconnect' ? 'Reconnecting…' : 'Reconnect' }}
+          </button>
+        }
         <button type="button" role="menuitem"
                 [disabled]="!!h.busyAction || h.status === 'draining'"
                 (click)="emit('drain')">

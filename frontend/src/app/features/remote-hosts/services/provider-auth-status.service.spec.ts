@@ -81,7 +81,8 @@ function snapshot(
       key: 'provider-auth:claude', category: 'provider-auth', advertisedStatus: status,
       healthState: 'healthy', advertisedAt: now,
       freshUntil: new Date(Date.now() + 120_000).toISOString(), isFresh: true,
-      consecutiveFailures: 0, detail: status === 'ready' ? 'Active session confirmed' : 'Not logged in',
+      consecutiveFailures: status === 'unavailable' ? 2 : 0,
+      detail: status === 'ready' ? 'Active session confirmed' : 'Not logged in',
       signal, expiresAt, affectedClaims: [], recoveryHistory: [],
     }],
   };

@@ -342,6 +342,13 @@ an expiry, Studio gives a quiet warning during the final 14 days. Follow
 
 Do not create provider-specific files such as `claude.env`.
 
+Ready-card wait text follows the same evidence boundary. A fresh rate-limit
+probe shows the bounded provider limit. Two consecutive explicit logout probes
+show `Waiting for <provider> sign-in`. An unknown provider badge, an expired
+capability snapshot, or a missing runner heartbeat instead names the runner as
+unreachable, includes the last snapshot time, and points to the Task Server link
+or runner service. An `unknown` badge never produces sign-in guidance.
+
 ## 2. Build agent-host
 
 ```bash

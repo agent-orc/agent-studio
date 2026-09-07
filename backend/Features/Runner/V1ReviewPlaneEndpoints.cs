@@ -47,6 +47,7 @@ public static class V1ReviewPlaneEndpoints
             string runnerId,
             Contract.RegisterRunnerRequest request,
             V1ReviewExecutorRegistry registry,
+            AgentStudio.Clients.ClientIdentityStore clients,
             AttemptAuthorityService authority,
             ILoggerFactory loggerFactory) =>
         {
@@ -55,6 +56,7 @@ public static class V1ReviewPlaneEndpoints
             try
             {
                 var registered = registry.Register(runnerId, request);
+                clients.RecordSeen(runnerId);
                 var adoptions = authority.ReAdoptRunnerAttempts(
                     runnerId,
                     request.HostId,
@@ -95,7 +97,8 @@ public static class V1ReviewPlaneEndpoints
             HttpContext context,
             string runnerId,
             Contract.CapabilityAdvertisementRequest request,
-            V1ReviewExecutorRegistry registry) =>
+            V1ReviewExecutorRegistry registry,
+            AgentStudio.Clients.ClientIdentityStore clients) =>
         {
             if (!RunnerMatches(context, runnerId))
                 return Results.Unauthorized();
@@ -105,7 +108,9 @@ public static class V1ReviewPlaneEndpoints
                     "Route and capability runner ids differ."));
             try
             {
-                return Results.Ok(registry.AdvertiseCapabilities(runnerId, request));
+                var snapshot = registry.AdvertiseCapabilities(runnerId, request);
+                clients.RecordSeen(runnerId);
+                return Results.Ok(snapshot);
             }
             catch (ArgumentException exception)
             {

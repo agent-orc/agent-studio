@@ -174,6 +174,82 @@ public sealed class ManagementApiTests : IDisposable
     }
 
     [Fact]
+    public async Task RemoteHostReconnect_UsesTheKeeperAdapter_AndReturnsNextSnapshotAge()
+    {
+        var keeper = new RecordingTunnelKeeperManager();
+        await using var factory = BuildFactory(keeper: keeper);
+        var identities = factory.Services.GetRequiredService<ClientIdentityStore>();
+        var identity = identities.Register(new RegisterClientRequest
+        {
+            DisplayName = "agent-runner-reconnect",
+            Kind = ClientIdentityKinds.Service,
+        });
+        Assert.Equal("agent-runner-reconnect", identity.Id);
+
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var response = await client.PostAsJsonAsync(
+            "/api/v1/management/remote-hosts/agent-runner-reconnect/reconnect",
+            new { });
+
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(body.GetProperty("succeeded").GetBoolean());
+        Assert.True(body.GetProperty("enabled").GetBoolean());
+        Assert.True(body.GetProperty("started").GetBoolean());
+        Assert.Equal("stale", body.GetProperty("linkState").GetString());
+        Assert.True(body.GetProperty("nextSnapshotAgeSeconds").GetDouble() >= 0);
+        Assert.Equal("status=unreachable", body.GetProperty("keeper").GetProperty("logTail")[0].GetString());
+        Assert.Equal(1, keeper.ReconnectCalls);
+        Assert.Contains("Enabled and started", body.GetProperty("detail").GetString());
+    }
+
+    [Fact]
+    public void RemoteRunnerLinkPolicy_DistinguishesConnectedStaleAndDown()
+    {
+        var now = new DateTime(2026, 9, 6, 12, 0, 0, DateTimeKind.Utc);
+        var registered = now.AddDays(-1);
+
+        Assert.Equal("connected", RemoteRunnerLinkPolicy.Evaluate(
+            now, registered, now.AddSeconds(-20), now.AddMinutes(2), TimeSpan.FromMinutes(5)).State);
+        Assert.Equal("stale", RemoteRunnerLinkPolicy.Evaluate(
+            now, registered, now.AddMinutes(-2), now.AddMinutes(-1), TimeSpan.FromMinutes(5)).State);
+        Assert.Equal("down", RemoteRunnerLinkPolicy.Evaluate(
+            now, registered, now.AddMinutes(-8), now.AddMinutes(-7), TimeSpan.FromMinutes(5)).State);
+    }
+
+    [Fact]
+    public async Task RunnerRegistration_ProjectsItsHeartbeatIntoClients()
+    {
+        var identities = Path.Combine(_root, "identities");
+        Directory.CreateDirectory(identities);
+        await File.WriteAllTextAsync(Path.Combine(identities, "agent-runner-heartbeat.json"), """
+            {
+              "id": "agent-runner-heartbeat",
+              "displayName": "agent-runner-heartbeat",
+              "kind": "service",
+              "registeredAt": "2026-09-06T08:00:00Z"
+            }
+            """);
+        await using var factory = BuildFactory();
+        using var runner = factory.CreateClient();
+
+        var registration = await runner.PutAsJsonAsync(
+            "/api/v1/runners/agent-runner-heartbeat",
+            new Contract.RegisterRunnerRequest(
+                "agent-runner-heartbeat", "host-heartbeat", "coding-1", "1.2.3",
+                Contract.TaskServerProtocol.Current,
+                [Contract.ReviewCapabilities.CodingExecutor]));
+        registration.EnsureSuccessStatusCode();
+
+        var clients = await runner.GetFromJsonAsync<JsonElement[]>("/api/clients");
+        var projected = Assert.Single(clients!, item =>
+            item.GetProperty("id").GetString() == "agent-runner-heartbeat");
+        Assert.Equal(JsonValueKind.String, projected.GetProperty("lastSeenAt").ValueKind);
+        Assert.True(projected.GetProperty("lastSeenAt").GetDateTime() > new DateTime(2026, 9, 6, 8, 0, 0, DateTimeKind.Utc));
+    }
+
+    [Fact]
     public async Task ProviderAuthProvisioning_RequiresOperator_AndDoesNotEchoTheSecret()
     {
         const string secret = "sk-ant-oat01-provider-secret-fixture";
@@ -418,7 +494,8 @@ public sealed class ManagementApiTests : IDisposable
 
     private WebApplicationFactory<Program> BuildFactory(
         string environment = "Test",
-        IProviderAuthProvisioner? provisioner = null) =>
+        IProviderAuthProvisioner? provisioner = null,
+        ITunnelKeeperManager? keeper = null) =>
         new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
     {
         builder.UseEnvironment(environment);
@@ -441,8 +518,34 @@ public sealed class ManagementApiTests : IDisposable
                 services.RemoveAll<IProviderAuthProvisioner>();
                 services.AddSingleton(provisioner);
             }
+            if (keeper is not null)
+            {
+                services.RemoveAll<ITunnelKeeperManager>();
+                services.AddSingleton(keeper);
+            }
         });
     });
+
+    private sealed class RecordingTunnelKeeperManager : ITunnelKeeperManager
+    {
+        public int ReconnectCalls { get; private set; }
+
+        public Task<TunnelKeeperStatus> ProbeAsync(CancellationToken cancellationToken)
+            => Task.FromResult(new TunnelKeeperStatus(
+                true, "AgentRunner-TunnelKeeper", "unhealthy", false, false, false,
+                "task-disabled", "2026-09-06T11:55:00Z", ["status=unreachable"],
+                "The Scheduled Task is disabled."));
+
+        public async Task<TunnelKeeperReconnectResult> ReconnectAsync(CancellationToken cancellationToken)
+        {
+            ReconnectCalls++;
+            var status = (await ProbeAsync(cancellationToken)) with
+            {
+                State = "healthy", Enabled = true, Running = true, SshRunning = true, Cause = null,
+            };
+            return new(true, true, true, status, "Enabled and started AgentRunner-TunnelKeeper.");
+        }
+    }
 
     private sealed class RecordingProviderAuthProvisioner : IProviderAuthProvisioner
     {

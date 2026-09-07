@@ -29,6 +29,13 @@
   white-space: nowrap;
 }
 .role__status { gap: var(--studio-spacing-2); white-space: nowrap; }
+.role__link {
+  display: block;
+  margin-top: var(--studio-spacing-1);
+  color: var(--studio-fg-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 .role__dot {
   width: 7px;
   height: 7px;

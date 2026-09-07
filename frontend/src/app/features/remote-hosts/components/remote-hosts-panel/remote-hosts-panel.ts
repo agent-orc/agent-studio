@@ -25,6 +25,7 @@ import {
   groupPhysicalHosts,
   type PhysicalHostGroup,
 } from '../../models/physical-host-group';
+import { NotificationComponent } from '../../../../components/notification/notification.component';
 
 /**
  * Execution Hosts settings page (AGT-1921).
@@ -41,7 +42,7 @@ import {
 @Component({
   selector: 'app-remote-hosts-panel',
   standalone: true,
-  imports: [RemoteHostCardComponent, AddHostWizardComponent, RunnerSetupDialogComponent],
+  imports: [RemoteHostCardComponent, AddHostWizardComponent, RunnerSetupDialogComponent, NotificationComponent],
   templateUrl: './remote-hosts-panel.html',
   styleUrl: './remote-hosts-panel.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -94,6 +95,10 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   readonly sortDirection = this.tableState.direction;
   readonly sortedHostGroups = computed(() =>
     this.tableState.sort(this.hostGroups(), host => this.boardSlots(host)));
+  readonly linkFailures = computed(() => this.hosts().filter(host =>
+    host.runnerLink?.linkState === 'down'
+    && host.runnerLink.readyCardsTargetHost
+    && host.runnerLink.keeper?.supported));
 
   /** Auto-review post-processing queue snapshot (AGT-2645). */
   readonly reviewQueueSnapshot = computed(() => this.reviewQueue.snapshot());
@@ -118,6 +123,16 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   }
 
   reload(): void { this.service.reload(); }
+  reconnect(id: string): void { this.service.reconnect(id); }
+  linkFailureMessage(host: RemoteHost): string {
+    switch (host.runnerLink?.keeper?.cause) {
+      case 'task-disabled': return 'The tunnel keeper Scheduled Task is disabled.';
+      case 'not-running': return 'The tunnel keeper Scheduled Task is not running.';
+      case 'ssh-not-running': return 'The tunnel keeper has no SSH reverse-forward process.';
+      case 'probe-failing': return 'The tunnel keeper functional probe is failing.';
+      default: return 'The tunnel keeper is unhealthy.';
+    }
+  }
 
   boardSlots(host: RemoteHost): number {
     const truth = this.boardRunningTruth();
@@ -205,6 +220,7 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
     }
     switch (evt.kind) {
       case 'reprobe': this.service.reprobe(evt.id); break;
+      case 'reconnect': this.service.reconnect(evt.id); break;
       case 'drain': this.service.drain(evt.id); break;
       case 'revive': this.service.revive(evt.id); break;
     }

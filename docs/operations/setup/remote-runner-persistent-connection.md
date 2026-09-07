@@ -84,8 +84,11 @@ Set-Location C:\Projects\agent-studio
 ```
 
 Both registrations are idempotent and use `IgnoreNew`. The keeper starts at
-boot, starts immediately when registered, and retains its five-minute fallback
-trigger. The independent `AgentRunner-TunnelWatchdog` starts at boot and owns a
+boot and user logon, starts immediately when registered, and retains its
+five-minute fallback trigger. Its registration also sets `StartWhenAvailable`,
+`AllowStartIfOnBatteries`, and `DontStopIfGoingOnBatteries`, so re-registering
+does not restore the power-policy failure that caused the 2026-09-06 outage.
+The independent `AgentRunner-TunnelWatchdog` starts at boot and owns a
 60-second probe loop. Both tasks use an S4U principal, so they do not depend on
 an interactive logon session. The selected identity must own a local protected
 SSH key and a non-interactive `agent-runner` alias. Run the registration from
@@ -149,6 +152,35 @@ under `%LOCALAPPDATA%\AgentTaskboard\tunnel-keeper\` and records the paths in
 eventual exit code. The stderr file includes verbose OpenSSH disconnect and
 forwarding diagnostics, so a later incident can distinguish keepalive death,
 connection reset, authentication failure, and remote bind refusal.
+
+### Studio-side supervision and reconnect
+
+Execution Hosts reads the configured Scheduled Task on the Windows Studio host
+(`RemoteRunnerLink:KeeperTaskName`, default `AgentRunner-TunnelKeeper`), checks
+whether a reverse-forward `ssh.exe` process exists, and includes the keeper
+state plus the tail of its transition log. Set
+`RemoteRunnerLink:KeeperStateDirectory` and `RemoteRunnerLink:KeeperLogPath`
+when the live keeper uses an operator-owned location such as
+`C:\Users\rmisc\ops\tunnel-keeper.log`; when that setting is omitted, Studio
+also discovers a legacy `tunnel-keeper.log` beside the script named in the task
+action. The repository keeper defaults to its
+`%LOCALAPPDATA%\AgentTaskboard\tunnel-keeper` state directory. The probe is
+guarded by an operating system check and is not attempted when Studio runs
+anywhere other than Windows.
+
+Capability-snapshot freshness is the runner link signal. A fresh snapshot is
+**connected**; an expired snapshot is **stale**; after
+`RemoteRunnerLink:SnapshotDownMinutes` (default five) it is **down**. If Ready
+cards target a down runner, Studio emits one operator notification describing
+whether the keeper task is disabled, not running, has no SSH process, or has a
+failing functional probe.
+
+The notification and Execution Hosts row offer **Reconnect**. It calls
+`POST /api/v1/management/remote-hosts/{id}/reconnect`, which enables and starts
+only the configured Scheduled Task. The response reports the scheduler outcome,
+the resulting keeper observation, current link state, and next snapshot age.
+It does not read, accept, or transmit credentials. A successful start can still
+show the old snapshot age until the runner's next advertisement arrives.
 
 ## Option B - autossh + systemd on the host (host dials in, `-L`)
 

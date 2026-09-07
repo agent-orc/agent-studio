@@ -12,7 +12,7 @@ describe('provider auth projection', () => {
   it('maps fresh probe truth to OK, unavailable, and unknown badges with detail', () => {
     const ok = providerAuthBadgesForSnapshot(snapshot('ready', 'healthy', true), NOW)[0];
     const unavailable = providerAuthBadgesForSnapshot(
-      snapshot('unavailable', 'healthy', true, 'Not logged in'),
+      snapshot('unavailable', 'healthy', true, 'Not logged in', null, 'signed-out'),
       NOW,
     )[0];
     const unknown = providerAuthBadgesForSnapshot(snapshot('ready', 'healthy', false), NOW)[0];
@@ -72,7 +72,7 @@ describe('provider auth projection', () => {
       },
     } as TaskInfo;
     const unavailable = providerAuthBadgesForSnapshot(
-      snapshot('unavailable', 'healthy', true, 'Not logged in'),
+      snapshot('unavailable', 'healthy', true, 'Not logged in', null, 'signed-out'),
       NOW,
     );
 
@@ -91,7 +91,7 @@ describe('provider auth projection', () => {
       cliType: 'claude',
     } as TaskInfo;
     const unavailable = providerAuthBadgesForSnapshot(
-      snapshot('unavailable', 'healthy', true, 'Not logged in'),
+      snapshot('unavailable', 'healthy', true, 'Not logged in', null, 'signed-out'),
       NOW,
     );
 
@@ -122,6 +122,30 @@ describe('provider auth projection', () => {
     ));
     expect(limited?.label).toContain('Claude rate-limited');
     expect(limited?.label).not.toContain('sign-in');
+  });
+
+  it('uses runner link loss for an unknown badge and reserves sign-in for two logout probes', () => {
+    const task = {
+      state: '2-ready', cliType: 'claude',
+      executionLocation: {
+        state: 'queued-remote', executionKind: 'remote', runnerId: 'agent-runner-01',
+        configuredRunnerId: 'agent-runner-01', connectionState: 'queued', leaseState: 'none', trustReason: 'fixture',
+      },
+    } as TaskInfo;
+    const stale = providerAuthBadgesForSnapshot(snapshot('ready', 'healthy', false), NOW);
+
+    const unreachable = providerAuthWaitReason(task, stale);
+    expect(unreachable?.label).toBe(
+      'runner-berlin unreachable since 2026-08-04T11:59:50Z (no runner heartbeat; Task Server link or runner service down)',
+    );
+    expect(unreachable?.label).not.toContain('sign-in');
+
+    const signedOut = providerAuthBadgesForSnapshot(
+      snapshot('unavailable', 'healthy', true, 'Not logged in', null, 'signed-out'), NOW,
+    );
+    const oneLogoutProbe = signedOut.map(status => ({ ...status, consecutiveFailures: 1 }));
+    expect(providerAuthWaitReason(task, oneLogoutProbe)?.label).toContain('unreachable since');
+    expect(providerAuthWaitReason(task, signedOut)?.label).toBe('Waiting for Claude sign-in on runner-berlin');
   });
 });
 
@@ -164,7 +188,7 @@ function snapshot(
       advertisedAt: '2026-08-04T11:59:30Z',
       freshUntil: isFresh ? '2026-08-04T12:02:30Z' : '2026-08-04T11:58:00Z',
       isFresh,
-      consecutiveFailures: healthState === 'healthy' ? 0 : 1,
+      consecutiveFailures: signal === 'signed-out' ? 2 : healthState === 'healthy' ? 0 : 1,
       detail,
       signal,
       expiresAt,
