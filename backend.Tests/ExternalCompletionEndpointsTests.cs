@@ -213,6 +213,44 @@ public sealed class ExternalCompletionEndpointsTests : IDisposable
         Assert.False(Directory.Exists(Path.Combine(_watchPath, TaskStates.Completed, "no-proof")));
     }
 
+    [Fact]
+    public async Task ExternalCompletion_RejectsResultEqualToAttemptBaseWithoutMutatingCard()
+    {
+        var baseSha = new string('a', 40);
+        WriteJob(TaskStates.Progress, "empty-result", "Empty Result", "Prompt.", commitSha: null);
+
+        using var factory = BuildFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var watchPath = Uri.EscapeDataString(_watchPath);
+
+        using var response = await client.PostAsJsonAsync(
+            $"/api/tasks/empty-result/external-completion?watchPath={watchPath}",
+            new ExternalCompletionRequest
+            {
+                Summary = "Remote work completed without a terminal sentinel.",
+                Source = "agent-runner-01",
+                ResultSha = baseSha,
+                BaseSha = baseSha,
+                ResultRef = "refs/heads/runner/agent-runner-01/empty-result",
+            });
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Contains(
+            "does not differ from the attempt base",
+            await response.Content.ReadAsStringAsync(),
+            StringComparison.OrdinalIgnoreCase);
+        var folder = Assert.Single(
+            TaskStates.All.Select(state => Path.Combine(_watchPath, state, "empty-result")),
+            Directory.Exists);
+        Assert.False(Directory.Exists(Path.Combine(_watchPath, TaskStates.HumanReview, "empty-result")));
+        Assert.False(File.Exists(Path.Combine(folder, "results", "deliverables.md")));
+        Assert.DoesNotContain(
+            "externalCompletion",
+            File.ReadAllText(Path.Combine(folder, "task.json")),
+            StringComparison.Ordinal);
+    }
+
     private WebApplicationFactory<Program> BuildFactory() =>
         new WebApplicationFactory<Program>()
             .WithWebHostBuilder(b =>

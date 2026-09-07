@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
+using AgentStudio.CliHosting;
 
 namespace AgentStudio.Cli;
 
@@ -126,9 +127,22 @@ public static partial class CliOutputLogParser
     }
 
     private static string FinishLine(StringBuilder sb, bool overflow, int maxLineChars)
-        => overflow
-            ? sb.ToString() + $"…[truncated: line exceeded {maxLineChars:N0} chars]"
-            : sb.ToString();
+    {
+        var prefix = sb.ToString();
+        if (!overflow) return prefix;
+
+        var match = PersistedLineRegex().Match(prefix);
+        var payloadIndex = match.Success ? match.Groups["text"].Index : 0;
+        var payload = prefix[payloadIndex..];
+        var payloadCap = maxLineChars - payloadIndex;
+        if (payloadCap > 0
+            && JsonLineTruncator.TryTruncateCodexFramePrefix(payload, payloadCap, out var bounded))
+        {
+            return prefix[..payloadIndex] + bounded;
+        }
+
+        return prefix + $"…[truncated: line exceeded {maxLineChars:N0} chars]";
+    }
 
     public static List<CliOutputLine> ParseLines(IEnumerable<string> lines, DateTime fallbackDateUtc)
     {

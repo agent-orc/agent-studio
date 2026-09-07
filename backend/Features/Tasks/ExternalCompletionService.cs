@@ -87,6 +87,20 @@ public sealed class ExternalCompletionService
         if (info == null)
             return new ExternalCompletionOutcome(ExternalCompletionStatus.NotFound);
 
+        var attemptBaseSha = string.IsNullOrWhiteSpace(request.BaseSha)
+            ? info.Provenance?.Base
+            : request.BaseSha.Trim();
+        if (!string.IsNullOrWhiteSpace(request.ResultSha)
+            && !string.IsNullOrWhiteSpace(attemptBaseSha)
+            && string.Equals(request.ResultSha.Trim(), attemptBaseSha, StringComparison.OrdinalIgnoreCase))
+        {
+            return new ExternalCompletionOutcome(
+                ExternalCompletionStatus.NoDelivery,
+                $"Result SHA '{request.ResultSha.Trim()}' does not differ from the attempt base; external completion requires a delivery.",
+                jobId,
+                info.State);
+        }
+
         var source = string.IsNullOrWhiteSpace(request.Source) ? "external" : request.Source!.Trim();
         var summary = request.Summary!.Trim();
         var now = DateTime.UtcNow;

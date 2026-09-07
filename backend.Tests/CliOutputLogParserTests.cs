@@ -1,5 +1,6 @@
 
 using Xunit;
+using System.Text.Json;
 
 namespace AgentStudio.Tests;
 
@@ -99,6 +100,48 @@ public class CliOutputLogParserTests
             Assert.True(
                 parsed[0].Text.Length <= CliOutputLogParser.MaxLineCharsCap + 128,
                 $"ParseFile must truncate a single giant line; got {parsed[0].Text.Length} chars");
+            Assert.Contains("…[truncated: line exceeded ", parsed[0].Text, StringComparison.Ordinal);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void ParseFile_KeepsOversizedCodexCommandFrameParseable()
+    {
+        var path = Path.GetTempFileName();
+        try
+        {
+            var command = "rg -n \"needle\" .";
+            var frame = JsonSerializer.Serialize(new
+            {
+                type = "item.completed",
+                item = new
+                {
+                    id = "item_13",
+                    type = "command_execution",
+                    command,
+                    aggregated_output = new string('x', 100 * 1024),
+                    exit_code = 0,
+                    status = "completed",
+                },
+            });
+            File.WriteAllText(path, "[12:00:00.000] [stdout] " + frame);
+
+            var parsedLines = CliOutputLogParser.ParseFile(path);
+
+            var line = Assert.Single(parsedLines);
+            Assert.True(line.Text.Length <= CliOutputLogParser.MaxLineCharsCap);
+            Assert.StartsWith("{\"type\":\"item.completed\"", line.Text, StringComparison.Ordinal);
+            using var parsed = JsonDocument.Parse(line.Text);
+            var item = parsed.RootElement.GetProperty("item");
+            Assert.Equal("item_13", item.GetProperty("id").GetString());
+            Assert.Equal("command_execution", item.GetProperty("type").GetString());
+            Assert.Equal(command, item.GetProperty("command").GetString());
+            Assert.Contains("payload cut at the 64 KiB log line cap", item.GetProperty("aggregated_output").GetString());
+            Assert.True(item.GetProperty("truncated").GetBoolean());
         }
         finally
         {

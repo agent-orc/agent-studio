@@ -51,6 +51,13 @@ public static class TaskExternalCompletionEndpoints
                 ExternalCompletionStatus.NotFound => Results.NotFound(),
                 ExternalCompletionStatus.InvalidRequest => Results.BadRequest(new { error = outcome.Message }),
                 ExternalCompletionStatus.MoveConflict => Results.Conflict(new { error = outcome.Message }),
+                ExternalCompletionStatus.NoDelivery => Results.Conflict(new
+                {
+                    error = outcome.Message,
+                    jobId = outcome.JobId ?? jobId,
+                    targetState = outcome.TargetState,
+                    verification = "no-delivery",
+                }),
                 // AGT-2220: an unproven delivery is a refused stamp, not a
                 // server error. 409 + the honest state the card was routed to.
                 ExternalCompletionStatus.UnverifiedDelivery => Results.Conflict(new

@@ -66,6 +66,21 @@ public sealed class CliProtocolNoveltyTests
     }
 
     [Fact]
+    public void Codex_error_frame_is_a_known_typed_provider_failure()
+    {
+        const string raw =
+            "{\"type\":\"error\",\"message\":\"Selected model is at capacity. Please try a different model.\"}";
+        var tracker = new CliProtocolNoveltyTracker("codex");
+
+        Assert.False(tracker.TryObserveFrame(raw, out _));
+        var mapped = RunnerCodexEventAdapter.MapKnownError(
+            new CliRunEvent.Unknown("unknown frame", raw));
+
+        var failed = Assert.IsType<CliRunEvent.TurnFailed>(mapped);
+        Assert.Equal("Selected model is at capacity. Please try a different model.", failed.Reason);
+    }
+
+    [Fact]
     public void V1_event_classification_uses_the_protocol_novelty_kind()
     {
         var marker = new ProtocolNoveltyTelemetry(

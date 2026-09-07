@@ -71,6 +71,12 @@ public record ExternalCompletionRequest
     /// the SHA is searched across all remote refs.
     /// </summary>
     public string? ResultRef { get; init; }
+
+    /// <summary>
+    /// Pickup base for this delivery attempt. A result equal to this SHA is an
+    /// empty delivery and is rejected before any completion evidence is written.
+    /// </summary>
+    public string? BaseSha { get; init; }
 }
 
 /// <summary>One delivered artifact recorded in <c>results/deliverables.md</c>.</summary>
@@ -92,6 +98,9 @@ public enum ExternalCompletionStatus
     InvalidRequest,
     MoveConflict,
     MoveFailed,
+
+    /// <summary>The claimed result is identical to the attempt base.</summary>
+    NoDelivery,
 
     /// <summary>
     /// AGT-2220: the claimed delivery could not be proven against the target

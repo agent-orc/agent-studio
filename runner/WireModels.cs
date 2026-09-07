@@ -449,7 +449,8 @@ public sealed record ExternalCompletionRequest(
     // is no longer trusted as prose in Summary - the server re-verifies these two
     // fields against the target repository before it stamps anything.
     string? ResultSha = null,
-    string? ResultRef = null);
+    string? ResultRef = null,
+    string? BaseSha = null);
 
 public sealed record ExternalCompletionResponse(
     string? JobId = null,

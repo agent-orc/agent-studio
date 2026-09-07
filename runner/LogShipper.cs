@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
+using AgentStudio.CliHosting;
 
 namespace AgentRunner;
 
@@ -70,7 +71,11 @@ public sealed class LogShipper
     public void Add(string stream, string text)
     {
         if (text.Length > MaxLineChars)
-            text = text[..MaxLineChars] + " [runner: event payload truncated]";
+        {
+            if (!JsonLineTruncator.TryTruncateObject(text, MaxLineChars, out var bounded))
+                bounded = text[..MaxLineChars] + " [runner: event payload truncated]";
+            text = bounded;
+        }
         if (_outbox is not null)
         {
             _outbox.Enqueue(
