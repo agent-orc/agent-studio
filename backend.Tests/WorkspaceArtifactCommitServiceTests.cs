@@ -418,6 +418,24 @@ public sealed class WorkspaceArtifactCommitServiceTests : IDisposable
         Assert.Contains("logs/bus/events.jsonl", RunGitCapture(_root, "status", "--short").Replace('\\', '/'));
     }
 
+    [Fact]
+    public void EvidenceCommit_ExcludesOversizedFileButCommitsTheRest()
+    {
+        var job = JobFolder("ASS-EVIDENCE-LARGE");
+        Directory.CreateDirectory(Path.Combine(job, "logs"));
+        File.WriteAllText(Path.Combine(job, "status.md"), "evidence\n");
+        var large = Path.Combine(job, "logs", "cli-output.log");
+        using (var stream = File.Create(large)) stream.SetLength(50L * 1024 * 1024 + 1);
+
+        var result = _service.TryCommitEvidence(_root, [job], [], "evidence: large\n");
+
+        Assert.True(result.DidCommit, result.Error);
+        var committed = RunGitCapture(_root, "show", "--name-only", "--format=", "HEAD");
+        Assert.Contains("status.md", committed);
+        Assert.DoesNotContain("cli-output.log", committed);
+        Assert.Contains("cli-output.log", RunGitCapture(_root, "status", "--short"));
+    }
+
     private string JobFolder(string id) =>
         Path.Combine(_root, "projects", "agent-taskboard", "tasks", "001", id);
 

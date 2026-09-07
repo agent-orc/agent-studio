@@ -5,11 +5,12 @@ namespace TaskServer.Tests;
 public sealed class ArchitectureBoundaryTests
 {
     [Fact]
-    public void Task_server_project_references_only_contracts_and_persistence_packages()
+    public void Task_server_project_references_contracts_and_host_neutral_retention_only()
     {
         var root = ProtocolTests.RepositoryRoot();
         var project = File.ReadAllText(Path.Combine(root, "task-server", "TaskServer.csproj"));
         Assert.Contains("TaskServer.Contracts.csproj", project);
+        Assert.Contains("AgentStudio.Retention.csproj", project);
         Assert.DoesNotContain("frontend", project, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("OrchestratorApi.csproj", project, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("AgentRunner.csproj", project, StringComparison.OrdinalIgnoreCase);

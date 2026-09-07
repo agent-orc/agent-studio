@@ -184,7 +184,7 @@ public sealed class WorkspaceEvidenceBatcherTests : IDisposable
     }
 
     [Fact]
-    public void FlushDue_ExcludesTrackedCliOutputRotation_NotJustUntracked()
+    public void FlushDue_ExcludesTrackedCliOutputAndRotationDuringLiveBatch()
     {
         var time = new FakeTimeProvider(new DateTime(2026, 8, 2, 12, 0, 0, DateTimeKind.Utc));
         var batcher = BuildBatcher(time, debounce: 5, maxDelay: 60);
@@ -206,7 +206,7 @@ public sealed class WorkspaceEvidenceBatcherTests : IDisposable
 
         Assert.True(Assert.Single(batcher.FlushDue()).Result.DidCommit);
         var committed = CommittedFiles();
-        Assert.Contains("projects/demo/3-progress/ASS-10/logs/cli-output.log", committed);
+        Assert.DoesNotContain("projects/demo/3-progress/ASS-10/logs/cli-output.log", committed);
         Assert.DoesNotContain(
             "projects/demo/3-progress/ASS-10/logs/cli-output.log.1",
             committed);
@@ -328,6 +328,23 @@ public sealed class WorkspaceEvidenceBatcherTests : IDisposable
 
         // Idempotent: a second catch-up with nothing dirty commits nothing.
         Assert.False(Assert.Single(batcher.CatchUp(new[] { _watchPath })).Result.DidCommit);
+    }
+
+    [Fact]
+    public void FlushExcludesClassCWhileCommittingSmallEvidence()
+    {
+        var time = new FakeTimeProvider(new DateTime(2026, 5, 5, 12, 0, 0, DateTimeKind.Utc));
+        var batcher = BuildBatcher(time, debounce: 1, maxDelay: 60);
+        Directory.CreateDirectory(Path.Combine(_watchPath, TaskStates.Progress, "ASS-HEAVY", "logs"));
+        WriteEvidence("ASS-HEAVY", "logs/cli-output.log", "live heavy output\n");
+        WriteEvidence("ASS-HEAVY", "status.md", "small evidence\n");
+        batcher.Ingest(new WorkspaceEvidenceRequest(_watchPath, Project, "ASS-HEAVY", "a", "b"));
+        time.Advance(TimeSpan.FromSeconds(2));
+
+        Assert.True(Assert.Single(batcher.FlushDue()).Result.DidCommit);
+        var files = CommittedFiles();
+        Assert.Contains("projects/demo/3-progress/ASS-HEAVY/status.md", files);
+        Assert.DoesNotContain("projects/demo/3-progress/ASS-HEAVY/logs/cli-output.log", files);
     }
 
     // ---- index.lock retry --------------------------------------------------
