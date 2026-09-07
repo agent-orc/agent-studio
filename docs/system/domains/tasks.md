@@ -483,6 +483,24 @@ New generations use `scripts/generate-project-proposals.mjs`. The generator is
 idempotent: an existing proposal document is preserved so a repeated survey run
 cannot erase an operator decision.
 
+## Watcher proposal state and tag
+
+Watcher ticket proposals are a second, separate proposal path
+([decision dossier](../../operations/orchestrator-waechter/index.html) section
+10). They reuse the ordinary lane and tag vocabulary rather than adding a lane:
+
+- The proposal state is `1-preparation`. A proposal never enters `2-ready` by
+  itself; only an operator approval promotes it, and it carries the model route
+  the routing policy recommended.
+- Every proposal carries the `watcher-proposal` tag plus one detector-class tag
+  (`watcher-repetition`, `watcher-contradiction`, `watcher-silence`,
+  `watcher-drift`, `watcher-hygiene`), so the inbox is a normal tag filter.
+- The draft references the cards its case overlaps. A fingerprint that already
+  has an open card produces a note on that card instead of a new card.
+- Contracts and detectors live in `backend/Features/Watcher/`. The lane and tag
+  constants are `WatcherProposalConventions`; nothing in that feature writes
+  task or Git state in the current slice.
+
 ## Epic lifecycle
 
 - Epics are `kind=epic` task records; membership is the child's `epicId`.
