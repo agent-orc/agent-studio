@@ -742,6 +742,29 @@ if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService<AgentStudio.Pipeline.IntegrationPushBackstopHostedService>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<AcceptanceRailHostedService>());
 }
+// AGT-2721: the global Watcher. It runs beside the task API with its own
+// cadence and its own kill switch (Watcher:Enabled, default off). The hosted
+// loop is registered outside the public demo profile so the switch can be
+// flipped at runtime; a disabled Watcher publishes a disabled snapshot rather
+// than disappearing, because an absent monitor and a switched-off monitor must
+// not look the same.
+builder.Services.AddSingleton<AgentStudio.Watcher.WatcherStore>();
+builder.Services.AddSingleton<AgentStudio.Watcher.WatcherBusPublisher>();
+builder.Services.AddSingleton<AgentStudio.Watcher.WatcherActivityProjection>();
+builder.Services.AddSingleton<AgentStudio.Watcher.WatcherSignalCollector>();
+builder.Services.AddSingleton<AgentStudio.Watcher.IWatcherAnalyst, AgentStudio.Watcher.CliWatcherAnalyst>();
+builder.Services.AddSingleton<AgentStudio.Watcher.WatcherProposalService>();
+builder.Services.AddSingleton<AgentStudio.Watcher.WatcherReviewService>();
+builder.Services.AddSingleton<AgentStudio.Watcher.WatcherSweepService>();
+builder.Services.AddSingleton<AgentStudio.Watcher.WatcherHostedService>();
+builder.Services.AddSingleton<AgentStudio.Watcher.IWatcherSignalSource, AgentStudio.Watcher.WatcherBusSignalSource>();
+builder.Services.AddSingleton<AgentStudio.Watcher.IWatcherSignalSource, AgentStudio.Watcher.WatcherQuotaSignalSource>();
+builder.Services.AddSingleton<AgentStudio.Watcher.IWatcherSignalSource, AgentStudio.Watcher.WatcherIntegrationSignalSource>();
+if (!publicDemoExecutionProfile)
+{
+    builder.Services.AddHostedService(sp =>
+        sp.GetRequiredService<AgentStudio.Watcher.WatcherHostedService>());
+}
 // Periodic reap of orphaned CLI process trees (codex/node) that a finished or
 // crashed run left behind. Closes the days-long accumulation gap the startup
 // reaper alone cannot: those survivors hold job-folder handles and wedge the

@@ -1,0 +1,125 @@
+<section class="watcher-decision" data-testid="watcher-decision">
+  @if (loading()) {
+    <p class="watcher-decision__note">Loading the Watcher proposal…</p>
+  } @else if (proposal(); as item) {
+    <header class="watcher-decision__head">
+      <h4 class="watcher-decision__title">Watcher proposal</h4>
+      <span class="watcher-decision__class"
+            data-testid="watcher-decision-class">{{ item.detectorClass }}</span>
+    </header>
+
+    <dl class="watcher-decision__meta">
+      <div>
+        <dt>Case</dt>
+        <dd data-testid="watcher-decision-case">{{ item.caseId }}</dd>
+      </div>
+      @if (targetCard(); as card) {
+        <div>
+          <dt>{{ item.kind === 'comment' ? 'Commented on' : 'Proposed card' }}</dt>
+          <dd data-testid="watcher-decision-card">{{ card }}</dd>
+        </div>
+      }
+      <div>
+        <dt>Recommended model</dt>
+        <dd data-testid="watcher-decision-model">
+          {{ item.recommendation.model }}
+          @if (item.recommendation.thinkingLevel) { / {{ item.recommendation.thinkingLevel }} }
+          <span class="watcher-decision__tier">{{ item.recommendation.tier }}</span>
+        </dd>
+      </div>
+      <div>
+        <dt>Model calls</dt>
+        <dd class="watcher-decision__numeric">{{ item.modelCalls.length }}</dd>
+      </div>
+      <div>
+        <dt>Evidence digest</dt>
+        <dd>{{ item.evidenceDigest }}</dd>
+      </div>
+    </dl>
+
+    <p class="watcher-decision__rule" data-testid="watcher-decision-rule">{{ item.detectorRule }}</p>
+
+    @if (pending()) {
+      @if (answer(); as chosen) {
+        <div class="watcher-decision__form">
+          @if (reasonRequired()) {
+            <label class="watcher-decision__label" for="watcher-decision-reason">
+              Reason. It becomes a visible suppression that expires.
+            </label>
+            <textarea id="watcher-decision-reason"
+                      class="watcher-decision__input"
+                      rows="3"
+                      [ngModel]="reasonDraft()"
+                      (ngModelChange)="reasonDraft.set($event)"
+                      data-testid="watcher-decision-reason"></textarea>
+          } @else if (mergeTargetRequired()) {
+            <label class="watcher-decision__label" for="watcher-decision-merge">
+              Card key this finding merges into
+            </label>
+            <input id="watcher-decision-merge"
+                   class="watcher-decision__input"
+                   type="text"
+                   [ngModel]="mergeTargetDraft()"
+                   (ngModelChange)="mergeTargetDraft.set($event)"
+                   data-testid="watcher-decision-merge" />
+          } @else {
+            <p class="watcher-decision__note">
+              {{ chosen === 'edited'
+                ? 'Records an acceptance after an edit. It does not count toward the auto-approval promotion rule.'
+                : 'Moves the proposed card to Ready with the recommended model.' }}
+            </p>
+          }
+          <div class="watcher-decision__actions">
+            <button type="button"
+                    class="watcher-decision__button"
+                    (click)="cancel()"
+                    [disabled]="submitting()"
+                    data-testid="watcher-decision-cancel">Cancel</button>
+            <button type="button"
+                    class="watcher-decision__button watcher-decision__button--primary"
+                    (click)="submit()"
+                    [disabled]="!canSubmit()"
+                    data-testid="watcher-decision-confirm">
+              {{ submitting() ? 'Recording…' : 'Confirm ' + chosen }}
+            </button>
+          </div>
+        </div>
+      } @else {
+        <div class="watcher-decision__actions" role="group" aria-label="Answer this Watcher proposal">
+          <button type="button"
+                  class="watcher-decision__button watcher-decision__button--primary"
+                  (click)="start('approved')"
+                  data-testid="watcher-decision-approve">Approve</button>
+          <button type="button"
+                  class="watcher-decision__button"
+                  (click)="start('edited')"
+                  data-testid="watcher-decision-edit">Approve after edit</button>
+          <button type="button"
+                  class="watcher-decision__button"
+                  (click)="start('merged')"
+                  data-testid="watcher-decision-merge-start">Merge</button>
+          <button type="button"
+                  class="watcher-decision__button"
+                  (click)="start('rejected')"
+                  data-testid="watcher-decision-reject">Reject</button>
+        </div>
+      }
+    } @else {
+      <p class="watcher-decision__answered" data-testid="watcher-decision-answered">
+        {{ decisionLabel(item.decision.state) }}
+        @if (item.decision.decidedBy) { by {{ item.decision.decidedBy }} }
+        @if (item.decision.reason) { <span class="watcher-decision__reason">{{ item.decision.reason }}</span> }
+      </p>
+    }
+
+    @if (error(); as message) {
+      <p class="watcher-decision__error" role="alert" data-testid="watcher-decision-error">{{ message }}</p>
+    }
+  } @else if (missing()) {
+    <p class="watcher-decision__note" data-testid="watcher-decision-missing">
+      No Watcher proposal is recorded for this case.
+    </p>
+  } @else {
+    <p class="watcher-decision__error" role="alert" data-testid="watcher-decision-error">{{ error() }}</p>
+  }
+</section>

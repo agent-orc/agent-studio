@@ -111,6 +111,7 @@
     <Using Include="AgentStudio.TestRuns" />
     <Using Include="AgentStudio.Tests" />
     <Using Include="AgentStudio.Tokens" />
+    <Using Include="AgentStudio.Watcher" />
   </ItemGroup>
 
 </Project>

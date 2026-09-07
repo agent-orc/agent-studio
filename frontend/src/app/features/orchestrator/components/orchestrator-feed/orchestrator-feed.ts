@@ -19,6 +19,7 @@ import { GlobalOrchestratorCardComponent } from '../global-orchestrator-card/glo
 import { LoadDistributionComponent } from '../load-distribution/load-distribution.component';
 import { OrchestratorFeedEntryComponent } from '../orchestrator-feed-entry/orchestrator-feed-entry';
 import { OrchestratorFeedStore } from '../../state/orchestrator-feed.store';
+import { WatcherDecisionComponent, isWatcherDecisionEntry } from '../../../watcher';
 import { OrchestratorFeedWindow } from './orchestrator-feed-windowing';
 
 import { TooltipDirective } from 'coding-agent-chat/shared';
@@ -26,7 +27,7 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 @Component({
   selector: 'app-orchestrator-feed',
   standalone: true,
-  imports: [FormsModule, GlobalOrchestratorCardComponent, LoadDistributionComponent, OrchestratorFeedEntryComponent, TooltipDirective],
+  imports: [FormsModule, GlobalOrchestratorCardComponent, LoadDistributionComponent, OrchestratorFeedEntryComponent, TooltipDirective, WatcherDecisionComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './orchestrator-feed.html',
   styleUrl: './orchestrator-feed.scss'
@@ -133,6 +134,20 @@ export class OrchestratorFeedComponent {
 
   refresh(silent = false): void {
     this.feedStore.refresh(silent);
+  }
+
+  /**
+   * True for a Watcher proposal row. The feed renders the review-mode surface
+   * for exactly these decisions; every other decision row keeps the existing
+   * steer override, which does not apply to a card that has not run yet.
+   */
+  isWatcherDecision(entry: OrchestratorLogEntry): boolean {
+    return isWatcherDecisionEntry(entry);
+  }
+
+  /** Refresh after an answer so the recorded decision row appears in the stream. */
+  onWatcherDecided(): void {
+    this.refresh();
   }
 
   kindLabel(kind: string): string {

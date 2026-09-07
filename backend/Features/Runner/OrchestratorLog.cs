@@ -138,6 +138,14 @@ public record OrchestratorLogEntry
     public string? ParticipantId { get; init; }
 
     /// <summary>
+    /// Bus correlation id when the entry was projected from the bus. Rows that
+    /// belong to one correlated case share it, which is how a consumer finds the
+    /// durable record behind a row without re-deriving it from the summary.
+    /// Legacy orchestrator.jsonl entries leave this null.
+    /// </summary>
+    public string? CorrelationId { get; init; }
+
+    /// <summary>
     /// Token usage for this orchestrator action, when the orchestrator
     /// itself made an LLM call. Today most entries are written by the
     /// runner without an LLM call and leave this null.

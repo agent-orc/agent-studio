@@ -1,0 +1,56 @@
+<section class="watcher-contingent" data-testid="watcher-contingent">
+  <header class="watcher-contingent__head">
+    <h3 class="watcher-contingent__title">Watcher contingent</h3>
+    <button type="button"
+            class="watcher-contingent__refresh"
+            (click)="reload()"
+            [disabled]="loading()"
+            data-testid="watcher-contingent-refresh">{{ loading() ? '…' : 'Refresh' }}</button>
+  </header>
+
+  @if (error(); as message) {
+    <p class="watcher-contingent__error" role="alert">{{ message }}</p>
+  } @else if (status(); as watcher) {
+    <p class="watcher-contingent__summary" data-testid="watcher-contingent-summary">
+      {{ watcher.enabled ? 'Watching' : 'Switched off' }}
+      · {{ watcher.snapshot.openCases }} open
+      · {{ watcher.snapshot.pendingProposals }} awaiting a decision
+      · spend today {{ costToday() }}
+    </p>
+
+    @if (exhausted()) {
+      <p class="watcher-contingent__exhausted" data-testid="watcher-contingent-exhausted">
+        The contingent is used up. The Watcher keeps detecting and counting;
+        <strong class="watcher-contingent__numeric">{{ backlog() }}</strong>
+        cases are waiting for analysis and proposals.
+      </p>
+    } @else {
+      <p class="watcher-contingent__backlog" data-testid="watcher-contingent-backlog">
+        <span class="watcher-contingent__numeric">{{ backlog() }}</span> cases waiting for a proposal.
+      </p>
+    }
+
+    <ul class="watcher-contingent__rows">
+      @for (row of rows(); track row.id) {
+        <li class="watcher-contingent__row" [attr.data-testid]="'watcher-contingent-' + row.id">
+          <span class="watcher-contingent__label">{{ row.label }}</span>
+          <span class="watcher-contingent__window">per {{ row.window }}</span>
+          <span class="watcher-contingent__value watcher-contingent__numeric">
+            {{ format(row.used) }} / {{ row.limit === null ? 'no ceiling' : format(row.limit) }}
+          </span>
+          @if (row.usedPct !== null) {
+            <span class="watcher-contingent__bar">
+              <span class="watcher-contingent__fill"
+                    [class.watcher-contingent__fill--exhausted]="row.exhausted"
+                    [style.width.%]="barWidth(row.usedPct)"></span>
+            </span>
+          } @else {
+            <span class="watcher-contingent__bar watcher-contingent__bar--unbounded"></span>
+          }
+        </li>
+      }
+    </ul>
+  } @else if (!loading()) {
+    <p class="watcher-contingent__summary">No Watcher contingent is available.</p>
+  }
+</section>

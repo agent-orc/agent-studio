@@ -50,11 +50,15 @@ public static class RunnerEndpoints
         // force every other project out before timestamps are compared.
         runnerGroup.MapGet("/orchestrator-feed",
             (HttpContext context, TaskScannerService scanner, OrchestratorLog log,
-                AgentStudio.Registry.ProjectRegistry projects) =>
+                AgentStudio.Registry.ProjectRegistry projects,
+                AgentStudio.Watcher.WatcherActivityProjection watcher) =>
             {
-                var entries = scanner.GetWatchPaths()
+                var readable = scanner.GetWatchPaths()
                     .Where(project => context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is not HumanPrincipal human
                                       || ProjectAccessAuthorization.Allows(human.User, project.Name, projects))
+                    .ToList();
+
+                var entries = readable
                     .SelectMany(project => log.Read(project.Path).Select(entry => new
                     {
                         project = project.Name,
@@ -66,9 +70,31 @@ public static class RunnerEndpoints
                         entry.Reasoning,
                         entry.JobId,
                         entry.ParticipantId,
+                        entry.CorrelationId,
                         entry.TokenUsage,
                         entry.UserOverride
                     }))
+                    // Watcher rows come from the event bus, not from
+                    // orchestrator.jsonl, and interleave with the ordinary
+                    // runtime rows by timestamp (dossier section 4a).
+                    .Concat(watcher
+                        .Read(readable.Select(project => project.Name).ToList())
+                        .Select(row => new
+                        {
+                            project = row.Project,
+                            watchPath = readable
+                                .FirstOrDefault(project => project.Name == row.SourceProject)?.Path ?? "",
+                            row.Entry.Ts,
+                            row.Entry.Kind,
+                            row.Entry.Topic,
+                            row.Entry.Summary,
+                            row.Entry.Reasoning,
+                            row.Entry.JobId,
+                            row.Entry.ParticipantId,
+                            row.Entry.CorrelationId,
+                            row.Entry.TokenUsage,
+                            row.Entry.UserOverride
+                        }))
                     .OrderByDescending(entry => entry.Ts)
                     .Take(500)
                     .ToList();

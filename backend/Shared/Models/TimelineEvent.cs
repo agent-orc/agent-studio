@@ -285,6 +285,20 @@ public static class TimelineEventKinds
     /// </summary>
     public const string AcceptanceRailActed = "acceptance_rail_acted";
     /// <summary>
+    /// AGT-2721: the global Watcher proposed this card from a durable case, or
+    /// appended a case comment to a card that already carries the fingerprint.
+    /// <see cref="TimelineEvent.Details"/> carries the case id, the detector
+    /// class, the fingerprint, and the evidence pack digest, so the audit line
+    /// of the review mode can be reconstructed from the card alone.
+    /// </summary>
+    public const string WatcherProposed = "watcher_proposed";
+    /// <summary>
+    /// AGT-2721: an operator answered a Watcher proposal (approve, edit, merge,
+    /// or reject). <see cref="TimelineEvent.Details"/> carries the decision, the
+    /// deciding principal, and the reason on a rejection.
+    /// </summary>
+    public const string WatcherProposalDecided = "watcher_proposal_decided";
+    /// <summary>
     /// AGT-2220: the card's recorded <c>integrationBranch</c> disagreed with
     /// project truth when a review was claimed, so the review plane rewrote it.
     /// A stale field (still <c>refs/heads/main</c> after develop became the

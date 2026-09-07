@@ -483,6 +483,35 @@ New generations use `scripts/generate-project-proposals.mjs`. The generator is
 idempotent: an existing proposal document is preserved so a repeated survey run
 cannot erase an operator decision.
 
+## Watcher proposals
+
+The global Watcher (AGT-2721,
+[dossier](../../operations/orchestrator-waechter/index.html)) is the second
+producer that creates cards without a human typing them. It writes through
+`TaskMutationService` like every other caller and lands in one place only:
+
+- **Proposal state.** A proposed card is created in `1-preparation`. It is never
+  created in `2-ready` and the Watcher itself never moves it there. The only
+  path into the run queue is an operator answer in review mode.
+- **Tags.** Every proposed card carries `watcher-proposal`, the detector class
+  as `watcher-<class>` (`repetition`, `contradiction`, `silence`, `drift`,
+  `hygiene`), and the fingerprint as `watcher-fp-<digest>`.
+- **Deduplication.** The fingerprint tag is load-bearing. Before proposing, the
+  Watcher looks for a non-terminal card carrying the same `watcher-fp-` tag; if
+  one exists it appends a comment to that card instead of creating a duplicate.
+- **References.** Cards the finding overlaps are written into `relatedTo`.
+- **Audit.** Each proposal appends a `watcher_proposed` timeline event carrying
+  the case id, detector class and rule, fingerprint, evidence-pack digest, the
+  recommended tier and model, and the number of model calls spent. An operator
+  answer appends `watcher_proposal_decided` with the decision and the deciding
+  principal.
+- **Model.** The card gets the routing-policy recommendation as a
+  non-explicit model, so pre-run qualification may still replace it. Approving
+  applies the recommendation before the move to `2-ready`.
+
+Everything else is out of bounds: the Watcher performs no lane transition of
+its own except the operator-triggered promotion, and no Git work at all.
+
 ## Epic lifecycle
 
 - Epics are `kind=epic` task records; membership is the child's `epicId`.

@@ -23,6 +23,14 @@ export interface OrchestratorLogEntry {
   summary: string;
   reasoning?: string | null;
   jobId?: string | null;
+  /** Bus participant when the row was projected from the event bus. */
+  participantId?: string | null;
+  /**
+   * Bus correlation id when the row was projected from the event bus. Rows of
+   * one correlated case share it, so a consumer can reach the durable record
+   * behind a row without parsing its summary.
+   */
+  correlationId?: string | null;
   tokenUsage?: OrchestratorTokenUsage | null;
   userOverride?: { at: string; newDirection: string } | null;
 }

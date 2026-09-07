@@ -24,6 +24,7 @@ an agent CLI, first tasks, and troubleshooting.
 | [task-server.md](./task-server.md) | Install, configure, supervise, migrate, drain, back up, restore, and verify the independently deployed Task Server control plane. |
 | [remote-compose-test-harness.md](./remote-compose-test-harness.md) | Run the isolated Task Server, Agent Runner, and Studio Compose acceptance harness on a remote Docker host, with deterministic partitions, rolling replacements, evidence export, and identity-scoped cleanup. |
 | [presentation-capture.md](./presentation-capture.md) | Regenerating deterministic presentation stills and recording safe silent loops or narrated backup footage against the ADR-0056 demo workspace. |
+| [global-watcher.md](./global-watcher.md) | Switching on the autonomous problem finder, sizing its dedicated contingent, tuning the five detector thresholds, and reviewing the ticket proposals it produces. |
 
 ## Related references
 
