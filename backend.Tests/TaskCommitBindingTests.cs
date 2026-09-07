@@ -162,6 +162,26 @@ public class TaskCommitBindingTests : IDisposable
     }
 
     [Fact]
+    public void BackfillLegacyCommitRepositories_PersistsMessagePrefixOnce()
+    {
+        var (_, mutations) = Build();
+        var legacy = MakeCommit(
+            "abc1234",
+            "[runner] feat: publish remote runner",
+            filesChanged: 2,
+            atIso: "2026-08-04T10:00:00Z");
+        var jobDir = SeedJobFolder("repository-backfill", "5-human-review", legacy);
+
+        Assert.Equal(1, mutations.BackfillLegacyCommitRepositories());
+        Assert.Equal(0, mutations.BackfillLegacyCommitRepositories());
+
+        using var json = JsonDocument.Parse(File.ReadAllText(Path.Combine(jobDir, "task.json")));
+        var rawCommit = Property(json.RootElement, "commits").EnumerateArray().Single();
+        Assert.Equal("runner", Property(rawCommit, "repository").GetString());
+        Assert.Equal(legacy.Message, Property(rawCommit, "message").GetString());
+    }
+
+    [Fact]
     public void AppendCommit_TwiceWithDifferentShas_GrowsChain_LegacyTracksNewest()
     {
         var (scanner, mutations) = Build();
@@ -343,10 +363,18 @@ public class TaskCommitBindingTests : IDisposable
         var jobDir = SeedJobFolder("theta", "3-progress", legacyCommit: null);
         var first = MakeCommit(
             "aaaaaaaa", "feat(AGT-2462): first generation", 1,
-            "2026-07-30T10:00:00Z") with { Branch = "agent-studio/results/run_first/result-a" };
+            "2026-07-30T10:00:00Z") with
+        {
+            Repository = "https://github.com/example/agent-studio.git",
+            Branch = "agent-studio/results/run_first/result-a",
+        };
         var second = MakeCommit(
             "bbbbbbbb", "fix(AGT-2462): second generation", 2,
-            "2026-07-30T11:00:00Z") with { Branch = "agent-studio/results/run_second/result-b" };
+            "2026-07-30T11:00:00Z") with
+        {
+            Repository = "https://github.com/example/runner.git",
+            Branch = "agent-studio/results/run_second/result-b",
+        };
 
         Assert.True(mutations.SetRemoteCommitAttributionOnFolder(
             jobDir, "run-first", "runner-a", first.Sha, [first]));
@@ -365,10 +393,12 @@ public class TaskCommitBindingTests : IDisposable
         Assert.Equal("run-first", info.Commits[0].RunAttemptId);
         Assert.Equal("runner-a", info.Commits[0].RunnerId);
         Assert.Equal(first.Sha, info.Commits[0].ResultSha);
+        Assert.Equal(first.Repository, info.Commits[0].Repository);
         Assert.Equal(first.Branch, info.Commits[0].Branch);
         Assert.Equal("run-second", info.Commits[1].RunAttemptId);
         Assert.Equal("runner-b", info.Commits[1].RunnerId);
         Assert.Equal(second.Sha, info.Commits[1].ResultSha);
+        Assert.Equal(second.Repository, info.Commits[1].Repository);
         Assert.Equal(second.Branch, info.Commits[1].Branch);
         Assert.Equal(second.Sha, info.Commit!.Sha);
     }

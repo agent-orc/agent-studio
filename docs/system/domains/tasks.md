@@ -186,6 +186,12 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   SHA-deduplicated union across generations; a later attempt does not replace
   earlier valid commits, and inherited SHAs retain their original
   `runAttemptId`, `runnerId`, delivery `branch`, and proving `resultSha`.
+- Every new attributed commit also records `repository` and `branch` as
+  structured fields. `repository` is the registered repository identity when
+  available, otherwise the repository remote URL. The historical `[repository]`
+  message prefix remains display text only. Startup migrates legacy records by
+  parsing that prefix once and persisting the structured repository without
+  changing the message.
 - A fenced remote ResultEnvelope attributes the exact `BaseSha..ResultSha`
   range. It must not recompute that boundary from the live integration branch:
   release tasks can publish `main` before completion, making the live merge
@@ -217,14 +223,24 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   token receipts from that attempt's CLI-log window. Ambiguous cards remain
   unchanged and are listed in the durable migration report.
 - Accepted-card `integration.status` is a read-time projection of attributed
-  commit membership in the configured target branch, cached against that
-  branch's current HEAD. Lane state, provenance merge records, pipeline success,
-  and curated merge subjects do not force `integrated`; an out-of-band merge is
-  detected on the next read.
+  commit membership. `integration.repositories[]` contains one entry per
+  attributed repository with its commits, integration and release branch
+  membership, and an evidence detail. Registered project checkouts and their
+  configured integration branches are resolved first; an unregistered identity
+  is evaluated only when its recorded path is locally available. The card is
+  `integrated` only when every repository entry is on its own integration
+  branch. A partial detail names the repository and only that repository's
+  missing commits. Reachability remains cached against each repository's target
+  HEAD. Lane state, provenance merge records, pipeline success, and curated
+  merge subjects do not force `integrated`; an out-of-band merge is detected on
+  the next read.
 - Human acceptance is transactional. A coding card remains in
   `5-human-review` with phase `integrating` until the delivery reaches `Merged`,
-  `MergedAfterRebase`, or `AlreadyMerged`. `NoTaskBranch`, conflict, gate failure,
-  and error return it
+  `MergedAfterRebase`, `AlreadyMerged`, or `AlreadyOnIntegrationBranch`. The
+  last outcome applies when no task branch exists and every current attributed
+  commit for the integration repository is already an ancestor of the target;
+  the pipeline record carries those evidence SHAs. `NoTaskBranch`, conflict,
+  gate failure, and error return it
   to ordinary Human Review with an Integration failed badge and timeline
   evidence. Before the already-integrated decision, acceptance fetches the
   configured origin integration ref and evaluates refreshed local plus remote

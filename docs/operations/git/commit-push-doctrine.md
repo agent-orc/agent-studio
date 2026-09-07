@@ -53,6 +53,14 @@ Interactive operator edits may still exist directly on `develop`. Read-only task
 
 The boundary is the same in both modes: worker CLIs do not create branches, switch branches, merge, commit, or push. The platform owns those operations. PR-shaped review remains a future integration strategy; the current implemented path is direct merge plus visible conflict or unpushed-branch outcomes.
 
+Historical and externally coordinated deliveries can already exist directly on
+the configured integration branch without a task branch. Acceptance treats this
+as `AlreadyOnIntegrationBranch` only when every current attributed commit for
+that repository is proven to be an ancestor of the integration branch. The
+evidence SHAs are recorded on the integration step. A missing task branch with
+missing or unresolved attributed commits remains `NoTaskBranch`; direct-delivery
+recognition never waives commit membership or the push durability rules above.
+
 ## What models / CLIs should leave to the platform
 
 Worker prompts use a calm ownership rule: please do not commit or push yourself; the platform commits after review. If a worker still creates a normal linear commit, that is recoverable bookkeeping drift. The runner shows an Info finding and folds the commit back into the platform commit where safe. If cleanup cannot be proven safe, the pipeline continues with a visible `worker advanced HEAD - needs cleanup` hint.

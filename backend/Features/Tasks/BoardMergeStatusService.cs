@@ -33,6 +33,7 @@ public sealed class BoardMergeStatusService
     private readonly GitService _git;
     private readonly ProjectSettingsService _settings;
     private readonly ILogger<BoardMergeStatusService> _logger;
+    private readonly TaskIntegrationStatusService? _integrationStatus;
 
     public const string ReleaseBranch = "main";
 
@@ -54,8 +55,9 @@ public sealed class BoardMergeStatusService
     public BoardMergeStatusService(
         GitService git,
         ProjectSettingsService settings,
-        ILogger<BoardMergeStatusService> logger)
-        : this(git, settings, logger, TimeProvider.System)
+        ILogger<BoardMergeStatusService> logger,
+        TaskIntegrationStatusService? integrationStatus = null)
+        : this(git, settings, logger, TimeProvider.System, integrationStatus)
     {
     }
 
@@ -63,11 +65,13 @@ public sealed class BoardMergeStatusService
         GitService git,
         ProjectSettingsService settings,
         ILogger<BoardMergeStatusService> logger,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        TaskIntegrationStatusService? integrationStatus = null)
     {
         _git = git;
         _settings = settings;
         _logger = logger;
+        _integrationStatus = integrationStatus;
         _cache = new GenerationSingleFlightCache<RepoReachability>(timeProvider);
     }
 
@@ -134,6 +138,44 @@ public sealed class BoardMergeStatusService
                     InIntegration = inIntegration,
                     InRelease = inRelease,
                     IntegrationBranch = reach.IntegrationBranch,
+                    ReleaseBranch = ReleaseBranch,
+                    IntegrationSha = inIntegration ? Short(anchor) : null,
+                    ReleaseSha = inRelease ? Short(anchor) : null,
+                };
+            }
+        }
+
+        // Multi-repository and direct-to-branch deliveries have no single task
+        // branch graph. Reuse the canonical repository projection and collapse
+        // every repository entry into the compact card signal.
+        if (_integrationStatus is not null)
+        {
+            var multiRepositoryJobs = jobs.Where(job =>
+                    TaskIntegrationStatusService.AttributedCommitRecords(job)
+                        .Select(commit => commit.Repository ?? string.Empty)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .Skip(1)
+                        .Any())
+                .ToList();
+            var repositoryStatuses = _integrationStatus.BuildLookup(multiRepositoryJobs);
+            foreach (var job in multiRepositoryJobs)
+            {
+                if (!repositoryStatuses.TryGetValue(job.TaskKey, out var status)
+                    || status.Repositories.Count == 0)
+                    continue;
+                var commits = TaskIntegrationStatusService.AttributedCommitRecords(job);
+                if (commits.Count == 0) continue;
+                var anchor = status.Repositories.SelectMany(repository => repository.Commits).Last().Sha;
+                var inIntegration = status.Repositories.All(repository => repository.OnIntegrationBranch);
+                var inRelease = status.Repositories.All(repository => repository.OnReleaseBranch);
+                result[job.TaskKey] = new TaskMergeSignal
+                {
+                    Branch = TaskIntegrationStatusService.DeliveryRefFor(job)
+                        ?? commits.LastOrDefault(commit => !string.IsNullOrWhiteSpace(commit.Branch))?.Branch
+                        ?? string.Empty,
+                    InIntegration = inIntegration,
+                    InRelease = inRelease,
+                    IntegrationBranch = status.IntegrationBranch,
                     ReleaseBranch = ReleaseBranch,
                     IntegrationSha = inIntegration ? Short(anchor) : null,
                     ReleaseSha = inRelease ? Short(anchor) : null,

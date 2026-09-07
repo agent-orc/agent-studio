@@ -320,7 +320,10 @@ public sealed class ExternalCompletionService
             if (!range.Success) return;
 
             var attribution = RemoteCommitAttributionGuard.Attribute(
-                info.Key ?? info.Id, verification.GitRef!, range.Commits);
+                info.Key ?? info.Id,
+                verification.GitRef!,
+                range.Commits,
+                ReviewSubjectStore.Read(folderPath)?.Repository);
             _mutations.SetRunIntegrationBranchOnFolder(folderPath, range.IntegrationBranch!);
             _mutations.SetRemoteCommitAttributionOnFolder(
                 folderPath,

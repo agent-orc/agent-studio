@@ -1,8 +1,11 @@
 using System.Diagnostics;
+using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 
+using AgentStudio.Pipeline;
+using AgentStudio.Registry;
 using AgentStudio.Shared;
 using AgentStudio.Tasks;
 
@@ -275,6 +278,37 @@ public sealed class BoardMergeStatusServiceTests : IDisposable
     }
 
     [Fact]
+    public void BuildLookup_MultiRepositoryDirectDelivery_CollapsesEveryRepository()
+    {
+        var studio = SeedDevelopMainRepo(out _, out _);
+        RunGit(studio, "checkout -q develop");
+        File.WriteAllText(Path.Combine(studio, "studio.txt"), "studio");
+        Commit(studio, "feat: studio direct delivery");
+        var studioSha = RunGit(studio, "rev-parse develop").Out.Trim();
+        RunGit(studio, "checkout -q main");
+        RunGit(studio, "merge -q --ff-only develop");
+
+        var runner = SeedDevelopMainRepo(out _, out _);
+        RunGit(runner, "checkout -q main");
+        File.WriteAllText(Path.Combine(runner, "runner.txt"), "runner");
+        Commit(runner, "feat: runner direct delivery");
+        var runnerSha = RunGit(runner, "rev-parse main").Out.Trim();
+
+        var service = BuildMultiRepositoryService(studio, runner, out var project);
+        var job = Job("multi-direct", project: project, repo: studio, commits:
+        [
+            Commit(studioSha) with { Repository = "agent-studio", Branch = "develop" },
+            Commit(runnerSha) with { Repository = "runner", Branch = "main" },
+        ]);
+
+        var signal = service.BuildLookup([job])[job.TaskKey];
+
+        Assert.True(signal.InIntegration);
+        Assert.True(signal.InRelease);
+        Assert.Equal("main", signal.Branch);
+    }
+
+    [Fact]
     public void BuildLookup_SkipsCardsWithoutAnchor()
     {
         var repo = SeedDevelopMainRepo(out _, out _);
@@ -373,6 +407,65 @@ public sealed class BoardMergeStatusServiceTests : IDisposable
             settings,
             logger ?? NullLogger<BoardMergeStatusService>.Instance,
             timeProvider ?? TimeProvider.System);
+    }
+
+    private BoardMergeStatusService BuildMultiRepositoryService(
+        string studio,
+        string runner,
+        out string projectName)
+    {
+        projectName = "Agent Studio";
+        var taskRepository = Path.Combine(_tempDir, "task-store");
+        Directory.CreateDirectory(Path.Combine(taskRepository, ".metadata"));
+        var projects = new ProjectsFile
+        {
+            NextProjectIdSeq = 3,
+            Projects =
+            [
+                new ProjectRecord
+                {
+                    Id = "PROJ-001", DisplayName = projectName, ShortCode = "AGT",
+                    WorkspaceId = DefaultWorkspace.Id, StorageLocation = Path.Combine(taskRepository, "studio"),
+                    RepositoryPath = studio,
+                    Urls = [new ProjectUrlRecord { Id = "repo", Label = "Repository", Url = "https://github.com/example/agent-studio.git" }],
+                },
+                new ProjectRecord
+                {
+                    Id = "PROJ-002", DisplayName = "Runner", ShortCode = "RUN",
+                    WorkspaceId = DefaultWorkspace.Id, StorageLocation = Path.Combine(taskRepository, "runner"),
+                    RepositoryPath = runner,
+                    Urls = [new ProjectUrlRecord { Id = "repo", Label = "Repository", Url = "https://github.com/example/runner.git" }],
+                },
+            ],
+        };
+        File.WriteAllText(
+            Path.Combine(taskRepository, ".metadata", "projects.json"),
+            JsonSerializer.Serialize(projects));
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = taskRepository,
+            ["WatchPaths:0:Name"] = projectName,
+            ["WatchPaths:0:RootPath"] = studio,
+            ["WatchPaths:0:RepositoryPath"] = studio,
+            ["WatchPaths:0:Path"] = Path.Combine(studio, ".orchestrator", "jobs"),
+        }).Build();
+        var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
+        var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
+        var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
+        settings.SetIntegrationBranch(projectName, "develop");
+        settings.SetIntegrationBranch("Runner", "main");
+        var integration = new TaskIntegrationStatusService(
+            git,
+            settings,
+            new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance),
+            NullLogger<TaskIntegrationStatusService>.Instance,
+            new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance));
+        return new BoardMergeStatusService(
+            git,
+            settings,
+            NullLogger<BoardMergeStatusService>.Instance,
+            integration);
     }
 
     private static List<(int Spawns, long GitMs, long WallMs, string Breakdown)> Rollups(

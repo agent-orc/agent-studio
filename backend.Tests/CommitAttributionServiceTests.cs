@@ -43,6 +43,38 @@ public class CommitAttributionServiceTests
     }
 
     [Fact]
+    public void Attribution_StampsRepositoryAndBranchForEveryCommit()
+    {
+        var result = CommitAttributionService.Attribute(new AttributionInput
+        {
+            TaskId = TaskId,
+            Repository = "repo_agent_studio",
+            TaskBranch = "develop",
+            Candidates = [Candidate("a101", "feat: direct delivery")],
+        });
+
+        var commit = Assert.Single(result.Attributed);
+        Assert.Equal("repo_agent_studio", commit.Repository);
+        Assert.Equal("develop", commit.Branch);
+    }
+
+    [Fact]
+    public void LegacyRepositoryPrefix_IsParsedWithoutChangingMessage()
+    {
+        var legacy = new TaskCommitInfo
+        {
+            Sha = "a".PadRight(40, '0'),
+            Message = "[runner] feat: publish runner",
+        };
+
+        var migrated = TaskCommitRepository.NormalizeLegacy(legacy);
+
+        Assert.Equal("runner", migrated.Repository);
+        Assert.Equal(legacy.Message, migrated.Message);
+        Assert.Same(migrated, TaskCommitRepository.NormalizeLegacy(migrated));
+    }
+
+    [Fact]
     public void OwnCrashRecovery_IsAttributed_NotExcluded()
     {
         var result = CommitAttributionService.Attribute(new AttributionInput

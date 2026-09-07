@@ -85,6 +85,7 @@ internal static class AcceptedIntegrationBackstopPolicy
                     merged++;
                     break;
                 case MergeIntoIntegrationOutcome.AlreadyMerged:
+                case MergeIntoIntegrationOutcome.AlreadyOnIntegrationBranch:
                     alreadyMerged++;
                     break;
                 default:

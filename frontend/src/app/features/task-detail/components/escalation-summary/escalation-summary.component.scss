@@ -112,6 +112,16 @@
     strong { color: var(--studio-fg-strong); }
   }
 
+  &__delivery-lines {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: var(--studio-spacing-1) var(--studio-spacing-3);
+  }
+
+  &__delivery-repository {
+    white-space: nowrap;
+  }
+
   &__seg {
     display: inline-flex;
     align-items: center;

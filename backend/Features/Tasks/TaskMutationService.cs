@@ -306,6 +306,7 @@ public class TaskMutationService
                 return commit with
                 {
                     Branch = commit.Branch ?? producer.Branch,
+                    Repository = commit.Repository ?? producer.Repository,
                     RunAttemptId = commit.RunAttemptId ?? producer.RunAttemptId,
                     RunnerId = commit.RunnerId ?? producer.RunnerId,
                     ResultSha = commit.ResultSha ?? producer.ResultSha,
@@ -999,6 +1000,38 @@ public class TaskMutationService
                 "TaskMutationService: best-effort persisted commit chain for generation union.");
             return null;
         }
+    }
+
+    /// <summary>
+    /// One-time compatibility migration for multi-repository attribution. The
+    /// former message-only <c>[repository]</c> convention is parsed once and
+    /// persisted as structured commit data; the subject remains unchanged.
+    /// </summary>
+    public int BackfillLegacyCommitRepositories()
+    {
+        var migrated = 0;
+        foreach (var task in _scanner.ScanAllJobsWithArchive())
+        {
+            var persisted = ReadPersistedCommitChain(task.FolderPath);
+            if (persisted is null || persisted.Count == 0) continue;
+
+            var changed = false;
+            var normalized = persisted.Select(commit =>
+            {
+                var replacement = TaskCommitRepository.NormalizeLegacy(commit);
+                changed |= !string.Equals(
+                    replacement.Repository,
+                    commit.Repository,
+                    StringComparison.Ordinal);
+                return replacement;
+            }).ToList();
+            if (!changed || !WriteCommitState(task.FolderPath, normalized)) continue;
+            migrated++;
+        }
+
+        if (migrated > 0)
+            _logger.LogInformation("commit-repository-backfill migratedTasks={Tasks}", migrated);
+        return migrated;
     }
 
     /// <summary>

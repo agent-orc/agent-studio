@@ -340,6 +340,8 @@ export interface TaskCommitInfo {
   sha: string;
   shortSha: string;
   message: string;
+  /** Registered repository id or remote URL that owns this commit. */
+  repository?: string | null;
   filesChanged: number;
   files: string[];
   at: string;
@@ -511,6 +513,24 @@ export interface TaskIntegrationStatus {
   detail: string | null;
   /** Typed current failure from the durable accepted-integration pipeline step. */
   failure?: TaskIntegrationFailure | null;
+  /** Repository-scoped commit membership, including multi-repository deliveries. */
+  repositories?: TaskRepositoryIntegrationStatus[];
+}
+
+export interface TaskRepositoryIntegrationStatus {
+  repository: string;
+  commits: TaskRepositoryCommitMembership[];
+  integrationBranch: string;
+  releaseBranch: string;
+  onIntegrationBranch: boolean;
+  onReleaseBranch: boolean;
+  detail: string;
+}
+
+export interface TaskRepositoryCommitMembership {
+  sha: string;
+  onIntegrationBranch: boolean;
+  onReleaseBranch: boolean;
 }
 
 export interface TaskIntegrationFailure {

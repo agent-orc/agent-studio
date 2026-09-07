@@ -22,7 +22,8 @@ public sealed class RemoteCommitAttributionGuardTests
         var result = RemoteCommitAttributionGuard.Attribute(
             "AGT-2389",
             "runner/agent-runner-01/AGT-2389",
-            commits);
+            commits,
+            "https://github.com/example/runner.git");
 
         Assert.True(result.Accepted, result.Warning);
         Assert.Equal(2, result.Commits.Count);
@@ -30,6 +31,8 @@ public sealed class RemoteCommitAttributionGuardTests
         {
             Assert.Equal(CommitAttributionKinds.Automatic, commit.Attribution);
             Assert.Equal(1.0, commit.Confidence);
+            Assert.Equal("https://github.com/example/runner.git", commit.Repository);
+            Assert.Equal("runner/agent-runner-01/AGT-2389", commit.Branch);
         });
         Assert.Equal(commits.Select(commit => commit.Sha), result.Commits.Select(commit => commit.Sha));
     }

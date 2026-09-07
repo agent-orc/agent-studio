@@ -1092,6 +1092,17 @@ catch (Exception ex)
     crashRecorder.Record("WikiAgentReadBackfill", ex);
 }
 
+// One-time migration from the legacy [repository] commit-subject convention to
+// the structured repository field used by multi-repository delivery status.
+try
+{
+    app.Services.GetRequiredService<TaskMutationService>().BackfillLegacyCommitRepositories();
+}
+catch (Exception ex)
+{
+    crashRecorder.Record("CommitRepositoryBackfill", ex);
+}
+
 // One-time, idempotent repair of Git-derived commit file metadata on live
 // cards. The sweep reads Git and writes only task.json through the owning
 // mutation service; entries with complete metadata make later boots a no-op.

@@ -1642,13 +1642,15 @@ public class TaskScannerService : ITaskScanner
             {
                 if (item.ValueKind != JsonValueKind.Object) continue;
                 var parsed = JsonSerializer.Deserialize<TaskCommitInfo>(item.GetRawText(), TaskJsonFile.ReadOpts);
-                if (parsed != null && !string.IsNullOrWhiteSpace(parsed.Sha)) chain.Add(parsed);
+                if (parsed != null && !string.IsNullOrWhiteSpace(parsed.Sha))
+                    chain.Add(TaskCommitRepository.NormalizeLegacy(parsed));
             }
         }
         TaskCommitInfo? legacy = null;
         if (raw.TryGetProperty("commit", out var commitEl) && commitEl.ValueKind == JsonValueKind.Object)
         {
             legacy = JsonSerializer.Deserialize<TaskCommitInfo>(commitEl.GetRawText(), TaskJsonFile.ReadOpts);
+            if (legacy is not null) legacy = TaskCommitRepository.NormalizeLegacy(legacy);
         }
         if (chain.Count == 0 && legacy != null && !string.IsNullOrWhiteSpace(legacy.Sha))
         {

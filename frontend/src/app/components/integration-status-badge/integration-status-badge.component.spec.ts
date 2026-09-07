@@ -49,6 +49,36 @@ describe('IntegrationStatusBadgeComponent', () => {
     expect(badge.classList.contains('integration-badge--acute')).toBe(false);
   });
 
+  it('renders repository-scoped delivery counts and target branches', () => {
+    const fixture = render(integration('integrated', {
+      repositories: [
+        {
+          repository: 'agent-studio',
+          commits: Array.from({ length: 5 }, (_, index) => ({
+            sha: `studio-${index}`, onIntegrationBranch: true, onReleaseBranch: true,
+          })),
+          integrationBranch: 'develop', releaseBranch: 'main',
+          onIntegrationBranch: true, onReleaseBranch: true,
+          detail: '5/5 on develop and main.',
+        },
+        {
+          repository: 'runner',
+          commits: Array.from({ length: 4 }, (_, index) => ({
+            sha: `runner-${index}`, onIntegrationBranch: true, onReleaseBranch: true,
+          })),
+          integrationBranch: 'main', releaseBranch: 'main',
+          onIntegrationBranch: true, onReleaseBranch: true,
+          detail: '4/4 on main.',
+        },
+      ],
+    }));
+
+    expect(fixture.componentInstance.label()).toBe(
+      'agent-studio 5/5 develop and main · runner 4/4 main',
+    );
+    expect(fixture.componentInstance.tooltip()).toContain('runner: 4/4 on main.');
+  });
+
   it('renders pending as amber "NICHT integriert" and flags acute', () => {
     const fixture = render(integration('pending'));
     const badge = fixture.nativeElement.querySelector('[data-testid="integration-status-badge"]') as HTMLElement;

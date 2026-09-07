@@ -29,7 +29,8 @@ public static class CommitAttributionRunner
     /// </summary>
     public static AttributionResult? Run(
         TaskInfo info, string? watchPath,
-        TaskSessionLog sessions, GitService git)
+        TaskSessionLog sessions, GitService git,
+        string? repository = null)
     {
         var events = sessions.ReadSessionEvents(info.Id, watchPath);
         var lines = CliOutputLogParser.ParseFile(TaskPaths.CliOutputLog(info.FolderPath));
@@ -64,6 +65,8 @@ public static class CommitAttributionRunner
         var input = new AttributionInput
         {
             TaskId = info.Id,
+            Repository = repository ?? ResolveRepository(info, watchPath, git),
+            TaskBranch = ResolveAttributionBranch(info, watchPath, git),
             Candidates = candidates,
             // The platform-stamped auto-commit(s) are the task's accepted work
             // by construction - pin them to full confidence.
@@ -74,5 +77,24 @@ public static class CommitAttributionRunner
         };
 
         return CommitAttributionService.Attribute(input);
+    }
+
+    private static string? ResolveAttributionBranch(TaskInfo info, string? watchPath, GitService git)
+    {
+        var repository = git.ResolveRepoRootForWatchPath(watchPath ?? info.WatchPath);
+        if (!string.IsNullOrWhiteSpace(repository))
+        {
+            var current = git.ReadCurrentBranchAt(repository);
+            if (!string.IsNullOrWhiteSpace(current)) return current;
+        }
+
+        return info.Commits.LastOrDefault(commit => !string.IsNullOrWhiteSpace(commit.Branch))?.Branch
+            ?? info.Commit?.Branch;
+    }
+
+    private static string? ResolveRepository(TaskInfo info, string? watchPath, GitService git)
+    {
+        var root = git.ResolveRepoRootForWatchPath(watchPath ?? info.WatchPath);
+        return string.IsNullOrWhiteSpace(root) ? null : git.ReadOriginUrlAt(root);
     }
 }

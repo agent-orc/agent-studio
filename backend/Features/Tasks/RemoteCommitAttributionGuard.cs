@@ -43,7 +43,8 @@ public static partial class RemoteCommitAttributionGuard
     public static RemoteCommitAttributionResult Attribute(
         string taskKey,
         string deliveryBranch,
-        IReadOnlyList<GitCommitInfo> commits)
+        IReadOnlyList<GitCommitInfo> commits,
+        string? repository = null)
     {
         var expected = taskKey.Trim();
         var normalizedBranch = TaskIntegrationBranch.Name(deliveryBranch);
@@ -77,6 +78,7 @@ public static partial class RemoteCommitAttributionGuard
             Sha = commit.Sha,
             ShortSha = commit.ShortSha,
             Message = commit.Subject,
+            Repository = repository,
             Branch = TaskIntegrationBranch.Name(deliveryBranch),
             FilesChanged = commit.FilesChanged,
             At = commit.AuthorDateUtc,

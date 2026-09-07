@@ -1328,7 +1328,8 @@ public static class LeaseEndpoints
                         remoteAttribution = RemoteCommitAttributionGuard.Attribute(
                             req.TaskKey,
                             deliveryBranch,
-                            deliveryRange.Commits);
+                            deliveryRange.Commits,
+                            req.Repository);
                         attributionWarning = remoteAttribution.Warning;
                         mutations.SetRunIntegrationBranchOnFolder(
                             task.FolderPath,

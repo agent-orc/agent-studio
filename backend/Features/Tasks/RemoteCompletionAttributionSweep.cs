@@ -183,7 +183,8 @@ public sealed class RemoteCompletionAttributionSweep
             var attribution = RemoteCommitAttributionGuard.Attribute(
                 task.Key ?? task.Id,
                 deliveryRef,
-                range.Commits);
+                range.Commits,
+                subject.Repository);
             if (!attribution.Accepted)
             {
                 if (!string.IsNullOrWhiteSpace(attribution.Warning)) warnings.Add(attribution.Warning);

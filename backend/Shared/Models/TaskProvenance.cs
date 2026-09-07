@@ -275,6 +275,32 @@ public record TaskIntegrationStatus
     /// <see cref="IntegrationStatuses.ConflictSkipped"/>.
     /// </summary>
     public TaskIntegrationFailure? Failure { get; init; }
+
+    /// <summary>
+    /// Repository-scoped membership evidence. Every attributed repository has
+    /// one entry, evaluated against its own registered checkout and branches.
+    /// </summary>
+    public List<TaskRepositoryIntegrationStatus> Repositories { get; init; } = [];
+}
+
+/// <summary>Integration and release membership for one attributed repository.</summary>
+public sealed record TaskRepositoryIntegrationStatus
+{
+    public string Repository { get; init; } = "repository";
+    public List<TaskRepositoryCommitMembership> Commits { get; init; } = [];
+    public string IntegrationBranch { get; init; } = "develop";
+    public string ReleaseBranch { get; init; } = "main";
+    public bool OnIntegrationBranch { get; init; }
+    public bool OnReleaseBranch { get; init; }
+    public string Detail { get; init; } = "";
+}
+
+/// <summary>Per-commit evidence retained inside a repository delivery line.</summary>
+public sealed record TaskRepositoryCommitMembership
+{
+    public string Sha { get; init; } = "";
+    public bool OnIntegrationBranch { get; init; }
+    public bool OnReleaseBranch { get; init; }
 }
 
 /// <summary>

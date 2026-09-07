@@ -256,6 +256,46 @@ describe('EscalationSummaryComponent', () => {
     expect(segments[0].textContent?.trim()).toBe('main ✓ merged');
     expect(segments[0].getAttribute('data-state')).toBe('merged');
   });
+
+  it('renders delivery context per repository and includes the missing reason', () => {
+    const base = detail();
+    const multiRepository = {
+      ...base,
+      info: {
+        ...base.info,
+        integration: {
+          status: 'partial', integrationBranch: 'develop', detail: 'runner is incomplete',
+          repositories: [
+            {
+              repository: 'agent-studio',
+              commits: [{ sha: 'a', onIntegrationBranch: true, onReleaseBranch: true }],
+              integrationBranch: 'develop', releaseBranch: 'main',
+              onIntegrationBranch: true, onReleaseBranch: true, detail: '1/1 on develop and main.',
+            },
+            {
+              repository: 'runner',
+              commits: [
+                { sha: 'b', onIntegrationBranch: true, onReleaseBranch: true },
+                { sha: 'c', onIntegrationBranch: false, onReleaseBranch: false },
+              ],
+              integrationBranch: 'main', releaseBranch: 'main',
+              onIntegrationBranch: false, onReleaseBranch: false,
+              detail: '1/2 on main; missing: c.',
+            },
+          ],
+        },
+      },
+    } as TaskDetail;
+
+    const el: HTMLElement = mount({ reviews: [], detail: multiRepository }).nativeElement;
+    const repositories = [...el.querySelectorAll('[data-testid="escalation-delivery-repository"]')]
+      .map((item) => item.textContent?.trim());
+
+    expect(repositories).toEqual([
+      'agent-studio 1/1 develop and main',
+      'runner 1/2 main (1/2 on main; missing: c.)',
+    ]);
+  });
 });
 
 describe('EscalationSummaryComponent — collapse (AGT-2060)', () => {

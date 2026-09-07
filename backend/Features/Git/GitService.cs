@@ -85,6 +85,11 @@ public enum MergeIntoIntegrationOutcome
     MergedAfterRebase,
     /// <summary>The task branch was already contained in the integration branch; no-op.</summary>
     AlreadyMerged,
+    /// <summary>
+    /// No delivery branch exists, but every attributed commit for this
+    /// repository is already reachable from the target branch.
+    /// </summary>
+    AlreadyOnIntegrationBranch,
     /// <summary>No <c>task/&lt;id&gt;</c> branch exists (e.g. a sequential run); nothing to merge.</summary>
     NoTaskBranch,
     /// <summary>The configured pull-request strategy deliberately left the delivery ref for external review.</summary>
@@ -117,7 +122,8 @@ public static class MergeIntoIntegrationOutcomePolicy
 
     public static bool IsSuccessfulIntegration(this MergeIntoIntegrationOutcome outcome)
         => outcome.IsFreshMerge()
-            || outcome == MergeIntoIntegrationOutcome.AlreadyMerged;
+            || outcome is MergeIntoIntegrationOutcome.AlreadyMerged
+                or MergeIntoIntegrationOutcome.AlreadyOnIntegrationBranch;
 }
 
 /// <summary>
@@ -140,6 +146,7 @@ public record MergeIntoIntegrationResult(
     IReadOnlyList<RebasedCommitReplacement> RebasedCommits,
     string? PreviousIntegrationSha)
 {
+    public IReadOnlyList<string> EvidenceShas { get; init; } = [];
     public static MergeIntoIntegrationResult Of(MergeIntoIntegrationOutcome outcome, string? mergedSha = null, string? error = null)
         => new(
             outcome,
@@ -5377,6 +5384,19 @@ public class GitService
         if (code != 0) return null;
         var branch = output.Trim();
         return string.IsNullOrWhiteSpace(branch) || !IsLikelyBranchName(branch) ? null : branch;
+    }
+
+    /// <summary>
+    /// Reads the configured origin URL at an explicit repository root. Commit
+    /// attribution persists this when no registered repository id is available.
+    /// </summary>
+    public string? ReadOriginUrlAt(string root)
+    {
+        if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root)) return null;
+        var (output, _, code) = RunGitArgs(root, "config", "--get", "remote.origin.url");
+        if (code != 0) return null;
+        var url = output.Trim();
+        return string.IsNullOrWhiteSpace(url) ? null : url;
     }
 
     /// <summary>

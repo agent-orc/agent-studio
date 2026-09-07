@@ -70,6 +70,9 @@ export class IntegrationStatusBadgeComponent {
   readonly label = computed(() => {
     const value = this.integration();
     if (!value) return '';
+    if (value.repositories?.length) {
+      return value.repositories.map((repository) => this.repositoryLine(repository)).join(' · ');
+    }
     switch (value.status) {
       case 'integrated': return value.sha ? `merged @${value.sha}` : 'merged';
       case 'partial': return 'teilweise integriert';
@@ -111,8 +114,20 @@ export class IntegrationStatusBadgeComponent {
           return 'No task branch or commit to integrate';
       }
     })();
-    return [...new Set([head, value.failure?.reason, value.detail].filter(Boolean))].join('\n');
+    const repositoryDetails = value.repositories?.map((repository) =>
+      `${repository.repository}: ${repository.detail}`) ?? [];
+    return [...new Set([head, ...repositoryDetails, value.failure?.reason, value.detail].filter(Boolean))].join('\n');
   });
+
+  private repositoryLine(repository: NonNullable<TaskIntegrationStatus['repositories']>[number]): string {
+    const integrated = repository.commits.filter((commit) => commit.onIntegrationBranch).length;
+    const branch = repository.integrationBranch || 'develop';
+    const release = repository.releaseBranch || 'main';
+    const targets = repository.onReleaseBranch && release !== branch
+      ? `${branch} and ${release}`
+      : branch;
+    return `${repository.repository} ${integrated}/${repository.commits.length} ${targets}`;
+  }
 
   readonly ariaLabel = computed(() => {
     const value = this.integration();

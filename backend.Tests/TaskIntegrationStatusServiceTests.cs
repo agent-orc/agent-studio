@@ -1,8 +1,10 @@
 using System.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Text.Json;
 
 using AgentStudio.Pipeline;
+using AgentStudio.Registry;
 using AgentStudio.Shared;
 using AgentStudio.Tasks;
 
@@ -290,6 +292,69 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         Assert.Contains(notLanded[..7], status.Detail);
         Assert.Contains("1/2", status.Detail!);
         Assert.DoesNotContain(landed[..7], status.Detail!);
+    }
+
+    [Fact]
+    public void BuildLookup_Agt2307StyleRepositories_AreEvaluatedInTheirOwnGraphs()
+    {
+        var studio = SeedDevelopMainRepo();
+        RunGit(studio, "checkout -q develop");
+        File.WriteAllText(Path.Combine(studio, "studio.txt"), "studio");
+        Commit(studio, "feat: studio delivery");
+        var studioSha = RunGit(studio, "rev-parse develop").Out.Trim();
+        File.WriteAllText(Path.Combine(studio, "studio-follow-up.txt"), "studio follow-up");
+        Commit(studio, "feat: studio follow-up");
+        var studioFollowUpSha = RunGit(studio, "rev-parse develop").Out.Trim();
+
+        var runner = SeedDevelopMainRepo();
+        RunGit(runner, "checkout -q main");
+        File.WriteAllText(Path.Combine(runner, "runner.txt"), "runner");
+        Commit(runner, "feat: runner delivery");
+        var runnerSha = RunGit(runner, "rev-parse main").Out.Trim();
+
+        var (service, project, log) = BuildMultiRepositoryService(studio, runner);
+        var job = Job("externalization", "AGT-2307", project, studio, log, commits:
+        [
+            Commit(studioSha) with { Repository = "agent-studio", Branch = "develop", FilesChanged = 1 },
+            Commit(studioFollowUpSha) with
+            {
+                Repository = "https://github.com/example/agent-studio.git",
+                Branch = "develop",
+                FilesChanged = 1,
+            },
+            Commit(runnerSha) with { Repository = "runner", Branch = "main", FilesChanged = 1 },
+        ]);
+
+        var integrated = service.BuildLookup([job])[job.TaskKey];
+
+        Assert.Equal(IntegrationStatuses.Integrated, integrated.Status);
+        Assert.Equal(2, integrated.Repositories.Count);
+        Assert.Equal(
+            ["agent-studio", "runner"],
+            integrated.Repositories.Select(repository => repository.Repository));
+        Assert.Equal(2, integrated.Repositories[0].Commits.Count);
+        Assert.All(integrated.Repositories, repository => Assert.True(repository.OnIntegrationBranch));
+
+        RunGit(runner, "checkout -q -b direct/pending");
+        File.WriteAllText(Path.Combine(runner, "pending.txt"), "pending");
+        Commit(runner, "feat: runner follow-up");
+        var pendingSha = RunGit(runner, "rev-parse HEAD").Out.Trim();
+        var partialJob = job with
+        {
+            Commits = [.. job.Commits, Commit(pendingSha) with
+            {
+                Repository = "runner",
+                Branch = "main",
+                FilesChanged = 1,
+            }],
+        };
+
+        var partial = service.BuildLookup([partialJob])[partialJob.TaskKey];
+
+        Assert.Equal(IntegrationStatuses.Partial, partial.Status);
+        Assert.Contains("runner:", partial.Detail);
+        Assert.Contains(pendingSha[..7], partial.Detail);
+        Assert.DoesNotContain(studioSha[..7], partial.Detail);
     }
 
     [Fact]
@@ -751,6 +816,56 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         log = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
         return new TaskIntegrationStatusService(
             git, settings, log, NullLogger<TaskIntegrationStatusService>.Instance);
+    }
+
+    private (TaskIntegrationStatusService Service, string Project, PipelineExecutionLog Log)
+        BuildMultiRepositoryService(string studio, string runner)
+    {
+        const string projectName = "Agent Studio";
+        var taskRepository = Path.Combine(_tempDir, "task-store-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(Path.Combine(taskRepository, ".metadata"));
+        var projects = new ProjectsFile
+        {
+            NextProjectIdSeq = 3,
+            Projects =
+            [
+                new ProjectRecord
+                {
+                    Id = "PROJ-001", DisplayName = projectName, ShortCode = "AGT",
+                    WorkspaceId = DefaultWorkspace.Id, StorageLocation = Path.Combine(taskRepository, "studio"),
+                    RepositoryPath = studio,
+                    Urls = [new ProjectUrlRecord { Id = "repo", Label = "Repository", Url = "https://github.com/example/agent-studio.git" }],
+                },
+                new ProjectRecord
+                {
+                    Id = "PROJ-002", DisplayName = "Runner", ShortCode = "RUN",
+                    WorkspaceId = DefaultWorkspace.Id, StorageLocation = Path.Combine(taskRepository, "runner"),
+                    RepositoryPath = runner,
+                    Urls = [new ProjectUrlRecord { Id = "repo", Label = "Repository", Url = "https://github.com/example/runner.git" }],
+                },
+            ],
+        };
+        File.WriteAllText(
+            Path.Combine(taskRepository, ".metadata", "projects.json"),
+            JsonSerializer.Serialize(projects));
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = taskRepository,
+            ["WatchPaths:0:Name"] = projectName,
+            ["WatchPaths:0:RootPath"] = studio,
+            ["WatchPaths:0:RepositoryPath"] = studio,
+            ["WatchPaths:0:Path"] = Path.Combine(studio, ".orchestrator", "jobs"),
+        }).Build();
+        var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
+        var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
+        var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
+        settings.SetIntegrationBranch(projectName, "develop");
+        settings.SetIntegrationBranch("Runner", "main");
+        var log = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var registry = new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance);
+        return (new TaskIntegrationStatusService(
+            git, settings, log, NullLogger<TaskIntegrationStatusService>.Instance, registry), projectName, log);
     }
 
     private static IConfiguration ConfigFor(string repo, string projectName)

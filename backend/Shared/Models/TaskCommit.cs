@@ -22,6 +22,13 @@ public record TaskCommitInfo
     public string ShortSha { get; init; } = "";
     public string Message { get; init; } = "";
     /// <summary>
+    /// Stable repository identity for this commit. New attribution writes the
+    /// registered repository id when one is available, otherwise its remote
+    /// URL. Legacy records are backfilled once from the informational
+    /// <c>[repository]</c> message prefix.
+    /// </summary>
+    public string? Repository { get; init; }
+    /// <summary>
     /// Delivery branch that carried this attributed commit. Remote attribution
     /// persists the exact runner/result ref here so acceptance can resolve the
     /// reviewed source from card data without reconstructing it from the task
@@ -73,6 +80,24 @@ public record TaskCommitInfo
     /// the operator can see where the system was uncertain.
     /// </summary>
     public double? Confidence { get; init; }
+}
+
+/// <summary>Compatibility parser for the historical <c>[repository]</c> subject prefix.</summary>
+public static class TaskCommitRepository
+{
+    public static string? FromMessagePrefix(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message) || message[0] != '[') return null;
+        var close = message.IndexOf(']');
+        if (close is <= 1 or > 160) return null;
+        var value = message[1..close].Trim();
+        return string.IsNullOrWhiteSpace(value) ? null : value;
+    }
+
+    public static TaskCommitInfo NormalizeLegacy(TaskCommitInfo commit)
+        => !string.IsNullOrWhiteSpace(commit.Repository)
+            ? commit
+            : commit with { Repository = FromMessagePrefix(commit.Message) };
 }
 
 /// <summary>Durable values used by commit-generation supersession.</summary>

@@ -782,6 +782,33 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
     }
 
     [Fact]
+    public void Run_NoTaskBranchWithAttributedCommitsOnDevelop_IsIntegrated()
+    {
+        var repo = SeedRepo("runner-direct-delivery");
+        RunGit(repo, "checkout -q -b develop");
+        File.WriteAllText(Path.Combine(repo, "direct.txt"), "direct delivery");
+        Commit(repo, "feat: direct delivery");
+        var deliveredSha = RunGit(repo, "rev-parse develop").Out.Trim();
+
+        var (git, log) = Build(repo);
+        var jobFolder = BeginRun(log, repo, jobId: "21-direct");
+        File.WriteAllText(
+            Path.Combine(jobFolder, "task.json"),
+            $$"""{"commits":[{"sha":"{{deliveredSha}}","shortSha":"{{deliveredSha[..7]}}","message":"[runner-direct-delivery] feat: direct delivery","filesChanged":1,"files":["direct.txt"]}]}""");
+
+        var runner = new MergeIntoDevelopRunner(git, log, NullLogger<MergeIntoDevelopRunner>.Instance);
+        var outcome = runner.Run("Fixture", "21-direct", jobFolder, repo, "develop");
+
+        Assert.Equal(MergeIntoIntegrationOutcome.AlreadyOnIntegrationBranch, outcome.Outcome);
+        Assert.Equal([deliveredSha], outcome.EvidenceShas);
+        var step = ReadMergeStep(log, jobFolder);
+        Assert.NotNull(step);
+        Assert.Equal(PipelineStepStatus.Passed, step!.Status);
+        Assert.Equal("already-on-integration-branch", step.Verdict);
+        Assert.Contains(deliveredSha[..7], step.VerdictSummary);
+    }
+
+    [Fact]
     public void Run_Conflict_RecordsStepFailed_WithConflictedFilesVisible()
     {
         var repo = SeedRepo("runner-conflict");

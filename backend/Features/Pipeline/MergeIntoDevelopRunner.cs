@@ -1,4 +1,4 @@
-
+using System.Text.Json;
 
 namespace AgentStudio.Pipeline;
 
@@ -315,6 +315,21 @@ public sealed class MergeIntoDevelopRunner
                     repoRoot,
                     branch,
                     () => _git.MergeBranchIntoIntegration(repoRoot, taskBranch, branch, ct)).ConfigureAwait(false);
+            }
+
+            if (result.Outcome == MergeIntoIntegrationOutcome.NoTaskBranch
+                && TryResolveDirectDelivery(
+                    jobFolderPath,
+                    repoRoot,
+                    branch,
+                    out var directEvidence))
+            {
+                result = MergeIntoIntegrationResult.Of(
+                    MergeIntoIntegrationOutcome.AlreadyOnIntegrationBranch,
+                    mergedSha: _git.GetBranchTip(repoRoot, branch) ?? directEvidence[^1]) with
+                {
+                    EvidenceShas = directEvidence,
+                };
             }
 
             if (!mechanicalAttributionHandled
@@ -1572,6 +1587,15 @@ public sealed class MergeIntoDevelopRunner
                     "already-merged",
                     $"Task branch already contained in {integrationBranch}; no merge needed.{exactGate}",
                     preDevelopResult?.Reason);
+            case MergeIntoIntegrationOutcome.AlreadyOnIntegrationBranch:
+                var evidence = result.EvidenceShas.Count == 0
+                    ? "attributed commits"
+                    : string.Join(", ", result.EvidenceShas.Select(Short));
+                return (
+                    PipelineStepStatus.Passed,
+                    "already-on-integration-branch",
+                    $"No task branch exists; attributed commits are already on {integrationBranch}.",
+                    $"Evidence: {evidence}.");
             case MergeIntoIntegrationOutcome.NoTaskBranch:
                 return (PipelineStepStatus.Skipped, "no-branch", result.Error ?? "No task branch to merge.", null);
             case MergeIntoIntegrationOutcome.PushedForReview:
@@ -1604,4 +1628,68 @@ public sealed class MergeIntoDevelopRunner
     }
 
     private static string Short(string sha) => sha.Length > 7 ? sha[..7] : sha;
+
+    private bool TryResolveDirectDelivery(
+        string jobFolderPath,
+        string repositoryRoot,
+        string integrationBranch,
+        out IReadOnlyList<string> evidenceShas)
+    {
+        evidenceShas = [];
+        try
+        {
+            var path = Path.Combine(jobFolderPath, "task.json");
+            if (!File.Exists(path)) return false;
+            using var document = JsonDocument.Parse(File.ReadAllText(path));
+            if (!document.RootElement.TryGetProperty("commits", out var commitsElement)
+                || commitsElement.ValueKind != JsonValueKind.Array)
+                return false;
+
+            var origin = _git.ReadOriginUrlAt(repositoryRoot);
+            var repositoryLabel = RepositoryLabel(origin ?? repositoryRoot);
+            var commits = new List<TaskCommitInfo>();
+            foreach (var element in commitsElement.EnumerateArray())
+            {
+                var commit = JsonSerializer.Deserialize<TaskCommitInfo>(
+                    element.GetRawText(),
+                    TaskJsonFile.ReadOpts);
+                if (commit is null
+                    || string.IsNullOrWhiteSpace(commit.Sha)
+                    || TaskCommitSupersession.IsSuperseded(commit))
+                    continue;
+                commit = TaskCommitRepository.NormalizeLegacy(commit);
+                if (TaskIntegrationStatusService.IsZeroFileLifecycleMarker(commit)
+                    && !_git.IsAncestor(repositoryRoot, commit.Sha, integrationBranch))
+                    continue;
+                if (!string.IsNullOrWhiteSpace(commit.Repository)
+                    && !SameRepository(commit.Repository, origin, repositoryLabel))
+                    continue;
+                commits.Add(commit);
+            }
+
+            if (commits.Count == 0) return false;
+            var landed = commits.All(commit =>
+                _git.IsAncestor(repositoryRoot, commit.Sha, integrationBranch));
+            if (!landed) return false;
+            evidenceShas = commits.Select(commit => commit.Sha).ToList();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            SilentCatch.Note(ex, "MergeIntoDevelopRunner: direct-delivery attribution is best-effort");
+            return false;
+        }
+    }
+
+    private static bool SameRepository(string candidate, string? origin, string repositoryLabel)
+        => string.Equals(candidate.Trim().TrimEnd('/', '\\'), origin?.Trim().TrimEnd('/', '\\'), StringComparison.OrdinalIgnoreCase)
+            || string.Equals(RepositoryLabel(candidate), repositoryLabel, StringComparison.OrdinalIgnoreCase);
+
+    private static string RepositoryLabel(string value)
+    {
+        var normalized = value.Trim().TrimEnd('/', '\\');
+        var separator = Math.Max(normalized.LastIndexOf('/'), Math.Max(normalized.LastIndexOf('\\'), normalized.LastIndexOf(':')));
+        var label = separator < 0 ? normalized : normalized[(separator + 1)..];
+        return label.EndsWith(".git", StringComparison.OrdinalIgnoreCase) ? label[..^4] : label;
+    }
 }

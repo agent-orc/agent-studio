@@ -40,6 +40,8 @@ public sealed record AttributionInput
 {
     /// <summary>The task whose commits we are attributing (its folder/job id).</summary>
     public string TaskId { get; init; } = "";
+    /// <summary>Registered repository id or remote URL for every candidate.</summary>
+    public string? Repository { get; init; }
     /// <summary>Branch the task ran on (today single-branch <c>main</c>). Null skips the branch check.</summary>
     public string? TaskBranch { get; init; }
     /// <summary>Current HEAD branch. Null skips the branch check.</summary>
@@ -123,6 +125,8 @@ public static class CommitAttributionService
                     Sha = c.Sha,
                     ShortSha = string.IsNullOrEmpty(c.ShortSha) ? Short(c.Sha) : c.ShortSha,
                     Message = message,
+                    Repository = input.Repository,
+                    Branch = input.TaskBranch,
                     FilesChanged = c.FilesChanged,
                     Files = c.Files.ToList(),
                     At = c.AuthorDateUtc,
@@ -180,6 +184,8 @@ public static class CommitAttributionService
                 Sha = c.Sha,
                 ShortSha = string.IsNullOrEmpty(c.ShortSha) ? Short(c.Sha) : c.ShortSha,
                 Message = message,
+                Repository = input.Repository,
+                Branch = input.TaskBranch,
                 FilesChanged = c.FilesChanged,
                 Files = c.Files.ToList(),
                 At = c.AuthorDateUtc,

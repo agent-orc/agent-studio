@@ -94,6 +94,8 @@ export interface EscalationDelivery {
   commitCount: number;
   /** Distinct changed files across those commits (0 when unknown). */
   filesChanged: number;
+  /** Repository delivery lines from the canonical integration projection. */
+  repositories: string[];
 }
 
 /** The single structured line that remains visible when details are closed. */
@@ -524,7 +526,17 @@ export function buildDelivery(info: TaskInfo): EscalationDelivery {
     for (const f of c.files ?? []) distinctFiles.add(f);
   }
   const filesChanged = distinctFiles.size > 0 ? distinctFiles.size : filesChangedSum;
-  return { merge, commitCount: commits.length, filesChanged };
+  const repositories = (info.integration?.repositories ?? []).map((repository) => {
+    const integrated = repository.commits.filter((commit) => commit.onIntegrationBranch).length;
+    const branch = repository.integrationBranch || 'develop';
+    const release = repository.releaseBranch || 'main';
+    const targets = repository.onReleaseBranch && release !== branch
+      ? `${branch} and ${release}`
+      : branch;
+    const reason = repository.onIntegrationBranch ? '' : ` (${repository.detail})`;
+    return `${repository.repository} ${integrated}/${repository.commits.length} ${targets}${reason}`;
+  });
+  return { merge, commitCount: commits.length, filesChanged, repositories };
 }
 
 /**
