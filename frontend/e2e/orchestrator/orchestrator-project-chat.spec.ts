@@ -12,7 +12,7 @@ test.describe('orchestrator project chat', () => {
     await expect(chat.getByText('Runbook · canonical session')).toBeVisible();
     await expect(chat.getByRole('button', { name: /Project/ })).toBeVisible();
     await expect(chat.getByTestId('orch-side-sheet-project-combo')).toBeVisible();
-    await expect(chat.getByPlaceholder(/Ask the orchestrator/i)).toBeVisible();
+    await expect(chat.getByPlaceholder(/Ask about this project/i)).toBeVisible();
 
     await expect(chat.getByRole('button', { name: /Search/i })).toHaveCount(0);
     await expect(chat.getByTestId('pchat-search-input')).toHaveCount(0);

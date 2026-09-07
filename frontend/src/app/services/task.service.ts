@@ -2463,20 +2463,6 @@ export class TaskService {
   }
 
   /**
-   * Upload one image to the project's chat-attachments folder so the
-   * subsequent `sendOrchestratorChat` call can reference it by its
-   * relative path. Multipart/form-data with `file` field.
-   */
-  uploadOrchestratorChatAttachment(projectName: string, file: File) {
-    const form = new FormData();
-    form.append('file', file, file.name || 'image.png');
-    return this.http.post<{ fileName: string; relativePath: string; url: string }>(
-      `${this.baseUrl}/runner/${encodeURIComponent(projectName)}/orchestrator-chat/attachments`,
-      form,
-    );
-  }
-
-  /**
    * One-shot Haiku call that turns a free-text prompt into a short
    * imperative English title. Drives the "Generate" button on the
    * Create-task dialog. Returns immediately when the prompt is empty.

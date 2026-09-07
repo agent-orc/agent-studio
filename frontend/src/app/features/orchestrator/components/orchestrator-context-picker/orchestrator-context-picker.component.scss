@@ -1,109 +1,13 @@
+/**
+ * Zero-height anchor: the picker renders nothing until it is opened, and the
+ * popover is positioned against this host's bottom edge, immediately above the
+ * composer. The chips it used to draw now live in the `<cac-chat>` chip row.
+ */
 :host {
   position: relative;
   display: block;
   flex: 0 0 auto;
   min-width: 0;
-}
-
-.context-draft {
-  display: flex;
-  align-items: center;
-  gap: var(--studio-spacing-2);
-  min-width: 0;
-  overflow: hidden;
-  padding: var(--studio-spacing-2) var(--studio-spacing-3);
-  border: 1px solid var(--studio-border);
-  border-radius: 8px;
-  background: var(--studio-bg-elevated);
-}
-
-.context-draft__chips {
-  display: flex;
-  flex: 1 1 auto;
-  flex-wrap: nowrap;
-  align-items: center;
-  gap: var(--studio-spacing-1);
-  min-width: 0;
-  overflow: hidden;
-}
-
-.context-chip,
-.context-draft__add {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--studio-spacing-1);
-  min-height: 26px;
-  padding: var(--studio-spacing-1) var(--studio-spacing-2);
-  border: 1px solid var(--studio-border-strong);
-  border-radius: 999px;
-  background: var(--studio-bg-editor);
-  color: var(--studio-fg);
-  font: inherit;
-  font-size: 10px;
-  white-space: nowrap;
-}
-
-button.context-chip,
-.context-draft__add {
-  cursor: pointer;
-}
-
-.context-chip--automatic {
-  min-width: 0;
-  flex: 0 1 auto;
-  border-color: color-mix(in srgb, var(--studio-accent-3) 42%, var(--studio-border));
-  background: color-mix(in srgb, var(--studio-accent-3) 10%, var(--studio-bg-editor));
-}
-
-.context-chip--excluded {
-  border-style: dashed;
-  color: var(--studio-fg-muted);
-  background: var(--studio-bg-editor);
-}
-
-.context-chip__icon { flex: 0 0 auto; color: var(--studio-accent-3-strong); }
-.context-chip--excluded .context-chip__icon { color: var(--studio-fg-muted); }
-
-.context-chip__label {
-  min-width: 0;
-  max-width: 160px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.context-chip__remove {
-  width: 16px;
-  height: 16px;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--studio-fg-muted);
-  cursor: pointer;
-  line-height: 1;
-}
-
-.context-draft__add {
-  flex: 0 0 auto;
-  border-style: dashed;
-  color: var(--studio-accent-3-strong);
-  background: transparent;
-}
-
-.context-draft__estimate {
-  flex: 0 0 auto;
-  margin: 0;
-  color: var(--studio-fg-muted);
-  font-size: 9px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.context-draft__estimate:focus-visible {
-  border-radius: 3px;
-  outline: 2px solid var(--studio-accent-3-strong);
-  outline-offset: 2px;
 }
 
 .source-picker {

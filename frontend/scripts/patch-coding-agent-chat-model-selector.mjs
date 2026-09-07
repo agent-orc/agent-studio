@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 
 /**
- * Compatibility bridge for coding-agent-chat 0.3.1.
+ * Compatibility bridge for coding-agent-chat 0.4.1.
  *
  * Studio consumes the published package, while the selector source is owned by
  * that package rather than this host. Keep the canonical component in place and
@@ -17,11 +17,15 @@ const packageJsonPath = require.resolve('coding-agent-chat/package.json');
 const packageRoot = dirname(packageJsonPath);
 const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
 
-// 0.3.2 changed only the conversation/shared modules (structured runner
-// activity, AGT-2316); its composer output is byte-identical to 0.3.1, so the
-// same rewrites apply. Any other version fails loudly below - either here or
-// via the occurrence guards.
-const supportedVersions = new Set(['0.3.1', '0.3.2']);
+// 0.4.1 (CAC-20) reshaped the composer footer and added context attachment
+// chips, but left the model selector untouched: it still ships no per-CLI
+// `disabledReason` and no balanced/faded picker layout, so every rewrite below
+// still applies verbatim. `disabledReason` does exist in 0.4.1 on the
+// whole-control `ChatModelControl` / `ChatPermissionControl` inputs; that is a
+// different seam from the per-option `ChatCliOption.disabledReason` added here.
+// Any other version fails loudly below - either here or via the occurrence
+// guards.
+const supportedVersions = new Set(['0.4.1']);
 if (!supportedVersions.has(packageJson.version)) {
   throw new Error(
     `The coding-agent-chat model-selector compatibility patch expects one of `
@@ -195,4 +199,4 @@ composerTypes = replaceExact(
 );
 writeFileSync(composerTypesPath, composerTypes);
 
-console.log('Applied the coding-agent-chat 0.3.1 model-selector compatibility patch.');
+console.log('Applied the coding-agent-chat 0.4.1 model-selector compatibility patch.');

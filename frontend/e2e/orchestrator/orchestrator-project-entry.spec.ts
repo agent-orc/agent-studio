@@ -380,7 +380,7 @@ test.describe('Orchestrator Chat shell posture and activity', () => {
     await page.goto(`/#/projects/${ALPHA.id}`, { waitUntil: 'domcontentloaded' });
 
     await expect(page.getByTestId('orch-side-sheet')).toBeVisible();
-    await expect(page.getByTestId('chat-composer-context-project')).toHaveText(ALPHA.name);
+    await expect(page.getByTestId('chat-context-attachment-context:automatic')).toBeVisible();
     await expect(page.getByTestId('chat-input')).not.toBeFocused();
   });
 
@@ -394,8 +394,8 @@ test.describe('Orchestrator Chat shell posture and activity', () => {
     const sheetHost = page.locator('app-orchestrator-side-sheet');
     await expect(page.getByTestId('orch-side-sheet')).toBeVisible();
     await expect(sheetHost).toHaveCSS('width', '720px');
-    await expect(page.getByTestId('chat-composer-context-project')).toHaveText(ALPHA.name);
-    await expect(page.getByTestId('chat-composer-context-surface')).toHaveText('Board');
+    await expect(page.getByTestId('chat-context-attachment-context:automatic'))
+      .toContainText('Board');
 
     await page.reload({ waitUntil: 'domcontentloaded' });
     await expect(page.getByTestId('orch-side-sheet')).toBeVisible();
@@ -404,8 +404,8 @@ test.describe('Orchestrator Chat shell posture and activity', () => {
     await page.evaluate(taskKey => { window.location.hash = `#/tasks/${taskKey}`; }, TASK.key);
     await expect(page.getByTestId('studio-task')).toBeVisible();
     await expect(page.getByTestId('orch-side-sheet')).toBeVisible();
-    await expect(page.getByTestId('chat-composer-context-surface')).toHaveText('Task');
-    await expect(page.getByTestId('chat-composer-context-detail')).toHaveText(TASK.key);
+    await expect(page.getByTestId('chat-context-attachment-context:automatic'))
+      .toContainText(TASK.key);
     await expect.poll(() => [...requestedChatContexts]).toContain(`task:${ALPHA.name}/${TASK.key}`);
 
     await page.getByTestId('orch-side-sheet-toggle').click();
