@@ -123,6 +123,55 @@ public sealed class RemoteReviewExecutorTests : IDisposable
         Assert.Empty(state.LoadAll());
     }
 
+    /// <summary>
+    /// Scenario test for AGT-2750: a replacement daemon re-adopts a persisted
+    /// review slot whose worker survived a <c>PrivateTmp=true</c> restart but
+    /// lost its <c>/tmp</c> mount. <see cref="DetachedWorkerTmpMountGuard"/>
+    /// (exercised here with the exact captured mountinfo shape) is what
+    /// <see cref="DurableReviewProcess.VerifyLive"/> would report as the
+    /// not-live reason; this proves the existing non-adoptable settlement path
+    /// turns that straight into a fenced <c>ReviewInfra</c>/<c>ExecutorRestarted</c>
+    /// report the moment the daemon reconciles the slot, instead of a live
+    /// worker being left to run to a doomed conclusion and getting graded as a
+    /// product failure an hour later.
+    /// </summary>
+    [Fact]
+    public async Task Torn_down_tmp_mount_settles_immediately_as_review_infra()
+    {
+        var mountInfo = new[]
+        {
+            "656 654 0:59 " +
+            "/tmp/systemd-private-dedae28ed8ee49ab9d9a88405a36b280-agent-runner-review.service-WhdhIS/tmp//deleted " +
+            "/tmp rw,nosuid,nodev shared:326 - tmpfs tmpfs rw,size=1048576k",
+        };
+        Assert.True(DetachedWorkerTmpMountGuard.TmpMountWasTornDown(mountInfo, out var reason));
+
+        var handler = new InterruptedArtifactHandler();
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://task-server") };
+        var options = Options();
+        using var client = new TaskServerClient(
+            http,
+            options.RunnerId,
+            usesDurableTaskServer: true,
+            options: options);
+        var logs = new List<string>();
+        var state = new ReviewStateStore(options.StateDir);
+        var workspacePath = Path.Combine(_reviewRoot, "review-attempt-1-f17", "repository");
+        var slot = state.Create(Claim(), workspacePath) with { Phase = "running" };
+        state.Save(slot);
+
+        var exitCode = await new RemoteReviewExecutor(options, client, state, logs.Add)
+            .ReportNonAdoptableAsync(slot, reason, CancellationToken.None);
+
+        Assert.Equal(3, exitCode); // The fixture acknowledges every report as ReviewInfra.
+        var report = Assert.Single(handler.Reports);
+        Assert.Equal("ReviewInfra", report.Outcome);
+        Assert.Equal("ExecutorRestarted", report.FailureClassification);
+        Assert.Contains("deleted", report.Summary, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("NewTestFailures", report.Summary, StringComparison.Ordinal);
+        Assert.Empty(state.LoadAll());
+    }
+
     [Fact]
     public async Task Report_submission_retries_transient_failures_with_the_same_durable_result()
     {

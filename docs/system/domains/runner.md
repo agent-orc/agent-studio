@@ -605,7 +605,18 @@ state.
   returned to Ready. A non-adoptable review is settled as `ReviewInfra` with
   classification `ExecutorRestarted`, the completed-command count and duration,
   the failed process proof, and the retry reason. DB lease presence alone is
-  never process-liveness evidence. systemd must use `KillMode=process`.
+  never process-liveness evidence. systemd must use `KillMode=process`. It must
+  also use `PrivateTmp=false`: a private-`/tmp` unit unmounts its namespace-scoped
+  `/tmp` on every restart even though `KillMode=process` leaves the detached
+  worker running, so the worker keeps a deleted mount and its next build/test
+  step fails with `MSB1025`, `SocketException (99)`, or a NuGet mkdtemp `ENOENT`
+  (AGT-2750). `DurableAgentProcess.VerifyLive`/`DurableReviewProcess.VerifyLive`
+  additionally read `/proc/<pid>/mountinfo` on Linux
+  (`DetachedWorkerTmpMountGuard`) and treat a deleted `/tmp` mount root as not
+  live, so a re-adopted worker with a torn-down mount fails its slot immediately
+  through the existing release/`ExecutorRestarted` path instead of running for
+  up to an hour before the grader misreads the infrastructure failure as a
+  product regression.
 - A Task Server restart is also not an attempt boundary. The server reloads the
   persisted RunAttempt and ReviewAttempt ledger; the surviving runner includes
   positively proven active slots in its next registration and the server

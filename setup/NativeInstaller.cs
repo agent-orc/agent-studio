@@ -407,7 +407,10 @@ internal sealed class NativeInstaller(
             StandardOutput=journal
             StandardError=journal
             NoNewPrivileges=true
-            PrivateTmp=true
+            # PrivateTmp=true tears the private /tmp mount away from a still-running
+            # detached worker on every restart (MSB1025, SocketException (99), NuGet
+            # mkdtemp ENOENT). KillMode=process deliberately leaves workers running.
+            PrivateTmp=false
             ProtectSystem=full
             ReadWritePaths={workRoot} {stateRoot} {configuration.HomeDirectory}
             CPUQuota={quota}%

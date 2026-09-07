@@ -255,6 +255,43 @@ public sealed class RemoteReviewWorkspace
                         ct);
                 }
 
+                if (TmpMountTornDownDuringBuild(execution.Process))
+                {
+                    commands.Add(await AddCommandEvidenceAsync(
+                        command.StepId,
+                        command.Aspect,
+                        command.FileName,
+                        command.Arguments,
+                        headBefore,
+                        treeBefore,
+                        execution.Process,
+                        execution.StartedAt,
+                        execution.FinishedAt,
+                        execution.Signal,
+                        command.TimeoutSeconds,
+                        "verification",
+                        "candidate",
+                        baselineSha: null,
+                        comparison: null,
+                        retryPerformed: false,
+                        dependencyCacheHit: false,
+                        dependencyCache: null,
+                        artifacts,
+                        ct,
+                        command,
+                        execution.AgentUsage));
+                    SaveCaches(candidateCache);
+                    throw await InfrastructureFailureAsync(
+                        "TmpMountTornDown",
+                        $"Review command '{command.StepId}' failed with a torn-down-/tmp signature " +
+                        "(MSB1025, SocketException (99), or a NuGet mkdtemp ENOENT), not a product failure: " +
+                        $"{CommandLine(command)}; exit={execution.Process.ExitCode}; " +
+                        $"budget={BudgetSummary(command.TimeoutSeconds, execution)}.",
+                        commands,
+                        artifacts,
+                        ct);
+                }
+
                 BaselineComparison? comparison = null;
                 var retryPerformed = false;
                 if (command.CompareToBaseline && !execution.Process.Success)
@@ -303,6 +340,39 @@ public sealed class RemoteReviewWorkspace
                             throw await InfrastructureFailureAsync(
                                 "ToolUnavailable",
                                 $"Review retry '{command.StepId}' lost its declared toolchain; " +
+                                $"exit={execution.Process.ExitCode}; budget={BudgetSummary(command.TimeoutSeconds, execution)}.",
+                                commands,
+                                artifacts,
+                                ct);
+                        }
+                        if (TmpMountTornDownDuringBuild(execution.Process))
+                        {
+                            commands.Add(await AddCommandEvidenceAsync(
+                                command.StepId,
+                                command.Aspect,
+                                command.FileName,
+                                command.Arguments,
+                                headBefore,
+                                treeBefore,
+                                execution.Process,
+                                execution.StartedAt,
+                                execution.FinishedAt,
+                                execution.Signal,
+                                command.TimeoutSeconds,
+                                "verification",
+                                "candidate",
+                                comparison.BaselineSha,
+                                comparison: null,
+                                retryPerformed: true,
+                                dependencyCacheHit: false,
+                                dependencyCache: null,
+                                artifacts,
+                                ct));
+                            SaveCaches(candidateCache);
+                            throw await InfrastructureFailureAsync(
+                                "TmpMountTornDown",
+                                $"Review retry '{command.StepId}' failed with a torn-down-/tmp signature " +
+                                "(MSB1025, SocketException (99), or a NuGet mkdtemp ENOENT), not a product failure; " +
                                 $"exit={execution.Process.ExitCode}; budget={BudgetSummary(command.TimeoutSeconds, execution)}.",
                                 commands,
                                 artifacts,
@@ -706,6 +776,28 @@ public sealed class RemoteReviewWorkspace
                && (process.StdOut + "\n" + process.StdErr).Contains(
                    "node_modules/@angular/cli/bin/ng.js",
                    StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// AGT-2750: a <c>PrivateTmp=true</c> unit restart deletes the detached
+    /// worker's <c>/tmp</c> mount while it keeps running under
+    /// <c>KillMode=process</c>. MSBuild's node pipe and NuGet's global
+    /// mutex mkdtemp both fail against the deleted mount, and the command
+    /// produces no parseable test output. Without this check
+    /// <see cref="SubjectFailures"/> falls back to a single
+    /// <c>&lt;unparsed failure&gt;</c> entry that <see cref="BaselineVerdict"/>
+    /// then reports as <c>NewTestFailures</c> - an infrastructure incident
+    /// graded as a product regression. Checked before baseline comparison so
+    /// it never reaches test-failure parsing.
+    /// </summary>
+    private static bool TmpMountTornDownDuringBuild(ProcessResult process)
+    {
+        if (process.Success) return false;
+        var output = process.StdOut + "\n" + process.StdErr;
+        return output.Contains("MSB1025", StringComparison.Ordinal)
+               || output.Contains("SocketException (99)", StringComparison.Ordinal)
+               || (output.Contains("mkdtemp(\"/tmp/.dotnet.", StringComparison.Ordinal)
+                   && output.Contains("ENOENT", StringComparison.OrdinalIgnoreCase));
+    }
 
     private static string FailureDetail(ProcessResult process)
     {

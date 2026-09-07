@@ -168,6 +168,11 @@ internal sealed class DurableReviewProcess
                     reason = $"review process cwd '{target ?? "unavailable"}' does not match workspace '{slot.WorkspacePath}'";
                     return false;
                 }
+                if (DetachedWorkerTmpMountGuard.TmpMountWasTornDown(slot.ProcessId.Value, out var tmpDetail))
+                {
+                    reason = tmpDetail;
+                    return false;
+                }
             }
             reason = "live review process generation and workspace match";
             return true;

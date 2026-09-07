@@ -396,7 +396,15 @@ StandardOutput=journal
 StandardError=journal
 $resource_policy
 NoNewPrivileges=true
-PrivateTmp=true
+# PrivateTmp=true tears the unit's private /tmp mount away on every daemon
+# restart, including from underneath a detached coding/review worker that
+# KillMode=process deliberately left running. The worker keeps the deleted
+# mount (dotnet/MSBuild pipes and NuGet's mkdtemp mutex fail with MSB1025,
+# SocketException (99), or ENOENT) and a real build/test run is graded as a
+# product failure instead of infrastructure. Plain host /tmp with per-attempt
+# TMPDIR isolation (see RemoteReviewWorkspace/RunnerOptions) survives a
+# restart untouched.
+PrivateTmp=false
 ProtectSystem=full
 ReadWritePaths=$service_root $runner_home
 

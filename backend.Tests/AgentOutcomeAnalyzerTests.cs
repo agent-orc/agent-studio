@@ -595,6 +595,13 @@ public class AgentOutcomeAnalyzerTests
     [InlineData("Error: connect ECONNRESET 140.82.113.3:443")]
     [InlineData("dial tcp: lookup api.example.com: Temporary failure in name resolution")]
     [InlineData("HTTP 503 Service Unavailable")]
+    // Torn-down-/tmp family (AGT-2750): a PrivateTmp=true unit restart deletes
+    // the mount out from under a still-running detached worker (KillMode=process
+    // deliberately keeps it alive). MSBuild's node pipe and NuGet's mkdtemp mutex
+    // fail against the deleted mount; this is host infrastructure, not a code
+    // failure in the change under test.
+    [InlineData("MSB1025: Startup of MSBuild's node communication pipe failed: SocketException (99): Cannot assign requested address")]
+    [InlineData("System.IO.IOException: mkdtemp(\"/tmp/.dotnet.AbC123\") == nullptr; errno == ENOENT")]
     public void EnvironmentalTransient_OnFailedRun_TypesAsEnvironmentalTransient(string reply)
     {
         // A transient host file lock / network glitch must type as

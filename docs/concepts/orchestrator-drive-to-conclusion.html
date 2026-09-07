@@ -2270,6 +2270,39 @@
             process stderr into the failure detail and the durable grade's explicit Detail line, including the full path.
           </td>
         </tr>
+        <tr id="case-agt-2750-private-tmp-restart-teardown">
+          <td>2026-09-07</td>
+          <td><code>AGT-2750</code><br><span class="small">runner-review-daemon-restart-privatetmp-teardown</span></td>
+          <td>
+            Two restarts of <code>agent-runner-review.service</code> (03:10 and 03:12 CEST) landed AGT-2709, AGT-2711,
+            QS-82, and QS-96 in Human Review minutes later with "Delivery gate failed": <code>dotnet test</code> exited 1
+            with <code>MSB1025 ... SocketException (99): Cannot assign requested address</code> and zero tests parsed.
+            A later restart (04:46) produced the NuGet-side symptom on AGT-2716: <code>mkdtemp("/tmp/.dotnet.XXXXXX")
+            == nullptr; errno == ENOENT</code>.
+          </td>
+          <td>
+            Both units set <code>PrivateTmp=true</code> alongside <code>KillMode=process</code>. The daemon restart
+            unmounted its private <code>/tmp</code>, but the detached review worker that <code>KillMode=process</code>
+            deliberately left running kept the deleted mount (<code>/proc/&lt;pid&gt;/mountinfo</code> showed the
+            <code>/tmp</code> mount root ending in <code>/deleted</code>). The worker ran for up to an hour before its
+            build/test step touched the dead mount and failed, by which point the grader had nothing but an unparsed
+            failure and reported <code>NewTestFailures</code>/<code>ProductFailure</code> instead of infrastructure.
+          </td>
+          <td>
+            <span class="pill ok">fixed in dev</span> Shipped units set <code>PrivateTmp=false</code>
+            (<code>deploy/systemd/agent-host.service</code>, <code>scripts/remote-runner-onboard.sh</code>,
+            <code>setup/NativeInstaller.cs</code>, and the <code>10-agent-runner-hardening.conf</code> retrofit
+            drop-in already deployed to existing hosts). <code>DetachedWorkerTmpMountGuard</code> reads
+            <code>/proc/&lt;pid&gt;/mountinfo</code> from <code>DurableAgentProcess.VerifyLive</code> /
+            <code>DurableReviewProcess.VerifyLive</code> so a re-adopted worker with a deleted <code>/tmp</code> mount
+            fails its slot immediately through the existing <code>ExecutorRestarted</code>/process-missing path
+            instead of running to a doomed conclusion. <code>RemoteReviewWorkspace</code> and
+            <code>AgentOutcomeAnalyzer</code> also classify the <code>MSB1025</code> / <code>SocketException (99)</code>
+            / NuGet <code>mkdtemp</code> <code>ENOENT</code> signatures as <code>ReviewInfra</code> /
+            <code>EnvironmentalTransient</code> before they ever reach test-failure parsing. Interim hand-applied
+            drop-in on agent-runner-01 (04:55) is superseded by the shipped fix.
+          </td>
+        </tr>
       </tbody>
     </table>
 

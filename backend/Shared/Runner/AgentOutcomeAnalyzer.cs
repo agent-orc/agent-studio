@@ -1026,10 +1026,28 @@ public static class AgentOutcomeAnalyzer
     };
 
     /// <summary>
+    /// Torn-down-/tmp signatures (AGT-2750). A <c>PrivateTmp=true</c> unit
+    /// restart deletes the running worker's private <c>/tmp</c> mount while
+    /// <c>KillMode=process</c> deliberately leaves it running. MSBuild's node
+    /// communication pipe and NuGet's global mutex mkdtemp both fail against
+    /// the deleted mount roughly an hour later, well after the daemon that
+    /// tore the mount down has forgotten it restarted. Kept specific (exact
+    /// MSBuild/NuGet error codes and the literal dotnet mkdtemp prefix) so a
+    /// match is an unambiguous host/unit-restart signal, not a real build
+    /// break in the change under test.
+    /// </summary>
+    private static readonly string[] TmpMountTeardownNeedles =
+    {
+        "msb1025",
+        "socketexception (99)",
+        "mkdtemp(\"/tmp/.dotnet.",
+    };
+
+    /// <summary>
     /// True when the run output carries a recognised transient environmental
-    /// signal (host file lock or network glitch). Callers must only invoke this
-    /// for a <c>failed</c> run so an agent that merely quotes one of these
-    /// phrases in a healthy turn does not trip it.
+    /// signal (host file lock, network glitch, or torn-down /tmp mount).
+    /// Callers must only invoke this for a <c>failed</c> run so an agent that
+    /// merely quotes one of these phrases in a healthy turn does not trip it.
     /// </summary>
     private static bool IsEnvironmentalTransient(string rawText)
     {
@@ -1038,15 +1056,25 @@ public static class AgentOutcomeAnalyzer
             if (rawText.Contains(needle, StringComparison.OrdinalIgnoreCase)) return true;
         foreach (var needle in NetworkGlitchNeedles)
             if (rawText.Contains(needle, StringComparison.OrdinalIgnoreCase)) return true;
+        foreach (var needle in TmpMountTeardownNeedles)
+            if (rawText.Contains(needle, StringComparison.OrdinalIgnoreCase)) return true;
         return false;
     }
 
     private static string BuildEnvironmentalTransientSummary(string rawText)
     {
         var isLock = HostFileLockNeedles.Any(n => rawText.Contains(n, StringComparison.OrdinalIgnoreCase));
-        var kind = isLock ? "a host file lock (MSB302x / file-in-use)" : "a network glitch (DNS / reset / gateway)";
-        var detail = ExtractFirstMatchingLine(rawText, isLock ? "process cannot access" : "resolve")
-                     ?? ExtractFirstMatchingLine(rawText, isLock ? "msb30" : "econn");
+        var isTmpTeardown = !isLock
+            && TmpMountTeardownNeedles.Any(n => rawText.Contains(n, StringComparison.OrdinalIgnoreCase));
+        var kind = isLock
+            ? "a host file lock (MSB302x / file-in-use)"
+            : isTmpTeardown
+                ? "a torn-down /tmp mount (unit restart mid-build; MSB1025 / SocketException (99) / NuGet mkdtemp ENOENT)"
+                : "a network glitch (DNS / reset / gateway)";
+        var detail = ExtractFirstMatchingLine(
+                rawText,
+                isLock ? "process cannot access" : isTmpTeardown ? "msb1025" : "resolve")
+            ?? ExtractFirstMatchingLine(rawText, isLock ? "msb30" : isTmpTeardown ? "mkdtemp" : "econn");
         return detail != null
             ? $"The run failed on {kind}: \"{detail}\" This is transient - the orchestrator retries it with backoff before escalating."
             : $"The run failed on {kind}. This is transient - the orchestrator retries it with backoff before escalating.";

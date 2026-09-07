@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using AgentStudio.TestSupport;
 using Xunit;
@@ -19,6 +20,28 @@ public sealed class RunnerServiceUnitTests
         Assert.Contains("StartLimitIntervalSec=300", content);
         Assert.Contains("StartLimitBurst=5", content);
         Assert.Contains("RestartSec=10s", content);
+    }
+
+    /// <summary>
+    /// PrivateTmp=true tears the unit's private /tmp mount away on every
+    /// restart, including from underneath a detached worker that KillMode=process
+    /// deliberately left running (MSB1025 / SocketException (99) / NuGet mkdtemp
+    /// ENOENT). A worker surviving the restart is worthless if its next build or
+    /// test step cannot use /tmp.
+    /// </summary>
+    [Theory]
+    [InlineData("deploy/systemd/agent-host.service")]
+    [InlineData("scripts/remote-runner-onboard.sh")]
+    [InlineData("deploy/agent-host/systemd/10-agent-runner-hardening.conf")]
+    public void Installed_units_never_privatize_tmp_out_from_under_a_surviving_worker(
+        string relativePath)
+    {
+        var lines = File.ReadAllLines(Path.Combine(RepoRoot(), relativePath))
+            .Select(line => line.Trim())
+            .ToArray();
+
+        Assert.Contains("PrivateTmp=false", lines);
+        Assert.DoesNotContain("PrivateTmp=true", lines);
     }
 
     [Fact]

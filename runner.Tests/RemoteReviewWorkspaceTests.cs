@@ -504,6 +504,49 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.False(exception.Evidence.Workspace.DirtyAfter);
     }
 
+    /// <summary>
+    /// AGT-2750: a review worker whose <c>/tmp</c> mount was torn down by a
+    /// <c>PrivateTmp=true</c> unit restart mid-build produces no parseable
+    /// test output (MSBuild's node pipe / NuGet's mkdtemp both fail). Before
+    /// this check, that fell through to <c>CompareToBaselineAsync</c>, which
+    /// treats the unparsed failure as a genuinely new test and reports
+    /// <c>NewTestFailures</c>/<c>ProductFailure</c> instead of
+    /// <c>ReviewInfra</c>. Uses the exact captured signature (MSB1025 +
+    /// SocketException (99)) from the agent-runner-01 incident log.
+    /// </summary>
+    [Theory]
+    [InlineData(
+        "MSB1025: Startup of MSBuild's node communication pipe failed: " +
+        "SocketException (99): Cannot assign requested address")]
+    [InlineData(
+        "System.IO.IOException: mkdtemp(\"/tmp/.dotnet.AbC123\") == nullptr; errno == ENOENT")]
+    public async Task Tmp_mount_teardown_signature_is_never_a_new_test_failure(string signature)
+    {
+        var (baselineSha, subjectSha) = await SeedSubjectBranchAsync();
+        var command = new ReviewCommandDto(
+            "verify-2",
+            "build-tests",
+            PosixShell.RequirePath(),
+            ["-c", $"printf '{signature}\\n' 1>&2; exit 1"],
+            CompareToBaseline: true);
+        var (workspace, _) = Workspace(
+            "attempt-tmp-teardown",
+            subjectSha,
+            [command],
+            24015,
+            resultRef: "refs/heads/task/new-failure",
+            integrationRef: "refs/heads/main");
+
+        await workspace.PrepareAsync(null!, default);
+
+        var exception = await Assert.ThrowsAsync<ReviewInfrastructureException>(
+            () => workspace.ExecutePlanAsync(default));
+
+        Assert.Equal("TmpMountTornDown", exception.Classification);
+        Assert.Equal("ReviewInfra", exception.Evidence!.Outcome);
+        Assert.DoesNotContain("NewTestFailures", exception.Message);
+    }
+
     [Fact]
     public void Retention_removes_only_expired_inactive_attempt_workspaces()
     {
