@@ -375,6 +375,26 @@ schwere Daten ins kalte Archiv <code>C:\Projects\agent-taskboard-archive</code> 
 geprüft (SHA-256 identisch). Heiße Task-Ordner von 9,2 GB auf 3,6 GB. Drei Befunde aus dem Produktionslauf gingen an
 AGT-2743: Auszug-Writer unbegrenzt (963 Auszüge mit 5,6 GB, vom Operator zurückgehalten, Regeneration aus dem kalten
 Archiv folgt), Laufzeit-Löschungen nicht committet, Reporting zählt Auszüge als heiße Daten.</p>
+<p class="stx stx-ok"><b>Stand 07.09. (R1 Nachbesserung):</b> Alle drei Produktionsbefunde sind behoben.
+(1) Der Auszug ist hart begrenzt: höchstens 20 Fehlerfenster à 51 Zeilen (die letzten), der Abschnitt
+„Timestamps and duration“ trägt nur noch erster/letzter Zeitstempel, Dauer und Lücken über einer Minute statt
+227.777 Zeilen, 100 Kommandos, Einzelzeilen auf 2.000 Zeichen gekürzt, Gesamtdeckel 256 KB mit Trunkierungsmarke.
+Auf einem 10-MiB-Log mit 6.000 Fehlerzeilen entstehen 179 KB statt zuvor bis zu 39,3 MB. Neu ist
+<code>retention re-excerpt --workspace &lt;path&gt; [--task KEY]</code>, das die Auszüge aus den kalten Payloads
+neu aufbaut und staged; der Operator führt es für die 963 zurückgehaltenen Auszüge aus.
+(2) Laufzeit-Löschungen werden committet: gelöschte <em>verfolgte</em> Dateien werden über <code>git ls-files</code>
+und den Index-Diff ermittelt und mit <code>git add -A</code> gestaged, unverfolgte und ignorierte Pfade werden
+übersprungen, der Glob-Pathspec entfällt. Ein Laufzeitproblem ist nur noch eine Warnung und bricht den
+Archiv-Commit nicht ab; der Exit-Code bleibt 0.
+(3) Reporting: <code>--project X</code> plant das Pseudo-Task <code>_workspace/_runtime</code> nicht mehr mit, und
+<code>excerptBytes</code> ist eine eigene Kennzahl neben <code>hotTaskBytes</code>, das die Auszüge nicht mehr
+mitzählt. Zusätzlich behoben: <code>backup-full</code> las bisher jede <code>archive-manifest.json</code> im Baum
+(auch Fremdkopien unter <code>results/</code>) und brach nach 20 Minuten ohne Ausgabe ab; Zeiger werden jetzt nur
+noch neben einer <code>task.json</code> gelesen, vor dem Bundle-Schritt validiert, defekte Zeiger sind Warnungen,
+und das Ergebnis nennt Schrittzeiten. Verifiziert auf einer produktionsnahen Fixture (numerische Buckets, Lane in
+task.json): plan, apply, re-excerpt, restore mit SHA-256-Abgleich, backup-full, verify-full, restore-full.
+Der Runner erreicht den Windows-Workspace nicht; der Operator führt <code>re-excerpt</code> und den nächsten
+Lauf dort aus und hängt die Zahlen an die Karte.</p>
 <ol>
   <li><b>Log nur am Run-Ende committen.</b> <code>WorkspaceEvidenceBatcher</code> und die Run-Grenzen schließen Klasse C
       während eines laufenden Runs aus; erst der Abschluss des Runs committet eine Version. Erwartete Wirkung: rund 90 %

@@ -17,7 +17,15 @@ public sealed record FullBackupInventory
     public int ColdPayloadCount { get; init; }
     public long TotalBytes { get; init; }
     public required string SetSha256 { get; init; }
+
+    /// <summary>Non-fatal findings, for example an unreadable archive pointer that was skipped.</summary>
+    public IReadOnlyList<string> Warnings { get; init; } = [];
+
+    /// <summary>Wall-clock per step, so a slow run can be attributed without guessing.</summary>
+    public IReadOnlyList<FullBackupStep> Steps { get; init; } = [];
 }
+
+public sealed record FullBackupStep(string Name, long Milliseconds);
 
 public sealed record FullBackupComplete(int SchemaVersion, DateTimeOffset CompletedAt, string SetSha256);
 
@@ -34,31 +42,31 @@ public sealed class FileTreeFullBackupService
         outputPath = Path.GetFullPath(outputPath);
         if (IsInside(outputPath, workspacePath))
             throw new ArgumentException("Full backup output must be outside the workspace repository.", nameof(outputPath));
+        // Pointers are validated before the expensive steps: a bad pointer used to surface only after the
+        // bundle had run for 20 minutes, and then left an empty output directory behind.
+        var (coldSources, warnings, taskCount) = await ReadColdReferencesAsync(workspacePath, cancellationToken);
+        foreach (var source in coldSources)
+            if (!File.Exists(source))
+                throw new InvalidDataException($"Referenced cold archive file is missing: {source}");
+
         var backup = Path.Combine(outputPath, "full", DateTimeOffset.UtcNow.ToString("yyyyMMddTHHmmssfffZ"));
         Directory.CreateDirectory(backup);
+        var steps = new List<FullBackupStep>();
+        var stopwatch = Stopwatch.StartNew();
         try
         {
             var bundle = Path.Combine(backup, "workspace.bundle");
             await RunGitAsync(workspacePath, ["bundle", "create", bundle, "--all"], cancellationToken);
+            steps.Add(Step("bundle", stopwatch));
 
             var untrackedRoot = Path.Combine(backup, "untracked");
             var untracked = (await RunGitAsync(workspacePath, ["ls-files", "--others", "--exclude-standard", "-z"], cancellationToken))
                 .Split('\0', StringSplitOptions.RemoveEmptyEntries);
             foreach (var relative in untracked)
                 CopyFileSafe(workspacePath, relative, untrackedRoot, relative);
+            steps.Add(Step("evidence-copy", stopwatch));
 
             var coldRoot = Path.Combine(backup, "cold");
-            var coldSources = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var pointerPath in Directory.EnumerateFiles(workspacePath, "archive-manifest.json", SearchOption.AllDirectories))
-            {
-                var pointer = JsonSerializer.Deserialize<ArchivePointer>(await File.ReadAllTextAsync(pointerPath, cancellationToken), JsonOptions);
-                if (pointer is null) continue;
-                foreach (var transition in pointer.Archives)
-                {
-                    coldSources.Add(Path.GetFullPath(transition.ManifestPath));
-                    coldSources.Add(Path.GetFullPath(transition.PayloadPath));
-                }
-            }
             foreach (var source in coldSources)
             {
                 if (!File.Exists(source))
@@ -66,21 +74,23 @@ public sealed class FileTreeFullBackupService
                 var relative = ArchiveRelativePath(source);
                 CopyFileSafe(Path.GetDirectoryName(source)!, Path.GetFileName(source), coldRoot, relative);
             }
+            steps.Add(Step("manifests", stopwatch));
 
             var files = await InventoryAsync(backup, cancellationToken);
             var setHash = SetHash(files);
+            steps.Add(Step("hashing", stopwatch));
             var inventory = new FullBackupInventory
             {
                 CreatedAt = DateTimeOffset.UtcNow,
                 WorkspaceName = Path.GetFileName(workspacePath),
                 Files = files,
-                TaskCount = Directory.Exists(Path.Combine(workspacePath, "projects"))
-                    ? Directory.EnumerateFiles(Path.Combine(workspacePath, "projects"), "task.json", SearchOption.AllDirectories).Count()
-                    : 0,
+                TaskCount = taskCount,
                 ColdPayloadCount = files.Count(file => file.RelativePath.StartsWith("cold/", StringComparison.Ordinal)
                                                       && file.RelativePath.EndsWith("payload.zip", StringComparison.Ordinal)),
                 TotalBytes = files.Sum(file => file.Size),
                 SetSha256 = setHash,
+                Warnings = warnings,
+                Steps = steps,
             };
             await File.WriteAllTextAsync(Path.Combine(backup, "inventory.json"),
                 JsonSerializer.Serialize(inventory, JsonOptions) + Environment.NewLine, cancellationToken);
@@ -135,15 +145,76 @@ public sealed class FileTreeFullBackupService
         await RewritePointersAsync(destinationPath, coldSource, coldDestination, cancellationToken);
     }
 
+    /// <summary>
+    /// Collects the cold files the workspace state references. Only pointers sitting next to a
+    /// <c>task.json</c> count; a foreign or malformed <c>archive-manifest.json</c> becomes a warning.
+    /// </summary>
+    private static async Task<(List<string> ColdSources, List<string> Warnings, int TaskCount)> ReadColdReferencesAsync(
+        string workspacePath,
+        CancellationToken cancellationToken)
+    {
+        var coldSources = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var warnings = new List<string>();
+        var taskCount = 0;
+        foreach (var (_, pointer, warning) in await ReadTaskPointersAsync(workspacePath, cancellationToken))
+        {
+            taskCount++;
+            if (warning is not null) warnings.Add(warning);
+            if (pointer is null) continue;
+            foreach (var transition in pointer.Archives)
+            {
+                coldSources.Add(Path.GetFullPath(transition.ManifestPath));
+                coldSources.Add(Path.GetFullPath(transition.PayloadPath));
+            }
+        }
+        return (coldSources.Order(StringComparer.OrdinalIgnoreCase).ToList(), warnings, taskCount);
+    }
+
+    private static async Task<List<(string PointerPath, ArchivePointer? Pointer, string? Warning)>> ReadTaskPointersAsync(
+        string workspacePath,
+        CancellationToken cancellationToken)
+    {
+        var result = new List<(string, ArchivePointer?, string?)>();
+        foreach (var folder in FileTreeRetentionStore.EnumerateTaskFolders(workspacePath))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var pointerPath = Path.Combine(folder.TaskPath, "archive-manifest.json");
+            if (!File.Exists(pointerPath))
+            {
+                result.Add((pointerPath, null, null));
+                continue;
+            }
+            try
+            {
+                var pointer = JsonSerializer.Deserialize<ArchivePointer>(
+                    await File.ReadAllTextAsync(pointerPath, cancellationToken), JsonOptions);
+                result.Add(pointer is null
+                    ? (pointerPath, null, $"archive pointer is empty and was skipped: {pointerPath}")
+                    : (pointerPath, pointer, null));
+            }
+            catch (JsonException exception)
+            {
+                result.Add((pointerPath, null, $"archive pointer is unreadable and was skipped: {pointerPath} ({exception.Message})"));
+            }
+        }
+        return result;
+    }
+
+    private static FullBackupStep Step(string name, Stopwatch stopwatch)
+    {
+        var step = new FullBackupStep(name, stopwatch.ElapsedMilliseconds);
+        stopwatch.Restart();
+        return step;
+    }
+
     private static async Task RewritePointersAsync(
         string workspace,
         string oldColdRoot,
         string newColdRoot,
         CancellationToken cancellationToken)
     {
-        foreach (var path in Directory.EnumerateFiles(workspace, "archive-manifest.json", SearchOption.AllDirectories))
+        foreach (var (path, pointer, _) in await ReadTaskPointersAsync(workspace, cancellationToken))
         {
-            var pointer = JsonSerializer.Deserialize<ArchivePointer>(await File.ReadAllTextAsync(path, cancellationToken), JsonOptions);
             if (pointer is null) continue;
             var rewritten = pointer.Archives.Select(transition => transition with
             {

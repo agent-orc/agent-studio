@@ -117,7 +117,11 @@ public sealed record RetentionRunResult(
     RetentionPlan Plan,
     int AppliedActions,
     long AppliedBytes,
-    IReadOnlyList<string> Errors);
+    IReadOnlyList<string> Errors)
+{
+    /// <summary>Non-fatal findings. A run that only produced warnings still succeeds.</summary>
+    public IReadOnlyList<string> Warnings { get; init; } = [];
+}
 
 public sealed class RetentionExecutor(IRetentionStore store)
 {

@@ -31,28 +31,37 @@ public sealed class FileTreeRetentionStore : IRetentionStore
         if (!Directory.Exists(WorkspacePath))
             throw new DirectoryNotFoundException($"Workspace does not exist: {WorkspacePath}");
         var result = new List<RetentionTaskInventory>();
-        var projectsPath = Path.Combine(WorkspacePath, "projects");
-        if (Directory.Exists(projectsPath))
+        foreach (var folder in EnumerateTaskFolders(WorkspacePath))
         {
-            foreach (var projectPath in Directory.EnumerateDirectories(projectsPath).Order(StringComparer.OrdinalIgnoreCase))
-            {
-                var tasksPath = Path.Combine(projectPath, "tasks");
-                if (!Directory.Exists(tasksPath)) continue;
-                foreach (var bucket in Directory.EnumerateDirectories(tasksPath).Order(StringComparer.OrdinalIgnoreCase))
-                foreach (var taskPath in Directory.EnumerateDirectories(bucket).Order(StringComparer.OrdinalIgnoreCase))
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    var taskJson = Path.Combine(taskPath, "task.json");
-                    if (!File.Exists(taskJson)) continue;
-                    result.Add(await InventoryTaskAsync(projectPath, bucket, taskPath, taskJson, cancellationToken));
-                }
-            }
+            cancellationToken.ThrowIfCancellationRequested();
+            result.Add(await InventoryTaskAsync(
+                folder.ProjectPath, folder.BucketPath, folder.TaskPath, Path.Combine(folder.TaskPath, "task.json"), cancellationToken));
         }
 
         var runtime = EnumerateWorkspaceRuntime();
         if (runtime.Count > 0)
             result.Add(new RetentionTaskInventory("_workspace", "_runtime", "_runtime", "runtime", null, ".", runtime));
         return result;
+    }
+
+    /// <summary>
+    /// Walks exactly <c>projects/&lt;project&gt;/tasks/&lt;bucket&gt;/&lt;task&gt;</c> and no deeper. Anything that
+    /// recurses the whole tree also finds foreign files a task carries under <c>results/</c> or
+    /// <c>attachments/</c> - fixture workspaces, nested archives - and mistakes them for real task data.
+    /// </summary>
+    public static IEnumerable<TaskFolder> EnumerateTaskFolders(string workspacePath)
+    {
+        var projectsPath = Path.Combine(workspacePath, "projects");
+        if (!Directory.Exists(projectsPath)) yield break;
+        foreach (var projectPath in Directory.EnumerateDirectories(projectsPath).Order(StringComparer.OrdinalIgnoreCase))
+        {
+            var tasksPath = Path.Combine(projectPath, "tasks");
+            if (!Directory.Exists(tasksPath)) continue;
+            foreach (var bucketPath in Directory.EnumerateDirectories(tasksPath).Order(StringComparer.OrdinalIgnoreCase))
+            foreach (var taskPath in Directory.EnumerateDirectories(bucketPath).Order(StringComparer.OrdinalIgnoreCase))
+                if (File.Exists(Path.Combine(taskPath, "task.json")))
+                    yield return new TaskFolder(projectPath, bucketPath, taskPath);
+        }
     }
 
     public Task<Stream> ReadFileAsync(
@@ -223,6 +232,98 @@ public sealed class FileTreeRetentionStore : IRetentionStore
             await WriteJsonAtomicallyAsync(transition.ManifestPath, manifest with { RestoredAt = DateTimeOffset.UtcNow }, cancellationToken);
         }
         await WriteStubAsync(task, pointer with { RestoredAt = DateTimeOffset.UtcNow }, cancellationToken);
+    }
+
+    /// <summary>
+    /// Rebuilds the hot excerpts from the cold payloads. Needed after an excerpt-writer fix, because the
+    /// originals are no longer in the hot tree and only the archive still holds the full content.
+    /// </summary>
+    public async Task<IReadOnlyList<ReExcerptResult>> ReExcerptAsync(
+        string? taskKey = null,
+        CancellationToken cancellationToken = default)
+    {
+        var results = new List<ReExcerptResult>();
+        var tasks = (await EnumerateTasksAndFilesAsync(cancellationToken))
+            .Where(task => taskKey is null || string.Equals(task.TaskKey, taskKey, StringComparison.OrdinalIgnoreCase));
+
+        foreach (var task in tasks)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ArchivePointer? pointer;
+            try
+            {
+                pointer = await ReadPointerAsync(task, cancellationToken);
+            }
+            catch (Exception exception)
+            {
+                results.Add(ReExcerptResult.Failed(task, $"unreadable archive pointer: {exception.Message}"));
+                continue;
+            }
+            if (pointer is null) continue;
+
+            foreach (var transition in pointer.Archives.OrderBy(item => item.ArchivedAt))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    results.Add(await ReExcerptTransitionAsync(task, transition, cancellationToken));
+                }
+                catch (Exception exception)
+                {
+                    results.Add(ReExcerptResult.Failed(task, $"stage {transition.Stage}: {exception.Message}"));
+                }
+            }
+        }
+        return results;
+    }
+
+    private async Task<ReExcerptResult> ReExcerptTransitionAsync(
+        RetentionTaskInventory task,
+        ArchiveTransition transition,
+        CancellationToken cancellationToken)
+    {
+        var manifest = JsonSerializer.Deserialize<ArchiveManifest>(
+                           await File.ReadAllTextAsync(transition.ManifestPath, cancellationToken), JsonOptions)
+                       ?? throw new InvalidDataException($"Invalid archive manifest: {transition.ManifestPath}");
+
+        var staging = Path.Combine(Path.GetTempPath(), "retention-re-excerpt-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(staging);
+        try
+        {
+            var files = new List<RetentionFile>();
+            using (var zip = ZipFile.OpenRead(transition.PayloadPath))
+            {
+                foreach (var file in manifest.Files)
+                {
+                    var entry = zip.GetEntry(file.RelativePath);
+                    if (entry is null) continue;
+                    var destination = Path.GetFullPath(Path.Combine(staging, file.RelativePath));
+                    if (!IsInside(destination, staging))
+                        throw new InvalidDataException($"Archive entry escapes staging root: {file.RelativePath}");
+                    Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+                    await using (var input = entry.Open())
+                    await using (var output = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None))
+                        await input.CopyToAsync(output, cancellationToken);
+                    files.Add(new RetentionFile(file.RelativePath, file.Size,
+                        new FileInfo(destination).LastWriteTimeUtc, _classifier.Classify(file.RelativePath)));
+                }
+            }
+
+            if (files.Count == 0)
+                return ReExcerptResult.Failed(task, $"stage {transition.Stage}: payload holds no manifest files");
+
+            var excerpt = await _excerptWriter.WriteAsync(staging, files, cancellationToken);
+            var excerptPath = Path.Combine(TaskRoot(task), $"retention-excerpt-stage-{transition.Stage}.md");
+            var previous = File.Exists(excerptPath) ? new FileInfo(excerptPath).Length : 0;
+            await File.WriteAllTextAsync(excerptPath, excerpt, cancellationToken);
+            return new ReExcerptResult(task.Project, task.TaskKey, transition.Stage,
+                Path.GetRelativePath(WorkspacePath, excerptPath).Replace('\\', '/'),
+                previous, new FileInfo(excerptPath).Length, null);
+        }
+        finally
+        {
+            if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);
+        }
     }
 
     private async Task<RetentionTaskInventory> InventoryTaskAsync(
