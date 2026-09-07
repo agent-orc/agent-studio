@@ -1235,12 +1235,32 @@ public class GitService
             }
         }
 
-        using var _t = GitProcessTelemetry.BeginRequest("git/inventory", _logger);
+        // AGT-2726: the request path reads the GitStateIndex snapshot and is
+        // measured under "git/inventory". Everything that still reaches this
+        // computation is background work, so it carries its own label and the
+        // two can never be confused in a rollup.
+        using var _t = GitProcessTelemetry.BeginRequest("git/inventory-compute", _logger);
         var fresh = ComputeProjectInventory(projectName);
         lock (_inventoryLock)
         {
             _inventoryCache[projectName] = (DateTime.UtcNow, fresh);
         }
+        return fresh;
+    }
+
+    /// <summary>
+    /// Computes one project's inventory unconditionally and refreshes the TTL
+    /// cache with the result. This is the capture step
+    /// <see cref="GitStateIndex"/> calls on its own thread; request paths read
+    /// the index snapshot instead and never reach a git spawn through here.
+    /// </summary>
+    public GitProjectInventory ComputeProjectInventoryUncached(string projectName)
+    {
+        if (string.IsNullOrWhiteSpace(projectName))
+            return EmptyInventory("", null, "projectName is required");
+
+        var fresh = ComputeProjectInventory(projectName);
+        lock (_inventoryLock) _inventoryCache[projectName] = (DateTime.UtcNow, fresh);
         return fresh;
     }
 

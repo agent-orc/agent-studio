@@ -1,0 +1,83 @@
+<section class="perf" data-testid="workspace-performance-panel">
+  @if (error(); as message) {
+    <p class="perf__message perf__message--error" data-testid="workspace-performance-error">{{ message }}</p>
+  } @else if (loading()) {
+    <p class="perf__message">Reading the last hour…</p>
+  } @else {
+    @if (warnings().length > 0) {
+      <ul class="perf__warnings" data-testid="workspace-performance-warnings">
+        @for (warning of warnings(); track warning.code) {
+          <li class="perf__warning">{{ warning.message }}</li>
+        }
+      </ul>
+    }
+
+    <div class="perf__rate" data-testid="workspace-performance-spawn-rate">
+      <span class="perf__rate-value">{{ spawnsPerMinute() | number: '1.0-1' }}</span>
+      <span class="perf__rate-label">git processes per minute over the last hour</span>
+    </div>
+
+    <h3 class="perf__heading">Endpoints</h3>
+    @if (endpoints().length === 0) {
+      <p class="perf__message">No requests were measured in the last hour.</p>
+    } @else {
+      <table class="perf__table" data-testid="workspace-performance-endpoints">
+        <thead>
+          <tr>
+            <th scope="col">Request</th>
+            <th scope="col" class="perf__num">Calls</th>
+            <th scope="col" class="perf__num">p50</th>
+            <th scope="col" class="perf__num">p95</th>
+            <th scope="col" class="perf__num">Git spawns</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (endpoint of endpoints(); track endpoint.label) {
+            <tr>
+              <td>{{ endpoint.label }}</td>
+              <td class="perf__num">{{ endpoint.calls }}</td>
+              <td class="perf__num">{{ ms(endpoint.p50Ms) }}</td>
+              <td class="perf__num">{{ ms(endpoint.p95Ms) }}</td>
+              <td class="perf__num">{{ endpoint.spawns }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    }
+
+    <h3 class="perf__heading">Indexed repositories</h3>
+    @if (repositories().length === 0) {
+      <p class="perf__message">No repository has been indexed yet.</p>
+    } @else {
+      <table class="perf__table" data-testid="workspace-performance-repositories">
+        <thead>
+          <tr>
+            <th scope="col">Repository</th>
+            <th scope="col">Projects</th>
+            <th scope="col">Indexed</th>
+            <th scope="col">Last trigger</th>
+            <th scope="col" class="perf__num">Last run</th>
+            <th scope="col" class="perf__num">Spawns</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (repository of repositories(); track repository.repositoryRoot) {
+            <tr>
+              <td class="perf__path">{{ repository.repositoryRoot }}</td>
+              <td>{{ repository.projectNames.join(', ') }}</td>
+              <td>
+                {{ age(repository) }}
+                @if (repository.refreshing) {
+                  <span class="perf__pending">· indexing</span>
+                }
+              </td>
+              <td>{{ repository.lastTrigger ?? 'none' }}</td>
+              <td class="perf__num">{{ ms(repository.lastRunMs) }}</td>
+              <td class="perf__num">{{ repository.lastRunSpawns }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    }
+  }
+</section>

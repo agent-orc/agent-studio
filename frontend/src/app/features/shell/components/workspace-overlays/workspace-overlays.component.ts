@@ -3,6 +3,7 @@ import { ChangeDetectionStrategy, Component, DestroyRef, effect, inject, input, 
 import { WorkspaceOverlaysService } from '../../state/workspace-overlays.service';
 import type { WorkspaceSettingsSection } from '../../state/workspace-overlays.service';
 import { WorkspaceScreenshotsComponent } from '../../../screenshots';
+import { WorkspacePerformancePanelComponent } from '../workspace-performance-panel/workspace-performance-panel.component';
 import { TokenUsageSectionComponent } from '../../../tokens';
 import {
   CliAdminPanelComponent,
@@ -71,6 +72,7 @@ interface SettingsRailItem {
     NgTemplateOutlet,
     TokenUsageSectionComponent,
     WorkspaceScreenshotsComponent,
+    WorkspacePerformancePanelComponent,
     CliAdminPanelComponent,
     CliWorkingMemoryPanelComponent,
     CliSessionsPanelComponent,
@@ -119,6 +121,7 @@ export class WorkspaceOverlaysComponent {
     { key: 'task-server', label: 'Task Server', description: 'Connected URL, workspace store, evidence git, client registry, and management sweeps.', icon: 'file', group: 'global' },
     { key: 'remote-hosts', label: 'Execution Hosts', description: 'Local and remote CLI execution: heartbeat, vitals, quota, and lifecycle.', icon: 'activity', group: 'global' },
     { key: 'orchestrator', label: 'Orchestrator', description: 'Platform-global supervisor, meta-cycle, and auto-intervention lifecycle flags.', icon: 'bot', group: 'global' },
+    { key: 'performance', label: 'Performance', description: 'Request latency, git spawn rate, and how old each repository index is.', icon: 'activity', group: 'global' },
     { key: 'caps', label: 'CLI Management', description: 'What CLIs and models are available, their fallback routes, usage caps and completion contracts.', icon: 'cli', group: 'workspace' },
     { key: 'cli-sessions', label: 'CLI sessions', description: 'Per-CLI per-project native session inventory.', icon: 'list', group: 'workspace' },
     { key: 'cli-paths', label: 'CLI paths', description: 'Where each CLI lives on disk: executable path and known project roots.', icon: 'link', group: 'workspace' },
@@ -197,6 +200,7 @@ export class WorkspaceOverlaysComponent {
       case 'remote-hosts': return 'workspace-remote-hosts-overlay';
       case 'orchestrator': return 'orchestrator-config-overlay';
       case 'working-memory': return 'workspace-working-memory-overlay';
+      case 'performance': return 'workspace-performance-overlay';
       case 'overview': return 'workspace-settings-overview-panel';
     }
   }

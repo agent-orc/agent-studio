@@ -37,7 +37,8 @@ export type WorkspaceSettingsSection =
   | 'working-memory'
   | 'prompts'
   | 'tokens'
-  | 'screenshots';
+  | 'screenshots'
+  | 'performance';
 
 export type WorkspaceTokenUsagePage = 'workspace' | 'claude' | 'codex';
 
@@ -225,6 +226,7 @@ export class WorkspaceOverlaysService {
       case '/workspace/settings/project-sources': return 'overview';
       case '/workspace/settings/orchestrator': return 'orchestrator';
       case '/workspace/settings/working-memory': return 'working-memory';
+      case '/workspace/settings/performance': return 'performance';
       // Retired 'summary' aliases resolve to the overview (migration: no crash).
       case '/workspace/summary':
       case '/summary':
@@ -258,6 +260,7 @@ export class WorkspaceOverlaysService {
       case 'remote-hosts': return '/workspace/settings/execution-hosts';
       case 'orchestrator': return '/workspace/settings/orchestrator';
       case 'working-memory': return '/workspace/settings/working-memory';
+      case 'performance': return '/workspace/settings/performance';
       case 'overview': return '/workspace/settings';
     }
   }
@@ -277,6 +280,7 @@ export class WorkspaceOverlaysService {
     '/workspace/settings/project-sources',
     '/workspace/settings/orchestrator',
     '/workspace/settings/working-memory',
+    '/workspace/settings/performance',
     '/workspace/settings/tokens',
     '/workspace/settings/tokens/claude',
     '/workspace/settings/tokens/codex',

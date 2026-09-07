@@ -4,6 +4,7 @@ export { StatusBarComponent } from './components/status-bar/status-bar';
 export { WorkspaceBannerComponent } from './components/workspace-banner/workspace-banner';
 export { WorkspaceOverlaysComponent } from './components/workspace-overlays/workspace-overlays.component';
 export { WorkspaceManagementComponent } from './components/workspace-management/workspace-management.component';
+export { WorkspacePerformancePanelComponent } from './components/workspace-performance-panel/workspace-performance-panel.component';
 export { UiPreferencesService } from './state/ui-preferences.service';
 export { WorkspaceOverlaysService } from './state/workspace-overlays.service';
 export type { WorkspaceSettingsSection } from './state/workspace-overlays.service';

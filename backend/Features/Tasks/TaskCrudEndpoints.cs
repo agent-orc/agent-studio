@@ -71,12 +71,13 @@ public static class TaskCrudEndpoints
             return Results.Ok(new TaskReferenceStatusResponse(items!));
         });
 
-        group.MapGet("/", (string? project, bool? includeFixtures, HttpContext ctx, TaskScannerService scanner, CliRouter router, TaskRunnerService runners, ITokenAggregator tokens, IConfiguration configuration, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, AgentStudio.Registry.ProjectRegistry projects, ILoggerFactory loggerFactory) =>
+        group.MapGet("/", (string? project, bool? includeFixtures, HttpContext ctx, TaskScannerService scanner, CliRouter router, TaskRunnerService runners, ITokenAggregator tokens, IConfiguration configuration, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, AgentStudio.Registry.ProjectRegistry projects, GitStateIndex gitState, ILoggerFactory loggerFactory) =>
         {
             using var gitTelemetry = GitProcessTelemetry.BeginRequest(
                 "tasks/list",
                 loggerFactory.CreateLogger("TaskListProjection"),
                 includeNested: true);
+            GitStateStampHeader.Apply(ctx, gitState.Stamp());
             var projectRequested = !string.IsNullOrWhiteSpace(project);
             var projectWatchPath = ResolveWatchPath(projects, project, watchPath: null);
             if (projectRequested && string.IsNullOrWhiteSpace(projectWatchPath))
@@ -89,7 +90,9 @@ public static class TaskCrudEndpoints
             var tokenLookup = BuildTokenLookup(raw, tokens);
             var verdictLookup = BuildOrchestratorVerdictLookup(raw, configuration);
             var dependencyLookups = BuildDependencyGraphLookups(raw, scanner);
-            var gitLookup = gitProjection.ReadCacheOnly(raw, scanner.SnapshotGeneration);
+            var gitLookup = gitProjection.ReadCacheOnly(
+                raw,
+                TaskListGitProjectionCache.CombineVersions(scanner.SnapshotGeneration, gitState.Generation));
             var liveLookup = liveStatus.BuildLookup(raw);
             var jobs = raw.Select(job => WithRuntime(job, router, runners, tokenLookup, verdictLookup, dependencyLookups.WaitsOn, dependencyLookups.TransitiveWaiters))
                           .WithLiveStatus(liveLookup)
@@ -112,18 +115,21 @@ public static class TaskCrudEndpoints
             return Results.Ok(jobs);
         });
 
-        group.MapGet("/grouped", (bool? includeFixtures, HttpContext context, TaskScannerService scanner, CliRouter router, TaskRunnerService runners, ITokenAggregator tokens, IConfiguration configuration, ProjectSettingsService projectSettings, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, AgentStudio.Registry.ProjectRegistry projects, ILoggerFactory loggerFactory) =>
+        group.MapGet("/grouped", (bool? includeFixtures, HttpContext context, TaskScannerService scanner, CliRouter router, TaskRunnerService runners, ITokenAggregator tokens, IConfiguration configuration, ProjectSettingsService projectSettings, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, AgentStudio.Registry.ProjectRegistry projects, GitStateIndex gitState, ILoggerFactory loggerFactory) =>
         {
             using var gitTelemetry = GitProcessTelemetry.BeginRequest(
                 "tasks/grouped",
                 loggerFactory.CreateLogger("TaskListProjection"),
                 includeNested: true);
+            GitStateStampHeader.Apply(context, gitState.Stamp());
             var raw = ProjectAccessAuthorization.FilterTasks(context, scanner.ScanAllJobs(), projects).ToList();
             if (includeFixtures != true) raw = raw.Where(j => !j.Fixture).ToList();
             var tokenLookup = BuildTokenLookup(raw, tokens);
             var verdictLookup = BuildOrchestratorVerdictLookup(raw, configuration);
             var dependencyLookups = BuildDependencyGraphLookups(raw, scanner);
-            var gitLookup = gitProjection.ReadCacheOnly(raw, scanner.SnapshotGeneration);
+            var gitLookup = gitProjection.ReadCacheOnly(
+                raw,
+                TaskListGitProjectionCache.CombineVersions(scanner.SnapshotGeneration, gitState.Generation));
             var liveLookup = liveStatus.BuildLookup(raw);
             var jobs = raw.Select(job => WithRuntime(job, router, runners, tokenLookup, verdictLookup, dependencyLookups.WaitsOn, dependencyLookups.TransitiveWaiters))
                           .WithLiveStatus(liveLookup)
@@ -196,6 +202,13 @@ public static class TaskCrudEndpoints
                 // kept (always []) so pre-existing clients that read
                 // grouped.archive don't NPE on a missing field.
                 Archive = Array.Empty<TaskInfo>()
+                // AGT-2726 deliberately does NOT add the git-state stamp as a
+                // field here. Clients read this object as a lane map - the
+                // Explorer's project rows iterate Object.entries(grouped) and
+                // treat every value as a task array - so a scalar sibling is a
+                // breaking change, not an additive one. The stamp rides the
+                // X-Git-State-* response headers instead, which is uniform
+                // across every endpoint that reads indexed git state.
             };
             return Results.Ok(grouped);
         });
@@ -301,13 +314,15 @@ public static class TaskCrudEndpoints
                 withRuntime = withRuntime with { Info = withRuntime.Info with { LiveStatus = currentLiveStatus } };
             // AGT-2046: fold the batched merge signal onto the detail's info too, so
             // a card opened from the board keeps the same [develop|main] indicator.
-            var mergeLookup = mergeStatus.BuildLookup(new[] { withRuntime.Info });
+            // AGT-2726: cache-only. The reachability sets belong to the background
+            // git index; a detail open reads them, it never computes them.
+            var mergeLookup = mergeStatus.BuildLookupCacheOnly(new[] { withRuntime.Info });
             if (mergeLookup.TryGetValue(withRuntime.Info.TaskKey, out var signal))
                 withRuntime = withRuntime with { Info = withRuntime.Info with { MergeSignal = signal } };
             // AGT-2202: fold the integration verdict so a completed/archived card
             // opened from the board keeps the same "integrated / not integrated"
             // badge as its board card.
-            var integrationLookup = integrationStatus.BuildLookup(new[] { withRuntime.Info });
+            var integrationLookup = integrationStatus.BuildLookupCacheOnly(new[] { withRuntime.Info });
             if (integrationLookup.TryGetValue(withRuntime.Info.TaskKey, out var integration))
                 withRuntime = withRuntime with { Info = withRuntime.Info with { Integration = integration } };
             // PUB-1: fold the per-task publish chip signal so a completed card opened

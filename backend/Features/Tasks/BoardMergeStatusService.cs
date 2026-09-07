@@ -79,6 +79,20 @@ public sealed class BoardMergeStatusService
     /// reading for that repo.
     /// </summary>
     public Dictionary<string, TaskMergeSignal> BuildLookup(IReadOnlyCollection<TaskInfo> jobs)
+        => BuildLookup(jobs, cacheOnly: false);
+
+    /// <summary>
+    /// The same projection restricted to reachability sets the background index
+    /// has already computed. A repository with no warm set contributes no
+    /// signal instead of forking git, so a request path can fold the merge chip
+    /// without ever waiting on a computation (AGT-2726).
+    /// </summary>
+    public Dictionary<string, TaskMergeSignal> BuildLookupCacheOnly(IReadOnlyCollection<TaskInfo> jobs)
+        => BuildLookup(jobs, cacheOnly: true);
+
+    private Dictionary<string, TaskMergeSignal> BuildLookup(
+        IReadOnlyCollection<TaskInfo> jobs,
+        bool cacheOnly)
     {
         var result = new Dictionary<string, TaskMergeSignal>(StringComparer.Ordinal);
         if (jobs.Count == 0) return result;
@@ -103,17 +117,27 @@ public sealed class BoardMergeStatusService
         }
 
         var reaches = new ConcurrentDictionary<RepoBranchKey, RepoReachability>();
-        Parallel.ForEach(
-            byRepo,
-            new ParallelOptions { MaxDegreeOfParallelism = ReadOnlyGitConcurrencyLimiter.MaxConcurrency },
-            pair =>
+        if (cacheOnly)
+        {
+            foreach (var pair in byRepo)
             {
-                reaches[pair.Key] = GetReachability(pair.Key);
-            });
+                if (TryPeekReachability(pair.Key, out var warm)) reaches[pair.Key] = warm;
+            }
+        }
+        else
+        {
+            Parallel.ForEach(
+                byRepo,
+                new ParallelOptions { MaxDegreeOfParallelism = ReadOnlyGitConcurrencyLimiter.MaxConcurrency },
+                pair =>
+                {
+                    reaches[pair.Key] = GetReachability(pair.Key);
+                });
+        }
 
         foreach (var (repoBranch, repoJobs) in byRepo)
         {
-            var reach = reaches[repoBranch];
+            if (!reaches.TryGetValue(repoBranch, out var reach)) continue;
 
             foreach (var job in repoJobs)
             {
@@ -151,10 +175,16 @@ public sealed class BoardMergeStatusService
     /// history page, then renders every commit from in-memory set membership.
     /// This is intentionally the shared resolver, not a second ancestry path.
     /// </summary>
+    /// <param name="cacheOnly">
+    /// When set, an unwarmed repository yields no presence at all instead of
+    /// computing one. The inventory request path passes this so it can render
+    /// from the background index without forking git (AGT-2726).
+    /// </param>
     public Dictionary<string, CommitBranchPresence> BuildCommitPresence(
         string projectName,
         string repoRoot,
-        IEnumerable<string> commitShas)
+        IEnumerable<string> commitShas,
+        bool cacheOnly = false)
     {
         var shas = commitShas
             .Where(ReviewSubjectStore.IsValidResultSha)
@@ -164,7 +194,16 @@ public sealed class BoardMergeStatusService
 
         using var _t = GitProcessTelemetry.BeginRequest("git/commit-presence", _logger);
         var configured = _settings.Get(projectName).IntegrationBranch;
-        var reach = GetReachability(new RepoBranchKey(repoRoot, configured));
+        var key = new RepoBranchKey(repoRoot, configured);
+        RepoReachability reach;
+        if (cacheOnly)
+        {
+            if (!TryPeekReachability(key, out reach)) return [];
+        }
+        else
+        {
+            reach = GetReachability(key);
+        }
         return shas.ToDictionary(
             sha => sha,
             sha => new CommitBranchPresence(
@@ -195,7 +234,7 @@ public sealed class BoardMergeStatusService
     private RepoReachability ComputeReachability(string root, string configuredBranch)
     {
         Interlocked.Increment(ref _computationCount);
-        return ReadOnlyGitConcurrencyLimiter.Run(() =>
+        return ReadOnlyGitConcurrencyLimiter.Run(root, () =>
         {
             // Branch resolution is part of the cached computation. Previously
             // every board request resolved it before checking the reachability
@@ -218,6 +257,15 @@ public sealed class BoardMergeStatusService
                 release,
                 integrationSucceeded && releaseSucceeded);
         });
+    }
+
+    private bool TryPeekReachability(RepoBranchKey key, out RepoReachability reachability)
+    {
+        var cacheKey = $"{key.Root}\0{key.Branch}";
+        var refFingerprint = ReadOnlyGitRefFingerprint.CaptureDetailed(
+            key.Root,
+            [key.Branch, ReleaseBranch]);
+        return _cache.TryPeekVersioned(cacheKey, refFingerprint.Value, out reachability);
     }
 
     private RepoReachability GetReachability(RepoBranchKey key)

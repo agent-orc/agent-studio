@@ -641,15 +641,57 @@ cannot erase an operator decision.
   Missing commit timestamps disable this fallback rather than reusing historical
   key-only evidence. Planned and running matches are pending evidence; an older
   green run remains visible as `diff not included` and never turns the card green.
-- `GET /api/tasks` and `GET /api/tasks/grouped` never run a Git process on the
-  request path. Merge, integration, publish, and test-evidence fields come from
-  the latest completed in-memory `TaskListGitProjectionCache` snapshot. A cold
-  read may omit those additive fields while it queues one background refresh;
-  later reads fold in the completed snapshot. Input changes and a two-second
-  refresh interval queue a new single-flight refresh without making the request
-  wait. `GitProcessTelemetry` records `tasks/list` and `tasks/grouped` separately
-  from `tasks/list-refresh`, so request rollups must remain at zero spawns even
-  when HEAD churn causes the background refresh to recompute Git projections.
+- `GET /api/tasks`, `GET /api/tasks/grouped`, `GET /api/tasks/{jobId}`, and
+  `GET /api/git/inventory` never run a Git process on the request path. Merge,
+  integration, publish, and test-evidence fields come from the latest completed
+  in-memory `TaskListGitProjectionCache` snapshot; branch, worktree, and
+  inventory facts come from the `GitStateIndex` capture. A cold read may omit
+  those additive fields while the background work runs; later reads fold in the
+  completed snapshot. A ref move invalidates the projection through
+  `GitStateIndex.Generation`, and a fifteen-second safety interval covers the
+  projection's non-Git inputs; neither makes the request wait.
+  `GitProcessTelemetry` records `tasks/list` and `tasks/grouped` separately from
+  `tasks/list-refresh` and `git/index-run`, so request rollups must remain at
+  zero spawns even when HEAD churn causes the background work to recompute Git
+  projections.
+
+## Board state source
+
+Board state is Git-derived, and every derivation happens in the background. One
+`GitStateIndex` per backend owns the repositories in the workspace: HEAD, branch
+tips, the worktree list, and each project's inventory. It is the only component
+that forks Git for those reads.
+
+- **Triggers.** A recursive `FileSystemWatcher` on each repository's shared Git
+  metadata directory (`HEAD`, `refs/`, `packed-refs`, `reftable/`, and
+  `worktrees/*/HEAD`, which covers every linked task worktree), plus the Task
+  Server's own move and bulk-change events, plus a five-minute safety sweep for
+  layouts a watcher cannot observe. Lock files and churn such as `index`,
+  `logs/`, and `COMMIT_EDITMSG` are classified as no trigger.
+- **Coalescing.** A 400 ms debounce folds a burst into one capture, bounded by a
+  two-second maximum wait so continuous ref churn still settles. A repository
+  already capturing is never started twice; concurrent triggers fold into the
+  next run.
+- **Spawn budget.** At most two repositories are captured at a time, each on a
+  dedicated thread rather than the thread pool, and on Windows their Git
+  processes run at below-normal priority. Each run logs
+  `git-index-run repository=… spawns=… ms=… trigger=…`; a run over five seconds
+  logs its slowest subcommand as well.
+- **Reads.** `GitStateIndex.Snapshot` and `InventoryFor` return the last
+  completed capture and never wait. Responses carry the freshness stamp as the
+  `X-Git-State-At` and `X-Git-State-Stale` headers. Headers on every endpoint,
+  never payload fields: `GET /api/tasks` is an array, `GET /api/git/inventory` a
+  positional record, and `GET /api/tasks/grouped` is read by clients as a lane
+  map whose every value they iterate as a task array, so a scalar sibling there
+  is a breaking change. The frontend reads the headers once in an HTTP
+  interceptor and shows the reading quietly in the status bar.
+- **Propagation.** A capture that changed state advances
+  `GitStateIndex.Generation` and pushes the existing coarse `jobsChanged` SignalR
+  event, so the board re-pulls without polling. An unchanged capture, such as the
+  safety sweep on an idle workspace, advances nothing and pushes nothing.
+
+Measurements, the defect this replaced, and the regression bound live in
+[reports/git-state-index-agt-2726.md](../reports/git-state-index-agt-2726.md).
 
 ## Execution location on task reads
 

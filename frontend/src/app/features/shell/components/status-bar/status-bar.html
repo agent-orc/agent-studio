@@ -35,6 +35,13 @@
         warningLabel="CLI repair failed"
         testid="status-bar-cli-repair" />
     }
+    @if (gitStateLabel(); as gitState) {
+      <app-statusbar-item
+        [button]="false"
+        [label]="gitState"
+        [tooltip]="gitStateTooltip()"
+        testid="status-bar-git-state" />
+    }
 
     <span class="statusbar__sep" aria-hidden="true"></span>
 

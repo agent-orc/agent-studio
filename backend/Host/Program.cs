@@ -387,6 +387,12 @@ builder.Services.AddSingleton<IAutoReviewPostProcessingQueue>(sp =>
     sp.GetRequiredService<AutoReviewPostProcessingQueue>());
 builder.Services.AddSingleton<TaskProvenanceService>();
 builder.Services.AddSingleton<BoardMergeStatusService>();
+// AGT-2726: the one background git index. It owns every repository's HEAD,
+// branch tips, worktree list and project inventory, and it is the only thing
+// that forks git for those reads. Request paths read its last capture.
+builder.Services.AddSingleton<GitStateIndex>();
+if (!publicDemoExecutionProfile)
+    builder.Services.AddHostedService<GitStateIndexHostedService>();
 builder.Services.AddSingleton<ProjectGitGraphService>();
 // AGT-2202: honest git-derived integration verdict for accepted cards (is the
 // work actually in develop?). Batched + cached per repo like BoardMergeStatusService.
@@ -1310,6 +1316,14 @@ IClientProxy TaskEventClients(string jobId)
 // transition service's move event. See backend/Hubs/TaskHubBroadcaster.cs.
 var jobHubBroadcaster = app.Services.GetRequiredService<AgentStudio.Host.TaskHubBroadcaster>();
 jobHubBroadcaster.AttachMoveSource(app.Services.GetRequiredService<TaskTransitionService>());
+
+// AGT-2726: a completed git-index capture is the moment the board's stale
+// enrichment becomes current. Push the existing coarse re-pull signal so the
+// stamp and the merge/integration chips update without a poll. The index only
+// raises this when the captured state actually changed, so an idle workspace
+// stays quiet.
+var gitStateIndex = app.Services.GetRequiredService<GitStateIndex>();
+gitStateIndex.RepositoryIndexed += _ => hubContext.Clients.All.SendAsync("jobsChanged");
 var workbenchHubBroadcaster = app.Services.GetRequiredService<AgentStudio.Host.WorkbenchHubBroadcaster>();
 workbenchHubBroadcaster.Attach(
     watcher,

@@ -4,6 +4,7 @@ import { provideServiceWorker } from '@angular/service-worker';
 import { provideCodingAgentChat } from 'coding-agent-chat';
 import { ModalErrorHandler } from './services/error-dialog.service';
 import { clientIdInterceptor } from './services/client-id.interceptor';
+import { gitStateStampInterceptor } from './services/git-state-stamp.interceptor';
 import { offlineGuardInterceptor } from './services/offline-guard.interceptor';
 import { publicDemoGuardInterceptor } from './services/public-demo-guard.interceptor';
 import { sessionSecurityInterceptor } from './services/session-security.interceptor';
@@ -20,6 +21,7 @@ export const appConfig: ApplicationConfig = {
       publicDemoGuardInterceptor,
       sessionSecurityInterceptor,
       clientIdInterceptor,
+      gitStateStampInterceptor,
     ])),
     { provide: ErrorHandler, useClass: ModalErrorHandler },
     // coding-agent-chat host seams: markdown task-reference auto-linking and

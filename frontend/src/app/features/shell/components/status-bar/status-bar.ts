@@ -12,6 +12,7 @@ import {
 } from '@angular/core';
 import { TaskService } from '../../../../services/task.service';
 import { ClientDefaultsService } from '../../../../services/client-defaults.service';
+import { GitStateStampService } from '../../../../services/git-state-stamp.service';
 import type { CliType } from '../../../../models/task.model';
 import { CLI_TYPES } from '../../../../models/task.model';
 import {
@@ -62,6 +63,7 @@ export function formatRunningLabel(
 export class StatusBarComponent implements OnInit, OnDestroy {
   private readonly jobService = inject(TaskService);
   private readonly clientDefaults = inject(ClientDefaultsService);
+  private readonly gitState = inject(GitStateStampService);
   private readonly remoteHosts = inject(RemoteHostsService);
   private readonly reviewQueue = inject(ReviewQueueService);
   private hostLoadRefreshHandle: VisibleIntervalHandle | null = null;
@@ -216,6 +218,34 @@ export class StatusBarComponent implements OnInit, OnDestroy {
     return repair.outcome === 'attempting'
       ? `CLI repair started at ${time}`
       : `CLI repair failed at ${time}`;
+  });
+
+  /**
+   * How old the git-derived state behind the board is (AGT-2726). The backend
+   * indexes merge signals, integration verdicts and repository inventories in
+   * the background and answers board requests from the last capture, so the bar
+   * says quietly when that capture was taken. Empty until a response has
+   * reported a stamp, and it stays a plain read-only chip: a freshness reading
+   * is not an acute state.
+   */
+  readonly gitStateLabel = computed(() => {
+    const stamp = this.gitState.stamp();
+    if (!stamp) return '';
+    if (!stamp.at) return stamp.stale ? 'git state indexing' : '';
+    const time = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' })
+      .format(stamp.at);
+    return stamp.stale ? `git state ${time} · indexing` : `git state ${time}`;
+  });
+
+  readonly gitStateTooltip = computed(() => {
+    const stamp = this.gitState.stamp();
+    if (!stamp) return '';
+    const taken = stamp.at
+      ? `Repository state indexed at ${stamp.at.toLocaleString()}.`
+      : 'Repository state has not been indexed yet.';
+    return stamp.stale
+      ? `${taken} A newer change is already known and is being indexed now.`
+      : taken;
   });
 
   readonly projectCount = computed(() => this.projectNames().length || Object.keys(this.jobService.runnerStatus().projects).length);

@@ -1,4 +1,4 @@
-
+﻿
 
 namespace AgentStudio.Host;
 
@@ -134,8 +134,24 @@ public static class SystemEndpoints
         // local and origin branches, active checkouts, on-disk worktrees, and
         // enriched commits so the tree can distinguish integration / feature /
         // task / runner state and hand a browsed SHA to the shared diff renderer.
-        app.MapGet("/api/git/inventory", (string project, ProjectGitGraphService graph) =>
-            Results.Ok(graph.BuildInventory(project)));
+        // AGT-2726: served from the background git index snapshot, never
+        // computed here. The response carries the freshness stamp headers so
+        // the frontend can say how old the branch/worktree picture is, and its
+        // own telemetry scope proves the request path forks no git process.
+        app.MapGet("/api/git/inventory", (
+            string project,
+            HttpContext context,
+            ProjectGitGraphService graph,
+            GitStateIndex gitState,
+            ILoggerFactory loggerFactory) =>
+        {
+            using var telemetry = GitProcessTelemetry.BeginRequest(
+                "git/inventory",
+                loggerFactory.CreateLogger("ProjectGitInventory"),
+                includeNested: true);
+            GitStateStampHeader.Apply(context, gitState.Stamp());
+            return Results.Ok(graph.BuildInventory(project));
+        });
 
         // Older graph rows are fetched only on explicit demand. Page size is
         // clamped in GitService and every row is enriched through the same

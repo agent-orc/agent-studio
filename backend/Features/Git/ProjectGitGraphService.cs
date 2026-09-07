@@ -13,6 +13,7 @@ namespace AgentStudio.Git;
 public sealed partial class ProjectGitGraphService
 {
     private readonly GitService _git;
+    private readonly GitStateIndex _index;
     private readonly TaskScannerService _tasks;
     private readonly BoardMergeStatusService _presence;
     private readonly TaskRunnerService _runner;
@@ -20,21 +21,32 @@ public sealed partial class ProjectGitGraphService
 
     public ProjectGitGraphService(
         GitService git,
+        GitStateIndex index,
         TaskScannerService tasks,
         BoardMergeStatusService presence,
         TaskRunnerService runner,
         IConfiguration configuration)
     {
         _git = git;
+        _index = index;
         _tasks = tasks;
         _presence = presence;
         _runner = runner;
         _identity = BuildIdentity.Load(configuration);
     }
 
+    /// <summary>
+    /// The Project Hub Git View for one project, joined onto the last capture the
+    /// background git index made. AGT-2726: this used to fork <c>worktree
+    /// list</c>, <c>for-each-ref</c> and a 50-commit <c>log</c> on the request
+    /// thread behind a three-second TTL, which cost 872 seconds of git time in a
+    /// 55-minute window. A project the index has not captured yet returns the
+    /// not-yet-indexed shape; the SignalR push delivers the real inventory as
+    /// soon as the capture lands.
+    /// </summary>
     public GitProjectInventory BuildInventory(string projectName)
     {
-        var inventory = _git.GetProjectInventory(projectName);
+        var inventory = _index.InventoryFor(projectName) ?? NotIndexedYet(projectName);
         if (!inventory.IsRepo || string.IsNullOrWhiteSpace(inventory.RepositoryPath))
             return inventory;
 
@@ -58,7 +70,13 @@ public sealed partial class ProjectGitGraphService
         var deployments = DeploymentMarkers();
         var history = inventory.History is null
             ? null
-            : EnrichHistory(projectName, inventory.RepositoryPath, inventory.History, tasks, deployments);
+            : EnrichHistory(
+                projectName,
+                inventory.RepositoryPath,
+                inventory.History,
+                tasks,
+                deployments,
+                cacheOnlyPresence: true);
         var active = BuildActiveCheckouts(projectName, tasks, branches, worktrees);
 
         return inventory with
@@ -71,28 +89,59 @@ public sealed partial class ProjectGitGraphService
         };
     }
 
+    /// <summary>
+    /// One older graph page, fetched only on explicit "Load older". Unlike the
+    /// inventory this cannot be served from the index: the page the operator
+    /// asked for is not part of the captured state, so it is read on demand and
+    /// memoized per HEAD.
+    /// </summary>
     public GitHistoryPage BuildHistory(string projectName, int offset, int pageSize)
     {
         var page = _git.GetProjectHistory(projectName, offset, pageSize);
-        // GetProjectHistory warmed the inventory cache. Reuse that canonical
-        // repository path instead of resolving the git toplevel a second time.
-        var inventory = _git.GetProjectInventory(projectName);
+        // Reuse the indexed repository path instead of resolving the git
+        // toplevel a second time; GetProjectHistory already warmed the TTL cache
+        // for the cold-index case.
+        var inventory = _index.InventoryFor(projectName) ?? _git.GetProjectInventory(projectName);
         var root = inventory.IsRepo ? inventory.RepositoryPath : null;
         if (root is null || page.Commits.Count == 0) return page;
-        return EnrichHistory(projectName, root, page, ProjectTasks(projectName), DeploymentMarkers());
+        return EnrichHistory(
+            projectName,
+            root,
+            page,
+            ProjectTasks(projectName),
+            DeploymentMarkers(),
+            cacheOnlyPresence: false);
     }
+
+    /// <summary>
+    /// The shape a project carries until the index has captured it once. It is
+    /// deliberately the same "no repository facts yet" shape the frontend
+    /// already renders as an empty state, with an explanatory error string.
+    /// </summary>
+    private static GitProjectInventory NotIndexedYet(string projectName)
+        => new(
+            projectName,
+            null,
+            false,
+            null,
+            [],
+            [],
+            [],
+            "Repository state has not been indexed yet.");
 
     private GitHistoryPage EnrichHistory(
         string projectName,
         string repoRoot,
         GitHistoryPage page,
         IReadOnlyList<TaskInfo> tasks,
-        IReadOnlyList<GitDeploymentMarker> deployments)
+        IReadOnlyList<GitDeploymentMarker> deployments,
+        bool cacheOnlyPresence)
     {
         var presence = _presence.BuildCommitPresence(
             projectName,
             repoRoot,
-            page.Commits.Select(commit => commit.Sha));
+            page.Commits.Select(commit => commit.Sha),
+            cacheOnlyPresence);
         var taskByCommit = BuildTaskByCommit(tasks);
         var taskByKey = tasks
             .Select(task => (Key: DisplayKey(task), Task: task))

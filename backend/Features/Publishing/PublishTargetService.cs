@@ -118,7 +118,7 @@ public sealed class PublishTargetService : IDisposable
             () =>
             {
                 using var _t = GitProcessTelemetry.BeginRequest("publish/derive", _logger);
-                return ReadOnlyGitConcurrencyLimiter.Run(() => Compute(projectName, root));
+                return ReadOnlyGitConcurrencyLimiter.Run(root ?? "", () => Compute(projectName, root));
             });
     }
 

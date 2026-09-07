@@ -136,6 +136,33 @@ internal sealed class GenerationSingleFlightCache<TValue>
     }
 
     /// <summary>
+    /// Returns the cached value for the key when it is current and unexpired,
+    /// without starting or joining a flight. Request paths use this to read
+    /// git-derived state without ever blocking on a computation the background
+    /// index owns (AGT-2726).
+    /// </summary>
+    public bool TryPeekVersioned(string key, string version, out TValue value)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(key);
+        ArgumentNullException.ThrowIfNull(version);
+
+        long generation;
+        lock (_generationLock) generation = _generation;
+
+        if (_values.TryGetValue(key, out var cached)
+            && cached.Generation == generation
+            && string.Equals(cached.Version, version, StringComparison.Ordinal)
+            && cached.ExpiresAt > _timeProvider.GetUtcNow())
+        {
+            value = cached.Value;
+            return true;
+        }
+
+        value = default!;
+        return false;
+    }
+
+    /// <summary>
     /// Starts a new generation. Already-running readers may finish with their
     /// old snapshot, but they cannot republish it into the new generation.
     /// </summary>

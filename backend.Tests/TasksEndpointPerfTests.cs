@@ -1,9 +1,13 @@
 using System.Diagnostics;
 using System.Net.Http.Json;
 using System.Text.Json;
+
+using AgentStudio.Git;
+
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 
 using Xunit;
@@ -306,10 +310,26 @@ public class JobsEndpointPerfTests : IDisposable
                 timeout.Token);
             Assert.True(initialRefresh[0].Spawns > 0);
 
+            // AGT-2726: the projection is no longer re-derived on a two-second
+            // timer. A ref move reaches it through the background git index's
+            // generation, so wait for the index to observe the commit rather
+            // than for an interval that no longer drives anything.
+            var gitIndex = factory.Services.GetRequiredService<GitStateIndex>();
+            var indexDeadline = DateTime.UtcNow.AddSeconds(30);
+            while (DateTime.UtcNow < indexDeadline && gitIndex.Snapshot(repo) is null)
+                await Task.Delay(50, timeout.Token);
+            var tipBeforeChurn = gitIndex.Snapshot(repo)?.Head;
+
             File.WriteAllText(Path.Combine(repo, "head-churn.txt"), "new HEAD\n");
             RunGit(repo, "add", "head-churn.txt");
             RunGit(repo, "commit", "-q", "-m", "test: move HEAD");
-            await Task.Delay(TaskListGitProjectionCache.RefreshInterval + TimeSpan.FromMilliseconds(250), timeout.Token);
+
+            indexDeadline = DateTime.UtcNow.AddSeconds(30);
+            while (DateTime.UtcNow < indexDeadline
+                   && gitIndex.Snapshot(repo)?.Head == tipBeforeChurn)
+            {
+                await Task.Delay(50, timeout.Token);
+            }
 
             stopwatch.Restart();
             using var churnResponse = await client.GetAsync("/api/tasks", timeout.Token);
@@ -590,6 +610,13 @@ internal sealed class StructuredTelemetryLoggerProvider : ILoggerProvider
 
     public IReadOnlyList<StructuredTelemetryRollup> Rollups(string label)
         => _rollups.Where(rollup => string.Equals(rollup.Label, label, StringComparison.Ordinal)).ToList();
+
+    /// <summary>
+    /// Every rollup this factory logged, whatever the label. AGT-2726's replay
+    /// bound is on the total git spawns a request mix produces, which includes
+    /// the background index runs and projection refreshes it triggers.
+    /// </summary>
+    public IReadOnlyList<StructuredTelemetryRollup> AllRollups() => _rollups.ToArray();
 
     public async Task<IReadOnlyList<StructuredTelemetryRollup>> WaitForRollupAsync(
         string label,

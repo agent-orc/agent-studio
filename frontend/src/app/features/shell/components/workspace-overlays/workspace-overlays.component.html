@@ -183,6 +183,21 @@
             (pageChange)="overlays.selectTokenUsagePage($event)"
             (openProjectSettings)="openProjectSettings.emit($event)" />
         }
+        @case ('performance') {
+          <section class="ws-settings__section" data-testid="workspace-performance">
+            <header class="ws-settings__section-head">
+              <h2 class="ws-settings__panel-title">Performance</h2>
+              <p class="ws-settings__panel-desc">
+                What the board's git-derived state costs. Latency percentiles per
+                request over the last hour, how many git processes this backend
+                starts per minute, and how old each repository's indexed state is.
+                Git-derived state is computed by one background index; a request
+                path that shows git spawns here is a defect.
+              </p>
+            </header>
+            <app-workspace-performance-panel />
+          </section>
+        }
         @case ('screenshots') {
           <app-workspace-screenshots (openTask)="openTask.emit($event)" />
         }

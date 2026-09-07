@@ -58,6 +58,8 @@ internal static class GitNetworkProcessRunner
             if (process is null)
                 return Failed(GitProcessFailureKind.StartFailure, "git process did not start");
 
+            ApplyBackgroundPriority(process);
+
             // GitService is predominantly synchronous. Blocking that path on
             // RunAsync().GetResult() made process-exit and pipe continuations
             // compete with parallel xUnit/Kestrel work for ThreadPool threads.
@@ -220,6 +222,25 @@ internal static class GitNetworkProcessRunner
         startInfo.Environment[$"GIT_CONFIG_VALUE_{count}"] = "true";
         startInfo.Environment["GIT_CONFIG_COUNT"] =
             (count + 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>
+    /// Background index spawns run at below-normal priority on Windows so a
+    /// repository capture never competes with the foreground UI for CPU. Setting
+    /// the priority races process exit, so a failure here is expected and never
+    /// fatal. No-op off Windows and on request-path spawns.
+    /// </summary>
+    private static void ApplyBackgroundPriority(Process process)
+    {
+        if (!OperatingSystem.IsWindows() || !GitBackgroundWork.IsActive) return;
+        try
+        {
+            process.PriorityClass = ProcessPriorityClass.BelowNormal;
+        }
+        catch (Exception ex)
+        {
+            SilentCatch.Note(ex, "GitNetworkProcessRunner: background priority");
+        }
     }
 
     private static GitProcessResult Failed(GitProcessFailureKind kind, string error)

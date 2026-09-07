@@ -104,6 +104,21 @@ public sealed class TaskIntegrationStatusService
     /// lane carries no verdict and the card renders none. Never throws.
     /// </summary>
     public Dictionary<string, TaskIntegrationStatus> BuildLookup(IReadOnlyCollection<TaskInfo> jobs)
+        => BuildLookup(jobs, cacheOnly: false);
+
+    /// <summary>
+    /// The same verdict restricted to ancestor sets the background index has
+    /// already computed. A repository with no warm set contributes no verdict
+    /// instead of forking git, so a request path can fold the integration badge
+    /// without waiting on a computation (AGT-2726).
+    /// </summary>
+    public Dictionary<string, TaskIntegrationStatus> BuildLookupCacheOnly(
+        IReadOnlyCollection<TaskInfo> jobs)
+        => BuildLookup(jobs, cacheOnly: true);
+
+    private Dictionary<string, TaskIntegrationStatus> BuildLookup(
+        IReadOnlyCollection<TaskInfo> jobs,
+        bool cacheOnly)
     {
         var result = new Dictionary<string, TaskIntegrationStatus>(StringComparer.Ordinal);
         if (jobs.Count == 0) return result;
@@ -138,25 +153,38 @@ public sealed class TaskIntegrationStatusService
                 ConfiguredIntegrationBranch(job));
 
         var reaches = new ConcurrentDictionary<RepoBranchKey, RepoIntegration>();
-        Parallel.ForEach(
-            byRepo,
-            new ParallelOptions { MaxDegreeOfParallelism = ReadOnlyGitConcurrencyLimiter.MaxConcurrency },
-            pair =>
+        if (cacheOnly)
+        {
+            foreach (var pair in byRepo)
             {
                 var cacheKey = $"{pair.Key.Root}\0{pair.Key.Branch}";
                 var refFingerprint = ReadOnlyGitRefFingerprint.CaptureDetailed(pair.Key.Root, [pair.Key.Branch]);
-                reaches[pair.Key] = _cache.GetOrCreateVersioned(
-                    cacheKey,
-                    refFingerprint.Value,
-                    value => value.Succeeded
-                        ? refFingerprint.RequiresShortFallback ? ShortFallbackTtl : CacheTtl
-                        : FailureCacheTtl,
-                    () => ComputeRepoIntegration(pair.Key.Root, pair.Key.Branch));
-            });
+                if (_cache.TryPeekVersioned(cacheKey, refFingerprint.Value, out var warm))
+                    reaches[pair.Key] = warm;
+            }
+        }
+        else
+        {
+            Parallel.ForEach(
+                byRepo,
+                new ParallelOptions { MaxDegreeOfParallelism = ReadOnlyGitConcurrencyLimiter.MaxConcurrency },
+                pair =>
+                {
+                    var cacheKey = $"{pair.Key.Root}\0{pair.Key.Branch}";
+                    var refFingerprint = ReadOnlyGitRefFingerprint.CaptureDetailed(pair.Key.Root, [pair.Key.Branch]);
+                    reaches[pair.Key] = _cache.GetOrCreateVersioned(
+                        cacheKey,
+                        refFingerprint.Value,
+                        value => value.Succeeded
+                            ? refFingerprint.RequiresShortFallback ? ShortFallbackTtl : CacheTtl
+                            : FailureCacheTtl,
+                        () => ComputeRepoIntegration(pair.Key.Root, pair.Key.Branch));
+                });
+        }
 
         foreach (var (repoBranch, repoJobs) in byRepo)
         {
-            var reach = reaches[repoBranch];
+            if (!reaches.TryGetValue(repoBranch, out var reach)) continue;
             foreach (var job in repoJobs)
                 result[job.TaskKey] = ClassifyWithRepo(job, reach);
         }
@@ -630,7 +658,7 @@ public sealed class TaskIntegrationStatusService
     private RepoIntegration ComputeRepoIntegration(string root, string configuredBranch)
     {
         Interlocked.Increment(ref _computationCount);
-        return ReadOnlyGitConcurrencyLimiter.Run(() =>
+        return ReadOnlyGitConcurrencyLimiter.Run(root, () =>
         {
             var integrationRef = _git.ResolveIntegrationReadRef(root, configuredBranch);
             var integrationBranch = integrationRef.StartsWith("origin/", StringComparison.Ordinal)

@@ -11,8 +11,16 @@ namespace AgentStudio.Tasks;
 /// </summary>
 public sealed class TaskListGitProjectionCache
 {
-    internal static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(2);
-    internal static readonly TimeSpan FailureRetryInterval = TimeSpan.FromSeconds(1);
+    /// <summary>
+    /// Safety refresh for the projection's non-git inputs (test-run evidence,
+    /// publish inputs). AGT-2726 moved the git half onto the background index:
+    /// a ref move now invalidates through <see cref="GitStateIndex.Generation"/>
+    /// within its debounce, so this interval no longer has to be short. At two
+    /// seconds it re-derived the whole board about six times a minute whether or
+    /// not anything had moved, which was most of the measured 2,243 spawns.
+    /// </summary>
+    internal static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(15);
+    internal static readonly TimeSpan FailureRetryInterval = TimeSpan.FromSeconds(5);
 
     private readonly ILogger<TaskListGitProjectionCache> _logger;
     private readonly TimeProvider _timeProvider;
@@ -80,11 +88,13 @@ public sealed class TaskListGitProjectionCache
     /// in-flight refresh.
     /// </summary>
     /// <param name="inputVersion">
-    /// Optional snapshot-generation stamp from <see cref="TaskIndexCache"/>. When
-    /// supplied it replaces the per-request <see cref="InputSignature"/> hash: the
-    /// generation already advances on every task mutation, watcher event, or
-    /// safety-TTL rescan, so a warm poll skips the O(N + commits) walk and still
-    /// forces a refresh the moment the underlying snapshot changes.
+    /// Optional input stamp, normally <see cref="CombineVersions"/> over the
+    /// <see cref="TaskIndexCache"/> snapshot generation and the
+    /// <see cref="GitStateIndex"/> generation. When supplied it replaces the
+    /// per-request <see cref="InputSignature"/> hash: both generations already
+    /// advance on every task mutation and every observed ref move, so a warm
+    /// poll skips the O(N + commits) walk and still forces a refresh the moment
+    /// either input changes.
     /// </param>
     public TaskListGitProjection ReadCacheOnly(
         IReadOnlyCollection<TaskInfo> tasks,
@@ -118,6 +128,14 @@ public sealed class TaskListGitProjectionCache
         return snapshot;
     }
 
+    /// <summary>
+    /// The refresh identity used by <see cref="ReadCacheOnly"/>. Equality is all
+    /// that matters: either generation moving means the projection's inputs
+    /// changed, so this is a change detector rather than an ordering.
+    /// </summary>
+    internal static long CombineVersions(long snapshotGeneration, long gitStateGeneration)
+        => HashCode.Combine(snapshotGeneration, gitStateGeneration);
+
     private void QueueRefresh(
         string scopeKey,
         CacheEntry entry,
@@ -131,12 +149,12 @@ public sealed class TaskListGitProjectionCache
             // the request after ReadCacheOnly has returned.
             if (ExecutionContext.IsFlowSuppressed())
             {
-                _ = Task.Run(() => Refresh(scopeKey, entry, tasks, signature));
+                _ = StartRefresh(scopeKey, entry, tasks, signature);
             }
             else
             {
                 using (ExecutionContext.SuppressFlow())
-                    _ = Task.Run(() => Refresh(scopeKey, entry, tasks, signature));
+                    _ = StartRefresh(scopeKey, entry, tasks, signature);
             }
         }
         catch (Exception ex)
@@ -149,6 +167,25 @@ public sealed class TaskListGitProjectionCache
             _logger.LogWarning(ex, "Task-list Git projection refresh could not be queued for scope {Scope}.", scopeKey);
         }
     }
+
+    /// <summary>
+    /// Starts one refresh on a dedicated thread. The projection blocks on git
+    /// subprocesses and on the read-only admission gate; running it on the
+    /// thread pool let a board refresh hold pool threads in a blocking wait,
+    /// which is what left <c>tasks/grouped</c> queued for seconds with no git
+    /// work of its own (AGT-2726).
+    /// </summary>
+    private Task StartRefresh(
+        string scopeKey,
+        CacheEntry entry,
+        TaskInfo[] tasks,
+        long signature)
+        => Task.Factory.StartNew(
+                () => Refresh(scopeKey, entry, tasks, signature),
+                CancellationToken.None,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default)
+            .Unwrap();
 
     private async Task Refresh(
         string scopeKey,
