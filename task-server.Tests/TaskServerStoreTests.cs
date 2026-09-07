@@ -113,7 +113,9 @@ public sealed class TaskServerStoreTests
             """;
         Assert.Equal(1L, (long)(await table.ExecuteScalarAsync())!);
         table.CommandText = "SELECT value FROM meta WHERE key = 'schema_version';";
-        Assert.Equal("11", (string)(await table.ExecuteScalarAsync())!);
+        Assert.Equal(
+            TaskServerStore.CurrentSchemaVersion.ToString(),
+            (string)(await table.ExecuteScalarAsync())!);
     }
 
     [Fact]

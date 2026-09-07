@@ -1,5 +1,8 @@
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Setup;
 
@@ -221,6 +224,9 @@ internal static class SetupApplication
         var runnerId = SetupValidation.RequireSimpleName(
             options.Role == "coding" ? runnerName : $"{runnerName}-review",
             "Runner id");
+        var runnerCredential = options.DryRun
+            ? new string('0', 64)
+            : await MintRunnerCredentialAsync(payload, runnerId, cancellationToken);
         var gitRemote = string.IsNullOrWhiteSpace(options.GitRemote)
             ? prompter.Ask(
                 "Git repository used for the host read/write probe (leave empty to register read-only)",
@@ -235,7 +241,7 @@ internal static class SetupApplication
             : SetupValidation.RequireGitRemote(options.GitPushRemote);
         var configuration = new HostConfiguration(
             payload.ServerUrl,
-            payload.Credential,
+            runnerCredential,
             payload.ReleaseVersion,
             runnerId,
             runnerName,
@@ -300,6 +306,61 @@ internal static class SetupApplication
             hostRelease,
             configuration,
             cancellationToken);
+    }
+
+    internal static async Task<string> MintRunnerCredentialAsync(
+        JoinPayload payload,
+        string runnerId,
+        CancellationToken cancellationToken,
+        HttpClient? client = null)
+    {
+        var ownsClient = client is null;
+        client ??= new HttpClient
+        {
+            BaseAddress = new Uri(payload.ServerUrl),
+            Timeout = TimeSpan.FromSeconds(30),
+        };
+        try
+        {
+            client.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Bearer", payload.Credential);
+            if (!client.DefaultRequestHeaders.Contains(TaskServerProtocol.HeaderName))
+                client.DefaultRequestHeaders.Add(
+                    TaskServerProtocol.HeaderName,
+                    TaskServerProtocol.Current.ToString());
+            if (!client.DefaultRequestHeaders.Contains("X-Client-Id"))
+                client.DefaultRequestHeaders.Add("X-Client-Id", "agent-orchestrator-setup");
+            var response = await client.PostAsJsonAsync(
+                "/api/v1/management/principals",
+                new CreatePrincipalRequest(
+                    $"runner:{runnerId}",
+                    TaskServerPrincipalKinds.Runner,
+                    RunnerId: runnerId),
+                cancellationToken);
+            if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
+            {
+                response.Dispose();
+                response = await client.PostAsJsonAsync(
+                    $"/api/v1/management/principals/{Uri.EscapeDataString($"runner:{runnerId}")}/rotate",
+                    new RotatePrincipalRequest(),
+                    cancellationToken);
+            }
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (!response.IsSuccessStatusCode)
+                throw new InvalidOperationException(
+                    $"Task Server could not mint the credential for Runner '{runnerId}' ({(int)response.StatusCode}): {body}");
+            var issued = await response.Content.ReadFromJsonAsync<IssuedPrincipalCredential>(
+                             cancellationToken: cancellationToken)
+                         ?? throw new InvalidOperationException(
+                             "Task Server returned an empty Runner credential response.");
+            response.Dispose();
+            return issued.Credential;
+        }
+        finally
+        {
+            if (ownsClient)
+                client.Dispose();
+        }
     }
 
     private static JoinPayload ReadJoinPayload(
@@ -512,9 +573,9 @@ internal static class SetupApplication
         Console.WriteLine($"  {token}");
         Console.WriteLine();
         Console.WriteLine(
-            "Treat the join token as a secret. It contains the current Task Server bearer credential in encoded, not encrypted, form.");
+            "Treat the join token as a secret. It contains a credential that setup uses to mint one bound Runner principal; it is encoded, not encrypted.");
         Console.WriteLine(
-            "The token is reusable until that credential is rotated. Do not place it in shell history, chat, task text or source control.");
+            "The join token never becomes the Runner service credential. Revoke or rotate its Studio principal after enrollment, and do not place it in shell history, chat, task text or source control.");
     }
 
     private static void PrintGitHubTokenGuide(string remote)

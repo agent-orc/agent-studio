@@ -86,21 +86,29 @@ if [ ! -f "$CONFIG_ROOT/server.env" ]; then
         none)
             loopback_listeners_only "$listen_url" \
                 || die "Authentication mode 'none' is permitted only for loopback LISTEN_URL values."
-            token_file=
-            token=
+            studio_token_file=
+            engine_token_file=
+            studio_token=
+            engine_token=
             ;;
         bearer)
-            token_file="$CONFIG_ROOT/task-server.token"
-            token=${AUTH_TOKEN:-}
-            if [ -z "$token" ]; then
+            studio_token_file="$CONFIG_ROOT/studio.token"
+            engine_token_file="$CONFIG_ROOT/engine.token"
+            studio_token=${STUDIO_AUTH_TOKEN:-${AUTH_TOKEN:-}}
+            engine_token=${ENGINE_AUTH_TOKEN:-}
+            if [ -z "$studio_token" ] || [ -z "$engine_token" ]; then
                 command -v openssl >/dev/null 2>&1 \
-                    || die "openssl is required to generate the initial bearer credential."
-                token=$(openssl rand -hex 32)
+                    || die "openssl is required to generate the initial principal credentials."
             fi
+            [ -n "$studio_token" ] || studio_token=$(openssl rand -hex 32)
+            [ -n "$engine_token" ] || engine_token=$(openssl rand -hex 32)
+            [ "$studio_token" != "$engine_token" ] \
+                || die "Studio and Engine principal credentials must be distinct."
             umask 077
-            printf '%s\n' "$token" >"$token_file"
-            chown "$SERVICE_USER:$SERVICE_USER" "$token_file" 2>/dev/null || true
-            chmod 0640 "$token_file"
+            printf '%s\n' "$studio_token" >"$studio_token_file"
+            printf '%s\n' "$engine_token" >"$engine_token_file"
+            chown "$SERVICE_USER:$SERVICE_USER" "$studio_token_file" "$engine_token_file" 2>/dev/null || true
+            chmod 0640 "$studio_token_file" "$engine_token_file"
             ;;
         *) die "Authentication mode must be 'none' or 'bearer'." ;;
     esac
@@ -110,7 +118,8 @@ if [ ! -f "$CONFIG_ROOT/server.env" ]; then
         -e "s/@STORE_PATH@/$(escape_sed "$STATE_ROOT")/" \
         -e "s/@BACKUP_PATH@/$(escape_sed "$STATE_ROOT/backups")/" \
         -e "s/@AUTH_MODE@/$(escape_sed "$auth_mode")/" \
-        -e "s/@AUTH_TOKEN_FILE@/$(escape_sed "$token_file")/" \
+        -e "s/@STUDIO_AUTH_TOKEN_FILE@/$(escape_sed "$studio_token_file")/" \
+        -e "s/@ENGINE_AUTH_TOKEN_FILE@/$(escape_sed "$engine_token_file")/" \
         "$source_dir/config/server.env.template" >"$CONFIG_ROOT/server.env"
     chmod 0640 "$CONFIG_ROOT/server.env"
 
@@ -118,7 +127,7 @@ if [ ! -f "$CONFIG_ROOT/server.env" ]; then
         -e "s/@SERVER_URL@/$(escape_sed "$listen_url")/" \
         -e '/^CLIENT_CREDENTIAL=@CLIENT_CREDENTIAL@$/d' \
         "$source_dir/config/engine.env.template" >"$CONFIG_ROOT/engine.env"
-    printf 'CLIENT_CREDENTIAL=%s\n' "$token" >>"$CONFIG_ROOT/engine.env"
+    printf 'CLIENT_CREDENTIAL=%s\n' "$engine_token" >>"$CONFIG_ROOT/engine.env"
     chmod 0640 "$CONFIG_ROOT/engine.env"
     chown "$SERVICE_USER:$SERVICE_USER" \
         "$CONFIG_ROOT/server.env" "$CONFIG_ROOT/engine.env" 2>/dev/null || true

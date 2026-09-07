@@ -11,7 +11,8 @@ public static class TaskServerEndpoints
             ? Results.Ok(new { status = "ready", authority = "restored", mode = store.Mode.ToString() })
             : Results.Json(new ApiError("authority-not-ready", "Lease and fence authority has not been restored."), statusCode: 503));
 
-        var api = app.MapGroup("/api/v1");
+        var api = app.MapGroup("/api/v1")
+            .RequireTaskServerScope(TaskServerScopes.TasksRead);
         api.MapGet("/protocol", (TaskServerStore store) => Results.Ok(store.Status().Protocol));
         api.MapPost("/protocol/compatibility", (ProtocolCompatibilityRequest request, TaskServerStore store) =>
         {
@@ -35,12 +36,14 @@ public static class TaskServerEndpoints
         api.MapGet("/workspaces", async (TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.ListWorkspacesAsync(ct)));
         api.MapPost("/workspaces", async (HttpContext context, CreateWorkspaceRequest request, TaskServerStore store, CancellationToken ct)
-            => await InvokeAsync(() => store.CreateWorkspaceAsync(request, Actor(context), ct), StatusCodes.Status201Created));
+            => await InvokeAsync(() => store.CreateWorkspaceAsync(request, Actor(context), ct), StatusCodes.Status201Created))
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
 
         api.MapGet("/projects", async (string? workspaceId, TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.ListProjectsAsync(workspaceId, ct)));
         api.MapPost("/projects", async (HttpContext context, CreateProjectRequest request, TaskServerStore store, CancellationToken ct)
-            => await InvokeAsync(() => store.CreateProjectAsync(request, Actor(context), ct), StatusCodes.Status201Created));
+            => await InvokeAsync(() => store.CreateProjectAsync(request, Actor(context), ct), StatusCodes.Status201Created))
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
 
         var orchestratorContexts = api.MapGroup("/orchestrator-contexts");
         orchestratorContexts.MapGet("", async (
@@ -55,7 +58,8 @@ public static class TaskServerEndpoints
             TaskServerStore store,
             CancellationToken ct)
             => await InvokeAsync(() => store.EnsureOrchestratorContextAsync(
-                projectIdentity, null, Actor(context), ct)));
+                projectIdentity, null, Actor(context), ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
         orchestratorContexts.MapPut("/projects/{projectIdentity}/tasks/{taskIdentity}", async (
             HttpContext context,
             string projectIdentity,
@@ -63,7 +67,8 @@ public static class TaskServerEndpoints
             TaskServerStore store,
             CancellationToken ct)
             => await InvokeAsync(() => store.EnsureOrchestratorContextAsync(
-                projectIdentity, taskIdentity, Actor(context), ct)));
+                projectIdentity, taskIdentity, Actor(context), ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
         orchestratorContexts.MapGet("/projects/{projectIdentity}/turns", async (
             HttpContext context,
             string projectIdentity,
@@ -89,7 +94,8 @@ public static class TaskServerEndpoints
             CancellationToken ct)
             => await InvokeAsync(() => store.AppendOrchestratorContextTurnAsync(
                 projectIdentity, null, request, Actor(context), ct), StatusCodes.Status201Created))
-            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Chat);
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Chat)
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
         orchestratorContexts.MapPost("/projects/{projectIdentity}/tasks/{taskIdentity}/turns", async (
             HttpContext context,
             string projectIdentity,
@@ -99,7 +105,8 @@ public static class TaskServerEndpoints
             CancellationToken ct)
             => await InvokeAsync(() => store.AppendOrchestratorContextTurnAsync(
                 projectIdentity, taskIdentity, request, Actor(context), ct), StatusCodes.Status201Created))
-            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Chat);
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Chat)
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
         orchestratorContexts.MapPost("/projects/{projectIdentity}/legacy-import", async (
             HttpContext context,
             string projectIdentity,
@@ -107,7 +114,8 @@ public static class TaskServerEndpoints
             TaskServerStore store,
             CancellationToken ct)
             => await InvokeAsync(() => store.ImportLegacyOrchestratorChatAsync(
-                projectIdentity, request, Actor(context), ct)));
+                projectIdentity, request, Actor(context), ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
 
         var hosts = api.MapGroup("/hosts");
         hosts.MapGet("/{hostId}/runtime-capacity", async (
@@ -125,7 +133,8 @@ public static class TaskServerEndpoints
                 hostId,
                 request,
                 Actor(context),
-                ct)));
+                ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
         hosts.MapGet("/{hostId}/project-policy", async (
             string hostId,
             HostProjectPolicyService projectPolicy,
@@ -141,7 +150,8 @@ public static class TaskServerEndpoints
                 hostId,
                 request,
                 Actor(context),
-                ct)));
+                ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
 
         api.MapGet("/projects/{projectId}/tasks", async (string projectId, TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.ListTasksAsync(projectId, ct)));
@@ -155,14 +165,18 @@ public static class TaskServerEndpoints
             => await InvokeNullableAsync(() => store.GetTaskHistoryAsync(projectId, taskIdentity, after ?? 0, ct)));
         api.MapPost("/projects/{projectId}/tasks", async (
             HttpContext context, string projectId, CreateTaskRequest request, TaskServerStore store, CancellationToken ct)
-            => await InvokeAsync(() => store.CreateTaskAsync(projectId, request, Actor(context), ct), StatusCodes.Status201Created));
+            => await InvokeAsync(() => store.CreateTaskAsync(projectId, request, Actor(context), ct), StatusCodes.Status201Created))
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
         api.MapPut("/projects/{projectId}/tasks/{taskIdentity}", async (
             HttpContext context, string projectId, string taskIdentity, UpdateTaskRequest request, TaskServerStore store, CancellationToken ct)
-            => await InvokeNullableAsync(() => store.UpdateTaskAsync(projectId, taskIdentity, request, Actor(context), ct)));
+            => await InvokeNullableAsync(() => store.UpdateTaskAsync(projectId, taskIdentity, request, Actor(context), ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
 
-        var runners = api.MapGroup("/runners");
+        var runners = api.MapGroup("/runners")
+            .RequireTaskServerScope(TaskServerScopes.RunsWrite);
         runners.MapGet("", async (TaskServerStore store, CancellationToken ct)
-            => await InvokeAsync(() => store.ListHostProjectionsAsync(ct)));
+            => await InvokeAsync(() => store.ListHostProjectionsAsync(ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksRead);
         runners.MapPut("/{runnerId}", async (
             HttpContext context, string runnerId, RegisterRunnerRequest request, TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.RegisterRunnerAsync(runnerId, request, Actor(context), ct)));
@@ -205,7 +219,8 @@ public static class TaskServerEndpoints
             if (!string.Equals(runnerId, request.RunnerId, StringComparison.Ordinal))
                 return Results.BadRequest(new ApiError("runner-id-mismatch", "Route and request runner ids differ."));
             return await InvokeAsync(() => store.ClaimAsync(request, Actor(context), ct));
-        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim)
+            .RequireTaskServerScope(TaskServerScopes.RunsClaim);
         runners.MapPut("/{runnerId}/outbox-status", async (
             HttpContext context,
             string runnerId,
@@ -220,9 +235,11 @@ public static class TaskServerEndpoints
             if (!string.Equals(runnerId, request.ExecutorId, StringComparison.Ordinal))
                 return Results.BadRequest(new ApiError("runner-id-mismatch", "Route and request review executor ids differ."));
             return await InvokeAsync(() => store.ClaimReviewAsync(request, Actor(context), ct));
-        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim)
+            .RequireTaskServerScope(TaskServerScopes.ReviewsClaim);
 
-        var permits = api.MapGroup("/work-permits");
+        var permits = api.MapGroup("/work-permits")
+            .RequireTaskServerScope(TaskServerScopes.RunsWrite);
         permits.MapPost("/{permitId}/accept", async (
             HttpContext context,
             string permitId,
@@ -236,7 +253,8 @@ public static class TaskServerEndpoints
                 ct)))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
-        var runs = api.MapGroup("/runs");
+        var runs = api.MapGroup("/runs")
+            .RequireTaskServerScope(TaskServerScopes.RunsWrite);
         runs.MapPost("/{runId}/reconcile", async (
             HttpContext context,
             string runId,
@@ -328,30 +346,39 @@ public static class TaskServerEndpoints
             string runId,
             TaskServerStore store,
             CancellationToken ct)
-            => await InvokeNullableAsync(() => store.GetResultHandoffAsync(runId, ct)));
+            => await InvokeNullableAsync(() => store.GetResultHandoffAsync(runId, ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksRead);
         runs.MapPost("/{runId}/events", async (
             HttpContext context, string runId, EventIngestRequest request, TaskServerStore store, CancellationToken ct)
-            => await InvokeAsync(() => store.IngestEventAsync(runId, request, Actor(context), ct), StatusCodes.Status201Created));
+            => await InvokeAsync(() => store.IngestEventAsync(runId, request, Actor(context), ct), StatusCodes.Status201Created))
+            .RequireTaskServerScope(TaskServerScopes.EventsWrite);
         runs.MapGet("/{runId}/events", async (string runId, long? after, TaskServerStore store, CancellationToken ct)
-            => await InvokeAsync(() => store.ListEventsAsync(runId, after ?? 0, ct)));
+            => await InvokeAsync(() => store.ListEventsAsync(runId, after ?? 0, ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksRead);
         runs.MapPost("/{runId}/artifacts", async (
             HttpContext context, string runId, ArtifactIngestRequest request, TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.IngestArtifactAsync(runId, request, Actor(context), ct), StatusCodes.Status201Created));
         runs.MapGet("/{runId}/artifacts", async (string runId, TaskServerStore store, CancellationToken ct)
-            => await InvokeAsync(() => store.ListArtifactsAsync(runId, ct)));
+            => await InvokeAsync(() => store.ListArtifactsAsync(runId, ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksRead);
         runs.MapGet("/{runId}/artifacts/{artifactId}/content", async (
             string runId, string artifactId, TaskServerStore store, CancellationToken ct)
-            => await InvokeNullableAsync(() => store.GetArtifactContentAsync(runId, artifactId, ct)));
+            => await InvokeNullableAsync(() => store.GetArtifactContentAsync(runId, artifactId, ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksRead);
 
-        var reviews = api.MapGroup("/reviews");
+        var reviews = api.MapGroup("/reviews")
+            .RequireTaskServerScope(TaskServerScopes.ReviewsWrite);
         reviews.MapPost("/subjects", async (
             HttpContext context, CreateReviewSubjectRequest request, TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.CreateReviewSubjectAsync(request, Actor(context), ct), StatusCodes.Status201Created))
-            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Review);
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Review)
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
         reviews.MapGet("/subjects/{subjectId}", async (string subjectId, TaskServerStore store, CancellationToken ct)
-            => await InvokeNullableAsync(() => store.GetReviewSubjectAsync(subjectId, ct)));
+            => await InvokeNullableAsync(() => store.GetReviewSubjectAsync(subjectId, ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksRead);
         reviews.MapGet("/attempts/{attemptId}", async (string attemptId, TaskServerStore store, CancellationToken ct)
-            => await InvokeNullableAsync(() => store.GetReviewAttemptAsync(attemptId, ct)));
+            => await InvokeNullableAsync(() => store.GetReviewAttemptAsync(attemptId, ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksRead);
         reviews.MapPost("/attempts/{attemptId}/lease/renew", async (
             HttpContext context, string attemptId, ReviewLeaseRenewRequest request, TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.RenewReviewLeaseAsync(attemptId, request, Actor(context), ct)))
@@ -365,12 +392,14 @@ public static class TaskServerEndpoints
             => await InvokeAsync(() => store.CleanupReviewAsync(attemptId, request, Actor(context), ct)))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
 
-        var orchestration = api.MapGroup("/orchestration");
+        var orchestration = api.MapGroup("/orchestration")
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
         orchestration.MapGet("/projects/{projectId}/flow-definition", async (
             string projectId,
             TaskServerStore store,
             CancellationToken ct)
-            => await InvokeNullableAsync(() => store.GetFlowDefinitionAsync(projectId, ct)));
+            => await InvokeNullableAsync(() => store.GetFlowDefinitionAsync(projectId, ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksRead);
         orchestration.MapPut("/projects/{projectId}/flow-definition", async (
             HttpContext context,
             string projectId,
@@ -384,12 +413,14 @@ public static class TaskServerEndpoints
             string? status,
             TaskServerStore store,
             CancellationToken ct)
-            => await InvokeAsync(() => store.ListOrchestrationRunsAsync(projectId, status, ct)));
+            => await InvokeAsync(() => store.ListOrchestrationRunsAsync(projectId, status, ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksRead);
         orchestration.MapGet("/runs/{runId}", async (
             string runId,
             TaskServerStore store,
             CancellationToken ct)
-            => await InvokeNullableAsync(() => store.GetOrchestrationRunAsync(runId, ct)));
+            => await InvokeNullableAsync(() => store.GetOrchestrationRunAsync(runId, ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksRead);
         orchestration.MapPost("/projects/{projectId}/runs", async (
             HttpContext context,
             string projectId,
@@ -406,7 +437,8 @@ public static class TaskServerEndpoints
             CancellationToken ct)
             => await InvokeAsync(() => store.ClaimOrchestrationAsync(
                 request, Actor(context), ct)))
-            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim)
+            .RequireTaskServerScope(TaskServerScopes.OrchestrationClaim);
         orchestration.MapPost("/runs/{runId}/lease/renew", async (
             HttpContext context,
             string runId,
@@ -415,7 +447,8 @@ public static class TaskServerEndpoints
             CancellationToken ct)
             => await InvokeAsync(() => store.RenewOrchestrationLeaseAsync(
                 runId, request, Actor(context), ct)))
-            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue)
+            .RequireTaskServerScope(TaskServerScopes.OrchestrationWrite);
         orchestration.MapPost("/runs/{runId}/lease/release", async (
             HttpContext context,
             string runId,
@@ -424,7 +457,8 @@ public static class TaskServerEndpoints
             CancellationToken ct)
             => await InvokeAsync(() => store.ReleaseOrchestrationLeaseAsync(
                 runId, request, Actor(context), ct)))
-            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue)
+            .RequireTaskServerScope(TaskServerScopes.OrchestrationWrite);
         orchestration.MapPost("/runs/{runId}/stages/complete", async (
             HttpContext context,
             string runId,
@@ -433,9 +467,36 @@ public static class TaskServerEndpoints
             CancellationToken ct)
             => await InvokeAsync(() => store.CompleteOrchestrationStageAsync(
                 runId, request, Actor(context), ct)))
-            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep)
+            .RequireTaskServerScope(TaskServerScopes.OrchestrationWrite);
 
-        var management = api.MapGroup("/management");
+        var management = api.MapGroup("/management")
+            .RequireTaskServerScope(TaskServerScopes.Management);
+        management.MapGet("/principals", async (TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.ListPrincipalsAsync(ct)));
+        management.MapPost("/principals", async (
+            HttpContext context,
+            CreatePrincipalRequest request,
+            TaskServerStore store,
+            CancellationToken ct)
+            => await InvokeAsync(
+                () => store.CreatePrincipalAsync(request, Actor(context), ct),
+                StatusCodes.Status201Created));
+        management.MapPost("/principals/{principalId}/rotate", async (
+            HttpContext context,
+            string principalId,
+            RotatePrincipalRequest request,
+            TaskServerStore store,
+            CancellationToken ct)
+            => await InvokeAsync(() => store.RotatePrincipalAsync(
+                principalId, request, Actor(context), ct)));
+        management.MapPost("/principals/{principalId}/revoke", async (
+            HttpContext context,
+            string principalId,
+            TaskServerStore store,
+            CancellationToken ct)
+            => await InvokeAsync(() => store.RevokePrincipalAsync(
+                principalId, Actor(context), ct)));
         management.MapGet("/status", (TaskServerStore store) => Results.Ok(store.Status()));
         management.MapGet("/outboxes", async (TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.ListRunnerOutboxesAsync(ct)));

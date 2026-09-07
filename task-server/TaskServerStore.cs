@@ -11,10 +11,10 @@ namespace AgentStudio.TaskServer;
 
 public sealed partial class TaskServerStore
 {
-    // 11 adds the durable application-owned Result-finalization state used by
-    // the awaited remote post-core gate. The migration block is idempotent;
-    // the number guards downgrades from binaries that do not know this state.
-    public const int CurrentSchemaVersion = 11;
+    // 12 adds scoped, revocable, hash-only service principals and credentials.
+    // The migration block is idempotent; the number guards downgrades from
+    // binaries that do not know this state.
+    public const int CurrentSchemaVersion = 12;
     private const string TimestampFormat = "O";
     private readonly TaskServerOptions _options;
     private readonly TimeProvider _clock;
@@ -2081,7 +2081,8 @@ public sealed partial class TaskServerStore
         foreach (var table in new[]
                  {
                      "workspaces", "projects", "tasks", "runs", "events", "artifacts",
-                     "audit", "fence_counters", "leases", "runners", "review_subjects",
+                     "audit", "principals", "principal_credentials", "fence_counters",
+                     "leases", "runners", "review_subjects",
                      "review_attempts", "review_fence_counters", "review_deliveries",
                      "result_handoffs", "result_ref_gc",
                      "runner_inventories", "invariant_reports",
@@ -2326,6 +2327,26 @@ public sealed partial class TaskServerStore
                 version INTEGER PRIMARY KEY,
                 applied_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS principals(
+                principal_id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL CHECK(kind IN ('studio', 'engine', 'runner')),
+                scopes_json TEXT NOT NULL,
+                runner_id TEXT UNIQUE,
+                created_at TEXT NOT NULL,
+                revoked_at TEXT,
+                last_seen_at TEXT,
+                CHECK(kind = 'runner' OR runner_id IS NULL)
+            );
+            CREATE TABLE IF NOT EXISTS principal_credentials(
+                credential_id TEXT PRIMARY KEY,
+                principal_id TEXT NOT NULL REFERENCES principals(principal_id) ON DELETE CASCADE,
+                secret_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT,
+                revoked_at TEXT
+            );
+            CREATE INDEX IF NOT EXISTS ix_principal_credentials_principal
+                ON principal_credentials(principal_id, revoked_at, expires_at);
             CREATE TABLE IF NOT EXISTS workspaces(
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,

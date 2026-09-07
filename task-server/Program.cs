@@ -36,6 +36,7 @@ builder.Services
         options.ListenUrl = bootstrap.ListenUrl;
     });
 builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
+builder.Services.AddSignalR();
 builder.Services.AddSingleton<IResultFinalizationSummaryGenerator, ApplicationResultFinalizationSummaryGenerator>();
 builder.Services.AddSingleton<TaskServerStore>();
 builder.Services.AddSingleton<RuntimeCapacitySettingsService>();
@@ -76,14 +77,69 @@ if (command.Kind == TaskServerCommandKind.Backup)
 }
 
 await store.InitializeAsync(app.Lifetime.ApplicationStopping);
+var bootstrap = app.Services.GetRequiredService<TaskServerBootstrapOptions>();
+if (bootstrap.RequiresAuthentication)
+{
+    await BootstrapPrincipalAsync(
+        store,
+        "bootstrap-studio",
+        TaskServerPrincipalKinds.Studio,
+        bootstrap.StudioAuthenticationToken,
+        runnerId: null,
+        app.Lifetime.ApplicationStopping);
+    await BootstrapPrincipalAsync(
+        store,
+        "bootstrap-engine",
+        TaskServerPrincipalKinds.Engine,
+        bootstrap.EngineAuthenticationToken,
+        runnerId: null,
+        app.Lifetime.ApplicationStopping);
+    if (bootstrap.BootstrapRunnerAuthenticationToken is not null)
+        await BootstrapPrincipalAsync(
+            store,
+            $"runner:{bootstrap.BootstrapRunnerId}",
+            TaskServerPrincipalKinds.Runner,
+            bootstrap.BootstrapRunnerAuthenticationToken,
+            bootstrap.BootstrapRunnerId,
+            app.Lifetime.ApplicationStopping);
+    if (bootstrap.LegacyRunnerAuthenticationToken is not null)
+        await BootstrapPrincipalAsync(
+            store,
+            "deprecated-shared-runner",
+            TaskServerPrincipalKinds.Runner,
+            bootstrap.LegacyRunnerAuthenticationToken,
+            runnerId: null,
+            app.Lifetime.ApplicationStopping);
+}
 app.UseRouting();
 app.UsePublicDemoExecutionLock();
 app.UseMiddleware<TaskServerAuthenticationMiddleware>();
 app.UseMiddleware<TaskServerProtocolMiddleware>();
 app.MapTaskServerEndpoints();
+app.MapHub<TaskServerEventsHub>("/hubs/events")
+    .RequireTaskServerScope(TaskServerScopes.EventsSubscribe);
 TaskServerPublicDemoExecutionRouteInventory.ValidateStartup(
     app,
     app.Services.GetRequiredService<TaskServerStartupExecutionAdmission>());
+static async Task BootstrapPrincipalAsync(
+    TaskServerStore store,
+    string principalId,
+    string kind,
+    string? configuredCredential,
+    string? runnerId,
+    CancellationToken cancellationToken)
+{
+    var issued = await store.EnsureBootstrapPrincipalAsync(
+        principalId,
+        kind,
+        configuredCredential,
+        runnerId,
+        cancellationToken);
+    if (issued is not null)
+        Console.WriteLine(
+            $"INITIAL {kind.ToUpperInvariant()} CREDENTIAL (shown once): {issued.Credential}");
+}
+
 await app.RunAsync();
 return 0;
 

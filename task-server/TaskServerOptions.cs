@@ -19,9 +19,14 @@ public sealed class TaskServerOptions
     public int InvariantReconciliationSeconds { get; set; } = 30;
     public int InventoryGraceSeconds { get; set; } = 120;
     public int MaximumEventPayloadBytes { get; set; } = 256 * 1024;
+    [Obsolete("Use AUTH=bearer and persisted Task Server principals. Removal planned after Phase B migration.")]
     public bool RequireAuthentication { get; set; }
+    [Obsolete("Use STUDIO_AUTH_TOKEN_FILE for one-time bootstrap. Removal planned after Phase B migration.")]
     public string? StudioBearerToken { get; set; }
+    [Obsolete("Mint one bound principal per Runner. Removal planned after Phase B migration.")]
     public string? RunnerBearerToken { get; set; }
+    public int PrincipalRotationOverlapSeconds { get; set; } = 300;
+    public int MaximumPrincipalRotationOverlapSeconds { get; set; } = 3600;
 
     public string ResolveDataDirectory()
     {
