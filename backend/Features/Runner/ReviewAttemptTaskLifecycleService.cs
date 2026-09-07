@@ -197,7 +197,8 @@ public sealed class ReviewAttemptTaskLifecycleService
         string hostId,
         int? requestedTtlSeconds,
         string idempotencyKey,
-        string? instanceId = null)
+        string? instanceId = null,
+        AgentStudio.TaskServer.Contracts.ReviewLeaseHandoff? handoff = null)
     {
         lock (_gate)
         {
@@ -209,7 +210,8 @@ public sealed class ReviewAttemptTaskLifecycleService
                 hostId,
                 requestedTtlSeconds,
                 idempotencyKey,
-                instanceId);
+                instanceId,
+                handoff);
             AppendClaimEntry(claimed, tasks);
             return claimed;
         }

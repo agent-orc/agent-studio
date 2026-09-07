@@ -177,6 +177,38 @@ public sealed class RemoteReviewExecutorTests : IDisposable
             && line.Contains("terminalOutcome=ProductFailure", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task Refused_adoption_renew_reclaims_same_attempt_with_higher_fence_and_reports()
+    {
+        var handler = new ReclaimingAdoptionHandler();
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://task-server") };
+        var options = Options();
+        using var client = new TaskServerClient(
+            http,
+            options.RunnerId,
+            usesDurableTaskServer: true,
+            options: options,
+            runnerInstanceId: "review-host:replacement");
+        var logs = new List<string>();
+        var state = new ReviewStateStore(options.StateDir);
+        var slot = await CreateCompletedSlotAsync(state);
+
+        var exitCode = await new RemoteReviewExecutor(options, client, state, logs.Add)
+            .ReattachAsync(slot, CancellationToken.None);
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal(1, handler.ReclaimAttempts);
+        Assert.Equal("attempt-1", handler.Reclaim!.AttemptId);
+        Assert.Equal(17, handler.Reclaim.Handoff!.Fence);
+        Assert.Equal(18, Assert.Single(handler.Reports).Fence);
+        Assert.Contains(logs, line => line.Contains(
+            "exact-attempt reclaim accepted",
+            StringComparison.Ordinal));
+        Assert.DoesNotContain(logs, line => line.Contains(
+            "review lease authority lost",
+            StringComparison.Ordinal));
+    }
+
     [Theory]
     [InlineData(HttpStatusCode.ServiceUnavailable, "task-not-found", "TaskNotFound")]
     [InlineData(HttpStatusCode.NotFound, "not-found", "TaskNotFound")]
@@ -379,6 +411,8 @@ public sealed class RemoteReviewExecutorTests : IDisposable
             CancellationToken cancellationToken)
         {
             var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            if (path.EndsWith("/lease/renew", StringComparison.Ordinal))
+                return JsonResponse(Claim().Lease! with { ExpiresAt = DateTime.UtcNow.AddMinutes(2) });
             if (request.Method == HttpMethod.Get && path.EndsWith("/artifacts/bundle/content", StringComparison.Ordinal))
             {
                 ArtifactRequested.TrySetResult();
@@ -445,6 +479,9 @@ public sealed class RemoteReviewExecutorTests : IDisposable
             CancellationToken cancellationToken)
         {
             var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            if (path.EndsWith("/lease/renew", StringComparison.Ordinal))
+                return Task.FromResult(JsonResponse(
+                    Claim().Lease! with { ExpiresAt = DateTime.UtcNow.AddMinutes(2) }));
             if (path.EndsWith("/report", StringComparison.Ordinal))
             {
                 ReportAttempts++;
@@ -487,6 +524,88 @@ public sealed class RemoteReviewExecutorTests : IDisposable
                     message = "synthetic report failure",
                     detail = (string?)null,
                 }, Json)),
+            };
+
+        private static HttpResponseMessage JsonResponse<T>(T value)
+            => new(HttpStatusCode.OK)
+            {
+                Content = new StringContent(JsonSerializer.Serialize(value, Json)),
+            };
+    }
+
+
+    private sealed class ReclaimingAdoptionHandler : HttpMessageHandler
+    {
+        private int _renewals;
+        public int ReclaimAttempts { get; private set; }
+        public ReviewClaimRequest? Reclaim { get; private set; }
+        public List<ReviewReportRequest> Reports { get; } = [];
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            if (path.EndsWith("/lease/renew", StringComparison.Ordinal) && ++_renewals <= 2)
+                return ApiError(HttpStatusCode.Conflict, "review-attempt-not-leased");
+            if (request.Method == HttpMethod.Put && path.Contains("/runners/", StringComparison.Ordinal))
+            {
+                return JsonResponse(new RunnerDto(
+                    "review-runner",
+                    "review-runner",
+                    "review-host",
+                    "review-host:replacement",
+                    "test",
+                    TaskServerProtocol.Current,
+                    "active",
+                    DateTime.UtcNow,
+                    DateTime.UtcNow,
+                    AttemptAdoptions:
+                    [
+                        new RunnerAttemptAdoption(
+                            RunnerAttemptKinds.Review,
+                            "attempt-1",
+                            "AGT-2471",
+                            "invalid-state"),
+                    ]));
+            }
+            if (path.EndsWith("/review-claims", StringComparison.Ordinal))
+            {
+                ReclaimAttempts++;
+                Reclaim = await ReadAsync<ReviewClaimRequest>(request);
+                var prior = Claim();
+                var lease = prior.Lease! with
+                {
+                    InstanceId = "review-host:replacement",
+                    LeaseId = "lease-2",
+                    Fence = 18,
+                    ExpiresAt = DateTime.UtcNow.AddMinutes(2),
+                };
+                return JsonResponse(prior with
+                {
+                    Attempt = prior.Attempt! with { Fence = 18 },
+                    Lease = lease,
+                });
+            }
+            if (path.EndsWith("/report", StringComparison.Ordinal))
+            {
+                Reports.Add(await ReadAsync<ReviewReportRequest>(request));
+                return JsonResponse(new ReviewReportDto(
+                    "report-1", "attempt-1", "subject-1", "Pass", null, "ok",
+                    new string('c', 64), DateTime.UtcNow, false, "5-human-review"));
+            }
+            if (path.EndsWith("/cleanup", StringComparison.Ordinal))
+                return JsonResponse(new ReviewCleanupResponse("cleaned", "attempt-1", DateTime.UtcNow, false));
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        }
+
+        private static async Task<T> ReadAsync<T>(HttpRequestMessage request)
+            => JsonSerializer.Deserialize<T>(await request.Content!.ReadAsStringAsync(), Json)!;
+
+        private static HttpResponseMessage ApiError(HttpStatusCode status, string code)
+            => new(status)
+            {
+                Content = new StringContent(JsonSerializer.Serialize(new { code, message = code }, Json)),
             };
 
         private static HttpResponseMessage JsonResponse<T>(T value)

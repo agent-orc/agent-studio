@@ -50,6 +50,7 @@ if (options.ExecEngine == RunnerOptions.ExecEngineCar
         + "the configured args apply to the legacy engine only and are ignored. "
         + "Set RUNNER_EXEC_ENGINE=legacy to fall back to the raw spawn (removed in AGT-2373).");
 using var shutdown = new CancellationTokenSource();
+var reviewDrainRequested = 0;
 Console.CancelKeyPress += (_, e) =>
 {
     e.Cancel = true;
@@ -63,9 +64,21 @@ using var sigterm = !OperatingSystem.IsWindows()
     {
         context.Cancel = true;
         Log(daemonMode
-            ? "planned shutdown requested (SIGTERM); stopping claims and flushing durable slot state..."
+            ? options.Role == "review"
+                ? "planned shutdown requested (SIGTERM); preserving review leases for handoff. "
+                  + "Use 'sudo agent-runner-deploy drain review' before maintenance; "
+                  + "plain systemctl restart is guarded."
+                : "planned shutdown requested (SIGTERM); stopping claims and flushing durable slot state..."
             : "shutdown requested (SIGTERM); cancelling one-shot run...");
         shutdown.Cancel();
+    })
+    : null;
+using var sighup = !OperatingSystem.IsWindows() && daemonMode && options.Role == "review"
+    ? PosixSignalRegistration.Create(PosixSignal.SIGHUP, context =>
+    {
+        context.Cancel = true;
+        if (Interlocked.Exchange(ref reviewDrainRequested, 1) == 0)
+            Log("review drain requested (SIGHUP); new claims are closed until active reviews finish");
     })
     : null;
 
@@ -96,7 +109,11 @@ try
     {
         if (!daemonMode)
             throw new ArgumentException("Remote Review Executor runs as a polling service and does not accept coding task keys.");
-        await new RemoteReviewDaemon(options, client, Log).RunAsync(shutdown.Token);
+        await new RemoteReviewDaemon(
+            options,
+            client,
+            Log,
+            drainRequested: () => Volatile.Read(ref reviewDrainRequested) != 0).RunAsync(shutdown.Token);
         Log("review daemon stopped");
         return 0;
     }

@@ -335,10 +335,14 @@ if [[ "$role" == "coding" ]]; then
   service_name="agent-runner"
   env_file="/etc/agent-runner/runner.env"
   service_root="/var/lib/agent-runner"
+  restart_policy="always"
+  manual_stop_guard=""
 else
   service_name="agent-runner-review"
   env_file="/etc/agent-runner/review.env"
   service_root="/var/lib/agent-runner-review"
+  restart_policy="on-failure"
+  manual_stop_guard="RefuseManualStop=true"
 fi
 
 env_tmp="$(mktemp)"
@@ -373,6 +377,7 @@ After=network-online.target
 Wants=network-online.target
 StartLimitIntervalSec=300
 StartLimitBurst=5
+$manual_stop_guard
 
 [Service]
 Type=simple
@@ -386,7 +391,7 @@ EnvironmentFile=$env_file
 # after the role-specific file gives the centrally rotated value precedence.
 EnvironmentFile=$provider_auth_file
 ExecStart=$agent_host_root/current/$runner_command --poll
-Restart=always
+Restart=$restart_policy
 RestartSec=10s
 TimeoutStopSec=90s
 KillSignal=SIGTERM
@@ -443,7 +448,15 @@ fi
 sudo install -m 0644 "$unit_tmp" "/etc/systemd/system/${service_name}.service"
 sudo systemctl daemon-reload
 sudo systemctl enable "$service_name"
-sudo systemctl restart "$service_name"
+if [[ "$role" == "review" ]]; then
+  if sudo systemctl is-active --quiet "$service_name"; then
+    sudo /usr/local/sbin/agent-runner-deploy restart review
+  else
+    sudo systemctl start "$service_name"
+  fi
+else
+  sudo systemctl restart "$service_name"
+fi
 sleep 2
 sudo systemctl is-enabled "$service_name"
 sudo systemctl is-active "$service_name"

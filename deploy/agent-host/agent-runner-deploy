@@ -21,11 +21,92 @@ readonly main_pid_poll_seconds=0.2
 readonly maximum_deps_json_bytes=$((16 * 1024 * 1024))
 readonly smoke_timeout_seconds=10
 readonly restart_observation_seconds=15
+readonly review_unit="agent-runner-review.service"
+readonly review_state_root="/var/lib/agent-runner-review/state/reviews"
+readonly default_drain_timeout_seconds=7200
 readonly -a release_units=(agent-runner.service agent-runner-review.service)
 
 die() {
   printf 'agent-runner-deploy: %s\n' "$*" >&2
   exit 2
+}
+
+review_busy_count() {
+  local count=0
+  if [[ -d "$review_state_root" ]]; then
+    count="$(find "$review_state_root" -maxdepth 1 -type f -name '*.review-slot.json' -printf '.' | wc -c)"
+  fi
+  [[ "$count" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "$count"
+}
+
+guard_review_idle() {
+  local busy
+  busy="$(review_busy_count)" || die "could not inspect durable review slots"
+  ((busy == 0)) || die \
+    "refusing restart while $busy review slot(s) are busy; run 'sudo agent-runner-deploy drain review' first, or use 'restart review --force' only to preserve workers through immediate adoption"
+}
+
+wait_for_review_stop() {
+  local timeout_seconds="$1"
+  local deadline=$((SECONDS + timeout_seconds))
+  local busy
+  while ((SECONDS < deadline)); do
+    busy="$(review_busy_count)" || return 1
+    if ((busy == 0)) && ! systemctl is-active --quiet "$review_unit"; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+wait_for_review_inactive() {
+  local deadline=$((SECONDS + main_pid_wait_seconds))
+  while ((SECONDS < deadline)); do
+    systemctl is-active --quiet "$review_unit" || return 0
+    sleep "$main_pid_poll_seconds"
+  done
+  return 1
+}
+
+drain_review() {
+  local timeout_seconds="${1:-$default_drain_timeout_seconds}"
+  [[ "$timeout_seconds" =~ ^[1-9][0-9]*$ ]] \
+    || die "drain timeout must be a positive number of seconds"
+  if ! systemctl is-active --quiet "$review_unit"; then
+    guard_review_idle
+    printf 'agent-runner-deploy: review daemon is already stopped and drained\n'
+    return
+  fi
+  systemctl kill --kill-whom=main --signal=SIGHUP "$review_unit" \
+    || die "could not request review drain"
+  printf 'agent-runner-deploy: review drain requested; waiting up to %s seconds\n' "$timeout_seconds"
+  wait_for_review_stop "$timeout_seconds" \
+    || die "review drain timed out; the daemon remains guarded. Inspect 'systemctl status $review_unit' and its journal"
+  printf 'agent-runner-deploy: review daemon drained and stopped\n'
+}
+
+restart_review() {
+  local force="${1:-}"
+  if [[ "$force" == "--force" ]]; then
+    systemctl kill --kill-whom=main --signal=SIGTERM "$review_unit" \
+      || die "could not force a lease-preserving review handoff"
+    wait_for_review_inactive \
+      || die "review daemon did not stop after the lease-preserving handoff request"
+  elif [[ -n "$force" ]]; then
+    die "usage: agent-runner-deploy restart review [--force]"
+  else
+    guard_review_idle
+    if systemctl is-active --quiet "$review_unit"; then
+      systemctl kill --kill-whom=main --signal=SIGTERM "$review_unit" \
+        || die "could not stop the idle review daemon"
+      wait_for_review_inactive || die "idle review daemon did not stop"
+    fi
+  fi
+  systemctl start "$review_unit" || die "could not start the review daemon"
+  printf 'agent-runner-deploy: review daemon restarted%s\n' \
+    "${force:+ with forced lease-preserving handoff}"
 }
 
 audit_config() {
@@ -82,7 +163,14 @@ restart_unit_and_wait_for_new_main_pid() {
   local previous_main_pid="$2"
   local timeout_seconds="${3:-$main_pid_wait_seconds}"
 
-  systemctl restart "$unit" >/dev/null || return 10
+  if [[ "$unit" == "$review_unit" ]]; then
+    guard_review_idle
+    systemctl kill --kill-whom=main --signal=SIGTERM "$unit" >/dev/null || return 10
+    wait_for_review_inactive || return 10
+    systemctl start "$unit" >/dev/null || return 10
+  else
+    systemctl restart "$unit" >/dev/null || return 10
+  fi
   wait_for_new_main_pid "$unit" "$previous_main_pid" "$timeout_seconds" || return 11
 }
 
@@ -92,7 +180,13 @@ rollback_config() {
   if [[ -n "${rollback_file:-}" && -f "$rollback_file" ]]; then
     mv -fT -- "$rollback_file" "$config_env_file"
     rollback_file=""
-    systemctl restart "$AGENT_RUNNER_CONFIG_UNIT" >/dev/null 2>&1 || true
+    if [[ "$AGENT_RUNNER_CONFIG_UNIT" == "$review_unit" ]]; then
+      systemctl kill --kill-whom=main --signal=SIGTERM "$AGENT_RUNNER_CONFIG_UNIT" >/dev/null 2>&1 || true
+      wait_for_review_inactive >/dev/null 2>&1 || true
+      systemctl start "$AGENT_RUNNER_CONFIG_UNIT" >/dev/null 2>&1 || true
+    else
+      systemctl restart "$AGENT_RUNNER_CONFIG_UNIT" >/dev/null 2>&1 || true
+    fi
   fi
   audit_config "rolled-back" "$reason" || true
   die "configuration was rolled back: $reason"
@@ -239,7 +333,7 @@ print_rollback_hint() {
   if [[ -n "$previous_release_id" ]]; then
     printf 'agent-runner-deploy: previous release: %s\n' "$previous_release_id" >&2
     printf '%s\n' \
-      "agent-runner-deploy: rollback command: sudo ln -sfnT $releases_root/$previous_release_id $current_link && sudo systemctl restart ${release_units[*]}" >&2
+      "agent-runner-deploy: rollback command: restore the release link, run 'sudo agent-runner-deploy restart review', and restart the coding unit" >&2
   else
     printf 'agent-runner-deploy: no previous release was available for rollback\n' >&2
   fi
@@ -269,7 +363,17 @@ restart_release_services() {
 
   for unit_index in "${!release_units[@]}"; do
     unit="${release_units[$unit_index]}"
-    if ! systemctl restart "$unit"; then
+    if [[ "$unit" == "$review_unit" ]]; then
+      if systemctl is-active --quiet "$unit"; then
+        systemctl kill --kill-whom=main --signal=SIGTERM "$unit" || \
+          post_restart_failure "$release_id" "$previous_release_id" "unit-stop-failed:$unit"
+        wait_for_review_inactive || \
+          post_restart_failure "$release_id" "$previous_release_id" "unit-stop-timeout:$unit"
+      fi
+      if ! systemctl start "$unit"; then
+        post_restart_failure "$release_id" "$previous_release_id" "unit-start-failed:$unit"
+      fi
+    elif ! systemctl restart "$unit"; then
       post_restart_failure "$release_id" "$previous_release_id" "unit-restart-failed:$unit"
     fi
   done
@@ -331,6 +435,7 @@ promote_release() {
   dotnet_root="$(dirname -- "$dotnet_path")"
 
   local previous_release_id=""
+  guard_review_idle
   previous_release_id="$(current_release_id || true)"
   local -a before_restart_counts=()
   local unit
@@ -464,8 +569,25 @@ main() {
     4:config)
       configure_role "$2" "$3" "$4"
       ;;
+    2:drain)
+      [[ "$2" == "review" ]] || die "only the review role supports a bounded drain"
+      drain_review
+      ;;
+    3:drain)
+      [[ "$2" == "review" ]] || die "only the review role supports a bounded drain"
+      drain_review "$3"
+      ;;
+    2:restart)
+      [[ "$2" == "review" ]] || die "only the review role uses the guarded restart command"
+      restart_review
+      ;;
+    3:restart)
+      [[ "$2" == "review" && "$3" == "--force" ]] \
+        || die "usage: agent-runner-deploy restart review [--force]"
+      restart_review "$3"
+      ;;
     *)
-      die "usage: agent-runner-deploy [config <coding|review> RUNNER_MAX_PARALLELISM <1-6>]"
+      die "usage: agent-runner-deploy [config <coding|review> RUNNER_MAX_PARALLELISM <1-6> | drain review [timeout-seconds] | restart review [--force]]"
       ;;
   esac
 }

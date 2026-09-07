@@ -245,6 +245,30 @@ curl -sS -X POST https://tasks.example.com/api/clients/agent-runner-01/drain \
   -H 'X-Client-Id: local-default'
 ```
 
+### Restart, drain, handoff
+
+The operator memory rule is: **drain, never restart while Review slots are
+busy**. Do not use `systemctl restart agent-runner-review.service`; the managed
+unit refuses manual stop and restart requests. Use the host helper:
+
+```bash
+sudo agent-runner-deploy drain review
+sudo systemctl start agent-runner-review.service
+```
+
+For an idle process, `sudo agent-runner-deploy restart review` performs the
+guarded restart. It refuses if durable slot files are present and prints the
+drain command. `restart review --force` is reserved for an emergency
+lease-preserving handoff. The replacement renews adopted authority before its
+normal heartbeat. A refused renewal triggers re-registration and an exact
+higher-fence reclaim that retains the running worker and workspace.
+
+Execution Hosts retains the latest Review role restart for 24 hours and shows
+`Restarted at <time>, N reviews lost`. Task Server audit events record the
+restart and each attempt that could not be adopted, including the card and the
+server rejection cause. On the monolith, the same affected cards receive a
+supervisor advisory.
+
 ## Retire
 
 Use **Retire**, read the confirmation, then choose **Drain and retire**. If work

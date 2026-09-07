@@ -121,7 +121,22 @@ public sealed record ReviewClaimRequest(
     string InstanceId,
     int RequestedTtlSeconds = 120,
     int AvailableSlots = 1,
-    IReadOnlyList<string>? RequiredCapabilities = null);
+    IReadOnlyList<string>? RequiredCapabilities = null,
+    string? AttemptId = null,
+    ReviewLeaseHandoff? Handoff = null);
+
+/// <summary>
+/// Exact durable authority presented when a replacement review daemon cannot
+/// renew an adopted lease. The server may mint a higher fence for this same
+/// attempt while retaining the already-running worker's isolation namespace.
+/// </summary>
+public sealed record ReviewLeaseHandoff(
+    string LeaseId,
+    string InstanceId,
+    long Fence,
+    long AuthorityEpoch,
+    string ResourceNamespace,
+    int PortBase);
 
 public sealed record ReviewClaimResponse(
     string Status,

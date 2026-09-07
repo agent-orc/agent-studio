@@ -588,6 +588,14 @@ public sealed partial class TaskServerStore
                     transaction,
                     ("$id", id)),
                 CultureInfo.InvariantCulture);
+            var previousInstanceId = Convert.ToString(
+                await ScalarAsync(
+                    connection,
+                    "SELECT instance_id FROM runners WHERE id = $id;",
+                    ct,
+                    transaction,
+                    ("$id", id)),
+                CultureInfo.InvariantCulture);
             if (!string.IsNullOrWhiteSpace(existingCapabilitiesJson))
             {
                 var existingCapabilities =
@@ -677,6 +685,64 @@ public sealed partial class TaskServerStore
                 activeAttempts,
                 request.AttemptLeaseTtlSeconds,
                 ct);
+            var isReviewExecutor = capabilities.Contains(
+                ReviewCapabilities.ReviewExecutor,
+                StringComparer.Ordinal);
+            var isRestart = isReviewExecutor
+                            && !string.IsNullOrWhiteSpace(previousInstanceId)
+                            && !string.Equals(previousInstanceId, request.InstanceId, StringComparison.Ordinal);
+            if (isRestart)
+            {
+                var reviewsLost = attemptAdoptions.Count(item =>
+                    string.Equals(item.Kind, RunnerAttemptKinds.Review, StringComparison.Ordinal)
+                    && !string.Equals(item.Status, "adopted", StringComparison.Ordinal));
+                await ExecuteAsync(connection, """
+                    INSERT INTO runner_review_restarts(runner_id, restarted_at, reviews_lost)
+                    VALUES ($runner, $at, $lost)
+                    ON CONFLICT(runner_id) DO UPDATE SET
+                        restarted_at = excluded.restarted_at,
+                        reviews_lost = excluded.reviews_lost;
+                    """, ct, transaction,
+                    ("$runner", id),
+                    ("$at", now),
+                    ("$lost", reviewsLost));
+                await AuditAsync(
+                    connection,
+                    transaction,
+                    actorId,
+                    "review-daemon.restarted",
+                    "runner",
+                    id,
+                    JsonSerializer.Serialize(new
+                    {
+                        request.HostId,
+                        previousInstanceId,
+                        request.InstanceId,
+                        reviewsLost,
+                    }),
+                    ct);
+                foreach (var lost in attemptAdoptions.Where(item =>
+                             string.Equals(item.Kind, RunnerAttemptKinds.Review, StringComparison.Ordinal)
+                             && !string.Equals(item.Status, "adopted", StringComparison.Ordinal)))
+                {
+                    await AuditAsync(
+                        connection,
+                        transaction,
+                        actorId,
+                        "review-attempt.lost-on-restart",
+                        "review-attempt",
+                        lost.AttemptId,
+                        JsonSerializer.Serialize(new
+                        {
+                            lost.TaskKey,
+                            lost.Status,
+                            lost.Message,
+                            request.HostId,
+                            request.InstanceId,
+                        }),
+                        ct);
+                }
+            }
             if (activeAttempts.Count > 0)
             {
                 var activeSlots = attemptAdoptions.Count(item =>

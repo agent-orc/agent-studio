@@ -542,7 +542,8 @@ public sealed class AttemptAuthorityService
         string hostId,
         int? requestedTtlSeconds,
         string idempotencyKey,
-        string? instanceId = null)
+        string? instanceId = null,
+        AgentStudio.TaskServer.Contracts.ReviewLeaseHandoff? handoff = null)
     {
         if (Blank(attemptId) || Blank(executorId) || Blank(hostId) || Blank(idempotencyKey))
             return new AttemptWriteResult(
@@ -578,7 +579,22 @@ public sealed class AttemptAuthorityService
             if (!IsCurrentReview(review) || Terminal(review.State))
                 return new AttemptWriteResult(AttemptWriteStatus.Superseded, review.AttemptId, ReviewAttempt: ToDto(review));
             var now = _utcNow();
-            if (review.Lease is { } live && live.ExpiresAt > now)
+            if (handoff is not null
+                && (review.Lease is null
+                    || !Same(review.Lease.ExecutorId, executorId)
+                    || !Same(review.Lease.HostId, hostId)
+                    || !Same(review.Lease.LeaseId, handoff.LeaseId)
+                    || !Same(review.Lease.ClientId, handoff.InstanceId)
+                    || review.LastFence != handoff.Fence
+                    || review.AuthorityEpoch != handoff.AuthorityEpoch))
+            {
+                return new AttemptWriteResult(
+                    AttemptWriteStatus.StaleFence,
+                    review.AttemptId,
+                    "Persisted review handoff authority does not match the durable attempt.",
+                    ReviewAttempt: ToDto(review));
+            }
+            if (handoff is null && review.Lease is { } live && live.ExpiresAt > now)
                 return new AttemptWriteResult(AttemptWriteStatus.InvalidState, review.AttemptId, $"ReviewAttempt is leased by '{live.ExecutorId}'.", ReviewAttempt: ToDto(review));
 
             var fence = NextFenceLocked(review.TaskKey);

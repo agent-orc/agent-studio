@@ -48,6 +48,8 @@ public static class V1ReviewPlaneEndpoints
             Contract.RegisterRunnerRequest request,
             V1ReviewExecutorRegistry registry,
             AttemptAuthorityService authority,
+            TaskScannerService scanner,
+            OrchestratorChatLog chat,
             ILoggerFactory loggerFactory) =>
         {
             if (!RunnerMatches(context, runnerId))
@@ -61,6 +63,24 @@ public static class V1ReviewPlaneEndpoints
                     request.InstanceId,
                     request.ActiveAttempts,
                     request.AttemptLeaseTtlSeconds);
+                registry.RecordReviewRestartOutcome(runnerId, adoptions);
+                foreach (var adoption in adoptions.Where(item => string.Equals(
+                             item.Kind,
+                             Contract.RunnerAttemptKinds.Review,
+                             StringComparison.Ordinal)))
+                {
+                    var task = FindTask(scanner, adoption.TaskKey);
+                    if (task is null) continue;
+                    var lost = !string.Equals(adoption.Status, "adopted", StringComparison.Ordinal);
+                    chat.AppendSupervisor(
+                        task,
+                        lost ? "review-lost-on-restart" : "review-daemon-restart",
+                        $"Review daemon '{runnerId}' restarted while attempt {adoption.AttemptId} " +
+                        $"for card {adoption.TaskKey} was active. " +
+                        (lost
+                            ? $"The attempt was not adopted: {adoption.Status}, {adoption.Message ?? "no server detail"}."
+                            : "The replacement adopted and renewed the same fenced attempt."));
+                }
                 if (request.ActiveAttempts is { Count: > 0 })
                 {
                     registry.RecordReAdoptedSlots(
@@ -289,11 +309,35 @@ public static class V1ReviewPlaneEndpoints
                 }
             }
 
-            var claimed = reviewAttemptLifecycle.ClaimNextReview(
-                runnerId,
-                executor.HostId,
-                request.InstanceId,
-                request.RequestedTtlSeconds);
+            if ((request.AttemptId is null) != (request.Handoff is null))
+                return Results.BadRequest(new Contract.ApiError(
+                    "invalid-review-handoff",
+                    "An exact review attempt id and its handoff authority must be supplied together."));
+            if (request.AttemptId is not null
+                && (!string.Equals(
+                        request.Handoff!.ResourceNamespace,
+                        ReviewResourceNamespace(request.AttemptId, request.Handoff.Fence),
+                        StringComparison.Ordinal)
+                    || request.Handoff.PortBase != PortBase(request.AttemptId, request.Handoff.Fence)))
+            {
+                return Results.Conflict(new Contract.ApiError(
+                    "invalid-review-handoff",
+                    "Persisted review handoff isolation does not match its prior fence."));
+            }
+            var claimed = request.AttemptId is null
+                ? reviewAttemptLifecycle.ClaimNextReview(
+                    runnerId,
+                    executor.HostId,
+                    request.InstanceId,
+                    request.RequestedTtlSeconds)
+                : reviewAttemptLifecycle.ClaimReview(
+                    request.AttemptId,
+                    runnerId,
+                    executor.HostId,
+                    request.RequestedTtlSeconds,
+                    $"v1-review-handoff:{runnerId}:{request.InstanceId}:{request.AttemptId}:{request.Handoff!.Fence}",
+                    request.InstanceId,
+                    request.Handoff);
             if (claimed.Status == AttemptWriteStatus.NotFound)
                 return Results.Ok(new Contract.ReviewClaimResponse(
                     "empty", Message: "No current immutable ReviewAttempt is queued."));
@@ -317,6 +361,14 @@ public static class V1ReviewPlaneEndpoints
                 timeline,
                 loggerFactory.CreateLogger(LoggerName));
             var lease = ToLease(review);
+            if (request.Handoff is not null)
+            {
+                lease = lease with
+                {
+                    ResourceNamespace = request.Handoff.ResourceNamespace,
+                    PortBase = request.Handoff.PortBase,
+                };
+            }
             return Results.Ok(new Contract.ReviewClaimResponse(
                 "claimed",
                 ToAttempt(review),
@@ -1153,6 +1205,9 @@ public static class V1ReviewPlaneEndpoints
             review.AuthorityEpoch);
     }
 
+    private static string ReviewResourceNamespace(string attemptId, long fence)
+        => $"review-{SafeSegment(attemptId).ToLowerInvariant()}-f{fence}";
+
     private static bool TryValidateLease(
         AttemptAuthorityService authority,
         string attemptId,
@@ -1353,6 +1408,8 @@ public sealed class V1ReviewExecutorRegistry
         new(StringComparer.Ordinal);
     private readonly Dictionary<string, OutboxStatusEntry> _outboxStatuses =
         new(StringComparer.Ordinal);
+    private readonly Dictionary<string, ReviewRestartStatus> _reviewRestarts =
+        new(StringComparer.Ordinal);
     private readonly object _gate = new();
 
     public Contract.RunnerDto Register(string runnerId, Contract.RegisterRunnerRequest request)
@@ -1414,6 +1471,11 @@ public sealed class V1ReviewExecutorRegistry
                     if (existingReview != reviewExecutor)
                         throw new InvalidOperationException(
                             "A coding or review identity cannot change its executor role.");
+                    if (reviewExecutor
+                        && !string.Equals(existing.InstanceId, request.InstanceId, StringComparison.Ordinal))
+                    {
+                        _reviewRestarts[runnerId] = new ReviewRestartStatus(now, 0);
+                    }
                     return existing with
                     {
                         Name = request.Name,
@@ -1448,6 +1510,20 @@ public sealed class V1ReviewExecutorRegistry
             "active",
             registration.RegisteredAt,
             registration.LastSeenAt);
+    }
+
+    public void RecordReviewRestartOutcome(
+        string runnerId,
+        IReadOnlyList<Contract.RunnerAttemptAdoption> adoptions)
+    {
+        lock (_gate)
+        {
+            if (!_reviewRestarts.TryGetValue(runnerId, out var restart)) return;
+            var lost = adoptions.Count(item =>
+                string.Equals(item.Kind, Contract.RunnerAttemptKinds.Review, StringComparison.Ordinal)
+                && !string.Equals(item.Status, "adopted", StringComparison.Ordinal));
+            _reviewRestarts[runnerId] = restart with { ReviewsLost = lost };
+        }
     }
 
     public Contract.RunnerCapabilitySnapshotDto AdvertiseCapabilities(
@@ -1866,6 +1942,9 @@ public sealed class V1ReviewExecutorRegistry
                         .Where(failure => failure.WholeHost && failure.CooldownUntil > now)
                         .OrderByDescending(failure => failure.CooldownUntil)
                         .FirstOrDefault();
+                    _reviewRestarts.TryGetValue(runnerId, out var restart);
+                    if (restart is not null && restart.RestartedAt < now.AddHours(-24))
+                        restart = null;
                     return new Contract.RunnerCapabilitySnapshotDto(
                         runnerId,
                         registration.Name,
@@ -1885,7 +1964,9 @@ public sealed class V1ReviewExecutorRegistry
                             null),
                         capabilities,
                         state?.Telemetry,
-                        RoleMaxParallelism: registration.RoleMaxParallelism);
+                        RoleMaxParallelism: registration.RoleMaxParallelism,
+                        RestartedAt: restart?.RestartedAt,
+                        ReviewsLost: restart?.ReviewsLost ?? 0);
                 })
                 .ToArray();
         }
@@ -2084,6 +2165,8 @@ public sealed class V1ReviewExecutorRegistry
         long Generation,
         IReadOnlyList<Contract.CapabilityHealthDto> Capabilities,
         Contract.HostTelemetrySnapshotDto? Telemetry);
+
+    private sealed record ReviewRestartStatus(DateTime RestartedAt, int ReviewsLost);
 
     private sealed record CapabilityFailureState(
         string Key,

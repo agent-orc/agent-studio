@@ -307,6 +307,27 @@ public sealed class TaskServerClient : IDisposable
                && string.Equals(adoption.Status, "adopted", StringComparison.Ordinal);
     }
 
+    internal Task<Contract.ReviewClaimResponse> ReclaimReviewHandoffAsync(
+        PersistedReviewSlot slot,
+        CancellationToken ct)
+    {
+        var lease = slot.Claim.Lease
+                    ?? throw new InvalidDataException("Persisted review handoff has no lease authority.");
+        return ClaimReviewAsync(new Contract.ReviewClaimRequest(
+            lease.ExecutorId,
+            RunnerInstanceId,
+            _options?.TtlSeconds ?? 120,
+            AvailableSlots: 1,
+            AttemptId: slot.AttemptId,
+            Handoff: new Contract.ReviewLeaseHandoff(
+                lease.LeaseId,
+                lease.InstanceId,
+                lease.Fence,
+                lease.AuthorityEpoch,
+                lease.ResourceNamespace,
+                lease.PortBase)), ct);
+    }
+
     internal Contract.RunnerActiveAttempt CodingAttemptFor(RunLeaseInfoDto lease)
     {
         if (_v1Leases.TryGetValue(lease.TaskKey, out var authority))

@@ -236,8 +236,12 @@ state.
   lookup failures retain the record without consuming a slot. A 24-hour safety
   limit also deletes any record that has no live PID, at startup or during the
   periodic reconciliation, and journals the purge count. A replacement adopts
-  a positively matched PID, renews the original lease instance, and submits the
-  deterministic `review-report:<attempt>:<fence>` terminal key. Report
+  a positively matched PID and renews the original lease instance before the
+  normal heartbeat starts. If that synchronous renewal is refused, the daemon
+  re-registers the persisted authority and then performs an exact-attempt
+  handoff reclaim. The new lease has a higher authority fence but retains the
+  already-running worker's workspace fence, namespace, and port range. It then
+  submits the deterministic `review-report:<attempt>:<fence>` terminal key. Report
   delivery retains the completed evidence and retries transport failures,
   ambiguous responses, HTTP 408/429, and ordinary 5xx responses with bounded
   backoff. A missing task (404 or legacy `task-not-found` 503), superseded
@@ -253,7 +257,10 @@ state.
   evidence without reopening an archived card. The report boundary rejects a
   missing authority record or an expired, non-replay lease immediately as
   HTTP 409 `LeaseExpired`, before task scanning, evidence writes, or delivery
-  integration. A retry of an already settled report remains admissible under
+  side effects. Managed Review units refuse plain manual stops and restarts;
+  `agent-runner-deploy drain review` closes claims and lets active executors
+  finish before the daemon exits. The guarded force path preserves workers for
+  the same adoption protocol. A retry of an already settled report remains admissible under
   its exact fence and idempotency key so post-settlement compatibility work can
   converge after a process restart.
 - `task-server/RemoteRunResultCollector.cs`,

@@ -33,13 +33,15 @@ helper_source="$repo_root/deploy/agent-host/agent-runner-deploy"
 policy_source="$repo_root/deploy/agent-host/agent-runner-config-policy"
 deps_validator_source="$repo_root/deploy/agent-host/agent-runner-deps-closure.py"
 handoff_source="$repo_root/deploy/agent-host/systemd/10-agent-runner-hardening.conf"
+review_guard_source="$repo_root/deploy/agent-host/systemd/20-agent-runner-review-restart-guard.conf"
 
 for required_source in \
   "$sudoers_source" \
   "$helper_source" \
   "$policy_source" \
   "$deps_validator_source" \
-  "$handoff_source"; do
+  "$handoff_source" \
+  "$review_guard_source"; do
   [[ -f "$required_source" ]] || die "versioned host asset is missing: $required_source"
 done
 command -v visudo >/dev/null || die "visudo is required"
@@ -91,6 +93,9 @@ for unit in agent-runner.service agent-runner-review.service; do
   install -o root -g root -m 0644 \
     "$handoff_source" "$drop_in_directory/10-agent-runner-hardening.conf"
 done
+install -o root -g root -m 0644 \
+  "$review_guard_source" \
+  "/etc/systemd/system/agent-runner-review.service.d/20-agent-runner-review-restart-guard.conf"
 systemctl daemon-reload
 for unit in agent-runner.service agent-runner-review.service; do
   [[ "$(systemctl show "$unit" --property=KillMode --value)" == "process" ]] \

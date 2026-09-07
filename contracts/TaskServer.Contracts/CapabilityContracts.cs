@@ -164,7 +164,9 @@ public sealed record RunnerCapabilitySnapshotDto(
     DateTime? RuntimeCapacityAppliedAt = null,
     long? RuntimeCapacityAppliedVersion = null,
     HostProjectPolicyDto? ProjectPolicy = null,
-    int? RoleMaxParallelism = null);
+    int? RoleMaxParallelism = null,
+    DateTime? RestartedAt = null,
+    int ReviewsLost = 0);
 
 public sealed record OperatorHostDrainRequest(string Reason);
 

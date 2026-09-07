@@ -284,7 +284,7 @@ atomic stdin provisioning command, then restart every installed runner role:
 
 ```bash
 ssh agent-runner-01 \
-  'sudo systemctl restart agent-runner.service agent-runner-review.service'
+  'sudo systemctl restart agent-runner.service; sudo agent-runner-deploy drain review; sudo systemctl start agent-runner-review.service'
 ```
 
 Omit a unit that is not installed on that host. Never append a token with an
@@ -872,12 +872,43 @@ recovery. Installing or changing the unit requires root, followed by
 
 ### Planned daemon restart and deploy
 
-A planned Runner deploy no longer waits for host idle. On a hardened host, stage
-the complete application and invoke the no-argument deploy helper as described
-in section 2. The helper records the previous release, validates the dependency
-closure, runs the service-user boot smoke check, atomically switches
-`/opt/agent-host/current`, restarts both main service processes, and watches for
-an immediate restart loop.
+#### Restart, drain, handoff
+
+Never run `systemctl restart agent-runner-review.service`. The Review unit sets
+`RefuseManualStop=true`, so a plain stop or restart is refused even when a
+second operator session applies an old restart rule. The daemon log prints the
+sanctioned command when it receives SIGTERM.
+
+Drain is the normal maintenance path. It sends SIGHUP to the daemon, closes
+new claim admission, renews every running review until it reports, waits up to
+two hours by default, and leaves the unit stopped. Start the replacement only
+after drain completes:
+
+```bash
+sudo agent-runner-deploy drain review
+sudo systemctl start agent-runner-review.service
+```
+
+An idle guarded restart is available through the helper. It refuses while any
+durable review slot is busy and prints the drain hint:
+
+```bash
+sudo agent-runner-deploy restart review
+```
+
+`sudo agent-runner-deploy restart review --force` is an emergency handoff, not
+the routine repair. It leaves detached workers alive. The replacement first
+renews each persisted lease synchronously. If renewal is refused, it
+re-registers the executor and reclaims that exact attempt with a higher fence
+while retaining the existing workspace namespace and ports.
+
+For a release promotion, stage the complete application and invoke the
+no-argument deploy helper as described in section 2. The helper refuses to
+switch releases while review slots are busy. Drain Review first, then run the
+promotion. It records the previous release, validates the dependency closure,
+runs the service-user boot smoke check, atomically switches
+`/opt/agent-host/current`, restarts Coding, starts Review, and watches for an
+immediate restart loop.
 
 ```bash
 sudo /usr/local/sbin/agent-runner-deploy
@@ -895,14 +926,17 @@ opening any freed slot to claims. For Coding, confirm every occupied slot report
 either `persisted attempt accepted` or `releasing dead persisted attempt`; the
 latter must be followed by a Ready card and a later higher-fence claim. For
 Review, confirm `review daemon handoff` is followed by `persisted review
-accepted` and `adopting persisted review` under the same attempt and fence. A
+accepted`, `adopting persisted review`, and `review adoption authority verified`
+under the same attempt and fence. A fallback `review adoption exact-attempt
+reclaim accepted` names the higher authority fence and retained workspace
+namespace. A
 `review adoption failed` line must be followed by an accepted
 `ExecutorRestarted` infrastructure report with explicit loss extent and retry
 reason. Do not change either unit back to `KillMode=control-group`. Retain every release referenced by a
 daemon or detached worker; garbage collection is a separate, process-aware
 operation. If post-restart observation fails, use the exact rollback one-liner
 printed by the helper. Rollback switches `current` to the recorded previous
-release and restarts both daemons. It never copies old files over the active
+release and uses the guarded Review helper. It never copies old files over the active
 release.
 
 This procedure covers a planned daemon binary restart, not a machine reboot,

@@ -12,6 +12,8 @@ show_count_file="$fixture_root/show-count"
 old_main_pid=""
 detached_worker_pid=""
 new_main_pid=""
+unit_active=1
+old_main_parallelism=""
 
 cleanup() {
   local pid
@@ -33,18 +35,29 @@ old_main_pid="$!"
 RUNNER_MAX_PARALLELISM=2 sleep 30 &
 detached_worker_pid="$!"
 printf '0\n' >"$show_count_file"
+old_main_parallelism="$(read_process_environment_value "$old_main_pid" RUNNER_MAX_PARALLELISM)"
 
 systemctl() {
   local action="${1:-}"
   shift || true
 
   case "$action" in
-    restart)
+    is-active)
+      ((unit_active == 1))
+      ;;
+    kill)
+      [[ "$*" == "--kill-whom=main --signal=SIGTERM agent-runner-review.service" ]]
+      kill "$old_main_pid" >/dev/null 2>&1 || true
+      wait "$old_main_pid" >/dev/null 2>&1 || true
+      unit_active=0
+      ;;
+    start)
       [[ "$*" == "agent-runner-review.service" ]]
       local environment_file_value
       environment_file_value="$(awk -F= '$1 == "RUNNER_MAX_PARALLELISM" { print $2 }' "$environment_file")"
       RUNNER_MAX_PARALLELISM="$environment_file_value" /usr/bin/sleep 30 >/dev/null 2>&1 &
       printf '%s\n' "$!" >"$new_main_pid_file"
+      unit_active=1
       ;;
     show)
       local show_count
@@ -83,7 +96,7 @@ new_main_pid="$(<"$new_main_pid_file")"
 [[ "$selected_pid" == "$new_main_pid" ]]
 [[ "$selected_pid" != "$old_main_pid" ]]
 [[ "$selected_pid" != "$detached_worker_pid" ]]
-[[ "$(read_process_environment_value "$old_main_pid" RUNNER_MAX_PARALLELISM)" == "2" ]]
+[[ "$old_main_parallelism" == "2" ]]
 [[ "$(read_process_environment_value "$selected_pid" RUNNER_MAX_PARALLELISM)" == "6" ]]
 kill -0 "$detached_worker_pid"
 

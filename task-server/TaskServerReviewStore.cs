@@ -79,8 +79,14 @@ public sealed partial class TaskServerStore
                 ON review_attempts(status, created_at);
             CREATE INDEX IF NOT EXISTS ix_review_attempts_subject
                 ON review_attempts(subject_id, attempt_number);
+            CREATE TABLE IF NOT EXISTS runner_review_restarts(
+                runner_id TEXT PRIMARY KEY,
+                restarted_at TEXT NOT NULL,
+                reviews_lost INTEGER NOT NULL
+            );
             """, ct);
         await AddColumnIfMissingAsync(connection, "review_attempts", "port_base", "INTEGER", ct);
+        await AddColumnIfMissingAsync(connection, "review_attempts", "workspace_fence", "INTEGER", ct);
     }
 
     public async Task<ReviewSubjectDto> CreateReviewSubjectAsync(
@@ -185,6 +191,20 @@ public sealed partial class TaskServerStore
         {
             var executor = await ReadReviewExecutorAsync(
                 connection, transaction, request.ExecutorId, request.InstanceId, ct);
+            if ((request.AttemptId is null) != (request.Handoff is null))
+                throw new ArgumentException(
+                    "An exact review attempt id and its handoff authority must be supplied together.");
+            if (request.Handoff is not null)
+            {
+                await ValidateReviewHandoffAsync(
+                    connection,
+                    transaction,
+                    request.ExecutorId,
+                    executor.HostId,
+                    request.AttemptId!,
+                    request.Handoff,
+                    ct);
+            }
             await SupersedeUnclaimableReviewAttemptsAsync(
                 connection,
                 transaction,
@@ -226,10 +246,14 @@ public sealed partial class TaskServerStore
                   JOIN review_subjects s ON s.id = a.subject_id
                   JOIN tasks t ON t.id = a.task_id
                  WHERE (
-                         a.status = 'queued'
-                         OR a.status = 'process-unknown'
-                         OR (a.status = 'leased' AND a.expires_at <= $now)
+                         ($handoff = 1 AND a.id = $attempt AND a.status IN ('queued', 'process-unknown', 'leased'))
+                         OR ($handoff = 0 AND (
+                              a.status = 'queued'
+                              OR a.status = 'process-unknown'
+                              OR (a.status = 'leased' AND a.expires_at <= $now)
+                            ))
                        )
+                   AND ($attempt IS NULL OR a.id = $attempt)
                    AND t.state = '4-auto-review'
                    AND NOT (
                          json_extract(s.plan_json, '$.requireDifferentHostFailureDomain') = 1
@@ -237,7 +261,11 @@ public sealed partial class TaskServerStore
                        )
                  ORDER BY a.created_at, a.attempt_number
                  LIMIT 32;
-                """, transaction, ("$now", Iso(UtcNow)), ("$host", executor.HostId)))
+                """, transaction,
+                ("$now", Iso(UtcNow)),
+                ("$host", executor.HostId),
+                ("$handoff", request.Handoff is null ? 0 : 1),
+                ("$attempt", request.AttemptId)))
             await using (var reader = await command.ExecuteReaderAsync(ct))
             {
                 while (await reader.ReadAsync(ct))
@@ -286,13 +314,18 @@ public sealed partial class TaskServerStore
             var leaseId = $"rls_{Guid.NewGuid():N}";
             var acquired = UtcNow;
             var expires = acquired.AddSeconds(NormalizeTtl(request.RequestedTtlSeconds));
-            var portCursor = Convert.ToInt32(
-                await ScalarAsync(connection, "SELECT value FROM meta WHERE key = 'review_port_cursor';", ct, transaction)
-                    ?? 23992,
-                CultureInfo.InvariantCulture);
-            var portBase = portCursor >= 59992 ? 24000 : portCursor + 8;
-            await SetMetaAsync(connection, transaction, "review_port_cursor",
-                portBase.ToString(CultureInfo.InvariantCulture), ct);
+            var portBase = request.Handoff?.PortBase ?? 0;
+            if (request.Handoff is null)
+            {
+                var portCursor = Convert.ToInt32(
+                    await ScalarAsync(connection, "SELECT value FROM meta WHERE key = 'review_port_cursor';", ct, transaction)
+                        ?? 23992,
+                    CultureInfo.InvariantCulture);
+                portBase = portCursor >= 59992 ? 24000 : portCursor + 8;
+                await SetMetaAsync(connection, transaction, "review_port_cursor",
+                    portBase.ToString(CultureInfo.InvariantCulture), ct);
+            }
+            var workspaceFence = request.Handoff?.Fence ?? fence;
             await ExecuteAsync(connection, """
                 INSERT INTO review_fence_counters(subject_id, last_fence)
                 VALUES ($subject, $fence)
@@ -301,6 +334,7 @@ public sealed partial class TaskServerStore
                    SET status = 'leased', executor_id = $executor, instance_id = $instance,
                        host_id = $host, lease_id = $lease, fence = $fence,
                        acquired_at = $acquired, expires_at = $expires, port_base = $portBase,
+                       workspace_fence = $workspaceFence,
                        required_capabilities_json = $requiredCapabilities,
                        canary_capabilities_json = $canaryCapabilities
                  WHERE id = $attempt;
@@ -309,7 +343,8 @@ public sealed partial class TaskServerStore
                 ("$subject", subject.SubjectId), ("$fence", fence), ("$executor", request.ExecutorId),
                 ("$instance", request.InstanceId), ("$host", executor.HostId), ("$lease", leaseId),
                 ("$acquired", Iso(acquired)), ("$expires", Iso(expires)),
-                ("$portBase", portBase), ("$attempt", attempt.AttemptId),
+                ("$portBase", portBase), ("$workspaceFence", workspaceFence),
+                ("$attempt", attempt.AttemptId),
                 ("$requiredCapabilities", JsonSerializer.Serialize(capabilityAdmission.Required)),
                 ("$canaryCapabilities", JsonSerializer.Serialize(capabilityAdmission.Canaries)));
             await ReserveCanariesAsync(
@@ -326,7 +361,7 @@ public sealed partial class TaskServerStore
                 HostId = executor.HostId,
                 Fence = fence,
             };
-            var resourceNamespace = ResourceNamespace(attempt.AttemptId, fence);
+            var resourceNamespace = ResourceNamespace(attempt.AttemptId, workspaceFence);
             var lease = new ReviewLeaseDto(
                 leaseId, attempt.AttemptId, subject.SubjectId, request.ExecutorId,
                 request.InstanceId, executor.HostId, fence, acquired, expires, "active",
@@ -340,6 +375,7 @@ public sealed partial class TaskServerStore
                     request.InstanceId,
                     executor.HostId,
                     fence,
+                    workspaceFence,
                     resourceNamespace,
                 }), ct);
             response = new ReviewClaimResponse(
@@ -351,6 +387,47 @@ public sealed partial class TaskServerStore
                 CanaryCapabilities: capabilityAdmission.Canaries);
         }, ct);
         return response!;
+    }
+
+    private static async Task ValidateReviewHandoffAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string executorId,
+        string hostId,
+        string attemptId,
+        ReviewLeaseHandoff handoff,
+        CancellationToken ct)
+    {
+        if (handoff.Fence <= 0
+            || handoff.PortBase <= 0
+            || !string.Equals(
+                handoff.ResourceNamespace,
+                ResourceNamespace(attemptId, handoff.Fence),
+                StringComparison.Ordinal))
+        {
+            throw new ArgumentException("Review handoff isolation authority is invalid.");
+        }
+
+        await using var command = Command(connection, """
+            SELECT executor_id, instance_id, host_id, lease_id, fence, port_base
+              FROM review_attempts
+             WHERE id = $attempt;
+            """, transaction, ("$attempt", attemptId));
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct))
+            throw new KeyNotFoundException("Review attempt was not found.");
+        if (!string.Equals(reader.IsDBNull(0) ? null : reader.GetString(0), executorId, StringComparison.Ordinal)
+            || !string.Equals(reader.IsDBNull(1) ? null : reader.GetString(1), handoff.InstanceId, StringComparison.Ordinal)
+            || !string.Equals(reader.IsDBNull(2) ? null : reader.GetString(2), hostId, StringComparison.Ordinal)
+            || !string.Equals(reader.IsDBNull(3) ? null : reader.GetString(3), handoff.LeaseId, StringComparison.Ordinal)
+            || reader.GetInt64(4) != handoff.Fence
+            || (reader.IsDBNull(5) ? 0 : reader.GetInt32(5)) != handoff.PortBase
+            || handoff.AuthorityEpoch != 0)
+        {
+            throw new TaskServerConflictException(
+                "stale-review-handoff",
+                "Persisted review handoff authority does not match the durable attempt.");
+        }
     }
 
     private async Task<int> SupersedeUnclaimableReviewAttemptsAsync(
@@ -734,7 +811,9 @@ public sealed partial class TaskServerStore
         ReviewReportRequest request,
         ReviewAuthorityRow attempt)
     {
-        var resourceNamespace = ResourceNamespace(attempt.AttemptId, attempt.Fence);
+        var resourceNamespace = ResourceNamespace(
+            attempt.AttemptId,
+            attempt.WorkspaceFence > 0 ? attempt.WorkspaceFence : attempt.Fence);
         if (!string.Equals(request.Workspace.ResourceNamespace, resourceNamespace, StringComparison.Ordinal)
             || !string.Equals(request.Environment.ExecutorId, attempt.ExecutorId, StringComparison.Ordinal)
             || !string.Equals(request.Environment.InstanceId, attempt.InstanceId, StringComparison.Ordinal)
@@ -1157,7 +1236,8 @@ public sealed partial class TaskServerStore
             SELECT id, subject_id, task_id, attempt_number, status, executor_id,
                    instance_id, host_id, lease_id, fence, acquired_at, expires_at,
                    report_id, report_sha256, report_idempotency_key, outcome,
-                   failure_classification, summary, reported_at, cleaned_at, port_base
+                   failure_classification, summary, reported_at, cleaned_at, port_base,
+                   workspace_fence
               FROM review_attempts WHERE id = $attempt;
             """, transaction, ("$attempt", attemptId));
         await using var reader = await command.ExecuteReaderAsync(ct);
@@ -1178,7 +1258,8 @@ public sealed partial class TaskServerStore
             reader.IsDBNull(17) ? null : reader.GetString(17),
             reader.IsDBNull(18) ? null : Parse(reader.GetString(18)),
             reader.IsDBNull(19) ? null : Parse(reader.GetString(19)),
-            reader.IsDBNull(20) ? 0 : reader.GetInt32(20));
+            reader.IsDBNull(20) ? 0 : reader.GetInt32(20),
+            reader.IsDBNull(21) ? reader.GetInt64(9) : reader.GetInt64(21));
     }
 
     private static void ValidateReviewAuthority(
@@ -1204,7 +1285,8 @@ public sealed partial class TaskServerStore
         => new(
             row.LeaseId!, row.AttemptId, row.SubjectId, row.ExecutorId!, row.InstanceId!,
             row.HostId!, row.Fence, row.AcquiredAt!.Value, row.ExpiresAt!.Value,
-            row.Status == "leased" ? "active" : row.Status, ResourceNamespace(row.AttemptId, row.Fence),
+            row.Status == "leased" ? "active" : row.Status,
+            ResourceNamespace(row.AttemptId, row.WorkspaceFence > 0 ? row.WorkspaceFence : row.Fence),
             row.PortBase);
 
     private static ReviewReportDto ToReviewReport(ReviewAuthorityRow row)
@@ -1483,5 +1565,6 @@ public sealed partial class TaskServerStore
         string? Summary,
         DateTime? ReportedAt,
         DateTime? CleanedAt,
-        int PortBase);
+        int PortBase,
+        long WorkspaceFence);
 }

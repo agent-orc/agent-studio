@@ -385,12 +385,104 @@ public sealed class RemoteReviewAuthorityTests
             default);
 
         Assert.Equal("adopted", Assert.Single(registered.AttemptAdoptions!).Status);
-        Assert.Equal(1, Assert.Single(
+        var capability = Assert.Single(
             await restarted.ListRunnerCapabilitySnapshotsAsync(default),
-            snapshot => snapshot.RunnerId == "review-a").Telemetry!.ActiveSlots);
+            snapshot => snapshot.RunnerId == "review-a");
+        Assert.Equal(1, capability.Telemetry!.ActiveSlots);
+        Assert.NotNull(capability.RestartedAt);
+        Assert.Equal(0, capability.ReviewsLost);
+        Assert.Contains(
+            await restarted.ListAuditAsync(0, default),
+            record => record.Action == "review-daemon.restarted"
+                      && record.TargetId == "review-a");
         var accepted = await restarted.ReportReviewAsync(
             claim.Attempt.AttemptId,
             PassingReport(claim),
+            "review-a",
+            default);
+        Assert.Equal("Pass", accepted.Outcome);
+    }
+
+    [Fact]
+    public async Task Restart_registration_records_each_review_that_cannot_be_adopted()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        await SeedReviewSubjectAsync(store);
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        var claim = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+
+        var registered = await store.RegisterRunnerAsync(
+            "review-a",
+            new RegisterRunnerRequest(
+                "review-a",
+                "host-a",
+                "replacement-instance",
+                "1.0.0",
+                TaskServerProtocol.Current,
+                [ReviewCapabilities.ReviewExecutor],
+                ActiveAttempts:
+                [
+                    new RunnerActiveAttempt(
+                        RunnerAttemptKinds.Review,
+                        claim.Attempt!.AttemptId,
+                        claim.Attempt.TaskId,
+                        claim.Lease!.LeaseId,
+                        claim.Lease.Fence + 1,
+                        LeaseInstanceId: claim.Lease.InstanceId),
+                ]),
+            "review-a",
+            default);
+
+        Assert.Equal("stale-authority", Assert.Single(registered.AttemptAdoptions!).Status);
+        var capability = Assert.Single(
+            await store.ListRunnerCapabilitySnapshotsAsync(default),
+            snapshot => snapshot.RunnerId == "review-a");
+        Assert.Equal(1, capability.ReviewsLost);
+        Assert.Contains(
+            await store.ListAuditAsync(0, default),
+            record => record.Action == "review-attempt.lost-on-restart"
+                      && record.TargetId == claim.Attempt.AttemptId
+                      && record.DetailJson.Contains(claim.Attempt.TaskId, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Refused_handoff_renew_can_reclaim_exact_attempt_with_higher_fence_and_same_workspace()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        await SeedReviewSubjectAsync(store);
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        var first = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+        await RegisterReviewerAsync(store, "review-a", "instance-b", "host-a");
+
+        var reclaimed = await store.ClaimReviewAsync(
+            new ReviewClaimRequest(
+                "review-a",
+                "instance-b",
+                AttemptId: first.Attempt!.AttemptId,
+                Handoff: new ReviewLeaseHandoff(
+                    first.Lease!.LeaseId,
+                    first.Lease.InstanceId,
+                    first.Lease.Fence,
+                    first.Lease.AuthorityEpoch,
+                    first.Lease.ResourceNamespace,
+                    first.Lease.PortBase)),
+            "review-a",
+            default);
+
+        Assert.Equal("claimed", reclaimed.Status);
+        Assert.Equal(first.Attempt.AttemptId, reclaimed.Attempt!.AttemptId);
+        Assert.True(reclaimed.Lease!.Fence > first.Lease.Fence);
+        Assert.Equal(first.Lease.ResourceNamespace, reclaimed.Lease.ResourceNamespace);
+        Assert.Equal(first.Lease.PortBase, reclaimed.Lease.PortBase);
+        var accepted = await store.ReportReviewAsync(
+            reclaimed.Attempt.AttemptId,
+            PassingReport(reclaimed),
             "review-a",
             default);
         Assert.Equal("Pass", accepted.Outcome);

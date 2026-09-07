@@ -234,6 +234,8 @@ export interface TaskServerRunnerCapabilitySnapshot {
   projectPolicy?: NonNullable<RemoteHost['projectPolicy']> | null;
   /** Role-local RUNNER_MAX_PARALLELISM declared by this runner process. */
   roleMaxParallelism?: number | null;
+  restartedAt?: string | null;
+  reviewsLost?: number;
 }
 
 export interface RemoteHostAdmission {
@@ -304,6 +306,9 @@ export interface RemoteHost {
   effectiveMaxParallelism?: number | null;
   /** Role-local ceiling advertised from RUNNER_MAX_PARALLELISM. */
   roleMaxParallelism?: number | null;
+  /** Review daemon restart outcome, retained by the Task Server for 24 hours. */
+  restartedAt?: string | null;
+  reviewsLost?: number;
   runtimeCapacityAppliedAt?: string | null;
   /** Exact Task Server policy version confirmed by this daemon. */
   runtimeCapacityAppliedVersion?: number | null;

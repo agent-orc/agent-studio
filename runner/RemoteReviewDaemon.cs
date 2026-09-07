@@ -12,6 +12,7 @@ public sealed class RemoteReviewDaemon
     private readonly TaskServerClient _client;
     private readonly Action<string> _log;
     private readonly Func<int, TaskServerConnectivitySnapshot?, HostTelemetrySample?>? _telemetryProbe;
+    private readonly Func<bool> _drainRequested;
 
     /// <param name="telemetryProbe">
     /// Test seam: deterministic host telemetry (active slots, connectivity ->
@@ -26,12 +27,14 @@ public sealed class RemoteReviewDaemon
         RunnerOptions options,
         TaskServerClient client,
         Action<string> log,
-        Func<int, TaskServerConnectivitySnapshot?, HostTelemetrySample?>? telemetryProbe = null)
+        Func<int, TaskServerConnectivitySnapshot?, HostTelemetrySample?>? telemetryProbe = null,
+        Func<bool>? drainRequested = null)
     {
         _options = options;
         _client = client;
         _log = log;
         _telemetryProbe = telemetryProbe;
+        _drainRequested = drainRequested ?? (() => false);
     }
 
     public async Task RunAsync(CancellationToken shutdown)
@@ -194,6 +197,7 @@ public sealed class RemoteReviewDaemon
         var admissionClosed = false;
         var nextRetentionSweep = DateTime.MinValue;
         var consecutiveFaults = 0;
+        var drainLogged = false;
         while (!shutdown.IsCancellationRequested)
         {
             idleWatchdog.RecordActiveSlots(active.Count);
@@ -217,6 +221,26 @@ public sealed class RemoteReviewDaemon
                 active.RemoveAt(index);
             }
             idleWatchdog.RecordActiveSlots(active.Count);
+
+            if (_drainRequested())
+            {
+                if (!drainLogged)
+                {
+                    _log(
+                        $"review drain requested; stopping new claims and waiting for " +
+                        $"{active.Count} active review slot(s)");
+                    drainLogged = true;
+                }
+                if (active.Count == 0)
+                {
+                    _log("review drain complete; no active review slots remain");
+                    break;
+                }
+                await DelayThroughShutdown(
+                    TimeSpan.FromSeconds(_options.PollSeconds),
+                    shutdown);
+                continue;
+            }
 
             try
             {

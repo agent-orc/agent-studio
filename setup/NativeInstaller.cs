@@ -377,13 +377,17 @@ internal sealed class NativeInstaller(
         var alias = unitName == "agent-host.service"
             ? $"{Environment.NewLine}Alias=agent-runner.service"
             : string.Empty;
+        var restartPolicy = configuration.Role == "review" ? "on-failure" : "always";
+        var manualStopGuard = configuration.Role == "review"
+            ? $"{Environment.NewLine}RefuseManualStop=true"
+            : string.Empty;
         return $"""
             [Unit]
             Description=Agent Studio {configuration.Role} agent host
             After=network-online.target
             Wants=network-online.target
             StartLimitIntervalSec=300
-            StartLimitBurst=5
+            StartLimitBurst=5{manualStopGuard}
 
             [Service]
             Type=simple
@@ -393,7 +397,7 @@ internal sealed class NativeInstaller(
             Environment=HOME={configuration.HomeDirectory}
             EnvironmentFile={environmentPath}
             ExecStart={paths.HostOpt}/current/agent-host --poll
-            Restart=always
+            Restart={restartPolicy}
             RestartSec=10s
             TimeoutStopSec=90s
             KillSignal=SIGTERM

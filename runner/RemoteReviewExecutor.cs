@@ -42,6 +42,7 @@ public sealed class RemoteReviewExecutor
         _log(
             $"adopting persisted review attempt={slot.AttemptId} fence={slot.Claim.Lease!.Fence} " +
             $"pid={slot.ProcessId?.ToString() ?? "result-ready"} phase={slot.Phase}");
+        slot = await VerifyAdoptedAuthorityAsync(slot, shutdown);
         var workspace = new RemoteReviewWorkspace(
             _options,
             slot.Claim.Subject!,
@@ -49,6 +50,106 @@ public sealed class RemoteReviewExecutor
             _log);
         return await RunPersistedAsync(slot, workspace, shutdown, reattach: true);
     }
+
+    private async Task<PersistedReviewSlot> VerifyAdoptedAuthorityAsync(
+        PersistedReviewSlot slot,
+        CancellationToken shutdown)
+    {
+        var original = slot.Claim.Lease!;
+        var renewSequence = DateTime.UtcNow.Ticks;
+        async Task<ReviewLeaseDto> RenewAsync(ReviewLeaseDto lease) =>
+            await _client.RenewReviewLeaseAsync(
+                slot.AttemptId,
+                new ReviewLeaseRenewRequest(
+                    lease.ExecutorId,
+                    lease.InstanceId,
+                    lease.LeaseId,
+                    lease.Fence,
+                    $"review-adoption-renew:{slot.AttemptId}:{lease.Fence}:{_client.RunnerInstanceId}:{renewSequence++}",
+                    _options.TtlSeconds,
+                    AuthorityEpoch: lease.AuthorityEpoch),
+                shutdown);
+
+        try
+        {
+            var renewed = await RenewAsync(original);
+            _log(
+                $"review adoption authority verified attempt={slot.AttemptId} " +
+                $"fence={renewed.Fence} expires={renewed.ExpiresAt:O}");
+            return SaveLease(slot, renewed, "adoption-verified");
+        }
+        catch (TaskServerException rejected) when (rejected.StatusCode is 404 or 409)
+        {
+            _log(
+                $"review adoption renew refused attempt={slot.AttemptId} fence={original.Fence} " +
+                $"status={rejected.StatusCode} code={rejected.ErrorCode ?? "none"}; " +
+                "re-registering executor before exact-attempt reclaim");
+        }
+
+        var reported = new RunnerActiveAttempt(
+            RunnerAttemptKinds.Review,
+            slot.AttemptId,
+            slot.Claim.Attempt!.TaskId,
+            original.LeaseId,
+            original.Fence,
+            original.AuthorityEpoch,
+            original.InstanceId);
+        try
+        {
+            if (await _client.ReRegisterAttemptAsync(reported, shutdown))
+            {
+                var renewed = await RenewAsync(original);
+                _log(
+                    $"review adoption authority re-registered attempt={slot.AttemptId} " +
+                    $"fence={renewed.Fence} expires={renewed.ExpiresAt:O}");
+                return SaveLease(slot, renewed, "adoption-verified");
+            }
+        }
+        catch (TaskServerException rejected) when (rejected.StatusCode is 404 or 409)
+        {
+            _log(
+                $"review adoption re-registration did not restore renew authority " +
+                $"attempt={slot.AttemptId} status={rejected.StatusCode} " +
+                $"code={rejected.ErrorCode ?? "none"}");
+        }
+
+        var reclaimed = await _client.ReclaimReviewHandoffAsync(slot, shutdown);
+        if (!string.Equals(reclaimed.Status, "claimed", StringComparison.Ordinal)
+            || reclaimed.Attempt is null
+            || reclaimed.Subject is null
+            || reclaimed.Lease is null
+            || !string.Equals(reclaimed.Attempt.AttemptId, slot.AttemptId, StringComparison.Ordinal)
+            || reclaimed.Lease.Fence <= original.Fence)
+        {
+            throw new TaskServerException(
+                409,
+                reclaimed.Message
+                ?? $"Task Server refused exact handoff reclaim for review '{slot.AttemptId}'.");
+        }
+
+        slot = _state.Save(slot with
+        {
+            Claim = reclaimed,
+            Phase = "adoption-reclaimed",
+            AdoptionFailure = null,
+        });
+        _log(
+            $"review adoption exact-attempt reclaim accepted attempt={slot.AttemptId} " +
+            $"oldFence={original.Fence} fence={reclaimed.Lease.Fence} " +
+            $"workspaceNamespace={reclaimed.Lease.ResourceNamespace}");
+        return slot;
+    }
+
+    private PersistedReviewSlot SaveLease(
+        PersistedReviewSlot slot,
+        ReviewLeaseDto lease,
+        string phase)
+        => _state.Save(slot with
+        {
+            Claim = slot.Claim with { Lease = lease },
+            Phase = phase,
+            AdoptionFailure = null,
+        });
 
     /// <summary>
     /// Settles a persisted slot whose exact process generation cannot be proven.

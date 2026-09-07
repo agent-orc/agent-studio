@@ -164,6 +164,32 @@ public sealed class RunnerServiceUnitTests
                 "/usr/local/sbin/agent-runner-deploy config "));
         Assert.DoesNotContain("RUNNER_MAX_PARALLELISM 0", content);
         Assert.DoesNotContain("RUNNER_MAX_PARALLELISM 7", content);
+        Assert.DoesNotContain("systemctl restart agent-runner-review.service", content);
+        Assert.Contains("agent-runner-deploy drain review", content);
+        Assert.Contains("agent-runner-deploy restart review --force", content);
+    }
+
+    [Fact]
+    public void Review_restart_guard_refuses_manual_restart_and_exposes_bounded_drain()
+    {
+        var helper = File.ReadAllText(
+            Path.Combine(RepoRoot(), "deploy", "agent-host", "agent-runner-deploy"));
+        var guard = File.ReadAllText(
+            Path.Combine(
+                RepoRoot(),
+                "deploy", "agent-host", "systemd",
+                "20-agent-runner-review-restart-guard.conf"));
+        var onboarding = File.ReadAllText(
+            Path.Combine(RepoRoot(), "scripts", "remote-runner-onboard.sh"));
+
+        Assert.Contains("guard_review_idle", helper);
+        Assert.Contains("drain review", helper);
+        Assert.Contains("--signal=SIGHUP", helper);
+        Assert.Contains("refusing restart while", helper);
+        Assert.Contains("RefuseManualStop=true", guard);
+        Assert.Contains("Restart=on-failure", guard);
+        Assert.Contains("manual_stop_guard=\"RefuseManualStop=true\"", onboarding);
+        Assert.Contains("restart_policy=\"on-failure\"", onboarding);
     }
 
     [Fact]
@@ -176,6 +202,7 @@ public sealed class RunnerServiceUnitTests
 
         Assert.Contains("source \"$config_policy\"", helper);
         Assert.Contains("mv -fT -- \"$candidate_file\" \"$config_env_file\"", helper);
+        Assert.Contains("AGENT_RUNNER_CONFIG_UNIT\" == \"$review_unit", helper);
         Assert.Contains("systemctl restart \"$AGENT_RUNNER_CONFIG_UNIT\"", helper);
         Assert.Contains("/proc/$main_pid/environ", helper);
         Assert.Contains("result=$result", helper);

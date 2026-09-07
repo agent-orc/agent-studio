@@ -39,4 +39,24 @@ describe('RemoteHostRoleRowComponent', () => {
     expect(fixture.nativeElement.querySelector('[data-testid="remote-host-slots-summary"]')?.textContent)
       .toContain('2 / 6');
   });
+
+  it('shows the recent restart time and lost-review count on the role row', () => {
+    TestBed.configureTestingModule({
+      imports: [RemoteHostRoleRowComponent],
+      providers: [provideZonelessChangeDetection()],
+    });
+    const fixture = TestBed.createComponent(RemoteHostRoleRowComponent);
+    fixture.componentRef.setInput('host', {
+      ...ROLE,
+      restartedAt: '2026-09-07T04:55:00Z',
+      reviewsLost: 6,
+    });
+    fixture.detectChanges();
+
+    const restart = fixture.nativeElement.querySelector(
+      '[data-testid="remote-host-role-restart"]',
+    );
+    expect(restart?.textContent).toContain('Restarted at');
+    expect(restart?.textContent).toContain('6 reviews lost');
+  });
 });
