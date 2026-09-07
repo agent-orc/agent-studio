@@ -1,6 +1,6 @@
 # Tasks Domain Map
 
-Version: 2026-08-27
+Version: 2026-09-07
 Status: System-of-record map for task storage, lanes, and API mutation changes.
 
 Use this when a change touches job folders, lane states, task metadata,
@@ -659,13 +659,58 @@ cannot erase an operator decision.
   green run remains visible as `diff not included` and never turns the card green.
 - `GET /api/tasks` and `GET /api/tasks/grouped` never run a Git process on the
   request path. Merge, integration, publish, and test-evidence fields come from
-  the latest completed in-memory `TaskListGitProjectionCache` snapshot. A cold
-  read may omit those additive fields while it queues one background refresh;
-  later reads fold in the completed snapshot. Input changes and a two-second
-  refresh interval queue a new single-flight refresh without making the request
-  wait. `GitProcessTelemetry` records `tasks/list` and `tasks/grouped` separately
-  from `tasks/list-refresh`, so request rollups must remain at zero spawns even
-  when HEAD churn causes the background refresh to recompute Git projections.
+  the latest completed in-memory `TaskListGitProjectionCache` snapshot, keyed
+  per repository. A repository the indexer has never run for contributes no
+  additive fields yet; later reads fold in its first completed snapshot.
+  `GitProcessTelemetry` records `tasks/list` and `tasks/grouped` separately
+  from `git-index-run`, so request rollups must remain at zero spawns
+  regardless of how much background indexing HEAD churn causes.
+
+## Board state source (AGT-2726)
+
+Git-derived board state (merge signal, integration status, publish signal,
+test-run evidence, and the Git inventory below) is owned by one background
+index per repository, `GitStateIndexService`, not computed on any request
+path.
+
+- **Change-driven, not request-driven.** Each repository is watched with a
+  `FileSystemWatcher` on `.git/HEAD`, `refs/`, `packed-refs`, and worktree
+  `HEAD` files, plus the Task Server's own `TaskWatcherService.OnJobChanged`
+  event (a task-folder write is itself an integration/delivery signal). A
+  debounce (default 400 ms) coalesces a burst of events into one run per
+  repository; a slow periodic sweep (default 45 s) re-checks a cheap
+  `GitRefSignature` as a safety net for anything the watcher missed. This
+  replaced the previous design, where every list/grouped poll landing more
+  than a fixed TTL after the last refresh queued a whole-board recompute -
+  structurally proportional to request traffic rather than to actual repo
+  change.
+- **Single-flight per repository, bounded concurrency across repositories.** A
+  trigger that arrives while a repository's run is already in flight does not
+  start a second one; it marks exactly one rerun for after the current run
+  finishes. `GitStateIndex:MaxConcurrentRepos` (default 2) bounds how many
+  repositories index at once process-wide.
+- **Stale-while-revalidate.** `TaskListGitProjectionCache.ReadCacheOnly` and
+  `GitService.GetProjectInventory` always return the last completed snapshot
+  immediately; a repository mid-refresh reports `stale=true` alongside it, and
+  the prior snapshot keeps serving reads.
+- **`gitStateAt` / `stale` on the wire.** `GET /api/tasks/grouped` carries
+  `gitStateAt` (the oldest index timestamp among the board's repositories) and
+  `stale` (true while any of them is unindexed or refreshing) as top-level
+  response fields. `GET /api/tasks` carries the same values as the
+  `X-Git-State-At` / `X-Git-State-Stale` response headers (its body is a bare
+  array, so adding fields there would be a wire-contract break).
+  `GET /api/git/inventory` carries `computedAt` and `stale` on the
+  `GitProjectInventory` payload itself. The frontend shows this quietly (board
+  header, `[data-testid="git-state-stamp"]`) and converges on it through the
+  existing SignalR job hub via a `gitStateChanged` push, the same convergence
+  pattern as `jobsBulkChanged`.
+- **Telemetry.** Every run logs `git-index-run repository=... spawns=... ms=...
+  trigger=...`; a run over `GitStateIndex:SlowRunWarnMs` (default 5 s) also
+  logs the slowest subcommand. `GitProcessTelemetry` (the same accounting used
+  for every other `git-info` request) retains a rolling per-label window so
+  `GET /api/admin/git-telemetry` can report p50/p95 and spawns/minute per
+  endpoint alongside each repository's index age, with a warning when
+  `tasks/grouped` p95 exceeds 1 s or total spawns exceed 20/min.
 
 ## Project Git inventory contract
 
@@ -677,7 +722,15 @@ cannot erase an operator decision.
   selected local and protected refs, and `HEAD`. An unchanged signature is a
   cache hit. A changed signature queues one recomputation, and concurrent reads
   coalesce while continuing to receive the previous snapshot. Every completed
-  inventory includes `computedAt`.
+  inventory includes `computedAt` and `stale` (true while unindexed or a
+  recomputation is queued or in flight).
+- `GitStateIndexService` (see Board state source above) calls
+  `GetProjectInventory` on every change-driven trigger it observes for a
+  repository, which drives this same signature-gated enqueue proactively
+  instead of waiting for the next request to notice staleness. This is the
+  only way the two systems interact: the indexer never bypasses or duplicates
+  this cache, it just makes its "is this stale" check fire on repository
+  change instead of on request arrival.
 - Inventory Git reads are bounded to local heads, tags, and the integration and
   release remote-tracking lines. The history projection is computed on the
   same background refresh, limited to 400 commits, and decorated from that same

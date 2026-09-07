@@ -24,7 +24,14 @@ internal readonly record struct GitRefSignature(
             head.WriteTicks, head.Length, SelectedRefsHash(gitDirectory));
     }
 
-    private static string? ResolveGitDirectory(string? repositoryPath)
+    /// <summary>
+    /// Resolves the actual <c>.git</c> directory for a repository path,
+    /// following the <c>gitdir:</c> pointer file a linked worktree uses.
+    /// Exposed so <see cref="GitStateIndexService"/> can point a
+    /// <see cref="FileSystemWatcher"/> at the same location this signature
+    /// reads, instead of re-deriving the resolution independently.
+    /// </summary>
+    internal static string? ResolveGitDirectory(string? repositoryPath)
     {
         if (string.IsNullOrWhiteSpace(repositoryPath)) return null;
         try

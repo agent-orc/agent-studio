@@ -1,202 +1,156 @@
 using System.Collections.Concurrent;
-using System.Diagnostics;
 
 namespace AgentStudio.Tasks;
 
 /// <summary>
-/// Cache-only Git enrichment for task-list responses. List requests return the
-/// latest completed projection immediately and may queue one detached refresh.
-/// Git processes run only inside that background refresh, never on the request
-/// execution context.
+/// Read-only, per-repository snapshot store for task-list Git enrichment
+/// (merge signal, integration status, publish signal, test-run evidence).
+///
+/// <para>
+/// AGT-2726: this class used to be the thing that decided when to recompute -
+/// every list/grouped request that landed past a 2-second TTL (or after any
+/// task mutation changed the combined input signature for the whole board)
+/// queued a detached recompute across every task in every project. Under a
+/// busy board that meant a full re-derivation roughly every two seconds,
+/// regardless of whether any repository's ref state had actually moved. That
+/// is now <see cref="AgentStudio.Git.GitStateIndexService"/>'s job: it watches
+/// each repository's refs (plus the Task Server's own change events) and
+/// recomputes one repository's projection only when that repository actually
+/// changed, on a debounce, with a slow periodic sweep as a safety net.
+/// </para>
+///
+/// <para>
+/// This class is now a pure snapshot store keyed by repository (watch path):
+/// <see cref="ReadCacheOnly"/> merges the last completed per-repository
+/// snapshots for the repositories the requested tasks touch, doing no Git
+/// work and starting no background work itself. Only the indexer calls
+/// <see cref="SetSnapshot"/> and <see cref="MarkRefreshing"/>.
+/// </para>
 /// </summary>
 public sealed class TaskListGitProjectionCache
 {
-    internal static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(2);
-    internal static readonly TimeSpan FailureRetryInterval = TimeSpan.FromSeconds(1);
-
-    private readonly ILogger<TaskListGitProjectionCache> _logger;
-    private readonly TimeProvider _timeProvider;
-    private readonly Func<IReadOnlyCollection<TaskInfo>, Task<TaskListGitProjection>> _refreshProjection;
-    private readonly ConcurrentDictionary<string, CacheEntry> _entries =
-        new(StringComparer.Ordinal);
-
-    public TaskListGitProjectionCache(
-        BoardMergeStatusService mergeStatus,
-        TaskIntegrationStatusService integrationStatus,
-        TaskPublishableService publishStatus,
-        TestRunService testRuns,
-        ILogger<TaskListGitProjectionCache> logger)
-        : this(
-            mergeStatus,
-            integrationStatus,
-            publishStatus,
-            testRuns,
-            logger,
-            TimeProvider.System)
-    {
-    }
-
-    internal TaskListGitProjectionCache(
-        BoardMergeStatusService mergeStatus,
-        TaskIntegrationStatusService integrationStatus,
-        TaskPublishableService publishStatus,
-        TestRunService testRuns,
-        ILogger<TaskListGitProjectionCache> logger,
-        TimeProvider timeProvider)
-        : this(
-            tasks => BuildProjectionAsync(
-                tasks,
-                mergeStatus.BuildLookup,
-                integrationStatus.BuildLookup,
-                publishStatus.BuildLookup,
-                testRuns.BuildLookup),
-            logger,
-            timeProvider)
-    {
-    }
-
-    internal TaskListGitProjectionCache(
-        Func<IReadOnlyCollection<TaskInfo>, TaskListGitProjection> refreshProjection,
-        ILogger<TaskListGitProjectionCache> logger,
-        TimeProvider timeProvider)
-        : this(tasks => Task.FromResult(refreshProjection(tasks)), logger, timeProvider)
-    {
-    }
-
-    internal TaskListGitProjectionCache(
-        Func<IReadOnlyCollection<TaskInfo>, Task<TaskListGitProjection>> refreshProjection,
-        ILogger<TaskListGitProjectionCache> logger,
-        TimeProvider timeProvider)
-    {
-        _logger = logger;
-        _timeProvider = timeProvider;
-        _refreshProjection = refreshProjection;
-    }
+    private readonly ConcurrentDictionary<string, RepoEntry> _entries =
+        new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Returns the most recently completed projection for the requested watch
-    /// path set. A cold read returns empty enrichment and queues the initial
-    /// refresh. The method performs no Git operation and never waits for an
-    /// in-flight refresh.
+    /// Returns the merged, most recently completed projection for every
+    /// repository the requested tasks belong to. A repository the indexer has
+    /// never computed contributes nothing (not an error - the merged result
+    /// simply omits its tasks until the first index run completes). Never
+    /// blocks and never starts a Git operation.
     /// </summary>
-    /// <param name="inputVersion">
-    /// Optional snapshot-generation stamp from <see cref="TaskIndexCache"/>. When
-    /// supplied it replaces the per-request <see cref="InputSignature"/> hash: the
-    /// generation already advances on every task mutation, watcher event, or
-    /// safety-TTL rescan, so a warm poll skips the O(N + commits) walk and still
-    /// forces a refresh the moment the underlying snapshot changes.
-    /// </param>
-    public TaskListGitProjection ReadCacheOnly(
-        IReadOnlyCollection<TaskInfo> tasks,
-        long? inputVersion = null)
+    public TaskListGitProjection ReadCacheOnly(IReadOnlyCollection<TaskInfo> tasks)
     {
         if (tasks.Count == 0) return TaskListGitProjection.Empty;
 
-        var captured = tasks.ToArray();
-        var scopeKey = ScopeKey(captured);
-        var signature = inputVersion ?? InputSignature(captured);
-        var entry = _entries.GetOrAdd(scopeKey, static _ => new CacheEntry());
-        TaskListGitProjection snapshot;
-        var queueRefresh = false;
+        var repoKeys = tasks
+            .Select(t => NormalizePath(t.WatchPath))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
 
-        lock (entry.Gate)
+        if (repoKeys.Length == 1)
+            return _entries.TryGetValue(repoKeys[0], out var only) ? only.Snapshot : TaskListGitProjection.Empty;
+
+        var merge = new Dictionary<string, TaskMergeSignal>(StringComparer.Ordinal);
+        var integration = new Dictionary<string, TaskIntegrationStatus>(StringComparer.Ordinal);
+        var publish = new Dictionary<string, TaskPublishSignal>(StringComparer.Ordinal);
+        var testRuns = new Dictionary<string, TaskTestRunEvidence>(StringComparer.Ordinal);
+        foreach (var key in repoKeys)
         {
-            snapshot = entry.Snapshot;
-            var now = _timeProvider.GetUtcNow();
-            if (TaskListGitRefreshPolicy.ShouldQueue(
-                    entry.HasSnapshot,
-                    entry.Refreshing,
-                    entry.InputSignature != signature,
-                    entry.RefreshAfter <= now))
-            {
-                entry.Refreshing = true;
-                queueRefresh = true;
-            }
+            if (!_entries.TryGetValue(key, out var entry)) continue;
+            foreach (var (k, v) in entry.Snapshot.Merge) merge[k] = v;
+            foreach (var (k, v) in entry.Snapshot.Integration) integration[k] = v;
+            foreach (var (k, v) in entry.Snapshot.Publish) publish[k] = v;
+            foreach (var (k, v) in entry.Snapshot.TestRuns) testRuns[k] = v;
         }
-
-        if (queueRefresh) QueueRefresh(scopeKey, entry, captured, signature);
-        return snapshot;
+        return new TaskListGitProjection(merge, integration, publish, testRuns);
     }
 
-    private void QueueRefresh(
-        string scopeKey,
-        CacheEntry entry,
-        TaskInfo[] tasks,
-        long signature)
+    /// <summary>
+    /// Freshness stamp for the repositories the requested tasks belong to:
+    /// the oldest <c>gitStateAt</c> among them (null when at least one
+    /// repository has never been indexed), and whether any of them is
+    /// currently mid-refresh. The board surfaces this quietly next to the
+    /// list/grouped response; it never gates the response on it.
+    /// </summary>
+    public GitProjectionFreshness ReadFreshness(IReadOnlyCollection<TaskInfo> tasks)
+    {
+        if (tasks.Count == 0) return new GitProjectionFreshness(null, false);
+
+        DateTimeOffset? oldest = null;
+        var stale = false;
+        var any = false;
+        foreach (var key in tasks.Select(t => NormalizePath(t.WatchPath)).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            any = true;
+            if (!_entries.TryGetValue(key, out var entry) || entry.GitStateAt is null)
+            {
+                stale = true;
+                continue;
+            }
+            if (entry.Refreshing) stale = true;
+            if (oldest is null || entry.GitStateAt < oldest) oldest = entry.GitStateAt;
+        }
+        return new GitProjectionFreshness(oldest, stale || !any);
+    }
+
+    /// <summary>
+    /// Written only by <see cref="AgentStudio.Git.GitStateIndexService"/> when
+    /// a repository's index run completes.
+    /// </summary>
+    internal void SetSnapshot(string watchPath, TaskListGitProjection projection, DateTimeOffset gitStateAt)
+    {
+        var key = NormalizePath(watchPath);
+        _entries.AddOrUpdate(
+            key,
+            _ => new RepoEntry { Snapshot = projection, GitStateAt = gitStateAt, Refreshing = false },
+            (_, existing) =>
+            {
+                existing.Snapshot = projection;
+                existing.GitStateAt = gitStateAt;
+                existing.Refreshing = false;
+                return existing;
+            });
+    }
+
+    /// <summary>
+    /// Marks a repository as mid-refresh so concurrent readers can report
+    /// <see cref="GitProjectionFreshness.Stale"/> while the indexer's run for
+    /// it is in flight. The previous snapshot (if any) keeps serving reads.
+    /// </summary>
+    internal void MarkRefreshing(string watchPath)
+    {
+        var key = NormalizePath(watchPath);
+        _entries.AddOrUpdate(
+            key,
+            _ => new RepoEntry { Snapshot = TaskListGitProjection.Empty, GitStateAt = null, Refreshing = true },
+            (_, existing) =>
+            {
+                existing.Refreshing = true;
+                return existing;
+            });
+    }
+
+    internal static string NormalizePath(string path)
     {
         try
         {
-            // The request's GitProcessTelemetry scope uses AsyncLocal. Suppress
-            // ExecutionContext flow so background Git work cannot be charged to
-            // the request after ReadCacheOnly has returned.
-            if (ExecutionContext.IsFlowSuppressed())
-            {
-                _ = Task.Run(() => Refresh(scopeKey, entry, tasks, signature));
-            }
-            else
-            {
-                using (ExecutionContext.SuppressFlow())
-                    _ = Task.Run(() => Refresh(scopeKey, entry, tasks, signature));
-            }
+            return Path.GetFullPath(path)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                .Replace('\\', '/');
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
         {
-            lock (entry.Gate)
-            {
-                entry.Refreshing = false;
-                entry.RefreshAfter = _timeProvider.GetUtcNow().Add(FailureRetryInterval);
-            }
-            _logger.LogWarning(ex, "Task-list Git projection refresh could not be queued for scope {Scope}.", scopeKey);
+            SilentCatch.Note(ex, "TaskListGitProjectionCache: invalid watch path");
+            return path.Replace('\\', '/').TrimEnd('/');
         }
     }
 
-    private async Task Refresh(
-        string scopeKey,
-        CacheEntry entry,
-        IReadOnlyCollection<TaskInfo> tasks,
-        long signature)
-    {
-        var stopwatch = Stopwatch.StartNew();
-        TaskListGitProjection? refreshed = null;
-        try
-        {
-            using var telemetry = GitProcessTelemetry.BeginRequest(
-                "tasks/list-refresh",
-                _logger,
-                includeNested: true);
-            refreshed = await _refreshProjection(tasks);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Task-list Git projection refresh failed for scope {Scope}.", scopeKey);
-        }
-        finally
-        {
-            stopwatch.Stop();
-            lock (entry.Gate)
-            {
-                if (refreshed is not null)
-                {
-                    entry.Snapshot = refreshed;
-                    entry.HasSnapshot = true;
-                    entry.InputSignature = signature;
-                }
-                entry.Refreshing = false;
-                entry.RefreshAfter = _timeProvider.GetUtcNow().Add(
-                    refreshed is null ? FailureRetryInterval : RefreshInterval);
-            }
-        }
-
-        if (refreshed is not null)
-        {
-            _logger.LogInformation(
-                "task-list-git-refresh-complete scope={Scope} tasks={TaskCount} elapsedMs={ElapsedMs}",
-                scopeKey,
-                tasks.Count,
-                stopwatch.ElapsedMilliseconds);
-        }
-    }
-
+    /// <summary>
+    /// Fans the four independent Git-derived lookups for one repository's
+    /// task set out concurrently. Shared by <see cref="AgentStudio.Git.GitStateIndexService"/>
+    /// (the sole caller in production) and tests.
+    /// </summary>
     internal static async Task<TaskListGitProjection> BuildProjectionAsync(
         IReadOnlyCollection<TaskInfo> tasks,
         Func<IReadOnlyCollection<TaskInfo>, Dictionary<string, TaskMergeSignal>> mergeLookup,
@@ -230,75 +184,20 @@ public sealed class TaskListGitProjectionCache
             await testRunTask);
     }
 
-    private static string ScopeKey(IEnumerable<TaskInfo> tasks)
-        // Distinct the raw watch paths first so the expensive Path.GetFullPath
-        // normalization runs once per project rather than once per task.
-        => string.Join(
-            "|",
-            tasks.Select(task => task.WatchPath)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Select(NormalizePath)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase));
-
-    private static int InputSignature(IEnumerable<TaskInfo> tasks)
+    private sealed class RepoEntry
     {
-        var hash = new HashCode();
-        foreach (var task in tasks.OrderBy(task => task.TaskKey, StringComparer.Ordinal))
-        {
-            hash.Add(task.TaskKey, StringComparer.Ordinal);
-            hash.Add(task.State, StringComparer.Ordinal);
-            hash.Add(task.ProjectName, StringComparer.OrdinalIgnoreCase);
-            hash.Add(task.WatchPath, StringComparer.OrdinalIgnoreCase);
-            hash.Add(task.IntegrationBranch, StringComparer.Ordinal);
-            hash.Add(task.Commit?.Sha, StringComparer.OrdinalIgnoreCase);
-            hash.Add(task.Provenance?.Branch, StringComparer.Ordinal);
-            hash.Add(task.Provenance?.Merge?.MergeCommit, StringComparer.OrdinalIgnoreCase);
-            foreach (var commit in task.Commits)
-            {
-                hash.Add(commit.Sha, StringComparer.OrdinalIgnoreCase);
-                hash.Add(commit.Branch, StringComparer.Ordinal);
-                hash.Add(commit.FilesChanged);
-            }
-        }
-        return hash.ToHashCode();
-    }
-
-    private static string NormalizePath(string path)
-    {
-        try
-        {
-            return Path.GetFullPath(path)
-                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-                .Replace('\\', '/');
-        }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
-        {
-            SilentCatch.Note(ex, "TaskListGitProjectionCache: invalid watch path");
-            return path.Replace('\\', '/').TrimEnd('/');
-        }
-    }
-
-    private sealed class CacheEntry
-    {
-        public object Gate { get; } = new();
-        public TaskListGitProjection Snapshot { get; set; } = TaskListGitProjection.Empty;
-        public bool HasSnapshot { get; set; }
-        public bool Refreshing { get; set; }
-        public long InputSignature { get; set; }
-        public DateTimeOffset RefreshAfter { get; set; } = DateTimeOffset.MinValue;
+        public TaskListGitProjection Snapshot = TaskListGitProjection.Empty;
+        public DateTimeOffset? GitStateAt;
+        public bool Refreshing;
     }
 }
 
-internal static class TaskListGitRefreshPolicy
-{
-    internal static bool ShouldQueue(
-        bool hasSnapshot,
-        bool refreshing,
-        bool inputChanged,
-        bool refreshDue)
-        => !refreshing && (!hasSnapshot || inputChanged || refreshDue);
-}
+/// <summary>
+/// Freshness stamp returned alongside a <see cref="TaskListGitProjection"/>
+/// read: the oldest <c>gitStateAt</c> among the touched repositories, and
+/// whether any of them is missing a snapshot or currently mid-refresh.
+/// </summary>
+public sealed record GitProjectionFreshness(DateTimeOffset? GitStateAt, bool Stale);
 
 public sealed record TaskListGitProjection(
     IReadOnlyDictionary<string, TaskMergeSignal> Merge,

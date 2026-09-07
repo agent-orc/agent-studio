@@ -444,7 +444,14 @@ public record GitProjectInventory(
     GitHistoryPage? History = null,
     IReadOnlyList<GitActiveCheckout>? ActiveCheckouts = null,
     IReadOnlyList<GitDeploymentMarker>? Deployments = null,
-    DateTimeOffset? ComputedAt = null);
+    DateTimeOffset? ComputedAt = null,
+    /// <summary>
+    /// True while this snapshot has never been computed, or a background
+    /// refresh is currently queued or in flight for it (AGT-2726). The
+    /// request path never waits on this - it is surfaced so the frontend can
+    /// show "updating" next to the <see cref="ComputedAt"/> stamp.
+    /// </summary>
+    bool Stale = false);
 
 /// <summary>
 /// Repository hygiene snapshot used by the project header badge and the
@@ -1259,6 +1266,7 @@ public class GitService
         var signature = GitRefSignature.Capture(configured.Path!);
         GitProjectInventory value;
         string decision;
+        bool stale;
         lock (_inventoryLock)
         {
             if (!_inventoryCache.TryGetValue(projectName, out var cached))
@@ -1285,11 +1293,13 @@ public class GitService
                     Interlocked.Increment(ref _inventoryRefreshQueueWrites);
                 decision = "recompute";
             }
+            stale = value.ComputedAt is null || cached.RefreshQueued || cached.RefreshTask is not null;
         }
 
         _logger.LogInformation(
             "git-info request=git/inventory cacheDecision={CacheDecision} refCount={RefCount} computedAt={ComputedAt} spawns=0",
             decision, value.Branches.Count, value.ComputedAt?.ToString("O") ?? "none");
+        if (stale != value.Stale) value = value with { Stale = stale };
         return value;
     }
 

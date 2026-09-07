@@ -1,0 +1,78 @@
+<section class="git-telemetry" data-testid="git-telemetry-panel">
+  <header class="git-telemetry__head">
+    <div>
+      <h3>Git index telemetry</h3>
+      <p>Background per-repository index freshness and request-path git-spawn budget.</p>
+    </div>
+    <button type="button" class="git-telemetry__refresh" data-testid="git-telemetry-refresh" (click)="refresh()">
+      Refresh
+    </button>
+  </header>
+
+  @if (loadError()) {
+    <div class="git-telemetry__banner git-telemetry__banner--err" data-testid="git-telemetry-error">
+      {{ loadError() }}
+    </div>
+  }
+
+  @if (snapshot(); as s) {
+    @if (s.warnings.length) {
+      <div class="git-telemetry__banner git-telemetry__banner--warn" data-testid="git-telemetry-warnings">
+        @for (warning of s.warnings; track warning) {
+          <div>{{ warning }}</div>
+        }
+      </div>
+    }
+
+    <span class="git-telemetry__muted">
+      generated {{ s.generatedAt | date:'HH:mm:ss' }} ·
+      {{ s.totalSpawnsPerMinute | number:'1.1-1' }} git spawns/min across all endpoints
+    </span>
+
+    <table class="git-telemetry__table" data-testid="git-telemetry-endpoints">
+      <thead>
+        <tr>
+          <th>Endpoint</th>
+          <th>Samples</th>
+          <th>p50</th>
+          <th>p95</th>
+          <th>Spawns/min</th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (endpoint of s.endpoints; track endpoint.label) {
+          <tr>
+            <td><code>{{ endpoint.label }}</code></td>
+            <td>{{ endpoint.sampleCount | number }}</td>
+            <td>{{ endpoint.p50Ms | number:'1.0-0' }}ms</td>
+            <td>{{ endpoint.p95Ms | number:'1.0-0' }}ms</td>
+            <td>{{ endpoint.spawnsPerMinute | number:'1.1-1' }}</td>
+          </tr>
+        } @empty {
+          <tr><td colspan="5" class="git-telemetry__muted">No requests recorded in the last hour.</td></tr>
+        }
+      </tbody>
+    </table>
+
+    <table class="git-telemetry__table" data-testid="git-telemetry-repositories">
+      <thead>
+        <tr>
+          <th>Repository</th>
+          <th>Index age</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (repo of s.repositories; track repo.projectName) {
+          <tr>
+            <td>{{ repo.projectName }}</td>
+            <td>{{ ageLabel(repo.ageSeconds) }}</td>
+            <td>{{ repo.refreshing ? 'refreshing' : 'idle' }}</td>
+          </tr>
+        } @empty {
+          <tr><td colspan="3" class="git-telemetry__muted">No repositories discovered yet.</td></tr>
+        }
+      </tbody>
+    </table>
+  }
+</section>

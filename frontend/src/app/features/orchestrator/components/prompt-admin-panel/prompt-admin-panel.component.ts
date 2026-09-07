@@ -19,6 +19,7 @@ import { PromptReviewSectionComponent } from '../prompt-review-section/prompt-re
 import { PromptCallTelemetryComponent } from '../prompt-call-telemetry/prompt-call-telemetry.component';
 import { PromptCoverageSectionComponent } from '../prompt-coverage-section/prompt-coverage-section.component';
 import { PromptMetaSummaryComponent } from '../prompt-meta-summary/prompt-meta-summary.component';
+import { GitTelemetryPanelComponent } from '../git-telemetry-panel/git-telemetry-panel.component';
 import {
   PromptAdminService,
   PromptDetail,
@@ -55,6 +56,7 @@ interface PromptDiffLine {
     PromptCallTelemetryComponent,
     PromptCoverageSectionComponent,
     PromptMetaSummaryComponent,
+    GitTelemetryPanelComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './prompt-admin-panel.component.html',

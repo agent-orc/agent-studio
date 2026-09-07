@@ -196,6 +196,8 @@
           </div>
         }
       } @else {
+        <app-git-telemetry-panel />
+
         @if (reviewSummary(); as summary) {
           <div class="prompts__banner" data-testid="prompt-admin-review-summary">
             Reviewed {{ summary.reviewedCount }} prompts with {{ summary.findingCount }} findings.

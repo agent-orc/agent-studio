@@ -7,6 +7,7 @@ import type {
   BatchMoveJobResponse,
   CreateTaskRequest,
   GroupedJobs,
+  GroupedJobsResponse,
   TaskArtifactsResponse,
   TaskFileHistoryEntry,
   TaskFileSourceScope,
@@ -278,6 +279,16 @@ export class TaskService {
   /** True while the job-events socket is connected (diagnostics / e2e). */
   readonly pushConnected = this.jobsHub.connected;
 
+  /**
+   * AGT-2726 — the background Git-index freshness stamp folded into the last
+   * `/api/tasks/grouped` response: the oldest `gitStateAt` among the
+   * repositories represented on the board, and whether any of them is
+   * currently unindexed or mid-refresh. The board shows this quietly next to
+   * the lanes; it never gates rendering on it.
+   */
+  readonly gitStateAt = signal<string | null>(null);
+  readonly gitStateStale = signal(false);
+
   // Eventual-consistency layer for drag/drop. The user-visible reorder
   // happens locally before the backend confirms (the previous round-trip
   // wait felt laggy and made consecutive drags clobber each other when a
@@ -401,13 +412,15 @@ export class TaskService {
       return true;
     };
 
-    this.http.get<GroupedJobs>(`${this.baseUrl}/tasks/grouped`).pipe(
+    this.http.get<GroupedJobsResponse>(`${this.baseUrl}/tasks/grouped`).pipe(
       finalize(() => this.finishGroupedRefresh()),
     ).subscribe({
-      next: (grouped) => {
+      next: ({ gitStateAt, stale, ...grouped }) => {
         if (acceptOptimisticTarget()) {
           this.grouped.set(grouped);
           this.jobs.set(uniqueJobsFromGrouped(grouped));
+          this.gitStateAt.set(gitStateAt);
+          this.gitStateStale.set(stale);
         }
         if (silent) {
           this.error.set(null);
@@ -2634,6 +2647,15 @@ export class TaskService {
       jobMoved: () => this.scheduleSilentRefresh(),
       jobsReordered: () => this.scheduleSilentRefresh(),
       jobsBulkChanged: () => this.scheduleSilentRefresh(),
+      // Quiet, immediate stamp update from the push payload itself (no round
+      // trip needed to know the index moved forward), plus a silent re-pull
+      // so the merge/integration/publish/test-run signals that repository's
+      // cards carry catch up to the new snapshot.
+      gitStateChanged: (e) => {
+        this.gitStateAt.update((current) =>
+          !current || new Date(e.gitStateAt) > new Date(current) ? e.gitStateAt : current);
+        this.scheduleSilentRefresh();
+      },
       runnerStatusChanged: () => this.refreshRunnerStatus(true),
       cliStarted: () => this.scheduleSilentRefresh(),
       cliFinished: () => this.scheduleSilentRefresh(),
