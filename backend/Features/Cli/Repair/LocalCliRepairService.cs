@@ -10,6 +10,12 @@ public enum NpmCliInstallState
     TrulyUninstalled,
     PackagePresentWithShim,
     MissingShimWithPackagePresent,
+    /// <summary>
+    /// Package directory and command shim are present, but the package's
+    /// launcher executable is still the placeholder the npm postinstall was
+    /// supposed to replace with the real platform binary.
+    /// </summary>
+    LauncherStubWithPackagePresent,
 }
 
 public sealed record NpmCliInstallInspection(
@@ -20,22 +26,48 @@ public sealed record NpmCliInstallInspection(
     string? PackageVersion,
     DateTimeOffset? PackageModifiedAt,
     string RequiredCommandShim,
-    IReadOnlyList<string> ExpectedShims);
+    IReadOnlyList<string> ExpectedShims,
+    string? LauncherBinary = null,
+    long? LauncherBinaryLength = null,
+    string? DetectionEvidence = null);
+
+internal enum NpmCliRepairAction
+{
+    /// <summary>Global npm install or forced relink of the configured package.</summary>
+    NpmInstall,
+    /// <summary>Re-run of the installed package's own postinstall script.</summary>
+    PackageInstallScript,
+}
 
 internal sealed record NpmCliRepairPlan(
     NpmGlobalInstallMode InstallMode,
     string Detection,
     string PackageState,
-    string RepairAction);
+    string RepairAction,
+    NpmCliRepairAction Action = NpmCliRepairAction.NpmInstall);
 
 /// <summary>
 /// Detects and repairs Windows global-npm failures where the configured package
-/// is absent or its required command shim disappears. Custom CLI paths and
-/// present-but-broken command shims remain outside this bounded repair.
+/// is absent, its required command shim disappears, or its launcher binary is
+/// still the postinstall placeholder. Custom CLI paths and present-but-broken
+/// command shims remain outside this bounded repair.
 /// </summary>
 public sealed class LocalCliRepairService
 {
     public static readonly TimeSpan AttemptWindow = TimeSpan.FromHours(1);
+
+    /// <summary>
+    /// Anything below this is the launcher placeholder, not a platform binary
+    /// (the observed Claude Code placeholder is 500 bytes, the real one is
+    /// hundreds of megabytes).
+    /// </summary>
+    public const int LauncherStubMaxBytes = 4096;
+
+    /// <summary>What a launcher package prints instead of its version.</summary>
+    internal const string NativeBinaryMissingMarker = "native binary not installed";
+
+    /// <summary>The npm postinstall entry point of a launcher package.</summary>
+    internal const string PackageInstallScript = "install.cjs";
 
     private static readonly JsonSerializerOptions JournalJson = new()
     {
@@ -88,7 +120,7 @@ public sealed class LocalCliRepairService
         _journalPath = journalPath;
         foreach (var entry in ReadJournal())
         {
-            if (entry.Outcome == "failed")
+            if (entry.Outcome is "failed" or "detected")
             {
                 _latest[entry.CliType] = ToStatus(entry);
             }
@@ -104,7 +136,7 @@ public sealed class LocalCliRepairService
         lock (_sync)
         {
             return _latest.Values
-                .Where(item => item.Outcome == "failed")
+                .Where(item => item.Outcome is "failed" or "detected")
                 .OrderByDescending(item => item.OccurredAt)
                 .ToArray();
         }
@@ -132,8 +164,10 @@ public sealed class LocalCliRepairService
         var appData = _appData();
         if (string.IsNullOrWhiteSpace(appData)) return before;
         var npmBin = Path.Combine(appData, "npm");
-        var inspection = Inspect(cliType, before.Path, npmBin);
+        var inspection = Inspect(cliType, before.Path, npmBin, before.Version);
         var repairPlan = SelectRepairPlan(inspection.State);
+        if (inspection.State == NpmCliInstallState.LauncherStubWithPackagePresent)
+            NoteLauncherStubDetected(cliType, inspection, before, lastObservedVersion);
         if (repairPlan is null)
         {
             _logger.LogDebug(
@@ -167,7 +201,8 @@ public sealed class LocalCliRepairService
                 $"Starting bounded {cliType} CLI repair: package {repairPlan.PackageState}, command shim {shimStateBefore}, npm action {repairPlan.RepairAction}.",
                 "",
                 "",
-                evidence));
+                evidence,
+                inspection.DetectionEvidence));
             _logger.LogInformation(
                 "Starting bounded local CLI repair cli={Cli} package={Package} packageVersion={Version} packageState={PackageState} shimStateBefore={ShimStateBefore} repairAction={RepairAction}",
                 cliType,
@@ -177,12 +212,9 @@ public sealed class LocalCliRepairService
                 shimStateBefore,
                 repairPlan.RepairAction);
 
-            var install = await _installer.InstallAsync(
-                inspection.PackageName,
-                repairPlan.InstallMode,
-                ct);
+            var install = await ExecuteRepairAsync(inspection, repairPlan, ct);
             var after = probe();
-            var afterInspection = Inspect(cliType, before.Path, npmBin);
+            var afterInspection = Inspect(cliType, before.Path, npmBin, after.Version);
             var packagePresentAfter = Directory.Exists(inspection.PackageDirectory);
             var commandShimRestored = File.Exists(inspection.RequiredCommandShim);
             var succeeded = install.Succeeded
@@ -217,7 +249,8 @@ public sealed class LocalCliRepairService
                 detail,
                 Truncate(LogRedactor.Scrub(install.StandardOutput), 4000),
                 Truncate(LogRedactor.Scrub(install.StandardError), 4000),
-                evidence);
+                evidence,
+                inspection.DetectionEvidence);
             AppendJournal(entry);
 
             if (succeeded)
@@ -259,6 +292,83 @@ public sealed class LocalCliRepairService
         }
     }
 
+    /// <summary>
+    /// Runs the repair the plan selected. A launcher stub is repaired by its own
+    /// postinstall; the version-pinned global reinstall is the fallback when that
+    /// script is gone or no node can run it.
+    /// </summary>
+    private async Task<NpmGlobalInstallResult> ExecuteRepairAsync(
+        NpmCliInstallInspection inspection,
+        NpmCliRepairPlan plan,
+        CancellationToken ct)
+    {
+        if (plan.Action != NpmCliRepairAction.PackageInstallScript)
+            return await _installer.InstallAsync(inspection.PackageName, plan.InstallMode, ct);
+
+        if (File.Exists(Path.Combine(inspection.PackageDirectory, PackageInstallScript)))
+        {
+            var scripted = await _installer.RunPackageInstallScriptAsync(
+                inspection.PackageDirectory,
+                PackageInstallScript,
+                ct);
+            if (scripted.Outcome != NpmGlobalInstallOutcome.NodeUnavailable) return scripted;
+        }
+
+        var pinned = string.IsNullOrWhiteSpace(inspection.PackageVersion)
+            ? inspection.PackageName
+            : $"{inspection.PackageName}@{inspection.PackageVersion}";
+        return await _installer.InstallAsync(pinned, plan.InstallMode, ct);
+    }
+
+    /// <summary>
+    /// Publishes the launcher-stub state as an active failure before the repair
+    /// runs, so the operator still sees the broken CLI while the one-attempt-per
+    /// -hour budget suppresses another repair. A healthy probe clears it through
+    /// <see cref="ReconcileHealthy"/>.
+    /// </summary>
+    private void NoteLauncherStubDetected(
+        string cliType,
+        NpmCliInstallInspection inspection,
+        (bool Available, string? Version, string Path) probe,
+        string? lastObservedVersion)
+    {
+        lock (_sync)
+        {
+            if (_latest.ContainsKey(cliType)) return;
+        }
+
+        var occurredAt = _clock();
+        var entry = new LocalCliRepairJournalEntry(
+            occurredAt,
+            cliType,
+            "detected",
+            "launcher-stub-with-package-present",
+            inspection.PackageName,
+            inspection.PackageDirectory,
+            inspection.PackageModifiedAt,
+            probe.Path,
+            inspection.ExpectedShims,
+            lastObservedVersion ?? inspection.PackageVersion,
+            null,
+            null,
+            $"{cliType} CLI launcher is still the postinstall placeholder: {inspection.DetectionEvidence}",
+            "",
+            "",
+            [],
+            inspection.DetectionEvidence);
+        AppendJournal(entry);
+        lock (_sync) _latest[cliType] = ToStatus(entry);
+        _logger.LogError(
+            "Local CLI launcher stub detected cli={Cli} package={Package} packageVersion={Version} launcher={Launcher} launcherBytes={LauncherBytes} detectedAt={DetectedAt:o} evidence={Evidence}",
+            cliType,
+            inspection.PackageName,
+            inspection.PackageVersion ?? lastObservedVersion ?? "unknown",
+            inspection.LauncherBinary ?? "unknown",
+            inspection.LauncherBinaryLength,
+            occurredAt,
+            inspection.DetectionEvidence);
+    }
+
     private void ReconcileHealthy(
         string cliType,
         (bool Available, string? Version, string Path) probe)
@@ -298,10 +408,16 @@ public sealed class LocalCliRepairService
             probe.Version ?? "unknown");
     }
 
+    /// <summary>
+    /// Classifies one global npm CLI install. <paramref name="versionOutput"/> is
+    /// the text the failing <c>--version</c> probe produced, if the caller
+    /// captured any; a launcher package reports its missing native binary there.
+    /// </summary>
     public static NpmCliInstallInspection Inspect(
         string cliType,
         string probedPath,
-        string npmBin)
+        string npmBin,
+        string? versionOutput = null)
     {
         var definition = Definition(cliType);
         if (definition is null || !IsGlobalCommandPath(cliType, probedPath, npmBin))
@@ -333,11 +449,16 @@ public sealed class LocalCliRepairService
         var requiredCommandShim = Path.Combine(npmBin, cliType + ".cmd");
         var packagePresent = Directory.Exists(packageDirectory);
         var shimPresent = File.Exists(requiredCommandShim);
+        var launcher = packagePresent ? ResolveLauncherBinary(packageDirectory, cliType) : null;
+        var launcherLength = launcher is null ? null : SafeLength(launcher);
+        var launcherIsStub = LauncherLooksLikeStub(launcherLength, versionOutput);
         var state = !packagePresent
             ? NpmCliInstallState.TrulyUninstalled
-            : shimPresent
-                ? NpmCliInstallState.PackagePresentWithShim
-                : NpmCliInstallState.MissingShimWithPackagePresent;
+            : !shimPresent
+                ? NpmCliInstallState.MissingShimWithPackagePresent
+                : launcherIsStub
+                    ? NpmCliInstallState.LauncherStubWithPackagePresent
+                    : NpmCliInstallState.PackagePresentWithShim;
         var packageJson = Path.Combine(packageDirectory, "package.json");
         return new NpmCliInstallInspection(
             state,
@@ -347,7 +468,101 @@ public sealed class LocalCliRepairService
             ReadPackageVersion(packageJson),
             File.Exists(packageJson) ? SafeLastWrite(packageJson) : null,
             requiredCommandShim,
-            expectedShims);
+            expectedShims,
+            launcher,
+            launcherLength,
+            state == NpmCliInstallState.LauncherStubWithPackagePresent
+                ? DescribeLauncherStub(
+                    packageDirectory,
+                    resolvedDefinition,
+                    launcher,
+                    launcherLength,
+                    versionOutput)
+                : null);
+    }
+
+    /// <summary>
+    /// A launcher package ships a placeholder of a few hundred bytes and lets its
+    /// postinstall replace it with the real platform binary. Only native launcher
+    /// targets are size-checked, so an ordinary small JavaScript bin entry can
+    /// never be mistaken for a stub.
+    /// </summary>
+    internal static bool LauncherLooksLikeStub(long? launcherLength, string? versionOutput)
+        => (launcherLength is not null && launcherLength < LauncherStubMaxBytes)
+           || (versionOutput?.Contains(NativeBinaryMissingMarker, StringComparison.OrdinalIgnoreCase) ?? false);
+
+    private static string? ResolveLauncherBinary(string packageDirectory, string cliType)
+    {
+        foreach (var relative in LauncherBinaryCandidates(packageDirectory, cliType))
+        {
+            if (!relative.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) continue;
+            string candidate;
+            try { candidate = Path.Combine(packageDirectory, relative); }
+            catch (Exception ex)
+            {
+                SilentCatch.Note(ex, "LocalCliRepairService: unusable launcher bin entry");
+                continue;
+            }
+            if (File.Exists(candidate)) return candidate;
+        }
+        return null;
+    }
+
+    private static IEnumerable<string> LauncherBinaryCandidates(string packageDirectory, string cliType)
+    {
+        var declared = ReadPackageBinEntry(Path.Combine(packageDirectory, "package.json"), cliType);
+        if (!string.IsNullOrWhiteSpace(declared)) yield return declared!;
+        yield return Path.Combine("bin", cliType + ".exe");
+    }
+
+    private static string DescribeLauncherStub(
+        string packageDirectory,
+        (string Scope, string Package, string PackageName) definition,
+        string? launcher,
+        long? launcherLength,
+        string? versionOutput)
+    {
+        var parts = new List<string>();
+        if (launcher is not null)
+        {
+            parts.Add(
+                $"launcher '{launcher}' is {launcherLength} bytes (below the {LauncherStubMaxBytes}-byte placeholder threshold)");
+        }
+        if (versionOutput?.Contains(NativeBinaryMissingMarker, StringComparison.OrdinalIgnoreCase) == true)
+            parts.Add($"--version reported '{NativeBinaryMissingMarker}'");
+        var nativePackages = NestedNativePackages(packageDirectory, definition);
+        parts.Add(nativePackages.Count > 0
+            ? $"nested native package(s) present: {string.Join(", ", nativePackages)}"
+            : "no nested native package found");
+        return string.Join("; ", parts) + ".";
+    }
+
+    /// <summary>
+    /// The optional platform dependency the postinstall copies from, extracted
+    /// below the package itself (<c>node_modules/@scope/package-win32-x64</c>).
+    /// </summary>
+    private static IReadOnlyList<string> NestedNativePackages(
+        string packageDirectory,
+        (string Scope, string Package, string PackageName) definition)
+    {
+        var scopeDirectory = Path.Combine(packageDirectory, "node_modules", definition.Scope);
+        if (!Directory.Exists(scopeDirectory)) return [];
+        try
+        {
+            return Directory.EnumerateDirectories(scopeDirectory)
+                .Select(Path.GetFileName)
+                .Where(name => name is not null
+                               && name.StartsWith(definition.Package + "-", StringComparison.OrdinalIgnoreCase))
+                .Select(name => $"{definition.Scope}/{name}")
+                .Order(StringComparer.OrdinalIgnoreCase)
+                .Take(4)
+                .ToArray();
+        }
+        catch (Exception ex)
+        {
+            SilentCatch.Note(ex, "LocalCliRepairService: nested native package enumeration failed");
+            return [];
+        }
     }
 
     public static bool AttemptAllowed(
@@ -369,6 +584,15 @@ public sealed class LocalCliRepairService
                 "missing-shim-with-package-present",
                 "present",
                 "force-relink"),
+            // The npm postinstall is the only step that placed the platform
+            // binary, so re-running it is the smallest repair. InstallMode
+            // carries the version-pinned reinstall used when the script is gone.
+            NpmCliInstallState.LauncherStubWithPackagePresent => new NpmCliRepairPlan(
+                NpmGlobalInstallMode.Install,
+                "launcher-stub-with-package-present",
+                "present",
+                "postinstall-rerun",
+                NpmCliRepairAction.PackageInstallScript),
             _ => null,
         };
 
@@ -377,8 +601,12 @@ public sealed class LocalCliRepairService
         lock (_sync)
         {
             if (!_inFlight.Add(cliType)) return false;
+            // Only the "attempting" row marks a spent attempt. A detection or a
+            // resolved row must not consume the budget, or a state that is
+            // journalled on sight could never be repaired.
             var previous = ReadJournal()
-                .Where(entry => string.Equals(entry.CliType, cliType, StringComparison.OrdinalIgnoreCase))
+                .Where(entry => string.Equals(entry.CliType, cliType, StringComparison.OrdinalIgnoreCase)
+                                && entry.Outcome == "attempting")
                 .Select(entry => (DateTimeOffset?)entry.Timestamp)
                 .LastOrDefault();
             if (AttemptAllowed(now, previous)) return true;
@@ -507,6 +735,8 @@ public sealed class LocalCliRepairService
     {
         if (install.Outcome == NpmGlobalInstallOutcome.NpmUnavailable)
             return $"{cliType} CLI repair failed: npm unavailable. {install.StandardError}";
+        if (install.Outcome == NpmGlobalInstallOutcome.NodeUnavailable)
+            return $"{cliType} CLI repair failed: node unavailable for {repairPlan.RepairAction}. {install.StandardError}";
         if (!install.Succeeded)
             return $"{cliType} CLI repair failed: package {repairPlan.PackageState}, command shim {shimStateBefore}, npm action {repairPlan.RepairAction} attempted, but npm exited {install.ExitCode?.ToString() ?? "without an exit code"}.";
         if (!packagePresentAfter)
@@ -560,6 +790,32 @@ public sealed class LocalCliRepairService
         catch { return null; }
     }
 
+    /// <summary>Reads the <c>bin</c> target a package declares for one command.</summary>
+    private static string? ReadPackageBinEntry(string packageJsonPath, string cliType)
+    {
+        if (!File.Exists(packageJsonPath)) return null;
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(packageJsonPath));
+            if (!document.RootElement.TryGetProperty("bin", out var bin)) return null;
+            return bin.ValueKind switch
+            {
+                JsonValueKind.String => bin.GetString(),
+                JsonValueKind.Object => bin.TryGetProperty(cliType, out var target)
+                    ? target.GetString()
+                    : null,
+                _ => null,
+            };
+        }
+        catch { return null; }
+    }
+
+    private static long? SafeLength(string path)
+    {
+        try { return new FileInfo(path).Length; }
+        catch { return null; }
+    }
+
     private static DateTimeOffset SafeLastWrite(string path)
     {
         try { return File.GetLastWriteTimeUtc(path); }
@@ -592,4 +848,7 @@ public sealed record LocalCliRepairJournalEntry(
     string Detail,
     string NpmStandardOutput,
     string NpmStandardError,
-    IReadOnlyList<NpmLogEvidence> RecentNpmActivity);
+    IReadOnlyList<NpmLogEvidence> RecentNpmActivity,
+    /// <summary>What the state classification was read from, for states that are
+    /// not visible from the package and shim paths alone.</summary>
+    string? DetectionEvidence = null);

@@ -101,4 +101,36 @@ describe('StatusBarComponent CLI repair note', () => {
     expect(note?.getAttribute('data-signal-tone')).toBe('mismatch');
     expect(note?.querySelector('[aria-label="CLI repair failed"]')).not.toBeNull();
   });
+
+  // AGT-2706: a broken install that is journalled on sight, before its repair
+  // attempt, is an active failure for the operator too.
+  it('shows a detected but not yet repaired CLI as an active failure', async () => {
+    await TestBed.configureTestingModule({
+      imports: [StatusBarComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(StatusBarComponent);
+    TestBed.inject(TaskService).runnerStatus.set({
+      projects: {},
+      cliRepairs: [{
+        cliType: 'claude',
+        outcome: 'detected',
+        occurredAt: '2026-09-06T07:45:00Z',
+        versionBefore: '2.1.263',
+        detail: 'claude CLI launcher is still the postinstall placeholder.',
+      }],
+    });
+
+    fixture.detectChanges();
+
+    const note = fixture.nativeElement.querySelector('[data-testid="status-bar-cli-repair"]');
+    expect(note?.textContent).toContain('CLI broken since');
+    expect(note?.getAttribute('data-signal-tone')).toBe('mismatch');
+    expect(note?.querySelector('[aria-label="CLI broken"]')).not.toBeNull();
+  });
 });

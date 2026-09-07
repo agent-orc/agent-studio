@@ -171,7 +171,11 @@ public record RunnerStatus
 public sealed record LocalCliRepairStatus
 {
     public string CliType { get; init; } = "";
-    /// <summary>Currently <c>failed</c>; healthy outcomes are not projected.</summary>
+    /// <summary>
+    /// <c>failed</c> for a repair that did not restore the CLI, or
+    /// <c>detected</c> for a broken install that is journalled on sight and is
+    /// waiting for its repair attempt. Healthy outcomes are not projected.
+    /// </summary>
     public string Outcome { get; init; } = "";
     public DateTimeOffset OccurredAt { get; init; }
     public string? VersionBefore { get; init; }

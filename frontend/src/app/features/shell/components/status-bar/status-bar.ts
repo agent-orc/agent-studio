@@ -199,7 +199,9 @@ export class StatusBarComponent implements OnInit, OnDestroy {
 
   readonly latestCliRepair = computed(() => {
     const repairs = (this.jobService.runnerStatus().cliRepairs ?? [])
-      .filter(item => item.outcome === 'failed' || item.outcome === 'attempting');
+      .filter(item => item.outcome === 'failed'
+        || item.outcome === 'attempting'
+        || item.outcome === 'detected');
     return repairs.reduce<(typeof repairs)[number] | null>((latest, item) =>
       latest === null || Date.parse(item.occurredAt) > Date.parse(latest.occurredAt) ? item : latest,
     null);
@@ -213,10 +215,17 @@ export class StatusBarComponent implements OnInit, OnDestroy {
       ? new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' })
         .format(new Date(parsed))
       : 'unknown time';
-    return repair.outcome === 'attempting'
-      ? `CLI repair started at ${time}`
+    if (repair.outcome === 'attempting') return `CLI repair started at ${time}`;
+    return repair.outcome === 'detected'
+      ? `CLI broken since ${time}`
       : `CLI repair failed at ${time}`;
   });
+
+  /** Screen-reader label for the same two acute outcomes the tone encodes. */
+  readonly cliRepairWarningLabel = computed(() =>
+    this.latestCliRepair()?.outcome === 'detected'
+      ? 'CLI broken'
+      : 'CLI repair failed');
 
   readonly projectCount = computed(() => this.projectNames().length || Object.keys(this.jobService.runnerStatus().projects).length);
   readonly orchestratorLabel = computed(() => this.orchestratorActiveChatCount() > 0
