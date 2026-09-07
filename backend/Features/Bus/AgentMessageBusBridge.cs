@@ -455,6 +455,32 @@ public sealed class AgentMessageBusBridge
     }
 
     /// <summary>
+    /// Emits one terminal operator-feed event for a host-owned provider sign-in.
+    /// Device codes and credentials are intentionally absent from this contract.
+    /// </summary>
+    public Task EmitProviderSignInAsync(
+        string host,
+        string provider,
+        string actor,
+        string outcome,
+        CancellationToken ct = default)
+    {
+        var severity = outcome == "completed" ? "Info" : "Warn";
+        var msg = NewMessage(
+            participantId: ParticipantRuntime,
+            role: "system",
+            kind: "action",
+            severity: severity,
+            project: null,
+            jobId: null,
+            topic: "provider_sign_in",
+            summary: TruncateSummary($"{provider} sign-in on {host}: {outcome}"),
+            payload: new { host, provider, actor, outcome },
+            tags: new[] { "provider-sign-in", $"provider:{provider}", $"outcome:{outcome}" });
+        return EmitAsync(msg, ct);
+    }
+
+    /// <summary>
     /// Token-usage attribution for one orchestrator turn or supporting-agent
     /// call. The aggregate rollup view stays in <c>orchestrator.jsonl</c> /
     /// the token summary service; the bus carries one event per recorded

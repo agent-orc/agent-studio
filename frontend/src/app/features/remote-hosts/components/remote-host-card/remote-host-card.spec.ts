@@ -6,6 +6,7 @@ import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.
 import { HostTelemetryHistoryComponent } from '../host-telemetry-history/host-telemetry-history';
 import { RemoteHostCardComponent } from './remote-host-card';
 import type { RemoteHost } from '../../models/remote-host.model';
+import { CodexSignInDialogService } from '../../services/codex-sign-in-dialog.service';
 
 const HOST: RemoteHost = {
   id: 'hetzner',
@@ -183,6 +184,29 @@ describe('RemoteHostCardComponent', () => {
       .toContain('Expires in 10 days');
     expect(fixture.nativeElement.querySelector('[data-testid="remote-host-provider-auth-history-claude"]')?.textContent)
       .toContain('ready → unavailable');
+  });
+
+  it('offers Codex sign-in for an expiring host badge and keeps the SSH target host-owned', () => {
+    const fixture = mount({
+      ...HOST,
+      capabilityHealth: [{
+        key: 'provider-auth:codex', category: 'provider-auth', advertisedStatus: 'ready',
+        healthState: 'healthy', advertisedAt: '2026-07-10T11:59:30Z',
+        freshUntil: '2026-07-10T12:02:30Z', isFresh: true, consecutiveFailures: 0,
+        detail: 'Credentials expire soon', signal: 'credentials-expiring',
+        affectedClaims: [], recoveryHistory: [],
+      }],
+    });
+    const signIn = fixture.nativeElement.querySelector(
+      '[data-testid="remote-host-codex-sign-in"]',
+    ) as HTMLButtonElement;
+
+    expect(signIn).toBeTruthy();
+    signIn.click();
+    expect(TestBed.inject(CodexSignInDialogService).request()).toMatchObject({
+      hostId: 'hetzner',
+      sshTarget: 'agent@runner.hetzner',
+    });
   });
 
   it('shows contents ready, workflow missing, and the documentation fix without blocking inflow', () => {

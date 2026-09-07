@@ -121,13 +121,24 @@
       </button>
     }
     @if (providerAuthWait(); as authWait) {
-      <span class="task-card__provider-auth-wait"
-            data-testid="task-card-provider-auth-wait"
-            role="status"
-            [cacTooltip]="authWait.tooltip">
-        <span class="task-card__provider-auth-dot" aria-hidden="true"></span>
-        {{ authWait.label }}
-      </span>
+      @if (authWait.signInTarget) {
+        <button type="button"
+                class="task-card__provider-auth-wait"
+                data-testid="task-card-provider-auth-wait"
+                [cacTooltip]="authWait.tooltip"
+                (click)="$event.stopPropagation(); codexSignIn.open(authWait.signInTarget)">
+          <span class="task-card__provider-auth-dot" aria-hidden="true"></span>
+          {{ authWait.label }} · Sign in
+        </button>
+      } @else {
+        <span class="task-card__provider-auth-wait"
+              data-testid="task-card-provider-auth-wait"
+              role="status"
+              [cacTooltip]="authWait.tooltip">
+          <span class="task-card__provider-auth-dot" aria-hidden="true"></span>
+          {{ authWait.label }}
+        </span>
+      }
     }
     <app-review-decision-badges [job]="job()" />
     @if (phaseBadge(); as pb) {

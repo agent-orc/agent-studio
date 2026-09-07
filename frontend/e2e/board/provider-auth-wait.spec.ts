@@ -10,12 +10,13 @@ function json(route: Route, body: unknown) {
   return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
 }
 
-async function installRoutes(page: Page): Promise<void> {
+async function installRoutes(page: Page, provider: 'claude' | 'codex' = 'claude'): Promise<void> {
   const now = new Date();
+  const providerLabel = provider === 'claude' ? 'Claude' : 'Codex';
   const task = {
     id: 'AGT-AUTH-WAIT', key: 'AGT-AUTH-WAIT', displayKey: 'AGT-AUTH-WAIT',
-    taskKey: `${WATCH_PATH}::AGT-AUTH-WAIT`, title: 'Claude task waiting for host authentication',
-    state: '2-ready', order: 1, agent: 'claude', cliType: 'claude',
+    taskKey: `${WATCH_PATH}::AGT-AUTH-WAIT`, title: `${providerLabel} task waiting for host authentication`,
+    state: '2-ready', order: 1, agent: provider, cliType: provider,
     createdAt: now.toISOString(), watchPath: WATCH_PATH, projectName: PROJECT,
     folderPath: `${WATCH_PATH}/2-ready/AGT-AUTH-WAIT`, lastActivity: now.toISOString(),
     sessionName: null, model: 'claude-sonnet-5', useOwnSession: null,
@@ -55,8 +56,11 @@ async function installRoutes(page: Page): Promise<void> {
       registeredAt: now.toISOString(), lastSeenAt: now.toISOString(),
       hostAdmission: { hostId: 'host-berlin', admissionState: 'open' },
       capabilities: [
-        capability('cli-execution:claude', 'ready'),
-        { ...capability('provider-auth:claude', 'unavailable', 'Not logged in'), signal: 'signed-out', consecutiveFailures: 2 },
+        capability(`cli-execution:${provider}`, 'ready'),
+        {
+          ...capability(`provider-auth:${provider}`, 'unavailable', 'Not logged in'),
+          signal: 'signed-out', consecutiveFailures: 2,
+        },
       ], telemetry: null,
     }]);
     if (url.includes('/api/clients')) return json(route, [{
@@ -96,4 +100,34 @@ test('Ready card shows the provider sign-in wait reason in both themes', async (
       path: join(resultsDir, `ready-card-provider-auth-wait-${theme}--mocked.png`),
     });
   }
+});
+
+test('Codex Ready-card wait chip opens the host-owned device sign-in dialog', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.addInitScript(() => localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({
+    v: 1, tabs: [{ kind: 'board', projectName: '__all__' }], activeKey: 'board:__all__',
+  })));
+  await installRoutes(page, 'codex');
+  await page.route('**/api/v1/management/remote-hosts/*/codex-sign-in', route => json(route, {
+    handle: 'codex_ready_card_session', state: 'pending',
+    verificationUrl: 'https://auth.openai.com/codex/device', userCode: 'MOCK-CODE',
+    expiresAt: new Date(Date.now() + 900_000).toISOString(),
+  }));
+  await page.route('**/api/v1/management/remote-hosts/*/codex-sign-in/*', route => json(route, {
+    handle: 'codex_ready_card_session', state: 'pending', detail: 'Waiting for browser sign-in.',
+    requestedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 900_000).toISOString(), completedAt: null,
+  }));
+
+  await page.goto('/?includeFixtures=true', { waitUntil: 'domcontentloaded' });
+  await dismissDevErrorDialog(page);
+  await page.addStyleTag({
+    content: 'app-error-dialog, app-offline-banner, [data-testid="error-dialog-overlay"] { display: none !important; }',
+  });
+
+  const wait = page.getByTestId('task-card-provider-auth-wait');
+  await expect(wait).toContainText('Waiting for Codex sign-in on runner-berlin');
+  await expect(wait).toContainText('Sign in');
+  await wait.click();
+  await expect(page.getByTestId('codex-sign-in-dialog')).toBeVisible();
+  await expect(page.getByTestId('codex-sign-in-code')).toContainText('MOCK-CODE');
 });

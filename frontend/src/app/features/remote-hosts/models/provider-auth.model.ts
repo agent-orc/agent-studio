@@ -36,6 +36,7 @@ export interface ProviderAuthWaitReason {
   label: string;
   tooltip: string;
   hostNames: readonly string[];
+  signInTarget: CodexSignInTarget | null;
 }
 
 export interface ProviderAuthProvisioningRequest {
@@ -54,6 +55,32 @@ export interface ProviderAuthProvisioningResponse {
   requestedAt: string;
   restartedServices: readonly string[];
   processEnvironmentVerified: boolean;
+}
+
+export interface CodexSignInTarget {
+  hostId: string;
+  runnerId: string;
+  hostName: string;
+  aliases: readonly string[];
+  sshTarget?: string | null;
+  baselineAdvertisedAt: string | null;
+}
+
+export interface CodexSignInStartResponse {
+  handle: string;
+  state: 'pending';
+  verificationUrl: string;
+  userCode: string;
+  expiresAt: string;
+}
+
+export interface CodexSignInStatusResponse {
+  handle: string;
+  state: 'pending' | 'completed' | 'failed';
+  detail: string;
+  requestedAt: string;
+  expiresAt: string;
+  completedAt: string | null;
 }
 
 const PROVIDER_AUTH_PREFIX = 'provider-auth:';
@@ -151,6 +178,20 @@ export function providerAuthWaitReason(
         ? `${detail}\nTwo consecutive provider probes reported an explicit logout. The task stays Ready until sign-in is restored.`
         : `${detail}\nNo fresh runner heartbeat is available. Check the Task Server link and runner services.`,
     hostNames: hostNames.length > 0 ? hostNames : configuredRunner ? [configuredRunner] : [],
+    signInTarget: provider === 'codex' && unavailable.length > 0
+      ? signInTarget(unavailable[0])
+      : null,
+  };
+}
+
+export function signInTarget(badge: ProviderAuthBadge, sshTarget?: string | null): CodexSignInTarget {
+  return {
+    hostId: badge.hostId || badge.runnerId,
+    runnerId: badge.runnerId,
+    hostName: badge.hostName,
+    aliases: badge.aliases,
+    sshTarget,
+    baselineAdvertisedAt: badge.advertisedAt,
   };
 }
 

@@ -67,7 +67,7 @@ import { TaskSelectionService } from '../../../task-detail';
 import { PostProcessingActivityComponent } from '../post-processing-activity/post-processing-activity.component';
 import { TestEvidenceStatusComponent } from '../../../test-evidence';
 import { CopyableTaskKeyComponent } from '../../../../components/copyable-task-key/copyable-task-key.component';
-import { ProviderAuthStatusService, providerAuthWaitReason } from '../../../remote-hosts';
+import { CodexSignInDialogService, ProviderAuthStatusService, providerAuthWaitReason } from '../../../remote-hosts';
 // Shared 'now' signal that ticks every 30s so all relative timestamps update in lockstep
 // without re-reading Date.now() during change detection (which causes NG0100).
 const nowTick = signal(Date.now());
@@ -120,7 +120,7 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   private readonly clients = inject(ClientService);
   private readonly tagRegistry = inject(TagRegistryStore);
   private readonly codeReviewActivity = inject(CodeReviewActivityStore);
-  private readonly providerAuthStatus = inject(ProviderAuthStatusService);
+  private readonly providerAuthStatus = inject(ProviderAuthStatusService); readonly codexSignIn = inject(CodexSignInDialogService);
   private stopPolling: (() => void) | null = null;
 
   readonly taskTypeChip = computed(() => buildTaskTypeChip(this.job().taskType));
