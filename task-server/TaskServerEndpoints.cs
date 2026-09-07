@@ -545,6 +545,14 @@ public static class TaskServerEndpoints
         management.MapPost("/migrations/legacy/import", async (
             HttpContext context, LegacyMigrationRequest request, LegacyMigrationService migration, CancellationToken ct)
             => await InvokeAsync(() => migration.ImportAsync(request, Actor(context), ct)));
+        management.MapGet("/migrations/legacy/reports", async (
+            TaskServerStore store, CancellationToken ct)
+            => Results.Ok(await store.ListLegacyMigrationReportsAsync(ct)));
+        management.MapGet("/migrations/legacy/reports/{migrationId}", async (
+            string migrationId, TaskServerStore store, CancellationToken ct)
+            => await store.GetLegacyMigrationReportAsync(migrationId, ct) is { } report
+                ? Results.Ok(report)
+                : Results.NotFound(new ApiError("legacy-migration-report-not-found", "Migration report was not found.")));
 
         var retention = management.MapGroup("/retention");
         retention.MapGet("/policy", async (RetentionManagementService retentionManagement, CancellationToken ct)

@@ -656,6 +656,83 @@ public sealed class TopologyTests
         }
     }
 
+    [Fact(Timeout = 60000)]
+    public async Task Offline_import_initializes_a_fresh_store_and_enters_maintenance_from_the_command_line()
+    {
+        var root = ProtocolTests.RepositoryRoot();
+        using var source = new TempDirectory();
+        using var data = new TempDirectory();
+        using var backups = new TempDirectory();
+        var taskDirectory = Path.Combine(source.Path, "projects", "PROJ-001", "tasks", "2-ready", "AGT-1");
+        Directory.CreateDirectory(taskDirectory);
+        Directory.CreateDirectory(Path.Combine(source.Path, ".metadata"));
+        await File.WriteAllTextAsync(Path.Combine(taskDirectory, "task.json"),
+            "{\"key\":\"AGT-1\",\"title\":\"CLI migration\",\"state\":\"2-ready\"}");
+        await File.WriteAllTextAsync(Path.Combine(source.Path, ".metadata", "attempt-authority.json"), """
+            {"authorityEpoch":2,"lastFenceByTask":{"GONE-1":4},"runAttempts":[
+              {"attemptId":"run-orphan","taskKey":"GONE-1","repositoryId":"repo","state":2,"lastFence":4,"createdAt":"2026-09-01T10:00:00Z"}
+            ],"reviewAttempts":[]}
+            """);
+        var environment = new Dictionary<string, string?>
+        {
+            ["STORE_PATH"] = data.Path,
+            ["BACKUP_PATH"] = backups.Path,
+            ["AUTH"] = "none",
+        };
+
+        using var inventoryProcess = StartBuilt(
+            root, "task-server", "task-server.dll", environment,
+            "inventory", "--source", source.Path, "--workspace", "Workspace");
+        await inventoryProcess.WaitForExitAsync(TimeSpan.FromSeconds(20));
+        Assert.Equal(0, inventoryProcess.Process.ExitCode);
+        var inventory = DeserializeCommandJson<LegacyMigrationInventory>(inventoryProcess);
+        Assert.Equal(1, inventory.OrphanedReferences!.CodingAttempts);
+        var inventoryPath = Path.Combine(source.Path, "inventory.json");
+        await File.WriteAllTextAsync(
+            inventoryPath,
+            JsonSerializer.Serialize(inventory, new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }));
+
+        using (var rejectedImport = StartBuilt(
+                   root, "task-server", "task-server.dll", environment,
+                   "import", "--source", source.Path, "--inventory", inventoryPath,
+                   "--workspace", "Workspace"))
+        {
+            await rejectedImport.WaitForExitAsync(TimeSpan.FromSeconds(20));
+            Assert.Equal(1, rejectedImport.Process.ExitCode);
+            Assert.True(rejectedImport.Contains("maintenance-required"), rejectedImport.ToString());
+            Assert.True(rejectedImport.Contains("--mode maintenance"), rejectedImport.ToString());
+        }
+
+        using var importProcess = StartBuilt(
+            root, "task-server", "task-server.dll", environment,
+            "import", "--source", source.Path, "--inventory", inventoryPath,
+            "--workspace", "Workspace", "--mode", "maintenance");
+        await importProcess.WaitForExitAsync(TimeSpan.FromSeconds(20));
+        Assert.True(importProcess.Process.ExitCode == 0, importProcess.ToString());
+        var imported = DeserializeCommandJson<LegacyMigrationResult>(importProcess);
+        Assert.True(imported.Imported);
+        Assert.Equal(1, imported.OrphanedReferences!.CodingAttempts);
+
+        await using var connection = new Microsoft.Data.Sqlite.SqliteConnection(
+            $"Data Source={Path.Combine(data.Path, "task-server.db")};Pooling=False");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT value FROM meta WHERE key = 'mode';";
+        Assert.Equal("Maintenance", (string)(await command.ExecuteScalarAsync())!);
+        command.CommandText = "SELECT count(*) FROM legacy_migration_orphans WHERE orphaned_task_key = 'GONE-1';";
+        Assert.Equal(2L, (long)(await command.ExecuteScalarAsync())!);
+    }
+
+    private static T DeserializeCommandJson<T>(RunningProcess process)
+    {
+        var lines = process.OutputLines;
+        var first = Array.FindIndex(lines.ToArray(), line => line.StartsWith('{'));
+        Assert.True(first >= 0, $"Command emitted no JSON.{Environment.NewLine}{process}");
+        var json = string.Join(Environment.NewLine, lines.Skip(first));
+        return JsonSerializer.Deserialize<T>(json, new JsonSerializerOptions(JsonSerializerDefaults.Web))
+               ?? throw new InvalidDataException("Command JSON root was null.");
+    }
+
     private static async Task<(ProjectDto Project, TaskDto Task)> SeedReadyTaskAsync(
         HttpClient client,
         string prefix)

@@ -68,6 +68,66 @@ if (!string.IsNullOrWhiteSpace(configuredUrl)
 
 var app = builder.Build();
 var store = app.Services.GetRequiredService<TaskServerStore>();
+var migration = app.Services.GetRequiredService<LegacyMigrationService>();
+var commandJson = new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true };
+if (command.Kind == TaskServerCommandKind.Inventory)
+{
+    try
+    {
+        var source = Path.GetFullPath(command.Source!);
+        var inventory = await migration.InventoryAsync(
+            new LegacyMigrationRequest(
+                source,
+                command.WorkspaceName ?? Path.GetFileName(source),
+                FreezeConfirmed: false),
+            default);
+        PrintInventoryTable(inventory, Console.Error);
+        Console.WriteLine(JsonSerializer.Serialize(inventory, commandJson));
+        return 0;
+    }
+    catch (Exception exception)
+    {
+        Console.Error.WriteLine($"Task Server inventory failed: {exception.Message}");
+        return 1;
+    }
+}
+
+if (command.Kind == TaskServerCommandKind.Import)
+{
+    try
+    {
+        var inventoryJson = await File.ReadAllTextAsync(Path.GetFullPath(command.InventoryPath!));
+        var inventory = JsonSerializer.Deserialize<LegacyMigrationInventory>(inventoryJson, commandJson)
+                        ?? throw new InvalidDataException("The inventory JSON root is null.");
+        LegacyMigrationService.ValidateInventoryHash(inventory);
+        await store.InitializeAsync();
+        if (command.Mode == TaskServerMode.Maintenance && store.Mode != TaskServerMode.Maintenance)
+            await store.ChangeModeAsync(
+                new ChangeModeRequest(TaskServerMode.Maintenance, "offline legacy import command"),
+                "task-server-import-command",
+                default);
+        var source = Path.GetFullPath(command.Source!);
+        var result = await migration.ImportAsync(
+            new LegacyMigrationRequest(
+                source,
+                command.WorkspaceName ?? Path.GetFileName(inventory.LegacyRoot),
+                FreezeConfirmed: true,
+                ExpectedMigrationId: inventory.MigrationId,
+                RequireAttemptAuthority: inventory.AuthorityEpoch > 0),
+            inventory,
+            "task-server-import-command",
+            default);
+        Console.WriteLine(JsonSerializer.Serialize(result, commandJson));
+        return 0;
+    }
+    catch (Exception exception)
+    {
+        var code = exception is TaskServerConflictException conflict ? $" [{conflict.Code}]" : string.Empty;
+        Console.Error.WriteLine($"Task Server import failed{code}: {exception.Message}");
+        return 1;
+    }
+}
+
 if (command.Kind == TaskServerCommandKind.Backup)
 {
     try
@@ -179,5 +239,28 @@ static async Task BootstrapPrincipalAsync(
 
 await app.RunAsync();
 return 0;
+
+static void PrintInventoryTable(LegacyMigrationInventory inventory, TextWriter writer)
+{
+    writer.WriteLine("Project | State | Tasks");
+    writer.WriteLine("--------|-------|------");
+    foreach (var project in inventory.ProjectCounts ?? [])
+    foreach (var state in project.States.OrderBy(item => item.Key, StringComparer.Ordinal))
+        writer.WriteLine($"{project.Project} | {state.Key} | {state.Value}");
+    writer.WriteLine($"TOTAL | all | {inventory.Tasks}");
+    writer.WriteLine(
+        $"Epics {inventory.Epics}; dossiers {inventory.Dossiers}; events {inventory.Events}; artifacts {inventory.Artifacts}; " +
+        $"sessions {inventory.OrchestratorSessions}; chats {inventory.ContextChats}/{inventory.ContextChatTurns} turns");
+    writer.WriteLine(
+        $"Authority {inventory.AttemptAuthorityRecords} attempts/{inventory.Leases} leases; " +
+        $"integration {inventory.PendingIntegrationRecords} pending/{inventory.IntegrationRecords} history; " +
+        $"Git {inventory.GitCommits} commits/{inventory.DeliveryRefs} delivery refs/{inventory.ResultRefs} result refs");
+    var orphans = inventory.OrphanedReferences ?? new LegacyMigrationOrphanCounts();
+    writer.WriteLine(
+        $"Orphan warnings {orphans.CodingAttempts} coding/{orphans.ReviewAttempts} review/" +
+        $"{orphans.Leases} leases/{orphans.FenceCounters} fences/{orphans.IntegrationRecords} integration");
+    writer.WriteLine($"Bus references {inventory.BusLogFiles} files/{inventory.BusLogBytes} bytes");
+    writer.WriteLine($"Inventory SHA-256: {inventory.InventorySha256}");
+}
 
 public partial class Program;

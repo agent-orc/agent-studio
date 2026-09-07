@@ -1,3 +1,5 @@
+using AgentStudio.TaskServer.Contracts;
+
 namespace AgentStudio.TaskServer;
 
 public enum TaskServerCommandKind
@@ -7,6 +9,8 @@ public enum TaskServerCommandKind
     Backup,
     Retention,
     FullBackup,
+    Inventory,
+    Import,
 }
 
 public sealed record FullBackupCommandLine(string Operation, string? BackupId, bool Json);
@@ -26,6 +30,10 @@ public sealed record RetentionCommandLine(
 public sealed record TaskServerCommandLine(
     TaskServerCommandKind Kind,
     string? BackupName,
+    string? Source,
+    string? InventoryPath,
+    string? WorkspaceName,
+    TaskServerMode? Mode,
     string[] HostArguments,
     RetentionCommandLine? Retention = null,
     FullBackupCommandLine? FullBackup = null)
@@ -52,11 +60,11 @@ public sealed record TaskServerCommandLine(
     public static TaskServerCommandLine Parse(string[] args)
     {
         if (args is ["--version"] or ["-V"])
-            return new TaskServerCommandLine(TaskServerCommandKind.Version, null, []);
+            return new TaskServerCommandLine(TaskServerCommandKind.Version, null, null, null, null, null, []);
         if (args.Length > 0 && string.Equals(args[0], "retention", StringComparison.OrdinalIgnoreCase))
             return ParseRetention(args);
-        if (args.Length == 0 || !string.Equals(args[0], "backup", StringComparison.OrdinalIgnoreCase))
-            return new TaskServerCommandLine(TaskServerCommandKind.Serve, null, args);
+        if (args.Length == 0 || !IsCommand(args[0]))
+            return new TaskServerCommandLine(TaskServerCommandKind.Serve, null, null, null, null, null, args);
 
         if (args.Length > 1 && args[1] is "full" or "verify-full" or "restore-full")
         {
@@ -75,10 +83,15 @@ public sealed record TaskServerCommandLine(
             if (requiresId && string.IsNullOrWhiteSpace(backupId))
                 throw new ArgumentException($"backup {operation} requires a backup id.");
             return new TaskServerCommandLine(
-                TaskServerCommandKind.FullBackup, null, hostArgs.ToArray(), FullBackup: new FullBackupCommandLine(operation, backupId, json));
+                TaskServerCommandKind.FullBackup, null, null, null, null, null, hostArgs.ToArray(),
+                FullBackup: new FullBackupCommandLine(operation, backupId, json));
         }
 
         string? name = null;
+        string? source = null;
+        string? inventory = null;
+        string? workspace = null;
+        TaskServerMode? mode = null;
         var hostArguments = new List<string>();
         for (var index = 1; index < args.Length; index++)
         {
@@ -89,18 +102,59 @@ public sealed record TaskServerCommandLine(
                 name = args[++index];
                 continue;
             }
+            if (ReadOption(args, ref index, "--source", out var sourceValue))
+            {
+                source = sourceValue;
+                continue;
+            }
+            if (ReadOption(args, ref index, "--inventory", out var inventoryValue))
+            {
+                inventory = inventoryValue;
+                continue;
+            }
+            if (ReadOption(args, ref index, "--workspace", out var workspaceValue))
+            {
+                workspace = workspaceValue;
+                continue;
+            }
+            if (ReadOption(args, ref index, "--mode", out var modeValue))
+            {
+                if (!Enum.TryParse<TaskServerMode>(modeValue, true, out var parsedMode))
+                    throw new ArgumentException($"{args[0]} --mode must be normal, draining, readonly, or maintenance.");
+                mode = parsedMode;
+                continue;
+            }
             hostArguments.Add(args[index]);
         }
+
+        var kind = args[0].ToLowerInvariant() switch
+        {
+            "backup" => TaskServerCommandKind.Backup,
+            "inventory" => TaskServerCommandKind.Inventory,
+            "import" => TaskServerCommandKind.Import,
+            _ => throw new ArgumentException($"Unknown Task Server command '{args[0]}'."),
+        };
+        if (kind is TaskServerCommandKind.Inventory or TaskServerCommandKind.Import
+            && string.IsNullOrWhiteSpace(source))
+            throw new ArgumentException($"{args[0]} --source requires a value.");
+        if (kind == TaskServerCommandKind.Import && string.IsNullOrWhiteSpace(inventory))
+            throw new ArgumentException("import --inventory requires a value.");
+        if (kind == TaskServerCommandKind.Import && mode is not null and not TaskServerMode.Maintenance)
+            throw new ArgumentException("import --mode only accepts maintenance.");
         return new TaskServerCommandLine(
-            TaskServerCommandKind.Backup,
+            kind,
             name,
+            source,
+            inventory,
+            workspace,
+            mode,
             hostArguments.ToArray());
     }
 
     private static TaskServerCommandLine ParseRetention(string[] args)
     {
         if (args.Length < 2 || args[1] is "--help" or "-h" || string.Equals(args[1], "help", StringComparison.OrdinalIgnoreCase))
-            return new TaskServerCommandLine(TaskServerCommandKind.Retention, null, [],
+            return new TaskServerCommandLine(TaskServerCommandKind.Retention, null, null, null, null, null, [],
                 new RetentionCommandLine("help", null, "default", null, null, null, null, false));
         var operation = args[1].ToLowerInvariant();
         if (operation is not ("plan" or "apply" or "restore" or "re-excerpt" or "backup-full" or "verify-full" or "restore-full"))
@@ -139,7 +193,22 @@ public sealed record TaskServerCommandLine(
             throw new ArgumentException($"retention {operation} requires --out.");
         if (operation == "restore-full" && string.IsNullOrWhiteSpace(workspace))
             throw new ArgumentException("retention restore-full requires --workspace as the empty destination.");
-        return new TaskServerCommandLine(TaskServerCommandKind.Retention, null, [],
+        return new TaskServerCommandLine(TaskServerCommandKind.Retention, null, null, null, null, null, [],
             new RetentionCommandLine(operation, workspace, policy, archive, project, task, output, json, store, confirmColdDelete));
+    }
+
+    private static bool IsCommand(string value)
+        => value.Equals("backup", StringComparison.OrdinalIgnoreCase)
+           || value.Equals("inventory", StringComparison.OrdinalIgnoreCase)
+           || value.Equals("import", StringComparison.OrdinalIgnoreCase);
+
+    private static bool ReadOption(string[] args, ref int index, string option, out string? value)
+    {
+        value = null;
+        if (!string.Equals(args[index], option, StringComparison.OrdinalIgnoreCase)) return false;
+        if (index + 1 >= args.Length || args[index + 1].StartsWith("--", StringComparison.Ordinal))
+            throw new ArgumentException($"{args[0]} {option} requires a value.");
+        value = args[++index];
+        return true;
     }
 }

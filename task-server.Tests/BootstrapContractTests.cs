@@ -1,4 +1,5 @@
 using AgentStudio.TaskServer;
+using AgentStudio.TaskServer.Contracts;
 using Microsoft.Extensions.Configuration;
 using Xunit;
 
@@ -111,15 +112,24 @@ public sealed class BootstrapContractTests
     }
 
     [Fact]
-    public void Command_line_has_explicit_version_and_backup_modes()
+    public void Command_line_has_explicit_version_backup_inventory_and_import_modes()
     {
         var version = TaskServerCommandLine.Parse(["--version"]);
         var backup = TaskServerCommandLine.Parse(
             ["backup", "--name", "nightly", "--TaskServer:MinimumLeaseSeconds", "10"]);
+        var inventory = TaskServerCommandLine.Parse(["inventory", "--source", "/frozen"]);
+        var import = TaskServerCommandLine.Parse(
+            ["import", "--source", "/frozen", "--inventory", "/tmp/inventory.json", "--workspace", "Workspace", "--mode", "maintenance"]);
 
         Assert.Equal(TaskServerCommandKind.Version, version.Kind);
         Assert.Equal(TaskServerCommandKind.Backup, backup.Kind);
         Assert.Equal("nightly", backup.BackupName);
+        Assert.Equal(TaskServerCommandKind.Inventory, inventory.Kind);
+        Assert.Equal("/frozen", inventory.Source);
+        Assert.Equal(TaskServerCommandKind.Import, import.Kind);
+        Assert.Equal("/tmp/inventory.json", import.InventoryPath);
+        Assert.Equal("Workspace", import.WorkspaceName);
+        Assert.Equal(TaskServerMode.Maintenance, import.Mode);
         Assert.Equal(
             ["--TaskServer:MinimumLeaseSeconds", "10"],
             backup.HostArguments);
@@ -143,6 +153,15 @@ public sealed class BootstrapContractTests
         Assert.Equal(["--TaskServer:DataDirectory", "/tmp/store"], full.HostArguments);
         Assert.Equal("backup-1", restore.FullBackup!.BackupId);
         Assert.Equal(["--TaskServer:DataDirectory", "/tmp/store"], restore.HostArguments);
+    }
+
+    [Fact]
+    public void Import_command_rejects_a_non_maintenance_mode()
+    {
+        var error = Assert.Throws<ArgumentException>(() => TaskServerCommandLine.Parse(
+            ["import", "--source", "/frozen", "--inventory", "/tmp/inventory.json", "--mode", "normal"]));
+
+        Assert.Contains("only accepts maintenance", error.Message, StringComparison.Ordinal);
     }
 
     private static IConfiguration Configuration(
