@@ -14,11 +14,15 @@ public sealed record GlobalSearchItem(
     string? Lane = null,
     string? Sha = null,
     string? Path = null,
-    bool IsWiki = false);
+    bool IsWiki = false,
+    string? DossierKey = null,
+    string? WorkbenchId = null,
+    string? Phase = null);
 
 public sealed record GlobalSearchResponse(
     string Query,
     IReadOnlyList<GlobalSearchItem> Tasks,
+    IReadOnlyList<GlobalSearchItem> Dossiers,
     IReadOnlyList<GlobalSearchItem> Commits,
     IReadOnlyList<GlobalSearchItem> Files,
     IReadOnlyDictionary<string, string> Errors,
@@ -50,6 +54,14 @@ public sealed record GlobalSearchStreamEvent(string Event, object Payload);
 
 /// <summary>The <c>tasks</c> frame: memory-only matches, emitted before any git work starts.</summary>
 public sealed record GlobalSearchTasksFrame(
+    IReadOnlyList<GlobalSearchItem> Items, long DurationMs, string? Error);
+
+/// <summary>
+/// The <c>dossiers</c> frame: Dossier catalogue matches, read from the cached
+/// Wiki snapshot rather than a repository fan-out, so it lands alongside the
+/// task frame instead of waiting on git.
+/// </summary>
+public sealed record GlobalSearchDossiersFrame(
     IReadOnlyList<GlobalSearchItem> Items, long DurationMs, string? Error);
 
 /// <summary>The <c>progress</c> frame: how many repositories this search will visit.</summary>
@@ -84,6 +96,7 @@ public sealed class GlobalSearchService(
     TaskScannerService scanner,
     GlobalSearchIndexes indexes,
     ProjectRegistry registry,
+    ProjectDocsService docs,
     ILogger<GlobalSearchService> logger)
 {
     private const int MaxPerDomain = 30;
@@ -113,6 +126,10 @@ public sealed class GlobalSearchService(
         var tasks = domains.Contains("tasks") ? SearchTasks(query, limit, colors, errors) : [];
         tasksTimer.Stop();
 
+        var dossiersTimer = Stopwatch.StartNew();
+        var dossiers = domains.Contains("dossiers") ? SearchDossiers(query, limit, colors, errors) : [];
+        dossiersTimer.Stop();
+
         var targets = domains.Overlaps(GitDomains) ? ResolveTargets(colors) : [];
         var results = new List<GlobalSearchRepositoryResult>(targets.Count);
         var repositoriesTimer = Stopwatch.StartNew();
@@ -130,10 +147,11 @@ public sealed class GlobalSearchService(
             errors[domain] = "Some results could not be loaded.";
 
         timer.Stop();
-        RecordCompletion(query, domains, tasks.Count, results, tasksTimer.ElapsedMilliseconds,
-            repositoriesTimer.ElapsedMilliseconds, timer.ElapsedMilliseconds);
+        RecordCompletion(query, domains, tasks.Count, dossiers.Count, results, tasksTimer.ElapsedMilliseconds,
+            dossiersTimer.ElapsedMilliseconds, repositoriesTimer.ElapsedMilliseconds, timer.ElapsedMilliseconds);
         return new GlobalSearchResponse(query,
             tasks,
+            dossiers,
             RankItems(results.SelectMany(r => r.Commits), query).Take(limit).ToList(),
             RankItems(results.SelectMany(r => r.Files), query).Take(limit).ToList(),
             errors, timer.ElapsedMilliseconds);
@@ -159,6 +177,15 @@ public sealed class GlobalSearchService(
         if (domains.Contains("tasks"))
             yield return new GlobalSearchStreamEvent("tasks", new GlobalSearchTasksFrame(
                 tasks, tasksTimer.ElapsedMilliseconds, errors.GetValueOrDefault("tasks")));
+
+        // Dossiers read the cached Wiki catalogue, not a repository, so this
+        // frame lands alongside tasks instead of waiting on the git fan-out.
+        var dossiersTimer = Stopwatch.StartNew();
+        var dossiers = domains.Contains("dossiers") ? SearchDossiers(query, limit, colors, errors) : [];
+        dossiersTimer.Stop();
+        if (domains.Contains("dossiers"))
+            yield return new GlobalSearchStreamEvent("dossiers", new GlobalSearchDossiersFrame(
+                dossiers, dossiersTimer.ElapsedMilliseconds, errors.GetValueOrDefault("dossiers")));
 
         // A palette that already moved on must not pay for the repository scan.
         ct.ThrowIfCancellationRequested();
@@ -216,8 +243,8 @@ public sealed class GlobalSearchService(
         await fanout;
         repositoriesTimer.Stop();
         timer.Stop();
-        RecordCompletion(query, domains, tasks.Count, results, tasksTimer.ElapsedMilliseconds,
-            repositoriesTimer.ElapsedMilliseconds, timer.ElapsedMilliseconds);
+        RecordCompletion(query, domains, tasks.Count, dossiers.Count, results, tasksTimer.ElapsedMilliseconds,
+            dossiersTimer.ElapsedMilliseconds, repositoriesTimer.ElapsedMilliseconds, timer.ElapsedMilliseconds);
 
         yield return new GlobalSearchStreamEvent("done", new GlobalSearchDoneFrame(
             timer.ElapsedMilliseconds, tasksTimer.ElapsedMilliseconds,
@@ -256,6 +283,53 @@ public sealed class GlobalSearchService(
             return [];
         }
     }
+
+    /// <summary>
+    /// Dossier matches from the cached Wiki catalogue, one project at a time.
+    /// Every registered, non-archived project's history-inclusive catalogue is
+    /// searched (so an archived Dossier still surfaces from a live project),
+    /// but an archived project itself never contributes: it is not a key of
+    /// <paramref name="colors"/>.
+    /// </summary>
+    private List<GlobalSearchItem> SearchDossiers(
+        string query, int limit, IReadOnlyDictionary<string, string> colors, IDictionary<string, string> errors)
+    {
+        try
+        {
+            var matches = new List<(string Project, WorkbenchListItem Item)>();
+            foreach (var project in colors.Keys)
+            {
+                var catalogue = docs.GetWikiWorkbenchCatalogue(project, includeHistory: true);
+                if (catalogue == null) continue;
+                matches.AddRange(catalogue.Items.Where(item => item.Valid).Select(item => (project, item)));
+            }
+            return matches
+                .Where(match => Contains(match.Item.Key, query) || Contains(match.Item.Id, query)
+                                || Contains(match.Item.Title, query) || Contains(match.Item.Summary, query)
+                                || Contains(match.Item.Status, query) || Contains(match.Item.Phase, query))
+                .OrderBy(match => DossierRank(match.Item, query))
+                .ThenBy(match => match.Item.Title.Length)
+                .Take(limit)
+                .Select(match => new GlobalSearchItem("dossiers", match.Project,
+                    colors.GetValueOrDefault(match.Project, DefaultColor), match.Item.Title, match.Item.Summary,
+                    DossierKey: match.Item.Key, WorkbenchId: match.Item.Id, Lane: match.Item.Status,
+                    Phase: match.Item.Phase))
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            errors["dossiers"] = "Some results could not be loaded.";
+            logger.LogWarning(ex, "global-search-domain-failed domain={Domain}", "dossiers");
+            return [];
+        }
+    }
+
+    /// <summary>Exact key match first, then title, then summary, then a bare id/status/phase hit.</summary>
+    private static int DossierRank(WorkbenchListItem item, string query) =>
+        string.Equals(item.Key, query, StringComparison.OrdinalIgnoreCase) ? 0
+        : Contains(item.Title, query) ? 1
+        : Contains(item.Summary, query) ? 2
+        : 3;
 
     private GlobalSearchRepositoryResult SearchRepository(GlobalSearchTarget target, string query, ISet<string> domains)
     {
@@ -346,19 +420,20 @@ public sealed class GlobalSearchService(
         .ToList();
 
     private void RecordCompletion(
-        string query, ISet<string> domains, int taskCount, IReadOnlyList<GlobalSearchRepositoryResult> results,
-        long tasksMs, long repositoriesMs, long durationMs)
+        string query, ISet<string> domains, int taskCount, int dossierCount,
+        IReadOnlyList<GlobalSearchRepositoryResult> results,
+        long tasksMs, long dossiersMs, long repositoriesMs, long durationMs)
     {
         // Per-repository cache attribution: without it a slow search is
         // indistinguishable from a search that simply had cold corpora.
         var cache = string.Join(' ', results.Select(r =>
             $"{r.Target.Name}={(r.CommitsFromCache ? "hit" : "miss")}/{(r.FilesFromCache ? "hit" : "miss")}:{r.DurationMs}ms"));
         logger.LogInformation(
-            "global-search-completed queryLength={QueryLength} domains={Domains} tasks={Tasks} commits={Commits} files={Files} errors={Errors} repositories={Repositories} tasksMs={TasksMs} commitsMs={CommitsMs} filesMs={FilesMs} repositoriesMs={RepositoriesMs} cache={Cache} durationMs={DurationMs}",
-            query.Length, string.Join(',', domains), taskCount,
+            "global-search-completed queryLength={QueryLength} domains={Domains} tasks={Tasks} dossiers={Dossiers} commits={Commits} files={Files} errors={Errors} repositories={Repositories} tasksMs={TasksMs} dossiersMs={DossiersMs} commitsMs={CommitsMs} filesMs={FilesMs} repositoriesMs={RepositoriesMs} cache={Cache} durationMs={DurationMs}",
+            query.Length, string.Join(',', domains), taskCount, dossierCount,
             results.Sum(r => r.Commits.Count), results.Sum(r => r.Files.Count),
             results.Sum(r => r.FailedDomains.Count), results.Count,
-            tasksMs, results.Sum(r => r.CommitsMs), results.Sum(r => r.FilesMs), repositoriesMs, cache, durationMs);
+            tasksMs, dossiersMs, results.Sum(r => r.CommitsMs), results.Sum(r => r.FilesMs), repositoriesMs, cache, durationMs);
 
         if (durationMs < SlowSearchWarnMs) return;
         var slowest = results.OrderByDescending(r => r.DurationMs).FirstOrDefault();

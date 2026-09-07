@@ -9,30 +9,35 @@ coverage.
 
 ## Global Search
 
-The title-bar search opens a Ctrl+K command palette. V1 covers tasks (key,
-title, prompt, and status text), commit messages and SHA prefixes, and file names
-or paths on each project's working branch. Task matches are ranked immediately
-from the in-memory board snapshot, with an exact task key first; the indexed
-task domain has a warm response target below 100 ms.
+The title-bar search opens a Ctrl+K command palette. It covers tasks (key,
+title, prompt, and status text), Dossiers (discovery key, id, title, summary,
+status, and phase, across every registered project's Wiki catalogue, history
+included), commit messages and SHA prefixes, and file names or paths on each
+project's working branch. Task matches are ranked immediately from the
+in-memory board snapshot, with an exact task key first; the indexed task
+domain has a warm response target below 100 ms. Dossier matches rank an exact
+discovery-key match first, then a title match, then a summary match, and are
+read from the same cached Wiki catalogue the Dossier list and viewer use, so
+they never scan `docs/` per query.
 
 The palette streams from
-`GET /api/search/stream?q=<query>&domains=tasks,commits,files&limit=<count>` as
-server-sent events. Frames arrive in this order: `tasks` (the memory-only
-domain, so it is never blocked by git), `progress` announcing how many
-repositories will be visited, one `repository` frame per checkout as it
-finishes, and a terminal `done` carrying the durations. The palette debounces
-250 ms, aborts the request in flight on every keystroke, and appends each
-repository's matches without reordering the groups already on screen.
+`GET /api/search/stream?q=<query>&domains=tasks,dossiers,commits,files&limit=<count>`
+as server-sent events. Frames arrive in this order: `tasks` and `dossiers`
+(the memory-only domains, so neither is blocked by git), `progress` announcing
+how many repositories will be visited, one `repository` frame per checkout as
+it finishes, and a terminal `done` carrying the durations. The palette
+debounces 250 ms, aborts the request in flight on every keystroke, and appends
+each repository's matches without reordering the groups already on screen.
 Disconnecting cancels the fan-out server-side.
 
 `GET /api/search?q=...&domains=...&limit=...` remains the single-response route
 with an unchanged wire contract: the normalized `query`, an array per requested
 domain, per-domain `errors`, and `durationMs`. It is what the orchestrator's
-context-source picker reads. Both routes accept the same
-comma-separated `domains` subset of `tasks`, `commits`, and `files`, and both
-bound `limit` in the backend.
+context-source picker reads. Both routes accept the same comma-separated
+`domains` subset of `tasks`, `dossiers`, `commits`, and `files`, both default to
+every domain when `domains` is omitted, and both bound `limit` in the backend.
 
-Neither route derives its corpus per query. Task text (prompt and status
+Neither route derives its git corpus per query. Task text (prompt and status
 documents) is an in-memory blob per card, re-read only when the card's
 last-activity stamp moves. Each repository's file list and a bounded window of
 its commit log are cached per HEAD, so a second query with a new term against
@@ -41,10 +46,11 @@ parallel with a bounded degree. `Search:CommitWindow` (default 2000, clamped to
 100-20000) sets how deep the commit index goes.
 
 Results are grouped by domain and carry project identity. Commit results open
-the diff surface, documentation files open the Wiki, and other files open the
-project Git view. Queries shorter than two characters return empty result
-groups, and a failed repository reports against the domains it broke without
-hiding the domains that succeeded.
+the diff surface, documentation files open the Wiki, Dossier results open the
+Dossier viewer (never a raw file path, even though the descriptor lives under
+`docs/`), and other files open the project Git view. Queries shorter than two
+characters return empty result groups, and a failed repository reports against
+the domains it broke without hiding the domains that succeeded.
 
 ## Entry Points
 

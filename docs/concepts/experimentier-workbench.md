@@ -294,6 +294,13 @@ Pulse may report recently changed, invalid, or decision-ready Dossiers, but
 Pulse does not own their list or lifecycle. Its role remains a generated entry
 view, as defined in [Wiki Pulse](wiki-pulse-dashboard.md).
 
+A Dossier's discovery key, id, title, summary, status, and phase are
+searchable from the title-bar global search palette (Ctrl+K): typing
+`PROJECT-W<n>` or a title or summary word opens the Dossier viewer directly,
+the same navigation the Explorer row uses. See
+[global search](../system/domains/frontend.md#global-search) for the domain
+contract.
+
 ## 5. Viewer, interactive HTML, and project previews
 
 The Dossier view is host chrome around isolated content:

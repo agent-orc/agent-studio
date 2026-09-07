@@ -39,9 +39,11 @@ export class GlobalSearchComponent {
   readonly tasks = input<readonly TaskInfo[]>([]);
   readonly open = model(false);
   readonly query = signal('');
-  readonly remote = signal<{ tasks: GlobalSearchItem[]; commits: GlobalSearchItem[]; files: GlobalSearchItem[] }>(
-    { tasks: [], commits: [], files: [] });
-  readonly domains = signal<Record<SearchDomain, SearchDomainState>>({ tasks: IDLE, commits: IDLE, files: IDLE });
+  readonly remote = signal<
+    { tasks: GlobalSearchItem[]; dossiers: GlobalSearchItem[]; commits: GlobalSearchItem[]; files: GlobalSearchItem[] }
+  >({ tasks: [], dossiers: [], commits: [], files: [] });
+  readonly domains = signal<Record<SearchDomain, SearchDomainState>>(
+    { tasks: IDLE, dossiers: IDLE, commits: IDLE, files: IDLE });
   readonly elapsedMs = signal(0);
   readonly activeIndex = signal(0);
   readonly inputRef = viewChild<ElementRef<HTMLInputElement>>('searchInput');
@@ -83,6 +85,7 @@ export class GlobalSearchComponent {
 
   readonly groups = computed(() => [
     { domain: 'tasks' as const, label: 'Tasks', items: this.taskResults() },
+    { domain: 'dossiers' as const, label: 'Dossiers', items: this.remote().dossiers },
     { domain: 'commits' as const, label: 'Commits', items: this.remote().commits },
     { domain: 'files' as const, label: 'Files', items: this.remote().files },
   ]);
@@ -127,16 +130,16 @@ export class GlobalSearchComponent {
   }
 
   private reset(): void {
-    this.remote.set({ tasks: [], commits: [], files: [] });
-    this.domains.set({ tasks: IDLE, commits: IDLE, files: IDLE });
+    this.remote.set({ tasks: [], dossiers: [], commits: [], files: [] });
+    this.domains.set({ tasks: IDLE, dossiers: IDLE, commits: IDLE, files: IDLE });
     this.elapsedMs.set(0);
   }
 
   private async run(query: string): Promise<void> {
     const controller = new AbortController();
     this.controller = controller;
-    this.remote.set({ tasks: [], commits: [], files: [] });
-    this.domains.set(mapDomains({ tasks: IDLE, commits: IDLE, files: IDLE },
+    this.remote.set({ tasks: [], dossiers: [], commits: [], files: [] });
+    this.domains.set(mapDomains({ tasks: IDLE, dossiers: IDLE, commits: IDLE, files: IDLE },
       state => ({ ...state, status: 'searching' })));
     this.startTicker();
 
@@ -146,6 +149,9 @@ export class GlobalSearchComponent {
         if (frame.event === 'tasks') {
           this.remote.update(current => ({ ...current, tasks: frame.data.items }));
           this.patch('tasks', { status: frame.data.error ? 'failed' : 'done', error: frame.data.error });
+        } else if (frame.event === 'dossiers') {
+          this.remote.update(current => ({ ...current, dossiers: frame.data.items }));
+          this.patch('dossiers', { status: frame.data.error ? 'failed' : 'done', error: frame.data.error });
         } else if (frame.event === 'progress') {
           this.patchGit({ completed: frame.data.completed, total: frame.data.total });
         } else if (frame.event === 'repository') {
@@ -214,6 +220,11 @@ export class GlobalSearchComponent {
       // archive, which the board snapshot deliberately omits, so looking the
       // task up in it first would silently swallow those results.
       this.tabs.open({ kind: 'task', taskKey: item.taskKey });
+    } else if (item.domain === 'dossiers' && item.workbenchId) {
+      this.tabs.open({
+        kind: 'workbench', projectName: item.projectName, workbenchId: item.workbenchId,
+        title: item.title, key: item.dossierKey,
+      });
     } else if (item.domain === 'commits' && item.sha) {
       this.boardFilters.setSoleProject(item.projectName);
       this.tabs.open({ kind: 'diff', commitSha: item.sha });
@@ -264,5 +275,10 @@ function mapDomains(
   current: Record<SearchDomain, SearchDomainState>,
   change: (state: SearchDomainState) => SearchDomainState,
 ): Record<SearchDomain, SearchDomainState> {
-  return { tasks: change(current.tasks), commits: change(current.commits), files: change(current.files) };
+  return {
+    tasks: change(current.tasks),
+    dossiers: change(current.dossiers),
+    commits: change(current.commits),
+    files: change(current.files),
+  };
 }

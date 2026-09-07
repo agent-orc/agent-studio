@@ -6,7 +6,7 @@ namespace AgentStudio.Search;
 
 public static class GlobalSearchEndpoints
 {
-    private static readonly HashSet<string> AllowedDomains = new(StringComparer.OrdinalIgnoreCase) { "tasks", "commits", "files" };
+    private static readonly HashSet<string> AllowedDomains = new(StringComparer.OrdinalIgnoreCase) { "tasks", "dossiers", "commits", "files" };
 
     public static void MapGlobalSearchEndpoints(this WebApplication app)
     {
@@ -16,7 +16,7 @@ public static class GlobalSearchEndpoints
             var query = q?.Trim() ?? "";
             var selected = ParseDomains(domains);
             if (query.Length < 2)
-                return Results.Ok(new GlobalSearchResponse(query, [], [], [], new Dictionary<string, string>(), 0));
+                return Results.Ok(new GlobalSearchResponse(query, [], [], [], [], new Dictionary<string, string>(), 0));
             var response = search.Search(query, selected, limit ?? 20);
             var allowed = AccessFilter(context, projects);
             if (allowed == null)
@@ -24,6 +24,7 @@ public static class GlobalSearchEndpoints
             return Results.Ok(response with
             {
                 Tasks = response.Tasks.Where(allowed).ToList(),
+                Dossiers = response.Dossiers.Where(allowed).ToList(),
                 Commits = response.Commits.Where(allowed).ToList(),
                 Files = response.Files.Where(allowed).ToList(),
             });
@@ -93,6 +94,7 @@ public static class GlobalSearchEndpoints
             : frame.Payload switch
             {
                 GlobalSearchTasksFrame tasks => tasks with { Items = tasks.Items.Where(allowed).ToList() },
+                GlobalSearchDossiersFrame dossiers => dossiers with { Items = dossiers.Items.Where(allowed).ToList() },
                 GlobalSearchRepositoryFrame repository => repository with
                 {
                     Commits = repository.Commits.Where(allowed).ToList(),

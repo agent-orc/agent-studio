@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
 import { sessionFetch } from '../../../../services/session-fetch';
 
-export type SearchDomain = 'tasks' | 'commits' | 'files';
+export type SearchDomain = 'tasks' | 'dossiers' | 'commits' | 'files';
 
 export interface GlobalSearchItem {
   domain: SearchDomain;
@@ -14,10 +14,23 @@ export interface GlobalSearchItem {
   sha?: string;
   path?: string;
   isWiki?: boolean;
+  dossierKey?: string;
+  workbenchId?: string;
+  phase?: string;
 }
 
 /** Task matches. Served from the in-memory index, so this frame lands first. */
 export interface SearchTasksFrame {
+  items: GlobalSearchItem[];
+  durationMs: number;
+  error: string | null;
+}
+
+/**
+ * Dossier matches. Read from the cached Dossier catalogue rather than a
+ * repository, so this frame lands alongside `tasks` instead of waiting on git.
+ */
+export interface SearchDossiersFrame {
   items: GlobalSearchItem[];
   durationMs: number;
   error: string | null;
@@ -50,6 +63,7 @@ export interface SearchDoneFrame {
 
 export type GlobalSearchFrame =
   | { event: 'tasks'; data: SearchTasksFrame }
+  | { event: 'dossiers'; data: SearchDossiersFrame }
   | { event: 'progress'; data: SearchProgressFrame }
   | { event: 'repository'; data: SearchRepositoryFrame }
   | { event: 'done'; data: SearchDoneFrame };
@@ -65,7 +79,7 @@ export class GlobalSearchService {
    * signal closes the response body, which cancels the fan-out server-side.
    */
   async *stream(query: string, signal: AbortSignal): AsyncGenerator<GlobalSearchFrame> {
-    const params = new URLSearchParams({ q: query, domains: 'tasks,commits,files', limit: '20' });
+    const params = new URLSearchParams({ q: query, domains: 'tasks,dossiers,commits,files', limit: '20' });
     const response = await sessionFetch(`/api/search/stream?${params.toString()}`, { signal });
     if (!response.ok || !response.body) throw new Error(`Search stream failed with status ${response.status}.`);
 

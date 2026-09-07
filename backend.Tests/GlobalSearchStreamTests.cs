@@ -120,7 +120,8 @@ public sealed class GlobalSearchStreamTests : IDisposable
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
         var indexes = new GlobalSearchIndexes(config, git, NullLogger<GlobalSearchIndexes>.Instance);
         var registry = new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance);
-        return new GlobalSearchService(scanner, indexes, registry, NullLogger<GlobalSearchService>.Instance);
+        var docs = new ProjectDocsService(scanner, registry, NullLogger<ProjectDocsService>.Instance, git);
+        return new GlobalSearchService(scanner, indexes, registry, docs, NullLogger<GlobalSearchService>.Instance);
     }
 
     private void RunGit(params string[] args)
