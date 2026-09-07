@@ -368,6 +368,13 @@ auslöst. Klasse A verlässt den heißen Store nie.</figcaption>
 <p class="stx stx-part"><b>Stand 06.09. 22:30:</b> Ignore-Regel für <code>.metadata/attempt-authority*</code> gesetzt,
 gedriftete Bus-Logs und Task-Zustände committet, Einzel-Push abgebrochen (über 2 GB), Repack der losen Objekte läuft,
 Block-Push zu 250 Commits läuft (erster Block in 303 s). Die übrigen Punkte sind Teil von R1 (§10).</p>
+<p class="stx stx-ok"><b>Stand 07.09. 04:30:</b> Block-Push fertig (2.819 Commits, ahead 0), Repack fertig (lose Objekte
+134.000 auf 30.000, <code>for-each-ref</code> von 13 s auf 0,09 s, Board-API unter 1 s). Erster Archivlauf mit der
+AGT-2743-Engine (Stand fence-4) nach manueller Vollsicherung (Git-Bundle 9,4 GB plus Evidenzkopie): 963 Tasks, 4,6 GB
+schwere Daten ins kalte Archiv <code>C:\Projects\agent-taskboard-archive</code> (1,43 GB komprimiert), Restore an AGT-2073
+geprüft (SHA-256 identisch). Heiße Task-Ordner von 9,2 GB auf 3,6 GB. Drei Befunde aus dem Produktionslauf gingen an
+AGT-2743: Auszug-Writer unbegrenzt (963 Auszüge mit 5,6 GB, vom Operator zurückgehalten, Regeneration aus dem kalten
+Archiv folgt), Laufzeit-Löschungen nicht committet, Reporting zählt Auszüge als heiße Daten.</p>
 <ol>
   <li><b>Log nur am Run-Ende committen.</b> <code>WorkspaceEvidenceBatcher</code> und die Run-Grenzen schließen Klasse C
       während eines laufenden Runs aus; erst der Abschluss des Runs committet eine Version. Erwartete Wirkung: rund 90 %
