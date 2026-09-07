@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "retention-und-archiv",
   "title": "Aufbewahrung und Archiv",
-  "summary": "Retention- und Archivmodell fuer Task-Daten: vier Datenklassen (Autoritaet, Evidenz, schwere Arbeitsdaten, Laufzeit), Regelmodell mit Standardwerten (10 MiB je Datei, 64 MiB je Task, 50 MiB Ablehnung, schwere Daten 30 Tage und ganze Tasks 180 Tage nach Terminal ins kalte Archiv, Human-Review nie), kaltes Archiv ausserhalb von Repository und Hot-Store mit Manifest, Stub und Restore, Task-Server als Eigentuemer der Schnittstelle (/api/v1/management/retention, Zeitplan, CLI), Admin-UI mit Vorschau und Verlauf. Messung 06.09.: 2.264 Tasks, 7,6 GB Arbeitsbaum, 28,7 GB Historie in elf Tagen, davon 95 % cli-output.log-Zwischenstaende. Entscheidungen E1-E10 vom Orchestrator getroffen; Umsetzung in R1-R4 (AGT-2743..2746). Nachtrag 06.09. 23:00 (§12, E11/E12): Verduennung grosser Blobs in vier Altersstufen mit inhaltsbezogenem Auszug statt Einmalverschiebung; Vollsicherung als Feature (Sicherungssatz im Dateisystem mit Inventar-Hash, Auswertungsexport als JSONL, 7/4/12-Verduennung der Saetze, extern und per S3 sicherbar).",
+  "summary": "Retention- und Archivmodell fuer Task-Daten: vier Datenklassen (Autoritaet, Evidenz, schwere Arbeitsdaten, Laufzeit), Regelmodell mit Standardwerten (10 MiB je Datei, 64 MiB je Task, 50 MiB Ablehnung, schwere Daten 30 Tage und ganze Tasks 180 Tage nach Terminal ins kalte Archiv, Human-Review nie), kaltes Archiv ausserhalb von Repository und Hot-Store mit Manifest, Stub und Restore, Task-Server als Eigentuemer der Schnittstelle (/api/v1/management/retention, Zeitplan, CLI), Admin-UI mit Vorschau und Verlauf. Messung 06.09.: 2.264 Tasks, 7,6 GB Arbeitsbaum, 28,7 GB Historie in elf Tagen, davon 95 % cli-output.log-Zwischenstaende. Entscheidungen E1-E10 vom Orchestrator getroffen; Umsetzung in R1-R4 (AGT-2743..2746). Nachtrag 06.09. 23:00 (\u00A712, E11/E12): Verduennung grosser Blobs in vier Altersstufen mit inhaltsbezogenem Auszug statt Einmalverschiebung; Vollsicherung als Feature (Sicherungssatz im Dateisystem mit Inventar-Hash, Auswertungsexport als JSONL, 7/4/12-Verduennung der Saetze, extern und per S3 sicherbar).",
   "entrypoint": "index.html",
   "status": "active",
   "phase": "decision-ready",
@@ -10,5 +10,14 @@
   "editedBy": "Orchestrator (Claude) im Auftrag von Robert, 06.09.2026",
   "statusReason": "Entscheidungen getroffen (Freigabe Robert 06.09.: autonom auswerten und umsetzen); Umsetzungskarten R1-R4 in Ready; loest AGT-W11 (log-retention) und den Entwurf workspace-repo-nachhaltigkeit ab.",
   "sourceTaskKeys": [],
-  "relatedTaskKeys": ["AGT-2743", "AGT-2744", "AGT-2745", "AGT-2746", "AGT-2728", "AGT-2732", "AGT-2739"]
+  "relatedTaskKeys": [
+    "AGT-2743",
+    "AGT-2744",
+    "AGT-2745",
+    "AGT-2746",
+    "AGT-2728",
+    "AGT-2732",
+    "AGT-2739"
+  ],
+  "key": "ASW-W46"
 }
