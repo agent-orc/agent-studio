@@ -106,6 +106,11 @@ Codex emits JSON Lines on stdout. `TransformReadLine` delegates to the pure
 layer"), which maps each frame onto the **same** marker vocabulary Claude emits, so
 a Codex run reads as cleanly as a Claude run in the Activity Log.
 
+The runner and backend keep the 64 KiB physical-line memory guards, but those
+guards never cut through a JSONL frame. They shorten large payload strings,
+write the truncation note inside the frame, and set `item.truncated` so every
+stored or returned Codex frame remains valid JSON.
+
 | Frame | Marker out | Stream |
 |---|---|---|
 | `{"type":"thread.started","thread_id":"<uuid>"}` | `● Session <uuid>` | stdout |

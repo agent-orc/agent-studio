@@ -61,6 +61,8 @@ CLI execution tests.
 - Every driver must satisfy the same contract: start process, stream output,
   capture session identity when available, report completion, surface quota and
   permission issues, and preserve terminal sentinels.
+- Log line caps never break a JSONL frame. Oversized structured payloads remain
+  parseable and carry an in-frame truncation note and flag.
 - CLI skills are required reading before changing the matching driver.
 - Prompt-template edits are behavior changes. String-render tests are not enough
   because the adapter can still hand a bad shape to the live CLI.
