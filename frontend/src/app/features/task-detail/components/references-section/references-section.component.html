@@ -60,6 +60,13 @@
         }
       }
 
+      <!-- AGT-2709: the release-gate affordance for both ends of a
+           releaseGate edge. Renders nothing when neither applies. -->
+      <app-release-gate-section
+        [info]="info()"
+        [dependents]="blocking()"
+        (changed)="changed.emit()" />
+
       <!-- AGT-2029 reverse direction: tasks that wait on this one. Read-only,
            always shown when present so both dependency directions are visible
            from the detail view. -->

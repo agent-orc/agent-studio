@@ -1,0 +1,128 @@
+// Rendered inside the References section's `.refs__body` flex column, so the
+// host stays out of that flow and the rows inherit the section's rhythm.
+:host {
+  display: contents;
+}
+
+.rel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-1);
+}
+
+// Mirrors `.refs__row`: a fixed label gutter plus a free content column, so the
+// release rows line up with the reference rows above them.
+.rel__row {
+  display: grid;
+  grid-template-columns: 92px 1fr;
+  align-items: start;
+  gap: var(--studio-spacing-2);
+}
+
+.rel__label {
+  padding-top: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--studio-fg-dim);
+}
+
+.rel__body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--studio-spacing-1);
+}
+
+// Status reads via background tint, never a left accent bar (style-guide R1).
+.rel__state {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--studio-accent-warn) 55%, var(--studio-border));
+  background: color-mix(in srgb, var(--studio-accent-warn) 14%, var(--studio-bg-elevated));
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 11px;
+  color: var(--studio-fg);
+}
+.rel__state--granted {
+  border-color: color-mix(in srgb, var(--studio-accent-success) 55%, var(--studio-border));
+  background: color-mix(in srgb, var(--studio-accent-success) 14%, var(--studio-bg-elevated));
+}
+
+.rel__action {
+  border: 1px solid var(--studio-border);
+  background: var(--studio-bg-elevated);
+  border-radius: 999px;
+  color: var(--studio-fg);
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+.rel__action:hover:not(:disabled) {
+  border-color: var(--studio-accent);
+  color: var(--studio-accent);
+}
+.rel__action:focus-visible {
+  outline: 2px solid var(--studio-accent);
+  outline-offset: 1px;
+}
+.rel__action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.rel__action--inline {
+  padding: 1px 8px;
+}
+
+.rel__dependents {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--studio-spacing-1);
+}
+
+.rel__chip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--studio-border);
+  background: var(--studio-bg-elevated);
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 11px;
+  color: var(--studio-fg-dim);
+  max-width: 240px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rel__waiting {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--studio-spacing-1);
+  border: 1px solid color-mix(in srgb, var(--studio-accent-warn) 55%, var(--studio-border));
+  background: color-mix(in srgb, var(--studio-accent-warn) 14%, var(--studio-bg-elevated));
+  border-radius: 999px;
+  padding: 1px 4px 1px 4px;
+}
+
+.rel__waiting-link {
+  border: 0;
+  background: transparent;
+  color: var(--studio-fg);
+  font: inherit;
+  font-size: 11px;
+  padding: 1px 5px;
+  cursor: pointer;
+}
+.rel__waiting-link:hover {
+  color: var(--studio-accent);
+  text-decoration: underline;
+}
+.rel__waiting-link:focus-visible {
+  outline: 2px solid var(--studio-accent);
+  outline-offset: 1px;
+}

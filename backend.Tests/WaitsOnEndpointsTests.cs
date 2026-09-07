@@ -424,7 +424,83 @@ public sealed class WaitsOnEndpointsTests : IDisposable
         Assert.False(waitsOn.GetProperty("blocked").GetBoolean());
     }
 
+    [Fact]
+    public async Task PutRelease_WritesTaskReleasedTimelineEventWithActorAndDependents()
+    {
+        // AGT-2709: the release decision has no other producer in the lifecycle,
+        // so the operator affordance must leave an auditable row naming who
+        // decided and which release-gated dependents the decision moves.
+        WriteJob(_libWatch, TaskStates.Completed, "dep", "LIB-1");
+        WriteJob(_appWatch, TaskStates.Ready, "consumer", "APP-1",
+            dependsOn: new[] { "LIB-1" }, releaseGate: true);
+
+        using var factory = BuildFactory();
+        using var client = factory.CreateClient();
+        // A freshly registered identity, so the row proves the actor is taken
+        // from the request rather than a hardcoded system attribution.
+        using var registration = await client.PostAsJsonAsync(
+            "/api/clients/register", new { displayName = "Release Operator" });
+        registration.EnsureSuccessStatusCode();
+        using var registered = JsonDocument.Parse(await registration.Content.ReadAsStringAsync());
+        var operatorId = registered.RootElement.GetProperty("id").GetString()!;
+        client.DefaultRequestHeaders.Add("X-Client-Id", operatorId);
+        var libWatchPath = Uri.EscapeDataString(_libWatch);
+
+        using var released = await client.PutAsJsonAsync(
+            $"/api/tasks/dep/release?watchPath={libWatchPath}", new { released = true });
+        released.EnsureSuccessStatusCode();
+
+        var events = ReadTimeline(Path.Combine(_libWatch, TaskStates.Completed, "dep"));
+        var granted = Assert.Single(events);
+        Assert.Equal(TimelineEventKinds.TaskReleased, granted.GetProperty("kind").GetString());
+        Assert.Equal($"human:{operatorId}", granted.GetProperty("actor").GetString());
+        var details = granted.GetProperty("details");
+        Assert.Equal("true", details.GetProperty("released").GetString());
+        Assert.Equal("APP-1", details.GetProperty("dependents").GetString());
+
+        // Reversible: withdrawing the release records its own row rather than
+        // silently rewriting the grant.
+        using var withdrawn = await client.PutAsJsonAsync(
+            $"/api/tasks/dep/release?watchPath={libWatchPath}", new { released = false });
+        withdrawn.EnsureSuccessStatusCode();
+
+        var after = ReadTimeline(Path.Combine(_libWatch, TaskStates.Completed, "dep"));
+        Assert.Equal(2, after.Count);
+        Assert.Equal("false", after[1].GetProperty("details").GetProperty("released").GetString());
+    }
+
+    [Fact]
+    public async Task GetDependents_FlagsReleaseGatedIncomingEdge()
+    {
+        // The target card names the dependents its release unblocks; the reverse
+        // link therefore has to carry the gate, not just the relation kind.
+        WriteJob(_libWatch, TaskStates.Completed, "dep", "LIB-1");
+        WriteJob(_appWatch, TaskStates.Ready, "gated", "APP-1",
+            dependsOn: new[] { "LIB-1" }, releaseGate: true);
+        WriteJob(_appWatch, TaskStates.Ready, "plain", "APP-2", dependsOn: new[] { "LIB-1" });
+
+        using var factory = BuildFactory();
+        using var client = factory.CreateClient();
+        using var doc = JsonDocument.Parse(await client.GetStringAsync(
+            $"/api/tasks/dep/dependents?kind=dependsOn&watchPath={Uri.EscapeDataString(_libWatch)}"));
+
+        var links = doc.RootElement.EnumerateArray()
+            .ToDictionary(l => l.GetProperty("sourceKey").GetString()!, l => l.GetProperty("releaseGate").GetBoolean());
+        Assert.True(links["APP-1"]);
+        Assert.False(links["APP-2"]);
+    }
+
     // ---- helpers --------------------------------------------------------
+
+    private static List<JsonElement> ReadTimeline(string jobFolder)
+    {
+        var path = Path.Combine(jobFolder, "logs", "timeline.jsonl");
+        if (!File.Exists(path)) return [];
+        return File.ReadAllLines(path)
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .Select(line => JsonDocument.Parse(line).RootElement.Clone())
+            .ToList();
+    }
 
     private static JsonElement FindCard(JsonElement lane, string id)
     {

@@ -1,0 +1,60 @@
+@if (visible()) {
+  <div class="rel" data-testid="release-gate-section">
+    <!-- Target side: this task gates its dependents. -->
+    @if (canRelease()) {
+      <div class="rel__row" data-testid="release-gate-target">
+        <span class="rel__label"
+              [cacTooltip]="'A dependsOn edge with releaseGate requires this explicit approval on top of terminal completion.'">
+          Release
+        </span>
+        <div class="rel__body">
+          <span class="rel__state"
+                [class.rel__state--granted]="released()"
+                data-testid="release-gate-state">{{ releaseStateLabel() }}</span>
+          <button type="button"
+                  class="rel__action"
+                  data-testid="release-gate-toggle"
+                  [cacTooltip]="releaseTooltip()"
+                  [disabled]="busyJobId() !== null"
+                  (click)="toggleSelfRelease()">{{ releaseButtonLabel() }}</button>
+          <span class="rel__dependents">
+            @for (link of gatedDependents(); track link.sourceJobId) {
+              <span class="rel__chip"
+                    [attr.data-testid]="'release-gate-dependent-' + dependentKey(link)"
+                    [cacTooltip]="link.sourceTitle || dependentKey(link)">
+                {{ dependentKey(link) }}
+              </span>
+            }
+          </span>
+        </div>
+      </div>
+    }
+
+    <!-- Dependent side: this task waits for someone else's release. -->
+    @if (waitingTargets().length > 0) {
+      <div class="rel__row" data-testid="release-gate-waiting">
+        <span class="rel__label"
+              [cacTooltip]="'These targets are complete; only their explicit release is missing.'">
+          Waits for release
+        </span>
+        <div class="rel__body">
+          @for (item of waitingTargets(); track item.key) {
+            <span class="rel__waiting"
+                  [attr.data-testid]="'release-gate-waiting-' + item.key">
+              <button type="button"
+                      class="rel__waiting-link"
+                      [cacTooltip]="targetLabel(item)"
+                      (click)="openTarget(item)">{{ item.key }}</button>
+              <button type="button"
+                      class="rel__action rel__action--inline"
+                      [attr.data-testid]="'release-gate-release-' + item.key"
+                      [cacTooltip]="'Release ' + item.key + ' so this task stops waiting.'"
+                      [disabled]="busyJobId() !== null"
+                      (click)="releaseTarget(item)">Release</button>
+            </span>
+          }
+        </div>
+      </div>
+    }
+  </div>
+}

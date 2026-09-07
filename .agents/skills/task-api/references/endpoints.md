@@ -239,6 +239,20 @@ Single-field edits. Body: `{ "title": "new" }`, `{ "cliType": "codex" }`,
 `{ "model": "gpt-5.5" }`, etc. Updating `cli-type` also keeps the parallel
 `agent` field in lockstep.
 
+### `PUT /api/tasks/{jobId}/release?watchPath=...`
+
+Set or withdraw the explicit content release consumed by `references.dependsOn`
+edges written as `{ "key": "...", "releaseGate": true }`. Body:
+`{ "released": true }` (`false` withdraws). `jobId` is the **target** being
+released, not the dependent waiting for it.
+
+Terminal completion never sets this flag, so a gated dependent stays blocked
+(`waits for release: <key>` on its card) until this call lands. Each call
+appends one `task_released` timeline event attributed to the request's
+`X-Client-Id`, together with the release-gated dependents it moves.
+
+`404` when the job id / watchPath pair does not resolve.
+
 ### `POST /api/tasks/{jobId}/intake`
 
 Trigger the orchestrator-intake gate for a single job (when configured).

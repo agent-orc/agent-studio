@@ -13,6 +13,7 @@ import {
 import { NgTemplateOutlet } from '@angular/common';
 import { ClientSummary, TagRegistryEntry } from '../../../../models/task.model';
 import { ModalStackService } from '../../../../services/modal-stack.service';
+import { BoardFiltersService } from '../../state/board-filters.service';
 import { TypeFilterOption } from '../filters-dropdown/filters-dropdown.component';
 
 import { TooltipDirective } from 'coding-agent-chat/shared';
@@ -29,6 +30,12 @@ import { SidesheetComponent } from '../../../../components/sidesheet/sidesheet.c
  * state. All sources of truth stay in `App` so URL hashing and existing
  * filter pills keep working unchanged. The component reads inputs and
  * emits outputs.
+ *
+ * The one exception is the AGT-2709 "waiting for release" facet, which is read
+ * and written straight on `BoardFiltersService` (the same direct-injection
+ * shape `ActiveBoardFiltersComponent` uses). The service is the actual source
+ * of truth per ADR-0034 - `App` only re-exposes it - and routing a boolean
+ * through the shell would grow an already over-budget `app.ts`.
  */
 @Component({
   selector: 'app-kanban-filter-sidesheet',
@@ -74,6 +81,10 @@ export class KanbanFilterSidesheetComponent {
    *  binding we don't want to retrigger the change. Tracked via a signal so
    *  the effect that focuses on open is still pure. */
   private readonly localQuery = signal<string>('');
+
+  private readonly boardFilters = inject(BoardFiltersService);
+  /** AGT-2709 dependency facet; see the class comment for why it bypasses App. */
+  readonly waitingForRelease = this.boardFilters.waitingForReleaseOnly;
 
   private readonly modalStack = inject(ModalStackService);
   private readonly destroyRef = inject(DestroyRef);
@@ -132,6 +143,10 @@ export class KanbanFilterSidesheetComponent {
 
   onSetOwner(id: string | null): void {
     this.setOwner.emit(id);
+  }
+
+  onToggleWaitingForRelease(): void {
+    this.boardFilters.toggleWaitingForReleaseOnly();
   }
 
   onClearAll(): void {

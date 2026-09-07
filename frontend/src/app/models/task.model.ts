@@ -177,6 +177,12 @@ export interface TaskReferenceLink {
   sourceState: string;
   sourceWatchPath: string;
   kind: TaskReferenceKind | string;
+  /**
+   * AGT-2709: true when the incoming `dependsOn` edge carries
+   * `releaseGate: true`, i.e. the source stays blocked until the queried task
+   * carries its explicit `released` flag. Always false for other relation kinds.
+   */
+  releaseGate?: boolean;
 }
 
 /**
