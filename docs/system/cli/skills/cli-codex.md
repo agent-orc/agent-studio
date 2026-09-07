@@ -218,8 +218,28 @@ wrapper. To refresh, the user clicks the side-sheet refresh button, which calls
 **The catalog follows the installed CLI, not a hardcoded list.** This is the
 house rule (convention/derivation over settings). The flagship `gpt-5.6-*`
 family is deliberately **not** a static `ModelMetadataRegistry` entry: it
-appears only when the live CLI advertises it. Models the CLI does not list stay
-hidden rather than being hard-wired.
+appears only when the live CLI advertises it.
+
+**Merged catalog: registry union live discovery (AGT-2707).** `Publish` runs
+`WithKnownButUnavailableModels`, which appends every OpenAI registry entry the
+live catalog does not list as `Available=false` with
+`AvailabilityNote = "Not offered by the installed codex-cli <version>."` (the
+version comes from `CliVersionTracker`; it is omitted when no probe has seen
+one). The picker renders those entries as **disabled pills with the note**,
+never hides them, so an onboarded model such as `gpt-6-astra` is visibly
+"known but your CLI is too old" instead of silently missing. The merge is
+recomputed on every read, so it follows both the current registry and the
+currently installed CLI; the disk cache stores only what the CLI reported.
+A model the CLI lists but the registry does not know stays selectable and
+carries `"Discovered from CLI; missing registry metadata."`.
+`ClaudeModelDiscovery.Reconcile` applies the same rule through the shared
+`ModelMetadataRegistry.AppendUnavailableRegistryEntries`.
+
+**`gpt-6-astra` is registry-onboarded but not tiered.** It has a registry entry
+(label, vendor, 272k context, pricing left null) so the disabled-not-hidden
+rule can fire, but it is not the product default and is not a routing tier -
+see the "not yet tiered" note in
+[model-routing-policy.md](../../domains/model-routing-policy.md).
 
 **Detection-driven product default.** Every catalog path (`fresh`, `mem-cache`,
 `disk-cache`, and the fallback below) runs through `Publish`, which calls
@@ -239,14 +259,40 @@ hidden rather than being hard-wired.
   `AgentDefaultsMaterialization`), and the invocation-time floor in
   `BuiltInCliBehaviors.DefaultCodexModel`.
 
-**Reasoning-level default.** For codex the product default reasoning level is
-the **top of the CLI-derived ladder** (`DefaultThinkingLevelForCli` →
-`CliThinkingLevels.For(...).Last()`): `gpt-5.6` → `ultra`, `gpt-5.5` → `xhigh`,
-`gpt-5-codex` → `high`. `ultra` is the CLI's new top tier and requires the
-`CodingAgentRunner` **0.5.0** ladder (it added the `gpt-5.6-*` family +
-`ultra`); on the older 0.3.1 ladder `gpt-5.6` was unknown and `xhigh` normalized
-down to `medium`. An explicit or owner-supplied level still wins and is
-normalized to the selected model's ladder (`ResolveThinkingLevel`).
+**Reasoning ladders come from the CLI, but only for onboarded models
+(AGT-2707).** `ParseDebugModelsJson` reads a model's
+`supported_reasoning_levels[].effort` (in CLI order) and
+`default_reasoning_level` **only when
+`ModelMetadataRegistry.UsesLiveDiscoveredThinkingLadder(id)` is true** — today
+that allowlist holds exactly `gpt-6-astra`. Every other codex model, the
+`gpt-5.6-*` family included, always resolves through the static
+`CliThinkingLevels.For` table regardless of what the same `debug models`
+response reports for it. This scoping exists because the static table drifts
+with every CLI release — codex-cli 0.153.4 lists `gpt-6-astra` as
+`low, medium, high, xhigh, max, ultra` while the static `gpt-6` branch still
+answers `minimal ... xhigh` — but a 2026-09-07 21:03 review blocked an earlier,
+unscoped version of this feature: letting every model's CLI-reported
+`default_reasoning_level` win changed `gpt-5.6-sol`'s product default from
+`ultra` to the CLI's own `low`, an unrelated regression the astra onboarding
+must not carry. `ModelMetadataRegistry.DetectedLadder` enforces the same
+allowlist on the read side, so `ThinkingLevelsFor`, `DefaultThinkingLevelForCli`,
+and `ResolveThinkingLevel` only ever consult a CLI-reported ladder for an
+onboarded model; a rung such as `max` on `gpt-6-astra` is accepted, but the
+5.6 family's ladder and default stay exactly what the static table says,
+byte-for-byte. Regression coverage:
+`CodexDetectedDefaultTests.Gpt56Ladder_And_Default_StayByteForByte_WhenCliReportsADifferentOne`.
+Whether to extend the allowlist to the gpt-5.6 family (so the static table's
+drift gets fixed there too) is the separate operator decision noted in
+[model-routing-policy.md](../../domains/model-routing-policy.md); add ids to
+`LiveDiscoveredLadderModelIds` only when that decision is made.
+
+- `WithCurrentCodexCapabilities` fills in a ladder only when an entry has none.
+  Overwriting a CLI-reported ladder with the static one is exactly the drift
+  this replaced. The disk cache is versioned (`codex-model-catalog.v2.json`)
+  because a pre-AGT-2707 file cannot be told apart from a CLI-reported one.
+- An explicit or owner-supplied level still wins and is normalized to the
+  selected model's ladder (`ResolveThinkingLevel`); an out-of-ladder request
+  lands on the model's own default rather than escalating to the top rung.
 
 **Cache / TTL / fallback.** When the CLI cannot be queried and no cache exists,
 discovery returns a registry-backed `FallbackCatalog` (the static OpenAI models,
@@ -472,4 +518,9 @@ To extend it for a new frame or `item.type`:
 `testdata/cli-fixtures/streams/codex/<exact-version>/` holds the canonical
 `--json` captures and replay metadata. Keep one fixture per concern.
 `backend.Tests/Fixtures/cli/codex/` is limited to renderer-specific snapshots
-that cannot consume the shared fixture directly.
+that cannot consume the shared fixture directly, plus the trimmed
+`codex debug models` catalogs used by `CodexModelDiscoveryTests`
+(`debug-models-v0.153.4.json` with `gpt-6-astra`, `debug-models-v0.151.0.json`
+without it). Keep the reasoning-ladder fields (`supported_reasoning_levels`,
+`default_reasoning_level`) in any new catalog fixture: they are what the parser
+reads.

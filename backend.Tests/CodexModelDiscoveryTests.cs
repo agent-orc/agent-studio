@@ -4,8 +4,164 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
-public class CodexModelDiscoveryTests
+/// <summary>
+/// Parser and merged-catalog coverage for Codex model discovery.
+///
+/// Fixture provenance: <c>Fixtures/cli/codex/debug-models-v0.153.4.json</c> is a
+/// trimmed <c>codex debug models</c> document. Its envelope and per-model field
+/// shape (<c>supported_reasoning_levels</c> as <c>{ effort, description }</c>
+/// objects, <c>default_reasoning_level</c>, <c>visibility</c>, <c>priority</c>)
+/// were captured from a live codex-cli run; the <c>gpt-6-astra</c> entry carries
+/// the values AGT-2707 recorded from codex-cli 0.153.4. The <c>v0.151.0</c>
+/// fixture is the same catalog before astra was published.
+///
+/// Shares <see cref="CodexDetectedDefaultCollection"/> because the parser reads
+/// the process-global detected ladder/default when a model reports neither.
+/// </summary>
+[Collection(CodexDetectedDefaultCollection.Name)]
+public class CodexModelDiscoveryTests : IDisposable
 {
+    public CodexModelDiscoveryTests() => ResetDetection();
+
+    public void Dispose() => ResetDetection();
+
+    private static void ResetDetection()
+    {
+        ModelMetadataRegistry.SetDetectedCodexDefault(null);
+        ModelMetadataRegistry.SetDetectedCodexLadders(null);
+    }
+
+    private static string Fixture(string name)
+        => File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "cli", "codex", name));
+
+    [Fact]
+    public void ParseDebugModelsJson_TakesTheReasoningLadderAndDefaultFromTheCli_OnlyForOnboardedModels()
+    {
+        // codex-cli 0.153.4 lists gpt-6-astra with a ladder the static
+        // CliThinkingLevels table does not know: it has no `minimal`, and it
+        // carries both `max` and `ultra` (AGT-2707).
+        var models = CodexModelDiscovery.ParseDebugModelsJson(
+            Fixture("debug-models-v0.153.4.json"), activeModel: ModelIds.Gpt6Astra);
+
+        var astra = Assert.Single(models, m => m.Id == ModelIds.Gpt6Astra);
+        Assert.Equal("GPT-6-Astra", astra.Label);
+        Assert.True(astra.IsDefault);
+        Assert.True(astra.Available);
+        Assert.Equal(["low", "medium", "high", "xhigh", "max", "ultra"], astra.ThinkingLevels);
+        Assert.Equal("medium", astra.DefaultThinkingLevel);
+        // gpt-6-astra is the only model onboarded for a live-discovered
+        // ladder; every other model - gpt-5.6-sol included - ignores the same
+        // fixture's supported_reasoning_levels/default_reasoning_level and
+        // keeps the static top-of-ladder rule byte-for-byte (2026-09-07
+        // review: a CLI-stated default must not silently override an
+        // already-shipped model's product default; see
+        // CodexDetectedDefaultTests.Gpt56Ladder_And_Default_StayByteForByte_WhenCliReportsADifferentOne).
+        Assert.Equal(
+            ModelMetadataRegistry.StaticThinkingLevelsFor(CliTypes.Codex, ModelIds.Gpt56Sol).Last(),
+            Assert.Single(models, m => m.Id == ModelIds.Gpt56Sol).DefaultThinkingLevel);
+        Assert.Equal(
+            ModelMetadataRegistry.StaticThinkingLevelsFor(CliTypes.Codex, ModelIds.Gpt55).Last(),
+            Assert.Single(models, m => m.Id == ModelIds.Gpt55).DefaultThinkingLevel);
+        // Registry-known models carry no "missing metadata" note; the rest do.
+        Assert.Null(Assert.Single(models, m => m.Id == ModelIds.Gpt55).AvailabilityNote);
+        Assert.Equal("Discovered from CLI; missing registry metadata.",
+            Assert.Single(models, m => m.Id == ModelIds.Gpt56Sol).AvailabilityNote);
+    }
+
+    [Fact]
+    public void ParseDebugModelsJson_UsesTheTopRung_WhenTheCliStatesNoDefault()
+    {
+        const string output = """
+        {"models":[
+          {"slug":"gpt-6-astra","display_name":"GPT-6-Astra","visibility":"list","priority":1,
+           "supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"max"}]}
+        ]}
+        """;
+
+        var astra = Assert.Single(CodexModelDiscovery.ParseDebugModelsJson(output));
+
+        Assert.Equal(["low", "medium", "max"], astra.ThinkingLevels);
+        Assert.Equal("max", astra.DefaultThinkingLevel);
+    }
+
+    [Fact]
+    public void WithKnownButUnavailableModels_ShowsAstraDisabled_WhenTheCliDoesNotListIt()
+    {
+        // Acceptance: on a codex-cli without astra the model stays visible and
+        // is disabled with an attributable note, never silently hidden.
+        var catalog = new CliModelCatalog
+        {
+            Models = CodexModelDiscovery.ParseDebugModelsJson(Fixture("debug-models-v0.151.0.json")),
+            Source = "cli-pty",
+            FetchedAt = DateTime.UtcNow
+        };
+
+        var merged = CodexModelDiscovery.WithKnownButUnavailableModels(catalog, "0.151.0");
+
+        var astra = Assert.Single(merged.Models, m => m.Id == ModelIds.Gpt6Astra);
+        Assert.False(astra.Available);
+        Assert.False(astra.Deprecated);
+        Assert.False(astra.IsDefault);
+        Assert.Equal("Not offered by the installed codex-cli 0.151.0.", astra.AvailabilityNote);
+        // Live entries are untouched and still lead the list.
+        Assert.Equal(ModelIds.Gpt56Sol, merged.Models[0].Id);
+        Assert.All(merged.Models.Where(m => !m.Available), m => Assert.NotNull(m.AvailabilityNote));
+        // A merged-in unavailable entry can never become the detected default.
+        Assert.Equal(ModelIds.Gpt56Sol, CodexModelDiscovery.PickDetectedDefault(merged));
+    }
+
+    [Fact]
+    public void WithKnownButUnavailableModels_LeavesAstraSelectable_WhenTheCliListsIt()
+    {
+        var catalog = new CliModelCatalog
+        {
+            Models = CodexModelDiscovery.ParseDebugModelsJson(Fixture("debug-models-v0.153.4.json")),
+            Source = "cli-pty",
+            FetchedAt = DateTime.UtcNow
+        };
+
+        var merged = CodexModelDiscovery.WithKnownButUnavailableModels(catalog, "0.153.4");
+
+        var astra = Assert.Single(merged.Models, m => m.Id == ModelIds.Gpt6Astra);
+        Assert.True(astra.Available);
+        Assert.Equal(["low", "medium", "high", "xhigh", "max", "ultra"], astra.ThinkingLevels);
+        // gpt-5-codex is a registry model the 0.153.4 catalog no longer lists.
+        var codex = Assert.Single(merged.Models, m => m.Id == ModelIds.Gpt5Codex);
+        Assert.False(codex.Available);
+        Assert.Equal("Not offered by the installed codex-cli 0.153.4.", codex.AvailabilityNote);
+    }
+
+    [Fact]
+    public void WithKnownButUnavailableModels_OmitsTheVersion_WhenNoProbeHasSeenOne()
+    {
+        var merged = CodexModelDiscovery.WithKnownButUnavailableModels(
+            new CliModelCatalog { Models = [], Source = "test", FetchedAt = DateTime.UtcNow },
+            cliVersion: null);
+
+        Assert.Equal(
+            "Not offered by the installed codex-cli.",
+            Assert.Single(merged.Models, m => m.Id == ModelIds.Gpt6Astra).AvailabilityNote);
+    }
+
+    [Fact]
+    public void Registry_OnboardsAstraWithoutMakingItTheDefault()
+    {
+        var astra = ModelMetadataRegistry.Find(ModelIds.Gpt6Astra);
+
+        Assert.NotNull(astra);
+        Assert.Equal("GPT-6 Astra", astra.Label);
+        Assert.Equal("openai", astra.Vendor);
+        Assert.Equal(272_000, astra.ContextWindow);
+        Assert.False(astra.IsDefault);
+        Assert.False(astra.Deprecated);
+        // No invented rates: pricing stays a live-catalog pass-through.
+        Assert.Null(astra.InputPricePerMillion);
+        Assert.Null(astra.OutputPricePerMillion);
+        // The product default is unchanged by onboarding astra.
+        Assert.Equal(ModelIds.Gpt55, ModelMetadataRegistry.DefaultForCli(CliTypes.Codex));
+    }
+
+
     [Fact]
     public void ParseDebugModelsJson_ReturnsVisibleModelsInPriorityOrder()
     {
@@ -149,9 +305,12 @@ public class CodexModelDiscoveryTests
     }
 
     [Fact]
-    public void WithCurrentCodexCapabilities_RecomputesThinkingLevelsForCachedCatalogs()
+    public void WithCurrentCodexCapabilities_KeepsCliLadders_AndFillsOnlyMissingOnes()
     {
-        var stale = new CliModelCatalog
+        // A cached ladder came from the CLI itself, so recomputing it from the
+        // static table would reintroduce exactly the drift AGT-2707 removed.
+        // Only an entry with no ladder at all gets the static answer.
+        var cached = new CliModelCatalog
         {
             Source = "disk-cache",
             FetchedAt = DateTime.UtcNow,
@@ -159,28 +318,28 @@ public class CodexModelDiscoveryTests
             [
                 new CliModelInfo
                 {
-                    Id = "gpt-5.5",
-                    Label = "GPT-5.5",
+                    Id = ModelIds.Gpt6Astra,
+                    Label = "GPT-6-Astra",
                     Vendor = "openai",
-                    ThinkingLevels = ["minimal", "low", "medium", "high"],
+                    ThinkingLevels = ["low", "medium", "high", "xhigh", "max", "ultra"],
                     DefaultThinkingLevel = "medium"
                 },
                 new CliModelInfo
                 {
-                    Id = "gpt-5-codex",
-                    Label = "GPT-5 Codex",
+                    Id = ModelIds.Gpt55,
+                    Label = "GPT-5.5",
                     Vendor = "openai",
-                    ThinkingLevels = ["minimal", "low", "medium", "high", "xhigh"],
-                    DefaultThinkingLevel = "medium"
+                    ThinkingLevels = []
                 }
             ]
         };
 
-        var updated = CodexModelDiscovery.WithCurrentCodexCapabilities(stale);
+        var updated = CodexModelDiscovery.WithCurrentCodexCapabilities(cached);
 
+        var astra = Assert.Single(updated.Models, m => m.Id == ModelIds.Gpt6Astra);
+        Assert.Equal(["low", "medium", "high", "xhigh", "max", "ultra"], astra.ThinkingLevels);
+        Assert.Equal("medium", astra.DefaultThinkingLevel);
         Assert.Equal(["minimal", "low", "medium", "high", "xhigh"],
-            Assert.Single(updated.Models, m => m.Id == "gpt-5.5").ThinkingLevels);
-        Assert.Equal(["minimal", "low", "medium", "high"],
-            Assert.Single(updated.Models, m => m.Id == "gpt-5-codex").ThinkingLevels);
+            Assert.Single(updated.Models, m => m.Id == ModelIds.Gpt55).ThinkingLevels);
     }
 }

@@ -10,17 +10,25 @@ namespace AgentStudio.Cli;
 /// </summary>
 public sealed class CodexModelDiscovery
 {
+    /// <summary>Label used in the "not offered by the installed ..." note.</summary>
+    private const string CliLabel = "codex-cli";
+
     private readonly ILogger<CodexModelDiscovery> _logger;
     private readonly IConfiguration _config;
+    private readonly CliVersionTracker? _versionTracker;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     private CliModelCatalog? _memCache;
     private DateTime _memCacheAt = DateTime.MinValue;
 
-    public CodexModelDiscovery(ILogger<CodexModelDiscovery> logger, IConfiguration config)
+    public CodexModelDiscovery(
+        ILogger<CodexModelDiscovery> logger,
+        IConfiguration config,
+        CliVersionTracker? versionTracker = null)
     {
         _logger = logger;
         _config = config;
+        _versionTracker = versionTracker;
     }
 
     private string CachePath
@@ -31,7 +39,10 @@ public sealed class CodexModelDiscovery
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "agent-taskboard");
             Directory.CreateDirectory(dir);
-            return Path.Combine(dir, "codex-model-catalog.json");
+            // v2: entries written by this version carry the CLI-reported
+            // reasoning ladder. A v1 file cannot be told apart from one whose
+            // ladder came from the static table, so it is simply not read.
+            return Path.Combine(dir, "codex-model-catalog.v2.json");
         }
     }
 
@@ -166,14 +177,26 @@ public sealed class CodexModelDiscovery
             if (string.IsNullOrWhiteSpace(label)) label = id;
 
             var priority = GetInt(item, "priority") ?? int.MaxValue;
+            // Only a model onboarded for live-discovered ladders (gpt-6-astra)
+            // takes its ladder/default from this CLI response; every other
+            // model - the gpt-5.6 family included - keeps the static table's
+            // answer byte-for-byte (AGT-2707 review: the CLI's own
+            // default_reasoning_level must not silently override an
+            // already-shipped model's product default).
+            var (levels, defaultLevel) = ModelMetadataRegistry.UsesLiveDiscoveredThinkingLadder(id)
+                ? ReadReasoningLadder(item, id)
+                : StaticLadderFor(id);
             parsed.Add((new CliModelInfo
             {
                 Id = id,
                 Label = label.Trim(),
                 Vendor = GuessVendor(id),
                 IsDefault = string.Equals(id, activeModel, StringComparison.OrdinalIgnoreCase),
-                ThinkingLevels = CliThinkingLevels.For(CliTypes.Codex, id).ToList(),
-                DefaultThinkingLevel = ModelMetadataRegistry.DefaultThinkingLevelForCli(CliTypes.Codex, id)
+                AvailabilityNote = ModelMetadataRegistry.Find(id) == null
+                    ? "Discovered from CLI; missing registry metadata."
+                    : null,
+                ThinkingLevels = levels,
+                DefaultThinkingLevel = defaultLevel
             }, priority, index++));
         }
 
@@ -191,16 +214,92 @@ public sealed class CodexModelDiscovery
         return models;
     }
 
+    /// <summary>
+    /// The reasoning ladder for one `codex debug models` entry. The CLI is the
+    /// source of truth: it reports <c>supported_reasoning_levels</c> (an array
+    /// of <c>{ effort, description }</c>) and <c>default_reasoning_level</c>,
+    /// and both drift across releases - 0.153.4 dropped <c>minimal</c> from the
+    /// 5.6 family and added <c>max</c>. The static <c>CliThinkingLevels</c>
+    /// table answers only when the CLI reports nothing (AGT-2707).
+    /// </summary>
+    private static (List<string> Levels, string? Default) ReadReasoningLadder(JsonElement item, string id)
+    {
+        var levels = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (item.TryGetProperty("supported_reasoning_levels", out var reported)
+            && reported.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var entry in reported.EnumerateArray())
+            {
+                var effort = entry.ValueKind switch
+                {
+                    JsonValueKind.String => entry.GetString(),
+                    JsonValueKind.Object => GetString(entry, "effort"),
+                    _ => null
+                };
+                if (string.IsNullOrWhiteSpace(effort)) continue;
+                var level = effort.Trim().ToLowerInvariant();
+                if (seen.Add(level)) levels.Add(level);
+            }
+        }
+
+        if (levels.Count == 0) return StaticLadderFor(id);
+
+        var reportedDefault = GetString(item, "default_reasoning_level")?.Trim().ToLowerInvariant();
+        // A default the CLI does not list is not a rung we can send it; fall
+        // back to the AGT-2025 rule (the biggest value the ladder offers).
+        var defaultLevel = !string.IsNullOrWhiteSpace(reportedDefault) && seen.Contains(reportedDefault)
+            ? reportedDefault
+            : levels[^1];
+        return (levels, defaultLevel);
+    }
+
+    /// <summary>
+    /// The answer for a model the CLI reported no ladder for: curated registry
+    /// metadata, else the static capability table, with the AGT-2025 codex rule
+    /// (the biggest rung on offer) as the default. Deliberately does not read
+    /// the published live ladders, so a model the current CLI stopped
+    /// describing cannot be answered with a previous release's ladder.
+    /// </summary>
+    private static (List<string> Levels, string? Default) StaticLadderFor(string id)
+    {
+        var levels = ModelMetadataRegistry.StaticThinkingLevelsFor(CliTypes.Codex, id);
+        return ([.. levels], levels.Count > 0 ? levels[^1] : null);
+    }
+
+    /// <summary>
+    /// Fill in reasoning ladders a cached catalog is missing. A ladder that is
+    /// already present came from the CLI itself and must survive: recomputing
+    /// it from the static table is exactly the drift this replaced (AGT-2707).
+    /// </summary>
     internal static CliModelCatalog WithCurrentCodexCapabilities(CliModelCatalog cat)
     {
-        var models = cat.Models.Select(m => m with
+        var models = cat.Models.Select(m =>
         {
-            ThinkingLevels = CliThinkingLevels.For(CliTypes.Codex, m.Id).ToList(),
-            DefaultThinkingLevel = ModelMetadataRegistry.DefaultThinkingLevelForCli(CliTypes.Codex, m.Id)
+            if (m.ThinkingLevels is { Count: > 0 }) return m;
+            var (levels, defaultLevel) = StaticLadderFor(m.Id);
+            return m with { ThinkingLevels = levels, DefaultThinkingLevel = defaultLevel };
         }).ToList();
 
         return cat with { Models = models };
     }
+
+    /// <summary>
+    /// Union of the live catalog and the registry: a model this Studio knows
+    /// for OpenAI but the installed codex-cli does not list is appended as
+    /// unavailable-with-a-reason so it renders disabled instead of vanishing
+    /// (AGT-2707). Recomputed on every read, so the merge follows both the
+    /// current registry and the currently installed CLI.
+    /// </summary>
+    internal static CliModelCatalog WithKnownButUnavailableModels(CliModelCatalog cat, string? cliVersion)
+        => cat with
+        {
+            Models = ModelMetadataRegistry.AppendUnavailableRegistryEntries(
+                cat.Models,
+                vendor: "openai",
+                cliType: CliTypes.Codex,
+                availabilityNote: ModelMetadataRegistry.UnavailableOnInstalledCliNote(CliLabel, cliVersion))
+        };
 
     /// <summary>
     /// Registry-backed static catalog used when the codex CLI cannot be queried
@@ -241,12 +340,13 @@ public sealed class CodexModelDiscovery
         if (models == null || models.Count == 0) return null;
 
         // Follow the CLI's own default when it already points at a gpt-5.6 model.
-        var flagged = models.FirstOrDefault(m => m.IsDefault && IsGpt56(m.Id));
+        // Merged-in registry entries are unavailable and can never be the default.
+        var flagged = models.FirstOrDefault(m => m.Available && m.IsDefault && IsGpt56(m.Id));
         if (flagged != null) return flagged.Id;
 
         // Otherwise: the models are priority-ordered, so the first gpt-5.6 is the
         // highest-priority one the CLI advertises.
-        return models.FirstOrDefault(m => IsGpt56(m.Id))?.Id;
+        return models.FirstOrDefault(m => m.Available && IsGpt56(m.Id))?.Id;
     }
 
     /// <summary>
@@ -258,11 +358,13 @@ public sealed class CodexModelDiscovery
     /// </summary>
     private CliModelCatalog Publish(CliModelCatalog cat)
     {
+        // Ladders first: every later default resolution reads them.
+        ModelMetadataRegistry.SetDetectedCodexLadders(cat.Models);
         var detected = PickDetectedDefault(cat);
         ModelMetadataRegistry.SetDetectedCodexDefault(detected);
         _logger.LogDebug("Codex detected default published: {Detected} (source={Source})",
             detected ?? "<none>", cat.Source);
-        return cat;
+        return WithKnownButUnavailableModels(cat, _versionTracker?.CurrentVersion(CliTypes.Codex));
     }
 
     private CliModelCatalog WithActiveModelApplied(CliModelCatalog cat)

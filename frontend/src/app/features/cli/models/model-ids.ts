@@ -12,6 +12,10 @@ export const MODEL_IDS = {
   // Availability follows the live catalog from /api/cli; this id only seeds
   // fixtures and the effective-model display before the catalog hydrates.
   gpt56Sol: 'gpt-5.6-sol',
+  // Onboarded gpt-6 flagship (AGT-2707). Known to the backend registry, so the
+  // picker renders it disabled with a reason on a codex-cli that does not offer
+  // it yet instead of hiding it.
+  gpt6Astra: 'gpt-6-astra',
 } as const;
 
 export const CLAUDE_FALLBACK_MODEL_ID = MODEL_IDS.claudeHaiku45;

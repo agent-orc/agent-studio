@@ -141,6 +141,12 @@ public static class ModelIds
     /// <summary>Economy Codex model for bounded supporting-agent and pipeline work.
     /// Availability still comes from live CLI discovery.</summary>
     public const string Gpt54Mini = "gpt-5.4-mini";
+    /// <summary>Onboarded OpenAI flagship of the gpt-6 generation. Unlike the
+    /// gpt-5.6 family this one IS a registry entry, so the picker can show it
+    /// as a disabled, explained option when the installed codex-cli does not
+    /// offer it yet (AGT-2707). It is not the product default; that stays with
+    /// <see cref="Gpt56Sol"/> detection / the <see cref="Gpt55"/> baseline.</summary>
+    public const string Gpt6Astra = "gpt-6-astra";
     public const string Gpt5Codex = "gpt-5-codex";
     public const string Gpt41 = "gpt-4.1";
     public const string Gpt4o = "gpt-4o";
@@ -200,6 +206,14 @@ public static class ModelMetadataRegistry
         // the GPT-4.1 / GPT-4o entries) so no invented cost is asserted.
         new(ModelIds.Gpt55, "GPT-5.5", "openai", IsDefault: true, Deprecated: false, Available: true,
             ContextWindow: 400_000),
+        // gpt-6-astra is onboarded as a known model so the picker can show it
+        // disabled-with-a-reason on a codex-cli that does not offer it yet
+        // (AGT-2707). Its reasoning ladder and default level are deliberately
+        // absent here: they come from live discovery, which is the only source
+        // that stays correct across CLI releases. Pricing is left null (no
+        // invented rates), same posture as the GPT-4.1 / GPT-4o entries.
+        new(ModelIds.Gpt6Astra, "GPT-6 Astra", "openai", IsDefault: false, Deprecated: false, Available: true,
+            ContextWindow: 272_000),
         // gpt-5-codex is retained (API-key accounts still accept it) but is no
         // longer the default: a ChatGPT-account spawn rejects it outright.
         new(ModelIds.Gpt5Codex, "GPT-5 Codex", "openai", IsDefault: false, Deprecated: false, Available: true,
@@ -236,6 +250,67 @@ public static class ModelMetadataRegistry
     /// <summary>The last Codex default detected from the installed CLI, or null.</summary>
     public static string? DetectedCodexDefault => _detectedCodexDefaultId;
 
+    /// <summary>
+    /// Reasoning ladders the installed Codex CLI reported per model
+    /// (<c>supported_reasoning_levels</c> + <c>default_reasoning_level</c>).
+    /// Same posture as <see cref="_detectedCodexDefaultId"/>: the installed CLI
+    /// is the source of truth and the static <c>CliThinkingLevels</c> table is
+    /// only a fallback, because that table drifts every time a CLI release
+    /// reshapes a ladder (AGT-2707: the 5.6 family gained <c>max</c> and lost
+    /// <c>minimal</c>). Empty => not probed yet, so the static table holds.
+    /// </summary>
+    private static volatile IReadOnlyDictionary<string, CliReasoningLadder> _detectedCodexLadders =
+        new Dictionary<string, CliReasoningLadder>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Model ids whose reasoning ladder and default are allowed to come from
+    /// live codex-cli discovery instead of the static <c>CliThinkingLevels</c>
+    /// table (AGT-2707: onboarding gpt-6-astra). Deliberately an explicit,
+    /// narrow allowlist rather than "every codex model": a 2026-09-07 review
+    /// blocked a broader version of this feature because letting the CLI's
+    /// own <c>default_reasoning_level</c> answer for the already-shipped
+    /// gpt-5.6 family silently changed their product default and ladder
+    /// order. Whether to extend live-discovered ladders to gpt-5.6 is a
+    /// separate operator decision (see model-routing-policy.md); add ids here
+    /// only when that decision is made.
+    /// </summary>
+    private static readonly HashSet<string> LiveDiscoveredLadderModelIds =
+        new(StringComparer.OrdinalIgnoreCase) { ModelIds.Gpt6Astra };
+
+    /// <summary>Whether <paramref name="model"/> is onboarded to take its reasoning
+    /// ladder/default from live CLI discovery rather than the static table.</summary>
+    public static bool UsesLiveDiscoveredThinkingLadder(string? model)
+        => !string.IsNullOrWhiteSpace(model) && LiveDiscoveredLadderModelIds.Contains(model.Trim());
+
+    /// <summary>
+    /// Publish the per-model reasoning ladders discovered from the installed
+    /// Codex CLI. Models not on <see cref="LiveDiscoveredLadderModelIds"/> or
+    /// that reported no ladder are skipped so they keep falling back to the
+    /// static table. Pass null/empty to clear.
+    /// </summary>
+    public static void SetDetectedCodexLadders(IEnumerable<CliModelInfo>? models)
+    {
+        var ladders = new Dictionary<string, CliReasoningLadder>(StringComparer.OrdinalIgnoreCase);
+        foreach (var model in models ?? [])
+        {
+            if (string.IsNullOrWhiteSpace(model.Id) || !UsesLiveDiscoveredThinkingLadder(model.Id)) continue;
+            var levels = model.ThinkingLevels;
+            if (levels is not { Count: > 0 }) continue;
+            ladders[model.Id.Trim()] = new CliReasoningLadder(
+                [.. levels],
+                string.IsNullOrWhiteSpace(model.DefaultThinkingLevel) ? null : model.DefaultThinkingLevel.Trim());
+        }
+        _detectedCodexLadders = ladders;
+    }
+
+    private static CliReasoningLadder? DetectedLadder(string? cliType, string? model)
+    {
+        if (string.IsNullOrWhiteSpace(model)) return null;
+        if (!CliTypes.IsValid(cliType) || CliTypes.Normalize(cliType) != CliTypes.Codex) return null;
+        if (!UsesLiveDiscoveredThinkingLadder(model)) return null;
+        return _detectedCodexLadders.TryGetValue(model.Trim(), out var ladder) ? ladder : null;
+    }
+
     public static IReadOnlyList<ModelMetadata> All => Entries;
 
     public static IReadOnlyList<ModelMetadata> ForVendor(string vendor)
@@ -266,12 +341,22 @@ public static class ModelMetadataRegistry
     /// </summary>
     public static string? DefaultThinkingLevelForCli(string? cliType, string? model)
     {
+        // Curated registry metadata wins first: a model this Studio already
+        // ships an explicit ladder for (the gpt-5.6 family) keeps its
+        // curated default byte-for-byte regardless of what an installed CLI
+        // reports for its OWN default_reasoning_level, which is a UX default
+        // for the bare CLI, not necessarily this product's routing choice.
         var metadata = Find(model);
         if (!string.IsNullOrWhiteSpace(metadata?.DefaultThinkingLevel)
             && IsCompatibleWithCli(cliType, metadata.Id))
         {
             return metadata.DefaultThinkingLevel;
         }
+
+        // Only a model with NO curated default (gpt-6-astra today) falls
+        // through to what the installed CLI itself reported (AGT-2707).
+        var detected = DetectedLadder(cliType, model)?.Default;
+        if (!string.IsNullOrWhiteSpace(detected)) return detected;
 
         if (CliTypes.IsValid(cliType) && CliTypes.Normalize(cliType) == CliTypes.Codex)
         {
@@ -373,7 +458,75 @@ public static class ModelMetadataRegistry
             DefaultThinkingLevel = DefaultThinkingLevelForCli(cliType, id)
         };
 
+    /// <summary>
+    /// The reasoning ladder for a CLI + model, most authoritative source
+    /// first: curated registry metadata (keeps the gpt-5.6 family's ladder
+    /// byte-for-byte regardless of what the installed CLI reports), then the
+    /// ladder the installed CLI reported for a model with no curated ladder
+    /// (gpt-6-astra today), then the static <c>CliThinkingLevels</c> table.
+    /// </summary>
     public static IReadOnlyList<string> ThinkingLevelsFor(string? cliType, string? model)
+    {
+        var metadata = Find(model);
+        if (metadata?.ThinkingLevels is { Length: > 0 } && IsCompatibleWithCli(cliType, metadata.Id))
+        {
+            return metadata.ThinkingLevels;
+        }
+
+        var detected = DetectedLadder(cliType, model)?.Levels;
+        return detected is { Count: > 0 } ? detected : CliThinkingLevels.For(cliType, model);
+    }
+
+    /// <summary>
+    /// The merged-catalog rule shared by every CLI discovery: a model this
+    /// registry knows for the CLI's vendor but that live discovery did not
+    /// report stays visible and is appended as unavailable with an explaining
+    /// note, so an onboarded model is disabled rather than silently hidden
+    /// (AGT-2707). Discovered models are returned untouched and first.
+    /// </summary>
+    public static List<CliModelInfo> AppendUnavailableRegistryEntries(
+        IReadOnlyList<CliModelInfo> discovered,
+        string vendor,
+        string cliType,
+        string availabilityNote)
+    {
+        var discoveredIds = new HashSet<string>(
+            discovered.Select(m => m.Id), StringComparer.OrdinalIgnoreCase);
+        var merged = discovered.ToList();
+
+        foreach (var known in ForVendor(vendor))
+        {
+            if (discoveredIds.Contains(known.Id)) continue;
+            if (known.Aliases?.Any(discoveredIds.Contains) == true) continue;
+            merged.Add(ToCliModelInfo(known, cliType) with
+            {
+                IsDefault = false,
+                Available = false,
+                Deprecated = known.Deprecated,
+                AvailabilityNote = availabilityNote
+            });
+        }
+
+        return merged;
+    }
+
+    /// <summary>
+    /// Note shown on a known model the installed CLI does not offer. The
+    /// version is included when a probe has observed one, so the operator can
+    /// tell "this CLI is too old" from "this model was withdrawn".
+    /// </summary>
+    public static string UnavailableOnInstalledCliNote(string cliLabel, string? cliVersion)
+        => string.IsNullOrWhiteSpace(cliVersion)
+            ? $"Not offered by the installed {cliLabel}."
+            : $"Not offered by the installed {cliLabel} {cliVersion.Trim()}.";
+
+    /// <summary>
+    /// The ladder without the live-discovery layer: curated registry metadata,
+    /// then the static capability table. Discovery itself uses this as its own
+    /// fallback so a CLI that reports no ladder cannot be answered with the
+    /// ladder a previous CLI release reported.
+    /// </summary>
+    public static IReadOnlyList<string> StaticThinkingLevelsFor(string? cliType, string? model)
     {
         var metadata = Find(model);
         if (metadata?.ThinkingLevels is { Length: > 0 }
@@ -385,20 +538,42 @@ public static class ModelMetadataRegistry
         return CliThinkingLevels.For(cliType, model);
     }
 
+    /// <summary>
+    /// Resolve a requested reasoning level against the model's effective ladder
+    /// (CLI-reported when available, so a rung such as <c>max</c> that only the
+    /// installed CLI knows about is accepted instead of being normalized away).
+    /// </summary>
     public static string? NormalizeThinkingLevel(string? cliType, string? model, string? requested)
     {
-        var metadata = Find(model);
-        if (metadata?.ThinkingLevels is not { Length: > 0 }
-            || !IsCompatibleWithCli(cliType, metadata.Id))
-        {
-            return CliThinkingLevels.Normalize(cliType, model, requested);
-        }
+        var levels = ThinkingLevelsFor(cliType, model);
+        if (levels.Count == 0) return null;
 
-        var levels = metadata.ThinkingLevels;
         var match = levels.FirstOrDefault(level =>
             string.Equals(level, requested?.Trim(), StringComparison.OrdinalIgnoreCase));
-        return match ?? DefaultThinkingLevelForCli(cliType, model);
+        if (match != null) return match;
+
+        // Out-of-ladder request: land on the model's own default rather than
+        // the product top-of-ladder, so a stale or mistyped level never
+        // silently escalates reasoning cost. Same source order as
+        // DefaultThinkingLevelForCli, minus its codex top-of-ladder rule.
+        var metadata = Find(model);
+        if (!string.IsNullOrWhiteSpace(metadata?.DefaultThinkingLevel)
+            && IsCompatibleWithCli(cliType, metadata.Id))
+        {
+            return metadata.DefaultThinkingLevel;
+        }
+
+        var detected = DetectedLadder(cliType, model)?.Default;
+        if (!string.IsNullOrWhiteSpace(detected)) return detected;
+
+        return CliThinkingLevels.DefaultFor(cliType, model) ?? levels[0];
     }
+
+    /// <summary>
+    /// One model's reasoning ladder exactly as the installed CLI reported it:
+    /// the supported rungs in CLI order plus the CLI's own default rung.
+    /// </summary>
+    private sealed record CliReasoningLadder(IReadOnlyList<string> Levels, string? Default);
 
     private static ModelMetadata Claude(
         string id,

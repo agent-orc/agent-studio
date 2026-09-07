@@ -113,6 +113,34 @@ describe('orderModelCatalog', () => {
     });
   });
 
+  it('keeps an onboarded but unavailable gpt-6 entry current, and last in its section', () => {
+    // Merged codex catalog on a CLI that does not offer gpt-6-astra yet: the
+    // model stays in the current section (it is not an older generation) but
+    // sorts behind every selectable entry (AGT-2707).
+    const note = 'Not offered by the installed codex-cli 0.151.0.';
+    const ordered = orderModelCatalog([
+      model('gpt-5.6-sol'),
+      model('gpt-5.5'),
+      model('gpt-6-astra', { available: false, availabilityNote: note }),
+      model('gpt-5-codex', { available: false, availabilityNote: note }),
+    ]);
+
+    expect(ordered.map((item) => item.id)).toEqual([
+      'gpt-5.6-sol',
+      'gpt-5.5',
+      'gpt-6-astra',
+      'gpt-5-codex',
+    ]);
+    const astra = ordered.find((item) => item.id === 'gpt-6-astra');
+    expect(astra).toMatchObject({ available: false, availabilityNote: note });
+    expect(astra?.olderGeneration).toBeFalsy();
+    // A superseded generation the CLI dropped stays grouped with older models.
+    expect(ordered.find((item) => item.id === 'gpt-5-codex')).toMatchObject({
+      available: false,
+      olderGeneration: true,
+    });
+  });
+
   it('keeps discovery order for ids without a conventional numeric generation', () => {
     const ordered = orderModelCatalog([
       model('claude-latest'),

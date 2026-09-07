@@ -217,24 +217,19 @@ public sealed class ClaudeModelDiscovery
 
     public static List<CliModelInfo> Reconcile(IReadOnlyList<CliModelInfo> discovered)
     {
-        var discoveredIds = new HashSet<string>(discovered.Select(m => m.Id), StringComparer.OrdinalIgnoreCase);
         var currentId = discovered.FirstOrDefault(m => m.Available && m.IsDefault)?.Id;
-        var result = discovered
+        var live = discovered
             .Where(m => m.Available)
             .Select(m => m with { IsDefault = false })
             .ToList();
 
-        foreach (var known in ModelMetadataRegistry.ForVendor("anthropic"))
-        {
-            if (discoveredIds.Contains(known.Id)) continue;
-            result.Add(ModelMetadataRegistry.ToCliModelInfo(known, CliTypes.Claude) with
-            {
-                IsDefault = false,
-                Available = false,
-                Deprecated = known.Deprecated,
-                AvailabilityNote = "Known in registry but not reported by the installed Claude CLI."
-            });
-        }
+        // Same merged-catalog rule as CodexModelDiscovery: known-but-unavailable
+        // is disabled with a reason, never hidden (AGT-2707).
+        var result = ModelMetadataRegistry.AppendUnavailableRegistryEntries(
+            live,
+            vendor: "anthropic",
+            cliType: CliTypes.Claude,
+            availabilityNote: "Known in registry but not reported by the installed Claude CLI.");
 
         MarkDefault(result, currentId);
         return result;

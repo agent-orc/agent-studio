@@ -71,6 +71,17 @@ CLI execution tests.
   because the adapter can still hand a bad shape to the live CLI.
 - Sandbox and permission behavior must be explicit per CLI. Do not hide a
   permission block behind a generic failure.
+- A CLI's model catalog is the known-model registry union live discovery. A
+  model the registry knows for that CLI's vendor but the installed CLI does not
+  offer stays in the catalog as unavailable with an attributable note, and the
+  picker renders it disabled: known-but-unavailable is disabled, not hidden. A
+  model only the CLI reports stays selectable. Reasoning ladders and default
+  levels come from the CLI only for models explicitly onboarded for it
+  (`ModelMetadataRegistry.UsesLiveDiscoveredThinkingLadder`, currently only
+  `gpt-6-astra`); every other model, including the codex `gpt-5.6` family,
+  always resolves through the static `CliThinkingLevels` table regardless of
+  what the CLI reports for it, byte-for-byte, so onboarding a new model can
+  never silently change an already-shipped model's default (AGT-2707).
 - Quota probes are observability surfaces. Preserve stable event names and
   useful error context when editing nearby code.
 - Quota reads are cache-only request paths. `GET /api/cli/quota` must never
