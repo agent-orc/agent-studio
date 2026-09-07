@@ -12,6 +12,8 @@ import {
 } from '@angular/core';
 import { TaskService } from '../../../../services/task.service';
 import { ClientDefaultsService } from '../../../../services/client-defaults.service';
+import { NowTickService } from '../../../../services/now-tick.service';
+import { formatDateTimeUtc } from '../../../../services/format.util';
 import type { CliType } from '../../../../models/task.model';
 import { CLI_TYPES } from '../../../../models/task.model';
 import {
@@ -50,6 +52,30 @@ export function formatRunningLabel(
   return hasRemotePlane ? remoteLabel : 'no runners';
 }
 
+/**
+ * AGT-2726 — the board's "git state as of" label. Git-derived card enrichment
+ * comes from a background index now, so the board can be honest about its age
+ * instead of implying the numbers were computed for this request. Deliberately
+ * seconds-resolution: the acceptance bound is an index age under 10 s after a
+ * ref change, and a label that only speaks in minutes could not show that.
+ */
+export function formatGitStateLabel(
+  gitStateAt: string | null | undefined,
+  stale: boolean,
+  now: number,
+): string {
+  if (!gitStateAt) return stale ? 'git indexing' : 'git idle';
+  const at = new Date(gitStateAt).getTime();
+  if (Number.isNaN(at)) return 'git idle';
+  const seconds = Math.max(0, Math.round((now - at) / 1000));
+  const age = seconds < 60
+    ? `${seconds}s`
+    : seconds < 3600
+      ? `${Math.round(seconds / 60)}m`
+      : `${Math.round(seconds / 3600)}h`;
+  return stale ? `git ${age} · refreshing` : `git ${age}`;
+}
+
 @Component({
   selector: 'app-status-bar',
   standalone: true,
@@ -64,6 +90,7 @@ export class StatusBarComponent implements OnInit, OnDestroy {
   private readonly clientDefaults = inject(ClientDefaultsService);
   private readonly remoteHosts = inject(RemoteHostsService);
   private readonly reviewQueue = inject(ReviewQueueService);
+  private readonly nowTick = inject(NowTickService);
   private hostLoadRefreshHandle: VisibleIntervalHandle | null = null;
 
   readonly projectNames = input<string[]>([]);
@@ -102,6 +129,28 @@ export class StatusBarComponent implements OnInit, OnDestroy {
 
   readonly runningTruth = computed(() =>
     deriveBoardRunningTruth(this.jobService.grouped().progress));
+
+  /**
+   * AGT-2726 — how old the git-derived card enrichment on this board is. It is
+   * read from the grouped payload the board already polls, so the stamp costs
+   * nothing extra, and it is rendered without a tone or a warning: an index a
+   * few seconds behind is the normal, healthy state, not an alarm.
+   */
+  readonly gitStateLabel = computed(() => formatGitStateLabel(
+    this.jobService.grouped().gitStateAt,
+    this.jobService.grouped().gitStateStale === true,
+    this.nowTick.now()));
+
+  readonly gitStateTooltip = computed(() => {
+    const grouped = this.jobService.grouped();
+    if (!grouped.gitStateAt) {
+      return 'Git-derived card state (merge, integration, publish) is still being indexed in the background.';
+    }
+    const at = formatDateTimeUtc(grouped.gitStateAt);
+    return grouped.gitStateStale
+      ? `Git-derived card state as of ${at}. A repository change was seen since; the background index is catching up and the board updates itself.`
+      : `Git-derived card state as of ${at}. The background index is up to date.`;
+  });
 
   /**
    * Active execution slots and configured ceilings split by executor plane

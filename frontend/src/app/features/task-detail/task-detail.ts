@@ -23,7 +23,7 @@ import type {
   CliType,
   ReviewEvidenceEntry,
 } from '../../models/task.model';
-import { CLI_TYPES, TaskState } from '../../models/task.model';
+import { boardLanes, CLI_TYPES, TaskState } from '../../models/task.model';
 import type { CliModelInfo } from '../../features/cli';
 import { TaskService } from '../../services/task.service';
 import { CliCatalogStore } from '../cli';
@@ -1253,8 +1253,8 @@ export class TaskDetailComponent implements OnDestroy {
   private captureLaneOrder(state: string): { jobId: string; watchPath: string }[] {
     const grouped = this.jobService.grouped();
     const out: { jobId: string; watchPath: string }[] = [];
-    for (const list of Object.values(grouped)) {
-      for (const j of list as TaskInfo[]) {
+    for (const list of boardLanes(grouped)) {
+      for (const j of list) {
         if (j.state === state) out.push({ jobId: j.id, watchPath: j.watchPath });
       }
     }

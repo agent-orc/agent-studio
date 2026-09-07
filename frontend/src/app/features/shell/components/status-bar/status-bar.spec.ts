@@ -4,7 +4,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
-import { formatRunningLabel, StatusBarComponent } from './status-bar';
+import { formatGitStateLabel, formatRunningLabel, StatusBarComponent } from './status-bar';
 import { TaskService } from '../../../../services/task.service';
 
 describe('formatRunningLabel', () => {
@@ -20,6 +20,37 @@ describe('formatRunningLabel', () => {
 
   it('keeps the remote unit explicit when the ceiling is not yet known', () => {
     expect(formatRunningLabel(0, 3, null, 1)).toBe('remote 3');
+  });
+});
+
+describe('formatGitStateLabel (AGT-2726)', () => {
+  const now = Date.parse('2026-09-07T10:00:00Z');
+
+  it.each([
+    { at: '2026-09-07T09:59:56Z', stale: false, expected: 'git 4s' },
+    { at: '2026-09-07T09:58:00Z', stale: false, expected: 'git 2m' },
+    { at: '2026-09-07T08:00:00Z', stale: false, expected: 'git 1h' },
+  ])('renders $expected for an index computed at $at', ({ at, stale, expected }) => {
+    expect(formatGitStateLabel(at, stale, now)).toBe(expected);
+  });
+
+  it('says it is refreshing rather than hiding the previous snapshot', () => {
+    // Stale-while-revalidate is the contract: the board keeps rendering the
+    // last completed snapshot and says so, instead of blanking or blocking.
+    expect(formatGitStateLabel('2026-09-07T09:59:55Z', true, now)).toBe('git 5s · refreshing');
+  });
+
+  it('reports a warming index without inventing an age', () => {
+    expect(formatGitStateLabel(null, true, now)).toBe('git indexing');
+    expect(formatGitStateLabel(undefined, false, now)).toBe('git idle');
+  });
+
+  it('does not render a negative age from a clock skew', () => {
+    expect(formatGitStateLabel('2026-09-07T10:00:30Z', false, now)).toBe('git 0s');
+  });
+
+  it('falls back to idle for an unparseable stamp instead of NaN', () => {
+    expect(formatGitStateLabel('not-a-date', false, now)).toBe('git idle');
   });
 });
 

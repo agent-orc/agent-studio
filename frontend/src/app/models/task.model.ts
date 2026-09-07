@@ -1124,6 +1124,34 @@ export interface GroupedJobs {
   review: TaskInfo[];
   completed: TaskInfo[];
   archive: TaskInfo[];
+  /**
+   * AGT-2726 — when the background git index last finished computing the
+   * git-derived enrichment on these cards (merge signal, integration status,
+   * publish signal). ISO-8601, or null while the index is still warming. The
+   * board renders it quietly; it is an "as of", not an alarm.
+   */
+  gitStateAt?: string | null;
+  /**
+   * True when a repository change has been observed that the snapshot above
+   * does not contain yet. The board keeps rendering the last snapshot and
+   * updates through the existing SignalR push once the index catches up; no
+   * request ever waits for git.
+   */
+  gitStateStale?: boolean;
+}
+
+/**
+ * Every lane array in a grouped payload, and nothing else.
+ *
+ * `GroupedJobs` is no longer a map of lane-name to card list: since AGT-2726 it
+ * also carries the scalar `gitStateAt` / `gitStateStale` stamp. Callers that
+ * walked `Object.values(grouped)` and cast each value to `TaskInfo[]` would
+ * therefore iterate a boolean (a `TypeError`) or a string (one "card" per
+ * character). Use this instead of `Object.values`; it stays correct as further
+ * non-lane fields are added.
+ */
+export function boardLanes(grouped: GroupedJobs): TaskInfo[][] {
+  return Object.values(grouped).filter((value): value is TaskInfo[] => Array.isArray(value));
 }
 
 /**

@@ -15,3 +15,4 @@ Durable contracts that code, CLIs, and agents must respect.
 | [code-patterns.md](code-patterns.md) | Code-pattern drift watchlist read by analysis services. |
 | [runtime-prompts.md](runtime-prompts.md) | Runtime prompt precedence, review companions, project override comparison, call telemetry, and cost boundaries. |
 | [wiki-tree.md](wiki-tree.md) | Wiki physical docs tree, mutation, rendering, and history contract. |
+| [git-state-index.md](git-state-index.md) | Git-derived board state as a background index; request paths never spawn or wait on git. |

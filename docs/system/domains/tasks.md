@@ -666,6 +666,23 @@ cannot erase an operator decision.
   wait. `GitProcessTelemetry` records `tasks/list` and `tasks/grouped` separately
   from `tasks/list-refresh`, so request rollups must remain at zero spawns even
   when HEAD churn causes the background refresh to recompute Git projections.
+- Board state source (AGT-2726): the git-derived half of those fields is filled
+  by the per-repository background index, not by whichever request missed the
+  cache. `GitStateIndex` schedules a run per repository (ref watcher, Task
+  Server lane and bulk events, plus a slow sweep), single-flight per repository,
+  and `GitBackgroundExecutor` runs it on bounded dedicated threads - never the
+  thread pool, which is what previously left `tasks/grouped` waiting seconds
+  with zero spawns of its own. `TaskListGitProjectionCache` still owns the
+  per-card assembly; it now runs on that same executor and reads warm
+  per-repository caches. Full contract:
+  [contracts/git-state-index.md](../contracts/git-state-index.md).
+- Both board reads carry the index stamp. `/api/tasks/grouped` adds
+  `gitStateAt` and `gitStateStale` to its response object; `GET /api/tasks`
+  answers with a bare array and carries the same two values as the
+  `X-Git-State-At` and `X-Git-State-Stale` headers. Both are additive: a client
+  that ignores them reads exactly the board it read before. Stale means a change
+  has been observed that the snapshot does not contain yet - the board keeps
+  rendering the snapshot and updates through the existing SignalR push.
 
 ## Project Git inventory contract
 
@@ -694,6 +711,11 @@ cannot erase an operator decision.
 - `git-info` inventory telemetry records `refCount`, `computedAt`, and the cache
   decision `hit`, `recompute`, or `coalesced`. Request telemetry records
   `spawns=0`; subprocess timings belong to `git/inventory-refresh`.
+- The inventory response also carries `stale` (AGT-2726): true for any decision
+  other than `hit`, meaning a refresh is warming or queued and the caller is
+  reading a deliberately older snapshot. The background git index drives that
+  refresh alongside the existing `GitInventoryRefreshHostedService` queue, and
+  the two coalesce onto one in-flight computation.
 
 ## Execution location on task reads
 

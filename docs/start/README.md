@@ -116,6 +116,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Result view and case templates | [concepts/result-view-and-case-templates.md](../concepts/result-view-and-case-templates.md) |
 | Publishing workflows (publish-target derivation + pending badges; PUB-1) | [concepts/publishing-workflows.md](../concepts/publishing-workflows.md) |
 | Git-info performance measurements and cache invalidation (AGT-2007) | [reports/git-info-performance-agt-2007.md](../system/reports/git-info-performance-agt-2007.md) |
+| Git-derived board state as a background index; request paths never spawn or wait on git (AGT-2726) | [contracts/git-state-index.md](../system/contracts/git-state-index.md) |
 | Planning-task lifecycle (plan → spawn → accept; spawn-contract gate; AGT-2069) | [concepts/planning-task-lifecycle.md](../concepts/planning-task-lifecycle.md) |
 | Experiment workbenches (Explorer, orchestrator chat, decision-to-task) | [concept](../concepts/experimentier-workbench.md) · [interactive mockup](../concepts/mockups/experimentier-workbench.html) |
 | Decoupled agent-session lifecycles (holder, consumer channel, multi-client attach) | [concept](../concepts/decoupled-lifecycles.md) · [interactive Dossier-family mockup](../concepts/mockups/decoupled-lifecycles.html) |

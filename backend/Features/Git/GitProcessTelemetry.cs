@@ -43,6 +43,14 @@ public static class GitProcessTelemetry
     internal static ILogger? Logger;
 
     /// <summary>
+    /// The rolling one-hour view of the same samples, for the Admin SLO panel
+    /// (AGT-2726). This is a projection of what is already recorded here, not a
+    /// second counter: every entry is written from <see cref="Record"/> and from
+    /// the scope rollup below.
+    /// </summary>
+    internal static readonly GitPerformanceWindow Window = new();
+
+    /// <summary>
     /// Opens a per-request git measurement scope. Dispose logs the rollup:
     /// total spawn count, summed git wall-time, request wall-time, and a
     /// per-subcommand breakdown. Nestable - the inner scope restores the outer
@@ -67,6 +75,7 @@ public static class GitProcessTelemetry
     internal static void Record(string command, long elapsedMs, int exitCode)
     {
         _current.Value?.Add(command, elapsedMs);
+        Window.RecordSpawn(DateTimeOffset.UtcNow);
         if (elapsedMs >= SlowSpawnWarnMs)
         {
             Logger?.LogWarning(
@@ -94,6 +103,15 @@ public static class GitProcessTelemetry
     /// </summary>
     internal static (int Spawns, long GitMs, int FileReads)? CurrentTally()
         => _current.Value is { } s ? (s.Spawns, s.GitMs, s.FileReads) : null;
+
+    /// <summary>
+    /// The ambient scope's slowest single subcommand so far, or null when
+    /// nothing is measuring or nothing has run. The background git index reports
+    /// it on a run that exceeds its budget - "this repository was slow" is not
+    /// actionable without "and this is the command that made it slow".
+    /// </summary>
+    internal static (string Command, long Ms)? CurrentSlowest()
+        => _current.Value?.Slowest();
 
     private sealed class GitRequestScope : IDisposable
     {
@@ -141,6 +159,16 @@ public static class GitProcessTelemetry
             }
         }
 
+        public (string Command, long Ms)? Slowest()
+        {
+            lock (_gate)
+            {
+                if (_byCommand.Count == 0) return null;
+                var slowest = _byCommand.MaxBy(kv => kv.Value.Ms);
+                return (slowest.Key, slowest.Value.Ms);
+            }
+        }
+
         public void AddFileReads(int count)
         {
             AddFileReadsLocal(count);
@@ -183,6 +211,11 @@ public static class GitProcessTelemetry
             _logger.LogInformation(
                 "git-info request={Label} spawns={Spawns} gitMs={GitMs} files={FileReads} wallMs={WallMs} breakdown=[{Breakdown}]",
                 _label, spawns, gitMs, fileReads, _wall.ElapsedMilliseconds, breakdown);
+
+            // Same sample, second consumer: the Admin SLO panel reads p50/p95
+            // per endpoint from this window instead of re-deriving them by
+            // parsing the log line above.
+            Window.RecordRequest(_label, DateTimeOffset.UtcNow, _wall.ElapsedMilliseconds, spawns);
         }
     }
 }

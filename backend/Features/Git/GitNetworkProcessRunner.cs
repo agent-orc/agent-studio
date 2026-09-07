@@ -57,6 +57,7 @@ internal static class GitNetworkProcessRunner
             process = Process.Start(startInfo);
             if (process is null)
                 return Failed(GitProcessFailureKind.StartFailure, "git process did not start");
+            GitBackgroundPriority.Apply(process);
 
             // GitService is predominantly synchronous. Blocking that path on
             // RunAsync().GetResult() made process-exit and pipe continuations

@@ -37,7 +37,7 @@ import type {
   PublishAutomationMode,
   PublishWorkflowRun,
 } from '../models/task.model';
-import { TaskState } from '../models/task.model';
+import { boardLanes, TaskState } from '../models/task.model';
 import type { ClaudeSessionResponse } from '../features/claude';
 import type { CliModelCatalog, CliCompletionContract, CliUsageReport, CliSessionDetail, CliSessionDeleteResult, CliWorkingMemoryReport, CliWorkingMemoryDeleteResult } from '../features/cli';
 import type { GitFileChange, GitStatus, TaskCommitDetail, TaskProvenanceView } from '../features/git';
@@ -212,8 +212,8 @@ const STATE_TO_LANE: Record<string, LaneKey> = {
 function uniqueJobsFromGrouped(grouped: GroupedJobs): TaskInfo[] {
   const seen = new Set<string>();
   const jobs: TaskInfo[] = [];
-  for (const lane of Object.values(grouped)) {
-    for (const job of lane ?? []) {
+  for (const lane of boardLanes(grouped)) {
+    for (const job of lane) {
       const key = job.taskKey || `${job.watchPath}::${job.id}`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -322,6 +322,12 @@ export class TaskService {
     escalated: [],
     completed: [],
     archive: [],
+    // AGT-2726: before the first response we have no snapshot at all, which is
+    // honestly "stale", not "idle and up to date". The board reads this to
+    // render the git-state stamp; a default of false would claim a freshness
+    // nothing has established yet.
+    gitStateAt: null,
+    gitStateStale: true,
   });
   readonly loading = signal(false);
   readonly error = signal<string | null>(null);

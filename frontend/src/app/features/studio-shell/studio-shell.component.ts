@@ -15,6 +15,7 @@ import {
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import type { TaskInfo, RegistryWorkspaceListItem, RegistryProjectSummary, WatchPathEntry, RegistryProjectUrl } from '../../models/task.model';
+import { boardLanes } from '../../models/task.model';
 import type { WorkbenchListItem } from '../../models/project-docs.model';
 import { forkJoin } from 'rxjs';
 import { TaskService } from '../../services/task.service';
@@ -1255,8 +1256,8 @@ export class StudioShellComponent {
 
   private findJob(taskKey: string): TaskInfo | null {
     const grouped = this.grouped();
-    for (const lane of Object.values(grouped)) {
-      for (const job of lane as TaskInfo[]) {
+    for (const lane of boardLanes(grouped)) {
+      for (const job of lane) {
         if (job.taskKey === taskKey) return job;
       }
     }

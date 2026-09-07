@@ -698,6 +698,20 @@ if (!publicDemoExecutionProfile)
 builder.Services.AddSingleton<GitService>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService<GitInventoryRefreshHostedService>();
+// AGT-2726: git-derived board state is a background index, not request-path
+// work. GitStateIndex holds the schedule and the per-repository stamps,
+// GitBackgroundExecutor owns the only threads allowed to spawn git for it, and
+// the hosted service wires the ref watchers and the safety sweep. Registered
+// unconditionally (also in the public-demo profile) because the request paths
+// read their gitStateAt stamp from the index even when no run ever executes.
+builder.Services.AddSingleton(sp => new GitStateIndex(
+    sp.GetRequiredService<IConfiguration>()
+        .GetSection(GitStateIndexOptions.SectionName)
+        .Get<GitStateIndexOptions>() ?? new GitStateIndexOptions()));
+builder.Services.AddSingleton<GitBackgroundExecutor>();
+builder.Services.AddSingleton<IGitRepositoryStateRefresher, GitRepositoryStateRefresher>();
+if (!publicDemoExecutionProfile)
+    builder.Services.AddHostedService<GitStateIndexHostedService>();
 builder.Services.AddSingleton<ProjectIntegrationViewService>();
 builder.Services.AddSingleton<AgentStudio.Search.GlobalSearchService>();
 builder.Services.AddSingleton<ProjectSettingsService>();

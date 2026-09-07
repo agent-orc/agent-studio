@@ -36,6 +36,14 @@
         testid="status-bar-cli-repair" />
     }
 
+    <app-statusbar-item
+      [button]="false"
+      icon="branch"
+      [iconSize]="11"
+      [label]="gitStateLabel()"
+      [tooltip]="gitStateTooltip()"
+      testid="status-bar-git-state" />
+
     <span class="statusbar__sep" aria-hidden="true"></span>
 
     <div class="statusbar__quota">

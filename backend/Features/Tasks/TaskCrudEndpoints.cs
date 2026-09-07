@@ -71,12 +71,17 @@ public static class TaskCrudEndpoints
             return Results.Ok(new TaskReferenceStatusResponse(items!));
         });
 
-        group.MapGet("/", (string? project, bool? includeFixtures, HttpContext ctx, TaskScannerService scanner, CliRouter router, TaskRunnerService runners, ITokenAggregator tokens, IConfiguration configuration, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, AgentStudio.Registry.ProjectRegistry projects, ILoggerFactory loggerFactory) =>
+        group.MapGet("/", (string? project, bool? includeFixtures, HttpContext ctx, TaskScannerService scanner, CliRouter router, TaskRunnerService runners, ITokenAggregator tokens, IConfiguration configuration, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, AgentStudio.Registry.ProjectRegistry projects, GitStateIndex gitState, ILoggerFactory loggerFactory) =>
         {
             using var gitTelemetry = GitProcessTelemetry.BeginRequest(
                 "tasks/list",
                 loggerFactory.CreateLogger("TaskListProjection"),
                 includeNested: true);
+            // The list response is a bare array on the wire and stays one. The
+            // git-state stamp travels in headers so no client contract changes
+            // (AGT-2726); /grouped, whose body is already an object, carries it
+            // inline where the board can read it without observing the response.
+            StampGitState(ctx, gitState);
             var projectRequested = !string.IsNullOrWhiteSpace(project);
             var projectWatchPath = ResolveWatchPath(projects, project, watchPath: null);
             if (projectRequested && string.IsNullOrWhiteSpace(projectWatchPath))
@@ -112,12 +117,13 @@ public static class TaskCrudEndpoints
             return Results.Ok(jobs);
         });
 
-        group.MapGet("/grouped", (bool? includeFixtures, HttpContext context, TaskScannerService scanner, CliRouter router, TaskRunnerService runners, ITokenAggregator tokens, IConfiguration configuration, ProjectSettingsService projectSettings, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, AgentStudio.Registry.ProjectRegistry projects, ILoggerFactory loggerFactory) =>
+        group.MapGet("/grouped", (bool? includeFixtures, HttpContext context, TaskScannerService scanner, CliRouter router, TaskRunnerService runners, ITokenAggregator tokens, IConfiguration configuration, ProjectSettingsService projectSettings, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, AgentStudio.Registry.ProjectRegistry projects, GitStateIndex gitState, ILoggerFactory loggerFactory) =>
         {
             using var gitTelemetry = GitProcessTelemetry.BeginRequest(
                 "tasks/grouped",
                 loggerFactory.CreateLogger("TaskListProjection"),
                 includeNested: true);
+            var stamp = StampGitState(context, gitState);
             var raw = ProjectAccessAuthorization.FilterTasks(context, scanner.ScanAllJobs(), projects).ToList();
             if (includeFixtures != true) raw = raw.Where(j => !j.Fixture).ToList();
             var tokenLookup = BuildTokenLookup(raw, tokens);
@@ -195,7 +201,15 @@ public static class TaskCrudEndpoints
                 // dedicated GET /api/tasks/archive endpoint instead. The key is
                 // kept (always []) so pre-existing clients that read
                 // grouped.archive don't NPE on a missing field.
-                Archive = Array.Empty<TaskInfo>()
+                Archive = Array.Empty<TaskInfo>(),
+                // AGT-2726: when the git-derived enrichment on these cards was
+                // last computed by the background index, and whether a newer
+                // run is already pending. Additive keys - a client that ignores
+                // them reads exactly the board it read before. The board shows
+                // the stamp quietly and refreshes through the existing SignalR
+                // push when the index advances.
+                GitStateAt = stamp.GitStateAt,
+                GitStateStale = stamp.Stale,
             };
             return Results.Ok(grouped);
         });
@@ -1069,6 +1083,32 @@ public static class TaskCrudEndpoints
 
         return Results.BadRequest($"Invalid state. Allowed: {string.Join(", ", TaskStates.All)}");
     }
+
+    /// <summary>
+    /// Attaches the background git index stamp to a board response and returns
+    /// it (AGT-2726). Reading the stamp is a dictionary lookup: no git process,
+    /// no wait on the index. Headers rather than a body envelope because
+    /// <c>GET /api/tasks</c> answers with a bare array and must keep doing so.
+    /// </summary>
+    private static GitStateStamp StampGitState(HttpContext context, GitStateIndex index)
+    {
+        var stamp = index.ReadBoard();
+        context.Response.Headers[GitStateHeaders.At] =
+            stamp.GitStateAt?.ToString("O") ?? "";
+        context.Response.Headers[GitStateHeaders.Stale] =
+            stamp.Stale ? "true" : "false";
+        return stamp;
+    }
+}
+
+/// <summary>
+/// Response headers that carry the background git index stamp on endpoints
+/// whose body shape is fixed by an existing wire contract.
+/// </summary>
+public static class GitStateHeaders
+{
+    public const string At = "X-Git-State-At";
+    public const string Stale = "X-Git-State-Stale";
 }
 
 /// <summary>

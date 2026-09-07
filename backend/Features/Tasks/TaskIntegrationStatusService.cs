@@ -130,20 +130,7 @@ public sealed class TaskIntegrationStatusService
         Parallel.ForEach(
             repoKeys,
             new ParallelOptions { MaxDegreeOfParallelism = ReadOnlyGitConcurrencyLimiter.MaxConcurrency },
-            key =>
-            {
-                var cacheKey = $"{key.Root}\0{key.Branch}";
-                var refFingerprint = ReadOnlyGitRefFingerprint.CaptureDetailed(
-                    key.Root,
-                    [key.Branch, BoardMergeStatusService.ReleaseBranch]);
-                reaches[key] = _cache.GetOrCreateVersioned(
-                    cacheKey,
-                    refFingerprint.Value,
-                    value => value.Succeeded
-                        ? refFingerprint.RequiresShortFallback ? ShortFallbackTtl : CacheTtl
-                        : FailureCacheTtl,
-                    () => ComputeRepoIntegration(key.Root, key.Branch));
-            });
+            key => reaches[key] = GetRepoIntegration(key));
 
         foreach (var (job, groups) in work)
         {
@@ -907,6 +894,45 @@ public sealed class TaskIntegrationStatusService
                 releaseAncestors,
                 succeeded && releaseSucceeded);
         });
+    }
+
+    /// <summary>
+    /// Computes one repository's ancestor sets ahead of any request, from the
+    /// background git index (AGT-2726). Shares the cache and the ref-fingerprint
+    /// versioning with <see cref="BuildLookup"/>, so a warmed repository answers
+    /// every delivered card without a spawn. Never throws.
+    /// </summary>
+    internal void WarmRepository(string repoRoot, string integrationBranch)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot)) return;
+        try
+        {
+            GetRepoIntegration(new RepoBranchKey(repoRoot, integrationBranch));
+        }
+        catch (Exception ex)
+        {
+            SilentCatch.Note(ex, "TaskIntegrationStatusService: index warm is best-effort");
+        }
+    }
+
+    /// <summary>
+    /// The single cached read for one repository's ancestor sets, shared by the
+    /// board lookup and by the background index warm so both go through the
+    /// same fingerprint, TTL, and single-flight.
+    /// </summary>
+    private RepoIntegration GetRepoIntegration(RepoBranchKey key)
+    {
+        var cacheKey = $"{key.Root}\0{key.Branch}";
+        var refFingerprint = ReadOnlyGitRefFingerprint.CaptureDetailed(
+            key.Root,
+            [key.Branch, BoardMergeStatusService.ReleaseBranch]);
+        return _cache.GetOrCreateVersioned(
+            cacheKey,
+            refFingerprint.Value,
+            value => value.Succeeded
+                ? refFingerprint.RequiresShortFallback ? ShortFallbackTtl : CacheTtl
+                : FailureCacheTtl,
+            () => ComputeRepoIntegration(key.Root, key.Branch));
     }
 
     private string ConfiguredIntegrationBranch(TaskInfo task)

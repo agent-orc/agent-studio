@@ -185,6 +185,12 @@ export class BoardFiltersService {
       review: autoReviewFiltered,
       completed: filterJobs(grouped.completed),
       archive: filterJobs(grouped.archive ?? []),
+      // A filter narrows which cards are shown; it does not make the
+      // git-derived enrichment on them any fresher. Carry the stamp through
+      // (AGT-2726) so a filtered board reports the same "as of" as the
+      // unfiltered one.
+      gitStateAt: grouped.gitStateAt,
+      gitStateStale: grouped.gitStateStale,
     } as GroupedJobs;
   }
 

@@ -89,6 +89,10 @@ export function buildProjectSidebarRows(
     // it would double-count every auto-review card. `archive` is terminal.
     // Neither feeds a visible board chip, so skip both outright.
     if (laneKey === 'archive' || laneKey === 'review') continue;
+    // The payload also carries the scalar git-state stamp (AGT-2726), so not
+    // every entry here is a lane. Iterating those would throw on the boolean
+    // and yield one "card" per character of the timestamp string.
+    if (!Array.isArray(lane)) continue;
     for (const job of lane as TaskInfo[]) {
       // Register the project so a row still appears for it even when all its
       // work sits in lanes that do not feed the active-work count (backlog,

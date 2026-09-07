@@ -277,6 +277,26 @@ public sealed class BoardMergeStatusService
             () => ComputeReachability(key.Root, key.Branch));
     }
 
+    /// <summary>
+    /// Computes one repository's reachability sets ahead of any request, from
+    /// the background git index (AGT-2726). This is the same ref-fingerprinted
+    /// projection <see cref="BuildLookup"/> reads, so a warmed repository turns
+    /// the board's merge signal into pure in-memory lookups. Never throws: an
+    /// unreachable repository is the indexer's problem to log, not the board's.
+    /// </summary>
+    internal void WarmRepository(string repoRoot, string integrationBranch)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot)) return;
+        try
+        {
+            GetReachability(new RepoBranchKey(repoRoot, integrationBranch));
+        }
+        catch (Exception ex)
+        {
+            SilentCatch.Note(ex, "BoardMergeStatusService: index warm is best-effort");
+        }
+    }
+
     private string ConfiguredIntegrationBranch(TaskInfo task)
     {
         return _settings.Get(task.ProjectName).IntegrationBranch;

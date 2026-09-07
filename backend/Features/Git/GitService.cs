@@ -444,7 +444,12 @@ public record GitProjectInventory(
     GitHistoryPage? History = null,
     IReadOnlyList<GitActiveCheckout>? ActiveCheckouts = null,
     IReadOnlyList<GitDeploymentMarker>? Deployments = null,
-    DateTimeOffset? ComputedAt = null);
+    DateTimeOffset? ComputedAt = null,
+    // AGT-2726: <see cref="ComputedAt"/> is the gitStateAt stamp for this
+    // endpoint; Stale says whether a change has been observed that this
+    // snapshot does not contain yet. Both are read from the cache the request
+    // path already returns - the request still spawns nothing.
+    bool Stale = false);
 
 /// <summary>
 /// Repository hygiene snapshot used by the project header badge and the
@@ -1290,7 +1295,10 @@ public class GitService
         _logger.LogInformation(
             "git-info request=git/inventory cacheDecision={CacheDecision} refCount={RefCount} computedAt={ComputedAt} spawns=0",
             decision, value.Branches.Count, value.ComputedAt?.ToString("O") ?? "none");
-        return value;
+        // "hit" means the ref signature still matches the snapshot's; anything
+        // else means a refresh is warming or queued and the caller is reading
+        // deliberately stale state (AGT-2726).
+        return value with { Stale = !string.Equals(decision, "hit", StringComparison.Ordinal) };
     }
 
     private static GitProjectInventory EmptyInventory(string projectName, string? repoPath, string? error)

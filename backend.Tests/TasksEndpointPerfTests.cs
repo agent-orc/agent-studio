@@ -326,6 +326,27 @@ public class JobsEndpointPerfTests : IDisposable
             groupedResponse.EnsureSuccessStatusCode();
             Assert.Equal(0, Assert.Single(telemetry.Rollups("tasks/grouped")).Spawns);
 
+            // AGT-2726: both board reads carry the background index stamp so a
+            // client can tell "as of when" without asking git anything. /grouped
+            // carries it in the body (its response is already an object);
+            // /api/tasks answers with a bare array, so its stamp travels in
+            // headers and the array contract is untouched.
+            var groupedBody = await groupedResponse.Content
+                .ReadFromJsonAsync<Dictionary<string, JsonElement>>(cancellationToken: timeout.Token);
+            Assert.NotNull(groupedBody);
+            Assert.Contains(groupedBody!.Keys, key => string.Equals(key, "gitStateAt", StringComparison.OrdinalIgnoreCase));
+            var staleKey = Assert.Single(
+                groupedBody.Keys,
+                key => string.Equals(key, "gitStateStale", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(
+                groupedBody[staleKey].ValueKind,
+                new[] { JsonValueKind.True, JsonValueKind.False });
+
+            Assert.True(churnResponse.Headers.Contains(GitStateHeaders.At));
+            Assert.Contains(
+                churnResponse.Headers.GetValues(GitStateHeaders.Stale),
+                value => value is "true" or "false");
+
             var refreshes = await telemetry.WaitForRollupAsync(
                 "tasks/list-refresh",
                 expectedCount: 2,

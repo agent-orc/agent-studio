@@ -17,6 +17,7 @@ public sealed class TaskListGitProjectionCache
     private readonly ILogger<TaskListGitProjectionCache> _logger;
     private readonly TimeProvider _timeProvider;
     private readonly Func<IReadOnlyCollection<TaskInfo>, Task<TaskListGitProjection>> _refreshProjection;
+    private readonly GitBackgroundExecutor? _executor;
     private readonly ConcurrentDictionary<string, CacheEntry> _entries =
         new(StringComparer.Ordinal);
 
@@ -25,14 +26,16 @@ public sealed class TaskListGitProjectionCache
         TaskIntegrationStatusService integrationStatus,
         TaskPublishableService publishStatus,
         TestRunService testRuns,
-        ILogger<TaskListGitProjectionCache> logger)
+        ILogger<TaskListGitProjectionCache> logger,
+        GitBackgroundExecutor? executor = null)
         : this(
             mergeStatus,
             integrationStatus,
             publishStatus,
             testRuns,
             logger,
-            TimeProvider.System)
+            TimeProvider.System,
+            executor)
     {
     }
 
@@ -42,35 +45,44 @@ public sealed class TaskListGitProjectionCache
         TaskPublishableService publishStatus,
         TestRunService testRuns,
         ILogger<TaskListGitProjectionCache> logger,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        GitBackgroundExecutor? executor = null)
         : this(
-            tasks => BuildProjectionAsync(
+            // Sequential, not fanned out. The parallel build existed to overlap
+            // per-repository git spawns; with the background index warming those
+            // repositories first (AGT-2726) there is no git left to overlap, and
+            // the fan-out only spent thread-pool threads that request paths need.
+            tasks => Task.FromResult(BuildProjection(
                 tasks,
                 mergeStatus.BuildLookup,
                 integrationStatus.BuildLookup,
                 publishStatus.BuildLookup,
-                testRuns.BuildLookup),
+                testRuns.BuildLookup)),
             logger,
-            timeProvider)
+            timeProvider,
+            executor)
     {
     }
 
     internal TaskListGitProjectionCache(
         Func<IReadOnlyCollection<TaskInfo>, TaskListGitProjection> refreshProjection,
         ILogger<TaskListGitProjectionCache> logger,
-        TimeProvider timeProvider)
-        : this(tasks => Task.FromResult(refreshProjection(tasks)), logger, timeProvider)
+        TimeProvider timeProvider,
+        GitBackgroundExecutor? executor = null)
+        : this(tasks => Task.FromResult(refreshProjection(tasks)), logger, timeProvider, executor)
     {
     }
 
     internal TaskListGitProjectionCache(
         Func<IReadOnlyCollection<TaskInfo>, Task<TaskListGitProjection>> refreshProjection,
         ILogger<TaskListGitProjectionCache> logger,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        GitBackgroundExecutor? executor = null)
     {
         _logger = logger;
         _timeProvider = timeProvider;
         _refreshProjection = refreshProjection;
+        _executor = executor;
     }
 
     /// <summary>
@@ -131,12 +143,12 @@ public sealed class TaskListGitProjectionCache
             // the request after ReadCacheOnly has returned.
             if (ExecutionContext.IsFlowSuppressed())
             {
-                _ = Task.Run(() => Refresh(scopeKey, entry, tasks, signature));
+                Dispatch(scopeKey, entry, tasks, signature);
             }
             else
             {
                 using (ExecutionContext.SuppressFlow())
-                    _ = Task.Run(() => Refresh(scopeKey, entry, tasks, signature));
+                    Dispatch(scopeKey, entry, tasks, signature);
             }
         }
         catch (Exception ex)
@@ -147,6 +159,39 @@ public sealed class TaskListGitProjectionCache
                 entry.RefreshAfter = _timeProvider.GetUtcNow().Add(FailureRetryInterval);
             }
             _logger.LogWarning(ex, "Task-list Git projection refresh could not be queued for scope {Scope}.", scopeKey);
+        }
+    }
+
+    /// <summary>
+    /// Hands the refresh to the shared background git executor when one is
+    /// configured, so it runs on the indexer's bounded, dedicated threads
+    /// instead of taking a thread-pool thread that request handling needs
+    /// (AGT-2726). Without an executor - unit tests, and hosts that do not run
+    /// the index - the original detached <c>Task.Run</c> behaviour stands.
+    /// </summary>
+    private void Dispatch(
+        string scopeKey,
+        CacheEntry entry,
+        TaskInfo[] tasks,
+        long signature)
+    {
+        if (_executor is null)
+        {
+            _ = Task.Run(() => Refresh(scopeKey, entry, tasks, signature));
+            return;
+        }
+
+        var accepted = _executor.Submit(
+            "tasks/list-refresh",
+            _ => Refresh(scopeKey, entry, tasks, signature).GetAwaiter().GetResult());
+        if (accepted) return;
+
+        // Shutdown raced the submission. Release the in-flight flag, otherwise
+        // every later read waits for a refresh that will never run.
+        lock (entry.Gate)
+        {
+            entry.Refreshing = false;
+            entry.RefreshAfter = _timeProvider.GetUtcNow().Add(FailureRetryInterval);
         }
     }
 
@@ -196,6 +241,25 @@ public sealed class TaskListGitProjectionCache
                 stopwatch.ElapsedMilliseconds);
         }
     }
+
+    /// <summary>
+    /// Builds all four enrichment lookups on the calling thread. Every lookup
+    /// reads a ref-fingerprinted per-repository cache that the background git
+    /// index keeps warm, so this is in-memory work; running it sequentially on
+    /// one dedicated thread costs less than the four-way <c>Task.Run</c> fan-out
+    /// it replaces, which parked four thread-pool threads per refresh.
+    /// </summary>
+    internal static TaskListGitProjection BuildProjection(
+        IReadOnlyCollection<TaskInfo> tasks,
+        Func<IReadOnlyCollection<TaskInfo>, Dictionary<string, TaskMergeSignal>> mergeLookup,
+        Func<IReadOnlyCollection<TaskInfo>, Dictionary<string, TaskIntegrationStatus>> integrationLookup,
+        Func<IReadOnlyCollection<TaskInfo>, Dictionary<string, TaskPublishSignal>> publishLookup,
+        Func<IReadOnlyCollection<TaskInfo>, Dictionary<string, TaskTestRunEvidence>> testRunLookup)
+        => new(
+            mergeLookup(tasks),
+            integrationLookup(tasks),
+            publishLookup(tasks),
+            testRunLookup(tasks));
 
     internal static async Task<TaskListGitProjection> BuildProjectionAsync(
         IReadOnlyCollection<TaskInfo> tasks,

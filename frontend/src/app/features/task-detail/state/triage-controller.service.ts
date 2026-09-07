@@ -1,5 +1,5 @@
 import { Injectable, inject } from '@angular/core';
-import { TaskInfo } from '../../../models/task.model';
+import { boardLanes, TaskInfo } from '../../../models/task.model';
 import { TaskService } from '../../../services/task.service';
 import { ErrorDialogService } from '../../../services/error-dialog.service';
 import { ConfirmDialogService } from '../../../services/confirm-dialog.service';
@@ -330,8 +330,8 @@ export class TriageController {
     // The triage panel sees one of seven lanes; pick the matching list
     // by scanning the grouped buckets for jobs whose `state` matches.
     const found: { jobId: string; watchPath: string }[] = [];
-    for (const list of Object.values(grouped)) {
-      for (const j of list as TaskInfo[]) {
+    for (const list of boardLanes(grouped)) {
+      for (const j of list) {
         if (j.state === state) found.push({ jobId: j.id, watchPath: j.watchPath });
       }
     }
