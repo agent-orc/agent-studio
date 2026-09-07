@@ -259,6 +259,57 @@ public sealed class RemoteReviewWorkspace
                 var retryPerformed = false;
                 if (command.CompareToBaseline && !execution.Process.Success)
                 {
+                    // AGT-2749: settle the cause before comparing baselines. A
+                    // command that failed for a host reason has no test result
+                    // to compare, and the comparison used to invent one
+                    // ("<unparsed failure in verify-2>") that then graded as a
+                    // new test failure. That is how an unmounted /tmp became
+                    // five ProductFailure verdicts on 06.09.2026.
+                    var cause = GateFailureClassifier.ClassifyVerificationCommand(
+                        execution.Process.ExitCode,
+                        ParsedTestFailures(execution.Process).Count,
+                        reason: null,
+                        output: $"{execution.Process.StdOut}\n{execution.Process.StdErr}");
+                    if (cause.IsRetryable)
+                    {
+                        commands.Add(await AddCommandEvidenceAsync(
+                            command.StepId,
+                            command.Aspect,
+                            command.FileName,
+                            command.Arguments,
+                            headBefore,
+                            treeBefore,
+                            execution.Process,
+                            execution.StartedAt,
+                            execution.FinishedAt,
+                            execution.Signal,
+                            command.TimeoutSeconds,
+                            "verification",
+                            "candidate",
+                            baselineSha: null,
+                            comparison: null,
+                            retryPerformed: false,
+                            dependencyCacheHit: false,
+                            dependencyCache: null,
+                            artifacts,
+                            ct,
+                            command,
+                            execution.AgentUsage));
+                        SaveCaches(candidateCache);
+                        throw await InfrastructureFailureAsync(
+                            cause.Signature,
+                            ReviewInfrastructureDiagnosis.Append(
+                                $"Review command '{command.StepId}' produced no verdict about the change: " +
+                                $"{cause.Detail}",
+                                [
+                                    new(ReviewInfrastructureDiagnosis.StepKey, command.StepId),
+                                    new(ReviewInfrastructureDiagnosis.CommandKey, CommandLine(command)),
+                                ]),
+                            commands,
+                            artifacts,
+                            ct);
+                    }
+
                     comparison = await CompareToBaselineAsync(
                         command,
                         execution.Process,
