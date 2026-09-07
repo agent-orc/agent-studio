@@ -15,18 +15,45 @@ or paths on each project's working branch. Task matches are ranked immediately
 from the in-memory board snapshot, with an exact task key first and a warm
 response target below 300 ms.
 
-Repository-backed results use
-`GET /api/search?q=<query>&domains=tasks,commits,files&limit=<count>`. The
-`domains` value is a comma-separated subset of `tasks`, `commits`, and `files`;
-`limit` is optional and bounded by the backend. The JSON response contains the
-normalized `query`, an array for each requested domain, per-domain `errors`,
-and `durationMs`. Git commit and file lookup reuse the HEAD-keyed cache rather
-than maintaining a search index.
+The palette reads
+`GET /api/search/stream?q=<query>&domains=tasks,commits,files&limit=<count>` as
+Server-Sent Events, so each domain lands as soon as it is ready instead of the
+whole response waiting on the slowest repository. Frames are `start`
+(repository count, for the "i of n repositories" line), `chunk` (one domain's
+items, from one repository for the git domains), `progress`, `error` (one
+degraded domain or repository), and `done` (total and per-domain durations).
+`GET /api/search` keeps the original single-shot JSON contract for callers that
+want one body; both paths run the same indexes and return the same results.
 
-Results are grouped by domain and carry project identity. Commit results open
-the diff surface, documentation files open the Wiki, and other files open the
-project Git view. Queries shorter than two characters return empty result
-groups, and a failed domain reports an error without hiding successful domains.
+Every domain answers from an in-memory index; nothing reads a file or spawns a
+process for a query it has already warmed:
+
+- **Tasks** come from `TaskSearchIndex`, a full-text index over each card's
+  `prompt.md` and `status.md` versioned by `TaskIndexCache.Generation`. A
+  generation change serves the current index and admits one background rebuild;
+  body text is memoized per card by document length and last-write, so a
+  rebuild after an unrelated lane move re-reads nothing.
+- **Files** and **commits** come from per-repository snapshots (`git ls-files`,
+  and a `git log` window bounded to 2,000 commits) memoized in `GitService`'s
+  HEAD-keyed LRU under a key that carries the repository and domain but **not
+  the query**. Matching is an in-memory pass, so a second search term against an
+  unchanged HEAD spawns no git process. Repositories are swept in parallel with
+  a bounded degree.
+
+`global-search-completed` carries per-domain durations and a per-repository
+cache hit/miss report; a search over five seconds also logs
+`global-search-slow` naming the slowest repository. For a repository whose
+history makes the first sweep slow, see
+[docs/operations/common-problems/slow-global-search-on-large-repository/](../../operations/common-problems/slow-global-search-on-large-repository/README.md).
+
+The palette debounces 250 ms, aborts the previous request on every keystroke
+and on Escape, and renders one status row per domain (result count, `i of n
+repositories`, or the degraded message) plus an elapsed clock. Results append
+as they arrive rather than re-sorting groups already on screen. Results are
+grouped by domain and carry project identity. Commit results open the diff
+surface, documentation files open the Wiki, and other files open the project
+Git view. Queries shorter than two characters return empty result groups, and a
+failed domain reports an error without hiding successful domains.
 
 ## Entry Points
 

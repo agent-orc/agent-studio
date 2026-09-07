@@ -160,6 +160,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Services killed by a harness sweep | [common-problems/services-killed-by-harness-sweep/](../operations/common-problems/services-killed-by-harness-sweep/) |
 | api.sh restart reports success while the old backend keeps serving | [common-problems/hollow-api-restart/](../operations/common-problems/hollow-api-restart/) |
 | Integration push blocked on main lineage starves origin/develop, causing infinite reclaim loops (AGT-2688) | [common-problems/lineage-blocked-integration-push/](../operations/common-problems/lineage-blocked-integration-push/) |
+| Global search stalls on a repository with a long history (AGT-2723) | [common-problems/slow-global-search-on-large-repository/](../operations/common-problems/slow-global-search-on-large-repository/) |
 | Orchestrator drive-to-conclusion & CLI-crash resilience | [concepts/orchestrator-drive-to-conclusion.html](../concepts/orchestrator-drive-to-conclusion.html) |
 | Task integration & worktree/merge workflow | [concepts/task-integration-and-merge-workflow.md](../concepts/task-integration-and-merge-workflow.md) |
 | Merge config analysis (parallelism coupling) | [concepts/task-integration-merge-config-analysis.html](../concepts/task-integration-merge-config-analysis.html) |

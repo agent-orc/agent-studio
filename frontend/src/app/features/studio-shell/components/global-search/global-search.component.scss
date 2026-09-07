@@ -36,7 +36,26 @@
 }
 
 .search-results { min-height: 100px; overflow: auto; padding: var(--studio-spacing-2); }
-.search-group h2 { margin: var(--studio-spacing-2) var(--studio-spacing-2) var(--studio-spacing-1); color: var(--studio-fg-muted); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+.search-group-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--studio-spacing-3);
+  margin: var(--studio-spacing-2) var(--studio-spacing-2) var(--studio-spacing-1);
+
+  h2 { margin: 0; color: var(--studio-fg-muted); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+}
+
+// Per-domain delivery state. The palette used to show one spinner for the whole
+// search, so a slow repository looked identical to a broken one.
+.search-group-status {
+  color: var(--studio-fg-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+
+  &[data-state='searching'] { color: var(--studio-fg-dim); }
+  &[data-state='failed'] { color: var(--studio-warn); }
+}
 .search-result {
   width: 100%;
   display: flex;
@@ -50,6 +69,8 @@
 .search-project-dot { width: 9px; height: 9px; flex: 0 0 auto; border-radius: 50%; }
 .search-result-copy { min-width: 0; flex: 1; display: grid; gap: var(--studio-spacing-1); strong, small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } strong { font-weight: 500; } small { color: var(--studio-fg-muted); } }
 .search-badge { padding: var(--studio-spacing-1) var(--studio-spacing-2); color: var(--studio-fg-dim); background: var(--studio-bg-editor); border: 1px solid var(--studio-border); border-radius: 9px; font-size: 10px; }
-.search-hint, .search-loading, .search-error { margin: var(--studio-spacing-4); color: var(--studio-fg-muted); text-align: center; }
+.search-hint, .search-progress, .search-error { margin: var(--studio-spacing-4); color: var(--studio-fg-muted); text-align: center; }
 .search-error { color: var(--studio-fg-dim); }
+.search-progress { display: flex; justify-content: center; gap: var(--studio-spacing-2); }
+.search-elapsed { color: var(--studio-fg-dim); font-variant-numeric: tabular-nums; }
 footer { display: flex; gap: var(--studio-spacing-4); padding: var(--studio-spacing-2) var(--studio-spacing-4); color: var(--studio-fg-muted); border-top: 1px solid var(--studio-border); font-size: 10px; }

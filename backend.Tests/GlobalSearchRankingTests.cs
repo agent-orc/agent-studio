@@ -21,7 +21,7 @@ public sealed class GlobalSearchRankingTests
     }
 
     [Fact]
-    public void ReadFiles_SearchesTrackedFilesInARealRepository()
+    public void FileIndex_ListsTrackedFilesOnceAndMatchesInMemory()
     {
         var root = Path.Combine(Path.GetTempPath(), $"global-search-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
@@ -31,10 +31,16 @@ public sealed class GlobalSearchRankingTests
             File.WriteAllText(Path.Combine(root, "README-search-proof.md"), "proof");
             RunGit(root, "add", "README-search-proof.md");
 
-            var results = GlobalSearchService.ReadFiles(root, "Fixture", "search-proof", "#fff");
+            // The index is query-independent; matching is a pure in-memory pass
+            // over it, so the same listing answers any number of terms.
+            var paths = GlobalSearchService.ReadFilePaths(root);
+            var target = new GlobalSearchService.RepositoryTarget("Fixture", root, "#fff");
+
+            var results = GlobalSearchService.MatchFiles(paths, target, "search-proof");
 
             Assert.Single(results);
             Assert.Equal("README-search-proof.md", results[0].Path);
+            Assert.Empty(GlobalSearchService.MatchFiles(paths, target, "no-such-file"));
         }
         finally
         {

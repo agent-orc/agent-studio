@@ -13,9 +13,15 @@
           <p class="search-hint">Type at least 2 characters to search all projects.</p>
         } @else {
           @for (group of groups(); track group.domain) {
-            @if (group.items.length || remote().errors[group.domain]) {
+            @let state = domainState()[group.domain];
+            @if (group.items.length || state.status !== 'idle') {
               <section class="search-group" [attr.data-testid]="'global-search-group-' + group.domain">
-                <h2>{{ group.label }}</h2>
+                <header class="search-group-head">
+                  <h2>{{ group.label }}</h2>
+                  <span class="search-group-status"
+                        [attr.data-testid]="'global-search-status-' + group.domain"
+                        [attr.data-state]="state.error ? 'failed' : state.status">{{ statusLabel(group.domain) }}</span>
+                </header>
                 @for (item of group.items; track item.domain + ':' + item.projectName + ':' + item.subtitle) {
                   <button type="button" role="option" class="search-result"
                           [class.search-result--active]="resultIndex(item) === activeIndex()"
@@ -27,12 +33,23 @@
                     @if (item.isWiki) { <span class="search-badge">Wiki</span> }
                   </button>
                 }
-                @if (remote().errors[group.domain]) { <p class="search-error">{{ remote().errors[group.domain] }}</p> }
+                @if (state.error) { <p class="search-error">{{ state.error }}</p> }
               </section>
             }
           }
-          @if (!flatResults().length && !loading()) { <p class="search-hint">No matching tasks, commits, or files.</p> }
-          @if (loading()) { <p class="search-loading">Searching repositories…</p> }
+          @if (!flatResults().length && !searching()) { <p class="search-hint">No matching tasks, commits, or files.</p> }
+          @if (searching()) {
+            <!-- No aria-live here: the clock ticks ten times a second and would
+                 turn a screen reader into a metronome. The patience note below
+                 is the announcement worth making. -->
+            <p class="search-progress" data-testid="global-search-elapsed">
+              <span>Searching…</span>
+              <span class="search-elapsed" aria-hidden="true">{{ (elapsedMs() / 1000).toFixed(1) }}s</span>
+            </p>
+          }
+          @if (showPatienceNote()) {
+            <p class="search-hint" data-testid="global-search-patience" aria-live="polite">Repository search can take a moment on projects with a long history.</p>
+          }
         }
       </div>
       <footer><span>↑↓ Navigate</span><span>↵ Open</span><span>Esc Close</span></footer>
