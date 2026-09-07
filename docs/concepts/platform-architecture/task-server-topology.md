@@ -49,7 +49,7 @@ and what is left.
 
 | Process | Source | Default listen | Role today |
 |---|---|---|---|
-| Studio frontend | `frontend/` | Angular dev server, same-origin `/api` and `/hubs` | Human surface. Consumes the broad legacy `/api/**` surface, not `/api/v1`. |
+| Studio frontend | `frontend/` | Angular dev server, same-origin `/api` and `/hubs` | Human surface. Consumes the broad legacy `/api/**` surface. The one exception is the remote-host management surface, which calls `/api/v1/management/remote-hosts/**` directly (AGT-2711 link health), so `/api/v1` is no longer runner-only. |
 | Studio backend (OrchestratorApi, the monolith) | `backend/`, composition root `backend/Host/EndpointMapping.cs` | `http://localhost:5030` | Live task authority today: task folders, lanes, review decision, post-processing, SignalR hub `/hubs/jobs`. Also hosts the interim `/api/v1` review plane. |
 | Standalone Task Server | `task-server/`, entry `task-server/Program.cs` | `http://127.0.0.1:5071`; `http://127.0.0.1:5031` under `TASK_SERVER_PROFILE=local-compatibility` | Durable control plane and system of record on SQLite. Not the live authority in the default repo configuration. |
 | Studio BFF | `studio-bff/Program.cs` | `http://127.0.0.1:5072`, upstream `TaskServer:BaseUrl` `http://127.0.0.1:5071` | Stateless same-origin proxy. Forwards `/api/v1/{**path}` and serves `/healthz`. It does not forward `/api/**` or `/hubs`. |
@@ -183,9 +183,14 @@ task and AttemptAuthority writer.
 
 The monolith additionally maps `/recovery` and
 `/api/v1/management/{status,diagnostics,remote-hosts,commands}` plus
-`POST /api/v1/management/remote-hosts/provider-auth` in
+`POST /api/v1/management/remote-hosts/provider-auth`,
+`GET /api/v1/management/remote-hosts/link-health` and
+`POST /api/v1/management/remote-hosts/{id}/reconnect` in
 `backend/Features/Management/ManagementEndpoints.cs`, again only in the
-local-v1 branch.
+local-v1 branch. The last two are the AGT-2711 remote runner link-health
+surface, backed by `RemoteRunnerLinkManagement.cs`; they exist on the monolith
+mount only and have no standalone Task Server counterpart, so the local-v1 and
+proxied management surfaces are not interchangeable for link health.
 
 ### Legacy planes still in use
 
