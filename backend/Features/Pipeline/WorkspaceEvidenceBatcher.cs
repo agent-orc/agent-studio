@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Configuration;
+using AgentStudio.Retention;
 
 namespace AgentStudio.Pipeline;
 
@@ -51,7 +52,10 @@ public sealed class WorkspaceEvidenceBatcher
         "*/attachments/*",
         "*/results/*",
         "*/.runtime/*",
+        "*/logs/cli-output.log",
         "*/logs/cli-output.log.1",
+        "*/review-*.log",
+        "*/review/*stdout*",
     };
 
     private readonly WorkspaceArtifactCommitService _commit;
@@ -59,6 +63,7 @@ public sealed class WorkspaceEvidenceBatcher
     private readonly IConfiguration _config;
     private readonly ILogger _logger;
     private readonly TimeProvider _time;
+    private readonly ArtifactClassifier _classifier = new();
 
     private readonly object _lock = new();
     private readonly Dictionary<string, PendingRepo> _pending = new(StringComparer.OrdinalIgnoreCase);
@@ -116,6 +121,9 @@ public sealed class WorkspaceEvidenceBatcher
             return configured is { Length: > 0 } ? configured : DefaultExcludeGlobs;
         }
     }
+
+    internal bool IsIntermediateCommitExcluded(string relativePath)
+        => _classifier.Classify(relativePath).ArtifactClass is ArtifactClass.HeavyWorkingData or ArtifactClass.Runtime;
 
     /// <summary>
     /// Fold one transition into its repo's pending bucket. Resolves the git root

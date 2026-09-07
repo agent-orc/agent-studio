@@ -47,12 +47,14 @@ internal sealed class CliOutputLogMaintenanceService
         }
 
         var ignoreUpdated = false;
+        var runtimeDeleted = 0;
         var taskRepository = _configuration["TaskRepository"];
         if (!string.IsNullOrWhiteSpace(taskRepository) && Directory.Exists(taskRepository))
         {
             try
             {
                 ignoreUpdated = EnsureRotationIgnored(taskRepository);
+                runtimeDeleted = DeleteExpiredRuntimeFiles(taskRepository, DateTimeOffset.UtcNow);
             }
             catch (Exception ex)
             {
@@ -62,30 +64,55 @@ internal sealed class CliOutputLogMaintenanceService
         }
 
         _logger.LogInformation(
-            "cli-output-log-maintenance scanned={Scanned} migrated={Migrated} failed={Failed} ignoreUpdated={IgnoreUpdated}",
-            paths.Count, migrated, failed, ignoreUpdated);
-        return new CliOutputLogMaintenanceResult(paths.Count, migrated, failed, ignoreUpdated);
+            "cli-output-log-maintenance scanned={Scanned} migrated={Migrated} failed={Failed} ignoreUpdated={IgnoreUpdated} runtimeDeleted={RuntimeDeleted}",
+            paths.Count, migrated, failed, ignoreUpdated, runtimeDeleted);
+        return new CliOutputLogMaintenanceResult(paths.Count, migrated, failed, ignoreUpdated, runtimeDeleted);
     }
 
     internal static bool EnsureRotationIgnored(string taskRepository)
     {
         var ignorePath = Path.Combine(Path.GetFullPath(taskRepository), ".gitignore");
         var existing = File.Exists(ignorePath) ? File.ReadAllText(ignorePath) : string.Empty;
-        if (existing.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Any(line => string.Equals(line, CliOutputLogFile.RotationIgnorePattern, StringComparison.Ordinal)))
+        var lines = existing.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToHashSet(StringComparer.Ordinal);
+        var rules = new[]
         {
-            return false;
-        }
+            CliOutputLogFile.RotationIgnorePattern,
+            "/logs/bus/",
+            "/.metadata/attempt-authority*",
+            "/.runtime/",
+        }.Where(rule => !lines.Contains(rule)).ToList();
+        if (rules.Count == 0) return false;
 
         var prefix = existing.Length == 0 || existing.EndsWith('\n') ? string.Empty : Environment.NewLine;
-        var comment = existing.Contains("cli-output.log", StringComparison.OrdinalIgnoreCase)
-            ? string.Empty
-            : "# Bounded CLI log rotation is runtime-only; cli-output.log remains the durable audit record."
-              + Environment.NewLine;
-        File.AppendAllText(
-            ignorePath,
-            prefix + comment + CliOutputLogFile.RotationIgnorePattern + Environment.NewLine);
+        File.AppendAllText(ignorePath, prefix
+            + "# Runtime retention data is never committed; cli-output.log remains the durable audit record."
+            + Environment.NewLine + string.Join(Environment.NewLine, rules) + Environment.NewLine);
         return true;
+    }
+
+    internal static int DeleteExpiredRuntimeFiles(string taskRepository, DateTimeOffset now)
+    {
+        var deleted = 0;
+        var bus = Path.Combine(taskRepository, "logs", "bus");
+        if (Directory.Exists(bus))
+            deleted += DeleteOlderThan(Directory.EnumerateFiles(bus, "*", SearchOption.AllDirectories), now.AddDays(-30));
+        var metadata = Path.Combine(taskRepository, ".metadata");
+        if (Directory.Exists(metadata))
+            deleted += DeleteOlderThan(Directory.EnumerateFiles(metadata, "attempt-authority.archive-*.json"), now.AddDays(-90));
+        return deleted;
+    }
+
+    private static int DeleteOlderThan(IEnumerable<string> paths, DateTimeOffset cutoff)
+    {
+        var deleted = 0;
+        foreach (var path in paths)
+        {
+            if (new FileInfo(path).LastWriteTimeUtc >= cutoff.UtcDateTime) continue;
+            File.Delete(path);
+            deleted++;
+        }
+        return deleted;
     }
 }
 
@@ -93,4 +120,5 @@ internal sealed record CliOutputLogMaintenanceResult(
     int Scanned,
     int Migrated,
     int Failed,
-    bool IgnoreUpdated);
+    bool IgnoreUpdated,
+    int RuntimeDeleted);

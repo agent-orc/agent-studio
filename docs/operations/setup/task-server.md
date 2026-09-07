@@ -182,6 +182,75 @@ targeting the installed executable, mirroring
 C:\AgentOrchestrator\current\task-server.exe backup --name manual
 ```
 
+## Retention CLI
+
+The Task Server binary owns the retention command surface for the legacy file
+tree and, after the Phase B cutover, the server store. The legacy adapter reads
+`projects/<project>/tasks/<bucket>/<task>/`, taking the lane and terminal time
+from `task.json`, plus `.metadata/` and `logs/bus/`. Its
+default cold target is the `agent-taskboard-archive` directory beside the
+workspace, never a directory inside the Git repository.
+
+```bash
+dotnet task-server.dll retention plan --workspace /srv/agent-taskboard-workspace --policy default
+dotnet task-server.dll retention apply --workspace /srv/agent-taskboard-workspace --policy retention-policy.json --json
+dotnet task-server.dll retention restore --workspace /srv/agent-taskboard-workspace --policy default --task AGT-2743
+dotnet task-server.dll retention re-excerpt --workspace /srv/agent-taskboard-workspace
+dotnet task-server.dll retention --help
+```
+
+Use `--archive <path>` to override the sibling cold-store path. `--project`
+and `--task` narrow a plan or apply run; a scoped run excludes the
+workspace-wide `_workspace/_runtime` pseudo task. `plan` never moves or deletes
+an artifact. It writes a versioned report under
+`.metadata/retention-runs/<timestamp>-plan.json`. `apply` writes the same
+before/after metrics, appends `.metadata/retention-audit.jsonl`, and records
+each project's hot-tree deletions in one commit. The report groups action
+counts and bytes by rule and project and lists the largest affected tasks.
+
+`before` and `after` report `hotTaskBytes` without the excerpts and carry the
+excerpt cost as its own `excerptBytes` figure, so an archive run does not read
+as growth. Runtime rotation is committed separately: only tracked paths are
+staged, untracked and ignored ones are skipped, and a rotation problem is a
+warning that leaves the exit code at 0 rather than losing the archive commit.
+
+`re-excerpt` rebuilds the hot excerpts from the cold payloads and stages them.
+Use it after an excerpt-writer change, when the originals have already left the
+hot tree. Excerpts are bounded: at most 20 error windows, a summarised timestamp
+section (first, last, duration, and gaps over a minute), 100 commands, and
+256 KB in total with a truncation marker.
+
+The built-in policy keeps authority data hot, retains active and review lanes,
+creates content-aware Markdown excerpts when heavy class-C originals become
+cold after 30 terminal days, and leaves `task.json`, `status.md`, excerpts, and
+the archive pointer hot after the 180-day task transition. Runtime bus logs are
+deleted after 30 days and attempt-authority daily archives after 90 days.
+Individual class-C files over 50 MiB are refused by every workspace evidence
+commit path and reported with their relative path.
+
+Full file-tree backup commands create a closed, externally copyable set:
+
+```bash
+dotnet task-server.dll retention backup-full --workspace /srv/agent-taskboard-workspace --out /srv/backups
+dotnet task-server.dll retention verify-full --out /srv/backups/full/20260907T010203000Z
+dotnet task-server.dll retention restore-full --workspace /srv/empty-restored-workspace --out /srv/backups/full/20260907T010203000Z
+```
+
+`backup-full` writes `workspace.bundle`, untracked evidence, referenced cold
+manifests and payloads, then `inventory.json`, and writes `complete.json` last.
+`inventory.json` schema version 1 contains `createdAt`, `workspaceName`,
+`taskCount`, `coldPayloadCount`, `totalBytes`, a sorted `files[]` list
+(`relativePath`, `size`, `sha256`), and `setSha256`, the SHA-256 of the stable
+path/size/hash sequence, plus `warnings[]` and per-step `steps[]` timings
+(`bundle`, `evidence-copy`, `manifests`, `hashing`). Archive pointers are read
+only where they sit next to a `task.json`, so foreign copies a task carries
+under `results/` or `attachments/` are ignored; pointers are validated before
+the bundle step, and an unreadable one is a warning rather than an abort.
+Verification checks every file and both set hashes.
+Restore refuses a non-empty destination, clones the bundle, overlays untracked
+evidence, restores the sibling cold tree, and rewrites archive pointers to that
+new cold location.
+
 ## Configuration and health
 
 The production binary consumes one host-owned `server.env` bootstrap contract.
