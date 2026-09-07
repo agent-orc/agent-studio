@@ -71,7 +71,7 @@
           <button type="button" class="cum__total cum__total--cost cum__cost-button"
                   (click)="showTotalCalculation()">
             <span class="cum__total-label">Est. cost</span>
-            <span class="cum__total-value">{{ totals().anyPriced ? formatUsd(totals().costUsd) : 'n/a' }}</span>
+            <span class="cum__total-value">{{ totalCostLabel() }}</span>
           </button>
         </div>
       </div>
@@ -91,10 +91,18 @@
           </thead>
           <tbody>
             @for (m of modelRows(); track m.source + ':' + m.model) {
-              <tr>
+              <tr [class.cum__row--grouped]="m.isOtherChild" [attr.data-testid]="m.isOtherSummary ? 'cli-usage-modal-other-row' : null">
                 <td>
-                  <code>{{ m.model }}</code>
-                  <span class="cum__src" [attr.data-src]="m.source">{{ m.source }}</span>
+                  @if (m.isOtherSummary) {
+                    <button type="button" class="cum__other-toggle" (click)="toggleOther()"
+                            [attr.aria-expanded]="otherExpanded()">
+                      <span class="cum__other-chevron">{{ otherExpanded() ? '▾' : '▸' }}</span>
+                      {{ m.model }}
+                    </button>
+                  } @else {
+                    <code>{{ m.model }}</code>
+                    <span class="cum__src" [attr.data-src]="m.source">{{ m.source }}</span>
+                  }
                 </td>
                 <td class="cum__num">{{ formatTokens(m.inputTokens) }}</td>
                 <td class="cum__num">{{ formatTokens(m.outputTokens) }}</td>
@@ -110,13 +118,13 @@
               </tr>
             }
           </tbody>
-          @if (modelRows().length > 1) {
+          @if (totals().models > 1) {
             <tfoot>
               <tr>
                 <td>Total · {{ totals().models }} models</td>
                 <td class="cum__num" colspan="3">{{ formatTokens(totals().tokens) }}</td>
                 <td class="cum__num cum__num--cost">
-                  <button type="button" class="cum__inline-cost" (click)="showTotalCalculation()">{{ totals().allPriced ? formatUsd(totals().costUsd) : 'Unknown' }}</button>
+                  <button type="button" class="cum__inline-cost" (click)="showTotalCalculation()">{{ totalCostLabel() }}</button>
                 </td>
               </tr>
             </tfoot>

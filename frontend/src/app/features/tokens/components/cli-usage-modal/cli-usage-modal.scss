@@ -275,6 +275,28 @@
 }
 .cum__src[data-src="ad-hoc"] { color: var(--studio-accent-warn-strong); }
 
+// "Other (n models)" disclosure toggle — a plain-text button, no left
+// accent bar; the fold-below-threshold rows it reveals get a background
+// tint instead (never a colored border) to read as grouped.
+.cum__other-toggle {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--studio-fg-muted);
+  font: inherit;
+  font-style: italic;
+  cursor: pointer;
+}
+.cum__other-chevron {
+  display: inline-block;
+  width: 1em;
+  color: var(--studio-fg-dim);
+}
+.cum__row--grouped {
+  background: color-mix(in srgb, var(--studio-fg-dim) 4%, transparent);
+}
+.cum__row--grouped code { opacity: 0.85; }
+
 .cum__empty {
   margin: 0;
   font-size: 12px;

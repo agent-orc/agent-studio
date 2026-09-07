@@ -25,6 +25,11 @@ export type {
   TokenCostTooltipOptions,
   TokenPricingGap,
 } from './token-cost-tooltip.util';
+export { formatCompactTokens, formatCompactUsd } from './token-number-format.util';
+export {
+  RecordedModelUsageGroupingStore,
+  DEFAULT_MODEL_USAGE_GROUPING_THRESHOLD,
+} from './services/recorded-model-usage-grouping.store';
 export type {
   TaskTokenCall,
   TaskTokenSummary,
