@@ -409,6 +409,9 @@ builder.Services.AddSingleton<ProjectDeploymentSummaryService>();
 builder.Services.AddSingleton<ProjectDeploymentCompiler>();
 builder.Services.AddSingleton<TestRunStore>();
 builder.Services.AddSingleton<TestRunService>();
+// AGT-2717: the one review head both review planes feed and every review
+// surface reads. Stateless over the job folder, so a singleton is enough.
+builder.Services.AddSingleton<AgentStudio.Review.ReviewProjectionService>();
 builder.Services.AddSingleton<TaskTransitionService>();
 builder.Services.AddSingleton<IBatchMoveItemExecutor, BatchMoveItemExecutor>();
 builder.Services.AddSingleton<BatchMoveJobCoordinator>();

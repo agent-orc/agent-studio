@@ -1,3 +1,5 @@
+import type { ReviewProjection } from './review-projection.model';
+
 export type CliType = 'claude' | 'codex' | 'gemini';
 export const CLI_TYPES: CliType[] = ['claude', 'codex', 'gemini'];
 
@@ -973,6 +975,15 @@ export interface TaskDetail {
    * `docs/system/contracts/filesystem.md` "results/review-evidence.jsonl".
    */
   reviewEvidence: ReviewEvidenceEntry[];
+  /**
+   * The card's single review head, derived server-side from the canonical
+   * `review-round-*.json` records both review planes write. The escalation
+   * banner, the Evidence tab, the Result header and the board chip all render
+   * it through `buildReviewHeadline`, so they cannot disagree about how many
+   * rounds ran, what blocked, and what to do next (AGT-2717). Null only for a
+   * payload served before the projection existed.
+   */
+  reviewProjection?: ReviewProjection | null;
 }
 
 export type ReviewEvidenceSource = 'security-audit' | 'code-review' | 'task-check' | 'human-note' | 'other';

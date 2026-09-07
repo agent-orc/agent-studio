@@ -214,6 +214,28 @@ public sealed class CodeReviewStepService
                 "code-review-step: failed to write {Path}", filePath);
         }
 
+        // AGT-2717: the local plane writes the same canonical review-round record
+        // the remote plane writes, so the review surfaces read one shape instead
+        // of choosing between two artifact families. The rendered Markdown above
+        // stays an artifact this record points at.
+        if (request.Mode == CodeReviewMode.Grade)
+        {
+            ReviewRoundRecordStore.Write(request.JobFolderPath, new ReviewRoundRecord
+            {
+                Plane = ReviewPlanes.Local,
+                // The file name already carries a millisecond-unique run instant,
+                // which is exactly the identity of this round.
+                AttemptId = startedAt.ToString("yyyy-MM-ddTHH-mm-ss-fffZ"),
+                SubjectSha = request.Commit,
+                ReceivedAt = startedAt,
+                Outcome = AspectVerdictParsing.StatusToken(status),
+                Grade = grade is null ? null : CodeReviewGradeParsing.GradeToken(grade.Value),
+                Summary = summary,
+                ReportRef = fileName,
+                Aspects = LocalRoundAspects(status, summary, findings),
+            }, _logger);
+        }
+
         string? concernTagId;
         if (request.Mode == CodeReviewMode.Grade)
         {
@@ -264,6 +286,43 @@ public sealed class CodeReviewStepService
             Grade: grade,
             ExecutionError: executionError,
             Findings: findings);
+    }
+
+    /// <summary>
+    /// The local round's aspect rows for the canonical review-round record. Each
+    /// concrete finding becomes its own row so a blocking round can quote what
+    /// actually blocked; a round without findings still carries one row so the
+    /// verdict is never invisible. The verdict follows the grade (D blocks, C is
+    /// concerns, A/B pass), so a solid card with small notes is never reported as
+    /// blocked.
+    /// </summary>
+    private static List<ReviewRoundAspect> LocalRoundAspects(
+        AspectStatus status,
+        string summary,
+        IReadOnlyList<string> findings)
+    {
+        var verdict = ReviewVerdicts.Normalize(AspectVerdictParsing.StatusToken(status));
+        if (findings.Count == 0)
+        {
+            return
+            [
+                new ReviewRoundAspect
+                {
+                    Name = "code-review",
+                    Verdict = verdict,
+                    Summary = summary,
+                },
+            ];
+        }
+
+        return findings
+            .Select(finding => new ReviewRoundAspect
+            {
+                Name = "code-review",
+                Verdict = verdict,
+                Summary = finding,
+            })
+            .ToList();
     }
 
     /// <summary>Tag id for the given verdict, or null when no tag should be hung.</summary>

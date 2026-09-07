@@ -1,4 +1,5 @@
 using System.Globalization;
+using AgentStudio.Review;
 
 namespace AgentStudio.TestRuns;
 
@@ -7,6 +8,15 @@ namespace AgentStudio.TestRuns;
 /// folder. Remote Review build-tests grades and build/test gate logs predate
 /// the project-wide TestRunStore, so card projection must include both sources
 /// instead of treating the absence of a project run as the absence of evidence.
+///
+/// <para>
+/// Since AGT-2717 the review half of that evidence comes from the canonical
+/// <see cref="ReviewRoundRecord"/> rather than from report Markdown. The reading
+/// rule AGT-2714 established is unchanged and now lives in
+/// <see cref="ReviewRoundProjectionPolicy"/>: build-tests are derived only from
+/// build-tests verdict rows, a blocking semantic verdict never changes them, and
+/// a missing row is <c>not-proven</c> with a reason that names the command.
+/// </para>
 /// </summary>
 internal static class TaskScopedTestEvidenceReader
 {
@@ -15,6 +25,13 @@ internal static class TaskScopedTestEvidenceReader
         ("build-test-gate-*.log", "build-test-gate", "Build/test gate"),
         ("pre-develop-build-gate-*.log", "pre-develop-build-gate", "Pre-develop build gate"),
         ("pre-main-test-gate-*.log", "pre-main-test-gate", "Pre-main test gate"),
+    ];
+
+    /// <summary>Report files whose derived state now comes from the record.</summary>
+    private static readonly string[] ReviewSignaturePatterns =
+    [
+        ReviewRoundRecordSchema.FilePattern,
+        "remote-review-grade-*.md",
     ];
 
     public static TaskScopedTestEvidenceSnapshot Read(TaskInfo task)
@@ -26,14 +43,19 @@ internal static class TaskScopedTestEvidenceReader
         var signature = new List<string>();
         try
         {
-            foreach (var path in Directory.EnumerateFiles(
-                         task.FolderPath,
-                         "remote-review-grade-*.md",
-                         SearchOption.TopDirectoryOnly))
+            foreach (var pattern in ReviewSignaturePatterns)
             {
-                AddSignature(path, signature);
-                sources.AddRange(ReadRemoteReview(path));
+                foreach (var path in Directory.EnumerateFiles(
+                             task.FolderPath,
+                             pattern,
+                             SearchOption.TopDirectoryOnly))
+                {
+                    AddSignature(path, signature);
+                }
             }
+
+            foreach (var round in ReadReviewRounds(task.FolderPath))
+                sources.AddRange(FromReviewRound(round));
 
             var postSteps = Path.Combine(task.FolderPath, "post-steps");
             if (Directory.Exists(postSteps))
@@ -58,104 +80,81 @@ internal static class TaskScopedTestEvidenceReader
             string.Join('|', signature.OrderBy(value => value, StringComparer.Ordinal)));
     }
 
-    private static IReadOnlyList<TaskTestEvidenceSource> ReadRemoteReview(string path)
+    /// <summary>
+    /// Canonical records, plus a Markdown backfill for any round written before
+    /// the record existed. Only rounds that carry review evidence of their own
+    /// reach the Evidence tab; a local grade round has no commands and no
+    /// aspects, so it contributes nothing here.
+    /// </summary>
+    private static IEnumerable<ReviewRoundRecord> ReadReviewRounds(string jobFolder)
     {
-        string text;
-        try { text = File.ReadAllText(path); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return []; }
+        var records = ReviewRoundRecordStore.ReadAll(jobFolder);
+        var known = records
+            .Select(record => $"{ReviewPlanes.Normalize(record.Plane)}:{record.AttemptId}")
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return records.Concat(ReviewRoundMarkdownBackfill.Read(jobFolder)
+            .Where(round => !known.Contains($"{ReviewPlanes.Normalize(round.Plane)}:{round.AttemptId}")));
+    }
 
-        var frontmatter = ReadFrontmatter(text);
-        if (!string.Equals(frontmatter.GetValueOrDefault("type"), "remote-review-grade", StringComparison.OrdinalIgnoreCase))
-            return [];
+    /// <summary>
+    /// One round's two independent evidence rows: the command proof and, when a
+    /// semantic verdict blocks, the reason it blocked. They are kept separate so
+    /// a blocked aspect never turns a passing build red.
+    /// </summary>
+    private static IEnumerable<TaskTestEvidenceSource> FromReviewRound(ReviewRoundRecord round)
+    {
+        var commit = round.SubjectSha;
+        if (string.IsNullOrWhiteSpace(commit)) yield break;
 
-        var commit = frontmatter.GetValueOrDefault("actualHead")
-                     ?? frontmatter.GetValueOrDefault("expectedResultSha")
-                     ?? "";
-        if (string.IsNullOrWhiteSpace(commit)) return [];
+        // The single-round projection reuses the shared policy, so the Evidence
+        // tab and the review banner always phrase the same round identically.
+        var projection = ReviewRoundProjectionPolicy.Build(
+            new ReviewProjectionInputs(round.AttemptId, [round]));
 
-        var observedAt = ParseDate(frontmatter.GetValueOrDefault("receivedAt"))
-                         ?? File.GetLastWriteTimeUtc(path);
-        var attemptId = frontmatter.GetValueOrDefault("attemptId") ?? Path.GetFileNameWithoutExtension(path);
-        var reportRef = Path.GetFileName(path);
-        var verdictRows = ReadTable(text, "## Aspect verdicts")
-            .Where(columns => columns.Count >= 4 && !IsTableHeader(columns))
-            .Select(columns => new ReviewVerdictRow(columns[0], columns[1], columns[2], columns[3]))
-            .ToList();
-        var commandSteps = ReadTable(text, "## Command evidence")
-            .Where(columns => columns.Count >= 3 && !IsTableHeader(columns))
-            .Select(columns => columns[2])
-            .Where(IsBuildVerifyStep)
-            .ToList();
-        var buildRows = verdictRows
-            .Where(row => row.Aspect.Equals("build-tests", StringComparison.OrdinalIgnoreCase))
-            .ToList();
-        var buildStepByRow = buildRows
-            .Select((row, index) => StepId(row.Summary)
-                                    ?? (index < commandSteps.Count ? commandSteps[index] : null))
-            .ToList();
-        var buildSteps = buildStepByRow
-            .OfType<string>()
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-        var buildResult = buildRows.Count == 0
-            ? "not-proven"
-            : buildRows.All(row => row.Status.Equals("pass", StringComparison.OrdinalIgnoreCase))
-                ? "passed"
-                : "failed";
-        var buildResultLabel = buildResult switch
+        if (round.BuildTests.Count > 0)
         {
-            "passed" => "Pass",
-            "failed" => "Failed",
-            _ => "Not proven",
-        };
-        var buildReason = buildResult switch
-        {
-            "passed" when buildSteps.Count > 0 => Sentence($"{NaturalList(buildSteps)} passed"),
-            "passed" => "All build-tests verdicts passed.",
-            "failed" => FailedBuildReason(buildRows, buildStepByRow),
-            _ when commandSteps.Count > 0 => Sentence(
-                $"Build-tests verdict is missing for {NaturalList(commandSteps)}"),
-            _ => "Build-tests command is missing from the Remote Review report.",
-        };
-        var stepSuffix = buildSteps.Count > 0 ? $" ({string.Join(", ", buildSteps)})" : "";
-        var sources = new List<TaskTestEvidenceSource>
-        {
-            new()
+            var buildTests = projection.BuildTests;
+            var stepSuffix = buildTests.Steps.Count > 0
+                ? $" ({string.Join(", ", buildTests.Steps)})"
+                : "";
+            yield return new TaskTestEvidenceSource
             {
                 Kind = "review-build-tests",
-                Id = attemptId,
+                Id = round.AttemptId,
                 Commit = commit,
-                Result = buildResult,
-                ObservedAt = observedAt,
-                Summary = $"Review build-tests {buildResultLabel} at {Short(commit)}{stepSuffix}",
-                Reason = buildReason,
-                ReportRef = reportRef,
-            },
-        };
-
-        var blockedAspects = verdictRows
-            .Where(row => !row.Aspect.Equals("build-tests", StringComparison.OrdinalIgnoreCase)
-                          && IsBlocking(row.Status))
-            .ToList();
-        if (blockedAspects.Count > 0)
-        {
-            var aspectNames = blockedAspects.Select(row => row.Aspect).ToList();
-            sources.Add(new TaskTestEvidenceSource
-            {
-                Kind = "review-aspects",
-                Id = attemptId,
-                Commit = commit,
-                Result = "blocked",
-                ObservedAt = observedAt,
-                Summary = $"Review blocked by {NaturalList(aspectNames)}",
-                Reason = Sentence(string.Join("; ", blockedAspects.Select(row =>
-                    $"{row.Aspect} blocked: {TrimSentence(row.Summary)}"))),
-                ReportRef = reportRef,
-            });
+                Result = buildTests.Result,
+                ObservedAt = round.ReceivedAt,
+                Summary = $"Review build-tests {ResultLabel(buildTests.Result)} at {Short(commit)}{stepSuffix}",
+                Reason = buildTests.Reason,
+                ReportRef = round.ReportRef ?? "",
+            };
         }
 
-        return sources;
+        if (projection.BlockingAspects.Count > 0)
+        {
+            yield return new TaskTestEvidenceSource
+            {
+                Kind = "review-aspects",
+                Id = round.AttemptId,
+                Commit = commit,
+                Result = "blocked",
+                ObservedAt = round.ReceivedAt,
+                Summary = $"Review blocked by {NaturalList(projection.BlockingAspects.Select(a => a.Name).ToList())}",
+                Reason = Sentence(string.Join("; ", projection.BlockingAspects.Select(aspect =>
+                    aspect.Summary.Length > 0
+                        ? $"{aspect.Name} blocked: {TrimSentence(aspect.Summary)}"
+                        : $"{aspect.Name} blocked without a recorded reason"))),
+                ReportRef = round.ReportRef ?? "",
+            };
+        }
     }
+
+    private static string ResultLabel(string result) => result switch
+    {
+        ReviewBuildTestsResults.Passed => "Pass",
+        ReviewBuildTestsResults.Failed => "Failed",
+        _ => "Not proven",
+    };
 
     private static TaskTestEvidenceSource? ReadGate(string path, string kind, string label)
     {
@@ -219,82 +218,6 @@ internal static class TaskScopedTestEvidenceReader
         };
     }
 
-    private static Dictionary<string, string> ReadFrontmatter(string text)
-    {
-        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        using var reader = new StringReader(text);
-        if (!string.Equals(reader.ReadLine()?.Trim(), "---", StringComparison.Ordinal)) return values;
-        while (reader.ReadLine() is { } line)
-        {
-            if (string.Equals(line.Trim(), "---", StringComparison.Ordinal)) break;
-            var colon = line.IndexOf(':');
-            if (colon <= 0) continue;
-            values[line[..colon].Trim()] = Unquote(line[(colon + 1)..].Trim());
-        }
-        return values;
-    }
-
-    private static IReadOnlyList<string> ParseTableRow(string line) =>
-        line.Trim('|').Split('|').Select(value => value.Trim()).ToList();
-
-    private static IEnumerable<IReadOnlyList<string>> ReadTable(string text, string heading)
-    {
-        var inSection = false;
-        foreach (var rawLine in text.Split('\n'))
-        {
-            var line = rawLine.Trim();
-            if (!inSection)
-            {
-                inSection = line.Equals(heading, StringComparison.OrdinalIgnoreCase);
-                continue;
-            }
-            if (line.StartsWith("## ", StringComparison.Ordinal)) yield break;
-            if (!line.StartsWith('|')) continue;
-            yield return ParseTableRow(line);
-        }
-    }
-
-    private static bool IsTableHeader(IReadOnlyList<string> columns) =>
-        columns.Count == 0
-        || columns[0].Equals("Aspect", StringComparison.OrdinalIgnoreCase)
-        || columns[0].Equals("Phase", StringComparison.OrdinalIgnoreCase)
-        || columns.All(column => column.Length > 0 && column.All(ch => ch is '-' or ':'));
-
-    private static bool IsBlocking(string status) =>
-        status.Equals("block", StringComparison.OrdinalIgnoreCase)
-        || status.Equals("blocked", StringComparison.OrdinalIgnoreCase)
-        || status.Equals("fail", StringComparison.OrdinalIgnoreCase)
-        || status.Equals("failed", StringComparison.OrdinalIgnoreCase);
-
-    private static bool IsBuildVerifyStep(string step) =>
-        step.Length > "verify-".Length
-        && step.StartsWith("verify-", StringComparison.OrdinalIgnoreCase)
-        && step["verify-".Length..].All(char.IsDigit);
-
-    private static string? StepId(string summary)
-    {
-        const string marker = "Review command '";
-        var start = summary.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
-        if (start < 0) return null;
-        start += marker.Length;
-        var end = summary.IndexOf('\'', start);
-        return end > start ? summary[start..end] : null;
-    }
-
-    private static string FailedBuildReason(
-        IReadOnlyList<ReviewVerdictRow> rows,
-        IReadOnlyList<string?> steps)
-    {
-        var failures = rows
-            .Select((row, index) => (Row: row, Step: index < steps.Count ? steps[index] : null))
-            .Where(item => !item.Row.Status.Equals("pass", StringComparison.OrdinalIgnoreCase))
-            .Select(item => $"{item.Step ?? "build-tests"} failed: {TrimSentence(item.Row.Summary)}")
-            .ToList();
-        return Sentence(failures.Count > 0
-            ? string.Join("; ", failures)
-            : "A build-tests verdict failed");
-    }
-
     private static string NaturalList(IReadOnlyList<string> values) => values.Count switch
     {
         0 => "",
@@ -341,12 +264,6 @@ internal static class TaskScopedTestEvidenceReader
             ? parsed
             : null;
 
-    private static string Unquote(string value) =>
-        value.Length >= 2 && value[0] == '"' && value[^1] == '"'
-            ? value[1..^1].Replace("\\\"", "\"", StringComparison.Ordinal)
-                .Replace("\\\\", "\\", StringComparison.Ordinal)
-            : value;
-
     private static string Short(string sha) => sha.Length > 8 ? sha[..8] : sha;
 
     private static void AddSignature(string path, ICollection<string> signature)
@@ -354,12 +271,6 @@ internal static class TaskScopedTestEvidenceReader
         var info = new FileInfo(path);
         signature.Add($"{info.Name}:{info.Length}:{info.LastWriteTimeUtc.Ticks}");
     }
-
-    private sealed record ReviewVerdictRow(
-        string Aspect,
-        string Status,
-        string Classification,
-        string Summary);
 }
 
 internal sealed record TaskScopedTestEvidenceSnapshot(

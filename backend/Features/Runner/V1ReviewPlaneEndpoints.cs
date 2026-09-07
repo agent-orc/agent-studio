@@ -512,6 +512,18 @@ public static class V1ReviewPlaneEndpoints
                     statusCode: StatusCodes.Status503ServiceUnavailable);
             }
 
+            // AGT-2717: the canonical review-round record. Written before the
+            // delivery decision so a round is never invisible to the review
+            // surfaces, then rewritten below once the gate has spoken. The write
+            // is keyed by (plane, attempt), so the second write replaces the
+            // first instead of adding a phantom round.
+            var roundRecord = RemoteReviewRoundRecordFactory.Create(
+                attemptId,
+                request,
+                receivedAt,
+                evidenceFile);
+            ReviewRoundRecordStore.Write(task.FolderPath, roundRecord);
+
             try
             {
                 await remotePipelineEvidence.ProjectAsync(
@@ -604,22 +616,33 @@ public static class V1ReviewPlaneEndpoints
                 {
                     var projectSettings = settings.Get(task.ProjectName);
                     var subject = ReviewSubjectStore.Read(task.FolderPath);
+                    var integrationBranch = TaskIntegrationBranch.Resolve(task, projectSettings.IntegrationBranch);
                     var integrationRequest = new RemoteDeliveryIntegrationRequest(
                         task.ProjectName,
                         task.Id,
                         task.FolderPath,
                         task.WatchPath,
-                        TaskIntegrationBranch.Resolve(task, projectSettings.IntegrationBranch),
+                        integrationBranch,
                         projectSettings.IntegrationStrategy,
                         PipelineTypes.Resolve(task),
                         subject?.CompletedAtUtc
                         ?? (sourceRun?.TerminalAt is { } terminalAt
                             ? new DateTimeOffset(DateTime.SpecifyKind(terminalAt, DateTimeKind.Utc))
                             : DateTimeOffset.UtcNow));
+                    ReviewRoundDeliveryGate gate;
                     if (integrationDecision.ShouldIntegrate)
                     {
                         var integrated = await remoteIntegration.EnqueueAsync(integrationRequest).ConfigureAwait(false);
                         integrationOutcome = integrated.Outcome.ToString();
+                        gate = new ReviewRoundDeliveryGate
+                        {
+                            Result = integrated.Outcome.IsSuccessfulIntegration()
+                                ? ReviewDeliveryStates.Integrated
+                                : ReviewDeliveryStates.GateFailed,
+                            Reason = integrated.Error
+                                     ?? $"Integration ended {integrated.Outcome}.",
+                            IntegrationBranch = integrationBranch,
+                        };
                     }
                     else
                     {
@@ -627,7 +650,18 @@ public static class V1ReviewPlaneEndpoints
                             integrationRequest,
                             integrationDecision.Reason);
                         integrationOutcome = AcceptedIntegrationFailureCodes.DeliveryGateFailed;
+                        gate = new ReviewRoundDeliveryGate
+                        {
+                            Result = ReviewDeliveryStates.GateFailed,
+                            Reason = integrationDecision.Reason,
+                            IntegrationBranch = integrationBranch,
+                        };
                     }
+                    // Same (plane, attempt) key as the write above, so the round
+                    // gains its gate result instead of becoming a second round.
+                    ReviewRoundRecordStore.Write(
+                        task.FolderPath,
+                        roundRecord with { DeliveryGate = gate });
                 }
 
                 if (string.Equals(task.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))

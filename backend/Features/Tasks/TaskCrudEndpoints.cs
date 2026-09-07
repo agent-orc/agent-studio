@@ -277,7 +277,7 @@ public static class TaskCrudEndpoints
             });
         });
 
-        group.MapGet("/{jobId}", (string jobId, string? project, string? watchPath, HttpContext context, TaskScannerService scanner, AgentStudio.Registry.ProjectRegistry projects, CliRouter router, TaskRunnerService runners, ITokenAggregator tokens, IConfiguration configuration, GitService git, TaskSessionLog sessions, BoardMergeStatusService mergeStatus, TaskIntegrationStatusService integrationStatus, TaskPublishableService publishStatus, TestRunService testRuns, TaskLiveStatusProjection liveStatus) =>
+        group.MapGet("/{jobId}", (string jobId, string? project, string? watchPath, HttpContext context, TaskScannerService scanner, AgentStudio.Registry.ProjectRegistry projects, CliRouter router, TaskRunnerService runners, ITokenAggregator tokens, IConfiguration configuration, GitService git, TaskSessionLog sessions, BoardMergeStatusService mergeStatus, TaskIntegrationStatusService integrationStatus, TaskPublishableService publishStatus, TestRunService testRuns, TaskLiveStatusProjection liveStatus, AgentStudio.Review.ReviewProjectionService reviewProjection) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             var detail = scanner.GetJobDetail(jobId, watchPath);
@@ -318,6 +318,10 @@ public static class TaskCrudEndpoints
             var testRunLookup = testRuns.BuildLookup(new[] { withRuntime.Info });
             if (testRunLookup.TryGetValue(withRuntime.Info.TaskKey, out var testEvidence))
                 withRuntime = withRuntime with { Info = withRuntime.Info with { TestEvidence = testEvidence } };
+            // AGT-2717: the one review head every surface reads. Folded last so it
+            // sees the resolved integration verdict and can say WHY develop is
+            // still pending instead of just that it is.
+            withRuntime = withRuntime with { ReviewProjection = reviewProjection.Build(withRuntime.Info) };
             return Results.Ok(withRuntime);
         });
 

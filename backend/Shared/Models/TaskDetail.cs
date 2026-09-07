@@ -41,6 +41,17 @@ public record TaskDetail
     /// <c>docs/system/contracts/filesystem.md</c> "results/review-evidence.jsonl".
     /// </summary>
     public List<ReviewEvidenceEntry> ReviewEvidence { get; init; } = [];
+
+    /// <summary>
+    /// The card's single review head, derived from the canonical
+    /// <c>review-round-*.json</c> records written by both review planes. Every
+    /// review surface reads this and only this, so the escalation banner, the
+    /// Evidence tab, the Result header and the board chip cannot disagree about
+    /// how many rounds ran, what blocked, and what to do next (AGT-2717).
+    /// Also served on its own as <c>GET /api/tasks/{jobId}/review-projection</c>.
+    /// Null only when the detail was assembled without the projection service.
+    /// </summary>
+    public AgentStudio.Review.ReviewProjection? ReviewProjection { get; init; }
 }
 
 /// <summary>
