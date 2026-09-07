@@ -696,11 +696,14 @@ builder.Services.AddSingleton<IntakeRunner>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService<IntakeHostedService>();
 builder.Services.AddSingleton<GitService>();
+if (!publicDemoExecutionProfile)
+    builder.Services.AddHostedService<GitInventoryRefreshHostedService>();
 builder.Services.AddSingleton<ProjectIntegrationViewService>();
 builder.Services.AddSingleton<AgentStudio.Search.GlobalSearchService>();
 builder.Services.AddSingleton<ProjectSettingsService>();
 builder.Services.AddSingleton<GitCleanupService>();
 builder.Services.AddSingleton<GitBranchRetentionService>();
+builder.Services.AddSingleton<ArchivedResultRefPruner>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService<GitBranchRetentionHostedService>();
 // Slice P (ASS-1663): build-profile onboarding validation dry-run.

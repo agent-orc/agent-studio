@@ -391,15 +391,18 @@ public sealed class GitBranchRetentionService
 public sealed class GitBranchRetentionHostedService : BackgroundService
 {
     private readonly GitBranchRetentionService _retention;
+    private readonly ArchivedResultRefPruner _archivedResultRefs;
     private readonly IConfiguration _configuration;
     private readonly ILogger<GitBranchRetentionHostedService> _logger;
 
     public GitBranchRetentionHostedService(
         GitBranchRetentionService retention,
+        ArchivedResultRefPruner archivedResultRefs,
         IConfiguration configuration,
         ILogger<GitBranchRetentionHostedService> logger)
     {
         _retention = retention;
+        _archivedResultRefs = archivedResultRefs;
         _configuration = configuration;
         _logger = logger;
     }
@@ -422,6 +425,7 @@ public sealed class GitBranchRetentionHostedService : BackgroundService
             try
             {
                 await Task.Run(() => _retention.RunOnce(stoppingToken), stoppingToken);
+                await Task.Run(() => _archivedResultRefs.RunOnce(stoppingToken), stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {

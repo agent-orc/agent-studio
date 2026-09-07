@@ -4,6 +4,7 @@ using System.Formats.Tar;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Threading.Channels;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace AgentStudio.Git;
@@ -435,7 +436,8 @@ public record GitProjectInventory(
     string? Error,
     GitHistoryPage? History = null,
     IReadOnlyList<GitActiveCheckout>? ActiveCheckouts = null,
-    IReadOnlyList<GitDeploymentMarker>? Deployments = null);
+    IReadOnlyList<GitDeploymentMarker>? Deployments = null,
+    DateTimeOffset? ComputedAt = null);
 
 /// <summary>
 /// Repository hygiene snapshot used by the project header badge and the
@@ -532,6 +534,7 @@ public class GitService
     private readonly AdHocUsageRecorder? _usage;
     private readonly ProjectRegistry _registry;
     private readonly CommitCandidateGate _commitGate;
+    private readonly ProjectSettingsService? _projectSettings;
 
     public GitService(
         ILogger<GitService> logger,
@@ -540,7 +543,8 @@ public class GitService
         RuntimePromptService? prompts = null,
         AdHocUsageRecorder? usage = null,
         ProjectRegistry? registry = null,
-        IEnumerable<ICommitCandidateScanner>? commitCandidateScanners = null)
+        IEnumerable<ICommitCandidateScanner>? commitCandidateScanners = null,
+        ProjectSettingsService? projectSettings = null)
     {
         _logger = logger;
         _scanner = scanner;
@@ -549,6 +553,7 @@ public class GitService
         _usage = usage;
         _registry = registry ?? new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance);
         _commitGate = new CommitCandidateGate(logger, commitCandidateScanners);
+        _projectSettings = projectSettings;
         // Give the ambient git-spawn telemetry a logger for out-of-scope
         // slow-spawn warnings (the per-request rollup uses its own logger).
         GitProcessTelemetry.Logger ??= logger;
@@ -1207,15 +1212,29 @@ public class GitService
     // ----- Project Hub Git View: branch + worktree + history inventory -----
 
     private readonly object _inventoryLock = new();
-    private readonly Dictionary<string, (DateTime At, GitProjectInventory Value)> _inventoryCache = new();
-    private static readonly TimeSpan InventoryTtl = TimeSpan.FromSeconds(3);
+    private readonly Dictionary<string, InventoryCacheEntry> _inventoryCache =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, IReadOnlyList<GitGraphCommit>> _inventoryHistory =
+        new(StringComparer.OrdinalIgnoreCase);
+    private const int InventoryHistoryLimit = 400;
+    private readonly Channel<string> _inventoryRefreshQueue =
+        Channel.CreateUnbounded<string>(new UnboundedChannelOptions
+        {
+            SingleReader = true,
+            SingleWriter = false,
+        });
+    private int _inventoryRefreshQueueWrites;
+    internal int InventoryRefreshQueueWrites => Volatile.Read(ref _inventoryRefreshQueueWrites);
+    internal event Action<string>? InventoryRefreshed;
 
     /// <summary>
     /// Branch / worktree / first graph-page inventory for one project, backing
     /// the Project Hub Git View. Read-only: it forks a bounded set of plumbing
     /// commands (<c>worktree list</c>, <c>for-each-ref</c>, <c>log</c>) and never
-    /// mutates the repository. Cached per project for ~3 s so a polling UI can
-    /// call freely without forking N git processes per render. Returns a shape
+    /// mutates the repository. The request path only reads a cheap filesystem
+    /// ref signature and returns the last completed background snapshot. A
+    /// changed signature queues one refresh; concurrent callers coalesce.
+    /// Returns a shape
     /// with <see cref="GitProjectInventory.IsRepo"/> false and a populated
     /// <see cref="GitProjectInventory.Error"/> when the project is unknown, has
     /// no configured repository, or the folder is not a git working tree - the
@@ -1226,26 +1245,159 @@ public class GitService
         if (string.IsNullOrWhiteSpace(projectName))
             return EmptyInventory("", null, "projectName is required");
 
+        var configured = ConfiguredRepositoryPath(projectName);
+        if (configured.Error is not null)
+            return EmptyInventory(projectName, configured.Path, configured.Error);
+
+        var signature = GitRefSignature.Capture(configured.Path!);
+        GitProjectInventory value;
+        string decision;
         lock (_inventoryLock)
         {
-            if (_inventoryCache.TryGetValue(projectName, out var cached) &&
-                DateTime.UtcNow - cached.At < InventoryTtl)
+            if (!_inventoryCache.TryGetValue(projectName, out var cached))
             {
-                return cached.Value;
+                cached = new InventoryCacheEntry(
+                    EmptyInventory(projectName, configured.Path, "Git inventory is warming."),
+                    signature);
+                _inventoryCache[projectName] = cached;
+            }
+
+            value = cached.Value;
+            if (value.ComputedAt is not null && cached.Signature == signature)
+            {
+                decision = "hit";
+            }
+            else if (cached.RefreshQueued || cached.RefreshTask is not null)
+            {
+                decision = "coalesced";
+            }
+            else
+            {
+                cached.RefreshQueued = true;
+                if (_inventoryRefreshQueue.Writer.TryWrite(projectName))
+                    Interlocked.Increment(ref _inventoryRefreshQueueWrites);
+                decision = "recompute";
             }
         }
 
-        using var _t = GitProcessTelemetry.BeginRequest("git/inventory", _logger);
-        var fresh = ComputeProjectInventory(projectName);
-        lock (_inventoryLock)
-        {
-            _inventoryCache[projectName] = (DateTime.UtcNow, fresh);
-        }
-        return fresh;
+        _logger.LogInformation(
+            "git-info request=git/inventory cacheDecision={CacheDecision} refCount={RefCount} computedAt={ComputedAt} spawns=0",
+            decision, value.Branches.Count, value.ComputedAt?.ToString("O") ?? "none");
+        return value;
     }
 
     private static GitProjectInventory EmptyInventory(string projectName, string? repoPath, string? error)
         => new(projectName, repoPath, false, null, [], [], [], error);
+
+    internal async Task RunInventoryRefreshLoopAsync(CancellationToken stoppingToken)
+    {
+        foreach (var project in _scanner.GetWatchPaths().Select(entry => entry.Name))
+        {
+            lock (_inventoryLock)
+            {
+                if (!_inventoryCache.TryGetValue(project, out var cached))
+                {
+                    var configured = ConfiguredRepositoryPath(project);
+                    cached = new InventoryCacheEntry(
+                        EmptyInventory(project, configured.Path, "Git inventory is warming."),
+                        GitRefSignature.Capture(configured.Path));
+                    _inventoryCache[project] = cached;
+                }
+                if (cached.RefreshQueued || cached.RefreshTask is not null) continue;
+                cached.RefreshQueued = true;
+                if (_inventoryRefreshQueue.Writer.TryWrite(project))
+                    Interlocked.Increment(ref _inventoryRefreshQueueWrites);
+            }
+        }
+
+        await foreach (var project in _inventoryRefreshQueue.Reader.ReadAllAsync(stoppingToken))
+        {
+            try
+            {
+                await RefreshProjectInventoryAsync(project, stoppingToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Git inventory refresh failed for project {Project}", project);
+            }
+        }
+    }
+
+    internal Task<GitProjectInventory> RefreshProjectInventoryAsync(
+        string projectName,
+        CancellationToken cancellationToken = default)
+    {
+        lock (_inventoryLock)
+        {
+            if (!_inventoryCache.TryGetValue(projectName, out var cached))
+            {
+                var configured = ConfiguredRepositoryPath(projectName);
+                cached = new InventoryCacheEntry(
+                    EmptyInventory(projectName, configured.Path, "Git inventory is warming."),
+                    GitRefSignature.Capture(configured.Path));
+                _inventoryCache[projectName] = cached;
+            }
+            cached.RefreshQueued = false;
+            if (cached.RefreshTask is not null) return cached.RefreshTask;
+
+            cached.RefreshTask = Task.Run(() =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                using var telemetry = GitProcessTelemetry.BeginRequest("git/inventory-refresh", _logger);
+                var fresh = ComputeProjectInventory(projectName) with
+                {
+                    ComputedAt = DateTimeOffset.UtcNow,
+                };
+                var signature = GitRefSignature.Capture(fresh.RepositoryPath);
+                lock (_inventoryLock)
+                {
+                    cached.Value = fresh;
+                    cached.Signature = signature;
+                }
+                _logger.LogInformation(
+                    "git-info refresh=git/inventory cacheDecision=recompute refCount={RefCount} computedAt={ComputedAt}",
+                    fresh.Branches.Count, fresh.ComputedAt?.ToString("O"));
+                try
+                {
+                    InventoryRefreshed?.Invoke(projectName);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex,
+                        "Git inventory enrichment refresh failed for project {Project}", projectName);
+                }
+                return fresh;
+            }, cancellationToken);
+            _ = cached.RefreshTask.ContinueWith(_ =>
+            {
+                lock (_inventoryLock) cached.RefreshTask = null;
+            }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            return cached.RefreshTask;
+        }
+    }
+
+    private (string? Path, string? Error) ConfiguredRepositoryPath(string projectName)
+    {
+        var entry = _scanner.GetWatchPaths().FirstOrDefault(candidate =>
+            string.Equals(candidate.Name, projectName, StringComparison.OrdinalIgnoreCase));
+        if (entry == null) return (null, "Unknown project");
+        var configured = ResolveConfiguredRepositoryPath(entry);
+        return string.IsNullOrWhiteSpace(configured)
+            ? (null, "Project has no configured repository path.")
+            : (configured, null);
+    }
+
+    private sealed class InventoryCacheEntry(GitProjectInventory value, GitRefSignature signature)
+    {
+        public GitProjectInventory Value { get; set; } = value;
+        public GitRefSignature Signature { get; set; } = signature;
+        public bool RefreshQueued { get; set; }
+        public Task<GitProjectInventory>? RefreshTask { get; set; }
+    }
 
     private GitProjectInventory ComputeProjectInventory(string projectName)
     {
@@ -1271,8 +1423,12 @@ public class GitService
             .GroupBy(w => w.Branch!, StringComparer.Ordinal)
             .ToDictionary(g => g.Key, g => g.First().Path, StringComparer.Ordinal);
 
-        var branches = ReadBranchInventory(root, currentBranch, worktreeByBranch);
-        var history = ReadProjectHistoryPage(root, offset: 0, pageSize: 50);
+        var branches = ReadBranchInventory(
+            projectName, root, currentBranch, worktreeByBranch, out var historyRefs);
+        var boundedHistory = ReadProjectHistoryPage(
+            root, offset: 0, pageSize: InventoryHistoryLimit, historyRefs);
+        lock (_inventoryLock) _inventoryHistory[root] = boundedHistory.Commits;
+        var history = PaginateHistory(boundedHistory.Commits, offset: 0, pageSize: 50);
         var recent = history.Commits
             .Select(commit => new GitCommitInfo(
                 commit.Sha,
@@ -1290,10 +1446,8 @@ public class GitService
     }
 
     /// <summary>
-    /// Returns one bounded all-ref graph page for a project. The first page is
-    /// already carried by <see cref="GetProjectInventory"/>; this method backs
-    /// explicit "Load older" requests. Inventory cache hits avoid repeat work on
-    /// initial render, while older pages are briefly memoized by project/offset.
+    /// Returns one page from the bounded history snapshot computed by the
+    /// inventory refresher. This request path never starts Git.
     /// </summary>
     public GitHistoryPage GetProjectHistory(string projectName, int offset, int pageSize)
     {
@@ -1303,30 +1457,55 @@ public class GitService
         var root = inventory.IsRepo ? inventory.RepositoryPath : null;
         if (root == null) return new GitHistoryPage(offset, pageSize, null, false, []);
 
-        var fingerprint = ReadOnlyGitRefFingerprint.Capture(
-            root,
-            inventory.Branches.Select(branch => branch.Name));
-        var logicalKey = $"git-graph\0{root}\0{fingerprint}\0{offset}\0{pageSize}";
-        return MemoizeByHead(root, logicalKey, () => ReadProjectHistoryPage(root, offset, pageSize));
+        IReadOnlyList<GitGraphCommit> commits;
+        lock (_inventoryLock)
+            commits = _inventoryHistory.TryGetValue(root, out var cached) ? cached : [];
+        return PaginateHistory(commits, offset, pageSize);
     }
 
-    private GitHistoryPage ReadProjectHistoryPage(string root, int offset, int pageSize)
+    private static GitHistoryPage PaginateHistory(
+        IReadOnlyList<GitGraphCommit> commits,
+        int offset,
+        int pageSize)
     {
+        var page = commits.Skip(offset).Take(pageSize).ToList();
+        var hasMore = offset + page.Count < commits.Count;
+        return new GitHistoryPage(
+            offset,
+            pageSize,
+            hasMore ? offset + page.Count : null,
+            hasMore,
+            page);
+    }
+
+    private GitHistoryPage ReadProjectHistoryPage(
+        string root,
+        int offset,
+        int pageSize,
+        IReadOnlyList<string> historyRefs)
+    {
+        if (historyRefs.Count == 0)
+            return new GitHistoryPage(offset, pageSize, null, false, []);
         const char US = '\x1f';
         const char RS = '\x1e';
         var format = string.Join("%x1f",
             "%H", "%h", "%P", "%aI", "%aN", "%s", "%D");
-        var (output, _, code) = RunGitArgs(
-            root,
+        var args = new List<string>
+        {
             "log",
-            "--all",
             "--topo-order",
             "--date-order",
             $"--max-count={pageSize + 1}",
             $"--skip={offset}",
             "--shortstat",
             "--decorate=full",
-            $"--pretty=format:%x1e{format}");
+            "--decorate-refs=HEAD",
+        };
+        args.AddRange(historyRefs.Select(reference => $"--decorate-refs={reference}"));
+        args.Add($"--pretty=format:%x1e{format}");
+        args.AddRange(historyRefs);
+        args.Add("--");
+        var (output, _, code) = RunGitArgs(root, args.ToArray());
         if (code != 0 || string.IsNullOrWhiteSpace(output))
             return new GitHistoryPage(offset, pageSize, null, false, []);
 
@@ -1480,9 +1659,15 @@ public class GitService
     }
 
     private List<GitBranchEntry> ReadBranchInventory(
-        string root, string? currentBranch, IReadOnlyDictionary<string, string> worktreeByBranch)
+        string projectName,
+        string root,
+        string? currentBranch,
+        IReadOnlyDictionary<string, string> worktreeByBranch,
+        out IReadOnlyList<string> historyRefs)
     {
-        // One pass covers local heads and origin tracking refs. Rows are folded
+        // One pass covers local heads, tags, and only the protected origin
+        // lines. Result, quarantine, salvage, and ordinary feature remotes are
+        // intentionally absent even when thousands exist locally. Rows are folded
         // by their branch name so the view can distinguish local-only,
         // local+origin, and origin-only branches without a second git command.
         // refs/backups/* stays outside the explicit patterns.
@@ -1493,19 +1678,29 @@ public class GitService
             "%(upstream:short)", "%(upstream:track)",
             "%(committerdate:iso-strict)", "%(contents:subject)"
         });
-        var (output, _, code) = RunGitArgs(root,
+        var args = new List<string>
+        {
             "for-each-ref", "--sort=-committerdate", "--count=400",
-            $"--format={fmt}", "refs/heads", "refs/remotes/origin");
-        if (code != 0 || string.IsNullOrWhiteSpace(output)) return [];
+            $"--format={fmt}", "refs/heads", "refs/tags",
+        };
+        args.AddRange(InventoryRemoteRefPatterns(projectName));
+        var (output, _, code) = RunGitArgs(root, args.ToArray());
+        if (code != 0 || string.IsNullOrWhiteSpace(output))
+        {
+            historyRefs = [];
+            return [];
+        }
 
         var byName = new Dictionary<string, BranchInventoryAccumulator>(StringComparer.Ordinal);
         var order = new List<string>();
+        var includedRefs = new List<string>();
         foreach (var raw in output.Replace("\r\n", "\n").Split('\n'))
         {
             if (string.IsNullOrWhiteSpace(raw)) continue;
             var parts = raw.Split(US);
             if (parts.Length < 8) continue;
             var fullRef = parts[0].Trim();
+            includedRefs.Add(fullRef);
             var remote = fullRef.StartsWith("refs/remotes/origin/", StringComparison.Ordinal);
             if (fullRef == "refs/remotes/origin/HEAD") continue;
             var name = remote
@@ -1549,6 +1744,7 @@ public class GitService
                 entry.LocalAt = lastAt;
             }
         }
+        historyRefs = includedRefs.Distinct(StringComparer.Ordinal).ToList();
         return order.Select(name =>
         {
             var entry = byName[name];
@@ -1568,6 +1764,18 @@ public class GitService
                 HasRemote: entry.HasRemote,
                 RemoteTipSha: entry.RemoteTipSha);
         }).ToList();
+    }
+
+    private IReadOnlyList<string> InventoryRemoteRefPatterns(string projectName)
+    {
+        var branches = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "main", "master", "develop", "dev", "integration", "release", "releases",
+        };
+        var configured = TaskIntegrationBranch.NormalizeRef(
+            _projectSettings?.Get(projectName).IntegrationBranch);
+        if (!string.IsNullOrWhiteSpace(configured)) branches.Add(configured);
+        return branches.Select(branch => $"refs/remotes/origin/{branch}").ToList();
     }
 
     private sealed class BranchInventoryAccumulator(string name)
@@ -1661,14 +1869,14 @@ public class GitService
     }
 
     /// <summary>
-    /// Resolves a project's git toplevel the same way <see cref="GetProjectInventory"/>
-    /// does (scanner entry -> configured repository path -> <c>rev-parse --show-toplevel</c>),
-    /// so an inventory SHA and its diff are always read from the same checkout.
+    /// Resolves a project's Git toplevel directly for mutation and explicit
+    /// detail operations. These callers cannot treat a cold background
+    /// inventory snapshot as proof that the repository is absent.
     /// </summary>
     private string? ResolveProjectRoot(string projectName)
     {
-        var inventory = GetProjectInventory(projectName);
-        return inventory.IsRepo ? inventory.RepositoryPath : null;
+        var configured = ConfiguredRepositoryPath(projectName);
+        return configured.Error is null ? ResolveGitToplevel(configured.Path!) : null;
     }
 
     /// <summary>

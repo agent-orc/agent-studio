@@ -4,6 +4,12 @@ using System.Text.Json;
 
 namespace AgentStudio.Runner;
 
+public sealed record AttemptIndexedDeliveryRef(
+    string TaskKey,
+    string Ref,
+    string ResultSha,
+    DateTime RecordedAt);
+
 /// <summary>
 /// Durable Task Server authority for coding and review attempts. This store owns
 /// identity, leases, monotonically increasing fences, the authority epoch,
@@ -1176,6 +1182,64 @@ public sealed class AttemptAuthorityService
             runs,
             reviews,
             runs.Count == 0 && reviews.Count == 0);
+    }
+
+    /// <summary>
+    /// Returns delivery refs already known by attempt authority without
+    /// consulting Git. Archive files are loaded once for the whole project
+    /// snapshot instead of once per task.
+    /// </summary>
+    public IReadOnlyList<AttemptIndexedDeliveryRef> GetIndexedDeliveryRefs(
+        IEnumerable<string> taskKeys,
+        bool includeArchived)
+    {
+        var keys = taskKeys.Select(Normalize).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (keys.Count == 0) return [];
+        List<RunAttemptDto> runs;
+        List<ReviewAttemptDto> reviews;
+        lock (_gate)
+        {
+            runs = _state.RunAttempts
+                .Where(attempt => keys.Contains(attempt.TaskKey))
+                .Select(ToDto)
+                .ToList();
+            reviews = _state.ReviewAttempts
+                .Where(attempt => keys.Contains(attempt.TaskKey))
+                .Select(ToDto)
+                .ToList();
+        }
+
+        if (includeArchived)
+        {
+            var archives = LoadArchivesForHistory();
+            runs.AddRange(archives.SelectMany(archive => archive.RunAttempts)
+                .Where(attempt => keys.Contains(attempt.TaskKey))
+                .Select(ToDto));
+            reviews.AddRange(archives.SelectMany(archive => archive.ReviewAttempts)
+                .Where(attempt => keys.Contains(attempt.TaskKey))
+                .Select(ToDto));
+        }
+
+        var indexed = runs
+            .Where(run => run.ResultEnvelope?.ImmutableRemoteRef is { Length: > 0 })
+            .Select(run => new AttemptIndexedDeliveryRef(
+                run.TaskKey,
+                run.ResultEnvelope!.ImmutableRemoteRef!,
+                run.ResultEnvelope.ResultSha,
+                run.TerminalAt ?? run.CreatedAt))
+            .Concat(reviews
+                .Where(review => !string.IsNullOrWhiteSpace(review.Subject.ResultRef))
+                .Select(review => new AttemptIndexedDeliveryRef(
+                    review.TaskKey,
+                    review.Subject.ResultRef!,
+                    review.Subject.ExpectedResultSha,
+                    review.Subject.CreatedAt)))
+            .Where(item => ReviewSubjectStore.IsValidResultSha(item.ResultSha))
+            .DistinctBy(item => $"{item.TaskKey}\0{item.Ref}\0{item.ResultSha}",
+                StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(item => item.RecordedAt)
+            .ToList();
+        return indexed;
     }
 
     private AttemptWriteResult ValidateRunWriteLocked(

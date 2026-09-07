@@ -174,8 +174,6 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
 {
     public const int MaxOutputLines = 300;
     public const int MaxFailureExcerptChars = 2_000;
-    internal const string FullOriginBranchesRefspec =
-        "+refs/heads/*:refs/remotes/origin/*";
     internal const string DependencyCacheDirectoryName = ".dependency-cache";
 
     private static readonly SemaphoreSlim ProcessGate = new(1, 1);
@@ -1061,7 +1059,8 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 .ConfigureAwait(false);
             if (available.ExitCode != 0)
             {
-                var fetchTarget = string.IsNullOrWhiteSpace(subjectRef) ? expectedSha : subjectRef;
+                var fetchTargets = SubjectFetchTargets(expectedSha, subjectRef);
+                var fetchTarget = fetchTargets[0];
                 var fetch = await RunGitAsync(
                     repositoryPath, ["fetch", "--no-tags", "origin", fetchTarget!],
                     Remaining(infrastructureTimeout, stopwatch.Elapsed), bounded.Token)
@@ -1072,11 +1071,19 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                     .ConfigureAwait(false);
                 if (available.ExitCode != 0)
                 {
-                    var fullFetch = await RunGitAsync(
-                        repositoryPath,
-                        ["fetch", "--no-tags", "origin", "--prune", FullOriginBranchesRefspec],
-                        Remaining(infrastructureTimeout, stopwatch.Elapsed),
-                        bounded.Token).ConfigureAwait(false);
+                    // A named subject can disappear after the result envelope is
+                    // accepted. Ask origin for the immutable object id as the
+                    // only fallback. Never mirror every origin branch into the
+                    // Task Server checkout: result and quarantine namespaces can
+                    // contain thousands of refs and are indexed by attempt
+                    // authority already.
+                    var shaFetch = fetchTargets.Count == 1
+                        ? fetch
+                        : await RunGitAsync(
+                            repositoryPath,
+                            ["fetch", "--no-tags", "origin", fetchTargets[1]],
+                            Remaining(infrastructureTimeout, stopwatch.Elapsed),
+                            bounded.Token).ConfigureAwait(false);
                     available = await RunGitAsync(
                         repositoryPath, ["cat-file", "-e", expectedSha + "^{commit}"],
                         Remaining(infrastructureTimeout, stopwatch.Elapsed), bounded.Token)
@@ -1085,7 +1092,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                     {
                         var fetchEvidence =
                             $"targeted fetch:\n{fetch.StandardOutput}\n{fetch.StandardError}\n" +
-                            $"full branch fetch:\n{fullFetch.StandardOutput}\n{fullFetch.StandardError}\n" +
+                            $"immutable SHA fetch:\n{shaFetch.StandardOutput}\n{shaFetch.StandardError}\n" +
                             $"subject probe:\n{available.StandardOutput}\n{available.StandardError}";
                         return WorkspacePreparation.Failed(
                             ClassifyInfrastructureOrMissing(fetchEvidence),
@@ -1096,7 +1103,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                                 stopwatch.Elapsed,
                                 "materialization",
                                 fetch,
-                                fullFetch,
+                                shaFetch,
                                 available));
                     }
 
@@ -1166,6 +1173,15 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 BudgetFailureReason("exact review subject materialization", budget),
                 violatedBudget: budget);
         }
+    }
+
+    internal static IReadOnlyList<string> SubjectFetchTargets(string expectedSha, string? subjectRef)
+    {
+        var targets = new List<string>(2);
+        if (!string.IsNullOrWhiteSpace(subjectRef)) targets.Add(subjectRef.Trim());
+        if (targets.Count == 0 || !string.Equals(targets[0], expectedSha, StringComparison.OrdinalIgnoreCase))
+            targets.Add(expectedSha);
+        return targets;
     }
 
     private static BuildTestGateBudgetEvidence? FirstInfrastructureBudget(

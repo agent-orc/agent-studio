@@ -60,7 +60,7 @@ public class GitProjectInventoryTests : IDisposable
     }
 
     [Fact]
-    public void Inventory_RealRepo_ClassifiesBranches_ListsWorktrees_AndRecentHistory()
+    public async Task Inventory_RealRepo_ClassifiesBranches_ListsWorktrees_AndRecentHistory()
     {
         var (repoRoot, watchPath) = SetupRepo();
 
@@ -93,10 +93,11 @@ public class GitProjectInventoryTests : IDisposable
         RunGit(repoRoot, "worktree", "add", worktreePath, "task/42");
 
         var git = BuildGitService(repoRoot, watchPath);
-        var inv = git.GetProjectInventory("Demo");
+        var inv = await git.RefreshProjectInventoryAsync("Demo");
 
         Assert.True(inv.IsRepo);
         Assert.Null(inv.Error);
+        Assert.NotNull(inv.ComputedAt);
         Assert.Equal("main", inv.CurrentBranch);
         Assert.NotNull(inv.RepositoryPath);
         Assert.True(Directory.Exists(inv.RepositoryPath!));
@@ -115,9 +116,9 @@ public class GitProjectInventoryTests : IDisposable
         // Worktrees: the primary checkout plus the task/42 worktree, each with a
         // concrete on-disk path.
         Assert.True(inv.Worktrees.Count >= 2);
-        var primary = Assert.Single(inv.Worktrees.Where(w => w.IsPrimary));
+        var primary = Assert.Single(inv.Worktrees, w => w.IsPrimary);
         Assert.False(string.IsNullOrWhiteSpace(primary.Path));
-        var taskWt = Assert.Single(inv.Worktrees.Where(w => w.Branch == "task/42"));
+        var taskWt = Assert.Single(inv.Worktrees, w => w.Branch == "task/42");
         Assert.False(taskWt.IsPrimary);
         Assert.False(string.IsNullOrWhiteSpace(taskWt.Path));
 
@@ -130,7 +131,7 @@ public class GitProjectInventoryTests : IDisposable
     }
 
     [Fact]
-    public void Inventory_FoldsLocalAndOriginRefs_AndKeepsOriginOnlyBranches()
+    public async Task Inventory_BoundsRemoteRefs_ToProtectedLines()
     {
         var (repoRoot, watchPath) = SetupRepo();
         WriteFile(repoRoot, "README.md", "seed");
@@ -145,21 +146,24 @@ public class GitProjectInventoryTests : IDisposable
         RunGit(repoRoot, "branch", "remote-only");
         RunGit(repoRoot, "push", "-q", "origin", "remote-only");
         RunGit(repoRoot, "branch", "-D", "remote-only");
+        RunGit(repoRoot, "branch", "develop");
+        RunGit(repoRoot, "push", "-q", "origin", "develop");
 
-        var inventory = BuildGitService(repoRoot, watchPath).GetProjectInventory("Demo");
+        var git = BuildGitService(repoRoot, watchPath);
+        var inventory = await git.RefreshProjectInventoryAsync("Demo");
         var branches = inventory.Branches.ToDictionary(branch => branch.Name, branch => branch);
 
         Assert.True(branches["main"].IsLocal);
         Assert.True(branches["main"].HasRemote);
         Assert.True(branches["local-only"].IsLocal);
         Assert.False(branches["local-only"].HasRemote);
-        Assert.False(branches["remote-only"].IsLocal);
-        Assert.True(branches["remote-only"].HasRemote);
+        Assert.DoesNotContain("remote-only", branches.Keys);
+        Assert.True(branches["develop"].HasRemote);
         Assert.Equal("origin/main", branches["main"].Upstream);
     }
 
     [Fact]
-    public void History_IsBoundedAndPaged_WithParentsAndRefDecorations()
+    public async Task History_IsBoundedAndPaged_WithParentsAndRefDecorations()
     {
         var (repoRoot, watchPath) = SetupRepo();
         for (var index = 0; index < 12; index++)
@@ -170,6 +174,7 @@ public class GitProjectInventoryTests : IDisposable
         }
 
         var git = BuildGitService(repoRoot, watchPath);
+        await git.RefreshProjectInventoryAsync("Demo");
         var first = git.GetProjectHistory("Demo", offset: 0, pageSize: 10);
         var second = git.GetProjectHistory("Demo", offset: first.NextOffset!.Value, pageSize: 10);
 
@@ -184,6 +189,69 @@ public class GitProjectInventoryTests : IDisposable
         Assert.Contains(first.Commits[0].Refs, reference => reference.Name == "main");
         Assert.Empty(first.Commits.Select(commit => commit.Sha)
             .Intersect(second.Commits.Select(commit => commit.Sha)));
+    }
+
+    [Fact]
+    public async Task Inventory_RequestPath_IsCacheOnly_AndSignatureChangeQueuesOneRefresh()
+    {
+        var (repoRoot, watchPath) = SetupRepo();
+        WriteFile(repoRoot, "README.md", "seed");
+        RunGit(repoRoot, "add", "-A");
+        RunGit(repoRoot, "commit", "-q", "-m", "seed");
+        var git = BuildGitService(repoRoot, watchPath);
+        var first = await git.RefreshProjectInventoryAsync("Demo");
+
+        using (GitProcessTelemetry.BeginRequest(
+                   "inventory-cache-test", NullLogger.Instance, includeNested: true))
+        {
+            var hit = git.GetProjectInventory("Demo");
+            Assert.Equal(first.ComputedAt, hit.ComputedAt);
+            Assert.Equal(0, GitProcessTelemetry.CurrentTally()!.Value.Spawns);
+        }
+
+        RunGit(repoRoot, "branch", "feature/signature-change");
+        var reads = Enumerable.Range(0, 32)
+            .AsParallel()
+            .Select(_ => git.GetProjectInventory("Demo"))
+            .ToList();
+        var stale = reads[0];
+        var coalesced = reads[^1];
+        Assert.Equal(first.ComputedAt, stale.ComputedAt);
+        Assert.Equal(first.ComputedAt, coalesced.ComputedAt);
+        Assert.Equal(1, git.InventoryRefreshQueueWrites);
+
+        var refreshed = await git.RefreshProjectInventoryAsync("Demo");
+        Assert.Contains(refreshed.Branches, branch => branch.Name == "feature/signature-change");
+        Assert.True(refreshed.ComputedAt > first.ComputedAt);
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task Inventory_IgnoresTwoThousandRemoteResultRefs()
+    {
+        var (repoRoot, watchPath) = SetupRepo();
+        WriteFile(repoRoot, "README.md", "seed");
+        RunGit(repoRoot, "add", "-A");
+        RunGit(repoRoot, "commit", "-q", "-m", "seed");
+        for (var index = 0; index < 2_000; index++)
+            RunGit(repoRoot, "update-ref", $"refs/remotes/origin/agent-studio/results/run-{index}/fence-1/result", "HEAD");
+
+        var git = BuildGitService(repoRoot, watchPath);
+        var inventory = await git.RefreshProjectInventoryAsync("Demo");
+
+        Assert.DoesNotContain(inventory.Branches,
+            branch => branch.Name.StartsWith("agent-studio/results/", StringComparison.Ordinal));
+        Assert.Single(inventory.Branches, branch => branch.Name == "main");
+        Assert.All(inventory.History!.Commits,
+            commit => Assert.DoesNotContain(commit.Refs,
+                reference => reference.Name.Contains("agent-studio/results/", StringComparison.Ordinal)));
+
+        var stopwatch = Stopwatch.StartNew();
+        stopwatch.Restart();
+        _ = git.GetProjectInventory("Demo");
+        stopwatch.Stop();
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromMilliseconds(50),
+            $"Cached inventory took {stopwatch.Elapsed.TotalMilliseconds:F1} ms.");
     }
 
     [Fact]

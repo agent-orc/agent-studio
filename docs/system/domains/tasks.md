@@ -651,6 +651,34 @@ cannot erase an operator decision.
   from `tasks/list-refresh`, so request rollups must remain at zero spawns even
   when HEAD churn causes the background refresh to recompute Git projections.
 
+## Project Git inventory contract
+
+- `GET /api/git/inventory` and `GET /api/git/history` return an in-memory
+  snapshot and never start Git on the request path. `GitInventoryRefreshHostedService`
+  warms every configured project at startup. A cold read returns an explicit
+  warming shape until that first snapshot completes.
+- Invalidation uses filesystem metadata for `.git/packed-refs`, `.git/refs`,
+  selected local and protected refs, and `HEAD`. An unchanged signature is a
+  cache hit. A changed signature queues one recomputation, and concurrent reads
+  coalesce while continuing to receive the previous snapshot. Every completed
+  inventory includes `computedAt`.
+- Inventory Git reads are bounded to local heads, tags, and the integration and
+  release remote-tracking lines. The history projection is computed on the
+  same background refresh, limited to 400 commits, and decorated from that same
+  bounded ref set. It never uses `git log --all`.
+- Result, quarantine, and salvage delivery refs come from task review-subject
+  and attempt indexes. They are not discovered by walking
+  `refs/remotes/origin/*`. Gate materialization fetches the named subject and
+  then its immutable SHA only; it never installs the wildcard origin refspec.
+- The daily retention pass removes local
+  `refs/remotes/origin/agent-studio/results/*` and
+  `refs/remotes/origin/agent-studio/quarantine/*` copies only when an archived
+  card indexes the exact ref. This sweep uses `git update-ref -d` locally and
+  never deletes or prunes a ref on origin.
+- `git-info` inventory telemetry records `refCount`, `computedAt`, and the cache
+  decision `hit`, `recompute`, or `coalesced`. Request telemetry records
+  `spawns=0`; subprocess timings belong to `git/inventory-refresh`.
+
 ## Execution location on task reads
 
 `GET /api/tasks`, `GET /api/tasks/grouped`, task detail, and SignalR task

@@ -129,16 +129,18 @@ public static class SystemEndpoints
             Results.Ok(git.GetProjectHygiene(project)));
 
         // Project Hub Git View: read-only branch / worktree / first graph-page
-        // inventory for one project. Cached ~3 s server-side. Deliberately
+        // inventory for one project. Requests return the last ref-signature
+        // keyed background snapshot and never start Git. Deliberately
         // project-scoped (never a global git client): it lists the project's
-        // local and origin branches, active checkouts, on-disk worktrees, and
+        // local branches, tags, protected origin lines, indexed delivery refs,
+        // active checkouts, on-disk worktrees, and
         // enriched commits so the tree can distinguish integration / feature /
         // task / runner state and hand a browsed SHA to the shared diff renderer.
         app.MapGet("/api/git/inventory", (string project, ProjectGitGraphService graph) =>
             Results.Ok(graph.BuildInventory(project)));
 
-        // Older graph rows are fetched only on explicit demand. Page size is
-        // clamped in GitService and every row is enriched through the same
+        // Older graph rows are paged from the same bounded background snapshot.
+        // Page size is clamped in GitService and every row is enriched through the same
         // cached develop/main presence resolver as the initial inventory page.
         app.MapGet("/api/git/history", (
             string project,

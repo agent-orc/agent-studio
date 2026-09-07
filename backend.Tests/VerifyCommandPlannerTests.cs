@@ -942,6 +942,21 @@ public sealed class BuildTestGateRunnerBehaviorTests : IDisposable
         Assert.Null(result.Workspace);
     }
 
+    [Fact]
+    public void ExactSubjectFetchTargets_NeverMaterializeTheOriginNamespace()
+    {
+        const string sha = "1111111111111111111111111111111111111111";
+        var targets = BuildTestGateRunner.SubjectFetchTargets(
+            sha,
+            "agent-studio/results/run-1/fence-1/1111111");
+
+        Assert.Equal(
+            ["agent-studio/results/run-1/fence-1/1111111", sha],
+            targets);
+        Assert.DoesNotContain(targets, target => target.Contains("refs/heads/*", StringComparison.Ordinal));
+        Assert.Equal([sha], BuildTestGateRunner.SubjectFetchTargets(sha, null));
+    }
+
     // MachineBound 21.07.: leader-hold vs 100 ms queue-budget is a wall-clock race
     // that flakes when the shared machine gate is under real load on the host.
     [Trait("Category", "MachineBound")]

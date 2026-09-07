@@ -12,23 +12,32 @@ namespace AgentStudio.Git;
 /// </summary>
 public sealed partial class ProjectGitGraphService
 {
+    private const int CachedHistoryLimit = 400;
     private readonly GitService _git;
     private readonly TaskScannerService _tasks;
     private readonly BoardMergeStatusService _presence;
     private readonly TaskRunnerService _runner;
+    private readonly AttemptAuthorityService _attempts;
     private readonly BuildIdentity _identity;
+    private readonly object _cacheGate = new();
+    private readonly Dictionary<string, GitProjectInventory> _cache =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, EnrichedHistorySnapshot> _historyCache =
+        new(StringComparer.OrdinalIgnoreCase);
 
     public ProjectGitGraphService(
         GitService git,
         TaskScannerService tasks,
         BoardMergeStatusService presence,
         TaskRunnerService runner,
+        AttemptAuthorityService attempts,
         IConfiguration configuration)
     {
         _git = git;
         _tasks = tasks;
         _presence = presence;
         _runner = runner;
+        _attempts = attempts;
         _identity = BuildIdentity.Load(configuration);
     }
 
@@ -38,9 +47,63 @@ public sealed partial class ProjectGitGraphService
         if (!inventory.IsRepo || string.IsNullOrWhiteSpace(inventory.RepositoryPath))
             return inventory;
 
+        lock (_cacheGate)
+        {
+            if (_cache.TryGetValue(projectName, out var cached)
+                && cached.ComputedAt == inventory.ComputedAt)
+                return cached;
+        }
+
+        // The raw snapshot can become visible immediately before its
+        // background enrichment callback finishes. Return it as-is in that
+        // narrow window so an HTTP poll never performs Git work.
+        return inventory;
+    }
+
+    internal void RefreshInventory(string projectName)
+    {
+        var inventory = _git.GetProjectInventory(projectName);
+        if (!inventory.IsRepo || string.IsNullOrWhiteSpace(inventory.RepositoryPath)) return;
         var tasks = ProjectTasks(projectName);
-        var taskByBranch = BuildTaskByBranch(tasks, inventory.Branches);
-        var branches = inventory.Branches
+        var deployments = DeploymentMarkers();
+        var history = _git.GetProjectHistory(projectName, 0, CachedHistoryLimit);
+        var enrichedHistory = EnrichHistory(
+            projectName,
+            inventory.RepositoryPath,
+            history,
+            tasks,
+            deployments);
+        var firstHistory = inventory.History is null
+            ? null
+            : PaginateHistory(
+                enrichedHistory.Commits,
+                inventory.History.Offset,
+                inventory.History.PageSize);
+        var enriched = BuildInventorySnapshot(
+            inventory with { History = firstHistory }, tasks, deployments);
+        lock (_cacheGate)
+        {
+            _cache[projectName] = enriched;
+            _historyCache[projectName] = new EnrichedHistorySnapshot(
+                inventory.ComputedAt,
+                enrichedHistory.Commits);
+        }
+    }
+
+    private GitProjectInventory BuildInventorySnapshot(
+        GitProjectInventory inventory,
+        IReadOnlyList<TaskInfo> tasks,
+        IReadOnlyList<GitDeploymentMarker> deployments)
+    {
+        var inventoryBranches = inventory.Branches
+            .Concat(IndexedDeliveryBranches(
+                tasks,
+                _attempts.GetIndexedDeliveryRefs(
+                    tasks.Select(task => task.TaskKey), includeArchived: true)))
+            .DistinctBy(branch => branch.Name, StringComparer.Ordinal)
+            .ToList();
+        var taskByBranch = BuildTaskByBranch(tasks, inventoryBranches);
+        var branches = inventoryBranches
             .Select(branch => branch with
             {
                 Tasks = taskByBranch.TryGetValue(branch.Name, out var cards) ? cards : [],
@@ -55,17 +118,12 @@ public sealed partial class ProjectGitGraphService
                         : null,
             })
             .ToList();
-        var deployments = DeploymentMarkers();
-        var history = inventory.History is null
-            ? null
-            : EnrichHistory(projectName, inventory.RepositoryPath, inventory.History, tasks, deployments);
-        var active = BuildActiveCheckouts(projectName, tasks, branches, worktrees);
+        var active = BuildActiveCheckouts(inventory.ProjectName, tasks, branches, worktrees);
 
         return inventory with
         {
             Branches = branches,
             Worktrees = worktrees,
-            History = history,
             ActiveCheckouts = active,
             Deployments = deployments,
         };
@@ -73,13 +131,35 @@ public sealed partial class ProjectGitGraphService
 
     public GitHistoryPage BuildHistory(string projectName, int offset, int pageSize)
     {
-        var page = _git.GetProjectHistory(projectName, offset, pageSize);
-        // GetProjectHistory warmed the inventory cache. Reuse that canonical
-        // repository path instead of resolving the git toplevel a second time.
+        offset = Math.Max(0, offset);
+        pageSize = Math.Clamp(pageSize, 10, 100);
         var inventory = _git.GetProjectInventory(projectName);
-        var root = inventory.IsRepo ? inventory.RepositoryPath : null;
-        if (root is null || page.Commits.Count == 0) return page;
-        return EnrichHistory(projectName, root, page, ProjectTasks(projectName), DeploymentMarkers());
+        lock (_cacheGate)
+        {
+            if (_historyCache.TryGetValue(projectName, out var cached)
+                && cached.ComputedAt == inventory.ComputedAt)
+                return PaginateHistory(cached.Commits, offset, pageSize);
+        }
+
+        // The raw snapshot can become visible just before background enrichment
+        // completes. Serve its in-memory history without presence enrichment so
+        // a ref-signature change cannot cause Git work on this request path.
+        return _git.GetProjectHistory(projectName, offset, pageSize);
+    }
+
+    private static GitHistoryPage PaginateHistory(
+        IReadOnlyList<GitGraphCommit> commits,
+        int offset,
+        int pageSize)
+    {
+        var page = commits.Skip(offset).Take(pageSize).ToList();
+        var hasMore = offset + page.Count < commits.Count;
+        return new GitHistoryPage(
+            offset,
+            pageSize,
+            hasMore ? offset + page.Count : null,
+            hasMore,
+            page);
     }
 
     private GitHistoryPage EnrichHistory(
@@ -186,6 +266,10 @@ public sealed partial class ProjectGitGraphService
         ];
     }
 
+    private sealed record EnrichedHistorySnapshot(
+        DateTimeOffset? ComputedAt,
+        IReadOnlyList<GitGraphCommit> Commits);
+
     internal static Dictionary<string, List<GitTaskBadge>> BuildTaskByCommit(
         IReadOnlyList<TaskInfo> tasks)
     {
@@ -279,6 +363,55 @@ public sealed partial class ProjectGitGraphService
         => string.IsNullOrWhiteSpace(task.FolderPath)
             ? null
             : ReviewSubjectStore.Read(task.FolderPath);
+
+    private static IEnumerable<GitBranchEntry> IndexedDeliveryBranches(
+        IReadOnlyList<TaskInfo> tasks,
+        IReadOnlyList<AttemptIndexedDeliveryRef> attemptRefs)
+    {
+        foreach (var indexed in attemptRefs)
+        {
+            var value = NormalizeBranch(indexed.Ref);
+            if (!IsDeliveryIndexRef(value)) continue;
+            yield return IndexedBranch(value, indexed.ResultSha, indexed.RecordedAt);
+        }
+
+        foreach (var task in tasks)
+        {
+            var subject = ReadReviewSubject(task);
+            if (subject is null || !ReviewSubjectStore.IsValidResultSha(subject.ResultSha)) continue;
+            foreach (var value in new[] { subject.ImmutableResultRef, subject.ResultRef }
+                         .Where(value => !string.IsNullOrWhiteSpace(value))
+                         .Select(value => NormalizeBranch(value!))
+                         .Where(IsDeliveryIndexRef)
+                         .Distinct(StringComparer.Ordinal))
+            {
+                yield return IndexedBranch(
+                    value, subject.ResultSha, subject.CompletedAtUtc.UtcDateTime);
+            }
+        }
+    }
+
+    private static GitBranchEntry IndexedBranch(string value, string sha, DateTime recordedAt)
+        => new(
+            value,
+            "other",
+            sha,
+            sha[..Math.Min(7, sha.Length)],
+            false,
+            null,
+            0,
+            0,
+            "Indexed immutable delivery",
+            recordedAt,
+            null,
+            IsLocal: false,
+            HasRemote: true,
+            RemoteTipSha: sha);
+
+    private static bool IsDeliveryIndexRef(string value)
+        => value.StartsWith("agent-studio/results/", StringComparison.Ordinal)
+            || value.StartsWith("agent-studio/quarantine/", StringComparison.Ordinal)
+            || value.StartsWith("agent-studio/salvage/", StringComparison.Ordinal);
 
     private static string? LatestCommitSha(TaskInfo task)
         => task.Commits.LastOrDefault()?.Sha ?? task.Commit?.Sha;
