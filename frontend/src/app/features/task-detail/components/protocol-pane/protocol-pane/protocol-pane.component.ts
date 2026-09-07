@@ -154,6 +154,13 @@ export class ProtocolPaneComponent implements OnDestroy {
   readonly chatSendLabel = input<string>('Send');
   readonly chatError = input<string | null>(null);
   readonly queuedFollowUp = input<boolean>(false);
+  /**
+   * True while the card carries a saved, not yet consumed follow-up
+   * (`pending-intent.json`). Quieter and more precise than
+   * {@link queuedFollowUp}: the prompt is on disk, so it survives restarts and
+   * the next run consumes it.
+   */
+  readonly pendingFollowUp = input<boolean>(false);
   readonly mutationsBlocked = input(false);
 
   readonly regenerating = input(false);

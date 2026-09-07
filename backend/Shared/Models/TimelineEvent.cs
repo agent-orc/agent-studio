@@ -300,7 +300,7 @@ public static class TimelineEventKinds
     /// carries the classification, repeat count, attempt ids, and the base ref /
     /// base commit / step / command the runner reported.
     /// </summary>
-    public const string ReviewInfrastructureRepeatDiagnosed = "review_infrastructure_repeat_diagnosed";
+    public const string ReviewInfrastructureRepeatDiagnosed = "review_infrastructure_repeat_diagnosed";
     /// AGT-2492: the recall sweep found that a parked card's recorded
     /// precondition no longer holds. <see cref="TimelineEvent.Summary"/> carries
     /// how long the card has been parked and why the blocker is considered gone;
@@ -318,6 +318,28 @@ public static class TimelineEventKinds
     /// executor, host, subject, and source run.
     /// </summary>
     public const string ReviewAttemptClaimed = "review_attempt_claimed";
+    /// <summary>
+    /// AGT-2747: a user follow-up was admitted as a queued intent instead of a
+    /// local run, because the card's lane, its delivery state, or its configured
+    /// execution location forbade spawning a process here.
+    /// <see cref="TimelineEvent.Details"/> carry the queue reason, the continue
+    /// mode, and the lane the card was promoted from.
+    /// </summary>
+    public const string FollowUpQueued = "follow_up_queued";
+    /// <summary>
+    /// AGT-2747: a run carrying an unconsumed user follow-up was stopped (lane
+    /// reconciliation, watchdog, quota cap), so the follow-up was written back
+    /// to <c>pending-intent.json</c> before the process died.
+    /// <see cref="TimelineEvent.Details"/> carry the stop reason and the mode.
+    /// </summary>
+    public const string FollowUpPreserved = "follow_up_preserved";
+    /// <summary>
+    /// AGT-2747: a run consumed a saved <c>pending-intent.json</c>. The consumed
+    /// copy is retained as <c>pending-intent.consumed.json</c> and
+    /// <see cref="TimelineEvent.RunId"/> names the run that took it, so an
+    /// operator can prove a queued steer actually reached an agent.
+    /// </summary>
+    public const string FollowUpConsumed = "follow_up_consumed";
 }
 
 /// <summary>

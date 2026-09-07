@@ -1693,9 +1693,13 @@ public class TaskMutationService
     /// <summary>
     /// Read and consume a saved pending intent. Returns null when there is
     /// nothing to consume. The file is renamed to
-    /// <c>pending-intent.consumed.json</c> first, then deleted on success;
-    /// if the caller's run fails to spawn, the rollback rule is to rename it
-    /// back so the next tick retries instead of losing the user's input.
+    /// <c>pending-intent.consumed.json</c>, which stays on disk as the
+    /// operator-visible proof that a queued follow-up reached a run (paired with
+    /// a <c>follow_up_consumed</c> ledger row). If the caller's run fails to
+    /// spawn, the rollback rule is to rename it back so the next tick retries
+    /// instead of losing the user's input - see
+    /// <see cref="RollbackStashedPendingIntent"/>, which only the run that
+    /// stashed the intent may call.
     /// </summary>
     public PendingIntent? ReadAndStashPendingIntent(string jobFolder)
     {
@@ -1717,21 +1721,6 @@ public class TaskMutationService
         {
             _logger.LogWarning(ex, "Failed to read pending-intent.json at {Path}", path);
             return null;
-        }
-    }
-
-    /// <summary>
-    /// Finalize a successful pending-intent consumption: drop the stashed
-    /// <c>pending-intent.consumed.json</c>. Call once the run is known to
-    /// have spawned successfully.
-    /// </summary>
-    public void DiscardStashedPendingIntent(string jobFolder)
-    {
-        var stash = Path.Combine(jobFolder, "pending-intent.consumed.json");
-        if (File.Exists(stash))
-        {
-            try { File.Delete(stash); }
-            catch (Exception ex) { _logger.LogDebug(ex, "Could not delete {Stash}", stash); }
         }
     }
 

@@ -55,6 +55,10 @@ state.
   the watchdog recovery policy.
 - `backend/Services/Runner/ProjectRunner.cs`: per-project pickup tick, active
   job latch, progress-first resume, dead-letter handling, and CLI spawn path.
+- `backend/Shared/Runner/FollowUpAdmissionPolicy.cs`: the pure lane / phase /
+  execution-location decision that gates whether a user follow-up may spawn a
+  local process or has to be queued as a saved intent. See
+  [Follow-ups: admission, queueing, preservation](#follow-ups-admission-queueing-preservation).
 - `cli-hosting/TaskCleanContextStore.cs`,
   `backend/Features/Cli/Execution/CleanContextPreparation.cs`, and
   `runner/CarWorkerExecution.cs`: the shared local/remote clean-home path,
@@ -1006,6 +1010,84 @@ the stalled-progress verdict, and whether any returned card has rejection
 evidence. The board mentions a latest rejection only when that evidence exists.
 The watchdog emits the rate-limited `remote-ready-starvation` warning event and
 clears the acute signal when claim progress, the queue, or capacity recovers.
+
+## Follow-ups: admission, queueing, preservation
+
+A user follow-up (`POST /api/tasks/{id}/continue` in mode `continue`, `steer`,
+`extend`, or `newTask`) and a manual `POST /api/tasks/{id}/start` are admitted
+against the card **before** any process is spawned. The rule exists because
+accepting a follow-up and then spawning a run that lane reconciliation kills a
+second later destroys the operator's input silently: the response already said
+`started`, the prompt only lives in the chat log, and no run ever reads it
+(three steers lost on 2026-09-07, AGT-2743).
+
+`FollowUpAdmissionPolicy` (`backend/Shared/Runner/FollowUpAdmissionPolicy.cs`)
+is a pure decision over three facts: the card's lane, its lifecycle phase, and
+the project's execution location resolved through `ProjectExecutionPolicy`
+against this backend's own `RunnerIdentity`.
+
+| Lane | Local follow-up run | Why |
+|---|---|---|
+| `0-backlog` | queued | never picked up; a follow-up belongs to the queue |
+| `1-preparation` | queued | same |
+| `1a-orchestrator-prep` | queued | same |
+| `2-ready` | **starts locally** | the runner's own pickup moves it to `3-progress` before spawning |
+| `3-progress` | **starts locally** | where a run belongs |
+| `3a-failed-pickup` | queued | `RunPlanner` never moves it to `3-progress`, so a run there is killed by lane reconciliation |
+| `3b-code-not-complete` | queued | same park-lane reason |
+| `4-auto-review` | queued | a delivery is being judged; the auto-review worker owns the card |
+| `5-human-review` | queued | delivery awaiting acceptance |
+| `5e-escalated` | queued | intervention basin |
+| `6-completed` | queued | terminal |
+| `7-archive` | queued | terminal |
+
+Two further gates apply to a card that is otherwise in a runnable lane:
+
+- **Delivery under review.** Phases `post-processing-running`,
+  `post-processing-blocked`, `awaiting-review`, and `integrating` mean the run
+  is over and its delivery is being handled. A follow-up sent then races the
+  auto-review worker and dies with `active job moved out of 3-progress`.
+- **Remote execution.** When `ProjectExecutionPolicy.ResolveExecutionLocation`
+  names a runner other than this backend, the follow-up belongs to that runner,
+  not to a local process. Admission runs before the local CLI-availability
+  check for exactly this reason: a card that will never run here must not be
+  refused because this host lacks the CLI.
+
+Precedence is lane, then delivery, then remote, so the `202` body always names
+the most fundamental obstacle.
+
+**Queueing is not a rejection.** A queued follow-up persists the prompt and
+mode as `pending-intent.json`, appends the usual continuation note to
+`prompt.md` (which is what a remote runner reads when it later claims the
+card), promotes the card to the top of `2-ready` with transition detail
+`follow-up-queued-<reason>`, writes a `follow_up_queued` ledger row, and answers
+`202 {"status":"queued","queued":{"reason":"lane-not-runnable"|"delivery-under-review"|"remote-execution"|"project-busy"}}`.
+A manual start carries no prompt, so nothing is persisted; the promotion alone
+carries the intent.
+
+**A kill never loses intent.** Every stop path that terminates a run still
+holding its execution slot - `ClearActiveJobIfMatches` (lane reconciliation and
+the move endpoint), the silence watchdog, and the quota-cap watchdog - calls
+`ProjectRunner.PreserveUnconsumedFollowUp` **before** stopping the process. It
+writes the follow-up back to `pending-intent.json` with reason
+`run-stopped:<why>`, appends a `follow_up_preserved` ledger row, and raises a
+supervisor advisory naming the card and the reason. A run whose CLI already
+exited is skipped: the agent has seen the follow-up, and the trailing
+post-processing lane move must not resurrect it.
+
+**Consumption is provable.** When a run consumes a saved intent, the file is
+renamed to `pending-intent.consumed.json` and kept, and a `follow_up_consumed`
+row records the run id. Only the run that stashed an intent may roll it back on
+spawn failure, so a later unrelated failure cannot replay a follow-up an agent
+already acted on. The card detail shows an unconsumed intent as one quiet line,
+"Follow-up waits for the next run."
+
+**`started` is honest.** A run that had to change lanes is watched for
+`Runner:FollowUpStartWindowMs` (1200 ms; `0` disables). If a preserved
+`pending-intent.json` re-appears inside that window, the run did not survive and
+the endpoint answers `409` with the reason while the intent stays persisted.
+The preservation half is the detector, so a run that legitimately finishes in
+under a second is never reported as lost.
 
 ## Verification
 
