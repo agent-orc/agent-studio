@@ -433,7 +433,8 @@ public sealed class WorkspaceArtifactCommitServiceTests : IDisposable
         var committed = RunGitCapture(_root, "show", "--name-only", "--format=", "HEAD");
         Assert.Contains("status.md", committed);
         Assert.DoesNotContain("cli-output.log", committed);
-        Assert.Contains("cli-output.log", RunGitCapture(_root, "status", "--short"));
+        Assert.True(File.Exists(large));
+        Assert.Empty(RunGitCapture(_root, "ls-files", Relative(large)));
     }
 
     private string JobFolder(string id) =>
