@@ -108,6 +108,7 @@ import { ClientService } from './services/client.service';
 import { NotificationService } from './services/notification.service';
 import type { TaskDetail, TaskInfo, WatchPathEntry, CliType } from './models/task.model';
 import { CLI_TYPES, TaskState } from './models/task.model';
+import { laneName, laneTone as laneToneFor, lanePresentation } from './models/lane-presentation';
 import { ErrorDialogService } from './services/error-dialog.service';
 import {
   cliTypeLabel as fmtCliTypeLabel,
@@ -574,28 +575,23 @@ export class App implements OnInit, OnDestroy {
     // (see PipelineCatalogue), so the retired 1a lane is not rendered.
     // Backlog-lane spec: 0-backlog leads the focus list when populated.
     const lanes: { state: string; title: string; icon: string; jobs: TaskInfo[] }[] = [
-      { state: TaskState.Backlog, title: 'Backlog', icon: '🗒️', jobs: grouped.backlog ?? [] },
-      { state: TaskState.Preparation, title: 'In Preparation', icon: '📋', jobs: grouped.preparation },
+      { ...laneChrome(TaskState.Backlog), jobs: grouped.backlog ?? [] },
+      { ...laneChrome(TaskState.Preparation), jobs: grouped.preparation },
     ];
     lanes.push(
-      { state: TaskState.Ready, title: 'Ready', icon: '📦', jobs: grouped.ready },
-      { state: TaskState.Progress, title: 'In Progress', icon: '🔵', jobs: grouped.progress },
+      { ...laneChrome(TaskState.Ready), jobs: grouped.ready },
+      { ...laneChrome(TaskState.Progress), jobs: grouped.progress },
     );
     // 3b-code-not-complete: hide-when-empty park lane.
     if ((grouped.codeNotComplete ?? []).length > 0) {
-      lanes.push({
-        state: TaskState.CodeNotComplete,
-        title: 'Code not complete',
-        icon: '🚧',
-        jobs: grouped.codeNotComplete,
-      });
+      lanes.push({ ...laneChrome(TaskState.CodeNotComplete), jobs: grouped.codeNotComplete });
     }
     lanes.push(
-      { state: TaskState.AutoReview, title: 'Post Processing', icon: '🤖', jobs: grouped.autoReview },
-      { state: TaskState.Escalated, title: 'Escalated', icon: '⚠️', jobs: grouped.escalated ?? [] },
-      { state: TaskState.HumanReview, title: 'Review', icon: '👁️', jobs: grouped.humanReview },
-      { state: TaskState.Completed, title: 'Delivered', icon: '🟢', jobs: grouped.completed },
-      { state: TaskState.Archive, title: 'Archive', icon: '🗄️', jobs: grouped.archive ?? [] },
+      { ...laneChrome(TaskState.AutoReview), jobs: grouped.autoReview },
+      { ...laneChrome(TaskState.Escalated), jobs: grouped.escalated ?? [] },
+      { ...laneChrome(TaskState.HumanReview), jobs: grouped.humanReview },
+      { ...laneChrome(TaskState.Completed), jobs: grouped.completed },
+      { ...laneChrome(TaskState.Archive), jobs: grouped.archive ?? [] },
     );
     return lanes;
   });
@@ -620,37 +616,17 @@ export class App implements OnInit, OnDestroy {
     //   3. 0-backlog                         — fresh inbox / triage
     const readySplit = splitReadyByPhase(grouped.ready);
     const backlogLanes: { state: string; title: string; icon: string; jobs: TaskInfo[] }[] = [];
-    backlogLanes.push({
-      state: TaskState.Ready,
-      title: 'Ready',
-      icon: '📦',
-      jobs: readySplit.humanReady,
-    });
+    backlogLanes.push({ ...laneChrome(TaskState.Ready), jobs: readySplit.humanReady });
     if (readySplit.intake.length > 0) {
       // Own "Preparation" lane: only pushed (so only rendered) while the
       // orchestrator-prep/intake loop is actually working a card, so the lane
       // is hidden whenever nothing is mid-preparation.
-      backlogLanes.push({
-        state: '2-ready-intake',
-        title: 'Preparation',
-        icon: '🛂',
-        jobs: readySplit.intake,
-      });
+      backlogLanes.push({ ...laneChrome('2-ready-intake'), jobs: readySplit.intake });
     }
-    backlogLanes.push({
-      state: TaskState.Preparation,
-      title: 'In Preparation',
-      icon: '📋',
-      jobs: grouped.preparation,
-    });
-    backlogLanes.push({
-      state: TaskState.Backlog,
-      title: 'Backlog',
-      icon: '🗒️',
-      jobs: grouped.backlog ?? [],
-    });
+    backlogLanes.push({ ...laneChrome(TaskState.Preparation), jobs: grouped.preparation });
+    backlogLanes.push({ ...laneChrome(TaskState.Backlog), jobs: grouped.backlog ?? [] });
     const activeLanes: { state: string; title: string; icon: string; jobs: TaskInfo[] }[] = [
-      { state: TaskState.Progress, title: 'In Progress', icon: '🔵', jobs: grouped.progress },
+      { ...laneChrome(TaskState.Progress), jobs: grouped.progress },
     ];
     // 3b-code-not-complete is a hide-when-empty park lane: the runner moves a
     // task here when it exhausts its auto-pickup retry budget without reaching
@@ -658,19 +634,9 @@ export class App implements OnInit, OnDestroy {
     // running. It sits at 3-progress / before review so the operator sees stuck
     // work next to what is actively running.
     if ((grouped.codeNotComplete ?? []).length > 0) {
-      activeLanes.push({
-        state: TaskState.CodeNotComplete,
-        title: 'Code not complete',
-        icon: '🚧',
-        jobs: grouped.codeNotComplete,
-      });
+      activeLanes.push({ ...laneChrome(TaskState.CodeNotComplete), jobs: grouped.codeNotComplete });
     }
-    activeLanes.push({
-      state: TaskState.AutoReview,
-      title: 'Post Processing',
-      icon: '🤖',
-      jobs: grouped.autoReview,
-    });
+    activeLanes.push({ ...laneChrome(TaskState.AutoReview), jobs: grouped.autoReview });
     const escalatedJobs = grouped.escalated ?? [];
     // Future option: metadata could apply this empty-lane policy to exception
     // lanes such as 1-preparation. For now it is intentionally Escalated-only.
@@ -691,10 +657,10 @@ export class App implements OnInit, OnDestroy {
         label: 'Done & Decide',
         lanes: [
           // Intervention comes before acceptance in the visible workflow.
-          ...(showEscalated ? [{ state: TaskState.Escalated, title: 'Escalated', icon: '⚠️', jobs: escalatedJobs }] : []),
-          { state: TaskState.HumanReview, title: 'Review', icon: '👁️', jobs: grouped.humanReview },
-          { state: TaskState.Completed, title: 'Delivered', icon: '🟢', jobs: grouped.completed },
-          { state: TaskState.Archive, title: 'Archive', icon: '🗄️', jobs: grouped.archive ?? [] },
+          ...(showEscalated ? [{ ...laneChrome(TaskState.Escalated), jobs: escalatedJobs }] : []),
+          { ...laneChrome(TaskState.HumanReview), jobs: grouped.humanReview },
+          { ...laneChrome(TaskState.Completed), jobs: grouped.completed },
+          { ...laneChrome(TaskState.Archive), jobs: grouped.archive ?? [] },
         ],
       },
     ];
@@ -741,13 +707,18 @@ export class App implements OnInit, OnDestroy {
    * targets, matching the context menu that refuses them as move targets.
    */
   readonly studioLaneOptions: readonly { state: string; label: string }[] = [
-    { state: TaskState.Preparation,   label: 'Preparation' },
-    { state: TaskState.Ready,         label: 'Ready' },
-    { state: TaskState.Escalated,     label: 'Escalated' },
-    { state: TaskState.HumanReview,   label: 'Review' },
-    { state: TaskState.Completed,     label: 'Delivered' },
-    { state: TaskState.Archive,       label: 'Archive' },
-  ];
+    TaskState.Preparation,
+    TaskState.Ready,
+    TaskState.Escalated,
+    TaskState.HumanReview,
+    TaskState.Completed,
+    TaskState.Archive,
+  ].map((state) => ({ state, label: laneName(state) }));
+
+  /** Lane tone key for the slim header's lane chip (AGT-2715). */
+  laneTone(state: string): string {
+    return laneToneFor(state);
+  }
 
   isStandardLane(state: string): boolean {
     return this.studioLaneOptions.some((o) => o.state === state);
@@ -2640,4 +2611,18 @@ export class App implements OnInit, OnDestroy {
   startResize(event: MouseEvent): void {
     this.uiPrefs.startResize(event);
   }
+}
+
+/**
+ * Board chrome for one lane: its state key, display name, and glyph, all read
+ * from the lane presentation catalogue.
+ *
+ * AGT-2715: the board used to spell out `title:` and `icon:` inline at each of
+ * the ~18 lane definitions across `focusGroups` and `laneGroups`. That is how
+ * the board column ended up calling `5-human-review` "Review" while the Result
+ * tab called the same lane "Human review lane".
+ */
+function laneChrome(state: string): { state: string; title: string; icon: string } {
+  const lane = lanePresentation(state);
+  return { state, title: lane.name, icon: lane.glyph };
 }

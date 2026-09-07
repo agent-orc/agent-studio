@@ -55,7 +55,8 @@ describe('OrchestratorContextHeaderComponent', () => {
     const task = text(fixture, 'orch-context-task');
     expect(task).toContain('AGT-1916');
     expect(task).toContain('Add orchestrator header');
-    expect(text(fixture, 'orch-context-lane')).toBe('progress');
+    // AGT-2715: the lane pill reads the catalogue name, not the raw slug tail.
+    expect(text(fixture, 'orch-context-lane')).toBe('In Progress');
     const header = fixture.nativeElement.querySelector('[data-testid="orch-context-header"]');
     expect(header.getAttribute('data-scope')).toBe('task');
     expect(fixture.nativeElement.querySelector('[data-testid="orch-context-board"]')).toBeNull();

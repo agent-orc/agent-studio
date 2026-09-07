@@ -1,10 +1,10 @@
 import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
 import type { TaskInfo } from '../../../../models/task.model';
-import { stateLabel } from '../../../../services/format.util';
 import { buildEpicGroups, EpicGroupView } from '../epic-grouping.util';
 import { TaskCardComponent } from '../task-card/task-card.component';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { StudioIconComponent, StudioIconName } from '../../../../components/studio-icon/studio-icon.component';
+import { laneName } from '../../../../models/lane-presentation';
 
 /**
  * Group-by-epic board view: the "Gruppieren nach Epic" toggle swaps the lane
@@ -55,7 +55,7 @@ export class EpicGroupBoardComponent {
   }
 
   laneLabel(state: string): string {
-    return stateLabel(state).replace(/-/g, ' ');
+    return laneName(state);
   }
 
   progressTooltip(group: EpicGroupView): string {

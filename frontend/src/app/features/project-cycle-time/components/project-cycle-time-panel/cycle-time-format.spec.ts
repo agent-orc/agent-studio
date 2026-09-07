@@ -51,7 +51,9 @@ describe('cycle-time formatting', () => {
     expect(laneLabel('4-auto-review')).toBe('Post Processing');
     expect(laneLabel('5e-escalated')).toBe('Escalated');
     expect(laneLabel('')).toBe('unknown');
-    expect(laneLabel('9-custom')).toBe('9-custom');
+    // AGT-2715: an unknown lane degrades to a readable name rather than
+    // leaking its raw key into a matrix header.
+    expect(laneLabel('9-custom')).toBe('Custom');
 
     expect(matrixLevel(0, 100)).toBe(0);
     expect(matrixLevel(5, 0)).toBe(0);

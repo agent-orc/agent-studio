@@ -1,3 +1,5 @@
+@use '../../../styles/lane-tone';
+
 /*
  * Task status card — schlank, kompakt, theme-aware. Used by the hover
  * popover over open-tabs / task-card hover (variant=popover) and inline
@@ -78,33 +80,18 @@ app-task-status-card {
     background: transparent;
   }
 
+  // Lane tone from the one shared token set (AGT-2715). This block used to
+  // pick generic accents per state — success-green for In Progress and
+  // accent-warn amber for Human review — which is why the same lane read
+  // amber here, purple on the detail header chip, and green nowhere else.
   &__lane {
-    color: var(--studio-fg);
-  }
+    @include lane-tone.vars;
 
-  // Lane-tone variants: pull the same semantic tokens the rest of the
-  // shell uses (accent / accent-warn / accent-success / accent-6) so the
-  // card adapts to the dark/light theme override block without carrying
-  // its own palette.
-  &__lane[data-state^='3-progress'],
-  &__lane[data-state='3-progress'] {
-    color: var(--studio-accent-success);
-    border-color: var(--studio-accent-success);
-  }
+    color: var(--lane-tone-fg);
 
-  &__lane[data-state='5-human-review'] {
-    color: var(--studio-accent-warn);
-    border-color: var(--studio-accent-warn);
-  }
-
-  &__lane[data-state='5e-escalated'] {
-    color: var(--lane-escalated);
-    border-color: var(--lane-escalated);
-  }
-
-  &__lane[data-state='4-auto-review'] {
-    color: var(--studio-accent);
-    border-color: var(--studio-accent);
+    &[data-lane-tone] {
+      border-color: var(--lane-tone-border);
+    }
   }
 
   &__lane-dot {

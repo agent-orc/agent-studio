@@ -311,7 +311,7 @@ test('each lane counter explains its lane via the canonical appTooltip', async (
   // Review-hue counter = Human Review (5-human-review).
   await page.getByTestId(`studio-explorer-project-board-count-human-review-${PROJECT}`).hover();
   await expect(tip).toBeVisible({ timeout: 5_000 });
-  await expect(tip).toHaveText(/Human Review.*waiting for your review/);
+  await expect(tip).toHaveText(/Human review.*waiting for your review/);
 
   const tipShot = test.info().outputPath('project-board-lane-counter-tooltip.png');
   await tip.screenshot({ path: tipShot });

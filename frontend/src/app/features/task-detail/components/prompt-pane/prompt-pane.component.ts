@@ -1,8 +1,9 @@
 import { ChangeDetectionStrategy, Component, ViewChild, computed, effect, inject, input, output, signal } from '@angular/core';
 import { LayoutPanesService } from '../../services/layout-panes.service';
 import { MarkdownViewComponent } from 'coding-agent-chat/markdown';
-import { TaskArtifact, TaskArtifactKind, TaskInfo, TaskPromptHistoryEntry, TaskTitleHistoryEntry, ReviewEvidenceEntry, ReviewEvidenceSource, TaskState } from '../../../../models/task.model';
+import {TaskArtifact, TaskArtifactKind, TaskInfo, TaskPromptHistoryEntry, TaskTitleHistoryEntry, ReviewEvidenceEntry, ReviewEvidenceSource} from '../../../../models/task.model';
 import type { CliType } from '../../../../models/task.model';
+import { laneName, laneTone as laneToneFor } from '../../../../models/lane-presentation';
 import type { CliModelInfo } from '../../../cli';
 import type { TaskScreenshot } from '../../../screenshots/models/screenshots.model';
 import { ScreenshotStripComponent } from '../../../screenshots/components/screenshot-strip/screenshot-strip.component';
@@ -285,21 +286,13 @@ export class PromptPaneComponent {
     return `${Math.round(months / 12)}y ago`;
   }
 
-  /** Human label for a kanban-state slug. Slugs match
-   *  STATE_TO_LANE in job.service.ts. */
+  /** Lane display name for the Description tab's meta chip (AGT-2715). */
   laneLabel(state: string): string {
-    switch (state) {
-      case TaskState.Backlog:          return 'Backlog';
-      case TaskState.Preparation:      return 'In Preparation';
-      case TaskState.OrchestratorPrep: return 'Orchestrator Prep';
-      case TaskState.Ready:            return 'Ready';
-      case TaskState.Progress:         return 'In Progress';
-      case TaskState.AutoReview:       return 'Post Processing';
-      case TaskState.HumanReview:      return 'Review';
-      case TaskState.Escalated:        return 'Escalated';
-      case TaskState.Completed:        return 'Delivered';
-      case TaskState.Archive:          return 'Archive';
-      default:                     return state ?? '';
-    }
+    return laneName(state);
+  }
+
+  /** Lane tone key for the same chip, so its colour matches every other surface. */
+  laneTone(state: string): string {
+    return laneToneFor(state);
   }
 }

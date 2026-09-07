@@ -25,6 +25,13 @@ Read them before any visual change; they override local convention. In short:
 - **R4 - Acute signals only for acute states**; history renders quietly (AGT-2049).
 - **R5 - Both themes always**, read tokens (never a one-theme hex), and every
   animation collapses to zero duration under `prefers-reduced-motion: reduce`.
+- **R9 - One name and one tone per lane, from one source.** A lane's display
+  name, role sentence, glyph, tone, and help topic live only in
+  `src/app/models/lane-presentation.ts`. Import `laneName()` / `laneSentence()`
+  / `laneGlyph()` / `laneTone()`; bind `[attr.data-lane-tone]` and include the
+  `styles/_lane-tone.scss` `vars` mixin instead of writing a per-lane colour
+  rule. `npm run lint:structure` fails on a hard-coded lane string. See the
+  Lane presentation section below.
 
 ## UI Verification — Playwright is mandatory after visual changes
 
@@ -147,6 +154,45 @@ When you add a new manual-target lane or a new move affordance, route it through
 Regression coverage (run with `PW_TARGET=stable`):
 - `e2e/task-detail/detail-lane-dropdown.spec.ts` — dropdown pages without moving; orchestrator lanes absent from the nav options.
 - `e2e/task-detail/detail-view-lane-pager.spec.ts` — context-menu moves keep the pager anchored on the original lane with the count shrinking by one.
+
+## Lane presentation: one name, one tone, one source (AGT-2715)
+
+A lane is named and tinted in exactly one place:
+[`src/app/models/lane-presentation.ts`](src/app/models/lane-presentation.ts).
+It carries, per lane state, the display `name`, the prose `sentence`, the
+`tone` key, the `glyph`, and the lane-guide `docTopic` — including the virtual
+`2-ready-intake` sub-lane and the legacy `4-review` / `1b-needs-human-review`
+keys, which borrow their parent lane's word and tone.
+
+Every surface that shows a lane reads it: board column headers, the detail
+header chip, the Overview and Description lane pills, the Result tab header,
+verdict signals, the decision badge, the task-status card, the Explorer lane
+counters, the cycle-time matrix, the project workflow section, and the lane
+pickers. **No component keeps its own lane string or its own per-lane colour
+rule.**
+
+Colour goes through the tone tokens: bind
+`[attr.data-lane-tone]="laneTone(state)"` and `@include lane-tone.vars;` from
+[`src/styles/_lane-tone.scss`](src/styles/_lane-tone.scss), then style from
+`--lane-tone-fg` / `-bg` / `-border`. The hue itself is still declared once per
+theme in the `--lane-*` palette in `_tokens-semantic.scss`.
+
+There is deliberately **no short-name field**. A second, shorter name is what
+caused the reported defect: the header chip said "Review" while the Result tab
+said "Human review lane", a badge normaliser rewrote that into "Human review",
+and the project workflow section said "Awaiting human review." One lane, one
+word — `5-human-review` is "Human review" everywhere.
+
+Enforced by `npm run lint:structure` →
+[`scripts/check-lane-strings.mjs`](scripts/check-lane-strings.mjs). It fails on
+a literal equal to a canonical lane name or role sentence, and on any retired
+wording. Genuine non-lane uses of the same word live in
+`scripts/lane-string-allowlist.json` with a reason.
+
+Locked by `src/app/models/lane-presentation.spec.ts`,
+`.../overview-pane/lane-wording-agrees.spec.ts`, and
+`e2e/task-detail/lane-presentation-one-source.spec.ts` (board column, header
+chip, and Result header agree on word and resolved colour, both themes).
 
 ## Explorer lane metrics mirror the board, and use the lane's own hue (AGT-2676)
 

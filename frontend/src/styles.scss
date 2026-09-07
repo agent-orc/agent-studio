@@ -11,6 +11,7 @@
 @use 'styles/deck-panel';
 @use 'styles/markdown-body';
 @use 'styles/empty-state';
+@use 'styles/lane-tone';
 @use 'app/components/tooltip/tooltip';
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -755,13 +756,19 @@ select option:hover {
   background-color: #45475a;
   color: #ffffff;
 }
-/* Active work is warm across cards, chips, and the board lane header. */
-.column[data-state='3-progress'] .column__header {
-  border-bottom-color: color-mix(in srgb, var(--lane-progress) 55%, var(--studio-border));
+/* Board lane header wears the lane's one tone (AGT-2715) — the same token the
+   detail header chip and the Result header dot read. This used to single out
+   3-progress with a hard-coded --lane-progress rule, so every other lane's
+   header carried no colour cue at all while that same lane was tinted
+   elsewhere. Tone tokens: styles/_lane-tone.scss. */
+.column__header[data-lane-tone] {
+  @include lane-tone.vars;
+
+  border-bottom-color: var(--lane-tone-border);
 }
-.column[data-state='3-progress'] .column__icon,
-.column[data-state='3-progress'] .column__title {
-  color: var(--lane-progress);
+.column__header[data-lane-tone] .column__icon,
+.column__header[data-lane-tone] .column__title {
+  color: var(--lane-tone-fg);
 }
 /* Shared action-feedback contract. The directive owns state semantics while
    this global primitive lets every native button inherit one visual pattern. */

@@ -419,7 +419,9 @@ test.describe('Pipeline: orchestrator-review rows are distinct, single final ver
     expect(Math.max(...phaseHeights) - Math.min(...phaseHeights), JSON.stringify(phaseHeights)).toBeLessThanOrEqual(1);
 
     await finalVerdict.hover();
-    await expect(page.getByTestId('cac-tooltip')).toContainText('Run outcome: Human review lane');
+    // AGT-2715: the tooltip title is the lane's one name, not a bespoke
+    // "Human review lane" wording that only this surface used.
+    await expect(page.getByTestId('cac-tooltip')).toContainText('Run outcome: Human review');
     await expect(page.getByTestId('cac-tooltip')).toContainText('waiting for a human decision');
 
     if (RESULTS_DIR) {

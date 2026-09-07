@@ -203,7 +203,7 @@ Do **not** select by CSS class names; they belong to styling and change often.
 | `kanban-ready-lane-width.spec.ts` | Ready lane width parity and lack of horizontal scrollbar |
 | `kanban-reorder-drop-on-top.spec.ts` | Kanban lane reorder: drop-on-top must set order=1 |
 | `kanban-seven-lanes.spec.ts` | ADR-0025 seven-lane kanban |
-| `lane-rename-no-human-prefix.spec.ts` | renders Ready / Review / Post Processing headings and never legacy human or auto-review headings |
+| `lane-rename-no-human-prefix.spec.ts` | renders Ready / Human review / Post Processing headings and never legacy human-prefixed or auto-review headings |
 | `lane-reorder-default-sort.repro.spec.ts` | REPRO default-sort within-lane reorder |
 | `lane-reorder-drag.spec.ts` | Lane drag-and-drop reorder |
 | `lane-reorder-drop-on-card.spec.ts` | Within-lane drag-drop never drops the card from the lane |
@@ -524,7 +524,7 @@ Do **not** select by CSS class names; they belong to styling and change often.
 | `watchdog-notification-operator-copy.spec.ts` | watchdog Suspicious notification reads in operator-friendly English |
 | `workspace-banner-long-message.spec.ts` | workspace banner clamps long auto-review verdict and keeps project below body |
 
-### `task-detail/` - 92 specs
+### `task-detail/` - 93 specs
 
 | Spec | Summary |
 |------|---------|
@@ -561,6 +561,7 @@ Do **not** select by CSS class names; they belong to styling and change often.
 | `inspector-tab-default.spec.ts` | Detail inspector - default tab |
 | `job-results-html-render.spec.ts` | Beautiful HTML result rendering |
 | `lane-badge-equals-pager-total.spec.ts` | Lane badge == pager total (project-scoped Review) |
+| `lane-presentation-one-source.spec.ts` | AGT-2715 lane presentation comes from one source |
 | `log-overlay-centering.spec.ts` | Log overlay (maximized agent log) - centering |
 | `open-failed-task.spec.ts` | open the failed screenshots-in-editors task and capture errors |
 | `overview-agent-metrics-fix.spec.ts` | Overview agent-run metrics fix (tokens + cumulative duration) |

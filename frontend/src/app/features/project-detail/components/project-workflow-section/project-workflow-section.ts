@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, OnInit, computed, inject, input, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { TaskService } from '../../../../services/task.service';
-import { TaskState } from '../../../../models/task.model';
+import { laneSentence } from '../../../../models/lane-presentation';
 import type { PipelineCatalogueStep, PipelineStepSetting } from '../../../../features/task-pipeline';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import {
@@ -66,11 +66,15 @@ export class ProjectWorkflowSectionComponent implements OnInit {
   private readonly jobService = inject(TaskService);
 
   // ---- Lane list (read-only, board order) ----
+  // Name, glyph, role sentence, and tone all come from the lane presentation
+  // (AGT-2715). This page used to keep its own role copy, which is how it ended
+  // up saying "Awaiting human review." for the lane every other surface called
+  // something else.
   readonly lanes: readonly WorkflowLaneRow[] = SORTABLE_LANES.map((lane) => ({
     state: lane.state,
     label: lane.label,
     icon: lane.icon,
-    role: LANE_ROLES[lane.state] ?? '',
+    role: laneSentence(lane.state),
   }));
 
   // ---- Board sort per lane (the only writeable controls; shown in the lane list) ----
@@ -197,19 +201,6 @@ export class ProjectWorkflowSectionComponent implements OnInit {
     });
   }
 }
-
-/** Role copy per lane, keyed by canonical lane state. Board order via SORTABLE_LANES. */
-const LANE_ROLES: Record<string, string> = {
-  [TaskState.Backlog]: 'Captured but not yet scheduled.',
-  [TaskState.Preparation]: 'Intake and preparation before the task is workable.',
-  [TaskState.Ready]: 'Queued and ready for pickup.',
-  [TaskState.Progress]: 'A run is executing the task (runner-owned).',
-  [TaskState.AutoReview]: 'Post Processing — automated review gates run here (orchestrator-owned).',
-  [TaskState.HumanReview]: 'Awaiting human review.',
-  [TaskState.Escalated]: 'Escalated for operator attention.',
-  [TaskState.Completed]: 'Delivered and accepted.',
-  [TaskState.Archive]: 'Archived; out of the active workflow.',
-};
 
 const AUTO_PUSH_LABELS: Record<AutoPushStrategy, string> = {
   'never': 'Never',
