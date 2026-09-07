@@ -610,4 +610,104 @@ describe('StudioTabStateService', () => {
       expect(restored.tabs().map(t => studioTabKey(t))).toEqual([ALL_BOARD_KEY]);
     });
   });
+
+  /**
+   * AGT-2692: opening a task is navigation into a detail, never a project
+   * switch. The tab records the board context it was opened from so the
+   * consumers of the app-wide scope (project picker, Explorer marker,
+   * BoardFiltersService) can keep "All projects" active while the task
+   * detail loads through its own project handle.
+   */
+  describe('task tab remembers the board context it was opened from', () => {
+    const taskTab = (state: StudioTabStateService, taskKey: string) =>
+      state.tabs().find(t => studioTabKey(t) === `task:${taskKey}`) as
+        { kind: 'task'; taskKey: string; scope?: unknown } | undefined;
+
+    it('stamps all-projects scope when opened from the cross-project board', () => {
+      expect(svc.activeKey()).toBe(ALL_BOARD_KEY);
+      svc.open({ kind: 'task', taskKey: 'AGT-1' });
+      expect(taskTab(svc, 'AGT-1')?.scope).toEqual({ kind: 'all-projects' });
+    });
+
+    it('stamps the project when opened from that project board', () => {
+      svc.open({ kind: 'board', projectName: 'Studio' });
+      svc.open({ kind: 'task', taskKey: 'AGT-1' });
+      expect(taskTab(svc, 'AGT-1')?.scope).toEqual({ kind: 'project', projectName: 'Studio' });
+    });
+
+    it('keeps the workspace-wide scope of the surface for Feed and Epics origins', () => {
+      svc.open({ kind: 'feed' });
+      svc.open({ kind: 'task', taskKey: 'AGT-1' });
+      expect(taskTab(svc, 'AGT-1')?.scope).toEqual({ kind: 'all-projects' });
+
+      svc.open({ kind: 'epics', projectName: null });
+      svc.open({ kind: 'task', taskKey: 'AGT-2' });
+      expect(taskTab(svc, 'AGT-2')?.scope).toEqual({ kind: 'all-projects' });
+    });
+
+    it('leaves the scope unset when the origin is not a board context', () => {
+      svc.open({ kind: 'workspace-settings' });
+      svc.open({ kind: 'task', taskKey: 'AGT-1' });
+      expect(taskTab(svc, 'AGT-1')?.scope).toBeUndefined();
+    });
+
+    it('an explicit scope on the payload wins over the inherited one', () => {
+      svc.open({ kind: 'board', projectName: 'Studio' });
+      svc.open({ kind: 'task', taskKey: 'AGT-1', scope: { kind: 'all-projects' } });
+      expect(taskTab(svc, 'AGT-1')?.scope).toEqual({ kind: 'all-projects' });
+    });
+
+    it('re-opening an already-open task keeps its original scope', () => {
+      svc.open({ kind: 'task', taskKey: 'AGT-1' });
+      expect(taskTab(svc, 'AGT-1')?.scope).toEqual({ kind: 'all-projects' });
+      // Detour through a project board, then re-open the same task from there:
+      // it is the same tab, so it keeps the context it was born in.
+      svc.open({ kind: 'board', projectName: 'Studio' });
+      svc.open({ kind: 'task', taskKey: 'AGT-1' });
+      expect(taskTab(svc, 'AGT-1')?.scope).toEqual({ kind: 'all-projects' });
+    });
+
+    it('a pager step inherits the scope of the tab it retargets', () => {
+      svc.open({ kind: 'task', taskKey: 'AGT-1' });
+      svc.retarget('task:AGT-1', { kind: 'task', taskKey: 'AGT-2' });
+      expect(taskTab(svc, 'AGT-1')).toBeUndefined();
+      expect(taskTab(svc, 'AGT-2')?.scope).toEqual({ kind: 'all-projects' });
+    });
+
+    it('a task opened from an all-projects task inherits all-projects', () => {
+      svc.open({ kind: 'task', taskKey: 'AGT-1' });
+      svc.open({ kind: 'task', taskKey: 'AGT-2' });
+      expect(taskTab(svc, 'AGT-2')?.scope).toEqual({ kind: 'all-projects' });
+    });
+
+    it('closing the task returns to the All-projects board it was opened from', () => {
+      svc.open({ kind: 'task', taskKey: 'AGT-1' });
+      expect(svc.activeKey()).toBe('task:AGT-1');
+      svc.close('task:AGT-1');
+      expect(svc.activeKey()).toBe(ALL_BOARD_KEY);
+    });
+
+    it('persists the scope across a reload', () => {
+      svc.open({ kind: 'task', taskKey: 'AGT-1' });
+      TestBed.resetTestingModule();
+      TestBed.configureTestingModule({ providers: [StudioTabStateService] });
+      const restored = TestBed.inject(StudioTabStateService);
+      expect(taskTab(restored, 'AGT-1')?.scope).toEqual({ kind: 'all-projects' });
+    });
+
+    it('restores a pre-AGT-2692 snapshot without inventing a scope', () => {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          v: 1,
+          tabs: [{ kind: 'board', projectName: '__all__' }, { kind: 'task', taskKey: 'AGT-1' }],
+          activeKey: 'task:AGT-1',
+        }),
+      );
+      TestBed.resetTestingModule();
+      TestBed.configureTestingModule({ providers: [StudioTabStateService] });
+      const restored = TestBed.inject(StudioTabStateService);
+      expect(taskTab(restored, 'AGT-1')?.scope).toBeUndefined();
+    });
+  });
 });

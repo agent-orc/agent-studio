@@ -148,6 +148,43 @@ Regression coverage (run with `PW_TARGET=stable`):
 - `e2e/task-detail/detail-lane-dropdown.spec.ts` — dropdown pages without moving; orchestrator lanes absent from the nav options.
 - `e2e/task-detail/detail-view-lane-pager.spec.ts` — context-menu moves keep the pager anchored on the original lane with the count shrinking by one.
 
+## Opening a task never switches the active project (AGT-2692)
+
+A task tab carries the board context it was opened from: `TaskTab.scope`
+(`{ kind: 'all-projects' }` or `{ kind: 'project', projectName }`) in
+`studio-shell.types.ts`. Two different questions must stay separate:
+
+- **App scope**: what the project picker, the Explorer marker, the sidebar
+  CTAs, and `BoardFiltersService.activeProjects` represent. Read it from
+  `StudioShellComponent.currentProjectName` / the `activeTab()` switch in
+  `app.ts`, both of which answer from `tab.scope` for a task tab.
+- **Detail data scope**: the project handle the detail fetches through.
+  That is always the task's own `TaskInfo.projectName` / `watchPath`, resolved
+  by `TaskSelectionService.getDetailFor`. It never becomes the app scope.
+
+Conflating the two was the reported bug: opening a task from the "All
+projects" board called `setSoleProject(<task's project>)`, so the whole
+workspace narrowed to one project and closing the task stranded the operator
+there instead of returning them to the cross-project board.
+
+Callers do not thread the origin through. `StudioTabStateService.open()` /
+`retarget()` stamp a scope-less task tab via the pure `taskScopeForOrigin`,
+which reads the surface being left: the All-projects board, Feed, Chat
+history, and workspace-wide Epics / Dossiers hand down `all-projects`; a
+project board hands down that project; a task inherits from the task it
+replaced (so paging a lane keeps the context). An already-open tab keeps the
+scope it was born with, and a tab with no resolvable origin (pre-AGT-2692
+snapshot, deep link) leaves `scope` unset and falls back to the task's
+project. When you add a new surface that opens tasks, give it a branch in
+`taskScopeForOrigin` rather than re-deriving the scope at the call site.
+
+Locked by `studio-tab-state.service.spec.ts` (scope stamping, inheritance,
+persistence, legacy snapshots), `studio-shell.task-tab-scope.spec.ts` (the
+derived picker scope), and
+`e2e/studio-shell/all-projects-task-open-keeps-scope.spec.ts` (open from All
+projects keeps the scope and returns there on close; open from a project
+board still scopes to that project).
+
 ## Explorer lane metrics mirror the board, and use the lane's own hue (AGT-2676)
 
 The Explorer tree's per-project Board metrics (`<app-explorer-lane-dashboard>`,
