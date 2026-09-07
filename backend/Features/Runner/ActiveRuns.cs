@@ -27,6 +27,14 @@ internal sealed class ActiveRun
     public string? QuotaFallbackReason { get; set; }
     public RunIntent Intent { get; init; }
     public string? Followup { get; init; }
+
+    /// <summary>
+    /// The <see cref="ContinueModes"/> value the follow-up arrived with. Kept
+    /// next to <see cref="Followup"/> so a stop path can write the pair back as
+    /// a <see cref="PendingIntent"/> instead of losing the user's steer
+    /// (AGT-2747). Null when this run carries no user follow-up.
+    /// </summary>
+    public string? FollowupMode { get; init; }
     public RunPlan? Plan { get; init; }
     public int ReissueAttempt { get; init; }
     public bool IsUiIterationPipeline { get; init; }

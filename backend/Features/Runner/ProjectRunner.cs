@@ -1094,6 +1094,8 @@ public class ProjectRunner
             "[taskboard] stopping active job {JobId} on {Project}: quota cap exceeded ({Reason})",
             jobId, ProjectName, ev.DescribeReason());
 
+        PreserveUnconsumedFollowUp(jobId, "quota cap exceeded");
+
         try
         {
             var info = _scanner.FindJob(jobId, Entry.Path);
@@ -2324,6 +2326,12 @@ public class ProjectRunner
         var claimedRunThisCall = false;
         var processStartConfirmed = false;
         string? acquiredPickupLockFolder = null;
+        // Set only when THIS call stashed a saved follow-up. Every rollback is
+        // gated on it: pending-intent.consumed.json now survives a successful
+        // run as consumption evidence (AGT-2747), so an unrelated later failure
+        // must not move that stale copy back into pending-intent.json and replay
+        // a follow-up an agent already acted on.
+        PendingIntent? consumedIntent = null;
         try
         {
             var info = _scanner.FindJob(jobId, Entry.Path);
@@ -2413,6 +2421,7 @@ public class ProjectRunner
                     intent = RunIntent.UserContinue;
                     followupPrompt = stashed.Prompt;
                     mode = stashed.Mode;
+                    consumedIntent = stashed;
                 }
             }
 
@@ -2598,6 +2607,7 @@ public class ProjectRunner
                 JobFolder = jobFolder,
                 Intent = intent,
                 Followup = followupPrompt,
+                FollowupMode = mode,
                 Plan = plan,
                 ReissueAttempt = reissueAttempt,
                 IsUiIterationPipeline = isUiIterationPipeline,
@@ -2648,7 +2658,7 @@ public class ProjectRunner
                 const string missingRepository = "No authoritative Git repository is configured for this coding run.";
                 RecordWorktreePreparationFailure(jobId, missingRepository);
                 ReleaseRun(jobId);
-                _mutations.RollbackStashedPendingIntent(info.FolderPath);
+                if (consumedIntent is not null) _mutations.RollbackStashedPendingIntent(info.FolderPath);
                 if (movedToProgressThisCall)
                     RevertFailedStartFromProgress(jobId, info, intent);
                 NotifyStatus();
@@ -2687,7 +2697,7 @@ public class ProjectRunner
                     // worktree can be prepared/reused.
                     RecordWorktreePreparationFailure(jobId, prep.Error);
                     ReleaseRun(jobId);
-                    _mutations.RollbackStashedPendingIntent(info.FolderPath);
+                    if (consumedIntent is not null) _mutations.RollbackStashedPendingIntent(info.FolderPath);
                     // The run never started: roll the just-applied 3-progress move
                     // back to 2-ready so the deferred task does not linger as a
                     // zombie in 3-progress while its slot is free.
@@ -2787,7 +2797,7 @@ public class ProjectRunner
                         ["mode"] = info.Mode ?? string.Empty,
                     });
                 ReleaseRun(jobId);
-                _mutations.RollbackStashedPendingIntent(info.FolderPath);
+                if (consumedIntent is not null) _mutations.RollbackStashedPendingIntent(info.FolderPath);
                 if (movedToProgressThisCall)
                     RevertFailedStartFromProgress(jobId, info, intent);
                 NotifyStatus();
@@ -3009,7 +3019,7 @@ public class ProjectRunner
                 // Roll back the consumed pending-intent on spawn failure so
                 // the next auto-pickup retries instead of losing the user's
                 // input.
-                _mutations.RollbackStashedPendingIntent(info.FolderPath);
+                if (consumedIntent is not null) _mutations.RollbackStashedPendingIntent(info.FolderPath);
                 // A spawn failure on autopickup is a silent attempt for
                 // dead-letter purposes: the CLI never produced output. The
                 // OnCliFinished path that normally records this never fires
@@ -3119,8 +3129,29 @@ public class ProjectRunner
                     ["resumed"] = effResumeFlag ? "true" : "false",
                 });
 
-            // Spawn succeeded; drop the stashed intent (we've consumed it).
-            _mutations.DiscardStashedPendingIntent(info.FolderPath);
+            // Spawn succeeded, so the saved follow-up is now this run's prompt.
+            // The stash stays on disk as pending-intent.consumed.json: it is the
+            // operator's proof that a queued steer actually reached an agent,
+            // paired with a ledger row naming the run that took it (AGT-2747).
+            if (consumedIntent is not null)
+            {
+                _logger.LogInformation(
+                    "follow-up-consumed job={JobId} project={Project} mode={Mode} savedReason={SavedReason} run={RunId}",
+                    jobId, ProjectName, consumedIntent.Mode, consumedIntent.SavedReason, effSessionToResume ?? "<new-session>");
+                _timeline?.Append(
+                    info.FolderPath,
+                    TimelineEventKinds.FollowUpConsumed,
+                    TimelineActors.System,
+                    summary: $"Follow-up consumed by this run ({consumedIntent.Mode}).",
+                    runId: effSessionToResume,
+                    details: new()
+                    {
+                        ["mode"] = consumedIntent.Mode,
+                        ["savedReason"] = consumedIntent.SavedReason,
+                        ["savedAt"] = consumedIntent.SavedAt.ToString("O"),
+                        ["evidence"] = "pending-intent.consumed.json",
+                    });
+            }
             // Only a confirmed process start ends a visible no-slot wait. Early
             // admission/quota/spawn failures intentionally leave the wait visible.
             SteerPendingMarker.Clear(info.FolderPath, _logger);
@@ -3178,7 +3209,7 @@ public class ProjectRunner
             {
                 try { WriteSpawnFailureDiagnostic(admissionInfo, admissionInfo.CliType ?? "unknown", ex.Message); }
                 catch (Exception diagnosticEx) { _logger.LogDebug(diagnosticEx, "Could not persist admission-fault diagnostic for {JobId}", jobId); }
-                _mutations.RollbackStashedPendingIntent(admissionInfo.FolderPath);
+                if (consumedIntent is not null) _mutations.RollbackStashedPendingIntent(admissionInfo.FolderPath);
                 if (movedToProgressThisCall)
                     RevertFailedStartFromProgress(jobId, admissionInfo, intent);
             }
@@ -3359,6 +3390,7 @@ public class ProjectRunner
                     Summary = $"Watchdog auto-cancelled \"{info.Title}\" after {silence:F0}s of silence.",
                     Reasoning = $"No streamed activity for {silence:F0}s (run age {age:F0}s){phaseTag}. Process tree terminated; the run finalizes as failed."
                 });
+                PreserveUnconsumedFollowUp(jobId, $"watchdog auto-cancel after {silence:F0}s of silence");
                 try { cli.Stop(jobKey, RunStopReason.Watchdog); }
                 catch (Exception ex) { _logger.LogWarning(ex, "Watchdog kill failed for {JobId}", jobId); }
                 break;
@@ -7428,6 +7460,10 @@ public class ProjectRunner
             "Runner '{Project}' clearing active job '{JobId}': {Reason}",
             ProjectName, jobId, reason);
 
+        // Before the process dies: a user follow-up this run never got to act
+        // on must survive the kill (AGT-2747).
+        PreserveUnconsumedFollowUp(jobId, reason);
+
         if (_activeCliType != null)
         {
             try
@@ -7466,6 +7502,95 @@ public class ProjectRunner
         }
 
         NotifyStatus();
+        return true;
+    }
+
+    /// <summary>
+    /// Writes a still-unconsumed user follow-up back to <c>pending-intent.json</c>
+    /// before a stop path kills the run that carried it, so a steer can never be
+    /// destroyed by a kill it did not cause (AGT-2747; three steers lost on
+    /// 2026-09-07 when lane reconciliation shot down freshly started runs).
+    ///
+    /// <para>
+    /// Only a run that still holds its execution slot is preserved: once the CLI
+    /// has exited normally the agent has seen the follow-up, and the trailing
+    /// post-processing lane move must not resurrect it as a fresh intent.
+    /// </para>
+    /// </summary>
+    /// <returns>True when a follow-up was written back.</returns>
+    private bool PreserveUnconsumedFollowUp(string jobId, string reason)
+    {
+        var run = _activeRuns.Get(jobId);
+        if (run is null || !run.HoldsExecutionSlot) return false;
+        if (string.IsNullOrWhiteSpace(run.Followup)) return false;
+
+        var mode = ContinueModes.Normalize(run.FollowupMode);
+        var savedReason = FollowUpQueueReasons.RunStopped(reason);
+        PendingIntent? saved;
+        try
+        {
+            saved = _mutations.SavePendingIntent(
+                jobId, mode, run.Followup!,
+                reason: savedReason,
+                activeJobId: jobId,
+                watchPath: Entry.Path);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "follow-up-preserve-failed job={JobId} project={Project}", jobId, ProjectName);
+            return false;
+        }
+
+        if (saved is null)
+        {
+            _logger.LogError(
+                "follow-up-preserve-failed job={JobId} project={Project} reason={Reason}: the task could not be resolved",
+                jobId, ProjectName, reason);
+            return false;
+        }
+
+        _logger.LogWarning(
+            "follow-up-preserved job={JobId} project={Project} mode={Mode} reason={Reason} chars={Chars}",
+            jobId, ProjectName, mode, reason, run.Followup!.Length);
+
+        var folder = run.JobFolder;
+        try { folder = _scanner.FindJob(jobId, Entry.Path)?.FolderPath ?? folder; }
+        catch (Exception ex) { _logger.LogDebug(ex, "PreserveUnconsumedFollowUp: FindJob threw for {JobId}", jobId); }
+
+        if (!string.IsNullOrWhiteSpace(folder))
+        {
+            _timeline?.Append(
+                folder!,
+                TimelineEventKinds.FollowUpPreserved,
+                TimelineActors.System,
+                summary: $"Follow-up preserved: the run was stopped ({reason}). It waits for the next run.",
+                details: new Dictionary<string, string>
+                {
+                    ["mode"] = mode,
+                    ["reason"] = reason,
+                    ["savedReason"] = savedReason,
+                });
+        }
+
+        // Advisory, not intervention: the operator has to learn that a steer they
+        // believed was running is now waiting instead.
+        try
+        {
+            _ = _bus?.EmitAdvisoryAsync(new SupervisorAdvisory(
+                CreatedAt: DateTime.UtcNow,
+                Project: ProjectName,
+                Severity: SupervisorSeverity.Warn,
+                Source: SupervisorSource.HardCheck,
+                Topic: "follow-up-preserved",
+                Message: $"The run for \"{jobId}\" was stopped ({reason}) while carrying an unconsumed {mode} follow-up. " +
+                         "The follow-up was saved on the card and the next run will consume it.",
+                JobId: jobId));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Advisory for preserved follow-up failed for {JobId}", jobId);
+        }
+
         return true;
     }
 

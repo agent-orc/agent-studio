@@ -45,8 +45,8 @@ public record ContinueJobResponse
 
 public record ContinueJobQueuedInfo
 {
-    /// <summary><c>project-busy</c> is the only reason today.</summary>
-    public string Reason { get; init; } = "project-busy";
+    /// <summary>One of <see cref="FollowUpQueueReasons"/>.</summary>
+    public string Reason { get; init; } = FollowUpQueueReasons.ProjectBusy;
     /// <summary>The job that was running when the user's send hit; for context only.</summary>
     public string? ActiveJobId { get; init; }
     public string? ActiveJobTitle { get; init; }
@@ -57,10 +57,12 @@ public record ContinueJobQueuedInfo
 }
 
 /// <summary>
-/// Saved user intent on a job that could not run immediately because the
-/// project was busy. Persisted as <c>pending-intent.json</c> in the job
-/// folder. The auto-pickup loop reads and consumes this when it runs the
-/// job, which turns the auto-pickup into a UserContinue with the saved
+/// Saved user intent on a job that could not run immediately - the project was
+/// busy, the lane did not admit a local run, a delivery was under review,
+/// execution is routed to a remote runner, or a run carrying the follow-up was
+/// stopped before it could act on it. Persisted as <c>pending-intent.json</c>
+/// in the job folder. The auto-pickup loop reads and consumes this when it runs
+/// the job, which turns the auto-pickup into a UserContinue with the saved
 /// follow-up + mode instead of a fresh start.
 /// </summary>
 public record PendingIntent
@@ -70,8 +72,11 @@ public record PendingIntent
     public string Mode { get; init; } = ContinueModes.Continue;
     public string Prompt { get; init; } = "";
     public DateTime SavedAt { get; init; }
-    /// <summary><c>project-busy</c> for now.</summary>
-    public string SavedReason { get; init; } = "project-busy";
+    /// <summary>
+    /// One of <see cref="FollowUpQueueReasons"/>, or <c>run-stopped:&lt;reason&gt;</c>
+    /// when a stopped run's unconsumed follow-up was written back.
+    /// </summary>
+    public string SavedReason { get; init; } = FollowUpQueueReasons.ProjectBusy;
     /// <summary>Diagnostic only: which job was active when this was saved.</summary>
     public string? SavedAgainstActiveJobId { get; init; }
 }

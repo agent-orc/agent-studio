@@ -52,6 +52,45 @@ describe('TaskDetailComponent (smoke)', () => {
   });
 });
 
+describe('TaskDetailComponent pending follow-up line', () => {
+  // AGT-2747: a saved follow-up that no run has consumed yet must be visible as
+  // one quiet line, so an operator can tell "the steer is waiting" from "the
+  // steer is gone" without opening the job folder.
+  async function build(pendingIntent: unknown, running: boolean) {
+    await TestBed.configureTestingModule({
+      imports: [TaskDetailComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(TaskDetailComponent);
+    const component = fixture.componentInstance;
+    fixture.componentRef.setInput('detail', {
+      info: { id: 'AGT-2747', watchPath: '/workspace', pendingIntent },
+    });
+    (component.isRunning as unknown as { set(value: boolean): void }).set(running);
+    return component;
+  }
+
+  it('shows the line while an unconsumed intent sits on the card', async () => {
+    const component = await build({ mode: 'steer', prompt: 'Do not squash.' }, false);
+    expect(component.showPendingFollowUp()).toBe(true);
+  });
+
+  it('stays quiet while the task is running', async () => {
+    const component = await build({ mode: 'steer', prompt: 'Do not squash.' }, true);
+    expect(component.showPendingFollowUp()).toBe(false);
+  });
+
+  it('stays quiet when no intent is saved', async () => {
+    const component = await build(undefined, false);
+    expect(component.showPendingFollowUp()).toBe(false);
+  });
+});
+
 describe('TaskDetailComponent Activity send flow', () => {
   function continueHarness(response = of({ status: 'queued' as const })) {
     const continueJob = vi.fn(() => response);

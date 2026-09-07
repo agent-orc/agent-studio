@@ -628,9 +628,6 @@ public class TaskRunnerService : BackgroundService
             info = _scanner.FindJob(jobId, watchPath) ?? info;
         }
 
-        var cli = _router.Get(info.CliType);
-        if (!cli.IsAvailable()) throw new TaskOperationException($"{cli.CliType} CLI is not installed or not on PATH", 400);
-
         // Persist override on the job so subsequent runs reuse it
         if (!string.IsNullOrWhiteSpace(modelOverride) && modelOverride != info.Model)
         {
@@ -644,8 +641,23 @@ public class TaskRunnerService : BackgroundService
             info = _scanner.FindJob(jobId, watchPath) ?? info;
         }
 
+        // Admission before spawn: a start that the lane, the delivery state, or
+        // the configured execution location forbids is queued, not spawned. A
+        // manual start carries no prompt, so nothing is persisted - the promotion
+        // to the top of 2-ready IS the intent. Evaluated before the local CLI
+        // check: a card routed to a remote runner must not be refused because
+        // this host lacks the CLI that will never run it.
+        var admission = FollowUpAdmissionPolicy.Decide(BuildFollowUpAdmissionFacts(info));
+        if (admission.Action == FollowUpAdmissionAction.Queue)
+            return QueueFollowUp(info, jobId, watchPath, ContinueModes.Continue, prompt: string.Empty, admission);
+
+        var cli = _router.Get(info.CliType);
+        if (!cli.IsAvailable()) throw new TaskOperationException($"{cli.CliType} CLI is not installed or not on PATH", 400);
+
+        var startedFrom = info.State;
         var outcome = await runner.StartJobManualAsync(jobId, ct);
-        return ShapeOutcome(outcome, info, jobId, watchPath, mode: ContinueModes.Continue, prompt: string.Empty);
+        var response = ShapeOutcome(outcome, info, jobId, watchPath, mode: ContinueModes.Continue, prompt: string.Empty);
+        return await ConfirmStartedRunAsync(response, info, jobId, watchPath, startedFrom, ct);
     }
 
     /// <summary>
@@ -672,9 +684,6 @@ public class TaskRunnerService : BackgroundService
             info = _scanner.FindJob(jobId, watchPath) ?? info;
         }
 
-        var cli = _router.Get(info.CliType);
-        if (!cli.IsAvailable()) throw new TaskOperationException($"{cli.CliType} CLI is not installed or not on PATH", 400);
-
         if (!string.IsNullOrWhiteSpace(modelOverride) && modelOverride != info.Model)
         {
             _mutations.SetJobModel(jobId, modelOverride, watchPath);
@@ -689,11 +698,46 @@ public class TaskRunnerService : BackgroundService
 
         var normalizedMode = ContinueModes.Normalize(mode);
 
+        // Admission before spawn (AGT-2747). Evaluated on the card, not on the
+        // runner's slot state: a lane that cannot hold a run, a delivery under
+        // review, or a remote execution location all mean "queue this", because
+        // a process started here would be killed by lane reconciliation within
+        // seconds while the caller had already been told "started". It also runs
+        // before the local CLI check, so a follow-up destined for a remote runner
+        // is never refused because this host lacks the CLI.
+        var admission = FollowUpAdmissionPolicy.Decide(BuildFollowUpAdmissionFacts(info));
+
+        // The follow-up joins the task's written record either way; only the
+        // question "does a process start here" depends on the admission.
+        await RecordUserFollowUpAsync(info, jobId, followupPrompt, normalizedMode, watchPath, ct);
+
+        if (admission.Action == FollowUpAdmissionAction.Queue)
+            return QueueFollowUp(info, jobId, watchPath, normalizedMode, followupPrompt, admission);
+
+        var cli = _router.Get(info.CliType);
+        if (!cli.IsAvailable()) throw new TaskOperationException($"{cli.CliType} CLI is not installed or not on PATH", 400);
+
+        var startedFrom = info.State;
+        var outcome = await runner.ContinueJobAsync(jobId, followupPrompt, normalizedMode, ct);
+        var response = ShapeOutcome(outcome, info, jobId, watchPath, normalizedMode, followupPrompt);
+        return await ConfirmStartedRunAsync(response, info, jobId, watchPath, startedFrom, ct);
+    }
+
+    /// <summary>
+    /// Writes the user's follow-up into the task's durable record before any
+    /// run decision: the extend-mode prompt history, the continuation note on
+    /// <c>prompt.md</c> (which is also what a remote runner reads when it later
+    /// claims the card), the <c>[user]</c> line the activity log polls, and the
+    /// typed bus projection.
+    /// </summary>
+    private async Task RecordUserFollowUpAsync(
+        TaskInfo info, string jobId, string followupPrompt, string mode, string? watchPath, CancellationToken ct)
+    {
         // Extend mode: persist the new prompt as its own prompt-N.md so the
         // task description grows blog-style. The agent still receives just
         // the new prompt (the runner handles framing); the historical files
         // are evidence and a renderable timeline for the UI.
-        if (normalizedMode == ContinueModes.Extend)
+        if (mode == ContinueModes.Extend)
         {
             try
             {
@@ -715,11 +759,8 @@ public class TaskRunnerService : BackgroundService
         // canonical transcript (the activity-log parser reads it); the bus
         // event is the typed projection that downstream messages chain onto
         // via correlationId.
-        try { _ = _bus?.EmitUserPromptAsync(info, followupPrompt, normalizedMode); }
+        try { _ = _bus?.EmitUserPromptAsync(info, followupPrompt, mode); }
         catch (Exception ex) { _logger.LogDebug(ex, "Bus mirror of user prompt failed for {JobId}", jobId); }
-
-        var outcome = await runner.ContinueJobAsync(jobId, followupPrompt, normalizedMode, ct);
-        return ShapeOutcome(outcome, info, jobId, watchPath, normalizedMode, followupPrompt);
     }
 
     /// <summary>
@@ -755,7 +796,7 @@ public class TaskRunnerService : BackgroundService
             // queued state.
             var savedIntent = _mutations.SavePendingIntent(
                 jobId, mode, prompt,
-                reason: "project-busy",
+                reason: FollowUpQueueReasons.ProjectBusy,
                 activeJobId: rej.BusyJobId,
                 watchPath: watchPath);
 
@@ -795,7 +836,7 @@ public class TaskRunnerService : BackgroundService
                 Status = "queued",
                 Queued = new ContinueJobQueuedInfo
                 {
-                    Reason = "project-busy",
+                    Reason = FollowUpQueueReasons.ProjectBusy,
                     ActiveJobId = rej.BusyJobId,
                     ActiveJobTitle = rej.BusyJobTitle,
                     Position = position > 0 ? position : 1,
@@ -812,6 +853,192 @@ public class TaskRunnerService : BackgroundService
 
         // CliUnavailable, None, or anything else: 400 with the message.
         throw new TaskOperationException(rej.Message ?? "Cannot start job", 400);
+    }
+
+    /// <summary>
+    /// Collects the plain facts <see cref="FollowUpAdmissionPolicy"/> needs:
+    /// the card's lane and lifecycle phase, plus the project's resolved
+    /// execution location measured against this backend's own runner identity.
+    /// </summary>
+    private FollowUpAdmissionFacts BuildFollowUpAdmissionFacts(TaskInfo info)
+    {
+        var settings = _projectSettings.Get(info.ProjectName);
+        return new FollowUpAdmissionFacts(
+            Lane: info.State,
+            Phase: info.Phase,
+            ExecutionLocation: ProjectExecutionPolicy.ResolveExecutionLocation(settings),
+            LocalRunnerId: _runnerIdentity?.RunnerId,
+            LocalRunnerName: _runnerIdentity?.RunnerName);
+    }
+
+    /// <summary>
+    /// Queues a follow-up the admission refused to start locally: persist the
+    /// prompt as <c>pending-intent.json</c>, promote the card to the top of
+    /// <c>2-ready</c> so the next local pickup or remote claim consumes it, and
+    /// shape the <c>202 {"status":"queued"}</c> answer.
+    ///
+    /// <para>
+    /// A manual start carries no prompt. Nothing is persisted then - saving an
+    /// empty intent would leave a badge on the card that no run would ever
+    /// consume - and the promotion alone carries the operator's intent.
+    /// </para>
+    /// </summary>
+    private ContinueJobResponse QueueFollowUp(
+        TaskInfo info,
+        string jobId,
+        string? watchPath,
+        string mode,
+        string prompt,
+        FollowUpAdmissionDecision decision)
+    {
+        var reason = decision.QueueReason ?? FollowUpQueueReasons.LaneNotRunnable;
+        var hasPrompt = !string.IsNullOrWhiteSpace(prompt);
+        if (hasPrompt)
+        {
+            _mutations.SavePendingIntent(
+                jobId, mode, prompt,
+                reason: reason,
+                activeJobId: null,
+                watchPath: watchPath);
+        }
+
+        var fromState = info.State;
+        var position = _states.PromoteToReadyTop(
+            jobId, watchPath,
+            transitionCause: LaneChangeCauses.ForOperatorMove(fromState, TaskStates.Ready),
+            transitionDetail: $"follow-up-queued-{reason}");
+
+        var refreshed = _scanner.FindJob(jobId, watchPath) ?? info;
+        _logger.LogInformation(
+            "follow-up-queued job={JobId} project={Project} reason={Reason} mode={Mode} from={From} position={Position} detail={Detail}",
+            jobId, info.ProjectName, reason, mode, fromState, position, decision.Detail);
+
+        try
+        {
+            _timeline?.Append(
+                refreshed.FolderPath,
+                TimelineEventKinds.FollowUpQueued,
+                TimelineActors.System,
+                summary: hasPrompt
+                    ? $"Follow-up queued ({reason}); it waits for the next run."
+                    : $"Start queued ({reason}); the card waits for the next run.",
+                details: new Dictionary<string, string>
+                {
+                    ["reason"] = reason,
+                    ["mode"] = mode,
+                    ["fromLane"] = fromState,
+                    ["detail"] = decision.Detail,
+                });
+
+            var queuedLine = hasPrompt
+                ? $"[queued] Saved your follow-up: {decision.Detail}. This task moved from {fromState} to 2-ready (position {position}); the next run consumes it."
+                : $"[queued] {decision.Detail}. This task moved from {fromState} to 2-ready (position {position}).";
+            _chatLog.Append(refreshed, OrchestratorMessageKind.Decision, queuedLine);
+
+            _orchestratorLog.Append(refreshed.WatchPath, new OrchestratorLogEntry
+            {
+                Kind = OrchestratorLogKinds.Decision,
+                Topic = OrchestratorLogTopics.TaskQueued,
+                JobId = jobId,
+                Summary = $"Queued a {mode} follow-up for \"{refreshed.Title}\" ({reason}); promoted from {fromState} to 2-ready (position {position}).",
+                Reasoning = $"Follow-up admission refused a local start: {decision.Detail}. " +
+                            (hasPrompt
+                                ? "The prompt is persisted as pending-intent.json on the task; the next run (local pickup or remote claim) consumes it."
+                                : "No prompt accompanied the start, so the promotion alone carries the intent.")
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to write [queued] meta for {JobId}", jobId);
+        }
+
+        return new ContinueJobResponse
+        {
+            Status = "queued",
+            Queued = new ContinueJobQueuedInfo
+            {
+                Reason = reason,
+                Position = position > 0 ? position : 1,
+                PromotedFromState = fromState
+            }
+        };
+    }
+
+    /// <summary>
+    /// Honest <c>started</c>: a run that a stop path killed inside the start
+    /// window is reported as <c>409</c>, not as a successful start.
+    ///
+    /// <para>
+    /// The detector is the preservation half of this feature: every stop path
+    /// that kills a run carrying an unconsumed follow-up writes the follow-up
+    /// back to <c>pending-intent.json</c> first
+    /// (<c>ProjectRunner.PreserveUnconsumedFollowUp</c>). A <em>fresh</em>
+    /// <c>run-stopped:</c> intent on the job we just started IS the proof that
+    /// the run did not survive - no guessing from process status, and no false
+    /// alarm for a run that legitimately finished in under a second. Freshness
+    /// matters because a card can already carry an older, still-unconsumed
+    /// intent when the operator continues it by hand.
+    /// </para>
+    ///
+    /// <para>
+    /// Only runs that had to change lanes are watched. A continue on a card
+    /// already in <c>3-progress</c> performs no lane move, so lane
+    /// reconciliation cannot fire against it and the caller keeps the fast path.
+    /// </para>
+    /// </summary>
+    private async Task<ContinueJobResponse> ConfirmStartedRunAsync(
+        ContinueJobResponse response,
+        TaskInfo info,
+        string jobId,
+        string? watchPath,
+        string startedFromLane,
+        CancellationToken ct)
+    {
+        if (response.Status != "started") return response;
+        if (startedFromLane == TaskStates.Progress) return response;
+
+        var window = ResolveStartWindow(_config);
+        if (window <= TimeSpan.Zero) return response;
+
+        // A card can already carry an unconsumed intent when the operator
+        // continues it by hand; only an intent this window did not start with
+        // counts as evidence that the run was killed.
+        var intentBefore = info.PendingIntent;
+
+        var deadline = DateTime.UtcNow + window;
+        var poll = TimeSpan.FromMilliseconds(200);
+        while (true)
+        {
+            var remaining = deadline - DateTime.UtcNow;
+            if (remaining <= TimeSpan.Zero) break;
+            try { await Task.Delay(remaining < poll ? remaining : poll, ct); }
+            catch (OperationCanceledException) { return response; }
+
+            var preserved = _scanner.FindJob(jobId, watchPath)?.PendingIntent;
+            if (!FollowUpAdmissionPolicy.IsStartWindowLoss(intentBefore, preserved)) continue;
+
+            _logger.LogWarning(
+                "follow-up-start-lost job={JobId} project={Project} from={From} savedReason={SavedReason}",
+                jobId, info.ProjectName, startedFromLane, preserved.SavedReason);
+            throw new TaskOperationException(
+                $"The run was stopped inside the start window ({preserved.SavedReason}). " +
+                "Your follow-up stays saved on the task and the next run consumes it.",
+                409);
+        }
+
+        return response;
+    }
+
+    /// <summary>
+    /// How long <see cref="ConfirmStartedRunAsync"/> watches a freshly started
+    /// run before answering <c>started</c>. <c>Runner:FollowUpStartWindowMs</c>
+    /// overrides it; <c>0</c> disables the check (tests, and operators who
+    /// prefer the older optimistic answer).
+    /// </summary>
+    internal static TimeSpan ResolveStartWindow(IConfiguration cfg)
+    {
+        var ms = cfg.GetValue("Runner:FollowUpStartWindowMs", 1200);
+        return ms <= 0 ? TimeSpan.Zero : TimeSpan.FromMilliseconds(Math.Min(ms, 10_000));
     }
 
     /// <summary>

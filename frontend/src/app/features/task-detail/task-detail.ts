@@ -789,6 +789,16 @@ export class TaskDetailComponent implements OnDestroy {
     return this.queuedFollowUp() || !!this.detail().info.pendingIntent;
   });
 
+  /**
+   * A saved follow-up sits on the card and no run has consumed it yet. Shown as
+   * one quiet line so an operator can tell "the steer is waiting" from "the
+   * steer is gone" without opening the job folder (AGT-2747).
+   */
+  readonly showPendingFollowUp = computed<boolean>(() => {
+    if (this.isRunning()) return false;
+    return !!this.detail().info.pendingIntent;
+  });
+
   startJob(): void {
     this.errorMsg.set(null);
     this.starting.set(true);

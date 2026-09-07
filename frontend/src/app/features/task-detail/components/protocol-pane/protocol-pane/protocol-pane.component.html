@@ -494,6 +494,11 @@
                      data-testid="activity-chat-error" role="alert">
                     {{ chatError() }} Your draft was restored. Edit it or Send again to retry.
                   </p>
+                } @else if (pendingFollowUp()) {
+                  <p class="chat-compose__status"
+                     data-testid="activity-chat-pending-followup" role="status">
+                    Follow-up waits for the next run.
+                  </p>
                 } @else if (queuedFollowUp()) {
                   <p class="chat-compose__status"
                      data-testid="activity-chat-queued" role="status">
