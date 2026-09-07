@@ -570,10 +570,10 @@ export class StudioShellComponent {
   });
 
   /**
-   * The project the user is contextually "in" — drives the active titlebar
+   * The project the application is scoped to. This drives the active titlebar
    * pill and the default project for sidebar CTAs. Board/Deck tabs name a
-   * project directly; Task/Activity tabs resolve through the job index;
-   * Diff/Welcome fall back to the last-known board project.
+   * project directly. Task/Activity tabs preserve the existing board-filter
+   * scope because their owning project is only a detail data handle.
    */
   readonly currentProjectName = computed<string | null>(() => {
     const tab = this.activeTab();
@@ -584,8 +584,8 @@ export class StudioShellComponent {
     if (tab.kind === 'hub') return tab.projectName;
     if (tab.kind === 'workbench') return tab.projectName;
     if (tab.kind === 'task' || tab.kind === 'activity') {
-      const job = this.findJob(tab.taskKey);
-      return job?.projectName ?? null;
+      const projects = [...this.boardFilters.activeProjects()];
+      return projects.length === 1 ? projects[0] : null;
     }
     return null;
   });
@@ -987,7 +987,7 @@ export class StudioShellComponent {
   readonly projectPickerItems = computed<readonly MenuItem[]>(() => buildProjectPickerItems({
     rows: this.projectRows(),
     totalProjectJobs: this.totalProjectJobs(),
-    allProjectsActive: this.activeBoardProject() === null && this.activeTab()?.kind === 'board',
+    allProjectsActive: this.activeProjectName() === null,
     activeTabKind: this.activeTab()?.kind,
   }));
   onProjectPickerItemClick(ev: MenuItemClickEvent): void {

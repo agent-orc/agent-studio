@@ -56,6 +56,11 @@ const TASK_DETAIL = {
   reviewEvidence: [],
 };
 
+const ALL_PROJECTS_GROUPED = {
+  ...EMPTY_GROUPED,
+  progress: [TASK_DETAIL.info],
+};
+
 const EPIC_DETAIL = {
   ...TASK_DETAIL,
   info: {
@@ -147,6 +152,7 @@ async function stubRouteData(page: Page): Promise<void> {
     if (url.pathname === '/api/tags' || url.pathname === '/api/clients' || url.pathname === '/api/clients/') {
       return json([]);
     }
+    if (url.pathname === '/api/git/summary') return json([]);
     if (url.pathname === '/api/v1/management/remote-hosts') return json([]);
     if (/\/api\/bus\/[^/]+\/messages$/.test(url.pathname)) return json([]);
     if (url.pathname === '/api/watch-paths') {
@@ -584,6 +590,52 @@ test.describe('Studio route restoration', () => {
     await page.goForward();
     await expect.poll(() => new URL(page.url()).hash).toMatch(/^#\/board(?:&|$)/);
     await expect(page.getByTestId('studio-project-picker-trigger')).toContainText('All projects');
+  });
+
+  test('task opened from All projects keeps the workspace-wide scope and returns there', async ({ page }, testInfo) => {
+    await page.route('**/api/tasks/grouped', route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(ALL_PROJECTS_GROUPED),
+    }));
+    await page.route('**/api/pipeline/accepted-integration-alert', route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ active: false, items: [] }),
+    }));
+    await page.addInitScript(() => {
+      localStorage.removeItem('atp.studio.tabs.v1');
+      localStorage.setItem('activeProjects', '[]');
+    });
+    await page.goto('/#/board', { waitUntil: 'commit' });
+
+    const picker = page.getByTestId('studio-project-picker-trigger');
+    const taskCard = page.getByTestId('task-card').filter({ hasText: 'Route restoration task' });
+    await expect(picker).toContainText('All projects');
+    await expect(taskCard).toBeVisible();
+    await page.screenshot({
+      path: evidencePath(testInfo, 'all-projects-task-open--before--mocked.png'),
+    });
+
+    await expect(page.getByTestId('error-dialog')).toHaveCount(0);
+    await taskCard.click();
+    await expect(page.getByTestId('studio-task')).toBeVisible();
+    await page.screenshot({
+      path: evidencePath(testInfo, 'all-projects-task-open--after--mocked.png'),
+    });
+    await expect(picker).toContainText('All projects');
+    await expect.poll(() => page.evaluate(() => localStorage.getItem('activeProjects'))).toBe('[]');
+
+    await page.goBack();
+    await expect(page.getByTestId('studio-board')).toBeVisible();
+    await expect(picker).toContainText('All projects');
+
+    await page.getByTestId('task-card').filter({ hasText: 'Route restoration task' }).click();
+    const taskTab = page.getByTestId(`studio-tab-task:${TASK_KEY}`);
+    await expect(taskTab).toHaveAttribute('aria-selected', 'true');
+    await taskTab.getByRole('button', { name: 'Close tab' }).click();
+    await expect(page.getByTestId('studio-board')).toBeVisible();
+    await expect(picker).toContainText('All projects');
   });
 
   test('Project Settings route restores the active Hub rail and survives reload', async ({ page }) => {

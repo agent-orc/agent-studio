@@ -104,6 +104,14 @@ Local storage still owns workspace preferences and the open-tab collection. It
 may seed the shell only when the URL does not identify another surface. URL
 state always wins for the active surface.
 
+Opening a task preserves the board scope that launched it. In particular, a
+task opened from the workspace-wide board keeps the project picker, Explorer,
+and board filters in the All projects context. The task's owning project is a
+data handle used by the detail loader only; it does not replace the global
+active-project selection. Browser Back and closing the task tab therefore
+return to the originating All projects board through the existing route and
+most-recently-used tab behavior.
+
 The Orchestrator Chat side sheet is deliberately not another route owner.
 Visibility and width are browser state and survive navigation and reload; no
 ordinary route change opens or closes the sheet. The default-on local **Open
@@ -226,3 +234,6 @@ review screenshots under the managed task's `results/` directory.
 - **2026-08-18:** Added shell tab pinning (leftmost block, compact label,
   protection from casual closing, persisted with the tab session) and made the
   close glyph a hover affordance on unpinned tabs. Neither is route state.
+- **2026-09-07:** Separated task-detail project data handles from the global
+  board scope so tasks opened from All projects retain and return to that
+  workspace-wide context.

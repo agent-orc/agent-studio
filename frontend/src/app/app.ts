@@ -969,23 +969,17 @@ export class App implements OnInit, OnDestroy {
     // it doesn't dereference jobDetailRef until invoked.
     this.triage.setClearActingCallback(() => this.jobDetailRef?.clearTriageActing());
 
-    // Studio-shell mirror: keep BoardFiltersService.activeProjects in
-    // lock-step with the project the active tab is contextually "in" —
-    // for EVERY project-bound tab kind, not just boards. Without this the
-    // filter/count surfaces (filteredTaskCount, the filter panel, the
-    // projected lanes) kept the previous scope when the user opened a
-    // Hub / Backlog / Epics / Task tab, leaking foreign-project elements
-    // and an all-projects total (e.g. "193") while the breadcrumb named
-    // the selected project. setSoleProject is idempotent so repeated tab
-    // activations don't toggle the filter off.
+    // Keep global board scope in sync with project surfaces. Task and Activity
+    // tabs retain the scope that opened them because their project is data-only.
+    // setSoleProject is idempotent, so repeated activations do not toggle it off.
     effect(() => {
       if (!this.featureFlags.vsCodeLayout()) return;
       const tab = this.studioTabState.activeTab();
       if (!tab) return;
       // `null`  → workspace-wide ("All projects"): clear the project filter.
       // string  → narrow to exactly that project.
-      // `undefined` → context unknown (diff/welcome, or a task whose job
-      //               hasn't loaded yet): leave the current scope untouched.
+      // `undefined` → detail or context-free tab: leave the current scope
+      //               untouched.
       let project: string | null | undefined;
       switch (tab.kind) {
         case 'board':
@@ -1005,7 +999,7 @@ export class App implements OnInit, OnDestroy {
           break;
         case 'task':
         case 'activity':
-          project = this.jobService.jobs().find(j => j.taskKey === tab.taskKey)?.projectName ?? undefined;
+          project = undefined;
           break;
         default:
           project = undefined;
