@@ -1,8 +1,10 @@
+import type { ChatContextAttachment } from 'coding-agent-chat/core';
 import type { TaskInfo } from '../../models/task.model';
 import type { StudioIconName } from '../../components/studio-icon/studio-icon.component';
 import { pageTypeIcon, pageTypeLabel, type PageContext } from '../../models/page-context.model';
 import { projectRailLabel } from '../project-detail/components/project-shell/project-shell.config';
 import type { StudioTab } from '../studio-shell';
+import type { OrchestratorContextSourceOption } from './models/orchestrator-context-source.model';
 
 /**
  * Presentational location context the host feeds into the composer's
@@ -64,6 +66,61 @@ export function buildContextChipPresentation(input: {
     };
   }
   return { label: 'Project overview', key: null, typeLabel: 'Project', icon: 'grid' };
+}
+
+/** Stable chip id for the automatic (current tab) context block. */
+export const AUTOMATIC_CONTEXT_ATTACHMENT_ID = 'context:automatic';
+
+/**
+ * Planning size the automatic context block is budgeted at. Its real cost is
+ * only known once the backend resolves the envelope at send time, so the chip
+ * shows this stable figure instead of a number that jitters per keystroke.
+ */
+export const AUTOMATIC_CONTEXT_ESTIMATE_TOKENS = 1_600;
+
+/** `~940` / `~1.6k` — the compact estimate every composer context chip carries. */
+export function formatCompactTokens(tokens: number): string {
+  if (tokens < 1_000) return `~${tokens}`;
+  const thousands = tokens / 1_000;
+  return `~${thousands.toFixed(Number.isInteger(thousands) ? 0 : 1)}k`;
+}
+
+/**
+ * Project the host's context state onto the chat library's chip row: the
+ * automatic current-tab block first, then each explicitly attached source.
+ * Every chip carries its own estimate, so the row is the single place the
+ * operator reads what the next message will carry and what it costs.
+ *
+ * A mandatory automatic block (task scope) still renders a chip, and the hint
+ * says so — the library gives every chip the same remove affordance, and the
+ * host answers that removal with a no-op rather than breaking the rule that a
+ * task chat always carries its task.
+ */
+export function buildComposerContextAttachments(input: {
+  automatic: ContextChipPresentation;
+  automaticIncluded: boolean;
+  automaticMandatory: boolean;
+  attachments: readonly OrchestratorContextSourceOption[];
+}): ChatContextAttachment[] {
+  const chips: ChatContextAttachment[] = [];
+  if (input.automaticIncluded) {
+    const estimate = formatCompactTokens(AUTOMATIC_CONTEXT_ESTIMATE_TOKENS);
+    const suffix = input.automaticMandatory ? ' · always included' : '';
+    chips.push({
+      id: AUTOMATIC_CONTEXT_ATTACHMENT_ID,
+      label: `${input.automatic.key?.trim() || input.automatic.label} · ${estimate}`,
+      hint: `Current tab · ${input.automatic.typeLabel}: ${input.automatic.label} · ${estimate}${suffix}`,
+    });
+  }
+  for (const source of input.attachments) {
+    const estimate = formatCompactTokens(source.estimateTokens);
+    chips.push({
+      id: source.id,
+      label: `${source.key?.trim() || source.label} · ${estimate}`,
+      hint: `${source.label} · ${source.detail} · ${estimate}`,
+    });
+  }
+  return chips;
 }
 
 function taskFor(tabKey: string, tasks: readonly TaskInfo[]): TaskInfo | undefined {

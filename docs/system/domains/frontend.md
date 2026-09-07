@@ -507,6 +507,11 @@ unseen again, and renders missing reviewed artifacts as no longer actionable.
   disabled with the GPT-only host-policy reason so they are not mistaken for a
   quota or installation detection failure. Do not replace it with a
   routing-only badge, reduced host list, or Orchestrator-only picker.
+- The Orchestrator composer is at most three rows - context chips when present,
+  the textarea, and the footer - with no toolbar row, no breadcrumb, no image
+  upload, and no host-owned context picker row above `<cac-chat>`; context
+  chips and the add affordance belong to the library (`contextAttachments`,
+  coding-agent-chat 0.4.1) and the source picker is popover-only.
 - Chat History is the workspace-level projection of the central Task Server
   context store. It lists permanent project contexts and non-archived task
   contexts with the store-owned short summary and latest activity. Opening a

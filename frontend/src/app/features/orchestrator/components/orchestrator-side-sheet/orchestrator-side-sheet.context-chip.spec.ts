@@ -97,7 +97,7 @@ describe('OrchestratorSideSheetComponent context badge and menu', () => {
       kind: 'page', reference: 'page:demo-project/concepts/context.md', projectId: 'demo-project',
     });
     const root = fixture.nativeElement as HTMLElement;
-    root.querySelector<HTMLButtonElement>('[data-testid="orch-add-context"]')!.click();
+    root.querySelector<HTMLButtonElement>('[data-testid="chat-context-attachment-add"]')!.click();
     fixture.detectChanges();
     expect(root.querySelector('[data-testid="orch-context-current-source"]')?.textContent)
       .toContain('Context model');
@@ -105,15 +105,11 @@ describe('OrchestratorSideSheetComponent context badge and menu', () => {
 
   it('renders the standard composer footer once and removes both host task workflows', async () => {
     const fixture = await makeFixture();
-    fixture.componentRef.setInput('composerContext', { project: 'Agent Studio', surface: 'Board' });
+    fixture.componentRef.setInput('composerContext', { project: 'demo-project', surface: 'Board' });
     fixture.detectChanges();
     const root = fixture.nativeElement as HTMLElement;
 
     expect(root.querySelectorAll('[data-testid="chat-composer-foot"]')).toHaveLength(1);
-    expect(root.querySelector('[data-testid="chat-composer-context-project"]')?.textContent?.trim())
-      .toBe('Agent Studio');
-    expect(root.querySelector('[data-testid="chat-composer-context-surface"]')?.textContent?.trim())
-      .toBe('Board');
     expect(root.textContent).not.toContain('Make a task from your message');
     expect(root.textContent).not.toContain('Make a task from this reply');
     expect(root.querySelector('[data-testid="orch-side-sheet-draft-actions"]')).toBeNull();
@@ -122,7 +118,7 @@ describe('OrchestratorSideSheetComponent context badge and menu', () => {
 
   it('forwards live active-tab context without remounting CAC or losing its draft', async () => {
     const fixture = await makeFixture();
-    fixture.componentRef.setInput('composerContext', { project: 'Agent Studio', surface: 'Board' });
+    fixture.componentRef.setInput('composerContext', { project: 'demo-project', surface: 'Board' });
     fixture.detectChanges();
     const firstChat = fixture.debugElement.query(By.directive(ChatComponent)).componentInstance as ChatComponent;
     const textarea = (fixture.nativeElement as HTMLElement)
@@ -132,19 +128,19 @@ describe('OrchestratorSideSheetComponent context badge and menu', () => {
     fixture.detectChanges();
 
     fixture.componentRef.setInput('composerContext', {
-      project: 'Agent Studio',
-      surface: 'Task',
-      detail: 'AGT-2162',
+      project: 'demo-project',
+      surface: 'Dossier',
+      detail: 'Runner link health',
     });
     fixture.detectChanges();
 
     const secondChat = fixture.debugElement.query(By.directive(ChatComponent)).componentInstance as ChatComponent;
     expect(secondChat).toBe(firstChat);
     expect(textarea.value).toBe('Draft survives navigation');
+    // The automatic chip is now the composer's location indicator.
     expect((fixture.nativeElement as HTMLElement)
-      .querySelector('[data-testid="chat-composer-context-surface"]')?.textContent?.trim()).toBe('Task');
-    expect((fixture.nativeElement as HTMLElement)
-      .querySelector('[data-testid="chat-composer-context-detail"]')?.textContent?.trim()).toBe('AGT-2162');
+      .querySelector('[data-testid="chat-context-attachment-context:automatic"]')?.textContent)
+      .toContain('Runner link health');
   });
 
   it('shows the persisted context receipt for the latest orchestrator answer', async () => {

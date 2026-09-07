@@ -108,8 +108,13 @@ test('project chat attaches known sources, inspects the persisted receipt, and k
   const captured = await installContextFixtures(page);
   await openChat(page);
 
-  await expect(page.getByTestId('orch-current-tab-chip')).toContainText('Current tab · Board');
-  await page.getByTestId('orch-add-context').click();
+  // The automatic current-tab chip is the first thing in the composer's chip
+  // row, with its own send-time estimate.
+  const automaticChip = page.getByTestId('chat-context-attachment-context:automatic');
+  await expect(automaticChip).toContainText('Board');
+  await expect(automaticChip).toContainText('~1.6k');
+
+  await page.getByTestId('chat-context-attachment-add').click();
   await expect(page.getByTestId('orch-context-current-automatic')).toContainText('already included');
   await page.getByTestId('orch-context-source-search').fill('context');
 
@@ -121,10 +126,23 @@ test('project chat attaches known sources, inspects the persisted receipt, and k
   await page.getByTestId('orch-context-group-wiki').getByRole('button', { name: /Context workbench/ }).click();
   await page.getByTestId('orch-context-group-files').getByRole('button', { name: /context-envelope.ts/ }).click();
   await page.getByTestId('orch-context-group-commits').getByRole('button', { name: /persist context receipts/ }).click();
-  await expect(page.getByTestId('orch-context-estimate')).toContainText('4 sources');
+  // Automatic block plus the three added sources, each carrying its estimate.
+  await expect(page.getByTestId('chat-context-attachments').getByRole('listitem')).toHaveCount(4);
+  await expect(page.getByTestId('chat-context-attachments')).toContainText('~1.6k');
 
   await setTheme(page, 'light');
   await page.screenshot({ path: resolve(RESULTS, 'project-chat-context-picker--mocked-light.png'), fullPage: false });
+  await page.getByRole('button', { name: 'Close context picker' }).click();
+
+  // Removing a chip drops exactly that source and leaves the automatic block.
+  const chipRow = page.getByTestId('chat-context-attachments');
+  await chipRow.getByRole('listitem').last().getByRole('button').click();
+  await expect(chipRow.getByRole('listitem')).toHaveCount(3);
+  await expect(automaticChip).toBeVisible();
+  await page.getByTestId('chat-context-attachment-add').click();
+  await page.getByTestId('orch-context-group-commits')
+    .getByRole('button', { name: /persist context receipts/ }).click();
+  await expect(chipRow.getByRole('listitem')).toHaveCount(4);
   await page.getByRole('button', { name: 'Close context picker' }).click();
 
   await page.getByTestId('chat-input').fill('Compare these context sources.');

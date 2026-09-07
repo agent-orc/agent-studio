@@ -167,21 +167,17 @@ test('full live GPT picker persists across Board and Task contexts', async ({ pa
   await expect(page.getByTestId('error-dialog-overlay')).toHaveCount(0);
   await page.getByTestId('orch-side-sheet-toggle').click();
   await expect(page.getByTestId('orch-side-sheet')).toBeVisible();
-  await expect(page.getByTestId('chat-composer-context-surface')).toHaveText('Board');
-  await expect(page.getByTestId('chat-toolbar-routing')).toHaveText('GPT-only · Inherited Codex default');
+  const automaticChip = page.getByTestId('chat-context-attachment-context:automatic');
+  await expect(automaticChip).toContainText('Board');
+  // The "GPT-only · Inherited Codex default" chip is gone with the toolbar
+  // row; the GPT-only policy now reads off the disabled CLI options below.
+  await expect(page.getByTestId('chat-toolbar-routing')).toHaveCount(0);
   await expect(page.getByTestId('orch-side-sheet-draft-actions')).toHaveCount(0);
   await expect(page.getByTestId('orch-side-sheet-make-task')).toHaveCount(0);
   await expect(page.getByTestId('orch-side-sheet-make-task-from-yours')).toHaveCount(0);
 
   const input = page.getByTestId('chat-input');
   await input.fill('/bug preserved picker draft');
-  await page.getByTestId('chat-attach').click();
-  await page.locator('input[type="file"]').setInputFiles({
-    name: 'picker-proof.png', mimeType: 'image/png', buffer: Buffer.from(
-      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
-      'base64'),
-  });
-  await expect(page.getByTestId('chat-drafts')).toContainText('picker-proof');
 
   await page.getByTestId('cac-model-selector-trigger').click();
   await expect(page.getByTestId('cac-model-selector-picker-cli-claude')).toBeDisabled();
@@ -212,24 +208,18 @@ test('full live GPT picker persists across Board and Task contexts', async ({ pa
   expect(modelListLayout.maskImage).toContain('linear-gradient');
   await page.getByTestId('cac-model-selector-picker-cancel').click();
   await expect(input).toHaveValue('/bug preserved picker draft');
-  await expect(page.getByTestId('chat-drafts')).toContainText('picker-proof');
   await expect(page.getByTestId('cac-model-selector-trigger')).toBeFocused();
   await input.fill('');
-  await page.getByTestId('chat-drafts').getByRole('button').click();
 
   await choose(page, 'gpt-5.6-sol', 'xhigh');
-  await expect(page.getByTestId('chat-toolbar-routing')).toHaveText('GPT-only · Operator choice');
   await page.getByTestId(`studio-tab-hub:${PROJECT}`).click();
-  await expect(page.getByTestId('chat-composer-context-surface')).toHaveText('Deck');
+  await expect(automaticChip).toContainText('Deck');
   await expect(page.getByTestId('cac-model-selector-trigger')).toContainText('gpt-5.6-sol');
   await page.getByTestId(`studio-tab-url-preview:${PROJECT}:preview`).click();
-  await expect(page.getByTestId('chat-composer-context-surface')).toHaveText('URL preview');
-  await expect(page.getByTestId('chat-composer-context-detail')).toHaveText('preview');
+  await expect(automaticChip).toContainText('preview');
   await expect(page.getByTestId('cac-model-selector-trigger')).toContainText('gpt-5.6-sol');
   await page.getByTestId(`studio-tab-task:${PROJECT}::task-1`).click();
-  await expect(page.getByTestId('chat-composer-context-surface')).toHaveText('Task');
-  await expect(page.getByTestId('chat-composer-context-detail'))
-    .toHaveText(`${PROJECT}::task-1`);
+  await expect(automaticChip).toContainText(`${PROJECT}::task-1`);
   await expect(page.getByTestId('cac-model-selector-trigger'))
     .toHaveAttribute('aria-label', /gpt-5\.6-sol.*xhigh/);
   await page.getByTestId('orch-context-badge').click();

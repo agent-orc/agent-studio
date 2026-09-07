@@ -138,6 +138,14 @@ async function stubBoardBootstrap(page: Page): Promise<string[]> {
   await page.route(/\/api\/runner\/orchestrator-feed$/, async (route) => {
     await fulfillKnownGet(route, { entries: [], generatedAtUtc: '2026-08-10T08:00:00Z' }, unexpectedRequests);
   });
+  // Board bootstrap dependencies added after this stub set was written
+  // (AGT-2711 remote runner link health, auto-review queue).
+  await page.route(/\/api\/runner\/auto-review-queue(?:\?.*)?$/, async (route) => {
+    await fulfillKnownGet(route, { items: [], generatedAtUtc: '2026-08-10T08:00:00Z' }, unexpectedRequests);
+  });
+  await page.route(/\/api\/v1\/management\/remote-hosts\/link-health(?:\?.*)?$/, async (route) => {
+    await fulfillKnownGet(route, { hosts: [], generatedAtUtc: '2026-08-10T08:00:00Z' }, unexpectedRequests);
+  });
   await page.route(/\/api\/runner\/queue-starvation$/, async (route) => {
     await fulfillKnownGet(route, {
       active: false, waitingTaskCount: 0, availableSlots: 0, thresholdMinutes: 30,
@@ -502,8 +510,13 @@ test.describe('Orchestrator context header · where am I', () => {
 
     const sheet = page.getByTestId('orch-side-sheet');
     await expect(page.getByTestId('chat-composer-foot')).toHaveCount(1);
-    await expect(page.getByTestId('chat-composer-context-project')).toHaveText(PROJECT);
-    await expect(page.getByTestId('chat-composer-context-surface')).toHaveText('Board');
+    // Three rows at most: chips, textarea, footer. No toolbar row, no
+    // breadcrumb, no attach affordance.
+    await expect(page.getByTestId('chat-toolbar')).toHaveCount(0);
+    await expect(page.getByTestId('chat-composer-context')).toHaveCount(0);
+    await expect(page.getByTestId('chat-attach')).toHaveCount(0);
+    await expect(page.getByTestId('chat-context-attachment-context:automatic'))
+      .toContainText('Board');
     await expect(page.getByText('Make a task from your message', { exact: true })).toHaveCount(0);
     await expect(page.getByText('Make a task from this reply', { exact: true })).toHaveCount(0);
 
@@ -511,10 +524,10 @@ test.describe('Orchestrator context header · where am I', () => {
     await input.fill('Keyboard order draft');
     await input.focus();
     await page.keyboard.press('Shift+Tab');
-    await expect(page.getByTestId('chat-toolbar-search')).toBeFocused();
+    await expect(page.getByTestId('chat-context-attachment-add')).toBeFocused();
     await input.focus();
     await page.keyboard.press('Tab');
-    await expect(page.getByTestId('chat-attach')).toBeFocused();
+    await expect(page.getByTestId('cac-model-selector-trigger')).toBeFocused();
     await page.keyboard.press('Tab');
     await expect(page.getByTestId('chat-send')).toBeFocused();
 
@@ -535,9 +548,10 @@ test.describe('Orchestrator context header · where am I', () => {
     await openSideSheet(page, false);
 
     const sheet = page.getByTestId('orch-side-sheet');
-    await expect(page.getByTestId('chat-composer-context-project')).toHaveText(PROJECT);
-    await expect(page.getByTestId('chat-composer-context-surface')).toHaveText('Task');
-    await expect(page.getByTestId('chat-composer-context-detail')).toHaveText('AGT-1916');
+    // The automatic context chip is the composer's location indicator now.
+    await expect(page.getByTestId('chat-context-attachment-context:automatic'))
+      .toContainText('AGT-1916');
+    await expect(page.getByTestId('chat-composer-context')).toHaveCount(0);
     const box = await sheet.boundingBox();
     expect(box?.width ?? 999).toBeLessThanOrEqual(390);
     await sheet.screenshot({ path: resolve(RESULTS, 'orchestrator-task-context-dark-mobile.png') });
@@ -573,38 +587,41 @@ test.describe('Orchestrator context header · where am I', () => {
         await showSideSheet(page, false);
       }
 
-      const draft = page.getByTestId('orch-context-draft');
-      const chip = page.getByTestId('orch-current-tab-chip');
-      const chipLabel = page.getByTestId('orch-current-tab-label');
-      const estimate = page.getByTestId('orch-context-estimate');
-      await expect(draft).toBeVisible();
-      await expect(chip).toHaveAttribute('data-context-type', 'Dossier');
-      await expect(page.getByTestId('orch-current-tab-type-icon')).toBeVisible();
-      await expect(chipLabel).toHaveText('AOW-W1');
+      // The chip row belongs to the library composer since 0.4.1; the host
+      // only feeds it. The stable Dossier key plus its estimate must stay on
+      // one line, with the long title behind the chip tooltip.
+      const chipRow = page.getByTestId('chat-context-attachments');
+      const chip = page.getByTestId('chat-context-attachment-context:automatic');
+      await expect(chipRow).toBeVisible();
+      await expect(chip).toContainText('AOW-W1');
+      await expect(chip).toContainText('~1.6k');
       await expect(chip).not.toContainText(LONG_CONTEXT_TITLE);
-      await expect(estimate).toHaveText('~1.6k');
-      await expect(estimate).not.toContainText('resolved when you send');
 
-      const layout = await draft.evaluate((element) => {
+      const layout = await chipRow.evaluate((element) => {
         const rowItems = [
-          element.querySelector<HTMLElement>('[data-testid="orch-current-tab-chip"]')!,
-          element.querySelector<HTMLElement>('[data-testid="orch-add-context"]')!,
-          element.querySelector<HTMLElement>('[data-testid="orch-context-estimate"]')!,
+          element.querySelector<HTMLElement>('[data-testid="chat-context-attachment-context:automatic"]')!,
+          element.querySelector<HTMLElement>('[data-testid="chat-context-attachment-add"]')!,
         ];
-        const label = element.querySelector<HTMLElement>('[data-testid="orch-current-tab-label"]')!;
+        // The library owns the chip's inner label and gives it no testid, so
+        // this one structural lookup reads its truncation style directly.
+        const label = rowItems[0].querySelector<HTMLElement>('span')!;
+        const centres = rowItems.map(item => {
+          const box = item.getBoundingClientRect();
+          return box.top + box.height / 2;
+        });
         return {
           fits: element.scrollWidth <= element.clientWidth + 1,
-          rowCount: new Set(rowItems.map(item => {
-            const box = item.getBoundingClientRect();
-            return Math.round(box.top + box.height / 2);
-          })).size,
-          chipWhiteSpace: getComputedStyle(rowItems[0]).whiteSpace,
+          // Chip and add button share one visual row. The two controls differ
+          // by a pixel of border/line-box, so compare centres with a tolerance
+          // instead of requiring an identical rounded value.
+          sameRow: Math.max(...centres) - Math.min(...centres) <= 2,
+          chipWhiteSpace: getComputedStyle(label).whiteSpace,
           labelOverflow: getComputedStyle(label).textOverflow,
         };
       });
       expect(layout).toEqual({
         fits: true,
-        rowCount: 1,
+        sameRow: true,
         chipWhiteSpace: 'nowrap',
         labelOverflow: 'ellipsis',
       });
@@ -618,14 +635,10 @@ test.describe('Orchestrator context header · where am I', () => {
       });
 
       await chip.hover();
-      await expect(page.locator('.app-tooltip-overlay')).toContainText(LONG_CONTEXT_TITLE);
-      await expect(page.locator('.app-tooltip-overlay')).toContainText('Current tab · Dossier');
-
-      await page.mouse.move(1, 1);
-      await expect(page.locator('.app-tooltip-overlay')).toHaveCount(0);
-      await estimate.hover();
-      await expect(page.locator('.app-tooltip-overlay'))
-        .toHaveText('1 source · about 1,600 tokens · resolved when you send');
+      const tooltip = page.locator('.cac-tooltip');
+      await expect(tooltip).toContainText(LONG_CONTEXT_TITLE);
+      await expect(tooltip).toContainText('Current tab · Dossier');
+      await expect(tooltip).toContainText('~1.6k');
       await page.getByTestId('orch-side-sheet').screenshot({
         path: resolve(
           RESULTS,

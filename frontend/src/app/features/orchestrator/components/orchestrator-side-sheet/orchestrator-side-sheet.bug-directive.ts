@@ -1,10 +1,9 @@
-import type { ChatEvent, ChatSubmitEvent } from 'coding-agent-chat/core';
+import type { ChatEvent } from 'coding-agent-chat/core';
 import type { WatchPathEntry } from '../../../../models/task.model';
 import type { TaskService } from '../../../../services/task.service';
 
 interface BugDirectiveInput {
   text: string;
-  event: ChatSubmitEvent;
   project: string;
   watchPaths: readonly WatchPathEntry[];
   jobService: TaskService;
@@ -18,7 +17,6 @@ export function handleBugDirective(input: BugDirectiveInput): void {
   const description = input.text.replace(/^\/bug\s*/, '').trim();
   const now = Date.now();
   input.appendUser(`bug-local:${now}`, new Date(now).toISOString(), input.text);
-  for (const attachment of input.event.attachments) URL.revokeObjectURL(attachment.previewUrl);
 
   if (!description) {
     input.appendEvent({

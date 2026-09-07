@@ -1,58 +1,3 @@
-<section class="context-draft" aria-label="Context for the next message" data-testid="orch-context-draft">
-  <div class="context-draft__chips">
-    <button type="button"
-            class="context-chip context-chip--automatic"
-            [class.context-chip--excluded]="!automaticIncluded()"
-            [attr.aria-pressed]="automaticIncluded()"
-            [attr.aria-label]="(automaticIncluded() ? 'Exclude ' : 'Include ') + automaticTypeLabel() + ' ' + automaticLabel()"
-            [attr.data-context-type]="automaticTypeLabel()"
-            [appTooltip]="automaticTooltip()"
-            [disabled]="disabled()"
-            (click)="toggleAutomatic()"
-            data-testid="orch-current-tab-chip">
-      <app-studio-icon
-        class="context-chip__icon"
-        [name]="automaticIcon()"
-        [size]="12"
-        data-testid="orch-current-tab-type-icon" />
-      <span class="context-chip__label" data-testid="orch-current-tab-label">
-        {{ automaticShortLabel() }}
-      </span>
-    </button>
-
-    @for (source of attachments(); track source.id) {
-      <span class="context-chip"
-            [appTooltip]="sourceTooltip(source)"
-            [attr.data-testid]="'orch-context-chip-' + source.id">
-        <app-studio-icon
-          class="context-chip__icon"
-          [name]="sourceIcon(source)"
-          [size]="12"
-          aria-hidden="true" />
-        <span class="context-chip__label">{{ sourceShortLabel(source) }}</span>
-        <button type="button"
-                class="context-chip__remove"
-                [disabled]="disabled()"
-                [attr.aria-label]="'Remove ' + source.label + ' from context'"
-                (click)="remove(source.id)">&times;</button>
-      </span>
-    }
-
-    <button type="button"
-            class="context-draft__add"
-            [disabled]="disabled()"
-            (click)="show()"
-            data-testid="orch-add-context">+ Add context</button>
-  </div>
-  <p class="context-draft__estimate"
-     tabindex="0"
-     [attr.aria-label]="contextMetaTooltip()"
-     [appTooltip]="contextMetaTooltip()"
-     data-testid="orch-context-estimate">
-    {{ compactTokenEstimate() }}
-  </p>
-</section>
-
 @if (open()) {
   <section class="source-picker"
            role="dialog"
@@ -68,6 +13,15 @@
 
     <section class="source-picker__recommended" aria-labelledby="orch-current-tab-heading">
       <h4 id="orch-current-tab-heading">Current tab</h4>
+      @if (!automaticIncluded()) {
+        <button type="button"
+                class="source-row"
+                (click)="includeAutomatic()"
+                data-testid="orch-context-include-automatic">
+          <span><strong>{{ automaticLabel() }}</strong><small>Automatic context, excluded for the next message</small></span>
+          <span>Add</span>
+        </button>
+      }
       @if (currentSource(); as source) {
         <button type="button"
                 class="source-row"
@@ -77,7 +31,7 @@
           <span><strong>{{ source.label }}</strong><small>{{ source.detail }}</small></span>
           <span>{{ selectedIds().has(source.id) ? 'Added' : 'Add' }}</span>
         </button>
-      } @else {
+      } @else if (automaticIncluded()) {
         <p class="source-picker__hint" data-testid="orch-context-current-automatic">
           {{ automaticLabel() }} is already included as automatic context.
         </p>
