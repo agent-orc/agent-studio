@@ -2,7 +2,7 @@ namespace AgentStudio.Search;
 
 public static class GlobalSearchEndpoints
 {
-    private static readonly HashSet<string> AllowedDomains = new(StringComparer.OrdinalIgnoreCase) { "tasks", "commits", "files" };
+    private static readonly HashSet<string> AllowedDomains = new(StringComparer.OrdinalIgnoreCase) { "tasks", "commits", "files", "dossiers" };
 
     public static void MapGlobalSearchEndpoints(this WebApplication app)
     {
@@ -15,7 +15,7 @@ public static class GlobalSearchEndpoints
                 : domains.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                     .Where(AllowedDomains.Contains).ToHashSet(StringComparer.OrdinalIgnoreCase);
             if (query.Length < 2)
-                return Results.Ok(new GlobalSearchResponse(query, [], [], [], new Dictionary<string, string>(), 0));
+                return Results.Ok(new GlobalSearchResponse(query, [], [], [], [], new Dictionary<string, string>(), 0));
             var response = search.Search(query, selected, limit ?? 20);
             if (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is not HumanPrincipal human)
                 return Results.Ok(response);
@@ -25,6 +25,7 @@ public static class GlobalSearchEndpoints
                 Tasks = response.Tasks.Where(Allowed).ToList(),
                 Commits = response.Commits.Where(Allowed).ToList(),
                 Files = response.Files.Where(Allowed).ToList(),
+                Dossiers = response.Dossiers.Where(Allowed).ToList(),
             });
         });
     }

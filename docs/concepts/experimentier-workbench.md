@@ -147,6 +147,15 @@ model, consistent with the
 [Wiki tree contract](../system/contracts/wiki-tree.md). The descriptor adds
 properties to one physical object, not a virtual tree.
 
+Every discovered Dossier carries a project-scoped document reference key of the
+form `PROJECT-W<number>` (for example `AGT-W15`), assigned once and never
+rewritten. That key is a first-class search term: the Ctrl+K palette owns a
+`Dossiers` result group that matches key, id, title, summary, status, and phase
+across every non-archived project and includes history, ranking an exact key
+first. Selecting a result opens the Dossier viewer, so quoting a key in a task,
+chat, or review comment is enough to reach the document. See the
+[frontend domain map](../system/domains/frontend.md) for the search contract.
+
 ### Inline decision markup
 
 Dossier authors put decision points where the supporting analysis reaches the

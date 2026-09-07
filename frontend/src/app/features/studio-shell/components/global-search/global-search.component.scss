@@ -49,7 +49,16 @@
 }
 .search-project-dot { width: 9px; height: 9px; flex: 0 0 auto; border-radius: 50%; }
 .search-result-copy { min-width: 0; flex: 1; display: grid; gap: var(--studio-spacing-1); strong, small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } strong { font-weight: 500; } small { color: var(--studio-fg-muted); } }
-.search-badge { padding: var(--studio-spacing-1) var(--studio-spacing-2); color: var(--studio-fg-dim); background: var(--studio-bg-editor); border: 1px solid var(--studio-border); border-radius: 9px; font-size: 10px; }
+.search-badge {
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
+  color: var(--studio-fg-dim);
+  background: var(--studio-bg-editor);
+  border: 1px solid var(--studio-border);
+  border-radius: 9px;
+  font-size: 10px;
+  white-space: nowrap;
+  &--key { color: var(--studio-fg); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+}
 .search-hint, .search-loading, .search-error { margin: var(--studio-spacing-4); color: var(--studio-fg-muted); text-align: center; }
 .search-error { color: var(--studio-fg-dim); }
 footer { display: flex; gap: var(--studio-spacing-4); padding: var(--studio-spacing-2) var(--studio-spacing-4); color: var(--studio-fg-muted); border-top: 1px solid var(--studio-border); font-size: 10px; }

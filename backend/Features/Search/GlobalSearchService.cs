@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using AgentStudio.Docs;
 using AgentStudio.Git;
 using AgentStudio.Registry;
 using AgentStudio.Shared;
@@ -16,13 +17,17 @@ public sealed record GlobalSearchItem(
     string? Lane = null,
     string? Sha = null,
     string? Path = null,
-    bool IsWiki = false);
+    bool IsWiki = false,
+    string? DossierKey = null,
+    string? DossierId = null,
+    string? Summary = null);
 
 public sealed record GlobalSearchResponse(
     string Query,
     IReadOnlyList<GlobalSearchItem> Tasks,
     IReadOnlyList<GlobalSearchItem> Commits,
     IReadOnlyList<GlobalSearchItem> Files,
+    IReadOnlyList<GlobalSearchItem> Dossiers,
     IReadOnlyDictionary<string, string> Errors,
     long DurationMs);
 
@@ -31,6 +36,8 @@ public sealed class GlobalSearchService(
     TaskScannerService scanner,
     GitService git,
     ProjectRegistry registry,
+    ProjectDocsService docs,
+    WorkbenchCatalogueService workbenches,
     ILogger<GlobalSearchService> logger)
 {
     private const int MaxPerDomain = 30;
@@ -42,6 +49,7 @@ public sealed class GlobalSearchService(
         var tasks = new List<GlobalSearchItem>();
         var commits = new List<GlobalSearchItem>();
         var files = new List<GlobalSearchItem>();
+        var dossiers = new List<GlobalSearchItem>();
         var errors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var registered = registry.List().Where(p => !p.Archived).ToList();
         var colors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -52,6 +60,12 @@ public sealed class GlobalSearchService(
         {
             try { tasks = SearchTasks(query, limit, colors); }
             catch (Exception ex) { Degrade("tasks", ex, errors); }
+        }
+
+        if (domains.Contains("dossiers"))
+        {
+            try { dossiers = SearchDossiers(ReadDossierCatalogue(), query, limit, colors); }
+            catch (Exception ex) { Degrade("dossiers", ex, errors); }
         }
 
         var repositories = registered
@@ -90,14 +104,64 @@ public sealed class GlobalSearchService(
 
         timer.Stop();
         logger.LogInformation(
-            "global-search-completed queryLength={QueryLength} domains={Domains} tasks={Tasks} commits={Commits} files={Files} errors={Errors} durationMs={DurationMs}",
-            query.Length, string.Join(',', domains), tasks.Count, commits.Count, files.Count, errors.Count, timer.ElapsedMilliseconds);
+            "global-search-completed queryLength={QueryLength} domains={Domains} tasks={Tasks} commits={Commits} files={Files} dossiers={Dossiers} errors={Errors} durationMs={DurationMs}",
+            query.Length, string.Join(',', domains), tasks.Count, commits.Count, files.Count, dossiers.Count, errors.Count, timer.ElapsedMilliseconds);
         return new(query,
             tasks.Take(limit).ToList(),
             RankItems(commits, query).Take(limit).ToList(),
             RankItems(files, query).Take(limit).ToList(),
+            dossiers,
             errors, timer.ElapsedMilliseconds);
     }
+
+    /// <summary>
+    /// Feeds the Dossier domain from the same cached Wiki snapshot the Dossier
+    /// overview reads, so both surfaces agree on which projects own a catalogue
+    /// (archived registry projects own none) and search never triggers its own
+    /// recursive docs/ scan. History is included: a decided or archived Dossier
+    /// stays findable by its key.
+    /// </summary>
+    private IReadOnlyList<WorkbenchOverviewItem> ReadDossierCatalogue() =>
+        docs.GetWikiWorkbenchOverview(workbenches.ListProjectNames()).Items;
+
+    /// <summary>
+    /// Ranks the catalogue for one query: an exact document key first, then a
+    /// title match, then a summary match, then the remaining id, status, and
+    /// phase word matches. Invalid descriptors stay out because the viewer
+    /// refuses to open them.
+    /// </summary>
+    internal static List<GlobalSearchItem> SearchDossiers(
+        IEnumerable<WorkbenchOverviewItem> catalogue,
+        string query,
+        int limit,
+        IReadOnlyDictionary<string, string> colors) => catalogue
+        .Where(entry => entry.Workbench.Valid)
+        .Select(entry => (Entry: entry, Rank: DossierRank(entry.Workbench, query)))
+        .Where(x => x.Rank < NoDossierMatch)
+        .OrderBy(x => x.Rank)
+        .ThenByDescending(x => x.Entry.Workbench.UpdatedAtUtc)
+        .Take(limit)
+        .Select(x => new GlobalSearchItem("dossiers", x.Entry.ProjectName,
+            colors.GetValueOrDefault(x.Entry.ProjectName, "#6e6e6e"),
+            x.Entry.Workbench.Title,
+            DossierSubtitle(x.Entry.Workbench),
+            DossierKey: x.Entry.Workbench.Key,
+            DossierId: x.Entry.Workbench.Id,
+            Summary: x.Entry.Workbench.Summary))
+        .ToList();
+
+    private const int NoDossierMatch = 4;
+
+    private static int DossierRank(WorkbenchListItem item, string query) =>
+        string.Equals(item.Key, query, StringComparison.OrdinalIgnoreCase) ? 0
+        : Contains(item.Title, query) ? 1
+        : Contains(item.Summary, query) ? 2
+        : Contains(item.Key, query) || Contains(item.Id, query)
+            || Contains(item.Status, query) || Contains(item.Phase, query) ? 3
+        : NoDossierMatch;
+
+    private static string DossierSubtitle(WorkbenchListItem item) =>
+        string.IsNullOrWhiteSpace(item.Phase) ? item.Status : $"{item.Status} · {item.Phase}";
 
     private List<GlobalSearchItem> SearchTasks(string query, int limit, IReadOnlyDictionary<string, string> colors)
     {

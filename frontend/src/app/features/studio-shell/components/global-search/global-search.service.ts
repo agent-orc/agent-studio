@@ -1,7 +1,7 @@
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 
-export type SearchDomain = 'tasks' | 'commits' | 'files';
+export type SearchDomain = 'tasks' | 'commits' | 'files' | 'dossiers';
 
 export interface GlobalSearchItem {
   domain: SearchDomain;
@@ -14,6 +14,12 @@ export interface GlobalSearchItem {
   sha?: string;
   path?: string;
   isWiki?: boolean;
+  /** Document reference key of a Dossier hit, for example `AGT-W15`. */
+  dossierKey?: string;
+  /** Dossier viewer route: this id plus `projectName`, never a repository path. */
+  dossierId?: string;
+  /** Dossier summary, shown as the result excerpt. */
+  summary?: string;
 }
 
 export interface GlobalSearchResponse {
@@ -21,6 +27,7 @@ export interface GlobalSearchResponse {
   tasks: GlobalSearchItem[];
   commits: GlobalSearchItem[];
   files: GlobalSearchItem[];
+  dossiers: GlobalSearchItem[];
   errors: Record<string, string>;
   durationMs: number;
 }
@@ -32,7 +39,7 @@ export class GlobalSearchService {
   search(query: string) {
     const params = new HttpParams()
       .set('q', query)
-      .set('domains', 'tasks,commits,files')
+      .set('domains', 'tasks,commits,files,dossiers')
       .set('limit', 20);
     return this.http.get<GlobalSearchResponse>('/api/search', { params });
   }
