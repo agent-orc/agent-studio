@@ -834,7 +834,9 @@ if (!builder.Environment.IsEnvironment("Test") && !underTestHost)
     builder.Services.AddHostedService<CliVersionMonitorHostedService>();
 builder.Services.AddSingleton<CliQuotaCapsService>();
 builder.Services.AddSingleton<CliQuotaWaitPolicyService>();
+builder.Services.AddSingleton<AgentStudio.Cli.IModelEquivalenceCatalog, AgentStudio.Cli.ModelEquivalenceCatalog>();
 builder.Services.AddSingleton<CliQuotaFallbackService>();
+builder.Services.AddSingleton<AgentStudio.Cli.QuotaAdmissionRecorder>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<TaskWatcherService>());
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService(sp => sp.GetRequiredService<TaskRunnerService>());
