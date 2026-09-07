@@ -1,6 +1,7 @@
 import { Injectable, computed, signal } from '@angular/core';
 import type { BoardTab, StudioTab } from '../studio-shell.types';
 import { studioTabKey } from '../studio-shell.types';
+import { tabProjectScope } from '../studio-shell.project-scope';
 
 const STORAGE_KEY = 'atp.studio.tabs.v1';
 const STORAGE_VERSION = 1;
@@ -98,6 +99,20 @@ export class StudioTabStateService {
     this.activate(key);
     this.persist();
     if (emptyProjectEntry) this._emptyProjectEntryRevision.update(revision => revision + 1);
+  }
+
+  /**
+   * Open a task tab stamped with the scope of the surface it is opened from.
+   *
+   * This is the entry point for every "operator clicked a task" path (board
+   * card, global search, markdown task reference). The stamped
+   * {@link TaskTab.originScope} keeps "which project the app is scoped to"
+   * attached to the tab instead of being re-derived from the task's own
+   * project, so opening a card on the All-projects board leaves the workspace
+   * cross-project (AGT-2692).
+   */
+  openTaskFromCurrentScope(taskKey: string): void {
+    this.open({ kind: 'task', taskKey, originScope: tabProjectScope(this.activeTab()) });
   }
 
   /** Focus an existing tab by key. No-op when the key is unknown. */
@@ -365,7 +380,13 @@ export class StudioTabStateService {
           viewTaskKey: tab.viewTaskKey || undefined,
         };
       case 'task':
-        return { kind: 'task', taskKey: tab.taskKey };
+        return {
+          kind: 'task',
+          taskKey: tab.taskKey,
+          // `null` is meaningful (opened from All projects); `undefined` means
+          // "no recorded origin" and must stay absent so it round-trips.
+          ...(tab.originScope !== undefined ? { originScope: tab.originScope } : {}),
+        };
       case 'hub':
         return {
           kind: 'hub',
@@ -389,7 +410,11 @@ export class StudioTabStateService {
       case 'diff':
         return { kind: 'diff', commitSha: tab.commitSha };
       case 'activity':
-        return { kind: 'activity', taskKey: tab.taskKey };
+        return {
+          kind: 'activity',
+          taskKey: tab.taskKey,
+          ...(tab.originScope !== undefined ? { originScope: tab.originScope } : {}),
+        };
       case 'url-preview':
         return { kind: 'url-preview', projectName: tab.projectName, urlId: tab.urlId };
       case 'workspace-settings':

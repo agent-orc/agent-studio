@@ -460,6 +460,50 @@ describe('StudioTabStateService', () => {
     });
   });
 
+  describe('openTaskFromCurrentScope stamps the opened-from scope (AGT-2692)', () => {
+    it('records a cross-project origin when the task is opened from All projects', () => {
+      expect(svc.activeKey()).toBe(ALL_BOARD_KEY);
+      svc.openTaskFromCurrentScope('C:/w::a');
+      expect(svc.activeTab()).toEqual({ kind: 'task', taskKey: 'C:/w::a', originScope: null });
+    });
+
+    it('records the project when the task is opened from that project board', () => {
+      svc.open({ kind: 'board', projectName: 'Project A' });
+      svc.openTaskFromCurrentScope('C:/w::a');
+      expect(svc.activeTab()).toEqual({ kind: 'task', taskKey: 'C:/w::a', originScope: 'Project A' });
+    });
+
+    it('carries the origin forward when a second task is opened from the first', () => {
+      svc.openTaskFromCurrentScope('C:/w::a');
+      svc.openTaskFromCurrentScope('C:/w::b');
+      expect(svc.activeTab()).toEqual({ kind: 'task', taskKey: 'C:/w::b', originScope: null });
+    });
+
+    it('leaves the origin unset when the surface claims no scope', () => {
+      svc.open({ kind: 'diff', commitSha: 'abc123' });
+      svc.openTaskFromCurrentScope('C:/w::a');
+      // No `originScope` key at all — the mirror falls back to the task's project.
+      expect(svc.activeTab()).toEqual({ kind: 'task', taskKey: 'C:/w::a' });
+    });
+
+    it('does not change the tab identity, so re-opening moves the origin in place', () => {
+      svc.openTaskFromCurrentScope('C:/w::a');
+      svc.open({ kind: 'board', projectName: 'Project A' });
+      svc.openTaskFromCurrentScope('C:/w::a');
+      expect(svc.tabs().map(t => studioTabKey(t)))
+        .toEqual([ALL_BOARD_KEY, 'task:C:/w::a', 'board:Project A']);
+      expect(svc.activeTab()).toEqual({ kind: 'task', taskKey: 'C:/w::a', originScope: 'Project A' });
+    });
+
+    it('survives a reload, including the cross-project null origin', () => {
+      svc.openTaskFromCurrentScope('C:/w::a');
+      TestBed.resetTestingModule();
+      TestBed.configureTestingModule({ providers: [StudioTabStateService] });
+      const restored = TestBed.inject(StudioTabStateService);
+      expect(restored.activeTab()).toEqual({ kind: 'task', taskKey: 'C:/w::a', originScope: null });
+    });
+  });
+
   describe('persistence across reloads', () => {
     it('writes the current state to localStorage on every change', () => {
       svc.open({ kind: 'task', taskKey: 'a' });

@@ -54,7 +54,7 @@ export class TaskReferenceNavigationService {
     if (!taskKey) return false;
     const job = this.jobsByTaskKey().get(taskKey);
     if (!job) return false;
-    this.tabs.open({ kind: 'task', taskKey: job.taskKey });
+    this.tabs.openTaskFromCurrentScope(job.taskKey);
     this.selection.openDetail(job);
     return true;
   }

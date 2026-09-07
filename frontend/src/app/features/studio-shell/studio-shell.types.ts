@@ -29,8 +29,20 @@ export interface EpicsTab { kind: 'epics'; projectName: string | null; }
 /** Epic detail tab - one per opened epic; key `epic:<epicKey>`. */
 export interface EpicTab { kind: 'epic'; epicKey: string; viewTaskKey?: string; }
 
-/** Task-detail tab — one per opened job; key `task:<taskKey>`. */
-export interface TaskTab { kind: 'task'; taskKey: string; }
+/**
+ * Task-detail tab — one per opened job; key `task:<taskKey>`.
+ *
+ * `originScope` records the workspace scope the task was opened *from*, which
+ * is not the project whose data the detail loads. `null` means it was opened
+ * from a workspace-wide surface such as the All-projects board, so the global
+ * project selection stays workspace-wide while the tab is active. A project
+ * name means it was opened from that project's surface. `undefined` means the
+ * origin is unknown (cold deep link, pre-AGT-2692 snapshot) and the scope
+ * falls back to the task's own project. Not part of the tab key: re-opening a
+ * task from a different surface moves the existing tab's origin instead of
+ * duplicating the tab.
+ */
+export interface TaskTab { kind: 'task'; taskKey: string; originScope?: string | null; }
 
 /**
  * Stable target inside a project's Wiki. The document or folder path belongs
@@ -72,8 +84,9 @@ export interface WorkbenchTab {
 /** Full-screen diff tab; key `diff:<commitSha>`. */
 export interface DiffTab { kind: 'diff'; commitSha: string; }
 
-/** Full-screen activity tab; key `activity:<taskKey>`. */
-export interface ActivityTab { kind: 'activity'; taskKey: string; }
+/** Full-screen activity tab; key `activity:<taskKey>`. Carries the same
+ *  opened-from scope as {@link TaskTab.originScope}. */
+export interface ActivityTab { kind: 'activity'; taskKey: string; originScope?: string | null; }
 
 /**
  * Embedded Project-URL preview tab (AGT-2067) — one per configured URL;

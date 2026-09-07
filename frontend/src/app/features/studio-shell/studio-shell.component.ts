@@ -271,8 +271,14 @@ export class StudioShellComponent {
   onDocumentClick(): void { this.closePickerMenu(); }
 
   /**
-   * Active project for the picker — derived from the active tab / board.
+   * Active project for the picker — the project the *workspace* is scoped to.
    * `null` means the user is in "All projects" mode (workspace-wide).
+   *
+   * A Task/Activity tab answers with the scope it was opened from, not with
+   * the project its detail loads: opening a card on the All-projects board
+   * keeps the picker on "All projects" (AGT-2692). Only a tab with no recorded
+   * origin — a cold deep link — falls back to the contextual project.
+   * {@link currentProjectName} stays the data/context project for CTAs.
    */
   readonly activeProjectName = computed<string | null>(() => {
     const tab = this.activeTab();
@@ -280,7 +286,24 @@ export class StudioShellComponent {
     if (tab.kind === 'board') return tab.projectName === '__all__' ? null : tab.projectName;
     if (tab.kind === 'epics') return tab.projectName;
     if (tab.kind === 'workbenches') return tab.projectName;
+    if (tab.kind === 'task' || tab.kind === 'activity') {
+      if (tab.originScope !== undefined) return tab.originScope;
+    }
     return this.currentProjectName();
+  });
+
+  /**
+   * Explorer "All projects" row highlight. True while the workspace scope is
+   * cross-project *and* the active tab belongs to that context — the board
+   * itself, or a task opened out of it. Without the task case the Explorer
+   * would drop every highlight the moment a cross-project card is opened,
+   * even though the operator never left All projects (AGT-2692).
+   */
+  readonly showAllProjectsActive = computed<boolean>(() => {
+    if (this.activeProjectName() !== null) return false;
+    const tab = this.activeTab();
+    if (tab?.kind === 'board') return true;
+    return (tab?.kind === 'task' || tab?.kind === 'activity') && tab.originScope === null;
   });
 
   readonly activeWorkbench = computed(() => {
@@ -527,7 +550,11 @@ export class StudioShellComponent {
    *  `TaskService.getWatchPaths()` via the shell's `projectNames` input
    *  the host passes in app.html. */
   readonly projectRows = computed<ProjectSidebarRow[]>(() => {
-    return buildProjectSidebarRows(this.grouped(), this.knownProjectNames(), this.currentProjectName());
+    // The highlighted row follows the *workspace* scope, not the project a
+    // task detail happens to read from. A task opened out of the All-projects
+    // board leaves every row unhighlighted rather than jumping the Explorer
+    // into that task's project (AGT-2692).
+    return buildProjectSidebarRows(this.grouped(), this.knownProjectNames(), this.activeProjectName());
   });
 
   /** Row name → resolved storage path for the tree's rename-stable join. */
@@ -657,7 +684,7 @@ export class StudioShellComponent {
   );
 
   openTask(job: TaskInfo): void {
-    this.tabState.open({ kind: 'task', taskKey: job.taskKey });
+    this.tabState.openTaskFromCurrentScope(job.taskKey);
     // Keep the legacy TaskSelectionService in sync so the embedded
     // <app-job-detail> can pick the job up by reading the selected signal.
     this.jobSelection.openDetailAfterPaint(job);

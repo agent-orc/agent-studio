@@ -426,3 +426,110 @@ describe('App studio-tab mirror (pager reuse)', () => {
     expect(app.studioTabState.activeKey()).toBe('task:C:/watch::task-a');
   });
 });
+
+/**
+ * AGT-2692. Opening a task from the cross-project board used to switch the
+ * whole workspace into that task's single project: the board filter narrowed,
+ * the picker renamed itself, and closing the task left the operator stranded
+ * in a project they never chose. The task tab now carries the scope it was
+ * opened from, and only that scope drives the workspace.
+ */
+describe('App all-projects task open keeps the workspace scope (AGT-2692)', () => {
+  const TAB_STORAGE_KEY = 'atp.studio.tabs.v1';
+  const VSCODE_FLAG_KEY = 'atp.flag.vsCodeLayout';
+  const ACTIVE_PROJECTS_KEY = 'activeProjects';
+
+  afterEach(() => {
+    TestBed.resetTestingModule();
+    localStorage.removeItem(TAB_STORAGE_KEY);
+    localStorage.removeItem(VSCODE_FLAG_KEY);
+    localStorage.removeItem(ACTIVE_PROJECTS_KEY);
+  });
+
+  async function configure(): Promise<App> {
+    TestBed.resetTestingModule();
+    localStorage.removeItem(TAB_STORAGE_KEY);
+    localStorage.removeItem(ACTIVE_PROJECTS_KEY);
+    localStorage.setItem(VSCODE_FLAG_KEY, '1');
+    TestBed.configureTestingModule({
+      providers: [
+        App,
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+      ],
+    });
+    return TestBed.inject(App);
+  }
+
+  /** Directly drive the extracted scope mapping (the mirror effect body). */
+  function applyScope(app: App): void {
+    const tab = app.studioTabState.activeTab();
+    if (!tab) throw new Error('no active tab');
+    (app as unknown as { mirrorTabScopeToBoardFilters(t: unknown): void })
+      .mirrorTabScopeToBoardFilters(tab);
+  }
+
+  function scope(app: App): string[] {
+    return [...app.activeProjects()];
+  }
+
+  it('leaves the scope on all-projects when a task is opened from the All-projects board', async () => {
+    const app = await configure();
+    expect(app.studioTabState.activeKey()).toBe('board:__all__');
+    applyScope(app);
+    expect(scope(app)).toEqual([]);
+
+    // The operator clicks a card belonging to "Project A" on the shared board.
+    app.studioTabState.openTaskFromCurrentScope('C:/watch::task-a');
+    applyScope(app);
+
+    expect(app.studioTabState.activeTab())
+      .toEqual({ kind: 'task', taskKey: 'C:/watch::task-a', originScope: null });
+    // The detail view still knows its project; the workspace does not narrow.
+    expect(scope(app)).toEqual([]);
+  });
+
+  it('returns to the All-projects board with an intact scope when the task closes', async () => {
+    const app = await configure();
+    app.studioTabState.openTaskFromCurrentScope('C:/watch::task-a');
+    applyScope(app);
+
+    app.studioTabState.close(studioTabKey({ kind: 'task', taskKey: 'C:/watch::task-a' }));
+    applyScope(app);
+
+    expect(app.studioTabState.activeKey()).toBe('board:__all__');
+    expect(scope(app)).toEqual([]);
+  });
+
+  it('still narrows when the task is opened from a project board', async () => {
+    const app = await configure();
+    app.studioTabState.open({ kind: 'board', projectName: 'Project A' });
+    applyScope(app);
+    expect(scope(app)).toEqual(['Project A']);
+
+    app.studioTabState.openTaskFromCurrentScope('C:/watch::task-a');
+    applyScope(app);
+
+    expect(scope(app)).toEqual(['Project A']);
+  });
+
+  it('keeps the all-projects scope while paging from one cross-project task to the next', async () => {
+    const app = await configure();
+    app.studioTabState.openTaskFromCurrentScope('C:/watch::task-a');
+    applyScope(app);
+
+    // Pager / cursor step retargets the tab in place and inherits the origin.
+    (app as unknown as { mirrorSelectionToStudioTab(d: unknown, r: boolean): void })
+      .mirrorSelectionToStudioTab(
+        { info: { taskKey: 'C:/watch::task-b', kind: 'task' } },
+        true,
+      );
+    applyScope(app);
+
+    expect(app.studioTabState.activeTab())
+      .toEqual({ kind: 'task', taskKey: 'C:/watch::task-b', originScope: null });
+    expect(scope(app)).toEqual([]);
+  });
+});

@@ -41,7 +41,16 @@ describe('TaskReferenceNavigationService', () => {
     const injector = Injector.create({
       providers: [
         { provide: TaskService, useValue: { jobs: jobsSignal } },
-        { provide: StudioTabStateService, useValue: { open: (tab: unknown) => openedTabs.push(tab) } },
+        {
+          provide: StudioTabStateService,
+          // A markdown reference opens through the scope-preserving door so a
+          // task reached from the All-projects board does not switch the
+          // workspace into that task's project (AGT-2692).
+          useValue: {
+            open: (tab: unknown) => openedTabs.push(tab),
+            openTaskFromCurrentScope: (taskKey: string) => openedTabs.push({ kind: 'task', taskKey }),
+          },
+        },
         { provide: TaskSelectionService, useValue: { openDetail: (job: TaskInfo) => openedDetails.push(job) } },
       ],
     });

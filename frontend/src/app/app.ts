@@ -99,7 +99,9 @@ import {
   replaceTaskViewRoute,
   studioProjectSlug,
   studioRouteForTab,
+  tabProjectScope,
   type StudioTab,
+  type TaskTab,
   type TaskDetailRouteTab,
   type TaskInspectorRouteTab,
 } from './features/studio-shell';
@@ -978,46 +980,18 @@ export class App implements OnInit, OnDestroy {
     // and an all-projects total (e.g. "193") while the breadcrumb named
     // the selected project. setSoleProject is idempotent so repeated tab
     // activations don't toggle the filter off.
+    //
+    // A Task/Activity tab answers with the scope it was opened *from*, not
+    // with the project its detail loads (AGT-2692): opening a card on the
+    // All-projects board used to narrow the whole workspace to that card's
+    // project, stranding the operator in a single project when they closed
+    // the task. `tabProjectScope` is the single policy both this effect and
+    // the studio-shell picker read.
     effect(() => {
       if (!this.featureFlags.vsCodeLayout()) return;
       const tab = this.studioTabState.activeTab();
       if (!tab) return;
-      // `null`  → workspace-wide ("All projects"): clear the project filter.
-      // string  → narrow to exactly that project.
-      // `undefined` → context unknown (diff/welcome, or a task whose job
-      //               hasn't loaded yet): leave the current scope untouched.
-      let project: string | null | undefined;
-      switch (tab.kind) {
-        case 'board':
-          project = tab.projectName === '__all__' ? null : tab.projectName;
-          break;
-        case 'feed':
-        case 'chat-history':
-          project = null;
-          break;
-        case 'workbenches':
-        case 'workbench':
-        case 'hub':
-          project = tab.projectName;
-          break;
-        case 'epics':
-          project = tab.projectName;
-          break;
-        case 'task':
-        case 'activity':
-          project = this.jobService.jobs().find(j => j.taskKey === tab.taskKey)?.projectName ?? undefined;
-          break;
-        default:
-          project = undefined;
-      }
-      if (project === undefined) return;
-      untracked(() => {
-        if (project === null) {
-          if (!this.boardFilters.hasExplicitProjectFilter()) this.boardFilters.clearProjectScope();
-        } else {
-          this.boardFilters.setSoleProject(project);
-        }
-      });
+      this.mirrorTabScopeToBoardFilters(tab);
     });
 
     // Studio-shell mirror: when a job is selected through any path (URL
@@ -1346,7 +1320,10 @@ export class App implements OnInit, OnDestroy {
     this.routeDetailTab.set(null);
     this.routeInspectorTab.set(null);
     if (this.featureFlags.vsCodeLayout()) {
-      this.studioTabState.open({ kind: 'task', taskKey: job.taskKey });
+      // Stamp the surface the card was clicked on. Opening from the
+      // All-projects board records `null`, which keeps the workspace
+      // cross-project for as long as the task tab is active (AGT-2692).
+      this.studioTabState.openTaskFromCurrentScope(job.taskKey);
     }
     this.jobSelection.openDetailAfterPaint(job);
   }
@@ -1949,6 +1926,34 @@ export class App implements OnInit, OnDestroy {
   }
 
   /**
+   * Apply the scope a tab stands for to the board filters. Extracted from the
+   * mirror effect so the scope decision is unit-testable without driving the
+   * full app lifecycle (same reason as {@link mirrorSelectionToStudioTab}).
+   *
+   * `null` → workspace-wide ("All projects"): clear the project filter.
+   * string → narrow to exactly that project.
+   * `undefined` → the tab claims no scope (diff/welcome, or a task whose job
+   * hasn't loaded yet): leave the current scope untouched.
+   */
+  private mirrorTabScopeToBoardFilters(tab: StudioTab): void {
+    let project = tabProjectScope(tab);
+    if (project === undefined && (tab.kind === 'task' || tab.kind === 'activity')) {
+      // No recorded origin — a cold `#/tasks/<key>` deep link or a tab
+      // snapshot from before origins existed. Fall back to the task's own
+      // project so a shared link still lands in context.
+      project = this.jobService.jobs().find(j => j.taskKey === tab.taskKey)?.projectName ?? undefined;
+    }
+    if (project === undefined) return;
+    untracked(() => {
+      if (project === null) {
+        if (!this.boardFilters.hasExplicitProjectFilter()) this.boardFilters.clearProjectScope();
+      } else {
+        this.boardFilters.setSoleProject(project);
+      }
+    });
+  }
+
+  /**
    * Map the current `selectedJob` onto a studio editor tab (vsCodeLayout):
    * focus the existing tab when present, otherwise open a fresh one — except
    * for a pager / cursor step (`retargetNav`), which reuses the active task
@@ -1979,12 +1984,22 @@ export class App implements OnInit, OnDestroy {
       return;
     }
     const active = this.studioTabState.activeTab();
+    // Stepping from one task to the next (pager, cursor key, triage advance)
+    // inherits the scope the previous task tab was opened under, so walking a
+    // lane from "All projects" never silently narrows the workspace. Every
+    // other entry into this branch is a non-user open (URL restore, epic
+    // sub-task) whose origin is genuinely unknown: leaving it unset keeps the
+    // task's own project as the fallback scope.
+    const originScope = active?.kind === 'task' || active?.kind === 'activity'
+      ? active.originScope
+      : undefined;
+    const target: TaskTab = { kind: 'task', taskKey: selected.info.taskKey, originScope };
     if (retargetNav && active?.kind === 'task') {
       // Pager / cursor step from one task to the next: reuse the tab we
       // navigated away from instead of opening a new one.
-      this.studioTabState.retarget(studioTabKey(active), { kind: 'task', taskKey: selected.info.taskKey });
+      this.studioTabState.retarget(studioTabKey(active), target);
     } else {
-      this.studioTabState.open({ kind: 'task', taskKey: selected.info.taskKey });
+      this.studioTabState.open(target);
     }
   }
 

@@ -91,7 +91,7 @@ export class GlobalSearchComponent {
     if (item.domain === 'tasks' && item.taskKey) {
       const task = this.tasks().find(candidate => candidate.taskKey === item.taskKey);
       if (task) {
-        this.tabs.open({ kind: 'task', taskKey: task.taskKey });
+        this.tabs.openTaskFromCurrentScope(task.taskKey);
       }
     } else if (item.domain === 'commits' && item.sha) {
       this.boardFilters.setSoleProject(item.projectName);
