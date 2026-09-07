@@ -35,7 +35,7 @@ builder.Services.AddHttpClient("task-server", client =>
 
 var app = builder.Build();
 app.MapGet("/healthz", () => Results.Ok(new { status = "live", role = "studio-bff" }));
-app.Map("/api/v1/{**path}", async context =>
+RequestDelegate proxyToTaskServer = async context =>
 {
     var client = context.RequestServices.GetRequiredService<IHttpClientFactory>().CreateClient("task-server");
     var target = context.Request.Path + context.Request.QueryString;
@@ -55,7 +55,9 @@ app.Map("/api/v1/{**path}", async context =>
     if (response.Content.Headers.ContentType is not null)
         context.Response.ContentType = response.Content.Headers.ContentType.ToString();
     await response.Content.CopyToAsync(context.Response.Body, context.RequestAborted);
-});
+};
+app.Map("/api/v1/{**path}", proxyToTaskServer);
+app.Map("/hubs/{**path}", proxyToTaskServer);
 
 await app.RunAsync();
 

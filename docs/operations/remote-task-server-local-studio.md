@@ -1,10 +1,8 @@
 # Remote Task Server with local Agent Studio
 
-Status: Phase A architecture delivered; Phase B deployment remains subject to
-Robert's approval. Updated 2026-08-09 with the Remote post-processing ownership
-and migration cut. This task changes no Phase B infrastructure; its delivered
-Task Server decision slice is described below. Every deployment action belongs
-to a separate Phase B task after approval.
+Status: Phase A architecture delivered. Phase B slice B2 principal and scope
+hardening was implemented by AGT-2730 on 2026-09-07. Deployment and migration
+remain gated on the other Phase B slices and the full release-gate rehearsal.
 
 ## Purpose and scope
 
@@ -154,9 +152,10 @@ already supplies device-level encrypted transport, while bearer principals fit
 the existing Task Server and Runner seams and are simpler to rotate. TLS remains
 mandatory inside WireGuard so credentials are not sent over cleartext HTTP.
 
-The release default of one shared `AUTH=bearer` secret is not sufficient for
-this topology. Phase B must provide distinct principals with server-side
-hash-only secret storage and route scopes:
+Task Server now maps `AUTH=bearer` onto distinct persisted principals with
+server-side hash-only credential storage and route scopes. Packaged setup
+creates separate Studio and Engine bootstrap files, while host setup exchanges
+the protected join credential for one bound Runner credential:
 
 | Principal | Credential location | Allowed authority |
 |---|---|---|
@@ -184,10 +183,11 @@ Requirements:
 7. `X-Client-Id` without a valid bearer returns 401. A valid Runner bearer on a
    Studio, management, or other Runner identity's mutation returns 403.
 
-The current role-separated Studio and Runner bearer mode is closer to this
-target than the shared release token, but it is still only a transition. The
-production gate is a distinct revocable credential for `agent-runner-01`, not a
-secret shared by all future Runners.
+The old `TaskServer:RequireAuthentication` plus `StudioBearerToken` and
+`RunnerBearerToken` profile maps into the principal model only as a deprecated
+migration bridge. It has an explicit post-Phase-B removal note. Production uses
+a distinct revocable credential for each Runner, never a Runner-family shared
+secret.
 
 ## Threat model
 
@@ -246,17 +246,14 @@ These are Phase B work, not assumptions that operations can work around:
    `job.json` as a compatibility fallback. A production remote move still needs
    per-project and per-state counts before its inventory can be accepted at the
    larger Phase B boundary.
-3. **Scoped credentials.** The packaged install defaults to one shared bearer.
-   It must support separate hash-only Studio, Engine, and per-Runner
-   credentials with route authorization and revocation.
-4. **Windows fallback artifact.** The documented control-plane release is
+3. **Windows fallback artifact.** The documented control-plane release is
    `linux-x64`. A version-matched Windows Task Server package or an equally
    tested Windows service installation, including cross-platform backup
    restore, is required before the move can be called reversible.
-5. **Connector security.** The local connector needs complete `/api` and
-   `/hubs` forwarding, secret-file or Credential Manager integration, strict
-   Origin checks, CSRF, protocol negotiation, health reporting, and an atomic
-   remote/local upstream switch.
+4. **Connector security.** The local connector forwards `/api/v1` and `/hubs`
+   with its Studio credential, but still needs complete route coverage,
+   Credential Manager integration, strict Origin checks, CSRF, protocol
+   negotiation, health reporting, and an atomic remote/local upstream switch.
 
 No API listener may open on `wg0` until gaps 3 and 5 pass their negative
 authentication tests.
@@ -539,7 +536,7 @@ concept.
 | Order | Slice | Acceptance result | Estimate |
 |---:|---|---|---:|
 | B1 | Studio route ownership and secure local connector | Full `/api` and `/hubs` matrix; remote task workflows pass; local-only dev-seat routes are explicit; connector keeps secrets out of Angular and enforces Origin and CSRF | 5 to 8 engineering days |
-| B2 | Task Server principal and scope hardening | Separate hash-only Studio, Engine, and per-Runner tokens; route scopes; hub auth; rotation and revoke tests; `X-Client-Id` negative tests | 3 to 5 engineering days |
+| B2 | Task Server principal and scope hardening | Implemented by AGT-2730: separate hash-only Studio, Engine, and per-Runner credentials; route scopes; hub auth boundary; rotation and revoke tests; `X-Client-Id` negative tests | Complete 2026-09-07 |
 | B3 | Current-workspace migration and evidence | `task.json` support; exact per-project and per-state counts; archive, events, artifacts, Git evidence, backup, import, and mismatch-stop tests | 3 to 5 engineering days |
 | B4 | Windows fallback and switch tooling | Version-matched Windows service; Linux-backup restore; warm standby; atomic connector profile; authenticated reverse-tunnel fallback; measured sub-15-minute drill | 3 to 5 engineering days |
 | B5 | Private Hetzner foundation | Dedicated VM, WireGuard peers, private TLS, dual firewall, systemd packages, off-host backup, monitoring, and proof of no public API listener | 2 to 3 engineering days plus operator access |

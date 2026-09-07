@@ -103,8 +103,8 @@ start_service() {
       . "${AGENT_SETUP_ORCHESTRATOR_CONFIG:?}/server.env"
       set +a
       # Real systemd starts from the unit EnvironmentFile and does not inherit
-      # the installer's one-shot AUTH_TOKEN bootstrap variable.
-      unset AUTH_TOKEN
+      # the installer's one-shot bootstrap variables.
+      unset AUTH_TOKEN STUDIO_AUTH_TOKEN ENGINE_AUTH_TOKEN
       nohup "${AGENT_SETUP_ORCHESTRATOR_OPT:?}/current/task-server" \
         >"$runtime/task-server.log" 2>&1 &
       ;;
@@ -216,7 +216,7 @@ grep -Fq 'registered as agent-runner-01-e2e (' "$runtime_root/host-setup.log"
 grep -Eq 'ready-no-workflow-scope|read-only|ready' "$runtime_root/host-setup.log"
 
 curl -fsS "$base_url/readyz" >"$runtime_root/ready.json"
-token="$(sed -n '1p' "$orchestrator_config/task-server.token")"
+token="$(sed -n '1p' "$orchestrator_config/studio.token")"
 remote_hosts="$(
   curl -fsS \
     -H "Authorization: Bearer $token" \
@@ -236,14 +236,14 @@ kill -0 "$(cat "$runtime_root/agent-host.pid")"
 
 mkdir -p "$(dirname "$report_path")"
 cat >"$report_path" <<REPORT
-# AGT-2334 guided setup end-to-end probe
+# Guided setup end-to-end probe
 
 - Date (UTC): $(date -u +%Y-%m-%dT%H:%M:%SZ)
 - Host: $(hostname)
 - Runner identity: ${RUNNER_NAME:-not-set}
 - OS: $(uname -srmo)
 - Stamped base revision: $git_sha
-- Worktree: AGT-2334 task branch source, including current task changes
+- Worktree: active task source, including current task changes
 - Release version under test: $version
 - Setup artifact: self-contained Linux x64 ELF, published as a single file
 - Release input: real Task Server, Orchestrator Engine, Agent Host, and setup publishes; static Studio fixture

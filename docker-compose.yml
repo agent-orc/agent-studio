@@ -97,6 +97,19 @@ services:
       - "127.0.0.1:${STUDIO_TASKSERVER_PORT:-5071}:5071"
     volumes:
       - orchestrator-data:/var/lib/agent-orchestrator
+    environment:
+      LISTEN_URL: http://0.0.0.0:5071
+      AllowedHosts: "*"
+      STORE_PATH: /var/lib/agent-orchestrator
+      AUTH: bearer
+      STUDIO_AUTH_TOKEN_FILE: /run/secrets/studio_token
+      ENGINE_AUTH_TOKEN_FILE: /run/secrets/engine_token
+      BOOTSTRAP_RUNNER_ID: distributed-runner
+      BOOTSTRAP_RUNNER_AUTH_TOKEN_FILE: /run/secrets/runner_token
+    secrets:
+      - studio_token
+      - engine_token
+      - runner_token
 
   orchestrator-engine:
     build:
@@ -106,6 +119,10 @@ services:
     restart: unless-stopped
     depends_on:
       - task-server
+    environment:
+      SERVER_URL: http://task-server:5071
+      CLIENT_ID: orchestrator-engine
+      CLIENT_CREDENTIAL: ${DISTRIBUTED_ENGINE_TOKEN:?set DISTRIBUTED_ENGINE_TOKEN}
 
   studio-bff:
     build:
@@ -117,6 +134,31 @@ services:
       - task-server
     ports:
       - "127.0.0.1:${STUDIO_BFF_PORT:-5072}:5072"
+    environment:
+      TaskServer__BaseUrl: http://task-server:5071
+      TaskServer__AuthTokenFile: /run/secrets/studio_token
+    secrets:
+      - studio_token
+
+  agent-host-distributed:
+    build:
+      context: .
+      dockerfile: runner/Dockerfile
+    profiles: ["distributed"]
+    restart: unless-stopped
+    depends_on:
+      - task-server
+    env_file:
+      - path: ./runner.env
+        required: false
+    environment:
+      RUNNER_SERVER_URL: http://task-server:5071
+      RUNNER_ID: distributed-runner
+      RUNNER_NAME: distributed-runner
+      RUNNER_ALLOW_INSECURE_HTTP: "1"
+      RUNNER_AUTH_TOKEN_FILE: /run/secrets/runner_token
+    secrets:
+      - runner_token
 
 volumes:
   workspace:
@@ -124,3 +166,11 @@ volumes:
   runner-coding:
   runner-review:
   orchestrator-data:
+
+secrets:
+  studio_token:
+    environment: DISTRIBUTED_STUDIO_TOKEN
+  engine_token:
+    environment: DISTRIBUTED_ENGINE_TOKEN
+  runner_token:
+    environment: DISTRIBUTED_RUNNER_TOKEN

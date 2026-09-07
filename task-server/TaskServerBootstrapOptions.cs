@@ -13,6 +13,11 @@ public sealed class TaskServerBootstrapOptions
         string backupPath,
         string authenticationMode,
         string? authenticationToken,
+        string? studioAuthenticationToken,
+        string? engineAuthenticationToken,
+        string? bootstrapRunnerId,
+        string? bootstrapRunnerAuthenticationToken,
+        string? legacyRunnerAuthenticationToken,
         bool usesLegacyRoleAuthentication)
     {
         ListenUrl = listenUrl;
@@ -20,6 +25,11 @@ public sealed class TaskServerBootstrapOptions
         BackupPath = backupPath;
         AuthenticationMode = authenticationMode;
         AuthenticationToken = authenticationToken;
+        StudioAuthenticationToken = studioAuthenticationToken;
+        EngineAuthenticationToken = engineAuthenticationToken;
+        BootstrapRunnerId = bootstrapRunnerId;
+        BootstrapRunnerAuthenticationToken = bootstrapRunnerAuthenticationToken;
+        LegacyRunnerAuthenticationToken = legacyRunnerAuthenticationToken;
         UsesLegacyRoleAuthentication = usesLegacyRoleAuthentication;
     }
 
@@ -28,6 +38,11 @@ public sealed class TaskServerBootstrapOptions
     public string BackupPath { get; }
     public string AuthenticationMode { get; }
     public string? AuthenticationToken { get; }
+    public string? StudioAuthenticationToken { get; }
+    public string? EngineAuthenticationToken { get; }
+    public string? BootstrapRunnerId { get; }
+    public string? BootstrapRunnerAuthenticationToken { get; }
+    public string? LegacyRunnerAuthenticationToken { get; }
     public bool UsesSharedBearerAuthentication =>
         string.Equals(AuthenticationMode, BearerAuthentication, StringComparison.Ordinal);
     public bool UsesLegacyRoleAuthentication { get; }
@@ -64,44 +79,65 @@ public sealed class TaskServerBootstrapOptions
             throw new InvalidOperationException(
                 "AUTH must be 'none' or 'bearer'.");
 
-        var token = FirstOrNull(
-            configuration["AUTH_TOKEN"],
-            configuration[$"{TaskServerOptions.SectionName}:AuthToken"]);
-        var tokenFile = FirstOrNull(
-            configuration["AUTH_TOKEN_FILE"],
-            configuration[$"{TaskServerOptions.SectionName}:AuthTokenFile"]);
-        if (token is not null && tokenFile is not null)
+        var token = ReadCredential(
+            configuration,
+            "AUTH_TOKEN",
+            $"{TaskServerOptions.SectionName}:AuthToken",
+            "AUTH_TOKEN_FILE",
+            $"{TaskServerOptions.SectionName}:AuthTokenFile");
+        var studioToken = ReadCredential(
+            configuration,
+            "STUDIO_AUTH_TOKEN",
+            $"{TaskServerOptions.SectionName}:StudioAuthToken",
+            "STUDIO_AUTH_TOKEN_FILE",
+            $"{TaskServerOptions.SectionName}:StudioAuthTokenFile");
+        var engineToken = ReadCredential(
+            configuration,
+            "ENGINE_AUTH_TOKEN",
+            $"{TaskServerOptions.SectionName}:EngineAuthToken",
+            "ENGINE_AUTH_TOKEN_FILE",
+            $"{TaskServerOptions.SectionName}:EngineAuthTokenFile");
+        var bootstrapRunnerId = FirstOrNull(configuration["BOOTSTRAP_RUNNER_ID"]);
+        var bootstrapRunnerToken = ReadCredential(
+            configuration,
+            "BOOTSTRAP_RUNNER_AUTH_TOKEN",
+            $"{TaskServerOptions.SectionName}:BootstrapRunnerAuthToken",
+            "BOOTSTRAP_RUNNER_AUTH_TOKEN_FILE",
+            $"{TaskServerOptions.SectionName}:BootstrapRunnerAuthTokenFile");
+        if ((bootstrapRunnerId is null) != (bootstrapRunnerToken is null))
             throw new InvalidOperationException(
-                "Configure only one of AUTH_TOKEN or AUTH_TOKEN_FILE.");
-        if (tokenFile is not null)
-        {
-            var resolvedTokenFile = Path.GetFullPath(tokenFile);
-            if (!File.Exists(resolvedTokenFile))
-                throw new InvalidOperationException(
-                    $"AUTH_TOKEN_FILE does not exist: {resolvedTokenFile}");
-            if (!OperatingSystem.IsWindows())
-            {
-                var mode = File.GetUnixFileMode(resolvedTokenFile);
-                if ((mode & (UnixFileMode.OtherRead
-                             | UnixFileMode.OtherWrite
-                             | UnixFileMode.OtherExecute)) != 0)
-                {
-                    throw new InvalidOperationException(
-                        "AUTH_TOKEN_FILE must not be accessible to other users.");
-                }
-            }
-            token = File.ReadAllText(resolvedTokenFile).Trim();
-        }
+                "BOOTSTRAP_RUNNER_ID and BOOTSTRAP_RUNNER_AUTH_TOKEN(_FILE) must be configured together.");
 
-        if (authenticationMode == BearerAuthentication
-            && (token is null || token.Length < 32))
-        {
-            throw new InvalidOperationException(
-                "AUTH=bearer requires AUTH_TOKEN or AUTH_TOKEN_FILE with at least 32 characters.");
-        }
+        studioToken ??= token;
+        if (usesLegacyRoleAuthentication)
+            studioToken ??= FirstOrNull(
+                configuration[$"{TaskServerOptions.SectionName}:StudioBearerToken"]);
+        var legacyRunnerToken = usesLegacyRoleAuthentication
+            ? FirstOrNull(configuration[$"{TaskServerOptions.SectionName}:RunnerBearerToken"])
+            : null;
+
+        foreach (var configuredToken in new[] { token, studioToken, engineToken, bootstrapRunnerToken, legacyRunnerToken })
+            if (configuredToken is not null && configuredToken.Length < 32)
+                throw new InvalidOperationException(
+                    "Configured bearer credentials must contain at least 32 characters.");
         if (authenticationMode == NoAuthentication && token is not null)
             throw new InvalidOperationException(
                 "AUTH_TOKEN and AUTH_TOKEN_FILE are invalid when AUTH=none.");
+        if (authenticationMode == NoAuthentication
+            && !usesLegacyRoleAuthentication
+            && (studioToken is not null
+                || engineToken is not null
+                || bootstrapRunnerToken is not null))
+            throw new InvalidOperationException(
+                "Principal bootstrap credentials are invalid when AUTH=none.");
+        if (usesLegacyRoleAuthentication
+            && (studioToken is null || legacyRunnerToken is null))
+            throw new InvalidOperationException(
+                "Deprecated role authentication requires StudioBearerToken and RunnerBearerToken.");
+        if (usesLegacyRoleAuthentication
+            && string.Equals(studioToken, legacyRunnerToken, StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                "StudioBearerToken and RunnerBearerToken must be distinct credentials.");
         if (usesLegacyRoleAuthentication
             && authenticationMode == BearerAuthentication)
         {
@@ -125,7 +161,41 @@ public sealed class TaskServerBootstrapOptions
                 : ResolvePath(backupPath),
             authenticationMode,
             token,
+            studioToken,
+            engineToken,
+            bootstrapRunnerId,
+            bootstrapRunnerToken,
+            legacyRunnerToken,
             usesLegacyRoleAuthentication);
+    }
+
+    private static string? ReadCredential(
+        IConfiguration configuration,
+        string directKey,
+        string legacyDirectKey,
+        string fileKey,
+        string legacyFileKey)
+    {
+        var direct = FirstOrNull(configuration[directKey], configuration[legacyDirectKey]);
+        var file = FirstOrNull(configuration[fileKey], configuration[legacyFileKey]);
+        if (direct is not null && file is not null)
+            throw new InvalidOperationException(
+                $"Configure only one of {directKey} or {fileKey}.");
+        if (file is null)
+            return direct;
+        var resolved = Path.GetFullPath(file);
+        if (!File.Exists(resolved))
+            throw new InvalidOperationException($"{fileKey} does not exist: {resolved}");
+        if (!OperatingSystem.IsWindows())
+        {
+            var mode = File.GetUnixFileMode(resolved);
+            if ((mode & (UnixFileMode.OtherRead
+                         | UnixFileMode.OtherWrite
+                         | UnixFileMode.OtherExecute)) != 0)
+                throw new InvalidOperationException(
+                    $"{fileKey} must not be accessible to other users.");
+        }
+        return File.ReadAllText(resolved).Trim();
     }
 
     private static bool ListensOnlyOnLoopback(string value)

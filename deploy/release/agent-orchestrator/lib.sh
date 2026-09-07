@@ -200,7 +200,10 @@ management_url()
 
 auth_token()
 {
-    token_file=$(read_env_value AUTH_TOKEN_FILE "$CONFIG_ROOT/server.env")
+    token_file=$(read_env_value STUDIO_AUTH_TOKEN_FILE "$CONFIG_ROOT/server.env")
+    if [ -z "$token_file" ]; then
+        token_file=$(read_env_value AUTH_TOKEN_FILE "$CONFIG_ROOT/server.env")
+    fi
     if [ -n "$token_file" ] && [ -f "$token_file" ]; then
         sed -n '1p' "$token_file"
     fi

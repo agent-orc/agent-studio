@@ -94,6 +94,23 @@ public sealed class BootstrapContractTests
     }
 
     [Fact]
+    public void Bearer_authentication_can_generate_initial_principals_on_an_empty_store()
+    {
+        using var store = new TempDirectory();
+        var options = TaskServerBootstrapOptions.Load(
+            Configuration(new Dictionary<string, string?>
+            {
+                ["LISTEN_URL"] = "http://0.0.0.0:5071",
+                ["STORE_PATH"] = store.Path,
+                ["AUTH"] = "bearer",
+            }));
+
+        Assert.True(options.RequiresAuthentication);
+        Assert.Null(options.StudioAuthenticationToken);
+        Assert.Null(options.EngineAuthenticationToken);
+    }
+
+    [Fact]
     public void Command_line_has_explicit_version_and_backup_modes()
     {
         var version = TaskServerCommandLine.Parse(["--version"]);

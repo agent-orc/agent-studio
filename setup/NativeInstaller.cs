@@ -42,13 +42,18 @@ internal sealed class NativeInstaller(
     {
         Console.WriteLine();
         Console.WriteLine("Installing the Control Plane");
-        var credential = ExistingCredential() ?? RandomNumberGenerator.GetHexString(64).ToLowerInvariant();
+        var studioCredential = ExistingCredential("studio.token")
+                               ?? ExistingCredential("task-server.token")
+                               ?? RandomNumberGenerator.GetHexString(64).ToLowerInvariant();
+        var engineCredential = ExistingCredential("engine.token")
+                               ?? RandomNumberGenerator.GetHexString(64).ToLowerInvariant();
         var environment = new Dictionary<string, string?>
         {
             ["NONINTERACTIVE"] = "1",
             ["LISTEN_URL"] = listenUrl,
             ["AUTH_MODE"] = "bearer",
-            ["AUTH_TOKEN"] = credential,
+            ["STUDIO_AUTH_TOKEN"] = studioCredential,
+            ["ENGINE_AUTH_TOKEN"] = engineCredential,
             ["AGENT_ORCHESTRATOR_OPT_ROOT"] = paths.OrchestratorOpt,
             ["AGENT_ORCHESTRATOR_CONFIG_ROOT"] = paths.OrchestratorConfig,
             ["AGENT_ORCHESTRATOR_STATE_ROOT"] = paths.OrchestratorState,
@@ -79,7 +84,7 @@ internal sealed class NativeInstaller(
                 "  Before adding remote hosts, terminate TLS at the host-visible URL and proxy /api/*, /healthz and /readyz to the private listen URL.");
         }
 
-        return new ControlPlaneResult(hostVisibleServerUrl, credential, version);
+        return new ControlPlaneResult(hostVisibleServerUrl, studioCredential, version);
     }
 
     public async Task InstallAgentHostAsync(
@@ -307,9 +312,9 @@ internal sealed class NativeInstaller(
             cancellationToken: cancellationToken);
     }
 
-    private string? ExistingCredential()
+    private string? ExistingCredential(string fileName)
     {
-        var tokenPath = Path.Combine(paths.OrchestratorConfig, "task-server.token");
+        var tokenPath = Path.Combine(paths.OrchestratorConfig, fileName);
         if (!File.Exists(tokenPath))
             return null;
         var token = File.ReadAllText(tokenPath).Trim();
@@ -431,7 +436,7 @@ internal sealed class NativeInstaller(
             try
             {
                 using var response = await http.GetAsync(
-                    "/api/v1/management/remote-hosts",
+                    "/api/v1/runners",
                     cancellationToken);
                 var body = await response.Content.ReadAsStringAsync(cancellationToken);
                 if (response.IsSuccessStatusCode)
@@ -484,9 +489,16 @@ internal sealed class NativeInstaller(
             return null;
         foreach (var capability in capabilities.EnumerateArray())
         {
-            if (capability.TryGetProperty("key", out var candidate)
-                && string.Equals(candidate.GetString(), key, StringComparison.Ordinal)
-                && capability.TryGetProperty("advertisedStatus", out var status))
+            var hasKey = capability.TryGetProperty("key", out var candidate)
+                         || capability.TryGetProperty("kind", out candidate);
+            if (!hasKey
+                || !string.Equals(
+                    candidate.GetString()?.Replace('-', ':'),
+                    key,
+                    StringComparison.Ordinal))
+                continue;
+            if (capability.TryGetProperty("advertisedStatus", out var status)
+                || capability.TryGetProperty("status", out status))
                 return status.GetString();
         }
         return null;

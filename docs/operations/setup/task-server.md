@@ -1,7 +1,7 @@
 # Task Server deployment and recovery
 
-Status: production bootstrap, topology release, and sole v1 ownership contract,
-AGT-2192/AGT-2196/AGT-2330, 2026-07-25.
+Status: production bootstrap, scoped service principals, topology release, and
+sole v1 ownership contract, AGT-2192/AGT-2196/AGT-2330/AGT-2730, 2026-09-07.
 
 This runbook implements the Task Server boundary from
 [Distributed Agent Studio target architecture](../../concepts/distributed-agent-studio-target-architecture.md).
@@ -51,18 +51,23 @@ and [`timer`](../../../deploy/systemd/agent-task-server-backup.timer) to
 The data directory must be owned by the dedicated service account and backed up
 independently of the installation directory.
 
-Create the bootstrap bearer file without putting the secret in shell history:
+Create distinct Studio and Engine bootstrap files without putting either
+secret in shell history:
 
 ```bash
 sudo install -d -m 0750 -o root -g agent-orchestrator /etc/agent-orchestrator
-sudo sh -c 'umask 0077; read -r secret; printf "%s\n" "$secret" > /etc/agent-orchestrator/task-server.token'
-sudo chown root:agent-orchestrator /etc/agent-orchestrator/task-server.token
-sudo chmod 0640 /etc/agent-orchestrator/task-server.token
+sudo sh -c 'umask 0077; read -r secret; printf "%s\n" "$secret" > /etc/agent-orchestrator/studio.token'
+sudo sh -c 'umask 0077; read -r secret; printf "%s\n" "$secret" > /etc/agent-orchestrator/engine.token'
+sudo chown root:agent-orchestrator /etc/agent-orchestrator/studio.token /etc/agent-orchestrator/engine.token
+sudo chmod 0640 /etc/agent-orchestrator/studio.token /etc/agent-orchestrator/engine.token
 ```
 
-Use a randomly generated value of at least 32 characters and transfer client
-copies through the host administration channel. Never put the value in a
-command line, task, log, or committed file.
+Use independently generated values with at least 256 bits of entropy. On an
+empty authenticated store, omitted bootstrap values cause Task Server to
+create the initial Studio and Engine credentials and print each secret once.
+Capture those lines through the host administration channel. The server stores
+only SHA-256 hashes and never returns a credential again after its create or
+rotate response.
 
 The service manager owns process start, stop, restart, and upgrade:
 
@@ -100,11 +105,11 @@ via `mklink /J` is the closest analog to the Linux `current` symlink). Create
 the host-owned bootstrap file at `C:\ProgramData\AgentOrchestrator\server.env`
 using the same `KEY=VALUE` contract as
 [`agent-task-server.env.example`](../../../deploy/systemd/agent-task-server.env.example),
-including `LISTEN_URL`, `STORE_PATH`, `BACKUP_PATH`, `AUTH`, and
-`AUTH_TOKEN_FILE`. Restrict it to the service account with `icacls`, and
-generate the bearer token the same way as Linux: a randomly generated value of
-at least 32 characters, transferred through the host administration channel
-and never put in a command line, task, log, or committed file.
+including `LISTEN_URL`, `STORE_PATH`, `BACKUP_PATH`, `AUTH`,
+`STUDIO_AUTH_TOKEN_FILE`, and `ENGINE_AUTH_TOKEN_FILE`. Restrict both token
+files to the service account with `icacls`, generate each independently with at
+least 256 bits of entropy, and never put either value in a command line, task,
+log, or committed file.
 
 Register and supervise the process with the scripts in
 [`deploy/windows/task-server/`](../../../deploy/windows/task-server/), run
@@ -189,22 +194,35 @@ settings.
 | `STORE_PATH` | Private database and migration evidence root, outside every version directory | `data` beside the installed service |
 | `BACKUP_PATH` | Verified SQLite backup destination | `<STORE_PATH>/backups` |
 | `AUTH` | `bearer` in production; `none` is loopback-only | `none` |
-| `AUTH_TOKEN_FILE` | Host-owned bearer secret file, minimum 32 characters | Required with `AUTH=bearer` unless `AUTH_TOKEN` is set |
-| `AUTH_TOKEN` | Direct secret alternative, mainly for ephemeral deployments | Unset |
+| `STUDIO_AUTH_TOKEN_FILE` | One-time bootstrap input for the initial Studio principal | Generated and written by packaged setup |
+| `ENGINE_AUTH_TOKEN_FILE` | One-time bootstrap input for the initial Engine principal | Generated and written by packaged setup |
+| `STUDIO_AUTH_TOKEN`, `ENGINE_AUTH_TOKEN` | Direct bootstrap alternatives for ephemeral deployments | Unset |
+| `BOOTSTRAP_RUNNER_ID` and `BOOTSTRAP_RUNNER_AUTH_TOKEN(_FILE)` | Optional bound Runner bootstrap for deterministic Compose or topology harnesses | Unset |
+| `AUTH_TOKEN_FILE`, `AUTH_TOKEN` | Deprecated shared bearer input, mapped to the bootstrap Studio principal only | Unset |
 | `TaskServer:MinimumLeaseSeconds` | Lower clamp for Runner leases | `30` |
 | `TaskServer:MaximumLeaseSeconds` | Upper clamp for Runner leases | `600` |
 | `TaskServer:ResultFinalizationMaxAttempts` | Bounded application-owned summary attempts after CORE completion | `3` |
 | `TaskServer:InvariantReconciliationSeconds` | Interval for Tranche 0 invariant comparison | `30` |
 | `TaskServer:InventoryGraceSeconds` | Minimum age before inventory mismatches are actionable | `120` |
 | `TaskServer:MaximumEventPayloadBytes` | Hard UTF-8 size limit for one typed event payload | `262144` |
-| `TaskServer:RequireAuthentication` | Require distinct Studio and Runner bearer credentials on `/api/v1` | `false` |
-| `TaskServer:StudioBearerToken` | Studio/BFF read and management credential | unset |
-| `TaskServer:RunnerBearerToken` | Runner registration, claim, renew, event, artifact, and completion credential | unset |
+| `TaskServer:PrincipalRotationOverlapSeconds` | Default period during which the old credential remains valid after rotation | `300` |
+| `TaskServer:MaximumPrincipalRotationOverlapSeconds` | Maximum accepted rotation overlap | `3600` |
+| `TaskServer:RequireAuthentication`, `StudioBearerToken`, `RunnerBearerToken` | Deprecated compatibility profile mapped into persisted principals; removal follows Phase B migration | unset |
 
-- Configure exactly one of `AUTH_TOKEN_FILE` or `AUTH_TOKEN`.
+- Configure at most one direct value or file for each bootstrap principal.
 - `GET /api/v1/protocol` and `POST /api/v1/protocol/compatibility` remain open
   so a client can negotiate before registration. All other v1 requests require
-  the bearer credential when `AUTH=bearer`.
+  a valid persisted principal when `AUTH=bearer`. Missing, malformed, unknown,
+  expired, or revoked credentials return 401. Authenticated principals without
+  the route scope return 403.
+- `X-Client-Id` and `X-Actor-Id` remain attribution hints. Neither participates
+  in authentication or scope decisions.
+- Studio defaults to `tasks:read`, `tasks:write`, `management`, and
+  `events:subscribe`. Engine defaults to orchestration claim and settlement plus
+  required reads. Each Runner receives a bound principal for Runner claim,
+  review claim, lease, event, artifact, and completion operations. Studio has
+  no fence-minting claim scope; Engine cannot claim Runner work; Runner has no
+  Studio mutation, management, or hub subscription scope.
 - `GET /healthz` proves the process is live.
 - `GET /readyz` succeeds only after schema integrity and durable lease/fence
   authority are restored.
@@ -250,10 +268,13 @@ remote URL cannot fail boot or a context-list request. Any AGT-2325
 compatibility review routes belong only to that local profile. They must never
 be mounted beside the standalone proxy.
 
-The canonical production bootstrap uses one service credential through
-`AUTH=bearer`. The interim compatibility profile may instead set
-`TaskServer:RequireAuthentication` and distinct `StudioBearerToken` and
-`RunnerBearerToken` values. Do not configure both modes. Studio BFF reads
+The canonical production bootstrap uses distinct Studio and Engine credentials
+with `AUTH=bearer`. Setup exchanges its protected join credential for one bound
+Runner credential and writes that result to `RUNNER_AUTH_TOKEN_FILE`. The
+interim `TaskServer:RequireAuthentication`, `StudioBearerToken`, and
+`RunnerBearerToken` profile is deprecated and scheduled for removal after
+existing Phase B installations migrate. Do not configure both modes. Studio
+BFF reads
 `TaskServer:AuthTokenFile`, `TaskServer:AuthToken`, or the compatibility
 `TaskServer:BearerToken`. Agent Runner reads its secret from
 `RUNNER_AUTH_TOKEN_FILE` or `RUNNER_AUTH_TOKEN`. A private-CA or rehearsal
@@ -266,6 +287,39 @@ For a zero-argument local profile, set `TASK_SERVER_PROFILE=local-compatibility`
 The service listens on `127.0.0.1:5031` and uses the current user's application
 data directory. The topology test separately proves the service with another
 process and temporary data root.
+
+## Rotate and revoke principals
+
+Use a current `management` credential and protocol header. Creation and
+rotation reveal a new secret exactly once, so redirect the response to a
+protected file and install the credential before the overlap ends.
+
+```bash
+curl --fail --silent --show-error \
+  -H "Authorization: Bearer $MANAGEMENT_CREDENTIAL" \
+  -H "X-Task-Protocol-Version: 2" \
+  -H "Content-Type: application/json" \
+  -d '{"overlapSeconds":300}' \
+  https://task-server.example/api/v1/management/principals/runner:agent-runner-01/rotate \
+  > /root/runner-rotation.json
+```
+
+Replace the Runner token file atomically, restart the Runner, and prove it has
+registered before the overlap expires. A zero-second overlap invalidates all
+older credential versions immediately. To contain a compromise, revoke first;
+revocation is read from the store on the next request and needs no Task Server
+restart:
+
+```bash
+curl --fail --silent --show-error -X POST \
+  -H "Authorization: Bearer $MANAGEMENT_CREDENTIAL" \
+  -H "X-Task-Protocol-Version: 2" \
+  https://task-server.example/api/v1/management/principals/runner:agent-runner-01/revoke
+```
+
+After revocation, reconcile or fence any active attempt separately. Revoking a
+credential prevents new authenticated requests; it does not by itself prove
+that a process stopped or that an existing Git credential was contained.
 
 ## Modes and durable authority
 
@@ -337,8 +391,8 @@ manager to stop the process; the API does not try to stop its own host process.
 `POST /api/v1/management/backups` creates a consistent SQLite backup, runs an
 integrity check, and returns its SHA-256. Backups contain server/workspace/
 project/task/run identities, task state, events, artifact content, audit,
-Runner records, coding and review leases, immutable review subjects, fenced
-reports, and fence counters.
+principal and credential hashes, Runner records, coding and review leases,
+immutable review subjects, fenced reports, and fence counters.
 
 The packaged timer calls the same implementation through the binary:
 

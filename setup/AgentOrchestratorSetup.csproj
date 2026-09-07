@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="AgentOrchestratorSetup.Tests" />
+    <ProjectReference Include="..\contracts\TaskServer.Contracts\TaskServer.Contracts.csproj" />
   </ItemGroup>
 
 </Project>

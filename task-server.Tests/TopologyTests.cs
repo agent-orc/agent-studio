@@ -456,7 +456,7 @@ public sealed class TopologyTests
             certificate.Export(X509ContentType.Pfx, certificatePassword));
         var certificateSha = Convert.ToHexString(SHA256.HashData(certificate.RawData));
         var studioToken = $"studio.{Guid.NewGuid():N}";
-        var runnerToken = $"runner.{Guid.NewGuid():N}";
+        var engineToken = $"engine.{Guid.NewGuid():N}";
         var serverUrl = $"https://127.0.0.1:{FreePort()}";
         var studioUrl = $"http://127.0.0.1:{FreePort()}";
 
@@ -468,13 +468,34 @@ public sealed class TopologyTests
             {
                 ["ASPNETCORE_Kestrel__Certificates__Default__Path"] = certificatePath,
                 ["ASPNETCORE_Kestrel__Certificates__Default__Password"] = certificatePassword,
-                ["TaskServer__RequireAuthentication"] = "true",
-                ["TaskServer__StudioBearerToken"] = studioToken,
-                ["TaskServer__RunnerBearerToken"] = runnerToken,
+                ["AUTH"] = "bearer",
+                ["STUDIO_AUTH_TOKEN"] = studioToken,
+                ["ENGINE_AUTH_TOKEN"] = engineToken,
             },
             "--urls", serverUrl,
             "--TaskServer:DataDirectory", data.Path);
         await WaitForHttpsAsync(serverUrl + "/readyz", server, certificateSha);
+
+        using var principalHandler = PinnedHandler(certificateSha);
+        using var principalClient = new HttpClient(principalHandler)
+        {
+            BaseAddress = new Uri(serverUrl),
+            Timeout = TimeSpan.FromSeconds(5),
+        };
+        principalClient.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", studioToken);
+        principalClient.DefaultRequestHeaders.Add(
+            TaskServerProtocol.HeaderName,
+            TaskServerProtocol.Current.ToString());
+        var runnerPrincipalResponse = await principalClient.PostAsJsonAsync(
+            "/api/v1/management/principals",
+            new CreatePrincipalRequest(
+                "runner:tls-runner",
+                TaskServerPrincipalKinds.Runner,
+                RunnerId: "tls-runner"));
+        runnerPrincipalResponse.EnsureSuccessStatusCode();
+        var runnerToken = (await runnerPrincipalResponse.Content
+            .ReadFromJsonAsync<IssuedPrincipalCredential>())!.Credential;
 
         using var studio = StartBuilt(
             root,
@@ -530,9 +551,13 @@ public sealed class TopologyTests
             "4-auto-review",
             runner,
             TimeSpan.FromSeconds(30));
-        var history = await studioClient.GetFromJsonAsync<TaskHistoryDto>(
-            $"/api/v1/projects/{project.ProjectId}/tasks/{task.TaskKey}/history");
-        Assert.NotNull(history);
+        var history = await WaitForTaskEventsAsync(
+            studioClient,
+            project.ProjectId,
+            task.TaskKey,
+            runner,
+            [LifecycleEventKinds.AgentMessage, LifecycleEventKinds.ToolTrace],
+            TimeSpan.FromSeconds(15));
         var run = Assert.Single(history.Runs);
         Assert.Contains(history.Events, item => item.Kind == LifecycleEventKinds.AgentMessage);
         Assert.Contains(history.Events, item => item.Kind == LifecycleEventKinds.ToolTrace);
@@ -837,6 +862,29 @@ public sealed class TopologyTests
         }
         throw new TimeoutException(
             $"Task '{taskKey}' did not reach '{expected}'. Process output:{Environment.NewLine}{process}");
+    }
+
+    private static async Task<TaskHistoryDto> WaitForTaskEventsAsync(
+        HttpClient client,
+        string projectId,
+        string taskKey,
+        RunningProcess process,
+        IReadOnlyList<string> expectedKinds,
+        TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow.Add(timeout);
+        while (DateTime.UtcNow < deadline)
+        {
+            AssertHealthy(process, process.Process.Id);
+            var history = await client.GetFromJsonAsync<TaskHistoryDto>(
+                $"/api/v1/projects/{projectId}/tasks/{taskKey}/history");
+            if (history is not null
+                && expectedKinds.All(kind => history.Events.Any(item => item.Kind == kind)))
+                return history;
+            await Task.Delay(100);
+        }
+        throw new TimeoutException(
+            $"Task '{taskKey}' did not publish {string.Join(", ", expectedKinds)}. Process output:{Environment.NewLine}{process}");
     }
 
     private static async Task WaitForOutputAsync(

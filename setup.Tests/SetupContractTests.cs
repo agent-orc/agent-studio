@@ -1,10 +1,64 @@
 using AgentStudio.Setup;
+using AgentStudio.TaskServer.Contracts;
+using System.Net;
+using System.Net.Http.Json;
 using Xunit;
 
 namespace AgentOrchestratorSetup.Tests;
 
 public sealed class SetupContractTests
 {
+    [Fact]
+    public async Task Agent_host_join_mints_a_bound_runner_credential()
+    {
+        var joinCredential = new string('j', 64);
+        var runnerCredential = "ats_0011223344556677." + new string('r', 64);
+        HttpRequestMessage? captured = null;
+        var handler = new StubHandler(request =>
+        {
+            captured = request;
+            return new HttpResponseMessage(HttpStatusCode.Created)
+            {
+                Content = JsonContent.Create(new IssuedPrincipalCredential(
+                    new PrincipalDto(
+                        "runner:runner-one",
+                        TaskServerPrincipalKinds.Runner,
+                        [TaskServerScopes.RunsClaim],
+                        "runner-one",
+                        DateTime.UtcNow,
+                        null,
+                        null),
+                    runnerCredential,
+                    DateTime.UtcNow)),
+            };
+        });
+        using var client = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("https://tasks.example.test"),
+        };
+        var payload = new JoinPayload(
+            1,
+            "https://tasks.example.test",
+            joinCredential,
+            "0.4.0",
+            DateTime.UtcNow);
+
+        var actual = await SetupApplication.MintRunnerCredentialAsync(
+            payload,
+            "runner-one",
+            default,
+            client);
+
+        Assert.Equal(runnerCredential, actual);
+        Assert.NotEqual(joinCredential, actual);
+        Assert.Equal("Bearer", captured!.Headers.Authorization!.Scheme);
+        Assert.Equal(joinCredential, captured.Headers.Authorization.Parameter);
+        Assert.Contains(
+            "\"runnerId\":\"runner-one\"",
+            await captured.Content!.ReadAsStringAsync(),
+            StringComparison.Ordinal);
+    }
+
     [Fact]
     public void JoinToken_RoundTripsAndDetectsCopyDamage()
     {
@@ -25,6 +79,16 @@ public sealed class SetupContractTests
             "checksum",
             Assert.Throws<ArgumentException>(() => JoinTokenCodec.Decode(damaged)).Message,
             StringComparison.OrdinalIgnoreCase);
+    }
+
+    private sealed class StubHandler(
+        Func<HttpRequestMessage, HttpResponseMessage> response)
+        : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+            => Task.FromResult(response(request));
     }
 
     [Fact]
