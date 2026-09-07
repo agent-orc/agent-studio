@@ -10,13 +10,17 @@ Docker Compose is the only new-user installation path documented for Agent
 Studio. The exact start command is:
 
 ```sh
-docker compose up --build --wait
+docker compose up --wait
 ```
 
-The user clones only `agent-orc/agent-studio`. The container builds resolve the
-published `coding-agent-chat` npm package and all .NET dependencies themselves.
-The user does not install .NET or Node.js, create local application settings,
-set maintainer-only switches, or place another repository at a relative path.
+The user clones only `agent-orc/agent-studio`. The user does not install .NET or
+Node.js, create local application settings, set maintainer-only switches, or
+place another repository at a relative path.
+
+Amended 2026-09-07: the decision stands, but the start command no longer builds.
+Compose runs published release images and `build:` moved behind the `dev`
+profile, so the resolution of the `coding-agent-chat` npm package and the .NET
+dependencies happens in the release workflow rather than on the user's machine.
 
 The detailed walkthrough is
 [Getting started](../../setup/getting-started.md).
@@ -51,11 +55,14 @@ hidden prerequisites for seeing the product.
 
 `scripts/compose-smoke-test.sh` is the executable acceptance check. It creates
 an isolated Compose project, uses the documented host ports by default, builds
-and starts only the default services, waits on the product health contract,
-checks the browser shell and a real API response, records service facts, and
-removes its test volumes on exit. Parallel CI jobs can opt into dynamically
-assigned ports without changing the product path under test. CI runs this same
-script.
+the release image tags through the `dev` profile, asserts that no image runs as
+root and that each declares a HEALTHCHECK, starts the default services, waits on
+the product health contract, checks the browser shell and a real API response,
+records service facts, and removes its test volumes on exit. Since 2026-09-07 it
+then runs the `distributed` profile and proves the Task Server, Orchestrator
+Engine, and Studio BFF healthy with OrchestratorApi serving `/api/v1` through
+the Task Server. Parallel CI jobs can opt into dynamically assigned ports
+without changing the product path under test. CI runs this same script.
 
 `scripts/compose-smoke-vm-test.sh` is the clean-machine harness. It verifies a
 pinned Ubuntu image checksum, requires KVM instead of falling back to software

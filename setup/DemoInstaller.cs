@@ -72,7 +72,8 @@ internal sealed class DemoInstaller(ProcessRunner processes, bool dryRun)
                 depends_on:
                   - orchestrator-api
                 ports:
-                  - "127.0.0.1:{port}:80"
+                  # 8080 in the container: the web image runs Caddy unprivileged.
+                  - "127.0.0.1:{port}:8080"
 
             volumes:
               demo-workspace:

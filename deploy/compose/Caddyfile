@@ -1,6 +1,11 @@
 # Caddy config for the containerised frontend: static Angular bundle plus a
 # reverse proxy for the API. Plain HTTP - TLS termination is the host's concern.
-:80 {
+# Port 8080 because the image runs Caddy as an unprivileged user.
+#
+# Log volume is bounded by omission: no `log` directive means Caddy writes
+# startup and error lines only, never one line per request. The Compose
+# json-file driver caps the retained bytes on top of that.
+:8080 {
 	encode zstd gzip
 
 	@api path /api/* /hubs/* /healthz /readyz

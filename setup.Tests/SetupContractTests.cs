@@ -70,7 +70,8 @@ public sealed class SetupContractTests
 
         Assert.Contains("agent-studio-api:v0.4.0", compose);
         Assert.Contains("agent-studio-web:v0.4.0", compose);
-        Assert.Contains("\"127.0.0.1:4011:80\"", compose);
+        // 8080, matching the unprivileged Caddy in the agent-studio-web image.
+        Assert.Contains("\"127.0.0.1:4011:8080\"", compose);
         Assert.Contains("demo-workspace:/data/workspace", compose);
         Assert.DoesNotContain("./", compose);
         Assert.DoesNotContain("/home/", compose);

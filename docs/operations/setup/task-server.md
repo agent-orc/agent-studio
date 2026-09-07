@@ -177,6 +177,101 @@ targeting the installed executable, mirroring
 C:\AgentOrchestrator\current\task-server.exe backup --name manual
 ```
 
+## Container images
+
+Every release tag publishes one image per service. The images are the
+deployment unit for the Docker Compose stack; the archives above remain the
+deployment unit for a native systemd or Scheduled Task install.
+
+| Image | Service | Base | Listens on |
+|---|---|---|---|
+| `ghcr.io/agent-orc/agent-studio-api` | OrchestratorApi | `dotnet/aspnet` | `5031` |
+| `ghcr.io/agent-orc/agent-studio-web` | Angular bundle behind Caddy | `caddy:2-alpine` | `8080` |
+| `ghcr.io/agent-orc/agent-task-server` | Task Server | `dotnet/aspnet` | `5071` |
+| `ghcr.io/agent-orc/agent-orchestrator-engine` | Orchestrator Engine | `dotnet/runtime` | no port |
+| `ghcr.io/agent-orc/agent-studio-bff` | Studio BFF | `dotnet/aspnet` | `5072` |
+| `ghcr.io/agent-orc/agent-host` | Agent Host with the CLI toolchain | `dotnet/sdk` | no port |
+
+The authoritative list is
+[`.github/release-images.txt`](../../../.github/release-images.txt), which the
+release workflow reads.
+
+### Naming and tags
+
+Each image carries two immutable tags: `v<version>` matching the repository
+`VERSION` file, and `sha-<short>` for the seven-character commit prefix. There
+is no `latest` tag: a stack that cannot name its version cannot be rolled back.
+The platform is `linux/amd64`.
+
+`docker-compose.yml` pins `${AGENT_STUDIO_VERSION}`, whose default equals the
+current release tag. The release workflow fails if that default and `VERSION`
+drift apart.
+
+### Runtime contract
+
+- No image runs as root. The .NET images use the base image's `APP_UID`
+  account; the web image adds an unprivileged `studio` user, which is why Caddy
+  listens on `8080` rather than `80`; the Agent Host image creates UID 1654 so
+  bind-mount ownership stays consistent with the rest of the stack.
+- Every image declares a `HEALTHCHECK`. The Task Server probes `/readyz`, not
+  `/healthz`, because it answers `/healthz` before schema integrity and durable
+  lease and fence authority are restored. The Orchestrator Engine and the Agent
+  Host serve no HTTP port; their check is `--health-check`, which probes the
+  configured Task Server's `/healthz` and exits `0` when reachable, `4` when
+  not, and `2` on a configuration error.
+- Log volume is bounded on both sides: the images cap severity and the Compose
+  `json-file` driver caps retained bytes at `10m` across three files.
+- Each image reads the same environment contract as the matching template under
+  [`deploy/release/agent-orchestrator/config/`](../../../deploy/release/agent-orchestrator/config/).
+  Two container-specific additions exist: `ALLOW_INSECURE_HTTP` on the Engine
+  and `RUNNER_ALLOW_INSECURE_HTTP` on the Agent Host, because
+  `http://task-server:5071` is neither HTTPS nor loopback. Both are off by
+  default and neither waives the credential requirement.
+
+### Verifying a digest and build identity
+
+The OCI labels carry the version and commit, but the binaries stay the source
+of truth: `TaskServerBuildIdentity` and the `agent-host --version` contract are
+what a deployment verifies against.
+
+```sh
+version=v0.1.0
+image=ghcr.io/agent-orc/agent-task-server:$version
+docker pull "$image"
+docker image inspect --format '{{index .RepoDigests 0}}' "$image"
+docker image inspect --format '{{.Config.User}} {{index .Config.Labels "org.opencontainers.image.version"}} {{index .Config.Labels "org.opencontainers.image.revision"}}' "$image"
+docker run --rm --entrypoint dotnet "$image" task-server.dll --version
+```
+
+The last command prints `task-server <VERSION>+sha.<40-character-commit>`. Its
+version and commit must match the two labels. Use
+`orchestrator-engine.dll` and `/opt/agent-host/agent-host.dll` for the other
+two identity-bearing images. The release workflow runs exactly these assertions
+against the pushed images before it creates the GitHub Release.
+
+### Running one service from its image
+
+The Task Server refuses `AUTH=none` unless every `LISTEN_URL` address is
+loopback, and a container's published address is not, so a credential is
+mandatory:
+
+```sh
+docker run --rm \
+  --name task-server \
+  --publish 127.0.0.1:5071:5071 \
+  --volume agent-orchestrator-data:/var/lib/agent-orchestrator \
+  --env AUTH=bearer \
+  --env AUTH_TOKEN="$(openssl rand -hex 32)" \
+  ghcr.io/agent-orc/agent-task-server:v0.1.0
+```
+
+`AUTH_TOKEN_FILE` is the better contract on a host install, but it does not
+survive a bind mount into a container: the file would have to be world-readable
+to reach the non-root service account, and the server rejects a token file that
+other users can read. Inside Compose the credential therefore arrives as
+`AUTH_TOKEN` from `.env`, which is an ephemeral deployment in the sense of the
+table below.
+
 ## Configuration and health
 
 The production binary consumes one host-owned `server.env` bootstrap contract.

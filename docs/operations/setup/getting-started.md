@@ -50,12 +50,25 @@ Clone one repository and run one start command:
 ```sh
 git clone https://github.com/agent-orc/agent-studio.git
 cd agent-studio
-docker compose up --build --wait
+docker compose up --wait
 ```
 
-The first build downloads the declared .NET, Node.js, and Caddy base images, so
-it takes longer than later starts. `--wait` returns only after Compose reports
-the API and browser endpoint healthy.
+The stack runs published release images from `ghcr.io/agent-orc`, so the first
+start downloads them instead of compiling anything. `--wait` returns only after
+Compose reports the API and browser endpoint healthy.
+
+To run a specific release, or to build the images from the checkout instead of
+pulling them, copy `.env.example` to `.env` and adjust `AGENT_STUDIO_VERSION`,
+or build the same tags locally:
+
+```sh
+docker compose --profile dev build
+docker compose up --wait
+```
+
+`build:` exists only in the `dev` profile, so a normal `up` never compiles.
+See [Container images](./task-server.md#container-images) for image names, tags,
+and how to verify a digest and build identity.
 
 Open [http://localhost:4011](http://localhost:4011). A successful first run
 shows the empty Agent Studio board. The same end-to-end check is available at:
@@ -82,7 +95,7 @@ container does not delete those volumes.
 The default ports can be changed when they conflict with another local service:
 
 ```sh
-STUDIO_UI_PORT=14011 STUDIO_API_PORT=15031 docker compose up --build --wait
+STUDIO_UI_PORT=14011 STUDIO_API_PORT=15031 docker compose up --wait
 ```
 
 This is the same Compose installation path with port overrides, not a second
@@ -116,9 +129,14 @@ Host is connected.
 
 ## Maintainer verification
 
-CI runs `scripts/compose-smoke-test.sh`, which starts the documented default
-stack, waits for both service health checks, loads the browser shell, and calls
-a real API endpoint.
+CI runs `scripts/compose-smoke-test.sh`. It builds the six release image tags
+through the `dev` profile, asserts that none of them runs as root and that each
+declares a HEALTHCHECK, then runs the stack twice: the documented default stack
+(waiting for both service health checks, loading the browser shell, and calling
+a real API endpoint), and the `distributed` profile, where it proves the Task
+Server, Orchestrator Engine, and Studio BFF healthy and confirms that
+OrchestratorApi serves `/api/v1` through the Task Server by comparing the
+`serverId` returned on both routes.
 
 For a clean-machine proof, `scripts/compose-smoke-vm-test.sh` boots a pinned
 Ubuntu 24.04 cloud image with KVM acceleration, installs only Docker and Compose

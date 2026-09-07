@@ -36,11 +36,15 @@
 ```bash
 git clone https://github.com/agent-orc/agent-studio.git
 cd agent-studio
-docker compose up --build --wait
+docker compose up --wait
 ```
 
 Open [http://localhost:4011](http://localhost:4011). Docker Compose is the
-primary new-user installation path. It requires at least 8 GB of free disk
+primary new-user installation path. It runs version-pinned release images from
+`ghcr.io/agent-orc` and compiles nothing; see
+[container images](./docs/operations/setup/task-server.md#container-images) for
+the published names, tags, and how to verify a digest and build identity. It
+requires at least 8 GB of free disk
 space; no host .NET or Node.js install, local settings file, maintainer switch,
 or neighbouring repository is required. See the
 [setup guide](./docs/operations/setup/getting-started.md) for prerequisites,

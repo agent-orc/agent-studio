@@ -258,6 +258,7 @@ then
 fi
 [ ! -e "$test_root/incomplete-etc/server.env" ]
 
+sh "$repo_root/scripts/release/release-images.test.sh"
 bash "$repo_root/scripts/release/promote-develop-to-main.test.sh"
 bash "$repo_root/scripts/supervisor/test-restart-stable-main-advance.sh"
 

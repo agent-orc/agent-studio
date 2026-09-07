@@ -13,10 +13,17 @@ if (args is ["--help"] or ["-h"])
     Console.WriteLine("""
         orchestrator-engine - API-only flow execution service
 
+        Verbs:
+          --version       Print release and stamped Git SHA.
+          --health-check  Probe the configured Task Server /healthz and exit
+                          (0 reachable, 4 unreachable). This is the container
+                          HEALTHCHECK; the Engine itself serves no HTTP port.
+
         Configuration is read from engine.env through the process environment:
           SERVER_URL
           CLIENT_ID
           CLIENT_CREDENTIAL
+          ALLOW_INSECURE_HTTP
           REVIEW_CONCURRENCY
           COUNCIL_CONCURRENCY
           POST_PROCESSING_CONCURRENCY
@@ -26,6 +33,32 @@ if (args is ["--help"] or ["-h"])
           LEASE_SECONDS
         """);
     return 0;
+}
+
+// The Engine is a headless worker with no listener of its own, so its liveness
+// contract is "configuration parses and the control plane answers". Same shape
+// and same exit codes as `agent-host --health-check`.
+if (args is ["--health-check"])
+{
+    try
+    {
+        var probeOptions = EngineOptions.FromEnvironment();
+        using var probeClient = new EngineTaskServerClient(probeOptions);
+        var reason = await probeClient.ProbeHealthAsync(CancellationToken.None);
+        if (reason is null)
+        {
+            Console.WriteLine($"health-check ok: task server reachable at {probeOptions.ServerUrl}");
+            return 0;
+        }
+        Console.Error.WriteLine(
+            $"health-check failed: cannot reach the task server at {probeOptions.ServerUrl} ({reason}).");
+        return 4;
+    }
+    catch (ArgumentException exception)
+    {
+        Console.Error.WriteLine($"orchestrator-engine configuration error: {exception.Message}");
+        return 2;
+    }
 }
 
 try

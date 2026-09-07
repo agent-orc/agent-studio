@@ -29,6 +29,41 @@ public sealed class EngineTaskServerClient : IDisposable
             _http.DefaultRequestHeaders.Add(TaskServerProtocol.ClientVersionHeaderName, EngineVersion.ProductVersion);
     }
 
+    /// <summary>How long the liveness probe waits before it calls the server unreachable.</summary>
+    private const int HealthProbeTimeoutSeconds = 10;
+
+    /// <summary>
+    /// Liveness probe against the Task Server's open <c>/healthz</c> route. Returns
+    /// <c>null</c> when the server answers 200, otherwise a short human-readable
+    /// reason. It never throws for an unreachable server, so a caller can report
+    /// "control plane down" cleanly instead of letting a transport exception
+    /// cascade. Mirrors <c>TaskServerClient.ProbeHealthAsync</c> on the Agent Host.
+    /// </summary>
+    public async Task<string?> ProbeHealthAsync(CancellationToken ct)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(TimeSpan.FromSeconds(HealthProbeTimeoutSeconds));
+        try
+        {
+            using var response = await _http.GetAsync("/healthz", timeout.Token);
+            return response.IsSuccessStatusCode
+                ? null
+                : $"server answered /healthz with HTTP {(int)response.StatusCode}";
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw; // a real shutdown, not a health failure - let the caller unwind
+        }
+        catch (OperationCanceledException)
+        {
+            return $"no response within {HealthProbeTimeoutSeconds}s";
+        }
+        catch (Exception exception)
+        {
+            return exception.Message;
+        }
+    }
+
     public async Task EnsureCompatibleAsync(CancellationToken ct)
     {
         var response = await PostAsync<ProtocolCompatibilityRequest, ProtocolCompatibilityResponse>(

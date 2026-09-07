@@ -19,7 +19,8 @@ jobs:
   test-build-release:
     name: Test, build and publish release
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # Six service images, one of which carries the whole CLI toolchain layer.
+    timeout-minutes: 120
     steps:
       - name: Check out exact tag
         uses: actions/checkout@v4
@@ -37,7 +38,12 @@ jobs:
           test "$(git tag --points-at "$GITHUB_SHA" | grep -Fx "$GITHUB_REF_NAME")" = "$GITHUB_REF_NAME"
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test -z "$(git status --porcelain --untracked-files=all)"
+          # docker-compose.yml pins the image tag new users pull by default. It
+          # cannot read VERSION, so assert here that the two never drift apart.
+          grep -q "AGENT_STUDIO_VERSION:-v$version" docker-compose.yml
+          grep -q "^AGENT_STUDIO_VERSION=v$version$" .env.example
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "short=${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
 
       - name: Set up .NET 10
         uses: actions/setup-dotnet@v4
@@ -166,24 +172,73 @@ jobs:
             frontend/dist/frontend/browser \
             artifacts/release
 
-      - name: Publish pinned demo images
+      - name: Publish pinned service images
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
+          SHORT: ${{ steps.version.outputs.short }}
+          SHA: ${{ github.sha }}
         run: |
+          set -euo pipefail
+          created="$(git show -s --format=%cI "$SHA")"
+          # Read the list up front: docker reads stdin, so it must not share the
+          # loop's input.
+          mapfile -t entries < <(grep -v '^[[:space:]]*#' .github/release-images.txt | grep -v '^[[:space:]]*$')
+          test "${#entries[@]}" -eq 6
           printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
-          docker build -f backend/Dockerfile \
-            -t "ghcr.io/agent-orc/agent-studio-api:v$VERSION" .
-          docker build -f frontend/Dockerfile \
-            -t "ghcr.io/agent-orc/agent-studio-web:v$VERSION" .
-          docker push "ghcr.io/agent-orc/agent-studio-api:v$VERSION"
-          docker push "ghcr.io/agent-orc/agent-studio-web:v$VERSION"
+          for entry in "${entries[@]}"; do
+            read -r name dockerfile <<<"$entry"
+            repo="ghcr.io/agent-orc/$name"
+            # linux/amd64 only, which is the runner's native architecture. The
+            # runner image carries the CLI toolchain, so cross-building it under
+            # emulation would not stay inside the job budget.
+            docker build -f "$dockerfile" \
+              --build-arg VERSION="$VERSION" \
+              --build-arg REVISION="$SHA" \
+              --label "org.opencontainers.image.created=$created" \
+              -t "$repo:v$VERSION" \
+              -t "$repo:sha-$SHORT" .
+            docker push "$repo:v$VERSION"
+            docker push "$repo:sha-$SHORT"
+          done
           docker logout ghcr.io
-          docker image rm \
-            "ghcr.io/agent-orc/agent-studio-api:v$VERSION" \
-            "ghcr.io/agent-orc/agent-studio-web:v$VERSION"
-          docker pull "ghcr.io/agent-orc/agent-studio-api:v$VERSION"
-          docker pull "ghcr.io/agent-orc/agent-studio-web:v$VERSION"
+
+      - name: Verify image labels, build identity, and non-root user
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SHORT: ${{ steps.version.outputs.short }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          mapfile -t entries < <(grep -v '^[[:space:]]*#' .github/release-images.txt | grep -v '^[[:space:]]*$')
+          # Re-pull so the assertions read what the registry actually serves, not
+          # the local build cache.
+          for entry in "${entries[@]}"; do
+            read -r name _ <<<"$entry"
+            repo="ghcr.io/agent-orc/$name"
+            docker image rm "$repo:v$VERSION" "$repo:sha-$SHORT"
+            docker pull "$repo:v$VERSION"
+            test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$repo:v$VERSION")" = "$VERSION"
+            test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$repo:v$VERSION")" = "$SHA"
+            user="$(docker image inspect --format '{{.Config.User}}' "$repo:v$VERSION")"
+            test -n "$user"
+            test "$user" != "root"
+            test "$user" != "0"
+            test -n "$(docker image inspect --format '{{if .Config.Healthcheck}}set{{end}}' "$repo:v$VERSION")"
+            printf 'image=%s user=%s\n' "$repo:v$VERSION" "$user"
+          done
+          # The binaries stay the source of truth for build identity, so the
+          # label is only trusted once the process inside the image agrees.
+          for entry in \
+            "agent-task-server task-server.dll" \
+            "agent-orchestrator-engine orchestrator-engine.dll" \
+            "agent-host /opt/agent-host/agent-host.dll"; do
+            read -r image assembly <<<"$entry"
+            reported="$(docker run --rm --entrypoint dotnet "ghcr.io/agent-orc/$image:v$VERSION" "$assembly" --version)"
+            printf '%s: %s\n' "$image" "$reported"
+            grep -F "$VERSION" <<<"$reported"
+            grep -F "$SHA" <<<"$reported"
+          done
 
       - name: Attest release assets
         uses: actions/attest-build-provenance@v2

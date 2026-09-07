@@ -19,7 +19,8 @@ jobs:
   compose-smoke:
     name: Docker Compose up and health check
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    # Six images, one carrying the CLI toolchain layer, then two up/down cycles.
+    timeout-minutes: 90
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -29,5 +30,11 @@ jobs:
           docker version
           docker compose version
 
-      - name: Build, start, and verify onboarding stack
+      # Cheap and daemon-free: fails on a wrong ENTRYPOINT assembly, a missing
+      # HEALTHCHECK, a root USER, or an image tag that drifted from Compose,
+      # before the expensive build starts.
+      - name: Check the release image contract
+        run: sh scripts/release/release-images.test.sh
+
+      - name: Build, start, and verify the default and distributed stacks
         run: scripts/compose-smoke-test.sh

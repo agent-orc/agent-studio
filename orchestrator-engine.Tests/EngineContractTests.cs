@@ -56,6 +56,57 @@ public sealed class EngineContractTests
             () => EngineOptions.Parse(key => anonymous.GetValueOrDefault(key))).Message);
     }
 
+    // The container network is the one topology where a non-loopback plain-HTTP
+    // Task Server URL is legitimate, and only with an explicit opt-in. The matrix
+    // pins that the opt-in covers exactly that case and relaxes nothing else.
+    [Theory]
+    [InlineData("http://task-server:5071", null, false)]
+    [InlineData("http://task-server:5071", "0", false)]
+    [InlineData("http://task-server:5071", "1", true)]
+    [InlineData("http://task-server:5071", "true", true)]
+    [InlineData("http://task-server:5071", "TRUE", true)]
+    [InlineData("https://tasks.example.test", null, true)]
+    [InlineData("https://tasks.example.test", "1", true)]
+    [InlineData("http://127.0.0.1:5071", null, true)]
+    public void Insecure_http_opt_in_permits_only_plain_http_outside_loopback(
+        string serverUrl,
+        string? allowInsecureHttp,
+        bool accepted)
+    {
+        var values = new Dictionary<string, string?>
+        {
+            ["SERVER_URL"] = serverUrl,
+            ["CLIENT_ID"] = "engine-a",
+            ["CLIENT_CREDENTIAL"] = "secret",
+            ["ALLOW_INSECURE_HTTP"] = allowInsecureHttp,
+        };
+
+        if (!accepted)
+        {
+            var rejected = Assert.Throws<ArgumentException>(
+                () => EngineOptions.Parse(key => values.GetValueOrDefault(key)));
+            Assert.Contains("ALLOW_INSECURE_HTTP", rejected.Message);
+            return;
+        }
+
+        var options = EngineOptions.Parse(key => values.GetValueOrDefault(key));
+        Assert.Equal(serverUrl, options.ServerUrl);
+    }
+
+    [Fact]
+    public void Insecure_http_opt_in_does_not_waive_the_credential_requirement()
+    {
+        var values = new Dictionary<string, string?>
+        {
+            ["SERVER_URL"] = "http://task-server:5071",
+            ["CLIENT_ID"] = "engine-a",
+            ["ALLOW_INSECURE_HTTP"] = "1",
+        };
+
+        Assert.Contains("CLIENT_CREDENTIAL", Assert.Throws<ArgumentException>(
+            () => EngineOptions.Parse(key => values.GetValueOrDefault(key))).Message);
+    }
+
     [Fact]
     public void Version_surface_contains_release_and_git_sha()
     {

@@ -4,8 +4,9 @@ Agent Studio releases are tag-bound, create-once GitHub Releases created only
 from an exact `vX.Y.Z` tag whose version matches the repository `VERSION` file.
 The release workflow tests the tagged revision, builds self-contained binaries,
 creates the guided setup executable and three archives, writes `SHA256SUMS`,
-attests the executable and archives, publishes version-pinned demo images, and
-creates the GitHub Release. A target host never builds from a checkout.
+attests the executable and archives, publishes one version-pinned container
+image per service, and creates the GitHub Release. A target host never builds
+from a checkout.
 
 ## Release assets
 
@@ -33,12 +34,22 @@ gh attestation verify agent-orchestrator-X.Y.Z-linux-x64.tar.gz \
   --repo agent-orc/agent-studio
 ```
 
-The demo path uses the exact release tag on the public
-`ghcr.io/agent-orc/agent-studio-api` and
-`ghcr.io/agent-orc/agent-studio-web` images. It binds the UI to loopback, uses
-isolated Docker volumes, mounts no host repositories, and starts no Agent Host.
-These images are an evaluation channel, not the native repository execution
-path.
+## Container images
+
+Every release tag also publishes six `linux/amd64` service images under
+`ghcr.io/agent-orc`, each tagged `v<version>` and `sha-<short>`:
+`agent-studio-api`, `agent-studio-web`, `agent-task-server`,
+`agent-orchestrator-engine`, `agent-studio-bff`, and `agent-host`. The list the
+workflow reads is [`.github/release-images.txt`](../../.github/release-images.txt).
+`docker-compose.yml` runs these images; it builds from source only under its
+`dev` profile. Naming, the runtime contract, and digest verification are
+documented in
+[container images](./setup/task-server.md#container-images).
+
+The demo path uses the exact release tag on the `agent-studio-api` and
+`agent-studio-web` images. It binds the UI to loopback, uses isolated Docker
+volumes, mounts no host repositories, and starts no Agent Host. The demo is an
+evaluation channel, not the native repository execution path.
 
 ## Guided setup
 

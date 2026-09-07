@@ -1,0 +1,10 @@
+# Service images published on every release tag: <image name> <dockerfile>.
+# The image name is appended to ghcr.io/agent-orc/ and tagged v<version> and
+# sha-<short>. Keep this list, docker-compose.yml, and the "Container images"
+# section of docs/operations/setup/task-server.md in step.
+agent-studio-api backend/Dockerfile
+agent-studio-web frontend/Dockerfile
+agent-task-server task-server/Dockerfile
+agent-orchestrator-engine orchestrator-engine/Dockerfile
+agent-studio-bff studio-bff/Dockerfile
+agent-host runner/Dockerfile
