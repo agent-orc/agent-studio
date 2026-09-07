@@ -29,6 +29,13 @@ public enum BuildTestGateFailureKind
     Cancellation,
     MissingSource,
     ReviewModel,
+    /// <summary>
+    /// The gate's own bundler or toolchain died before the first test ran, so
+    /// nothing about the delivery was evaluated (AGT-2720). Infrastructure, never
+    /// a product verdict: the integration stays pending with the named reason and
+    /// retries instead of marking the card partial.
+    /// </summary>
+    GateEnvironment,
 }
 
 public sealed record BuildTestGateRequest(
@@ -138,6 +145,13 @@ public sealed record BuildTestGateResult(
     public string? TerminationSignal { get; init; }
     public BuildTestGateFailureKind FailureKind { get; init; }
     public string? FailureFingerprint { get; init; }
+
+    /// <summary>
+    /// Set only for <see cref="BuildTestGateFailureKind.GateEnvironment"/>: the
+    /// named toolchain fault, e.g. <c>gate environment: vite case-insensitive FS
+    /// probe failed</c>. Card surfaces render this instead of a bare failure.
+    /// </summary>
+    public string? GateEnvironmentReason { get; init; }
     public IReadOnlyList<BuildTestGateProcessEvidence> Processes { get; init; } = [];
     public IReadOnlyList<BuildTestGateDependencyCacheEvidence> DependencyCache { get; init; } = [];
     public BuildTestGateBudgetEvidence? ViolatedBudget { get; init; }
@@ -624,19 +638,21 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 var verdict = kind == BuildTestGateFailureKind.Code && mode != PostStepMode.Fail
                     ? BuildTestGateVerdict.Warn
                     : BuildTestGateVerdict.Fail;
+                var cacheEvidence = decisions
+                    .Select(item => ToCacheEvidence(item, installRan: true))
+                    .Concat(dependencyCache)
+                    .ToArray();
                 var reason = FailureReason($"dependency preparation `{command.Command}`", process);
                 return WithFailure(new BuildTestGateResult(
                     verdict, process.ExitCode, sw.ElapsedMilliseconds, output.Text,
-                    reason, ranBackend, ranFrontend)
+                    EnvironmentReason(kind, process, cacheEvidence, reason), ranBackend, ranFrontend)
                 {
                     Processes = evidence,
                     Findings = findings,
-                    DependencyCache = decisions
-                        .Select(item => ToCacheEvidence(item, installRan: true))
-                        .Concat(dependencyCache)
-                        .ToArray(),
+                    DependencyCache = cacheEvidence,
                     TerminationSignal = process.TerminationSignal,
                     ViolatedBudget = process.ViolatedBudget,
+                    GateEnvironmentReason = EnvironmentDiagnosisReason(kind, process),
                 }, kind);
             }
             foreach (var item in decisions)
@@ -703,13 +719,15 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 var reason = FailureReason(Describe(command), process);
                 return WithFailure(new BuildTestGateResult(
                     verdict, process.ExitCode, sw.ElapsedMilliseconds, output.Text,
-                    reason, ranBackend, ranFrontend)
+                    EnvironmentReason(kind, process, dependencyCache, reason),
+                    ranBackend, ranFrontend)
                 {
                     Processes = evidence,
                     Findings = findings,
                     DependencyCache = dependencyCache,
                     TerminationSignal = process.TerminationSignal,
                     ViolatedBudget = process.ViolatedBudget,
+                    GateEnvironmentReason = EnvironmentDiagnosisReason(kind, process),
                 }, kind);
             }
         }
@@ -733,6 +751,47 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         GateDependencyScope Scope,
         string InstallRoot,
         ReviewDependencyCacheEvidenceDto Decision);
+
+    /// <summary>
+    /// Leads a gate environment failure with the named toolchain fault and the
+    /// dependency-cache decision that produced the tree it ran on. Without the
+    /// cache decision a <c>hit</c> on a corrupted entry is invisible: the CAC-18
+    /// gate reported a bare vite stack for four weeks while every run silently
+    /// reused the same broken <c>node_modules</c> (AGT-2720).
+    /// </summary>
+    private static string EnvironmentReason(
+        BuildTestGateFailureKind kind,
+        BuildTestGateProcessEvidence process,
+        IReadOnlyList<BuildTestGateDependencyCacheEvidence> dependencyCache,
+        string reason)
+    {
+        if (kind != BuildTestGateFailureKind.GateEnvironment) return reason;
+        var parts = new List<string> { EnvironmentDiagnosisReason(kind, process)! };
+        var cacheDecisions = CacheDecisionSummary(dependencyCache);
+        if (cacheDecisions is not null) parts.Add(cacheDecisions);
+        parts.Add(reason);
+        return string.Join("; ", parts);
+    }
+
+    private static string? EnvironmentDiagnosisReason(
+        BuildTestGateFailureKind kind,
+        BuildTestGateProcessEvidence process)
+    {
+        if (kind != BuildTestGateFailureKind.GateEnvironment) return null;
+        var diagnosis = GateEnvironmentFailurePolicy.Diagnose(process);
+        return GateEnvironmentFailurePolicy.DescribeReason(
+            diagnosis.IsEnvironmentFailure
+                ? diagnosis
+                : new GateEnvironmentDiagnosis("unknown", "the gate toolchain failed before test discovery"));
+    }
+
+    internal static string? CacheDecisionSummary(
+        IReadOnlyList<BuildTestGateDependencyCacheEvidence> dependencyCache)
+    {
+        if (dependencyCache.Count == 0) return null;
+        return "dependency-cache " + string.Join(", ", dependencyCache.Select(item =>
+            $"{item.State} scope={item.WorkingSubdir} reason={item.Reason}"));
+    }
 
     private static BuildTestGateDependencyCacheEvidence ToCacheEvidence(
         DependencyPreparationDecision item,
@@ -1530,6 +1589,12 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         if (process.TimedOut) return BuildTestGateFailureKind.Timeout;
         if (process.ExitCode == 137 || string.Equals(process.TerminationSignal, "SIGKILL", StringComparison.Ordinal))
             return BuildTestGateFailureKind.OutOfMemory;
+        // AGT-2720: checked before the completed-normally rule below. A bundler
+        // that dies in its own probe exits cleanly with code 1, so the "it
+        // finished, therefore it reported a product result" reasoning would
+        // otherwise turn a toolchain fault into a red suite.
+        if (GateEnvironmentFailurePolicy.Diagnose(process).IsEnvironmentFailure)
+            return BuildTestGateFailureKind.GateEnvironment;
         var evidence = process.StandardError + "\n" + process.StandardOutput;
         var classified = ClassifyFailure(evidence);
         if (classified == BuildTestGateFailureKind.None)
@@ -1626,13 +1691,23 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         }, kind);
     }
 
-    private static BuildTestGateResult SaveDependencyCache(
+    /// <summary>
+    /// Saves the prepared dependencies back into the shared entry, EXCEPT after
+    /// a gate environment failure: that workspace ran on a tree the toolchain
+    /// could not use, so writing it back would hand the next gate the same fault.
+    /// The entry is evicted instead and the retry reinstalls from the lockfile
+    /// (AGT-2720).
+    /// </summary>
+    internal static BuildTestGateResult SaveDependencyCache(
         BuildTestGateResult result,
         GateDependencyCacheSession? session)
     {
         if (session is null) return result;
         var output = result.Output;
-        foreach (var message in session.Save())
+        var messages = result.FailureKind == BuildTestGateFailureKind.GateEnvironment
+            ? session.Evict(result.GateEnvironmentReason ?? "gate-environment")
+            : session.Save();
+        foreach (var message in messages)
             output = AppendOutput(output, $"# {message}");
         return result with { Output = output };
     }

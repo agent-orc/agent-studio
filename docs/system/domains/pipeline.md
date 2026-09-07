@@ -488,6 +488,45 @@ steer the pipeline in this policy version.
   commands, including `installCmd`, use the same `bash -lc` contract as
   build-profile validation on every host. Convention-derived commands retain
   the host shell.
+- A cache entry is a hit only with proof that an install COMPLETED, not only
+  that a hash matched. For an npm-locked scope the restored `node_modules` must
+  also carry `.package-lock.json`, the file npm writes last; without it the
+  decision is `miss` with reason `install-incomplete` and the install runs. The
+  save is transactional: items move into a temporary sibling and the entry is
+  swapped by rename only after every item transferred, and a delete never
+  happens in place, so an interrupted save leaves the previous entry intact
+  instead of publishing a stump. A gate failure classified as
+  `GateEnvironment` evicts the scope's entry before the retry and records
+  `dependency-cache evicted reason=...` in the transcript, and the gate reason
+  itself names the cache decision so a `hit` on a broken tree is visible on the
+  card. Without those four properties a truncated entry with a valid
+  `.nm-state` is permanent: the entry that broke CAC-18 kept 2,580 of 25,748
+  files after an interrupted save, reported `dependency-cache hit
+  reason=lock-unchanged` for four weeks, and killed every pre-main gate inside
+  vite while the Linux review host, which installs fresh, passed the same suite
+  412 times.
+- A gate command that dies inside its own bundler or toolchain BEFORE the first
+  test ran is `BuildTestGateFailureKind.GateEnvironment`, never a product
+  failure. `GateEnvironmentFailurePolicy` requires both halves: a known
+  environment signature (vite's `testCaseInsensitiveFS` probe, a missing module
+  inside `node_modules`, an esbuild platform or version mismatch, a failed
+  native binding, or a stack frame inside an installed tool) AND no evidence
+  that a test runner started. A compiler diagnostic, a failing assertion, and
+  any run that reached test discovery stay `Code`. The merge step records
+  verdict `gate-environment` with failure code `gate-environment`; the card
+  projection keeps that delivery `pending` with the named reason - never
+  `partial` or `conflict-skipped` - and the accepted-integration backstop
+  retries the same integration instead of asking for an operator or steer
+  round. The card keeps its lane and integrating phase for exactly that reason;
+  returning it to Human Review would ask a human to fix a delivery no suite ever
+  ran against. The retry is bounded by
+  `AcceptedIntegrationBackstopPolicy.MaxGateEnvironmentRetries` and counted from
+  the durable `failureCode=gate-environment` timeline notices, not from the
+  merge step, which a re-run replaces in place. Once the budget is spent the card
+  goes to Human Review naming the gate host. The integration chip and the
+  Evidence tab render
+  `gate environment: <fault>` and the Evidence source drops from `failed` to
+  the existing not-proven class, because nothing about the delivery was proven.
 - Immutable Remote Review plans carry that same preparation command, lockfile
   scopes, and preserve globs to the Review Executor. Preparation runs before
   verification in both the candidate and any materialized baseline workspace.

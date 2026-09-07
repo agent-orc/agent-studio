@@ -230,6 +230,23 @@ public sealed class TaskIntegrationStatusService
                 lastMerge);
         }
 
+        // AGT-2720: the gate's own bundler or toolchain died before the first
+        // test, so the attempt decided nothing. Returning the card to review
+        // would ask a human to fix a delivery no suite ever ran against; the
+        // honest recovery is to run the integration again on a working gate
+        // environment. The gate evicts its suspect dependency-cache entry on
+        // this exact failure, so the retry does not repeat the same fault.
+        // The retry BUDGET lives with the sweep that owns the loop
+        // (AcceptedIntegrationBackstopPolicy); this projection only states that
+        // the attempt is not a decision.
+        if (IsGateEnvironmentAttempt(lastMerge))
+        {
+            return new AcceptedIntegrationRecoveryDecision(
+                AcceptedIntegrationRecoveryAction.Retry,
+                "The last gate failed in its own toolchain before test discovery; the integration is retried.",
+                lastMerge);
+        }
+
         // BP-02: a crash can leave the merge commit in local ancestry while the
         // exact-SHA gate verdict is still pending. That state must resume the
         // runner rather than treating ancestry as proof that the gate ran.
@@ -338,6 +355,14 @@ public sealed class TaskIntegrationStatusService
 
         if (integrated > 0)
         {
+            // A gate that died in its own toolchain never evaluated the missing
+            // commits, so `partial` would accuse a delivery nothing tested.
+            if (GateEnvironmentPending(job, projectedBranch, DeliveryRefFor(job), repositoryEntries)
+                is { } environmentPending)
+            {
+                return environmentPending;
+            }
+
             var missing = repositoryEntries
                 .Where(entry => !entry.OnIntegrationBranch)
                 .Select(entry => $"{entry.Repository}: {string.Join(", ", entry.Commits.Where(commit => !commit.OnIntegrationBranch).Select(commit => Short(commit.Sha)))}");
@@ -552,6 +577,11 @@ public sealed class TaskIntegrationStatusService
 
         // SOME landed, some did not → partial, naming the missing short-SHAs so the
         // tooltip says exactly which attributed commits are not in develop yet.
+        // Unless the last attempt never got past its own toolchain: then the
+        // remainder is unevaluated, not rejected (AGT-2720).
+        if (GateEnvironmentPending(job, branchName, deliveryRef) is { } environmentPending)
+            return environmentPending;
+
         var integratedCount = attributed.Count - missing.Count;
         var missingShort = string.Join(", ", missing.Select(Short));
         return new TaskIntegrationStatus
@@ -583,6 +613,9 @@ public sealed class TaskIntegrationStatusService
 
         if (ReadIntegrationFailure(job) is { } failure)
         {
+            if (failure.Code == AcceptedIntegrationFailureCodes.GateEnvironment)
+                return GateEnvironmentPendingStatus(failure, branchName, deliveryRef, repositories);
+
             var visibleReason = VisibleFailureReason(job, branchName, failure);
             return new TaskIntegrationStatus
             {
@@ -622,6 +655,46 @@ public sealed class TaskIntegrationStatusService
             Repositories = repositories ?? [],
         };
     }
+
+    /// <summary>
+    /// AGT-2720: the last integration attempt died inside the gate's own
+    /// toolchain before the first test, so it proved nothing about this
+    /// delivery. Such a card must never read <c>partial</c> or
+    /// <c>conflict-skipped</c> - both accuse the delivery and both stop the
+    /// acceptance rail. It stays <c>pending</c> with the named environment
+    /// reason, and the accepted-integration backstop retries the integration
+    /// unchanged on its next sweep.
+    /// </summary>
+    private TaskIntegrationStatus? GateEnvironmentPending(
+        TaskInfo job,
+        string branchName,
+        string? deliveryRef,
+        List<TaskRepositoryIntegrationStatus>? repositories = null)
+        => ReadIntegrationFailure(job) is
+            { Code: AcceptedIntegrationFailureCodes.GateEnvironment } failure
+            ? GateEnvironmentPendingStatus(failure, branchName, deliveryRef, repositories)
+            : null;
+
+    private static TaskIntegrationStatus GateEnvironmentPendingStatus(
+        AcceptedIntegrationFailure failure,
+        string branchName,
+        string? deliveryRef,
+        List<TaskRepositoryIntegrationStatus>? repositories)
+        => new()
+        {
+            Status = IntegrationStatuses.Pending,
+            DeliveryRef = deliveryRef,
+            IntegrationBranch = branchName,
+            Detail = failure.Reason,
+            Repositories = repositories ?? [],
+            Failure = new TaskIntegrationFailure
+            {
+                Code = failure.Code,
+                Label = failure.Label,
+                Reason = failure.Reason,
+                RebaseRecoveryAvailable = false,
+            },
+        };
 
     private static TaskIntegrationStatus Integrated(
         string sha,
@@ -721,6 +794,20 @@ public sealed class TaskIntegrationStatusService
                + $"rebase '{delivery}' onto the current integration branch '{branchName}', "
                + "resolve the conflicts, and deliver the updated branch.";
     }
+
+    /// <summary>
+    /// AGT-2720: a merge attempt whose gate died in its own toolchain before
+    /// test discovery. The verdict is read from the persisted failure code, with
+    /// the stable verdict vocabulary as the fallback for steps written before
+    /// the code existed.
+    /// </summary>
+    internal static bool IsGateEnvironmentAttempt(PipelineStepExecution? step)
+        => step is not null
+           && (string.Equals(
+                   step.FailureCode,
+                   AcceptedIntegrationFailureCodes.GateEnvironment,
+                   StringComparison.OrdinalIgnoreCase)
+               || string.Equals(step.Verdict, "gate-environment", StringComparison.OrdinalIgnoreCase));
 
     internal PipelineStepExecution? ReadLatestMergeStep(TaskInfo job)
     {

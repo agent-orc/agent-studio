@@ -499,6 +499,62 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
     }
 
     [Fact]
+    public async Task RunAsync_MainTarget_GateEnvironmentFailure_IsNotAProductFailure()
+    {
+        // AGT-2720 / CAC-18: the pre-main full suite died inside vite before the
+        // first test ran. main must not advance, but the durable step has to say
+        // `gate-environment` with the named fault and the dependency-cache
+        // decision - not `error`, which the card reads as a broken delivery.
+        var repo = SeedRepo("runner-main-gate-environment");
+        RunGit(repo, "checkout -q -b task/cac-18");
+        File.WriteAllText(Path.Combine(repo, "task.txt"), "release work");
+        Commit(repo, "feat: release work");
+        var taskSha = RunGit(repo, "rev-parse task/cac-18").Out.Trim();
+        var mainBefore = RunGit(repo, "rev-parse main").Out.Trim();
+        RunGit(repo, "checkout -q main");
+
+        var (git, log, settings) = BuildWithSettings(repo);
+        const string gateReason =
+            "gate environment: vite case-insensitive FS probe failed; "
+            + "dependency-cache hit scope=. reason=lock-unchanged; "
+            + "`npm test` (frontend) exit 1";
+        var gateRunner = new CapturingBuildTestGateRunner(new BuildTestGateResult(
+            BuildTestGateVerdict.Fail,
+            1,
+            20,
+            "at testCaseInsensitiveFS (node_modules/vite/dist/node/chunks/config.js:1911:42)",
+            gateReason,
+            false,
+            true)
+        {
+            FailureKind = BuildTestGateFailureKind.GateEnvironment,
+            GateEnvironmentReason = "gate environment: vite case-insensitive FS probe failed",
+        });
+        var runner = new MergeIntoDevelopRunner(
+            git,
+            log,
+            NullLogger<MergeIntoDevelopRunner>.Instance,
+            projectSettings: settings,
+            preMainTestGate: new PreMainTestGate(gateRunner));
+        var jobFolder = BeginRun(log, repo, jobId: "cac-18");
+
+        var outcome = await runner.RunAsync(
+            "Fixture", "cac-18", jobFolder, repo, "main", CancellationToken.None);
+
+        Assert.Equal(MergeIntoIntegrationOutcome.Error, outcome.Outcome);
+        Assert.Equal(mainBefore, RunGit(repo, "rev-parse main").Out.Trim());
+        Assert.NotEqual(taskSha, RunGit(repo, "rev-parse main").Out.Trim());
+
+        var step = ReadMergeStep(log, jobFolder);
+        Assert.NotNull(step);
+        Assert.Equal(PipelineStepStatus.Failed, step!.Status);
+        Assert.Equal("gate-environment", step.Verdict);
+        Assert.Equal(AcceptedIntegrationFailureCodes.GateEnvironment, step.FailureCode);
+        Assert.Equal(gateReason, step.Reason);
+        Assert.Contains("never reached test discovery", step.VerdictSummary);
+    }
+
+    [Fact]
     public async Task RunAsync_MainTarget_FetchesImmutableRemoteDeliveryWithoutTaskBranch()
     {
         var (repo, _) = SeedRepoWithOrigin("runner-main-remote-ref");

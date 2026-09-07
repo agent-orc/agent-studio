@@ -25,6 +25,14 @@ public sealed class AcceptedIntegrationFailurePolicyTests
             false
         },
         {
+            // AGT-2720: distinct from gate-failed. The gate never reached test
+            // discovery, so this is not a verdict about the delivery at all.
+            "gate-environment",
+            "gate environment: vite case-insensitive FS probe failed",
+            AcceptedIntegrationFailureCodes.GateEnvironment,
+            false
+        },
+        {
             "error",
             "Release source 'origin/task' must be rebased onto 'main' before the full-suite gate.",
             AcceptedIntegrationFailureCodes.SourceNeedsRebase,

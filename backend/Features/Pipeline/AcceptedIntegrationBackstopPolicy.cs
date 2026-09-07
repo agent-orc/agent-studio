@@ -48,6 +48,22 @@ internal sealed record AcceptedIntegrationSweepSummary(
 /// </summary>
 internal static class AcceptedIntegrationBackstopPolicy
 {
+    /// <summary>
+    /// How many sweeps in a row may re-run an integration whose gate died in its
+    /// own toolchain before test discovery (AGT-2720). Small on purpose: each
+    /// attempt is a full suite holding the machine gate, and the gate evicts its
+    /// dependency-cache entry on this failure, so a fault that survives three
+    /// fresh installs is the gate host itself and needs an operator.
+    /// </summary>
+    public const int MaxGateEnvironmentRetries = 3;
+
+    /// <summary>
+    /// True once the gate-environment retry budget is spent, so the sweep stops
+    /// looping and hands the card to a human with the named reason instead.
+    /// </summary>
+    public static bool GateEnvironmentBudgetExhausted(int priorAttempts)
+        => priorAttempts >= MaxGateEnvironmentRetries;
+
     public static bool IsRecoveryCandidate(TaskInfo task)
     {
         if (!AcceptanceIntegrationPolicy.IsIntegrationRequired(task)) return false;

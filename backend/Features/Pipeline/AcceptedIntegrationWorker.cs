@@ -83,6 +83,10 @@ public sealed class AcceptedIntegrationWorker : BackgroundService
             {
                 await FinalizeAcceptedTaskAsync(request, result).ConfigureAwait(false);
             }
+            else if (result.GateEnvironmentFailure)
+            {
+                KeepPendingForGateEnvironmentRetry(request, result);
+            }
             else
             {
                 await ReturnToReviewWithFailureAsync(request, result).ConfigureAwait(false);
@@ -157,6 +161,42 @@ public sealed class AcceptedIntegrationWorker : BackgroundService
                     ["integrationBranch"] = request.IntegrationBranch,
                 });
         }
+    }
+
+    /// <summary>
+    /// AGT-2720: the gate died in its own toolchain before the first test, so
+    /// this attempt decided nothing. The card keeps its lane, its integrating
+    /// phase, and its pending marker, which is exactly what makes the
+    /// accepted-integration backstop pick it up and run the same integration
+    /// again on its next sweep. Returning it to Human Review instead would ask
+    /// an operator to fix a delivery no suite ever ran against - the state
+    /// CAC-18 sat in for four weeks.
+    /// </summary>
+    private void KeepPendingForGateEnvironmentRetry(
+        AcceptedIntegrationRequest request,
+        MergeIntoIntegrationResult result)
+    {
+        _logger.LogWarning(
+            "accepted_integration_gate_environment project={Project} job_id={JobId} integration={Integration} reason={Reason}",
+            request.Project,
+            request.JobId,
+            request.IntegrationBranch,
+            result.Error ?? "gate environment");
+
+        var job = _scanner.FindJob(request.JobId, request.WatchPath);
+        if (job == null) return;
+        _timeline?.Append(
+            job.FolderPath,
+            TimelineEventKinds.IntegrationFailed,
+            TimelineActors.System,
+            "The gate failed in its own toolchain before the first test; the integration stays pending and retries.",
+            details: new Dictionary<string, string>
+            {
+                ["outcome"] = result.Outcome.ToString(),
+                ["integrationBranch"] = request.IntegrationBranch,
+                ["failureCode"] = AcceptedIntegrationFailureCodes.GateEnvironment,
+                ["detail"] = result.Error ?? string.Empty,
+            });
     }
 
     private async Task ReturnToReviewWithFailureAsync(

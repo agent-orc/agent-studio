@@ -14,6 +14,18 @@ public static class DependencyPreparationState
     public const string MarkerFileName = ".nm-state";
     public const string DependencyDirectoryName = "node_modules";
 
+    /// <summary>
+    /// npm writes this file as the last step of a successful <c>npm ci</c>. Its
+    /// absence beside a populated <c>node_modules</c> means the tree was never
+    /// installed completely, or was truncated after the install (AGT-2720): the
+    /// CAC-18 entry carried a matching <see cref="MarkerFileName"/> over 2,580 of
+    /// 25,748 files, so the hash alone could never detect the corruption.
+    /// </summary>
+    public const string InstallCompletionFileName = ".package-lock.json";
+
+    private static readonly string[] NpmLockfileNames =
+        ["package-lock.json", "npm-shrinkwrap.json"];
+
     public static ReviewDependencyCacheEvidenceDto Evaluate(
         string installRoot,
         ReviewDependencyScopeDto scope,
@@ -34,6 +46,13 @@ public static class DependencyPreparationState
         var dependencyDirectory = Path.Combine(installRoot, DependencyDirectoryName);
         if (!Directory.Exists(dependencyDirectory))
             return Evidence(scope, "miss", "deps-dir-missing", hash, present, installRan);
+
+        // Checked before the hash marker on purpose: an entry that lost its
+        // install-completion file is corrupt, and naming it `install-incomplete`
+        // is the diagnosis the operator needs. `lock-changed` would be a lie.
+        if (RequiresInstallCompletionFile(present)
+            && !File.Exists(Path.Combine(dependencyDirectory, InstallCompletionFileName)))
+            return Evidence(scope, "miss", "install-incomplete", hash, present, installRan);
 
         var marker = Path.Combine(installRoot, MarkerFileName);
         if (!File.Exists(marker))
@@ -89,6 +108,16 @@ public static class DependencyPreparationState
         return Convert.ToHexString(sha.ComputeHash(stream)).ToLowerInvariant();
     }
 
+    /// <summary>
+    /// Only npm writes <see cref="InstallCompletionFileName"/>. A scope locked by
+    /// a different package manager must not be declared incomplete for missing a
+    /// file its toolchain never creates.
+    /// </summary>
+    private static bool RequiresInstallCompletionFile(IReadOnlyList<string> presentLockNames)
+        => presentLockNames.Any(name => NpmLockfileNames.Contains(
+            Path.GetFileName(name),
+            StringComparer.OrdinalIgnoreCase));
+
     private static ReviewDependencyCacheEvidenceDto Evidence(
         ReviewDependencyScopeDto scope,
         string state,
@@ -113,6 +142,12 @@ public static class DependencyPreparationState
 /// </summary>
 public sealed class DependencyCacheSession
 {
+    /// <summary>The only directory a restore ever reads. Written by rename only.</summary>
+    private const string ContentDirectoryName = "content";
+    private const string IncomingDirectoryName = "content.incoming";
+    private const string RetiredDirectoryName = "content.retired";
+    private const string TrashSuffix = ".trash-";
+
     private readonly string _workspace;
     private readonly string _cacheRoot;
     private readonly IReadOnlyList<ReviewDependencyScopeDto> _scopes;
@@ -159,40 +194,198 @@ public sealed class DependencyCacheSession
             : Path.Combine(root, SafeSegment(role));
     }
 
-    public IReadOnlyList<string> Restore() => Transfer(restore: true);
-
-    public IReadOnlyList<string> Save() => Transfer(restore: false);
-
-    private IReadOnlyList<string> Transfer(bool restore)
+    public IReadOnlyList<string> Restore()
     {
-        var operation = restore ? "restore" : "save";
         var stopwatch = Stopwatch.StartNew();
         var messages = new List<string>();
-        var contentRoot = Path.Combine(_cacheRoot, "content");
-        var sourceRoot = restore ? contentRoot : _workspace;
-        var destinationRoot = restore ? _workspace : contentRoot;
+        var contentRoot = Path.Combine(_cacheRoot, ContentDirectoryName);
 
-        foreach (var relative in CacheDirectories(sourceRoot))
+        foreach (var relative in CacheDirectories(contentRoot))
         {
             MoveDirectory(
-                ResolveWithin(sourceRoot, relative),
-                ResolveWithin(destinationRoot, relative),
-                operation,
+                ResolveWithin(contentRoot, relative),
+                ResolveWithin(_workspace, relative),
+                "restore",
                 relative,
                 messages);
         }
 
-        foreach (var scope in _scopes)
+        foreach (var marker in MarkerPaths())
         {
-            var marker = Combine(scope.WorkingSubdir, DependencyPreparationState.MarkerFileName);
             MoveFile(
-                ResolveWithin(sourceRoot, marker),
-                ResolveWithin(destinationRoot, marker),
-                operation,
+                ResolveWithin(contentRoot, marker),
+                ResolveWithin(_workspace, marker),
+                "restore",
                 marker,
                 messages);
         }
 
+        return Summarize("restore", messages, stopwatch);
+    }
+
+    /// <summary>
+    /// Transactional save: everything moves into a temporary sibling first and
+    /// the entry is swapped by rename only after every item transferred. The
+    /// AGT-2720 root cause was the opposite order - the previous entry was
+    /// deleted in place, a recursive delete died half-way, and the surviving
+    /// stump kept a valid <c>.nm-state</c>. Every later gate then read a
+    /// <c>lock-unchanged</c> hit on a truncated <c>node_modules</c> and died in
+    /// vite before the first test. An interrupted save must leave the previous
+    /// entry untouched instead.
+    /// </summary>
+    public IReadOnlyList<string> Save()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var messages = new List<string>();
+        var contentRoot = Path.Combine(_cacheRoot, ContentDirectoryName);
+        var incomingRoot = Path.Combine(_cacheRoot, IncomingDirectoryName);
+        // Staging debris from an interrupted save is never an entry, so it is
+        // discarded rather than merged into this one.
+        PurgeDirectory(incomingRoot, "save", messages);
+        SweepAbandonedTrash();
+
+        var transferred = 0;
+        var incomplete = false;
+        foreach (var relative in CacheDirectories(_workspace))
+        {
+            if (MoveDirectory(
+                    ResolveWithin(_workspace, relative),
+                    ResolveWithin(incomingRoot, relative),
+                    "save",
+                    relative,
+                    messages))
+            {
+                transferred++;
+            }
+            else
+            {
+                incomplete = true;
+            }
+        }
+
+        foreach (var marker in MarkerPaths())
+        {
+            if (!MoveFile(
+                    ResolveWithin(_workspace, marker),
+                    ResolveWithin(incomingRoot, marker),
+                    "save",
+                    marker,
+                    messages))
+            {
+                incomplete = true;
+            }
+        }
+
+        if (incomplete || transferred == 0)
+        {
+            var reason = incomplete ? "incomplete-transfer" : "nothing-to-save";
+            messages.Add($"dependency-cache save state=discarded reason={reason}");
+            PurgeDirectory(incomingRoot, "save", messages);
+            return Summarize("save", messages, stopwatch);
+        }
+
+        CarryOverUnsavedItems(contentRoot, incomingRoot, messages);
+        Promote(contentRoot, incomingRoot, messages);
+        return Summarize("save", messages, stopwatch);
+    }
+
+    /// <summary>
+    /// Drops this repository's cache entry so the next gate reinstalls from the
+    /// lockfile. Called when a gate died in its own toolchain: the entry is the
+    /// prime suspect and a broken tree must never survive into the retry.
+    /// </summary>
+    public IReadOnlyList<string> Evict(string reason)
+    {
+        var messages = new List<string>();
+        foreach (var name in new[] { ContentDirectoryName, IncomingDirectoryName, RetiredDirectoryName })
+            PurgeDirectory(Path.Combine(_cacheRoot, name), "evict", messages);
+
+        var summary =
+            $"dependency-cache evicted repository={Path.GetFileName(_cacheRoot)} " +
+            $"scopes={_scopes.Count} reason={Token(reason)}";
+        messages.Add(summary);
+        _log?.Invoke(summary);
+        return messages;
+    }
+
+    /// <summary>
+    /// Moves anything the previous entry still holds and this save did not
+    /// replace into the staging tree, so swapping the whole entry never silently
+    /// drops a scope that was not part of this run's plan.
+    /// </summary>
+    private void CarryOverUnsavedItems(
+        string contentRoot,
+        string incomingRoot,
+        ICollection<string> messages)
+    {
+        if (!Directory.Exists(contentRoot)) return;
+        foreach (var relative in CacheDirectories(contentRoot))
+        {
+            var destination = ResolveWithin(incomingRoot, relative);
+            if (Directory.Exists(destination)) continue;
+            MoveDirectory(
+                ResolveWithin(contentRoot, relative),
+                destination,
+                "save",
+                relative,
+                messages);
+        }
+
+        foreach (var marker in MarkerPaths())
+        {
+            var destination = ResolveWithin(incomingRoot, marker);
+            if (File.Exists(destination)) continue;
+            MoveFile(ResolveWithin(contentRoot, marker), destination, "save", marker, messages);
+        }
+    }
+
+    private void Promote(string contentRoot, string incomingRoot, ICollection<string> messages)
+    {
+        var retiredRoot = Path.Combine(_cacheRoot, RetiredDirectoryName);
+        PurgeDirectory(retiredRoot, "save", messages);
+        var retired = false;
+        try
+        {
+            if (Directory.Exists(contentRoot))
+            {
+                Directory.Move(contentRoot, retiredRoot);
+                retired = true;
+            }
+            Directory.CreateDirectory(_cacheRoot);
+            Directory.Move(incomingRoot, contentRoot);
+            messages.Add("dependency-cache save state=promoted");
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // The swap is the only window in which the entry can be missing.
+            // Put the previous entry back rather than leaving no entry at all.
+            if (retired && !Directory.Exists(contentRoot))
+            {
+                try { Directory.Move(retiredRoot, contentRoot); }
+                catch (Exception restoreError) when (restoreError is IOException or UnauthorizedAccessException)
+                {
+                    Report($"dependency-cache save state=failed reason=entry-unrecoverable", messages);
+                }
+            }
+            Report(
+                $"dependency-cache save state=failed reason={exception.GetType().Name}",
+                messages);
+            return;
+        }
+
+        PurgeDirectory(retiredRoot, "save", messages);
+    }
+
+    private IReadOnlyList<string> MarkerPaths()
+        => _scopes
+            .Select(scope => Combine(scope.WorkingSubdir, DependencyPreparationState.MarkerFileName))
+            .ToArray();
+
+    private IReadOnlyList<string> Summarize(
+        string operation,
+        List<string> messages,
+        Stopwatch stopwatch)
+    {
         stopwatch.Stop();
         var summary =
             $"dependency-cache {operation} repository={Path.GetFileName(_cacheRoot)} " +
@@ -200,6 +393,79 @@ public sealed class DependencyCacheSession
         messages.Add(summary);
         _log?.Invoke(summary);
         return messages;
+    }
+
+    /// <summary>
+    /// Renames before deleting so a recursive delete that dies half-way leaves
+    /// its debris under a name no restore ever reads.
+    /// </summary>
+    private void PurgeDirectory(string path, string operation, ICollection<string> messages)
+    {
+        if (!Directory.Exists(path)) return;
+        var target = path + TrashSuffix + Guid.NewGuid().ToString("N")[..8];
+        try
+        {
+            Directory.Move(path, target);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            target = path;
+        }
+
+        try
+        {
+            Directory.Delete(target, recursive: true);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            Report(
+                $"dependency-cache {operation} item={Path.GetFileName(path)} state=purge-failed " +
+                $"reason={exception.GetType().Name}",
+                messages);
+        }
+    }
+
+    /// <summary>
+    /// A rename-then-delete whose delete failed leaves a trash sibling behind.
+    /// Retry it on the next save so the entry directory cannot grow without
+    /// bound on a host where deletes intermittently fail.
+    /// </summary>
+    private void SweepAbandonedTrash()
+    {
+        if (!Directory.Exists(_cacheRoot)) return;
+        IEnumerable<string> abandoned;
+        try
+        {
+            abandoned = Directory.EnumerateDirectories(_cacheRoot, "*" + TrashSuffix + "*").ToArray();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return;
+        }
+
+        foreach (var path in abandoned)
+        {
+            try { Directory.Delete(path, recursive: true); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                // Still held; the next save tries again.
+            }
+        }
+    }
+
+    private void Report(string message, ICollection<string> messages)
+    {
+        messages.Add(message);
+        _log?.Invoke(message);
+    }
+
+    private static string Token(string value)
+    {
+        var normalized = new string((value ?? string.Empty)
+            .Select(ch => char.IsLetterOrDigit(ch) || ch is '-' or '.' or '_' ? ch : '-')
+            .ToArray())
+            .Trim('-');
+        return normalized.Length == 0 ? "unspecified" : normalized;
     }
 
     private IReadOnlyList<string> CacheDirectories(string sourceRoot)
@@ -279,14 +545,18 @@ public sealed class DependencyCacheSession
         }
     }
 
-    private void MoveDirectory(
+    /// <summary>
+    /// Returns false only when an item that exists at the source did not reach
+    /// the destination, so a save can tell a complete transfer from a partial one.
+    /// </summary>
+    private bool MoveDirectory(
         string source,
         string destination,
         string operation,
         string relative,
         ICollection<string> messages)
     {
-        if (!Directory.Exists(source)) return;
+        if (!Directory.Exists(source)) return true;
         try
         {
             if (Directory.Exists(destination))
@@ -294,45 +564,47 @@ public sealed class DependencyCacheSession
                 if (operation == "restore")
                 {
                     messages.Add($"dependency-cache restore skipped item={relative} reason=destination-exists");
-                    return;
+                    return true;
                 }
-                Directory.Delete(destination, recursive: true);
+                PurgeDirectory(destination, operation, messages);
             }
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
             Directory.Move(source, destination);
             messages.Add($"dependency-cache {operation} item={relative} state=moved");
+            return true;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            var message =
+            Report(
                 $"dependency-cache {operation} item={relative} state=failed " +
-                $"reason={exception.GetType().Name}";
-            messages.Add(message);
-            _log?.Invoke(message);
+                $"reason={exception.GetType().Name}",
+                messages);
+            return false;
         }
     }
 
-    private void MoveFile(
+    private bool MoveFile(
         string source,
         string destination,
         string operation,
         string relative,
         ICollection<string> messages)
     {
-        if (!File.Exists(source)) return;
+        if (!File.Exists(source)) return true;
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
             File.Move(source, destination, overwrite: operation == "save");
             messages.Add($"dependency-cache {operation} item={relative} state=moved");
+            return true;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            var message =
+            Report(
                 $"dependency-cache {operation} item={relative} state=failed " +
-                $"reason={exception.GetType().Name}";
-            messages.Add(message);
-            _log?.Invoke(message);
+                $"reason={exception.GetType().Name}",
+                messages);
+            return false;
         }
     }
 

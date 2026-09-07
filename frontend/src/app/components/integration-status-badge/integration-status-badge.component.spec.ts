@@ -207,6 +207,50 @@ describe('IntegrationStatusBadgeComponent', () => {
     http.verify();
   });
 
+  it('names a gate environment failure instead of blaming the delivery', () => {
+    // AGT-2720 / CAC-18: the pre-main gate died inside vite before the first
+    // test ran. The backend keeps the card pending and retries it, so the badge
+    // must say the environment failed - not a bare "NICHT integriert", and not
+    // the per-repository commit split that reads as a partial delivery.
+    const reason = 'gate environment: vite case-insensitive FS probe failed; '
+      + 'dependency-cache hit scope=. reason=lock-unchanged';
+    const fixture = render(integration('pending', {
+      detail: reason,
+      failure: {
+        code: 'gate-environment',
+        label: 'Gate environment failed',
+        reason,
+        rebaseRecoveryAvailable: false,
+      },
+      repositories: [
+        {
+          repository: 'coding-agent-chat',
+          commits: [{ sha: 'abc1234', onIntegrationBranch: true, onReleaseBranch: false }],
+          integrationBranch: 'main', releaseBranch: 'main',
+          onIntegrationBranch: false, onReleaseBranch: false,
+          detail: '1/107 on main.',
+        },
+      ],
+    }));
+    const badge = fixture.nativeElement.querySelector(
+      '[data-testid="integration-status-badge"]',
+    ) as HTMLElement;
+
+    expect(badge.textContent).toContain('Gate environment failed');
+    expect(badge.textContent).not.toContain('1/107');
+    expect(badge.dataset['integrationStatus']).toBe('pending');
+    expect(badge.dataset['integrationFailureCode']).toBe('gate-environment');
+    expect(fixture.componentInstance.tooltip()).toContain(
+      'gate toolchain failed before the first test ran',
+    );
+    expect(fixture.componentInstance.tooltip()).toContain('vite case-insensitive FS probe failed');
+    expect(fixture.componentInstance.tooltip()).toContain('dependency-cache hit');
+    expect(fixture.componentInstance.ariaLabel()).toContain('Gate environment failed');
+    expect(fixture.nativeElement.querySelector(
+      '[data-testid="task-card-integration-recovery"]',
+    )).toBeNull();
+  });
+
   it('renders no-branch as grey "kein Branch"', () => {
     const fixture = render(integration('no-branch'));
     const badge = fixture.nativeElement.querySelector('[data-testid="integration-status-badge"]') as HTMLElement;

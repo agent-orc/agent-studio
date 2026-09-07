@@ -295,6 +295,118 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
     }
 
     [Fact]
+    public void BuildLookup_GateEnvironmentFailure_StaysPendingInsteadOfPartial()
+    {
+        // AGT-2720 / CAC-18: the pre-main gate died inside vite before the first
+        // test, so the commits it did not land were never evaluated. Projecting
+        // `partial` accused a delivery nothing had tested and stopped the card;
+        // it must read `pending` with the named environment reason instead.
+        var repo = SeedDevelopMainRepo();
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "checkout -q -b task/gate-environment");
+        File.WriteAllText(Path.Combine(repo, "landed.txt"), "landed work");
+        Commit(repo, "feat: landed work");
+        var landed = RunGit(repo, "rev-parse task/gate-environment").Out.Trim();
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "merge --no-ff --no-edit task/gate-environment");
+        RunGit(repo, "checkout -q task/gate-environment");
+        File.WriteAllText(Path.Combine(repo, "not-landed.txt"), "not landed");
+        Commit(repo, "feat: not landed work");
+        var notLanded = RunGit(repo, "rev-parse task/gate-environment").Out.Trim();
+
+        var svc = BuildService(repo, out var project, out var log);
+        var job = Job("gate-environment", "CAC-18", project, repo, log,
+            commits: [Commit(landed), Commit(notLanded)],
+            prov: Prov(branch: "task/gate-environment"));
+        RecordGateEnvironmentMergeStep(log, job, project);
+
+        var status = svc.BuildLookup([job])[job.TaskKey];
+
+        Assert.Equal(IntegrationStatuses.Pending, status.Status);
+        Assert.Equal(AcceptedIntegrationFailureCodes.GateEnvironment, status.Failure?.Code);
+        Assert.Contains("vite case-insensitive FS probe failed", status.Detail!);
+        // The cache decision that produced the broken tree stays visible.
+        Assert.Contains("dependency-cache hit", status.Detail!);
+        Assert.False(status.Failure?.RebaseRecoveryAvailable);
+    }
+
+    [Fact]
+    public void BuildLookup_GateEnvironmentFailure_IsNeverConflictSkipped()
+    {
+        // With nothing landed the same failure would otherwise take the
+        // conflict-skipped branch, which reads as "the delivery is broken".
+        var repo = SeedDevelopMainRepo();
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "checkout -q -b task/gate-environment-none");
+        File.WriteAllText(Path.Combine(repo, "wip.txt"), "wip");
+        Commit(repo, "feat: nothing landed");
+        var anchor = RunGit(repo, "rev-parse task/gate-environment-none").Out.Trim();
+
+        var svc = BuildService(repo, out var project, out var log);
+        var job = Job("gate-environment-none", "CAC-19", project, repo, log,
+            commits: [Commit(anchor)],
+            prov: Prov(branch: "task/gate-environment-none"));
+        RecordGateEnvironmentMergeStep(log, job, project);
+
+        var status = svc.BuildLookup([job])[job.TaskKey];
+
+        Assert.Equal(IntegrationStatuses.Pending, status.Status);
+        Assert.NotEqual(IntegrationStatuses.ConflictSkipped, status.Status);
+        Assert.Equal("Gate environment failed", status.Failure?.Label);
+    }
+
+    [Fact]
+    public void ResolveAcceptedIntegrationRecovery_GateEnvironment_RetriesTheIntegration()
+    {
+        // A toolchain fault is not an operator decision: the honest recovery is
+        // to run the same integration again on a working gate environment. The
+        // gate evicts its suspect dependency-cache entry on this exact failure,
+        // so the retry does not repeat the fault.
+        var repo = SeedDevelopMainRepo();
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "checkout -q -b task/gate-environment-retry");
+        File.WriteAllText(Path.Combine(repo, "retry.txt"), "wip");
+        Commit(repo, "feat: retry candidate");
+        var anchor = RunGit(repo, "rev-parse task/gate-environment-retry").Out.Trim();
+
+        var svc = BuildService(repo, out var project, out var log);
+        var job = Job("gate-environment-retry", "CAC-20", project, repo, log,
+            commits: [Commit(anchor)],
+            prov: Prov(branch: "task/gate-environment-retry"));
+        RecordGateEnvironmentMergeStep(log, job, project);
+        var status = svc.BuildLookup([job])[job.TaskKey];
+
+        var decision = svc.ResolveAcceptedIntegrationRecovery(job, status);
+
+        Assert.Equal(AcceptedIntegrationRecoveryAction.Retry, decision.Action);
+    }
+
+    /// <summary>
+    /// The durable merge step the CAC-18 pre-main gate would write today: the
+    /// <c>gate-environment</c> verdict, the named toolchain fault, and the
+    /// dependency-cache decision the run was based on.
+    /// </summary>
+    private static void RecordGateEnvironmentMergeStep(
+        PipelineExecutionLog log,
+        TaskInfo job,
+        string project)
+    {
+        log.EnsureRun(job.FolderPath, PipelineCatalogue.Standard, project, job.Id);
+        log.RecordStep(job.FolderPath, new PipelineStepExecution
+        {
+            StepId = PipelineCatalogue.MergeIntoDevelopStepId,
+            Kind = StepKind.Tool,
+            Status = PipelineStepStatus.Failed,
+            Verdict = "gate-environment",
+            VerdictSummary = "The gate never reached test discovery, so the delivery was not evaluated.",
+            Reason = "gate environment: vite case-insensitive FS probe failed; "
+                     + "dependency-cache hit scope=. reason=lock-unchanged; "
+                     + "`npm test` (frontend) exit 1",
+            FailureCode = AcceptedIntegrationFailureCodes.GateEnvironment,
+        });
+    }
+
+    [Fact]
     public void BuildLookup_Agt2307StyleRepositories_AreEvaluatedInTheirOwnGraphs()
     {
         var studio = SeedDevelopMainRepo();

@@ -36,6 +36,47 @@ public sealed class AcceptedIntegrationBackstopPolicyTests
         Assert.Contains("integrated=2", entry.Message, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(2, false)]
+    [InlineData(3, true)]
+    [InlineData(9, true)]
+    public void GateEnvironmentRetries_AreBounded(int priorAttempts, bool exhausted)
+    {
+        // AGT-2720: a gate that dies in its own toolchain decided nothing, so the
+        // sweep retries it - but each attempt is a full suite holding the machine
+        // gate. A fault that survives three fresh installs is the gate host and
+        // must reach an operator instead of looping every sweep.
+        Assert.Equal(
+            exhausted,
+            AcceptedIntegrationBackstopPolicy.GateEnvironmentBudgetExhausted(priorAttempts));
+    }
+
+    [Fact]
+    public void GateEnvironmentAttempt_IsReadFromTheFailureCodeOrTheLegacyVerdict()
+    {
+        Assert.True(TaskIntegrationStatusService.IsGateEnvironmentAttempt(new PipelineStepExecution
+        {
+            StepId = PipelineCatalogue.MergeIntoDevelopStepId,
+            Status = PipelineStepStatus.Failed,
+            FailureCode = AcceptedIntegrationFailureCodes.GateEnvironment,
+        }));
+        Assert.True(TaskIntegrationStatusService.IsGateEnvironmentAttempt(new PipelineStepExecution
+        {
+            StepId = PipelineCatalogue.MergeIntoDevelopStepId,
+            Status = PipelineStepStatus.Failed,
+            Verdict = "gate-environment",
+        }));
+        Assert.False(TaskIntegrationStatusService.IsGateEnvironmentAttempt(new PipelineStepExecution
+        {
+            StepId = PipelineCatalogue.MergeIntoDevelopStepId,
+            Status = PipelineStepStatus.Failed,
+            Verdict = "gate-failed",
+            FailureCode = AcceptedIntegrationFailureCodes.BuildGateFailed,
+        }));
+        Assert.False(TaskIntegrationStatusService.IsGateEnvironmentAttempt(null));
+    }
+
     [Fact]
     public void Alert_OverThirtyMinutesWithoutSuccessfulIntegration_SetsProjectHintAndLogsTaskKeys()
     {

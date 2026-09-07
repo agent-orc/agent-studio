@@ -24,6 +24,15 @@ public static class AcceptedIntegrationFailureCodes
     /// describes the push step (AGT-2688).
     /// </summary>
     public const string IntegrationPushBlocked = "integration-push-blocked";
+
+    /// <summary>
+    /// The gate never reached test discovery: its own bundler or toolchain died
+    /// first, so the delivery was never evaluated (AGT-2720). Distinct from
+    /// <see cref="BuildGateFailed"/>, which IS a verdict about the merge result.
+    /// This code keeps the card <c>pending</c> and retries the integration; it
+    /// must never present as a product failure.
+    /// </summary>
+    public const string GateEnvironment = "gate-environment";
 }
 
 /// <summary>
@@ -68,6 +77,14 @@ public static class AcceptedIntegrationFailurePolicy
                     reason,
                     "The delivery conflicts with the current integration branch."),
                 RebaseRecoveryAvailable: true),
+            AcceptedIntegrationFailureCodes.GateEnvironment => new(
+                code,
+                "Gate environment failed",
+                FirstNonBlank(
+                    reason,
+                    verdictSummary,
+                    "The gate toolchain failed before the first test ran; the delivery was not evaluated."),
+                RebaseRecoveryAvailable: false),
             AcceptedIntegrationFailureCodes.BuildGateFailed => new(
                 code,
                 "Build gate failed",
@@ -133,6 +150,8 @@ public static class AcceptedIntegrationFailurePolicy
 
     private static string InferCode(string? verdict, string? reason)
     {
+        if (string.Equals(verdict, "gate-environment", StringComparison.OrdinalIgnoreCase))
+            return AcceptedIntegrationFailureCodes.GateEnvironment;
         if (string.Equals(verdict, "conflict", StringComparison.OrdinalIgnoreCase))
             return AcceptedIntegrationFailureCodes.MergeConflict;
         if (string.Equals(verdict, "gate-failed", StringComparison.OrdinalIgnoreCase))
@@ -182,6 +201,7 @@ public static class AcceptedIntegrationFailurePolicy
             AcceptedIntegrationFailureCodes.NoTaskBranch => AcceptedIntegrationFailureCodes.NoTaskBranch,
             AcceptedIntegrationFailureCodes.IntegrationError => AcceptedIntegrationFailureCodes.IntegrationError,
             AcceptedIntegrationFailureCodes.IntegrationPushBlocked => AcceptedIntegrationFailureCodes.IntegrationPushBlocked,
+            AcceptedIntegrationFailureCodes.GateEnvironment => AcceptedIntegrationFailureCodes.GateEnvironment,
             _ => null,
         };
     }

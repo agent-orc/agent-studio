@@ -6,6 +6,12 @@ import { NotificationService } from '../../services/notification.service';
 import { TaskService } from '../../services/task.service';
 
 /**
+ * Backend `AcceptedIntegrationFailureCodes.GateEnvironment`: the gate never
+ * reached test discovery, so the attempt is not a verdict on the delivery.
+ */
+const GATE_ENVIRONMENT_FAILURE_CODE = 'gate-environment';
+
+/**
  * AGT-2202 — the accept-safety badge. Renders the honest, git-derived
  * {@link TaskIntegrationStatus} on an accepted card (5-human-review / 6-completed
  * / 7-archive) so "Accept != Merge" is impossible to miss:
@@ -67,9 +73,20 @@ export class IntegrationStatusBadgeComponent {
     return value.failure?.rebaseRecoveryAvailable ?? true;
   });
 
+  /**
+   * AGT-2720: the last integration attempt died inside the gate's own bundler
+   * or toolchain before the first test ran, so it judged nothing about this
+   * delivery. The backend keeps such a card `pending` and retries it; the badge
+   * must say so instead of showing a bare "NICHT integriert" (or the
+   * per-repository commit split) that reads as the delivery's fault.
+   */
+  readonly gateEnvironmentFailure = computed(() =>
+    this.integration()?.failure?.code === GATE_ENVIRONMENT_FAILURE_CODE);
+
   readonly label = computed(() => {
     const value = this.integration();
     if (!value) return '';
+    if (this.gateEnvironmentFailure()) return value.failure?.label ?? 'Gate environment failed';
     if (value.repositories?.length) {
       return value.repositories.map((repository) => this.repositoryLine(repository)).join(' · ');
     }
@@ -97,6 +114,10 @@ export class IntegrationStatusBadgeComponent {
     if (!value) return '';
     const branch = value.integrationBranch || 'develop';
     const head = (() => {
+      if (this.gateEnvironmentFailure()) {
+        return `The gate toolchain failed before the first test ran, so the delivery was not evaluated; `
+          + `the integration into ${branch} is retried automatically`;
+      }
       switch (value.status) {
         case 'integrated':
           return value.sha
@@ -133,6 +154,8 @@ export class IntegrationStatusBadgeComponent {
     const value = this.integration();
     if (!value) return '';
     const branch = value.integrationBranch || 'develop';
+    if (this.gateEnvironmentFailure())
+      return `Gate environment failed before the first test; not integrated into ${branch}`;
     switch (value.status) {
       case 'integrated': return `Integrated into ${branch}`;
       case 'partial': return `Partially integrated into ${branch}`;

@@ -58,6 +58,12 @@ internal sealed class GateDependencyCacheSession
 
     public IReadOnlyList<string> Save() => _session.Save();
 
+    /// <summary>
+    /// Drops the entry after a gate died in its own toolchain, so the retry
+    /// reinstalls instead of inheriting the suspect tree (AGT-2720).
+    /// </summary>
+    public IReadOnlyList<string> Evict(string reason) => _session.Evict(reason);
+
     internal static string CachePath(string reviewWorkspaceRoot, string repositoryPath)
         => DependencyCacheSession.CachePath(
             Path.Combine(reviewWorkspaceRoot, BuildTestGateRunner.DependencyCacheDirectoryName),

@@ -458,6 +458,79 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
     }
 
     [Fact]
+    public async Task GateEnvironmentFailure_KeepsTheAcceptancePendingAndRetryable()
+    {
+        // AGT-2720 acceptance, driven against the CAC-18 subject shape: the
+        // pre-develop gate dies inside vite before the first test. The delivery
+        // must NOT integrate, but the card must also NOT be marked partial or
+        // conflict-skipped and must NOT be parked in Human Review - it stays
+        // pending with the named reason and the backstop retries it.
+        var deliverySha = PublishDelivery("cac-18-delivery.txt", "unevaluated work\n");
+        var gate = new GateEnvironmentBuildTestGateRunner();
+        var deps = Build(deliverySha, backgroundIntegration: true, gateRunner: gate);
+        var legacyAccept = deps.States.MoveJob(Slug, TaskStates.Completed, _watchPath);
+        Assert.Equal(MoveJobStatus.Success, legacyAccept.Status);
+        var completed = deps.Scanner.FindJob(Slug, _watchPath)!;
+
+        var worker = new AcceptedIntegrationWorker(
+            deps.AcceptedQueue!,
+            deps.Merge,
+            deps.Scanner,
+            deps.Mutations,
+            deps.Provenance,
+            NullLogger<AcceptedIntegrationWorker>.Instance,
+            deps.Transitions,
+            deps.Timeline);
+        var result = await worker.ProcessAsync(new AcceptedIntegrationRequest(
+            Project,
+            Slug,
+            completed.FolderPath,
+            _watchPath,
+            "develop",
+            IntegrationStrategies.DirectMerge));
+
+        Assert.Equal(1, gate.Invocations);
+        Assert.True(result.GateEnvironmentFailure);
+        Assert.False(result.Outcome.IsSuccessfulIntegration());
+        Assert.NotEqual(0, Git(_repo, "merge-base", "--is-ancestor", deliverySha, "develop").Code);
+
+        // The card keeps its lane, so the accepted-integration backstop still
+        // owns it instead of an operator having to re-accept an untested card.
+        var afterAttempt = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Equal(TaskStates.Completed, afterAttempt.State);
+        Assert.DoesNotContain(
+            "## Acceptance integration",
+            File.Exists(Path.Combine(afterAttempt.FolderPath, "status.md"))
+                ? File.ReadAllText(Path.Combine(afterAttempt.FolderPath, "status.md"))
+                : string.Empty);
+
+        var integration = deps.Integration.BuildLookup([afterAttempt])[afterAttempt.TaskKey];
+        Assert.Equal(IntegrationStatuses.Pending, integration.Status);
+        Assert.NotEqual(IntegrationStatuses.Partial, integration.Status);
+        Assert.NotEqual(IntegrationStatuses.ConflictSkipped, integration.Status);
+        Assert.Equal(AcceptedIntegrationFailureCodes.GateEnvironment, integration.Failure?.Code);
+        Assert.Contains("vite case-insensitive FS probe failed", integration.Detail!);
+        Assert.Contains("dependency-cache hit", integration.Detail!);
+
+        var mergeStep = deps.Pipeline.Read(afterAttempt.FolderPath)?.Steps.LastOrDefault(
+            step => step.StepId == PipelineCatalogue.MergeIntoDevelopStepId);
+        Assert.Equal("gate-environment", mergeStep?.Verdict);
+        Assert.Equal(AcceptedIntegrationFailureCodes.GateEnvironment, mergeStep?.FailureCode);
+
+        var recovery = deps.Integration.ResolveAcceptedIntegrationRecovery(afterAttempt, integration);
+        Assert.Equal(AcceptedIntegrationRecoveryAction.Retry, recovery.Action);
+
+        // The notice is the durable counter that bounds the retry, so the
+        // backstop cannot loop a broken gate host forever.
+        var notice = Assert.Single(
+            deps.Timeline.ReadAll(afterAttempt.FolderPath),
+            entry => entry.Kind == TimelineEventKinds.IntegrationFailed
+                     && entry.Details?.GetValueOrDefault("failureCode")
+                        == AcceptedIntegrationFailureCodes.GateEnvironment);
+        Assert.Contains("retries", notice.Summary);
+    }
+
+    [Fact]
     public async Task OperatorOverride_CompletesWithoutStartingIntegration_AndRecordsAuditReason()
     {
         var deliverySha = PublishDelivery("override.txt", "operator accepted\n");
@@ -1772,6 +1845,45 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
                 ExpectedSha = request.ExpectedSha,
                 TestedSha = request.ExpectedSha,
             };
+        }
+    }
+
+    /// <summary>
+    /// Reproduces the CAC-18 gate: the suite dies inside vite's case-insensitive
+    /// filesystem probe before a single test runs, on a dependency-cache hit.
+    /// </summary>
+    private sealed class GateEnvironmentBuildTestGateRunner : IBuildTestGateRunner
+    {
+        public const string Reason =
+            "gate environment: vite case-insensitive FS probe failed; "
+            + "dependency-cache hit scope=. reason=lock-unchanged; "
+            + "`npm test` (frontend) exit 1";
+
+        public int Invocations { get; private set; }
+
+        public Task<BuildTestGateResult> RunAsync(
+            BuildTestGateRequest request,
+            IReadOnlyList<string>? changedFiles,
+            BuildProfile? profile,
+            PostStepMode mode,
+            TimeSpan timeout,
+            CancellationToken ct)
+        {
+            Invocations++;
+            return Task.FromResult(new BuildTestGateResult(
+                BuildTestGateVerdict.Fail,
+                1,
+                20,
+                "at testCaseInsensitiveFS (node_modules/vite/dist/node/chunks/config.js:1911:42)",
+                Reason,
+                false,
+                true)
+            {
+                ExpectedSha = request.ExpectedSha,
+                TestedSha = request.ExpectedSha,
+                FailureKind = BuildTestGateFailureKind.GateEnvironment,
+                GateEnvironmentReason = "gate environment: vite case-insensitive FS probe failed",
+            });
         }
     }
 

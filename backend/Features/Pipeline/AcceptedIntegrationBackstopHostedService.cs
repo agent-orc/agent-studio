@@ -100,6 +100,25 @@ public sealed class AcceptedIntegrationBackstopHostedService : BackgroundService
                     continue;
                 }
 
+                // AGT-2720: the gate-environment retry is bounded here, where
+                // the sweep loop lives. Without a budget a permanently broken
+                // gate host would re-run a 15-25 minute full suite every sweep
+                // and starve every queued card.
+                if (TaskIntegrationStatusService.IsGateEnvironmentAttempt(decision.LastMergeAttempt))
+                {
+                    var priorAttempts = CountGateEnvironmentAttempts(job);
+                    if (AcceptedIntegrationBackstopPolicy.GateEnvironmentBudgetExhausted(priorAttempts))
+                    {
+                        ReturnTransactionalAcceptToReview(
+                            job,
+                            "GateEnvironment",
+                            $"The gate failed in its own toolchain {priorAttempts} times in a row without "
+                            + "reaching test discovery; the gate host needs an operator. "
+                            + (decision.LastMergeAttempt?.Reason ?? string.Empty));
+                        continue;
+                    }
+                }
+
                 var settings = _settings.Get(job.ProjectName);
                 var result = _runner.Run(
                     job.ProjectName,
@@ -115,6 +134,20 @@ public sealed class AcceptedIntegrationBackstopHostedService : BackgroundService
                 {
                     FinalizeTransactionalAccept(job);
                     ClearPendingTag(job);
+                }
+                else if (result.GateEnvironmentFailure)
+                {
+                    // AGT-2720: the gate never reached test discovery, so this
+                    // sweep decided nothing. Leave the card exactly as it is -
+                    // that is what makes the next sweep retry the integration
+                    // rather than parking an unevaluated delivery in review. The
+                    // notice is the durable retry counter the budget reads.
+                    _logger.LogWarning(
+                        "accepted-integration-backstop gate environment failure project={Project} job={JobId} reason={Reason}",
+                        job.ProjectName,
+                        job.Id,
+                        result.Error ?? "gate environment");
+                    RecordGateEnvironmentAttempt(job, result);
                 }
                 else
                 {
@@ -379,6 +412,32 @@ public sealed class AcceptedIntegrationBackstopHostedService : BackgroundService
             TimelineActors.System,
             "Recovered acceptance integration succeeded; task moved to Completed.");
     }
+
+    /// <summary>
+    /// One durable notice per sweep that ended in a gate environment failure.
+    /// The merge STEP cannot serve as the counter: a re-run replaces the step
+    /// with the same id, so the attempt history would always read as one.
+    /// </summary>
+    private void RecordGateEnvironmentAttempt(TaskInfo job, MergeIntoIntegrationResult result)
+        => _timeline?.Append(
+            job.FolderPath,
+            TimelineEventKinds.IntegrationFailed,
+            TimelineActors.System,
+            "The gate failed in its own toolchain before the first test; the integration stays pending and retries.",
+            details: new Dictionary<string, string>
+            {
+                ["outcome"] = result.Outcome.ToString(),
+                ["failureCode"] = AcceptedIntegrationFailureCodes.GateEnvironment,
+                ["detail"] = result.Error ?? string.Empty,
+            });
+
+    private int CountGateEnvironmentAttempts(TaskInfo job)
+        => _timeline?.ReadAll(job.FolderPath).Count(entry =>
+            entry.Kind == TimelineEventKinds.IntegrationFailed
+            && string.Equals(
+                entry.Details?.GetValueOrDefault("failureCode"),
+                AcceptedIntegrationFailureCodes.GateEnvironment,
+                StringComparison.Ordinal)) ?? 0;
 
     private void ReturnTransactionalAcceptToReview(
         TaskInfo job,

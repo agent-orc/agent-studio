@@ -147,6 +147,16 @@ public record MergeIntoIntegrationResult(
     string? PreviousIntegrationSha)
 {
     public IReadOnlyList<string> EvidenceShas { get; init; } = [];
+
+    /// <summary>
+    /// AGT-2720: the attempt failed because the gate's own bundler or toolchain
+    /// died BEFORE the first test, so it decided nothing about this delivery.
+    /// Acceptance must keep the card pending for a retry instead of consuming
+    /// the attempt as a decision and asking a human to fix an unevaluated
+    /// delivery.
+    /// </summary>
+    public bool GateEnvironmentFailure { get; init; }
+
     public static MergeIntoIntegrationResult Of(MergeIntoIntegrationOutcome outcome, string? mergedSha = null, string? error = null)
         => new(
             outcome,

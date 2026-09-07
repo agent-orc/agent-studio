@@ -353,6 +353,15 @@ public sealed class MergeIntoDevelopRunner
             _logger.LogInformation(
                 "merge-into-develop project={Project} job={JobId} delivery={Delivery} integration={Integration} strategy={Strategy} outcome={Outcome}",
                 project, jobId, taskBranch, branch, strategy, result.Outcome);
+            // AGT-2720: mark an attempt that never got past the gate's own
+            // toolchain, so acceptance keeps the card pending for a retry
+            // instead of consuming it as a decision about the delivery.
+            if (!result.Outcome.IsSuccessfulIntegration()
+                && (GateEnvironmentFailurePolicy.IsGateEnvironmentFailure(preMainResult)
+                    || GateEnvironmentFailurePolicy.IsGateEnvironmentFailure(preDevelopResult)))
+            {
+                result = result with { GateEnvironmentFailure = true };
+            }
             Record(jobFolderPath, project, jobId, branch, result, preMainResult, preDevelopResult, startedAt);
 
             // AGT-1999: once the accepted task is folded into the integration
@@ -1545,6 +1554,28 @@ public sealed class MergeIntoDevelopRunner
         BuildTestGateResult? preMainResult,
         BuildTestGateResult? preDevelopResult)
     {
+        // AGT-2720: a gate whose own bundler or toolchain died before the first
+        // test evaluated nothing about this delivery. It gets its own verdict so
+        // the card reads "gate environment: ..." and stays pending for a retry,
+        // instead of a `partial` that reads as a broken delivery and stops the
+        // acceptance rail (CAC-18 sat there for 412 review passes).
+        var environmentGate = new[] { preMainResult, preDevelopResult }
+            .FirstOrDefault(GateEnvironmentFailurePolicy.IsGateEnvironmentFailure);
+        if (environmentGate is not null && !result.Outcome.IsSuccessfulIntegration())
+        {
+            return (
+                PipelineStepStatus.Failed,
+                "gate-environment",
+                // The gate reason leads with the named toolchain fault AND the
+                // dependency-cache decision it ran on, so a cache hit on a
+                // broken tree is visible on the card, not only in the log.
+                string.IsNullOrWhiteSpace(environmentGate.Reason)
+                    ? environmentGate.GateEnvironmentReason
+                    : environmentGate.Reason,
+                "The gate never reached test discovery, so the delivery was not evaluated. "
+                + "The integration stays pending and retries on the next rail run.");
+        }
+
         switch (result.Outcome)
         {
             case MergeIntoIntegrationOutcome.Merged:

@@ -181,21 +181,30 @@ internal static class TaskScopedTestEvidenceReader
                                       reason,
                                       "no verify commands derivable",
                                       StringComparison.OrdinalIgnoreCase);
+        // AGT-2720: a gate that died in its own toolchain before the first test
+        // proved nothing about the delivery. Rendering it as "failed" is what
+        // made CAC-18 look like a red suite for four weeks; it belongs in the
+        // existing not-proven class with the named environment reason.
+        var gateEnvironment = (reason ?? string.Empty)
+            .StartsWith(GateEnvironmentFailurePolicy.ReasonPrefix, StringComparison.OrdinalIgnoreCase);
         var result = normalizedVerdict switch
         {
             "ok" or "warn" => "passed",
+            "fail" when gateEnvironment => "not-proven",
             "fail" => "failed",
             "notapplicable" or "not-applicable" => "not-applicable",
             "skipped" when legacyNotApplicable => "not-applicable",
             _ => "not-proven",
         };
-        var resultLabel = result switch
-        {
-            "passed" => "green",
-            "failed" => "failed",
-            "not-applicable" => "not applicable",
-            _ => "skipped",
-        };
+        var resultLabel = gateEnvironment
+            ? "blocked by its environment"
+            : result switch
+            {
+                "passed" => "green",
+                "failed" => "failed",
+                "not-applicable" => "not applicable",
+                _ => "skipped",
+            };
         var observedAt = ParseDate(ReadToken(text, "completedAtUtc"))
                          ?? File.GetLastWriteTimeUtc(path);
         var id = ReadToken(text, "gateRunId");
