@@ -25,4 +25,20 @@ public sealed class CliEnvironment
 
     /// <summary>No-op retained for the probe base class.</summary>
     public bool EnsureTerminalSetupAcknowledged(params string[] terminalIds) => false;
+
+    /// <summary>
+    /// Environment overrides every observing PTY spawn must carry: quota probes,
+    /// model discovery, and the parser-development probe endpoint read the
+    /// installed CLI, they never mutate it. Without the guard an interactive
+    /// start may auto-update the global npm package mid-probe and leave a
+    /// half-installed CLI behind for every later run (AGT-2706). The keys mirror
+    /// the run spawn path in <c>CliExecutionServiceBase</c> and are layered on
+    /// top of the terminal settings in <see cref="PtySession.SpawnAsync"/>.
+    /// </summary>
+    public static IDictionary<string, string> ProbeEnvironment()
+        => new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["CLAUDE_CODE_DISABLE_AUTOUPDATER"] = "1",
+            ["DISABLE_AUTOUPDATER"] = "1",
+        };
 }

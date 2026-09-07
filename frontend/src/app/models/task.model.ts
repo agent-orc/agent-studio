@@ -1696,7 +1696,8 @@ export interface RunnerStatus {
 
 export interface LocalCliRepairStatus {
   cliType: string;
-  outcome: 'repaired' | 'failed' | string;
+  /** `detected` is a broken install journalled on sight, before its repair attempt. */
+  outcome: 'repaired' | 'failed' | 'detected' | string;
   occurredAt: string;
   versionBefore?: string | null;
   versionAfter?: string | null;

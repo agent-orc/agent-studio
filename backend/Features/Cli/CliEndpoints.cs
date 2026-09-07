@@ -278,7 +278,11 @@ public static class CliEndpoints
 
             try
             {
-                await using var pty = await PtySession.SpawnAsync(app: resolvedPath, cwd: scratch, ct: ct);
+                await using var pty = await PtySession.SpawnAsync(
+                    app: resolvedPath,
+                    cwd: scratch,
+                    extraEnv: CliEnvironment.ProbeEnvironment(),
+                    ct: ct);
                 await pty.WaitForIdleAsync(idleMs: 1500, timeoutMs: 8000, ct);
                 // For Claude/Codex confirm trust prompt first.
                 if (cliType is "claude" or "codex")

@@ -76,7 +76,11 @@ public abstract class QuotaProbeBase : IQuotaProbe
             _logger.LogDebug(ex, "Pre-probe environment setup failed (best-effort)");
         }
 
-        await using var pty = await PtySession.SpawnAsync(app: resolvedPath, cwd: scratch, ct: ct);
+        await using var pty = await PtySession.SpawnAsync(
+            app: resolvedPath,
+            cwd: scratch,
+            extraEnv: CliEnvironment.ProbeEnvironment(),
+            ct: ct);
         await pty.WaitForIdleAsync(idleMs: 1500, timeoutMs: initialIdleMs, ct);
 
         if (!string.IsNullOrEmpty(sendKeys))
@@ -119,7 +123,11 @@ public abstract class QuotaProbeBase : IQuotaProbe
             _logger.LogDebug(ex, "Pre-probe environment setup failed (best-effort)");
         }
 
-        await using var pty = await PtySession.SpawnAsync(app: resolvedPath, cwd: scratch, ct: ct);
+        await using var pty = await PtySession.SpawnAsync(
+            app: resolvedPath,
+            cwd: scratch,
+            extraEnv: CliEnvironment.ProbeEnvironment(),
+            ct: ct);
         await pty.WaitForIdleAsync(idleMs: 1500, timeoutMs: initialIdleMs, ct);
 
         foreach (var step in steps)

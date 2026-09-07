@@ -35,10 +35,13 @@ CLI execution tests.
 - `backend/Services/Quota/QuotaService.cs`: aggregate quota surface.
 - `backend/Features/Cli/Repair/LocalCliRepairService.cs`: Windows local-host
   detection and bounded repair when a configured Claude or Codex global npm
-  package is absent or its required `.cmd` command shim disappeared. It selects
-  a plain install or forced relink from that state and persists repair and
-  nearby npm-activity evidence to
+  package is absent, its required `.cmd` command shim disappeared, or its
+  launcher binary is still the postinstall placeholder. It selects a plain
+  install, a forced relink, or a postinstall re-run from that state and persists
+  repair, detection, and nearby npm-activity evidence to
   `<TaskRepository>/logs/cli-self-heal.jsonl`.
+- `backend/Features/Cli/Pty/CliEnvironment.cs`: `ProbeEnvironment()` is the one
+  updater guard every PTY spawn passes as `extraEnv`.
 - `backend/Features/Cli/CliEndpoints.cs`: sessions, versions, quota, and model
   endpoints. The CLI-session tool (AGT-2102) adds `GET /api/cli/{cliType}/session-detail`
   (lazy single-transcript parse: model, thinking, message count, first prompt)
@@ -77,17 +80,28 @@ CLI execution tests.
 - Claude and Codex version changes are checked after startup and periodically.
   Keep the structured `CLI version changed` log line when editing version or
   self-heal behavior.
-- Local CLI repair handles two recognized global npm states: a truly absent
-  configured package receives a plain install, while a present package with an
-  absent Windows `.cmd` command shim receives a forced relink so an unchanged
-  package version still regenerates bin shims. Custom executable paths and
-  present-but-broken command shims remain outside this policy. Repair verifies
-  npm itself with `npm --version` from an explicit active-Node, APPDATA, or PATH
-  location before install, then verifies both the `.cmd` shim and CLI
-  `--version`. It is limited to one persisted attempt per CLI per hour. The
-  runner-status projection contains only active failures: a successful repair
-  or later healthy probe clears the entry, and the durable resolved journal row
-  prevents restart rehydration from restoring a stale alarm.
+- A quota probe or model discovery observes the installed CLI; it never mutates
+  it. Every `PtySession.SpawnAsync` call passes `CliEnvironment.ProbeEnvironment()`
+  as `extraEnv`, which disables the Claude and Codex self-updaters exactly as the
+  run spawn path does. A probe that lets the CLI auto-update can leave a
+  half-installed global package behind and break every later run on that host.
+  `PtyProbeUpdaterGuardTests` pins the guard at each spawn site.
+- Local CLI repair handles three recognized global npm states: a truly absent
+  configured package receives a plain install, a present package with an absent
+  Windows `.cmd` command shim receives a forced relink so an unchanged package
+  version still regenerates bin shims, and a present package whose launcher
+  binary is still the sub-4096-byte postinstall placeholder (or whose
+  `--version` reports `native binary not installed`) receives a re-run of the
+  package's own `install.cjs`, falling back to a version-pinned global install
+  when that script is gone. Custom executable paths and present-but-broken
+  command shims remain outside this policy. Repair verifies npm itself with
+  `npm --version` from an explicit active-Node, APPDATA, or PATH location before
+  install, then verifies both the `.cmd` shim and CLI `--version`. It is limited
+  to one persisted attempt per CLI per hour. The runner-status projection
+  contains only active failures: a launcher stub is journalled as `detected` on
+  sight so a suppressed attempt still raises the alarm, while a successful
+  repair or later healthy probe clears the entry, and the durable resolved
+  journal row prevents restart rehydration from restoring a stale alarm.
 - Codex Spark quota windows are independent windows. Keep their labels and burn
   percentages separate from the standard 5-hour and weekly windows; never fold
   a Spark-only snapshot into the main-window admission signal.

@@ -69,6 +69,96 @@ public class NpmGlobalInstaller
         }
     }
 
+    /// <summary>
+    /// Re-runs the installed package's own postinstall script with the active
+    /// node. Launcher packages (Claude Code since 2.1.263) ship a placeholder
+    /// binary and let that script hard-link or copy the real platform binary
+    /// from the optional native dependency; when npm skipped the step the
+    /// package looks healthy but the launcher is still the placeholder.
+    /// </summary>
+    public virtual async Task<NpmGlobalInstallResult> RunPackageInstallScriptAsync(
+        string packageDirectory,
+        string scriptFileName,
+        CancellationToken ct)
+    {
+        try
+        {
+            var node = await ResolveNodeExecutableAsync(ct);
+            if (node is null)
+            {
+                return new NpmGlobalInstallResult(
+                    NpmGlobalInstallOutcome.NodeUnavailable,
+                    null,
+                    "",
+                    "node unavailable: no candidate beside the active Node installation or on PATH passed 'node --version'.");
+            }
+
+            var execution = await ExecuteAsync(
+                node,
+                packageDirectory,
+                [scriptFileName],
+                DefaultTimeout,
+                ct);
+            return new NpmGlobalInstallResult(
+                execution.ExitCode == 0
+                    ? NpmGlobalInstallOutcome.Succeeded
+                    : NpmGlobalInstallOutcome.Failed,
+                execution.ExitCode,
+                execution.StandardOutput,
+                execution.StandardError);
+        }
+        catch (Exception ex)
+        {
+            return new NpmGlobalInstallResult(
+                NpmGlobalInstallOutcome.Failed,
+                null,
+                "",
+                ex.Message);
+        }
+    }
+
+    internal static async Task<string?> ResolveNodeExecutableAsync(CancellationToken ct)
+    {
+        var candidates = NodeExecutableCandidates(
+            OperatingSystem.IsWindows(),
+            Environment.GetEnvironmentVariable("PATH"),
+            Environment.GetEnvironmentVariable("ProgramFiles"),
+            Environment.GetEnvironmentVariable("ProgramFiles(x86)"));
+        foreach (var candidate in candidates)
+        {
+            var result = await ExecuteAsync(
+                candidate,
+                Path.GetDirectoryName(candidate)!,
+                ["--version"],
+                PreflightTimeout,
+                ct);
+            if (result.ExitCode == 0 && !string.IsNullOrWhiteSpace(result.StandardOutput))
+                return candidate;
+        }
+        return null;
+    }
+
+    internal static IReadOnlyList<string> NodeExecutableCandidates(
+        bool isWindows,
+        string? pathValue,
+        string? programFiles,
+        string? programFilesX86)
+    {
+        var fileName = isWindows ? "node.exe" : "node";
+        var separator = isWindows ? ';' : Path.PathSeparator;
+        var candidates = FindOnPath(pathValue, fileName, separator).ToList();
+        if (isWindows)
+        {
+            foreach (var root in new[] { programFiles, programFilesX86 }
+                         .Where(root => !string.IsNullOrWhiteSpace(root)))
+            {
+                var node = Path.Combine(root!, "nodejs", fileName);
+                if (File.Exists(node)) candidates.Add(node);
+            }
+        }
+        return candidates.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
     internal static IReadOnlyList<string> BuildArguments(
         string packageName,
         NpmGlobalInstallMode mode)
@@ -313,6 +403,8 @@ public enum NpmGlobalInstallOutcome
     Succeeded,
     Failed,
     NpmUnavailable,
+    /// <summary>No usable node was found for a package postinstall re-run.</summary>
+    NodeUnavailable,
 }
 
 public sealed record NpmGlobalInstallResult(
