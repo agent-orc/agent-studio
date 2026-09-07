@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en" data-document-pattern="concept">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Studio route ownership and local connector</title>
+  <style data-article-template="v2">
+    :root {
+      color-scheme: light;
+      --article-paper: #fcfcfb;
+      --article-surface: #f2f1ee;
+      --article-surface-strong: #e9e8e3;
+      --article-ink: #151515;
+      --article-muted: #5f5e59;
+      --article-faint: #7c7a74;
+      --article-line: #d8d6cf;
+      --article-link: #1f67b2;
+      --article-link-soft: #eaf1fb;
+      --article-good: #18753a;
+      --article-good-soft: #eaf4ea;
+      --article-warn: #8b6100;
+      --article-warn-soft: #f8f0dd;
+      --article-bad: #b72f2f;
+      --article-bad-soft: #fbecec;
+      --article-serif: Georgia, "Times New Roman", serif;
+      --article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --article-paper: #1a1a19;
+        --article-surface: #232322;
+        --article-surface-strong: #2c2c2a;
+        --article-ink: #f7f7f4;
+        --article-muted: #c3c2b7;
+        --article-faint: #9d9c94;
+        --article-line: #3d3d3a;
+        --article-link: #78aef0;
+        --article-link-soft: #1e2a3a;
+        --article-good: #67b867;
+        --article-good-soft: #1f2f1f;
+        --article-warn: #d9a63f;
+        --article-warn-soft: #33301e;
+        --article-bad: #e66767;
+        --article-bad-soft: #382222;
+      }
+    }
+    * { box-sizing: border-box; }
+    html { background: var(--article-paper); }
+    body { margin: 0; background: var(--article-paper); color: var(--article-ink); font: 17px/1.75 var(--article-serif); text-rendering: optimizeLegibility; }
+    main { width: min(70ch, calc(100% - 48px)); margin: 0 auto; padding: 0 0 80px; }
+    header.page { margin-bottom: 12px; padding: 48px 0 28px; border-bottom: 1px solid var(--article-line); }
+    h1, h2, h3, h4, .kicker, .meta, .number, nav, table, figcaption, .box, .callout, .variant-grid, .evidence-list, .metric-grid, .diagram, .route-groups { font-family: var(--article-sans); }
+    h1 { margin: 0 0 14px; font-size: clamp(2.2rem, 6vw, 3.4rem); line-height: 1.08; letter-spacing: -0.025em; }
+    h2 { margin: 56px 0 10px; font-size: 1.55rem; line-height: 1.25; }
+    h3 { margin: 34px 0 8px; font-size: 1.08rem; line-height: 1.35; }
+    h4 { margin: 0 0 8px; font-size: 0.94rem; }
+    p { margin: 0 0 18px; }
+    p:last-child { margin-bottom: 0; }
+    .kicker, .number { margin: 0 0 12px; color: var(--article-faint); font-size: 0.75rem; font-weight: 700; letter-spacing: 0.12em; line-height: 1; text-transform: uppercase; }
+    .lede { margin: 0; color: var(--article-muted); font-size: 1.18rem; line-height: 1.6; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; color: var(--article-faint); font-size: 0.78rem; }
+    .meta b { color: var(--article-muted); font-weight: 650; }
+    a { color: var(--article-link); text-underline-offset: 0.16em; }
+    a:focus-visible { outline: 2px solid var(--article-link); outline-offset: 3px; border-radius: 2px; }
+    code { padding: 0.08em 0.34em; border-radius: 4px; background: var(--article-surface-strong); font: 0.84em/1.5 var(--article-mono); overflow-wrap: anywhere; }
+    ul, ol { margin: 0 0 18px; padding-left: 24px; }
+    li + li { margin-top: 6px; }
+    table { width: 100%; margin: 24px 0; border-collapse: collapse; font-size: 0.84rem; line-height: 1.5; }
+    th, td { padding: 10px 12px; border-bottom: 1px solid var(--article-line); text-align: left; vertical-align: top; }
+    th { color: var(--article-faint); font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .box, .callout { margin: 24px 0; padding: 18px 22px; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-surface); font: 0.92rem/1.65 var(--article-sans); }
+    .callout[data-tone="accent"] { border-color: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); background: var(--article-link-soft); }
+    .callout[data-tone="good"] { border-color: color-mix(in srgb, var(--article-good) 30%, var(--article-line)); background: var(--article-good-soft); }
+    .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
+    .breakout { width: min(1120px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
+    .metric-grid, .variant-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin: 24px 0; }
+    .metric, .variant { min-width: 0; padding: 16px; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-surface); }
+    .metric strong { display: block; color: var(--article-link); font-size: 1.8rem; line-height: 1.1; }
+    .metric span, .variant p { color: var(--article-muted); font-size: 0.84rem; line-height: 1.55; }
+    .variant h3 { margin: 0 0 8px; }
+    .recommended { border-color: color-mix(in srgb, var(--article-link) 45%, var(--article-line)); background: var(--article-link-soft); }
+    .diagram { position: relative; margin: 32px 0; padding: 22px; border: 1px solid var(--article-line); border-radius: 12px; background: var(--article-surface); }
+    .diagram-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+    .diagram-row.single { grid-template-columns: minmax(0, 1fr); width: min(520px, 100%); margin: 0 auto; }
+    .node { min-height: 96px; padding: 15px; border: 1px solid var(--article-line); border-radius: 9px; background: var(--article-paper); }
+    .node.authority { border-color: color-mix(in srgb, var(--article-link) 48%, var(--article-line)); background: var(--article-link-soft); }
+    .node.execution { border-color: color-mix(in srgb, var(--article-good) 44%, var(--article-line)); background: var(--article-good-soft); }
+    .node small { display: block; margin-top: 5px; color: var(--article-muted); line-height: 1.45; }
+    .wires { display: block; width: 100%; height: 62px; color: var(--article-link); }
+    .wires line, .wires path { fill: none; stroke: currentColor; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+    .wires .exec { color: var(--article-good); stroke: currentColor; }
+    figcaption { margin-top: 10px; color: var(--article-muted); font: 0.8rem/1.5 var(--article-sans); }
+    .evidence-list { display: grid; gap: 10px; margin: 24px 0; }
+    .evidence { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px 14px; align-items: start; padding: 14px; border: 1px solid var(--article-line); border-radius: 9px; background: var(--article-surface); color: var(--article-ink); text-decoration: none; }
+    .evidence:hover { border-color: var(--article-link); background: var(--article-link-soft); }
+    .evidence-class { display: inline-flex; align-items: center; min-height: 22px; padding: 2px 8px; border-radius: 999px; background: var(--article-surface-strong); color: var(--article-muted); font-size: 0.68rem; font-weight: 750; letter-spacing: 0.04em; text-transform: uppercase; white-space: nowrap; }
+    .evidence-class[data-evidence-class="observed"] { background: var(--article-good-soft); color: var(--article-good); }
+    .evidence-class[data-evidence-class="inferred"] { background: var(--article-warn-soft); color: var(--article-warn); }
+    .evidence-class[data-evidence-class="proposed"] { background: var(--article-link-soft); color: var(--article-link); }
+    .evidence b { display: block; margin-bottom: 2px; font-size: 0.88rem; }
+    .evidence small { display: block; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; }
+    .route-groups { columns: 2; margin: 18px 0; padding: 16px 16px 16px 34px; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-surface); font-size: 0.78rem; }
+    .route-groups li { break-inside: avoid; }
+    .dim { color: var(--article-muted); }
+    @media (max-width: 760px) {
+      main { width: min(100% - 28px, 70ch); padding-bottom: 52px; }
+      header.page { padding-top: 32px; }
+      .breakout { width: calc(100vw - 20px); }
+      .metric-grid, .variant-grid, .diagram-row { grid-template-columns: 1fr; }
+      .route-groups { columns: 1; }
+      .evidence { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; } }
+  </style>
+</head>
+<body>
+<main>
+  <header class="page">
+    <p class="kicker">Phase B · B1 · Decision dossier</p>
+    <h1>Studio route ownership and local connector</h1>
+    <p class="lede">A route-counted boundary for the Windows Studio, its loopback connector, and the remote Task Server. The count turns the D4b uncertainty into an ordered migration estimate.</p>
+    <div class="meta"><span><b>Status</b> Decided</span><span><b>Updated</b> 7 September 2026</span><span><b>Source</b> AGT-2731</span></div>
+  </header>
+
+  <section id="inventory">
+    <h2><span class="number">01</span> Inventory</h2>
+    <p>The counting unit is one distinct method plus normalized path template in production Angular code. Query combinations are recorded as variants on that operation. Comments, tests, and the separate cross-origin UpdateService on port 5039 are excluded.</p>
+    <div class="metric-grid breakout">
+      <div class="metric"><strong>363</strong><span>frontend operations: 362 under <code>/api</code>, one under <code>/hubs</code></span></div>
+      <div class="metric"><strong>268</strong><span>Task Server operations</span></div>
+      <div class="metric"><strong>95</strong><span>Windows dev-seat operations</span></div>
+      <div class="metric"><strong>0</strong><span>retired frontend operations</span></div>
+      <div class="metric"><strong>28</strong><span>OrchestratorApi <code>MapGroup("/api/...")</code> calls</span></div>
+      <div class="metric"><strong>4 / 268</strong><span>Task Server operations already present in standalone v1</span></div>
+    </div>
+    <p>The canonical inventory is <a href="routes.json"><code>routes.json</code></a>. Every frontend operation has one classification, owning component, source location, query shape, v1 status, target route, priority, and per-route size. Repeated call sites are evidence on one row rather than duplicate routes.</p>
+
+    <h3>Classes</h3>
+    <table>
+      <thead><tr><th>Class</th><th>Count</th><th>Boundary</th></tr></thead>
+      <tbody>
+        <tr><td><code>task-server</code></td><td>268</td><td>Durable task, orchestration, identity, event, policy, artifact, or management state. Four routes exist in standalone v1; 264 must be added or replaced.</td></tr>
+        <tr><td><code>dev-seat</code></td><td>95</td><td>Repository and Wiki preview, Git helpers, local CLI probes and sessions, project URL launch and diagnosis, Dossier files, and developer tooling. These remain local and gain no task authority.</td></tr>
+        <tr><td><code>retired</code></td><td>0</td><td>No production Angular call was classified as retired. Retirement is valid only after its call site is removed, so no unused backend-only route was misrepresented as a frontend route.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Groups</h3>
+    <p>The 28 OrchestratorApi groups are counted independently from absolute endpoint mappings. A group can be mixed because the legacy composition root places both authority and local helpers below the same prefix.</p>
+    <ol class="route-groups breakout">
+      <li><code>/api/adhoc-usage</code></li><li><code>/api/admin/config</code></li><li><code>/api/admin/prompts</code></li><li><code>/api/analysis</code></li>
+      <li><code>/api/attempts</code></li><li><code>/api/auth</code></li><li><code>/api/bus</code></li><li><code>/api/cli</code></li>
+      <li><code>/api/clients</code></li><li><code>/api/crash-recovery</code></li><li><code>/api/devtools</code></li><li><code>/api/diagnostics</code></li>
+      <li><code>/api/drift</code></li><li><code>/api/epics</code></li><li><code>/api/maintenance</code></li><li><code>/api/orchestrator/context</code></li>
+      <li><code>/api/orchestrator/sessions</code></li><li><code>/api/projects/{project}/chat</code></li><li><code>/api/runner</code></li><li><code>/api/runner/integration-lease</code></li>
+      <li><code>/api/runner/lease</code></li><li><code>/api/runtime</code></li><li><code>/api/supervisor</code></li><li><code>/api/tags</code></li>
+      <li><code>/api/tasks</code></li><li><code>/api/v1</code></li><li><code>/api/v1/management</code></li><li><code>/api/workspace</code></li>
+    </ol>
+  </section>
+
+  <section id="alternatives" data-concept-section="alternatives" data-document-section="alternatives">
+    <h2><span class="number">02</span> Alternatives</h2>
+    <div class="variant-grid breakout">
+      <article class="variant">
+        <h3>studio-bff extension</h3>
+        <p>Keep the small proxy and add all forwarding, security, health, and WebSocket behavior. Its current strength is a narrow <code>/api/v1</code> pass-through. Hosting 95 dev-seat operations would require importing OrchestratorApi file, Git, CLI, and launcher dependencies or inventing a second local API.</p>
+      </article>
+      <article class="variant recommended">
+        <h3>OrchestratorApi connector profile</h3>
+        <p>Reuse the existing dev-seat handlers and transparent v1 proxy, but compose an explicit connector-only route table. The profile excludes task storage, scanners that act as task authority, schedulers, Runner loops, and all unclassified endpoints. This is the recommended process choice.</p>
+      </article>
+      <article class="variant">
+        <h3>BFF plus native helper</h3>
+        <p>Run studio-bff as the credential boundary and a second native helper for Windows-only routes. It separates concerns but creates two local lifecycles, another authenticated hop, split health, and a routing table that is harder to prove complete.</p>
+      </article>
+      <article class="variant">
+        <h3>Legacy OrchestratorApi</h3>
+        <p>Run the monolith unchanged and proxy only <code>/api/v1</code>. This leaves two task authorities, exposes broad legacy handlers, and defeats the approved topology. It is not a cutover option.</p>
+      </article>
+    </div>
+  </section>
+
+  <section id="recommendation" data-concept-section="recommendation" data-document-section="recommendation">
+    <h2><span class="number">03</span> Recommendation</h2>
+    <div class="callout" data-tone="accent">
+      <h3>OrchestratorApi connector profile</h3>
+      <p>Use a connector-specific composition root in OrchestratorApi. It is the only option that reuses the 95 local handlers without preserving local task authority. Treat the route inventory as an allowlist and fail startup when a mapped route has no inventory row.</p>
+    </div>
+
+    <figure class="breakout">
+      <div class="diagram" role="img" aria-label="Angular on Windows connects over loopback to an OrchestratorApi connector profile. The connector serves dev-seat routes locally and forwards Task Server routes and the jobs hub over private TLS to the remote Task Server. The remote Task Server controls the remote Runner. A local Task Server is an exclusive fallback upstream.">
+        <div class="diagram-row">
+          <div class="node"><b>Angular Studio</b><small>Windows · <code>[::1]:4011</code><br>same-origin <code>/api</code> and <code>/hubs</code></small></div>
+          <div class="node authority"><b>Connector profile</b><small>Windows · <code>[::1]:5031</code><br>Origin, CSRF, credential injection, route allowlist</small></div>
+          <div class="node"><b>Dev seat</b><small>95 local operations<br>files, Git, CLI probes, launchers</small></div>
+        </div>
+        <svg class="wires" viewBox="0 0 1000 62" aria-hidden="true" preserveAspectRatio="none">
+          <path d="M165 0 V24 H500 V62"></path><path d="M835 0 V24 H500"></path>
+        </svg>
+        <div class="diagram-row">
+          <div class="node authority"><b>Remote Task Server</b><small>primary authority<br>264 v1 additions, four existing operations</small></div>
+          <div class="node authority"><b>Atomic upstream</b><small>one immutable generation<br>remote or local, never both writable</small></div>
+          <div class="node"><b>Local Task Server</b><small>exact-version fallback<br>restored and fenced before selection</small></div>
+        </div>
+        <svg class="wires" viewBox="0 0 1000 62" aria-hidden="true" preserveAspectRatio="none">
+          <path class="exec" d="M165 0 V31 H500 V62"></path>
+        </svg>
+        <div class="diagram-row single">
+          <div class="node execution"><b>Remote Runner</b><small>checkout, coding agents, tools, bounded event and artifact delivery</small></div>
+        </div>
+      </div>
+      <figcaption><b>Topology.</b> The connector is a credential and transport boundary. Task authority stays in the selected Task Server; execution stays in the Runner; Windows-only helpers stay in the dev seat. The inline SVG carries connections while selectable HTML carries labels.</figcaption>
+    </figure>
+
+    <h3>Routes</h3>
+    <ul>
+      <li>Map the 95 <code>dev-seat</code> operations locally. Do not use a broad <code>/api/*</code> local fallback.</li>
+      <li>Forward the 268 <code>task-server</code> operations. During migration, legacy paths may be compatibility aliases, but their handlers and writes live in the Task Server.</li>
+      <li>Split three mixed contracts before cutover: task file reads with <code>scope=code</code>, global search across tasks and repository objects, and the project snapshot that combines authority with checkout facts.</li>
+      <li>Keep <code>/api/v1/management/commands</code> and <code>/api/v1/management/remote-hosts/provider-auth</code> on their current paths, but implement them in the standalone Task Server. The other four frontend-used v1 operations already exist there.</li>
+    </ul>
+
+    <h3>WebSocket</h3>
+    <p>The connector keeps the browser path <code>/hubs/jobs</code>. It proxies SignalR negotiation, WebSocket upgrade, SSE fallback, and long polling to a versioned Task Server hub. The upstream handshake receives the Studio bearer; browser cookies, inbound authorization, and hop-by-hop headers do not cross the boundary. The connector preserves <code>Sec-WebSocket-Protocol</code> and runs a bounded full-duplex pump with cancellation in both directions.</p>
+    <p>Origin, Host, and connector session checks run before the upgrade. The negotiate POST requires CSRF. A successful reconnect supplies a durable cursor, and the Task Server replays events after that cursor before live delivery. The connector never synthesizes job events and never becomes an event store.</p>
+
+    <h3>Security</h3>
+    <ul>
+      <li><b>Listener:</b> bind only <code>[::1]:5031</code>. Reject any Host other than the configured bracketed loopback authority. Do not bind IPv4 wildcard, IPv6 wildcard, LAN, or Docker Desktop default interfaces.</li>
+      <li><b>Origin:</b> unsafe HTTP, SignalR negotiate, and WebSocket upgrade accept only the configured Studio origin, initially <code>http://[::1]:4011</code>. Safe reads with no Origin still require the connector session. Any present but non-matching Origin is rejected.</li>
+      <li><b>CSRF:</b> issue an opaque HttpOnly connector-session cookie and a readable, session-bound <code>agentstudio-csrf</code> cookie with <code>SameSite=Strict</code>, no Domain, and Path <code>/</code>. Unsafe methods must present the matching <code>X-CSRF-Token</code>. Rotate both on connector restart, upstream generation change, and explicit logout.</li>
+      <li><b>Headers:</b> strip browser <code>Authorization</code>, cookies, forwarded headers, and client-selected protocol identity. Inject the scoped Studio bearer and connector-owned protocol/version headers. Forward <code>X-Client-Id</code> only as audit attribution.</li>
+      <li><b>Credential:</b> native mode reads target <code>AgentStudio/TaskServer/studio-robert-windows</code> from Windows Credential Manager. Docker mode reads a read-only ACL-protected secret file mounted at <code>/run/secrets/studio-task-server-token</code>. Do not use an environment variable, browser storage, config JSON, or logs.</li>
+    </ul>
+
+    <h3>Health</h3>
+    <p><code>/healthz</code> reports connector process liveness only. <code>/readyz</code> is 200 only when the credential is loaded, the selected upstream answers <code>/readyz</code>, protocol compatibility passes, the TLS identity or pin matches, and the route table checksum equals the shipped inventory. Its body may report mode, generation, masked upstream name, protocol, and last successful probe time, but no token, secret path, or private host address.</p>
+
+    <h3>Upstream switch</h3>
+    <p>The connector holds one immutable upstream snapshot: mode, base URI, TLS pin, credential handle, protocol range, and generation. A switch first validates the candidate, verifies an exact-version restore, and requires evidence that the previous authority is drained or read-only. Only then does one atomic exchange publish the new generation. Requests already in flight finish against their captured generation; new requests use the new one. A failed validation leaves the old generation untouched. No request is retried against the other authority after a partial mutation.</p>
+
+    <h3>Runtime</h3>
+    <p>The remote Task Server remains Docker-operated as approved. For the connector, native Windows hosting is the recommended starting mode because Credential Manager, Windows CLI discovery, VS Code launch, project URL processes, and repository paths are part of the accepted dev-seat scope. Run it as a restricted Windows service, with no interactive desktop privilege except an explicitly isolated launcher broker.</p>
+    <p>A Docker Desktop connector is conforming only if it binds the published port specifically to <code>[::1]</code>, uses the secret-file contract, mounts each allowed repository explicitly, has no Docker socket, and removes or delegates every Windows process-launch route. Docker and native modes must expose the same route checksum and security test suite.</p>
+  </section>
+
+  <section id="evidence" data-concept-section="evidence" data-document-section="evidence">
+    <h2><span class="number">04</span> Evidence</h2>
+    <p>The findings below are source observations or stated inferences. This dossier makes no claim about a human sight review and makes no claim about an already working remote Studio.</p>
+    <div class="evidence-list">
+      <a class="evidence" href="routes.json"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Route inventory</b><small>363 normalized frontend operations, source locations, query variants, classifications, v1 status, and 28 OrchestratorApi MapGroup calls.</small></span></a>
+      <a class="evidence" href="extract-routes.mjs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Static extractor</b><small>Scans production TypeScript for HttpClient, multipart Fetch, wrapper reads, and SignalR calls. The build step adds reviewed URL-only media, EventSource, and lifecycle call sites.</small></span></a>
+      <a class="evidence" href="build-inventory.mjs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Inventory builder</b><small>Normalizes parameter names, merges repeated evidence, attaches query shapes, applies the reviewed ownership rules, and computes the D4b totals.</small></span></a>
+      <a class="evidence" href="../concepts/distributed-agent-studio-target-architecture.md"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Target ownership</b><small>The Task Server owns users, workspaces, projects, tasks, orchestration, events, artifacts, audit, and management APIs. Runners own checkouts, coding processes, and tools.</small></span></a>
+      <a class="evidence" href="../operations/remote-task-server-local-studio.md"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Approved topology source</b><small>The existing Phase A document names broad Studio API coverage and connector security as the two B1 gaps and identifies studio-bff as an incomplete v1-only starting point.</small></span></a>
+      <span class="evidence"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b>Connector process</b><small>The OrchestratorApi profile is preferred because 95 local operations already depend on its Windows-facing services. The profile must replace broad composition with a route allowlist.</small></span></span>
+      <span class="evidence"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b>D4b conversion</b><small>Six weighted route points per engineering day after shared infrastructure, plus 15 days of connector and event-stream foundation. This is a planning model, not observed throughput.</small></span></span>
+    </div>
+
+    <h3>Coverage</h3>
+    <p>The extractor resolves all production network call sites except nine reviewed indirections: three host lifecycle URLs represented explicitly in the builder, three generic wrapper methods whose callers are resolved, one server-provided artifact URL covered by task artifact content routes, and four cross-origin UpdateService calls that are outside the requested <code>/api</code> and <code>/hubs</code> scope. URL-only media helpers and the developer EventSource are explicit builder entries.</p>
+    <p>No screenshot is included because the dossier makes no finding about a visible product surface. Its claims concern static route calls, server composition, and architecture contracts.</p>
+  </section>
+
+  <section id="estimate">
+    <h2><span class="number">05</span> Estimate</h2>
+    <p>D4b contains 264 must-add Task Server operations. Every route has an individual S, M, L, or XL estimate in <code>routes.json</code>. The total is 436 weighted route points. At six points per engineering day, route implementation is 73 days. Connector security, protocol negotiation, replayable live updates, contract harnesses, and cutover controls add 15 days.</p>
+    <div class="callout" data-tone="warn"><h3>D4b baseline</h3><p><b>88 engineering days</b>, with a planning range of <b>71 to 115 engineering days</b>. The range reflects handler reuse at the low end and contract, projection, or split-route discovery at the high end. Parallel delivery changes elapsed time, not total effort.</p></div>
+    <table class="breakout">
+      <thead><tr><th>Order</th><th>Bundle</th><th>Routes</th><th>Points</th><th>Frontend impact</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>Core attach path</td><td>27</td><td>62</td><td>Login, board, task mutation, orchestration chat, runner state, and live updates.</td></tr>
+        <tr><td>2</td><td>Task detail and host control</td><td>111</td><td>183</td><td>Task history, artifacts, pipeline detail, host policy, and workspace projections.</td></tr>
+        <tr><td>3</td><td>Operations and insight</td><td>102</td><td>165</td><td>Runtime, bus, cycle time, tokens, deployment, security, and supervisor projections.</td></tr>
+        <tr><td>4</td><td>Administration and long tail</td><td>24</td><td>26</td><td>Admin configuration and lower-frequency Studio surfaces.</td></tr>
+      </tbody>
+    </table>
+    <p>The first release gate is not “all 264 routes exist.” It is that the complete P0 attach path works through the connector while Studio shutdown does not interrupt remote execution. Later bundles can follow without weakening ownership.</p>
+  </section>
+
+  <section id="open-decisions" data-concept-section="open-decisions" data-document-section="open-decisions">
+    <h2><span class="number">06</span> Open decisions</h2>
+    <p>No product-scope choice remains open in this B1 concept. Human concept review and promotion remain pipeline gates; they do not reopen the recorded operator decision.</p>
+    <div class="callout" data-tone="good">
+      <h3>Decision 2026-09-07</h3>
+      <p><b>Deciding actor:</b> Orchestrator under operator autonomy grant.</p>
+      <ol>
+        <li><b>Connector:</b> approved the OrchestratorApi connector profile with a connector-only composition root, the <code>routes.json</code> allowlist, and startup failure for any unclassified <code>/api</code> or <code>/hubs</code> endpoint. The studio-bff plus native-helper alternative is rejected.</li>
+        <li><b>Dev seat:</b> approved the 95-route <code>dev-seat</code> allowlist in <code>routes.json</code>.</li>
+        <li><b>Runtime:</b> approved a native Windows connector while the remote Task Server runs in Docker. A Docker Desktop connector remains optional and must meet the same stated contract.</li>
+        <li><b>Order:</b> approved P0 core attach, P1 task detail and hosts, P2 operations and insight, then P3 administration and tail.</li>
+        <li><b>Estimate:</b> accepted 88 engineering days as the D4b baseline and 71 to 115 days as the planning range, with no product surface cut.</li>
+      </ol>
+    </div>
+    <p class="dim"><b>Release gate:</b> the complete P0 attach path works through the connector and remote execution continues while Studio is detached. The accepted D4b estimate is 88 engineering days, with a planning range of 71 to 115.</p>
+  </section>
+</main>
+</body>
+</html>
