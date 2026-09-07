@@ -17,10 +17,7 @@
 :host([data-retired='true']) .host__row td { color: var(--studio-fg-muted); }
 .host__row:hover td { background: var(--studio-bg-hover); }
 
-.host__name-cell,
 .host__status,
-.host__load,
-.host__actions,
 .detail__actions,
 .detail__badges,
 .provider-auth,
@@ -29,7 +26,23 @@
   align-items: center;
 }
 
-.host__name-cell { gap: var(--studio-spacing-2); min-width: 0; }
+// .host__name-cell and .host__load are the <td> elements themselves; they
+// must stay `display: table-cell` (the browser default) so they keep
+// stretching to the row's real rendered height like every sibling cell. A
+// <td> with `display: flex` drops out of table-cell layout - the UA wraps
+// it in an anonymous table-cell that stretches instead, while the visible
+// flex box (and its inherited border-top/background from `.host__row td`)
+// stays pinned to its own shorter height. That produced the misaligned/
+// doubled row rule at group boundaries (AGT-2748). The inner wrappers below
+// carry the flex row layout instead; `.host__actions` only ever renders one
+// child, so it needs no flex container at all (see below).
+.host__name-cell-inner,
+.host__load-inner {
+  display: flex;
+  align-items: center;
+}
+
+.host__name-cell-inner { gap: var(--studio-spacing-2); min-width: 0; }
 .host__name {
   overflow: hidden;
   color: var(--studio-fg-strong);
@@ -84,7 +97,7 @@
   white-space: nowrap;
 }
 
-.host__load { gap: var(--studio-spacing-2); }
+.host__load-inner { gap: var(--studio-spacing-2); }
 .host__load-track {
   position: relative;
   width: 44px;
@@ -112,7 +125,10 @@
   white-space: nowrap;
 }
 
-.host__actions { justify-content: flex-end; gap: var(--studio-spacing-1); white-space: nowrap; }
+// This <td> is the machine row's own cell (a single placeholder - per-role
+// actions live on the role rows below it), so it stays a plain table-cell
+// and is right-aligned with `text-align` instead of `justify-content`.
+.host__actions { text-align: right; white-space: nowrap; }
 .host__btn {
   min-height: 28px;
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
@@ -137,7 +153,10 @@
 }
 .host__details {
   display: grid;
-  padding: var(--studio-spacing-2) var(--studio-spacing-5) var(--studio-spacing-4);
+  // Same horizontal inset as `.host__row td` / `.role__` cells (studio-spacing-2)
+  // so the disclosed detail content shares one left edge with the row above it
+  // and with the table edge - not a deeper, separately-framed inset (ADM-01).
+  padding: var(--studio-spacing-2) var(--studio-spacing-2) var(--studio-spacing-4);
 }
 .detail {
   min-width: 0;
@@ -276,7 +295,6 @@
 
 @container remote-host-table (max-width: 36rem) {
   .host__load { display: none; }
-  .host__details { padding-inline: var(--studio-spacing-3); }
 }
 
 @media (prefers-reduced-motion: reduce) {

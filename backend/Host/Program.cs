@@ -272,6 +272,7 @@ if (!underTestHost)
 }
 
 builder.Services.AddSingleton<ClientIdentityStore>();
+builder.Services.AddSingleton<ClientIdentityAuditLog>();
 builder.Services.AddSingleton<AccessSecurityStore>();
 builder.Services.AddSingleton<ManagementService>();
 builder.Services.AddSingleton<IProviderAuthProvisioner, SshProviderAuthProvisioner>();

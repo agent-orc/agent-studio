@@ -349,6 +349,50 @@ test.describe('Execution Hosts settings section', () => {
     await expect(local.getByTestId('remote-host-release')).toHaveText('–');
   });
 
+  test('retired and online group boundaries share the same row-rule geometry (ADM-03, AGT-2748)', async ({ page, devBackend: _devBackend }) => {
+    void _devBackend;
+    await stubGroupedHostApis(page);
+    await page.goto('/#/workspace/settings/execution-hosts');
+    await page.getByTestId('remote-hosts-retired-filter').click();
+    await expect(page.getByTestId('remote-host-role-row').filter({ hasText: 'e2e-retired-2' })).toBeVisible();
+
+    async function rowBox(locator: Locator) {
+      const box = await locator.boundingBox();
+      expect(box).not.toBeNull();
+      return box!;
+    }
+
+    // Online group boundary: the last role row of agent-runner-01 (Review)
+    // followed by the first retired machine's primary row.
+    const onlineLastRole = page.getByTestId('remote-host-role-row').filter({ hasText: 'Review' });
+    const firstRetiredMachine = page.getByTestId('remote-host-primary-row').filter({ hasText: 'e2e-retired-1' });
+    const onlineRoleBox = await rowBox(onlineLastRole);
+    const firstRetiredBox = await rowBox(firstRetiredMachine);
+
+    // Retired-to-retired group boundary: e2e-retired-1's role row followed by
+    // e2e-retired-2's primary row - the exact case from the bug report.
+    const retired1Role = page.getByTestId('remote-host-role-row').filter({ hasText: 'e2e-retired-1' });
+    const retired2Machine = page.getByTestId('remote-host-primary-row').filter({ hasText: 'e2e-retired-2' });
+    const retired1RoleBox = await rowBox(retired1Role);
+    const retired2Box = await rowBox(retired2Machine);
+
+    // One grid, one x offset (ADM-03): a role row's left edge and width match
+    // the next machine row's, retired or not - no offset between groups.
+    expect(Math.abs(onlineRoleBox.x - firstRetiredBox.x)).toBeLessThanOrEqual(1);
+    expect(Math.abs(retired1RoleBox.x - retired2Box.x)).toBeLessThanOrEqual(1);
+    expect(Math.abs(onlineRoleBox.width - firstRetiredBox.width)).toBeLessThanOrEqual(1);
+    expect(Math.abs(retired1RoleBox.width - retired2Box.width)).toBeLessThanOrEqual(1);
+
+    // No doubled rule at the group boundary: the next row starts exactly
+    // where the previous row ends (one collapsed hairline, not a wider seam),
+    // and retired groups use the same geometry as the online group.
+    const onlineGap = firstRetiredBox.y - (onlineRoleBox.y + onlineRoleBox.height);
+    const retiredGap = retired2Box.y - (retired1RoleBox.y + retired1RoleBox.height);
+    expect(Math.abs(onlineGap)).toBeLessThanOrEqual(1);
+    expect(Math.abs(retiredGap)).toBeLessThanOrEqual(1);
+    expect(Math.abs(onlineGap - retiredGap)).toBeLessThanOrEqual(1);
+  });
+
   test('narrow tables collapse complete actions into the row overflow menu', async ({ page, devBackend: _devBackend }) => {
     void _devBackend;
     await page.setViewportSize({ width: 900, height: 820 });

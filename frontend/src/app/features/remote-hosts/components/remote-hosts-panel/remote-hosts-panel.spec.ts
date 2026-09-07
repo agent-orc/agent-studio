@@ -117,6 +117,48 @@ describe('RemoteHostsPanelComponent', () => {
     fixture.destroy();
   });
 
+  it('opens the purge-retired dialog from the toolbar and closes it on cancel or purge', async () => {
+    await TestBed.configureTestingModule({
+      imports: [RemoteHostsPanelComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+      ],
+    }).compileComponents();
+    const service = TestBed.inject(RemoteHostsService);
+
+    const fixture = TestBed.createComponent(RemoteHostsPanelComponent);
+    fixture.detectChanges();
+    const el: HTMLElement = fixture.nativeElement;
+
+    service.hosts.update(hosts => [...hosts, {
+      id: 'e2e-owner-alpha', name: 'e2e-owner-Alpha', role: 'remote', serviceRole: 'runner',
+      address: null, clientId: 'e2e-owner-alpha', status: 'retired', os: 'Linux',
+      lastHeartbeatAt: null, uptimeLabel: null, capabilities: [], cliQuotas: [], stats: null,
+    }]);
+    fixture.detectChanges();
+
+    const purgeButton = el.querySelector('[data-testid="remote-hosts-purge-retired"]') as HTMLButtonElement;
+    expect(purgeButton).toBeTruthy();
+    purgeButton.click();
+    fixture.detectChanges();
+    expect(el.querySelector('[data-testid="purge-retired-dialog"]')).toBeTruthy();
+
+    fixture.componentInstance.onPurgeCancelled();
+    fixture.detectChanges();
+    expect(el.querySelector('[data-testid="purge-retired-dialog"]')).toBeFalsy();
+
+    purgeButton.click();
+    fixture.detectChanges();
+    fixture.componentInstance.onPurged();
+    fixture.detectChanges();
+    expect(el.querySelector('[data-testid="purge-retired-dialog"]')).toBeFalsy();
+
+    fixture.destroy();
+  });
+
   describe('auto-review queue summary', () => {
     async function mountWithReviewSnapshot(snapshot: ReviewQueueSnapshot | null) {
       await TestBed.configureTestingModule({

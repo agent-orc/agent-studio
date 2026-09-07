@@ -1,33 +1,42 @@
 @let h = host();
 
 @if (routeStatus() !== 'unknown') {
-  <section class="route" [attr.data-tone]="routeStatus()" data-testid="remote-host-task-server-route-state">
-    <strong>Task Server route {{ routeStatus() }}</strong>
-    <span>{{ routeDetail() }}</span>
-    @if (h.taskServerConnection?.failureStartedAt) {
-      <span>
-        Failure started {{ h.taskServerConnection?.failureStartedAt | date:'short' }}
-        · {{ h.taskServerConnection?.consecutiveFailures }} failed requests
-      </span>
-    }
-    @if (h.taskServerConnection?.lastRecoveredAt) {
-      <span>Last recovered {{ h.taskServerConnection?.lastRecoveredAt | date:'short' }}</span>
-    }
-  </section>
+  <div class="notice" [attr.data-tone]="routeStatus()" data-testid="remote-host-task-server-route-state">
+    <span class="notice__dot" aria-hidden="true"></span>
+    <span class="notice__text">
+      <strong>Task Server route {{ routeStatus() }}</strong>
+      <span>{{ routeDetail() }}</span>
+      @if (h.taskServerConnection?.failureStartedAt) {
+        <span>
+          Failure started {{ h.taskServerConnection?.failureStartedAt | date:'short' }}
+          · {{ h.taskServerConnection?.consecutiveFailures }} failed requests
+        </span>
+      }
+      @if (h.taskServerConnection?.lastRecoveredAt) {
+        <span>Last recovered {{ h.taskServerConnection?.lastRecoveredAt | date:'short' }}</span>
+      }
+    </span>
+  </div>
 }
 
 @if (h.hostAdmission?.automaticDrainAt || h.hostAdmission?.admissionState === 'automatic-draining') {
-  <section class="admission" data-testid="remote-host-admission">
-    <strong>Automatic whole-host drain</strong>
-    <span>{{ h.hostAdmission?.automaticDrainReason }}</span>
-  </section>
+  <div class="notice" data-tone="warn" data-testid="remote-host-admission">
+    <span class="notice__dot" aria-hidden="true"></span>
+    <span class="notice__text">
+      <strong>Automatic whole-host drain</strong>
+      <span>{{ h.hostAdmission?.automaticDrainReason }}</span>
+    </span>
+  </div>
 }
 
 @if (h.hostAdmission?.operatorDrainAt || h.hostAdmission?.admissionState === 'operator-draining') {
-  <section class="admission" data-testid="remote-host-operator-admission">
-    <strong>Operator-requested host drain</strong>
-    <span>{{ h.hostAdmission?.operatorDrainReason }}</span>
-  </section>
+  <div class="notice" data-tone="idle" data-testid="remote-host-operator-admission">
+    <span class="notice__dot" aria-hidden="true"></span>
+    <span class="notice__text">
+      <strong>Operator-requested host drain</strong>
+      <span>{{ h.hostAdmission?.operatorDrainReason }}</span>
+    </span>
+  </div>
 }
 
 @if (h.capabilityHealth?.length) {
@@ -36,28 +45,37 @@
       <strong>Capability admission</strong>
       <span>Fresh health controls new matching claims. Running work keeps its lease.</span>
     </header>
-    <div class="health__list">
+    <div class="health__grid" role="table" aria-label="Capability admission entries">
+      <div class="health__row health__row--head" role="row">
+        <span role="columnheader">Capability</span>
+        <span role="columnheader">State</span>
+        <span role="columnheader">Reason</span>
+        <span role="columnheader">Advertised</span>
+        <span role="columnheader" class="health__col-failures">Failures</span>
+        <span role="columnheader" class="health__col-cooldown">Cooldown</span>
+        <span role="columnheader" class="health__col-canary">Canary</span>
+        <span role="columnheader" class="health__col-affected">Affected claims</span>
+      </div>
       @for (capability of h.capabilityHealth; track capability.key) {
-        <article class="capability"
-                 [attr.data-state]="displayState(capability)"
-                 [attr.data-fresh]="capability.isFresh"
-                 [attr.data-testid]="'remote-host-capability-' + capability.key">
-          <div class="capability__head">
-            <strong>{{ capability.key }}</strong>
-            <span class="state" [attr.data-tone]="tone(capability)">
-              {{ displayState(capability) }}
-            </span>
-          </div>
-          <dl>
-            <div><dt>Reason</dt><dd>{{ capability.reason || capability.detail || 'Healthy advertisement' }}</dd></div>
-            <div><dt>Advertised</dt><dd>{{ capability.advertisedAt | date:'short' }} · fresh until {{ capability.freshUntil | date:'short' }}</dd></div>
-            <div><dt>Failures</dt><dd>{{ capability.firstFailureAt ? (capability.firstFailureAt | date:'short') : 'none' }} → {{ capability.lastFailureAt ? (capability.lastFailureAt | date:'short') : 'none' }}</dd></div>
-            <div><dt>Cooldown</dt><dd>{{ capability.cooldownUntil ? (capability.cooldownUntil | date:'short') : 'none' }}</dd></div>
-            <div><dt>Canary</dt><dd>{{ capability.canaryClaimId || 'none' }}</dd></div>
-            <div><dt>Affected claims</dt><dd>{{ capability.affectedClaims.length ? capability.affectedClaims.join(', ') : 'none' }}</dd></div>
-          </dl>
+        <div class="health__row"
+             role="row"
+             [attr.data-state]="displayState(capability)"
+             [attr.data-fresh]="capability.isFresh"
+             [attr.data-testid]="'remote-host-capability-' + capability.key">
+          <span role="cell" class="health__name">{{ capability.key }}</span>
+          <span role="cell">
+            <span class="state" [attr.data-tone]="tone(capability)">{{ displayState(capability) }}</span>
+          </span>
+          <span role="cell" class="health__reason">{{ capability.reason || capability.detail || 'Healthy advertisement' }}</span>
+          <span role="cell">{{ capability.advertisedAt | date:'short' }}</span>
+          <span role="cell" class="health__col-failures">
+            {{ capability.firstFailureAt ? (capability.firstFailureAt | date:'short') : 'none' }} → {{ capability.lastFailureAt ? (capability.lastFailureAt | date:'short') : 'none' }}
+          </span>
+          <span role="cell" class="health__col-cooldown">{{ capability.cooldownUntil ? (capability.cooldownUntil | date:'short') : 'none' }}</span>
+          <span role="cell" class="health__col-canary">{{ capability.canaryClaimId || 'none' }}</span>
+          <span role="cell" class="health__col-affected">{{ capability.affectedClaims.length ? capability.affectedClaims.join(', ') : 'none' }}</span>
           @if (capability.recoveryHistory.length) {
-            <details>
+            <details class="health__history">
               <summary>Recovery history · {{ capability.recoveryHistory.length }}</summary>
               <ol>
                 @for (event of capability.recoveryHistory; track event.occurredAt + event.toState) {
@@ -69,7 +87,7 @@
               </ol>
             </details>
           }
-        </article>
+        </div>
       }
     </div>
   </section>

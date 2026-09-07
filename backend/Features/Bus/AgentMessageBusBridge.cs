@@ -481,6 +481,33 @@ public sealed class AgentMessageBusBridge
     }
 
     /// <summary>
+    /// Emits one workspace-level lifecycle event for a client-identity
+    /// permanent deletion (single delete or one row of a purge batch).
+    /// Client identities are not project-scoped, so <c>project</c> stays
+    /// null like <see cref="EmitProviderSignInAsync"/>.
+    /// </summary>
+    public Task EmitClientIdentityDeletedAsync(
+        string clientId,
+        string displayName,
+        string actor,
+        string reason,
+        CancellationToken ct = default)
+    {
+        var msg = NewMessage(
+            participantId: ParticipantRuntime,
+            role: "system",
+            kind: "lifecycle",
+            severity: "Info",
+            project: null,
+            jobId: null,
+            topic: "client-identity-deleted",
+            summary: TruncateSummary($"{displayName} ({clientId}) permanently deleted by {actor}"),
+            payload: new { clientId, displayName, actor, reason },
+            tags: new[] { "client-identity", "identity-deleted" });
+        return EmitAsync(msg, ct);
+    }
+
+    /// <summary>
     /// Token-usage attribution for one orchestrator turn or supporting-agent
     /// call. The aggregate rollup view stays in <c>orchestrator.jsonl</c> /
     /// the token summary service; the bus carries one event per recorded

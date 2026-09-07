@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { api, BACKEND } from '../helpers/api';
+import { api, BACKEND, purgeE2eClients } from '../helpers/api';
 
 /**
  * Client identity + per-task attribution.
@@ -178,16 +178,10 @@ test.describe('Client identity + attribution', () => {
       } catch { /* ignore */ }
     }
 
-    // 2. Best-effort cleanup of the e2e-owner clients. Soft-delete only;
-    //    historical attribution is preserved by design, so the records stay
-    //    (kind=retired) and the next run re-uses the same ids.
-    const all = await api<ClientSummary[]>('/api/clients/');
-    for (const c of all) {
-      if (c.id.startsWith(TEST_PREFIX) && c.kind !== 'retired') {
-        try {
-          await api(`/api/clients/${c.id}`, { method: 'DELETE' });
-        } catch { /* ignore */ }
-      }
-    }
+    // 2. Cleanup of the e2e-owner clients: retire, then permanently purge
+    //    (AGT-2748) so leftovers stop accumulating in the shared dev
+    //    workspace across runs. Registration is idempotent on displayName,
+    //    so a re-run simply re-creates the identity if the spec needs it again.
+    await purgeE2eClients(TEST_PREFIX);
   });
 });

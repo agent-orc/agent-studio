@@ -736,4 +736,67 @@ describe('RemoteHostsService client registry hydration', () => {
     flushLinkHealth(http);
     http.verify();
   });
+
+  it('previews a retired-host purge without deleting anything', () => {
+    TestBed.configureTestingModule({ providers: [RemoteHostsService, provideHttpClient(), provideHttpClientTesting()] });
+    const svc = TestBed.inject(RemoteHostsService);
+    const http = TestBed.inject(HttpTestingController);
+
+    svc.previewPurgeRetired('e2e-');
+    expect(svc.purging()).toBe(true);
+
+    const request = http.expectOne('/api/clients/retired/purge');
+    expect(request.request.method).toBe('POST');
+    expect(request.request.body).toEqual({ prefix: 'e2e-', dryRun: true });
+    request.flush({
+      dryRun: true,
+      results: [
+        { id: 'e2e-owner-alpha', displayName: 'e2e-owner-Alpha', outcome: 'would-delete' },
+        { id: 'e2e-owner-busy', displayName: 'e2e-owner-Busy', outcome: 'skipped-active-lease' },
+      ],
+    });
+
+    expect(svc.purging()).toBe(false);
+    expect(svc.purgeError()).toBeNull();
+    expect(svc.purgePreview()?.results.length).toBe(2);
+    http.verify();
+  });
+
+  it('applies a retired-host purge and removes the deleted hosts from the registry', () => {
+    TestBed.configureTestingModule({ providers: [RemoteHostsService, provideHttpClient(), provideHttpClientTesting()] });
+    const svc = TestBed.inject(RemoteHostsService);
+    const http = TestBed.inject(HttpTestingController);
+    svc.reload();
+    http.expectOne('/api/clients').flush([{
+      id: 'e2e-owner-alpha', displayName: 'e2e-owner-Alpha', kind: 'retired',
+      registeredAt: '2026-08-01T00:00:00Z', lastSeenAt: null,
+    }]);
+    http.expectOne('/api/v1/management/remote-hosts').flush([]);
+    flushLinkHealth(http);
+
+    svc.applyPurgeRetired('e2e-');
+    const request = http.expectOne('/api/clients/retired/purge');
+    expect(request.request.body).toEqual({ prefix: 'e2e-', dryRun: false });
+    request.flush({
+      dryRun: false,
+      results: [{ id: 'e2e-owner-alpha', displayName: 'e2e-owner-Alpha', outcome: 'deleted' }],
+    });
+
+    expect(svc.hosts().some(host => host.id === 'e2e-owner-alpha')).toBe(false);
+    expect(svc.purgePreview()?.results[0].outcome).toBe('deleted');
+    http.verify();
+  });
+
+  it('surfaces a purge failure without touching the registry', () => {
+    TestBed.configureTestingModule({ providers: [RemoteHostsService, provideHttpClient(), provideHttpClientTesting()] });
+    const svc = TestBed.inject(RemoteHostsService);
+    const http = TestBed.inject(HttpTestingController);
+
+    svc.previewPurgeRetired('e2e-');
+    http.expectOne('/api/clients/retired/purge').flush('boom', { status: 500, statusText: 'Server Error' });
+
+    expect(svc.purging()).toBe(false);
+    expect(svc.purgeError()).toBeTruthy();
+    http.verify();
+  });
 });

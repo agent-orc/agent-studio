@@ -40,6 +40,12 @@
         {{ showRetired() ? 'Hide retired' : 'Show retired' }}
         <span>{{ retiredCount() }}</span>
       </button>
+      <button class="rh__retired-filter"
+              type="button"
+              data-testid="remote-hosts-purge-retired"
+              (click)="openPurgeDialog()">
+        Delete retired…
+      </button>
     }
   </div>
 
@@ -182,6 +188,10 @@
 
   @if (wizardOpen()) {
     <app-add-host-wizard (cancelled)="closeWizard()" (completed)="completeWizard($event)" />
+  }
+
+  @if (purgeDialogOpen()) {
+    <app-purge-retired-dialog (cancelled)="onPurgeCancelled()" (purged)="onPurged()" />
   }
 
   @if (setupHost(); as host) {

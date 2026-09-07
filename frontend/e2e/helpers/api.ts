@@ -38,3 +38,33 @@ export async function api<T = unknown>(
   }
   return text ? (JSON.parse(text) as T) : (undefined as T);
 }
+
+/**
+ * Teardown for e2e-registered client identities (AGT-2748). Every fixture
+ * that registers a client with an `e2e-` prefix should call this from its
+ * `afterAll` instead of hand-rolling a retire loop: it retires any live
+ * match still standing, then permanently deletes everything under the
+ * prefix that is already retired via `POST /api/clients/retired/purge`, so
+ * leftovers stop accumulating in the shared dev workspace across runs. Best
+ * effort throughout - a failed sweep here must never fail the test run;
+ * the next spec's purge call sweeps whatever this one missed.
+ */
+export async function purgeE2eClients(prefix: string): Promise<void> {
+  interface ClientSummary { id: string; kind: string; }
+  let clients: ClientSummary[];
+  try {
+    clients = await api<ClientSummary[]>('/api/clients/');
+  } catch {
+    return;
+  }
+  for (const client of clients) {
+    if (!client.id.startsWith(prefix) || client.kind === 'retired') continue;
+    try { await api(`/api/clients/${encodeURIComponent(client.id)}`, { method: 'DELETE' }); } catch { /* ignore */ }
+  }
+  try {
+    await api('/api/clients/retired/purge', {
+      method: 'POST',
+      body: JSON.stringify({ prefix, dryRun: false })
+    });
+  } catch { /* ignore: leftover identities get swept by the next purge */ }
+}

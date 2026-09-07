@@ -39,4 +39,39 @@ describe('RemoteHostRoleRowComponent', () => {
     expect(fixture.nativeElement.querySelector('[data-testid="remote-host-slots-summary"]')?.textContent)
       .toContain('2 / 6');
   });
+
+  it('offers Delete next to Revive on a retired role row, and emits it', () => {
+    TestBed.configureTestingModule({
+      imports: [RemoteHostRoleRowComponent],
+      providers: [provideZonelessChangeDetection()],
+    });
+    const fixture = TestBed.createComponent(RemoteHostRoleRowComponent);
+    fixture.componentRef.setInput('host', { ...ROLE, status: 'retired' });
+    fixture.detectChanges();
+
+    const revive = fixture.nativeElement.querySelector('[data-testid="remote-host-action-revive"]');
+    const del = fixture.nativeElement.querySelector('[data-testid="remote-host-action-delete"]');
+    expect(revive).toBeTruthy();
+    expect(del).toBeTruthy();
+    expect(del?.textContent).toContain('Delete');
+    expect(del?.disabled).toBe(false);
+
+    let emitted: { kind: string; id: string } | null = null;
+    fixture.componentInstance.action.subscribe(evt => { emitted = evt; });
+    del!.click();
+
+    expect(emitted).toEqual({ kind: 'delete', id: ROLE.id });
+  });
+
+  it('does not offer Delete on a live (non-retired) role row', () => {
+    TestBed.configureTestingModule({
+      imports: [RemoteHostRoleRowComponent],
+      providers: [provideZonelessChangeDetection()],
+    });
+    const fixture = TestBed.createComponent(RemoteHostRoleRowComponent);
+    fixture.componentRef.setInput('host', ROLE);
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('[data-testid="remote-host-action-delete"]')).toBeFalsy();
+  });
 });

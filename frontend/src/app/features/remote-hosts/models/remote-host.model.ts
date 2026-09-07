@@ -45,6 +45,18 @@ export type HostActionKind =
   | 'project-policy';
 export type HostRampStrategy = 'conservative' | 'balanced' | 'aggressive';
 
+/** One candidate row of a `POST /api/clients/retired/purge` dry-run or apply pass. */
+export interface PurgeRetiredClientResult {
+  id: string;
+  displayName: string;
+  outcome: 'would-delete' | 'deleted' | 'skipped-active-lease' | 'skipped-not-retired';
+}
+
+export interface PurgeRetiredClientsResponse {
+  dryRun: boolean;
+  results: readonly PurgeRetiredClientResult[];
+}
+
 /**
  * The one capacity record of an execution host: a hard ceiling on concurrent
  * runs, the CPU load the host aims to stay under, and how fast concurrency may

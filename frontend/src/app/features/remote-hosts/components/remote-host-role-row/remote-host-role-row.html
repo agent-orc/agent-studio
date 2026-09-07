@@ -1,9 +1,11 @@
 @let h = host();
 
 <td class="role__name-cell">
-  <span class="role__branch" aria-hidden="true">↳</span>
-  <strong data-testid="remote-host-role-label">{{ roleLabel() }}</strong>
-  <span class="role__identity" data-testid="remote-host-role-name">{{ h.name }}</span>
+  <span class="role__name-cell-inner">
+    <span class="role__branch" aria-hidden="true">↳</span>
+    <strong data-testid="remote-host-role-label">{{ roleLabel() }}</strong>
+    <span class="role__identity" data-testid="remote-host-role-name">{{ h.name }}</span>
+  </span>
 </td>
 <td>
   <span class="role__status" data-testid="remote-host-role-status">
@@ -28,6 +30,12 @@
               [disabled]="!!h.busyAction"
               (click)="emit('revive')">
         {{ h.busyAction === 'revive' ? 'Reviving…' : 'Revive' }}
+      </button>
+      <button class="role__btn role__btn--danger" type="button"
+              data-testid="remote-host-action-delete"
+              [disabled]="!!h.busyAction"
+              (click)="emit('delete')">
+        {{ h.busyAction === 'delete' ? 'Deleting…' : 'Delete' }}
       </button>
     } @else {
       @if (h.runnerLink?.linkState === 'down' && h.runnerLink?.keeper?.supported) {
@@ -63,6 +71,10 @@
       @if (retired()) {
         <button type="button" role="menuitem" [disabled]="!!h.busyAction" (click)="emit('revive')">
           {{ h.busyAction === 'revive' ? 'Reviving…' : 'Revive' }}
+        </button>
+        <button class="role__menu-danger" type="button" role="menuitem"
+                [disabled]="!!h.busyAction" (click)="emit('delete')">
+          {{ h.busyAction === 'delete' ? 'Deleting…' : 'Delete' }}
         </button>
       } @else {
         @if (h.runnerLink?.linkState === 'down' && h.runnerLink?.keeper?.supported) {

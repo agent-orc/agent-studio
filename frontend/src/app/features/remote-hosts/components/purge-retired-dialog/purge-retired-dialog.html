@@ -1,0 +1,63 @@
+<div class="prd__backdrop" data-testid="purge-retired-dialog">
+  <section class="prd__modal" role="dialog" aria-modal="true" aria-label="Delete retired execution hosts">
+    <h3>Delete retired execution hosts</h3>
+    <p class="prd__hint">
+      Preview the retired identities a name prefix matches before deleting them permanently.
+      A runner with an active lease is skipped automatically, dry-run or not.
+    </p>
+
+    <label class="prd__field">
+      <span>Name prefix</span>
+      <input type="text"
+             data-testid="purge-retired-prefix"
+             [value]="prefix()"
+             (input)="prefix.set($any($event.target).value)"
+             [disabled]="previewed() && !applied()"
+             placeholder="e2e-" />
+    </label>
+
+    @if (!previewed()) {
+      <div class="prd__actions">
+        <button type="button" (click)="close()">Cancel</button>
+        <button type="button" data-testid="purge-retired-preview" [disabled]="purging()" (click)="runPreview()">
+          {{ purging() ? 'Loading…' : 'Preview' }}
+        </button>
+      </div>
+    }
+
+    @if (purgeError(); as error) {
+      <p class="prd__error" data-testid="purge-retired-error">{{ error }}</p>
+    }
+
+    @if (previewed() && preview()) {
+      <ul class="prd__list" data-testid="purge-retired-list">
+        @for (row of results(); track row.id) {
+          <li [attr.data-outcome]="row.outcome">
+            <span class="prd__list-name">{{ row.displayName }}</span>
+            <code>{{ row.id }}</code>
+            <span class="prd__list-outcome">{{ outcomeLabel(row.outcome) }}</span>
+          </li>
+        } @empty {
+          <li class="prd__list-empty">No retired hosts match this prefix.</li>
+        }
+      </ul>
+
+      @if (!applied()) {
+        <div class="prd__actions">
+          <button type="button" (click)="close()">Cancel</button>
+          <button type="button" (click)="editPrefix()">Edit prefix</button>
+          <button type="button" class="prd__danger" data-testid="purge-retired-confirm"
+                  [disabled]="deletableCount() === 0 || purging()"
+                  (click)="confirmPurge()">
+            {{ purging() ? 'Deleting…' : 'Delete ' + deletableCount() + ' permanently' }}
+          </button>
+        </div>
+      } @else {
+        <p class="prd__status" data-testid="purge-retired-done">{{ deletedCount() }} deleted.</p>
+        <div class="prd__actions">
+          <button type="button" data-testid="purge-retired-close" (click)="close()">Done</button>
+        </div>
+      }
+    }
+  </section>
+</div>

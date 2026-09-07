@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { api } from '../helpers/api';
+import { api, purgeE2eClients } from '../helpers/api';
 import path from 'node:path';
 
 /**
@@ -85,11 +85,8 @@ test.describe('effective model screenshots', () => {
   });
 
   test.afterAll(async () => {
-    const all = await api<ClientSummary[]>('/api/clients/');
-    for (const c of all) {
-      if (c.id.startsWith(TEST_OWNER_PREFIX) && c.kind !== 'retired') {
-        try { await api(`/api/clients/${c.id}`, { method: 'DELETE' }); } catch { /* ignore */ }
-      }
-    }
+    // Retire, then permanently purge (AGT-2748) so leftovers stop
+    // accumulating in the shared dev workspace across runs.
+    await purgeE2eClients(TEST_OWNER_PREFIX);
   });
 });

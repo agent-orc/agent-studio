@@ -15,10 +15,17 @@
 :host([data-retired='true']) td { color: var(--studio-fg-muted); }
 :host:hover td { background: var(--studio-bg-hover); }
 
-.role__name-cell,
 .role__status,
 .role__actions-wide { display: flex; align-items: center; }
-.role__name-cell { min-width: 0; gap: var(--studio-spacing-2); }
+// .role__name-cell is the <td> itself; it must stay `display: table-cell`
+// (the browser default) so it keeps stretching to the row's real rendered
+// height like every sibling cell. A <td> with `display: flex` drops out of
+// table-cell layout - the UA wraps it in an anonymous table-cell that
+// stretches instead, while the visible flex box (and its inherited
+// border-top/background from `:host td`) stays pinned to its own shorter
+// height. That produced the misaligned/doubled row rule (AGT-2748). The
+// inner wrapper below carries the flex row layout instead.
+.role__name-cell-inner { display: flex; align-items: center; min-width: 0; gap: var(--studio-spacing-2); }
 .role__branch { color: var(--studio-fg-muted); }
 .role__name-cell strong { flex: 0 0 auto; color: var(--studio-fg-strong); }
 .role__identity {

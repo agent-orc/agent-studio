@@ -326,3 +326,29 @@ public record ClientDetail
     /// <summary>Up to ten most recent job ids attributed to this client (newest first).</summary>
     public List<string> RecentJobIds { get; init; } = [];
 }
+
+/// <summary>
+/// Body for <c>POST /api/clients/retired/purge</c>. An empty or missing
+/// <see cref="Prefix"/> matches every retired identity except the bootstrap
+/// default, which is never eligible. <see cref="DryRun"/> defaults to true so
+/// a caller must opt in explicitly to actually delete.
+/// </summary>
+public record PurgeRetiredClientsRequest
+{
+    public string? Prefix { get; init; }
+    public bool DryRun { get; init; } = true;
+}
+
+/// <summary>One candidate row of a purge dry-run or apply pass.</summary>
+public record PurgeRetiredClientResult
+{
+    public string Id { get; init; } = "";
+    public string DisplayName { get; init; } = "";
+    public string Outcome { get; init; } = "";
+}
+
+public record PurgeRetiredClientsResponse
+{
+    public bool DryRun { get; init; }
+    public List<PurgeRetiredClientResult> Results { get; init; } = [];
+}

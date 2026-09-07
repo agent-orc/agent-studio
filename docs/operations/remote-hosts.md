@@ -269,13 +269,65 @@ curl -sS -X POST https://tasks.example.com/api/clients/agent-runner-01/revive \
 sudo systemctl restart agent-host
 ```
 
+## Retire, revive, delete
+
+The full lifecycle for one identity is retire (above) to stop new claims,
+revive (above) to bring it back, or permanent delete to remove the record for
+good. Delete is only reachable from an already-retired role: the role row's
+overflow menu on a retired runner offers **Delete** next to **Revive**, with a
+confirmation naming the runner; the row disappears without a reload.
+
 ## Remove permanently
 
-Permanent removal is only available for an already-retired client. It deletes
-the identity record and cannot be undone. Use it only after deciding that the
-revive path and the visible historical host entry are no longer needed.
+Permanent removal is only available for an already-retired client, and is
+refused with `409 Conflict` while the identity still holds a live run lease
+(`client-has-active-lease`) - the guard re-derives occupancy from the same
+run-lease authority the claim endpoint uses, not from the identity's own
+cached telemetry, so a stale slot count cannot let a still-working runner be
+deleted out from under its task. A non-retired identity is refused with
+`409 Conflict` (`client-must-be-retired-before-delete`); an unknown id
+returns `404` (`client-not-found`). The bootstrap `local-default` identity can
+never be deleted. Deletion cannot be undone. Use it only after deciding that
+the revive path and the visible historical host entry are no longer needed.
+Every successful deletion appends a JSONL row to
+`<TaskRepository>/identities/.audit/identity-deletions.jsonl` (id, display
+name, actor, timestamp, reason) and emits a workspace-level
+`client-identity-deleted` event on the agent message bus.
 
 ```bash
 curl -sS -X DELETE https://tasks.example.com/api/clients/agent-runner-01/permanent \
   -H 'X-Client-Id: local-default'
 ```
+
+## Delete retired hosts in bulk
+
+e2e fixtures and decommissioned hosts leave a graveyard of retired identities
+behind (`e2e-effective-model-...`, `e2e-owner-...`, one-off runner names).
+**Delete retired…** in the Execution Hosts toolbar opens a dry-run preview: a
+name-prefix filter (defaulting to `e2e-`) lists every matching retired
+identity and what would happen to it, before anything is deleted. The same
+per-identity guard applies to every candidate - a match that still holds an
+active lease is skipped, not force-deleted.
+
+The underlying API is `POST /api/clients/retired/purge` with an optional
+`prefix` and a `dryRun` flag (defaults to `true`):
+
+```bash
+# Preview only - nothing is deleted.
+curl -sS -X POST https://tasks.example.com/api/clients/retired/purge \
+  -H 'Content-Type: application/json' -H 'X-Client-Id: local-default' \
+  -d '{"prefix":"e2e-","dryRun":true}'
+
+# Apply: permanently deletes every matching retired identity without an active lease.
+curl -sS -X POST https://tasks.example.com/api/clients/retired/purge \
+  -H 'Content-Type: application/json' -H 'X-Client-Id: local-default' \
+  -d '{"prefix":"e2e-","dryRun":false}'
+```
+
+Each row of the response reports one outcome: `would-delete` (dry run),
+`deleted`, `skipped-active-lease`, or `skipped-not-retired`. An empty or
+absent `prefix` matches every retired identity except `local-default`, which
+is never a candidate. Playwright fixtures that register an `e2e-`-prefixed
+identity call the shared `purgeE2eClients(prefix)` helper
+(`frontend/e2e/helpers/api.ts`) from their `afterAll` so this graveyard stops
+growing run over run.

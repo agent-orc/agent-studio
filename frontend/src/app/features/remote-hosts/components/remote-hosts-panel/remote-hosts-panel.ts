@@ -16,6 +16,7 @@ import {
 import { AddHostWizardComponent, type ProvisionedHostDraft } from '../add-host-wizard/add-host-wizard';
 import { type VisibleCliTaskCreated, type VisibleCliTaskWorkspace } from '../../../visible-cli-task';
 import { RunnerSetupDialogComponent } from '../runner-setup-dialog/runner-setup-dialog';
+import { PurgeRetiredDialogComponent } from '../purge-retired-dialog/purge-retired-dialog';
 import {
   RemoteHostTableState,
   type RemoteHostSortKey,
@@ -42,7 +43,7 @@ import { NotificationComponent } from '../../../../components/notification/notif
 @Component({
   selector: 'app-remote-hosts-panel',
   standalone: true,
-  imports: [RemoteHostCardComponent, AddHostWizardComponent, RunnerSetupDialogComponent, NotificationComponent],
+  imports: [RemoteHostCardComponent, AddHostWizardComponent, RunnerSetupDialogComponent, PurgeRetiredDialogComponent, NotificationComponent],
   templateUrl: './remote-hosts-panel.html',
   styleUrl: './remote-hosts-panel.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -60,6 +61,7 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   readonly wizardOpen = signal(false);
   readonly showRetired = signal(false);
   readonly setupHost = signal<RemoteHost | null>(null);
+  readonly purgeDialogOpen = signal(false);
   readonly pendingConfirmation = signal<{ kind: 'retire' | 'delete'; host: RemoteHost } | null>(null);
   readonly confirmationTitle = computed(() => {
     const pending = this.pendingConfirmation();
@@ -169,6 +171,15 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   }
 
   toggleRetired(): void { this.showRetired.update(value => !value); }
+
+  openPurgeDialog(): void { this.purgeDialogOpen.set(true); }
+
+  onPurgeCancelled(): void { this.purgeDialogOpen.set(false); }
+
+  onPurged(): void {
+    this.purgeDialogOpen.set(false);
+    this.reload();
+  }
 
   roleSlots(group: PhysicalHostGroup): Readonly<Record<string, number>> {
     return Object.fromEntries(group.roles.map(role => [role.id, this.boardSlots(role)]));

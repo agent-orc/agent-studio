@@ -5,6 +5,7 @@ import type {
   HostActionKind,
   HostRampStrategy,
   HostTelemetrySeries,
+  PurgeRetiredClientsResponse,
   RemoteRunnerLinkHealth,
   RemoteRunnerReconnectResponse,
   RemoteHost,
@@ -33,6 +34,11 @@ export class RemoteHostsService {
   readonly loading = signal<boolean>(false);
   readonly error = signal<string | null>(null);
   readonly identityDiagnostics = signal<readonly ClientSummary[]>([]);
+
+  /** Bulk-purge dry-run/apply state, read by the "Delete retired…" dialog. */
+  readonly purgePreview = signal<PurgeRetiredClientsResponse | null>(null);
+  readonly purging = signal(false);
+  readonly purgeError = signal<string | null>(null);
 
   private static readonly FRESH_CLIENT_MS = 90_000;
   private static readonly DEGRADED_CLIENT_MS = 5 * 60_000;
@@ -560,6 +566,53 @@ export class RemoteHostsService {
       next: () => this.hosts.update(items => items.filter(item => item.id !== id)),
       error: error => this.actionFailed(id, error),
     });
+  }
+
+  /** Dry-run preview: which retired identities match `prefix`, and why each would or would not be deleted. */
+  previewPurgeRetired(prefix: string): void {
+    if (!this.http) return;
+    this.purging.set(true);
+    this.purgeError.set(null);
+    this.http.post<PurgeRetiredClientsResponse>('/api/clients/retired/purge', { prefix, dryRun: true }).subscribe({
+      next: response => {
+        this.purgePreview.set(response);
+        this.purging.set(false);
+      },
+      error: () => {
+        this.purgeError.set('Could not preview retired hosts for this prefix.');
+        this.purging.set(false);
+      },
+    });
+  }
+
+  /** Actually deletes the identities matching `prefix` (skipping any with an active lease). */
+  applyPurgeRetired(prefix: string): void {
+    if (!this.http) return;
+    this.purging.set(true);
+    this.purgeError.set(null);
+    this.http.post<PurgeRetiredClientsResponse>('/api/clients/retired/purge', { prefix, dryRun: false }).subscribe({
+      next: response => {
+        this.purgePreview.set(response);
+        this.purging.set(false);
+        const deletedIds = new Set(response.results.filter(r => r.outcome === 'deleted').map(r => r.id));
+        if (deletedIds.size) {
+          this.hosts.update(hosts => hosts.filter(host => !deletedIds.has(host.id)));
+          this.notifications?.success(
+            `${deletedIds.size} retired host${deletedIds.size === 1 ? '' : 's'} permanently deleted.`,
+            'Purge complete',
+          );
+        }
+      },
+      error: () => {
+        this.purgeError.set('Could not delete the matching retired hosts.');
+        this.purging.set(false);
+      },
+    });
+  }
+
+  clearPurgePreview(): void {
+    this.purgePreview.set(null);
+    this.purgeError.set(null);
   }
 
   /**

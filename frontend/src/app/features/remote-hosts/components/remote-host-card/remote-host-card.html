@@ -2,17 +2,19 @@
 
 <tr class="host__row" [attr.data-tone]="tone()" data-testid="remote-host-primary-row">
   <td class="host__name-cell">
-    <button class="host__disclosure"
-            type="button"
-            data-testid="remote-host-disclosure"
-            [attr.aria-expanded]="expanded()"
-            [attr.aria-controls]="detailId()"
-            [attr.aria-label]="(expanded() ? 'Hide details for ' : 'Show details for ') + h.name"
-            (click)="toggleExpanded()">
-      <span aria-hidden="true">›</span>
-    </button>
-    <strong class="host__name" data-testid="remote-host-name">{{ h.name }}</strong>
-    <span class="host__role-count">{{ roles().length }} {{ roles().length === 1 ? 'role' : 'roles' }}</span>
+    <div class="host__name-cell-inner">
+      <button class="host__disclosure"
+              type="button"
+              data-testid="remote-host-disclosure"
+              [attr.aria-expanded]="expanded()"
+              [attr.aria-controls]="detailId()"
+              [attr.aria-label]="(expanded() ? 'Hide details for ' : 'Show details for ') + h.name"
+              (click)="toggleExpanded()">
+        <span aria-hidden="true">›</span>
+      </button>
+      <strong class="host__name" data-testid="remote-host-name">{{ h.name }}</strong>
+      <span class="host__role-count">{{ roles().length }} {{ roles().length === 1 ? 'role' : 'roles' }}</span>
+    </div>
   </td>
   <td>
     <span class="host__status" data-testid="remote-host-status">
@@ -22,14 +24,16 @@
   </td>
   <td><span class="host__placeholder" title="Shown per runner role">–</span></td>
   <td class="host__load" data-testid="remote-host-load">
-    @if (loadPct() !== null) {
-      <span class="host__load-track" aria-hidden="true">
-        <span [style.width.%]="loadPct()"></span>
-      </span>
-      <span class="host__number">{{ loadLabel() }}</span>
-    } @else {
-      <span class="host__placeholder" title="Not reported">–</span>
-    }
+    <span class="host__load-inner">
+      @if (loadPct() !== null) {
+        <span class="host__load-track" aria-hidden="true">
+          <span [style.width.%]="loadPct()"></span>
+        </span>
+        <span class="host__number">{{ loadLabel() }}</span>
+      } @else {
+        <span class="host__placeholder" title="Not reported">–</span>
+      }
+    </span>
   </td>
   <td class="host__activity" data-testid="remote-host-heartbeat"
       [attr.title]="h.lastHeartbeatAt ? (h.lastHeartbeatAt | date:'medium') : 'No heartbeat reported'">
