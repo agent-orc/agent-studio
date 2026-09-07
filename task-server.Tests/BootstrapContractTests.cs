@@ -1,4 +1,5 @@
 using AgentStudio.TaskServer;
+using AgentStudio.TaskServer.Contracts;
 using Microsoft.Extensions.Configuration;
 using Xunit;
 
@@ -94,15 +95,27 @@ public sealed class BootstrapContractTests
     }
 
     [Fact]
-    public void Command_line_has_explicit_version_and_backup_modes()
+    public void Command_line_has_explicit_version_backup_inventory_and_import_modes()
     {
         var version = TaskServerCommandLine.Parse(["--version"]);
         var backup = TaskServerCommandLine.Parse(
             ["backup", "--name", "nightly", "--TaskServer:MinimumLeaseSeconds", "10"]);
+        var inventory = TaskServerCommandLine.Parse(["inventory", "--source", "/frozen"]);
+        var import = TaskServerCommandLine.Parse(
+            ["import", "--source", "/frozen", "--inventory", "/tmp/inventory.json", "--workspace", "Workspace", "--mode", "maintenance"]);
 
         Assert.Equal(TaskServerCommandKind.Version, version.Kind);
         Assert.Equal(TaskServerCommandKind.Backup, backup.Kind);
         Assert.Equal("nightly", backup.BackupName);
+        Assert.Equal(TaskServerCommandKind.Inventory, inventory.Kind);
+        Assert.Equal("/frozen", inventory.Source);
+        Assert.Equal(TaskServerCommandKind.Import, import.Kind);
+        Assert.Equal("/tmp/inventory.json", import.InventoryPath);
+        Assert.Equal("Workspace", import.WorkspaceName);
+        Assert.Equal(TaskServerMode.Maintenance, import.Mode);
+        var invalidMode = Assert.Throws<ArgumentException>(() => TaskServerCommandLine.Parse(
+            ["import", "--source", "/frozen", "--inventory", "/tmp/inventory.json", "--mode", "normal"]));
+        Assert.Equal("import --mode supports only maintenance.", invalidMode.Message);
         Assert.Equal(
             ["--TaskServer:MinimumLeaseSeconds", "10"],
             backup.HostArguments);

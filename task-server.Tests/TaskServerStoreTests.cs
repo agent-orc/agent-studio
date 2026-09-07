@@ -81,7 +81,7 @@ public sealed class TaskServerStoreTests
     }
 
     [Fact]
-    public async Task Version_ten_adds_durable_result_finalization_state()
+    public async Task Version_ten_adds_durable_result_finalization_state_and_reaches_current_schema()
     {
         using var temp = new TempDirectory();
         var first = Store(temp.Path);
@@ -113,7 +113,7 @@ public sealed class TaskServerStoreTests
             """;
         Assert.Equal(1L, (long)(await table.ExecuteScalarAsync())!);
         table.CommandText = "SELECT value FROM meta WHERE key = 'schema_version';";
-        Assert.Equal("11", (string)(await table.ExecuteScalarAsync())!);
+        Assert.Equal(TaskServerStore.CurrentSchemaVersion.ToString(), (string)(await table.ExecuteScalarAsync())!);
     }
 
     [Fact]
@@ -637,6 +637,9 @@ public sealed class TaskServerStoreTests
         var migration = new LegacyMigrationService(store);
         var request = new LegacyMigrationRequest(legacy.Path, "Agent Studio for Software", true);
         var inventory = await migration.InventoryAsync(request, default);
+        var invalidInventory = Assert.Throws<TaskServerConflictException>(
+            () => LegacyMigrationService.ValidateInventoryHash(inventory with { Tasks = inventory.Tasks + 1 }));
+        Assert.Equal("legacy-inventory-invalid", invalidInventory.Code);
         await File.WriteAllTextAsync(prompt, "Changed prompt with a different length");
 
         await store.ChangeModeAsync(new ChangeModeRequest(TaskServerMode.Maintenance, "single-writer cutover"), "operator", default);
@@ -645,7 +648,7 @@ public sealed class TaskServerStoreTests
             "operator",
             default));
 
-        Assert.Equal("legacy-inventory-changed", conflict.Code);
+        Assert.Equal("legacy-inventory-mismatch", conflict.Code);
         Assert.Empty(await store.ListProjectsAsync(null, default));
     }
 
@@ -668,6 +671,212 @@ public sealed class TaskServerStoreTests
             () => migration.InventoryAsync(request, default));
 
         Assert.Equal("legacy-attempt-authority-required", conflict.Code);
+    }
+
+    [Fact]
+    public async Task Legacy_cutover_inventories_every_entity_is_idempotent_and_restores_the_same_inventory_hash()
+    {
+        using var source = new TempDirectory();
+        using var data = new TempDirectory();
+        var ready = Path.Combine(source.Path, "projects", "PROJ-001", "tasks", "2-ready", "AGT-1");
+        var archived = Path.Combine(source.Path, "projects", "PROJ-001", "tasks", "7-archive", "AGT-2");
+        Directory.CreateDirectory(Path.Combine(ready, "results"));
+        Directory.CreateDirectory(Path.Combine(ready, "logs"));
+        Directory.CreateDirectory(archived);
+        Directory.CreateDirectory(Path.Combine(source.Path, ".metadata", "orchestrator-sessions", "global"));
+        Directory.CreateDirectory(Path.Combine(source.Path, "projects", "PROJ-001", ".orchestrator", "context-chats"));
+        Directory.CreateDirectory(Path.Combine(source.Path, "logs", "bus", "Agent Studio"));
+        Directory.CreateDirectory(Path.Combine(source.Path, "docs", "cutover"));
+        await File.WriteAllTextAsync(Path.Combine(source.Path, ".metadata", "projects.json"), $$"""
+            {"projects":[{"id":"PROJ-001","displayName":"Agent Studio","shortCode":"AGT","nextTaskKeySeq":3,"storageLocation":"{{Path.Combine(source.Path, "projects", "PROJ-001", "tasks").Replace("\\", "\\\\")}}"}]}
+            """);
+        await File.WriteAllTextAsync(Path.Combine(ready, "task.json"), """
+            {
+              "id":"epic-cutover","key":"AGT-1","title":"Cutover epic","state":"2-ready","kind":"epic",
+              "tags":["integrationpending"],
+              "commits":[{"sha":"1111111"},{"sha":"2222222"}],
+              "integrationRecords":[{"id":"integration-1","classification":"integrated-verified"}],
+              "delivery":{"resultRef":"refs/agent-studio/result/1","deliveryRef":"refs/heads/task/agt-1"}
+            }
+            """);
+        await File.WriteAllTextAsync(Path.Combine(archived, "task.json"), """
+            {"id":"archived-task","key":"AGT-2","title":"Archived","state":"7-archive"}
+            """);
+        await File.WriteAllTextAsync(Path.Combine(ready, "prompt.md"), "Migrate every entity.");
+        await File.WriteAllTextAsync(Path.Combine(ready, "logs", "timeline.jsonl"),
+            "{\"kind\":\"created\",\"timestamp\":\"2026-09-01T10:00:00Z\"}\n");
+        await File.WriteAllTextAsync(Path.Combine(archived, "timeline.jsonl"),
+            "{\"kind\":\"archived\",\"timestamp\":\"2026-09-02T10:00:00Z\"}\n");
+        await File.WriteAllTextAsync(Path.Combine(ready, "results", "report.txt"), "review evidence");
+        await File.WriteAllTextAsync(
+            Path.Combine(ready, "logs", "cli-output.log"),
+            new string('x', 10 * 1024 * 1024 + 1024));
+        await File.WriteAllTextAsync(Path.Combine(source.Path, "docs", "cutover", "workbench.json"),
+            "{\"schemaVersion\":2,\"pageKind\":\"workbench\",\"id\":\"cutover\"}");
+        await File.WriteAllTextAsync(Path.Combine(source.Path, ".metadata", "orchestrator-sessions", "global", "session.json"),
+            "{\"contextKey\":\"global\",\"kind\":\"global\"}");
+        await File.WriteAllTextAsync(Path.Combine(source.Path, ".metadata", "orchestrator-sessions", "global", "history.jsonl"),
+            "{\"kind\":\"boot\"}\n");
+        await File.WriteAllTextAsync(Path.Combine(source.Path, "projects", "PROJ-001", "orchestrator-chat.jsonl"),
+            "{\"ts\":\"2026-09-01T12:00:00Z\",\"role\":\"user\",\"text\":\"project\"}\n");
+        await File.WriteAllTextAsync(Path.Combine(source.Path, "projects", "PROJ-001", ".orchestrator", "context-chats", "task.jsonl"),
+            "{\"ts\":\"2026-09-01T12:01:00Z\",\"role\":\"user\",\"text\":\"task\"}\n");
+        await File.WriteAllTextAsync(Path.Combine(source.Path, "logs", "bus", "Agent Studio", "2026-09-01.jsonl"),
+            "{\"kind\":\"task-event\"}\n");
+        await File.WriteAllTextAsync(Path.Combine(source.Path, ".metadata", "attempt-authority.json"), """
+            {
+              "authorityEpoch":4,"lastFenceByTask":{"AGT-1":5},
+              "runAttempts":[
+                {"attemptId":"run-open","taskKey":"AGT-1","repositoryId":"repo","state":1,"lastFence":5,"createdAt":"2026-09-01T10:00:00Z","lease":{"leaseId":"lease-open","fence":5,"executorId":"runner-1","hostId":"host-1","acquiredAt":"2026-09-01T10:00:00Z","expiresAt":"2026-09-01T10:05:00Z"}},
+                {"attemptId":"run-closed","taskKey":"AGT-2","repositoryId":"repo","state":2,"lastFence":2,"createdAt":"2026-08-01T10:00:00Z","terminalAt":"2026-08-01T10:05:00Z"}
+              ],
+              "reviewAttempts":[
+                {"attemptId":"review-open","taskKey":"AGT-1","repositoryId":"repo","sourceRunAttemptId":"run-open","state":1,"lastFence":3,"createdAt":"2026-09-01T10:06:00Z","lease":{"leaseId":"review-lease","fence":3,"executorId":"reviewer-1","hostId":"host-1","acquiredAt":"2026-09-01T10:06:00Z","expiresAt":"2026-09-01T10:10:00Z"},"subject":{"subjectId":"subject-1","repositoryId":"repo","expectedResultSha":"1111111111111111111111111111111111111111","sourceRunAttemptId":"run-open","resultRef":"refs/agent-studio/result/1"}}
+              ]
+            }
+            """);
+
+        var store = Store(data.Path);
+        await store.InitializeAsync();
+        var service = new LegacyMigrationService(store);
+        var request = new LegacyMigrationRequest(source.Path, "Workspace", true, RequireAttemptAuthority: true);
+        var inventory = await service.InventoryAsync(request, default);
+        Assert.Equal(2, inventory.Tasks);
+        Assert.Equal(1, inventory.Epics);
+        Assert.Equal(1, inventory.Dossiers);
+        Assert.Equal(1, inventory.OrchestratorSessions);
+        Assert.Equal(2, inventory.ContextChats);
+        Assert.Equal(2, inventory.ContextChatTurns);
+        Assert.Equal(1, inventory.PendingIntegrationRecords);
+        Assert.Equal(2, inventory.GitCommits);
+        Assert.Equal(1, inventory.IntegrationRecords);
+        Assert.Equal(1, inventory.ResultRefs);
+        Assert.Equal(1, inventory.DeliveryRefs);
+        Assert.Equal(1, inventory.BusLogFiles);
+        var projectCounts = Assert.Single(inventory.ProjectCounts!);
+        Assert.Equal(1, projectCounts.States["2-ready"]);
+        Assert.Equal(1, projectCounts.States["7-archive"]);
+
+        using var frozen = new TempDirectory();
+        CopyDirectory(source.Path, frozen.Path);
+        var frozenRequest = request with { LegacyRoot = frozen.Path };
+        var frozenInventory = await service.InventoryAsync(frozenRequest, default);
+        Assert.Equal(inventory.MigrationId, frozenInventory.MigrationId);
+        Assert.Equal(inventory.InventorySha256, frozenInventory.InventorySha256);
+
+        await store.ChangeModeAsync(new ChangeModeRequest(TaskServerMode.Maintenance, "cutover"), "operator", default);
+        var imported = await service.ImportAsync(
+            frozenRequest with { ExpectedMigrationId = inventory.MigrationId }, inventory, "operator", default);
+        Assert.False(imported.Idempotent);
+        Assert.Equal(inventory.InventorySha256, imported.AfterInventorySha256);
+        Assert.NotEmpty(imported.ReportSignature!);
+        Assert.True(File.Exists(Path.Combine(store.DataDirectory, imported.ReportPath!)));
+        Assert.Single(await store.ListLegacyMigrationReportsAsync(default));
+        var artifactReferences = await store.ListArtifactsAsync(string.Empty, default);
+        Assert.Equal(2, artifactReferences.Count);
+        Assert.All(artifactReferences, artifact =>
+        {
+            Assert.True(artifact.PointerOnly);
+            Assert.StartsWith(frozen.Path, artifact.SourcePath!, StringComparison.Ordinal);
+        });
+        await using (var connection = new SqliteConnection($"Data Source={store.DatabasePath};Pooling=False"))
+        {
+            await connection.OpenAsync();
+            Assert.Equal(1L, Scalar(connection, "SELECT count(*) FROM runs WHERE id = 'run-open' AND status = 'process-unknown';"));
+            Assert.Equal(1L, Scalar(connection, "SELECT count(*) FROM runs WHERE id = 'run-closed' AND status = 'completed';"));
+            Assert.Equal(2L, Scalar(connection, "SELECT count(*) FROM artifacts WHERE pointer_only = 1 AND length(content) = 0;"));
+            Assert.Equal(1L, Scalar(connection, "SELECT count(*) FROM legacy_migration_entities WHERE entity_kind = 'bus-log-reference';"));
+        }
+        var preImportBackupCount = Directory.EnumerateFiles(store.BackupDirectory, "*.db").Count();
+        var repeated = await service.ImportAsync(
+            frozenRequest with { ExpectedMigrationId = inventory.MigrationId }, inventory, "operator", default);
+        Assert.True(repeated.Idempotent);
+        Assert.Equal(preImportBackupCount, Directory.EnumerateFiles(store.BackupDirectory, "*.db").Count());
+
+        var backup = await store.CreateBackupAsync(new BackupRequest("post-import"), "operator", default);
+        Assert.Equal(inventory.InventorySha256, backup.InventorySha256);
+        using var restoredData = new TempDirectory();
+        var restoredStore = Store(restoredData.Path);
+        await restoredStore.InitializeAsync();
+        await restoredStore.ChangeModeAsync(new ChangeModeRequest(TaskServerMode.Maintenance, "restore rehearsal"), "operator", default);
+        var copiedBackup = Path.Combine(restoredStore.BackupDirectory, Path.GetFileName(backup.Path));
+        File.Copy(backup.Path, copiedBackup);
+        var restored = await restoredStore.RestoreBackupAsync(new RestoreRequest(backup.BackupId), "operator", default);
+        Assert.True(restored.Restored);
+        Assert.Equal(inventory.InventorySha256, restored.InventorySha256);
+        var restoredReport = await restoredStore.GetLegacyMigrationReportAsync(inventory.MigrationId, default);
+        Assert.NotNull(restoredReport);
+        Assert.Equal(inventory.InventorySha256, restoredReport!.AfterInventorySha256);
+        Assert.True(File.Exists(Path.Combine(restoredStore.DataDirectory, restoredReport.ReportPath)));
+    }
+
+    [Fact]
+    public async Task Legacy_cutover_preserves_orphaned_authority_as_reported_degradation_and_restores_it()
+    {
+        using var source = new TempDirectory();
+        using var data = new TempDirectory();
+        var taskDirectory = Path.Combine(source.Path, "projects", "PROJ-001", "tasks", "2-ready", "AGT-1");
+        Directory.CreateDirectory(taskDirectory);
+        Directory.CreateDirectory(Path.Combine(source.Path, ".metadata"));
+        await File.WriteAllTextAsync(Path.Combine(taskDirectory, "task.json"), """
+            {"key":"AGT-1","title":"Surviving task","state":"2-ready","projectName":"Agent Studio","integrationRecords":[{"id":"orphan-integration","taskKey":"QS-50","classification":"integrated-historical"}]}
+            """);
+        await File.WriteAllTextAsync(Path.Combine(source.Path, ".metadata", "attempt-authority.json"), """
+            {
+              "authorityEpoch":9,
+              "lastFenceByTask":{"AGT-1":2,"QS-50":7},
+              "runAttempts":[
+                {"attemptId":"run-surviving","taskKey":"AGT-1","repositoryId":"repo","state":2,"lastFence":2,"createdAt":"2026-08-01T10:00:00Z","terminalAt":"2026-08-01T10:05:00Z"},
+                {"attemptId":"run-orphan","taskKey":"QS-50","repositoryId":"repo","state":1,"lastFence":7,"createdAt":"2026-08-02T10:00:00Z","lease":{"leaseId":"lease-orphan-run","fence":7,"executorId":"runner-1","hostId":"host-1","acquiredAt":"2026-08-02T10:00:00Z","expiresAt":"2026-08-02T10:05:00Z"}}
+              ],
+              "reviewAttempts":[
+                {"attemptId":"review-orphan","taskKey":"QS-50","repositoryId":"repo","sourceRunAttemptId":"run-orphan","state":1,"lastFence":4,"createdAt":"2026-08-02T10:06:00Z","lease":{"leaseId":"lease-orphan-review","fence":4,"executorId":"reviewer-1","hostId":"host-1","acquiredAt":"2026-08-02T10:06:00Z","expiresAt":"2026-08-02T10:10:00Z"},"subject":{"subjectId":"subject-orphan","repositoryId":"repo","expectedResultSha":"1111111111111111111111111111111111111111","sourceRunAttemptId":"run-orphan"}}
+              ]
+            }
+            """);
+
+        var store = Store(data.Path);
+        await store.InitializeAsync();
+        var service = new LegacyMigrationService(store);
+        var request = new LegacyMigrationRequest(source.Path, "Workspace", true, RequireAttemptAuthority: true);
+        var inventory = await service.InventoryAsync(request, default);
+
+        Assert.Equal(1, inventory.OrphanedCodingAttempts);
+        Assert.Equal(1, inventory.OrphanedReviewAttempts);
+        Assert.Equal(2, inventory.OrphanedLeases);
+        Assert.Equal(1, inventory.OrphanedFenceCounters);
+        Assert.Equal(1, inventory.OrphanedIntegrationRecords);
+        Assert.Contains(inventory.Warnings, warning => warning.Contains("orphaned coding-attempt", StringComparison.Ordinal));
+
+        await store.ChangeModeAsync(new ChangeModeRequest(TaskServerMode.Maintenance, "orphan rehearsal"), "operator", default);
+        var imported = await service.ImportAsync(
+            request with { ExpectedMigrationId = inventory.MigrationId }, inventory, "operator", default);
+
+        Assert.Equal(inventory.InventorySha256, imported.AfterInventorySha256);
+        Assert.Equal(1, imported.Before!.OrphanedCodingAttempts);
+        await using (var connection = new SqliteConnection($"Data Source={store.DatabasePath};Pooling=False"))
+        {
+            await connection.OpenAsync();
+            Assert.Equal(1L, Scalar(connection, "SELECT count(*) FROM runs WHERE id = 'run-surviving';"));
+            Assert.Equal(0L, Scalar(connection, "SELECT count(*) FROM runs WHERE id = 'run-orphan';"));
+            Assert.Equal(1L, Scalar(connection, "SELECT count(*) FROM legacy_migration_orphans WHERE entity_kind = 'coding-attempt' AND orphaned_task_key = 'QS-50';"));
+            Assert.Equal(1L, Scalar(connection, "SELECT count(*) FROM legacy_migration_orphans WHERE entity_kind = 'review-attempt';"));
+            Assert.Equal(2L, Scalar(connection, "SELECT count(*) FROM legacy_migration_orphans WHERE entity_kind = 'lease';"));
+            Assert.Equal(1L, Scalar(connection, "SELECT count(*) FROM legacy_migration_orphans WHERE entity_kind = 'fence-counter';"));
+            Assert.Equal(1L, Scalar(connection, "SELECT count(*) FROM legacy_migration_orphans WHERE entity_kind = 'integration-record';"));
+        }
+
+        var backup = await store.CreateBackupAsync(new BackupRequest("orphan-post-import"), "operator", default);
+        using var restoredData = new TempDirectory();
+        var restoredStore = Store(restoredData.Path);
+        await restoredStore.InitializeAsync();
+        await restoredStore.ChangeModeAsync(new ChangeModeRequest(TaskServerMode.Maintenance, "restore orphan rehearsal"), "operator", default);
+        File.Copy(backup.Path, Path.Combine(restoredStore.BackupDirectory, Path.GetFileName(backup.Path)));
+        var restored = await restoredStore.RestoreBackupAsync(new RestoreRequest(backup.BackupId), "operator", default);
+        Assert.Equal(inventory.InventorySha256, restored.InventorySha256);
+        var restoredReport = await restoredStore.GetLegacyMigrationReportAsync(inventory.MigrationId, default);
+        Assert.Equal(1, restoredReport!.Before.OrphanedCodingAttempts);
+        Assert.Contains(restoredReport.Before.Warnings, warning => warning.Contains("orphaned coding-attempt", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -1577,6 +1786,15 @@ public sealed class TaskServerStoreTests
         using var command = connection.CreateCommand();
         command.CommandText = sql;
         return Convert.ToInt64(command.ExecuteScalar());
+    }
+
+    private static void CopyDirectory(string source, string destination)
+    {
+        Directory.CreateDirectory(destination);
+        foreach (var file in Directory.EnumerateFiles(source))
+            File.Copy(file, Path.Combine(destination, Path.GetFileName(file)));
+        foreach (var directory in Directory.EnumerateDirectories(source))
+            CopyDirectory(directory, Path.Combine(destination, Path.GetFileName(directory)));
     }
 
     private static async Task<(WorkspaceDto Workspace, ProjectDto Project, TaskDto Task)> SeedReadyTaskAsync(TaskServerStore store)
