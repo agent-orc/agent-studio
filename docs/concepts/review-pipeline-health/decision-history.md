@@ -2,6 +2,30 @@
 
 Newest first. Every entry: date · decision · reasoning · card/commit reference.
 
+## 2026-09-07: PrivateTmp=true made the 2026-08-18 "loss-free" restart claim incomplete
+`ReviewSlotReconciler` re-adopting a detached `DurableReviewProcess` worker by
+PID-liveness/workspace match proves the worker survives a restart; it does not
+prove the worker's environment still works. The units also set
+`PrivateTmp=true`, so every `agent-runner.service`/`agent-runner-review.service`
+restart unmounted the unit's private `/tmp`, out from under a worker that
+`KillMode=process` deliberately left running. The worker kept the deleted mount
+(`/proc/<pid>/mountinfo` showed the `/tmp` mount root ending in `/deleted`), and
+roughly an hour later `dotnet test`/`dotnet restore` failed with `MSB1025`,
+`SocketException (99)`, or a NuGet `mkdtemp` `ENOENT` — infrastructure failures
+the grader read as a product regression (`NewTestFailures`/`ProductFailure`).
+Decision: ship `PrivateTmp=false` on both units (`deploy/systemd/agent-host.service`,
+`scripts/remote-runner-onboard.sh`, `setup/NativeInstaller.cs`, and the
+`10-agent-runner-hardening.conf` retrofit drop-in) so host `/tmp` survives a
+restart untouched; add `DetachedWorkerTmpMountGuard` so `VerifyLive` positively
+detects a torn-down `/tmp` mount at re-adoption time and fails the slot
+immediately instead of letting a doomed build run for an hour; and classify the
+three captured signatures as `ReviewInfra`/`EnvironmentalTransient` in
+`RemoteReviewWorkspace`/`AgentOutcomeAnalyzer` before they ever reach
+test-failure parsing. The 2026-08-18 entry below is amended by this one: a
+restart is loss-free only when the worker's `/tmp` is also intact. →
+AGT-2750, AGT-2749 (general infra-classification rule), AGT-2753 (lease-
+preserving handoff).
+
 ## 2026-09-01: SSH gate shortcut retired after Remote Review replacement
 Canonical Remote review now freezes deterministic build and test commands into
 the immutable ReviewSubject. A Review Executor claims the ReviewAttempt through

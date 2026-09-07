@@ -315,6 +315,11 @@ internal sealed class DurableAgentProcess
                     reason = $"process cwd '{target ?? "unavailable"}' does not match worktree '{slot.WorktreePath}'";
                     return false;
                 }
+                if (DetachedWorkerTmpMountGuard.TmpMountWasTornDown(slot.ProcessId.Value, out var tmpDetail))
+                {
+                    reason = tmpDetail;
+                    return false;
+                }
             }
 
             reason = "live process and worktree match";

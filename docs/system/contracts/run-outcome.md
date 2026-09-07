@@ -142,8 +142,11 @@ escalating instead of parking it on first detection:
 
 - `EnvironmentalTransient` - a host file lock (the MSBuild `MSB3021` / `MSB3026`
   / `MSB3027` copy-lock family, "the process cannot access the file … because it
-  is being used by another process") or a network glitch (DNS failure,
-  `ECONNRESET` / `ETIMEDOUT` / `EAI_AGAIN`, a 502/503/504 gateway blip). Retried
+  is being used by another process"), a network glitch (DNS failure,
+  `ECONNRESET` / `ETIMEDOUT` / `EAI_AGAIN`, a 502/503/504 gateway blip), or a
+  torn-down `/tmp` mount (`MSB1025`, `SocketException (99)`, or a NuGet
+  `mkdtemp("/tmp/.dotnet.` `ENOENT` - a `PrivateTmp=true` unit restart deleting
+  the mount out from under a still-running detached worker, AGT-2750). Retried
   up to `PostProcessingOutcomeTaxonomy.DefaultMaxEnvironmentalRetries` (2) with a
   30s / 120s / 300s backoff, then escalated with the `environmental` category.
 - `CliLaunchFailed` - the agent CLI could not launch or its `--resume` target was

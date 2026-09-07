@@ -33,7 +33,11 @@ StandardOutput=journal
 StandardError=journal
 
 NoNewPrivileges=true
-PrivateTmp=true
+# PrivateTmp=true tears the unit's private /tmp mount away on every daemon
+# restart, including from underneath a detached job worker that
+# KillMode=process deliberately left running. See scripts/remote-runner-onboard.sh
+# for the incident detail (MSB1025 / SocketException (99) / mkdtemp ENOENT).
+PrivateTmp=false
 ProtectSystem=full
 ReadWritePaths=/var/lib/agent-runner /home/agent-runner
 
