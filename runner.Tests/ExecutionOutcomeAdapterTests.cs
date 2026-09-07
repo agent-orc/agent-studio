@@ -344,6 +344,7 @@ public sealed class ExecutionOutcomeAdapterTests
     [Fact]
     public void Missing_sentinel_uses_out_of_band_only_with_exact_registered_repo_proof()
     {
+        var baseSha = new string('0', 40);
         var commit = new string('a', 40);
         var verified = new WorktreeTeardownResult(
             true,
@@ -358,10 +359,15 @@ public sealed class ExecutionOutcomeAdapterTests
         var missingSentinel = new RunOutcome(
             RunOutcomeKind.Unknown,
             "The provider completed without a terminal sentinel.");
+        var inconclusive = ExecutionOutcomeAdapter.Classify(Coding(
+            ExitCode: 0,
+            FinalAssistantOutput: "Work was committed."));
 
         var request = RemoteTaskRunner.BuildVerifiedOutOfBandRequest(
             missingSentinel,
+            inconclusive,
             verified,
+            baseSha,
             "agent-runner-01");
 
         Assert.NotNull(request);
@@ -373,18 +379,89 @@ public sealed class ExecutionOutcomeAdapterTests
 
         Assert.Null(RemoteTaskRunner.BuildVerifiedOutOfBandRequest(
             missingSentinel,
+            inconclusive,
             verified with { DeliveryProof = null },
+            baseSha,
             "agent-runner-01"));
         Assert.Null(RemoteTaskRunner.BuildVerifiedOutOfBandRequest(
             missingSentinel,
+            inconclusive,
+            verified with
+            {
+                ResultSha = baseSha,
+                DeliveryProof = verified.DeliveryProof! with { CommitSha = baseSha },
+            },
+            baseSha,
+            "agent-runner-01"));
+        Assert.Null(RemoteTaskRunner.BuildVerifiedOutOfBandRequest(
+            missingSentinel,
+            inconclusive,
             verified with
             {
                 DeliveryProof = verified.DeliveryProof! with { CommitSha = new string('b', 40) },
             },
+            baseSha,
             "agent-runner-01"));
         Assert.Null(RemoteTaskRunner.BuildVerifiedOutOfBandRequest(
             new RunOutcome(RunOutcomeKind.Done, "Sentinel present."),
+            ExecutionOutcomeAdapter.Classify(Coding(
+                ExitCode: 0,
+                FinalAssistantOutput: "[[TASK_DONE]]")),
             verified,
+            baseSha,
+            "agent-runner-01"));
+    }
+
+    [Fact]
+    public void Turn_failed_with_unchanged_secured_work_reports_failure_instead_of_external_completion()
+    {
+        var baseSha = new string('a', 40);
+        const string message = "Selected model is at capacity. Please try a different model.";
+        var transcript =
+            $"{{\"type\":\"error\",\"message\":\"{message}\"}}\n" +
+            $"{{\"type\":\"turn.failed\",\"error\":{{\"message\":\"{message}\"}}}}";
+        var provider = ProviderOutputEvidenceExtractor.Extract(transcript);
+        var decision = ExecutionOutcomeAdapter.Classify(Coding(
+            ProviderTerminalEvent: provider.TerminalEvent,
+            FinalAssistantOutput: provider.FinalAssistantOutput,
+            StdOut: transcript,
+            ExitCode: 1));
+        var teardown = new WorktreeTeardownResult(
+            true,
+            "runner/agent-runner-01/AGT-2692",
+            baseSha,
+            "https://example.invalid/branch",
+            ResultSha: baseSha,
+            DeliveryProof: new RemoteDeliveryProof(
+                "https://example.invalid/project.git",
+                "refs/heads/runner/agent-runner-01/AGT-2692",
+                baseSha));
+
+        Assert.Equal(ExecutionOutcomeKind.QuotaExceeded, decision.Outcome);
+        Assert.Equal(message, provider.FailureMessage);
+        var failedAttempt = RemoteTaskRunner.BuildRunOutcome(
+            decision,
+            provider,
+            SentinelScanner.Scan(transcript),
+            message);
+        Assert.Equal(RunOutcomeKind.Unknown, failedAttempt.Kind);
+        Assert.Equal(message, failedAttempt.Reason);
+        Assert.Null(RemoteTaskRunner.BuildVerifiedOutOfBandRequest(
+            failedAttempt,
+            decision,
+            teardown,
+            baseSha,
+            "agent-runner-01"));
+        var changedSha = new string('b', 40);
+        Assert.Null(RemoteTaskRunner.BuildVerifiedOutOfBandRequest(
+            failedAttempt,
+            decision,
+            teardown with
+            {
+                ResultSha = changedSha,
+                DeliveryProof = teardown.DeliveryProof! with { CommitSha = changedSha },
+            },
+            baseSha,
             "agent-runner-01"));
     }
 

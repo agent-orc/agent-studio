@@ -78,6 +78,7 @@ neighbor task endpoints.
 | `gateItems[]` | no | Open operator checklist items written to `orchestrator-follow-up.md`, for example a remote `worktree-blocked` salvage failure. |
 | `resultSha` | for commit-producing modes | Full 40-character commit the completion claims was delivered. Re-verified against the target repository (AGT-2220). |
 | `resultRef` | no | Ref expected to carry `resultSha`. Without it the SHA is searched across all remote refs. |
+| `baseSha` | for remote runner reconciliation | Full 40-character attempt base. The endpoint refuses the completion when it equals `resultSha`, because an unchanged base is not a delivery. |
 
 Attribution is split deliberately: the **caller** (`X-Client-Id`) is the operator
 who *relayed* the result and drives the `lane_changed` ledger row; the completion
@@ -89,7 +90,11 @@ lane move is last so all the evidence lands together before the folder is
 renamed:
 
 0. **Verification gate** (AGT-2220) — before *any* evidence is written, the
-   claimed `resultSha`/`resultRef` is proven against the target repository.
+   claimed `resultSha`/`resultRef` is proven against the target repository. A
+   remote runner request whose `baseSha` equals `resultSha` is rejected without
+   mutating the task, even when the result ref resolves correctly: the ref only
+   proves that the unchanged base is reachable, not that the attempt delivered
+   work.
    `OutOfBandStampPolicy.Decide` then rules: commit-producing modes (`coding`,
    `concept`) need a proven commit; report-only modes (`planning`, `research`)
    deliver a document rather than commits and carry no claim to prove. An
@@ -132,8 +137,9 @@ renamed:
 **Status → HTTP mapping**: `Success` → `200` with `{ jobId, targetState, source,
 evidenceCommitSha }`; `NotFound` → `404`; `InvalidRequest` (missing summary /
 unknown `targetState`) → `400`; `MoveConflict` (target folder exists / directory
-locked) → `409`; `UnverifiedDelivery` → `409` (see §3.1); everything else →
-`500`. The canonical writes (status / deliverables / `task.json`) are treated as
+locked) → `409`; `UnverifiedDelivery` → `409` (see §3.1); `NoDelivery` (attempt
+base equals result) → `409`; everything else → `500`. The canonical writes
+(status / deliverables / `task.json`) are treated as
 fatal on hard failure so the caller is never told a half-reconciled card is done;
 the ancillary writes (lifecycle, timeline, commit) are best-effort-logged.
 

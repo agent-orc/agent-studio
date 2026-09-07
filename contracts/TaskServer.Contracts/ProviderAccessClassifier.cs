@@ -41,6 +41,8 @@ public static partial class ProviderAccessClassifier
         "rate_limit_exceeded",
         "insufficient_quota",
         "too many requests",
+        "model is at capacity",
+        "at capacity",
         "status=rejected",
         "· rejected ·",
     ];

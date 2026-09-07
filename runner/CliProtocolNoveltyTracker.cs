@@ -28,6 +28,7 @@ internal sealed class CliProtocolNoveltyTracker(string cliType)
         "turn.started",
         "turn.completed",
         "turn.failed",
+        "error",
         "session_meta",
         "rate_limits",
         "item.started",
@@ -166,4 +167,54 @@ internal sealed class CliProtocolNoveltyTracker(string cliType)
             .ToArray());
         return string.IsNullOrWhiteSpace(normalized) ? "<empty-type>" : normalized;
     }
+}
+
+/// <summary>
+/// Compatibility bridge for Codex provider-error frames introduced after the
+/// pinned CAR adapter. The runner treats the frame as a typed failed turn while
+/// preserving unknown frames for protocol-drift telemetry.
+/// </summary>
+internal static class RunnerCodexEventAdapter
+{
+    public static CliRunEvent MapKnownError(CliRunEvent evt)
+    {
+        if (evt is not CliRunEvent.Unknown unknown)
+            return evt;
+
+        var raw = unknown.RawDetail ?? unknown.Sample;
+        if (string.IsNullOrWhiteSpace(raw))
+            return evt;
+
+        try
+        {
+            using var document = JsonDocument.Parse(raw);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object
+                || !string.Equals(Text(root, "type"), "error", StringComparison.Ordinal))
+            {
+                return evt;
+            }
+
+            var message = Text(root, "message")
+                          ?? NestedText(root, "error", "message")
+                          ?? "Codex provider error";
+            return new CliRunEvent.TurnFailed(message) { RunId = evt.RunId };
+        }
+        catch (JsonException)
+        {
+            return evt;
+        }
+    }
+
+    private static string? Text(JsonElement element, string property)
+        => element.TryGetProperty(property, out var value)
+           && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
+
+    private static string? NestedText(JsonElement element, string parent, string property)
+        => element.TryGetProperty(parent, out var nested)
+           && nested.ValueKind == JsonValueKind.Object
+            ? Text(nested, property)
+            : null;
 }

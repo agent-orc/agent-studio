@@ -1,0 +1,26 @@
+{
+  "timestamp": "2026-07-28T10:24:21.886Z",
+  "specs": {
+    "pipeline-page-evidence": {
+      "status": "✓",
+      "specFile": "e2e/project/pipeline-page-evidence.spec.ts",
+      "tests": [
+        "pipeline page: reworked panel shows health, steps, models, prompt bindings, per-step tokens",
+        "pipeline page: pure dotnet project keeps Angular stylelint visible but inapplicable"
+      ],
+      "files": []
+    },
+    "pipeline-step-config": {
+      "status": "✓",
+      "specFile": "e2e/project/pipeline-step-config.spec.ts",
+      "tests": [
+        "pipeline: pipeline-step section renders and a per-step model change persists",
+        "pipeline: a closed-row toggle disables a step without expanding it",
+        "pipeline: task type is first, switches catalogue, and keeps bug override isolated",
+        "pipeline: economy recommendation opt-in persists for an aspect",
+        "pipeline: abort-review exposes a run-condition control that persists"
+      ],
+      "files": []
+    }
+  }
+}

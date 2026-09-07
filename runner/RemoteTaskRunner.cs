@@ -968,7 +968,19 @@ public sealed class RemoteTaskRunner
             SameSessionResumeAttempts: sameSessionResumeAttempts);
         var typed = ExecutionOutcomeAdapter.Classify(factsAfterExit);
         var sentinelOutcome = SentinelScanner.Scan(result.StdOut);
-        var outcome = typed.Outcome switch
+        var outcome = BuildRunOutcome(typed, provider, sentinelOutcome, result.StdErr);
+        return new RemoteExecutionResult(
+            outcome,
+            result.StdOut.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries),
+            typed);
+    }
+
+    internal static RunOutcome BuildRunOutcome(
+        ExecutionOutcomeDecision typed,
+        ProviderOutputEvidence provider,
+        RunOutcome sentinelOutcome,
+        string? stdErr)
+        => typed.Outcome switch
         {
             ExecutionOutcomeKind.SuccessfulCompletion when sentinelOutcome.Kind == RunOutcomeKind.NoOp
                 => sentinelOutcome,
@@ -979,14 +991,11 @@ public sealed class RemoteTaskRunner
             ExecutionOutcomeKind.LaunchFailure
                 => new RunOutcome(
                     RunOutcomeKind.EnvironmentFailure,
-                    DescribePreparationFailure(result.StdErr)),
-            _ => new RunOutcome(RunOutcomeKind.Unknown, typed.Outcome.ToString()),
+                    DescribePreparationFailure(stdErr ?? string.Empty)),
+            _ => new RunOutcome(
+                RunOutcomeKind.Unknown,
+                provider.FailureMessage ?? typed.Detail ?? typed.Outcome.ToString()),
         };
-        return new RemoteExecutionResult(
-            outcome,
-            result.StdOut.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries),
-            typed);
-    }
 
     private async Task<DurableArtifactManifest> UploadResultsAsync(
         string taskKey,
@@ -1230,7 +1239,12 @@ public sealed class RemoteTaskRunner
         bool sourceMutated,
         CancellationToken ct)
     {
-        var external = BuildVerifiedOutOfBandRequest(outcome, teardown, _options.RunnerName);
+        var external = BuildVerifiedOutOfBandRequest(
+            outcome,
+            outcomeDecision,
+            teardown,
+            baseSha,
+            _options.RunnerName);
         if (external is not null)
         {
             var response = await _client.CompleteAsync(taskKey, external, ct);
@@ -1257,14 +1271,19 @@ public sealed class RemoteTaskRunner
 
     internal static ExternalCompletionRequest? BuildVerifiedOutOfBandRequest(
         RunOutcome outcome,
+        ExecutionOutcomeDecision outcomeDecision,
         WorktreeTeardownResult teardown,
+        string? baseSha,
         string source)
     {
         var proof = teardown.DeliveryProof;
         if (outcome.Kind != RunOutcomeKind.Unknown
+            || outcomeDecision.Outcome != ExecutionOutcomeKind.ProtocolInconclusive
             || !teardown.SecuredWork
             || proof is null
+            || !IsCommitSha(baseSha)
             || string.IsNullOrWhiteSpace(teardown.ResultSha)
+            || string.Equals(baseSha, teardown.ResultSha, StringComparison.OrdinalIgnoreCase)
             || !string.Equals(
                 proof.CommitSha,
                 teardown.ResultSha,
@@ -1292,7 +1311,8 @@ public sealed class RemoteTaskRunner
             // string it never re-checked. These two fields are what the server
             // now independently verifies against the target repository.
             ResultSha: proof.CommitSha,
-            ResultRef: proof.Ref);
+            ResultRef: proof.Ref,
+            BaseSha: baseSha);
     }
 
     /// <summary>

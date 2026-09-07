@@ -25,6 +25,26 @@ public sealed class RunnerCapabilityProbeTests
                 new ProcessResult(exitCode, stdout, stderr)));
 
     [Theory]
+    [InlineData("Selected model is at capacity. Please try a different model.")]
+    [InlineData("The model is at capacity right now.")]
+    public void Provider_capacity_is_a_bounded_rate_limit_not_authentication_failure(string message)
+    {
+        var observedAt = new DateTimeOffset(2026, 8, 31, 6, 45, 42, TimeSpan.Zero);
+
+        var evidence = ProviderAccessClassifier.Classify(
+            1,
+            stdout: null,
+            stderr: message,
+            observedAt: observedAt);
+
+        Assert.Equal(ProviderAccessEvidenceKind.RateLimited, evidence.Kind);
+        Assert.Equal(observedAt.Add(ProviderAccessClassifier.UnknownLimitRetry), evidence.LimitedUntil);
+        Assert.False(evidence.ResetTimeReported);
+        Assert.False(RunnerCapabilityProbe.IsProviderAuthenticationFailure(
+            new ProcessResult(1, "", message)));
+    }
+
+    [Theory]
     [InlineData("/usr/local/bin/codex", "codex")]
     [InlineData("claude.exe", "claude")]
     public void Provider_identity_is_stable_across_binary_paths(string binary, string expected)

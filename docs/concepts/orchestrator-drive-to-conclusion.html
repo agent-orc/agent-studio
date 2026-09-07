@@ -2238,9 +2238,14 @@
             <code>ProviderUnauthorized</code> (same family as AGT-2694).
           </td>
           <td>
-            <b>Card AGT-2713</b>: a run without a delivery is a failed attempt with its crash reason, never a completion;
-            the server rejects result-equals-base completions; "at capacity" becomes a bounded rate limit; the Codex
-            <code>error</code> frame is typed. Operator requeued the card on 2026-09-06 after the runner link was restored.
+            <span class="pill ok">fixed in dev</span> a run without a delivery reaches a failed
+            <code>RunAttempt</code> with the provider crash reason and never enters Human Review as a completion. Only a
+            protocol-inconclusive run with a result SHA different from its pickup base can use the verified out-of-band
+            path, and the server independently rejects result-equals-base requests with <code>409</code>. "At capacity" is
+            a bounded provider limit, and the Codex <code>error</code> frame is a typed failed turn. The original incident
+            reached <span class="lane">5-human-review</span>; the corrected terminal returns control to the orchestrator for
+            capability wait, fallback, or bounded escalation. Operator requeued the card on 2026-09-06 after the runner
+            link was restored.
           </td>
         </tr>
         <tr id="case-cac-18-review-preparation-plan-loop">
@@ -2323,9 +2328,13 @@
       <li><code>RunStopReason</code> in {Watchdog, Cancelled, QuotaCapExceeded} <em>or</em> (<code>exitCode &lt; 0</code>/non-zero
           AND no agent terminal text AND no commits) &rarr; <strong>infra crash</strong> &rarr; CooldownRetry if budget remains,
           else GaveUpToHuman. This is the ASS-1757 path.</li>
-      <li>Failed exit WITH substantial agent text but no positive sentinel and no commits &rarr; <strong>NeedsReview</strong>
-          ("failed without terminal sentinel"). No re-issue, no "unknown".</li>
-      <li>Failed exit WITH commits &rarr; <strong>Succeeded</strong> via CommittedPartial (unchanged).</li>
+      <li>A provider failure terminal such as <code>turn.failed</code>, or a typed <code>CliCrash</code>, is a failed attempt
+          regardless of whether teardown secured a changed ref. The provider reason remains visible, and any secured commits
+          are retry or recovery input rather than completion evidence.</li>
+      <li>A provider capacity or rate-limit failure &rarr; shared capability <strong>Limited</strong> until the reported reset
+          or the bounded unknown-limit retry. Admission waits or falls back without changing the capability to Unauthorized.</li>
+      <li>Failed exit WITH substantial agent text but no provider failure terminal and no positive sentinel &rarr;
+          <strong>NeedsReview</strong> ("failed without terminal sentinel"). No re-issue, no "unknown".</li>
     </ul>
 
     <h3>Honest escalation wiring</h3>

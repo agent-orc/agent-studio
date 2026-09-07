@@ -395,6 +395,22 @@ public sealed class ProtocolTests
             attempt.OutcomeDecision.RawFacts.FinalAssistantOutput);
     }
 
+    [Fact]
+    public void Provider_capacity_uses_the_bounded_unknown_limit_retry()
+    {
+        var observedAt = new DateTimeOffset(2026, 8, 31, 6, 45, 42, TimeSpan.Zero);
+
+        var evidence = ProviderAccessClassifier.Classify(
+            1,
+            stdout: null,
+            stderr: "Selected model is at capacity. Please try a different model.",
+            observedAt: observedAt);
+
+        Assert.Equal(ProviderAccessEvidenceKind.RateLimited, evidence.Kind);
+        Assert.Equal(observedAt.Add(ProviderAccessClassifier.UnknownLimitRetry), evidence.LimitedUntil);
+        Assert.False(evidence.ResetTimeReported);
+    }
+
     internal static string RepositoryRoot()
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);

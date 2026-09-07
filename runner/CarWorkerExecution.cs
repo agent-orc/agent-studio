@@ -119,6 +119,8 @@ internal static class CarWorkerExecution
         void OnRunEvent(string id, CliRunEvent evt)
         {
             if (!string.Equals(id, runId, StringComparison.Ordinal)) return;
+            if (cliType == AgentCliProcess.CodexCli)
+                evt = RunnerCodexEventAdapter.MapKnownError(evt);
             if (evt is CliRunEvent.RunStarted)
                 Volatile.Write(ref processStarted, 1);
             trace.Write(evt);
@@ -365,8 +367,11 @@ internal sealed class CarEventTrace : IDisposable
 
         foreach (var evt in events)
         {
-            Write(evt);
-            if (evt is CliRunEvent.Unknown unknown)
+            var normalized = AgentCliProcess.NormalizeCliType(cliType) == AgentCliProcess.CodexCli
+                ? RunnerCodexEventAdapter.MapKnownError(evt)
+                : evt;
+            Write(normalized);
+            if (normalized is CliRunEvent.Unknown unknown)
                 onUnclassifiedFrame?.Invoke(unknown.RawDetail ?? unknown.Sample ?? string.Empty);
         }
     }

@@ -357,7 +357,13 @@ public sealed class GitWorkspaceTests : IDisposable
             result.DeliveryProof);
         var request = RemoteTaskRunner.BuildVerifiedOutOfBandRequest(
             new RunOutcome(RunOutcomeKind.Unknown, "terminal sentinel missing"),
+            ExecutionOutcomeAdapter.Classify(new ExecutionRawFacts(
+                "run-test",
+                ExecutionAttemptKind.Coding,
+                FinalAssistantOutput: "Committed the requested work.",
+                ExitCode: 0)),
             result,
+            workspace.BaseSha,
             "runner-test");
         Assert.NotNull(request);
         Assert.Contains(localHead, request!.Summary);

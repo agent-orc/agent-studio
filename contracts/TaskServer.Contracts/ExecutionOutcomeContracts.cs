@@ -132,7 +132,8 @@ public sealed record ProviderOutputEvidence(
     string? FinalAssistantOutput,
     string? SessionId,
     bool ProviderReportedCompletion,
-    bool ProviderReportedFailure);
+    bool ProviderReportedFailure,
+    string? FailureMessage = null);
 
 /// <summary>
 /// Shared terminal-outcome adapter for Remote coding and review execution.
@@ -372,6 +373,7 @@ public static class ProviderOutputEvidenceExtractor
         string? sessionId = null;
         var completed = false;
         var failed = false;
+        string? failureMessage = null;
 
         foreach (var line in (stdout ?? string.Empty).Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
         {
@@ -388,6 +390,7 @@ public static class ProviderOutputEvidenceExtractor
                     terminal = line;
                     failed = true;
                     completed = false;
+                    failureMessage = ExtractFailureMessage(root) ?? failureMessage;
                 }
                 else if (type is "result" or "turn.completed" or "response.completed")
                 {
@@ -402,8 +405,17 @@ public static class ProviderOutputEvidenceExtractor
             }
         }
 
-        return new ProviderOutputEvidence(terminal, final, sessionId, completed, failed);
+        return new ProviderOutputEvidence(
+            terminal,
+            final,
+            sessionId,
+            completed,
+            failed,
+            failureMessage);
     }
+
+    private static string? ExtractFailureMessage(JsonElement root)
+        => FindString(root, ["message", "error", "reason"]);
 
     private static bool IsFailure(JsonElement root, string? type)
     {
