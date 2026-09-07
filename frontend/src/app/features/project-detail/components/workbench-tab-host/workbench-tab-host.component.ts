@@ -20,6 +20,7 @@ import { WorkbenchViewerComponent } from '../workbench-viewer/workbench-viewer.c
 export class WorkbenchTabHostComponent {
   readonly mode = input.required<'overview' | 'viewer'>();
   readonly projectName = input<string | null>(null);
+  readonly projectId = input<string | null>(null);
   readonly workbenchId = input<string | null>(null);
   readonly openWorkbench = output<WorkbenchOverviewItem>();
   readonly openWiki = output<string>();

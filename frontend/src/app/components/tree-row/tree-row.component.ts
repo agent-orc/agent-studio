@@ -49,6 +49,7 @@ export class TreeRowComponent {
   readonly tooltip = input<string | null>(null);
   readonly tooltipTestId = input<string | null>(null);
   readonly ariaLabel = input<string | null>(null);
+  readonly ariaControls = input<string | null>(null);
   readonly active = input(false);
   readonly level = input<'root' | 'child'>('root');
   readonly testid = input<string | null>(null);

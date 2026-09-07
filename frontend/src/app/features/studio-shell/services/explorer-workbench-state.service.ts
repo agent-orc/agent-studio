@@ -1,4 +1,6 @@
-import { Injectable, signal } from '@angular/core';
+import { Injectable, inject, signal } from '@angular/core';
+import { DossierSectionStateService } from '../../../services/dossier-section-state.service';
+import { ProjectLookupService } from '../../../services/project-lookup.service';
 
 export type ExplorerWorkbenchGroupId = 'needs-decision' | 'in-implementation' | 'history';
 
@@ -18,13 +20,15 @@ const DEFAULT_STATE: ExplorerWorkbenchNavigationState = {
 };
 
 /**
- * Session-scoped disclosure state for the catalogue-backed Dossier tree.
- * The state is project-keyed because every project owns an independent
- * Dossiers branch. It intentionally stores presentation only; lifecycle and
- * status remain owned by the Workbench catalogue.
+ * Session-scoped state for each project's outer Dossiers navigation branch.
+ * Lifecycle groups are also mirrored to the shared local section store so the
+ * overview and Explorer keep the same project-scoped disclosure preference.
+ * This stores presentation only; lifecycle remains owned by the catalogue.
  */
 @Injectable({ providedIn: 'root' })
 export class ExplorerWorkbenchStateService {
+  private readonly sections = inject(DossierSectionStateService);
+  private readonly projects = inject(ProjectLookupService);
   private readonly states = signal<Record<string, ExplorerWorkbenchNavigationState>>(readStates());
 
   stateFor(projectName: string): ExplorerWorkbenchNavigationState {
@@ -36,6 +40,11 @@ export class ExplorerWorkbenchStateService {
   }
 
   setGroupExpanded(projectName: string, group: ExplorerWorkbenchGroupId, expanded: boolean): void {
+    this.sections.setExpanded(
+      this.projects.getProjectDisplay(projectName).id ?? projectName,
+      group === 'in-implementation' ? 'current' : group,
+      expanded,
+    );
     this.update(projectName, state => ({
       ...state,
       groups: { ...state.groups, [group]: expanded },
@@ -45,6 +54,11 @@ export class ExplorerWorkbenchStateService {
   collapseAll(projectNames: readonly string[]): void {
     const next = { ...this.states() };
     for (const projectName of projectNames) {
+      this.sections.collapse(this.projects.getProjectDisplay(projectName).id ?? projectName, [
+        'needs-decision',
+        'current',
+        'history',
+      ]);
       next[projectName] = {
         dossiersExpanded: false,
         groups: {

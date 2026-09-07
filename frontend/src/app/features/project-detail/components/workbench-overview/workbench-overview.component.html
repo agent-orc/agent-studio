@@ -47,11 +47,20 @@
       <div class="workbench-overview__body">
         @if (decisionPending().length > 0) {
           <section class="workbench-overview__section" data-testid="workbench-overview-decision-pending">
-            <header class="workbench-overview__section-head">
-              <div><h2>Needs a decision</h2><p>Open decision gates.</p></div>
-              <span data-testid="workbench-overview-decision-count">{{ decisionPending().length }}</span>
+            <header>
+              <button #decisionHeader type="button" class="workbench-overview__section-head"
+                      data-testid="workbench-overview-decision-toggle"
+                      [attr.aria-expanded]="sectionExpanded('needs-decision')"
+                      aria-controls="workbench-overview-decision-list"
+                      (click)="toggleSection('needs-decision', decisionHeader, 'workbench-overview-decision-list')">
+                <app-studio-icon class="workbench-overview__section-chevron"
+                                 [name]="sectionExpanded('needs-decision') ? 'chevronDown' : 'chevronRight'" [size]="12" />
+                <div><h2>Needs a decision</h2><p>Open decision gates.</p></div>
+                <span data-testid="workbench-overview-decision-count"><app-count-badge [value]="decisionPending().length" /></span>
+              </button>
             </header>
-            <div class="workbench-overview__list">
+            @if (sectionExpanded('needs-decision')) {
+            <div id="workbench-overview-decision-list" class="workbench-overview__list">
               @for (item of decisionPending(); track item.projectName + ':' + item.workbench.id) {
                 @let project = projectDisplay(item);
                 <article class="workbench-overview__row" [class.workbench-overview__row--expanded]="inlineDecisionExpanded(item)"
@@ -112,15 +121,25 @@
                 </article>
               }
             </div>
+            }
           </section>
         }
         @if (current().length > 0) {
           <section class="workbench-overview__section" data-testid="workbench-overview-active">
-            <header class="workbench-overview__section-head">
-              <div><h2>Current</h2><p>Active work and accepted delivery, ordered by latest movement.</p></div>
-              <span data-testid="workbench-overview-active-count">{{ current().length }}</span>
+            <header>
+              <button #currentHeader type="button" class="workbench-overview__section-head"
+                      data-testid="workbench-overview-active-toggle"
+                      [attr.aria-expanded]="sectionExpanded('current')"
+                      aria-controls="workbench-overview-active-list"
+                      (click)="toggleSection('current', currentHeader, 'workbench-overview-active-list')">
+                <app-studio-icon class="workbench-overview__section-chevron"
+                                 [name]="sectionExpanded('current') ? 'chevronDown' : 'chevronRight'" [size]="12" />
+                <div><h2>Current</h2><p>Active work and accepted delivery, ordered by latest movement.</p></div>
+                <span data-testid="workbench-overview-active-count"><app-count-badge [value]="current().length" /></span>
+              </button>
             </header>
-            <div class="workbench-overview__list" data-testid="workbench-overview-active-list">
+            @if (sectionExpanded('current')) {
+            <div id="workbench-overview-active-list" class="workbench-overview__list" data-testid="workbench-overview-active-list">
               @for (item of current(); track item.projectName + ':' + item.workbench.id) {
                 @let project = projectDisplay(item);
                 <article class="workbench-overview__row"
@@ -170,15 +189,25 @@
                 </article>
               }
             </div>
+            }
           </section>
         }
         @if (invalid().length > 0) {
           <section class="workbench-overview__section" data-testid="workbench-overview-invalid">
-            <header class="workbench-overview__section-head">
-              <div><h2>Needs attention</h2><p>Invalid Dossier descriptors require correction.</p></div>
-              <span>{{ invalid().length }}</span>
+            <header>
+              <button #invalidHeader type="button" class="workbench-overview__section-head"
+                      data-testid="workbench-overview-invalid-toggle"
+                      [attr.aria-expanded]="sectionExpanded('needs-attention')"
+                      aria-controls="workbench-overview-invalid-list"
+                      (click)="toggleSection('needs-attention', invalidHeader, 'workbench-overview-invalid-list')">
+                <app-studio-icon class="workbench-overview__section-chevron"
+                                 [name]="sectionExpanded('needs-attention') ? 'chevronDown' : 'chevronRight'" [size]="12" />
+                <div><h2>Needs attention</h2><p>Invalid Dossier descriptors require correction.</p></div>
+                <span><app-count-badge [value]="invalid().length" /></span>
+              </button>
             </header>
-            <div class="workbench-overview__list">
+            @if (sectionExpanded('needs-attention')) {
+            <div id="workbench-overview-invalid-list" class="workbench-overview__list">
               @for (item of invalid(); track item.projectName + ':' + item.workbench.id) {
                 <article class="workbench-overview__row workbench-overview__row--invalid">
                   <div class="workbench-overview__row-main">
@@ -189,22 +218,35 @@
                 </article>
               }
             </div>
+            }
           </section>
         }
         <section class="workbench-overview__history" data-testid="workbench-overview-history">
-          <header class="workbench-overview__section-head">
-            <div><h2>History</h2><p>Documented and discarded decisions remain available without acute styling.</p></div>
-            <span data-testid="workbench-overview-history-section-count">{{ historyCount() }}</span>
+          <header>
+            <button #historyHeader type="button" class="workbench-overview__section-head"
+                    data-testid="workbench-overview-history-toggle"
+                    [attr.aria-expanded]="sectionExpanded('history')"
+                    aria-controls="workbench-overview-history-groups"
+                    (click)="toggleSection('history', historyHeader, 'workbench-overview-history-groups')">
+              <app-studio-icon class="workbench-overview__section-chevron"
+                               [name]="sectionExpanded('history') ? 'chevronDown' : 'chevronRight'" [size]="12" />
+              <div><h2>History</h2><p>Documented and discarded decisions remain available without acute styling.</p></div>
+              <span data-testid="workbench-overview-history-section-count"><app-count-badge [value]="historyCount()" /></span>
+            </button>
           </header>
-          <div class="workbench-overview__history-groups">
+          @if (sectionExpanded('history')) {
+          <div id="workbench-overview-history-groups" class="workbench-overview__history-groups">
             <section>
-              <button type="button" class="workbench-overview__history-toggle"
+              <button #documentedHeader type="button" class="workbench-overview__history-toggle"
                       data-testid="workbench-overview-completed-toggle"
-                      [attr.aria-expanded]="completedOpen()" (click)="toggleCompleted()">
-                <span>Documented</span><strong>{{ documented().length }}</strong><i aria-hidden="true">›</i>
+                      [attr.aria-expanded]="sectionExpanded('documented')"
+                      aria-controls="workbench-overview-completed-list"
+                      (click)="toggleSection('documented', documentedHeader, 'workbench-overview-completed-list')">
+                <app-studio-icon [name]="sectionExpanded('documented') ? 'chevronDown' : 'chevronRight'" [size]="12" />
+                <span>Documented</span><app-count-badge [value]="documented().length" />
               </button>
-              @if (completedOpen()) {
-                <div class="workbench-overview__history-list" data-testid="workbench-overview-completed-list">
+              @if (sectionExpanded('documented')) {
+                <div id="workbench-overview-completed-list" class="workbench-overview__history-list" data-testid="workbench-overview-completed-list">
                   @for (item of documented(); track item.projectName + ':' + item.workbench.id) {
                     @let project = projectDisplay(item);
                     <article class="workbench-overview__row workbench-overview__row--history">
@@ -225,13 +267,16 @@
               }
             </section>
             <section>
-              <button type="button" class="workbench-overview__history-toggle"
+              <button #discardedHeader type="button" class="workbench-overview__history-toggle"
                       data-testid="workbench-overview-discarded-toggle"
-                      [attr.aria-expanded]="discardedOpen()" (click)="toggleDiscarded()">
-                <span>Discarded</span><strong>{{ discarded().length }}</strong><i aria-hidden="true">›</i>
+                      [attr.aria-expanded]="sectionExpanded('discarded')"
+                      aria-controls="workbench-overview-discarded-list"
+                      (click)="toggleSection('discarded', discardedHeader, 'workbench-overview-discarded-list')">
+                <app-studio-icon [name]="sectionExpanded('discarded') ? 'chevronDown' : 'chevronRight'" [size]="12" />
+                <span>Discarded</span><app-count-badge [value]="discarded().length" />
               </button>
-              @if (discardedOpen()) {
-                <div class="workbench-overview__history-list" data-testid="workbench-overview-discarded-list">
+              @if (sectionExpanded('discarded')) {
+                <div id="workbench-overview-discarded-list" class="workbench-overview__history-list" data-testid="workbench-overview-discarded-list">
                   @for (item of discarded(); track item.projectName + ':' + item.workbench.id) {
                     @let project = projectDisplay(item);
                     <article class="workbench-overview__row workbench-overview__row--history">
@@ -252,6 +297,7 @@
               }
             </section>
           </div>
+          }
         </section>
       </div>
     }

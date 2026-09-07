@@ -200,6 +200,7 @@
                               (selectRequest)="openWikiRequest.emit(p.name)" />
                 <app-explorer-workbench-list
                   [projectName]="p.name"
+                  [projectId]="p.projectId"
                   [activeWorkbenchId]="activeWorkbenchIdFor(p.name)"
                   [overviewActive]="p.isActive && activeProjectSurface() === 'workbenches'"
                   (openWorkbench)="openWorkbenchRequest.emit({ projectName: p.name, workbench: $event })"

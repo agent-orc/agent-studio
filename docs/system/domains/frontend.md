@@ -239,13 +239,14 @@ without a parallel surface.
   catalogue as a thinking inbox. The Explorer projects that catalogue into a first-class Dossiers
   branch rather than exposing the descriptor's physical `operations/` path.
   Current entries are grouped as `Needs a decision` and `In implementation`;
-  `Documented` and `Discarded` stay under a collapsed History branch. Every
+  `Documented` and `Discarded` stay under a History branch. Every
   lifecycle header and leaf uses one compact 24 px tree row: its pattern icon
   aligns with every sibling at that depth, its title receives the flexible
   width, and only a quiet status dot or compact open-decision count trails it.
   Catalogue key, complete title, lifecycle state, phase, and freshness stay in
   the viewport-safe shared tooltip instead of a second tree line. The Dossiers
   count is the number of open decisions, not the number of documents.
+  Dossier overview and Explorer lifecycle headers are keyboard-accessible disclosures whose per-project collapsed state persists locally; a newly populated section opens once with its quiet count visible.
   Lifecycle-group counts equal
   their visible leaves and zero counts stay hidden. The catalogue's
   `docs/operations/admin-design-guideline/index.html` entry is promoted once as
@@ -263,7 +264,7 @@ without a parallel surface.
   An active Dossier is
   the selected leaf in the Explorer rather than making its Dossiers disclosure
   parent current. Opening one expands the owning workspace, project, and
-  owning lifecycle group, persists those disclosure choices in session state,
+  owning lifecycle group, persists those disclosure choices,
   and scrolls the selected leaf into view. It does not open or close unrelated
   branches. The Explorer-head Collapse all action closes workspace, project,
   Dossiers, lifecycle, and History branches. Settled Dossiers keep the same

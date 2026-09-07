@@ -442,6 +442,7 @@
                   <app-workbench-tab-host
                     mode="overview"
                     [projectName]="tab.projectName"
+                    [projectId]="tab.projectName ? projectHubUrls.projectIdForName(tab.projectName) : null"
                     (openWorkbench)="onWorkbenchOverviewOpen($event)" />
                 }
               }

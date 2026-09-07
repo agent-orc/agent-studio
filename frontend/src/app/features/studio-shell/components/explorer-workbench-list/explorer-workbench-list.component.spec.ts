@@ -4,6 +4,7 @@ import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { beforeEach, vi } from 'vitest';
 import type { WorkbenchCatalogue, WorkbenchListItem } from '../../../../models/project-docs.model';
+import { DossierSectionStateService } from '../../../../services/dossier-section-state.service';
 import { ExplorerWorkbenchStateService } from '../../services/explorer-workbench-state.service';
 import { ExplorerWorkbenchListComponent } from './explorer-workbench-list.component';
 
@@ -43,6 +44,7 @@ async function mount(activeWorkbenchId: string | null = null) {
   }).compileComponents();
   const fixture = TestBed.createComponent(ExplorerWorkbenchListComponent);
   fixture.componentRef.setInput('projectName', 'Demo');
+  fixture.componentRef.setInput('projectId', 'project-demo');
   fixture.componentRef.setInput('activeWorkbenchId', activeWorkbenchId);
   fixture.detectChanges();
   return {
@@ -50,6 +52,7 @@ async function mount(activeWorkbenchId: string | null = null) {
     component: fixture.componentInstance,
     http: TestBed.inject(HttpTestingController),
     state: TestBed.inject(ExplorerWorkbenchStateService),
+    sections: TestBed.inject(DossierSectionStateService),
   };
 }
 
@@ -58,6 +61,9 @@ describe('ExplorerWorkbenchListComponent', () => {
 
   beforeEach(() => {
     sessionStorage.removeItem(STORAGE_KEY);
+    for (const key of Object.keys(localStorage)) {
+      if (key.startsWith('dossier-overview:')) localStorage.removeItem(key);
+    }
     scrollIntoView.mockClear();
     Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
       configurable: true,
@@ -100,15 +106,16 @@ describe('ExplorerWorkbenchListComponent', () => {
     expect(pendingStatus?.textContent?.trim()).toBe('3 open');
     expect(pending?.querySelectorAll('[data-status]')).toHaveLength(1);
     expect(root.querySelector('[data-testid="studio-explorer-workbench-history-Demo"]')
-      ?.getAttribute('aria-expanded')).toBe('false');
-    expect(root.querySelector('[data-testid="studio-explorer-workbench-Demo-documented"]')).toBeNull();
+      ?.getAttribute('aria-expanded')).toBe('true');
+    expect(root.querySelector('[data-testid="studio-explorer-workbench-history-Demo"]')
+      ?.getAttribute('aria-controls')).toBe('studio-explorer-dossier-Demo-history');
+    expect(root.querySelector('[data-testid="studio-explorer-workbench-Demo-documented"]')).not.toBeNull();
 
     component.toggleGroup('history');
     fixture.detectChanges();
-    expect(root.querySelector('[data-testid="studio-explorer-workbench-Demo-documented"]')).not.toBeNull();
-    expect(root.querySelector('[data-testid="studio-explorer-workbench-Demo-discarded"]')).not.toBeNull();
-    expect(root.querySelector('[data-testid="studio-explorer-workbench-documented-history"]')?.textContent)
-      .toContain('Documented');
+    expect(root.querySelector('[data-testid="studio-explorer-workbench-Demo-documented"]')).toBeNull();
+    expect(JSON.parse(localStorage.getItem('dossier-overview:project-demo:history') ?? '{}'))
+      .toEqual({ collapsed: true, hadItems: true });
     http.verify();
   });
 
@@ -133,10 +140,12 @@ describe('ExplorerWorkbenchListComponent', () => {
   });
 
   it('reveals only the active Dossier path and leaves foreign status groups untouched', async () => {
-    const { fixture, component, http, state } = await mount('active');
-    state.setGroupExpanded('Demo', 'needs-decision', false);
-    state.setGroupExpanded('Demo', 'in-implementation', false);
-    state.setGroupExpanded('Demo', 'history', true);
+    const { fixture, component, http, sections } = await mount('active');
+    sections.observeItems('project-demo', 'needs-decision', 1);
+    sections.observeItems('project-demo', 'current', 1);
+    sections.setExpanded('project-demo', 'needs-decision', false);
+    sections.setExpanded('project-demo', 'current', false);
+    sections.setExpanded('project-demo', 'history', true);
 
     http.expectOne(request => request.url === '/api/projects/Demo/workbenches'
       && request.params.get('history') === 'true')
@@ -189,10 +198,13 @@ describe('ExplorerWorkbenchListComponent', () => {
   });
 
   it('opens the collapsed History path for a deep-linked documented Dossier', async () => {
-    const { fixture, component, http, state } = await mount('documented');
-    state.setGroupExpanded('Demo', 'needs-decision', false);
-    state.setGroupExpanded('Demo', 'in-implementation', false);
-    state.setGroupExpanded('Demo', 'history', false);
+    const { fixture, component, http, sections } = await mount('documented');
+    sections.observeItems('project-demo', 'needs-decision', 1);
+    sections.observeItems('project-demo', 'current', 1);
+    sections.observeItems('project-demo', 'history', 1);
+    sections.setExpanded('project-demo', 'needs-decision', false);
+    sections.setExpanded('project-demo', 'current', false);
+    sections.setExpanded('project-demo', 'history', false);
     http.expectOne(request => request.url === '/api/projects/Demo/workbenches'
       && request.params.get('history') === 'true')
       .flush(catalogue([item('documented', 'documented'), item('active', 'active')]));

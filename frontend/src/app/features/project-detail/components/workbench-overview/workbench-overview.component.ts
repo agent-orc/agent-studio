@@ -11,6 +11,7 @@ import {
   untracked,
 } from '@angular/core';
 import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
+import { CountBadgeComponent } from '../../../../components/count-badge/count-badge.component';
 import {
   TaskReferenceMicrocardComponent,
   type TaskReferenceStatus,
@@ -20,6 +21,10 @@ import { ProjectDocsService } from '../../../../services/project-docs.service';
 import { JobsHubClient } from '../../../../services/jobs-hub-client.service';
 import { ProjectLookupService } from '../../../../services/project-lookup.service';
 import { TaskService } from '../../../../services/task.service';
+import {
+  DossierSectionStateService,
+  type DossierSectionId,
+} from '../../../../services/dossier-section-state.service';
 import { WorkbenchOverviewControlsComponent } from '../workbench-overview-controls/workbench-overview-controls.component';
 import { WorkbenchViewerComponent } from '../workbench-viewer/workbench-viewer.component';
 import { WorkbenchOverviewViewStateService } from './workbench-overview-view-state.service';
@@ -33,6 +38,7 @@ import type {
   standalone: true,
   imports: [
     LoadingSurfaceComponent,
+    CountBadgeComponent,
     StudioIconComponent,
     TaskReferenceMicrocardComponent,
     WorkbenchOverviewControlsComponent,
@@ -45,12 +51,14 @@ import type {
 })
 export class WorkbenchOverviewComponent {
   readonly projectName = input<string | null>(null);
+  readonly projectId = input<string | null>(null);
   readonly openWorkbench = output<WorkbenchOverviewItem>();
 
   private readonly docs = inject(ProjectDocsService);
   private readonly hub = inject(JobsHubClient);
   private readonly projects = inject(ProjectLookupService);
   private readonly tasks = inject(TaskService);
+  private readonly sectionState = inject(DossierSectionStateService);
   private readonly destroyRef = inject(DestroyRef);
   readonly viewState = inject(WorkbenchOverviewViewStateService);
   private refreshHandle: ReturnType<typeof setTimeout> | null = null;
@@ -59,8 +67,6 @@ export class WorkbenchOverviewComponent {
   readonly overview = signal<WorkbenchOverview | null>(null);
   readonly loading = signal(false);
   readonly error = signal(false);
-  readonly discardedOpen = signal(false);
-  readonly completedOpen = signal(false);
   readonly expandedDecisionKey = signal<string | null>(null);
   readonly referenceStatusesByItem = signal<ReadonlyMap<string, readonly TaskReferenceStatus[]>>(new Map());
   readonly referenceStatusesLoading = signal(false);
@@ -80,16 +86,29 @@ export class WorkbenchOverviewComponent {
   readonly documented = computed(() => this.sortedItemsWithStatus('documented'));
   readonly currentCount = computed(() => this.decisionPending().length + this.current().length);
   readonly historyCount = computed(() => this.discarded().length + this.documented().length);
+  readonly sectionScope = computed(() => this.projectId()?.trim() || this.projectName()?.trim() || 'all-projects');
 
   constructor() {
     effect(() => {
       const projectName = this.projectName();
       untracked(() => {
         this.viewState.setScope(projectName);
-        this.discardedOpen.set(false);
-        this.completedOpen.set(false);
         this.expandedDecisionKey.set(null);
         this.load(projectName, true);
+      });
+    });
+
+    effect(() => {
+      const scope = this.sectionScope();
+      const items = this.overview()?.items;
+      if (!items) return;
+      untracked(() => {
+        this.sectionState.observeItems(scope, 'needs-decision', countStatus(items, 'decision-pending'));
+        this.sectionState.observeItems(scope, 'current', countStatus(items, 'active', 'decided'));
+        this.sectionState.observeItems(scope, 'needs-attention', countStatus(items, 'invalid'));
+        this.sectionState.observeItems(scope, 'history', countStatus(items, 'documented', 'archived'));
+        this.sectionState.observeItems(scope, 'documented', countStatus(items, 'documented'));
+        this.sectionState.observeItems(scope, 'discarded', countStatus(items, 'archived'));
       });
     });
 
@@ -116,11 +135,14 @@ export class WorkbenchOverviewComponent {
   inlineDecisionExpanded(item: WorkbenchOverviewItem): boolean {
     return this.expandedDecisionKey() === this.itemKey(item);
   }
-  toggleDiscarded(): void {
-    this.discardedOpen.update(value => !value);
+  sectionExpanded(section: DossierSectionId): boolean {
+    return this.sectionState.expanded(this.sectionScope(), section);
   }
-  toggleCompleted(): void {
-    this.completedOpen.update(value => !value);
+  toggleSection(section: DossierSectionId, header: HTMLElement, contentId: string): void {
+    const expanded = this.sectionExpanded(section);
+    const content = document.getElementById(contentId);
+    if (expanded && content?.contains(document.activeElement)) header.focus();
+    this.sectionState.setExpanded(this.sectionScope(), section, !expanded);
   }
   openDecisionCount(item: WorkbenchOverviewItem): number {
     return item.workbench.openDecisionCount
@@ -243,6 +265,10 @@ export class WorkbenchOverviewComponent {
       },
     });
   }
+}
+
+function countStatus(items: readonly WorkbenchOverviewItem[], ...statuses: readonly string[]): number {
+  return items.filter(item => statuses.includes(item.workbench.status)).length;
 }
 
 function statusesByItem(

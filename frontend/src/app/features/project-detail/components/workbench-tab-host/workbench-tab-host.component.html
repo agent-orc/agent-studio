@@ -2,6 +2,7 @@
   @defer (on immediate) {
     <app-workbench-overview
       [projectName]="projectName()"
+      [projectId]="projectId()"
       (openWorkbench)="openWorkbench.emit($event)" />
   } @placeholder {
     <app-loading-surface kind="list" label="Loading overview…" />

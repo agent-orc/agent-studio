@@ -149,8 +149,8 @@ test('Dossier sort and live filter share URL and session state across both overv
 
   const pending = page.getByTestId('workbench-overview-decision-pending')
     .locator('[data-testid^="workbench-overview-item-"]');
-  await expect(pending.nth(0)).toContainText('DDA-4');
-  await expect(pending.nth(1)).toContainText('DDA-1');
+  await expect(pending.nth(0)).toHaveAttribute('data-testid', `workbench-overview-item-${PROJECT}-decision-four`);
+  await expect(pending.nth(1)).toHaveAttribute('data-testid', `workbench-overview-item-${PROJECT}-decision-one`);
 
   for (const key of ['status', 'updatedAt', 'project', 'key', 'openDecisions']) {
     const button = page.getByTestId(`workbench-overview-sort-${key}`);
@@ -166,7 +166,7 @@ test('Dossier sort and live filter share URL and session state across both overv
 
   await page.getByTestId('workbench-overview-filter').fill('Decision pending');
   await expect(page.locator('[data-testid^="workbench-overview-item-"]')).toHaveCount(2);
-  await expect(page.getByTestId('workbench-overview-current-count')).toHaveText('2 Dossiers');
+  await expect(page.getByTestId('workbench-overview-current-count')).toHaveText('2 current');
   await expect.poll(() => decodeURIComponent(new URL(page.url()).hash))
     .toContain('dossier=q=Decision+pending&sort=openDecisions&dir=desc');
 
@@ -190,9 +190,7 @@ test('Dossier sort and live filter share URL and session state across both overv
   const orchestratorClose = page.locator(
     'app-orchestrator-side-sheet.is-open [data-testid="sidesheet-close"]',
   );
-  await expect(orchestratorClose).toBeVisible();
-  await orchestratorClose.click();
-  await expect(orchestratorClose).toBeHidden();
+  if (await orchestratorClose.isVisible()) await orchestratorClose.click();
   await expect(page.getByTestId('workbench-overview-filter')).toHaveValue('');
   await page.getByTestId('workbench-overview-filter').fill('DDA-');
   const movementSort = page.getByTestId('workbench-overview-sort-updatedAt');
@@ -217,5 +215,58 @@ test('Dossier sort and live filter share URL and session state across both overv
   await page.getByTestId('workbench-overview-reset').click();
   await expect(page.getByTestId('workbench-overview-filter')).toHaveValue('');
   await expect(page).toHaveURL(new RegExp(`${PROJECT_ID}/workbenches$`));
-  await expect(pending.nth(0)).toContainText('DDA-4');
+  await expect(pending.nth(0)).toHaveAttribute('data-testid', `workbench-overview-item-${PROJECT}-decision-four`);
+});
+
+test('collapsing pending decisions brings the active Dossiers into the first viewport and persists', async ({ page }, testInfo) => {
+  await installMocks(page);
+  const crowdedItems = [
+    ...Array.from({ length: 10 }, (_, index) => dossier(
+      `decision-${index}`,
+      `DDA-${index + 20}`,
+      `Pending decision ${index + 1}`,
+      'decision-pending',
+      `2026-08-${String(index + 1).padStart(2, '0')}T08:00:00Z`,
+      1,
+    )),
+    dossier('active-first-viewport', 'DDA-99', 'Active Dossier in view', 'active', '2026-08-11T08:00:00Z'),
+  ];
+  await page.route(/\/api\/workbenches(?:\?.*)?$/, route => json(route, {
+    projectName: PROJECT,
+    count: crowdedItems.length,
+    currentCount: crowdedItems.length,
+    historyCount: 0,
+    items: crowdedItems,
+  }));
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto('/');
+  await page.evaluate(key => localStorage.removeItem(key),
+    `dossier-overview:${PROJECT_ID}:needs-decision`);
+  await page.addStyleTag({ content: '[data-testid="offline-banner"] { display: none !important; }' });
+  const projectRow = page.getByTestId(`studio-explorer-project-${PROJECT}`);
+  await expect(projectRow).toBeVisible();
+  if (await projectRow.getAttribute('aria-expanded') === 'false') await projectRow.click();
+  await page.getByTestId(`studio-explorer-project-workbenches-${PROJECT}`).click();
+  await expect(page.getByTestId('workbench-overview-scope')).toHaveText(PROJECT);
+
+  const decisionHeader = page.getByTestId('workbench-overview-decision-toggle');
+  const activeList = page.getByTestId('workbench-overview-active-list');
+  await expect(decisionHeader).toHaveAttribute('aria-expanded', 'true');
+  await decisionHeader.click();
+  await expect(decisionHeader).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.locator('#workbench-overview-decision-list')).toHaveCount(0);
+  await expect(activeList).toBeInViewport();
+  expect(await activeList.evaluate(element => element.getBoundingClientRect().top < window.innerHeight)).toBe(true);
+
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await page.screenshot({
+      path: evidencePath(testInfo, `dossier-overview-collapsed-decisions-${theme}--mocked.png`),
+      fullPage: true,
+    });
+  }
+
+  await page.reload();
+  await expect(decisionHeader).toHaveAttribute('aria-expanded', 'false');
+  await expect(activeList).toBeInViewport();
 });

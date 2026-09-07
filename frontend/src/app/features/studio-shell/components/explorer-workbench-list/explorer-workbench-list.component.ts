@@ -16,6 +16,10 @@ import { TreeRowComponent } from '../../../../components/tree-row/tree-row.compo
 import type { StudioIconName } from '../../../../components/studio-icon/studio-icon.component';
 import { ProjectDocsService } from '../../../../services/project-docs.service';
 import { JobsHubClient } from '../../../../services/jobs-hub-client.service';
+import {
+  DossierSectionStateService,
+  type DossierSectionId,
+} from '../../../../services/dossier-section-state.service';
 import type { ArticlePattern, WorkbenchCatalogue, WorkbenchListItem } from '../../../../models/project-docs.model';
 import {
   ExplorerWorkbenchStateService,
@@ -42,6 +46,7 @@ interface WorkbenchNavigationGroup {
 })
 export class ExplorerWorkbenchListComponent {
   readonly projectName = input.required<string>();
+  readonly projectId = input<string | null>(null);
   readonly activeWorkbenchId = input<string | null>(null);
   readonly overviewActive = input(false);
   readonly openWorkbench = output<WorkbenchListItem>();
@@ -51,6 +56,8 @@ export class ExplorerWorkbenchListComponent {
   private readonly docs = inject(ProjectDocsService);
   private readonly hub = inject(JobsHubClient);
   private readonly navigationState = inject(ExplorerWorkbenchStateService);
+  private readonly sectionState = inject(DossierSectionStateService);
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   readonly loading = signal(false);
   readonly catalogue = signal<WorkbenchCatalogue | null>(null);
   readonly expanded = computed(() =>
@@ -80,6 +87,7 @@ export class ExplorerWorkbenchListComponent {
     (this.catalogue()?.items ?? [])
       .filter(item => item.status === 'decision-pending')
       .reduce((count, item) => count + this.openCount(item), 0));
+  readonly sectionScope = computed(() => this.projectId()?.trim() || this.projectName());
 
   private readonly topics = viewChildren<ElementRef<HTMLElement>>('workbenchTopic');
   private readonly styleGuideRow = viewChild<ElementRef<HTMLElement>>('styleGuideRow');
@@ -105,6 +113,19 @@ export class ExplorerWorkbenchListComponent {
       } else if (!activeWorkbenchId) {
         this.lastRevealedWorkbench = null;
       }
+    });
+
+    effect(() => {
+      const scope = this.sectionScope();
+      const catalogue = this.catalogue();
+      if (!catalogue) return;
+      const groups = this.currentGroups();
+      untracked(() => {
+        for (const group of groups) {
+          this.sectionState.observeItems(scope, sectionId(group.id), group.items.length);
+        }
+        this.sectionState.observeItems(scope, 'history', this.historyItems().length);
+      });
     });
 
     effect(() => {
@@ -136,11 +157,17 @@ export class ExplorerWorkbenchListComponent {
   }
 
   groupExpanded(group: ExplorerWorkbenchGroupId): boolean {
-    return this.navigationState.stateFor(this.projectName()).groups[group];
+    return this.sectionState.expanded(this.sectionScope(), sectionId(group));
   }
 
   toggleGroup(group: ExplorerWorkbenchGroupId): void {
-    this.navigationState.setGroupExpanded(this.projectName(), group, !this.groupExpanded(group));
+    const expanded = this.groupExpanded(group);
+    if (expanded) this.focusGroupHeaderWhenNeeded(group);
+    this.sectionState.setExpanded(this.sectionScope(), sectionId(group), !expanded);
+  }
+
+  groupContentId(group: ExplorerWorkbenchGroupId): string {
+    return `studio-explorer-dossier-${encodeURIComponent(this.projectName())}-${group}`;
   }
 
   isActive(item: WorkbenchListItem): boolean {
@@ -223,14 +250,31 @@ export class ExplorerWorkbenchListComponent {
     if (item.id === this.styleGuide()?.id) return;
     this.setExpanded(true);
     if (item.status === 'documented' || item.status === 'archived') {
-      this.navigationState.setGroupExpanded(this.projectName(), 'history', true);
+      this.sectionState.setExpanded(this.sectionScope(), 'history', true);
     } else {
       const group = item.status === 'decision-pending' || item.status === 'invalid'
         ? 'needs-decision'
         : 'in-implementation';
-      this.navigationState.setGroupExpanded(this.projectName(), group, true);
+      this.sectionState.setExpanded(this.sectionScope(), sectionId(group), true);
     }
   }
+
+  private focusGroupHeaderWhenNeeded(group: ExplorerWorkbenchGroupId): void {
+    const suffix = group === 'history' ? 'history-items' : `group-items-${group}`;
+    const content = this.host.nativeElement.querySelector<HTMLElement>(
+      `[data-dossier-section-content="${suffix}"]`,
+    );
+    if (!content?.contains(document.activeElement)) return;
+    this.host.nativeElement.querySelector<HTMLButtonElement>(
+      `[data-testid="${group === 'history'
+        ? `studio-explorer-workbench-history-${this.projectName()}`
+        : `studio-explorer-workbench-group-${this.projectName()}-${group}`}"]`,
+    )?.focus();
+  }
+}
+
+function sectionId(group: ExplorerWorkbenchGroupId): DossierSectionId {
+  return group === 'in-implementation' ? 'current' : group;
 }
 
 function normalizePath(value: string): string {

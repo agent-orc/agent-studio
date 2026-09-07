@@ -31,11 +31,14 @@
                       [chevron]="groupExpanded(group.id) ? 'expanded' : 'collapsed'"
                       [label]="group.label"
                       [count]="group.items.length > 0 ? group.items.length : null"
+                      [ariaControls]="groupContentId(group.id)"
                       [testid]="'studio-explorer-workbench-group-' + projectName() + '-' + group.id"
                       (chevronClick)="toggleGroup(group.id)"
                       (selectRequest)="toggleGroup(group.id)" />
         @if (groupExpanded(group.id)) {
           <div class="studio-workbench-group-items"
+               [id]="groupContentId(group.id)"
+               [attr.data-dossier-section-content]="'group-items-' + group.id"
                [attr.data-testid]="'studio-explorer-workbench-group-items-' + projectName() + '-' + group.id">
             @for (workbench of group.items; track workbench.id) {
               <span #workbenchTopic class="studio-workbench-topic-host">
@@ -75,11 +78,14 @@
                     [chevron]="groupExpanded('history') ? 'expanded' : 'collapsed'"
                     label="History"
                     [count]="historyItems().length > 0 ? historyItems().length : null"
+                    [ariaControls]="groupContentId('history')"
                     [testid]="'studio-explorer-workbench-history-' + projectName()"
                     (chevronClick)="toggleGroup('history')"
                     (selectRequest)="toggleGroup('history')" />
       @if (groupExpanded('history')) {
         <div class="studio-workbench-history-items"
+             [id]="groupContentId('history')"
+             data-dossier-section-content="history-items"
              [attr.data-testid]="'studio-explorer-workbench-history-items-' + projectName()">
           <app-explorer-workbench-history
             [projectName]="projectName()"

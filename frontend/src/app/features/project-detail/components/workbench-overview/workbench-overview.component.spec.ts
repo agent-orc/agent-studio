@@ -65,6 +65,9 @@ function overview(items: WorkbenchOverviewItem[], projectName: string | null = n
 describe('WorkbenchOverviewComponent', () => {
   beforeEach(() => {
     sessionStorage.clear();
+    for (const key of Object.keys(localStorage)) {
+      if (key.startsWith('dossier-overview:')) localStorage.removeItem(key);
+    }
     history.replaceState(null, '', '/#/workbenches');
   });
 
@@ -185,9 +188,14 @@ describe('WorkbenchOverviewComponent', () => {
     expect(fixture.nativeElement.querySelector(
       '[data-testid="workbench-overview-task-Demo-pending-AGT-404"] a',
     )).toBeNull();
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-overview-discarded-list"]')).not.toBeNull();
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-overview-completed-list"]')).not.toBeNull();
+
+    (fixture.nativeElement.querySelector('[data-testid="workbench-overview-discarded-toggle"]') as HTMLButtonElement).click();
+    (fixture.nativeElement.querySelector('[data-testid="workbench-overview-completed-toggle"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
     expect(fixture.nativeElement.querySelector('[data-testid="workbench-overview-discarded-list"]')).toBeNull();
     expect(fixture.nativeElement.querySelector('[data-testid="workbench-overview-completed-list"]')).toBeNull();
-
     (fixture.nativeElement.querySelector('[data-testid="workbench-overview-discarded-toggle"]') as HTMLButtonElement).click();
     (fixture.nativeElement.querySelector('[data-testid="workbench-overview-completed-toggle"]') as HTMLButtonElement).click();
     fixture.detectChanges();
@@ -218,6 +226,80 @@ describe('WorkbenchOverviewComponent', () => {
     fixture.detectChanges();
     expect(fixture.nativeElement.querySelector('[data-testid="workbench-viewer"]')).not.toBeNull();
     expect(fixture.nativeElement.querySelector('[data-testid="workbench-viewer-open-wiki"]')).toBeNull();
+    http.verify();
+  });
+
+  it('toggles, persists, restores focus, and reopens a section when items newly appear', async () => {
+    vi.useFakeTimers();
+    await TestBed.configureTestingModule({
+      imports: [WorkbenchOverviewComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()],
+    }).compileComponents();
+    const http = TestBed.inject(HttpTestingController);
+    const mount = () => {
+      const fixture = TestBed.createComponent(WorkbenchOverviewComponent);
+      fixture.componentRef.setInput('projectName', 'Demo');
+      fixture.componentRef.setInput('projectId', 'PROJ-001');
+      fixture.detectChanges();
+      return fixture;
+    };
+
+    const fixture = mount();
+    http.expectOne(request => request.url === '/api/workbenches' && request.params.get('project') === 'Demo')
+      .flush(overview([item('pending', 'decision-pending', 1), item('active', 'active')], 'Demo'));
+    fixture.detectChanges();
+
+    const header = fixture.nativeElement.querySelector(
+      '[data-testid="workbench-overview-decision-toggle"]',
+    ) as HTMLButtonElement;
+    expect(header.getAttribute('aria-expanded')).toBe('true');
+    expect(header.getAttribute('aria-controls')).toBe('workbench-overview-decision-list');
+    const rowAction = fixture.nativeElement.querySelector(
+      '[data-testid="workbench-overview-full-Demo-pending"]',
+    ) as HTMLButtonElement;
+    rowAction.focus();
+    header.click();
+    fixture.detectChanges();
+
+    expect(document.activeElement).toBe(header);
+    expect(header.getAttribute('aria-expanded')).toBe('false');
+    expect(fixture.nativeElement.querySelector('#workbench-overview-decision-list')).toBeNull();
+    expect(JSON.parse(localStorage.getItem('dossier-overview:PROJ-001:needs-decision') ?? '{}'))
+      .toEqual({ collapsed: true, hadItems: true });
+
+    fixture.destroy();
+    const reloaded = mount();
+    http.expectOne(request => request.url === '/api/workbenches' && request.params.get('project') === 'Demo')
+      .flush(overview([item('pending', 'decision-pending', 1), item('active', 'active')], 'Demo'));
+    reloaded.detectChanges();
+    expect(reloaded.nativeElement.querySelector(
+      '[data-testid="workbench-overview-decision-toggle"]')?.getAttribute('aria-expanded')).toBe('false');
+
+    const hub = TestBed.inject(JobsHubClient);
+    hub.workbenchEvent.set({
+      type: 'statusChanged', projectName: 'Demo', workbenchId: 'pending', workbench: null,
+      previousStatus: 'decision-pending', occurredAtUtc: '2026-09-06T10:00:00Z',
+    });
+    reloaded.detectChanges();
+    await vi.advanceTimersByTimeAsync(80);
+    http.expectOne(request => request.url === '/api/workbenches' && request.params.get('project') === 'Demo')
+      .flush(overview([item('active', 'active')], 'Demo'));
+    reloaded.detectChanges();
+
+    hub.workbenchEvent.set({
+      type: 'created', projectName: 'Demo', workbenchId: 'fresh', workbench: null,
+      previousStatus: null, occurredAtUtc: '2026-09-06T10:01:00Z',
+    });
+    reloaded.detectChanges();
+    await vi.advanceTimersByTimeAsync(80);
+    http.expectOne(request => request.url === '/api/workbenches' && request.params.get('project') === 'Demo')
+      .flush(overview([item('fresh', 'decision-pending', 1), item('active', 'active')], 'Demo'));
+    reloaded.detectChanges();
+
+    expect(reloaded.nativeElement.querySelector(
+      '[data-testid="workbench-overview-decision-toggle"]')?.getAttribute('aria-expanded')).toBe('true');
+    expect(reloaded.nativeElement.querySelector('#workbench-overview-decision-list')?.textContent)
+      .toContain('fresh');
     http.verify();
   });
 
