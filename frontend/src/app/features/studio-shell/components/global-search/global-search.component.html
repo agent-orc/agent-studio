@@ -5,6 +5,7 @@
         <span aria-hidden="true">⌕</span>
         <input #searchInput data-testid="global-search-input" type="search" autocomplete="off"
                placeholder="Search tasks, commits, files…" [ngModel]="query()" (ngModelChange)="onQuery($event)" />
+        @if (searching()) { <span class="search-elapsed" data-testid="global-search-elapsed">{{ elapsedLabel() }}</span> }
         <kbd>Esc</kbd>
       </label>
 
@@ -13,9 +14,23 @@
           <p class="search-hint">Type at least 2 characters to search all projects.</p>
         } @else {
           @for (group of groups(); track group.domain) {
-            @if (group.items.length || remote().errors[group.domain]) {
+            @let state = domains()[group.domain];
+            @if (group.items.length || state.status !== 'idle') {
               <section class="search-group" [attr.data-testid]="'global-search-group-' + group.domain">
-                <h2>{{ group.label }}</h2>
+                <header class="search-group-head">
+                  <h2>{{ group.label }}</h2>
+                  <span class="search-group-status" [attr.data-testid]="'global-search-status-' + group.domain"
+                        [attr.data-status]="state.status">
+                    @if (group.items.length) { <span>{{ group.items.length }}</span> }
+                    @switch (state.status) {
+                      @case ('searching') {
+                        @if (state.total) { <span>Searching {{ state.completed }} of {{ state.total }} repositories</span> }
+                        @else { <span>Searching…</span> }
+                      }
+                      @case ('failed') { <span>{{ state.error }}</span> }
+                    }
+                  </span>
+                </header>
                 @for (item of group.items; track item.domain + ':' + item.projectName + ':' + item.subtitle) {
                   <button type="button" role="option" class="search-result"
                           [class.search-result--active]="resultIndex(item) === activeIndex()"
@@ -27,12 +42,14 @@
                     @if (item.isWiki) { <span class="search-badge">Wiki</span> }
                   </button>
                 }
-                @if (remote().errors[group.domain]) { <p class="search-error">{{ remote().errors[group.domain] }}</p> }
+                @if (state.status !== 'failed' && state.error) { <p class="search-error">{{ state.error }}</p> }
               </section>
             }
           }
-          @if (!flatResults().length && !loading()) { <p class="search-hint">No matching tasks, commits, or files.</p> }
-          @if (loading()) { <p class="search-loading">Searching repositories…</p> }
+          @if (!flatResults().length && !searching()) { <p class="search-hint">No matching tasks, commits, or files.</p> }
+          @if (showSlowNotice()) {
+            <p class="search-loading" data-testid="global-search-slow-notice">Repository search can take a moment on large histories.</p>
+          }
         }
       </div>
       <footer><span>↑↓ Navigate</span><span>↵ Open</span><span>Esc Close</span></footer>

@@ -1,10 +1,13 @@
 using AgentStudio.Search;
+using AgentStudio.Shared;
 using Xunit;
 
 namespace AgentStudio.Tests;
 
 public sealed class GlobalSearchRankingTests
 {
+    private static readonly GlobalSearchTarget Fixture = new("Agent Studio", "/tmp/fixture", "#fff");
+
     [Fact]
     public void RankItems_PutsExactThenPrefixBeforeContains()
     {
@@ -21,40 +24,41 @@ public sealed class GlobalSearchRankingTests
     }
 
     [Fact]
-    public void ReadFiles_SearchesTrackedFilesInARealRepository()
+    public void MatchFiles_MatchesPathSubstringsAndRoutesDocsToTheWiki()
     {
-        var root = Path.Combine(Path.GetTempPath(), $"global-search-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(root);
-        try
-        {
-            RunGit(root, "init");
-            File.WriteAllText(Path.Combine(root, "README-search-proof.md"), "proof");
-            RunGit(root, "add", "README-search-proof.md");
+        string[] paths = ["README-search-proof.md", "docs/system/domains/frontend.md", "docs/app/contract.json", "src/main.ts"];
 
-            var results = GlobalSearchService.ReadFiles(root, "Fixture", "search-proof", "#fff");
+        var matches = GlobalSearchService.MatchFiles(paths, Fixture, "md").ToList();
 
-            Assert.Single(results);
-            Assert.Equal("README-search-proof.md", results[0].Path);
-        }
-        finally
-        {
-            foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
-                File.SetAttributes(file, FileAttributes.Normal);
-            Directory.Delete(root, true);
-        }
+        Assert.Equal(
+            new[] { "README-search-proof.md", "docs/system/domains/frontend.md" },
+            matches.Select(x => x.Path));
+        Assert.False(matches[0].IsWiki);
+        Assert.True(matches[1].IsWiki);
+    }
+
+    [Fact]
+    public void MatchFiles_KeepsDocsAppOutOfTheWikiViewer()
+    {
+        var matches = GlobalSearchService.MatchFiles(["docs/app/contract.json"], Fixture, "contract").ToList();
+
+        Assert.False(Assert.Single(matches).IsWiki);
+    }
+
+    [Fact]
+    public void MatchCommits_MatchesShaPrefixAndSubject()
+    {
+        IndexedCommit[] commits =
+        [
+            new("abc123def456", "abc123d", "feat: streamed search"),
+            new("999888777666", "9998887", "chore: unrelated"),
+        ];
+
+        Assert.Equal("abc123def456", Assert.Single(GlobalSearchService.MatchCommits(commits, Fixture, "abc123")).Sha);
+        Assert.Equal("abc123def456", Assert.Single(GlobalSearchService.MatchCommits(commits, Fixture, "streamed")).Sha);
+        Assert.Empty(GlobalSearchService.MatchCommits(commits, Fixture, "nothing-here"));
     }
 
     private static GlobalSearchItem Item(string title) =>
         new("files", "Agent Studio", "#fff", title, title);
-
-    private static void RunGit(string root, params string[] args)
-    {
-        using var process = new System.Diagnostics.Process { StartInfo = new("git") {
-            WorkingDirectory = root, UseShellExecute = false, RedirectStandardError = true
-        }};
-        foreach (var arg in args) process.StartInfo.ArgumentList.Add(arg);
-        process.Start();
-        process.WaitForExit();
-        Assert.True(process.ExitCode == 0, process.StandardError.ReadToEnd());
-    }
 }

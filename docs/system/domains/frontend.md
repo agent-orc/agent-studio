@@ -12,21 +12,39 @@ coverage.
 The title-bar search opens a Ctrl+K command palette. V1 covers tasks (key,
 title, prompt, and status text), commit messages and SHA prefixes, and file names
 or paths on each project's working branch. Task matches are ranked immediately
-from the in-memory board snapshot, with an exact task key first and a warm
-response target below 300 ms.
+from the in-memory board snapshot, with an exact task key first; the indexed
+task domain has a warm response target below 100 ms.
 
-Repository-backed results use
-`GET /api/search?q=<query>&domains=tasks,commits,files&limit=<count>`. The
-`domains` value is a comma-separated subset of `tasks`, `commits`, and `files`;
-`limit` is optional and bounded by the backend. The JSON response contains the
-normalized `query`, an array for each requested domain, per-domain `errors`,
-and `durationMs`. Git commit and file lookup reuse the HEAD-keyed cache rather
-than maintaining a search index.
+The palette streams from
+`GET /api/search/stream?q=<query>&domains=tasks,commits,files&limit=<count>` as
+server-sent events. Frames arrive in this order: `tasks` (the memory-only
+domain, so it is never blocked by git), `progress` announcing how many
+repositories will be visited, one `repository` frame per checkout as it
+finishes, and a terminal `done` carrying the durations. The palette debounces
+250 ms, aborts the request in flight on every keystroke, and appends each
+repository's matches without reordering the groups already on screen.
+Disconnecting cancels the fan-out server-side.
+
+`GET /api/search?q=...&domains=...&limit=...` remains the single-response route
+with an unchanged wire contract: the normalized `query`, an array per requested
+domain, per-domain `errors`, and `durationMs`. It is what the orchestrator's
+context-source picker reads. Both routes accept the same
+comma-separated `domains` subset of `tasks`, `commits`, and `files`, and both
+bound `limit` in the backend.
+
+Neither route derives its corpus per query. Task text (prompt and status
+documents) is an in-memory blob per card, re-read only when the card's
+last-activity stamp moves. Each repository's file list and a bounded window of
+its commit log are cached per HEAD, so a second query with a new term against
+an unchanged repository spawns no git process. Repositories are searched in
+parallel with a bounded degree. `Search:CommitWindow` (default 2000, clamped to
+100-20000) sets how deep the commit index goes.
 
 Results are grouped by domain and carry project identity. Commit results open
 the diff surface, documentation files open the Wiki, and other files open the
 project Git view. Queries shorter than two characters return empty result
-groups, and a failed domain reports an error without hiding successful domains.
+groups, and a failed repository reports against the domains it broke without
+hiding the domains that succeeded.
 
 ## Entry Points
 
