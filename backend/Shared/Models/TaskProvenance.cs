@@ -312,6 +312,18 @@ public sealed record TaskIntegrationFailure
     public string Label { get; init; } = "Integration failed";
     public string Reason { get; init; } = "Integration failed without a diagnostic.";
     public bool RebaseRecoveryAvailable { get; init; }
+
+    /// <summary>
+    /// AGT-2749: whether the shared taxonomy attributes this failure to the
+    /// reviewed change, the host, or the provider account. The acceptance rail
+    /// requeues Infrastructure and Quota instead of parking them.
+    /// </summary>
+    public AgentStudio.TaskServer.Contracts.RunFailureClass FailureClass { get; init; }
+        = AgentStudio.TaskServer.Contracts.RunFailureClass.Unknown;
+
+    /// <summary>Stable signature slug behind <see cref="FailureClass"/>.</summary>
+    public string FailureSignature { get; init; }
+        = AgentStudio.TaskServer.Contracts.RunFailureSignatures.Unclassified;
 }
 
 /// <summary>

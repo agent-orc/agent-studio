@@ -32,6 +32,7 @@ namespace AgentStudio.Tests;
 /// </para>
 /// </summary>
 [Collection("LiveCli")]
+[Trait("Category", "MachineBound")]
 public class CliKestrelHostingRepoTests : IClassFixture<WebApplicationFactory<Program>>
 {
     private readonly WebApplicationFactory<Program> _factory;

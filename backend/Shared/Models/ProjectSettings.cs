@@ -332,6 +332,17 @@ public record ProjectSettings
     /// <c>project-settings.json</c>.
     /// </summary>
     public TaskSpawnerConfig? TaskSpawner { get; init; }
+
+    /// <summary>
+    /// AGT-2749: per-project override of the build/test gate-run budget, in
+    /// seconds. Null falls back to <see cref="AgentStudio.Pipeline.GateRunBudgetPolicy"/>
+    /// (a measured run-history p95 when enough history exists, otherwise
+    /// <see cref="AgentStudio.Pipeline.GateRunBudgetDefaults.DefaultSeconds"/>).
+    /// Set this when a project's suite legitimately runs longer than the
+    /// platform default, so the gate stops misclassifying a slow-but-healthy
+    /// suite as an infrastructure timeout.
+    /// </summary>
+    public int? BuildTestGateTimeoutSeconds { get; init; }
 }
 
 /// <summary>

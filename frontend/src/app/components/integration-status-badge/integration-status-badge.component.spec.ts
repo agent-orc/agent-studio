@@ -207,6 +207,73 @@ describe('IntegrationStatusBadgeComponent', () => {
     http.verify();
   });
 
+  it('appends the requeue class to an infrastructure failure and its tooltip', () => {
+    const fixture = render(integration('conflict-skipped', {
+      detail: "Integration branch 'develop' could not be fetched from origin: git operation timed out after 30 seconds",
+      failure: {
+        code: 'integration-error',
+        label: 'Integration failed',
+        reason: "Integration branch 'develop' could not be fetched from origin: git operation timed out after 30 seconds",
+        rebaseRecoveryAvailable: false,
+        failureClass: 'infrastructure',
+        failureSignature: 'git-network-timeout',
+      },
+    }));
+    const badge = fixture.nativeElement.querySelector('[data-testid="integration-status-badge"]') as HTMLElement;
+
+    expect(badge.textContent).toContain('Integration failed · Infrastructure');
+    expect(badge.dataset['integrationFailureClass']).toBe('infrastructure');
+    expect(fixture.componentInstance.tooltip()).toContain('Infrastructure fault, will be retried automatically');
+    expect(fixture.nativeElement.querySelector(
+      '[data-testid="task-card-integration-recovery"]',
+    )).toBeNull();
+  });
+
+  it('appends the requeue class for a quota failure', () => {
+    const fixture = render(integration('conflict-skipped', {
+      failure: {
+        code: 'integration-error',
+        label: 'Integration failed',
+        reason: 'The CLI provider quota is exhausted.',
+        rebaseRecoveryAvailable: false,
+        failureClass: 'quota',
+        failureSignature: 'cli-quota-exhausted',
+      },
+    }));
+    const badge = fixture.nativeElement.querySelector('[data-testid="integration-status-badge"]') as HTMLElement;
+
+    expect(badge.textContent).toContain('Integration failed · Quota');
+    expect(badge.dataset['integrationFailureClass']).toBe('quota');
+  });
+
+  it('does not append a requeue class for a product failure or a legacy record', () => {
+    const productFixture = render(integration('conflict-skipped', {
+      failure: {
+        code: 'build-gate-failed',
+        label: 'Build gate failed',
+        reason: '1 test fails on the change that passes on the baseline.',
+        rebaseRecoveryAvailable: false,
+        failureClass: 'product',
+        failureSignature: 'new-test-failures',
+      },
+    }));
+    expect(productFixture.nativeElement.querySelector(
+      '[data-testid="integration-status-badge"]',
+    ).textContent).not.toContain('·');
+
+    const legacyFixture = render(integration('conflict-skipped', {
+      failure: {
+        code: 'merge-conflict',
+        label: 'Merge conflict',
+        reason: 'The delivery conflicts with the current integration branch.',
+        rebaseRecoveryAvailable: true,
+      },
+    }));
+    expect(legacyFixture.nativeElement.querySelector(
+      '[data-testid="integration-status-badge"]',
+    ).textContent).not.toContain('·');
+  });
+
   it('renders no-branch as grey "kein Branch"', () => {
     const fixture = render(integration('no-branch'));
     const badge = fixture.nativeElement.querySelector('[data-testid="integration-status-badge"]') as HTMLElement;

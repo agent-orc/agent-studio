@@ -1,3 +1,5 @@
+using AgentStudio.TaskServer.Contracts;
+
 namespace AgentStudio.Tasks;
 
 public sealed record AcceptanceRailSnapshot
@@ -87,7 +89,20 @@ public sealed class AcceptanceRailHostedService : BackgroundService
             {
                 statusByKey.TryGetValue(job.TaskKey, out var status);
                 var used = CountConflictRequeues(job);
-                var decision = AcceptanceRailPolicy.Decide(job, status, used, options);
+                var infrastructureUsed = CountInfrastructureRequeues(job);
+                var decision = AcceptanceRailPolicy.Decide(
+                    job,
+                    status,
+                    used,
+                    options,
+                    DateTimeOffset.UtcNow,
+                    infrastructureUsed.Count,
+                    infrastructureUsed.LastAt,
+                    // The provider reset instant is not carried on the card, so
+                    // the rail backs off exponentially instead of waiting for a
+                    // known reset. The policy takes the instant for the callers
+                    // that do know it.
+                    quotaResetAt: null);
                 if (decision.Reason == "operator-hold")
                 {
                     held++;
@@ -104,9 +119,36 @@ public sealed class AcceptanceRailHostedService : BackgroundService
                         if (status is not null && Requeue(job, status, used + 1)) requeued++;
                         else failed++;
                         break;
+                    case AcceptanceRailAction.RequeueInfrastructure:
+                        if (status is not null
+                            && await RequeueInfrastructureAsync(
+                                job,
+                                status,
+                                infrastructureUsed.Count + 1,
+                                options.MaxInfrastructureRequeues,
+                                ct))
+                        {
+                            requeued++;
+                        }
+                        else failed++;
+                        break;
                     case AcceptanceRailAction.Escalate:
                         if (job.State == TaskStates.Escalated && HasExhaustionReceipt(job))
                             break;
+                        if (decision.Reason == "infrastructure-requeue-budget-exhausted")
+                        {
+                            if (await EscalateInfrastructureAsync(
+                                    job,
+                                    status,
+                                    infrastructureUsed.Count,
+                                    options.MaxInfrastructureRequeues,
+                                    ct))
+                            {
+                                escalated++;
+                            }
+                            else failed++;
+                            break;
+                        }
                         if (await EscalateAsync(job, used, options.MaxRequeues, ct)) escalated++;
                         else failed++;
                         break;
@@ -240,6 +282,90 @@ public sealed class AcceptanceRailHostedService : BackgroundService
         return true;
     }
 
+    /// <summary>
+    /// Replays a card whose last failure was attributed to the host or the
+    /// provider account (AGT-2749). The delivery is unchanged, so this path must
+    /// not write a rebase steer: the card only goes back to
+    /// <see cref="TaskStates.AutoReview"/> to be verified again.
+    /// </summary>
+    private async Task<bool> RequeueInfrastructureAsync(
+        TaskInfo job,
+        TaskIntegrationStatus status,
+        int retryNumber,
+        int maximum,
+        CancellationToken ct)
+    {
+        var failureClass = status.Failure?.FailureClass ?? RunFailureClass.Unknown;
+        var signature = status.Failure?.FailureSignature ?? RunFailureSignatures.Unclassified;
+        var reason = $"The last integration failure is {ClassText(failureClass)} ({signature}), not a verdict on the change. "
+                     + $"Requeued to {TaskStates.AutoReview} as retry {retryNumber}/{maximum}.";
+
+        var outcome = await _transitions.MoveAsync(
+            job.Id,
+            TaskStates.AutoReview,
+            job.WatchPath,
+            ct,
+            cause: TimelineActors.System,
+            reason: reason,
+            expectedSourceState: job.State,
+            transitionCause: LaneChangeCauses.ReviewInfrastructure,
+            transitionDetail: TaskIntegrationRecoveryService.AcceptanceRailSource);
+        if (outcome.Status != MoveJobStatus.Success)
+        {
+            _logger.LogWarning(
+                "acceptance-rail-infrastructure-requeue-refused project={Project} job={JobId} status={Status} message={Message}",
+                job.ProjectName,
+                job.Id,
+                outcome.Status,
+                outcome.Message);
+            return false;
+        }
+
+        var moved = _scanner.FindJob(job.Id, job.WatchPath);
+        if (moved is not null)
+            AppendAction(moved, AcceptanceRailReceipts.InfrastructureRequeueAction, reason, retryNumber);
+        return true;
+    }
+
+    private async Task<bool> EscalateInfrastructureAsync(
+        TaskInfo job,
+        TaskIntegrationStatus? status,
+        int used,
+        int maximum,
+        CancellationToken ct)
+    {
+        var failureClass = status?.Failure?.FailureClass ?? RunFailureClass.Unknown;
+        var signature = status?.Failure?.FailureSignature ?? RunFailureSignatures.Unclassified;
+        var reason = $"Integration recovery stopped after {used}/{maximum} {ClassSlug(failureClass)} requeues ({signature}). "
+                     + "Fix the host or the account, then requeue the card.";
+        var category = failureClass == RunFailureClass.Quota
+            ? HumanReviewEscalationCategories.QuotaExhausted
+            : HumanReviewEscalationCategories.Environmental;
+        var outcome = await _humanReviewEscalation.EscalateAsync(
+            job.Id,
+            job.WatchPath,
+            job.ProjectName,
+            category,
+            reason,
+            ct);
+        if (outcome.Status != MoveJobStatus.Success) return false;
+
+        var moved = _scanner.FindJob(job.Id, job.WatchPath);
+        if (moved is not null)
+            AppendAction(moved, "escalated", reason, used);
+        return true;
+    }
+
+    private static string ClassText(RunFailureClass failureClass) => failureClass switch
+    {
+        RunFailureClass.Quota => "a provider quota fault",
+        RunFailureClass.Infrastructure => "an infrastructure fault",
+        _ => "an unclassified fault",
+    };
+
+    private static string ClassSlug(RunFailureClass failureClass)
+        => failureClass.ToString().ToLowerInvariant();
+
     private async Task<bool> EscalateAsync(
         TaskInfo job,
         int used,
@@ -269,6 +395,14 @@ public sealed class AcceptanceRailHostedService : BackgroundService
                 entry.Details?.GetValueOrDefault("source"),
                 TaskIntegrationRecoveryService.AcceptanceRailSource,
                 StringComparison.Ordinal));
+
+    /// <summary>
+    /// Infrastructure replays already spent on this card, plus the instant of the
+    /// last one. An infrastructure requeue writes no recovery intent, so the rail
+    /// counts its own receipts instead of the recovery-queued events.
+    /// </summary>
+    private (int Count, DateTimeOffset? LastAt) CountInfrastructureRequeues(TaskInfo job)
+        => AcceptanceRailReceipts.CountInfrastructureRequeues(_timeline, job.FolderPath);
 
     private bool HasExhaustionReceipt(TaskInfo job)
         => _timeline.ReadAll(job.FolderPath).Any(entry =>
