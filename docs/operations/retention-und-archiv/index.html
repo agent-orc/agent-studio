@@ -375,6 +375,11 @@ schwere Daten ins kalte Archiv <code>C:\Projects\agent-taskboard-archive</code> 
 geprüft (SHA-256 identisch). Heiße Task-Ordner von 9,2 GB auf 3,6 GB. Drei Befunde aus dem Produktionslauf gingen an
 AGT-2743: Auszug-Writer unbegrenzt (963 Auszüge mit 5,6 GB, vom Operator zurückgehalten, Regeneration aus dem kalten
 Archiv folgt), Laufzeit-Löschungen nicht committet, Reporting zählt Auszüge als heiße Daten.</p>
+<p class="stx stx-ok"><b>Stand 07.09. 06:45:</b> Alle drei Befunde in AGT-2743 (Stand fence-5) behoben und vom Operator auf dem
+Windows-Host bestätigt: <code>backup-full</code> läuft in 29 Minuten durch und liefert einen verifizierten Sicherungssatz mit
+10,9 GB (Git-Bundle plus alle kalten Nutzlasten und Manifeste mit SHA-256); <code>re-excerpt</code> baute 964 Auszüge aus dem
+kalten Archiv neu, 0 Fehler, zusammen 134 MB, größter 256 KB (vorher 5,6 GB); Auszüge sind committet und gepusht. Heiße
+Task-Ordner 3,7 GB, kaltes Archiv 1,43 GB. Sicherungssätze liegen unter <code>C:\Projects\agent-taskboard-backup\full\</code>.</p>
 <ol>
   <li><b>Log nur am Run-Ende committen.</b> <code>WorkspaceEvidenceBatcher</code> und die Run-Grenzen schließen Klasse C
       während eines laufenden Runs aus; erst der Abschluss des Runs committet eine Version. Erwartete Wirkung: rund 90 %
