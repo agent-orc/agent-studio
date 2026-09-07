@@ -4,7 +4,7 @@
   "title": "Studio route ownership and local connector",
   "summary": "Route-counted ownership for the Angular Studio, a constrained local connector, and the remote Task Server, including the D4b migration estimate and Robert's decision gate.",
   "entrypoint": "index.html",
-  "status": "decided",
+  "status": "decision-pending",
   "phase": "decision-ready",
   "updatedAt": "2026-09-07T05:00:00Z",
   "sourceTaskKeys": [
