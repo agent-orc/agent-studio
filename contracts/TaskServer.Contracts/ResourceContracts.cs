@@ -97,7 +97,9 @@ public sealed record ArtifactDto(
     string IdempotencyKey,
     long Fence,
     DateTime CreatedAt,
-    long? Sequence = null);
+    long? Sequence = null,
+    string? SourcePath = null,
+    bool PointerOnly = false);
 
 /// <summary>
 /// One immutable identity needed to reconstruct a coding result. Git submodules
@@ -180,7 +182,9 @@ public sealed record ArtifactContentDto(
     string MediaType,
     string Sha256,
     string ContentBase64,
-    long SizeBytes);
+    long SizeBytes,
+    string? SourcePath = null,
+    bool PointerOnly = false);
 
 /// <summary>
 /// Application-owned Result finalization state for one completed core run.

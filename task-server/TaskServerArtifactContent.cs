@@ -12,7 +12,8 @@ public sealed partial class TaskServerStore
     {
         await using var connection = await OpenReadyAsync(ct);
         await using var command = Command(connection, """
-            SELECT a.id, a.run_id, a.name, a.media_type, a.sha256, a.content, a.size_bytes, a.archived, t.id, t.task_key
+            SELECT a.id, a.run_id, a.name, a.media_type, a.sha256, a.content, a.size_bytes,
+                   a.archived, t.id, t.task_key, a.source_path, a.pointer_only
               FROM artifacts a
               JOIN runs r ON r.id = a.run_id
               JOIN tasks t ON t.id = r.task_id
@@ -26,6 +27,8 @@ public sealed partial class TaskServerStore
         return new ArtifactContentDto(
             reader.GetString(0), reader.GetString(1), reader.GetString(2),
             reader.GetString(3), reader.GetString(4), Convert.ToBase64String(content),
-            reader.GetInt64(6));
+            reader.GetInt64(6),
+            reader.IsDBNull(10) ? null : reader.GetString(10),
+            reader.GetInt64(11) != 0);
     }
 }

@@ -858,6 +858,10 @@ project/task/run identities, task state, events, artifact content, audit,
 principal and credential hashes, Runner records, coding and review leases,
 immutable review subjects, fenced reports, and fence counters.
 
+When the store contains a completed legacy import, backup and restore responses
+also return that report's `inventorySha256`. A restore rehearsal into an empty
+store must return the same value before cutover evidence is accepted.
+
 The packaged timer calls the same implementation through the binary:
 
 ```bash
@@ -888,6 +892,48 @@ remains in `Maintenance` until an operator explicitly resumes normal service.
 Legacy absolute paths and `watchPath` are migration inputs only. They never
 become resource identity.
 
+The standalone binary is the cutover entry point. `inventory` writes canonical
+JSON to stdout and a per-project, per-state table to stderr, so operators can
+redirect the machine-readable inventory without losing the review summary:
+
+```powershell
+dotnet TaskServer.dll inventory `
+  --source C:\Projects\agent-taskboard-workspace `
+  > C:\Cutover\task-server-inventory.json
+```
+
+The inventory covers every registered project, all live and archive states,
+epics, Dossier descriptors, task timelines, result and attachment artifacts,
+orchestrator session records, project and task context chats, live and archived
+attempt authority, pending and historical integration records, attributed Git
+commits, delivery and result refs, and bus-log references. `inventorySha256` is
+calculated from a stable canonical projection of those counts plus the ordered
+relative-path, size, and SHA-256 source manifest. The absolute source root and
+inventory timestamp are excluded, so an exact frozen copy has the same hash.
+
+After every legacy writer is stopped, persist `Maintenance` mode and import the
+saved inventory:
+
+```powershell
+dotnet TaskServer.dll import `
+  --source C:\Projects\agent-taskboard-workspace-frozen `
+  --inventory C:\Cutover\task-server-inventory.json `
+  --mode maintenance
+```
+
+The offline import command initializes an empty store before importing.
+`--mode maintenance` persists the required mode as part of that invocation, so
+a fresh store does not require a manual `meta` table edit. If the option is
+omitted while the store is not already in `Maintenance`, the command fails with
+`maintenance-required` and prints the exact `--mode maintenance` remedy.
+
+The command rejects a modified inventory as `legacy-inventory-invalid`, a
+source that no longer matches it as `legacy-inventory-mismatch`, and any target
+count disagreement as `legacy-post-import-mismatch`. Target-count validation is
+inside the import transaction for tasks, events, and artifacts. A repeated
+import of the same migration ID returns the existing signed report and does not
+create another backup or duplicate data.
+
 1. Call `POST /api/v1/management/migrations/legacy/inventory` with the legacy
    root and workspace name. Save the project/task/event/artifact counts,
    warnings, evidence-Git roots, and migration ID.
@@ -898,11 +944,18 @@ become resource identity.
    `freezeConfirmed:true` and `expectedMigrationId` set to the saved inventory
    ID. Import fails if task metadata, prompts, timelines, or result artifacts
    changed after inventory.
-4. The server creates a pre-import backup, imports the inventory in one
-   transaction, preserves task `results/`, timeline events, stable generated
-   identities, and copies evidence Git metadata into
-   `migration-evidence/{migrationId}`.
-5. Compare counts and save the returned integrity SHA-256. Start Task Server as
+4. The server creates a pre-import backup and imports the inventory in one
+   transaction. Task metadata, timeline events, stable identities, and Git
+   evidence are durable records. Result, attachment, and task-log files are
+   content-hashed references to the untouched frozen root. File bodies,
+   including `cli-output.log` at any size, are not copied into SQLite.
+5. Compare counts and retain the signed report from
+   `migration-reports/legacy-{migrationId}.json`. It contains before and after
+   inventories, hashes, server and schema versions, duration, backup identity,
+   and the store integrity hash. The HMAC-SHA256 signing key is held in SQLite,
+   so it follows verified backup and restore. The management API exposes all
+   reports at `GET /api/v1/management/migrations/legacy/reports` and one report
+   at `GET /api/v1/management/migrations/legacy/reports/{migrationId}`. Start Task Server as
    the only writer, then point Studio/BFF and Runner at its URL.
 6. The rollback boundary is the returned pre-import backup plus the untouched,
    frozen legacy root. Roll back before allowing either side to accept another
@@ -913,6 +966,31 @@ The automated acceptance suite rehearses inventory, freeze enforcement,
 transactional import, integrity verification, backup/restore, evidence Git
 preservation, restart fencing, protocol rejection, and separate process
 lifecycle.
+
+Attempt-authority policy is explicit. Closed coding and review attempts remain
+closed history. Every leased attempt retains its lease ID, runner, host, fence,
+and epoch but enters `process-unknown`; only the normal audited containment
+proof can release it. Every `attempt-authority.archive-*.json` file participates
+in the source hash. Authority, lease, fence, or integration records that name a
+task folder which no longer exists are reported as degradations rather than
+aborting import. They are retained in `legacy_migration_orphans` with an
+`orphaned_task_key` marker and effective status; open orphaned authority is
+`process-unknown`. The inventory and signed report count each orphan kind, and
+post-import validation checks those counts exactly. The live execution tables
+keep their non-null task foreign keys, so orphan records cannot become runnable
+authority. Bus logs use a different policy: each JSONL file is counted, hashed,
+sized, and stored as a pointer to the frozen root, but its messages are not
+replayed into the Task Server event stream.
+
+Two further source conditions degrade instead of aborting, and both are listed
+in the inventory warnings and the signed report. A registered project without a
+`shortCode` falls back to a shared task-key prefix; because store prefixes are
+unique, a second project with the same fallback is imported under a numbered
+prefix such as `LEG2` and the rename is reported. An `.metadata` integration
+file that cannot be read or parsed is skipped as a whole file, so one corrupt
+record set does not cost the entire inventory run. A Dossier descriptor reachable
+from both the legacy root and a registered repository nested inside it is counted
+once, which keeps the inventory count equal to the rows the import inserts.
 
 ### Planned local Windows cutover
 
