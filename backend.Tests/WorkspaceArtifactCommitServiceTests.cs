@@ -254,6 +254,170 @@ public sealed class WorkspaceArtifactCommitServiceTests : IDisposable
             RunGitCapture(_root, $"--git-dir={remote}", "rev-parse", "refs/heads/develop").Trim());
     }
 
+    [Fact]
+    public async Task WorkspacePushWorker_UsesCatchUpBudgetAfterTimeout()
+    {
+        var pushTimeouts = new List<TimeSpan>();
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["WorkspaceArtifacts:PushRetrySeconds"] = "0",
+                ["WorkspaceArtifacts:PushTimeoutSeconds"] = "3",
+                ["WorkspaceArtifacts:CatchUpPushTimeoutSeconds"] = "120",
+            })
+            .Build();
+        Task<WorkspaceArtifactPushWorker.PushGitResult> Run(
+            string _, IReadOnlyList<string> args, TimeSpan timeout, CancellationToken __)
+        {
+            if (args[0] != "push")
+                return Task.FromResult(new WorkspaceArtifactPushWorker.PushGitResult(0, "1", "", GitProcessFailureKind.None));
+            pushTimeouts.Add(timeout);
+            return Task.FromResult(pushTimeouts.Count == 1
+                ? new WorkspaceArtifactPushWorker.PushGitResult(-1, "", "timed out", GitProcessFailureKind.TimedOut)
+                : new WorkspaceArtifactPushWorker.PushGitResult(0, "", "", GitProcessFailureKind.None));
+        }
+
+        var worker = new WorkspaceArtifactPushWorker(
+            new WorkspaceArtifactPushQueue(),
+            NullLogger<WorkspaceArtifactPushWorker>.Instance,
+            config,
+            bus: null,
+            advisories: null,
+            time: TimeProvider.System,
+            runGit: Run);
+
+        Assert.True(await worker.ProcessAsync(new WorkspaceArtifactPushRequest(_root, "ASS-CATCHUP"), default));
+        Assert.Equal([TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(120)], pushTimeouts);
+    }
+
+    [Fact]
+    public void WorkspacePushWorker_SchedulesConfiguredRepositoryForStartupCatchUp()
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["TaskRepository"] = _root })
+            .Build();
+        var worker = new WorkspaceArtifactPushWorker(
+            new WorkspaceArtifactPushQueue(),
+            NullLogger<WorkspaceArtifactPushWorker>.Instance,
+            config);
+
+        var request = Assert.IsType<WorkspaceArtifactPushRequest>(worker.StartupCatchUpRequest());
+        Assert.Equal(Path.GetFullPath(_root), Path.GetFullPath(request.RepositoryRoot));
+        Assert.Equal("workspace-startup-catch-up", request.JobId);
+    }
+
+    [Fact]
+    public async Task WorkspacePushWorker_PersistsFinalAdvisoryWithAheadCount()
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["TaskRepository"] = _root,
+                ["WorkspaceArtifacts:PushRetrySeconds"] = "0",
+            })
+            .Build();
+        var advisories = new AgentStudio.State.SupervisorAdvisoryStore();
+        Task<WorkspaceArtifactPushWorker.PushGitResult> Run(
+            string _, IReadOnlyList<string> args, TimeSpan __, CancellationToken ___)
+        {
+            if (args.Contains("--count"))
+                return Task.FromResult(new WorkspaceArtifactPushWorker.PushGitResult(0, "73\n", "", GitProcessFailureKind.None));
+            if (args.Contains("--disk-usage"))
+                return Task.FromResult(new WorkspaceArtifactPushWorker.PushGitResult(0, "1024\n", "", GitProcessFailureKind.None));
+            return Task.FromResult(new WorkspaceArtifactPushWorker.PushGitResult(1, "", "offline", GitProcessFailureKind.None));
+        }
+        var worker = new WorkspaceArtifactPushWorker(
+            new WorkspaceArtifactPushQueue(),
+            NullLogger<WorkspaceArtifactPushWorker>.Instance,
+            config,
+            bus: null,
+            advisories: advisories,
+            time: TimeProvider.System,
+            runGit: Run);
+
+        Assert.False(await worker.ProcessAsync(
+            new WorkspaceArtifactPushRequest(_root, "ASS-ADVISORY", Project: "demo"), default));
+
+        var advisory = Assert.Single(advisories.Snapshot(_root, "demo"));
+        Assert.Equal("workspace-repository-push-failed", advisory.Topic);
+        Assert.Contains(_root, advisory.Message);
+        Assert.Contains("ahead: 73", advisory.Message);
+    }
+
+    [Fact]
+    public async Task WorkspacePushWorker_DrainsSimulatedTwoThousandCommitBacklogWithOnePush()
+    {
+        var pushes = 0;
+        var config = new ConfigurationBuilder().Build();
+        Task<WorkspaceArtifactPushWorker.PushGitResult> Run(
+            string _, IReadOnlyList<string> args, TimeSpan __, CancellationToken ___)
+        {
+            if (args.Contains("--count"))
+                return Task.FromResult(new WorkspaceArtifactPushWorker.PushGitResult(0, "2000\n", "", GitProcessFailureKind.None));
+            if (args.Contains("--disk-usage"))
+                return Task.FromResult(new WorkspaceArtifactPushWorker.PushGitResult(0, "2147483648\n", "", GitProcessFailureKind.None));
+            pushes++;
+            return Task.FromResult(new WorkspaceArtifactPushWorker.PushGitResult(0, "", "", GitProcessFailureKind.None));
+        }
+        var worker = new WorkspaceArtifactPushWorker(
+            new WorkspaceArtifactPushQueue(),
+            NullLogger<WorkspaceArtifactPushWorker>.Instance,
+            config,
+            bus: null,
+            advisories: null,
+            time: TimeProvider.System,
+            runGit: Run);
+
+        Assert.True(await worker.ProcessAsync(new WorkspaceArtifactPushRequest(_root, "backlog"), default));
+        Assert.Equal(1, pushes);
+    }
+
+    [Fact]
+    public void ArtifactCommit_RefusesOversizedFileBeforeStaging()
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["TaskRepository"] = _root,
+                ["WorkspaceArtifacts:MaximumFileBytes"] = (1024 * 1024).ToString(),
+            })
+            .Build();
+        var service = new WorkspaceArtifactCommitService(
+            config, NullLogger<WorkspaceArtifactCommitService>.Instance);
+        var job = JobFolder("ASS-LARGE");
+        Directory.CreateDirectory(job);
+        File.WriteAllText(Path.Combine(job, "small.txt"), "evidence\n");
+        using (var stream = File.Create(Path.Combine(job, "large.bin")))
+            stream.SetLength(2 * 1024 * 1024);
+
+        var result = service.TryCommitArtifactUpload(_root, "ASS-LARGE", job, ["small.txt", "large.bin"]);
+
+        Assert.True(result.DidCommit, result.Error);
+        Assert.Contains("small.txt", RunGitCapture(_root, "show", "--name-only", "--format=", "HEAD"));
+        Assert.DoesNotContain("large.bin", RunGitCapture(_root, "show", "--name-only", "--format=", "HEAD"));
+        Assert.Contains("large.bin", RunGitCapture(_root, "status", "--short"));
+    }
+
+    [Fact]
+    public void TrackedSweep_CommitsOrdinaryDriftButLeavesRuntimeStateUnstaged()
+    {
+        Directory.CreateDirectory(Path.Combine(_root, "logs", "bus"));
+        File.WriteAllText(Path.Combine(_root, "logs", "bus", "events.jsonl"), "one\n");
+        File.WriteAllText(Path.Combine(_root, "tracked.txt"), "one\n");
+        RunGit(_root, "add", "logs/bus/events.jsonl", "tracked.txt");
+        RunGit(_root, "commit", "-q", "-m", "tracked files");
+        File.AppendAllText(Path.Combine(_root, "logs", "bus", "events.jsonl"), "two\n");
+        File.AppendAllText(Path.Combine(_root, "tracked.txt"), "two\n");
+
+        var result = _service.TryCommitTrackedSweep(_root);
+
+        Assert.True(result.DidCommit, result.Error);
+        var committed = RunGitCapture(_root, "show", "--name-only", "--format=", "HEAD");
+        Assert.Contains("tracked.txt", committed);
+        Assert.DoesNotContain("logs/bus", committed);
+        Assert.Contains("logs/bus/events.jsonl", RunGitCapture(_root, "status", "--short").Replace('\\', '/'));
+    }
+
     private string JobFolder(string id) =>
         Path.Combine(_root, "projects", "agent-taskboard", "tasks", "001", id);
 

@@ -667,6 +667,9 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.WorkspaceArtifactPushQueue>()
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService<AgentStudio.Pipeline.WorkspaceArtifactPushWorker>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.WorkspaceArtifactCommitService>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.WorkspaceRepositoryMaintenanceService>();
+if (!publicDemoExecutionProfile)
+    builder.Services.AddHostedService<AgentStudio.Pipeline.WorkspaceRepositoryMaintenanceWorker>();
 // Transition-Committer (WorkspaceEvidence): every successful lane transition
 // enqueues an evidence-commit wish (TaskStateMachine.EnqueueEvidence); the
 // worker debounces and commits the touched projects/<name> data paths per
