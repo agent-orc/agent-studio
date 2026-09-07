@@ -702,6 +702,7 @@ builder.Services.AddSingleton<GitService>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService<GitInventoryRefreshHostedService>();
 builder.Services.AddSingleton<ProjectIntegrationViewService>();
+builder.Services.AddSingleton<AgentStudio.Search.GlobalSearchIndexes>();
 builder.Services.AddSingleton<AgentStudio.Search.GlobalSearchService>();
 builder.Services.AddSingleton<ProjectSettingsService>();
 builder.Services.AddSingleton<GitCleanupService>();

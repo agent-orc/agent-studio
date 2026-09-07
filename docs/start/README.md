@@ -58,6 +58,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Frontend | [domains/frontend.md](../system/domains/frontend.md) |
 | Stable view URL contract | [contracts/stable-view-urls.md](../system/contracts/stable-view-urls.md) |
 | Global search palette and API | [domains/frontend.md#global-search](../system/domains/frontend.md#global-search) |
+| Global search is slow because one repository has a long history | [common-problems/global-search-slow-repository/](../system/common-problems/global-search-slow-repository/) |
 | Frontend navigation style guide | [frontend/style-guide/navigation.md](../quality/frontend/style-guide/navigation.md) |
 | CLI | [domains/cli.md](../system/domains/cli.md) |
 | Model routing policy (model, thinking level, risk floors, benchmark evidence) | [domains/model-routing-policy.md](../system/domains/model-routing-policy.md) |

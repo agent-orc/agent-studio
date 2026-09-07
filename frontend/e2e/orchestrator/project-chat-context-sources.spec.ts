@@ -37,7 +37,9 @@ async function installContextFixtures(page: Page) {
       summary: 'Review the context workspace sources', runtimeStatus: 'idle', queuePosition: 0,
     }],
   }));
-  await page.route('**/api/search**', route => json(route, {
+  // Scoped to the single-response route: `**/api/search**` would also swallow
+  // the palette's `/api/search/stream`, which speaks server-sent events.
+  await page.route('**/api/search?**', route => json(route, {
     tasks: [{ domain: 'tasks', projectName: PROJECT, title: 'Prepare context contracts', subtitle: '2-ready', taskKey: 'CTX-22', lane: '2-ready' }],
     files: [{ domain: 'files', projectName: PROJECT, title: 'context-envelope.ts', subtitle: 'src/context-envelope.ts', path: 'src/context-envelope.ts', isWiki: false }],
     commits: [{ domain: 'commits', projectName: PROJECT, title: 'feat: persist context receipts', subtitle: '9a11cbed', sha: '9a11cbed0123456789abcdef' }],

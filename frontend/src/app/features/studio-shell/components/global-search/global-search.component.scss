@@ -35,8 +35,21 @@
   kbd { color: var(--studio-fg-muted); font: 10px var(--font-mono); }
 }
 
+.search-elapsed { color: var(--studio-fg-muted); font: 10px var(--font-mono); font-variant-numeric: tabular-nums; }
+
 .search-results { min-height: 100px; overflow: auto; padding: var(--studio-spacing-2); }
+.search-group-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--studio-spacing-3); }
 .search-group h2 { margin: var(--studio-spacing-2) var(--studio-spacing-2) var(--studio-spacing-1); color: var(--studio-fg-muted); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+.search-group-status {
+  display: flex;
+  gap: var(--studio-spacing-2);
+  margin-right: var(--studio-spacing-2);
+  color: var(--studio-fg-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+
+  &[data-status='failed'] { color: var(--studio-fg-dim); }
+}
 .search-result {
   width: 100%;
   display: flex;
@@ -45,7 +58,10 @@
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
   border-radius: 4px;
   text-align: left;
-  &--active { background: var(--studio-nav-active-bg); box-shadow: inset 3px 0 0 var(--studio-nav-active-bar); }
+  // Selection is the background tint alone. A coloured left accent bar is a
+  // hard-rule violation (docs/quality/design/style-guide-hard-rules.md) and was
+  // redundant with the tint anyway.
+  &--active { background: var(--studio-nav-active-bg); }
 }
 .search-project-dot { width: 9px; height: 9px; flex: 0 0 auto; border-radius: 50%; }
 .search-result-copy { min-width: 0; flex: 1; display: grid; gap: var(--studio-spacing-1); strong, small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } strong { font-weight: 500; } small { color: var(--studio-fg-muted); } }

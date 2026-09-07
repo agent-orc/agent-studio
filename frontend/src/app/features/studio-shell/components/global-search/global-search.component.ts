@@ -1,9 +1,28 @@
-import { ChangeDetectionStrategy, Component, ElementRef, HostListener, computed, effect, inject, input, model, signal, viewChild } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, HostListener, computed, effect, inject, input, model, signal, viewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import type { TaskInfo } from '../../../../models/task.model';
 import { BoardFiltersService } from '../../../board';
 import { StudioTabStateService } from '../../services/studio-tab-state.service';
-import { GlobalSearchItem, GlobalSearchService } from './global-search.service';
+import { GlobalSearchItem, GlobalSearchService, SearchDomain } from './global-search.service';
+
+/** Debounce before a keystroke turns into a request. */
+const DEBOUNCE_MS = 250;
+/** After this long the palette says out loud that repository search takes a moment. */
+const SLOW_NOTICE_MS = 2_000;
+const TICK_MS = 100;
+
+export type SearchDomainStatus = 'idle' | 'searching' | 'done' | 'failed';
+
+/** What one domain row in the palette reports. */
+export interface SearchDomainState {
+  status: SearchDomainStatus;
+  /** Repositories answered / total. Zero for the task domain, which has no fan-out. */
+  completed: number;
+  total: number;
+  error: string | null;
+}
+
+const IDLE: SearchDomainState = { status: 'idle', completed: 0, total: 0, error: null };
 
 @Component({
   selector: 'app-global-search',
@@ -20,34 +39,53 @@ export class GlobalSearchComponent {
   readonly tasks = input<readonly TaskInfo[]>([]);
   readonly open = model(false);
   readonly query = signal('');
-  readonly remote = signal<{ commits: GlobalSearchItem[]; files: GlobalSearchItem[]; errors: Record<string, string> }>({ commits: [], files: [], errors: {} });
-  readonly loading = signal(false);
+  readonly remote = signal<{ tasks: GlobalSearchItem[]; commits: GlobalSearchItem[]; files: GlobalSearchItem[] }>(
+    { tasks: [], commits: [], files: [] });
+  readonly domains = signal<Record<SearchDomain, SearchDomainState>>({ tasks: IDLE, commits: IDLE, files: IDLE });
+  readonly elapsedMs = signal(0);
   readonly activeIndex = signal(0);
   readonly inputRef = viewChild<ElementRef<HTMLInputElement>>('searchInput');
   private readonly focusWhenOpened = effect(() => {
     if (this.open()) queueMicrotask(() => this.inputRef()?.nativeElement.focus());
   });
   private timer: ReturnType<typeof setTimeout> | null = null;
-  private requestVersion = 0;
+  private ticker: ReturnType<typeof setInterval> | null = null;
+  private controller: AbortController | null = null;
 
+  constructor() {
+    inject(DestroyRef).onDestroy(() => this.cancel());
+  }
+
+  readonly searching = computed(() => Object.values(this.domains()).some(state => state.status === 'searching'));
+  /** A calm note, only once the wait is long enough that silence would read as a hang. */
+  readonly showSlowNotice = computed(() => this.searching() && this.elapsedMs() >= SLOW_NOTICE_MS);
+  readonly elapsedLabel = computed(() => `${(this.elapsedMs() / 1000).toFixed(1)}s`);
+
+  /**
+   * Board-snapshot matches first (they need no round trip at all), then the
+   * indexed prompt and status matches the backend found, minus anything the
+   * board already covers.
+   */
   readonly taskResults = computed<GlobalSearchItem[]>(() => {
     const q = this.query().trim().toLowerCase();
     if (q.length < 2) return [];
-    return this.tasks()
+    const local = this.tasks()
       .filter(task => [task.key, task.title, task.state].some(value => value?.toLowerCase().includes(q)))
       .sort((a, b) => Number(b.key?.toLowerCase() === q) - Number(a.key?.toLowerCase() === q))
       .slice(0, 20)
       .map(task => ({
-        domain: 'tasks', projectName: task.projectName, projectColor: this.projectColor(task.projectName),
+        domain: 'tasks' as const, projectName: task.projectName, projectColor: this.projectColor(task.projectName),
         title: task.title, subtitle: task.key || task.id, taskKey: task.taskKey, lane: task.state,
       }));
+    const seen = new Set<string | undefined>(local.map(item => item.taskKey));
+    return [...local, ...this.remote().tasks.filter(item => !seen.has(item.taskKey))].slice(0, 20);
   });
 
   readonly groups = computed(() => [
-    { domain: 'tasks', label: 'Tasks', items: this.taskResults() },
-    { domain: 'commits', label: 'Commits', items: this.remote().commits },
-    { domain: 'files', label: 'Files', items: this.remote().files },
-  ] as const);
+    { domain: 'tasks' as const, label: 'Tasks', items: this.taskResults() },
+    { domain: 'commits' as const, label: 'Commits', items: this.remote().commits },
+    { domain: 'files' as const, label: 'Files', items: this.remote().files },
+  ]);
   readonly flatResults = computed(() => this.groups().flatMap(group => group.items));
 
   show(): void {
@@ -58,41 +96,124 @@ export class GlobalSearchComponent {
   close(): void {
     this.open.set(false);
     this.query.set('');
-    this.remote.set({ commits: [], files: [], errors: {} });
+    this.cancel();
+    this.reset();
   }
 
   onQuery(value: string): void {
     this.query.set(value);
     this.activeIndex.set(0);
-    if (this.timer) clearTimeout(this.timer);
+    // Every keystroke retires the search in flight: its results are for a query
+    // the operator has already moved on from, and leaving it running keeps a
+    // repository fan-out alive for nothing.
+    this.cancel();
+
     const q = value.trim();
     if (q.length < 2) {
-      this.remote.set({ commits: [], files: [], errors: {} });
-      this.loading.set(false);
+      this.reset();
       return;
     }
-    this.loading.set(true);
-    const version = ++this.requestVersion;
-    this.timer = setTimeout(() => this.api.search(q).subscribe({
-      next: result => {
-        if (version !== this.requestVersion) return;
-        this.remote.set({ commits: result.commits, files: result.files, errors: result.errors });
-        this.loading.set(false);
-      },
-      error: () => {
-        if (version !== this.requestVersion) return;
-        this.remote.set({ commits: [], files: [], errors: { search: 'Git results are temporarily unavailable.' } });
-        this.loading.set(false);
-      },
-    }), 120);
+    this.timer = setTimeout(() => this.run(q), DEBOUNCE_MS);
+  }
+
+  /** Stops the search in flight without closing the palette or dropping results. */
+  cancel(): void {
+    if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+    this.controller?.abort();
+    this.controller = null;
+    this.stopTicker();
+    this.domains.update(current => mapDomains(current, state =>
+      state.status === 'searching' ? { ...state, status: 'idle' } : state));
+  }
+
+  private reset(): void {
+    this.remote.set({ tasks: [], commits: [], files: [] });
+    this.domains.set({ tasks: IDLE, commits: IDLE, files: IDLE });
+    this.elapsedMs.set(0);
+  }
+
+  private async run(query: string): Promise<void> {
+    const controller = new AbortController();
+    this.controller = controller;
+    this.remote.set({ tasks: [], commits: [], files: [] });
+    this.domains.set(mapDomains({ tasks: IDLE, commits: IDLE, files: IDLE },
+      state => ({ ...state, status: 'searching' })));
+    this.startTicker();
+
+    try {
+      for await (const frame of this.api.stream(query, controller.signal)) {
+        if (controller.signal.aborted) return;
+        if (frame.event === 'tasks') {
+          this.remote.update(current => ({ ...current, tasks: frame.data.items }));
+          this.patch('tasks', { status: frame.data.error ? 'failed' : 'done', error: frame.data.error });
+        } else if (frame.event === 'progress') {
+          this.patchGit({ completed: frame.data.completed, total: frame.data.total });
+        } else if (frame.event === 'repository') {
+          // Append, never reorder: groups the operator can already read must not
+          // jump under the cursor when a slower repository answers.
+          this.remote.update(current => ({
+            ...current,
+            commits: [...current.commits, ...frame.data.commits],
+            files: [...current.files, ...frame.data.files],
+          }));
+          const failed = new Set(frame.data.failedDomains);
+          for (const domain of ['commits', 'files'] as const) {
+            this.patch(domain, {
+              completed: frame.data.completed,
+              total: frame.data.total,
+              error: failed.has(domain)
+                ? `${frame.data.projectName} could not be searched.`
+                : this.domains()[domain].error,
+            });
+          }
+        } else {
+          this.patchGit({ status: 'done' });
+        }
+      }
+    } catch {
+      if (controller.signal.aborted) return;
+      this.domains.update(current => mapDomains(current, state =>
+        state.status === 'searching'
+          ? { ...state, status: 'failed', error: 'Search is temporarily unavailable.' }
+          : state));
+    } finally {
+      if (this.controller === controller) {
+        this.controller = null;
+        this.stopTicker();
+        this.domains.update(current => mapDomains(current, state =>
+          state.status === 'searching' ? { ...state, status: 'done' } : state));
+      }
+    }
+  }
+
+  private patch(domain: SearchDomain, change: Partial<SearchDomainState>): void {
+    this.domains.update(current => ({ ...current, [domain]: { ...current[domain], ...change } }));
+  }
+
+  private patchGit(change: Partial<SearchDomainState>): void {
+    this.patch('commits', change);
+    this.patch('files', change);
+  }
+
+  private startTicker(): void {
+    this.elapsedMs.set(0);
+    const startedAt = Date.now();
+    this.stopTicker();
+    this.ticker = setInterval(() => this.elapsedMs.set(Date.now() - startedAt), TICK_MS);
+  }
+
+  private stopTicker(): void {
+    if (!this.ticker) return;
+    clearInterval(this.ticker);
+    this.ticker = null;
   }
 
   choose(item: GlobalSearchItem): void {
     if (item.domain === 'tasks' && item.taskKey) {
-      const task = this.tasks().find(candidate => candidate.taskKey === item.taskKey);
-      if (task) {
-        this.tabs.open({ kind: 'task', taskKey: task.taskKey });
-      }
+      // The key alone addresses the card. Indexed matches can come from the
+      // archive, which the board snapshot deliberately omits, so looking the
+      // task up in it first would silently swallow those results.
+      this.tabs.open({ kind: 'task', taskKey: item.taskKey });
     } else if (item.domain === 'commits' && item.sha) {
       this.boardFilters.setSoleProject(item.projectName);
       this.tabs.open({ kind: 'diff', commitSha: item.sha });
@@ -117,6 +238,8 @@ export class GlobalSearchComponent {
       return;
     }
     if (!this.open()) return;
+    // Escape closes, and closing cancels: one press both retires the search in
+    // flight and dismisses the palette, so Escape never leaves work running.
     if (event.key === 'Escape') { event.preventDefault(); this.close(); return; }
     const results = this.flatResults();
     if (event.key === 'ArrowDown' && results.length) {
@@ -135,4 +258,11 @@ export class GlobalSearchComponent {
     for (const char of name) hash = ((hash << 5) - hash + char.charCodeAt(0)) | 0;
     return `hsl(${Math.abs(hash) % 360} 58% 48%)`;
   }
+}
+
+function mapDomains(
+  current: Record<SearchDomain, SearchDomainState>,
+  change: (state: SearchDomainState) => SearchDomainState,
+): Record<SearchDomain, SearchDomainState> {
+  return { tasks: change(current.tasks), commits: change(current.commits), files: change(current.files) };
 }
