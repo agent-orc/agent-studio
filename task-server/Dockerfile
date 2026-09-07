@@ -6,6 +6,9 @@ COPY . ./
 RUN dotnet publish task-server/TaskServer.csproj -c Release -o /app /p:UseAppHost=false
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build /app ./
 # Same bootstrap variables as deploy/release/agent-orchestrator/config/server.env.template.
@@ -14,4 +17,4 @@ ENV LISTEN_URL=http://0.0.0.0:5071 \
     BACKUP_PATH=/var/lib/agent-orchestrator/backup
 VOLUME ["/var/lib/agent-orchestrator"]
 EXPOSE 5071
-ENTRYPOINT ["dotnet", "TaskServer.dll"]
+ENTRYPOINT ["dotnet", "task-server.dll"]

@@ -1,0 +1,45 @@
+services:
+  task-server:
+    environment:
+      AUTH: bearer
+      AUTH_TOKEN: ${SCENARIO_AUTH_TOKEN:?SCENARIO_AUTH_TOKEN is required}
+      AllowedHosts: "*"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:5071/readyz"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 5s
+
+  studio-bff:
+    environment:
+      TaskServer__AuthToken: ${SCENARIO_AUTH_TOKEN:?SCENARIO_AUTH_TOKEN is required}
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:5072/healthz"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 5s
+
+  orchestrator-engine:
+    depends_on:
+      task-server:
+        condition: service_healthy
+    environment:
+      CLIENT_ID: deployment-scenario-engine
+      CLIENT_CREDENTIAL: ${SCENARIO_AUTH_TOKEN:?SCENARIO_AUTH_TOKEN is required}
+      ALLOW_INSECURE_HTTP: "1"
+      POLL_SECONDS: "60"
+
+  scenario-fake-runner:
+    build:
+      context: .
+      dockerfile: testsupport/scenario/Dockerfile
+    profiles: ["runner"]
+    depends_on:
+      task-server:
+        condition: service_healthy
+    environment:
+      SCENARIO_AUTH_TOKEN: ${SCENARIO_AUTH_TOKEN:?SCENARIO_AUTH_TOKEN is required}
+    volumes:
+      - ${SCENARIO_OUTPUT_DIR:?SCENARIO_OUTPUT_DIR is required}:/scenario-output

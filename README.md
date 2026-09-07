@@ -54,6 +54,14 @@ To add execution capacity after the Studio is running, follow the
 contributors use the separate
 [contributor setup](./docs/operations/setup/contributor-setup.md).
 
+## Testing
+
+Every deployment card and release uses the same reduced, deterministic
+[deployment regression scenario](./docs/operations/testing/deployment-scenario.md).
+Run `scripts/scenario.sh --target inproc --level smoke` for the fast
+cross-platform gate, or `--target compose --level full` for the release proof.
+Each run produces JUnit XML, a Markdown step report, and linked evidence.
+
 ## More
 
 Agent Studio is part of the agent-orc ecosystem. It uses

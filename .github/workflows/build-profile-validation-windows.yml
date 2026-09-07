@@ -1,20 +1,21 @@
-name: Build profile validation (Windows)
+name: Card build gate
 
 on:
   push:
     branches: [main]
     tags: ['v*.*.*']
-    paths:
-      - 'backend/**'
-      - 'backend.Tests/**'
-      - '.github/workflows/build-profile-validation-windows.yml'
+  pull_request: {}
   workflow_dispatch:
 
 jobs:
   build-profile-validation:
-    name: Host-native dotnet profile
-    runs-on: windows-latest
-    timeout-minutes: 10
+    name: Host-native profile and scenario (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -22,8 +23,29 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
       - name: Validate host-native shell and retained pickup state
+        if: matrix.os == 'windows-latest'
         run: >-
           dotnet test backend.Tests/OrchestratorApi.Tests.csproj
           --filter "FullyQualifiedName=AgentStudio.Tests.BuildProfileValidationServiceTests.DotnetProfile_UsesHostShell_ValidatesGreenAndAllowsPickup|FullyQualifiedName=AgentStudio.Tests.ProjectSettingsServiceTests.ChangingOnlyTestFilter_PreservesPipelineReadyValidation"
           --logger "console;verbosity=normal"
+
+      - name: Run deployment smoke twice
+        shell: bash
+        env:
+          JOB_RESULTS_DIR: ${{ github.workspace }}/artifacts
+        run: |
+          scripts/scenario.sh --target inproc --level smoke --output "$JOB_RESULTS_DIR/deployment-smoke-1"
+          scripts/scenario.sh --target inproc --level smoke --output "$JOB_RESULTS_DIR/deployment-smoke-2"
+
+      - name: Upload deployment scenario reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-smoke-${{ matrix.os }}
+          path: artifacts/deployment-smoke-*/
+          if-no-files-found: error

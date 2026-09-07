@@ -50,6 +50,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Topic | Start here |
 |---|---|
 | Contribution and style conventions for all agents | [contribution-and-style-guide.html](contribution-and-style-guide.html) |
+| Deployment regression scenario and report contract | [operations/testing/deployment-scenario.md](../operations/testing/deployment-scenario.md) |
 | Runner | [domains/runner.md](../system/domains/runner.md) |
 | Pipeline | [domains/pipeline.md](../system/domains/pipeline.md) |
 | Quality Studio pipeline analysis policy | [pipeline domain](../system/domains/pipeline.md#quality-studio-analysis-steps) · [JSON schema](../app/schemas/quality-analysis-policy.schema.json) |

@@ -94,6 +94,19 @@ jobs:
             --filter "FullyQualifiedName~TaskServer.Tests.TopologyTests|FullyQualifiedName~TaskServer.Tests.ProtocolTests" \
             --logger "console;verbosity=normal"
 
+      - name: Test deployment scenario
+        env:
+          JOB_RESULTS_DIR: ${{ github.workspace }}/artifacts
+        run: scripts/scenario.sh --target compose --level full
+
+      - name: Upload deployment scenario report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-scenario-${{ github.sha }}
+          path: artifacts/deployment-scenario/
+          if-no-files-found: error
+
       - name: Lint and type-check frontend
         working-directory: frontend
         run: |

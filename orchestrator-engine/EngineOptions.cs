@@ -25,8 +25,16 @@ public sealed class EngineOptions
             throw new ArgumentException("SERVER_URL must be an absolute URL.");
         var isLoopback = server.IsLoopback
                          || IPAddress.TryParse(server.Host, out var address) && IPAddress.IsLoopback(address);
+        if (!string.Equals(server.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(server.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("SERVER_URL must use HTTP or HTTPS.");
+        var allowContainedHttp = string.Equals(
+            value("ALLOW_INSECURE_HTTP"),
+            "1",
+            StringComparison.Ordinal);
         if (!string.Equals(server.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
-            && !isLoopback)
+            && !isLoopback
+            && !allowContainedHttp)
             throw new ArgumentException("SERVER_URL must use HTTPS unless it is a loopback address.");
 
         var credential = value("CLIENT_CREDENTIAL")?.Trim();

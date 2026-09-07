@@ -17,6 +17,7 @@ if (args is ["--help"] or ["-h"])
           SERVER_URL
           CLIENT_ID
           CLIENT_CREDENTIAL
+          ALLOW_INSECURE_HTTP (1 only for a contained Compose network)
           REVIEW_CONCURRENCY
           COUNCIL_CONCURRENCY
           POST_PROCESSING_CONCURRENCY

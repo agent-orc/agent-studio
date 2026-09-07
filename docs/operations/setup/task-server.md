@@ -467,3 +467,8 @@ The test owns only its exact child PIDs and temporary directories. It never
 sweeps by process name. Its parent-PID assertions require Task Server, Studio
 BFF, and Runner to be siblings owned by the harness, so stopping Studio cannot
 implicitly stop either service.
+
+Deployment cards and releases also run the shared
+[deployment regression scenario](../testing/deployment-scenario.md). Use its
+`inproc smoke` target for a fast host-native gate, `compose full` for release
+topology, and `remote full` for control-plane or cutover evidence.

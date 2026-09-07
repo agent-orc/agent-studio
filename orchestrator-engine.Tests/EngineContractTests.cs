@@ -57,6 +57,28 @@ public sealed class EngineContractTests
     }
 
     [Fact]
+    public void Contained_compose_http_requires_explicit_opt_in_and_still_requires_credential()
+    {
+        var contained = new Dictionary<string, string?>
+        {
+            ["SERVER_URL"] = "http://task-server:5071",
+            ["CLIENT_ID"] = "compose-engine",
+            ["CLIENT_CREDENTIAL"] = "scenario-token",
+            ["ALLOW_INSECURE_HTTP"] = "1",
+        };
+
+        var options = EngineOptions.Parse(key => contained.GetValueOrDefault(key));
+
+        Assert.Equal("http://task-server:5071", options.ServerUrl);
+        contained.Remove("CLIENT_CREDENTIAL");
+        Assert.Contains("CLIENT_CREDENTIAL", Assert.Throws<ArgumentException>(
+            () => EngineOptions.Parse(key => contained.GetValueOrDefault(key))).Message);
+        contained["SERVER_URL"] = "ftp://task-server:21";
+        Assert.Contains("HTTP or HTTPS", Assert.Throws<ArgumentException>(
+            () => EngineOptions.Parse(key => contained.GetValueOrDefault(key))).Message);
+    }
+
+    [Fact]
     public void Version_surface_contains_release_and_git_sha()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

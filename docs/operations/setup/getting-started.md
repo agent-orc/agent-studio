@@ -116,9 +116,11 @@ Host is connected.
 
 ## Maintainer verification
 
-CI runs `scripts/compose-smoke-test.sh`, which starts the documented default
-stack, waits for both service health checks, loads the browser shell, and calls
-a real API endpoint.
+CI runs `scripts/compose-smoke-test.sh`, the compatibility entry point for the
+shared [deployment regression scenario](../testing/deployment-scenario.md).
+It starts the documented default stack plus the distributed Task Server, BFF,
+and Engine, waits for service health, checks the browser shell and a real API
+endpoint, then runs the six-step scenario smoke path from the fake Runner image.
 
 For a clean-machine proof, `scripts/compose-smoke-vm-test.sh` boots a pinned
 Ubuntu 24.04 cloud image with KVM acceleration, installs only Docker and Compose

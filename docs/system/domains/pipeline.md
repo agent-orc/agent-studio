@@ -646,7 +646,10 @@ definitions live in the Task Server, while execution lives in
 `orchestrator-engine`. The Engine receives the task payload and prior stage
 results only through the public API. Its `engine.env` contains bootstrap
 connectivity, identity/credential, lease timing, and concurrency caps, never
-project flow definitions, model routing, or gate policy.
+project flow definitions, model routing, or gate policy. HTTPS remains required
+off-loopback. The source Compose stack may set `ALLOW_INSECURE_HTTP=1` only for
+the authenticated, contained Docker network between Engine and Task Server;
+the option does not belong in a remote-host `engine.env`.
 
 A valid Remote Review report is evidence, not a lane decision. Infrastructure
 outcomes stay in Auto Review and retry the same immutable subject. A valid

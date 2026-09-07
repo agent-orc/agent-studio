@@ -1,0 +1,39 @@
+{
+  "$schema": "deployment-scenario.schema.json",
+  "id": "deployment-regression-v1",
+  "seed": 2739,
+  "clock": "2026-09-06T12:00:00Z",
+  "smokeStepCount": 6,
+  "fixture": {
+    "workspace": { "id": "wsp-deployment-scenario", "name": "Deployment scenario" },
+    "project": { "id": "prj-deployment-scenario", "name": "Deployment scenario", "prefix": "DSR" },
+    "dossier": { "taskId": "tsk-dossier", "taskKey": "DSR-1", "title": "Dossier: deployment decision", "decision": "approve" },
+    "epic": { "taskId": "tsk-epic", "taskKey": "DSR-2", "title": "Epic: deterministic deployment proof", "children": ["DSR-3", "DSR-4"] },
+    "tasks": [
+      { "taskId": "tsk-scenario-run", "taskKey": "DSR-3", "title": "Execute seeded deployment scenario", "state": "2-ready" },
+      { "taskId": "tsk-scenario-followup", "taskKey": "DSR-4", "title": "Verify restored scenario inventory", "state": "0-backlog" }
+    ],
+    "repository": {
+      "failingValue": "red",
+      "passingValue": "green",
+      "resultFile": "actual.txt",
+      "expectedFile": "expected.txt"
+    }
+  },
+  "steps": [
+    { "id": "bootstrap-principals", "handler": "bootstrap_principals", "levels": ["smoke", "full"], "assertions": [{ "type": "all_protocol_clients_supported" }] },
+    { "id": "register-project", "handler": "register_project", "levels": ["smoke", "full"], "assertions": [{ "type": "seed_inventory_exact" }] },
+    { "id": "register-runner", "handler": "register_runner", "levels": ["smoke", "full"], "assertions": [{ "type": "runner_registered" }] },
+    { "id": "create-task", "handler": "create_task", "levels": ["smoke", "full"], "assertions": [{ "type": "ready_task_present" }] },
+    { "id": "claim", "handler": "claim", "levels": ["smoke", "full"], "assertions": [{ "type": "fenced_claim_granted" }] },
+    { "id": "run-fake-cli", "handler": "run_fake_cli", "levels": ["smoke", "full"], "assertions": [{ "type": "failing_test_observed" }, { "type": "passing_test_observed" }, { "type": "commit_and_log_persisted" }, { "type": "task_in_auto_review" }] },
+    { "id": "auto-review", "handler": "auto_review", "levels": ["full"], "assertions": [{ "type": "fake_review_passed" }] },
+    { "id": "integrate", "handler": "integrate", "levels": ["full"], "assertions": [{ "type": "result_commit_integrated" }] },
+    { "id": "complete", "handler": "complete", "levels": ["full"], "assertions": [{ "type": "task_completed" }] },
+    { "id": "orchestrator-chat", "handler": "orchestrator_chat", "levels": ["full"], "assertions": [{ "type": "context_receipt_round_tripped" }] },
+    { "id": "dossier-decision", "handler": "dossier_decision", "levels": ["full"], "assertions": [{ "type": "decision_persisted" }] },
+    { "id": "backup", "handler": "backup", "levels": ["full"], "assertions": [{ "type": "backup_hash_recorded" }] },
+    { "id": "restore", "handler": "restore", "levels": ["full"], "assertions": [{ "type": "backup_restored_or_verified" }] },
+    { "id": "inventory-hash-equality", "handler": "inventory_hash_equality", "levels": ["full"], "assertions": [{ "type": "inventory_hash_equal" }] }
+  ]
+}
