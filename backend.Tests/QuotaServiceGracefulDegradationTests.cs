@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -65,6 +66,64 @@ public sealed class QuotaServiceGracefulDegradationTests : IDisposable
     }
 
     [Fact]
+    public async Task RefreshAsync_SuccessfulProbe_PersistsLastGoodReadingToDisk()
+    {
+        var service = NewService(new ScriptedProbe(_ => new QuotaSnapshot
+        {
+            CliType = "codex",
+            CliVersion = "codex-cli 0.149.0",
+            Plan = "Pro",
+            Source = "/status",
+            Windows = [new QuotaWindow { Label = "Weekly", UsedPct = 61 }]
+        }));
+
+        var fresh = await service.RefreshAsync("codex");
+
+        Assert.NotNull(fresh);
+        Assert.Null(fresh.ProbeFailedAt);
+        Assert.Null(fresh.Error);
+
+        var persisted = JsonSerializer.Deserialize<List<QuotaSnapshot>>(
+            File.ReadAllText(Path.Combine(_repoDir, ".runtime", "quota-cache.json")),
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+        var stored = Assert.Single(persisted!);
+        Assert.Equal("codex", stored.CliType);
+        Assert.Equal("Pro", stored.Plan);
+        Assert.Equal("codex-cli 0.149.0", stored.CliVersion);
+        Assert.Equal(61, Assert.Single(stored.Windows).UsedPct);
+    }
+
+    /// <summary>
+    /// Cold start after a backend restart: the on-disk last-good reading must be
+    /// served straight from the hydrated cache, without waiting on (or even
+    /// starting) a live probe. <see cref="ExplodingProbe"/> fails the test if the
+    /// read path ever probes synchronously.
+    /// </summary>
+    [Fact]
+    public async Task ColdStart_WithPersistedFile_ServesLastGoodWithoutProbing()
+    {
+        var seed = NewService(new ScriptedProbe(_ => new QuotaSnapshot
+        {
+            CliType = "codex",
+            CliVersion = "codex-cli 0.149.0",
+            Plan = "Pro",
+            Source = "/status",
+            Windows = [new QuotaWindow { Label = "Weekly", UsedPct = 61 }]
+        }));
+        await seed.RefreshAsync("codex");
+
+        // A second instance over the same TaskRepository == a backend restart.
+        var restarted = NewService(new ExplodingProbe());
+        var report = restarted.GetCached();
+
+        var snap = Assert.Single(report.Snapshots);
+        Assert.Equal("Pro", snap.Plan);
+        Assert.Equal("codex-cli 0.149.0", snap.CliVersion);
+        Assert.Equal(61, Assert.Single(snap.Windows).UsedPct);
+    }
+
+    [Fact]
     [Trait("Category", "MachineBound")]
     public async Task GetWithBackgroundRefresh_DoesNotWaitForSynchronousProbeStartup()
     {
@@ -123,6 +182,13 @@ public sealed class QuotaServiceGracefulDegradationTests : IDisposable
         public string CliType => "codex";
         public Task<QuotaSnapshot> ProbeAsync(CancellationToken ct)
             => Task.FromResult(script(Interlocked.Increment(ref _calls)));
+    }
+
+    private sealed class ExplodingProbe : IQuotaProbe
+    {
+        public string CliType => "codex";
+        public Task<QuotaSnapshot> ProbeAsync(CancellationToken ct)
+            => throw new InvalidOperationException("Cold-start read must not probe.");
     }
 
     private sealed class BlockingProbe(
