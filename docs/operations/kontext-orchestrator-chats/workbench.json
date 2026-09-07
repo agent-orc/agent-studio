@@ -6,9 +6,9 @@
   "entrypoint": "index.html",
   "status": "decided",
   "phase": "testing",
-  "updatedAt": "2026-08-11T14:45:00Z",
+  "updatedAt": "2026-08-17T00:00:00Z",
   "editedBy": "Operator bookkeeping via AGT-2621",
-  "statusReason": "Slices 1 through 5 were approved on 2026-08-10; AGT-2575 and AGT-2577 remain open, so this Dossier stays decided rather than documented.",
+  "statusReason": "Curation 2026-08-17: stays decided. The previous reason named AGT-2575 and AGT-2577 as open, which is no longer true: both are in lane 7-archive and the AGT-2577 orchestrator-chat-history surface exists in the frontend tree. Two things still block History. First, the source card AGT-2514 is in lane 5-human-review, so a source card of this Dossier is not terminal. Second, section 09 Implementation and Delivery record is empty, and this Dossier's own append-only rule says a card appears there only after its delivery contains a dated implementation entry; none of AGT-2572 through AGT-2577 has one.",
   "sourceTaskKeys": [
     "AGT-2514",
     "AGT-2572",

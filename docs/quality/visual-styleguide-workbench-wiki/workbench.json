@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "id": "visual-styleguide-workbench-wiki",
   "title": "Visual StyleGuide: page action bar",
-  "summary": "Review the shared page-head action bar across document, concept, Dossier, incident, and report page types in light and dark themes.",
+  "summary": "Review the shared page-head action bar across document, concept, Dossier, incident, and report page types in light and dark themes. [Closed to History 2026-08-17: the delivering card AGT-2282 is terminal (lane 7-archive) and the review is implemented, not pending. Verified in code: frontend/src/app/features/project-detail/components/page-action-bar/ carries the four fixed actions in the mandated order (Create Task in Project, Archive, Open in Orchestrator Chat, Pin to Home) plus the bounded per-type extras Build as feature and Create follow-up, with the pin-writes-home.json rule backed by backend/Features/Docs/ProjectDocsService.cs and covered by backend.Tests/WikiHomeTests.cs and frontend/e2e/project/page-action-bar.spec.ts. The stale phase decision-ready did not mean an operator decision was outstanding. Status moves active to documented, so the Dossier leaves the active list and stays readable under History.]",
   "entrypoint": "index.html",
-  "status": "active",
+  "status": "documented",
   "phase": "decision-ready",
-  "updatedAt": "2026-07-23T00:00:00Z",
+  "updatedAt": "2026-08-17T00:00:00Z",
   "sourceTaskKeys": [
     "AGT-2282"
   ],

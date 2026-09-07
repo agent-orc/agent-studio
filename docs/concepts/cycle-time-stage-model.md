@@ -9,6 +9,11 @@ does the time of a completed task go, stage by stage, and how much of it sits in
 the build/test gate and in integration. The view is a read model over evidence
 the platform already records; it adds no new writer.
 
+The evidence it reads is the task timeline ledger. For where that ledger sits
+among the platform's other signal streams, and for the still-open question of a
+cross-application event contract, see
+[`platform-architecture/telemetry-layer.md`](platform-architecture/telemetry-layer.md).
+
 Endpoint: `GET /api/projects/{project}/cycle-time?window=7d|30d|all`. The
 project handle accepts the watch-path name, the registry id (`PROJ-NNN`), or the
 short code. An invalid window returns `400`, an unknown project `404`.

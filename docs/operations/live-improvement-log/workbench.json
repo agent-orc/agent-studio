@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "id": "live-improvement-log",
   "title": "Live improvement log",
-  "summary": "Operator-ordered rolling log (2026-08-18): the orchestrator records improvement observations from live supervision over the coming hours. Every entry is reconciled against in-flight cards and existing dossiers before it may propose new work - dedup is the core discipline. Entries carry one of three verdicts: covered-by (existing key), operator-action (no ticket needed, a hand must move), or new-candidate (becomes a card only after a second sighting or operator nod).",
+  "summary": "Operator-ordered rolling log (2026-08-18): the orchestrator records improvement observations from live supervision over the coming hours. Every entry is reconciled against in-flight cards and existing dossiers before it may propose new work - dedup is the core discipline. Entries carry one of three verdicts: covered-by (existing key), operator-action (no ticket needed, a hand must move), or new-candidate (becomes a card only after a second sighting or operator nod). [Curation 2026-09-07 (AGT-2671): stays in the active list as a standing rolling log rather than a single-decision dossier, and is not closable - no related task key is fully terminal yet. The former status \"accepted\" and phase \"in-progress\" were outside the descriptor vocabulary (status: active | decision-pending | decided | documented | archived, phase: informational | shaping | testing | decision-ready) and made this dossier render as \"Descriptor needs repair\"; the descriptor repair in develop corrected them to decided/testing, which this pass adopts because it keeps the log in the active list.]",
   "entrypoint": "index.html",
   "status": "decided",
   "phase": "testing",
-  "updatedAt": "2026-08-18T09:00:00Z",
+  "updatedAt": "2026-09-07T00:00:00Z",
   "sourceTaskKeys": [],
   "relatedTaskKeys": [
     "AGT-2658",

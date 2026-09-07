@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "id": "board-statusmodell-ist-soll",
   "title": "Board-Statusmodell: IST-Karte und SOLL-Regeln",
-  "summary": "Entscheidungsreife Dossier zum Statusmodell des Boards. Sie kartiert alle Lane-Uebergaenge samt Ausloesern, Recovery und Edge-Cases, belegt die Widersprueche vom 28./29.07. und formuliert SOLL-Vertraege fuer Task-as-Truth, Multi-Runner-Takeover, Integration, Review, Accept und Archive. Der verpflichtende Brechpunkt-Katalog BP-01 bis BP-19 ist vollstaendig beantwortet.",
+  "summary": "Entscheidungsreife Dossier zum Statusmodell des Boards. Sie kartiert alle Lane-Uebergaenge samt Ausloesern, Recovery und Edge-Cases, belegt die Widersprueche vom 28./29.07. und formuliert SOLL-Vertraege fuer Task-as-Truth, Multi-Runner-Takeover, Integration, Review, Accept und Archive. Der verpflichtende Brechpunkt-Katalog BP-01 bis BP-19 ist vollstaendig beantwortet. [Curation 2026-08-18 (AGT-2671): DONE CHECK - the Robert decision (E1-E14) is still open, stays active. Durable IST-lane and escalation-category taxonomy identified as a candidate for docs/system/domains/tasks.md; not transferred this pass, recommend a dedicated follow-up.]",
   "entrypoint": "index.html",
   "status": "active",
   "phase": "decision-ready",
-  "updatedAt": "2026-07-30T01:32:12Z",
+  "updatedAt": "2026-08-18T12:00:00Z",
   "sourceTaskKeys": [
     "AGT-2424"
   ],

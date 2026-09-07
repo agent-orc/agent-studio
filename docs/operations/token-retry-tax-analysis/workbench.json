@@ -2,14 +2,15 @@
   "schemaVersion": 1,
   "id": "token-retry-tax-analysis",
   "title": "Token and retry tax, 11 to 12 August 2026",
-  "summary": "Decision dossier reconciling the observed 68 to 95 percent GPT weekly-quota rise against Codex token events, coding rounds, deterministic reviews, infrastructure incidents, API-equivalent cost, and concrete savings controls.",
+  "summary": "Decision dossier reconciling the observed 68 to 95 percent GPT weekly-quota rise against Codex token events, coding rounds, deterministic reviews, infrastructure incidents, API-equivalent cost, and concrete savings controls. [Curation 2026-08-17: stays decision-pending; no operator decision is recorded yet. The descriptor carried the source card key AGT-2652 in its key field instead of a document reference key, which made this Dossier render as \"Descriptor needs repair\"; the key is corrected to a document reference key and the required implementationTasks array is restored. The correction landed as AGT-W44, not AGT-W40: AGT-W40 is already held by the decision-briefing dossier, so reusing it would have produced a duplicate document key.]",
   "entrypoint": "index.html",
   "status": "decision-pending",
   "phase": "decision-ready",
-  "updatedAt": "2026-08-12T08:00:00Z",
+  "updatedAt": "2026-08-17T00:00:00Z",
   "sourceTaskKeys": [
     "AGT-2652"
   ],
+  "implementationTasks": [],
   "relatedTaskKeys": [
     "AGT-2646",
     "AGT-2648",
