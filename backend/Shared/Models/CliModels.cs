@@ -201,6 +201,13 @@ public static class ModelMetadataRegistry
         .SelectMany(e => new[] { e.Id }.Concat(e.Aliases ?? []).Select(id => (id, e)))
         .ToDictionary(x => x.id, x => x.e, StringComparer.OrdinalIgnoreCase);
 
+    // Persisted token receipts store the display label, not the id (a task.json
+    // durable record predates a later catalog rename/repricing). This index lets
+    // NormalizeId resolve a label back to its id so historical receipts price
+    // the same as a fresh fold (AGT-2740).
+    private static readonly IReadOnlyDictionary<string, ModelMetadata> ByLabel = Entries
+        .ToDictionary(e => e.Label, e => e, StringComparer.OrdinalIgnoreCase);
+
     // Detection-driven Codex default id, published by CodexModelDiscovery after
     // a live catalog fetch (house rule: derive from the installed CLI, do not
     // hardcode a catalog - AGT-2025). Volatile because it is read on request
@@ -294,8 +301,15 @@ public static class ModelMetadataRegistry
         return ById.TryGetValue(id.Trim(), out var metadata) ? metadata : null;
     }
 
+    /// <summary>Find a registry entry by its display label (e.g. "Claude Sonnet 5"), case-insensitive.</summary>
+    public static ModelMetadata? FindByLabel(string? label)
+    {
+        if (string.IsNullOrWhiteSpace(label)) return null;
+        return ByLabel.TryGetValue(label.Trim(), out var metadata) ? metadata : null;
+    }
+
     public static string NormalizeId(string? id)
-        => Find(id)?.Id ?? id?.Trim() ?? "";
+        => Find(id)?.Id ?? FindByLabel(id)?.Id ?? id?.Trim() ?? "";
 
     public static long? ContextWindowFor(string? id)
     {

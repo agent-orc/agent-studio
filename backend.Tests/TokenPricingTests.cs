@@ -185,4 +185,19 @@ public class TokenPricingTests
         Assert.Equal(dashed.Total, dotted.Total);
         Assert.Equal(ModelIds.ClaudeOpus47, dotted.ModelId);
     }
+
+    [Fact]
+    public void NormalizeId_ResolvesEveryRegistryLabelBackToItsOwnId()
+    {
+        // Drift guard (AGT-2740): a durable receipt can carry a registry
+        // display label instead of an id. FindByLabel/NormalizeId must
+        // resolve every current label back to the exact id that produced
+        // it, case-insensitively, or a historical receipt silently prices
+        // as unknown again the next time the catalog changes.
+        foreach (var entry in ModelMetadataRegistry.All)
+        {
+            Assert.Equal(entry.Id, ModelMetadataRegistry.NormalizeId(entry.Label));
+            Assert.Equal(entry.Id, ModelMetadataRegistry.FindByLabel(entry.Label.ToUpperInvariant())?.Id);
+        }
+    }
 }

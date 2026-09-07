@@ -150,7 +150,7 @@ public sealed class ProjectTokenReceiptReader
             entries.Add(new TaskTokenCall
             {
                 Ts = residualAt.Value,
-                Model = summary.LastModel,
+                Model = ResolveModelId(summary.LastModel),
                 ParticipantId = "agent:task-receipt",
                 InputTokens = residualInput,
                 OutputTokens = residualOutput,
@@ -182,7 +182,7 @@ public sealed class ProjectTokenReceiptReader
                     : call.ParticipantId,
                 TokenUsage = new OrchestratorTokenUsage
                 {
-                    Model = call.Model,
+                    Model = ResolveModelId(call.Model),
                     InputTokens = SafeInt(call.InputTokens),
                     OutputTokens = SafeInt(call.OutputTokens),
                     CacheReadTokens = SafeInt(call.CacheReadTokens),
@@ -191,6 +191,18 @@ public sealed class ProjectTokenReceiptReader
             };
         }
     }
+
+    /// <summary>
+    /// A durable receipt persists whatever <c>TaskTokenSummary.Entries[].Model</c>
+    /// carried at write time, which historically was the catalog display label
+    /// (e.g. "Claude Sonnet 5") rather than the model id. The price catalog only
+    /// matches on id, so folding a label straight back through pricing silently
+    /// reports it as unknown. Resolve label -&gt; id here, once, at the
+    /// receipt-&gt;entry boundary, so every downstream fold (aggregate, per-job,
+    /// heatmap) prices historical and current receipts the same way (AGT-2740).
+    /// </summary>
+    private static string? ResolveModelId(string? model)
+        => string.IsNullOrWhiteSpace(model) ? null : ModelMetadataRegistry.NormalizeId(model);
 
     private static IEnumerable<string> EnumerateTaskFolders(string watchPath)
     {

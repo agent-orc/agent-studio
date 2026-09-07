@@ -177,6 +177,25 @@ public class TokenSummaryTests
     }
 
     [Fact]
+    public void Summarize_LabelInsteadOfIdStillPrices()
+    {
+        // Durable task receipts historically persisted the catalog display
+        // label in TaskTokenCall.Model rather than the id (AGT-2740). A
+        // receipt round-trip must price identically to a fresh fold: label
+        // input has to resolve back to the id before pricing, not surface as
+        // an unknown model.
+        var entries = new[] { Entry("Claude Sonnet 5", 1_000_000, 100_000) };
+        var s = TokenSummaryService.Summarize("Demo", entries);
+
+        Assert.True(s.AllModelsPriced);
+        var model = Assert.Single(s.ByModel);
+        Assert.Equal("Claude Sonnet 5", model.Model);
+        Assert.True(model.ModelPriced);
+        Assert.True(model.ModelInCatalog);
+        Assert.True(model.EstimatedApiCostUsd > 0m);
+    }
+
+    [Fact]
     public void Summarize_ByModelUsesRegistryLabels()
     {
         var entries = new[]
