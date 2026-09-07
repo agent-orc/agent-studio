@@ -19,6 +19,7 @@
     <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
     <ProjectReference Include="..\contracts\TaskServer.Contracts\TaskServer.Contracts.csproj" />
     <ProjectReference Include="..\cli-hosting\AgentStudio.CliHosting.csproj" />
+    <ProjectReference Include="..\retention\AgentStudio.Retention.csproj" />
   </ItemGroup>
 
   <!-- Roslyn analyzer that flags silent (empty / comment-only) catch blocks so
