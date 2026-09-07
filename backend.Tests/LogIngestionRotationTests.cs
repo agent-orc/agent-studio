@@ -98,6 +98,29 @@ public sealed class LogIngestionRotationTests : IDisposable
         Assert.Equal(
             1,
             File.ReadLines(ignore).Count(line => line == CliOutputLogFile.RotationIgnorePattern));
+        Assert.Contains("/logs/bus/", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RuntimeRetentionDeletesOldBusAndAuthorityArchivesOnly()
+    {
+        var bus = Path.Combine(_root, "logs", "bus", "demo");
+        var metadata = Path.Combine(_root, ".metadata");
+        Directory.CreateDirectory(bus);
+        Directory.CreateDirectory(metadata);
+        var oldBus = Path.Combine(bus, "old.jsonl");
+        var newBus = Path.Combine(bus, "new.jsonl");
+        var oldAuthority = Path.Combine(metadata, "attempt-authority.archive-2025-01-01.json");
+        var liveAuthority = Path.Combine(metadata, "attempt-authority.json");
+        foreach (var path in new[] { oldBus, newBus, oldAuthority, liveAuthority }) File.WriteAllText(path, "{}\n");
+        File.SetLastWriteTimeUtc(oldBus, DateTime.UtcNow.AddDays(-31));
+        File.SetLastWriteTimeUtc(oldAuthority, DateTime.UtcNow.AddDays(-91));
+
+        Assert.Equal(2, CliOutputLogMaintenanceService.DeleteExpiredRuntimeFiles(_root, DateTimeOffset.UtcNow));
+        Assert.False(File.Exists(oldBus));
+        Assert.False(File.Exists(oldAuthority));
+        Assert.True(File.Exists(newBus));
+        Assert.True(File.Exists(liveAuthority));
     }
 
     private static void WriteOversizedLineLog(string path)

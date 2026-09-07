@@ -254,6 +254,36 @@ public sealed class WorkspaceArtifactCommitServiceTests : IDisposable
             RunGitCapture(_root, $"--git-dir={remote}", "rev-parse", "refs/heads/develop").Trim());
     }
 
+    [Fact]
+    public void ArtifactCommitRefusesClassCFileAbove50MiBAndLeavesItUnstaged()
+    {
+        var job = JobFolder("ASS-LARGE");
+        var results = Path.Combine(job, "results");
+        Directory.CreateDirectory(results);
+        var large = Path.Combine(results, "trace.zip");
+        using (var stream = File.Create(large)) stream.SetLength(50L * 1024 * 1024 + 1);
+
+        var result = _service.TryCommitArtifactUpload(_root, "ASS-LARGE", job, ["results/trace.zip"]);
+
+        Assert.False(result.Success);
+        Assert.StartsWith("oversize-refused", result.Error);
+        Assert.DoesNotContain("trace.zip", RunGitCapture(_root, "diff", "--cached", "--name-only"));
+    }
+
+    [Fact]
+    public void EvidenceCommitRefusesClassCFileAbove50MiB()
+    {
+        var job = JobFolder("ASS-EVIDENCE-LARGE");
+        Directory.CreateDirectory(Path.Combine(job, "logs"));
+        var large = Path.Combine(job, "logs", "cli-output.log");
+        using (var stream = File.Create(large)) stream.SetLength(50L * 1024 * 1024 + 1);
+
+        var result = _service.TryCommitEvidence(_root, [job], [], "evidence: large\n");
+
+        Assert.False(result.Success);
+        Assert.StartsWith("oversize-refused", result.Error);
+    }
+
     private string JobFolder(string id) =>
         Path.Combine(_root, "projects", "agent-taskboard", "tasks", "001", id);
 

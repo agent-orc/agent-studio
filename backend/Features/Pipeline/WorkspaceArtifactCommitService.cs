@@ -1,9 +1,9 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
+using AgentStudio.Retention;
 
 namespace AgentStudio.Pipeline;
 
@@ -30,11 +30,8 @@ public sealed class WorkspaceArtifactCommitService
     // collide on `.git/index.lock`. Keyed by resolved git root so distinct
     // repos never contend. Static so the single DI singleton and any test
     // instance pointed at the same repo share the gate.
-    private static readonly ConcurrentDictionary<string, object> RepoGates =
-        new(StringComparer.OrdinalIgnoreCase);
-
     private static object RepoGate(string gitRoot) =>
-        RepoGates.GetOrAdd(gitRoot, _ => new object());
+        RepositoryWriteGate.SyncRoot(gitRoot);
 
     public WorkspaceArtifactCommitService(
         IConfiguration configuration,
@@ -156,6 +153,17 @@ public sealed class WorkspaceArtifactCommitService
                 var add = RunGitRetryingIndexLock(gitRoot, addArgs);
                 if (add.Code != 0)
                     return WorkspaceArtifactCommitResult.Failed("git-add", add.ErrorText);
+
+                var refused = FindOversizeStagedFiles(gitRoot, pathspecs);
+                if (refused.Count > 0)
+                {
+                    Unstage(gitRoot, refused);
+                    _logger.LogWarning(
+                        "workspace-artifact-commit refused oversized class-c files jobId={JobId} files={Files} limitBytes={Limit}",
+                        jobId, string.Join(",", refused), ArtifactClassifier.DefaultRefuseAboveBytes);
+                    return WorkspaceArtifactCommitResult.Failed("oversize-refused",
+                        $"Class C file exceeds 50 MiB: {string.Join(", ", refused)}");
+                }
 
                 var changed = RunGit(gitRoot, ["diff", "--cached", "--quiet", "--", .. pathspecs]);
                 if (changed.Code == 0)
@@ -455,6 +463,17 @@ public sealed class WorkspaceArtifactCommitService
                         _logger.LogDebug("workspace-evidence exclude reset non-zero root={Root} error={Error}", gitRoot, reset.ErrorText);
                 }
 
+                var refused = FindOversizeStagedFiles(gitRoot, pathspecs);
+                if (refused.Count > 0)
+                {
+                    Unstage(gitRoot, refused);
+                    _logger.LogWarning(
+                        "workspace-evidence-commit refused oversized class-c files root={Root} files={Files} limitBytes={Limit}",
+                        gitRoot, string.Join(",", refused), ArtifactClassifier.DefaultRefuseAboveBytes);
+                    return WorkspaceArtifactCommitResult.Failed("oversize-refused",
+                        $"Class C file exceeds 50 MiB: {string.Join(", ", refused)}");
+                }
+
                 var diffArgs = new List<string> { "diff", "--cached", "--quiet", "--" };
                 diffArgs.AddRange(pathspecs);
                 var changed = RunGit(gitRoot, diffArgs);
@@ -507,6 +526,30 @@ public sealed class WorkspaceArtifactCommitService
             specs.Add(glob.Trim());
         }
         return specs;
+    }
+
+    private static List<string> FindOversizeStagedFiles(string gitRoot, IReadOnlyList<string> pathspecs)
+    {
+        var args = new List<string> { "diff", "--cached", "--name-only", "-z", "--" };
+        args.AddRange(pathspecs);
+        var listed = RunGit(gitRoot, args);
+        if (listed.Code != 0) return [];
+        var classifier = new ArtifactClassifier();
+        return listed.Out.Split('\0', StringSplitOptions.RemoveEmptyEntries)
+            .Where(relative =>
+            {
+                var path = Path.Combine(gitRoot, relative.Replace('/', Path.DirectorySeparatorChar));
+                return File.Exists(path) && classifier.IsCommitRefused(relative, new FileInfo(path).Length);
+            })
+            .ToList();
+    }
+
+    private static void Unstage(string gitRoot, IReadOnlyList<string> relativePaths)
+    {
+        if (relativePaths.Count == 0) return;
+        var args = new List<string> { "reset", "-q", "--" };
+        args.AddRange(relativePaths);
+        _ = RunGit(gitRoot, args);
     }
 
     /// <summary>Turn exclude globs into <c>:(exclude)</c> magic pathspecs (default

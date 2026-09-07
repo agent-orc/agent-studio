@@ -19,6 +19,9 @@ if (command.Kind == TaskServerCommandKind.Version)
     return 0;
 }
 
+if (command.Kind == TaskServerCommandKind.Retention)
+    return await RetentionCommand.RunAsync(command.Retention!, default);
+
 var builder = WebApplication.CreateBuilder(command.HostArguments);
 if (string.Equals(Environment.GetEnvironmentVariable("TASK_SERVER_PROFILE"), "local-compatibility", StringComparison.OrdinalIgnoreCase))
     builder.Configuration.AddJsonFile("appsettings.LocalCompatibility.json", optional: false, reloadOnChange: false);
