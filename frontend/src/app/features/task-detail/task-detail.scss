@@ -363,24 +363,12 @@
       text-transform: none;
       letter-spacing: normal;
     }
-    // Lane state pills — use --lane-* tokens that flip per theme.
-    // Was hardcoded Tailwind hexes; now reads the same lane palette
-    // the kanban columns use, so the detail-header state pill
-    // matches the column color cue.
-    .state--1-preparation { background: color-mix(in srgb, var(--lane-prep) 15%, transparent); color: var(--lane-prep); }
-    .state--2-ready { background: color-mix(in srgb, var(--lane-ready) 15%, transparent); color: var(--lane-ready); }
-    .state--3-progress { background: color-mix(in srgb, var(--lane-progress) 15%, transparent); color: var(--lane-progress); }
-    /* ADR-0025 lanes (auto-review = amber, human-review = sky); legacy
-       4-review and 5/6-completed selectors retained so older payloads
-       keep matching during the transition. */
-    .state--4-review { background: color-mix(in srgb, var(--lane-auto-review) 15%, transparent); color: var(--lane-auto-review); }
-    .state--4-auto-review { background: color-mix(in srgb, var(--lane-auto-review) 15%, transparent); color: var(--lane-auto-review); }
-    .state--5-human-review { background: color-mix(in srgb, var(--lane-human-review) 15%, transparent); color: var(--lane-human-review); }
-    .state--5e-escalated { background: color-mix(in srgb, var(--lane-escalated) 15%, transparent); color: var(--lane-escalated); }
-    .state--5-completed { background: color-mix(in srgb, var(--lane-completed) 15%, transparent); color: var(--lane-completed); }
-    .state--6-completed { background: color-mix(in srgb, var(--lane-completed) 15%, transparent); color: var(--lane-completed); }
-    .state--6-archive { background: color-mix(in srgb, var(--lane-archive) 15%, transparent); color: var(--lane-archive); }
-    .state--7-archive { background: color-mix(in srgb, var(--lane-archive) 15%, transparent); color: var(--lane-archive); }
+    // Lane state pill: the tint comes from the shared `.lane-tinted` class in
+    // src/styles/_lane-tone.scss, driven by the `data-lane` attribute on the
+    // element. The per-state colour map that used to live here (including the
+    // stale "human-review = sky" comment, while the token had long been
+    // purple) is exactly the drift AGT-2715 removed. Add new lanes to
+    // _lane-tone.scss, never here.
     /* "Do Next" — visible only on 2-ready cards. Uses the brand-orange
        accent to echo the start CTA on in-progress lanes. */
     .detail__do-next {

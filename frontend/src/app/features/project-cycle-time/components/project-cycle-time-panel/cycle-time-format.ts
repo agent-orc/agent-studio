@@ -3,6 +3,7 @@ import type {
   CycleTimeStageKey,
   CycleTimeWindow,
 } from '../../models/project-cycle-time.model';
+import { laneShortName } from '../../../../models/lane-presentation';
 
 /**
  * Compact duration for dense tables: `42s`, `3.5m`, `2.1h`, `1.4d`. One unit,
@@ -51,24 +52,14 @@ export function formatTimestamp(iso: string | null | undefined): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-/** Short lane labels for the matrix and the transition tables. Unknown lanes keep their key. */
+/**
+ * Short lane labels for the matrix and the transition tables. Wording comes
+ * from `models/lane-presentation.ts`; an absent lane keeps the panel's own
+ * "unknown" placeholder because a missing transition endpoint is not a lane.
+ */
 export function laneLabel(lane: string | null | undefined): string {
-  switch (lane) {
-    case '0-backlog': return 'Backlog';
-    case '1-preparation': return 'Preparation';
-    case '1a-orchestrator-prep': return 'Orchestrator prep';
-    case '2-ready': return 'Ready';
-    case '3-progress': return 'Progress';
-    case '3a-failed-pickup': return 'Failed pickup';
-    case '3b-code-not-complete': return 'Code not complete';
-    case '4-auto-review': return 'Post Processing';
-    case '5-human-review': return 'Human Review';
-    case '5e-escalated': return 'Escalated';
-    case '6-completed': return 'Completed';
-    case '7-archive': return 'Archive';
-    case '': case null: case undefined: return 'unknown';
-    default: return lane;
-  }
+  if (!lane) return 'unknown';
+  return laneShortName(lane);
 }
 
 /**

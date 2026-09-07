@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, OnInit, computed, inject, input, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { TaskService } from '../../../../services/task.service';
-import { TaskState } from '../../../../models/task.model';
+import { LANES_IN_BOARD_ORDER } from '../../../../models/lane-presentation';
 import type { PipelineCatalogueStep, PipelineStepSetting } from '../../../../features/task-pipeline';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import {
@@ -198,18 +198,15 @@ export class ProjectWorkflowSectionComponent implements OnInit {
   }
 }
 
-/** Role copy per lane, keyed by canonical lane state. Board order via SORTABLE_LANES. */
-const LANE_ROLES: Record<string, string> = {
-  [TaskState.Backlog]: 'Captured but not yet scheduled.',
-  [TaskState.Preparation]: 'Intake and preparation before the task is workable.',
-  [TaskState.Ready]: 'Queued and ready for pickup.',
-  [TaskState.Progress]: 'A run is executing the task (runner-owned).',
-  [TaskState.AutoReview]: 'Post Processing — automated review gates run here (orchestrator-owned).',
-  [TaskState.HumanReview]: 'Awaiting human review.',
-  [TaskState.Escalated]: 'Escalated for operator attention.',
-  [TaskState.Completed]: 'Delivered and accepted.',
-  [TaskState.Archive]: 'Archived; out of the active workflow.',
-};
+/**
+ * Role copy per lane, keyed by canonical lane state. Board order via
+ * SORTABLE_LANES. The sentences are the shared ones from
+ * `models/lane-presentation.ts`, so this section explains a lane in the same
+ * words the Result header and the lane guides use.
+ */
+const LANE_ROLES: Record<string, string> = Object.fromEntries(
+  LANES_IN_BOARD_ORDER.map((lane) => [lane.state, lane.sentence]),
+);
 
 const AUTO_PUSH_LABELS: Record<AutoPushStrategy, string> = {
   'never': 'Never',

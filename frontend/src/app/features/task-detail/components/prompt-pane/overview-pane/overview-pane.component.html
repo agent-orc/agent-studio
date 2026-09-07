@@ -24,7 +24,7 @@
         <span class="ov-subline__sep" aria-hidden="true">·</span>
       }
       <span class="ov-lane-pill ov-subline__lane" data-testid="overview-title-lane"
-            [class]="'ov-lane-pill state--' + job().state" [attr.data-state]="job().state">
+            [attr.data-lane]="job().state" [attr.data-state]="job().state">
         <span class="ov-lane-pill__dot" aria-hidden="true">●</span>
         {{ laneLabel(job().state) }}
       </span>

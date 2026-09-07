@@ -186,8 +186,8 @@
                     [cacTooltip]="'Next task in lane'"
                     (click)="onTriageNext(detail.info)">›</button>
             <span class="studio-tab-actions-sep" aria-hidden="true"></span>
-            <select class="studio-tab-action studio-tab-action--lane-select"
-                    [class]="'studio-tab-action studio-tab-action--lane-select state--' + studioPagerLaneState()"
+            <select class="studio-tab-action studio-tab-action--lane-select lane-tinted"
+                    [attr.data-lane]="studioPagerLaneState()"
                     [value]="studioPagerLaneState()"
                     data-testid="studio-lane-select"
                     aria-label="Page through lane"

@@ -288,6 +288,38 @@
   --lane-archive:      #6e6e6e;
   --lane-failed:       var(--color-mocha-red);
 
+  // ---------------------------------------------------------------------------
+  // Lane tone — one token per lane, named by `LanePresentation.tone`
+  // (src/app/models/lane-presentation.ts). This is the layer every surface that
+  // colours a lane reads: the board column header dot, the detail header lane
+  // chip, the Result header dot. Before AGT-2715 each of those picked its own
+  // `--lane-*` entry (or a raw hex), which is how `5-human-review` ended up
+  // blue in the header and amber in the Result tab at the same time.
+  //
+  // Deliberately aliases rather than duplicates the palette above: a custom
+  // property is substituted at use time, so these resolve to whatever the
+  // active theme declared for `--lane-*`. That keeps both themes correct
+  // without a second copy in the light block.
+  //
+  // Slugs mirror the lane key, so `--studio-lane-<slug>` is mechanically
+  // derivable from `TaskState`. Lanes with no palette entry of their own share
+  // the closest neighbour instead of inventing an eleventh hue.
+  // ---------------------------------------------------------------------------
+  --studio-lane-backlog:           var(--lane-backlog);
+  --studio-lane-preparation:       var(--lane-prep);
+  --studio-lane-orchestrator-prep: var(--lane-prep);
+  --studio-lane-ready:             var(--lane-ready);
+  --studio-lane-ready-intake:      var(--lane-prep);
+  --studio-lane-progress:          var(--lane-progress);
+  --studio-lane-failed-pickup:     var(--lane-failed);
+  --studio-lane-code-not-complete: var(--lane-failed);
+  --studio-lane-auto-review:       var(--lane-auto-review);
+  --studio-lane-human-review:      var(--lane-human-review);
+  --studio-lane-escalated:         var(--lane-escalated);
+  --studio-lane-completed:         var(--lane-completed);
+  --studio-lane-archive:           var(--lane-archive);
+  --studio-lane-unknown:           var(--studio-fg-muted);
+
   // Board nav lane counters. Subtle, titlebar/sidebar-grade pigments distinct
   // from the saturated kanban lane colours so the Explorer stays calm.
   --studio-board-nav-lane-ready-fg:        var(--color-slate-300);

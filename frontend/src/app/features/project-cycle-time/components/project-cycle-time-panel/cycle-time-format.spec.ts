@@ -50,8 +50,11 @@ describe('cycle-time formatting', () => {
   it('labels lanes and bands matrix counts on a square-root scale', () => {
     expect(laneLabel('4-auto-review')).toBe('Post Processing');
     expect(laneLabel('5e-escalated')).toBe('Escalated');
+    expect(laneLabel('5-human-review')).toBe('Human review');
     expect(laneLabel('')).toBe('unknown');
-    expect(laneLabel('9-custom')).toBe('9-custom');
+    // An unrecognised lane is humanised by the shared lane presentation
+    // rather than printed as a raw key (AGT-2715).
+    expect(laneLabel('9-custom')).toBe('Custom');
 
     expect(matrixLevel(0, 100)).toBe(0);
     expect(matrixLevel(5, 0)).toBe(0);

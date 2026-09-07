@@ -5,6 +5,7 @@
       <div class="result__meta" role="group" aria-label="Run summary" data-testid="result-summary-meta">
         <span class="result__case"
               [attr.data-tone]="outcomeTone()"
+              [attr.data-lane]="verdict().lane"
               [attr.data-outcome]="verdict().status || verdict().kind"
               data-testid="result-case-badge"
               [cacTooltip]="verdict().detail">

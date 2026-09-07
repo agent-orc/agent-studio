@@ -1792,7 +1792,14 @@
   // projected <app-detail-header>, so this <select> is the detail view's
   // path to move the task to an arbitrary lane. Drawn as a bordered pill
   // with an explicit chevron so it reads as an interactive control, not a
-  // static label; the `state--*` class tints it to the active lane color.
+  // static label.
+  //
+  // Colour: the lane's own tone, resolved from the `data-lane` attribute by
+  // src/styles/_lane-tone.scss. This is the chip in the operator's 2026-09-06
+  // report — it said "Review" in a colour of its own while the Result header
+  // called the same lane something else in a second colour (AGT-2715). It now
+  // reads "Human review" in the Human review hue, matching the board column
+  // and the Result header dot.
   &--lane-select {
     appearance: none;
     -webkit-appearance: none;
@@ -1802,7 +1809,9 @@
     padding: 0 24px 0 10px;
     font-family: inherit;
     font-weight: 600;
-    color: var(--studio-fg);
+    // Resting colour + tint come from `.lane-tinted[data-lane]`
+    // (src/styles/_lane-tone.scss), which the element also carries. Restating
+    // them here would be a second place to change a lane's colour.
     background-color: transparent;
     background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
                       linear-gradient(135deg, currentColor 50%, transparent 50%);
@@ -1810,9 +1819,15 @@
     background-size: 5px 5px, 5px 5px;
     background-repeat: no-repeat;
 
+    // Hover strengthens the same lane tint rather than swapping to a neutral
+    // foreground. Restating `color` here is load-bearing: the base
+    // `.studio-tab-action:hover` rule sets `--studio-fg-strong`, and its
+    // pseudo-class makes it outrank the unhovered `--lane-select` declaration,
+    // so without this the lane silently loses its hue the moment the pointer
+    // crosses the chip.
     &:hover:not([disabled]) {
-      background-color: var(--studio-bg-hover);
-      color: var(--studio-fg-strong);
+      background-color: color-mix(in srgb, var(--studio-lane-tone, var(--studio-bg-hover)) 24%, transparent);
+      color: var(--studio-lane-tone, var(--studio-fg-strong));
       border-color: currentColor;
     }
     &:focus-visible {

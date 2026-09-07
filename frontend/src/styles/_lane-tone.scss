@@ -1,0 +1,70 @@
+// ---------------------------------------------------------------------------
+// Lane tone resolution (AGT-2715)
+// ---------------------------------------------------------------------------
+// The one place a lane key becomes a colour. A surface that wants to render in
+// its lane's tone stamps `data-lane="<TaskState key>"` on an element and reads
+// `var(--studio-lane-tone)` in its own SCSS:
+//
+//   <span class="column__lane-dot" [attr.data-lane]="state()"></span>
+//   .column__lane-dot { background: var(--studio-lane-tone); }
+//
+// The custom property inherits, so stamping the attribute on a container tones
+// every descendant that reads it. Both themes are covered for free: the
+// `--studio-lane-*` tokens in `_tokens-semantic.scss` alias the themed
+// `--lane-*` palette and are substituted at use time.
+//
+// Rules:
+//   - Never map a lane key to a colour in component SCSS. Add the lane here.
+//   - Never read a `--lane-*` palette entry directly for a lane-tinted surface;
+//     read `--studio-lane-tone` so the board, the header chip, and the Result
+//     header can never disagree.
+//   - The name that rides along with the colour comes from the same source:
+//     `LANE_PRESENTATION` in `src/app/models/lane-presentation.ts`.
+//
+// Global (unencapsulated) on purpose: the attribute is stamped by components
+// across several features, and an emulated-encapsulation copy per component is
+// exactly the duplication this file removes.
+
+[data-lane] { --studio-lane-tone: var(--studio-lane-unknown); }
+
+[data-lane='0-backlog']             { --studio-lane-tone: var(--studio-lane-backlog); }
+[data-lane='1-preparation']         { --studio-lane-tone: var(--studio-lane-preparation); }
+[data-lane='1a-orchestrator-prep']  { --studio-lane-tone: var(--studio-lane-orchestrator-prep); }
+[data-lane='1b-needs-human-review'] { --studio-lane-tone: var(--studio-lane-human-review); }
+[data-lane='2-ready']               { --studio-lane-tone: var(--studio-lane-ready); }
+[data-lane='2-ready-intake']        { --studio-lane-tone: var(--studio-lane-ready-intake); }
+[data-lane='3-progress']            { --studio-lane-tone: var(--studio-lane-progress); }
+[data-lane='3a-failed-pickup']      { --studio-lane-tone: var(--studio-lane-failed-pickup); }
+[data-lane='3b-code-not-complete']  { --studio-lane-tone: var(--studio-lane-code-not-complete); }
+[data-lane='4-review']              { --studio-lane-tone: var(--studio-lane-auto-review); }
+[data-lane='4-auto-review']         { --studio-lane-tone: var(--studio-lane-auto-review); }
+[data-lane='5-human-review']        { --studio-lane-tone: var(--studio-lane-human-review); }
+[data-lane='5e-escalated']          { --studio-lane-tone: var(--studio-lane-escalated); }
+[data-lane='6-completed']           { --studio-lane-tone: var(--studio-lane-completed); }
+[data-lane='7-archive']             { --studio-lane-tone: var(--studio-lane-archive); }
+
+// Shared 15%-tint chip surface. Used by the detail header lane select and any
+// other pill that names a lane, so the chip background and the dot beside it
+// are provably the same hue.
+//
+// The `[data-lane]` qualifier is load-bearing, not decoration. It raises the
+// selector to (0,2,0) so it outranks the light-theme form-control safety net in
+// `styles.scss` (`html[data-studio-theme='light'] select`, (0,1,2)), which
+// otherwise repaints these chips #1a1a1a in light mode only — a lane that was
+// correctly coloured in dark and grey in light. It also reads correctly: an
+// element with no lane stamped has no lane tint to apply.
+.lane-tinted[data-lane] {
+  background: color-mix(in srgb, var(--studio-lane-tone) 15%, transparent);
+  color: var(--studio-lane-tone);
+}
+
+// The lane's colour cue, sized to match the Result header's outcome dot
+// (`.result__case-dot`). Style-guide R1 sanctions a dot for status; a lane
+// must never be marked with a left accent bar.
+.lane-tone-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--studio-lane-tone);
+}

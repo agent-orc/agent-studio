@@ -1,6 +1,8 @@
 import type { CliExecution, TaskOutcomeIssue, TaskSummaryStatus } from '../../../../models/task.model';
 import type { PipelineExecutionRecord } from '../../../task-pipeline';
 import type { OutcomeAssessment } from '../agent-outcome.util';
+import { TaskState } from '../../../../models/task.model';
+import { lanePresentation } from '../../../../models/lane-presentation';
 
 /** Legacy visual tone retained for selectors and color-token compatibility. */
 export type ProtocolVerdictKind = 'ok' | 'problem' | 'unclear';
@@ -11,6 +13,12 @@ export interface RunOutcomeSignal {
   status: AuthoritativeRunOutcomeStatus;
   label: string;
   detail: string;
+  /**
+   * Lane key when the signal *is* a lane (`source === 'lane'`). Surfaces stamp
+   * it as `data-lane` so the run outcome renders in the lane's own tone rather
+   * than the severity colour. Null for every other source.
+   */
+  lane?: string | null;
 }
 
 export interface ProtocolVerdict {
@@ -22,6 +30,11 @@ export interface ProtocolVerdict {
   emoji: string;
   label: string;
   detail: string;
+  /**
+   * Lane key when the leading signal is a lane, else null. The Result header
+   * stamps it as `data-lane` to pick up `--studio-lane-tone`.
+   */
+  lane: string | null;
   /**
    * Run duration as written by the runner into the `# Status` header of
    * status.md (e.g. `4 min`). Surfaced as a compact inline stat beside the
@@ -62,7 +75,7 @@ export function deriveProtocolVerdict(input: ProtocolVerdictInputs): ProtocolVer
   if (input.isRunning) {
     return presentation('unclear', 'Running', 'Agent is still working. No terminal outcome exists for this run yet.', [
       signal('execution', 'unclear', 'Run is active', 'The current CLI process is still running.'),
-    ], input.statusMarkdown);
+    ], input.statusMarkdown, null);
   }
 
   const signals = collectSignals(input);
@@ -77,7 +90,9 @@ export function deriveProtocolVerdict(input: ProtocolVerdictInputs): ProtocolVer
     ));
   }
   const leading = resolveAuthoritativeRunOutcome(signals)!;
-  return presentation(leading.status, leading.label, leading.detail, signals, input.statusMarkdown);
+  return presentation(
+    leading.status, leading.label, leading.detail, signals, input.statusMarkdown, leading.lane ?? null,
+  );
 }
 
 const OUTCOME_RANK: Record<AuthoritativeRunOutcomeStatus, number> = {
@@ -157,10 +172,15 @@ function collectSignals(input: ProtocolVerdictInputs): RunOutcomeSignal[] {
       break;
   }
 
-  if (input.laneState === '5-human-review' || input.laneState === '5e-escalated') {
-    signals.push(signal('lane', 'needs-decision', 'Human review lane', 'The task is waiting for a human decision.'));
-  } else if (input.laneState === '6-completed' || input.laneState === '7-archive') {
-    signals.push(signal('lane', 'succeeded', 'Completed lane', `The task is in ${input.laneState}.`));
+  // A lane signal names its lane exactly as the board column and the detail
+  // header chip do, and carries the lane key so the Result header can render in
+  // that lane's own tone instead of a generic severity colour (AGT-2715). It
+  // used to read "Human review lane" here, "Review" in the header chip, and
+  // "Human review" after a downstream badge rewrote the string.
+  if (input.laneState === TaskState.HumanReview || input.laneState === TaskState.Escalated) {
+    signals.push(laneSignal(input.laneState, 'needs-decision'));
+  } else if (input.laneState === TaskState.Completed || input.laneState === TaskState.Archive) {
+    signals.push(laneSignal(input.laneState, 'succeeded'));
   }
 
   if (input.summaryStatus === 'failed') {
@@ -241,7 +261,17 @@ function activitySignal(activity: OutcomeAssessment): RunOutcomeSignal {
 }
 
 function signal(source: RunOutcomeSignal['source'], status: AuthoritativeRunOutcomeStatus, label: string, detail: string): RunOutcomeSignal {
-  return { source, status, label, detail };
+  return { source, status, label, detail, lane: null };
+}
+
+/**
+ * Build the `lane` signal for a lane key. Label and detail come from
+ * {@link LANE_PRESENTATION}, so the Result header, the board column, and the
+ * detail header chip cannot name the same lane differently.
+ */
+function laneSignal(state: string, status: AuthoritativeRunOutcomeStatus): RunOutcomeSignal {
+  const lane = lanePresentation(state);
+  return { source: 'lane', status, label: lane.name, detail: lane.sentence, lane: state };
 }
 
 function presentation(
@@ -250,10 +280,11 @@ function presentation(
   detail: string,
   signals: RunOutcomeSignal[],
   markdown: string | null | undefined,
+  lane: string | null,
 ): ProtocolVerdict {
   const kind: ProtocolVerdictKind = status === 'failed' ? 'problem' : status === 'succeeded' ? 'ok' : 'unclear';
   const emoji = status === 'failed' ? '🔴' : status === 'succeeded' ? '🟢' : status === 'needs-decision' ? '🟠' : '🟡';
-  return { kind, status, signals, emoji, label, detail, duration: parseDuration(markdown) };
+  return { kind, status, signals, emoji, label, detail, lane, duration: parseDuration(markdown) };
 }
 
 const DURATION_RE = /^\s*-\s*Duration:\s*(.+?)\s*$/im;

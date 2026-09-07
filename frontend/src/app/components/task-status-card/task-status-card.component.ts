@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, ViewEncapsulation, computed, input } from '@angular/core';
 import type { TaskInfo } from '../../models/task.model';
-import { TaskState } from '../../models/task.model';
+import { laneShortName } from '../../models/lane-presentation';
 import { projectIdentity } from '../../services/project-identity.util';
 import { cliTypeLabel } from '../../services/format.util';
 import { InfoButtonComponent } from '../info-button/info-button.component';
@@ -66,23 +66,11 @@ export class TaskStatusCardComponent {
 }
 
 /**
- * Lane label resolver. Matches the labels used in the overview pane so the
- * card and the Overview tab agree on terminology.
+ * Lane label resolver. Reads the shared lane presentation so the card, the
+ * Overview tab, and the board column agree on terminology.
  */
 function laneLabelFor(state: string): string {
-  switch (state) {
-    case TaskState.Preparation:    return 'Preparation';
-    case TaskState.OrchestratorPrep: return 'Orchestrator Prep';
-    case TaskState.Ready:          return 'Ready';
-    case TaskState.Progress:       return 'In Progress';
-    case '4-review':               return 'Review';
-    case TaskState.AutoReview:     return 'Post Processing';
-    case TaskState.HumanReview:    return 'Review';
-    case TaskState.Escalated:      return 'Escalated';
-    case TaskState.Completed:      return 'Delivered';
-    case TaskState.Archive:        return 'Archive';
-    default:                       return state || '';
-  }
+  return laneShortName(state);
 }
 
 function formatRelative(iso: string): string {

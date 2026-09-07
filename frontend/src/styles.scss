@@ -6,6 +6,9 @@
 @use 'styles/tokens-primitives';
 @use 'styles/tokens-semantic';
 @use 'styles/components-semantic';
+// Lane tone — resolves `data-lane="<TaskState>"` into `--studio-lane-tone`.
+// Pairs with `src/app/models/lane-presentation.ts` (AGT-2715).
+@use 'styles/lane-tone';
 // Deck-Panel v1 — the one bounded-panel shape for the Project Deck.
 // docs/concepts/visual-style-guide/deck-panel-v1.md (AGT-2337 / AGT-2280).
 @use 'styles/deck-panel';

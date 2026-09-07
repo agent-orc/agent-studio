@@ -17,9 +17,12 @@ export function outcomeDecisionBadge(outcome: ProtocolVerdict | null): DecisionB
     ? 'danger'
     : status === 'succeeded' ? 'ok' : status === 'needs-decision' ? 'warn' : 'neutral';
   const severity: TooltipSeverity = tone === 'danger' ? 'error' : tone === 'warn' ? 'warn' : tone === 'ok' ? 'success' : 'info';
+  // No label rewriting here: the verdict already carries the shared lane
+  // wording. This used to patch 'Human review lane' into 'Human review',
+  // which is how one lane ended up with two names in two panes (AGT-2715).
   return {
     verdict: status,
-    label: outcome.label === 'Human review lane' ? 'Human review' : outcome.label,
+    label: outcome.label,
     tone,
     severity,
     tooltip: { title: `Run outcome: ${outcome.label}`, body: outcome.detail },

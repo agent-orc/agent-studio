@@ -4,6 +4,7 @@ import { forkJoin, of } from 'rxjs';
 import { catchError, map } from 'rxjs/operators';
 import { FormsModule } from '@angular/forms';
 import { TaskState, type CliType, type ComponentRoutingResolution, type TagRegistryEntry, type TaskKind, type TaskMode, type WatchPathEntry } from '../../../../models/task.model';
+import { lanePresentation } from '../../../../models/lane-presentation';
 import type { CliModelInfo } from '../../../../features/cli';
 import { TaskService } from '../../../../services/task.service';
 import { TagRegistryStore } from '../../../../services/tag-registry.store';
@@ -27,10 +28,13 @@ export interface LaneOption {
 }
 /** Manual create targets stop before orchestrator-owned Progress. */
 export const CREATE_LANE_OPTIONS: readonly LaneOption[] = [
-  { state: TaskState.Backlog,     label: 'Backlog',     icon: '🗒️' },
-  { state: TaskState.Preparation, label: 'Preparation', icon: '📋' },
-  { state: TaskState.Ready,       label: 'Ready',       icon: '📦' },
-];
+  TaskState.Backlog,
+  TaskState.Preparation,
+  TaskState.Ready,
+].map((state) => {
+  const presentation = lanePresentation(state);
+  return { state, label: presentation.shortName, icon: presentation.glyph };
+});
 
 const PENDING_PREFIX = 'pending-attachment-';
 

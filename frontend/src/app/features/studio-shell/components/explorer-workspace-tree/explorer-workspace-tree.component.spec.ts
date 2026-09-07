@@ -292,7 +292,9 @@ describe('ExplorerWorkspaceTreeComponent', () => {
 
     expect(tipFor('studio-explorer-project-board-count-ready-Alpha')).toMatchObject({ title: 'Ready' });
     expect(tipFor('studio-explorer-project-board-count-progress-Alpha')).toMatchObject({ title: 'In Progress' });
-    expect(tipFor('studio-explorer-project-board-count-human-review-Alpha')).toMatchObject({ title: 'Human Review' });
+    // "Human review" is the one lane wording, shared with the board column
+    // header, the detail header chip, and the Result tab (AGT-2715).
+    expect(tipFor('studio-explorer-project-board-count-human-review-Alpha')).toMatchObject({ title: 'Human review' });
   });
 
   it('renders a capped, stably ordered dot dashboard with numeric a11y text', () => {

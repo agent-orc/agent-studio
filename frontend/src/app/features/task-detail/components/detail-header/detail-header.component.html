@@ -115,8 +115,8 @@
     </span>
   }
   <select #stateSelect
-          class="detail__state detail__state--select"
-          [class]="'detail__state detail__state--select state--' + selectedLane()"
+          class="detail__state detail__state--select lane-tinted"
+          [attr.data-lane]="selectedLane()"
           [value]="selectedLane()"
           [cacTooltip]="'Select which lane to page through'"
           data-testid="detail-state-select"

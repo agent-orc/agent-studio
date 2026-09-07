@@ -52,7 +52,7 @@
               <span class="meta-row__sep" aria-hidden="true">·</span>
               <span class="desc-meta__state"
                     [attr.data-state]="info.state"
-                    [class]="'desc-meta__state state--' + info.state">
+                    [attr.data-lane]="info.state">
                 <span class="desc-meta__state-dot" aria-hidden="true">●</span>
                 {{ laneLabel(info.state) }}
               </span>

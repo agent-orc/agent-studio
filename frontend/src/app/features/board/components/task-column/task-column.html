@@ -48,6 +48,7 @@
       <div class="column__header">
         <span class="column__icon" [attr.data-testid]="'lane-header-avatar-' + state()"
               aria-hidden="true">{{ icon() }}</span>
+        <span class="lane-tone-dot" [attr.data-lane]="state()" [attr.data-testid]="'lane-tone-dot-' + state()" aria-hidden="true"></span>
         <h2 class="column__title" [attr.data-testid]="'lane-title-' + state()"
             [cacTooltip]="title()">{{ title() }}</h2>
         <span class="column__count" [attr.data-testid]="'lane-count-' + state()">

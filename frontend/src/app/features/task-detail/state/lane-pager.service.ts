@@ -1,5 +1,6 @@
 import { Injectable, computed, signal } from '@angular/core';
-import { TaskInfo, TaskState } from '../../../models/task.model';
+import { TaskInfo } from '../../../models/task.model';
+import { LANES_IN_BOARD_ORDER } from '../../../models/lane-presentation';
 import { taskUrlKey } from './task-url';
 
 /**
@@ -34,19 +35,17 @@ export interface LanePagerSnapshot {
 
 const STORAGE_KEY = 'app:lanePager:v2';
 
-export const LANE_LABELS: Record<string, string> = {
-  [TaskState.Backlog]:          'Backlog',
-  [TaskState.Preparation]:      'Preparation',
-  [TaskState.OrchestratorPrep]: 'Orchestrator Prep',
-  [TaskState.Ready]:            'Ready',
-  [TaskState.Progress]:         'In Progress',
-  [TaskState.CodeNotComplete]:  'Code not complete',
-  [TaskState.AutoReview]:       'Post Processing',
-  [TaskState.HumanReview]:      'Review',
-  [TaskState.Escalated]:        'Escalated',
-  [TaskState.Completed]:        'Delivered',
-  [TaskState.Archive]:          'Archive',
-};
+/**
+ * Lane key -> short display name, in board order.
+ *
+ * Projection of {@link LANES_IN_BOARD_ORDER}; the strings themselves live in
+ * `models/lane-presentation.ts`. Kept as an exported record because callers
+ * also read its key order as the canonical lane ordering (`app.ts` epic
+ * sub-task rank, `epic-rollup-pane` lane grouping).
+ */
+export const LANE_LABELS: Record<string, string> = Object.fromEntries(
+  LANES_IN_BOARD_ORDER.map((lane) => [lane.state, lane.shortName]),
+);
 
 @Injectable({ providedIn: 'root' })
 export class LanePagerService {

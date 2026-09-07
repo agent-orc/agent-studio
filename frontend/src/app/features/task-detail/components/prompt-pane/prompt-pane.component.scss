@@ -71,18 +71,9 @@
   padding: 2px 8px;
   border-radius: 999px;
   background: var(--studio-bg-hover);
-  color: var(--lane-backlog);
-
-  &.state--0-backlog            { color: var(--lane-backlog); }
-  &.state--1-preparation        { color: var(--lane-prep); }
-  &.state--1a-orchestrator-prep { color: var(--lane-prep); }
-  &.state--2-ready              { color: var(--lane-ready); }
-  &.state--3-progress           { color: var(--lane-progress); }
-  &.state--4-auto-review        { color: var(--lane-auto-review); }
-  &.state--5-human-review       { color: var(--lane-human-review); }
-  &.state--5e-escalated         { color: var(--lane-escalated); }
-  &.state--6-completed          { color: var(--lane-completed); }
-  &.state--7-archive            { color: var(--lane-archive); }
+  // One lane, one hue: `--studio-lane-tone` is resolved from the `data-lane`
+  // attribute by src/styles/_lane-tone.scss (AGT-2715).
+  color: var(--studio-lane-tone);
 }
 .desc-meta__state-dot {
   font-size: 0.65em;

@@ -1,4 +1,4 @@
-import { TaskState } from '../../../../../models/task.model';
+import { laneName } from '../../../../../models/lane-presentation';
 import type { StudioIconName } from '../../../../../components/studio-icon/studio-icon.component';
 import type { PipelineStepStatus, StepKind } from '../../../../task-pipeline';
 
@@ -61,21 +61,9 @@ export function stepStatusLabel(status: PipelineDisplayStatus): string {
   }
 }
 
+/** Lane display name. Wording lives in `models/lane-presentation.ts`. */
 export function laneLabel(state: string): string {
-  switch (state) {
-    case TaskState.Backlog:          return 'Backlog';
-    case TaskState.Preparation:      return 'In Preparation';
-    case TaskState.OrchestratorPrep: return 'Orchestrator Prep';
-    case '1b-needs-human-review':    return 'Needs Human Review';
-    case TaskState.Ready:            return 'Ready';
-    case TaskState.Progress:         return 'In Progress';
-    case TaskState.AutoReview:       return 'Post Processing';
-    case TaskState.HumanReview:      return 'Review';
-    case TaskState.Escalated:        return 'Escalated';
-    case TaskState.Completed:        return 'Delivered';
-    case TaskState.Archive:          return 'Archive';
-    default:                         return state ?? '';
-  }
+  return laneName(state);
 }
 
 export function formatTokens(value: number): string {

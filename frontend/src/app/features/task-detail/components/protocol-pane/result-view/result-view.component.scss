@@ -51,6 +51,14 @@
   &[data-tone="info"]    { --result-tone: var(--studio-accent-3); }
   &[data-tone="problem"] { --result-tone: var(--severity-high); }
   &[data-tone="neutral"] { --result-tone: var(--studio-fg-muted); }
+
+  // When the run outcome IS a lane, the badge reads in that lane's tone rather
+  // than a generic severity colour, so "Human review" here is the same hue as
+  // the Human review column header and the header lane chip (AGT-2715).
+  // `--studio-lane-tone` is resolved from the `data-lane` attribute by
+  // src/styles/_lane-tone.scss, in both themes. Declared last so it wins over
+  // the severity branches above.
+  &[data-lane] { --result-tone: var(--studio-lane-tone); }
 }
 
 .result__case-dot {

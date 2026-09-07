@@ -1,4 +1,5 @@
-import { CliType, TaskMode, TaskState } from '../models/task.model';
+import { CliType, TaskMode } from '../models/task.model';
+import { laneShortName } from '../models/lane-presentation';
 
 /**
  * Pure formatting helpers used by both the board and detail views.
@@ -38,10 +39,14 @@ export function formatResetIn(epochSeconds: number, now: number): string {
   return `in ${Math.floor(hrs / 24)} d`;
 }
 
+/**
+ * Display name for a lane key. Delegates to the lane presentation module so
+ * the board, the detail header, and every fallback `<option>` say the same
+ * word. It used to special-case two lanes and slug the rest, which is how
+ * `5-human-review` reached the UI as the bare string "human-review".
+ */
 export function stateLabel(state: string): string {
-  if (state === TaskState.AutoReview) return 'Post Processing';
-  if (state === TaskState.Completed) return 'Delivered';
-  return state.replace(/^\d+-/, '');
+  return laneShortName(state);
 }
 
 export function formatTime(dateStr: string): string {
