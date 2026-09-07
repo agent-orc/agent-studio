@@ -32,6 +32,13 @@ should explain when a pin is below the policy floor.
 routes in this policy. Add a default tier only after controlled comparisons
 show a repeatable benefit over `medium` or `xhigh`.
 
+`gpt-6-astra` is **not yet tiered**. It is onboarded as a known model so the
+picker can offer it (or explain its absence) when the installed codex-cli lists
+it, but it has no routing tier, is not the product default, and has no cohort
+in the benchmark below. Whether it becomes a tier or the default is a separate
+operator decision; until then it is selectable only as an explicit pin, and an
+explicit pin is not evidence that it clears any correctness floor.
+
 ## Weighted decision
 
 Score the task at intake from information available before implementation. Use

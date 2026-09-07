@@ -66,6 +66,13 @@ CLI execution tests.
   because the adapter can still hand a bad shape to the live CLI.
 - Sandbox and permission behavior must be explicit per CLI. Do not hide a
   permission block behind a generic failure.
+- A CLI's model catalog is the known-model registry union live discovery. A
+  model the registry knows for that CLI's vendor but the installed CLI does not
+  offer stays in the catalog as unavailable with an attributable note, and the
+  picker renders it disabled: known-but-unavailable is disabled, not hidden. A
+  model only the CLI reports stays selectable. Reasoning ladders and default
+  levels come from the CLI when it reports them; the static
+  `CliThinkingLevels` table is the fallback, never an overwrite.
 - Quota probes are observability surfaces. Preserve stable event names and
   useful error context when editing nearby code.
 - Quota reads are cache-only request paths. `GET /api/cli/quota` must never

@@ -24,10 +24,74 @@ public sealed class CodexDetectedDefaultCollection
 [Collection(CodexDetectedDefaultCollection.Name)]
 public sealed class CodexDetectedDefaultTests : IDisposable
 {
-    public CodexDetectedDefaultTests() => ModelMetadataRegistry.SetDetectedCodexDefault(null);
+    public CodexDetectedDefaultTests() => Reset();
 
-    // Never leak a detected default into sibling tests that assume the baseline.
-    public void Dispose() => ModelMetadataRegistry.SetDetectedCodexDefault(null);
+    // Never leak a detected default or ladder into sibling tests that assume
+    // the baseline.
+    public void Dispose() => Reset();
+
+    private static void Reset()
+    {
+        ModelMetadataRegistry.SetDetectedCodexDefault(null);
+        ModelMetadataRegistry.SetDetectedCodexLadders(null);
+    }
+
+    [Fact]
+    public void ThinkingLevels_FollowTheCliLadder_OverTheStaticTable()
+    {
+        // The static table answers gpt-6 with the drifted minimal..xhigh
+        // ladder; the installed CLI is the source of truth (AGT-2707).
+        Assert.Equal(
+            ["minimal", "low", "medium", "high", "xhigh"],
+            ModelMetadataRegistry.ThinkingLevelsFor(CliTypes.Codex, ModelIds.Gpt6Astra));
+
+        ModelMetadataRegistry.SetDetectedCodexLadders(
+        [
+            new CliModelInfo
+            {
+                Id = ModelIds.Gpt6Astra,
+                ThinkingLevels = ["low", "medium", "high", "xhigh", "max", "ultra"],
+                DefaultThinkingLevel = "medium"
+            }
+        ]);
+
+        Assert.Equal(
+            ["low", "medium", "high", "xhigh", "max", "ultra"],
+            ModelMetadataRegistry.ThinkingLevelsFor(CliTypes.Codex, ModelIds.Gpt6Astra));
+        Assert.Equal("medium",
+            ModelMetadataRegistry.DefaultThinkingLevelForCli(CliTypes.Codex, ModelIds.Gpt6Astra));
+        // A rung only the CLI knows about survives task-level normalization.
+        Assert.Equal("max",
+            ModelMetadataRegistry.ResolveThinkingLevel(CliTypes.Codex, ModelIds.Gpt6Astra, "MAX"));
+        Assert.Equal("ultra",
+            ModelMetadataRegistry.ResolveThinkingLevel(CliTypes.Codex, ModelIds.Gpt6Astra, "ultra"));
+        // An out-of-ladder request lands on the CLI's own default, not the top rung.
+        Assert.Equal("medium",
+            ModelMetadataRegistry.ResolveThinkingLevel(CliTypes.Codex, ModelIds.Gpt6Astra, "minimal"));
+        // The static ladder still answers a model the CLI reported nothing for.
+        Assert.Equal(
+            ["minimal", "low", "medium", "high", "xhigh"],
+            ModelMetadataRegistry.ThinkingLevelsFor(CliTypes.Codex, ModelIds.Gpt55));
+    }
+
+    [Fact]
+    public void DetectedLadders_DoNotLeakIntoOtherClis()
+    {
+        ModelMetadataRegistry.SetDetectedCodexLadders(
+        [
+            new CliModelInfo
+            {
+                Id = ModelIds.ClaudeOpus5,
+                ThinkingLevels = ["ultra"],
+                DefaultThinkingLevel = "ultra"
+            }
+        ]);
+
+        Assert.Equal(["low", "medium", "high", "xhigh", "max"],
+            ModelMetadataRegistry.ThinkingLevelsFor(CliTypes.Claude, ModelIds.ClaudeOpus5));
+        Assert.Equal("high",
+            ModelMetadataRegistry.DefaultThinkingLevelForCli(CliTypes.Claude, ModelIds.ClaudeOpus5));
+    }
 
     [Fact]
     public void DefaultForCli_Codex_FallsBackToGpt55_WhenNothingDetected()
