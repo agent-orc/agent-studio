@@ -35,8 +35,29 @@
   kbd { color: var(--studio-fg-muted); font: 10px var(--font-mono); }
 }
 
+// Elapsed time is compared against itself tick by tick, so the digits must not
+// shift width while it counts.
+.search-elapsed { color: var(--studio-fg-muted); font: 11px var(--font-mono); font-variant-numeric: tabular-nums; }
+
 .search-results { min-height: 100px; overflow: auto; padding: var(--studio-spacing-2); }
-.search-group h2 { margin: var(--studio-spacing-2) var(--studio-spacing-2) var(--studio-spacing-1); color: var(--studio-fg-muted); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+.search-group-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--studio-spacing-3);
+  margin: var(--studio-spacing-2) var(--studio-spacing-2) var(--studio-spacing-1);
+}
+.search-group h2 { margin: 0; color: var(--studio-fg-muted); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+.search-group-status {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--studio-fg-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  &--failed { color: var(--studio-fg-dim); }
+}
 .search-result {
   width: 100%;
   display: flex;
@@ -45,11 +66,12 @@
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
   border-radius: 4px;
   text-align: left;
-  &--active { background: var(--studio-nav-active-bg); box-shadow: inset 3px 0 0 var(--studio-nav-active-bar); }
+  // Active row is a background tint only: the hard design rules forbid a
+  // coloured left accent bar on a row.
+  &--active { background: var(--studio-nav-active-bg); }
 }
 .search-project-dot { width: 9px; height: 9px; flex: 0 0 auto; border-radius: 50%; }
 .search-result-copy { min-width: 0; flex: 1; display: grid; gap: var(--studio-spacing-1); strong, small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } strong { font-weight: 500; } small { color: var(--studio-fg-muted); } }
 .search-badge { padding: var(--studio-spacing-1) var(--studio-spacing-2); color: var(--studio-fg-dim); background: var(--studio-bg-editor); border: 1px solid var(--studio-border); border-radius: 9px; font-size: 10px; }
-.search-hint, .search-loading, .search-error { margin: var(--studio-spacing-4); color: var(--studio-fg-muted); text-align: center; }
-.search-error { color: var(--studio-fg-dim); }
+.search-hint { margin: var(--studio-spacing-4); color: var(--studio-fg-muted); text-align: center; }
 footer { display: flex; gap: var(--studio-spacing-4); padding: var(--studio-spacing-2) var(--studio-spacing-4); color: var(--studio-fg-muted); border-top: 1px solid var(--studio-border); font-size: 10px; }

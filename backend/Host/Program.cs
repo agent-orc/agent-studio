@@ -695,7 +695,12 @@ if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService<IntakeHostedService>();
 builder.Services.AddSingleton<GitService>();
 builder.Services.AddSingleton<ProjectIntegrationViewService>();
+builder.Services.AddSingleton<AgentStudio.Search.GlobalSearchIndex>();
 builder.Services.AddSingleton<AgentStudio.Search.GlobalSearchService>();
+// Keeps the palette's task blob warm so the first keystroke is an in-memory
+// scan; without it the first query after a snapshot publish pays the rebuild.
+if (!publicDemoExecutionProfile)
+    builder.Services.AddHostedService<AgentStudio.Search.GlobalSearchIndexWarmer>();
 builder.Services.AddSingleton<ProjectSettingsService>();
 builder.Services.AddSingleton<GitCleanupService>();
 builder.Services.AddSingleton<GitBranchRetentionService>();

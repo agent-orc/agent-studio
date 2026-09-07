@@ -15,18 +15,58 @@ or paths on each project's working branch. Task matches are ranked immediately
 from the in-memory board snapshot, with an exact task key first and a warm
 response target below 300 ms.
 
-Repository-backed results use
-`GET /api/search?q=<query>&domains=tasks,commits,files&limit=<count>`. The
-`domains` value is a comma-separated subset of `tasks`, `commits`, and `files`;
-`limit` is optional and bounded by the backend. The JSON response contains the
-normalized `query`, an array for each requested domain, per-domain `errors`,
-and `durationMs`. Git commit and file lookup reuse the HEAD-keyed cache rather
-than maintaining a search index.
+**Indexes, not per-query spawns.** Every domain is materialized once per
+underlying revision and matched in memory afterwards. File and commit lists are
+cached per repository HEAD (`git ls-files` once, a bounded `git log` window of
+the newest 2,000 commits once); the cache key carries the repository root only,
+never the query, so a new search term spawns no git process. Card text is cached
+per `TaskIndexCache` snapshot generation and rebuilt incrementally: a rebuild
+re-reads only the cards whose `prompt.md`/`status.md` changed, and a background
+warmer normally absorbs the rebuild before an operator types. Repositories are
+searched in parallel with a bounded degree.
+
+**Endpoints.** `GET /api/search?q=<query>&domains=tasks,commits,files&limit=<count>`
+returns one JSON payload with the normalized `query`, an array per requested
+domain, per-domain `errors`, and `durationMs`. The `domains` value is a
+comma-separated subset of `tasks`, `commits`, and `files`; `limit` is optional
+and bounded by the backend.
+
+`GET /api/search/stream` takes the same parameters and answers as server-sent
+events so the palette is never blocked by the slowest repository:
+
+| Event | Payload | Order |
+|---|---|---|
+| `meta` | `query`, `repositories` (how many the git domains will visit) | first |
+| `tasks` | `items`, `durationMs`, `error` | before any repository frame |
+| `repository` | `name`, `index`, `total`, `commits`, `files`, `durationMs`, `commitsCache`, `filesCache`, `commitsError`, `filesError` | one per repository, in completion order |
+| `done` | `durationMs`, `errors` | last |
+
+`index` counts completions, so it is the progress counter the palette renders as
+"i of n repositories". Errors are reported per domain, so a failing commit walk
+never blanks out the file results from the same repository. Disconnecting
+cancels the request, and the backend kills the git children still walking. New
+domains (for example dossiers) slot in as additional named events without
+changing the existing ones.
+
+**Palette behaviour.** Keystrokes debounce for 250 ms and every keystroke aborts
+the stream already in flight. Each domain row reports its own state: searching
+with `i of n repositories`, done with a result count, or the error that domain
+hit. An elapsed timer runs while a search is open and, after two seconds, the
+palette notes that repository search can take a moment. Results append in
+arrival order, so rows the operator is already reading never move. Escape stops
+a running search and keeps what arrived; a second Escape closes the palette.
 
 Results are grouped by domain and carry project identity. Commit results open
 the diff surface, documentation files open the Wiki, and other files open the
 project Git view. Queries shorter than two characters return empty result
 groups, and a failed domain reports an error without hiding successful domains.
+
+**Observability.** `global-search-completed` carries per-domain durations
+(`taskMs`, `gitMs`), the repository count, and a per-repository
+`cache=<name>=<commits>/<files>` hit-or-miss breakdown. A search past five
+seconds also logs `global-search-slow` naming the slowest repository. See
+[global-search-slow-repository](../../operations/common-problems/global-search-slow-repository/)
+when that warning appears.
 
 ## Entry Points
 
