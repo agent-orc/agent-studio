@@ -1,0 +1,231 @@
+{
+  "nowUtc": "2026-09-06T21:00:00Z",
+  "note": "Replayable fixture matrix for the eight findings in docs/operations/orchestrator-waechter/index.html section 10.1. Every entry reconstructs the signals the Task Server already held on the evening of 2026-09-06; each one must produce exactly one Watcher case. Affected card keys are reconstructions of the observed cards, while manualTickets names the cards an operator actually wrote by hand that evening.",
+  "fixtures": [
+    {
+      "id": "probe-error-repeat",
+      "dossierRow": 1,
+      "finding": "Quota probes stale for 8 h (Claude launcher stub)",
+      "expectedClass": "repetition",
+      "expectedRule": "probe-error-repeat",
+      "manualTickets": ["AGT-2705", "AGT-2706"],
+      "note": "The Codex hook modal was the same rule keyed on a second CLI. WatcherDedupeAndRestartTests replays that variant to prove one case per CLI.",
+      "signals": {
+        "probes": [
+          {
+            "cliType": "claude",
+            "observedAtUtc": "2026-09-06T12:50:00Z",
+            "cliVersion": "2.4.1"
+          },
+          {
+            "cliType": "claude",
+            "observedAtUtc": "2026-09-06T13:00:00Z",
+            "cliVersion": "2.4.1",
+            "probeFailedAtUtc": "2026-09-06T13:00:00Z",
+            "error": "launcher returned the interactive stub instead of a usage report (exit 0, 41 bytes)"
+          },
+          {
+            "cliType": "claude",
+            "observedAtUtc": "2026-09-06T15:00:00Z",
+            "cliVersion": "2.4.1",
+            "probeFailedAtUtc": "2026-09-06T15:00:00Z",
+            "error": "launcher returned the interactive stub instead of a usage report (exit 0, 41 bytes)"
+          },
+          {
+            "cliType": "claude",
+            "observedAtUtc": "2026-09-06T17:00:00Z",
+            "cliVersion": "2.4.1",
+            "probeFailedAtUtc": "2026-09-06T17:00:00Z",
+            "error": "launcher returned the interactive stub instead of a usage report (exit 0, 41 bytes)"
+          },
+          {
+            "cliType": "claude",
+            "observedAtUtc": "2026-09-06T19:00:00Z",
+            "cliVersion": "2.4.1",
+            "probeFailedAtUtc": "2026-09-06T19:00:00Z",
+            "error": "launcher returned the interactive stub instead of a usage report (exit 0, 39 bytes)"
+          },
+          {
+            "cliType": "claude",
+            "observedAtUtc": "2026-09-06T21:00:00Z",
+            "cliVersion": "2.4.1",
+            "probeFailedAtUtc": "2026-09-06T21:00:00Z",
+            "error": "launcher returned the interactive stub instead of a usage report (exit 0, 41 bytes)"
+          }
+        ]
+      }
+    },
+    {
+      "id": "runner-snapshot-silence",
+      "dossierRow": 2,
+      "finding": "Ready lane reported waiting for sign-in while the runner link was down for four days",
+      "expectedClass": "silence",
+      "expectedRule": "runner-snapshot-silence",
+      "manualTickets": ["AGT-2711", "AGT-2712"],
+      "signals": {
+        "capabilitySnapshots": [
+          {
+            "runnerId": "linux-runner-01",
+            "project": "agent-taskboard",
+            "lastSnapshotAtUtc": "2026-09-02T18:12:00Z",
+            "expectedCadence": "00:05:00",
+            "readyCardsTargeting": ["AGT-2698", "AGT-2701", "AGT-2704"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "empty-completion",
+      "dossierRow": 3,
+      "finding": "Crash recorded as external completion into human review with an empty result",
+      "expectedClass": "contradiction",
+      "expectedRule": "empty-completion",
+      "manualTickets": ["AGT-2713"],
+      "signals": {
+        "completions": [
+          {
+            "project": "agent-taskboard",
+            "taskKey": "AGT-2709",
+            "completedAtUtc": "2026-09-06T16:41:00Z",
+            "precedingTypedOutcome": "CliCrash",
+            "externalCompletion": true,
+            "baseSha": "4c1d9a7f2b6e5081c3a9d47f10be2c8845ff3a91",
+            "resultSha": "4c1d9a7f2b6e5081c3a9d47f10be2c8845ff3a91",
+            "attributedCommits": 0,
+            "landedState": "5-human-review"
+          }
+        ]
+      }
+    },
+    {
+      "id": "review-attempt-repeat",
+      "dossierRow": 4,
+      "finding": "412 remote reviews on one card, 284 in one day, all Pass, never integrated",
+      "expectedClass": "repetition",
+      "expectedRule": "review-attempt-repeat",
+      "manualTickets": ["AGT-2717", "AGT-2720"],
+      "signals": {
+        "reviewAttempts": [
+          {
+            "project": "agent-taskboard",
+            "taskKey": "AGT-2698",
+            "subjectSha": "9f3ac02b58d1e7746ca0b8135d29ef4470ab6c22",
+            "attempts": 412,
+            "peakAttemptsPerDay": 284,
+            "allSameVerdict": true,
+            "verdict": "Pass",
+            "stateChanged": false,
+            "firstAttemptAtUtc": "2026-09-04T07:22:00Z",
+            "lastAttemptAtUtc": "2026-09-06T20:48:00Z"
+          }
+        ]
+      }
+    },
+    {
+      "id": "integration-failure-repeat",
+      "dossierRow": 5,
+      "finding": "Nine reviewed deliveries blocked by one dirty integration checkout for six days",
+      "expectedClass": "repetition",
+      "expectedRule": "integration-failure-repeat",
+      "manualTickets": ["QS-102"],
+      "signals": {
+        "integrationFailures": [
+          { "project": "quality-suite", "taskKey": "QS-81", "failureFingerprint": "refusing-to-fast-forward-dirty", "message": "Integration working tree has uncommitted changes; refusing to fast-forward it from origin. Dirty files: reports/coverage.xml.", "observedAtUtc": "2026-08-31T09:05:00Z" },
+          { "project": "quality-suite", "taskKey": "QS-84", "failureFingerprint": "refusing-to-fast-forward-dirty", "message": "Integration working tree has uncommitted changes; refusing to fast-forward it from origin. Dirty files: reports/coverage.xml.", "observedAtUtc": "2026-08-31T14:40:00Z" },
+          { "project": "quality-suite", "taskKey": "QS-88", "failureFingerprint": "refusing-to-fast-forward-dirty", "message": "Integration working tree has uncommitted changes; refusing to fast-forward it from origin. Dirty files: reports/coverage.xml.", "observedAtUtc": "2026-09-01T11:18:00Z" },
+          { "project": "quality-suite", "taskKey": "QS-90", "failureFingerprint": "refusing-to-fast-forward-dirty", "message": "Integration working tree has uncommitted changes; refusing to fast-forward it from origin. Dirty files: reports/coverage.xml.", "observedAtUtc": "2026-09-02T08:02:00Z" },
+          { "project": "quality-suite", "taskKey": "QS-93", "failureFingerprint": "refusing-to-fast-forward-dirty", "message": "Integration working tree has uncommitted changes; refusing to fast-forward it from origin. Dirty files: reports/coverage.xml.", "observedAtUtc": "2026-09-02T16:27:00Z" },
+          { "project": "quality-suite", "taskKey": "QS-95", "failureFingerprint": "refusing-to-fast-forward-dirty", "message": "Integration working tree has uncommitted changes; refusing to fast-forward it from origin. Dirty files: reports/coverage.xml.", "observedAtUtc": "2026-09-03T10:11:00Z" },
+          { "project": "quality-suite", "taskKey": "QS-97", "failureFingerprint": "refusing-to-fast-forward-dirty", "message": "Integration working tree has uncommitted changes; refusing to fast-forward it from origin. Dirty files: reports/coverage.xml.", "observedAtUtc": "2026-09-04T13:55:00Z" },
+          { "project": "quality-suite", "taskKey": "QS-99", "failureFingerprint": "refusing-to-fast-forward-dirty", "message": "Integration working tree has uncommitted changes; refusing to fast-forward it from origin. Dirty files: reports/coverage.xml.", "observedAtUtc": "2026-09-05T09:36:00Z" },
+          { "project": "quality-suite", "taskKey": "QS-101", "failureFingerprint": "refusing-to-fast-forward-dirty", "message": "Integration working tree has uncommitted changes; refusing to fast-forward it from origin. Dirty files: reports/coverage.xml.", "observedAtUtc": "2026-09-06T12:04:00Z" }
+        ]
+      }
+    },
+    {
+      "id": "gate-cache-drift",
+      "dossierRow": 6,
+      "finding": "Pre-main gate failing before the first test for weeks (corrupted dependency cache)",
+      "expectedClass": "drift",
+      "expectedRule": "tool-drift-dependent-failure",
+      "manualTickets": ["AGT-2720"],
+      "signals": {
+        "toolVersions": [
+          {
+            "tool": "pre-main-gate-toolchain",
+            "previousVersion": "20.11.1",
+            "newVersion": "20.12.0",
+            "changedAtUtc": "2026-08-31T22:40:00Z",
+            "project": "agent-taskboard"
+          }
+        ],
+        "dependentFailures": [
+          {
+            "tool": "pre-main-gate-toolchain",
+            "failureFingerprint": "toolchain-startup-before-test-discovery",
+            "message": "node:internal/modules/cjs/loader: cannot find module 'vitest/node' after dependency cache restore",
+            "firstFailureAtUtc": "2026-09-01T06:14:00Z",
+            "lastFailureAtUtc": "2026-09-06T18:52:00Z",
+            "occurrences": 37,
+            "project": "agent-taskboard",
+            "affectedCards": ["AGT-2702", "AGT-2708", "AGT-2716"],
+            "evidence": [
+              { "label": "dependency-cache", "source": "post-steps/pre-main-test-gate-3.log", "value": "cache hit, no install marker recorded", "observedAtUtc": "2026-09-06T18:52:00Z" },
+              { "label": "test-discovery", "source": "post-steps/pre-main-test-gate-3.log", "value": "never reached; the gate died during toolchain startup" }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "projection-count-mismatch",
+      "dossierRow": 7,
+      "finding": "Escalation banner 0 rounds, grade not recorded on a card with seven review reports",
+      "expectedClass": "contradiction",
+      "expectedRule": "projection-count-mismatch",
+      "manualTickets": ["AGT-2714", "AGT-2717"],
+      "signals": {
+        "projections": [
+          {
+            "project": "agent-taskboard",
+            "taskKey": "AGT-2699",
+            "subject": "review rounds",
+            "artifactSource": "code-review-*.md in the task folder",
+            "artifactCount": 7,
+            "projectionSource": "escalation banner projection",
+            "projectedCount": 0,
+            "observedAtUtc": "2026-09-06T19:30:00Z"
+          }
+        ]
+      }
+    },
+    {
+      "id": "validation-error-aged",
+      "dossierRow": 8,
+      "finding": "Fifteen invalid dossier descriptors",
+      "expectedClass": "hygiene",
+      "expectedRule": "validation-error-aged",
+      "manualTickets": [],
+      "note": "Fixed by hand on 2026-09-06; no card was written.",
+      "signals": {
+        "validationErrors": [
+          { "subject": "docs/operations/batch-gate-concept/workbench.json", "message": "key must use the project reference form 'PROJECT-W<number>'.", "firstSeenAtUtc": "2026-08-20T10:00:00Z" },
+          { "subject": "docs/operations/concept-pipeline/workbench.json", "message": "key must use the project reference form 'PROJECT-W<number>'.", "firstSeenAtUtc": "2026-08-20T10:00:00Z" },
+          { "subject": "docs/operations/deck-icon-exploration/workbench.json", "message": "editedAt must be an ISO UTC timestamp ending in Z.", "firstSeenAtUtc": "2026-08-20T10:00:00Z" },
+          { "subject": "docs/operations/demo-instanz/workbench.json", "message": "schemaVersion 2 must not store legacy status or updatedAt fields.", "firstSeenAtUtc": "2026-08-21T08:30:00Z" },
+          { "subject": "docs/operations/escalation-view-information-architecture/workbench.json", "message": "id must match the containing folder.", "firstSeenAtUtc": "2026-08-21T08:30:00Z" },
+          { "subject": "docs/operations/installer-story/workbench.json", "message": "Unsupported status 'in-progress'.", "firstSeenAtUtc": "2026-08-22T15:45:00Z" },
+          { "subject": "docs/operations/kontext-orchestrator-chats/workbench.json", "message": "Unsupported phase 'draft'.", "firstSeenAtUtc": "2026-08-22T15:45:00Z" },
+          { "subject": "docs/operations/living-document-naming/workbench.json", "message": "key is required after project discovery.", "firstSeenAtUtc": "2026-08-24T09:12:00Z" },
+          { "subject": "docs/operations/project-feed/workbench.json", "message": "editedAt must be an ISO UTC timestamp ending in Z.", "firstSeenAtUtc": "2026-08-24T09:12:00Z" },
+          { "subject": "docs/operations/rebase-merge-and-steering/workbench.json", "message": "key must use the project reference form 'PROJECT-W<number>'.", "firstSeenAtUtc": "2026-08-26T11:03:00Z" },
+          { "subject": "docs/operations/telemetry-layer/workbench.json", "message": "Unsupported lifecycleState 'open'.", "firstSeenAtUtc": "2026-08-26T11:03:00Z" },
+          { "subject": "docs/operations/timeline-redesign/workbench.json", "message": "id must match the containing folder.", "firstSeenAtUtc": "2026-08-28T14:20:00Z" },
+          { "subject": "docs/operations/unverifizierte-lieferungen/workbench.json", "message": "pageKind must be workbench.", "firstSeenAtUtc": "2026-08-28T14:20:00Z" },
+          { "subject": "docs/operations/async-validation-staging-lane/workbench.json", "message": "entrypoint is missing or escapes its Dossier folder.", "firstSeenAtUtc": "2026-08-30T07:55:00Z" },
+          { "subject": "docs/operations/operational-resilience/workbench.json", "message": "Missing workbench.json.", "firstSeenAtUtc": "2026-08-30T07:55:00Z" }
+        ]
+      }
+    }
+  ]
+}

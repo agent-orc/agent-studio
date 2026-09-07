@@ -852,8 +852,40 @@
 <ul>
 <!-- agent-studio:implementation-log:start -->
   <li data-implementation-entry="" data-task-key="AGT-2654" data-delivered-at="2026-08-12" data-slice="visual-guardian-first-slice"><b>Visual guardian first slice.</b> Added mandatory visual capture and multimodal verdict stages to the UI pipeline for AGT frontend deliveries, versioned the Human Gate evidence contract, implemented one restart-safe automatic defect steer, registered its loop breaker, and produced a browser plus model before/after evidence case.</li>
+  <li data-implementation-entry="" data-task-key="AGT-2721" data-delivered-at="2026-09-07" data-slice="w1-w2-detectors-cases-proposals"><b>W1 and W2 as one chain: detectors, cases, ticket proposals, contingent, review mode.</b> Added <code>backend/Features/Watcher/</code> with the five detector classes of §10.2 as pure functions over one normalized sweep input, the durable <code>WatcherCase</code> and <code>WatcherProposal</code> contracts, a fingerprint-keyed restart-safe store, the dedicated per-day and per-week contingent, the house-style card-draft composer with a routing-policy model recommendation, and the review mode with approve, edit, merge, and reject plus an expiring suppression list. The eight findings of §10.1 are a replayable JSON fixture matrix at <code>testdata/watcher/fixtures-2026-09-06.json</code>. The sweep runs as a hosted service on the dossier's five-minute cadence with the <code>Watcher:Enabled</code> hot kill switch and a <code>watcher-run</code> structured log modelled on the acceptance rail.</li>
 <!-- agent-studio:implementation-log:end -->
 </ul>
+
+<h3>§8b State after AGT-2721</h3>
+<p class="stx stx-part"><b>Detection, cases, proposals, contingent, and review mode are implemented and fixture-covered. Live signal collection is wired for two of the eight rules; the other six wait on their producer.</b></p>
+
+<table>
+  <thead><tr><th>Part</th><th>State</th><th>Where</th></tr></thead>
+  <tbody>
+    <tr><td>Five detector classes, eight rules</td><td><span class="pill done">Delivered</span> pure, no I/O, no model</td><td><code>WatcherDetectors.cs</code>, replayed by <code>WatcherDetectorTests</code></td></tr>
+    <tr><td>Case dedupe, restart survival, explicit terminals</td><td><span class="pill done">Delivered</span></td><td><code>WatcherStore.cs</code>, <code>WatcherSweepCoordinator.cs</code></td></tr>
+    <tr><td>Ticket proposals in the proposal state</td><td><span class="pill done">Delivered</span> never Ready without an operator</td><td><code>WatcherTaskGatewayAdapter.cs</code>, <code>WatcherCardDraftComposer.cs</code></td></tr>
+    <tr><td>Contingent, backlog when exhausted</td><td><span class="pill done">Delivered</span></td><td><code>WatcherContingentPolicy.cs</code>, <code>GET /api/watcher/contingent</code></td></tr>
+    <tr><td>Review mode, suppression, class evidence</td><td><span class="pill done">Delivered</span> auto-approval deliberately absent</td><td><code>WatcherReviewService.cs</code></td></tr>
+    <tr><td>Activity Problem and Decision rows, bus topics</td><td><span class="pill done">Delivered</span></td><td><code>WatcherActivityPublisher.cs</code></td></tr>
+    <tr><td>Strong analysis on declared uncertainty</td><td><span class="pill part">Seam only</span> the shipped analyst declines every call, so shadow mode spends nothing</td><td><code>WatcherAnalysisPolicy.cs</code>, <code>DecliningWatcherAnalyst</code></td></tr>
+    <tr><td>Live collection for <code>empty-completion</code> and <code>validation-error-aged</code></td><td><span class="pill done">Delivered</span></td><td><code>WatcherEvidenceCollector.cs</code></td></tr>
+    <tr><td>Live collection for the other six rules</td><td><span class="pill open">Blocked on producers</span> fixture-covered, not yet fed from production</td><td>see the gaps below</td></tr>
+    <tr><td>Watcher inbox and contingent strip in the UI</td><td><span class="pill open">Open</span> the API exists, no Angular surface yet</td><td><code>WatcherEndpoints.cs</code></td></tr>
+  </tbody>
+</table>
+
+<div class="box warn">
+  <h4>Producer gaps the collector cannot work around</h4>
+  <p>Each of these is a missing durable signal, not a missing detector. The detector already handles the shape; it has nothing truthful to read.</p>
+  <ul>
+    <li><b>probe-error-repeat</b> needs a probe history. <code>quota-cache.json</code> keeps only the newest snapshot and overwrites <code>probeFailedAt</code> on every failure, so "N consecutive cycles" cannot be derived from it.</li>
+    <li><b>runner-snapshot-silence</b> and <b>review-attempt-repeat</b> live in the Task Server's SQLite plane, reachable only across the versioned API.</li>
+    <li><b>integration-failure-repeat</b> needs the failure reason kept as a normalized fingerprint; today it is free text on the integration result.</li>
+    <li><b>tool-drift-dependent-failure</b> needs the CLI version change to be durable; <code>CliVersionTracker</code> only writes a log line.</li>
+    <li><b>projection-count-mismatch</b> needs the escalation banner counts server-side; they are computed in the frontend projection today.</li>
+  </ul>
+</div>
 <!-- agent-studio:implementation-section:end --><h2 id="decision"><span class="no">§9</span>Decision request</h2>
 <div class="box warn">
   <h4>Requested operator decision</h4>

@@ -1,0 +1,57 @@
+<section class="wcont" data-testid="watcher-contingent-panel">
+  @if (errorMsg(); as err) {
+    <div class="wcont__error" data-testid="watcher-contingent-error">{{ err }}</div>
+  } @else if (!snapshot()) {
+    <div class="wcont__empty">Loading the Watcher contingent…</div>
+  } @else {
+    @if (exhausted()) {
+      <div class="wcont__banner wcont__banner--spent" data-testid="watcher-contingent-exhausted">
+        <span class="wcont__dot wcont__dot--crit" aria-hidden="true"></span>
+        <span>
+          The contingent is used up. The Watcher keeps detecting and counting,
+          but writes no proposals and makes no model calls.
+        </span>
+      </div>
+    }
+
+    <div class="wcont__backlog" data-testid="watcher-backlog">
+      <span class="wcont__backlog-count" [class.is-acute]="backlog() > 0">{{ backlog() }}</span>
+      <span class="wcont__backlog-label">
+        {{ backlog() === 1 ? 'case found but not drafted' : 'cases found but not drafted' }}
+      </span>
+      <button class="wcont__refresh"
+              type="button"
+              data-testid="watcher-contingent-refresh"
+              [disabled]="loading()"
+              (click)="reload()">
+        {{ loading() ? '⏳' : '↻' }}
+      </button>
+    </div>
+
+    <ul class="wcont__rows">
+      @for (row of rows(); track row.key) {
+        <li class="wcont__row">
+          <span class="wcont__label">{{ row.label }}</span>
+          <span class="wcont__window">{{ row.window }}</span>
+          <span class="wcont__bar">
+            <span class="wcont__fill"
+                  [class]="severity(row.usedPct)"
+                  [style.width.%]="barWidth(row.usedPct)"></span>
+          </span>
+          <span class="wcont__used" [class]="severity(row.usedPct)">
+            {{ formatCount(row.used, row.unit) }} / {{ formatCount(row.limit, row.unit) }}
+          </span>
+        </li>
+      }
+    </ul>
+
+    <p class="wcont__cost" data-testid="watcher-contingent-cost">
+      Realized cost this week:
+      @if (weeklyCost() === null) {
+        <b>unknown</b> <span class="wcont__cost-note">(a model in this window has no catalog price)</span>
+      } @else {
+        <b>{{ weeklyCost() | currency: 'USD' : 'symbol' : '1.2-4' }}</b>
+      }
+    </p>
+  }
+</section>

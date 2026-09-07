@@ -742,6 +742,21 @@ if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService<AgentStudio.Pipeline.IntegrationPushBackstopHostedService>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<AcceptanceRailHostedService>());
 }
+
+// AGT-2721 - the Global Watcher (dossier W1 + W2). It detects, proposes, and
+// stops there: the only task state it touches is one proposal card or one
+// comment, and a proposal reaches Ready only through an operator decision.
+builder.Services.AddSingleton<WatcherStore>();
+builder.Services.AddSingleton<IWatcherEvidenceCollector, WatcherEvidenceCollector>();
+builder.Services.AddSingleton<IWatcherTaskGateway, WatcherTaskGatewayAdapter>();
+builder.Services.AddSingleton<IWatcherActivityPublisher, WatcherActivityPublisher>();
+// Shadow-mode default: the route each case earns is recorded, no call is made.
+builder.Services.AddSingleton<IWatcherAnalyst, DecliningWatcherAnalyst>();
+builder.Services.AddSingleton<WatcherSweepCoordinator>();
+builder.Services.AddSingleton<WatcherReviewService>();
+builder.Services.AddSingleton<WatcherHostedService>();
+if (!publicDemoExecutionProfile)
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<WatcherHostedService>());
 // Periodic reap of orphaned CLI process trees (codex/node) that a finished or
 // crashed run left behind. Closes the days-long accumulation gap the startup
 // reaper alone cannot: those survivors hold job-folder handles and wedge the

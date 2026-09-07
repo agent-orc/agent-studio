@@ -95,6 +95,42 @@ public sealed class ModelRoutingPolicyRegistry
         string? title = null,
         string? prompt = null)
     {
+        var selection = SelectTier(taskType, economyMode, title, prompt);
+        var (model, thinkingLevel) = ResolveCatalogueRoute(selection.Selected, catalogue);
+        return Describe(selection, model, thinkingLevel);
+    }
+
+    /// <summary>
+    /// The same tier selection without a live CLI catalogue, answering with the
+    /// policy's own route for the tier. Callers that only need a recommendation
+    /// to show or to record - the create-task preview, the Watcher's ticket
+    /// proposals - must not have to probe a CLI to learn the correctness floor.
+    /// </summary>
+    public ModelRoutingRecommendation RecommendFromPolicy(
+        string? taskType,
+        bool economyMode = false,
+        string? title = null,
+        string? prompt = null)
+    {
+        var selection = SelectTier(taskType, economyMode, title, prompt);
+        return Describe(selection, selection.Selected.Model, selection.Selected.ThinkingLevel);
+    }
+
+    private sealed record TierSelection(
+        string TaskType,
+        ModelRoutingTier Requested,
+        ModelRoutingTier Selected,
+        ModelRoutingTier? CorrectnessFloor,
+        int Score,
+        bool EconomyMode,
+        bool EconomyDowngraded);
+
+    private TierSelection SelectTier(
+        string? taskType,
+        bool economyMode,
+        string? title,
+        string? prompt)
+    {
         var normalizedType = TaskTypes.Normalize(taskType);
         var typeDefault = Policy.TaskTypeDefaults[normalizedType];
         var requested = Tier(typeDefault.Tier);
@@ -141,7 +177,16 @@ public sealed class ModelRoutingPolicyRegistry
             }
         }
 
-        var (model, thinkingLevel) = ResolveCatalogueRoute(selectedTier, catalogue);
+        return new TierSelection(
+            normalizedType, requested, selectedTier, correctnessFloor, score, economyMode, downgraded);
+    }
+
+    private ModelRoutingRecommendation Describe(
+        TierSelection selection,
+        string model,
+        string? thinkingLevel)
+    {
+        var (normalizedType, requested, selectedTier, correctnessFloor, score, economyMode, downgraded) = selection;
         var floorReason = correctnessFloor == null
             ? ""
             : $"; correctness floor {correctnessFloor.Id}";

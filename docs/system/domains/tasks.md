@@ -254,6 +254,21 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   `GET /api/pipeline/acceptance-rail` expose lane depth, action counts, failure
   count, and the last-run timestamp. Session orchestrators may observe these
   facts but do not own the lane mutation.
+- The **proposal state** is `1-preparation` plus the `watcher-proposal` tag. The
+  Global Watcher (AGT-2721) writes its ticket proposals there through the normal
+  task API, with a `watcher-<detector-class>` provenance tag and `relatedTo`
+  references to the cards the finding overlaps. A card in the proposal state is
+  a draft, not queued work: only an operator decision on
+  `POST /api/watcher/proposals/{proposalId}/decision` drops the
+  `watcher-proposal` tag, applies the recommended model, and moves the card to
+  `2-ready`. Rejecting records a visible, expiring suppression for the detector
+  fingerprint instead. A fingerprint that already owns an open card receives a
+  `watcher_commented` timeline entry on that card rather than a second card.
+  The Watcher performs no other task or Git mutation; `Watcher:Enabled` is a hot
+  kill switch and `Watcher:Contingent` bounds proposals, comments, and model
+  calls per day and per week. When the contingent is used up, detection and
+  counting continue and the unanalysed backlog stays visible on
+  `GET /api/watcher/contingent`.
 - The immutable current review subject selects the authoritative delivery
   generation for integration membership. When a reissue rebases an accepted
   commit to a replacement object id, target-branch ancestry of that reviewed

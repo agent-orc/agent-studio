@@ -321,6 +321,15 @@ internal static class OrchestratorConfigCatalog
             DefaultValue: false,
             SourceFile: "backend/Services/Supervisor/SoftReasoningHostedService.cs"),
         new(
+            "Watcher:Enabled",
+            "Watcher",
+            "Global Watcher",
+            "Five-minute detector sweep that raises Watcher cases and drafts ticket proposals. "
+            + "Off stops detection and every write; proposals already drafted stay in the inbox.",
+            "bool",
+            DefaultValue: true,
+            SourceFile: "backend/Features/Watcher/WatcherHostedService.cs"),
+        new(
             "Supervisor:HardCheckEnabled",
             "Supervisor",
             "Hard health checks",

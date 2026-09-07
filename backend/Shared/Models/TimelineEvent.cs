@@ -285,6 +285,22 @@ public static class TimelineEventKinds
     /// </summary>
     public const string AcceptanceRailActed = "acceptance_rail_acted";
     /// <summary>
+    /// AGT-2721: the Global Watcher appended a note to this card because a
+    /// detector fingerprint it already owns recurred. This is the comment side
+    /// of the proposal rule: a fingerprint with an open card gets a note on
+    /// that card, never a second card. <see cref="TimelineEvent.Details"/>
+    /// carries the case id, the detector class, and the fingerprint.
+    /// </summary>
+    public const string WatcherCommented = "watcher_commented";
+    /// <summary>
+    /// AGT-2721: an operator answered a Watcher ticket proposal. Recorded on
+    /// the drafted card so the acceptance and edit evidence that section 10.4
+    /// requires for class promotion lives with the work, not only in the
+    /// Watcher store. <see cref="TimelineEvent.Details"/> carries the decision,
+    /// the case id, and whether the draft was edited before approval.
+    /// </summary>
+    public const string WatcherProposalDecided = "watcher_proposal_decided";
+    /// <summary>
     /// AGT-2220: the card's recorded <c>integrationBranch</c> disagreed with
     /// project truth when a review was claimed, so the review plane rewrote it.
     /// A stale field (still <c>refs/heads/main</c> after develop became the
@@ -300,7 +316,7 @@ public static class TimelineEventKinds
     /// carries the classification, repeat count, attempt ids, and the base ref /
     /// base commit / step / command the runner reported.
     /// </summary>
-    public const string ReviewInfrastructureRepeatDiagnosed = "review_infrastructure_repeat_diagnosed";
+    public const string ReviewInfrastructureRepeatDiagnosed = "review_infrastructure_repeat_diagnosed";
     /// AGT-2492: the recall sweep found that a parked card's recorded
     /// precondition no longer holds. <see cref="TimelineEvent.Summary"/> carries
     /// how long the card has been parked and why the blocker is considered gone;
