@@ -75,9 +75,15 @@ public sealed class ExternalCompletionService
         if (request is null || string.IsNullOrWhiteSpace(request.Summary))
             return new ExternalCompletionOutcome(ExternalCompletionStatus.InvalidRequest, "summary is required.");
 
-        var targetState = string.IsNullOrWhiteSpace(request.TargetState)
-            ? TaskStates.HumanReview
+        var requestedTargetState = string.IsNullOrWhiteSpace(request.TargetState)
+            ? TaskStates.AutoReview
             : request.TargetState!.Trim();
+        // An external completion is delivery evidence, not review evidence.
+        // Finished targets therefore re-enter through Post Processing so the
+        // normal gate and review policy runs before Human Review.
+        var targetState = requestedTargetState is TaskStates.HumanReview or TaskStates.Completed
+            ? TaskStates.AutoReview
+            : requestedTargetState;
         if (!TaskStates.All.Contains(targetState))
             return new ExternalCompletionOutcome(
                 ExternalCompletionStatus.InvalidRequest,
@@ -107,7 +113,7 @@ public sealed class ExternalCompletionService
         }
 
         var (decision, decisionReason) =
-            OutOfBandStampPolicy.Decide(info.Mode, targetState, verification);
+            OutOfBandStampPolicy.Decide(info.Mode, requestedTargetState, verification);
         if (decision == OutOfBandStampDecision.RefuseUnverified)
         {
             return await RefuseUnverifiedAsync(
@@ -159,6 +165,7 @@ public sealed class ExternalCompletionService
             {
                 ["source"] = source,
                 ["targetState"] = targetState,
+                ["requestedTargetState"] = requestedTargetState,
                 ["verification"] = (verification?.Status ?? DeliveryVerificationStatus.NotVerifiable)
                     .ToString(),
                 ["verificationNote"] = decisionReason,
@@ -189,6 +196,11 @@ public sealed class ExternalCompletionService
                 // exact stuck state this endpoint exists to retire. Idempotent for
                 // every other source lane.
                 TerminalizeLifecycle(afterFolder, targetState, source, now);
+                // Moving from Progress can prepare a review scaffold. Restore the
+                // external result narrative after that transition-owned setup so
+                // the review card still explains what was delivered and by whom.
+                WriteStatus(afterFolder, summary, source, now, decisionReason);
+                WriteGateItems(afterFolder, request.GateItems);
                 break;
             case MoveJobStatus.NotFound:
                 // Raced away between find and move; the evidence is already on

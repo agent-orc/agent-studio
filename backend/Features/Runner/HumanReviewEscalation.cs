@@ -327,7 +327,8 @@ public sealed class HumanReviewEscalation
         }
         try
         {
-            var pass = string.Equals(outcome, "Pass", StringComparison.OrdinalIgnoreCase);
+            var pass = string.Equals(outcome, "Pass", StringComparison.OrdinalIgnoreCase)
+                       || string.Equals(outcome, "PassWithConcerns", StringComparison.OrdinalIgnoreCase);
             var chain = attemptChain is null ? string.Empty : " " + attemptChain.Headline;
             ReviewDecisionLog.Append(_workspaceRoot!, new ReviewDecisionRecord(
                 CreatedAt: DateTime.UtcNow,

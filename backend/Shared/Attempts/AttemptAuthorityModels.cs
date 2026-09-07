@@ -12,12 +12,13 @@ public enum AttemptLifecycleState
 
 public enum ReviewTerminalOutcome
 {
-    InfrastructureFailure,
-    ProductFailure,
-    Inconclusive,
-    Pass,
-    Cancellation,
-    Superseded,
+    InfrastructureFailure = 0,
+    ProductFailure = 1,
+    Inconclusive = 2,
+    Pass = 3,
+    Cancellation = 4,
+    Superseded = 5,
+    PassWithConcerns = 6,
 }
 
 public sealed record AttemptLeaseDto(

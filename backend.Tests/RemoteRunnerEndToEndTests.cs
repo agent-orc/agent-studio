@@ -4908,7 +4908,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
     }
 
     [Fact]
-    public async Task Monolith_v1_review_plane_exhausts_three_infrastructure_retries_to_escalated()
+    public async Task Monolith_v1_review_plane_exhausts_three_infrastructure_retries_to_human_review()
     {
         const string reviewRunnerId = "review-runner-budget";
         const string reviewInstance = "review-budget-host:4243";
@@ -4951,8 +4951,16 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
 
         Assert.NotNull(terminal);
         Assert.False(terminal.RetryScheduled);
-        Assert.Equal(TaskStates.Escalated, terminal.TaskState);
-        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.Escalated, TaskKey)));
+        Assert.Equal(TaskStates.HumanReview, terminal.TaskState);
+        var parkedFolder = Path.Combine(_watchPath, TaskStates.HumanReview, TaskKey);
+        Assert.True(Directory.Exists(parkedFolder));
+        using (var taskJson = JsonDocument.Parse(File.ReadAllText(Path.Combine(parkedFolder, "task.json"))))
+        {
+            var failure = taskJson.RootElement.GetProperty("reviewFailure");
+            Assert.Equal("infrastructure", failure.GetProperty("FailureClass").GetString());
+            Assert.Equal(3, failure.GetProperty("RetryNumber").GetInt32());
+            Assert.True(failure.GetProperty("Exhausted").GetBoolean());
+        }
 
         var projection = factory.Services
             .GetRequiredService<AttemptAuthorityService>()
@@ -4978,7 +4986,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
     /// problem") would send the operator after a remedy that cannot work.
     /// </summary>
     [Fact]
-    public async Task Monolith_v1_review_escalation_summary_names_the_youngest_failure_class()
+    public async Task Monolith_v1_review_park_reason_names_the_youngest_failure_class()
     {
         const string reviewRunnerId = "review-runner-divergent";
         const string reviewInstance = "review-divergent-host:4243";
@@ -5009,8 +5017,12 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             await reviewClient.ReportReviewAsync(claim.Attempt!.AttemptId, report, CancellationToken.None);
         }
 
-        var status = await File.ReadAllTextAsync(
-            Path.Combine(_watchPath, TaskStates.Escalated, TaskKey, "status.md"));
+        using var taskJson = JsonDocument.Parse(await File.ReadAllTextAsync(
+            Path.Combine(_watchPath, TaskStates.HumanReview, TaskKey, "task.json")));
+        var status = taskJson.RootElement
+            .GetProperty("reviewFailure")
+            .GetProperty("Reason")
+            .GetString()!;
 
         // 1. The youngest attempt owns the situation report.
         Assert.Contains("ReviewInfra/ShaMismatch", status);
@@ -5027,20 +5039,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Contains("- Operator options for the newest cause ReviewInfra/ShaMismatch:", status);
         Assert.Contains("Re-run the source coding attempt", status);
         Assert.DoesNotContain("Restore the baseline ref", status);
-        // The board's status-stub contract stays intact: exactly one Category
-        // line and one Reason line, and the Reason names the youngest cause.
-        Assert.Equal(1, CountLines(status, "- Category: "));
-        Assert.Equal(1, CountLines(status, "- Reason: "));
-        var reason = status
-            .Split('\n')
-            .First(line => line.StartsWith("- Reason: ", StringComparison.Ordinal));
-        Assert.Contains("ReviewInfra/ShaMismatch", reason);
-        Assert.Contains("Divergent chain", reason);
     }
-
-    private static int CountLines(string text, string prefix) => text
-        .Split('\n')
-        .Count(line => line.StartsWith(prefix, StringComparison.Ordinal));
 
         }
 

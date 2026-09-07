@@ -360,11 +360,78 @@ public sealed class RemoteReviewWorkspace
         }
 
         var proof = await CurrentProofAsync(ct);
-        var outcome = verdicts.Any(verdict =>
-            verdict.Status is "block" or "concerns" or "fail")
-            ? "ProductFailure"
-            : "Pass";
-        return new ReviewExecutionEvidence(outcome, proof, commands, artifacts, verdicts);
+        var commandFailureClass = ClassifyCommandFailures(commands, artifacts);
+        var grading = ReviewGradingPolicy.Map(
+            verdicts.Select(verdict => verdict.Status),
+            commandFailureClass);
+        var outcome = grading switch
+        {
+            ReviewGradingOutcome.Pass => "Pass",
+            ReviewGradingOutcome.PassWithConcerns => "PassWithConcerns",
+            ReviewGradingOutcome.ProductFailure => "ProductFailure",
+            ReviewGradingOutcome.Quota => "ReviewInfra",
+            ReviewGradingOutcome.InfrastructureFailure => "ReviewInfra",
+            _ => "Inconclusive",
+        };
+        var failureClassification = grading switch
+        {
+            ReviewGradingOutcome.Quota => "quota",
+            ReviewGradingOutcome.InfrastructureFailure => "infrastructure",
+            ReviewGradingOutcome.Unknown => "unknown",
+            ReviewGradingOutcome.ProductFailure => "product",
+            _ => null,
+        };
+        return new ReviewExecutionEvidence(
+            outcome, proof, commands, artifacts, verdicts, failureClassification);
+    }
+
+    private static ReviewFailureClass? ClassifyCommandFailures(
+        IReadOnlyCollection<ReviewCommandEvidenceDto> commands,
+        IReadOnlyCollection<ReviewArtifactEvidenceDto> artifacts)
+    {
+        foreach (var command in commands.Where(command =>
+                     command.Phase == "verification"
+                     && command.WorkspaceRole == "candidate"
+                     && (command.Signal is not null || command.ExitCode is null or not 0)))
+        {
+            var parsed = command.NewFailures?
+                .Where(ReviewFailureClassifier.IsParsedFailureName)
+                .ToArray() ?? [];
+            var evidence = string.Join('\n', artifacts
+                .Where(artifact => artifact.ContentBase64 is not null
+                    && (string.Equals(artifact.Sha256, command.StdoutSha256, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(artifact.Sha256, command.StderrSha256, StringComparison.OrdinalIgnoreCase)))
+                .Select(artifact => Decode(artifact.ContentBase64!)));
+            if (command.Signal is not null)
+                evidence = $"signal={command.Signal}\n{evidence}";
+            if (command.ExitCode is null or < 0)
+                evidence = $"exit=n/a\n{evidence}";
+
+            var classified = ReviewFailureClassifier.Classify(evidence, parsed);
+            if (classified.FailureClass == ReviewFailureClass.Unknown
+                && command.NewFailures is not null
+                && parsed.Length == 0
+                && command.PreExistingFailures?.Count > 0)
+            {
+                continue;
+            }
+            // A baseline-comparison process that exits without a parsed test
+            // result did not prove a regression. Treat that missing evidence as
+            // review infrastructure even if the tool emitted no known marker.
+            if (classified.FailureClass == ReviewFailureClass.Unknown
+                && command.NewFailures is not null
+                && parsed.Length == 0)
+                return ReviewFailureClass.Infrastructure;
+            if (classified.FailureClass != ReviewFailureClass.Unknown)
+                return classified.FailureClass;
+        }
+        return null;
+
+        static string Decode(string encoded)
+        {
+            try { return Encoding.UTF8.GetString(Convert.FromBase64String(encoded)); }
+            catch (FormatException) { return string.Empty; }
+        }
     }
 
     private async Task<CommandExecution> RunCommandAsync(
@@ -1291,8 +1358,6 @@ public sealed class RemoteReviewWorkspace
         ProcessResult result)
     {
         var failures = ParsedTestFailures(result);
-        if (!result.Success && failures.Count == 0)
-            return [$"<unparsed failure in {command.StepId}>"];
         return failures;
     }
 
@@ -1519,7 +1584,8 @@ public sealed record ReviewExecutionEvidence(
     ReviewWorkspaceProofDto Workspace,
     IReadOnlyList<ReviewCommandEvidenceDto> Commands,
     IReadOnlyList<ReviewArtifactEvidenceDto> Artifacts,
-    IReadOnlyList<ReviewVerdictDto> Verdicts);
+    IReadOnlyList<ReviewVerdictDto> Verdicts,
+    string? FailureClass = null);
 
 internal sealed record ReviewExecutionCheckpoint(
     IReadOnlyList<string> CompletedStepIds,

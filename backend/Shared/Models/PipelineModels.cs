@@ -274,6 +274,8 @@ public sealed record PipelineStepExecution
     /// recovery eligibility without parsing prose.
     /// </summary>
     public string? FailureCode { get; init; }
+    /// <summary>One of product, infrastructure, quota, or unknown.</summary>
+    public string? FailureClass { get; init; }
     /// <summary>
     /// Optional verdict token from the step (e.g. <c>pass</c>,
     /// <c>concerns</c>, <c>block</c> for aspect steps). Lets the UI

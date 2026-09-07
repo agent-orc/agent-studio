@@ -1286,7 +1286,7 @@ public sealed class RemoteTaskRunner
                     Note: "Verified by ls-remote against the project registration.")
             ],
             Source: source,
-            TargetState: "5-human-review",
+            TargetState: "4-auto-review",
             // AGT-2220: hand the proof over as data, not only as prose. The
             // sentence above used to BE the evidence - the server stamped on a
             // string it never re-checked. These two fields are what the server

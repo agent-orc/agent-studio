@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace AgentStudio.Pipeline;
 
@@ -130,13 +131,52 @@ public static class VerifyCommandPlanner
     {
         var fromProfile = FromProfile(profile);
         if (fromProfile.Count > 0)
-            return new VerifyPlan(fromProfile, VerifyPlan.SourceBuildProfile);
+            return new VerifyPlan(ApplyDefaultTestExclusions(fromProfile), VerifyPlan.SourceBuildProfile);
 
         var derived = AutoDiscover(repositoryPath);
         if (derived.Count > 0)
-            return new VerifyPlan(derived, VerifyPlan.SourceAutoDiscovery);
+            return new VerifyPlan(ApplyDefaultTestExclusions(derived), VerifyPlan.SourceAutoDiscovery);
 
         return new VerifyPlan(Array.Empty<VerifyCommand>(), VerifyPlan.SourceNone);
+    }
+
+    internal const string DefaultDotNetTestFilter = "Category!=MachineBound&Category!=LiveCli";
+
+    private static IReadOnlyList<VerifyCommand> ApplyDefaultTestExclusions(
+        IEnumerable<VerifyCommand> commands)
+        => commands.Select(command => command.Kind == VerifyCommandKind.Test
+                ? command with { Command = AddDefaultDotNetTestFilter(command.Command) }
+                : command)
+            .ToArray();
+
+    internal static string AddDefaultDotNetTestFilter(string command)
+    {
+        if (!Regex.IsMatch(command, @"(?<![\w./-])dotnet\s+test\b", RegexOptions.IgnoreCase))
+            return command;
+        if (command.Contains("Category!=LiveCli", StringComparison.OrdinalIgnoreCase)
+            && command.Contains("Category!=MachineBound", StringComparison.OrdinalIgnoreCase))
+            return command;
+
+        var filter = Regex.Match(
+            command,
+            "(?:--filter|-f)\\s+(?<value>\"[^\"]*\"|'[^']*'|[^\\s;&]+)",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (filter.Success)
+        {
+            var value = filter.Groups["value"].Value.Trim('"', '\'');
+            if (!value.Contains("Category!=MachineBound", StringComparison.OrdinalIgnoreCase))
+                value += "&Category!=MachineBound";
+            if (!value.Contains("Category!=LiveCli", StringComparison.OrdinalIgnoreCase))
+                value += "&Category!=LiveCli";
+            return command[..filter.Index] + $"--filter \"{value}\"" + command[(filter.Index + filter.Length)..];
+        }
+
+        return Regex.Replace(
+            command,
+            @"(?<![\w./-])dotnet\s+test\b",
+            match => $"{match.Value} --filter \"{DefaultDotNetTestFilter}\"",
+            RegexOptions.IgnoreCase,
+            TimeSpan.FromSeconds(1));
     }
 
     /// <summary>

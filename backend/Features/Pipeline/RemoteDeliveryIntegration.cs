@@ -36,12 +36,13 @@ public static class RemoteDeliveryIntegrationPolicy
                 "The source run has no settled immutable Result-Envelope.");
         }
 
-        if (!string.Equals(reviewOutcome, "Pass", StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(reviewOutcome, "Pass", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(reviewOutcome, "PassWithConcerns", StringComparison.OrdinalIgnoreCase))
         {
             return new RemoteDeliveryIntegrationDecision(
                 false,
                 RemoteBuildTestGateClass.Failed,
-                $"Remote Review ended with '{reviewOutcome ?? "unknown"}', not Pass.");
+                $"Remote Review ended with '{reviewOutcome ?? "unknown"}', not a passing outcome.");
         }
 
         var buildTests = verdicts

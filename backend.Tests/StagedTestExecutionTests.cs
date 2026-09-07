@@ -44,7 +44,7 @@ public sealed class TestSelectionPlannerTests : IDisposable
 
         Assert.Equal(TestExecutionLevels.WorkPackage, result.Audit.Level);
         Assert.Contains(result.Commands, command =>
-            command.Command == "dotnet test \"tests/App.Tests/App.Tests.csproj\" --filter Category!=MachineBound");
+            command.Command == $"dotnet test \"tests/App.Tests/App.Tests.csproj\" --filter \"{VerifyCommandPlanner.DefaultDotNetTestFilter}\"");
         Assert.DoesNotContain(result.Commands, command => command.Command.Contains("Other.Tests"));
         Assert.DoesNotContain(result.Commands, command => command.Command == fullCommand);
         Assert.Contains(fullCommand, result.Audit.OmittedTestCommands);
@@ -71,7 +71,7 @@ public sealed class TestSelectionPlannerTests : IDisposable
 
         Assert.Contains(result.Commands, command =>
             command.Command ==
-            "dotnet test \"tests/App.Tests/App.Tests.csproj\" --filter Category!=MachineBound");
+            $"dotnet test \"tests/App.Tests/App.Tests.csproj\" --filter \"{VerifyCommandPlanner.DefaultDotNetTestFilter}\"");
         Assert.DoesNotContain(result.Commands, command => command.Command == "dotnet test");
     }
 

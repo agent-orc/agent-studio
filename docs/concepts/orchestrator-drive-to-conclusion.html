@@ -2265,6 +2265,27 @@
             process stderr into the failure detail and the durable grade's explicit Detail line, including the full path.
           </td>
         </tr>
+        <tr id="case-2026-09-06-review-gate-overload">
+          <td>2026-09-06</td>
+          <td><code>AGT-2706</code> through <code>AGT-2723</code>, <code>QS-59</code>, <code>QS-82</code>,
+            <code>QS-89</code>, <code>QS-96</code><br><span class="small">review and build gates during host overload</span></td>
+          <td>
+            Thirteen cards encountered gate budget overruns, 30-second integration fetch timeouts, missing or unparsable
+            verification output, exhausted live-CLI quota, runner connectivity loss, or an out-of-band completion without
+            review. The pipeline treated those conditions as product failures or non-recoverable acceptance outcomes.
+          </td>
+          <td>
+            Gate and review results had no shared failure class. The grader fabricated
+            <code>&lt;unparsed failure&gt;</code> as a new failing test, integration fetches inherited the generic network
+            timeout, concern-only aspects mapped to ProductFailure, and the acceptance rail retried only rebase conflicts.
+          </td>
+          <td>
+            <span class="pill human">5-human-review</span> for all thirteen cards until the operator manually requeued them.
+            <br><span class="small">Under the corrected path, infrastructure and quota outcomes retain a visible reason and
+            retry count in <span class="lane">4-auto-review</span>, wait for load or quota readiness, and reach Human Review
+            only after three failed retries. Out-of-band completions enter review first.</span>
+          </td>
+        </tr>
       </tbody>
     </table>
 

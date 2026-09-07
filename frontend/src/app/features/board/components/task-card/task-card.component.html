@@ -22,6 +22,20 @@
   <div class="task-card__header">
     <app-copyable-task-key variant="card" [key]="job().key" [label]="issueLabel()" testId="task-card-key" />
     <span class="task-card__header-signals">
+      @if (job().reviewFailure; as failure) {
+        <span class="task-card__failure-pill"
+              data-testid="task-card-review-failure"
+              [attr.data-failure-class]="failure.failureClass"
+              [attr.data-retry]="failure.retryNumber"
+              [cacTooltip]="failure.reason">
+          {{ failure.failureClass }} ·
+          @if (failure.exhausted) {
+            retries exhausted {{ failure.retryNumber }}/{{ failure.maximumRetries }}
+          } @else {
+            retry {{ failure.retryNumber }}/{{ failure.maximumRetries }}
+          }
+        </span>
+      }
       @if (codeReviewGradeBadge(); as grade) {
         <span class="task-card__grade-pill"
               [class]="'task-card__grade-pill--' + grade.tone"

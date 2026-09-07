@@ -319,6 +319,15 @@ export interface TaskInfo {
     reason: string;
     scope?: 'quota' | 'provider' | string;
   } | null;
+  /** Active gate/review failure and bounded automatic retry state. */
+  reviewFailure?: {
+    failureClass: 'product' | 'infrastructure' | 'quota' | 'unknown' | string;
+    reason: string;
+    retryNumber: number;
+    maximumRetries: number;
+    retryAtUtc?: string | null;
+    exhausted: boolean;
+  } | null;
   /**
    * Card kind. `epic` cards are containers for sub-tasks; `task` (the default
    * when omitted) is an ordinary card. See backend `TaskKinds`.

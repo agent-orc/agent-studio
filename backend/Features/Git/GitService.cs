@@ -3835,7 +3835,7 @@ public class GitService
 
         var deliveryRef = $"refs/remotes/origin/{branch}";
         var fetchDelivery = $"+refs/heads/{branch}:{deliveryRef}";
-        var (_, deliveryError, deliveryCode) = RunGitArgs(
+        var (_, deliveryError, deliveryCode) = RunGitFetchArgs(
             repoRoot, cancellationToken, "fetch", "--no-tags", "origin", fetchDelivery);
         if (deliveryCode != 0)
             return Failed(
@@ -3896,7 +3896,7 @@ public class GitService
             if (!IsLikelyBranchName(candidate)) continue;
             var integrationRef = $"refs/remotes/origin/{candidate}";
             var fetchIntegration = $"+refs/heads/{candidate}:{integrationRef}";
-            var (_, _, fetchCode) = RunGitArgs(
+            var (_, _, fetchCode) = RunGitFetchArgs(
                 repoRoot, cancellationToken, "fetch", "--no-tags", "origin", fetchIntegration);
             if (fetchCode != 0) continue;
             var mergeBase = GetMergeBase(repoRoot, integrationRef, deliveryRef);
@@ -4233,7 +4233,7 @@ public class GitService
 
         var remoteIntegrationRef = $"refs/remotes/origin/{integrationBranch}";
         var fetchTarget = $"+refs/heads/{integrationBranch}:{remoteIntegrationRef}";
-        var (_, fetchError, fetchCode) = RunGitArgs(
+        var (_, fetchError, fetchCode) = RunGitFetchArgs(
             repoRoot, cancellationToken, "fetch", "--no-tags", "origin", fetchTarget);
         if (fetchCode != 0)
         {
@@ -4283,7 +4283,7 @@ public class GitService
         var remoteRef = $"refs/remotes/origin/{deliveryBranch}";
         var fetchSource = $"refs/heads/{deliveryBranch}";
         var fetchTarget = $"+{fetchSource}:{remoteRef}";
-        var (_, fetchError, fetchCode) = RunGitArgs(
+        var (_, fetchError, fetchCode) = RunGitFetchArgs(
             repoRoot, cancellationToken, "fetch", "--no-tags", "origin", fetchTarget);
         if (fetchCode != 0)
         {
@@ -6490,6 +6490,28 @@ public class GitService
         }
 
         return RunGitProcess(psi, stdin, cancellationToken);
+    }
+
+    private static (string Out, string Err, int Code) RunGitFetchArgs(
+        string cwd,
+        CancellationToken cancellationToken,
+        params string[] args)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = "git",
+            WorkingDirectory = cwd,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        foreach (var argument in args) psi.ArgumentList.Add(argument);
+        var result = GitNetworkProcessRunner.Run(
+            psi,
+            timeout: GitNetworkProcessRunner.CatchUpTimeout,
+            cancellationToken: cancellationToken);
+        return (result.StandardOutput, result.StandardError, result.ExitCode);
     }
 
     private static (string Out, string Err, int Code) RunGitProcess(

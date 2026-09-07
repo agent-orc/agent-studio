@@ -258,7 +258,7 @@ public sealed partial class TaskServerStore
                            ON attempt.subject_id = subject.id
                         WHERE subject.source_run_id = h.run_id
                           AND attempt.reported_at IS NOT NULL
-                          AND attempt.outcome IN ('Pass', 'ProductFailure')
+                          AND attempt.outcome IN ('Pass', 'PassWithConcerns', 'ProductFailure')
                    ) AS has_terminal_review,
                    EXISTS (
                        SELECT 1

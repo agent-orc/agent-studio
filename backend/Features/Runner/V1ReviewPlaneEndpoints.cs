@@ -223,9 +223,9 @@ public static class V1ReviewPlaneEndpoints
             TaskScannerService scanner,
             AgentStudio.Registry.ProjectRegistry projects,
             AgentStudio.Projects.ProjectSettingsService settings,
+            TaskMutationService mutations,
             RemoteReviewPlanBuilder remoteReviewPlans,
             HumanReviewEscalation escalation,
-            TaskMutationService mutations,
             TimelineLog timeline,
             ILoggerFactory loggerFactory,
             CancellationToken ct) =>
@@ -372,6 +372,7 @@ public static class V1ReviewPlaneEndpoints
             TaskScannerService scanner,
             AgentStudio.Registry.ProjectRegistry projects,
             AgentStudio.Projects.ProjectSettingsService settings,
+            TaskMutationService mutations,
             RemoteReviewPlanBuilder remoteReviewPlans,
             GitService git,
             TaskTransitionService transitions,
@@ -442,10 +443,34 @@ public static class V1ReviewPlaneEndpoints
                 };
             }
 
+            if (request.Commands
+                .SelectMany(command => command.NewFailures ?? [])
+                .Any(failure => !Contract.ReviewFailureClassifier.IsParsedFailureName(failure)))
+            {
+                request = request with
+                {
+                    Outcome = "ReviewInfra",
+                    FailureClassification = Contract.ReviewFailureClasses.Infrastructure,
+                    Summary = request.Summary
+                              ?? "Verification ended without a parsable failing-test result.",
+                };
+            }
+            else if (string.Equals(request.Outcome, "ProductFailure", StringComparison.OrdinalIgnoreCase)
+                     && request.Commands.All(command => command.ExitCode == 0 && command.Signal is null)
+                     && request.Verdicts.Any(verdict => verdict.Status == "concerns")
+                     && request.Verdicts.All(verdict => verdict.Status is "pass" or "concerns"))
+            {
+                request = request with
+                {
+                    Outcome = "PassWithConcerns",
+                    FailureClassification = null,
+                };
+            }
+
             if (!TryOutcome(request.Outcome, out var outcome))
                 return Results.BadRequest(new Contract.ApiError(
                     "invalid-review-outcome",
-                    "Outcome must be Pass, ProductFailure, ReviewInfra, Inconclusive, or Cancellation."));
+                    "Outcome must be Pass, PassWithConcerns, ProductFailure, ReviewInfra, Inconclusive, or Cancellation."));
 
             var settled = authority.SettleReview(new SettleReviewAttemptRequest(
                 new AttemptWriteReference(
@@ -473,7 +498,7 @@ public static class V1ReviewPlaneEndpoints
                     StringComparison.Ordinal))
                 ?.ReceivedAt
                 ?? DateTime.UtcNow;
-            if (settled.ReviewAttempt.Outcome == ReviewTerminalOutcome.Pass)
+            if (settled.ReviewAttempt.Outcome is ReviewTerminalOutcome.Pass or ReviewTerminalOutcome.PassWithConcerns)
             {
                 settings.MarkBuildProfileRemotelyValidated(
                     task.ProjectName,
@@ -530,8 +555,43 @@ public static class V1ReviewPlaneEndpoints
                 request.Outcome,
                 "ReviewInfra",
                 StringComparison.OrdinalIgnoreCase);
+            var chainForRetry = infrastructureFailure
+                ? BuildAttemptChainSummary(authority, settled.ReviewAttempt.TaskKey)
+                : null;
+            var failureClass = Contract.ReviewFailureClassifier.Classify(
+                    request.FailureClassification + "\n" + request.Summary)
+                .FailureClass == Contract.ReviewFailureClass.Quota
+                ? Contract.ReviewFailureClass.Quota
+                : Contract.ReviewFailureClass.Infrastructure;
+            var retryDecision = infrastructureFailure
+                ? Contract.ReviewFailureRetryPolicy.Decide(
+                    failureClass,
+                    Math.Max(0, (chainForRetry?.GradedAttempts.Count ?? 1) - 1),
+                    receivedAt,
+                    AttemptAuthorityService.ReviewInfrastructureRetryBudget,
+                    quotaResetAtUtc: task.QuotaWait?.ResetAt)
+                : null;
             var retry = infrastructureFailure
+                        && retryDecision?.Requeue == true
                         && authority.HasReviewInfrastructureRetryBudget(settled.ReviewAttempt.AttemptId);
+            if (infrastructureFailure)
+            {
+                mutations.SetReviewFailureOnFolder(task.FolderPath, new ReviewFailureStatus
+                {
+                    FailureClass = Contract.ReviewFailureClasses.WireValue(failureClass),
+                    Reason = (request.Summary ?? request.FailureClassification ?? "Remote review infrastructure failed.")
+                             + (!retry && chainForRetry is not null ? "\n\n" + chainForRetry.Detail : string.Empty),
+                    RetryNumber = retryDecision?.RetryNumber
+                                  ?? AttemptAuthorityService.ReviewInfrastructureRetryBudget,
+                    MaximumRetries = AttemptAuthorityService.ReviewInfrastructureRetryBudget,
+                    RetryAtUtc = retry ? retryDecision?.RetryAtUtc : null,
+                    Exhausted = !retry,
+                });
+            }
+            else
+            {
+                mutations.ClearReviewFailureOnFolder(task.FolderPath);
+            }
             var repeatDiagnosis = infrastructureFailure
                 ? RecordInfrastructureRepeatDiagnosis(authority, timeline, task, settled.ReviewAttempt)
                 : null;
@@ -697,34 +757,37 @@ public static class V1ReviewPlaneEndpoints
                 var review = settled.ReviewAttempt;
                 if (string.Equals(task.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
                 {
-                    // The budget constant alone described the chain by its size.
-                    // The chain summary describes it by its NEWEST cause and by
-                    // every distinct classification it produced, so a late,
-                    // harder failure cannot be hidden behind the majority class
-                    // (AGT-2220).
-                    var chain = BuildAttemptChainSummary(authority, review.TaskKey);
-                    var moved = await escalation.EscalateAsync(
+                    var chain = chainForRetry ?? BuildAttemptChainSummary(authority, review.TaskKey);
+                    var moved = await transitions.MoveAsync(
                         task.Id,
+                        TaskStates.HumanReview,
                         task.WatchPath,
-                        task.ProjectName,
-                        HumanReviewEscalationCategories.ReviewSubjectUnmaterializable,
-                        $"The immutable ReviewSubject exhausted its budget of {AttemptAuthorityService.ReviewInfrastructureRetryBudget} infrastructure retries and cannot be materialized. "
-                        + chain.Headline,
                         ct,
-                        statusDetail: chain.Detail);
+                        cause: $"remote-review:{attemptId}",
+                        suppressProductExecution: true,
+                        expectedSourceState: TaskStates.AutoReview,
+                        transitionCause: LaneChangeCauses.ReviewInfrastructure,
+                        transitionDetail: $"{Contract.ReviewFailureClasses.WireValue(failureClass)}-retry-exhausted");
                     if (moved.Status != MoveJobStatus.Success)
                     {
                         return Results.Json(
                             new Contract.ApiError(
                                 "review-subject-escalation-failed",
-                                $"Review result is durable, but the Escalated lane write failed: {moved.Status} {moved.Message}"),
+                                $"Review result is durable, but the Human Review lane write failed: {moved.Status} {moved.Message}"),
                             statusCode: StatusCodes.Status503ServiceUnavailable);
                     }
-                    taskState = TaskStates.Escalated;
+                    taskState = TaskStates.HumanReview;
+                    escalation.RecordRemoteReviewParkVerdict(
+                        task.ProjectName,
+                        task.Id,
+                        moved.NewFolderPath ?? task.FolderPath,
+                        request.Outcome,
+                        (request.Summary ?? "Remote review infrastructure failed.") + " " + chain.Headline,
+                        chain);
                 }
-                else if (string.Equals(task.State, TaskStates.Escalated, StringComparison.OrdinalIgnoreCase))
+                else if (string.Equals(task.State, TaskStates.HumanReview, StringComparison.OrdinalIgnoreCase))
                 {
-                    taskState = TaskStates.Escalated;
+                    taskState = TaskStates.HumanReview;
                 }
                 else
                 {
@@ -1273,6 +1336,7 @@ public static class V1ReviewPlaneEndpoints
         outcome = value.Trim().ToLowerInvariant() switch
         {
             "pass" => ReviewTerminalOutcome.Pass,
+            "passwithconcerns" => ReviewTerminalOutcome.PassWithConcerns,
             "productfailure" => ReviewTerminalOutcome.ProductFailure,
             "reviewinfra" => ReviewTerminalOutcome.InfrastructureFailure,
             "inconclusive" => ReviewTerminalOutcome.Inconclusive,

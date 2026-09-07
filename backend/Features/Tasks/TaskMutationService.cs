@@ -1236,6 +1236,21 @@ public class TaskMutationService
         return Updated();
     }
 
+    public bool SetReviewFailureOnFolder(string folderPath, ReviewFailureStatus failure)
+    {
+        if (!Directory.Exists(folderPath)) return false;
+        TaskJsonFile.UpdateField(folderPath, "reviewFailure", failure, _logger);
+        return Updated();
+    }
+
+    public bool ClearReviewFailureOnFolder(string folderPath)
+    {
+        if (!Directory.Exists(folderPath)) return false;
+        var removed = TaskJsonFile.RemoveField(folderPath, "reviewFailure", _logger);
+        if (removed) Updated();
+        return removed;
+    }
+
     public string? CreateJob(CreateTaskRequest req)
     {
         var watchPaths = _scanner.GetWatchPaths();

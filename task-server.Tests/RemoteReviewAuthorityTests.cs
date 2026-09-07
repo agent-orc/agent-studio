@@ -35,7 +35,7 @@ public sealed class RemoteReviewAuthorityTests
         var subject = await SeedReviewSubjectAsync(store, plan: plan);
 
         Assert.Equal(
-            "dotnet test -maxcpucount:2 -p:ParallelizeTestCollections=false",
+            $"dotnet test -maxcpucount:2 -p:ParallelizeTestCollections=false --filter \"{ReviewPlanResourcePolicy.DefaultGateTestFilter}\"",
             Assert.Single(subject.Plan.Commands).Arguments[1]);
     }
 
@@ -259,6 +259,7 @@ public sealed class RemoteReviewAuthorityTests
             record => record.Action == "review.cleanup-failed"
                       && record.DetailJson.Contains("WorkspaceCleanupFailed", StringComparison.Ordinal));
 
+        await ReleaseReviewBackoffAsync(store);
         var retry = await store.ClaimReviewAsync(
             new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
         Assert.Equal(subject.SubjectId, retry.Subject!.SubjectId);
@@ -305,12 +306,85 @@ public sealed class RemoteReviewAuthorityTests
         Assert.True(report.RetryScheduled);
         Assert.Equal("4-auto-review", (await TaskAsync(store, subject.TaskId)).State);
 
+        await ReleaseReviewBackoffAsync(store);
         var retry = await store.ClaimReviewAsync(
             new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
         Assert.Equal("claimed", retry.Status);
         Assert.Equal(subject.SubjectId, retry.Subject!.SubjectId);
         Assert.NotEqual(first.Attempt.AttemptId, retry.Attempt!.AttemptId);
         Assert.Equal(first.Attempt.AttemptNumber + 1, retry.Attempt.AttemptNumber);
+    }
+
+    [Fact]
+    public async Task Infrastructure_retry_budget_parks_only_after_three_retries()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var subject = await SeedReviewSubjectAsync(store);
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+
+        for (var attemptNumber = 1; attemptNumber <= 4; attemptNumber++)
+        {
+            var claim = await store.ClaimReviewAsync(
+                new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+            Assert.Equal("claimed", claim.Status);
+            Assert.Equal(attemptNumber, claim.Attempt!.AttemptNumber);
+            var request = PassingReport(claim) with
+            {
+                Outcome = "ReviewInfra",
+                FailureClassification = ReviewFailureClasses.Infrastructure,
+            };
+
+            var report = await store.ReportReviewAsync(
+                claim.Attempt.AttemptId,
+                request,
+                "review-a",
+                default);
+
+            if (attemptNumber <= 3)
+            {
+                Assert.True(report.RetryScheduled);
+                Assert.Equal("4-auto-review", report.TaskState);
+                await ReleaseReviewBackoffAsync(store);
+            }
+            else
+            {
+                Assert.False(report.RetryScheduled);
+                Assert.Equal("5-human-review", report.TaskState);
+            }
+        }
+
+        Assert.Equal("5-human-review", (await TaskAsync(store, subject.TaskId)).State);
+    }
+
+    [Fact]
+    public async Task Concerns_without_a_blocking_failure_are_pass_with_concerns()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        await SeedReviewSubjectAsync(store);
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        var claim = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+        var passing = PassingReport(claim);
+        var request = passing with
+        {
+            Outcome = "ProductFailure",
+            Verdicts = passing.Verdicts.Select((verdict, index) => index == 0
+                ? verdict with { Status = "concerns", Classification = "DocumentationImpact" }
+                : verdict).ToArray(),
+        };
+
+        var report = await store.ReportReviewAsync(
+            claim.Attempt!.AttemptId,
+            request,
+            "review-a",
+            default);
+
+        Assert.Equal("PassWithConcerns", report.Outcome);
+        Assert.False(report.RetryScheduled);
     }
 
     [Fact]
@@ -656,6 +730,7 @@ public sealed class RemoteReviewAuthorityTests
         Assert.Equal("ReviewInfra", containment.Outcome);
         Assert.Equal("ContainmentMismatch", containment.FailureClassification);
 
+        await ReleaseReviewBackoffAsync(store);
         var retry = await store.ClaimReviewAsync(
             new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
         var wrongTree = PassingReport(retry);
@@ -1006,6 +1081,7 @@ public sealed class RemoteReviewAuthorityTests
         Assert.Equal("4-auto-review", infra.TaskState);
         Assert.Equal("4-auto-review", (await TaskAsync(store, subject.TaskId)).State);
 
+        await ReleaseReviewBackoffAsync(store);
         var retry = await store.ClaimReviewAsync(
             new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
         var passed = await store.ReportReviewAsync(
@@ -1136,6 +1212,16 @@ public sealed class RemoteReviewAuthorityTests
 
     private static TaskServerStore Store(string dataDirectory)
         => new(Options.Create(new TaskServerOptions { DataDirectory = dataDirectory }), TimeProvider.System);
+
+    private static async Task ReleaseReviewBackoffAsync(TaskServerStore store)
+    {
+        await using var connection = new SqliteConnection($"Data Source={store.DatabasePath};Pooling=False");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE review_attempts SET created_at = $ready WHERE status = 'queued';";
+        command.Parameters.AddWithValue("$ready", "2000-01-01T00:00:00.0000000Z");
+        await command.ExecuteNonQueryAsync();
+    }
 
     private static async Task<ReviewSubjectDto> SeedReviewSubjectAsync(
         TaskServerStore store,

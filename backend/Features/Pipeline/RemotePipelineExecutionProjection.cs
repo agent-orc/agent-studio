@@ -200,7 +200,8 @@ internal static class RemotePipelineExecutionProjection
         int attempt,
         IReadOnlyList<TaskTokenCall> calls)
     {
-        var passed = string.Equals(grade.Outcome, "Pass", StringComparison.OrdinalIgnoreCase);
+        var passed = string.Equals(grade.Outcome, "Pass", StringComparison.OrdinalIgnoreCase)
+                     || string.Equals(grade.Outcome, "PassWithConcerns", StringComparison.OrdinalIgnoreCase);
         var verdict = grade.Outcome.Trim().ToLowerInvariant() switch
         {
             "productfailure" => "product-failure",

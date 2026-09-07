@@ -29,6 +29,8 @@ public enum BuildTestGateFailureKind
     Cancellation,
     MissingSource,
     ReviewModel,
+    Quota,
+    UnparseableOutput,
 }
 
 public sealed record BuildTestGateRequest(
@@ -1515,22 +1517,23 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         if (process.ExitCode == 137 || string.Equals(process.TerminationSignal, "SIGKILL", StringComparison.Ordinal))
             return BuildTestGateFailureKind.OutOfMemory;
         var evidence = process.StandardError + "\n" + process.StandardOutput;
+        var failureClass = ReviewFailureClassifier.Classify(
+            evidence,
+            ReviewFailureClassifier.ParseFailingTests(evidence));
+        if (failureClass.FailureClass == ReviewFailureClass.Quota)
+            return BuildTestGateFailureKind.Quota;
+        if (failureClass.FailureClass == ReviewFailureClass.Product)
+            return BuildTestGateFailureKind.Code;
         var classified = ClassifyFailure(evidence);
         if (classified == BuildTestGateFailureKind.None)
-            return BuildTestGateFailureKind.Code;
-        // A verify command that ran to completion and returned an exit code was NOT
-        // prevented from running by the host: whatever lock / OOM / timeout string it
-        // printed is its own reported result - e.g. a test that logs an
-        // IOException "... because it is being used by another process" on its temp
-        // DB files (AGT-2110, 21.07.). Treating such a DETERMINISTIC test failure as
-        // review infrastructure poisoned the environmental-retry budget: the same
-        // 15-25 min build+test was re-run twice more, each time holding the machine
-        // gate and starving every queued card, before escalating "Lock persisted".
-        // Only a genuine MSBuild build-output lock (MSB3026/MSB3027) is a real,
-        // retryable host fault; every other string from a completed process is a
-        // code/test defect that must flow through the normal reissue path instead.
+            return BuildTestGateFailureKind.UnparseableOutput;
+        // A completed process is product evidence only when the classifier found
+        // a parsed failing test or compiler diagnostic above. Other output may be
+        // a truncated test stream, so it remains retryable infrastructure.
         if (CompletedNormally(process) && !IsGenuineBuildOutputLock(evidence))
-            return BuildTestGateFailureKind.Code;
+            return failureClass.FailureClass == ReviewFailureClass.Infrastructure
+                ? classified
+                : BuildTestGateFailureKind.UnparseableOutput;
         return classified;
     }
 

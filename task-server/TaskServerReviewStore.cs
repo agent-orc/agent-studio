@@ -231,6 +231,7 @@ public sealed partial class TaskServerStore
                          OR (a.status = 'leased' AND a.expires_at <= $now)
                        )
                    AND t.state = '4-auto-review'
+                   AND a.created_at <= $now
                    AND NOT (
                          json_extract(s.plan_json, '$.requireDifferentHostFailureDomain') = 1
                          AND s.coding_host_id = $host
@@ -530,8 +531,14 @@ public sealed partial class TaskServerStore
             var classified = ClassifyReviewReport(subject, request, attempt);
             var received = UtcNow;
             var reportId = $"rrpt_{Guid.NewGuid():N}";
-            var retry = string.Equals(classified.Outcome, "ReviewInfra", StringComparison.Ordinal);
-            const string taskState = "4-auto-review";
+            var infrastructureOutcome = string.Equals(classified.Outcome, "ReviewInfra", StringComparison.Ordinal);
+            var retryDecision = infrastructureOutcome
+                ? DecideReviewFailureRetry(attempt, classified.Classification, received)
+                : null;
+            var retry = retryDecision?.Requeue == true;
+            var taskState = infrastructureOutcome && !retry
+                ? "5-human-review"
+                : "4-auto-review";
             await ExecuteAsync(connection, """
                 UPDATE review_attempts
                    SET status = 'reported', report_id = $report, report_json = $json,
@@ -549,7 +556,7 @@ public sealed partial class TaskServerStore
                 ("$now", Iso(received)), ("$attempt", attemptId), ("$state", taskState),
                 ("$task", attempt.TaskId));
             if (retry)
-                await InsertReviewRetryAsync(connection, transaction, attempt, received, ct);
+                await InsertReviewRetryAsync(connection, transaction, attempt, retryDecision!.RetryAtUtc, ct);
             if (!string.Equals(classified.Outcome, "ReviewInfra", StringComparison.Ordinal))
             {
                 await ResolveCanarySuccessAsync(
@@ -575,6 +582,15 @@ public sealed partial class TaskServerStore
                     reportId,
                     payloadHash,
                     retry,
+                    failureClass = infrastructureOutcome
+                        ? NormalizeReviewFailureClass(classified.Classification).WireValue()
+                        : string.Equals(classified.Outcome, "ProductFailure", StringComparison.Ordinal)
+                            ? ReviewFailureClasses.Product
+                            : null,
+                    retryNumber = retryDecision?.RetryNumber,
+                    maximumRetries = retryDecision?.MaximumRetries,
+                    retryAtUtc = retryDecision?.RetryAtUtc,
+                    retryReason = retryDecision?.Reason,
                 }), ct);
             result = new ReviewReportDto(
                 reportId, attemptId, attempt.SubjectId, classified.Outcome,
@@ -597,9 +613,14 @@ public sealed partial class TaskServerStore
             var payloadHash = HashJson(request);
             if (await DeliveryExistsAsync(connection, transaction, attemptId, "cleanup", request.IdempotencyKey, payloadHash, ct))
             {
+                var duplicateRetry = string.Equals(attempt.Outcome, "ReviewInfra", StringComparison.Ordinal)
+                    && DecideReviewFailureRetry(
+                        attempt,
+                        attempt.FailureClassification,
+                        UtcNow).Requeue;
                 result = new ReviewCleanupResponse(
                     "duplicate", attemptId, attempt.CleanedAt ?? UtcNow,
-                    string.Equals(attempt.Outcome, "ReviewInfra", StringComparison.Ordinal));
+                    duplicateRetry);
                 return;
             }
             ValidateReviewAuthority(attempt, request.ExecutorId, request.InstanceId, request.LeaseId, request.Fence, requireLeased: false);
@@ -607,6 +628,8 @@ public sealed partial class TaskServerStore
             {
                 var failedAt = UtcNow;
                 var classification = request.FailureClassification ?? "WorkspaceCleanupFailed";
+                var retryDecision = DecideReviewFailureRetry(attempt, classification, failedAt);
+                var taskState = retryDecision.Requeue ? "4-auto-review" : "5-human-review";
                 await ExecuteAsync(connection, """
                     UPDATE review_attempts
                        SET status = 'cleanup-failed', outcome = 'ReviewInfra',
@@ -614,16 +637,22 @@ public sealed partial class TaskServerStore
                            cleanup_idempotency_key = $key, cleaned_at = $now
                      WHERE id = $attempt;
                     UPDATE tasks
-                       SET state = '4-auto-review', version = version + 1, updated_at = $now
+                       SET state = $state, version = version + 1, updated_at = $now
                      WHERE id = $task;
                     """, ct, transaction,
                     ("$classification", classification), ("$key", request.IdempotencyKey),
-                    ("$now", Iso(failedAt)), ("$attempt", attemptId), ("$task", attempt.TaskId));
-                await InsertReviewRetryAsync(connection, transaction, attempt, failedAt, ct);
+                    ("$now", Iso(failedAt)), ("$attempt", attemptId), ("$task", attempt.TaskId),
+                    ("$state", taskState));
+                if (retryDecision.Requeue)
+                    await InsertReviewRetryAsync(connection, transaction, attempt, retryDecision.RetryAtUtc, ct);
                 await RecordDeliveryAsync(connection, transaction, attemptId, "cleanup", request.IdempotencyKey, payloadHash, ct);
                 await AuditAsync(connection, transaction, actorId, "review.cleanup-failed", "review-attempt", attemptId,
                     JsonSerializer.Serialize(new { classification, request.WorkspaceRemoved }), ct);
-                result = new ReviewCleanupResponse("cleanup-failed", attemptId, failedAt, true);
+                result = new ReviewCleanupResponse(
+                    "cleanup-failed",
+                    attemptId,
+                    failedAt,
+                    retryDecision.Requeue);
                 return;
             }
 
@@ -631,7 +660,10 @@ public sealed partial class TaskServerStore
             var retry = false;
             if (string.IsNullOrWhiteSpace(attempt.ReportId))
             {
-                retry = true;
+                var classification = request.FailureClassification ?? "CleanupWithoutReport";
+                var retryDecision = DecideReviewFailureRetry(attempt, classification, now);
+                retry = retryDecision.Requeue;
+                var taskState = retry ? "4-auto-review" : "5-human-review";
                 await ExecuteAsync(connection, """
                     UPDATE review_attempts
                        SET outcome = 'ReviewInfra',
@@ -639,12 +671,14 @@ public sealed partial class TaskServerStore
                            reported_at = $now
                      WHERE id = $attempt;
                     UPDATE tasks
-                       SET state = '4-auto-review', version = version + 1, updated_at = $now
+                       SET state = $state, version = version + 1, updated_at = $now
                      WHERE id = $task;
                     """, ct, transaction,
-                    ("$classification", request.FailureClassification ?? "CleanupWithoutReport"),
-                    ("$now", Iso(now)), ("$attempt", attemptId), ("$task", attempt.TaskId));
-                await InsertReviewRetryAsync(connection, transaction, attempt, now, ct);
+                    ("$classification", classification),
+                    ("$now", Iso(now)), ("$attempt", attemptId), ("$task", attempt.TaskId),
+                    ("$state", taskState));
+                if (retry)
+                    await InsertReviewRetryAsync(connection, transaction, attempt, retryDecision.RetryAtUtc, ct);
             }
             await ExecuteAsync(connection, """
                 UPDATE review_attempts
@@ -804,6 +838,10 @@ public sealed partial class TaskServerStore
             return ("ReviewInfra", "CommandSubjectMismatch");
         if (ReviewToolchainFailurePolicy.IsUnavailable(request.Commands, request.Artifacts))
             return ("ReviewInfra", "ToolUnavailable");
+        if (request.Commands
+            .SelectMany(command => command.NewFailures ?? [])
+            .Any(failure => !ReviewFailureClassifier.IsParsedFailureName(failure)))
+            return ("ReviewInfra", ReviewFailureClasses.Infrastructure);
         if (string.Equals(request.Outcome, "ReviewInfra", StringComparison.Ordinal)
             && request.FailureClassification is "PreparationFailed")
             return ClassifyPreparationFailure(subject, request);
@@ -861,7 +899,12 @@ public sealed partial class TaskServerStore
                 || !artifactDigests.Contains(command.StderrSha256)))
             return ("ReviewInfra", "ArtifactEvidenceIncomplete");
         if (request.Commands.Any(command => command.Signal is not null || command.ExitCode is null or < 0))
-            return ("ReviewInfra", "CommandTerminated");
+        {
+            var terminated = ClassifyCommandEvidence(request.Commands, request.Artifacts);
+            return ("ReviewInfra", terminated.FailureClass == ReviewFailureClass.Quota
+                ? ReviewFailureClasses.Quota
+                : ReviewFailureClasses.Infrastructure);
+        }
         if (request.Verdicts.Any(verdict =>
                 verdict.Status is not ("pass" or "concerns" or "block" or "fail")))
             return ("ReviewInfra", "InvalidAspectVerdict");
@@ -871,25 +914,71 @@ public sealed partial class TaskServerStore
                 return false;
             var planned = subject.Plan.Commands.Single(item =>
                 string.Equals(item.StepId, command.StepId, StringComparison.Ordinal));
-            if (planned.CompareToBaseline && command.NewFailures is { Count: > 0 })
+            if (planned.CompareToBaseline
+                && command.NewFailures?.Any(ReviewFailureClassifier.IsParsedFailureName) == true)
                 return true;
             if (command.ExitCode == 0) return false;
             return !planned.CompareToBaseline
                    || command.BaselineSha is null
                    || command.NewFailures is null
-                   || command.NewFailures.Count > 0;
+                   || command.NewFailures.Any(ReviewFailureClassifier.IsParsedFailureName);
         });
-        if (commandFailures
-            || request.Verdicts.Any(verdict => verdict.Status is "concerns" or "block" or "fail"))
-            return ("ProductFailure", request.FailureClassification ?? "ReviewFinding");
+        if (commandFailures)
+        {
+            var commandClass = ClassifyCommandEvidence(request.Commands, request.Artifacts);
+            if (commandClass.FailureClass is ReviewFailureClass.Infrastructure or ReviewFailureClass.Quota)
+                return ("ReviewInfra", commandClass.WireClass);
+            if (commandClass.FailureClass == ReviewFailureClass.Product
+                || request.Verdicts.Any(verdict => verdict.Status is "block" or "fail"))
+            {
+                return ("ProductFailure", ReviewFailureClasses.Product);
+            }
+            return ("ReviewInfra", ReviewFailureClasses.Infrastructure);
+        }
+        if (request.Verdicts.Any(verdict => verdict.Status is "block" or "fail"))
+            return ("ProductFailure", ReviewFailureClasses.Product);
+        if (request.Verdicts.Any(verdict => verdict.Status == "concerns"))
+            return ("PassWithConcerns", request.FailureClassification);
         if (string.Equals(request.Outcome, "ReviewInfra", StringComparison.Ordinal))
             return ("ReviewInfra", string.IsNullOrWhiteSpace(request.FailureClassification)
                 ? "UnclassifiedReviewInfrastructure"
                 : request.FailureClassification);
         if (string.Equals(request.Outcome, "Pass", StringComparison.Ordinal)
+            || string.Equals(request.Outcome, "PassWithConcerns", StringComparison.Ordinal)
             || string.Equals(request.Outcome, "ProductFailure", StringComparison.Ordinal))
             return (request.Outcome, request.FailureClassification);
         return ("ReviewInfra", "InvalidReviewOutcome");
+    }
+
+    private static ReviewFailureClassification ClassifyCommandEvidence(
+        IReadOnlyList<ReviewCommandEvidenceDto> commands,
+        IReadOnlyList<ReviewArtifactEvidenceDto> artifacts)
+    {
+        var parsedFailures = commands
+            .SelectMany(command => command.NewFailures ?? [])
+            .Where(ReviewFailureClassifier.IsParsedFailureName)
+            .ToArray();
+        var evidence = new StringBuilder();
+        foreach (var command in commands.Where(command =>
+                     command.ExitCode is null or not 0 || command.Signal is not null))
+        {
+            if (command.Signal is not null) evidence.Append("signal=").AppendLine(command.Signal);
+            if (command.ExitCode is null or < 0) evidence.AppendLine("exit=n/a");
+            foreach (var artifact in artifacts.Where(artifact => artifact.ContentBase64 is not null
+                         && (string.Equals(artifact.Sha256, command.StdoutSha256, StringComparison.OrdinalIgnoreCase)
+                             || string.Equals(artifact.Sha256, command.StderrSha256, StringComparison.OrdinalIgnoreCase))))
+            {
+                try
+                {
+                    evidence.AppendLine(Encoding.UTF8.GetString(Convert.FromBase64String(artifact.ContentBase64!)));
+                }
+                catch (FormatException)
+                {
+                    evidence.AppendLine("unparseable test output artifact");
+                }
+            }
+        }
+        return ReviewFailureClassifier.Classify(evidence.ToString(), parsedFailures);
     }
 
     private static (string Outcome, string? Classification) ClassifyPreparationFailure(
@@ -995,6 +1084,22 @@ public sealed partial class TaskServerStore
             ("$id", $"rat_{Guid.NewGuid():N}"), ("$subject", attempt.SubjectId),
             ("$task", attempt.TaskId), ("$number", attempt.AttemptNumber + 1), ("$now", Iso(now)));
     }
+
+    private ReviewRetryDecision DecideReviewFailureRetry(
+        ReviewAuthorityRow attempt,
+        string? classification,
+        DateTime nowUtc)
+        => ReviewFailureRetryPolicy.Decide(
+            NormalizeReviewFailureClass(classification),
+            Math.Max(0, attempt.AttemptNumber - 1),
+            nowUtc,
+            Math.Max(0, _options.ReviewFailureMaxRetries));
+
+    private static ReviewFailureClass NormalizeReviewFailureClass(string? classification)
+        => string.Equals(classification, ReviewFailureClasses.Quota, StringComparison.OrdinalIgnoreCase)
+           || (classification?.Contains("quota", StringComparison.OrdinalIgnoreCase) ?? false)
+            ? ReviewFailureClass.Quota
+            : ReviewFailureClass.Infrastructure;
 
     private static async Task EnsureReviewSubjectCurrentAsync(
         SqliteConnection connection,

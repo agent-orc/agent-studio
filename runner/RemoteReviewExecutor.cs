@@ -290,6 +290,9 @@ public sealed class RemoteReviewExecutor
         string summary,
         CancellationToken ct)
     {
+        failureClassification ??= evidence.Outcome == "ReviewInfra"
+            ? evidence.FailureClass ?? ReviewFailureClasses.Infrastructure
+            : null;
         var attempt = slot.Claim.Attempt!;
         var lease = slot.Claim.Lease!;
         if (failureClassification is not null)
@@ -461,7 +464,9 @@ public sealed class RemoteReviewExecutor
                 $"terminalOutcome={report.Outcome}");
         }
 
-        return report.Outcome == "Pass" ? 0 : report.Outcome == "ProductFailure" ? 2 : 3;
+        return report.Outcome is "Pass" or "PassWithConcerns"
+            ? 0
+            : report.Outcome == "ProductFailure" ? 2 : 3;
     }
 
     private async Task<int> FinalizeTerminalReportRejectionAsync(
@@ -626,7 +631,7 @@ public sealed class RemoteReviewExecutor
             .Select(verdict => $"{verdict.Aspect}: {verdict.Summary}")
             .ToArray();
         if (baseline.Length > 0) return string.Join(" ", baseline);
-        return evidence.Outcome == "Pass"
+        return evidence.Outcome is "Pass" or "PassWithConcerns"
             ? "All applicable remote review aspects passed."
             : "At least one remote review aspect found a product concern.";
     }

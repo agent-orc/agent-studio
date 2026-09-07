@@ -1,4 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
+import path from 'node:path';
 
 /**
  * Multi-aspect post-processing surface (slice 1).
@@ -40,6 +41,14 @@ interface JobInfoStub {
   ownerClientId: string;
   tokenSummary: null;
   tags: string[];
+  reviewFailure?: {
+    failureClass: string;
+    reason: string;
+    retryNumber: number;
+    maximumRetries: number;
+    retryAtUtc: string | null;
+    exhausted: boolean;
+  };
 }
 
 function jobStub(over: Partial<JobInfoStub>): JobInfoStub {
@@ -231,10 +240,10 @@ async function installMocks(
 }
 
 async function dismissErrorDialogIfPresent(page: Page): Promise<void> {
-  const overlay = page.locator('app-error-dialog .overlay--error');
+  const overlay = page.getByTestId('error-dialog-overlay');
   if (await overlay.isVisible().catch(() => false)) {
-    const close = page.locator('app-error-dialog button').first();
-    await close.click({ trial: false }).catch(() => { /* best-effort */ });
+    await page.keyboard.press('Escape');
+    await overlay.waitFor({ state: 'hidden', timeout: 2_000 }).catch(() => { /* best-effort */ });
   }
 }
 
@@ -334,5 +343,52 @@ test.describe('Auto-review multi-aspect surface', () => {
     // Capture suppression evidence on the card.
     await page.setViewportSize({ width: 1400, height: 900 });
     await card.screenshot({ path: 'screenshots/auto-review/auto-review-concerns-card.png' });
+  });
+
+  test('infrastructure failure shows its class and retry counter in Post Processing', async ({ page }) => {
+    const job = jobStub({
+      id: 'fixture-infrastructure',
+      title: 'Fetch delivery branch',
+      state: '4-auto-review',
+      reviewFailure: {
+        failureClass: 'infrastructure',
+        reason: "Integration branch 'develop' could not be fetched from origin: git operation timed out after 30 seconds",
+        retryNumber: 2,
+        maximumRetries: 3,
+        retryAtUtc: '2026-09-07T13:10:00Z',
+        exhausted: false,
+      },
+    });
+    await installMocks(page, [job], {
+      lastTickAt: null,
+      accept: 0,
+      reissue: 0,
+      escalate: 0,
+      aspectsRun: 0,
+      pending: 1,
+      currentJob: null,
+      currentProject: null,
+    });
+    await restoreAllProjectsBoard(page);
+
+    await page.goto('/');
+    await page.waitForLoadState('domcontentloaded');
+    await dismissErrorDialogIfPresent(page);
+
+    const card = page.locator('[data-testid="task-card"]', { hasText: 'Fetch delivery branch' });
+    const failure = card.getByTestId('task-card-review-failure');
+    await expect(card).toBeVisible({ timeout: 10_000 });
+    await expect(failure).toContainText('infrastructure');
+    await expect(failure).toContainText('retry 2/3');
+    await expect(failure).toHaveAttribute('data-failure-class', 'infrastructure');
+
+    if (process.env.JOB_RESULTS_DIR) {
+      await dismissErrorDialogIfPresent(page);
+      await expect(page.getByTestId('error-dialog-overlay')).toBeHidden();
+      await card.scrollIntoViewIfNeeded();
+      await card.screenshot({
+        path: path.join(process.env.JOB_RESULTS_DIR, 'infrastructure-retry-card--mocked.png'),
+      });
+    }
   });
 });

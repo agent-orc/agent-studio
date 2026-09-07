@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using AgentStudio.Pipeline;
 
 namespace AgentStudio.Projects;
 
@@ -1343,6 +1344,21 @@ public class ProjectSettingsService
         }
         _logger.LogInformation("Staged test policy {Action} for project {Project}",
             policy is null ? "cleared" : "updated", projectName);
+    }
+
+    public void SetGateRunBudget(string projectName, int? minutes)
+    {
+        EnsureLoaded();
+        int? normalized = minutes is null
+            ? null
+            : Math.Clamp(minutes.Value, GateRunBudgetPolicy.MinimumMinutes, GateRunBudgetPolicy.MaximumMinutes);
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var settings) ? settings : new ProjectSettings();
+            _cache[key] = current with { GateRunBudgetMinutes = normalized };
+            Persist();
+        }
     }
 
     private static TestExecutionPolicy? NormalizeTestExecution(TestExecutionPolicy? policy)

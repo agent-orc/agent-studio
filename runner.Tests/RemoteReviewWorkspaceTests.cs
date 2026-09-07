@@ -343,7 +343,8 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         await workspace.PrepareAsync(null!, default);
         var evidence = await workspace.ExecutePlanAsync(default);
 
-        Assert.Equal("ProductFailure", evidence.Outcome);
+        Assert.Equal("ReviewInfra", evidence.Outcome);
+        Assert.Equal("infrastructure", evidence.FailureClass);
         var preparationEvidence = evidence.Commands
             .Where(item => item.Phase == "preparation")
             .ToArray();

@@ -12,6 +12,7 @@ namespace AgentStudio.TaskServer.Contracts;
 public static partial class ReviewPlanResourcePolicy
 {
     public const int DefaultDotNetMaxCpuCount = 2;
+    public const string DefaultGateTestFilter = "Category!=MachineBound&Category!=LiveCli";
 
     public static ReviewPlanDto Apply(
         ReviewPlanDto plan,
@@ -102,6 +103,7 @@ public static partial class ReviewPlanResourcePolicy
         }
         filtered.Insert(1, $"-maxcpucount:{maxCpuCount}");
         filtered.Insert(2, "-p:ParallelizeTestCollections=false");
+        ApplyDefaultCategoryFilter(filtered);
         return filtered;
     }
 
@@ -111,9 +113,47 @@ public static partial class ReviewPlanResourcePolicy
         var limited = MaxCpuShellArgument().Replace(shellCommand, string.Empty);
         limited = TestCollectionParallelismShellArgument().Replace(limited, string.Empty);
         limited = CollapseUnquotedHorizontalWhitespace(limited);
-        return DotNetTest().Replace(
+        limited = ApplyDefaultCategoryFilter(limited);
+        limited = DotNetTest().Replace(
             limited,
             match => $"{match.Value} -maxcpucount:{maxCpuCount} -p:ParallelizeTestCollections=false");
+        return limited;
+    }
+
+    private static void ApplyDefaultCategoryFilter(List<string> arguments)
+    {
+        var index = arguments.FindIndex(argument => argument is "--filter" or "-f");
+        if (index >= 0 && index + 1 < arguments.Count)
+        {
+            var value = arguments[index + 1];
+            if (!value.Contains("Category!=MachineBound", StringComparison.OrdinalIgnoreCase))
+                value += "&Category!=MachineBound";
+            if (!value.Contains("Category!=LiveCli", StringComparison.OrdinalIgnoreCase))
+                value += "&Category!=LiveCli";
+            arguments[index + 1] = value;
+            return;
+        }
+        arguments.Add("--filter");
+        arguments.Add(DefaultGateTestFilter);
+    }
+
+    private static string ApplyDefaultCategoryFilter(string shellCommand)
+    {
+        var filter = DotNetTestFilterArgument().Match(shellCommand);
+        if (filter.Success)
+        {
+            var value = filter.Groups["value"].Value.Trim('"', '\'');
+            if (!value.Contains("Category!=MachineBound", StringComparison.OrdinalIgnoreCase))
+                value += "&Category!=MachineBound";
+            if (!value.Contains("Category!=LiveCli", StringComparison.OrdinalIgnoreCase))
+                value += "&Category!=LiveCli";
+            return shellCommand[..filter.Index]
+                   + $"--filter \"{value}\""
+                   + shellCommand[(filter.Index + filter.Length)..];
+        }
+        return DotNetTest().Replace(
+            shellCommand,
+            match => $"{match.Value} --filter \"{DefaultGateTestFilter}\"");
     }
 
     private static string CollapseUnquotedHorizontalWhitespace(string value)
@@ -176,5 +216,8 @@ public static partial class ReviewPlanResourcePolicy
 
     [GeneratedRegex(@"(?<!\S)(?:-[pP]:|/[pP]:|--property:?)ParallelizeTestCollections=(?:true|false)", RegexOptions.IgnoreCase)]
     private static partial Regex TestCollectionParallelismShellArgument();
+
+    [GeneratedRegex("(?:--filter|-f)\\s+(?<value>\"[^\"]*\"|'[^']*'|[^\\s;&]+)", RegexOptions.IgnoreCase)]
+    private static partial Regex DotNetTestFilterArgument();
 
 }

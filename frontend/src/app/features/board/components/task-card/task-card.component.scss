@@ -505,6 +505,7 @@
     .task-card__human-review-pill,
     .task-card__git-state-pill,
     .task-card__grade-pill,
+    .task-card__failure-pill,
     .task-card__external-pill,
     .task-card__phase-pill {
       display: inline-flex;
@@ -516,6 +517,16 @@
       font-size: var(--studio-card-meta-size);
       font-weight: 600;
       letter-spacing: 0.02em;
+    }
+    .task-card__failure-pill {
+      max-width: 240px;
+      overflow: hidden;
+      border: 1px solid var(--notify-warning-border);
+      background: var(--notify-warning-tint);
+      color: var(--notify-warning-icon-fg);
+      font-variant-numeric: tabular-nums;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     /* Mode badge (planning / research / concept). Only non-coding modes render a pill so
        the board stays quiet for the default mode. AGT-2069: planning cards get

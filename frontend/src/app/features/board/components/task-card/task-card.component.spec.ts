@@ -2078,6 +2078,38 @@ describe('TaskCardComponent external-done badge render', () => {
   });
 });
 
+describe('TaskCardComponent review failure header', () => {
+  it('shows infrastructure class and retry counter in the card header', async () => {
+    await TestBed.configureTestingModule({
+      imports: [TaskCardComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(TaskCardComponent);
+    fixture.componentRef.setInput('job', makeJob({
+      state: '4-auto-review',
+      reviewFailure: {
+        failureClass: 'infrastructure',
+        reason: 'git operation timed out after 30 seconds',
+        retryNumber: 2,
+        maximumRetries: 3,
+        retryAtUtc: '2026-09-07T12:05:00Z',
+        exhausted: false,
+      },
+    }));
+    fixture.detectChanges();
+
+    const pill = fixture.nativeElement.querySelector('[data-testid="task-card-review-failure"]') as HTMLElement;
+    expect(pill.textContent).toContain('infrastructure');
+    expect(pill.textContent).toContain('retry 2/3');
+    expect(pill.getAttribute('data-failure-class')).toBe('infrastructure');
+  });
+});
+
 describe('TaskCardComponent — waits-on dependency chip (AGT-2029)', () => {
   async function mount(job: TaskInfo) {
     await TestBed.configureTestingModule({

@@ -30,6 +30,12 @@ internal sealed record GitProcessResult(
 internal static class GitNetworkProcessRunner
 {
     internal static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(30);
+    /// <summary>
+    /// Network catch-up budget for integration and delivery fetches. These
+    /// operations may transfer a repack and must not inherit the short metadata
+    /// probe timeout.
+    /// </summary>
+    internal static readonly TimeSpan CatchUpTimeout = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan TerminationDrainTimeout = TimeSpan.FromSeconds(3);
 
     internal static GitProcessResult Run(

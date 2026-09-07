@@ -78,6 +78,13 @@ public record TaskInfo
     /// </summary>
     public QuotaWaitStatus? QuotaWait { get; init; }
     /// <summary>
+    /// Active gate or review failure carried into Post Processing or Human
+    /// Review. The class, reason, retry counter, and next eligible retry are
+    /// persisted together so lane and card surfaces never reduce an
+    /// infrastructure fault to a generic product failure.
+    /// </summary>
+    public ReviewFailureStatus? ReviewFailure { get; init; }
+    /// <summary>
     /// Card kind: <c>task</c> (default, a runnable unit of work) or <c>epic</c>
     /// (a container grouping sub-tasks under one overarching goal). An epic is
     /// not code-executed itself; only its sub-tasks run through the pipeline.
@@ -493,6 +500,16 @@ public record TaskInfo
     /// that structured reference carrier lands.
     /// </summary>
     public ConceptDossierSummary? ConceptDossier { get; init; }
+}
+
+public sealed record ReviewFailureStatus
+{
+    public string FailureClass { get; init; } = "unknown";
+    public string Reason { get; init; } = string.Empty;
+    public int RetryNumber { get; init; }
+    public int MaximumRetries { get; init; } = 3;
+    public DateTime? RetryAtUtc { get; init; }
+    public bool Exhausted { get; init; }
 }
 
 /// <summary>Compact current-step projection used by board and task detail.</summary>

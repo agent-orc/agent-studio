@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Runner;
 
@@ -172,9 +173,6 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     /// </summary>
     public Func<string, string, string, TimeSpan, CancellationToken, Task<string>> CliRunner { get; set; }
         = DefaultRunCliAsync;
-
-    internal Func<int, TimeSpan> BuildTestGateRetryBackoff { get; set; }
-        = PostProcessingOutcomeTaxonomy.RetryBackoff;
 
     private readonly AgentStudio.AdHoc.AdHocUsageRecorder? _usage;
     private readonly AgentStudio.Cli.CliOneShotRegistry? _oneShotRegistry;
@@ -2270,6 +2268,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     workspace, entry, current, buildGateResult);
                 return;
             }
+            TaskJsonFile.RemoveField(current.FolderPath, "reviewFailure", _logger);
             // The quality grade is reporting evidence, not a success gate. A
             // red deterministic build must stay loud and still receive that
             // evidence before the task is reissued / escalated. The aspect pool
@@ -2281,6 +2280,11 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             await HandleBuildTestGateFailureAsync(
                 workspace, entry, pending, current, buildGateResult, failedBuildGrade, ct);
             return;
+        }
+        if (current.ReviewFailure is not null)
+        {
+            TaskJsonFile.RemoveField(current.FolderPath, "reviewFailure", _logger);
+            _scanner.InvalidateCache();
         }
 
         var qualityAnalysis = await RunQualityAngularRulesPostStepAsync(
@@ -3621,6 +3625,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             DurationMs = durationMs,
             Verdict = verdictToken,
             Reason = string.IsNullOrWhiteSpace(reason) ? null : reason,
+            FailureClass = status == PipelineStepStatus.Failed
+                ? ReviewFailureClassifier.Classify(reason).WireClass
+                : null,
         });
     }
 
@@ -3647,7 +3654,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         {
             RecordBuildTestGateStep(current.FolderPath, PipelineStepStatus.Skipped,
                 durationMs: 0, verdictToken: "condition",
-                reason: "pipeline condition did not match");
+                reason: "pipeline condition did not match",
+                failureKind: BuildTestGateFailureKind.None);
             return new BuildTestGateResult(BuildTestGateVerdict.Skipped, null, 0, "",
                 "condition", false, false);
         }
@@ -3665,14 +3673,18 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         {
             RecordBuildTestGateStep(current.FolderPath, PipelineStepStatus.Skipped,
                 durationMs: 0, verdictToken: "off",
-                reason: "post-step disabled by config");
+                reason: "post-step disabled by config",
+                failureKind: BuildTestGateFailureKind.None);
             return new BuildTestGateResult(BuildTestGateVerdict.Skipped, null, 0, "",
                 "mode=off", false, false);
         }
 
         var repoPath = ResolveBuildTestGateRepositoryPath(entry);
         var subject = ResolveBuildTestGateSubject(current, entry.Path);
-        var timeoutSeconds = _configuration.GetValue($"PostSteps:{PipelineCatalogue.BuildTestGateStepId}:TimeoutSeconds", 300);
+        var gateRunBudget = GateRunBudgetPolicy.Resolve(
+            settings?.GateRunBudgetMinutes,
+            ReadRecentGateDurations(entry.Name));
+        var timeoutSeconds = Math.Max(1, (int)Math.Ceiling(gateRunBudget.TotalSeconds));
         var infrastructureTimeoutSeconds = _configuration.GetValue(
             $"PostSteps:{PipelineCatalogue.BuildTestGateStepId}:InfrastructureTimeoutSeconds", 120);
         // The machine gate is held for a whole build+test run, so a card queued
@@ -3707,80 +3719,63 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 entry.Name, current.Id, AutoReviewActivitySteps.Gate),
         };
 
-        BuildTestGateResult? result = null;
-        for (var infrastructureRetry = 0;
-             infrastructureRetry <= PostProcessingOutcomeTaxonomy.DefaultMaxEnvironmentalRetries;
-             infrastructureRetry++)
+        BuildTestGateResult result;
+        // One gate execution belongs to one visible review attempt. Persistent
+        // infrastructure retries are scheduled at the card boundary below so
+        // operators can see the class, counter, and backoff between attempts.
+        try
         {
-            try
-            {
-                result = await _buildTestGateRunner.RunAsync(
-                    request, changedFiles, settings?.BuildProfile, mode,
-                    TimeSpan.FromSeconds(timeoutSeconds), ct);
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex,
-                    "ReviewDecisionOrchestrator: build-test gate threw for {Project}/{JobId}; classifying as review infrastructure",
-                    entry.Name, current.Id);
-                result = new BuildTestGateResult(
-                    BuildTestGateVerdict.Fail, null, 0, ex.ToString(),
-                    "build-test gate runner threw", false, false)
-                {
-                    GateId = request.GateId,
-                    Repository = repoPath,
-                    ExpectedSha = subject.Sha,
-                    AttemptChainId = subject.AttemptChainId,
-                    Executor = subject.Executor,
-                    FailureKind = BuildTestGateFailureKind.ProcessLaunch,
-                    FailureFingerprint = BuildTestGateRunner.Fingerprint(
-                        BuildTestGateFailureKind.ProcessLaunch, ex.ToString()),
-                    TerminationSignal = "processlaunch",
-                };
-            }
-
-            var normalizedKind = result.Verdict == BuildTestGateVerdict.Fail
-                                 && result.FailureKind == BuildTestGateFailureKind.None
-                ? BuildTestGateRunner.ClassifyFailure(result.Output + "\n" + result.Reason)
-                : result.FailureKind;
-            if (result.Verdict == BuildTestGateVerdict.Fail
-                && normalizedKind == BuildTestGateFailureKind.None)
-                normalizedKind = BuildTestGateFailureKind.Code;
-            result = result with
+            result = await _buildTestGateRunner.RunAsync(
+                request, changedFiles, settings?.BuildProfile, mode,
+                TimeSpan.FromSeconds(timeoutSeconds), ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "ReviewDecisionOrchestrator: build-test gate threw for {Project}/{JobId}; classifying as review infrastructure",
+                entry.Name, current.Id);
+            result = new BuildTestGateResult(
+                BuildTestGateVerdict.Fail, null, 0, ex.ToString(),
+                "build-test gate runner threw", false, false)
             {
                 GateId = request.GateId,
-                Repository = result.Repository ?? repoPath,
-                ExpectedSha = result.ExpectedSha ?? subject.Sha,
-                AttemptChainId = result.AttemptChainId ?? subject.AttemptChainId,
-                Executor = result.Executor ?? subject.Executor,
-                FailureKind = normalizedKind,
-                FailureFingerprint = result.FailureFingerprint
-                    ?? (normalizedKind == BuildTestGateFailureKind.None
-                        ? null
-                        : BuildTestGateRunner.Fingerprint(
-                            normalizedKind, result.Reason + "\n" + result.Output)),
+                Repository = repoPath,
+                ExpectedSha = subject.Sha,
+                AttemptChainId = subject.AttemptChainId,
+                Executor = subject.Executor,
+                FailureKind = BuildTestGateFailureKind.ProcessLaunch,
+                FailureFingerprint = BuildTestGateRunner.Fingerprint(
+                    BuildTestGateFailureKind.ProcessLaunch, ex.ToString()),
+                TerminationSignal = "processlaunch",
             };
-
-            WriteBuildTestGateLog(current.FolderPath, result, changedFiles);
-            if (!result.IsInfrastructureFailure
-                || infrastructureRetry >= PostProcessingOutcomeTaxonomy.DefaultMaxEnvironmentalRetries)
-                break;
-
-            var retryNumber = infrastructureRetry + 1;
-            var backoff = BuildTestGateRetryBackoff(retryNumber);
-            _logger.LogWarning(
-                "build_test_gate_infrastructure_retry project={Project} job_id={JobId} expected_sha={ExpectedSha} attempt_chain_id={AttemptChainId} gate_id={GateId} failure_kind={FailureKind} failure_fingerprint={FailureFingerprint} retry={Retry} backoff_ms={BackoffMs}",
-                entry.Name, current.Id, subject.Sha ?? "missing", subject.AttemptChainId ?? "missing",
-                result.GateId, result.FailureKind, result.FailureFingerprint ?? "missing",
-                retryNumber, backoff.TotalMilliseconds);
-            if (backoff > TimeSpan.Zero) await Task.Delay(backoff, ct);
         }
 
-        if (result is null) return null;
+        var normalizedKind = result.Verdict == BuildTestGateVerdict.Fail
+                             && result.FailureKind == BuildTestGateFailureKind.None
+            ? BuildTestGateRunner.ClassifyFailure(result.Output + "\n" + result.Reason)
+            : result.FailureKind;
+        if (result.Verdict == BuildTestGateVerdict.Fail
+            && normalizedKind == BuildTestGateFailureKind.None)
+            normalizedKind = BuildTestGateFailureKind.UnparseableOutput;
+        result = result with
+        {
+            GateId = request.GateId,
+            Repository = result.Repository ?? repoPath,
+            ExpectedSha = result.ExpectedSha ?? subject.Sha,
+            AttemptChainId = result.AttemptChainId ?? subject.AttemptChainId,
+            Executor = result.Executor ?? subject.Executor,
+            FailureKind = normalizedKind,
+            FailureFingerprint = result.FailureFingerprint
+                ?? (normalizedKind == BuildTestGateFailureKind.None
+                    ? null
+                    : BuildTestGateRunner.Fingerprint(
+                        normalizedKind, result.Reason + "\n" + result.Output)),
+        };
+        WriteBuildTestGateLog(current.FolderPath, result, changedFiles);
 
         var status = result.Verdict switch
         {
@@ -3800,7 +3795,13 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             BuildTestGateVerdict.NotApplicable => "not-applicable",
             _ => "skipped",
         };
-        RecordBuildTestGateStep(current.FolderPath, status, result.DurationMs, verdictToken, result.Reason);
+        RecordBuildTestGateStep(
+            current.FolderPath,
+            status,
+            result.DurationMs,
+            verdictToken,
+            result.Reason,
+            result.FailureKind);
 
         _logger.LogInformation(
             "ReviewDecisionOrchestrator: build-test gate {Verdict} for {Project}/{JobId} in {DurationMs}ms (backend={Backend} frontend={Frontend} changedFiles={ChangedFiles})",
@@ -3809,6 +3810,41 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             changedFiles?.Count.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unknown");
 
         return result;
+    }
+
+    private IEnumerable<long> ReadRecentGateDurations(string projectName)
+    {
+        var logs = new List<(DateTime WrittenAtUtc, long DurationMs)>();
+        foreach (var job in _scanner.ScanAllAutomationJobs()
+                     .Where(job => string.Equals(job.ProjectName, projectName, StringComparison.OrdinalIgnoreCase)))
+        {
+            var directory = Path.Combine(job.FolderPath, "post-steps");
+            if (!Directory.Exists(directory)) continue;
+            foreach (var path in Directory.EnumerateFiles(directory, "build-test-gate-*.log"))
+            {
+                try
+                {
+                    var first = File.ReadLines(path).FirstOrDefault() ?? string.Empty;
+                    var token = first.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                        .FirstOrDefault(value => value.StartsWith("durationMs=", StringComparison.Ordinal));
+                    if (token is null
+                        || !long.TryParse(token["durationMs=".Length..], out var durationMs)
+                        || durationMs <= 0)
+                        continue;
+                    logs.Add((File.GetLastWriteTimeUtc(path), durationMs));
+                }
+                catch (IOException ex)
+                {
+                    // History is advisory. The default remains available when a
+                    // concurrently moved task folder makes one receipt unreadable.
+                    SilentCatch.Note(ex, "ReviewDecisionOrchestrator: gate history receipt became unreadable");
+                }
+            }
+        }
+        return logs.OrderBy(item => item.WrittenAtUtc)
+            .TakeLast(GateRunBudgetPolicy.HistoryWindow)
+            .Select(item => item.DurationMs)
+            .ToArray();
     }
 
     private IReadOnlyList<string>? ResolveLatestRunChangedFiles(TaskInfo job, string? watchPath)
@@ -3860,7 +3896,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         PipelineStepStatus status,
         long durationMs,
         string verdictToken,
-        string reason)
+        string reason,
+        BuildTestGateFailureKind failureKind)
     {
         if (_pipelineLog == null) return;
         var now = DateTime.UtcNow;
@@ -3874,6 +3911,14 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             DurationMs = durationMs,
             Verdict = verdictToken,
             Reason = string.IsNullOrWhiteSpace(reason) ? null : reason,
+            FailureClass = status != PipelineStepStatus.Failed
+                ? null
+                : failureKind switch
+                {
+                    BuildTestGateFailureKind.Code => ReviewFailureClasses.Product,
+                    BuildTestGateFailureKind.Quota => ReviewFailureClasses.Quota,
+                    _ => ReviewFailureClasses.Infrastructure,
+                },
         });
     }
 
@@ -5333,39 +5378,79 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         BuildTestGateResult result)
     {
         _pipelineLog?.Complete(current.FolderPath);
+        var classified = ReviewFailureClassifier.Classify(result.Reason + "\n" + result.Output);
+        var failureClass = classified.FailureClass == ReviewFailureClass.Quota
+            ? ReviewFailureClass.Quota
+            : ReviewFailureClass.Infrastructure;
+        var retriesUsed = Math.Max(0, current.ReviewFailure?.RetryNumber ?? 0);
+        var maximumRetries = Math.Max(0, _configuration.GetValue(
+            "ReviewDecisionOrchestrator:FailureMaxRetries",
+            ReviewFailureRetryPolicy.DefaultMaxRetries));
+        var retry = ReviewFailureRetryPolicy.Decide(
+            failureClass,
+            retriesUsed,
+            DateTime.UtcNow,
+            maximumRetries,
+            quotaResetAtUtc: current.QuotaWait?.ResetAt);
         var reason = BuildTestGateInfrastructureReasonPrefix
-            + $"{result.FailureKind} persisted for exact subject {result.ExpectedSha ?? "missing"} "
-            + $"in attempt chain {result.AttemptChainId ?? "missing"} after "
-            + $"{PostProcessingOutcomeTaxonomy.DefaultMaxEnvironmentalRetries} retries "
-            + $"(fingerprint {result.FailureFingerprint ?? "missing"}); coding reissue budget was not consumed.";
-        var move = GuardedMoveJob(
-            current.Id, TaskStates.Escalated, entry.Path,
-            transitionCause: LaneChangeCauses.Escalated, transitionDetail: "build-test-gate-infrastructure");
-        if (move.Status == MoveJobStatus.Success)
+            + $"class={failureClass.WireValue()}; {result.FailureKind} for exact subject "
+            + $"{result.ExpectedSha ?? "missing"} in attempt chain {result.AttemptChainId ?? "missing"} "
+            + $"(fingerprint {result.FailureFingerprint ?? "missing"}); {retry.Reason} "
+            + "The coding reissue budget was not consumed.";
+
+        if (retry.Requeue)
         {
-            var movedFolderPath = move.NewFolderPath ?? current.FolderPath;
-            var escalated = current with { FolderPath = movedFolderPath, State = TaskStates.Escalated };
-            RecordOrchestratorDecisionStep(movedFolderPath, PipelineStepStatus.Failed,
-                DecisionVerdictEscalate, reason);
-            WritePostProcessingOutcome(escalated, PostProcessingOutcomes.FailedPostProcessing,
+            WriteReviewFailure(current.FolderPath, new ReviewFailureStatus
+            {
+                FailureClass = failureClass.WireValue(),
+                Reason = result.Reason,
+                RetryNumber = retry.RetryNumber,
+                MaximumRetries = retry.MaximumRetries,
+                RetryAtUtc = retry.RetryAtUtc,
+            });
+            RecordOrchestratorDecisionStep(current.FolderPath, PipelineStepStatus.Failed,
+                "retry", reason);
+            WritePostProcessingOutcome(current, PostProcessingOutcomes.FailedPostProcessing,
                 summary: reason,
                 performer: PostProcessingPerformers.Tool,
                 stepId: PipelineCatalogue.BuildTestGateStepId,
                 evidenceRef: "post-steps/");
-            _chatLog.AppendSupervisor(escalated, "escalate",
-                $"Build/test review infrastructure failed for exact subject `{result.ExpectedSha ?? "missing"}` "
-                + "after bounded retries. The coding work was not reissued. "
-                + $"Failure: {result.FailureKind} ({result.FailureFingerprint ?? "missing"}).");
-            EmitVerdictTimeline(movedFolderPath, TimelineEventKinds.OrchestratorEscalated,
-                TimelineActors.Orchestrator, reason,
-                BuildBuildTestGateInfrastructureDetails(result, reason));
+            _chatLog.AppendSupervisor(current, "retry",
+                $"Review {failureClass.WireValue()} failure. Retrying {retry.RetryNumber}/{retry.MaximumRetries} "
+                + $"after {retry.RetryAtUtc:O}. {result.Reason}");
+            EmitVerdictTimeline(current.FolderPath, TimelineEventKinds.QualityLoopReopened,
+                TimelineActors.Orchestrator, reason, BuildBuildTestGateInfrastructureDetails(result, reason));
+            _scanner.InvalidateCache();
+            return Task.CompletedTask;
+        }
+
+        WriteReviewFailure(current.FolderPath, new ReviewFailureStatus
+        {
+            FailureClass = failureClass.WireValue(),
+            Reason = result.Reason,
+            RetryNumber = retriesUsed,
+            MaximumRetries = maximumRetries,
+            Exhausted = true,
+        });
+        var move = GuardedMoveJob(
+            current.Id, TaskStates.HumanReview, entry.Path,
+            transitionCause: LaneChangeCauses.ReviewVerdict,
+            transitionDetail: $"{failureClass.WireValue()}-retry-exhausted");
+        if (move.Status == MoveJobStatus.Success)
+        {
+            var movedFolderPath = move.NewFolderPath ?? current.FolderPath;
+            RecordOrchestratorDecisionStep(movedFolderPath, PipelineStepStatus.Failed,
+                DecisionVerdictEscalate, reason);
+            _chatLog.AppendSupervisor(
+                current with { FolderPath = movedFolderPath, State = TaskStates.HumanReview },
+                "review",
+                $"Review {failureClass.WireValue()} failure exhausted {retriesUsed}/{maximumRetries} retries. "
+                + $"Human Review now shows the infrastructure reason: {result.Reason}");
         }
         else
-        {
             _logger.LogWarning(
-                "ReviewDecisionOrchestrator: failed to escalate {JobId} after build-test review infrastructure failure: {Status} {Message}",
+                "ReviewDecisionOrchestrator: failed to park {JobId} after review infrastructure retries: {Status} {Message}",
                 current.Id, move.Status, move.Message);
-        }
 
         _statusSnapshot.RecordEscalate();
         AppendReviewDecision(workspace, new ReviewDecisionRecord(
@@ -5386,6 +5471,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         }, current.FolderPath, move.NewFolderPath);
         return Task.CompletedTask;
     }
+
+    private void WriteReviewFailure(string folderPath, ReviewFailureStatus failure)
+        => TaskJsonFile.UpdateField(folderPath, "reviewFailure", failure, _logger);
 
     private static Dictionary<string, string> BuildBuildTestGateInfrastructureDetails(
         BuildTestGateResult result,
@@ -6807,6 +6895,13 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             if (info.Fixture)
             {
                 onSkipped?.Invoke(info.Id, "fixture-card");
+                continue;
+            }
+
+            if (info.ReviewFailure is { Exhausted: false, RetryAtUtc: { } retryAt }
+                && retryAt > DateTime.UtcNow)
+            {
+                onSkipped?.Invoke(info.Id, "review-failure-backoff");
                 continue;
             }
 

@@ -8,12 +8,14 @@ namespace AgentStudio.Tests;
 
 public sealed class RemoteDeliveryIntegrationPolicyTests
 {
-    [Fact]
-    public void Decide_PassedBuildTestGate_IntegratesSettledEnvelope()
+    [Theory]
+    [InlineData("Pass")]
+    [InlineData("PassWithConcerns")]
+    public void Decide_PassingBuildTestGate_IntegratesSettledEnvelope(string reviewOutcome)
     {
         var decision = RemoteDeliveryIntegrationPolicy.Decide(
             hasSettledResultEnvelope: true,
-            reviewOutcome: "Pass",
+            reviewOutcome,
             Plan("build-tests"),
             [new Contract.ReviewVerdictDto(
                 "build-tests",

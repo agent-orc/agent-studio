@@ -86,7 +86,8 @@ internal static class TaskScopedTestEvidenceReader
             || outcome.Equals("Failed", StringComparison.OrdinalIgnoreCase);
         var passed = !failed
                      && buildStatuses.All(status => status.Equals("pass", StringComparison.OrdinalIgnoreCase))
-                     && outcome.Equals("Pass", StringComparison.OrdinalIgnoreCase);
+                     && (outcome.Equals("Pass", StringComparison.OrdinalIgnoreCase)
+                         || outcome.Equals("PassWithConcerns", StringComparison.OrdinalIgnoreCase));
         var result = failed ? "failed" : passed ? "passed" : "not-proven";
         var commit = frontmatter.GetValueOrDefault("actualHead")
                      ?? frontmatter.GetValueOrDefault("expectedResultSha")

@@ -42,6 +42,11 @@ public sealed record TestSelectionAudit
     public string? AdvisorReason { get; init; }
     public bool FullSuiteRequired { get; init; }
     public bool FullSuiteRan { get; init; }
+    public IReadOnlyList<string> SkippedByDefault { get; init; } =
+    [
+        "Category LiveCli is skipped by default because it consumes live CLI quota.",
+        "Category MachineBound is skipped by default because it depends on the operator host.",
+    ];
 }
 
 public sealed record StagedVerifyPlan(
@@ -347,16 +352,15 @@ public static class TestSelectionPlanner
         {
             if (!command.Command.TrimStart().StartsWith("dotnet test", StringComparison.OrdinalIgnoreCase))
                 continue;
-            var match = Regex.Match(command.Command,
+            var normalized = VerifyCommandPlanner.AddDefaultDotNetTestFilter(command.Command);
+            var match = Regex.Match(normalized,
                 "(?:^|\\s)(?:--filter|-f)\\s+(?:\\\"[^\\\"]*\\\"|'[^']*'|\\S+)",
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
             if (match.Success) return " " + match.Value.Trim();
         }
-        // Repository-wide routine gates exclude machine-bound and Windows-host
-        // process/timing families. Preserve an explicit project filter when one
-        // exists; otherwise apply the canonical exclusion to every generated
-        // work-package test-project command.
-        return " --filter Category!=MachineBound";
+        // Repository-wide routine gates exclude live CLI and machine-bound
+        // families, including when the project supplied another filter.
+        return $" --filter \"{VerifyCommandPlanner.DefaultDotNetTestFilter}\"";
     }
 
     private static string? OwningProject(string root, string changedFile, IReadOnlyList<string> projects)

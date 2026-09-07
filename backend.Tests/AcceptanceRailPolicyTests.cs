@@ -88,6 +88,74 @@ public sealed class AcceptanceRailPolicyTests
         Assert.Equal(AcceptanceRailAction.Requeue, decision.Action);
     }
 
+    [Theory]
+    [InlineData("infrastructure")]
+    [InlineData("quota")]
+    public void RetryableReviewFailure_IsRequeuedWithoutIntegrationEvidence(string failureClass)
+    {
+        var decision = AcceptanceRailPolicy.Decide(
+            Card() with
+            {
+                ReviewFailure = new ReviewFailureStatus
+                {
+                    FailureClass = failureClass,
+                    RetryNumber = 1,
+                    MaximumRetries = 3,
+                    RetryAtUtc = DateTime.UtcNow.AddMinutes(-1),
+                },
+            },
+            integration: null,
+            conflictRequeues: 0,
+            Options);
+
+        Assert.Equal(AcceptanceRailAction.Requeue, decision.Action);
+        Assert.Equal("retryable-review-failure", decision.Reason);
+    }
+
+    [Fact]
+    public void RetryableReviewFailure_RespectsBackoff()
+    {
+        var decision = AcceptanceRailPolicy.Decide(
+            Card() with
+            {
+                ReviewFailure = new ReviewFailureStatus
+                {
+                    FailureClass = "infrastructure",
+                    RetryNumber = 1,
+                    MaximumRetries = 3,
+                    RetryAtUtc = DateTime.UtcNow.AddMinutes(1),
+                },
+            },
+            integration: null,
+            conflictRequeues: 0,
+            Options);
+
+        Assert.Equal(AcceptanceRailAction.Ignore, decision.Action);
+        Assert.Equal("review-failure-backoff", decision.Reason);
+    }
+
+    [Fact]
+    public void ExhaustedReviewFailure_RemainsForHumanReview()
+    {
+        var decision = AcceptanceRailPolicy.Decide(
+            Card() with
+            {
+                ReviewFailure = new ReviewFailureStatus
+                {
+                    FailureClass = "quota",
+                    RetryNumber = 3,
+                    MaximumRetries = 3,
+                    Exhausted = true,
+                },
+            },
+            integration: null,
+            conflictRequeues: 0,
+            Options);
+
+        Assert.Equal(AcceptanceRailAction.Ignore, decision.Action);
+        Assert.Equal("review-failure-retry-budget-exhausted", decision.Reason);
+    }
+
     [Fact]
     public void ConflictAtConfiguredLimit_IsEscalated()
     {

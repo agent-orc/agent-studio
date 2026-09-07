@@ -41,6 +41,11 @@ public record SetCrashRecoveryRequest
     public bool Enabled { get; init; }
 }
 
+public record SetGateRunBudgetRequest
+{
+    public int? Minutes { get; init; }
+}
+
 /// <summary>
 /// Per-project preferences under <c>/api/projects</c> — read-all
 /// for the header bar plus the per-project auto-commit toggle.
@@ -114,6 +119,7 @@ public static class ProjectSettingsEndpoints
                     pipelineSteps = PipelineTypeSettings.ForType(kv.Value, PipelineTypes.Task)?.PipelineSteps
                         ?? new Dictionary<string, PipelineStepSetting>(),
                     testExecution = kv.Value.TestExecution,
+                    gateRunBudgetMinutes = kv.Value.GateRunBudgetMinutes,
                     pipelineStepOrder = PipelineTypeSettings.ForType(kv.Value, PipelineTypes.Task)?.PipelineStepOrder
                         ?? Array.Empty<string>(),
                     pipelineStepsByType = kv.Value.PipelineStepsByType
@@ -809,6 +815,22 @@ public static class ProjectSettingsEndpoints
             if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
             settings.SetTestExecution(projectName, req);
             return Results.Ok(settings.Get(projectName).TestExecution);
+        });
+
+        app.MapPut("/api/projects/{projectName}/gate-run-budget", (
+            string projectName,
+            SetGateRunBudgetRequest req,
+            ProjectSettingsService settings,
+            TaskScannerService scanner) =>
+        {
+            var known = scanner.GetWatchPaths().Any(entry =>
+                string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase));
+            if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            if (req.Minutes is < GateRunBudgetPolicy.MinimumMinutes or > GateRunBudgetPolicy.MaximumMinutes)
+                return Results.BadRequest(new { error = $"Gate-run budget must be {GateRunBudgetPolicy.MinimumMinutes} to {GateRunBudgetPolicy.MaximumMinutes} minutes." });
+            settings.SetGateRunBudget(projectName, req.Minutes);
+            scanner.InvalidateCache();
+            return Results.Ok(new { minutes = req.Minutes });
         });
 
         app.MapDelete("/api/projects/{projectName}/test-execution", (string projectName, ProjectSettingsService settings, TaskScannerService scanner) =>

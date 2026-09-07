@@ -11,6 +11,14 @@ public sealed class GitNetworkProcessRunnerTests : IDisposable
         Path.GetTempPath(),
         "agent-studio-git-network-" + Guid.NewGuid().ToString("N"));
 
+    [Fact]
+    public void IntegrationCatchUpBudget_IsLongerThanMetadataProbeBudget()
+    {
+        Assert.Equal(TimeSpan.FromSeconds(30), GitNetworkProcessRunner.DefaultTimeout);
+        Assert.Equal(TimeSpan.FromMinutes(5), GitNetworkProcessRunner.CatchUpTimeout);
+        Assert.True(GitNetworkProcessRunner.CatchUpTimeout > GitNetworkProcessRunner.DefaultTimeout);
+    }
+
     [SkippableFact]
     [Trait("Category", "MachineBound")]
     public async Task HangingFakeRemote_TimesOutAndReapsEveryProcess()

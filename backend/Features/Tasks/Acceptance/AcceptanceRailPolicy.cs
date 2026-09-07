@@ -54,8 +54,8 @@ public sealed record AcceptanceRailDecision(
 
 /// <summary>
 /// Pure policy for the platform-owned acceptance rail. It accepts only
-/// Git-derived integrated coding deliveries and requeues only typed,
-/// rebase-recoverable integration failures.
+/// Git-derived integrated coding deliveries and requeues typed review
+/// infrastructure failures or rebase-recoverable integration failures.
 /// </summary>
 public static class AcceptanceRailPolicy
 {
@@ -78,6 +78,24 @@ public static class AcceptanceRailPolicy
             return Ignore("outside-rail-lanes");
         if (IsHeld(task, options.HoldList))
             return Ignore("operator-hold");
+
+        if (task.State == TaskStates.HumanReview
+            && task.ReviewFailure is { } reviewFailure
+            && AgentStudio.TaskServer.Contracts.ReviewFailureClasses.IsRetryable(reviewFailure.FailureClass))
+        {
+            if (reviewFailure.Exhausted)
+            {
+                return Ignore("review-failure-retry-budget-exhausted");
+            }
+
+            if (reviewFailure.RetryAtUtc > DateTime.UtcNow)
+                return Ignore("review-failure-backoff");
+
+            return new AcceptanceRailDecision(
+                AcceptanceRailAction.Requeue,
+                "retryable-review-failure");
+        }
+
         if (!AcceptanceIntegrationPolicy.IsIntegrationRequired(task))
             return Ignore("no-code-acceptance");
 

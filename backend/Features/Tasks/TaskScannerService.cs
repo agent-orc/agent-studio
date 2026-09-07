@@ -660,6 +660,7 @@ public class TaskScannerService : ITaskScanner
                     || thinkingExplicit.ValueKind != JsonValueKind.False,
                 CliType = raw.TryGetProperty("cliType", out var ct) ? ct.GetString() : null,
                 QuotaWait = QuotaWaitMarker.ToStatus(QuotaWaitMarker.TryRead(jobDir, _logger)),
+                ReviewFailure = ReadReviewFailure(raw),
                 Kind = TaskKinds.Normalize(raw.TryGetProperty("kind", out var kd) ? kd.GetString() : null),
                 EpicId = raw.TryGetProperty("epicId", out var ep) && !string.IsNullOrWhiteSpace(ep.GetString()) ? ep.GetString() : null,
                 Mode = TaskModes.Normalize(raw.TryGetProperty("mode", out var md0) ? md0.GetString() : null),
@@ -1250,6 +1251,22 @@ public class TaskScannerService : ITaskScanner
         try
         {
             return JsonSerializer.Deserialize<ExternalCompletionInfo>(ext.GetRawText(), TaskJsonFile.ReadOpts);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static ReviewFailureStatus? ReadReviewFailure(JsonElement raw)
+    {
+        if (!raw.TryGetProperty("reviewFailure", out var failure)
+            || failure.ValueKind != JsonValueKind.Object)
+            return null;
+        try
+        {
+            return JsonSerializer.Deserialize<ReviewFailureStatus>(
+                failure.GetRawText(), TaskJsonFile.ReadOpts);
         }
         catch
         {

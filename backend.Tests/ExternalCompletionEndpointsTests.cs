@@ -77,15 +77,15 @@ public sealed class ExternalCompletionEndpointsTests : IDisposable
 
         response.EnsureSuccessStatusCode();
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        Assert.Equal(TaskStates.HumanReview, body.RootElement.GetProperty("targetState").GetString());
+        Assert.Equal(TaskStates.AutoReview, body.RootElement.GetProperty("targetState").GetString());
         Assert.Equal("operator-chat", body.RootElement.GetProperty("source").GetString());
 
-        // Lane moved 5e-escalated -> 5-human-review. On Windows the source
+        // Lane moved 5e-escalated -> 4-auto-review. On Windows the source
         // folder can linger briefly after a reported Success (open handle from
         // the just-written lifecycle terminalization; the move falls back to
         // copy+retry-delete), so poll instead of asserting the very first read.
         var source = Path.Combine(_watchPath, TaskStates.Escalated, "stuck-card");
-        var moved = Path.Combine(_watchPath, TaskStates.HumanReview, "stuck-card");
+        var moved = Path.Combine(_watchPath, TaskStates.AutoReview, "stuck-card");
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
         while ((Directory.Exists(source) || !Directory.Exists(moved)) && DateTime.UtcNow < deadline)
             await Task.Delay(100);

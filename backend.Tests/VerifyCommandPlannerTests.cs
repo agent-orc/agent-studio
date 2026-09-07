@@ -66,7 +66,7 @@ public sealed class VerifyCommandPlannerTests : IDisposable
         Assert.Equal(VerifyPlan.SourceAutoDiscovery, plan.Source);
         Assert.Collection(plan.Commands,
             c => AssertCommand(c, VerifyEcosystem.DotNet, VerifyCommandKind.Build, "", "dotnet build"),
-            c => AssertCommand(c, VerifyEcosystem.DotNet, VerifyCommandKind.Test, "", "dotnet test"));
+            c => AssertCommand(c, VerifyEcosystem.DotNet, VerifyCommandKind.Test, "", $"dotnet test --filter \"{VerifyCommandPlanner.DefaultDotNetTestFilter}\""));
     }
 
     [Fact]
@@ -95,7 +95,7 @@ public sealed class VerifyCommandPlannerTests : IDisposable
         Assert.Equal(VerifyPlan.SourceAutoDiscovery, plan.Source);
         Assert.Collection(plan.Commands,
             c => AssertCommandAtRepositoryRoot(c, VerifyCommandKind.Build, "dotnet build"),
-            c => AssertCommandAtRepositoryRoot(c, VerifyCommandKind.Test, "dotnet test"));
+            c => AssertCommandAtRepositoryRoot(c, VerifyCommandKind.Test, $"dotnet test --filter \"{VerifyCommandPlanner.DefaultDotNetTestFilter}\""));
     }
 
     [Fact]
@@ -242,7 +242,7 @@ public sealed class VerifyCommandPlannerTests : IDisposable
         Assert.Equal(VerifyPlan.SourceAutoDiscovery, plan.Source);
         Assert.Collection(plan.Commands,
             c => AssertCommand(c, VerifyEcosystem.DotNet, VerifyCommandKind.Build, "", "dotnet build"),
-            c => AssertCommand(c, VerifyEcosystem.DotNet, VerifyCommandKind.Test, "", "dotnet test"),
+            c => AssertCommand(c, VerifyEcosystem.DotNet, VerifyCommandKind.Test, "", $"dotnet test --filter \"{VerifyCommandPlanner.DefaultDotNetTestFilter}\""),
             c => AssertCommand(c, VerifyEcosystem.Node, VerifyCommandKind.Build, "frontend", "npm run build"),
             c => AssertCommand(c, VerifyEcosystem.Node, VerifyCommandKind.Test, "frontend", "npm test"),
             c => AssertCommand(c, VerifyEcosystem.Node, VerifyCommandKind.Lint, "frontend", "npm run lint"));
@@ -464,7 +464,9 @@ public sealed class VerifyCommandPlannerTests : IDisposable
         Assert.Contains(plan.Commands, c =>
             c.Ecosystem == VerifyEcosystem.DotNet && c.Kind == VerifyCommandKind.Build && c.Command == "dotnet build");
         Assert.Contains(plan.Commands, c =>
-            c.Ecosystem == VerifyEcosystem.DotNet && c.Kind == VerifyCommandKind.Test && c.Command == "dotnet test");
+            c.Ecosystem == VerifyEcosystem.DotNet
+            && c.Kind == VerifyCommandKind.Test
+            && c.Command == $"dotnet test --filter \"{VerifyCommandPlanner.DefaultDotNetTestFilter}\"");
         // frontend/package.json declares build/test/lint scripts.
         Assert.Contains(plan.Commands, c =>
             c.Ecosystem == VerifyEcosystem.Node && c.WorkingSubdir == "frontend" && c.Command == "npm run build");
@@ -1268,7 +1270,7 @@ public sealed class BuildTestGateClassificationTests
         };
 
     [Fact]
-    public void CompletedTestRun_LoggingAFileLockException_IsCode()
+    public void CompletedTestRun_WithoutParsedFailureName_IsInfrastructure()
     {
         // The exact AGT-2110 signature: a finished test process (exit 1) whose
         // stdout carries a temp-file IOException. Before the fix this became Lock =
@@ -1279,7 +1281,7 @@ public sealed class BuildTestGateClassificationTests
 
         var kind = BuildTestGateRunner.ClassifyFailure(evidence);
 
-        Assert.Equal(BuildTestGateFailureKind.Code, kind);
+        Assert.Equal(BuildTestGateFailureKind.UnparseableOutput, kind);
     }
 
     [Theory]
@@ -1296,9 +1298,19 @@ public sealed class BuildTestGateClassificationTests
     }
 
     [Fact]
-    public void CompletedProcess_WithoutAnyInfraSignal_IsCode()
+    public void CompletedProcess_WithoutParsedFailure_IsInfrastructure()
     {
         var kind = BuildTestGateRunner.ClassifyFailure(Evidence(exitCode: 1, stdout: "3 tests failed"));
+
+        Assert.Equal(BuildTestGateFailureKind.UnparseableOutput, kind);
+    }
+
+    [Fact]
+    public void CompletedProcess_WithParsedFailingTest_IsCode()
+    {
+        var kind = BuildTestGateRunner.ClassifyFailure(Evidence(
+            exitCode: 1,
+            stdout: "  Failed AgentStudio.Tests.RealRegression [12 ms]"));
 
         Assert.Equal(BuildTestGateFailureKind.Code, kind);
     }

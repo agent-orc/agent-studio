@@ -20,7 +20,7 @@ public sealed class ReviewPlanResourcePolicyTests
         var limited = ReviewPlanResourcePolicy.Apply(plan, dotNetMaxCpuCount: 2);
 
         Assert.Equal(
-            "cd -- backend && dotnet test -maxcpucount:2 -p:ParallelizeTestCollections=false --filter Category!=MachineBound",
+            "cd -- backend && dotnet test -maxcpucount:2 -p:ParallelizeTestCollections=false --filter \"Category!=MachineBound&Category!=LiveCli\"",
             Assert.Single(limited.Commands).Arguments[1]);
     }
 
@@ -36,7 +36,7 @@ public sealed class ReviewPlanResourcePolicyTests
         var limited = ReviewPlanResourcePolicy.Apply(plan, dotNetMaxCpuCount: 2);
 
         Assert.Equal(
-            ["test", "-maxcpucount:2", "-p:ParallelizeTestCollections=false", "runner.Tests"],
+            ["test", "-maxcpucount:2", "-p:ParallelizeTestCollections=false", "runner.Tests", "--filter", ReviewPlanResourcePolicy.DefaultGateTestFilter],
             limited.Commands[0].Arguments);
         Assert.Equal(build, limited.Commands[1]);
     }
@@ -58,7 +58,7 @@ public sealed class ReviewPlanResourcePolicyTests
 
         Assert.Equal(first, second);
         Assert.Equal(
-            "dotnet test -maxcpucount:2 -p:ParallelizeTestCollections=false",
+            $"dotnet test -maxcpucount:2 -p:ParallelizeTestCollections=false --filter \"{ReviewPlanResourcePolicy.DefaultGateTestFilter}\"",
             Assert.Single(first.Commands).Arguments[1]);
     }
 
@@ -77,7 +77,7 @@ public sealed class ReviewPlanResourcePolicyTests
         var limited = ReviewPlanResourcePolicy.Apply(plan, dotNetMaxCpuCount: 2);
 
         Assert.Equal(
-            "dotnet test -maxcpucount:2 -p:ParallelizeTestCollections=false --filter \"Name~two  spaces\"",
+            "dotnet test -maxcpucount:2 -p:ParallelizeTestCollections=false --filter \"Name~two  spaces&Category!=MachineBound&Category!=LiveCli\"",
             Assert.Single(limited.Commands).Arguments[1]);
     }
 
@@ -98,7 +98,7 @@ public sealed class ReviewPlanResourcePolicyTests
         var limited = ReviewPlanResourcePolicy.Apply(plan, dotNetMaxCpuCount: 2);
 
         Assert.Equal(
-            "dotnet test -maxcpucount:2 -p:ParallelizeTestCollections=false --filter Category!=MachineBound && npm ci",
+            "dotnet test -maxcpucount:2 -p:ParallelizeTestCollections=false --filter \"Category!=MachineBound&Category!=LiveCli\" && npm ci",
             Assert.Single(limited.Preparation!).Arguments[1]);
     }
 }

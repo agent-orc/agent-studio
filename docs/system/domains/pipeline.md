@@ -523,9 +523,9 @@ steer the pipeline in this policy version.
   A newly failing marked test is retried once; if it does not reproduce, the
   report retains its identity as `FlakyQuarantine` and does not classify the
   card as `ProductFailure`. A reproduced marked failure remains a blocking new
-  failure. A command with unparseable failing-test output stays fail-closed as a
-  new failure. This comparison does not weaken the absolute full-suite boundary
-  before advancing `main`.
+  failure. A command with missing or unparseable failing-test output is
+  `infrastructure`, never a synthesized new test failure. This comparison does
+  not weaken the absolute full-suite boundary before advancing `main`.
 - Remote Review command execution survives a planned Review daemon restart.
   Recovered attempts retain their original fence and containment namespace and
   resume before load-aware admission evaluates any fresh slot. Completed
@@ -604,6 +604,43 @@ steer the pipeline in this policy version.
   and previews the fresh enabled chain. Without an active step or queue
   position, active-lane cards report the newest recorded activity time and
   explicitly flag ten minutes of silence as a possible hang.
+
+### Failure classes and requeue
+
+Gate and Remote Review outcomes carry one stable class. The classifier is
+deliberately strict about `product`: only a parsed failing test name, compiler
+diagnostics from a failed build, or an explicit reviewer verdict on the diff
+may use it.
+
+| Class | Examples | Lane behavior |
+|---|---|---|
+| `product` | Parsed failing test, compiler error, reviewer `block` or `fail` verdict | Preserve the failing test or finding name and use the product-failure review path. |
+| `infrastructure` | Gate budget overrun, command or Git fetch timeout, missing or unparseable test output, aborted process, runner disconnect | Keep or return the card to Auto Review with a visible retry counter. Wait for the host load gate and use bounded backoff. |
+| `quota` | Review CLI usage or weekly quota exhausted | Keep or return the card to Auto Review, and do not retry before the quota service reset time. |
+| `unknown` | Evidence is insufficient for a safe classification | Never manufacture a product regression. Retain an inconclusive or infrastructure-safe outcome for operator diagnosis. |
+
+Infrastructure and quota retries default to three attempts. The card header
+shows the class and `retry n/3`; the reason remains available as detail. When
+the retry budget is exhausted, the card moves to Human Review with the class,
+reason, and exhausted counter intact. The acceptance rail recognizes these
+typed failures and requeues a parked card after its backoff even when no
+integration conflict exists. It leaves exhausted failures for the operator.
+
+An aspect set containing `concerns`, with no blocking verdict or command
+failure, maps to `PassWithConcerns`. The table-driven grade never maps concerns
+alone to `ProductFailure`. Out-of-band completion is delivery evidence rather
+than review evidence, so it enters Auto Review before any Human Review handoff.
+
+The project setting `gateRunBudgetMinutes` overrides the deterministic gate-run
+budget. Without an override, the budget is the p95 of the latest 20 completed
+runs plus 50 percent, bounded to 5 through 180 minutes; a project without
+history uses 60 minutes. Integration and delivery fetches use the five-minute
+catch-up network budget instead of the 30-second metadata-probe timeout. A
+budget overrun remains `infrastructure`.
+
+Gate-generated .NET test commands exclude `Category=LiveCli` and
+`Category=MachineBound` by default. The selection audit reports both exclusions
+and their reasons. Explicit live probes remain available outside routine gates.
 
 ### Execution placement matrix
 

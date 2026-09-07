@@ -181,7 +181,7 @@ public class ReviewDecisionOrchestratorCompletionGateTests : IDisposable
     }
 
     [Fact]
-    public async Task InfrastructureFailureRetriesSameSubjectWithoutCodingReissue()
+    public async Task InfrastructureFailureSchedulesVisibleSameSubjectRetryWithoutCodingReissue()
     {
         const string slug = "build-infrastructure";
         var sha = new string('c', 40);
@@ -197,27 +197,24 @@ public class ReviewDecisionOrchestratorCompletionGateTests : IDisposable
         };
         var gate = new FakeBuildTestGateRunner(result);
         var orchestrator = BuildOrchestrator(new CountingAspect().Cli, maxReissues: 3, gate);
-        orchestrator.BuildTestGateRetryBackoff = _ => TimeSpan.Zero;
 
         await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
 
-        Assert.Equal(3, gate.CallCount);
-        Assert.All(gate.Requests, request =>
-        {
-            Assert.Equal(sha, request.ExpectedSha);
-            Assert.Equal("lease-infra", request.AttemptChainId);
-        });
+        Assert.Equal(1, gate.CallCount);
+        Assert.Equal(sha, gate.Requests[0].ExpectedSha);
+        Assert.Equal("lease-infra", gate.Requests[0].AttemptChainId);
         Assert.False(Directory.Exists(Path.Combine(_watchPath, TaskStates.Ready, slug)));
-        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.Escalated, slug)));
-        var decision = Assert.Single(
+        Assert.False(Directory.Exists(Path.Combine(_watchPath, TaskStates.HumanReview, slug)));
+        var folder = Path.Combine(_watchPath, TaskStates.AutoReview, slug);
+        Assert.True(Directory.Exists(folder));
+        using var taskJson = JsonDocument.Parse(File.ReadAllText(Path.Combine(folder, "task.json")));
+        var failure = taskJson.RootElement.GetProperty("reviewFailure");
+        Assert.Equal("infrastructure", failure.GetProperty("FailureClass").GetString());
+        Assert.Equal(1, failure.GetProperty("RetryNumber").GetInt32());
+        Assert.Equal(3, failure.GetProperty("MaximumRetries").GetInt32());
+        Assert.DoesNotContain(
             ReviewDecisionLog.ReadAll(_workspace, Project),
             item => item.JobId == slug);
-        Assert.Equal(ReviewDecisionKind.Escalate, decision.Kind);
-        Assert.StartsWith(
-            "[auto-review-escalation] "
-            + ReviewDecisionOrchestrator.BuildTestGateInfrastructureReasonPrefix,
-            decision.Reason);
-        Assert.Equal("lease-infra", decision.AttemptChainId);
     }
 
     [Fact]

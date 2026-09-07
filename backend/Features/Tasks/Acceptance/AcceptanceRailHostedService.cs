@@ -101,7 +101,12 @@ public sealed class AcceptanceRailHostedService : BackgroundService
                         else failed++;
                         break;
                     case AcceptanceRailAction.Requeue:
-                        if (status is not null && Requeue(job, status, used + 1)) requeued++;
+                        if (decision.Reason == "retryable-review-failure")
+                        {
+                            if (await RequeueReviewFailureAsync(job, ct)) requeued++;
+                            else failed++;
+                        }
+                        else if (status is not null && Requeue(job, status, used + 1)) requeued++;
                         else failed++;
                         break;
                     case AcceptanceRailAction.Escalate:
@@ -236,6 +241,44 @@ public sealed class AcceptanceRailHostedService : BackgroundService
                 "requeued",
                 $"Queued deterministic integration recovery retry {retryNumber}.",
                 retryNumber);
+        }
+        return true;
+    }
+
+    private async Task<bool> RequeueReviewFailureAsync(TaskInfo job, CancellationToken ct)
+    {
+        var failure = job.ReviewFailure;
+        if (failure is null) return false;
+
+        var outcome = await _transitions.MoveAsync(
+            job.Id,
+            TaskStates.AutoReview,
+            job.WatchPath,
+            ct,
+            cause: TimelineActors.System,
+            reason: $"The acceptance rail requeued a {failure.FailureClass} review failure ({failure.RetryNumber}/{failure.MaximumRetries}).",
+            expectedSourceState: TaskStates.HumanReview,
+            transitionCause: LaneChangeCauses.ReviewInfrastructure,
+            transitionDetail: "review-failure-retry");
+        if (outcome.Status != MoveJobStatus.Success)
+        {
+            _logger.LogWarning(
+                "acceptance-rail-review-requeue-refused project={Project} job={JobId} status={Status} message={Message}",
+                job.ProjectName,
+                job.Id,
+                outcome.Status,
+                outcome.Message);
+            return false;
+        }
+
+        var moved = _scanner.FindJob(job.Id, job.WatchPath);
+        if (moved is not null)
+        {
+            AppendAction(
+                moved,
+                "requeued",
+                $"Requeued {failure.FailureClass} review failure {failure.RetryNumber}/{failure.MaximumRetries} after its backoff.",
+                failure.RetryNumber);
         }
         return true;
     }

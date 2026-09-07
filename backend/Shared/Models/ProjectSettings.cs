@@ -266,6 +266,13 @@ public record ProjectSettings
     public TestExecutionPolicy? TestExecution { get; init; }
 
     /// <summary>
+    /// Optional deterministic gate-run budget in minutes. Null uses the p95 of
+    /// the project's last 20 completed gate runs plus 50 percent, or 60 minutes
+    /// when no history exists.
+    /// </summary>
+    public int? GateRunBudgetMinutes { get; init; }
+
+    /// <summary>
     /// Per-CLI permission / sandbox mode override. Map of <see cref="CliTypes"/>
     /// id (<c>claude</c> / <c>codex</c> / <c>gemini</c> / <c>copilot</c>) to a
     /// mode id from <see cref="CliPermissionModes"/>. A missing CLI key means
