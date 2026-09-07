@@ -35,6 +35,45 @@
   kbd { color: var(--studio-fg-muted); font: 10px var(--font-mono); }
 }
 
+// Per-domain progress. Status is encoded by the dot colour and the detail text,
+// never by an edge bar (style-guide R1).
+.search-progress {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--studio-spacing-2) var(--studio-spacing-4);
+  padding: var(--studio-spacing-2) var(--studio-spacing-4);
+  color: var(--studio-fg-muted);
+  border-bottom: 1px solid var(--studio-border);
+  font-size: 11px;
+}
+
+.search-progress-row { display: flex; align-items: center; gap: var(--studio-spacing-2); }
+.search-progress-label { color: var(--studio-fg-dim); }
+.search-progress-detail { font-variant-numeric: tabular-nums; }
+.search-progress-elapsed { margin-left: auto; font-variant-numeric: tabular-nums; }
+
+.search-progress-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--studio-fg-dim);
+
+  [data-status='searching'] > & { background: var(--studio-accent); animation: search-progress-pulse 1.1s ease-in-out infinite; }
+  [data-status='done'] > & { background: var(--lane-completed); }
+  [data-status='failed'] > & { background: var(--studio-error); }
+}
+
+@keyframes search-progress-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .search-progress-dot { animation-duration: 0s; }
+}
+
 .search-results { min-height: 100px; overflow: auto; padding: var(--studio-spacing-2); }
 .search-group h2 { margin: var(--studio-spacing-2) var(--studio-spacing-2) var(--studio-spacing-1); color: var(--studio-fg-muted); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
 .search-result {

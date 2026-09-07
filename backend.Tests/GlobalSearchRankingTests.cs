@@ -21,40 +21,43 @@ public sealed class GlobalSearchRankingTests
     }
 
     [Fact]
-    public void ReadFiles_SearchesTrackedFilesInARealRepository()
+    public void MatchFiles_MatchesPathsFromTheIndexWithoutTouchingDisk()
     {
-        var root = Path.Combine(Path.GetTempPath(), $"global-search-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(root);
-        try
-        {
-            RunGit(root, "init");
-            File.WriteAllText(Path.Combine(root, "README-search-proof.md"), "proof");
-            RunGit(root, "add", "README-search-proof.md");
+        var paths = new[] { "README-search-proof.md", "docs/guide.md", "docs/app/contract.md", "src/main.cs" };
 
-            var results = GlobalSearchService.ReadFiles(root, "Fixture", "search-proof", "#fff");
+        var results = GlobalSearchService.MatchFiles(paths, Repository(), "search-proof");
 
-            Assert.Single(results);
-            Assert.Equal("README-search-proof.md", results[0].Path);
-        }
-        finally
-        {
-            foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
-                File.SetAttributes(file, FileAttributes.Normal);
-            Directory.Delete(root, true);
-        }
+        Assert.Single(results);
+        Assert.Equal("README-search-proof.md", results[0].Path);
+        Assert.Equal("Fixture", results[0].ProjectName);
     }
+
+    [Fact]
+    public void MatchFiles_RoutesDocsToTheWikiButNeverTheDocsAppCodeContract()
+    {
+        var results = GlobalSearchService.MatchFiles(
+            ["docs/guide.md", "docs/app/contract.md"], Repository(), ".md");
+
+        Assert.Equal(new[] { true, false }, results.Select(r => r.IsWiki));
+    }
+
+    [Fact]
+    public void MatchCommits_MatchesSubjectShaAndShortSha()
+    {
+        var commits = new[]
+        {
+            new CommitIndexEntry("aaaaaaaabbbbbbbb", "aaaaaaa", "feat: global search streaming"),
+            new CommitIndexEntry("ccccccccdddddddd", "ccccccc", "chore: unrelated"),
+        };
+
+        Assert.Single(GlobalSearchService.MatchCommits(commits, Repository(), "streaming"));
+        Assert.Single(GlobalSearchService.MatchCommits(commits, Repository(), "aaaaaaaabbbb"));
+        Assert.Single(GlobalSearchService.MatchCommits(commits, Repository(), "ccccccc"));
+        Assert.Equal(2, GlobalSearchService.MatchCommits(commits, Repository(), "c").Count);
+    }
+
+    private static SearchRepository Repository() => new("Fixture", "/tmp/fixture", "#fff");
 
     private static GlobalSearchItem Item(string title) =>
         new("files", "Agent Studio", "#fff", title, title);
-
-    private static void RunGit(string root, params string[] args)
-    {
-        using var process = new System.Diagnostics.Process { StartInfo = new("git") {
-            WorkingDirectory = root, UseShellExecute = false, RedirectStandardError = true
-        }};
-        foreach (var arg in args) process.StartInfo.ArgumentList.Add(arg);
-        process.Start();
-        process.WaitForExit();
-        Assert.True(process.ExitCode == 0, process.StandardError.ReadToEnd());
-    }
 }

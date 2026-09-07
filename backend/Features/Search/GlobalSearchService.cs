@@ -1,8 +1,6 @@
 using System.Diagnostics;
-using System.Text;
-using AgentStudio.Git;
-using AgentStudio.Registry;
-using AgentStudio.Shared;
+using System.Runtime.CompilerServices;
+using System.Threading.Channels;
 
 namespace AgentStudio.Search;
 
@@ -26,16 +24,153 @@ public sealed record GlobalSearchResponse(
     IReadOnlyDictionary<string, string> Errors,
     long DurationMs);
 
-/// <summary>Bounded, read-only workspace search. Git results reuse GitService's HEAD-keyed LRU.</summary>
+/// <summary>
+/// One delivered slice of a search. <see cref="Repository"/> is null for the task
+/// domain, which is answered in one piece from memory; the git domains emit one
+/// chunk per checkout with <see cref="Completed"/> of <see cref="Total"/> so the
+/// palette can show how far the sweep has got instead of one opaque spinner.
+/// </summary>
+public sealed record GlobalSearchChunk(
+    string Domain,
+    IReadOnlyList<GlobalSearchItem> Items,
+    string? Repository,
+    int Completed,
+    int Total,
+    string? Error);
+
+/// <summary>
+/// Bounded, read-only workspace search over prebuilt indexes.
+///
+/// <para>Tasks are matched against <see cref="TaskSearchIndex"/> (memory only, no
+/// file reads on the request path); commits and files are matched against the
+/// HEAD-keyed <see cref="RepositorySearchIndex"/>, so a new query on an unchanged
+/// checkout spawns no git process. Repositories are swept in parallel with the
+/// same bounded degree the other read-only git surfaces use, and each one is
+/// delivered as it finishes rather than after the slowest.</para>
+/// </summary>
 public sealed class GlobalSearchService(
+    TaskSearchIndex taskIndex,
+    RepositorySearchIndex repositoryIndex,
     TaskScannerService scanner,
-    GitService git,
     ProjectRegistry registry,
     ILogger<GlobalSearchService> logger)
 {
     private const int MaxPerDomain = 30;
+    private const string DefaultColor = "#6e6e6e";
+    private const string DegradedMessage = "Some results could not be loaded.";
 
-    public GlobalSearchResponse Search(string query, ISet<string> domains, int limit)
+    /// <summary>A search past this budget names its slowest repository in a warning.</summary>
+    internal const long SlowSearchWarningMs = 5_000;
+
+    /// <summary>Git-backed domains, in the order a repository is swept for them.</summary>
+    private static readonly string[] GitDomains = ["commits", "files"];
+
+    /// <summary>
+    /// Streams per-domain slices. The task chunk is produced first and never waits
+    /// on git; the git chunks arrive in completion order. Cancelling the token
+    /// stops the sweep, so a superseded keystroke stops paying for its work.
+    /// </summary>
+    public async IAsyncEnumerable<GlobalSearchChunk> StreamAsync(
+        string query,
+        ISet<string> domains,
+        int limit,
+        [EnumeratorCancellation] CancellationToken ct = default)
+    {
+        // A search superseded before it started does no work at all.
+        ct.ThrowIfCancellationRequested();
+        limit = Math.Clamp(limit, 1, MaxPerDomain);
+        var timer = Stopwatch.StartNew();
+        var telemetry = new SearchTelemetry();
+        var colors = ProjectColors();
+
+        if (domains.Contains("tasks"))
+        {
+            GlobalSearchChunk chunk;
+            try
+            {
+                chunk = new("tasks", SearchTasks(query, limit, colors), null, 1, 1, null);
+            }
+            catch (Exception ex)
+            {
+                chunk = new("tasks", [], null, 1, 1, Degrade("tasks", ex, null));
+            }
+            telemetry.TasksMs = timer.ElapsedMilliseconds;
+            yield return chunk;
+        }
+
+        var gitDomains = GitDomains.Where(domains.Contains).ToArray();
+        var repositories = Repositories(colors);
+        if (gitDomains.Length == 0 || repositories.Count == 0)
+        {
+            LogCompletion(query, domains, timer, telemetry);
+            yield break;
+        }
+
+        var channel = Channel.CreateUnbounded<GlobalSearchChunk>();
+        var progress = gitDomains.ToDictionary(domain => domain, _ => new int[1], StringComparer.Ordinal);
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Parallel.ForEachAsync(
+                    repositories,
+                    new ParallelOptions
+                    {
+                        MaxDegreeOfParallelism = ReadOnlyGitConcurrencyLimiter.MaxConcurrency,
+                        CancellationToken = ct,
+                    },
+                    async (repository, token) =>
+                    {
+                        var started = Stopwatch.GetTimestamp();
+                        foreach (var domain in gitDomains)
+                        {
+                            token.ThrowIfCancellationRequested();
+                            var (items, error) = SearchRepository(domain, repository, query, telemetry);
+                            var done = Interlocked.Increment(ref progress[domain][0]);
+                            await channel.Writer.WriteAsync(
+                                new GlobalSearchChunk(domain, items, repository.Name, done, repositories.Count, error),
+                                token);
+                        }
+                        telemetry.NoteRepository(repository.Name, ElapsedMs(started));
+                    });
+            }
+            catch (OperationCanceledException ex)
+            {
+                SilentCatch.Note(ex, "GlobalSearchService: search cancelled by the caller");
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "global-search-sweep-failed");
+            }
+            finally
+            {
+                channel.Writer.TryComplete();
+            }
+        }, CancellationToken.None);
+
+        try
+        {
+            await foreach (var chunk in channel.Reader.ReadAllAsync(ct))
+            {
+                // The last repository of a domain fixes that domain's wall clock,
+                // which is what the operator waited for.
+                if (chunk.Completed == chunk.Total) telemetry.NoteDomainDone(chunk.Domain, timer.ElapsedMilliseconds);
+                yield return chunk;
+            }
+        }
+        finally
+        {
+            LogCompletion(query, domains, timer, telemetry);
+        }
+    }
+
+    /// <summary>
+    /// Drains <see cref="StreamAsync"/> into the single-response contract of
+    /// <c>GET /api/search</c>. Callers that cannot consume a stream keep the
+    /// original shape, including the global per-domain ranking and limit.
+    /// </summary>
+    public async Task<GlobalSearchResponse> SearchAsync(
+        string query, ISet<string> domains, int limit, CancellationToken ct = default)
     {
         var timer = Stopwatch.StartNew();
         limit = Math.Clamp(limit, 1, MaxPerDomain);
@@ -43,55 +178,19 @@ public sealed class GlobalSearchService(
         var commits = new List<GlobalSearchItem>();
         var files = new List<GlobalSearchItem>();
         var errors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var registered = registry.List().Where(p => !p.Archived).ToList();
-        var colors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var project in registered) colors[project.DisplayName] = project.Color ?? "#6e6e6e";
-        foreach (var watchPath in scanner.GetWatchPaths()) colors.TryAdd(watchPath.Name, "#6e6e6e");
 
-        if (domains.Contains("tasks"))
+        await foreach (var chunk in StreamAsync(query, domains, limit, ct))
         {
-            try { tasks = SearchTasks(query, limit, colors); }
-            catch (Exception ex) { Degrade("tasks", ex, errors); }
-        }
-
-        var repositories = registered
-            .Select(p => (Name: p.DisplayName, Root: p.RepositoryPath ?? p.RootPath))
-            .Where(p => !string.IsNullOrWhiteSpace(p.Root) && Directory.Exists(p.Root))
-            .Select(p => (p.Name, Root: p.Root!))
-            .Concat(scanner.GetWatchPaths().Select(p => (p.Name, Root: p.RepositoryPath.Length > 0 ? p.RepositoryPath : p.RootPath)))
-            .Where(p => !string.IsNullOrWhiteSpace(p.Root) && Directory.Exists(p.Root))
-            .GroupBy(p => Path.GetFullPath(p.Root), StringComparer.OrdinalIgnoreCase)
-            .Select(g => g.First());
-
-        foreach (var project in repositories)
-        {
-            var root = project.Root;
-            if (domains.Contains("commits"))
+            switch (chunk.Domain)
             {
-                try
-                {
-                    var cached = git.MemoizeByHead(root, $"global-search-commits|{root}|{query.ToLowerInvariant()}",
-                        () => ReadCommits(root, project.Name, query, colors.GetValueOrDefault(project.Name, "#6e6e6e")));
-                    commits.AddRange(cached);
-                }
-                catch (Exception ex) { Degrade("commits", ex, errors, project.Name); }
+                case "tasks": tasks.AddRange(chunk.Items); break;
+                case "commits": commits.AddRange(chunk.Items); break;
+                case "files": files.AddRange(chunk.Items); break;
             }
-            if (domains.Contains("files"))
-            {
-                try
-                {
-                    var cached = git.MemoizeByHead(root, $"global-search-files|{root}|{query.ToLowerInvariant()}",
-                        () => ReadFiles(root, project.Name, query, colors.GetValueOrDefault(project.Name, "#6e6e6e")));
-                    files.AddRange(cached);
-                }
-                catch (Exception ex) { Degrade("files", ex, errors, project.Name); }
-            }
+            if (chunk.Error != null) errors[chunk.Domain] = chunk.Error;
         }
 
         timer.Stop();
-        logger.LogInformation(
-            "global-search-completed queryLength={QueryLength} domains={Domains} tasks={Tasks} commits={Commits} files={Files} errors={Errors} durationMs={DurationMs}",
-            query.Length, string.Join(',', domains), tasks.Count, commits.Count, files.Count, errors.Count, timer.ElapsedMilliseconds);
         return new(query,
             tasks.Take(limit).ToList(),
             RankItems(commits, query).Take(limit).ToList(),
@@ -99,84 +198,164 @@ public sealed class GlobalSearchService(
             errors, timer.ElapsedMilliseconds);
     }
 
-    private List<GlobalSearchItem> SearchTasks(string query, int limit, IReadOnlyDictionary<string, string> colors)
+    private (IReadOnlyList<GlobalSearchItem> Items, string? Error) SearchRepository(
+        string domain, SearchRepository repository, string query, SearchTelemetry telemetry)
     {
-        return scanner.ScanAllAutomationJobsWithArchive()
-            .Select(task => (Task: task, Text: ReadTaskText(task)))
-            .Where(x => Contains(x.Task.Key, query) || Contains(x.Task.Title, query) || Contains(x.Text, query) || Contains(x.Task.State, query))
-            .OrderBy(x => string.Equals(x.Task.Key, query, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
-            .ThenByDescending(x => x.Task.LastActivity)
-            .Take(limit)
-            .Select(x => new GlobalSearchItem("tasks", x.Task.ProjectName,
-                colors.GetValueOrDefault(x.Task.ProjectName, "#6e6e6e"), x.Task.Title,
-                FirstMatchingLine(x.Text, query) ?? x.Task.State, x.Task.TaskKey, x.Task.State))
-            .ToList();
-    }
-
-    private static string ReadTaskText(TaskInfo task)
-    {
-        var text = new StringBuilder();
-        foreach (var name in new[] { "prompt.md", "status.md" })
+        try
         {
-            var path = Path.Combine(task.FolderPath, name);
-            if (File.Exists(path)) text.AppendLine(File.ReadAllText(path));
+            if (domain == "commits")
+            {
+                var commits = repositoryIndex.Commits(repository.Root);
+                telemetry.NoteCache(repository.Name, domain, commits.CacheHit);
+                return (MatchCommits(commits.Value, repository, query), null);
+            }
+
+            var paths = repositoryIndex.Paths(repository.Root);
+            telemetry.NoteCache(repository.Name, domain, paths.CacheHit);
+            return (MatchFiles(paths.Value, repository, query), null);
         }
-        return text.ToString();
+        catch (Exception ex)
+        {
+            return ([], Degrade(domain, ex, repository.Name));
+        }
     }
 
-    internal static List<GlobalSearchItem> ReadCommits(string root, string project, string query, string color)
+    private List<GlobalSearchItem> SearchTasks(
+        string query, int limit, IReadOnlyDictionary<string, string> colors)
     {
-        var output = RunGit(root, ["log", "--all", "--no-merges", "--max-count=250", "--pretty=format:%H%x1f%h%x1f%s"]);
-        return output.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-            .Select(line => line.TrimEnd('\r').Split('\x1f'))
-            .Where(p => p.Length >= 3 && (Contains(p[0], query) || Contains(p[1], query) || Contains(p[2], query)))
-            .Select(p => new GlobalSearchItem("commits", project, color, p[2], p[1], Sha: p[0]))
+        // The blob is already lowercase, so the per-card test is an ordinal
+        // Contains over one string instead of four culture-aware comparisons.
+        var needle = query.ToLowerInvariant();
+        return taskIndex.Entries()
+            .Where(entry => entry.Blob.Contains(needle, StringComparison.Ordinal))
+            .OrderBy(entry => string.Equals(entry.Task.Key, query, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .ThenByDescending(entry => entry.Task.LastActivity)
+            .Take(limit)
+            .Select(entry => new GlobalSearchItem("tasks", entry.Task.ProjectName,
+                colors.GetValueOrDefault(entry.Task.ProjectName, DefaultColor), entry.Task.Title,
+                FirstMatchingLine(entry.Text, query) ?? entry.Task.State, entry.Task.TaskKey, entry.Task.State))
             .ToList();
     }
 
-    internal static List<GlobalSearchItem> ReadFiles(string root, string project, string query, string color)
-    {
-        var output = RunGit(root, ["ls-files", "--cached", "--others", "--exclude-standard"]);
-        return output.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-            .Select(path => path.TrimEnd('\r').Replace('\\', '/'))
-            .Where(path => Contains(path, query))
-            .Select(path => new GlobalSearchItem("files", project, color, Path.GetFileName(path), path,
-                Path: path, IsWiki: path.StartsWith("docs/", StringComparison.OrdinalIgnoreCase)
-                    // docs/app/ is a code contract, not a wiki page: never route it into the wiki viewer.
-                    && !path.StartsWith("docs/app/", StringComparison.OrdinalIgnoreCase)))
-            .ToList();
-    }
+    internal static List<GlobalSearchItem> MatchCommits(
+        IReadOnlyList<CommitIndexEntry> commits, SearchRepository repository, string query) => commits
+        .Where(c => Contains(c.Sha, query) || Contains(c.ShortSha, query) || Contains(c.Subject, query))
+        .Select(c => new GlobalSearchItem(
+            "commits", repository.Name, repository.Color, c.Subject, c.ShortSha, Sha: c.Sha))
+        .ToList();
+
+    internal static List<GlobalSearchItem> MatchFiles(
+        IReadOnlyList<string> paths, SearchRepository repository, string query) => paths
+        .Where(path => Contains(path, query))
+        .Select(path => new GlobalSearchItem("files", repository.Name, repository.Color,
+            Path.GetFileName(path), path,
+            Path: path, IsWiki: path.StartsWith("docs/", StringComparison.OrdinalIgnoreCase)
+                // docs/app/ is a code contract, not a wiki page: never route it into the wiki viewer.
+                && !path.StartsWith("docs/app/", StringComparison.OrdinalIgnoreCase)))
+        .ToList();
 
     internal static IEnumerable<GlobalSearchItem> RankItems(IEnumerable<GlobalSearchItem> items, string query) => items
         .OrderBy(i => string.Equals(i.Title, query, StringComparison.OrdinalIgnoreCase) || string.Equals(i.Subtitle, query, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
         .ThenBy(i => i.Title.StartsWith(query, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
         .ThenBy(i => i.Title.Length);
 
-    private void Degrade(string domain, Exception ex, IDictionary<string, string> errors, string? project = null)
+    private Dictionary<string, string> ProjectColors()
     {
-        errors[domain] = "Some results could not be loaded.";
-        logger.LogWarning(ex, "global-search-domain-failed domain={Domain} project={Project}", domain, project);
+        var colors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var project in registry.List().Where(p => !p.Archived))
+            colors[project.DisplayName] = project.Color ?? DefaultColor;
+        foreach (var watchPath in scanner.GetWatchPaths()) colors.TryAdd(watchPath.Name, DefaultColor);
+        return colors;
     }
 
-    private static bool Contains(string? value, string query) => value?.Contains(query, StringComparison.OrdinalIgnoreCase) == true;
-    private static string? FirstMatchingLine(string text, string query) => text.Split('\n').Select(x => x.Trim()).FirstOrDefault(x => Contains(x, query));
+    private List<SearchRepository> Repositories(IReadOnlyDictionary<string, string> colors) => registry.List()
+        .Where(p => !p.Archived)
+        .Select(p => (Name: p.DisplayName, Root: (string?)(p.RepositoryPath ?? p.RootPath)))
+        .Concat(scanner.GetWatchPaths()
+            .Select(p => (Name: p.Name, Root: (string?)(p.RepositoryPath.Length > 0 ? p.RepositoryPath : p.RootPath))))
+        .Where(p => !string.IsNullOrWhiteSpace(p.Root) && Directory.Exists(p.Root))
+        .GroupBy(p => Path.GetFullPath(p.Root!), StringComparer.OrdinalIgnoreCase)
+        .Select(group => group.First())
+        .Select(p => new SearchRepository(p.Name, p.Root!, colors.GetValueOrDefault(p.Name, DefaultColor)))
+        .ToList();
 
-    private static string RunGit(string root, IReadOnlyList<string> args)
+    private string Degrade(string domain, Exception ex, string? project)
     {
-        using var process = new Process { StartInfo = new ProcessStartInfo("git") {
-            WorkingDirectory = root, RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true
-        }};
-        foreach (var arg in args) process.StartInfo.ArgumentList.Add(arg);
-        process.Start();
-        var stdout = process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
-        if (!process.WaitForExit(10_000))
+        logger.LogWarning(ex, "global-search-domain-failed domain={Domain} project={Project}", domain, project);
+        return DegradedMessage;
+    }
+
+    private void LogCompletion(string query, ISet<string> domains, Stopwatch timer, SearchTelemetry telemetry)
+    {
+        timer.Stop();
+        logger.LogInformation(
+            "global-search-completed queryLength={QueryLength} domains={Domains} tasksMs={TasksMs} commitsMs={CommitsMs} filesMs={FilesMs} cache={Cache} indexRebuilds={Rebuilds} cardReads={CardReads} durationMs={DurationMs}",
+            query.Length, string.Join(',', domains), telemetry.TasksMs, telemetry.CommitsMs, telemetry.FilesMs,
+            telemetry.CacheReport(), taskIndex.Rebuilds, taskIndex.CardReads, timer.ElapsedMilliseconds);
+
+        if (timer.ElapsedMilliseconds <= SlowSearchWarningMs) return;
+        var (name, elapsed) = telemetry.Slowest();
+        logger.LogWarning(
+            "global-search-slow durationMs={DurationMs} slowestRepository={Repository} slowestMs={SlowestMs} commitWindow={CommitWindow}",
+            timer.ElapsedMilliseconds, name ?? "n/a", elapsed, RepositorySearchIndex.CommitWindow);
+    }
+
+    private static long ElapsedMs(long startedTimestamp) =>
+        (long)Stopwatch.GetElapsedTime(startedTimestamp).TotalMilliseconds;
+
+    private static bool Contains(string? value, string query) => value?.Contains(query, StringComparison.OrdinalIgnoreCase) == true;
+
+    private static string? FirstMatchingLine(string text, string query) =>
+        text.Split('\n').Select(x => x.Trim()).FirstOrDefault(x => Contains(x, query));
+
+    /// <summary>
+    /// Per-domain timings and per-repository cache outcomes, gathered from the
+    /// parallel sweep so the completion log can explain a slow search instead of
+    /// reporting one aggregate number.
+    /// </summary>
+    private sealed class SearchTelemetry
+    {
+        private readonly Lock _lock = new();
+        private readonly SortedDictionary<string, string> _cache = new(StringComparer.OrdinalIgnoreCase);
+        private string? _slowestRepository;
+        private long _slowestMs;
+
+        public long TasksMs;
+        public long CommitsMs;
+        public long FilesMs;
+
+        public void NoteDomainDone(string domain, long elapsedMs)
         {
-            process.Kill(true);
-            throw new TimeoutException("git search exceeded 10 seconds");
+            lock (_lock)
+            {
+                if (domain == "commits") CommitsMs = elapsedMs;
+                else if (domain == "files") FilesMs = elapsedMs;
+            }
         }
-        if (process.ExitCode != 0) throw new InvalidOperationException(stderr.Trim());
-        return stdout;
+
+        public void NoteCache(string repository, string domain, bool hit)
+        {
+            lock (_lock) _cache[$"{repository}/{domain}"] = hit ? "hit" : "miss";
+        }
+
+        public void NoteRepository(string repository, long elapsedMs)
+        {
+            lock (_lock)
+            {
+                if (elapsedMs <= _slowestMs) return;
+                _slowestMs = elapsedMs;
+                _slowestRepository = repository;
+            }
+        }
+
+        public (string? Repository, long ElapsedMs) Slowest()
+        {
+            lock (_lock) return (_slowestRepository, _slowestMs);
+        }
+
+        public string CacheReport()
+        {
+            lock (_lock) return string.Join(',', _cache.Select(pair => $"{pair.Key}={pair.Value}"));
+        }
     }
 }

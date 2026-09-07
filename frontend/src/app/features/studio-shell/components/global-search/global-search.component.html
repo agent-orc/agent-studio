@@ -8,12 +8,26 @@
         <kbd>Esc</kbd>
       </label>
 
+      @if (query().trim().length >= 2) {
+        <div class="search-progress" data-testid="global-search-progress" role="status" aria-live="polite">
+          @for (group of groups(); track group.domain) {
+            <span class="search-progress-row" [attr.data-status]="group.state.status"
+                  [attr.data-testid]="'global-search-progress-' + group.domain">
+              <span class="search-progress-dot" aria-hidden="true"></span>
+              <span class="search-progress-label">{{ group.label }}</span>
+              <span class="search-progress-detail">{{ progressDetail(group.domain, group.items.length) }}</span>
+            </span>
+          }
+          @if (searching()) { <span class="search-progress-elapsed">{{ elapsedLabel() }}</span> }
+        </div>
+      }
+
       <div class="search-results" role="listbox" aria-label="Search results">
         @if (query().trim().length < 2) {
           <p class="search-hint">Type at least 2 characters to search all projects.</p>
         } @else {
           @for (group of groups(); track group.domain) {
-            @if (group.items.length || remote().errors[group.domain]) {
+            @if (group.items.length) {
               <section class="search-group" [attr.data-testid]="'global-search-group-' + group.domain">
                 <h2>{{ group.label }}</h2>
                 @for (item of group.items; track item.domain + ':' + item.projectName + ':' + item.subtitle) {
@@ -27,15 +41,19 @@
                     @if (item.isWiki) { <span class="search-badge">Wiki</span> }
                   </button>
                 }
-                @if (remote().errors[group.domain]) { <p class="search-error">{{ remote().errors[group.domain] }}</p> }
               </section>
             }
           }
-          @if (!flatResults().length && !loading()) { <p class="search-hint">No matching tasks, commits, or files.</p> }
-          @if (loading()) { <p class="search-loading">Searching repositories…</p> }
+          @for (group of groups(); track group.domain) {
+            @if (group.state.error) { <p class="search-error">{{ group.label }}: {{ group.state.error }}</p> }
+          }
+          @if (!flatResults().length && !searching()) { <p class="search-hint">No matching tasks, commits, or files.</p> }
+          @if (slowNotice()) {
+            <p class="search-hint" data-testid="global-search-slow-note">Repository search can take a moment on large histories. Results appear as each project answers.</p>
+          }
         }
       </div>
-      <footer><span>↑↓ Navigate</span><span>↵ Open</span><span>Esc Close</span></footer>
+      <footer><span>↑↓ Navigate</span><span>↵ Open</span><span>Esc Cancel or close</span></footer>
     </section>
   </div>
 }
