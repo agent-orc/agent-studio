@@ -38,3 +38,17 @@ export async function api<T = unknown>(
   }
   return text ? (JSON.parse(text) as T) : (undefined as T);
 }
+
+/** Retire and permanently delete e2e identities so shared workspaces stay clean. */
+export async function cleanupE2eClients(prefix = 'e2e-'): Promise<void> {
+  const clients = await api<Array<{ id: string; displayName: string; kind: string }>>('/api/clients/');
+  for (const client of clients.filter(item =>
+    item.id.startsWith(prefix) || item.displayName.startsWith(prefix))) {
+    try {
+      if (client.kind !== 'retired') {
+        await api(`/api/clients/${encodeURIComponent(client.id)}/retire`, { method: 'POST', body: '{}' });
+      }
+      await api(`/api/clients/${encodeURIComponent(client.id)}`, { method: 'DELETE' });
+    } catch { /* best-effort teardown; guarded identities remain visible for an operator */ }
+  }
+}

@@ -7,6 +7,14 @@
       </p>
     </div>
     <div class="rh__actions">
+      @if (retiredCount()) {
+        <button class="rh__refresh"
+                type="button"
+                data-testid="remote-hosts-purge-open"
+                (click)="openPurge()">
+          Delete retired…
+        </button>
+      }
       <button class="rh__add"
               type="button"
               data-testid="remote-hosts-add"
@@ -192,6 +200,43 @@
           <button type="button" class="rh__danger" data-testid="remote-host-confirm-submit" (click)="confirmLifecycleAction()">
             {{ pending.kind === 'retire' ? 'Drain and retire' : 'Delete permanently' }}
           </button>
+        </div>
+      </section>
+    </div>
+  }
+
+  @if (purgeOpen()) {
+    <div class="rh__modal-backdrop" data-testid="remote-hosts-purge-dialog">
+      <section class="rh__modal" role="dialog" aria-modal="true" aria-label="Delete retired runners">
+        <h3>Delete retired runners</h3>
+        <label class="rh__purge-field">
+          <span>Name prefix</span>
+          <input data-testid="remote-hosts-purge-prefix" [value]="purgePrefix()" (input)="updatePurgePrefix($event)" />
+        </label>
+        @if (purgePreview(); as preview) {
+          <p data-testid="remote-hosts-purge-summary">
+            {{ preview.clients.length }} retired {{ preview.clients.length === 1 ? 'runner matches' : 'runners match' }}.
+          </p>
+          <ul class="rh__purge-list" data-testid="remote-hosts-purge-list">
+            @for (client of preview.clients; track client.id) {
+              <li>
+                <span>{{ client.name }}</span>
+                @if (!client.canDelete) { <small>{{ client.blockedBy }}</small> }
+              </li>
+            }
+          </ul>
+        } @else {
+          <p>Preview the retired identities that match this prefix before deleting them.</p>
+        }
+        <div class="rh__modal-actions">
+          <button type="button" (click)="closePurge()">Cancel</button>
+          @if (purgePreview()) {
+            <button type="button" class="rh__danger" data-testid="remote-hosts-purge-confirm" (click)="confirmPurge()">
+              Delete listed runners
+            </button>
+          } @else {
+            <button type="button" data-testid="remote-hosts-purge-preview" (click)="previewPurge()">Preview</button>
+          }
         </div>
       </section>
     </div>

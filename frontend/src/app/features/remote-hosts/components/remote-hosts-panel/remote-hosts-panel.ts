@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject, input, output, signal } from '@angular/core';
 import { TaskService } from '../../../../services/task.service';
-import { RemoteHostsService } from '../../services/remote-hosts.service';
+import { RemoteHostsService, type PurgeRetiredClientsResponse } from '../../services/remote-hosts.service';
 import { ReviewQueueService } from '../../services/review-queue.service';
 import { RemoteHostCardComponent } from '../remote-host-card/remote-host-card';
 import type { HostActionKind, HostProjectSlots, RemoteHost } from '../../models/remote-host.model';
@@ -60,6 +60,9 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   readonly showRetired = signal(false);
   readonly setupHost = signal<RemoteHost | null>(null);
   readonly pendingConfirmation = signal<{ kind: 'retire' | 'delete'; host: RemoteHost } | null>(null);
+  readonly purgeOpen = signal(false);
+  readonly purgePrefix = signal('e2e-');
+  readonly purgePreview = signal<PurgeRetiredClientsResponse | null>(null);
   readonly confirmationTitle = computed(() => {
     const pending = this.pendingConfirmation();
     if (!pending) return '';
@@ -154,6 +157,30 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   }
 
   toggleRetired(): void { this.showRetired.update(value => !value); }
+
+  openPurge(): void {
+    this.purgePrefix.set('e2e-');
+    this.purgePreview.set(null);
+    this.purgeOpen.set(true);
+  }
+
+  closePurge(): void { this.purgeOpen.set(false); }
+
+  updatePurgePrefix(event: Event): void {
+    this.purgePrefix.set((event.target as HTMLInputElement).value);
+    this.purgePreview.set(null);
+  }
+
+  previewPurge(): void {
+    this.service.purgeRetired(this.purgePrefix(), true, response => this.purgePreview.set(response));
+  }
+
+  confirmPurge(): void {
+    this.service.purgeRetired(this.purgePrefix(), false, response => {
+      this.purgePreview.set(response);
+      if (!response.clients.some(item => !item.canDelete)) this.purgeOpen.set(false);
+    });
+  }
 
   roleSlots(group: PhysicalHostGroup): Readonly<Record<string, number>> {
     return Object.fromEntries(group.roles.map(role => [role.id, this.boardSlots(role)]));

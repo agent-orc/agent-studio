@@ -480,6 +480,28 @@ public class ClientIdentityTests : IDisposable
     }
 
     [Fact]
+    public void DeletePolicy_RefusesEveryAuthorityGuard()
+    {
+        var now = DateTime.UtcNow;
+        var retired = new ClientIdentity
+        {
+            Id = "guarded-runner",
+            DisplayName = "guarded-runner",
+            Kind = ClientIdentityKind.Retired,
+            LastSeenAt = now,
+        };
+
+        Assert.Null(ClientIdentityDeletionPolicy.BlockedBy(
+            retired, new ClientAttemptAuthorityFacts(false, false), now));
+        Assert.Equal("runner-online", ClientIdentityDeletionPolicy.BlockedBy(
+            retired with { RunnerDaemonState = "running" }, new ClientAttemptAuthorityFacts(false, false), now));
+        Assert.Equal("active-lease", ClientIdentityDeletionPolicy.BlockedBy(
+            retired, new ClientAttemptAuthorityFacts(true, false), now));
+        Assert.Equal("process-unknown-attempt", ClientIdentityDeletionPolicy.BlockedBy(
+            retired, new ClientAttemptAuthorityFacts(false, true), now));
+    }
+
+    [Fact]
     public void Scanner_MigratesLegacyJobToLocalDefault()
     {
         var config = BuildConfig();

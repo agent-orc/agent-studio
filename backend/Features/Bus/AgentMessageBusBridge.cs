@@ -600,6 +600,25 @@ public sealed class AgentMessageBusBridge
         catch (Exception ex) { _logger.LogWarning(ex, "Bus append failed: kind={Kind} topic={Topic} job={Job}", message.Kind, message.Topic, message.JobId); }
     }
 
+    public Task EmitClientIdentityDeletedAsync(
+        string clientId,
+        string displayName,
+        string actor,
+        CancellationToken ct = default)
+    {
+        var msg = NewMessage(
+            participantId: ParticipantRuntime,
+            role: "actor",
+            kind: "lifecycle",
+            severity: "Info",
+            project: null,
+            topic: "client-identity-deleted",
+            summary: $"Deleted retired runner identity {displayName}.",
+            payload: new { clientId, displayName, actor },
+            tags: ["client-identity", "runner-lifecycle", "deleted"]);
+        return EmitAsync(msg, ct);
+    }
+
     private AgentMessage NewMessage(
         string participantId,
         string role,

@@ -346,6 +346,60 @@ test.describe('Execution Hosts settings section', () => {
     await expect(local.getByTestId('remote-host-release')).toHaveText('–');
   });
 
+  test('deletes one retired runner, purges by prefix, and keeps separators aligned in both themes', async ({ page, devBackend: _devBackend }) => {
+    await stubGroupedHostApis(page);
+    await page.route('**/api/clients/e2e-retired-1', route => route.fulfill({ status: 204, body: '' }));
+    await page.route('**/api/clients/retired/purge', route => {
+      const body = route.request().postDataJSON() as { dryRun: boolean; namePrefix: string };
+      const clients = [2, 3, 4].map(index => ({
+        id: `e2e-retired-${index}`, name: `e2e-retired-${index}`, canDelete: true, blockedBy: null,
+      }));
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        dryRun: body.dryRun, namePrefix: body.namePrefix, clients, deletedCount: body.dryRun ? 0 : 3,
+      }) });
+    });
+    await page.setViewportSize({ width: 1600, height: 950 });
+    await page.goto('/#/workspace/settings/execution-hosts');
+    await page.getByTestId('remote-hosts-retired-filter').click();
+
+    const assertAlignedRules = async () => {
+      const spans = await page.getByTestId('remote-hosts-table').locator('tbody tr').evaluateAll(rows =>
+        rows.filter(row => row.querySelectorAll(':scope > td').length > 0).map(row => {
+          const cells = row.querySelectorAll(':scope > td');
+          const first = cells[0].getBoundingClientRect();
+          const last = cells[cells.length - 1].getBoundingClientRect();
+          return { left: Math.round(first.left), right: Math.round(last.right) };
+        }));
+      expect(new Set(spans.map(span => span.left)).size).toBe(1);
+      expect(new Set(spans.map(span => span.right)).size).toBe(1);
+    };
+
+    const retiredOne = page.getByTestId('remote-host-role-row').filter({ hasText: 'e2e-retired-1' });
+    await retiredOne.getByTestId('remote-host-action-delete').click();
+    await expect(page.getByTestId('remote-host-confirm')).toContainText('e2e-retired-1');
+    await page.getByTestId('remote-host-confirm-submit').click();
+    await expect(retiredOne).toHaveCount(0);
+
+    await page.getByTestId('remote-hosts-purge-open').click();
+    await expect(page.getByTestId('remote-hosts-purge-prefix')).toHaveValue('e2e-');
+    await page.getByTestId('remote-hosts-purge-preview').click();
+    await expect(page.getByTestId('remote-hosts-purge-list')).toContainText('e2e-retired-4');
+    await page.getByTestId('remote-hosts-purge-confirm').click();
+    await expect(page.getByTestId('remote-host-role-row').filter({ hasText: 'e2e-retired-' })).toHaveCount(0);
+
+    // Revisit the geometry with retired rows present for visual and numeric proof.
+    await page.reload();
+    await page.getByTestId('remote-hosts-retired-filter').click();
+    await setTheme(page, 'light');
+    await assertAlignedRules();
+    await page.screenshot({ path: join(SHOT_DIR, 'execution-hosts-retired-separators-light--mocked.png'), fullPage: false });
+    await setTheme(page, 'dark');
+    await assertAlignedRules();
+    await page.screenshot({ path: join(SHOT_DIR, 'execution-hosts-retired-separators-dark--mocked.png'), fullPage: false });
+    await page.getByTestId('remote-hosts-retired-filter').click();
+    await assertAlignedRules();
+  });
+
   test('narrow tables collapse complete actions into the row overflow menu', async ({ page, devBackend: _devBackend }) => {
     await page.setViewportSize({ width: 900, height: 820 });
     await stubGroupedHostApis(page);

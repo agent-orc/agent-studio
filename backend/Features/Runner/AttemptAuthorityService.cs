@@ -68,6 +68,31 @@ public sealed class AttemptAuthorityService
         get { lock (_gate) return _state.AuthorityEpoch; }
     }
 
+    public ClientAttemptAuthorityFacts InspectClientAuthority(string clientId)
+    {
+        var normalized = Normalize(clientId);
+        var now = _utcNow();
+        lock (_gate)
+        {
+            var leases = _state.RunAttempts
+                .Where(run => run.State == AttemptLifecycleState.Leased && OwnedBy(run.Lease, normalized))
+                .Select(run => (run.AuthorityEpoch, run.Lease))
+                .Concat(_state.ReviewAttempts
+                    .Where(review => review.State == AttemptLifecycleState.Leased && OwnedBy(review.Lease, normalized))
+                    .Select(review => (review.AuthorityEpoch, review.Lease)))
+                .ToList();
+            return new ClientAttemptAuthorityFacts(
+                leases.Any(item => item.Lease is not null && item.Lease.ExpiresAt > now),
+                leases.Any(item => item.AuthorityEpoch != _state.AuthorityEpoch));
+        }
+    }
+
+    private static bool OwnedBy(AttemptLeaseRecord? lease, string clientId)
+        => lease is not null
+           && (Same(lease.ClientId, clientId)
+               || Same(lease.ExecutorId, clientId)
+               || Same(lease.HostId, clientId));
+
     public AttemptWriteResult AcquireRun(
         string taskKey,
         string repositoryId,

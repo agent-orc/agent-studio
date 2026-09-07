@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
+import { HttpTestingController } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { RemoteHostsPanelComponent } from './remote-hosts-panel';
@@ -115,6 +116,41 @@ describe('RemoteHostsPanelComponent', () => {
     expect(diagnostic?.textContent).toContain('identity file corrupt: agent-runner-01.json');
     expect(diagnostic?.textContent).toContain('POST /api/clients/register');
     fixture.destroy();
+  });
+
+  it('previews and confirms prefix-scoped retired deletion', async () => {
+    await TestBed.configureTestingModule({
+      imports: [RemoteHostsPanelComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    const service = TestBed.inject(RemoteHostsService);
+    service.hosts.set([{
+      id: 'e2e-old', clientId: 'e2e-old', name: 'e2e-old', status: 'retired', role: 'remote',
+      address: null, os: 'Linux', lastHeartbeatAt: null, uptimeLabel: null,
+      capabilities: [], cliQuotas: [], stats: null,
+    }]);
+    const fixture = TestBed.createComponent(RemoteHostsPanelComponent);
+    fixture.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+
+    (fixture.nativeElement.querySelector('[data-testid="remote-hosts-purge-open"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    expect((fixture.nativeElement.querySelector('[data-testid="remote-hosts-purge-prefix"]') as HTMLInputElement).value).toBe('e2e-');
+    (fixture.nativeElement.querySelector('[data-testid="remote-hosts-purge-preview"]') as HTMLButtonElement).click();
+    http.expectOne('/api/clients/retired/purge').flush({
+      dryRun: true, namePrefix: 'e2e-', deletedCount: 0,
+      clients: [{ id: 'e2e-old', name: 'e2e-old', canDelete: true, blockedBy: null }],
+    });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="remote-hosts-purge-list"]')?.textContent).toContain('e2e-old');
+
+    (fixture.nativeElement.querySelector('[data-testid="remote-hosts-purge-confirm"]') as HTMLButtonElement).click();
+    http.expectOne('/api/clients/retired/purge').flush({
+      dryRun: false, namePrefix: 'e2e-', deletedCount: 1,
+      clients: [{ id: 'e2e-old', name: 'e2e-old', canDelete: true, blockedBy: null }],
+    });
+    fixture.detectChanges();
+    expect(service.hosts()).toHaveLength(0);
   });
 
   describe('auto-review queue summary', () => {

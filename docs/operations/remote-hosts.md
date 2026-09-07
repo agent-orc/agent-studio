@@ -245,7 +245,13 @@ curl -sS -X POST https://tasks.example.com/api/clients/agent-runner-01/drain \
   -H 'X-Client-Id: local-default'
 ```
 
-## Retire
+## Retire, revive, delete
+
+These lifecycle operations have different purposes. Retire drains a runner and
+keeps its identity for later revival. Revive makes that identity eligible to
+run again. Delete removes an identity and its role registrations permanently.
+
+### Retire
 
 Use **Retire**, read the confirmation, then choose **Drain and retire**. If work
 is running, the server drains first and changes the identity to `retired` only
@@ -258,7 +264,7 @@ curl -sS -X POST https://tasks.example.com/api/clients/agent-runner-01/retire \
   -H 'X-Client-Id: local-default'
 ```
 
-## Revive
+### Revive
 
 Choose **Show retired**, then **Revive** on the role row. Start or re-register the daemon
 afterward so `LastSeenAt`, daemon state, and the push probe become fresh again.
@@ -269,13 +275,26 @@ curl -sS -X POST https://tasks.example.com/api/clients/agent-runner-01/revive \
 sudo systemctl restart agent-host
 ```
 
-## Remove permanently
+### Delete
 
-Permanent removal is only available for an already-retired client. It deletes
-the identity record and cannot be undone. Use it only after deciding that the
-revive path and the visible historical host entry are no longer needed.
+Delete is only available for an already-retired client. The server refuses the
+operation with `409 Conflict` while the runner is online, has active slots or a
+live lease, or owns an unresolved `process-unknown` attempt. Stop the daemon and
+resolve its attempt authority before retrying. A successful delete removes the
+identity record, writes an audit entry, and emits a lifecycle bus event.
 
 ```bash
-curl -sS -X DELETE https://tasks.example.com/api/clients/agent-runner-01/permanent \
+curl -sS -X DELETE https://tasks.example.com/api/clients/agent-runner-01 \
   -H 'X-Client-Id: local-default'
+```
+
+Use **Delete retired…** to preview a prefix-scoped bulk purge. The dialog starts
+with `e2e-`; preview is mandatory before confirmation. The API supports the same
+flow directly and applies the guards independently to every identity:
+
+```bash
+curl -sS -X POST https://tasks.example.com/api/clients/retired/purge \
+  -H 'Content-Type: application/json' \
+  -H 'X-Client-Id: local-default' \
+  -d '{"namePrefix":"e2e-","dryRun":true}'
 ```

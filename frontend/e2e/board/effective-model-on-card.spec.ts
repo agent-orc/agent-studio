@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { api } from '../helpers/api';
+import { api, cleanupE2eClients } from '../helpers/api';
 
 /**
  * Job-card "effective model" indicator.
@@ -117,13 +117,6 @@ test.describe('job-card effective model', () => {
   });
 
   test.afterAll(async () => {
-    // Best-effort retirement of e2e owner clients. Soft-delete only;
-    // historical attribution is preserved by design.
-    const all = await api<ClientSummary[]>('/api/clients/');
-    for (const c of all) {
-      if (c.id.startsWith(TEST_OWNER_PREFIX) && c.kind !== 'retired') {
-        try { await api(`/api/clients/${c.id}`, { method: 'DELETE' }); } catch { /* ignore */ }
-      }
-    }
+    await cleanupE2eClients(TEST_OWNER_PREFIX);
   });
 });

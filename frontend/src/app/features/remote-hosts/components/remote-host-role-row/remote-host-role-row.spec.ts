@@ -39,4 +39,19 @@ describe('RemoteHostRoleRowComponent', () => {
     expect(fixture.nativeElement.querySelector('[data-testid="remote-host-slots-summary"]')?.textContent)
       .toContain('2 / 6');
   });
+
+  it('offers revive and delete for a retired role', () => {
+    TestBed.configureTestingModule({
+      imports: [RemoteHostRoleRowComponent],
+      providers: [provideZonelessChangeDetection()],
+    });
+    const fixture = TestBed.createComponent(RemoteHostRoleRowComponent);
+    fixture.componentRef.setInput('host', { ...ROLE, status: 'retired' });
+    fixture.detectChanges();
+
+    const labels = [...fixture.nativeElement.querySelectorAll('[role="menuitem"]')]
+      .map((button: Element) => button.textContent?.trim());
+    expect(labels).toContain('Revive');
+    expect(labels).toContain('Delete');
+  });
 });

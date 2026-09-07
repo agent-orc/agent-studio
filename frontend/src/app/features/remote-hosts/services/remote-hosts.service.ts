@@ -12,6 +12,20 @@ import type {
 import { seedRemoteHosts } from './remote-hosts.seed';
 import { ProviderAuthStatusService } from './provider-auth-status.service';
 
+export interface RetiredClientDeletionItem {
+  id: string;
+  name: string;
+  canDelete: boolean;
+  blockedBy: string | null;
+}
+
+export interface PurgeRetiredClientsResponse {
+  dryRun: boolean;
+  namePrefix: string | null;
+  clients: RetiredClientDeletionItem[];
+  deletedCount: number;
+}
+
 /**
  * Registry + action service for the Remote-Hosts page (AGT-1921).
  *
@@ -484,9 +498,31 @@ export class RemoteHostsService {
     const host = this.hosts().find(item => item.id === id);
     if (!host || !this.http) return;
     this.patch(id, item => ({ ...item, busyAction: 'delete' }));
-    this.http.delete(`/api/clients/${encodeURIComponent(host.clientId)}/permanent`).subscribe({
+    this.http.delete(`/api/clients/${encodeURIComponent(host.clientId)}`).subscribe({
       next: () => this.hosts.update(items => items.filter(item => item.id !== id)),
       error: error => this.actionFailed(id, error),
+    });
+  }
+
+  purgeRetired(
+    namePrefix: string,
+    dryRun: boolean,
+    next: (response: PurgeRetiredClientsResponse) => void,
+  ): void {
+    if (!this.http) return;
+    this.error.set(null);
+    this.http.post<PurgeRetiredClientsResponse>('/api/clients/retired/purge', {
+      namePrefix: namePrefix.trim() || null,
+      dryRun,
+    }).subscribe({
+      next: response => {
+        if (!dryRun) {
+          const deleted = new Set(response.clients.filter(item => item.canDelete).map(item => item.id));
+          this.hosts.update(hosts => hosts.filter(host => !deleted.has(host.clientId)));
+        }
+        next(response);
+      },
+      error: error => this.actionFailed('', error),
     });
   }
 
@@ -513,8 +549,9 @@ export class RemoteHostsService {
   }
 
   private actionFailed(id: string, error: unknown): void {
-    this.patch(id, host => ({ ...host, busyAction: null }));
-    this.error.set('The host lifecycle change could not be saved. Nothing was changed.');
+    if (id) this.patch(id, host => ({ ...host, busyAction: null }));
+    const response = error as { error?: { message?: string } };
+    this.error.set(response.error?.message || 'The host lifecycle change could not be saved. Nothing was changed.');
     this.log('action-failed', { hostId: id, message: (error as { message?: string })?.message ?? 'unknown' });
   }
 

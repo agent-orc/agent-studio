@@ -89,20 +89,17 @@ public static class ClientEndpoints
             return Results.Ok(detail);
         });
 
-        // Compatibility route: DELETE used to flip kind immediately. Keep the
-        // route for older callers, but give it the same graceful semantics as
-        // the explicit retire action. Permanent deletion is deliberately only
-        // available through DELETE /{id}/permanent after retirement.
-        clients.MapDelete("/{id}", (string id, ClientIdentityStore store) =>
+        clients.MapDelete("/{id}", (string id, HttpContext context, ClientIdentityDeletionService deletion) =>
         {
             if (string.Equals(id, DefaultClientIdentity.Id, StringComparison.OrdinalIgnoreCase))
             {
-                return Results.BadRequest(new { error = "default-identity-cannot-be-retired" });
+                return Results.BadRequest(new { error = "default-identity-cannot-be-deleted" });
             }
-            var updated = store.RequestDrain(id, retireAfterDrain: true);
-            return updated is not null
-                ? Results.Ok(ClientSummary.From(updated))
-                : Results.NotFound(new { error = "client-not-found-or-retired" });
+            var result = deletion.Delete(id, Actor(context));
+            if (!result.Found) return Results.NotFound(new { error = result.Error, message = result.Message });
+            return result.Deleted
+                ? Results.NoContent()
+                : Results.Conflict(new { error = result.Error, message = result.Message });
         });
 
         clients.MapPost("/{id}/drain", (string id, ClientIdentityStore store) =>
@@ -131,14 +128,19 @@ public static class ClientEndpoints
                 : Results.Ok(ClientSummary.From(updated));
         });
 
-        clients.MapDelete("/{id}/permanent", (string id, ClientIdentityStore store) =>
+        clients.MapDelete("/{id}/permanent", (string id, HttpContext context, ClientIdentityDeletionService deletion) =>
         {
             if (string.Equals(id, DefaultClientIdentity.Id, StringComparison.OrdinalIgnoreCase))
                 return Results.BadRequest(new { error = "default-identity-cannot-be-deleted" });
-            return store.PermanentlyDelete(id)
+            var result = deletion.Delete(id, Actor(context));
+            if (!result.Found) return Results.NotFound(new { error = result.Error, message = result.Message });
+            return result.Deleted
                 ? Results.NoContent()
-                : Results.BadRequest(new { error = "client-must-be-retired-before-delete" });
+                : Results.Conflict(new { error = result.Error, message = result.Message });
         });
+
+        clients.MapPost("/retired/purge", (PurgeRetiredClientsRequest? request, HttpContext context, ClientIdentityDeletionService deletion) =>
+            Results.Ok(deletion.Purge(request ?? new PurgeRetiredClientsRequest(), Actor(context))));
 
         clients.MapGet("/{id}/telemetry", (string id, string? window, ClientIdentityStore identities, HostTelemetryStore telemetry) =>
         {
@@ -292,6 +294,11 @@ public static class ClientEndpoints
             });
         });
     }
+
+    private static string Actor(HttpContext context)
+        => context.Request.Headers["X-Client-Id"].ToString() is { Length: > 0 } actor
+            ? actor
+            : DefaultClientIdentity.Id;
 
     private static ClientSummary DiagnosticSummary(ClientIdentityFileDiagnostic diagnostic) => new()
     {

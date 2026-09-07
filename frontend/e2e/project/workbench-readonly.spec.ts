@@ -167,7 +167,7 @@ test('article patterns drive the Dossier Explorer and isolated viewer in both th
     if (catalogue.items?.some(item => item.id === 'app-survey')) { project = candidate; break; }
   }
   if (!project) {
-    const clientName = `workbench-evidence-${Date.now().toString(36)}`;
+    const clientName = `e2e-workbench-evidence-${Date.now().toString(36)}`;
     const register = await fetch(`${devBackend.baseUrl}/api/clients/register`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ displayName: clientName }),
     });
@@ -376,6 +376,14 @@ test('article patterns drive the Dossier Explorer and isolated viewer in both th
     if (createdWorkspaceId) await fetch(`${devBackend.baseUrl}/api/workspaces/${createdWorkspaceId}`, {
       method: 'DELETE', headers: { 'X-Client-Id': clientId ?? '' },
     });
+    if (clientId) {
+      await fetch(`${devBackend.baseUrl}/api/clients/${clientId}/retire`, {
+        method: 'POST', headers: { 'content-type': 'application/json', 'X-Client-Id': clientId }, body: '{}',
+      });
+      await fetch(`${devBackend.baseUrl}/api/clients/${clientId}`, {
+        method: 'DELETE', headers: { 'X-Client-Id': 'local-default' },
+      });
+    }
   }
 });
 

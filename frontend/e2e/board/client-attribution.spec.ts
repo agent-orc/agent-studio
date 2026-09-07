@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { api, BACKEND } from '../helpers/api';
+import { api, BACKEND, cleanupE2eClients } from '../helpers/api';
 
 /**
  * Client identity + per-task attribution.
@@ -178,16 +178,7 @@ test.describe('Client identity + attribution', () => {
       } catch { /* ignore */ }
     }
 
-    // 2. Best-effort cleanup of the e2e-owner clients. Soft-delete only;
-    //    historical attribution is preserved by design, so the records stay
-    //    (kind=retired) and the next run re-uses the same ids.
-    const all = await api<ClientSummary[]>('/api/clients/');
-    for (const c of all) {
-      if (c.id.startsWith(TEST_PREFIX) && c.kind !== 'retired') {
-        try {
-          await api(`/api/clients/${c.id}`, { method: 'DELETE' });
-        } catch { /* ignore */ }
-      }
-    }
+    // 2. Retire and delete fixture identities after their jobs are gone.
+    await cleanupE2eClients(TEST_PREFIX);
   });
 });
