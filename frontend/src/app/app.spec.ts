@@ -8,6 +8,7 @@ import { App } from './app';
 import { TaskService } from './services/task.service';
 import type { TaskDetail, TaskInfo } from './models/task.model';
 import { studioTabKey } from './features/studio-shell';
+import { BoardFiltersService } from './features/board';
 import { ensureBrowserStorage } from '../testing/browser-storage';
 
 ensureBrowserStorage();
@@ -425,4 +426,228 @@ describe('App studio-tab mirror (pager reuse)', () => {
     ]);
     expect(app.studioTabState.activeKey()).toBe('task:C:/watch::task-a');
   });
+});
+
+/**
+ * AGT-2692 - opening a task from the All-projects board must not switch the
+ * app into that task's project.
+ *
+ * Operator report (2026-08-29): from the cross-project board, opening a task
+ * silently narrowed the workspace to the task's single project, and closing the
+ * task left them stranded there instead of back on "All projects".
+ *
+ * The scope the app is in is `BoardFiltersService.activeProjects` (persisted,
+ * and what the sidebar, picker and lanes read). An empty set is "All projects".
+ * The task's own project stays available to the detail view - see
+ * `TaskSelectionService.getDetailFor`, which resolves the project handle from
+ * the TaskInfo, not from this scope.
+ */
+describe('App All-projects task open (AGT-2692)', () => {
+  const TAB_STORAGE_KEY = 'atp.studio.tabs.v1';
+  const VSCODE_FLAG_KEY = 'atp.flag.vsCodeLayout';
+  const PROJECT_STORAGE_KEY = 'activeProjects';
+
+  afterEach(() => {
+    TestBed.resetTestingModule();
+    localStorage.removeItem(TAB_STORAGE_KEY);
+    localStorage.removeItem(VSCODE_FLAG_KEY);
+    localStorage.removeItem(PROJECT_STORAGE_KEY);
+  });
+
+  async function configure(): Promise<App> {
+    TestBed.resetTestingModule();
+    localStorage.removeItem(TAB_STORAGE_KEY);
+    localStorage.removeItem(PROJECT_STORAGE_KEY);
+    localStorage.setItem(VSCODE_FLAG_KEY, '1');
+    TestBed.configureTestingModule({
+      providers: [
+        App,
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+      ],
+    });
+    const app = TestBed.inject(App);
+    // Boot lands on the seeded cross-project board; settle its scope effect.
+    TestBed.tick();
+    return app;
+  }
+
+  /** The app-wide project scope, read off the root BoardFiltersService. */
+  function scope(): string[] {
+    return [...TestBed.inject(BoardFiltersService).activeProjects()];
+  }
+
+  function boardTask(over: Partial<TaskInfo>): TaskInfo {
+    return {
+      id: 'task-a',
+      taskKey: 'C:/watch-a::task-a',
+      title: 'Task One',
+      state: '2-ready',
+      order: 1,
+      agent: 'codex',
+      createdAt: '2026-01-01T00:00:00Z',
+      watchPath: 'C:/watch-a',
+      projectName: 'Project A',
+      folderPath: 'C:/watch-a/.orchestrator/jobs/task-a',
+      lastActivity: '2026-01-01T00:00:00Z',
+      sessionName: null,
+      model: null,
+      cliType: 'codex',
+      useOwnSession: null,
+      lastUsage: null,
+      execution: null,
+      commit: null,
+      ...over,
+    } as TaskInfo;
+  }
+
+  /** Seed a cross-project feed: two projects visible on one board. */
+  function seedTwoProjects(app: App): { a: TaskInfo; b: TaskInfo } {
+    const a = boardTask({});
+    const b = boardTask({
+      id: 'task-b',
+      taskKey: 'C:/watch-b::task-b',
+      title: 'Task Two',
+      watchPath: 'C:/watch-b',
+      projectName: 'Project B',
+      folderPath: 'C:/watch-b/.orchestrator/jobs/task-b',
+    });
+    app.jobService.jobs.set([a, b]);
+    app.jobService.grouped.set({ ...app.jobService.grouped(), ready: [a, b] });
+    return { a, b };
+  }
+
+  it('leaves the active scope on All projects when a task is opened from the cross-project board', async () => {
+    const app = await configure();
+    const { a } = seedTwoProjects(app);
+    expect(app.studioTabState.activeKey()).toBe('board:__all__');
+    expect(scope()).toEqual([]);
+
+    app.openDetail(a);
+    TestBed.tick();
+
+    // The task opened, and it remembers the context it was opened from ...
+    expect(app.studioTabState.activeTab()).toEqual({
+      kind: 'task',
+      taskKey: 'C:/watch-a::task-a',
+      originScope: 'all-projects',
+    });
+    // ... so the app-wide scope is still "All projects", not "Project A".
+    expect(scope()).toEqual([]);
+  });
+
+  it('still narrows the scope for a task opened from a single-project board', async () => {
+    const app = await configure();
+    const { a } = seedTwoProjects(app);
+    app.studioTabState.open({ kind: 'board', projectName: 'Project A' });
+    TestBed.tick();
+    expect(scope()).toEqual(['Project A']);
+
+    app.openDetail(a);
+    TestBed.tick();
+
+    expect(app.studioTabState.activeTab()).toEqual({
+      kind: 'task',
+      taskKey: 'C:/watch-a::task-a',
+    });
+    expect(scope()).toEqual(['Project A']);
+  });
+
+  it('returns to the All-projects board with a workspace-wide scope when the task tab is closed', async () => {
+    const app = await configure();
+    const { a } = seedTwoProjects(app);
+    app.openDetail(a);
+    TestBed.tick();
+
+    app.studioTabState.close('task:C:/watch-a::task-a');
+    TestBed.tick();
+
+    expect(app.studioTabState.activeKey()).toBe('board:__all__');
+    expect(scope()).toEqual([]);
+  });
+
+  it('keeps the All-projects scope while paging from one task to the next', async () => {
+    const app = await configure();
+    const { a, b } = seedTwoProjects(app);
+    app.openDetail(a);
+    TestBed.tick();
+
+    // Pager / cursor step reuses the tab in place; the origin context rides along
+    // even though the next task belongs to a different project.
+    (app as unknown as { mirrorSelectionToStudioTab(d: TaskDetail, r: boolean): void })
+      .mirrorSelectionToStudioTab(
+        { ...detailShell(), info: b } as TaskDetail,
+        true,
+      );
+    TestBed.tick();
+
+    expect(app.studioTabState.activeTab()).toEqual({
+      kind: 'task',
+      taskKey: 'C:/watch-b::task-b',
+      originScope: 'all-projects',
+    });
+    expect(scope()).toEqual([]);
+  });
+
+  it('restores the All-projects scope after a reload of the task tab', async () => {
+    const app = await configure();
+    const { a } = seedTwoProjects(app);
+    app.openDetail(a);
+    TestBed.tick();
+
+    // A reload rehydrates the tab list from localStorage; the origin context
+    // has to survive that round trip or the scope snaps on the next boot.
+    const persisted = JSON.parse(localStorage.getItem(TAB_STORAGE_KEY) ?? '{}');
+    expect(persisted.tabs).toContainEqual({
+      kind: 'task',
+      taskKey: 'C:/watch-a::task-a',
+      originScope: 'all-projects',
+    });
+
+    TestBed.resetTestingModule();
+    TestBed.configureTestingModule({
+      providers: [
+        App,
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+      ],
+    });
+    const reloaded = TestBed.inject(App);
+    seedTwoProjects(reloaded);
+    TestBed.tick();
+
+    expect(reloaded.studioTabState.activeKey()).toBe('task:C:/watch-a::task-a');
+    expect(scope()).toEqual([]);
+  });
+
+  it('does not clear a project filter the operator set explicitly', async () => {
+    const app = await configure();
+    const { a } = seedTwoProjects(app);
+    TestBed.inject(BoardFiltersService).setExplicitSoleProject('Project B');
+    TestBed.tick();
+
+    app.openDetail(a);
+    TestBed.tick();
+
+    // Neither narrowed to the task's project nor silently reset: an explicit
+    // filter is the operator's, and only they clear it.
+    expect(scope()).toEqual(['Project B']);
+  });
+
+  function detailShell(): Omit<TaskDetail, 'info'> {
+    return {
+      promptMarkdown: '',
+      promptHistory: [],
+      titleHistory: [],
+      statusMarkdown: null,
+      contextUsage: null,
+      log: [],
+      summaryState: null,
+      reviewEvidence: [],
+    };
+  }
 });

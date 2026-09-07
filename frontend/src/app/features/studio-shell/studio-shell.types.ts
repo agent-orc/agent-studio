@@ -14,6 +14,9 @@ export type StudioTabKind = 'board' | 'feed' | 'chat-history' | 'epics' | 'epic'
 /** Sidebar panel kinds reachable from the ActivityBar. */
 export type StudioPanelKind = 'explorer' | 'filters' | 'cli' | 'activity' | 'runbook' | 'settings';
 
+/** Sentinel `projectName` marking the cross-project ("All projects") board. */
+export const ALL_PROJECTS_BOARD = '__all__';
+
 /** Board tab - one per project; key `board:<projectName>` or `board:__all__`. */
 export interface BoardTab { kind: 'board'; projectName: string; }
 
@@ -29,8 +32,18 @@ export interface EpicsTab { kind: 'epics'; projectName: string | null; }
 /** Epic detail tab - one per opened epic; key `epic:<epicKey>`. */
 export interface EpicTab { kind: 'epic'; epicKey: string; viewTaskKey?: string; }
 
-/** Task-detail tab — one per opened job; key `task:<taskKey>`. */
-export interface TaskTab { kind: 'task'; taskKey: string; }
+/**
+ * Task-detail tab — one per opened job; key `task:<taskKey>`.
+ *
+ * `originScope` records the project scope the tab was opened *from*, not the
+ * project the detail loads its data from. A task opened off the cross-project
+ * board belongs to the All-projects context and must keep the app scoped
+ * workspace-wide (`'all-projects'`); every other origin leaves the scope to be
+ * derived from the task's own project (field absent). It is deliberately not
+ * part of {@link studioTabKey}: the same task opened from either surface is one
+ * tab, it just remembers where the operator came from.
+ */
+export interface TaskTab { kind: 'task'; taskKey: string; originScope?: 'all-projects'; }
 
 /**
  * Stable target inside a project's Wiki. The document or folder path belongs
@@ -119,4 +132,26 @@ export function studioTabKey(tab: StudioTab): string {
     case 'workspace-settings': return 'workspace-settings';
     case 'welcome':  return 'welcome';
   }
+}
+
+/**
+ * The {@link TaskTab.originScope} a task tab inherits from the surface it is
+ * opened on. Spread into the tab payload so the absent-field default stays the
+ * "derive from the task's project" behaviour:
+ *
+ * ```ts
+ * tabState.open({ kind: 'task', taskKey, ...inheritedTaskScope(tabState.activeTab()) });
+ * ```
+ *
+ * Opening a task from the cross-project board keeps the workspace-wide scope,
+ * and so does stepping from one such task to the next (pager, cursor keys), so
+ * walking a lane out of All-projects never silently narrows the app to a single
+ * project.
+ */
+export function inheritedTaskScope(origin: StudioTab | null | undefined): Pick<TaskTab, 'originScope'> {
+  if (!origin) return {};
+  const fromAllProjects =
+    (origin.kind === 'board' && origin.projectName === ALL_PROJECTS_BOARD)
+    || (origin.kind === 'task' && origin.originScope === 'all-projects');
+  return fromAllProjects ? { originScope: 'all-projects' } : {};
 }

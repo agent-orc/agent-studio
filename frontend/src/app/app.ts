@@ -94,6 +94,8 @@ import {
   StudioTabStateService,
   StudioPanelStateService,
   studioTabKey,
+  inheritedTaskScope,
+  projectScopeForTab,
   parseStudioRoute,
   navigateStudioRoute,
   replaceTaskViewRoute,
@@ -978,38 +980,24 @@ export class App implements OnInit, OnDestroy {
     // and an all-projects total (e.g. "193") while the breadcrumb named
     // the selected project. setSoleProject is idempotent so repeated tab
     // activations don't toggle the filter off.
+    //
+    // AGT-2692 carved out the one case where a project-bound tab must NOT
+    // narrow the scope: a task opened from the cross-project board. See
+    // projectScopeForTab / TaskTab.originScope.
     effect(() => {
       if (!this.featureFlags.vsCodeLayout()) return;
       const tab = this.studioTabState.activeTab();
       if (!tab) return;
-      // `null`  → workspace-wide ("All projects"): clear the project filter.
-      // string  → narrow to exactly that project.
-      // `undefined` → context unknown (diff/welcome, or a task whose job
-      //               hasn't loaded yet): leave the current scope untouched.
-      let project: string | null | undefined;
-      switch (tab.kind) {
-        case 'board':
-          project = tab.projectName === '__all__' ? null : tab.projectName;
-          break;
-        case 'feed':
-        case 'chat-history':
-          project = null;
-          break;
-        case 'workbenches':
-        case 'workbench':
-        case 'hub':
-          project = tab.projectName;
-          break;
-        case 'epics':
-          project = tab.projectName;
-          break;
-        case 'task':
-        case 'activity':
-          project = this.jobService.jobs().find(j => j.taskKey === tab.taskKey)?.projectName ?? undefined;
-          break;
-        default:
-          project = undefined;
-      }
+      // The decision itself is pure policy (projectScopeForTab); this effect
+      // only applies it. `null` → workspace-wide, string → that project,
+      // `undefined` → unknown, leave the current scope untouched.
+      // The job index is read lazily inside the resolver so this effect keeps
+      // depending on jobs() only for the tab kinds that actually consult it;
+      // an eager read would re-run the whole mirror on every poll.
+      const project = projectScopeForTab(
+        tab,
+        (taskKey) => this.jobService.jobs().find(j => j.taskKey === taskKey)?.projectName,
+      );
       if (project === undefined) return;
       untracked(() => {
         if (project === null) {
@@ -1346,7 +1334,11 @@ export class App implements OnInit, OnDestroy {
     this.routeDetailTab.set(null);
     this.routeInspectorTab.set(null);
     if (this.featureFlags.vsCodeLayout()) {
-      this.studioTabState.open({ kind: 'task', taskKey: job.taskKey });
+      this.studioTabState.open({
+        kind: 'task',
+        taskKey: job.taskKey,
+        ...inheritedTaskScope(this.studioTabState.activeTab()),
+      });
     }
     this.jobSelection.openDetailAfterPaint(job);
   }
@@ -1978,13 +1970,16 @@ export class App implements OnInit, OnDestroy {
       this.studioTabState.select(key);
       return;
     }
+    // The origin surface decides whether the new tab keeps the All-projects
+    // scope; a pager step inherits it from the task tab it replaces.
     const active = this.studioTabState.activeTab();
+    const scope = inheritedTaskScope(active);
     if (retargetNav && active?.kind === 'task') {
       // Pager / cursor step from one task to the next: reuse the tab we
       // navigated away from instead of opening a new one.
-      this.studioTabState.retarget(studioTabKey(active), { kind: 'task', taskKey: selected.info.taskKey });
+      this.studioTabState.retarget(studioTabKey(active), { kind: 'task', taskKey: selected.info.taskKey, ...scope });
     } else {
-      this.studioTabState.open({ kind: 'task', taskKey: selected.info.taskKey });
+      this.studioTabState.open({ kind: 'task', taskKey: selected.info.taskKey, ...scope });
     }
   }
 

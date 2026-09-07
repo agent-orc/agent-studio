@@ -24,5 +24,7 @@ export {
 // consolidated settings view (shell feature) mounts it via a direct path so it
 // does not pull StudioShellComponent through this barrel and re-form the
 // shell <-> studio-shell import cycle (AGT-2035).
-export { studioTabKey } from './studio-shell.types';
-export type { StudioTab, StudioTabKind, StudioPanelKind, WikiTabTarget } from './studio-shell.types';
+export { studioTabKey, inheritedTaskScope, ALL_PROJECTS_BOARD } from './studio-shell.types';
+export type { StudioTab, StudioTabKind, StudioPanelKind, TaskTab, WikiTabTarget } from './studio-shell.types';
+export { projectScopeForTab } from './studio-shell.project-scope';
+export type { StudioProjectScope } from './studio-shell.project-scope';

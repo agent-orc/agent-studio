@@ -61,7 +61,7 @@ import { StudioPanelStateService } from './services/studio-panel-state.service';
 import { ExplorerSectionsService } from './services/explorer-sections.service';
 import { ExplorerWorkbenchStateService } from './services/explorer-workbench-state.service';
 import { buildProjectSidebarRows, type ProjectSidebarRow } from './studio-shell.project-rows';
-import { StudioTab, studioTabKey } from './studio-shell.types';
+import { ALL_PROJECTS_BOARD, StudioTab, inheritedTaskScope, studioTabKey } from './studio-shell.types';
 import { GlobalSearchComponent } from './components/global-search/global-search.component';
 import { OrchestratorFeedStore } from '../orchestrator';
 
@@ -271,15 +271,21 @@ export class StudioShellComponent {
   onDocumentClick(): void { this.closePickerMenu(); }
 
   /**
-   * Active project for the picker — derived from the active tab / board.
-   * `null` means the user is in "All projects" mode (workspace-wide).
+   * Project the app is *scoped* to — drives the picker pill and the Explorer's
+   * active project row. `null` means "All projects" (workspace-wide).
+   *
+   * This is deliberately narrower than {@link currentProjectName}: a task tab
+   * opened off the cross-project board keeps the All-projects scope even though
+   * the detail behind it loads through its own project (AGT-2692). Opening a
+   * task must not silently switch the operator out of the All-projects board.
    */
   readonly activeProjectName = computed<string | null>(() => {
     const tab = this.activeTab();
     if (!tab) return null;
-    if (tab.kind === 'board') return tab.projectName === '__all__' ? null : tab.projectName;
+    if (tab.kind === 'board') return tab.projectName === ALL_PROJECTS_BOARD ? null : tab.projectName;
     if (tab.kind === 'epics') return tab.projectName;
     if (tab.kind === 'workbenches') return tab.projectName;
+    if (tab.kind === 'task' && tab.originScope === 'all-projects') return null;
     return this.currentProjectName();
   });
 
@@ -525,9 +531,13 @@ export class StudioShellComponent {
    *  it must still render as a picker target for the probe to land
    *  tasks). The set of "known projects" comes from
    *  `TaskService.getWatchPaths()` via the shell's `projectNames` input
-   *  the host passes in app.html. */
+   *  the host passes in app.html.
+   *
+   *  The active-row marker follows the app-wide scope (`activeProjectName`),
+   *  not the data context, so an All-projects task tab leaves every project row
+   *  unmarked instead of lighting one up behind an "All projects" picker. */
   readonly projectRows = computed<ProjectSidebarRow[]>(() => {
-    return buildProjectSidebarRows(this.grouped(), this.knownProjectNames(), this.currentProjectName());
+    return buildProjectSidebarRows(this.grouped(), this.knownProjectNames(), this.activeProjectName());
   });
 
   /** Row name → resolved storage path for the tree's rename-stable join. */
@@ -570,15 +580,18 @@ export class StudioShellComponent {
   });
 
   /**
-   * The project the user is contextually "in" — drives the active titlebar
-   * pill and the default project for sidebar CTAs. Board/Deck tabs name a
-   * project directly; Task/Activity tabs resolve through the job index;
-   * Diff/Welcome fall back to the last-known board project.
+   * The project whose DATA the active tab needs — the workspace breadcrumb and
+   * the default project for sidebar CTAs. Board/Deck tabs name a project
+   * directly; Task/Activity tabs resolve through the job index; Diff/Welcome
+   * fall back to the last-known board project.
+   *
+   * Not the app-wide selection: use {@link activeProjectName} for anything that
+   * renders "which project am I scoped to" (picker pill, Explorer active row).
    */
   readonly currentProjectName = computed<string | null>(() => {
     const tab = this.activeTab();
     if (!tab) return null;
-    if (tab.kind === 'board') return tab.projectName === '__all__' ? null : tab.projectName;
+    if (tab.kind === 'board') return tab.projectName === ALL_PROJECTS_BOARD ? null : tab.projectName;
     if (tab.kind === 'epics') return tab.projectName;
     if (tab.kind === 'workbenches') return tab.projectName;
     if (tab.kind === 'hub') return tab.projectName;
@@ -657,7 +670,11 @@ export class StudioShellComponent {
   );
 
   openTask(job: TaskInfo): void {
-    this.tabState.open({ kind: 'task', taskKey: job.taskKey });
+    this.tabState.open({
+      kind: 'task',
+      taskKey: job.taskKey,
+      ...inheritedTaskScope(this.activeTab()),
+    });
     // Keep the legacy TaskSelectionService in sync so the embedded
     // <app-job-detail> can pick the job up by reading the selected signal.
     this.jobSelection.openDetailAfterPaint(job);

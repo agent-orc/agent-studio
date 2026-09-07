@@ -1,10 +1,10 @@
 import { Injectable, computed, signal } from '@angular/core';
 import type { BoardTab, StudioTab } from '../studio-shell.types';
-import { studioTabKey } from '../studio-shell.types';
+import { ALL_PROJECTS_BOARD, studioTabKey } from '../studio-shell.types';
 
 const STORAGE_KEY = 'atp.studio.tabs.v1';
 const STORAGE_VERSION = 1;
-const ALL_PROJECTS = '__all__';
+const ALL_PROJECTS = ALL_PROJECTS_BOARD;
 const ALL_BOARD_TAB: BoardTab = { kind: 'board', projectName: ALL_PROJECTS };
 const ALL_BOARD_KEY = studioTabKey(ALL_BOARD_TAB);
 
@@ -365,7 +365,13 @@ export class StudioTabStateService {
           viewTaskKey: tab.viewTaskKey || undefined,
         };
       case 'task':
-        return { kind: 'task', taskKey: tab.taskKey };
+        return {
+          kind: 'task',
+          taskKey: tab.taskKey,
+          // Survives persistence so a reload of an All-projects task tab
+          // restores the workspace-wide scope instead of narrowing.
+          ...(tab.originScope ? { originScope: tab.originScope } : {}),
+        };
       case 'hub':
         return {
           kind: 'hub',
