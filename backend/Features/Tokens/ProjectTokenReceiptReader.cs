@@ -182,7 +182,12 @@ public sealed class ProjectTokenReceiptReader
                     : call.ParticipantId,
                 TokenUsage = new OrchestratorTokenUsage
                 {
-                    Model = call.Model,
+                    // Historical receipts persisted the display label (e.g.
+                    // "Claude Sonnet 5") instead of the catalog id (AGT-2740);
+                    // resolve it back here so pricing never sees a label.
+                    Model = string.IsNullOrWhiteSpace(call.Model)
+                        ? call.Model
+                        : ModelMetadataRegistry.NormalizeId(call.Model),
                     InputTokens = SafeInt(call.InputTokens),
                     OutputTokens = SafeInt(call.OutputTokens),
                     CacheReadTokens = SafeInt(call.CacheReadTokens),

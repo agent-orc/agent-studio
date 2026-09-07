@@ -224,8 +224,8 @@ public sealed class TokenSummaryBusParityTests : IDisposable
         Assert.Equal(13_900, summary.TotalTokens);
         Assert.Equal("GPT-5 Codex", summary.LastModel);
         Assert.Equal(2, summary.Entries.Count);
-        Assert.Contains(summary.Entries, e => e.Model == "GPT-5 Codex");
-        Assert.Contains(summary.Entries, e => e.Model == "Claude Haiku 4.5");
+        Assert.Contains(summary.Entries, e => e.Model == "gpt-5-codex" && e.DisplayModel == "GPT-5 Codex");
+        Assert.Contains(summary.Entries, e => e.Model == "claude-haiku-4-5" && e.DisplayModel == "Claude Haiku 4.5");
 
         static AgentMessageLatency createdLatency(DateTime requestedAt, DateTime completedAt)
             => new(

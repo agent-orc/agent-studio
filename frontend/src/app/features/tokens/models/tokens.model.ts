@@ -10,7 +10,10 @@
 
 export interface TaskTokenCall {
   ts: string;
+  /** Canonical catalog model id, or a raw unrecognized id. Prefer `displayModel` for UI. */
   model: string | null;
+  /** Human-readable model label; falls back to `model` for ids absent from the registry. */
+  displayModel?: string | null;
   participantId?: string | null;
   inputTokens: number;
   outputTokens: number;

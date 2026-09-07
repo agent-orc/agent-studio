@@ -136,6 +136,7 @@ public class TokenSummaryService
                 u.CacheCreationTokens, entry.Ts);
             bucket.Cost += cost.Total;
             if (!cost.ModelKnown) bucket.AnyUnpriced = true;
+            var canonicalModel = ModelMetadataRegistry.NormalizeId(u.Model);
             var displayModel = TokenModelDisplay.Label(u.Model);
             if (entry.Ts > (bucket.LastUpdate ?? DateTime.MinValue))
             {
@@ -158,7 +159,9 @@ public class TokenSummaryService
             bucket.Entries.Add(new TaskTokenCall
             {
                 Ts = entry.Ts,
-                Model = displayModel,
+                // Canonical id, never the display label - see TaskTokenCall.Model.
+                Model = string.IsNullOrWhiteSpace(canonicalModel) ? null : canonicalModel,
+                DisplayModel = displayModel,
                 ParticipantId = entry.ParticipantId,
                 InputTokens = u.InputTokens,
                 OutputTokens = u.OutputTokens,
@@ -193,21 +196,22 @@ public class TokenSummaryService
 
     public static TaskTokenSummary WithModelFallback(TaskTokenSummary summary, string? modelId)
     {
-        var fallback = TokenModelDisplay.Label(modelId);
-        if (string.IsNullOrWhiteSpace(fallback)) return summary;
+        var fallbackLabel = TokenModelDisplay.Label(modelId);
+        if (string.IsNullOrWhiteSpace(fallbackLabel)) return summary;
+        var fallbackId = ModelMetadataRegistry.NormalizeId(modelId);
 
         var entries = summary.Entries
             .Select(e => ShouldApplyRunModelFallback(e)
-                ? Reprice(e with { Model = fallback }, modelId)
+                ? Reprice(e with { Model = fallbackId, DisplayModel = fallbackLabel }, modelId)
                 : e)
             .ToList();
         var hasAgentFallbackRow = entries.Any(e =>
-            string.Equals(e.Model, fallback, StringComparison.Ordinal)
+            string.Equals(e.Model, fallbackId, StringComparison.Ordinal)
             && TokenModelDisplay.IsAgentParticipant(e.ParticipantId));
 
         return summary with
         {
-            LastModel = string.IsNullOrWhiteSpace(summary.LastModel) && hasAgentFallbackRow ? fallback : summary.LastModel,
+            LastModel = string.IsNullOrWhiteSpace(summary.LastModel) && hasAgentFallbackRow ? fallbackLabel : summary.LastModel,
             Entries = entries,
             EstimatedApiCostUsd = entries.Sum(e => e.EstimatedApiCostUsd),
             AllModelsPriced = entries.Count > 0 && entries.All(e => e.ModelPriced),
