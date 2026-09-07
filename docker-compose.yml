@@ -1,122 +1,266 @@
 # Agent Studio - container-default stack.
 #
-# Default (no profile):    orchestrator API + frontend  -> a working Studio.
+# Default (no profile):    orchestrator API + frontend  -> a working Studio,
+#                          pulled from the pinned ${AGENT_STUDIO_VERSION}
+#                          release images. No source checkout required.
 # --profile runner:        adds coding/review agent-hosts (needs runner.env
 #                          with identity, auth token, and git remotes; the
 #                          coding CLIs run INSIDE these containers - the
 #                          container is the isolation boundary).
 # --profile distributed:   target-architecture preview (task-server, engine,
 #                          studio-bff) - not required for a working install.
+# --profile dev:            source-built "-dev" siblings of every service
+#                          above, for contributors iterating on this checkout.
+#                          Build is intentionally never wired to the default,
+#                          runner, or distributed services - only the "dev"
+#                          profile ever triggers `build:`. Name the exact
+#                          "-dev" services you want on the command line
+#                          (e.g. `docker compose --profile dev up --build
+#                          orchestrator-api-dev frontend-dev`); a bare
+#                          `--profile dev up` also starts every profile-less
+#                          default service and will collide on their ports.
+#
+# Every "-dev" sibling repeats its anchor's `environment:` map in full rather
+# than adding to it: YAML's `<<:` merge key replaces a same-named key wholesale
+# instead of deep-merging it, so a service that needs one different value
+# (e.g. RUNNER_SERVER_URL pointing at a "-dev" dependency) must restate every
+# other key too. Keep prod/dev pairs' shared keys in sync by hand.
 name: agent-studio
+
+x-logging: &bounded-logs
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-orchestrator-api: &orchestrator-api
+  restart: unless-stopped
+  ports:
+    - "127.0.0.1:${STUDIO_API_PORT:-5031}:5031"
+  volumes:
+    - workspace:/data/workspace
+    - projects:/data/projects
+  environment:
+    TaskRepository: /data/workspace
+    # Blank keeps OrchestratorApi in local mode. The distributed smoke test
+    # sets this to the Task Server URL to exercise the /api/v1 proxy.
+    TaskServer__BaseUrl: ${TASK_SERVER_BASE_URL:-}
+  healthcheck:
+    test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:5031/healthz"]
+    interval: 5s
+    timeout: 3s
+    retries: 24
+    start_period: 10s
+  logging: *bounded-logs
+
+x-frontend: &frontend
+  restart: unless-stopped
+  ports:
+    - "${STUDIO_UI_PORT:-4011}:8080"
+  healthcheck:
+    test: ["CMD", "wget", "--quiet", "--output-document=-", "http://127.0.0.1:8080/healthz"]
+    interval: 5s
+    timeout: 3s
+    retries: 12
+    start_period: 5s
+  logging: *bounded-logs
+
+x-agent-host-coding: &agent-host-coding
+  restart: unless-stopped
+  env_file:
+    - path: ./runner.env
+      required: true
+  environment:
+    RUNNER_SERVER_URL: http://orchestrator-api:5031
+    RUNNER_ROLE: coding
+    # Compose-internal network: plain HTTP is an explicit, contained opt-in.
+    RUNNER_ALLOW_INSECURE_HTTP: "1"
+    RUNNER_AUTH_TOKEN_FILE: /run/secrets/runner.token
+  volumes:
+    - runner-coding:/var/lib/agent-host
+    - ./runner.token:/run/secrets/runner.token:ro
+  logging: *bounded-logs
+
+x-agent-host-review: &agent-host-review
+  restart: unless-stopped
+  env_file:
+    - path: ./runner.env
+      required: true
+  environment:
+    RUNNER_SERVER_URL: http://orchestrator-api:5031
+    RUNNER_ROLE: review
+    RUNNER_ALLOW_INSECURE_HTTP: "1"
+    RUNNER_AUTH_TOKEN_FILE: /run/secrets/runner.token
+  volumes:
+    - runner-review:/var/lib/agent-host
+    - ./runner.token:/run/secrets/runner.token:ro
+  logging: *bounded-logs
+
+x-task-server: &task-server
+  restart: unless-stopped
+  ports:
+    - "127.0.0.1:${STUDIO_TASKSERVER_PORT:-5071}:5071"
+  volumes:
+    - orchestrator-data:/var/lib/agent-orchestrator
+  environment:
+    LISTEN_URL: http://0.0.0.0:5071
+    AllowedHosts: "*"
+    STORE_PATH: /var/lib/agent-orchestrator
+    AUTH: bearer
+    STUDIO_AUTH_TOKEN_FILE: /run/secrets/studio_token
+    ENGINE_AUTH_TOKEN_FILE: /run/secrets/engine_token
+    BOOTSTRAP_RUNNER_ID: distributed-runner
+    BOOTSTRAP_RUNNER_AUTH_TOKEN_FILE: /run/secrets/runner_token
+  secrets:
+    - studio_token
+    - engine_token
+    - runner_token
+  healthcheck:
+    test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:5071/healthz"]
+    interval: 5s
+    timeout: 3s
+    retries: 24
+    start_period: 10s
+  logging: *bounded-logs
+
+x-orchestrator-engine: &orchestrator-engine
+  restart: unless-stopped
+  environment:
+    CLIENT_ID: orchestrator-engine
+    CLIENT_CREDENTIAL: ${DISTRIBUTED_ENGINE_TOKEN:?set DISTRIBUTED_ENGINE_TOKEN}
+  logging: *bounded-logs
+
+x-studio-bff: &studio-bff
+  restart: unless-stopped
+  ports:
+    - "127.0.0.1:${STUDIO_BFF_PORT:-5072}:5072"
+  environment:
+    TaskServer__AuthTokenFile: /run/secrets/studio_token
+  secrets:
+    - studio_token
+  healthcheck:
+    test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:5072/healthz"]
+    interval: 5s
+    timeout: 3s
+    retries: 24
+    start_period: 10s
+  logging: *bounded-logs
+
+x-agent-host-distributed: &agent-host-distributed
+  restart: unless-stopped
+  env_file:
+    - path: ./runner.env
+      required: false
+  environment:
+    RUNNER_ID: distributed-runner
+    RUNNER_NAME: distributed-runner
+    RUNNER_ALLOW_INSECURE_HTTP: "1"
+    RUNNER_AUTH_TOKEN_FILE: /run/secrets/runner_token
+  secrets:
+    - runner_token
+  logging: *bounded-logs
 
 services:
   orchestrator-api:
+    <<: *orchestrator-api
+    image: ghcr.io/agent-orc/agent-studio-api:${AGENT_STUDIO_VERSION:-latest}
+
+  orchestrator-api-dev:
+    <<: *orchestrator-api
     build:
       context: .
       dockerfile: backend/Dockerfile
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:${STUDIO_API_PORT:-5031}:5031"
-    volumes:
-      - workspace:/data/workspace
-      - projects:/data/projects
-    environment:
-      TaskRepository: /data/workspace
-    healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:5031/healthz"]
-      interval: 5s
-      timeout: 3s
-      retries: 24
-      start_period: 10s
+      args:
+        VERSION: ${AGENT_STUDIO_VERSION:-0.0.0-dev}
+    profiles: ["dev"]
 
   frontend:
-    build:
-      context: .
-      dockerfile: frontend/Dockerfile
-    restart: unless-stopped
+    <<: *frontend
+    image: ghcr.io/agent-orc/agent-studio-web:${AGENT_STUDIO_VERSION:-latest}
     depends_on:
       orchestrator-api:
         condition: service_healthy
-    ports:
-      - "${STUDIO_UI_PORT:-4011}:80"
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--output-document=-", "http://127.0.0.1/healthz"]
-      interval: 5s
-      timeout: 3s
-      retries: 12
-      start_period: 5s
+
+  frontend-dev:
+    <<: *frontend
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        VERSION: ${AGENT_STUDIO_VERSION:-0.0.0-dev}
+    environment:
+      # The Caddyfile's reverse_proxy target: frontend-dev's dependency is
+      # orchestrator-api-dev, not the prod-image orchestrator-api container.
+      STUDIO_API_UPSTREAM: orchestrator-api-dev:5031
+    depends_on:
+      orchestrator-api-dev:
+        condition: service_healthy
+    profiles: ["dev"]
 
   agent-host-coding:
+    <<: *agent-host-coding
+    image: ghcr.io/agent-orc/agent-host:${AGENT_STUDIO_VERSION:-latest}
+    profiles: ["runner"]
+    depends_on:
+      - orchestrator-api
+
+  agent-host-coding-dev:
+    <<: *agent-host-coding
     build:
       context: .
       dockerfile: runner/Dockerfile
-    profiles: ["runner"]
-    restart: unless-stopped
-    depends_on:
-      - orchestrator-api
-    env_file:
-      - path: ./runner.env
-        required: true
+      args:
+        VERSION: ${AGENT_STUDIO_VERSION:-0.0.0-dev}
     environment:
-      RUNNER_SERVER_URL: http://orchestrator-api:5031
+      RUNNER_SERVER_URL: http://orchestrator-api-dev:5031
       RUNNER_ROLE: coding
-      # Compose-internal network: plain HTTP is an explicit, contained opt-in.
       RUNNER_ALLOW_INSECURE_HTTP: "1"
       RUNNER_AUTH_TOKEN_FILE: /run/secrets/runner.token
-    volumes:
-      - runner-coding:/var/lib/agent-host
-      - ./runner.token:/run/secrets/runner.token:ro
+    depends_on:
+      - orchestrator-api-dev
+    profiles: ["dev"]
 
   agent-host-review:
+    <<: *agent-host-review
+    image: ghcr.io/agent-orc/agent-host:${AGENT_STUDIO_VERSION:-latest}
+    profiles: ["runner"]
+    depends_on:
+      - orchestrator-api
+
+  agent-host-review-dev:
+    <<: *agent-host-review
     build:
       context: .
       dockerfile: runner/Dockerfile
-    profiles: ["runner"]
-    restart: unless-stopped
-    depends_on:
-      - orchestrator-api
-    env_file:
-      - path: ./runner.env
-        required: true
+      args:
+        VERSION: ${AGENT_STUDIO_VERSION:-0.0.0-dev}
     environment:
-      RUNNER_SERVER_URL: http://orchestrator-api:5031
+      RUNNER_SERVER_URL: http://orchestrator-api-dev:5031
       RUNNER_ROLE: review
       RUNNER_ALLOW_INSECURE_HTTP: "1"
       RUNNER_AUTH_TOKEN_FILE: /run/secrets/runner.token
-    volumes:
-      - runner-review:/var/lib/agent-host
-      - ./runner.token:/run/secrets/runner.token:ro
+    depends_on:
+      - orchestrator-api-dev
+    profiles: ["dev"]
 
   task-server:
+    <<: *task-server
+    image: ghcr.io/agent-orc/agent-task-server:${AGENT_STUDIO_VERSION:-latest}
+    profiles: ["distributed"]
+
+  task-server-dev:
+    <<: *task-server
     build:
       context: .
       dockerfile: task-server/Dockerfile
-    profiles: ["distributed"]
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:${STUDIO_TASKSERVER_PORT:-5071}:5071"
-    volumes:
-      - orchestrator-data:/var/lib/agent-orchestrator
-    environment:
-      LISTEN_URL: http://0.0.0.0:5071
-      AllowedHosts: "*"
-      STORE_PATH: /var/lib/agent-orchestrator
-      AUTH: bearer
-      STUDIO_AUTH_TOKEN_FILE: /run/secrets/studio_token
-      ENGINE_AUTH_TOKEN_FILE: /run/secrets/engine_token
-      BOOTSTRAP_RUNNER_ID: distributed-runner
-      BOOTSTRAP_RUNNER_AUTH_TOKEN_FILE: /run/secrets/runner_token
-    secrets:
-      - studio_token
-      - engine_token
-      - runner_token
+      args:
+        VERSION: ${AGENT_STUDIO_VERSION:-0.0.0-dev}
+    profiles: ["dev"]
 
   orchestrator-engine:
-    build:
-      context: .
-      dockerfile: orchestrator-engine/Dockerfile
+    <<: *orchestrator-engine
+    image: ghcr.io/agent-orc/agent-orchestrator-engine:${AGENT_STUDIO_VERSION:-latest}
     profiles: ["distributed"]
-    restart: unless-stopped
     depends_on:
       - task-server
     environment:
@@ -124,41 +268,74 @@ services:
       CLIENT_ID: orchestrator-engine
       CLIENT_CREDENTIAL: ${DISTRIBUTED_ENGINE_TOKEN:?set DISTRIBUTED_ENGINE_TOKEN}
 
-  studio-bff:
+  orchestrator-engine-dev:
+    <<: *orchestrator-engine
     build:
       context: .
-      dockerfile: studio-bff/Dockerfile
+      dockerfile: orchestrator-engine/Dockerfile
+      args:
+        VERSION: ${AGENT_STUDIO_VERSION:-0.0.0-dev}
+    depends_on:
+      - task-server-dev
+    environment:
+      SERVER_URL: http://task-server-dev:5071
+      CLIENT_ID: orchestrator-engine
+      CLIENT_CREDENTIAL: ${DISTRIBUTED_ENGINE_TOKEN:?set DISTRIBUTED_ENGINE_TOKEN}
+    profiles: ["dev"]
+
+  studio-bff:
+    <<: *studio-bff
+    image: ghcr.io/agent-orc/agent-studio-bff:${AGENT_STUDIO_VERSION:-latest}
     profiles: ["distributed"]
-    restart: unless-stopped
     depends_on:
       - task-server
-    ports:
-      - "127.0.0.1:${STUDIO_BFF_PORT:-5072}:5072"
     environment:
       TaskServer__BaseUrl: http://task-server:5071
       TaskServer__AuthTokenFile: /run/secrets/studio_token
-    secrets:
-      - studio_token
 
-  agent-host-distributed:
+  studio-bff-dev:
+    <<: *studio-bff
     build:
       context: .
-      dockerfile: runner/Dockerfile
+      dockerfile: studio-bff/Dockerfile
+      args:
+        VERSION: ${AGENT_STUDIO_VERSION:-0.0.0-dev}
+    depends_on:
+      - task-server-dev
+    environment:
+      TaskServer__BaseUrl: http://task-server-dev:5071
+      TaskServer__AuthTokenFile: /run/secrets/studio_token
+    profiles: ["dev"]
+
+  agent-host-distributed:
+    <<: *agent-host-distributed
+    image: ghcr.io/agent-orc/agent-host:${AGENT_STUDIO_VERSION:-latest}
     profiles: ["distributed"]
-    restart: unless-stopped
     depends_on:
       - task-server
-    env_file:
-      - path: ./runner.env
-        required: false
     environment:
       RUNNER_SERVER_URL: http://task-server:5071
       RUNNER_ID: distributed-runner
       RUNNER_NAME: distributed-runner
       RUNNER_ALLOW_INSECURE_HTTP: "1"
       RUNNER_AUTH_TOKEN_FILE: /run/secrets/runner_token
-    secrets:
-      - runner_token
+
+  agent-host-distributed-dev:
+    <<: *agent-host-distributed
+    build:
+      context: .
+      dockerfile: runner/Dockerfile
+      args:
+        VERSION: ${AGENT_STUDIO_VERSION:-0.0.0-dev}
+    depends_on:
+      - task-server-dev
+    environment:
+      RUNNER_SERVER_URL: http://task-server-dev:5071
+      RUNNER_ID: distributed-runner
+      RUNNER_NAME: distributed-runner
+      RUNNER_ALLOW_INSECURE_HTTP: "1"
+      RUNNER_AUTH_TOKEN_FILE: /run/secrets/runner_token
+    profiles: ["dev"]
 
 volumes:
   workspace:
