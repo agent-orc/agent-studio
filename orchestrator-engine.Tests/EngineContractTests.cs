@@ -57,6 +57,23 @@ public sealed class EngineContractTests
     }
 
     [Fact]
+    public void Private_container_http_requires_explicit_opt_in_and_credential()
+    {
+        var values = new Dictionary<string, string?>
+        {
+            ["SERVER_URL"] = "http://task-server:5071",
+            ["CLIENT_ID"] = "engine-a",
+            ["CLIENT_CREDENTIAL"] = "secret",
+            ["ALLOW_INSECURE_HTTP"] = "1",
+        };
+
+        var options = EngineOptions.Parse(key => values.GetValueOrDefault(key));
+
+        Assert.True(options.AllowInsecureHttp);
+        Assert.Equal("http://task-server:5071", options.ServerUrl);
+    }
+
+    [Fact]
     public void Version_surface_contains_release_and_git_sha()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

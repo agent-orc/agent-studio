@@ -1,6 +1,6 @@
 # Caddy config for the containerised frontend: static Angular bundle plus a
 # reverse proxy for the API. Plain HTTP - TLS termination is the host's concern.
-:80 {
+:8080 {
 	encode zstd gzip
 
 	@api path /api/* /hubs/* /healthz /readyz

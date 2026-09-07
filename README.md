@@ -36,7 +36,10 @@
 ```bash
 git clone https://github.com/agent-orc/agent-studio.git
 cd agent-studio
-docker compose up --build --wait
+cp .env.example .env
+# Replace TASK_SERVER_AUTH_TOKEN in .env before using a distributed profile.
+mkdir -p .data/{workspace,projects,task-server,agent-host}
+docker compose up --wait
 ```
 
 Open [http://localhost:4011](http://localhost:4011). Docker Compose is the
@@ -51,7 +54,9 @@ executable offers an isolated Docker demo, a native single-machine install, and
 a guided [multi-machine](./docs/operations/setup/multi-machine.md) join flow.
 To add execution capacity after the Studio is running, follow the
 [Agent Host guide](./docs/operations/setup/linux-runner-host.md). Source
-contributors use the separate
+contributors use the explicit `dev` build profile described in the
+[container image guide](./docs/operations/setup/task-server.md#container-images)
+and the separate
 [contributor setup](./docs/operations/setup/contributor-setup.md).
 
 ## More

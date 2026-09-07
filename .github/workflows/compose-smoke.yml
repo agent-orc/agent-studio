@@ -1,4 +1,4 @@
-name: Onboarding smoke
+name: Container topology smoke
 
 on:
   push:
@@ -17,9 +17,9 @@ concurrency:
 
 jobs:
   compose-smoke:
-    name: Docker Compose up and health check
+    name: Default, distributed, and runner profiles
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 55
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -29,5 +29,5 @@ jobs:
           docker version
           docker compose version
 
-      - name: Build, start, and verify onboarding stack
+      - name: Build, start, and verify all Compose profiles
         run: scripts/compose-smoke-test.sh

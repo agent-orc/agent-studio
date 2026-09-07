@@ -19,7 +19,7 @@ jobs:
   test-build-release:
     name: Test, build and publish release
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - name: Check out exact tag
         uses: actions/checkout@v4
@@ -38,6 +38,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test -z "$(git status --porcelain --untracked-files=all)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${GITHUB_SHA:0:12}" >> "$GITHUB_OUTPUT"
 
       - name: Set up .NET 10
         uses: actions/setup-dotnet@v4
@@ -166,24 +167,84 @@ jobs:
             frontend/dist/frontend/browser \
             artifacts/release
 
-      - name: Publish pinned demo images
+      - name: Build and publish six release images
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
+          SHORT_SHA: ${{ steps.version.outputs.short_sha }}
+          SHA: ${{ github.sha }}
         run: |
           printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
-          docker build -f backend/Dockerfile \
-            -t "ghcr.io/agent-orc/agent-studio-api:v$VERSION" .
-          docker build -f frontend/Dockerfile \
-            -t "ghcr.io/agent-orc/agent-studio-web:v$VERSION" .
-          docker push "ghcr.io/agent-orc/agent-studio-api:v$VERSION"
-          docker push "ghcr.io/agent-orc/agent-studio-web:v$VERSION"
+          declare -A dockerfiles=(
+            [agent-studio-api]=backend/Dockerfile
+            [agent-studio-web]=frontend/Dockerfile
+            [agent-task-server]=task-server/Dockerfile
+            [agent-orchestrator-engine]=orchestrator-engine/Dockerfile
+            [agent-studio-bff]=studio-bff/Dockerfile
+            [agent-host]=runner/Dockerfile
+          )
+          for image in "${!dockerfiles[@]}"; do
+            identity="$image/$VERSION+sha.$SHA"
+            if [ "$image" = agent-task-server ]; then
+              identity="task-server $VERSION+sha.$SHA"
+            elif [ "$image" = agent-host ]; then
+              identity="agent-host $VERSION+sha.$SHA"
+            fi
+            docker build --platform linux/amd64 \
+              --build-arg VERSION="$VERSION" \
+              --build-arg COMMIT="$SHA" \
+              --build-arg BUILD_IDENTITY="$identity" \
+              --label org.opencontainers.image.source="https://github.com/$GITHUB_REPOSITORY" \
+              --label org.opencontainers.image.created="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              -f "${dockerfiles[$image]}" \
+              -t "ghcr.io/agent-orc/$image:v$VERSION" \
+              -t "ghcr.io/agent-orc/$image:sha-$SHORT_SHA" .
+            docker push "ghcr.io/agent-orc/$image:v$VERSION"
+            docker push "ghcr.io/agent-orc/$image:sha-$SHORT_SHA"
+          done
           docker logout ghcr.io
-          docker image rm \
-            "ghcr.io/agent-orc/agent-studio-api:v$VERSION" \
-            "ghcr.io/agent-orc/agent-studio-web:v$VERSION"
-          docker pull "ghcr.io/agent-orc/agent-studio-api:v$VERSION"
-          docker pull "ghcr.io/agent-orc/agent-studio-web:v$VERSION"
+
+      - name: Verify image identities, runtime users, health checks, and sizes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SHORT_SHA: ${{ steps.version.outputs.short_sha }}
+          SHA: ${{ github.sha }}
+        run: |
+          : > artifacts/release/container-images.txt
+          for image in agent-studio-api agent-studio-web agent-task-server agent-orchestrator-engine agent-studio-bff agent-host; do
+            ref="ghcr.io/agent-orc/$image:v$VERSION"
+            immutable_ref="ghcr.io/agent-orc/$image:sha-$SHORT_SHA"
+            docker pull "$ref"
+            docker pull "$immutable_ref"
+            version_digest="$(docker image inspect "$ref" --format '{{ index .RepoDigests 0 }}' | cut -d@ -f2)"
+            sha_digest="$(docker image inspect "$immutable_ref" --format '{{ index .RepoDigests 0 }}' | cut -d@ -f2)"
+            test -n "$version_digest"
+            test "$version_digest" = "$sha_digest"
+            test "$(docker image inspect "$ref" --format '{{ index .Config.Labels "org.opencontainers.image.version" }}')" = "$VERSION"
+            test "$(docker image inspect "$ref" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$SHA"
+            user="$(docker image inspect "$ref" --format '{{ .Config.User }}')"
+            test -n "$user"
+            test "$user" != root
+            test "$user" != 0
+            test "$(docker image inspect "$ref" --format '{{ if .Config.Healthcheck }}yes{{ end }}')" = yes
+            bytes="$(docker image inspect "$ref" --format '{{ .Size }}')"
+            printf '%s %s digest=%s bytes=%s user=%s\n' "$image" "sha-$SHORT_SHA" "$version_digest" "$bytes" "$user" | tee -a artifacts/release/container-images.txt
+          done
+          {
+            echo '### Container image report'
+            echo '```text'
+            cat artifacts/release/container-images.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          (cd artifacts/release && sha256sum container-images.txt >> SHA256SUMS)
+          docker run --rm "ghcr.io/agent-orc/agent-task-server:v$VERSION" --version | grep -F "task-server $VERSION+sha.$SHA"
+          docker run --rm --entrypoint dotnet "ghcr.io/agent-orc/agent-host:v$VERSION" \
+            /opt/agent-host/agent-host.dll --version | grep -F "agent-host $VERSION+sha.$SHA"
+
+      - name: Smoke-test published image topology
+        env:
+          AGENT_STUDIO_VERSION: v${{ steps.version.outputs.version }}
+        run: scripts/compose-smoke-test.sh
 
       - name: Attest release assets
         uses: actions/attest-build-provenance@v2
@@ -199,6 +260,7 @@ jobs:
           gh release create "$GITHUB_REF_NAME"
           artifacts/release/*.tar.gz
           artifacts/release/agent-orchestrator-setup
+          artifacts/release/container-images.txt
           artifacts/release/SHA256SUMS
           --verify-tag
           --generate-notes

@@ -1,0 +1,31 @@
+# Source-build override. It is intentionally inert unless callers combine this
+# file with docker-compose.yml and pass --profile dev.
+services:
+  orchestrator-api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+  task-server:
+    build:
+      context: .
+      dockerfile: task-server/Dockerfile
+  orchestrator-api-proxy:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+  orchestrator-engine:
+    build:
+      context: .
+      dockerfile: orchestrator-engine/Dockerfile
+  studio-bff:
+    build:
+      context: .
+      dockerfile: studio-bff/Dockerfile
+  agent-host:
+    build:
+      context: .
+      dockerfile: runner/Dockerfile

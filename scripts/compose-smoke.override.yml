@@ -1,0 +1,5 @@
+# Test-only fixture mount. Production Compose never exposes this host path.
+services:
+  agent-host:
+    volumes:
+      - ${RUNNER_FIXTURE_PATH}:/fixtures:ro

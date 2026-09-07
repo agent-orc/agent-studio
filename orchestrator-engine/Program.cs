@@ -24,6 +24,7 @@ if (args is ["--help"] or ["-h"])
           COMPLETION_JUDGE_CONCURRENCY
           POLL_SECONDS
           LEASE_SECONDS
+          ALLOW_INSECURE_HTTP
         """);
     return 0;
 }

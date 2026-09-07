@@ -50,12 +50,23 @@ Clone one repository and run one start command:
 ```sh
 git clone https://github.com/agent-orc/agent-studio.git
 cd agent-studio
-docker compose up --build --wait
+cp .env.example .env
+mkdir -p .data/{workspace,projects,task-server,agent-host}
+docker compose up --wait
 ```
 
-The first build downloads the declared .NET, Node.js, and Caddy base images, so
-it takes longer than later starts. `--wait` returns only after Compose reports
-the API and browser endpoint healthy.
+Set `AGENT_STUDIO_VERSION` in `.env` to the release tag you intend to deploy.
+The first start pulls the release artifacts needed by the selected profiles.
+`--wait` returns only after Compose reports the API and browser endpoint
+healthy.
+
+The release images run as UID/GID 10001 rather than root. On a native Linux
+Docker host, make new bind-mount directories writable by that account before
+the first start:
+
+```sh
+sudo chown -R 10001:10001 .data
+```
 
 Open [http://localhost:4011](http://localhost:4011). A successful first run
 shows the empty Agent Studio board. The same end-to-end check is available at:
@@ -75,14 +86,14 @@ The default Compose project contains exactly two services:
 | `orchestrator-api` | Board API and current local orchestration runtime | `127.0.0.1:5031` |
 | `frontend` | Production Studio bundle and reverse proxy | `0.0.0.0:4011` |
 
-Task data and managed project data live in the named Docker volumes
-`agent-studio_workspace` and `agent-studio_projects`. Rebuilding or replacing a
-container does not delete those volumes.
+Task data and managed project data live at the host paths configured by
+`STUDIO_WORKSPACE_PATH` and `STUDIO_PROJECTS_PATH` in `.env`. Replacing a
+container does not delete those directories.
 
 The default ports can be changed when they conflict with another local service:
 
 ```sh
-STUDIO_UI_PORT=14011 STUDIO_API_PORT=15031 docker compose up --build --wait
+STUDIO_UI_PORT=14011 STUDIO_API_PORT=15031 docker compose up --wait
 ```
 
 This is the same Compose installation path with port overrides, not a second
@@ -116,9 +127,10 @@ Host is connected.
 
 ## Maintainer verification
 
-CI runs `scripts/compose-smoke-test.sh`, which starts the documented default
-stack, waits for both service health checks, loads the browser shell, and calls
-a real API endpoint.
+CI runs `scripts/compose-smoke-test.sh`, which proves the documented default
+stack, the distributed Task Server and proxy topology, and a containerized
+Agent Host claim through Auto Review. Release CI runs it against the published
+images; branch CI uses the explicit source-build override.
 
 For a clean-machine proof, `scripts/compose-smoke-vm-test.sh` boots a pinned
 Ubuntu 24.04 cloud image with KVM acceleration, installs only Docker and Compose
@@ -144,7 +156,9 @@ scripts/compose-smoke-vm-test.sh
 | A port is already allocated | Use the `STUDIO_UI_PORT` and `STUDIO_API_PORT` overrides shown above. |
 | `--wait` ends with an unhealthy service | Run `docker compose ps` and `docker compose logs`; the service health checks preserve the failing component. |
 | The browser cannot reach `4011` on a remote host | Allow the selected UI port in the host firewall or bind it through your existing private tunnel. The API stays loopback-only by default. |
-| A rebuild consumes too much disk | Inspect with `docker system df`. Do not remove named volumes that contain installation data. |
+| Image layers consume too much disk | Inspect with `docker system df`. Do not remove the configured host data paths. |
 
 If you are changing Agent Studio source code rather than installing the product,
-use the separate [contributor setup](./contributor-setup.md).
+use
+`docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile dev up --build --wait`
+and the separate [contributor setup](./contributor-setup.md).

@@ -24,6 +24,61 @@ The Task Server project references shared contracts and SQLite persistence. It
 does not reference Angular, the legacy Studio backend, Agent Runner, coding
 agent libraries, repository worktree code, or host process execution.
 
+## Container images
+
+Every release publishes the complete Linux AMD64 stack under the
+`ghcr.io/agent-orc/` namespace:
+
+| Service | Image |
+|---|---|
+| Studio API | `agent-studio-api` |
+| Studio web | `agent-studio-web` |
+| Task Server | `agent-task-server` |
+| Orchestrator Engine | `agent-orchestrator-engine` |
+| Studio BFF | `agent-studio-bff` |
+| Agent Host | `agent-host` |
+
+Each image receives both `v<version>` and `sha-<first-12-commit-characters>`
+tags. Use the version tag to select a release, then record and deploy the
+registry digest so later pulls cannot change the selected bytes:
+
+```bash
+docker pull ghcr.io/agent-orc/agent-task-server:v0.1.0
+docker image inspect ghcr.io/agent-orc/agent-task-server:v0.1.0 \
+  --format '{{index .RepoDigests 0}}'
+docker image inspect ghcr.io/agent-orc/agent-task-server:v0.1.0 \
+  --format 'version={{index .Config.Labels "org.opencontainers.image.version"}} commit={{index .Config.Labels "org.opencontainers.image.revision"}} identity={{index .Config.Labels "io.agent-studio.build-identity"}} user={{.Config.User}}'
+docker run --rm ghcr.io/agent-orc/agent-task-server:v0.1.0 --version
+```
+
+The OCI version and revision labels must match the release tag and commit. The
+Task Server label and `--version` output derive from `TaskServerBuildIdentity`;
+the Agent Host image is similarly verified against its `agent-host --version`
+contract during release. All six images declare a non-root user and an image
+health check. Compose additionally bounds the `json-file` log size and count.
+
+To run only the Task Server, place `LISTEN_URL`, `AUTH=bearer`, and
+`AUTH_TOKEN` in a root-owned mode-`0640` environment file, and make the durable
+host directory writable by UID/GID 10001:
+
+```bash
+docker run --detach --name agent-task-server \
+  --user 10001:10001 \
+  --read-only \
+  --tmpfs /tmp \
+  --publish 127.0.0.1:5071:5071 \
+  --mount type=bind,src=/srv/agent-studio/task-server,dst=/var/lib/agent-orchestrator \
+  --env-file /etc/agent-orchestrator/server.env \
+  ghcr.io/agent-orc/agent-task-server:v0.1.0
+```
+
+For the full topology, copy [`.env.example`](../../../.env.example) to `.env`,
+replace its token and paths, and run `docker compose --profile distributed up
+--wait`. Production Compose resolves only published images through
+`AGENT_STUDIO_VERSION`. Contributors who explicitly need source builds use
+`docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile dev
+up --build --wait`.
+
 ## Install and supervise
 
 Publish each process independently:
