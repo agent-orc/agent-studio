@@ -134,7 +134,15 @@ steer the pipeline in this policy version.
   runs belong to commits rather than cards and expose planned order, scope,
   host, state, result, duration, and derived card attachments through
   `GET /api/projects/{project}/test-runs`. They do not replace per-task pipeline
-  step telemetry.
+  step telemetry. Task-scoped Remote Review evidence keeps command proof and
+  semantic review outcomes separate: `review-build-tests` is derived only from
+  the report's build-tests verdict rows, while a blocking semantic verdict is
+  projected as `review-aspects`. A blocked aspect never changes a passing build
+  verdict. Every projected source carries a one-sentence `reason` and a
+  `reportRef`; `not-proven` means that the report contains no build-tests verdict
+  row, and its reason identifies the missing verify command when the command
+  table records one. The task-detail Evidence tab renders each source and links
+  back to that report.
 - `backend/Features/Pipeline/RemoteDeliveryIntegration.cs` and
   `backend/Features/Pipeline/MergeIntoDevelopRunner.cs`: the immediate Remote
   admission policy, per-project delivery-order queue, and common

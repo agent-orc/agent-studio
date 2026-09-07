@@ -102,6 +102,8 @@ public sealed record TaskTestEvidenceSource
     public string Result { get; init; } = "";
     public DateTime? ObservedAt { get; init; }
     public string Summary { get; init; } = "";
+    public string Reason { get; init; } = "";
+    public string ReportRef { get; init; } = "";
 }
 
 public sealed record DeploymentTestRunReference

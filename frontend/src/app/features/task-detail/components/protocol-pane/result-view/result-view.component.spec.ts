@@ -118,6 +118,8 @@ describe('ResultViewComponent', () => {
           result: state,
           observedAt: null,
           summary,
+          reason: state === 'not-proven' ? 'The build command did not run.' : 'No build/test commands are defined.',
+          reportRef: 'post-steps/build-test-gate-1.log',
         }],
       },
     }), verdict());

@@ -1,6 +1,5 @@
 :host { display: block; min-width: 0; }
 .test-evidence { display: flex; align-items: center; gap: var(--studio-spacing-2); min-width: 0; margin-top: var(--studio-card-section-gap); padding: var(--studio-spacing-2); border-radius: 7px; background: var(--studio-card-muted-bg); color: var(--studio-fg-dim); }
-.test-evidence--panel { margin-top: 0; border: 1px solid var(--studio-card-muted-border); }
 .test-evidence__dot { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: var(--studio-fg-muted); }
 .test-evidence__copy { display: grid; min-width: 0; gap: var(--studio-spacing-1); }
 .test-evidence__copy strong, .test-evidence__copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -9,8 +8,24 @@
 .test-evidence[data-evidence-state='proven'] { color: var(--studio-success); background: color-mix(in srgb, var(--studio-success) 10%, transparent); }
 .test-evidence[data-evidence-state='pending'] { color: var(--studio-warn); background: color-mix(in srgb, var(--studio-warn) 10%, transparent); }
 .test-evidence[data-evidence-state='not-applicable'] { color: var(--studio-fg-dim); background: var(--studio-card-muted-bg); }
-.test-evidence[data-evidence-state='failed'], .test-evidence[data-evidence-state='not-proven'] { color: var(--studio-danger, var(--severity-high)); background: color-mix(in srgb, var(--studio-danger, var(--severity-high)) 10%, transparent); }
+.test-evidence[data-evidence-state='failed'] { color: var(--studio-danger, var(--severity-high)); background: color-mix(in srgb, var(--studio-danger, var(--severity-high)) 10%, transparent); }
+.test-evidence[data-evidence-state='not-proven'] { color: var(--studio-fg-dim); background: var(--studio-card-muted-bg); }
 .test-evidence[data-evidence-state='proven'] .test-evidence__dot { background: var(--studio-success); }
 .test-evidence[data-evidence-state='pending'] .test-evidence__dot { background: var(--studio-warn); }
 .test-evidence[data-evidence-state='not-applicable'] .test-evidence__dot { background: var(--studio-fg-muted); }
-.test-evidence[data-evidence-state='failed'] .test-evidence__dot, .test-evidence[data-evidence-state='not-proven'] .test-evidence__dot { background: var(--studio-danger, var(--severity-high)); }
+.test-evidence[data-evidence-state='failed'] .test-evidence__dot { background: var(--studio-danger, var(--severity-high)); }
+.test-evidence[data-evidence-state='not-proven'] .test-evidence__dot { background: var(--studio-fg-muted); }
+
+.test-evidence-sources { display: grid; gap: var(--studio-spacing-2); min-width: 0; }
+.test-evidence-source { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--studio-spacing-2); min-width: 0; padding: var(--studio-spacing-2) var(--studio-spacing-3); border-radius: 7px; background: var(--studio-card-muted-bg); color: var(--studio-fg-dim); }
+.test-evidence-source__dot { width: 8px; height: 8px; border-radius: 50%; background: var(--studio-fg-muted); }
+.test-evidence-source__copy { display: grid; min-width: 0; gap: var(--studio-spacing-1); }
+.test-evidence-source__copy strong { color: inherit; font-size: 11px; }
+.test-evidence-source__copy small { color: var(--studio-fg-muted); font-size: 10px; line-height: 1.4; }
+.test-evidence-source__report { color: inherit; font-size: 10px; font-weight: 600; text-underline-offset: 2px; }
+.test-evidence-source[data-source-result='passed'] { color: var(--studio-success); background: color-mix(in srgb, var(--studio-success) 10%, transparent); }
+.test-evidence-source[data-source-result='passed'] .test-evidence-source__dot { background: var(--studio-success); }
+.test-evidence-source[data-source-result='blocked'] { color: var(--studio-warn); background: color-mix(in srgb, var(--studio-warn) 10%, transparent); }
+.test-evidence-source[data-source-result='blocked'] .test-evidence-source__dot { background: var(--studio-warn); }
+.test-evidence-source[data-source-result='failed'] { color: var(--studio-danger, var(--severity-high)); background: color-mix(in srgb, var(--studio-danger, var(--severity-high)) 10%, transparent); }
+.test-evidence-source[data-source-result='failed'] .test-evidence-source__dot { background: var(--studio-danger, var(--severity-high)); }

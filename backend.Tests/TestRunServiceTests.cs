@@ -229,6 +229,8 @@ public sealed class TestRunServiceTests : IDisposable
              actualHead: "{commit}"
              ---
 
+             ## Aspect verdicts
+
              | Aspect | Status | Classification | Summary |
              | --- | --- | --- | --- |
              | build-tests | pass | CommandPassed | Review command passed. |
@@ -250,6 +252,121 @@ public sealed class TestRunServiceTests : IDisposable
         Assert.Equal("review-42", source.Id);
         Assert.Equal(commit, source.Commit);
         Assert.Equal("passed", source.Result);
+        Assert.Equal("All build-tests verdicts passed.", source.Reason);
+        Assert.Equal("remote-review-grade-review-42.md", source.ReportRef);
+    }
+
+    [Fact]
+    public void CardEvidence_KeepsPassingReviewBuildTestsIndependentFromBlockedAspect()
+    {
+        var stack = BuildStack();
+        var commit = RevParse(stack.Repo, "HEAD");
+        var folder = Path.Combine(stack.Storage, TaskStates.HumanReview, "agt-2689-review-evidence");
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(
+            Path.Combine(folder, "remote-review-grade-review_ad5cca8e3178425fb9ba9cabe329d50e.md"),
+            $"""
+             ---
+             type: remote-review-grade
+             attemptId: "review_ad5cca8e3178425fb9ba9cabe329d50e"
+             receivedAt: 2026-08-31T12:00:00Z
+             outcome: "ProductFailure"
+             expectedResultSha: "{commit}"
+             actualHead: "{commit}"
+             ---
+
+             ## Aspect verdicts
+
+             | Aspect | Status | Classification | Summary |
+             | --- | --- | --- | --- |
+             | build-tests | pass | CommandPassed | Review command 'verify-1' passed. |
+             | build-tests | pass | CommandPassed | Review command 'verify-2' passed. |
+             | requirement-fit | pass | RemoteAspectVerdict | Requirements match the implementation. |
+             | code-quality | pass | RemoteAspectVerdict | Code quality passed. |
+             | tests-and-evidence | pass | RemoteAspectVerdict | Tests and evidence passed. |
+             | documentation-impact | block | RemoteAspectVerdict | Public API and state-file contract changed without corresponding load-bearing doc updates. |
+
+             ## Command evidence
+
+             | Phase | Workspace | Step | Location | Host / executor | Command | Exit | Budget | Output | Errors |
+             | --- | --- | --- | --- | --- | --- | ---: | --- | --- | --- |
+             | verification | candidate | verify-1 | local | review / executor | `dotnet build` | 0 | verify: 100/1000 ms | stdout | stderr |
+             | verification | candidate | verify-2 | local | review / executor | `dotnet test` | 0 | verify: 528000/7200000 ms | stdout | stderr |
+             """);
+        var job = Task("agt-2689-review-evidence", stack.Storage, commit) with
+        {
+            State = TaskStates.HumanReview,
+            FolderPath = folder,
+        };
+
+        var evidence = stack.Service.BuildLookup([job])[job.TaskKey];
+
+        Assert.Equal("proven", evidence.EvidenceState);
+        Assert.Equal($"Review build-tests Pass at {commit[..8]} (verify-1, verify-2)", evidence.Summary);
+        Assert.Collection(
+            evidence.Sources,
+            buildTests =>
+            {
+                Assert.Equal("review-build-tests", buildTests.Kind);
+                Assert.Equal("passed", buildTests.Result);
+                Assert.Equal("verify-1 and verify-2 passed.", buildTests.Reason);
+                Assert.Equal("remote-review-grade-review_ad5cca8e3178425fb9ba9cabe329d50e.md", buildTests.ReportRef);
+            },
+            aspects =>
+            {
+                Assert.Equal("review-aspects", aspects.Kind);
+                Assert.Equal("blocked", aspects.Result);
+                Assert.Equal("Review blocked by documentation-impact", aspects.Summary);
+                Assert.Equal(
+                    "documentation-impact blocked: Public API and state-file contract changed without corresponding load-bearing doc updates.",
+                    aspects.Reason);
+                Assert.Equal("remote-review-grade-review_ad5cca8e3178425fb9ba9cabe329d50e.md", aspects.ReportRef);
+            });
+    }
+
+    [Fact]
+    public void CardEvidence_ExplainsWhichReviewBuildTestsVerdictIsMissing()
+    {
+        var stack = BuildStack();
+        var commit = RevParse(stack.Repo, "HEAD");
+        var folder = Path.Combine(stack.Storage, TaskStates.HumanReview, "missing-review-build-tests");
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(
+            Path.Combine(folder, "remote-review-grade-review-missing.md"),
+            $"""
+             ---
+             type: remote-review-grade
+             attemptId: "review-missing"
+             receivedAt: 2026-08-31T12:00:00Z
+             outcome: "ProductFailure"
+             expectedResultSha: "{commit}"
+             actualHead: "{commit}"
+             ---
+
+             ## Aspect verdicts
+
+             | Aspect | Status | Classification | Summary |
+             | --- | --- | --- | --- |
+             | documentation-impact | block | RemoteAspectVerdict | Required documentation was not updated. |
+
+             ## Command evidence
+
+             | Phase | Workspace | Step | Location | Host / executor | Command | Exit | Budget | Output | Errors |
+             | --- | --- | --- | --- | --- | --- | ---: | --- | --- | --- |
+             | verification | candidate | verify-1 | local | review / executor | `dotnet build` | 0 | verify: 100/1000 ms | stdout | stderr |
+             """);
+        var job = Task("missing-review-build-tests", stack.Storage, commit) with
+        {
+            State = TaskStates.HumanReview,
+            FolderPath = folder,
+        };
+
+        var evidence = stack.Service.BuildLookup([job])[job.TaskKey];
+
+        Assert.Equal("not-proven", evidence.EvidenceState);
+        var buildTests = Assert.Single(evidence.Sources, source => source.Kind == "review-build-tests");
+        Assert.Equal("not-proven", buildTests.Result);
+        Assert.Equal("Build-tests verdict is missing for verify-1.", buildTests.Reason);
     }
 
     [Fact]
@@ -276,6 +393,8 @@ public sealed class TestRunServiceTests : IDisposable
         var source = Assert.Single(evidence.Sources);
         Assert.Equal("build-test-gate", source.Kind);
         Assert.Equal("gate-42", source.Id);
+        Assert.Equal("All selected commands passed.", source.Reason);
+        Assert.Equal("post-steps/build-test-gate-1.log", source.ReportRef);
     }
 
     [Theory]
@@ -331,6 +450,8 @@ public sealed class TestRunServiceTests : IDisposable
              expectedResultSha: "{oldCommit}"
              actualHead: "{oldCommit}"
              ---
+
+             ## Aspect verdicts
 
              | Aspect | Status | Classification | Summary |
              | --- | --- | --- | --- |

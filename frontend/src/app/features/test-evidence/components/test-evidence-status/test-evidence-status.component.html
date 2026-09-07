@@ -1,20 +1,50 @@
 @if (evidence(); as evidence) {
-  <div class="test-evidence"
-       [class.test-evidence--panel]="variant() === 'panel'"
-       [attr.data-evidence-state]="evidence.evidenceState"
-       [attr.data-match-quality]="evidence.matchQuality"
-       [attr.data-testid]="testId()"
-       [appTooltip]="tooltipText()">
-    <span class="test-evidence__dot" aria-hidden="true"></span>
-    <span class="test-evidence__copy">
-      <strong>{{ evidence.summary }}</strong>
-      @if (evidence.runId) {
-        <small>{{ evidence.runId }} · {{ evidence.runState }}{{ evidence.runResult ? ' · ' + evidence.runResult : '' }}</small>
-      } @else if (evidence.sources?.length) {
-        <small>{{ sourceDetail() }}</small>
-      } @else {
-        <small>No SHA-linked project run, build gate, or review grade is recorded.</small>
+  @if (variant() === 'panel' && evidence.sources?.length) {
+    <section class="test-evidence-sources"
+             [attr.data-evidence-state]="evidence.evidenceState"
+             [attr.data-match-quality]="evidence.matchQuality"
+             [attr.data-testid]="testId()"
+             aria-label="Test evidence sources">
+      @for (source of evidence.sources; track source.kind + ':' + source.id) {
+        <article class="test-evidence-source"
+                 [attr.data-source-kind]="source.kind"
+                 [attr.data-source-result]="source.result"
+                 [attr.data-testid]="'test-evidence-source-' + source.kind"
+                 [attr.aria-label]="sourceAriaLabel(source)"
+                 [appTooltip]="sourceReason(source)">
+          <span class="test-evidence-source__dot" aria-hidden="true"></span>
+          <span class="test-evidence-source__copy">
+            <strong>{{ source.summary }}</strong>
+            <small>{{ sourceReason(source) }}</small>
+          </span>
+          @if (reportHref(source); as href) {
+            <a class="test-evidence-source__report"
+               [href]="href"
+               target="_blank"
+               rel="noopener noreferrer"
+               [attr.aria-label]="'Open report for ' + source.summary">Report</a>
+          }
+        </article>
       }
-    </span>
-  </div>
+    </section>
+  } @else {
+    <div class="test-evidence"
+         [attr.data-evidence-state]="evidence.evidenceState"
+         [attr.data-match-quality]="evidence.matchQuality"
+         [attr.data-testid]="testId()"
+         [attr.aria-label]="tooltipText()"
+         [appTooltip]="tooltipText()">
+      <span class="test-evidence__dot" aria-hidden="true"></span>
+      <span class="test-evidence__copy">
+        <strong>{{ evidence.summary }}</strong>
+        @if (evidence.runId) {
+          <small>{{ evidence.runId }} · {{ evidence.runState }}{{ evidence.runResult ? ' · ' + evidence.runResult : '' }}</small>
+        } @else if (evidence.sources?.length) {
+          <small>{{ sourceDetail() }}</small>
+        } @else {
+          <small>No SHA-linked project run, build gate, or review grade is recorded.</small>
+        }
+      </span>
+    </div>
+  }
 }

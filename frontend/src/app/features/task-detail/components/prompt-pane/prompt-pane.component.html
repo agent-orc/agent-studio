@@ -129,6 +129,19 @@
             </div>
           }
           @if (job(); as j) {
+            @if (testEvidence(); as testEvidence) {
+              <div class="ev-section" data-testid="ev-section-test">
+                <div class="ev-section-head">
+                  <span class="ev-section-dot ev-section-dot--test">●</span>
+                  <span class="ev-section-title">Test Evidence</span>
+                  <span class="ev-section-count">{{ testEvidence.sources?.length || 1 }}</span>
+                </div>
+                <app-test-evidence-status
+                  [task]="j"
+                  variant="panel"
+                  testId="evidence-tab-test-evidence" />
+              </div>
+            }
             <app-review-evidence-panel
               [entries]="reviewEvidence()"
               [job]="j"

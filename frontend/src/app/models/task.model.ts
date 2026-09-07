@@ -1816,12 +1816,14 @@ export type TestRunMatchQuality = 'none' | 'perfect' | 'contains-diff' | 'does-n
 export type TestEvidenceState = 'unassigned' | 'pending' | 'proven' | 'failed' | 'not-proven' | 'not-applicable';
 
 export interface TaskTestEvidenceSource {
-  kind: 'project-test-run' | 'review-build-tests' | 'build-test-gate' | 'pre-develop-build-gate' | 'pre-main-test-gate' | string;
+  kind: 'project-test-run' | 'review-build-tests' | 'review-aspects' | 'build-test-gate' | 'pre-develop-build-gate' | 'pre-main-test-gate' | string;
   id: string;
   commit: string;
-  result: 'passed' | 'failed' | 'not-proven' | 'not-applicable' | string;
+  result: 'passed' | 'blocked' | 'failed' | 'not-proven' | 'not-applicable' | string;
   observedAt: string | null;
   summary: string;
+  reason: string;
+  reportRef: string;
 }
 
 export interface TaskTestRunEvidence {

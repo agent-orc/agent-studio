@@ -391,6 +391,8 @@ test('archived-card evidence incident renders honest before and SHA-linked after
               result: 'passed',
               observedAt: '2026-07-29T20:41:22Z',
               summary: `Review build-tests Pass at ${sha}`,
+              reason: 'verify-1 and verify-2 passed.',
+              reportRef: `remote-review-grade-${reviewId}.md`,
             }],
           }
         : {
@@ -464,6 +466,8 @@ test('build gate not-applicable is neutral while a true skip stays red', async (
       result: state,
       observedAt: '2026-08-08T10:00:00Z',
       summary,
+      reason: state === 'not-proven' ? 'The build command did not run.' : 'No build/test commands are defined.',
+      reportRef: 'post-steps/build-test-gate-1.log',
     }],
   });
   const grouped = (): typeof GROUPED => ({

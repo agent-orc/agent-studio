@@ -355,7 +355,8 @@ public sealed class TestRunService
 
     private static TaskTestRunEvidence FromTaskScoped(IReadOnlyList<ScopedEvidenceMatch> matches)
     {
-        var selected = matches[0];
+        var selected = matches.FirstOrDefault(match => match.Source.Kind != "review-aspects")
+                       ?? matches[0];
         var evidenceState = selected.Source.Result switch
         {
             "passed" => "proven",
