@@ -426,3 +426,134 @@ describe('App studio-tab mirror (pager reuse)', () => {
     expect(app.studioTabState.activeKey()).toBe('task:C:/watch::task-a');
   });
 });
+
+/**
+ * AGT-2692 — operator sighting (2026-08-29): from the All-projects board,
+ * opening a task switched the active workspace into that task's single
+ * project, so closing the task stranded the operator there. The active tab
+ * still drives the project scope; a task tab now reports the scope it was
+ * opened in instead of the project it happens to belong to.
+ */
+describe('App active project scope on task open', () => {
+  const TAB_STORAGE_KEY = 'atp.studio.tabs.v1';
+  const VSCODE_FLAG_KEY = 'atp.flag.vsCodeLayout';
+  const ALL_BOARD_KEY = 'board:__all__';
+
+  afterEach(() => {
+    TestBed.resetTestingModule();
+    localStorage.removeItem(TAB_STORAGE_KEY);
+    localStorage.removeItem(VSCODE_FLAG_KEY);
+    localStorage.removeItem('activeProjects');
+  });
+
+  async function configure(): Promise<App> {
+    TestBed.resetTestingModule();
+    localStorage.removeItem(TAB_STORAGE_KEY);
+    localStorage.setItem('activeProjects', '[]');
+    localStorage.setItem(VSCODE_FLAG_KEY, '1');
+    TestBed.configureTestingModule({
+      providers: [
+        App,
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+      ],
+    });
+    const app = TestBed.inject(App);
+    // The scope mirror is a constructor effect; give it a first run so the
+    // seeded All-projects board is the established baseline.
+    TestBed.tick();
+    return app;
+  }
+
+  function boardTask(over: Partial<TaskInfo>): TaskInfo {
+    return {
+      id: 'task-a',
+      taskKey: 'C:/watch::task-a',
+      title: 'Task One',
+      state: '2-ready',
+      order: 1,
+      agent: 'codex',
+      createdAt: '2026-01-01T00:00:00Z',
+      watchPath: 'C:/watch',
+      projectName: 'Alpha',
+      folderPath: 'C:/watch/.orchestrator/jobs/task-a',
+      lastActivity: '2026-01-01T00:00:00Z',
+      sessionName: null,
+      model: null,
+      cliType: 'codex',
+      useOwnSession: null,
+      lastUsage: null,
+      execution: null,
+      commit: null,
+      ...over,
+    } as TaskInfo;
+  }
+
+  function seedJobs(app: App, jobs: TaskInfo[]): void {
+    app.jobService.jobs.set(jobs);
+    app.jobService.grouped.set({ ...app.jobService.grouped(), ready: jobs });
+  }
+
+  it('leaves the active scope on All projects when a task is opened from the cross-project board', async () => {
+    const app = await configure();
+    const task = boardTask({});
+    seedJobs(app, [task]);
+    expect(app.studioTabState.activeKey()).toBe(ALL_BOARD_KEY);
+    expect([...app.activeProjects()]).toEqual([]);
+
+    app.studioTabState.open({ kind: 'task', taskKey: task.taskKey });
+    TestBed.tick();
+
+    expect(app.studioTabState.activeKey()).toBe('task:C:/watch::task-a');
+    // The detail is open, but the app is still workspace-wide.
+    expect([...app.activeProjects()]).toEqual([]);
+  });
+
+  it('returns to the All-projects board with the scope intact when the task is closed', async () => {
+    const app = await configure();
+    const task = boardTask({});
+    seedJobs(app, [task]);
+
+    app.studioTabState.open({ kind: 'task', taskKey: task.taskKey });
+    TestBed.tick();
+    app.studioTabState.close('task:C:/watch::task-a');
+    TestBed.tick();
+
+    expect(app.studioTabState.activeKey()).toBe(ALL_BOARD_KEY);
+    expect([...app.activeProjects()]).toEqual([]);
+  });
+
+  it('still narrows to the project when the task is opened from that project board', async () => {
+    const app = await configure();
+    const task = boardTask({});
+    seedJobs(app, [task]);
+
+    app.studioTabState.open({ kind: 'board', projectName: 'Alpha' });
+    TestBed.tick();
+    expect([...app.activeProjects()]).toEqual(['Alpha']);
+
+    app.studioTabState.open({ kind: 'task', taskKey: task.taskKey });
+    TestBed.tick();
+
+    expect([...app.activeProjects()]).toEqual(['Alpha']);
+  });
+
+  it('keeps a cross-project task workspace-wide even when it belongs to another project', async () => {
+    const app = await configure();
+    const alpha = boardTask({});
+    const beta = boardTask({ id: 'task-b', taskKey: 'C:/watch::task-b', projectName: 'Beta' });
+    seedJobs(app, [alpha, beta]);
+
+    // Open from the All-projects board, then page on to a task in a different
+    // project: the iteration stays in the cross-project context.
+    app.studioTabState.open({ kind: 'task', taskKey: alpha.taskKey });
+    TestBed.tick();
+    app.studioTabState.retarget('task:C:/watch::task-a', { kind: 'task', taskKey: beta.taskKey });
+    TestBed.tick();
+
+    expect(app.studioTabState.activeKey()).toBe('task:C:/watch::task-b');
+    expect([...app.activeProjects()]).toEqual([]);
+  });
+});

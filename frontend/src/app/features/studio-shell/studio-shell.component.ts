@@ -62,6 +62,7 @@ import { ExplorerSectionsService } from './services/explorer-sections.service';
 import { ExplorerWorkbenchStateService } from './services/explorer-workbench-state.service';
 import { buildProjectSidebarRows, type ProjectSidebarRow } from './studio-shell.project-rows';
 import { StudioTab, studioTabKey } from './studio-shell.types';
+import { ALL_PROJECTS_BOARD_NAME, taskTabProjectScope } from './services/task-tab-scope';
 import { GlobalSearchComponent } from './components/global-search/global-search.component';
 import { OrchestratorFeedStore } from '../orchestrator';
 
@@ -572,21 +573,23 @@ export class StudioShellComponent {
   /**
    * The project the user is contextually "in" — drives the active titlebar
    * pill and the default project for sidebar CTAs. Board/Deck tabs name a
-   * project directly; Task/Activity tabs resolve through the job index;
-   * Diff/Welcome fall back to the last-known board project.
+   * project directly; a Task tab reports the scope it was opened in, so a card
+   * opened from the All-projects board stays workspace-wide (AGT-2692) while
+   * the detail still loads its own project's data; Activity tabs and
+   * Diff/Welcome resolve through the job index or fall back to no project.
    */
   readonly currentProjectName = computed<string | null>(() => {
     const tab = this.activeTab();
     if (!tab) return null;
-    if (tab.kind === 'board') return tab.projectName === '__all__' ? null : tab.projectName;
+    if (tab.kind === 'board') return tab.projectName === ALL_PROJECTS_BOARD_NAME ? null : tab.projectName;
     if (tab.kind === 'epics') return tab.projectName;
     if (tab.kind === 'workbenches') return tab.projectName;
     if (tab.kind === 'hub') return tab.projectName;
     if (tab.kind === 'workbench') return tab.projectName;
-    if (tab.kind === 'task' || tab.kind === 'activity') {
-      const job = this.findJob(tab.taskKey);
-      return job?.projectName ?? null;
+    if (tab.kind === 'task') {
+      return taskTabProjectScope(tab, key => this.findJob(key)?.projectName) ?? null;
     }
+    if (tab.kind === 'activity') return this.findJob(tab.taskKey)?.projectName ?? null;
     return null;
   });
 

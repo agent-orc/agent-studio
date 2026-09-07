@@ -610,4 +610,78 @@ describe('StudioTabStateService', () => {
       expect(restored.tabs().map(t => studioTabKey(t))).toEqual([ALL_BOARD_KEY]);
     });
   });
+
+  /**
+   * AGT-2692 — a task tab records the scope it was opened in, so the app
+   * never switches projects just because a card was clicked. The task's own
+   * project remains the detail view's data source and is untouched here.
+   */
+  describe('task tab origin scope', () => {
+    const scopeOf = (svc: StudioTabStateService, key: string) => {
+      const tab = svc.tabs().find(t => studioTabKey(t) === key);
+      return tab?.kind === 'task' ? tab.scope : undefined;
+    };
+
+    it('stamps all-projects when the task is opened from the cross-project board', () => {
+      expect(svc.activeKey()).toBe(ALL_BOARD_KEY);
+      svc.open({ kind: 'task', taskKey: 'w::a' });
+      expect(scopeOf(svc, 'task:w::a')).toEqual({ kind: 'all-projects' });
+    });
+
+    it('stamps the project when the task is opened from that project board', () => {
+      svc.open({ kind: 'board', projectName: 'Alpha' });
+      svc.open({ kind: 'task', taskKey: 'w::a' });
+      expect(scopeOf(svc, 'task:w::a')).toEqual({ kind: 'project', projectName: 'Alpha' });
+    });
+
+    it('keeps the original stamp when the same task is re-opened from elsewhere', () => {
+      svc.open({ kind: 'task', taskKey: 'w::a' });
+      svc.open({ kind: 'board', projectName: 'Alpha' });
+      svc.open({ kind: 'task', taskKey: 'w::a' });
+      expect(svc.activeKey()).toBe('task:w::a');
+      expect(scopeOf(svc, 'task:w::a')).toEqual({ kind: 'all-projects' });
+    });
+
+    it('lets an explicit scope from the caller win over the origin', () => {
+      svc.open({ kind: 'board', projectName: 'Alpha' });
+      svc.open({ kind: 'task', taskKey: 'w::a', scope: { kind: 'all-projects' } });
+      expect(scopeOf(svc, 'task:w::a')).toEqual({ kind: 'all-projects' });
+    });
+
+    it('carries the scope through a pager retarget so walking a lane never drifts', () => {
+      svc.open({ kind: 'task', taskKey: 'w::a' });
+      svc.retarget('task:w::a', { kind: 'task', taskKey: 'w::b' });
+      expect(svc.tabs().map(t => studioTabKey(t))).toEqual([ALL_BOARD_KEY, 'task:w::b']);
+      expect(scopeOf(svc, 'task:w::b')).toEqual({ kind: 'all-projects' });
+    });
+
+    it('persists the stamp across a reload', () => {
+      svc.open({ kind: 'task', taskKey: 'w::a' });
+      TestBed.resetTestingModule();
+      TestBed.configureTestingModule({ providers: [StudioTabStateService] });
+      const restored = TestBed.inject(StudioTabStateService);
+      expect(scopeOf(restored, 'task:w::a')).toEqual({ kind: 'all-projects' });
+    });
+
+    it('drops an unusable persisted stamp instead of scoping to an empty project', () => {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          v: 1,
+          tabs: [{ kind: 'task', taskKey: 'w::a', scope: { kind: 'project', projectName: '' } }],
+          activeKey: 'task:w::a',
+        }),
+      );
+      TestBed.resetTestingModule();
+      TestBed.configureTestingModule({ providers: [StudioTabStateService] });
+      const restored = TestBed.inject(StudioTabStateService);
+      expect(scopeOf(restored, 'task:w::a')).toBeUndefined();
+    });
+
+    it('leaves the task tab unstamped when the origin carries no project context', () => {
+      svc.open({ kind: 'diff', commitSha: 'abc' });
+      svc.open({ kind: 'task', taskKey: 'w::a' });
+      expect(scopeOf(svc, 'task:w::a')).toBeUndefined();
+    });
+  });
 });

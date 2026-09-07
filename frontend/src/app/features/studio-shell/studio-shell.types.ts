@@ -29,8 +29,21 @@ export interface EpicsTab { kind: 'epics'; projectName: string | null; }
 /** Epic detail tab - one per opened epic; key `epic:<epicKey>`. */
 export interface EpicTab { kind: 'epic'; epicKey: string; viewTaskKey?: string; }
 
+/**
+ * Which project scope a task tab was opened in (AGT-2692).
+ *
+ * Stamped from the tab that was active at open time, never from the task's
+ * own project. The detail view always loads its data through the owning
+ * project's handle; this type only answers "which project is the app scoped
+ * to while this tab is active", so a task opened from the cross-project board
+ * keeps the shell in "All projects".
+ */
+export type TaskTabScope =
+  | { kind: 'all-projects' }
+  | { kind: 'project'; projectName: string };
+
 /** Task-detail tab — one per opened job; key `task:<taskKey>`. */
-export interface TaskTab { kind: 'task'; taskKey: string; }
+export interface TaskTab { kind: 'task'; taskKey: string; scope?: TaskTabScope; }
 
 /**
  * Stable target inside a project's Wiki. The document or folder path belongs
