@@ -31,3 +31,24 @@ jobs:
 
       - name: Build, start, and verify onboarding stack
         run: scripts/compose-smoke-test.sh
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # The onboarding stack above is the default single-API path. This drives
+      # the distributed control plane from the same scenario definition the
+      # inproc target uses, so both Compose profiles stay covered.
+      - name: Run the deployment regression scenario on the Compose stack
+        run: |
+          bash scripts/scenario.sh --target compose --level smoke \
+            --out artifacts/scenario
+
+      - name: Upload the deployment scenario report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compose-scenario-report
+          path: artifacts/scenario
+          if-no-files-found: warn

@@ -94,6 +94,21 @@ jobs:
             --filter "FullyQualifiedName~TaskServer.Tests.TopologyTests|FullyQualifiedName~TaskServer.Tests.ProtocolTests" \
             --logger "console;verbosity=normal"
 
+      - name: Run the deployment regression scenario
+        env:
+          SCENARIO_CONFIGURATION: Release
+        run: |
+          bash scripts/scenario.sh --target inproc --level smoke \
+            --no-build --out artifacts/scenario
+
+      - name: Upload the deployment scenario report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-scenario-report
+          path: artifacts/scenario
+          if-no-files-found: warn
+
       - name: Lint and type-check frontend
         working-directory: frontend
         run: |

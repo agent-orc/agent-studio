@@ -1,0 +1,296 @@
+{
+  "schemaVersion": 1,
+  "id": "deployment-regression",
+  "title": "Agent Studio deployment regression scenario",
+  "steps": [
+    {
+      "id": "topology-ready",
+      "title": "The deployment answers as a ready authority on the shipped protocol",
+      "level": "smoke",
+      "action": "topology-ready",
+      "expect": {
+        "facts": {
+          "server.authority-ready": true,
+          "server.mode": "normal",
+          "protocol.current": 2,
+          "protocol.minimum-supported": 1,
+          "studio.reachable": true
+        },
+        "factsAtLeast": {
+          "server.schema-version": 1
+        }
+      }
+    },
+    {
+      "id": "bootstrap-principals",
+      "title": "Management issues scoped principals with usable credentials",
+      "level": "smoke",
+      "action": "bootstrap-principals",
+      "with": {
+        "principals": [
+          {
+            "id": "studio:scenario",
+            "kind": "studio"
+          },
+          {
+            "id": "engine:scenario",
+            "kind": "engine"
+          }
+        ]
+      },
+      "expect": {
+        "facts": {
+          "principals.created": 2,
+          "principals.studio.scopes": "events:subscribe,management,tasks:read,tasks:write",
+          "principals.engine.scopes": "events:subscribe,orchestration:claim,orchestration:write,tasks:read"
+        },
+        "factsAtLeast": {
+          "principals.total": 2,
+          "principals.shortest-credential": 32
+        }
+      }
+    },
+    {
+      "id": "register-runner",
+      "title": "A coding runner registers against the deployment",
+      "level": "smoke",
+      "action": "register-runner",
+      "targets": [
+        "inproc",
+        "compose"
+      ],
+      "with": {
+        "timeoutSeconds": 60
+      },
+      "expect": {
+        "facts": {
+          "runner.registered": true,
+          "runner.host-id-present": true
+        },
+        "factsAtLeast": {
+          "runner.capabilities.count": 1,
+          "runner.capacity.configured": 1
+        }
+      }
+    },
+    {
+      "id": "seed-project",
+      "title": "A workspace, project, and ready task are created through the Studio surface",
+      "level": "smoke",
+      "action": "seed-project",
+      "with": {
+        "workspace": "Scenario workspace",
+        "project": "Scenario project",
+        "prefix": "SCN",
+        "task": {
+          "title": "Deployment regression proof",
+          "body": "Change the checkout, leave bounded evidence, and finish with the terminal sentinel.",
+          "state": "2-ready"
+        }
+      },
+      "expect": {
+        "facts": {
+          "project.task-key-prefix": "SCN",
+          "task.key-matches-prefix": true,
+          "task.state": "2-ready",
+          "task.title": "Deployment regression proof"
+        }
+      }
+    },
+    {
+      "id": "claim-task",
+      "title": "The runner accepts a fenced work permit and the task enters progress",
+      "level": "smoke",
+      "action": "await-claim",
+      "targets": [
+        "inproc",
+        "compose"
+      ],
+      "with": {
+        "timeoutSeconds": 90
+      },
+      "expect": {
+        "facts": {
+          "task.state": "3-progress",
+          "audit.work-permit-accepted.count": 1,
+          "run.count": 1,
+          "run.fence-positive": true
+        }
+      }
+    },
+    {
+      "id": "run-task",
+      "title": "The deterministic CLI run commits, publishes bounded evidence, and hands over a durable result",
+      "level": "smoke",
+      "action": "await-run-completed",
+      "targets": [
+        "inproc",
+        "compose"
+      ],
+      "with": {
+        "state": "4-auto-review",
+        "timeoutSeconds": 180
+      },
+      "expect": {
+        "facts": {
+          "task.state": "4-auto-review",
+          "audit.run-completed.count": 1,
+          "events.run-completed.count": 1,
+          "events.idempotency-keys-unique": true,
+          "artifacts.status-md": true,
+          "result.handoff-acknowledged": true,
+          "result.sha.length": 40,
+          "result.immutable-ref-present": true,
+          "result.envelope-digest.length": 64,
+          "result-finalization.status": "ready",
+          "cli.invocations": 1
+        },
+        "factsAtLeast": {
+          "artifacts.count": 2
+        }
+      }
+    },
+    {
+      "id": "auto-review-handoff",
+      "title": "The coding result becomes a fenced review subject a review executor is offered",
+      "level": "full",
+      "action": "auto-review-handoff",
+      "targets": [
+        "inproc",
+        "compose"
+      ],
+      "with": {
+        "reviewerId": "scenario-reviewer",
+        "timeoutSeconds": 60
+      },
+      "expect": {
+        "facts": {
+          "review.subject-created": true,
+          "review.claim.status": "granted",
+          "review.claim.matches-subject": true,
+          "review.claim.fenced": true,
+          "review.attempt.number": 1,
+          "review.cli.passing-test": "build-tests passing.sh pass",
+          "review.cli.failing-test": "build-tests failing.sh known-failure"
+        }
+      }
+    },
+    {
+      "id": "complete-task",
+      "title": "The task reaches the completed lane through the task API",
+      "level": "full",
+      "action": "complete-task",
+      "targets": [
+        "inproc",
+        "compose"
+      ],
+      "with": {
+        "state": "6-completed"
+      },
+      "expect": {
+        "facts": {
+          "task.state": "6-completed",
+          "task.version-advanced": true,
+          "run.count": 1
+        }
+      }
+    },
+    {
+      "id": "orchestrator-turn",
+      "title": "An orchestrator chat turn is stored with its context receipt",
+      "level": "full",
+      "action": "orchestrator-turn",
+      "with": {
+        "summary": "Scenario project context",
+        "body": "Summarize the deployment regression proof."
+      },
+      "expect": {
+        "facts": {
+          "orchestrator.turns": 2,
+          "orchestrator.turn.role": "user",
+          "orchestrator.turn.body": "Summarize the deployment regression proof.",
+          "orchestrator.receipt-present": true,
+          "orchestrator.receipt.binds-user-turn": true,
+          "orchestrator.receipt.sources": 1,
+          "orchestrator.receipt.hard-cap-tokens": 12000
+        }
+      }
+    },
+    {
+      "id": "inventory-before-backup",
+      "title": "The deployment inventory is digested before the backup",
+      "level": "full",
+      "action": "inventory-hash",
+      "targets": [
+        "inproc"
+      ],
+      "with": {
+        "scope": "primary"
+      },
+      "expect": {
+        "facts": {
+          "inventory.scope": "primary",
+          "inventory.recorded": true,
+          "inventory.digest.length": 64
+        }
+      }
+    },
+    {
+      "id": "backup-store",
+      "title": "Management writes a verifiable backup of the durable store",
+      "level": "full",
+      "action": "backup-store",
+      "targets": [
+        "inproc"
+      ],
+      "with": {
+        "name": "scenario"
+      },
+      "expect": {
+        "facts": {
+          "backup.created": true,
+          "backup.sha256.length": 64,
+          "backup.size-positive": true
+        }
+      }
+    },
+    {
+      "id": "restore-store",
+      "title": "The backup restores into an empty store on a second Task Server",
+      "level": "full",
+      "action": "restore-store",
+      "targets": [
+        "inproc"
+      ],
+      "expect": {
+        "facts": {
+          "restore.target-workspaces-before": 0,
+          "restore.verify-only-succeeded": true,
+          "restore.restored": true,
+          "restore.sha-matches-backup": true,
+          "restore.target-workspaces-after": 1,
+          "restore.mode-after": "normal"
+        }
+      }
+    },
+    {
+      "id": "inventory-after-restore",
+      "title": "The restored deployment carries the identical inventory digest",
+      "level": "full",
+      "action": "inventory-hash",
+      "targets": [
+        "inproc"
+      ],
+      "with": {
+        "scope": "restored"
+      },
+      "expect": {
+        "facts": {
+          "inventory.scope": "restored",
+          "inventory.matches-primary": true,
+          "inventory.digest.length": 64
+        }
+      }
+    }
+  ]
+}

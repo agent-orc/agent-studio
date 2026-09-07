@@ -151,6 +151,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Remote runner persistent connection (tunnel-as-a-service + health-check) | [operations/setup/remote-runner-persistent-connection.md](../operations/setup/remote-runner-persistent-connection.md) |
 | Runner link as part of the application (dossier: link ownership, LinkSupervisor design, tunnel retirement with the remote Task Server) | [operations/runner-link/](../operations/runner-link/index.html) |
 | Remote three-unit Compose infrastructure harness | [operations/setup/remote-compose-test-harness.md](../operations/setup/remote-compose-test-harness.md) |
+| Deployment regression scenario, the one end-to-end run every deployment card and every release passes (AGT-2739) | [operations/testing/deployment-scenario.md](../operations/testing/deployment-scenario.md) |
 | Private Hetzner Task Server with local Angular Studio (Phase A architecture, migration, security, and rollback) | [operations/remote-task-server-local-studio.md](../operations/remote-task-server-local-studio.md) |
 | Common problems | [common-problems/README.md](../operations/common-problems/README.md) |
 | Ready shows waiting for sign-in but the host is logged in | [common-problems/ready-sign-in-runner-link-down/](../operations/common-problems/ready-sign-in-runner-link-down/) |

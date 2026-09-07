@@ -36,6 +36,18 @@ npm --prefix frontend run build
 bash scripts/release/release-scripts.test.sh
 ```
 
+Changes to the deployed topology, the Task Server, the Studio BFF, the runner,
+the installer, or the Compose stack also run the deployment regression scenario.
+It is the one end-to-end run every deployment change passes, it needs no Docker
+at the `inproc` target, and the smoke level finishes in seconds:
+
+```bash
+bash scripts/scenario.sh --target inproc --level smoke
+```
+
+See [deployment regression scenario](docs/operations/testing/deployment-scenario.md)
+for the other targets, the report format, and how to add a step.
+
 Frontend behavior changes also require relevant Playwright coverage. See
 [frontend/e2e/README.md](frontend/e2e/README.md) for the test setup and
 evidence conventions.

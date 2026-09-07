@@ -521,3 +521,16 @@ The test owns only its exact child PIDs and temporary directories. It never
 sweeps by process name. Its parent-PID assertions require Task Server, Studio
 BFF, and Runner to be siblings owned by the harness, so stopping Studio cannot
 implicitly stop either service.
+
+The end-to-end counterpart is the deployment regression scenario, which drives
+one task from creation to completion and then restores the deployment from its
+own backup. It runs from a single definition against a local process topology,
+the Compose control plane, or a remote deployment:
+
+```bash
+bash scripts/scenario.sh --target inproc --level smoke
+bash scripts/scenario.sh --target inproc --level full
+```
+
+See [deployment regression scenario](../testing/deployment-scenario.md) for the
+step catalogue, the report format, and how a card adds a step.

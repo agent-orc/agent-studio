@@ -79,5 +79,10 @@ run_at "$repo/frontend" 'Frontend unit tests' \
   npm run test:ci
 run_at "$repo/frontend" 'Frontend production build' \
   npm run build
+# End-to-end proof on the deployed topology. The Release build above is already
+# current, so the scenario runs against it instead of rebuilding the solution.
+run_at "$repo" 'Deployment regression scenario (inproc smoke)' \
+  env SCENARIO_CONFIGURATION=Release \
+  bash scripts/scenario.sh --target inproc --level smoke --no-build
 
 printf '\nPROMOTION_FULL_GATE=passed\n'
