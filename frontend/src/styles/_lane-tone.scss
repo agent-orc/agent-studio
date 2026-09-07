@@ -1,0 +1,71 @@
+// =============================================================================
+// Lane tone — one colour per lane, on every surface (AGT-2715)
+// =============================================================================
+//
+// A lane used to pick up a different colour on every surface it appeared on:
+// the detail header chip read the purple lane palette, the Result tab header
+// dot read the generic amber `--studio-accent-warn`, and the task-status card
+// hard-coded a third pigment. The operator asked for one tone per lane,
+// exactly like the lane's name.
+//
+// This partial owns both halves of that contract:
+//
+//   - `tokens()`  — emits the `--studio-lane-<tone>-{fg,bg,border}` triplets.
+//     Called once per theme block from `_tokens-semantic.scss`. The hue is
+//     still defined exactly once, in that file's `--lane-*` palette; this
+//     mixin only derives the soft background and border from it, so the two
+//     themes cannot drift apart in mix strength.
+//
+//   - `vars()`    — maps `[data-lane-tone='<key>']` onto local
+//     `--lane-tone-{fg,bg,border}` custom properties. A component includes it
+//     on its lane element and then styles from `--lane-tone-*` only, never
+//     from a per-lane colour rule of its own.
+//
+// The keys mirror `LaneTone` in `src/app/models/lane-presentation.ts`
+// one-for-one. Adding a lane means adding it in both places.
+
+/// Tone key -> hue, read from the `--lane-*` palette so a lane's pigment stays
+/// defined in a single place per theme.
+$lane-tones: (
+  'backlog': var(--lane-backlog),
+  'preparation': var(--lane-prep),
+  'orchestrator-prep': var(--lane-prep),
+  'ready': var(--lane-ready),
+  'progress': var(--lane-progress),
+  'failed-pickup': var(--lane-failed),
+  'code-not-complete': var(--lane-failed),
+  'auto-review': var(--lane-auto-review),
+  'human-review': var(--lane-human-review),
+  'escalated': var(--lane-escalated),
+  'completed': var(--lane-completed),
+  'archive': var(--lane-archive),
+  'unknown': var(--studio-fg-muted),
+);
+
+/// Emit the lane tone token triplets. `$bg` / `$border` are the mix strengths
+/// used to derive the soft fill and the border from the hue; the light theme
+/// runs slightly weaker because it sits on white.
+@mixin tokens($bg, $border) {
+  @each $key, $hue in $lane-tones {
+    --studio-lane-#{$key}-fg: #{$hue};
+    --studio-lane-#{$key}-bg: color-mix(in srgb, var(--studio-lane-#{$key}-fg) #{$bg}, transparent);
+    --studio-lane-#{$key}-border: color-mix(in srgb, var(--studio-lane-#{$key}-fg) #{$border}, transparent);
+  }
+}
+
+/// Bind `data-lane-tone` to the local `--lane-tone-*` triplet. Include this on
+/// the element that carries `[attr.data-lane-tone]="laneTone(...)"` and style
+/// from `--lane-tone-fg` / `-bg` / `-border` below it.
+@mixin vars {
+  --lane-tone-fg: var(--studio-lane-unknown-fg);
+  --lane-tone-bg: var(--studio-lane-unknown-bg);
+  --lane-tone-border: var(--studio-lane-unknown-border);
+
+  @each $key, $hue in $lane-tones {
+    &[data-lane-tone='#{$key}'] {
+      --lane-tone-fg: var(--studio-lane-#{$key}-fg);
+      --lane-tone-bg: var(--studio-lane-#{$key}-bg);
+      --lane-tone-border: var(--studio-lane-#{$key}-border);
+    }
+  }
+}

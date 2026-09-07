@@ -14,6 +14,7 @@ import { CreateModePickerComponent } from '../create-mode-picker/create-mode-pic
 import { RoutingPreviewComponent } from '../routing-preview/routing-preview.component';
 import type { ModelRoutingRecommendation } from '../../../quota';
 import { ModelRoutingSuggestionComponent } from '../model-routing-suggestion/model-routing-suggestion.component';
+import { lanePresentation } from '../../../../models/lane-presentation';
 export interface PendingAttachment {
   id: string;
   file: File;
@@ -27,10 +28,13 @@ export interface LaneOption {
 }
 /** Manual create targets stop before orchestrator-owned Progress. */
 export const CREATE_LANE_OPTIONS: readonly LaneOption[] = [
-  { state: TaskState.Backlog,     label: 'Backlog',     icon: '🗒️' },
-  { state: TaskState.Preparation, label: 'Preparation', icon: '📋' },
-  { state: TaskState.Ready,       label: 'Ready',       icon: '📦' },
-];
+  TaskState.Backlog,
+  TaskState.Preparation,
+  TaskState.Ready,
+].map((state) => {
+  const lane = lanePresentation(state);
+  return { state, label: lane.name, icon: lane.glyph };
+});
 
 const PENDING_PREFIX = 'pending-attachment-';
 

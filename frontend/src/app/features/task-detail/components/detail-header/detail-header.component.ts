@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, ElementRef, ViewChild, computed, effect, inject, input, output, signal } from '@angular/core';
 import { TaskInfo, TaskState } from '../../../../models/task.model';
+import { laneName, laneTone as laneToneFor } from '../../../../models/lane-presentation';
 import {
   formatDateTime as fmtDateTime,
   formatRelativeShort as fmtRelativeShort,
@@ -165,13 +166,18 @@ export class DetailHeaderComponent {
    * lane is omitted too (prep runs in-place on 1-preparation now).
    */
   readonly laneOptions: readonly { state: string; label: string }[] = [
-    { state: TaskState.Preparation,   label: 'Preparation' },
-    { state: TaskState.Ready,         label: 'Ready' },
-    { state: TaskState.HumanReview,   label: 'Review' },
-    { state: TaskState.Escalated,     label: 'Escalated' },
-    { state: TaskState.Completed,     label: 'Delivered' },
-    { state: TaskState.Archive,       label: 'Archive' },
-  ];
+    TaskState.Preparation,
+    TaskState.Ready,
+    TaskState.HumanReview,
+    TaskState.Escalated,
+    TaskState.Completed,
+    TaskState.Archive,
+  ].map((state) => ({ state, label: laneName(state) }));
+
+  /** Lane tone key for the header chip (AGT-2715). */
+  laneTone(state: string): string {
+    return laneToneFor(state);
+  }
 
   isStandardLane(state: string): boolean {
     return this.laneOptions.some(o => o.state === state);

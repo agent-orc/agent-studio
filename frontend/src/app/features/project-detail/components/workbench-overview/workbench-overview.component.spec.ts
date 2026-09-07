@@ -182,7 +182,7 @@ describe('WorkbenchOverviewComponent', () => {
     vi.advanceTimersByTime(300);
     expect(document.querySelector(
       '[data-testid="workbench-overview-task-Demo-pending-AGT-1-tooltip"]',
-    )?.textContent).toContain('In progress');
+    )?.textContent).toContain('In Progress');
     activeCardLink.click();
     expect(openTaskKey).toHaveBeenCalledWith('Demo::active-card');
     expect(fixture.nativeElement.querySelector(

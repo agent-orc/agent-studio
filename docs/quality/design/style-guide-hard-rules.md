@@ -124,6 +124,31 @@ and do not contain `Tab` or `Escape`. The detailed embedding contract and its
 CAC-22 precedent are recorded in the
 [Admin Surface Design Guideline](../../operations/admin-design-guideline/index.html#panel-keyboard-containment).
 
+### R9 - One name and one tone per lane, from one source
+
+A workflow lane is named and tinted in exactly one place:
+`frontend/src/app/models/lane-presentation.ts` plus the `--studio-lane-*` tone
+tokens it maps onto. Every surface that shows a lane - board column header,
+task header chip, Result tab header, verdict signals, badges, settings lists,
+lane pickers, info buttons - reads that module. No component keeps its own
+lane label or its own per-lane colour rule.
+
+Bind `[attr.data-lane-tone]="laneTone(state)"` and include the shared
+`lane-tone.vars` mixin rather than writing a per-lane selector. R1 still
+applies: a lane is encoded by its word, a dot, or a background tint, never a
+left accent bar.
+
+Why: one lane once carried four wordings and two tones on a single screen -
+"Review" on the header chip, "Human review lane" on the Result header, "Human
+review" on the decision badge, "Awaiting human review." in the project workflow
+section (operator 2026-09-06, AGT-2715). Each surface had grown its own label
+map, so the drift was structural rather than a typo.
+
+Enforced by `npm run lint:structure`
+(`frontend/scripts/check-lane-strings.mjs`), which fails the build on a
+hard-coded lane string. The full contract is in
+[docs/system/domains/frontend.md](../../system/domains/frontend.md#lane-presentation-one-name-one-tone-one-source).
+
 ## How this is enforced
 
 - **Prompt anchoring:** referenced from [AGENTS.md](../../../AGENTS.md) and

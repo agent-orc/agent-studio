@@ -1,4 +1,6 @@
+import { TaskState } from '../../../../models/task.model';
 import type { CliExecution, TaskOutcomeIssue, TaskSummaryStatus } from '../../../../models/task.model';
+import { lanePresentation } from '../../../../models/lane-presentation';
 import type { PipelineExecutionRecord } from '../../../task-pipeline';
 import type { OutcomeAssessment } from '../agent-outcome.util';
 
@@ -11,6 +13,13 @@ export interface RunOutcomeSignal {
   status: AuthoritativeRunOutcomeStatus;
   label: string;
   detail: string;
+  /**
+   * Lane key this signal speaks for, set only on `source: 'lane'`. When such a
+   * signal leads the verdict, the Result header wears that lane's tone instead
+   * of the generic status tone, so the lane reads in one colour everywhere
+   * (AGT-2715).
+   */
+  lane?: string;
 }
 
 export interface ProtocolVerdict {
@@ -22,6 +31,12 @@ export interface ProtocolVerdict {
   emoji: string;
   label: string;
   detail: string;
+  /**
+   * Lane key when the leading signal is the lane itself, else null. Lets the
+   * Result header tint from the lane tone rather than the generic status tone
+   * (AGT-2715).
+   */
+  lane: string | null;
   /**
    * Run duration as written by the runner into the `# Status` header of
    * status.md (e.g. `4 min`). Surfaced as a compact inline stat beside the
@@ -77,7 +92,9 @@ export function deriveProtocolVerdict(input: ProtocolVerdictInputs): ProtocolVer
     ));
   }
   const leading = resolveAuthoritativeRunOutcome(signals)!;
-  return presentation(leading.status, leading.label, leading.detail, signals, input.statusMarkdown);
+  return presentation(
+    leading.status, leading.label, leading.detail, signals, input.statusMarkdown, leading.lane ?? null,
+  );
 }
 
 const OUTCOME_RANK: Record<AuthoritativeRunOutcomeStatus, number> = {
@@ -157,10 +174,16 @@ function collectSignals(input: ProtocolVerdictInputs): RunOutcomeSignal[] {
       break;
   }
 
-  if (input.laneState === '5-human-review' || input.laneState === '5e-escalated') {
-    signals.push(signal('lane', 'needs-decision', 'Human review lane', 'The task is waiting for a human decision.'));
-  } else if (input.laneState === '6-completed' || input.laneState === '7-archive') {
-    signals.push(signal('lane', 'succeeded', 'Completed lane', `The task is in ${input.laneState}.`));
+  // AGT-2715: a lane signal is named by the lane presentation, never by a
+  // string of its own — "Human review lane" here versus "Review" on the header
+  // chip is exactly the drift the operator reported. `lane` is carried through
+  // so the Result header can wear the lane's tone when this signal leads.
+  if (input.laneState === TaskState.HumanReview || input.laneState === TaskState.Escalated) {
+    const lane = lanePresentation(input.laneState);
+    signals.push(signal('lane', 'needs-decision', lane.name, lane.sentence, lane.state));
+  } else if (input.laneState === TaskState.Completed || input.laneState === TaskState.Archive) {
+    const lane = lanePresentation(input.laneState);
+    signals.push(signal('lane', 'succeeded', lane.name, lane.sentence, lane.state));
   }
 
   if (input.summaryStatus === 'failed') {
@@ -240,8 +263,14 @@ function activitySignal(activity: OutcomeAssessment): RunOutcomeSignal {
   return signal('activity', 'unclear', 'Agent reply unclear', activity.summary || 'The agent reply has no clear terminal verdict.');
 }
 
-function signal(source: RunOutcomeSignal['source'], status: AuthoritativeRunOutcomeStatus, label: string, detail: string): RunOutcomeSignal {
-  return { source, status, label, detail };
+function signal(
+  source: RunOutcomeSignal['source'],
+  status: AuthoritativeRunOutcomeStatus,
+  label: string,
+  detail: string,
+  lane?: string,
+): RunOutcomeSignal {
+  return lane ? { source, status, label, detail, lane } : { source, status, label, detail };
 }
 
 function presentation(
@@ -250,10 +279,11 @@ function presentation(
   detail: string,
   signals: RunOutcomeSignal[],
   markdown: string | null | undefined,
+  lane: string | null = null,
 ): ProtocolVerdict {
   const kind: ProtocolVerdictKind = status === 'failed' ? 'problem' : status === 'succeeded' ? 'ok' : 'unclear';
   const emoji = status === 'failed' ? '🔴' : status === 'succeeded' ? '🟢' : status === 'needs-decision' ? '🟠' : '🟡';
-  return { kind, status, signals, emoji, label, detail, duration: parseDuration(markdown) };
+  return { kind, status, signals, emoji, label, detail, lane, duration: parseDuration(markdown) };
 }
 
 const DURATION_RE = /^\s*-\s*Duration:\s*(.+?)\s*$/im;

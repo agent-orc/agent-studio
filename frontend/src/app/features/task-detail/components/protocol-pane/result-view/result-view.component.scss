@@ -2,6 +2,8 @@
 // comes from --studio-* / --severity-* semantic tokens, which flip per theme,
 // so no separate light-mode bridge is needed (same contract as
 // protocol-verdict-banner).
+@use '../../../../../../styles/lane-tone';
+
 :host { display: block; }
 
 .result {
@@ -51,6 +53,14 @@
   &[data-tone="info"]    { --result-tone: var(--studio-accent-3); }
   &[data-tone="problem"] { --result-tone: var(--severity-high); }
   &[data-tone="neutral"] { --result-tone: var(--studio-fg-muted); }
+
+  // When the lane itself is the leading signal, the header wears the lane's
+  // one tone instead of the generic status tone, so Human review reads in the
+  // same colour here, on the header chip, and on the board column (AGT-2715).
+  // Declared after the status tones so it wins on equal specificity.
+  @include lane-tone.vars;
+
+  &[data-lane-tone] { --result-tone: var(--lane-tone-fg); }
 }
 
 .result__case-dot {

@@ -81,6 +81,7 @@ import {
   stepStatusIcon,
   stepStatusLabel,
 } from './overview-pane-formatters';
+import { laneTone } from '../../../../../models/lane-presentation';
 import { PipelineHistoryNoticeComponent } from './pipeline-history-notice/pipeline-history-notice.component';
 import { OverviewRunsComponent } from './overview-runs/overview-runs.component';
 import { distinctStepVerdict } from './pipeline-status-verdict.util';
@@ -512,6 +513,7 @@ export class OverviewPaneComponent {
   readonly stepStatusLabel = stepStatusLabel;
   readonly visibleStepVerdict = distinctStepVerdict;
   readonly laneLabel = laneLabel;
+  readonly laneTone = laneTone;
   readonly formatTokens = formatTokens;
   readonly formatDuration = formatDuration;
 

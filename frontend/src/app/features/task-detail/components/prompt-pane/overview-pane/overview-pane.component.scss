@@ -1,3 +1,5 @@
+@use '../../../../../../styles/lane-tone';
+
 :host { display: block; }
 
 .overview {
@@ -385,19 +387,12 @@
   padding: 2px 8px;
   border-radius: 999px;
   background: var(--studio-bg-hover);
-  color: var(--lane-backlog);
 
-  &.state--0-backlog              { color: var(--lane-backlog); }
-  &.state--1-preparation          { color: var(--lane-prep); }
-  &.state--1a-orchestrator-prep   { color: var(--lane-prep); }
-  &.state--1b-needs-human-review  { color: var(--lane-human-review); }
-  &.state--2-ready                { color: var(--lane-ready); }
-  &.state--3-progress             { color: var(--lane-progress); }
-  &.state--4-auto-review          { color: var(--lane-auto-review); }
-  &.state--5-human-review         { color: var(--lane-human-review); }
-  &.state--5e-escalated           { color: var(--lane-escalated); }
-  &.state--6-completed            { color: var(--lane-completed); }
-  &.state--7-archive              { color: var(--lane-archive); }
+  // AGT-2715: one tone per lane, resolved from data-lane-tone rather than the
+  // per-state colour map that used to be maintained here.
+  @include lane-tone.vars;
+
+  color: var(--lane-tone-fg);
 
   &__dot {
     font-size: 0.65em;

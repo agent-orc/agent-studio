@@ -15,6 +15,7 @@ import { TaskService } from '../../../../services/task.service';
 import { projectIdentity } from '../../../../services/project-identity.util';
 import type { EpicRollup } from '../../../../models/task.model';
 import { EpicCreateDialogComponent } from '../epic-create-dialog/epic-create-dialog.component';
+import { laneName } from '../../../../models/lane-presentation';
 
 /** Project the overview is scoped to; null means the cross-project view. */
 export interface EpicOverviewScope {
@@ -166,10 +167,9 @@ export class EpicOverviewScreenComponent implements OnInit {
     return projectIdentity(name);
   }
 
-  /** "6-completed" -> "completed" for the sub-task lane label. */
+  /** Lane display name from the one catalogue (AGT-2715). */
   laneLabel(state: string): string {
-    const name = state.includes('-') ? state.substring(state.indexOf('-') + 1) : state;
-    return name.replace(/-/g, ' ');
+    return laneName(state);
   }
 
   verdictLabel(verdict: string | null | undefined): string | null {

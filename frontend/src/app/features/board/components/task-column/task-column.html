@@ -45,7 +45,7 @@
          (dragover)="onDragOver($event)"
          (dragleave)="onDragLeave($event)"
          (drop)="onDrop($event)">
-      <div class="column__header">
+      <div class="column__header" [attr.data-lane-tone]="laneTone()">
         <span class="column__icon" [attr.data-testid]="'lane-header-avatar-' + state()"
               aria-hidden="true">{{ icon() }}</span>
         <h2 class="column__title" [attr.data-testid]="'lane-title-' + state()"

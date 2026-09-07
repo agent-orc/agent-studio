@@ -1,4 +1,5 @@
-import { CliType, TaskMode, TaskState } from '../models/task.model';
+import { CliType, TaskMode } from '../models/task.model';
+import { laneName } from '../models/lane-presentation';
 
 /**
  * Pure formatting helpers used by both the board and detail views.
@@ -38,10 +39,15 @@ export function formatResetIn(epochSeconds: number, now: number): string {
   return `in ${Math.floor(hrs / 24)} d`;
 }
 
+/**
+ * Lane display name. AGT-2715: this used to special-case two lanes and strip
+ * the numeric prefix off everything else, which is how surfaces built on it
+ * ended up rendering raw slugs like "human-review" next to a proper "Review"
+ * elsewhere. It now delegates to the lane presentation catalogue, which keeps
+ * the same readable-slug fallback for lane keys the frontend does not know.
+ */
 export function stateLabel(state: string): string {
-  if (state === TaskState.AutoReview) return 'Post Processing';
-  if (state === TaskState.Completed) return 'Delivered';
-  return state.replace(/^\d+-/, '');
+  return laneName(state);
 }
 
 export function formatTime(dateStr: string): string {

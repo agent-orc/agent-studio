@@ -8,6 +8,7 @@ import { MarkdownViewComponent } from 'coding-agent-chat/markdown';
 import { CliModelSelectorComponent } from '../../../../components/cli-model-selector';
 import { ReferencesSectionComponent } from '../references-section/references-section.component';
 import { LANE_LABELS } from '../../state/lane-pager.service';
+import { laneName } from '../../../../models/lane-presentation';
 
 /** One lane column in the epic mini-board: a state plus the sub-tasks that sit in it. */
 export interface EpicLaneGroup {
@@ -165,10 +166,9 @@ export class EpicRollupPaneComponent {
     this.editingDesc.set(false);
   }
 
-  /** "6-completed" -> "completed" for an unknown lane label fallback. */
+  /** Lane display name from the one catalogue (AGT-2715). */
   laneLabel(state: string): string {
-    const name = state.includes('-') ? state.substring(state.indexOf('-') + 1) : state;
-    return name.replace(/-/g, ' ');
+    return laneName(state);
   }
 
   openSub(sub: EpicSubTaskRef): void {

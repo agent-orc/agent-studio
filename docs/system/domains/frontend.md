@@ -459,9 +459,72 @@ Overview and task detail share one durable unseen/reviewed truth. The queue
 preserves task and artifact provenance, keeps reviewed receipts from becoming
 unseen again, and renders missing reviewed artifacts as no longer actionable.
 
+## Lane presentation: one name, one tone, one source
+
+A lane is *named* and *tinted* in exactly one place:
+[`frontend/src/app/models/lane-presentation.ts`](../../../frontend/src/app/models/lane-presentation.ts).
+It maps every `TaskState` (plus the virtual `2-ready-intake` sub-lane and the
+legacy `4-review` / `1b-needs-human-review` keys) to:
+
+| Field | Purpose | Example (`5-human-review`) |
+|---|---|---|
+| `name` | The one display name, on every surface | `Human review` |
+| `sentence` | Prose form for role copy, help text, verdict detail | `Waiting for a human decision.` |
+| `tone` | Tone key resolving to `--studio-lane-<tone>-{fg,bg,border}` | `human-review` |
+| `glyph` | Lane emoji for board headers and settings lists | `👁️` |
+| `docTopic` | Lane-guide concept doc behind the info button | `lane-5-human-review` |
+
+Rules:
+
+- **No component, template, or utility keeps its own lane string.** Import
+  `laneName()` / `laneSentence()` / `laneGlyph()` / `laneTone()`. The board
+  headers, detail header chip, Overview and Description lane pills, Result tab
+  header, verdict signals, decision badge, task-status card, Explorer lane
+  counters, cycle-time matrix, project workflow section, and lane pickers all
+  read from this module.
+- **A lane has exactly one tone.** Bind `[attr.data-lane-tone]="laneTone(state)"`
+  and `@include lane-tone.vars;` from
+  [`frontend/src/styles/_lane-tone.scss`](../../../frontend/src/styles/_lane-tone.scss);
+  never hand-roll a per-lane colour rule. The hue is still declared once per
+  theme in the `--lane-*` palette in `_tokens-semantic.scss`; the
+  `--studio-lane-*` triplets derive the soft fill and border from it, so the
+  themes cannot drift apart in mix strength. R1 still applies: encode the lane
+  via text, dot, or background tint, never a left accent bar.
+- **There is deliberately no second "short name" field.** A short name is what
+  caused the reported defect (AGT-2715): the header chip said "Review" while
+  the Result tab said "Human review lane", a badge normaliser rewrote that to
+  "Human review", and the workflow section said "Awaiting human review." One
+  lane, one word.
+- **Unknown lane keys degrade readably.** A backend-first lane renders as words
+  derived from its slug (`9-something-new` → "Something new") with the neutral
+  `unknown` tone, rather than leaking a raw key into the UI.
+
+Enforced by `npm run lint:structure` →
+[`frontend/scripts/check-lane-strings.mjs`](../../../frontend/scripts/check-lane-strings.mjs),
+which fails on a string literal equal to a canonical lane name or role
+sentence, and on any retired wording ("Human review lane", "Awaiting human
+review", "Human Review", "Human Ready", "Auto Review"). Genuine non-lane uses
+of the same word (a CLI readiness flag reading "Ready", an "Archive" button
+verb) live in `scripts/lane-string-allowlist.json` with a stated reason.
+
+Regression coverage: `src/app/models/lane-presentation.spec.ts` (catalogue
+completeness, name and tone uniqueness, alias and unknown-key behaviour),
+`.../overview-pane/lane-wording-agrees.spec.ts` (lane signal → verdict → badge
+→ tooltip all read one word), and
+`e2e/task-detail/lane-presentation-one-source.spec.ts` (board column, detail
+header chip, and Result header agree on word and resolved colour, both themes).
+
+> Naming history: an earlier task dropped the "Human Ready" / "Auto Review"
+> naming *scheme*, which left `5-human-review` reading "Review" on the board
+> only. AGT-2715 supersedes that for this lane — every surface now reads
+> "Human review". `e2e/board/lane-rename-no-human-prefix.spec.ts` still guards
+> the retired scheme.
+
 ## Invariants
 
 - Angular components are standalone. Do not introduce NgModules.
+- A lane's name and tone come from `models/lane-presentation.ts` only; see the
+  Lane presentation section above.
 - State should use Angular signals and existing stores before new state
   mechanisms.
 - Durable user-owned frontend mutations are optimistic by default: snapshot,
