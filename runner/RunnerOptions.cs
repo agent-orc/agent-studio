@@ -143,6 +143,20 @@ public sealed class RunnerOptions
     /// <summary>Heartbeat cadence; kept well under the TTL so a slow network still renews in time.</summary>
     public int HeartbeatSeconds { get; init; }
 
+    /// <summary>
+    /// TTL requested by the final renewal a review daemon sends before handing a
+    /// detached worker to its replacement. It only has to outlive the restart
+    /// window (systemd <c>TimeoutStopSec</c> plus start), and the Task Server
+    /// clamps it to its own ceiling, so five minutes is deliberately generous.
+    /// </summary>
+    public int HandoffLeaseTtlSeconds { get; init; } = 300;
+
+    /// <summary>
+    /// How long <c>--drain</c> waits for busy review slots to finish before it
+    /// gives up and reports the remaining attempts to the operator.
+    /// </summary>
+    public int DrainTimeoutSeconds { get; init; } = 3600;
+
     /// <summary>Hard cap on a single CLI run before the runner gives up and reports a blocked completion.</summary>
     public int RunTimeoutSeconds { get; init; }
 
@@ -177,6 +191,24 @@ public sealed class RunnerOptions
     /// to confirm the connection before assigning work.
     /// </summary>
     public bool HealthCheckOnly { get; init; }
+
+    /// <summary>
+    /// When set (<c>--drain</c>), the process asks the running review daemon to
+    /// stop claiming and waits for its slots to finish instead of starting a
+    /// daemon of its own. This is the sanctioned alternative to a restart that
+    /// lands on busy slots.
+    /// </summary>
+    public bool DrainOnly { get; init; }
+
+    /// <summary>
+    /// When set (<c>--restart-guard</c>), the process reports whether a plain
+    /// restart would discard review gate work and exits. <c>agent-runner-deploy</c>
+    /// calls it before it restarts the review unit.
+    /// </summary>
+    public bool RestartGuardOnly { get; init; }
+
+    /// <summary>Overrides a refusal from <see cref="RestartGuardOnly"/> (<c>--force</c>).</summary>
+    public bool Force { get; init; }
 
     public static string Env(string name, string fallback = "")
     {
@@ -221,6 +253,9 @@ public sealed class RunnerOptions
         var once = true;
         var help = false;
         var healthCheck = false;
+        var drain = false;
+        var restartGuard = false;
+        var force = false;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -229,6 +264,12 @@ public sealed class RunnerOptions
             if (a == "--once") { once = true; continue; }
             if (a == "--poll") { once = false; continue; }
             if (a == "--health-check") { healthCheck = true; continue; }
+            // Boolean modes must be listed here: the generic branch below treats
+            // an unknown --flag as "--key value" and would swallow the next
+            // argument.
+            if (a == "--drain") { drain = true; continue; }
+            if (a == "--restart-guard") { restartGuard = true; continue; }
+            if (a == "--force") { force = true; continue; }
             if (a.StartsWith("--", StringComparison.Ordinal))
             {
                 var key = a[2..];
@@ -297,6 +338,12 @@ public sealed class RunnerOptions
                 : null,
             TtlSeconds = overrides.TryGetValue("ttl", out var ttl) && int.TryParse(ttl, out var ttlV) ? ttlV : EnvInt("RUNNER_TTL_SECONDS", 900),
             HeartbeatSeconds = EnvInt("RUNNER_HEARTBEAT_SECONDS", 30),
+            HandoffLeaseTtlSeconds = EnvInt("RUNNER_HANDOFF_LEASE_TTL_SECONDS", 300),
+            DrainTimeoutSeconds = overrides.TryGetValue("drain-timeout-seconds", out var drainTimeout)
+                                          && int.TryParse(drainTimeout, out var drainTimeoutValue)
+                                          && drainTimeoutValue > 0
+                ? drainTimeoutValue
+                : EnvInt("RUNNER_DRAIN_TIMEOUT_SECONDS", 3600),
             RunTimeoutSeconds = EnvInt("RUNNER_RUN_TIMEOUT_SECONDS", 3600),
             HostMaxParallelism = overrides.TryGetValue("max-parallelism", out var max) && int.TryParse(max, out var maxV) && maxV > 0
                 ? maxV : EnvInt("RUNNER_MAX_PARALLELISM", 2),
@@ -324,6 +371,9 @@ public sealed class RunnerOptions
             LoadGateSustainedSeconds = EnvInt("RUNNER_LOAD_GATE_SUSTAINED_SECONDS", 120),
             AllowInsecureHttp = OptIn(Val("allow-insecure-http", "RUNNER_ALLOW_INSECURE_HTTP")),
             HealthCheckOnly = healthCheck,
+            DrainOnly = drain,
+            RestartGuardOnly = restartGuard,
+            Force = force,
         };
 
         var serverUri = new Uri(options.ServerUrl, UriKind.Absolute);

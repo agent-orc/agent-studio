@@ -141,6 +141,23 @@ public sealed record ReviewLeaseRenewRequest(
     int RequestedTtlSeconds = 120,
     long AuthorityEpoch = 0);
 
+/// <summary>
+/// Takeover of one specific ReviewAttempt by the executor that still owns its
+/// running detached worker. A replacement daemon sends this after a planned
+/// restart when it has proven the worker alive but the Task Server refused the
+/// handed-off lease. The previous lease identity is the continuity proof: only
+/// an attempt whose recorded authority is exactly that handed-off lease, and
+/// whose lease is no longer live, may be re-fenced this way. Everything else
+/// stays a fresh claim.
+/// </summary>
+public sealed record ReviewReClaimRequest(
+    string ExecutorId,
+    string InstanceId,
+    string PreviousLeaseId,
+    long PreviousFence,
+    string IdempotencyKey,
+    int RequestedTtlSeconds = 120);
+
 public sealed record ReviewCommandEvidenceDto(
     string StepId,
     string Aspect,
