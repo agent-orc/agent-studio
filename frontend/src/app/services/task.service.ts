@@ -36,6 +36,7 @@ import type {
   PublishActionPanel,
   PublishAutomationMode,
   PublishWorkflowRun,
+  ReviewProjectionView,
 } from '../models/task.model';
 import { TaskState } from '../models/task.model';
 import type { ClaudeSessionResponse } from '../features/claude';
@@ -1080,6 +1081,19 @@ export class TaskService {
   listCodeReviews(jobId: string, watchPath?: string) {
     return this.http.get<{ entries: CodeReviewListEntry[] }>(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/code-review/list`,
+      this.withWatchPath(watchPath),
+    );
+  }
+
+  /**
+   * AGT-2717: the canonical merge of every review attempt across both planes.
+   * Task detail already carries the same object as `info.reviewProjection`;
+   * use this when a caller only needs the review head without the full
+   * task-detail payload.
+   */
+  getReviewProjection(jobId: string, watchPath?: string) {
+    return this.http.get<ReviewProjectionView>(
+      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/review-projection`,
       this.withWatchPath(watchPath),
     );
   }

@@ -25,12 +25,14 @@ public sealed class TaskListGitProjectionCache
         TaskIntegrationStatusService integrationStatus,
         TaskPublishableService publishStatus,
         TestRunService testRuns,
+        AgentStudio.Review.ReviewProjectionService reviewProjection,
         ILogger<TaskListGitProjectionCache> logger)
         : this(
             mergeStatus,
             integrationStatus,
             publishStatus,
             testRuns,
+            reviewProjection,
             logger,
             TimeProvider.System)
     {
@@ -41,6 +43,7 @@ public sealed class TaskListGitProjectionCache
         TaskIntegrationStatusService integrationStatus,
         TaskPublishableService publishStatus,
         TestRunService testRuns,
+        AgentStudio.Review.ReviewProjectionService reviewProjection,
         ILogger<TaskListGitProjectionCache> logger,
         TimeProvider timeProvider)
         : this(
@@ -49,7 +52,8 @@ public sealed class TaskListGitProjectionCache
                 mergeStatus.BuildLookup,
                 integrationStatus.BuildLookup,
                 publishStatus.BuildLookup,
-                testRuns.BuildLookup),
+                testRuns.BuildLookup,
+                reviewProjection.BuildLookup),
             logger,
             timeProvider)
     {
@@ -202,32 +206,37 @@ public sealed class TaskListGitProjectionCache
         Func<IReadOnlyCollection<TaskInfo>, Dictionary<string, TaskMergeSignal>> mergeLookup,
         Func<IReadOnlyCollection<TaskInfo>, Dictionary<string, TaskIntegrationStatus>> integrationLookup,
         Func<IReadOnlyCollection<TaskInfo>, Dictionary<string, TaskPublishSignal>> publishLookup,
-        Func<IReadOnlyCollection<TaskInfo>, Dictionary<string, TaskTestRunEvidence>> testRunLookup)
+        Func<IReadOnlyCollection<TaskInfo>, Dictionary<string, TaskTestRunEvidence>> testRunLookup,
+        Func<IReadOnlyCollection<TaskInfo>, Dictionary<string, AgentStudio.Review.ReviewProjectionView>> reviewProjectionLookup)
         => await BuildProjectionAsync(
             tasks,
             captured => Task.Run(() => mergeLookup(captured)),
             captured => Task.Run(() => integrationLookup(captured)),
             captured => Task.Run(() => publishLookup(captured)),
-            captured => Task.Run(() => testRunLookup(captured)));
+            captured => Task.Run(() => testRunLookup(captured)),
+            captured => Task.Run(() => reviewProjectionLookup(captured)));
 
     internal static async Task<TaskListGitProjection> BuildProjectionAsync(
         IReadOnlyCollection<TaskInfo> tasks,
         Func<IReadOnlyCollection<TaskInfo>, Task<Dictionary<string, TaskMergeSignal>>> mergeLookup,
         Func<IReadOnlyCollection<TaskInfo>, Task<Dictionary<string, TaskIntegrationStatus>>> integrationLookup,
         Func<IReadOnlyCollection<TaskInfo>, Task<Dictionary<string, TaskPublishSignal>>> publishLookup,
-        Func<IReadOnlyCollection<TaskInfo>, Task<Dictionary<string, TaskTestRunEvidence>>> testRunLookup)
+        Func<IReadOnlyCollection<TaskInfo>, Task<Dictionary<string, TaskTestRunEvidence>>> testRunLookup,
+        Func<IReadOnlyCollection<TaskInfo>, Task<Dictionary<string, AgentStudio.Review.ReviewProjectionView>>> reviewProjectionLookup)
     {
         var mergeTask = mergeLookup(tasks);
         var integrationTask = integrationLookup(tasks);
         var publishTask = publishLookup(tasks);
         var testRunTask = testRunLookup(tasks);
+        var reviewProjectionTask = reviewProjectionLookup(tasks);
 
-        await Task.WhenAll(mergeTask, integrationTask, publishTask, testRunTask);
+        await Task.WhenAll(mergeTask, integrationTask, publishTask, testRunTask, reviewProjectionTask);
         return new TaskListGitProjection(
             await mergeTask,
             await integrationTask,
             await publishTask,
-            await testRunTask);
+            await testRunTask,
+            await reviewProjectionTask);
     }
 
     private static string ScopeKey(IEnumerable<TaskInfo> tasks)
@@ -304,11 +313,13 @@ public sealed record TaskListGitProjection(
     IReadOnlyDictionary<string, TaskMergeSignal> Merge,
     IReadOnlyDictionary<string, TaskIntegrationStatus> Integration,
     IReadOnlyDictionary<string, TaskPublishSignal> Publish,
-    IReadOnlyDictionary<string, TaskTestRunEvidence> TestRuns)
+    IReadOnlyDictionary<string, TaskTestRunEvidence> TestRuns,
+    IReadOnlyDictionary<string, AgentStudio.Review.ReviewProjectionView> ReviewProjection)
 {
     public static TaskListGitProjection Empty { get; } = new(
         new Dictionary<string, TaskMergeSignal>(StringComparer.Ordinal),
         new Dictionary<string, TaskIntegrationStatus>(StringComparer.Ordinal),
         new Dictionary<string, TaskPublishSignal>(StringComparer.Ordinal),
-        new Dictionary<string, TaskTestRunEvidence>(StringComparer.Ordinal));
+        new Dictionary<string, TaskTestRunEvidence>(StringComparer.Ordinal),
+        new Dictionary<string, AgentStudio.Review.ReviewProjectionView>(StringComparer.Ordinal));
 }

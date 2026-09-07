@@ -67,6 +67,35 @@ function buildInfo(state: string, emptyContext = false) {
       integrationSha: 'b2ed3f4',
       releaseSha: '1a526e9',
     },
+    // AGT-2717: the escalation banner reads the canonical review projection
+    // instead of counting `code-review/list` entries client-side; keep this
+    // fixture's rounds/outcome in sync with CODE_REVIEW_LIST above.
+    reviewProjection: emptyContext ? null : {
+      attempts: [
+        {
+          plane: 'local', attemptId: 'code-review-grade-2026-07-09T19-22-02Z', receivedAt: '2026-07-09T19:22:02Z',
+          outcome: 'pass', grade: 'B', buildTestsResult: 'not-proven', buildTestsReason: null, aspects: [],
+          subjectSha: null, reportRef: 'code-review-grade-2026-07-09T19-22-02Z.md',
+        },
+        {
+          plane: 'local', attemptId: 'code-review-grade-2026-07-09T18-22-02Z', receivedAt: '2026-07-09T18:22:02Z',
+          outcome: 'concerns', grade: 'C', buildTestsResult: 'not-proven', buildTestsReason: null, aspects: [],
+          subjectSha: null, reportRef: 'code-review-grade-2026-07-09T18-22-02Z.md',
+        },
+        {
+          plane: 'local', attemptId: 'code-review-grade-2026-07-09T17-22-02Z', receivedAt: '2026-07-09T17:22:02Z',
+          outcome: 'concerns', grade: 'D', buildTestsResult: 'not-proven', buildTestsReason: null, aspects: [],
+          subjectSha: null, reportRef: 'code-review-grade-2026-07-09T17-22-02Z.md',
+        },
+      ],
+      rounds: 3,
+      latestPlane: 'local',
+      latestOutcome: 'pass',
+      latestReceivedAt: '2026-07-09T19:22:02Z',
+      blockingAspects: [],
+      delivery: { status: 'integrated', reason: null },
+      decisionRequired: { required: true, source: 'escalation-event', reason: null },
+    },
     tags: [],
     ownerClientId: 'local-default',
     lastUsage: null,
@@ -355,7 +384,7 @@ test.describe('Escalation summary panel — collapsible + compact', () => {
     const panel = page.getByTestId('escalation-summary');
     const essence = page.getByTestId('escalation-essence');
     await expect(essence).toContainText(
-      '3 review rounds · Grade B · 4 open findings · Reissue budget exhausted',
+      '3 review rounds (local) · latest 09.07. 19:22 pass · build and tests not proven · in develop',
     );
     await expect(essence).not.toContainText('Council finding 1');
     await expect(essence).not.toContainText('###');
@@ -415,7 +444,7 @@ test.describe('Escalation summary panel — collapsible + compact', () => {
 
     // 2. The header carries one bounded line from structured fields.
     await expect(page.getByTestId('escalation-essence')).toContainText(
-      '3 review rounds · Grade B · 4 open findings · Reissue budget exhausted',
+      '3 review rounds (local) · latest 09.07. 19:22 pass · build and tests not proven · in develop',
     );
     await expect(page.getByTestId('escalation-essence')).not.toContainText('Council finding 1');
     const mergeSegments = page.getByTestId('escalation-merge-segment');
@@ -555,7 +584,7 @@ test.describe('Escalation summary panel — collapsible + compact', () => {
     const panel = page.getByTestId('escalation-summary');
 
     await expect(page.getByTestId('escalation-essence')).toContainText(
-      '0 review rounds · Grade not recorded · 0 open findings · Reissue budget exhausted',
+      '0 review rounds · Reissue budget exhausted',
     );
     await expect(page.getByTestId('escalation-context-empty')).toHaveText(
       'No structured findings, review artifacts, or delivery context were recorded.',

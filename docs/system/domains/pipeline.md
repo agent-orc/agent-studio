@@ -143,6 +143,27 @@ steer the pipeline in this policy version.
   row, and its reason identifies the missing verify command when the command
   table records one. The task-detail Evidence tab renders each source and links
   back to that report.
+- `backend/Features/Review/ReviewProjection.cs`: the canonical, read-time merge
+  of every review attempt across **both** review planes (AGT-2717) - local
+  `code-review-grade-*.md` and remote `remote-review-grade-*.md` - into one
+  `ReviewProjectionView` per task: `attempts` (plane, attempt id, received-at,
+  outcome, grade, build-tests result/reason, per-aspect verdicts, subject SHA,
+  report ref), the derived `rounds` count and latest plane/outcome, the
+  `blockingAspects` on the latest attempt with their quoted reason, the
+  `delivery` state (`integrated` / `gate-failed` with reason / `not-attempted`,
+  read from the `integration_succeeded` / `integration_failed` /
+  `integration_overridden` timeline events), and `decisionRequired` (an
+  operator-decision park wins, then the newest `orchestrator_escalated` event,
+  then a lane move into Human Review). `ReviewProjectionReader` reuses
+  `TaskScopedTestEvidenceReader.ReadRemoteReviewAttempts` for the remote
+  build-tests reading rule instead of re-parsing the report, so the Evidence
+  tab and the projection can never disagree about what one report says. Served
+  folded onto `TaskInfo.reviewProjection` on every task list/detail response
+  and standalone at `GET /api/tasks/{jobId}/review-projection`. The escalation
+  banner, Result header, and board chip all render off this one projection
+  instead of each parsing their own subset of review artifacts - a remote-only
+  review history (seven Remote Review rounds, zero local grade files) reads as
+  "7 review rounds (remote)", never "0 review rounds".
 - `backend/Features/Pipeline/RemoteDeliveryIntegration.cs` and
   `backend/Features/Pipeline/MergeIntoDevelopRunner.cs`: the immediate Remote
   admission policy, per-project delivery-order queue, and common

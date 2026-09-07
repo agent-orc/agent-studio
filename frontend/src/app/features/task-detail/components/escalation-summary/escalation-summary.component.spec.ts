@@ -5,13 +5,43 @@ import { of, throwError } from 'rxjs';
 import { EscalationSummaryComponent } from './escalation-summary.component';
 import { TaskService } from '../../../../services/task.service';
 import { TaskTimelinePollService } from '../../../polling/services/task-timeline-poll.service';
-import type { TaskDetail } from '../../../../models/task.model';
+import type { TaskDetail, ReviewProjectionView } from '../../../../models/task.model';
 import type { TaskTimelineEvent } from '../../../task-timeline';
 
 /** localStorage key the component persists per-task collapse under. */
 const COLLAPSE_KEY = 'taskboard.escalation.collapsed';
 
-function detail(over: { id?: string; state?: string; orchestratorVerdict?: string } = {}): TaskDetail {
+/** A single local `code-review-grade-*.md` round, matching the fixtures below that pass one graded review. */
+function oneLocalRound(grade: string): ReviewProjectionView {
+  return {
+    attempts: [{
+      plane: 'local',
+      attemptId: 'code-review-grade-2026-07-09T19-22-02Z',
+      receivedAt: '2026-07-09T19:22:02Z',
+      outcome: 'pass',
+      grade,
+      buildTestsResult: 'not-proven',
+      buildTestsReason: null,
+      aspects: [],
+      subjectSha: null,
+      reportRef: 'code-review-grade-2026-07-09T19-22-02Z.md',
+    }],
+    rounds: 1,
+    latestPlane: 'local',
+    latestOutcome: 'pass',
+    latestReceivedAt: '2026-07-09T19:22:02Z',
+    blockingAspects: [],
+    delivery: { status: 'integrated', reason: null },
+    decisionRequired: { required: false, source: null, reason: null },
+  };
+}
+
+function detail(over: {
+  id?: string;
+  state?: string;
+  orchestratorVerdict?: string;
+  reviewProjection?: ReviewProjectionView | null;
+} = {}): TaskDetail {
   return {
     info: {
       id: over.id ?? 'AGT-1994',
@@ -30,6 +60,7 @@ function detail(over: { id?: string; state?: string; orchestratorVerdict?: strin
         integrationSha: 'b2ed3f4',
         releaseSha: '1a526e9',
       },
+      reviewProjection: over.reviewProjection ?? null,
     },
     reviewEvidence: [],
   } as unknown as TaskDetail;
@@ -105,11 +136,12 @@ describe('EscalationSummaryComponent', () => {
           summary: 'escalated', details: { attempt: '3', maxAttempts: '3' },
         },
       ],
+      detail: detail({ reviewProjection: oneLocalRound('B') }),
     });
     const el: HTMLElement = fixture.nativeElement;
 
     expect(el.querySelector('[data-testid="escalation-essence"]')?.textContent).toContain(
-      '1 review round · Grade B · 2 open findings · Reissue budget exhausted',
+      '1 review round (local) · latest 09.07. 19:22 pass · build and tests not proven · in develop',
     );
     expect(el.querySelector('[data-testid="escalation-essence"]')?.textContent).not.toContain('Frontend Playwright');
     expect(el.querySelector('[data-testid="escalation-grade-documents"]')).not.toBeNull();
@@ -159,7 +191,7 @@ describe('EscalationSummaryComponent', () => {
     const el: HTMLElement = fixture.nativeElement;
 
     expect(el.querySelector('[data-testid="escalation-essence"]')?.textContent).toContain(
-      '0 review rounds · Grade not recorded · 1 open finding · Completion gate',
+      '0 review rounds · Completion gate',
     );
     expect(el.querySelector('[data-testid="escalation-essence"]')?.textContent).not.toContain(
       'completion gate found unfinished work',
@@ -203,7 +235,7 @@ describe('EscalationSummaryComponent', () => {
     expect(el.querySelector('[data-testid="escalation-gate-items"]')).toBeNull();
     expect(el.querySelector('[data-testid="escalation-grade-documents"]')).toBeNull();
     expect(el.querySelector('[data-testid="escalation-delivery"]')).toBeNull();
-    expect(el.querySelector('[data-testid="escalation-essence"]')?.textContent).toContain('0 open findings');
+    expect(el.querySelector('[data-testid="escalation-essence"]')?.textContent).toContain('0 review rounds');
   });
 
   it('renders one readable pending segment when integration and release use main', () => {
@@ -357,9 +389,10 @@ describe('EscalationSummaryComponent — collapse (AGT-2060)', () => {
           runAt: '2026-07-09T19:22:02Z',
         },
       ],
+      detail: detail({ reviewProjection: oneLocalRound('B') }),
     }).nativeElement;
     expect(el.querySelector('[data-testid="escalation-essence"]')?.textContent).toContain(
-      '1 review round · Grade B · 0 open findings',
+      '1 review round (local) · latest 09.07. 19:22 pass',
     );
     expect(el.querySelectorAll('[data-testid="escalation-essence-merge"]')).toHaveLength(1);
   });

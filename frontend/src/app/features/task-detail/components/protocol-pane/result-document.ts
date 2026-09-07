@@ -17,7 +17,7 @@
  * Keeping the parse here (pure, unit-tested) rather than in the component keeps
  * the view thin and lets the case + metric logic be hammered branch by branch.
  */
-import type { TaskDetail } from '../../../../models/task.model';
+import type { TaskDetail, ReviewProjectionView } from '../../../../models/task.model';
 import { formatTokens } from '../../../../services/format.util';
 import { buildTokenCostTooltip } from '../../../tokens';
 import type { ProtocolVerdict } from './protocol-verdict';
@@ -126,6 +126,32 @@ export function codeReviewGradeFromTags(tags: readonly string[] | null | undefin
     if (m) return m[1].toUpperCase();
   }
   return null;
+}
+
+/**
+ * AGT-2717: fallback review stat from the canonical review projection when the
+ * task carries no local `code-review:grade-*` tag - the AGT-2689 case, where
+ * every round is a Remote Review report and this header used to show nothing
+ * for "Review" at all. Reads the same rounds/outcome/blocking-aspect facts as
+ * the escalation banner and the board chip, so the three surfaces agree.
+ */
+export function reviewMetricFromProjection(
+  projection: ReviewProjectionView | null | undefined,
+): ResultMetric | null {
+  if (!projection || projection.rounds === 0) return null;
+  const blocking = projection.blockingAspects[0] ?? null;
+  const tone: ResultMetric['tone'] = blocking || projection.delivery.status === 'gate-failed'
+    ? 'problem'
+    : projection.latestOutcome?.toLowerCase() === 'pass'
+      ? 'ok'
+      : 'neutral';
+  const roundsLabel = projection.rounds === 1 ? '1 round' : `${projection.rounds} rounds`;
+  const value = projection.latestOutcome ? `${roundsLabel} · ${projection.latestOutcome}` : roundsLabel;
+  const tooltip = [
+    `${roundsLabel} of review${projection.latestPlane ? ` (latest via ${projection.latestPlane})` : ''}.`,
+    blocking ? `Blocked by ${blocking.aspect}: ${blocking.reason}.` : null,
+  ].filter(Boolean).join(' ');
+  return { id: 'review', label: 'Review', value, tone, tooltip };
 }
 
 /** Split markdown into `## Heading` -> body sections (ignores content before the first `##`). */
@@ -237,6 +263,9 @@ function buildMetrics(detail: TaskDetail, verdict: ProtocolVerdict, markdown: st
   if (grade) {
     const meta = GRADE_META[grade] ?? { tone: 'neutral' as const, tooltip: `Code review grade ${grade}.` };
     metrics.push({ id: 'grade', label: 'Review', value: `Grade ${grade}`, tone: meta.tone, tooltip: meta.tooltip });
+  } else {
+    const reviewMetric = reviewMetricFromProjection(info.reviewProjection);
+    if (reviewMetric) metrics.push(reviewMetric);
   }
 
   if (verdict.duration) {

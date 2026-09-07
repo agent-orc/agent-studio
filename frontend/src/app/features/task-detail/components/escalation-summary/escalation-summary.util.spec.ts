@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { TaskInfo, ReviewEvidenceEntry } from '../../../../models/task.model';
+import type { TaskInfo, ReviewEvidenceEntry, ReviewProjectionView, ReviewAttempt } from '../../../../models/task.model';
 import type { CodeReviewListEntry } from '../../../../services/task.service';
 import type { SteeringInfo } from '../../../../components/steering-detail';
 import {
@@ -50,6 +50,34 @@ function review(over: Partial<CodeReviewListEntry> = {}): CodeReviewListEntry {
 
 function info(over: Partial<TaskInfo> = {}): TaskInfo {
   return { orchestratorVerdict: 'escalate', ...(over as object) } as TaskInfo;
+}
+
+function reviewAttempt(over: Partial<ReviewAttempt> = {}): ReviewAttempt {
+  return {
+    plane: over.plane ?? 'remote',
+    attemptId: over.attemptId ?? 'review_0',
+    receivedAt: over.receivedAt ?? '2026-08-31T12:18:00Z',
+    outcome: over.outcome ?? 'ProductFailure',
+    grade: over.grade ?? null,
+    buildTestsResult: over.buildTestsResult ?? 'passed',
+    buildTestsReason: over.buildTestsReason ?? 'verify-1 and verify-2 passed.',
+    aspects: over.aspects ?? [],
+    subjectSha: over.subjectSha ?? 'a'.repeat(40),
+    reportRef: over.reportRef ?? `remote-review-grade-${over.attemptId ?? 'review_0'}.md`,
+  };
+}
+
+function reviewProjection(over: Partial<ReviewProjectionView> = {}): ReviewProjectionView {
+  return {
+    attempts: over.attempts ?? [reviewAttempt()],
+    rounds: over.rounds ?? 1,
+    latestPlane: over.latestPlane ?? 'remote',
+    latestOutcome: over.latestOutcome ?? 'ProductFailure',
+    latestReceivedAt: over.latestReceivedAt ?? '2026-08-31T12:18:00Z',
+    blockingAspects: over.blockingAspects ?? [],
+    delivery: over.delivery ?? { status: 'not-attempted', reason: null },
+    decisionRequired: over.decisionRequired ?? { required: false, source: null, reason: null },
+  };
 }
 
 describe('gateItemsFromCouncil', () => {
@@ -264,6 +292,23 @@ describe('buildEscalationSummaryView', () => {
           integrationSha: 'b2ed3f4',
           releaseSha: '1a526e9',
         },
+        reviewProjection: reviewProjection({
+          attempts: [reviewAttempt({
+            plane: 'local',
+            attemptId: 'code-review-grade-2026-07-09T19-22-02Z',
+            receivedAt: '2026-07-09T19:22:02Z',
+            outcome: 'pass',
+            grade: 'B',
+            buildTestsResult: 'not-proven',
+            buildTestsReason: null,
+            reportRef: 'code-review-grade-2026-07-09T19-22-02Z.md',
+          })],
+          rounds: 1,
+          latestPlane: 'local',
+          latestOutcome: 'pass',
+          latestReceivedAt: '2026-07-09T19:22:02Z',
+          delivery: { status: 'integrated', reason: null },
+        }),
       } as Partial<TaskInfo>),
       reviewEvidence: [],
       codeReviews: [review({
@@ -324,7 +369,7 @@ describe('buildEscalationSummaryView', () => {
     expect(view.recommendation?.kind).toBe('needs-decision');
     expect(view.reissues[0].trigger).toBe('build/test gate failed: npm test exited with 1');
     expect(view.essence.label).toBe(
-      '1 review round · Grade B · 2 open findings · Reissue budget exhausted',
+      '1 review round (local) · latest 09.07. 19:22 pass · build and tests not proven · in develop',
     );
     // A completion-gate escalation is a logical / quality review, not a give-up.
     expect(view.escalation?.kind).toBe('needs-review');
@@ -332,20 +377,10 @@ describe('buildEscalationSummaryView', () => {
 });
 
 describe('buildEscalationEssence', () => {
-  it('composes three review rounds, the latest grade, open findings and budget class', () => {
-    const codeReviews = [
-      review({ grade: 'B', runAt: '2026-07-09T19:00:00Z' }),
-      review({ grade: 'C', runAt: '2026-07-09T18:00:00Z', fileName: 'code-review-grade-round-2.md' }),
-      review({ grade: 'D', runAt: '2026-07-09T17:00:00Z', fileName: 'code-review-grade-round-1.md' }),
-    ];
+  it('falls back to "0 review rounds" plus the reason class when the task carries no review attempt at all', () => {
     const essence = buildEscalationEssence({
-      codeReviews,
-      gateItems: [
-        { id: 'one', text: 'one', checked: false },
-        { id: 'two', text: 'two', checked: false },
-        { id: 'three', text: 'three', checked: false },
-        { id: 'four', text: 'four', checked: false },
-      ],
+      reviewProjection: null,
+      codeReviews: [],
       timeline: [{
         ts: '2026-07-09T20:00:00Z', kind: 'orchestrator_escalated', actor: 'orchestrator',
         summary: 'The Markdown body may be arbitrarily long.', details: { attempt: '3', maxAttempts: '3' },
@@ -353,13 +388,58 @@ describe('buildEscalationEssence', () => {
       steering: null,
     });
     expect(essence).toEqual({
-      reviewRounds: 3,
-      latestGrade: 'B',
-      openFindings: 4,
+      reviewRounds: 0,
+      latestPlane: null,
+      latestOutcome: null,
+      latestReceivedAt: null,
+      blockingAspect: null,
+      buildTestsSummary: null,
+      deliverySummary: null,
       reasonClass: 'Reissue budget exhausted',
-      label: '3 review rounds · Grade B · 4 open findings · Reissue budget exhausted',
+      label: '0 review rounds · Reissue budget exhausted',
     });
     expect(essence.label).not.toContain('Markdown body');
+  });
+
+  it('names seven remote rounds, the blocking aspect, the passing build, and the failed gate (AGT-2689)', () => {
+    const attempts = [
+      reviewAttempt({ attemptId: 'review_6', receivedAt: '2026-08-31T17:11:00Z' }),
+      reviewAttempt({ attemptId: 'review_5', receivedAt: '2026-08-31T16:22:00Z' }),
+      reviewAttempt({ attemptId: 'review_4', receivedAt: '2026-08-31T15:33:00Z' }),
+      reviewAttempt({ attemptId: 'review_3', receivedAt: '2026-08-31T14:44:00Z' }),
+      reviewAttempt({ attemptId: 'review_2', receivedAt: '2026-08-31T13:55:00Z' }),
+      reviewAttempt({ attemptId: 'review_1', receivedAt: '2026-08-31T13:06:00Z' }),
+      reviewAttempt({ attemptId: 'review_0', receivedAt: '2026-08-31T12:18:00Z' }),
+    ];
+    const essence = buildEscalationEssence({
+      reviewProjection: reviewProjection({
+        attempts,
+        rounds: 7,
+        latestReceivedAt: attempts[0].receivedAt,
+        blockingAspects: [{
+          aspect: 'documentation-impact',
+          reason: 'Public API and state-file contract changed without corresponding load-bearing doc updates',
+        }],
+        delivery: { status: 'gate-failed', reason: 'Remote delivery gate failed before integration.' },
+        decisionRequired: { required: true, source: 'parked-blocker', reason: 'Operator decision needed.' },
+      }),
+      codeReviews: [],
+      timeline: [],
+      steering: null,
+    });
+    expect(essence.reviewRounds).toBe(7);
+    expect(essence.blockingAspect).toEqual({
+      aspect: 'documentation-impact',
+      reason: 'Public API and state-file contract changed without corresponding load-bearing doc updates',
+    });
+    expect(essence.label).toBe(
+      '7 review rounds (remote) · latest 31.08. 17:11 ProductFailure · '
+      + 'blocked by documentation-impact: Public API and state-file contract changed without corresponding load-bearing doc updates · '
+      + 'build and tests pass · delivery gate failed, not in develop',
+    );
+    // Never "0 rounds" or "Grade not recorded" when review reports exist.
+    expect(essence.label).not.toContain('0 review round');
+    expect(essence.label).not.toContain('Grade not recorded');
   });
 
   it('uses structured cause and council disposition fallbacks', () => {
@@ -367,6 +447,18 @@ describe('buildEscalationEssence', () => {
       verdict: 'escalate', verdictLabel: 'Escalate', tone: 'danger', reason: '# raw Markdown',
       openItems: [], prompt: null, context: [{ key: 'Cause', value: 'completion-gate' }], commits: [],
     }, [])).toBe('Completion gate');
+  });
+});
+
+describe('deriveRecommendation with a blocking aspect', () => {
+  it('names the concrete gap and both operator options', () => {
+    expect(deriveRecommendation('escalate', [
+      { aspect: 'documentation-impact', reason: 'Docs missing.' },
+    ])).toEqual({
+      kind: 'needs-decision',
+      label: 'Reissue for documentation-impact, or accept with override',
+      tone: 'danger',
+    });
   });
 });
 

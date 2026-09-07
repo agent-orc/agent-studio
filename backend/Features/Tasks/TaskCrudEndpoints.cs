@@ -97,6 +97,7 @@ public static class TaskCrudEndpoints
                           .WithIntegrationStatus(gitLookup.Integration)
                           .WithPublishSignal(gitLookup.Publish)
                           .WithTestRunEvidence(gitLookup.TestRuns)
+                          .WithReviewProjection(gitLookup.ReviewProjection)
                           .ToList();
             if (TaskQueryRequest.FromQuery(ctx.Request.Query) is { IsActive: true } query)
             {
@@ -131,6 +132,7 @@ public static class TaskCrudEndpoints
                           .WithIntegrationStatus(gitLookup.Integration)
                           .WithPublishSignal(gitLookup.Publish)
                           .WithTestRunEvidence(gitLookup.TestRuns)
+                          .WithReviewProjection(gitLookup.ReviewProjection)
                           .ToList();
             // F35: each lane is sorted using a per-project strategy. The kanban
             // mixes projects inside one lane, so the sort groups by project,
@@ -277,7 +279,7 @@ public static class TaskCrudEndpoints
             });
         });
 
-        group.MapGet("/{jobId}", (string jobId, string? project, string? watchPath, HttpContext context, TaskScannerService scanner, AgentStudio.Registry.ProjectRegistry projects, CliRouter router, TaskRunnerService runners, ITokenAggregator tokens, IConfiguration configuration, GitService git, TaskSessionLog sessions, BoardMergeStatusService mergeStatus, TaskIntegrationStatusService integrationStatus, TaskPublishableService publishStatus, TestRunService testRuns, TaskLiveStatusProjection liveStatus) =>
+        group.MapGet("/{jobId}", (string jobId, string? project, string? watchPath, HttpContext context, TaskScannerService scanner, AgentStudio.Registry.ProjectRegistry projects, CliRouter router, TaskRunnerService runners, ITokenAggregator tokens, IConfiguration configuration, GitService git, TaskSessionLog sessions, BoardMergeStatusService mergeStatus, TaskIntegrationStatusService integrationStatus, TaskPublishableService publishStatus, TestRunService testRuns, AgentStudio.Review.ReviewProjectionService reviewProjection, TaskLiveStatusProjection liveStatus) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             var detail = scanner.GetJobDetail(jobId, watchPath);
@@ -318,6 +320,10 @@ public static class TaskCrudEndpoints
             var testRunLookup = testRuns.BuildLookup(new[] { withRuntime.Info });
             if (testRunLookup.TryGetValue(withRuntime.Info.TaskKey, out var testEvidence))
                 withRuntime = withRuntime with { Info = withRuntime.Info with { TestEvidence = testEvidence } };
+            // AGT-2717: fold the canonical review projection so the escalation
+            // banner, Evidence tab, Result header, and board chip all read the
+            // same rounds/outcome/blocking-aspect facts from one card open.
+            withRuntime = withRuntime with { Info = withRuntime.Info with { ReviewProjection = reviewProjection.Read(withRuntime.Info) } };
             return Results.Ok(withRuntime);
         });
 

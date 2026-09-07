@@ -507,6 +507,15 @@ export interface TaskInfo {
   testEvidence?: TaskTestRunEvidence | null;
 
   /**
+   * AGT-2717: canonical, read-time merge of every review attempt across both
+   * planes (local `code-review-grade-*.md` and remote
+   * `remote-review-grade-*.md`). The escalation banner, Evidence tab, Result
+   * header, and board chip all render off this single projection instead of
+   * each parsing their own subset of review artifacts. Never persisted.
+   */
+  reviewProjection?: ReviewProjectionView | null;
+
+  /**
    * ASS-1751: read-time run-activity classification for `3-progress` cards,
    * distinguishing a live run, a failed run waiting out the rapid-crash
    * backoff, and an orphan killed by a backend restart. Present only on
@@ -1841,6 +1850,77 @@ export interface TaskTestRunEvidence {
   summary: string;
   /** SHA-linked task-owned grades and gate logs that complement project TestRunStore runs. */
   sources?: TaskTestEvidenceSource[];
+}
+
+/** Which review plane produced a {@link ReviewAttempt}. */
+export type ReviewPlane = 'local' | 'remote';
+
+/** One row of a Remote Review attempt's aspect verdict table. */
+export interface ReviewAspectVerdict {
+  aspect: string;
+  status: string;
+  classification: string;
+  summary: string;
+}
+
+/**
+ * One review round, from either plane, normalized to a single shape
+ * (AGT-2717). Mirrors backend `AgentStudio.Review.ReviewAttempt`.
+ */
+export interface ReviewAttempt {
+  plane: ReviewPlane;
+  attemptId: string;
+  receivedAt: string | null;
+  /** Remote: the report's `outcome` (e.g. `Pass`, `ProductFailure`). Local: the grade step's `verdict`. */
+  outcome: string | null;
+  /** Quality grade A-D for a local grade attempt; null otherwise. */
+  grade: string | null;
+  buildTestsResult: 'passed' | 'failed' | 'not-proven' | string;
+  buildTestsReason: string | null;
+  /** Empty for a local attempt; the local grade step carries no per-aspect breakdown. */
+  aspects: ReviewAspectVerdict[];
+  subjectSha: string | null;
+  reportRef: string;
+}
+
+/** A blocking aspect on the latest review attempt, with its quoted reason. */
+export interface ReviewProjectionBlockingAspect {
+  aspect: string;
+  reason: string;
+}
+
+export type ReviewDeliveryStatus = 'integrated' | 'gate-failed' | 'not-attempted';
+
+/** Is this task's reviewed work actually in develop/main, derived from the integration timeline. */
+export interface ReviewDeliveryState {
+  status: ReviewDeliveryStatus;
+  reason: string | null;
+}
+
+export type ReviewDecisionSource = 'parked-blocker' | 'escalation-event' | 'lane-change' | null;
+
+/** Whether a human decision is pending on this card, and where that fact came from. */
+export interface ReviewDecisionRequired {
+  required: boolean;
+  source: ReviewDecisionSource;
+  reason: string | null;
+}
+
+/**
+ * Canonical, task-scoped projection of every review attempt across both
+ * planes (AGT-2717). Mirrors backend `AgentStudio.Review.ReviewProjectionView`.
+ */
+export interface ReviewProjectionView {
+  /** Newest first. */
+  attempts: ReviewAttempt[];
+  rounds: number;
+  latestPlane: ReviewPlane | null;
+  latestOutcome: string | null;
+  latestReceivedAt: string | null;
+  /** Non-build-tests aspects blocking the latest attempt, empty when the latest attempt passed clean. */
+  blockingAspects: ReviewProjectionBlockingAspect[];
+  delivery: ReviewDeliveryState;
+  decisionRequired: ReviewDecisionRequired;
 }
 
 export interface CrashRecoveryPending {

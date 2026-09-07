@@ -58,24 +58,56 @@ internal static class TaskScopedTestEvidenceReader
             string.Join('|', signature.OrderBy(value => value, StringComparer.Ordinal)));
     }
 
-    private static IReadOnlyList<TaskTestEvidenceSource> ReadRemoteReview(string path)
+    /// <summary>
+    /// Every <c>remote-review-grade-*.md</c> report in the task folder, parsed
+    /// once into plain facts (frontmatter + aspect verdict rows + the derived
+    /// build-tests result). <see cref="ReviewProjectionReader"/> (AGT-2717)
+    /// reuses this instead of re-parsing the report Markdown, so the
+    /// build-tests reading rule has exactly one implementation.
+    /// </summary>
+    internal static IReadOnlyList<RemoteReviewAttemptFacts> ReadRemoteReviewAttempts(TaskInfo task)
+    {
+        if (string.IsNullOrWhiteSpace(task.FolderPath) || !Directory.Exists(task.FolderPath))
+            return [];
+
+        var facts = new List<RemoteReviewAttemptFacts>();
+        try
+        {
+            foreach (var path in Directory.EnumerateFiles(
+                         task.FolderPath,
+                         "remote-review-grade-*.md",
+                         SearchOption.TopDirectoryOnly))
+            {
+                if (ParseAttempt(path) is { } fact) facts.Add(fact);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            SilentCatch.Note(ex, "TaskScopedTestEvidenceReader: folder enumeration failure reading remote-review-grade attempts");
+        }
+
+        return facts.OrderByDescending(fact => fact.ObservedAt).ToList();
+    }
+
+    private static RemoteReviewAttemptFacts? ParseAttempt(string path)
     {
         string text;
         try { text = File.ReadAllText(path); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return []; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
 
         var frontmatter = ReadFrontmatter(text);
         if (!string.Equals(frontmatter.GetValueOrDefault("type"), "remote-review-grade", StringComparison.OrdinalIgnoreCase))
-            return [];
+            return null;
 
         var commit = frontmatter.GetValueOrDefault("actualHead")
                      ?? frontmatter.GetValueOrDefault("expectedResultSha")
                      ?? "";
-        if (string.IsNullOrWhiteSpace(commit)) return [];
+        if (string.IsNullOrWhiteSpace(commit)) return null;
 
         var observedAt = ParseDate(frontmatter.GetValueOrDefault("receivedAt"))
                          ?? File.GetLastWriteTimeUtc(path);
         var attemptId = frontmatter.GetValueOrDefault("attemptId") ?? Path.GetFileNameWithoutExtension(path);
+        var outcome = frontmatter.GetValueOrDefault("outcome");
         var reportRef = Path.GetFileName(path);
         var verdictRows = ReadTable(text, "## Aspect verdicts")
             .Where(columns => columns.Count >= 4 && !IsTableHeader(columns))
@@ -117,23 +149,45 @@ internal static class TaskScopedTestEvidenceReader
                 $"Build-tests verdict is missing for {NaturalList(commandSteps)}"),
             _ => "Build-tests command is missing from the Remote Review report.",
         };
-        var stepSuffix = buildSteps.Count > 0 ? $" ({string.Join(", ", buildSteps)})" : "";
+
+        return new RemoteReviewAttemptFacts(
+            AttemptId: attemptId,
+            ReportRef: reportRef,
+            Commit: commit,
+            ObservedAt: observedAt,
+            Outcome: string.IsNullOrWhiteSpace(outcome) ? null : outcome,
+            VerdictRows: verdictRows,
+            BuildResult: buildResult,
+            BuildResultLabel: buildResultLabel,
+            BuildReason: buildReason,
+            BuildSteps: buildSteps);
+    }
+
+    private static IReadOnlyList<TaskTestEvidenceSource> ReadRemoteReview(string path)
+    {
+        if (ParseAttempt(path) is not { } fact) return [];
+        return BuildEvidenceSources(fact);
+    }
+
+    private static IReadOnlyList<TaskTestEvidenceSource> BuildEvidenceSources(RemoteReviewAttemptFacts fact)
+    {
+        var stepSuffix = fact.BuildSteps.Count > 0 ? $" ({string.Join(", ", fact.BuildSteps)})" : "";
         var sources = new List<TaskTestEvidenceSource>
         {
             new()
             {
                 Kind = "review-build-tests",
-                Id = attemptId,
-                Commit = commit,
-                Result = buildResult,
-                ObservedAt = observedAt,
-                Summary = $"Review build-tests {buildResultLabel} at {Short(commit)}{stepSuffix}",
-                Reason = buildReason,
-                ReportRef = reportRef,
+                Id = fact.AttemptId,
+                Commit = fact.Commit,
+                Result = fact.BuildResult,
+                ObservedAt = fact.ObservedAt,
+                Summary = $"Review build-tests {fact.BuildResultLabel} at {Short(fact.Commit)}{stepSuffix}",
+                Reason = fact.BuildReason,
+                ReportRef = fact.ReportRef,
             },
         };
 
-        var blockedAspects = verdictRows
+        var blockedAspects = fact.VerdictRows
             .Where(row => !row.Aspect.Equals("build-tests", StringComparison.OrdinalIgnoreCase)
                           && IsBlocking(row.Status))
             .ToList();
@@ -143,14 +197,14 @@ internal static class TaskScopedTestEvidenceReader
             sources.Add(new TaskTestEvidenceSource
             {
                 Kind = "review-aspects",
-                Id = attemptId,
-                Commit = commit,
+                Id = fact.AttemptId,
+                Commit = fact.Commit,
                 Result = "blocked",
-                ObservedAt = observedAt,
+                ObservedAt = fact.ObservedAt,
                 Summary = $"Review blocked by {NaturalList(aspectNames)}",
                 Reason = Sentence(string.Join("; ", blockedAspects.Select(row =>
                     $"{row.Aspect} blocked: {TrimSentence(row.Summary)}"))),
-                ReportRef = reportRef,
+                ReportRef = fact.ReportRef,
             });
         }
 
@@ -260,7 +314,7 @@ internal static class TaskScopedTestEvidenceReader
         || columns[0].Equals("Phase", StringComparison.OrdinalIgnoreCase)
         || columns.All(column => column.Length > 0 && column.All(ch => ch is '-' or ':'));
 
-    private static bool IsBlocking(string status) =>
+    internal static bool IsBlocking(string status) =>
         status.Equals("block", StringComparison.OrdinalIgnoreCase)
         || status.Equals("blocked", StringComparison.OrdinalIgnoreCase)
         || status.Equals("fail", StringComparison.OrdinalIgnoreCase)
@@ -354,14 +408,35 @@ internal static class TaskScopedTestEvidenceReader
         var info = new FileInfo(path);
         signature.Add($"{info.Name}:{info.Length}:{info.LastWriteTimeUtc.Ticks}");
     }
-
-    private sealed record ReviewVerdictRow(
-        string Aspect,
-        string Status,
-        string Classification,
-        string Summary);
 }
 
 internal sealed record TaskScopedTestEvidenceSnapshot(
     IReadOnlyList<TaskTestEvidenceSource> Sources,
     string Signature);
+
+/// <summary>One row of the report's <c>## Aspect verdicts</c> table.</summary>
+internal sealed record ReviewVerdictRow(
+    string Aspect,
+    string Status,
+    string Classification,
+    string Summary);
+
+/// <summary>
+/// Plain facts parsed from one <c>remote-review-grade-*.md</c> report:
+/// frontmatter plus every aspect verdict row and the derived build-tests
+/// result. The single source both <see cref="TaskScopedTestEvidenceReader"/>
+/// (Evidence tab) and <see cref="AgentStudio.Review.ReviewProjectionReader"/>
+/// (AGT-2717) build their view off, so the two review surfaces cannot
+/// disagree about what one report says.
+/// </summary>
+internal sealed record RemoteReviewAttemptFacts(
+    string AttemptId,
+    string ReportRef,
+    string Commit,
+    DateTime ObservedAt,
+    string? Outcome,
+    IReadOnlyList<ReviewVerdictRow> VerdictRows,
+    string BuildResult,
+    string BuildResultLabel,
+    string BuildReason,
+    IReadOnlyList<string> BuildSteps);

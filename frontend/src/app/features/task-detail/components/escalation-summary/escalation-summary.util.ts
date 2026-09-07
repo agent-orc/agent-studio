@@ -24,6 +24,11 @@
 import type { TaskInfo } from '../../../../models/task.model';
 import type { ReviewEvidenceEntry, ReviewEvidenceSeverity } from '../../../../models/task.model';
 import type {
+  ReviewProjectionView,
+  ReviewProjectionBlockingAspect,
+  ReviewPlane,
+} from '../../../../models/task.model';
+import type {
   CodeReviewListEntry,
   CouncilFindingAssessment,
 } from '../../../../services/task.service';
@@ -98,11 +103,24 @@ export interface EscalationDelivery {
   repositories: string[];
 }
 
-/** The single structured line that remains visible when details are closed. */
+/**
+ * The single structured line that remains visible when details are closed.
+ *
+ * AGT-2717: built from the canonical `ReviewProjectionView` (both review
+ * planes merged server-side) instead of counting `code-review-grade-*.md`
+ * entries, so a remote-only review history (e.g. AGT-2689: seven Remote
+ * Review rounds, zero local grade files) never reads as "0 review rounds ·
+ * Grade not recorded".
+ */
 export interface EscalationEssence {
   reviewRounds: number;
-  latestGrade: string | null;
-  openFindings: number;
+  latestPlane: ReviewPlane | null;
+  latestOutcome: string | null;
+  latestReceivedAt: string | null;
+  blockingAspect: ReviewProjectionBlockingAspect | null;
+  /** Null when the latest round is not from the review projection (0 rounds). */
+  buildTestsSummary: string | null;
+  deliverySummary: string | null;
   reasonClass: string;
   label: string;
 }
@@ -461,27 +479,100 @@ export function deriveReissues(events: readonly TaskTimelineEvent[]): Escalation
     });
 }
 
-/** Compose the bounded banner line from typed review, finding and timeline data. */
+/** `DD.MM. HH:mm` (UTC), matching the operator-facing timestamps already used in review reports. */
+function formatCompactTimestamp(iso: string | null): string {
+  if (!iso) return 'an unknown time';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return 'an unknown time';
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const hours = String(date.getUTCHours()).padStart(2, '0');
+  const minutes = String(date.getUTCMinutes()).padStart(2, '0');
+  return `${day}.${month}. ${hours}:${minutes}`;
+}
+
+/** One-line build/tests state for the latest review attempt, or null when there is no attempt yet. */
+function buildTestsSummaryLabel(projection: ReviewProjectionView): string | null {
+  const latest = projection.attempts[0];
+  if (!latest) return null;
+  switch (latest.buildTestsResult) {
+    case 'passed':
+      return 'build and tests pass';
+    case 'failed':
+      return latest.buildTestsReason ? `build failed: ${latest.buildTestsReason}` : 'build failed';
+    default:
+      return 'build and tests not proven';
+  }
+}
+
+/** One-line delivery-gate state, honest about "reviewed" vs. "actually landed". */
+function deliverySummaryLabel(delivery: ReviewProjectionView['delivery']): string {
+  switch (delivery.status) {
+    case 'integrated':
+      return 'in develop';
+    case 'gate-failed':
+      return 'delivery gate failed, not in develop';
+    default:
+      return 'delivery not attempted';
+  }
+}
+
+/**
+ * Compose the bounded banner line from the canonical review projection
+ * (AGT-2717): how many rounds and from which plane, the latest outcome and
+ * when it landed, the blocking aspect with its quoted reason, whether build
+ * and tests passed, and whether the reviewed work actually reached develop.
+ * Falls back to the pre-projection escalation-reason class only when the
+ * task carries no review attempt at all (e.g. an infra-crash give-up before
+ * any review ran) - "0 review rounds" never displaces a real round count.
+ */
 export function buildEscalationEssence(inputs: {
+  reviewProjection: ReviewProjectionView | null;
   codeReviews: readonly CodeReviewListEntry[];
-  gateItems: readonly EscalationGateItem[];
   timeline: readonly TaskTimelineEvent[];
   steering: SteeringInfo | null;
 }): EscalationEssence {
-  const reviewRounds = inputs.codeReviews.filter(
-    (entry) => !!entry.grade?.trim() || /^code-review-grade-/i.test(entry.fileName),
-  ).length;
-  const latestGrade = pickReviewHead(inputs.codeReviews)?.grade ?? null;
-  const openFindings = inputs.gateItems.filter((item) => !item.checked).length;
+  const projection = inputs.reviewProjection;
   const reasonClass = escalationReasonClass(inputs.timeline, inputs.steering, inputs.codeReviews);
-  const roundsLabel = reviewRounds === 1 ? '1 review round' : `${reviewRounds} review rounds`;
-  const findingsLabel = openFindings === 1 ? '1 open finding' : `${openFindings} open findings`;
+
+  if (!projection || projection.rounds === 0) {
+    return {
+      reviewRounds: 0,
+      latestPlane: null,
+      latestOutcome: null,
+      latestReceivedAt: null,
+      blockingAspect: null,
+      buildTestsSummary: null,
+      deliverySummary: null,
+      reasonClass,
+      label: `0 review rounds · ${reasonClass}`,
+    };
+  }
+
+  const roundsLabel = projection.rounds === 1 ? '1 review round' : `${projection.rounds} review rounds`;
+  const planeLabel = projection.latestPlane ? ` (${projection.latestPlane})` : '';
+  const blockingAspect = projection.blockingAspects[0] ?? null;
+  const buildTestsSummary = buildTestsSummaryLabel(projection);
+  const deliverySummary = deliverySummaryLabel(projection.delivery);
+
+  const clauses = [
+    `${roundsLabel}${planeLabel}`,
+    `latest ${formatCompactTimestamp(projection.latestReceivedAt)} ${projection.latestOutcome ?? 'unknown outcome'}`,
+    blockingAspect ? `blocked by ${blockingAspect.aspect}: ${blockingAspect.reason}` : null,
+    buildTestsSummary,
+    deliverySummary,
+  ].filter((clause): clause is string => !!clause);
+
   return {
-    reviewRounds,
-    latestGrade,
-    openFindings,
+    reviewRounds: projection.rounds,
+    latestPlane: projection.latestPlane,
+    latestOutcome: projection.latestOutcome,
+    latestReceivedAt: projection.latestReceivedAt,
+    blockingAspect,
+    buildTestsSummary,
+    deliverySummary,
     reasonClass,
-    label: `${roundsLabel} · Grade ${latestGrade ?? 'not recorded'} · ${findingsLabel} · ${reasonClass}`,
+    label: clauses.join(' · '),
   };
 }
 
@@ -544,17 +635,27 @@ export function buildDelivery(info: TaskInfo): EscalationDelivery {
  * cards carry `escalate` (the gate handed the call to a human → "Needs
  * decision"); a card that reached escalation after a reissue/accept verdict
  * maps to the corresponding steer. Null when no verdict is recorded.
+ *
+ * AGT-2717: when the review projection names a blocking aspect, the label
+ * names the concrete gap so the operator's two options - reissue with that
+ * gap fixed, or accept with an explicit override - are visible without
+ * opening the body.
  */
 export function deriveRecommendation(
   verdict: TaskInfo['orchestratorVerdict'],
+  blockingAspects: readonly ReviewProjectionBlockingAspect[] = [],
 ): EscalationRecommendation | null {
   switch (verdict) {
     case 'accept':
       return { kind: 'accept', label: 'Accept as-is', tone: 'ok' };
     case 'reissue':
       return { kind: 'reissue', label: 'Reissue', tone: 'warn' };
-    case 'escalate':
-      return { kind: 'needs-decision', label: 'Needs decision', tone: 'danger' };
+    case 'escalate': {
+      const gap = blockingAspects[0];
+      return gap
+        ? { kind: 'needs-decision', label: `Reissue for ${gap.aspect}, or accept with override`, tone: 'danger' }
+        : { kind: 'needs-decision', label: 'Needs decision', tone: 'danger' };
+    }
     default:
       return null;
   }
@@ -565,6 +666,7 @@ export function buildEscalationSummaryView(inputs: EscalationSummaryInputs): Esc
   const { items, source } = resolveGateItems(inputs);
   const delivery = buildDelivery(inputs.info);
   const reason = inputs.steering?.reason?.trim() || null;
+  const reviewProjection = inputs.info.reviewProjection ?? null;
   return {
     escalation: deriveEscalationClass(inputs),
     reason,
@@ -573,11 +675,14 @@ export function buildEscalationSummaryView(inputs: EscalationSummaryInputs): Esc
     gateSource: source,
     review: pickReviewHead(inputs.codeReviews),
     delivery,
-    recommendation: deriveRecommendation(inputs.info.orchestratorVerdict),
+    recommendation: deriveRecommendation(
+      inputs.info.orchestratorVerdict,
+      reviewProjection?.blockingAspects ?? [],
+    ),
     reissues: deriveReissues(inputs.timeline),
     essence: buildEscalationEssence({
+      reviewProjection,
       codeReviews: inputs.codeReviews,
-      gateItems: items,
       timeline: inputs.timeline,
       steering: inputs.steering,
     }),
