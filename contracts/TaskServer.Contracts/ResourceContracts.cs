@@ -25,7 +25,9 @@ public sealed record TaskDto(
     long Version,
     DateTime CreatedAt,
     DateTime UpdatedAt,
-    string? Body = null);
+    string? Body = null,
+    string? ArchiveState = null,
+    DateTime? ArchivedAt = null);
 
 public sealed record RunDto(
     string RunId,

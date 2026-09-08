@@ -24,12 +24,7 @@ public sealed class RetentionPlanner
             var taskDays = heavyRule.ArchiveTaskAfterDaysTerminal;
             if (taskDays.HasValue && age >= TimeSpan.FromDays(taskDays.Value))
             {
-                var stageTwo = task.Files.Where(file =>
-                        file.Classification.ArtifactClass is ArtifactClass.Evidence or ArtifactClass.HeavyWorkingData
-                        && !string.Equals(file.RelativePath, "status.md", StringComparison.OrdinalIgnoreCase)
-                        && !file.RelativePath.StartsWith("retention-excerpt", StringComparison.OrdinalIgnoreCase)
-                        && !string.Equals(file.RelativePath, "archive-manifest.json", StringComparison.OrdinalIgnoreCase))
-                    .ToList();
+                var stageTwo = SelectStageTwoFiles(task.Files);
                 Add(actions, RetentionActionKind.ArchiveTask, heavyRule.Id, task, stageTwo, 2,
                     $"terminal for at least {taskDays.Value} days");
                 continue;
@@ -63,6 +58,26 @@ public sealed class RetentionPlanner
         }
 
         return new RetentionPlan(now, policy.Version, actions);
+    }
+
+    /// <summary>
+    /// Stage 2 leaves the compact task stub hot. SQLite artifact keys have run and artifact prefixes, so the
+    /// comparison deliberately uses the final path segment rather than assuming a file-tree relative path.
+    /// </summary>
+    public static List<RetentionFile> SelectStageTwoFiles(IEnumerable<RetentionFile> files)
+        => files.Where(file =>
+                file.Classification.ArtifactClass is ArtifactClass.Evidence or ArtifactClass.HeavyWorkingData
+                && !IsStubFile(file.RelativePath))
+            .ToList();
+
+    private static bool IsStubFile(string relativePath)
+    {
+        var normalized = relativePath.Replace('\\', '/');
+        var name = normalized[(normalized.LastIndexOf('/') + 1)..];
+        return string.Equals(name, "status.md", StringComparison.OrdinalIgnoreCase)
+               || name.StartsWith("retention-excerpt", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(name, "archive-manifest.json", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(name, "manifest.json", StringComparison.OrdinalIgnoreCase);
     }
 
     private static void PlanRuntime(

@@ -6,7 +6,10 @@ public enum TaskServerCommandKind
     Version,
     Backup,
     Retention,
+    FullBackup,
 }
+
+public sealed record FullBackupCommandLine(string Operation, string? BackupId, bool Json);
 
 public sealed record RetentionCommandLine(
     string Operation,
@@ -16,13 +19,15 @@ public sealed record RetentionCommandLine(
     string? Project,
     string? Task,
     string? OutputPath,
-    bool Json);
+    bool Json,
+    string? Store = null);
 
 public sealed record TaskServerCommandLine(
     TaskServerCommandKind Kind,
     string? BackupName,
     string[] HostArguments,
-    RetentionCommandLine? Retention = null)
+    RetentionCommandLine? Retention = null,
+    FullBackupCommandLine? FullBackup = null)
 {
     public const string RetentionUsage = """
         Usage:
@@ -33,6 +38,14 @@ public sealed record TaskServerCommandLine(
           task-server retention backup-full --workspace <path> --out <backup-root> [--json]
           task-server retention verify-full --out <backup-directory> [--json]
           task-server retention restore-full --workspace <empty-path> --out <backup-directory> [--json]
+
+          task-server retention plan --store <STORE_PATH> [--project <project>] [--task <key>] [--json]
+          task-server retention apply --store <STORE_PATH> [--project <project>] [--task <key>] [--json]
+          task-server retention restore --store <STORE_PATH> --task <key> [--json]
+
+          task-server backup full [--TaskServer:DataDirectory <path>] [--json]
+          task-server backup verify-full <backup-id> [--TaskServer:DataDirectory <path>] [--json]
+          task-server backup restore-full <backup-id> [--TaskServer:DataDirectory <path>] [--json]
         """;
 
     public static TaskServerCommandLine Parse(string[] args)
@@ -43,6 +56,24 @@ public sealed record TaskServerCommandLine(
             return ParseRetention(args);
         if (args.Length == 0 || !string.Equals(args[0], "backup", StringComparison.OrdinalIgnoreCase))
             return new TaskServerCommandLine(TaskServerCommandKind.Serve, null, args);
+
+        if (args.Length > 1 && args[1] is "full" or "verify-full" or "restore-full")
+        {
+            var operation = args[1];
+            string? backupId = null;
+            var json = false;
+            var hostArgs = new List<string>();
+            for (var index = 2; index < args.Length; index++)
+            {
+                if (string.Equals(args[index], "--json", StringComparison.OrdinalIgnoreCase)) { json = true; continue; }
+                if (backupId is null && !args[index].StartsWith("--", StringComparison.Ordinal)) { backupId = args[index]; continue; }
+                hostArgs.Add(args[index]);
+            }
+            if (operation is "verify-full" or "restore-full" && string.IsNullOrWhiteSpace(backupId))
+                throw new ArgumentException($"backup {operation} requires a backup id.");
+            return new TaskServerCommandLine(
+                TaskServerCommandKind.FullBackup, null, hostArgs.ToArray(), FullBackup: new FullBackupCommandLine(operation, backupId, json));
+        }
 
         string? name = null;
         var hostArguments = new List<string>();
@@ -71,7 +102,7 @@ public sealed record TaskServerCommandLine(
         var operation = args[1].ToLowerInvariant();
         if (operation is not ("plan" or "apply" or "restore" or "re-excerpt" or "backup-full" or "verify-full" or "restore-full"))
             throw new ArgumentException($"Unknown retention operation '{args[1]}'.");
-        string? workspace = null, archive = null, project = null, task = null, output = null;
+        string? workspace = null, archive = null, project = null, task = null, output = null, store = null;
         var policy = "default";
         var json = false;
         for (var index = 2; index < args.Length; index++)
@@ -88,11 +119,15 @@ public sealed record TaskServerCommandLine(
                 case "--project": project = value; break;
                 case "--task": task = value; break;
                 case "--out": output = value; break;
+                case "--store": store = value; break;
                 default: throw new ArgumentException($"Unknown retention option '{args[index - 1]}'.");
             }
         }
-        if (operation is ("plan" or "apply" or "restore" or "re-excerpt" or "backup-full") && string.IsNullOrWhiteSpace(workspace))
-            throw new ArgumentException($"retention {operation} requires --workspace.");
+        if (operation is ("plan" or "apply" or "restore" or "re-excerpt")
+            && string.IsNullOrWhiteSpace(workspace) && string.IsNullOrWhiteSpace(store))
+            throw new ArgumentException($"retention {operation} requires --workspace or --store.");
+        if (operation == "backup-full" && string.IsNullOrWhiteSpace(workspace))
+            throw new ArgumentException("retention backup-full requires --workspace.");
         if (operation == "restore" && string.IsNullOrWhiteSpace(task))
             throw new ArgumentException("retention restore requires --task.");
         if (operation is ("backup-full" or "verify-full" or "restore-full") && string.IsNullOrWhiteSpace(output))
@@ -100,6 +135,6 @@ public sealed record TaskServerCommandLine(
         if (operation == "restore-full" && string.IsNullOrWhiteSpace(workspace))
             throw new ArgumentException("retention restore-full requires --workspace as the empty destination.");
         return new TaskServerCommandLine(TaskServerCommandKind.Retention, null, [],
-            new RetentionCommandLine(operation, workspace, policy, archive, project, task, output, json));
+            new RetentionCommandLine(operation, workspace, policy, archive, project, task, output, json, store));
     }
 }

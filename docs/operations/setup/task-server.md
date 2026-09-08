@@ -16,7 +16,7 @@ in [networked Task Server](networked-task-server.md).
 | Package | Runtime responsibility | Durable data |
 |---|---|---|
 | `contracts/TaskServer.Contracts` | Versioned resource, runner, review, event, artifact, management, and compatibility DTOs | None |
-| `task-server` | Stable identities, tasks, runs, immutable review subjects, review attempts, reports, events, artifacts, audit, migrations, backup/restore, leases, fences, and management API | Its configured data directory only |
+| `task-server` | Stable identities, tasks, runs, immutable review subjects, review attempts, reports, events, artifacts, audit, migrations, backup/restore, full backup sets, retention policy and scheduled archive sweeps, leases, fences, and management API | Its configured data directory only |
 | `studio-bff` | Optional stateless same-origin proxy for Agent Studio | None |
 | `runner` | Separately registered coding and review services, host probes, Git worktrees, CLI and review processes, bounded execution, and durable result delivery through protocol 2 | Host worktrees, fsynced outboxes, and bounded transfer state only |
 
@@ -236,6 +236,107 @@ dotnet task-server.dll retention verify-full --out /srv/backups/full/20260907T01
 dotnet task-server.dll retention restore-full --workspace /srv/empty-restored-workspace --out /srv/backups/full/20260907T010203000Z
 ```
 
+## Retention against the SQLite store
+
+After the Phase B cutover the same classifier, planner, and executor
+(`retention/`) run against the server's own tables through
+`SqliteRetentionStore` instead of the file tree. Class A rows (`tasks`,
+`events`, `leases`, `audit`, `review_attempts`) are never enumerated by the
+adapter, so an archive or restore run can never touch them. Class B and C data
+is the `artifacts` table: each row's `name` (for example
+`logs/cli-output.log`, `status.md`) is classified exactly like a file-tree
+path. `retention_policies` holds the workspace defaults and per-project
+overrides as JSON rule sets; `archive_manifests` holds one row per task with
+every archive stage (payload path, SHA-256, and per-file hashes) so a restore
+can replay them in order; `archive_runs` holds one row per plan or apply with
+its full report. `tasks.archive_state` and `archived_at` are set only once a
+whole task reaches stage 2, so a task list does not need to join
+`archive_manifests` to show a stub.
+
+Archiving a heavy file clears `artifacts.content` to `NULL` and sets
+`archived = 1`; the row keeps its `sha256` and `size_bytes`. A content read on
+an archived artifact,
+`GET /api/v1/runs/{runId}/artifacts/{artifactId}/content`, returns HTTP 409
+`artifact-archived` with the archived task's id, key, and manifest URL instead
+of an empty body. Restoring rewrites the content back and re-verifies every
+file's hash before clearing `archived`.
+
+Management routes, all under `/api/v1/management/retention`:
+
+| Route | Purpose | Scope |
+|---|---|---|
+| `GET`/`PUT /policy` | Read or version-guarded write of the workspace policy (all four artifact classes required on write) | `tasks:read` / `management` |
+| `GET`/`PUT`/`DELETE /policy/projects/{projectId}` | Read, write, or reset one project's rule overrides (partial rule sets allowed) | `tasks:read` / `management` |
+| `POST /plan` | Dry run; returns the plan and records an `archive_runs` row in mode `plan` | `management` |
+| `POST /apply` | Runs now; skips tasks with an active or process-unknown lease; refused with `server-not-writable` in `ReadOnly` and `Maintenance` | `management` |
+| `GET /runs`, `GET /runs/{id}` | Run history with the full report | `tasks:read` |
+| `GET /archive/{taskId}` | Manifest for an archived task (accepts a task id or task key) | `tasks:read` |
+| `POST /archive/{taskId}` | Archive one task now, bypassing the age thresholds | `management` |
+| `POST /archive/{taskId}/restore` | Restore, with every file hash re-verified | `management` |
+
+`RetentionSchedulerHostedService` mirrors `ResultRefGcHostedService`: a
+`PeriodicTimer` checks once per configured hour (default 03:00 UTC,
+`TaskServer:RetentionScheduleHourUtc`) and runs at most once per day. It skips
+while the server is `Draining`, `ReadOnly`, or `Maintenance`, or while
+`AuthorityReady` is false. A scheduled run records the same `archive_runs` row
+as a manual apply, plus a distinct `retention.run.completed` audit action so
+the Studio feed can tell an automatic sweep from an operator-triggered one. A
+failed sweep is logged and never stops the server.
+
+The legacy migration import
+(`POST /api/v1/management/migrations/legacy/import`) runs the active policy
+against the freshly imported inventory before returning, so heavy data already
+past the archive threshold lands directly in the cold archive instead of
+sitting hot; `LegacyMigrationResult.ArchivedTasks` and `.ArchivedBytes` report
+what moved.
+
+The retention CLI gains a `--store <STORE_PATH>` option for `plan`, `apply`,
+and `restore`, pointing at a Task Server data directory instead of a workspace
+checkout. It opens the store the same way `backup` does (authority restored
+without the process-unknown restart quarantine, since a retention pass over an
+offline copy must not mutate lease or fence state):
+
+```bash
+dotnet task-server.dll retention plan --store /srv/agent-orchestrator/data --json
+dotnet task-server.dll retention apply --store /srv/agent-orchestrator/data --project AGT --json
+dotnet task-server.dll retention restore --store /srv/agent-orchestrator/data --task AGT-2744
+```
+
+## Full backup sets
+
+`POST /api/v1/management/backups/full` builds a self-contained set under
+`BACKUP_PATH/full/<backup-id>/`: the same verified SQLite snapshot
+`POST /api/v1/management/backups` produces (`snapshot.db`), every cold archive
+payload the current `archive_manifests` rows reference (`cold/`), an analysis
+export (`export/`), `inventory.json` (schema version 1: `files[]` with
+`relativePath`/`size`/`sha256`, `taskCount`, `coldPayloadCount`, `totalBytes`,
+`setSha256`, and `warnings[]` for any referenced payload that could not be
+found), and `complete.json` written last. `GET /backups/full` lists sets from
+their `inventory.json`/`complete.json` pair; `POST /backups/full/{id}/verify`
+recomputes every hash; `POST /backups/full/{id}/restore` requires
+`Maintenance` mode, restores the snapshot through the same path as
+`POST /management/restore`, and copies the cold payloads back onto the
+configured `ARCHIVE_PATH`. Restore does not rewrite manifest payload paths, so
+it only supports restoring onto the same `ARCHIVE_PATH` the set was created
+from; a cross-host restore is a follow-up.
+
+The export is versioned JSONL, one file per entity: `tasks.jsonl` (task id,
+key, project, lane, archive state, timestamps), `runs.jsonl` (run id, task id,
+status, runner id, timestamps), `reviews.jsonl` (attempt id, subject id,
+status, outcome, timestamps). `runs.jsonl` reserves `model`, `durationSeconds`,
+and `tokens` fields for a future schema version; today's schema does not track
+per-run model or token cost, so those fields are always `null` rather than
+estimated. The set is designed to be read by DuckDB or a notebook without a
+running Task Server.
+
+CLI:
+
+```bash
+dotnet task-server.dll backup full --TaskServer:DataDirectory /srv/agent-orchestrator/data
+dotnet task-server.dll backup verify-full <backup-id> --TaskServer:DataDirectory /srv/agent-orchestrator/data
+dotnet task-server.dll backup restore-full <backup-id> --TaskServer:DataDirectory /srv/agent-orchestrator/data
+```
+
 `backup-full` writes `workspace.bundle`, untracked evidence, referenced cold
 manifests and payloads, then `inventory.json`, and writes `complete.json` last.
 `inventory.json` schema version 1 contains `createdAt`, `workspaceName`,
@@ -277,6 +378,11 @@ settings.
 | `TaskServer:PrincipalRotationOverlapSeconds` | Default period during which the old credential remains valid after rotation | `300` |
 | `TaskServer:MaximumPrincipalRotationOverlapSeconds` | Maximum accepted rotation overlap | `3600` |
 | `TaskServer:RequireAuthentication`, `StudioBearerToken`, `RunnerBearerToken` | Deprecated compatibility profile mapped into persisted principals; removal follows Phase B migration | unset |
+| `TaskServer:RetentionArchivePath` | Cold archive root for the SQLite retention adapter, outside `STORE_PATH` | `<STORE_PATH>/archive` |
+| `TaskServer:RetentionSchedulerEnabled` | Enables the daily archive sweep | `true` |
+| `TaskServer:RetentionScheduleHourUtc` | UTC hour the scheduler checks once per day | `3` |
+| `TaskServer:RetentionSchedulerIntervalMinutes` | Poll interval for the scheduler's daily-hour check | `60` |
+| `TaskServer:BackupPathFull` | Full backup set root | `<BACKUP_PATH>/full` |
 
 - Configure at most one direct value or file for each bootstrap principal.
 - `GET /api/v1/protocol` and `POST /api/v1/protocol/compatibility` remain open

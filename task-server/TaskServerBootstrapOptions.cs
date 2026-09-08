@@ -11,6 +11,7 @@ public sealed class TaskServerBootstrapOptions
         string listenUrl,
         string storePath,
         string backupPath,
+        string archivePath,
         string authenticationMode,
         string? authenticationToken,
         string? studioAuthenticationToken,
@@ -23,6 +24,7 @@ public sealed class TaskServerBootstrapOptions
         ListenUrl = listenUrl;
         StorePath = storePath;
         BackupPath = backupPath;
+        ArchivePath = archivePath;
         AuthenticationMode = authenticationMode;
         AuthenticationToken = authenticationToken;
         StudioAuthenticationToken = studioAuthenticationToken;
@@ -36,6 +38,7 @@ public sealed class TaskServerBootstrapOptions
     public string ListenUrl { get; }
     public string StorePath { get; }
     public string BackupPath { get; }
+    public string ArchivePath { get; }
     public string AuthenticationMode { get; }
     public string? AuthenticationToken { get; }
     public string? StudioAuthenticationToken { get; }
@@ -65,6 +68,9 @@ public sealed class TaskServerBootstrapOptions
         var backupPath = FirstOrNull(
             configuration["BACKUP_PATH"],
             configuration[$"{TaskServerOptions.SectionName}:BackupDirectory"]);
+        var archivePath = FirstOrNull(
+            configuration["ARCHIVE_PATH"],
+            configuration[$"{TaskServerOptions.SectionName}:RetentionArchivePath"]);
         var authenticationMode = First(
                 configuration["AUTH"],
                 configuration["AUTH_MODE"],
@@ -159,6 +165,9 @@ public sealed class TaskServerBootstrapOptions
             backupPath is null
                 ? Path.Combine(resolvedStorePath, "backups")
                 : ResolvePath(backupPath),
+            archivePath is null
+                ? Path.Combine(resolvedStorePath, "archive")
+                : ResolvePath(archivePath),
             authenticationMode,
             token,
             studioToken,
