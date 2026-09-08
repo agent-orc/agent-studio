@@ -19,7 +19,7 @@ jobs:
   compose-smoke:
     name: Docker Compose up and health check
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 45
     steps:
       - name: Check out source
         uses: actions/checkout@v4

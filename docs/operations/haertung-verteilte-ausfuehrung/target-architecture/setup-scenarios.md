@@ -10,13 +10,16 @@ Docker Compose is the only new-user installation path documented for Agent
 Studio. The exact start command is:
 
 ```sh
-docker compose up --build --wait
+docker compose up --wait
 ```
 
-The user clones only `agent-orc/agent-studio`. The container builds resolve the
-published `coding-agent-chat` npm package and all .NET dependencies themselves.
-The user does not install .NET or Node.js, create local application settings,
-set maintainer-only switches, or place another repository at a relative path.
+Since AGT-2729, the default services pull pinned per-service release images
+(see [Container images](../../setup/task-server.md#container-images)) instead
+of building locally; `--build` only applies to the `dev` profile a source
+contributor opts into. The user still clones only `agent-orc/agent-studio` (or
+downloads just `docker-compose.yml`). The user does not install .NET or
+Node.js, create local application settings, set maintainer-only switches, or
+place another repository at a relative path.
 
 The detailed walkthrough is
 [Getting started](../../setup/getting-started.md).
