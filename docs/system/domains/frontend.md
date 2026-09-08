@@ -408,6 +408,14 @@ without a parallel surface.
   summary. It does not own project onboarding or a project-source catalogue.
   Legacy CLI-admin and usage links resolve to the CLI Management section at
   `#/workspace/settings/caps`.
+- The Retention destination at `#/workspace/settings/retention` owns the
+  versioned workspace rule table, dry-run and explicit apply reports, run
+  history, and full-backup controls. Project Settings mounts the same rule
+  table for sparse overrides. Archived task detail remains navigable from the
+  board, global search, and dossier history, then renders the cold manifest and
+  hot Markdown excerpts in Docs with one restore action. All retention traffic
+  uses `/api/v1/management/retention` and `/api/v1/management/backups/full`, so
+  the Orchestrator proxy and direct Task Server deployment share one frontend.
 - The Execution Hosts destination at `#/workspace/settings/execution-hosts`
   uses one sortable machine row for status, load, activity, and exact release
   identity. Coding and Review runner processes advertised with the same host id

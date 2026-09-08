@@ -1,0 +1,87 @@
+<section class="rules" data-testid="retention-rules">
+  @if (loading()) {
+    <p class="rules__state" data-testid="retention-rules-loading">Loading retention rules…</p>
+  } @else if (error() && !workspacePolicy()) {
+    <p class="rules__state rules__state--error" role="alert">{{ error() }}</p>
+  } @else {
+    @if (message()) { <p class="rules__message" data-testid="retention-rules-message">{{ message() }}</p> }
+    @if (error()) { <p class="rules__message rules__message--error" role="alert">{{ error() }}</p> }
+    <div class="rules__scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Class</th>
+            <th>Contains</th>
+            <th>Hot cap / file</th>
+            <th>Hot budget / task</th>
+            <th>Archive after terminal</th>
+            <th>Delete after</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (row of rows; track row.id) {
+            @if (ruleFor(row.artifactClass); as rule) {
+              <tr [attr.data-testid]="'retention-rule-' + row.id">
+                <td class="rules__identity">
+                  <strong>{{ row.classLabel }}</strong>
+                  <span>{{ row.stageLabel }}</span>
+                  <span class="rules__badge">{{ sourceLabel(row) }}</span>
+                </td>
+                <td>{{ row.contents }}</td>
+                <td class="rules__metric">
+                  @if (editingRow() === row.id && row.id === 'full') {
+                    <label><span>Cap (MiB)</span><input type="number" min="1" [value]="mib(draft()!.hotCapBytesPerFile)" (input)="setMib('hotCapBytesPerFile', $any($event.target).value)" /></label>
+                    <label><span>Refuse (MiB)</span><input type="number" min="1" max="95" [value]="mib(draft()!.refuseAboveBytes)" (input)="setMib('refuseAboveBytes', $any($event.target).value)" /></label>
+                  } @else if (row.id === 'full') {
+                    {{ bytes(rule.hotCapBytesPerFile) }}
+                    <small>Refuse above {{ bytes(rule.refuseAboveBytes) }}</small>
+                  } @else { <span class="rules__unknown">–</span> }
+                </td>
+                <td class="rules__metric">
+                  @if (editingRow() === row.id && row.id === 'full') {
+                    <label><span>Budget (MiB)</span><input type="number" min="1" [value]="mib(draft()!.hotBudgetBytesPerTask)" (input)="setMib('hotBudgetBytesPerTask', $any($event.target).value)" /></label>
+                  } @else if (row.id === 'full') { {{ bytes(rule.hotBudgetBytesPerTask) }} }
+                  @else { <span class="rules__unknown">–</span> }
+                </td>
+                <td class="rules__metric">
+                  @if (editingRow() === row.id && (row.id === 'thinned' || row.id === 'stub' || row.id === 'evidence')) {
+                    <label><span>Days</span><input type="number" min="7"
+                      [value]="row.id === 'thinned' ? draft()!.archiveAfterDaysTerminal : draft()!.archiveTaskAfterDaysTerminal"
+                      (input)="setDays(row.id === 'thinned' ? 'archiveAfterDaysTerminal' : 'archiveTaskAfterDaysTerminal', $any($event.target).value)" /></label>
+                  } @else if (row.id === 'thinned') { {{ days(rule.archiveAfterDaysTerminal) }} }
+                  @else if (row.id === 'stub' || row.id === 'evidence') { {{ days(rule.archiveTaskAfterDaysTerminal) }} }
+                  @else { <span class="rules__unknown">–</span> }
+                </td>
+                <td class="rules__metric">
+                  @if (editingRow() === row.id && row.id === 'runtime') {
+                    <label><span>Days</span><input type="number" min="7" [value]="draft()!.deleteAfterDays" (input)="setDays('deleteAfterDays', $any($event.target).value)" /></label>
+                  } @else if (editingRow() === row.id && row.id === 'cold-delete') {
+                    <label class="rules__check"><input type="checkbox" [checked]="draft()!.deleteArchiveEnabled" (change)="setColdDeleteEnabled($any($event.target).checked)" /><span>Enabled</span></label>
+                    <label><span>Days</span><input type="number" min="7" [disabled]="!draft()!.deleteArchiveEnabled" [value]="draft()!.deleteArchiveAfterDaysTerminal" (input)="setDays('deleteArchiveAfterDaysTerminal', $any($event.target).value)" /></label>
+                  } @else if (row.id === 'runtime') { {{ days(rule.deleteAfterDays) }} }
+                  @else if (row.id === 'cold-delete') { {{ rule.deleteArchiveEnabled ? days(rule.deleteArchiveAfterDaysTerminal) : 'Off' }} }
+                  @else { <span class="rules__unknown">–</span> }
+                </td>
+                <td class="rules__actions">
+                  @if (row.id === 'keep') {
+                    <span class="rules__fixed">Fixed</span>
+                  } @else if (editingRow() === row.id) {
+                    <button type="button" data-testid="retention-rule-save" [disabled]="saving() || !!validationError(row)" (click)="save(row)">Save</button>
+                    <button type="button" class="rules__secondary" [disabled]="saving()" (click)="cancelEdit()">Cancel</button>
+                    @if (validationError(row); as validation) { <small class="rules__validation">{{ validation }}</small> }
+                  } @else {
+                    <button type="button" [attr.data-testid]="'retention-rule-edit-' + row.id" [disabled]="saving()" (click)="beginEdit(row)">Edit</button>
+                    @if (isProject() && hasProjectOverride(row.artifactClass)) {
+                      <button type="button" class="rules__secondary" [attr.data-testid]="'retention-rule-reset-' + row.id" [disabled]="saving()" (click)="reset(row)">Reset</button>
+                    }
+                  }
+                </td>
+              </tr>
+            }
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+</section>

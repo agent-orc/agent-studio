@@ -18,6 +18,7 @@ import { OrchestratorLogicPanelComponent, PromptAdminPanelComponent } from '../.
 import { AppearanceSettingsComponent } from '../../../studio-shell/components/appearance-settings/appearance-settings.component';
 import { UpdatesSettingsComponent } from '../../../update';
 import { WorkspaceManagementComponent } from '../workspace-management/workspace-management.component';
+import { RetentionAdminComponent } from '../../../retention';
 import type { TaskScreenshot } from '../../../../features/screenshots';
 import { ModalStackService } from '../../../../services/modal-stack.service';
 import { OverlayPortalDirective } from '../../../../directives/overlay-portal.directive';
@@ -82,6 +83,7 @@ interface SettingsRailItem {
     AppearanceSettingsComponent,
     UpdatesSettingsComponent,
     WorkspaceManagementComponent,
+    RetentionAdminComponent,
     SectionHeaderComponent,
     TreeRowComponent,
     StudioIconComponent,
@@ -124,6 +126,7 @@ export class WorkspaceOverlaysComponent {
     { key: 'cli-paths', label: 'CLI paths', description: 'Where each CLI lives on disk: executable path and known project roots.', icon: 'link', group: 'workspace' },
     { key: 'working-memory', label: 'Working memory', description: 'Per-CLI memory and session state. Auth stays protected.', icon: 'book', group: 'workspace' },
     { key: 'prompts', label: 'System prompts', description: 'Application-wide runtime prompt defaults and overrides.', icon: 'code', group: 'workspace' },
+    { key: 'retention', label: 'Retention', description: 'Artifact rules, previews, archive runs, and full backups.', icon: 'archive', group: 'workspace' },
     { key: 'tokens', label: 'Token usage', description: 'The single usage area: token spend across every project.', icon: 'activity', group: 'workspace' },
     { key: 'screenshots', label: 'Visual evidence', description: 'Screenshots captured by tasks across all projects.', icon: 'eye', group: 'workspace' },
   ];
@@ -188,6 +191,7 @@ export class WorkspaceOverlaysComponent {
       case 'cli-sessions': return 'cli-sessions-overlay';
       case 'cli-paths': return 'cli-paths-overlay';
       case 'prompts': return 'prompt-admin-overlay';
+      case 'retention': return 'workspace-retention-overlay';
       case 'tokens': return 'workspace-tokens-overlay';
       case 'screenshots': return 'workspace-screenshots-overlay';
       case 'appearance': return 'workspace-appearance-overlay';

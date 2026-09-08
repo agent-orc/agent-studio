@@ -36,6 +36,7 @@ export type WorkspaceSettingsSection =
   | 'cli-paths'
   | 'working-memory'
   | 'prompts'
+  | 'retention'
   | 'tokens'
   | 'screenshots';
 
@@ -215,6 +216,7 @@ export class WorkspaceOverlaysService {
       case '/workspace/settings/cli-paths': return 'cli-paths';
       case '/workspace/settings/prompts':
       case '/workspace/prompts': return 'prompts';
+      case '/workspace/settings/retention': return 'retention';
       case '/workspace/settings/appearance': return 'appearance';
       case '/workspace/settings/updates': return 'updates';
       case '/workspace/settings/workspaces': return 'workspaces';
@@ -251,6 +253,7 @@ export class WorkspaceOverlaysService {
       case 'cli-sessions': return '/workspace/settings/cli-sessions';
       case 'cli-paths': return '/workspace/settings/cli-paths';
       case 'prompts': return '/workspace/settings/prompts';
+      case 'retention': return '/workspace/settings/retention';
       case 'appearance': return '/workspace/settings/appearance';
       case 'updates': return '/workspace/settings/updates';
       case 'workspaces': return '/workspace/settings/workspaces';
@@ -268,6 +271,7 @@ export class WorkspaceOverlaysService {
     '/workspace/settings/cli-sessions',
     '/workspace/settings/cli-paths',
     '/workspace/settings/prompts',
+    '/workspace/settings/retention',
     '/workspace/settings/appearance',
     '/workspace/settings/updates',
     '/workspace/settings/workspaces',

@@ -182,6 +182,34 @@ public class TaskIndexCacheTests : IDisposable
     }
 
     [Fact]
+    public void ScanArchivedJobs_ProjectsColdMarkerFromArchiveManifest()
+    {
+        WriteJob(TaskStates.Archive, "archived-cold", "Cold archive");
+        File.WriteAllText(Path.Combine(_watchPath, TaskStates.Archive, "archived-cold", "archive-manifest.json"), "{}");
+
+        var archived = Assert.Single(_scanner.ScanArchivedJobs());
+
+        Assert.Equal("cold", archived.ArchiveState);
+        Assert.Equal("cold", ArchivedTaskInfo.From(archived).ArchiveState);
+    }
+
+    [Fact]
+    public void ScanArchivedJobs_ProjectsRestoredMarkerFromArchiveManifest()
+    {
+        WriteJob(TaskStates.Archive, "archived-restored", "Restored archive");
+        var manifestPath = Path.Combine(_watchPath, TaskStates.Archive, "archived-restored", "archive-manifest.json");
+        File.WriteAllText(manifestPath, "{}");
+
+        Assert.Equal("cold", Assert.Single(_scanner.ScanArchivedJobs()).ArchiveState);
+
+        File.WriteAllText(manifestPath, """{"restoredAt":"2026-09-08T12:00:00Z"}""");
+
+        var archived = Assert.Single(_scanner.ScanArchivedJobs());
+
+        Assert.Equal("hot-restored", archived.ArchiveState);
+    }
+
+    [Fact]
     public void ScanArchivedJobs_PicksUpNewArchivedFolder_AfterInvalidate()
     {
         WriteJob(TaskStates.Archive, "archived-1", "First");

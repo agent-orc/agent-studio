@@ -164,6 +164,11 @@
         defaults above.
       </p>
     </header>
+    @if (projectId(); as id) {
+      <div data-testid="project-retention-rules">
+        <app-retention-rules-table scope="project" [projectId]="id" />
+      </div>
+    }
     <div class="ps-settings__execution-grid">
       <app-execution-assignment-card [projectName]="projectName()" />
       <article class="ps-settings__card ps-settings__card--wiki-source"

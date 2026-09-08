@@ -1,4 +1,5 @@
 using AgentStudio.TaskServer.Contracts;
+using Microsoft.Extensions.Options;
 
 namespace AgentStudio.TaskServer;
 
@@ -576,6 +577,15 @@ public static class TaskServerEndpoints
         retention.MapGet("/runs", async (RetentionManagementService retentionManagement, CancellationToken ct)
             => await InvokeAsync(() => retentionManagement.ListRunsAsync(ct)))
             .RequireTaskServerScope(TaskServerScopes.TasksRead);
+        retention.MapGet("/schedule", (IOptions<TaskServerOptions> options, TimeProvider clock) =>
+        {
+            var enabled = options.Value.RetentionSchedulerEnabled;
+            var hour = Math.Clamp(options.Value.RetentionScheduleHour, 0, 23);
+            var now = clock.GetLocalNow();
+            var next = new DateTimeOffset(now.Year, now.Month, now.Day, hour, 0, 0, now.Offset);
+            if (next <= now) next = next.AddDays(1);
+            return Results.Ok(new RetentionScheduleDto(enabled, hour, enabled ? next : null));
+        }).RequireTaskServerScope(TaskServerScopes.TasksRead);
         retention.MapGet("/runs/{runId}", async (string runId, RetentionManagementService retentionManagement, CancellationToken ct)
             => await InvokeNullableAsync(() => retentionManagement.GetRunAsync(runId, ct)))
             .RequireTaskServerScope(TaskServerScopes.TasksRead);

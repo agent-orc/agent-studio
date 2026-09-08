@@ -111,6 +111,7 @@ export class PromptPaneComponent {
   readonly weight = input<number>(1);
   readonly isRunning = input(false);
   readonly jobId = input<string | null>(null);
+  readonly archived = input(false);
   readonly watchPath = input<string | null>(null);
   readonly availableModels = input<readonly CliModelInfo[]>([]);
   /** Optimistic CLI + model values forwarded to the Overview tab's badge

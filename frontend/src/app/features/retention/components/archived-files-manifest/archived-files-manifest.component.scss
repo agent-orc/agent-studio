@@ -1,0 +1,11 @@
+:host { display: block; }
+.cold-files { border-block: 1px solid var(--studio-border); color: var(--studio-fg-muted); padding-block: var(--studio-space-3); }
+header { align-items: start; display: flex; gap: var(--studio-space-3); justify-content: space-between; }
+h3 { color: var(--studio-fg-strong); font-size: var(--studio-font-size-sm); margin: 0; }
+p { font-size: var(--studio-font-size-xs); margin: var(--studio-spacing-1) 0 0; }
+.cold-files__state { background: var(--studio-bg-subtle); border-radius: var(--studio-radius-sm); font-size: var(--studio-font-size-xs); padding: var(--studio-spacing-1) var(--studio-spacing-2); }
+.cold-files__scroll { margin-top: var(--studio-space-2); overflow-x: auto; }
+table { border-collapse: collapse; font-size: var(--studio-font-size-xs); width: 100%; }
+th, td { border-top: 1px solid var(--studio-border); padding: var(--studio-space-2); text-align: left; }
+th { color: var(--studio-fg-muted); font-weight: 500; }
+code { color: var(--studio-fg-dim); font-size: 10px; }

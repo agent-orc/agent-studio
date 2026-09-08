@@ -67,6 +67,7 @@ import {
   gitToggleTooltip, isCliErrorMessage, rateLimitTooltip, stateLabel,
 } from './services/task-detail-formatters';
 import { taskDetailShortcutTargetAllowed, taskNavigationOwnsFocus } from './task-detail-keyboard.util';
+import { ArchivedTaskNoticeComponent } from '../retention/components/archived-task-notice/archived-task-notice.component';
 
 import { TooltipDirective } from 'coding-agent-chat/shared';
 @Component({
@@ -85,6 +86,7 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
     DetailHeaderComponent,
     TaskLiveStatusComponent,
     PaneToggleBarComponent,
+    ArchivedTaskNoticeComponent,
     TooltipDirective,
   ],
   providers: [
@@ -101,12 +103,7 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
     CliOutputPollService,
     TaskArtifactsService,
   ],
-  // Cycle 7b: OnPush. The detail panel mounts seven polling services
-  // (claude session, session events, run timeline, screenshots,
-  // git pane, cli output, hygiene strip) plus the protocol/log/git
-  // panes; each poll tick used to trigger a default-CD pass over the
-  // whole subtree. Signals already mark themselves dirty, so OnPush
-  // prunes the unrelated work without changing behavior.
+  // Polling services use signals, so OnPush prunes unrelated detail work.
   changeDetection: ChangeDetectionStrategy.OnPush,
   // Keep styles global to this subtree so the still-inline class rules
   // (.pane*, .detail*, .inspector*, .notes-panel*, .sidebar-card*, …)

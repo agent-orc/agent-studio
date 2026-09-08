@@ -55,7 +55,12 @@ public class TaskScannerService : ITaskScanner
     private readonly ConcurrentDictionary<string, LiveFolderSnapshot> _liveFolders =
         new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
 
-    private sealed record ArchivedFolderSnapshot(long TaskJsonLength, DateTime TaskJsonWriteUtc, TaskInfo Task);
+    private sealed record ArchivedFolderSnapshot(
+        long TaskJsonLength,
+        DateTime TaskJsonWriteUtc,
+        long ArchiveManifestLength,
+        DateTime ArchiveManifestWriteUtc,
+        TaskInfo Task);
 
     private sealed record LiveFolderFingerprint(
         long TaskJsonLength, DateTime TaskJsonWriteUtc,
@@ -63,7 +68,8 @@ public class TaskScannerService : ITaskScanner
         DateTime LogsDirWriteUtc, DateTime ResultsDirWriteUtc, DateTime AttachmentsDirWriteUtc,
         DateTime StatusMdWriteUtc,
         long CliOutputLength, DateTime CliOutputWriteUtc,
-        long SessionEventsLength, DateTime SessionEventsWriteUtc);
+        long SessionEventsLength, DateTime SessionEventsWriteUtc,
+        long ArchiveManifestLength, DateTime ArchiveManifestWriteUtc);
 
     private sealed record LiveFolderSnapshot(LiveFolderFingerprint Fingerprint, TaskInfo Task);
 
@@ -136,6 +142,24 @@ public class TaskScannerService : ITaskScanner
             callerMemberName,
             callerFilePath);
         _statsMetadataCache?.Invalidate();
+    }
+
+    private static string? ReadArchiveState(string jobDir)
+    {
+        var path = Path.Combine(jobDir, "archive-manifest.json");
+        if (!File.Exists(path)) return null;
+        try
+        {
+            using var manifest = JsonDocument.Parse(File.ReadAllText(path));
+            return manifest.RootElement.TryGetProperty("restoredAt", out var restoredAt)
+                   && restoredAt.ValueKind is not JsonValueKind.Null and not JsonValueKind.Undefined
+                ? "hot-restored"
+                : "cold";
+        }
+        catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
     }
 
     public List<WatchPathEntry> GetWatchPaths()
@@ -541,12 +565,15 @@ public class TaskScannerService : ITaskScanner
         // the archive and live memos below reuse it without re-hitting the disk.
         var taskJsonInfo = new FileInfo(jobJsonPath);
         if (!taskJsonInfo.Exists) return null;
+        var archiveManifestInfo = new FileInfo(Path.Combine(jobDir, "archive-manifest.json"));
 
         try
         {
             if (_archivedFolders.TryGetValue(jobDir, out var archived)
                 && archived.TaskJsonLength == taskJsonInfo.Length
-                && archived.TaskJsonWriteUtc == taskJsonInfo.LastWriteTimeUtc)
+                && archived.TaskJsonWriteUtc == taskJsonInfo.LastWriteTimeUtc
+                && archived.ArchiveManifestLength == (archiveManifestInfo.Exists ? archiveManifestInfo.Length : -1L)
+                && archived.ArchiveManifestWriteUtc == (archiveManifestInfo.Exists ? archiveManifestInfo.LastWriteTimeUtc : default))
             {
                 return archived.Task;
             }
@@ -635,6 +662,7 @@ public class TaskScannerService : ITaskScanner
                 Title = raw.TryGetProperty("title", out var title) ? title.GetString() ?? "" : "",
                 AcceptanceScope = ReadAcceptanceScope(raw),
                 State = resolvedState,
+                ArchiveState = ReadArchiveState(jobDir),
                 Order = raw.TryGetProperty("order", out var ord) && ord.TryGetInt32(out var orderVal) ? orderVal : 999,
                 Agent = raw.TryGetProperty("agent", out var agent) ? agent.GetString() ?? "" : "",
                 CreatedAt = raw.TryGetProperty("createdAt", out var created) && created.TryGetDateTime(out var dt) ? dt : File.GetCreationTime(jobJsonPath),
@@ -702,9 +730,12 @@ public class TaskScannerService : ITaskScanner
             if (isArchive)
             {
                 taskJsonInfo.Refresh();
+                archiveManifestInfo.Refresh();
                 _archivedFolders[jobDir] = new ArchivedFolderSnapshot(
                     taskJsonInfo.Length,
                     taskJsonInfo.LastWriteTimeUtc,
+                    archiveManifestInfo.Exists ? archiveManifestInfo.Length : -1L,
+                    archiveManifestInfo.Exists ? archiveManifestInfo.LastWriteTimeUtc : default,
                     info);
                 _liveFolders.TryRemove(jobDir, out _);
             }
@@ -2000,9 +2031,10 @@ public class TaskScannerService : ITaskScanner
     /// <summary>
     /// Cheap folder fingerprint that gates the live-folder fast path. Covers
     /// exactly the stats <see cref="GetLastActivityTime"/> pays plus the lengths
-    /// of the two tail-scanned logs, so a matching fingerprint guarantees the
-    /// parsed <c>task.json</c>, the <c>cli-output.log</c>/<c>session-events.jsonl</c>
-    /// tails, and the derived last-activity time are all unchanged. Marker files
+    /// of the two tail-scanned logs and the cold-archive manifest, so a matching
+    /// fingerprint guarantees the parsed <c>task.json</c>, the
+    /// <c>cli-output.log</c>/<c>session-events.jsonl</c> tails, archive state,
+    /// and the derived last-activity time are all unchanged. Marker files
     /// are intentionally excluded — they are re-applied per scan. The passed
     /// <paramref name="taskJsonInfo"/> is reused so task.json is not re-stat'd.
     /// </summary>
@@ -2011,6 +2043,7 @@ public class TaskScannerService : ITaskScanner
         var cliOutput = StatFile(TaskPaths.CliOutputLog(jobDir));
         var sessionEvents = StatFile(TaskPaths.SessionEventsLog(jobDir));
         var statusMd = StatFile(Path.Combine(jobDir, "status.md"));
+        var archiveManifest = StatFile(Path.Combine(jobDir, "archive-manifest.json"));
 
         return new LiveFolderFingerprint(
             taskJsonInfo.Length, taskJsonInfo.LastWriteTimeUtc,
@@ -2020,7 +2053,8 @@ public class TaskScannerService : ITaskScanner
             StatDir(Path.Combine(jobDir, "attachments")),
             statusMd.WriteUtc,
             cliOutput.Length, cliOutput.WriteUtc,
-            sessionEvents.Length, sessionEvents.WriteUtc);
+            sessionEvents.Length, sessionEvents.WriteUtc,
+            archiveManifest.Length, archiveManifest.WriteUtc);
 
         // One stat per path; a missing file/dir yields a stable sentinel so its
         // later appearance flips the fingerprint and forces a re-parse.

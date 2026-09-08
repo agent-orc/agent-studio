@@ -279,6 +279,7 @@ export interface TaskInfo {
   displayKey?: string | null;
   title: string;
   state: string;
+  archiveState?: string | null;
   /** Explicit content approval used only by dependsOn edges with releaseGate=true. */
   released?: boolean;
   order: number;
@@ -1162,6 +1163,7 @@ export interface ArchivedTaskInfo {
   taskType: string;
   cliType?: string | null;
   agent: string;
+  archiveState?: string | null;
 }
 
 /**

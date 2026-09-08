@@ -1,0 +1,37 @@
+<section class="history" data-testid="retention-run-history">
+  <p class="history__schedule" data-testid="retention-schedule">{{ scheduleText() }}</p>
+  @if (error()) { <p class="history__error" role="alert">{{ error() }}</p> }
+  @if (loading() && runs().length === 0) {
+    <p class="history__empty">Loading run history…</p>
+  } @else if (runs().length === 0) {
+    <p class="history__empty">No retention runs have been recorded.</p>
+  } @else {
+    <div class="history__scroll"><table>
+      <thead><tr><th>Time</th><th>Trigger</th><th>Mode</th><th>Counts</th><th>Bytes</th><th>Duration</th><th>Actor</th><th>Result</th><th></th></tr></thead>
+      <tbody>
+        @for (run of runs(); track run.id) {
+          <tr data-testid="retention-history-row">
+            <td class="history__number">{{ date(run.startedAt) }}</td>
+            <td>{{ run.trigger }}</td>
+            <td>{{ run.mode }}</td>
+            <td class="history__number">{{ run.actionCount }}</td>
+            <td class="history__number">{{ bytes(run.appliedBytes) }}</td>
+            <td class="history__number">{{ duration(run) }}</td>
+            <td>{{ run.actorId }}</td>
+            <td>{{ result(run) }}</td>
+            <td><button type="button" [attr.data-testid]="'retention-history-toggle-' + run.id" [attr.aria-expanded]="expandedRunId() === run.id" (click)="toggle(run)">{{ expandedRunId() === run.id ? 'Hide' : 'Report' }}</button></td>
+          </tr>
+          @if (expandedRunId() === run.id) {
+            <tr class="history__detail" data-testid="retention-history-detail"><td colspan="9">
+              @if (details()[run.id]; as detail) {
+                @if (detail.errors.length) { <p class="history__error">{{ detail.errors.join(' · ') }}</p> }
+                @if (detail.warnings.length) { <p class="history__warning">{{ detail.warnings.join(' · ') }}</p> }
+                <app-retention-report-table [plan]="detail.plan" />
+              } @else { <p class="history__empty">Loading report…</p> }
+            </td></tr>
+          }
+        }
+      </tbody>
+    </table></div>
+  }
+</section>

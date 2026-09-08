@@ -514,7 +514,7 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
       key: item.key ?? null,
       title: item.title,
       state: item.state,
-      watchPath: item.watchPath,
+      archiveState: item.archiveState ?? null, watchPath: item.watchPath,
       projectName: item.projectName,
       agent: item.agent,
       cliType: (item.cliType ?? null) as CliType | null,
@@ -540,7 +540,7 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
     if (item.agent) lines.push(`Agent: ${item.agent}${item.cliType ? ` (${item.cliType})` : ''}`);
     else if (item.cliType) lines.push(`CLI: ${item.cliType}`);
     lines.push('');
-    lines.push(`Archived: ${this.formatLongDate(item.enteredLaneAt)}`);
+    lines.push(`Archived: ${this.formatLongDate(item.enteredLaneAt)}`); if (item.archiveState && item.archiveState !== 'hot-restored') lines.push('Storage: cold');
     lines.push(`Last activity: ${this.formatLongDate(item.lastActivity)}`);
     if (item.commitCount > 0) {
       lines.push('');

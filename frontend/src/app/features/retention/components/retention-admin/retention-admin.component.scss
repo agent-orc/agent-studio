@@ -1,0 +1,19 @@
+:host { display: block; min-width: 0; }
+.retention { display: flex; flex-direction: column; gap: var(--studio-spacing-5); color: var(--studio-fg); }
+.retention__head { display: flex; align-items: center; justify-content: space-between; padding-bottom: var(--studio-spacing-3); border-bottom: 1px solid var(--studio-border-strong); }
+h2, h3, p { margin: 0; }
+h2 { color: var(--studio-fg-strong); font-size: 1.05rem; }
+h3 { color: var(--studio-fg-strong); font-size: 0.9rem; }
+header p { max-width: 76ch; margin-top: var(--studio-spacing-1); color: var(--studio-fg-dim); font-size: 0.78rem; }
+.retention__section { display: flex; flex-direction: column; gap: var(--studio-spacing-2); min-width: 0; }
+.retention__section + .retention__section { padding-top: var(--studio-spacing-3); border-top: 1px solid var(--studio-border); }
+.retention__section-head { display: flex; align-items: end; justify-content: space-between; gap: var(--studio-spacing-3); }
+.retention__actions { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-1); }
+button { min-height: var(--studio-row-min-h-interactive); padding: var(--studio-spacing-1) var(--studio-spacing-3); border: 1px solid var(--studio-accent); border-radius: 4px; background: var(--studio-accent); color: var(--studio-on-accent); font: inherit; cursor: pointer; }
+button:disabled { cursor: not-allowed; opacity: 0.55; }
+.retention__secondary { border-color: var(--studio-border-strong); background: transparent; color: var(--studio-fg); }
+.retention__summary { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-3); min-height: var(--studio-row-min-h-interactive); align-items: center; padding: var(--studio-row-pad-block) var(--studio-row-pad-inline); background: var(--studio-surface-muted); color: var(--studio-fg); font-size: 0.78rem; font-variant-numeric: tabular-nums; }
+.retention__summary strong { color: var(--studio-fg-strong); }
+.retention__error, .retention__warning { color: var(--severity-high); font-size: 0.78rem; }
+.retention__warning { color: var(--severity-medium); }
+@media (max-width: 760px) { .retention__section-head { align-items: stretch; flex-direction: column; } }
