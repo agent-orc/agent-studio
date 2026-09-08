@@ -326,3 +326,32 @@ public record ClientDetail
     /// <summary>Up to ten most recent job ids attributed to this client (newest first).</summary>
     public List<string> RecentJobIds { get; init; } = [];
 }
+
+/// <summary>Body for <c>POST /api/clients/retired/purge</c>.</summary>
+public record PurgeRetiredClientsRequest
+{
+    /// <summary>Case-insensitive id/display-name prefix filter (e.g. "e2e-"). Null or empty matches every retired client.</summary>
+    public string? Prefix { get; init; }
+
+    /// <summary>True (the default) only previews the candidates; false actually deletes the eligible ones.</summary>
+    public bool DryRun { get; init; } = true;
+}
+
+/// <summary>One retired identity considered by a purge sweep, with its eligibility.</summary>
+public record PurgeRetiredClientCandidate
+{
+    public string Id { get; init; } = "";
+    public string DisplayName { get; init; } = "";
+    public bool Eligible { get; init; }
+    public string? RefusalReason { get; init; }
+    /// <summary>True only on an applied (non-dry-run) purge that deleted this candidate.</summary>
+    public bool Deleted { get; init; }
+}
+
+/// <summary>Result of <c>POST /api/clients/retired/purge</c>, dry-run or applied.</summary>
+public record PurgeRetiredClientsResponse
+{
+    public bool DryRun { get; init; }
+    public IReadOnlyList<PurgeRetiredClientCandidate> Candidates { get; init; } = [];
+    public int DeletedCount { get; init; }
+}

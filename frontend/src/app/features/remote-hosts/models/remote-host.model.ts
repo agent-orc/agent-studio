@@ -261,6 +261,34 @@ export interface RemoteRunnerLinkHealth {
   keeper: TunnelKeeperHealth | null;
 }
 
+/** One retired identity considered by a purge sweep. Mirrors the backend's `PurgeRetiredClientCandidate`. */
+export interface PurgeRetiredClientCandidate {
+  id: string;
+  displayName: string;
+  eligible: boolean;
+  refusalReason: string | null;
+  /** True only once an applied (non-dry-run) purge actually deleted this candidate. */
+  deleted: boolean;
+}
+
+/** Result of `POST /api/clients/retired/purge`, dry-run or applied. */
+export interface PurgeRetiredClientsResponse {
+  dryRun: boolean;
+  candidates: readonly PurgeRetiredClientCandidate[];
+  deletedCount: number;
+}
+
+/** Human-readable label for a purge candidate's refusal code. */
+export function purgeRefusalLabel(reason: string | null): string {
+  switch (reason) {
+    case 'client-must-be-retired-before-delete': return 'Not retired';
+    case 'client-online': return 'Still online';
+    case 'client-has-active-lease': return 'Active lease';
+    case 'client-attempt-process-unknown': return 'Attempt outcome unknown';
+    default: return reason ?? 'Blocked';
+  }
+}
+
 export interface RemoteRunnerReconnectResponse {
   runnerId: string;
   succeeded: boolean;

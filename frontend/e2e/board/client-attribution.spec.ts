@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { api, BACKEND } from '../helpers/api';
+import { cleanupE2eClients, registerE2eClient, type ClientSummary } from '../helpers/e2e-clients';
 
 /**
  * Client identity + per-task attribution.
@@ -14,14 +15,6 @@ import { api, BACKEND } from '../helpers/api';
  *   only in the pre-studio-shell layout (vsCodeLayout=0); the shipping default
  *   layout exposes the same filter as an owner radio list in the activity-bar.
  */
-
-interface ClientSummary {
-  id: string;
-  displayName: string;
-  emoji: string | null;
-  colour: string | null;
-  kind: string;
-}
 
 interface WatchPath { name: string; path: string; rootPath: string; }
 
@@ -42,10 +35,7 @@ async function ensureWatchPath(): Promise<WatchPath> {
 }
 
 async function registerClient(displayName: string, emoji: string, colour: string): Promise<ClientSummary> {
-  return api<ClientSummary>('/api/clients/register', {
-    method: 'POST',
-    body: JSON.stringify({ displayName, emoji, colour, kind: 'human' })
-  });
+  return registerE2eClient(displayName, { emoji, colour, kind: 'human' });
 }
 
 test.describe('Client identity + attribution', () => {
@@ -178,16 +168,8 @@ test.describe('Client identity + attribution', () => {
       } catch { /* ignore */ }
     }
 
-    // 2. Best-effort cleanup of the e2e-owner clients. Soft-delete only;
-    //    historical attribution is preserved by design, so the records stay
-    //    (kind=retired) and the next run re-uses the same ids.
-    const all = await api<ClientSummary[]>('/api/clients/');
-    for (const c of all) {
-      if (c.id.startsWith(TEST_PREFIX) && c.kind !== 'retired') {
-        try {
-          await api(`/api/clients/${c.id}`, { method: 'DELETE' });
-        } catch { /* ignore */ }
-      }
-    }
+    // 2. Retire and permanently delete the e2e-owner clients so they never
+    //    accumulate as retired Execution Hosts history (AGT-2748).
+    await cleanupE2eClients(TEST_PREFIX);
   });
 });

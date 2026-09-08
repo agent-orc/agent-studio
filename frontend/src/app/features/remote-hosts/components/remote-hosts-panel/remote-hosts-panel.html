@@ -14,6 +14,14 @@
         <span aria-hidden="true">+</span>
         <span>Add execution host</span>
       </button>
+      @if (retiredCount()) {
+        <button class="rh__refresh"
+                type="button"
+                data-testid="remote-hosts-purge-retired"
+                (click)="openPurgeRetired()">
+          <span>Delete retired…</span>
+        </button>
+      }
       <button class="rh__refresh"
             type="button"
             data-testid="remote-hosts-refresh"
@@ -182,6 +190,10 @@
 
   @if (wizardOpen()) {
     <app-add-host-wizard (cancelled)="closeWizard()" (completed)="completeWizard($event)" />
+  }
+
+  @if (purgeRetiredOpen()) {
+    <app-purge-retired-hosts-dialog (closed)="closePurgeRetired()" />
   }
 
   @if (setupHost(); as host) {

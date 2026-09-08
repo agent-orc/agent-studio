@@ -1,0 +1,94 @@
+<app-dialog eyebrow="Execution hosts"
+            title="Delete retired…"
+            subtitle="Permanently remove retired identities whose id or name starts with a prefix."
+            role="dialog"
+            kind="danger"
+            testid="purge-retired-dialog"
+            (closeRequest)="closed.emit()">
+  @switch (phase()) {
+    @case ('form') {
+      <label class="field">
+        <span>Name prefix</span>
+        <input type="text"
+               data-testid="purge-retired-prefix"
+               [ngModel]="prefix()"
+               (ngModelChange)="setPrefix($event)"
+               placeholder="e2e-" />
+      </label>
+    }
+    @case ('previewing') {
+      <div class="empty">Loading retired clients matching "{{ prefix() }}"…</div>
+    }
+    @case ('error') {
+      <div class="empty empty--error" data-testid="purge-retired-error">{{ errorText() }}</div>
+    }
+    @case ('preview') {
+      @if (candidates().length === 0) {
+        <div class="empty" data-testid="purge-retired-empty">No retired clients match "{{ prefix() }}".</div>
+      } @else {
+        <ul class="list" data-testid="purge-retired-list">
+          @for (candidate of candidates(); track candidate.id) {
+            <li class="row" [class.row--blocked]="!candidate.eligible" [attr.data-testid]="'purge-retired-row-' + candidate.id">
+              <span class="row__name">{{ candidate.displayName }}</span>
+              <code class="row__id">{{ candidate.id }}</code>
+              @if (candidate.eligible) {
+                <span class="row__state row__state--ok">Eligible</span>
+              } @else {
+                <span class="row__state row__state--blocked">{{ refusalLabel(candidate.refusalReason) }}</span>
+              }
+            </li>
+          }
+        </ul>
+      }
+    }
+    @case ('purging') {
+      <div class="empty">Deleting {{ eligibleCount() }} client(s)…</div>
+    }
+    @case ('report') {
+      <div class="report" data-testid="purge-retired-report">
+        <p class="report__line"><strong>{{ deletedCount() }}</strong> deleted.</p>
+        @if (blockedCandidates().length) {
+          <ul class="list">
+            @for (candidate of blockedCandidates(); track candidate.id) {
+              <li class="row row--blocked">
+                <span class="row__name">{{ candidate.displayName }}</span>
+                <span class="row__state row__state--blocked">{{ refusalLabel(candidate.refusalReason) }}</span>
+              </li>
+            }
+          </ul>
+        }
+      </div>
+    }
+  }
+  <ng-container footer>
+    @switch (phase()) {
+      @case ('form') {
+        <div>
+          <button class="btn btn--ghost" (click)="closed.emit()">Cancel</button>
+          <button class="btn" data-testid="purge-retired-preview" (click)="preview()">Preview</button>
+        </div>
+      }
+      @case ('preview') {
+        <div>
+          <button class="btn btn--ghost" (click)="backToForm()">Back</button>
+          <button class="btn btn--danger"
+                  data-testid="purge-retired-confirm"
+                  [disabled]="eligibleCount() === 0"
+                  (click)="confirmPurge()">
+            Delete {{ eligibleCount() }} eligible
+          </button>
+        </div>
+      }
+      @case ('error') {
+        <div>
+          <button class="btn" (click)="backToForm()">Retry</button>
+        </div>
+      }
+      @case ('report') {
+        <div>
+          <button class="btn" data-testid="purge-retired-close" (click)="closed.emit()">Close</button>
+        </div>
+      }
+    }
+  </ng-container>
+</app-dialog>

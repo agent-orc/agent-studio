@@ -1400,6 +1400,141 @@ test.describe('Execution Hosts settings section', () => {
     await page.screenshot({ path: join(SHOT_DIR, 'remote-host-slots-stale-light--mocked.png'), fullPage: false });
   });
 
+  test('retired groups keep identical row geometry to online groups, with only the tint changed (ADM-03)', async ({ page, devBackend: _devBackend }) => {
+    void _devBackend;
+    await stubGroupedHostApis(page);
+    await page.goto('/#/workspace/settings/execution-hosts');
+    await page.getByTestId('remote-hosts-retired-filter').click();
+    await expect(page.getByTestId('remote-host-role-row').filter({ hasText: 'e2e-retired-' })).toHaveCount(4);
+
+    const geometry = await page.evaluate(() => {
+      const rows = Array.from(
+        document.querySelectorAll('[data-testid="remote-hosts-table"] tbody tr'),
+      ) as HTMLTableRowElement[];
+      return rows.map(row => {
+        const td = row.querySelector('td')!;
+        return {
+          testid: row.getAttribute('data-testid'),
+          retired: row.closest('tbody')?.getAttribute('data-retired'),
+          left: td.getBoundingClientRect().left,
+          background: getComputedStyle(td).backgroundColor,
+        };
+      });
+    });
+
+    // Every row's first cell starts at the exact same x offset - no per-row-type
+    // shift between a machine row and its role row(s), retired or online.
+    expect(new Set(geometry.map(row => row.left)).size).toBe(1);
+
+    // A retired group's machine row shares its role row's tint: one calm band
+    // per group instead of alternating page-background / muted-role shades.
+    const retiredMachine = geometry.find(row => row.testid === 'remote-host-primary-row' && row.retired === 'true');
+    const retiredRole = geometry.find(row => row.testid === 'remote-host-role-row' && row.retired === 'true');
+    expect(retiredMachine?.background).toBeTruthy();
+    expect(retiredMachine?.background).toBe(retiredRole?.background);
+
+    // The online group's machine row deliberately keeps the plain background -
+    // only its role rows carry the muted tint - so retired and online groups
+    // are visibly distinct kinds of rows, not just a coincidence of this fixture.
+    const onlineMachine = geometry.find(row => row.testid === 'remote-host-primary-row' && row.retired !== 'true');
+    const onlineRole = geometry.find(row => row.testid === 'remote-host-role-row' && row.retired !== 'true');
+    expect(onlineMachine?.background).not.toBe(onlineRole?.background);
+
+    await setTheme(page, 'light');
+    await page.screenshot({ path: join(SHOT_DIR, 'retired-groups-separator-light--mocked.png'), fullPage: false });
+    await setTheme(page, 'dark');
+    await page.screenshot({ path: join(SHOT_DIR, 'retired-groups-separator-dark--mocked.png'), fullPage: false });
+  });
+
+  test('capability admission renders one column of hairline rows, not tiles (ADM-01/ADM-03)', async ({ page, devBackend: _devBackend }) => {
+    void _devBackend;
+    await stubGroupedHostApis(page);
+    await page.goto('/#/workspace/settings/execution-hosts');
+    const machine = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' }).first();
+    await expandHost(machine);
+
+    const columns = await machine.getByTestId('remote-host-capability-health').locator('.health__list')
+      .evaluate(el => getComputedStyle(el).gridTemplateColumns.trim().split(/\s+/).length);
+    expect(columns).toBe(1);
+
+    const connectionSection = machine.getByTestId('remote-host-detail-section-connection');
+    await connectionSection.scrollIntoViewIfNeeded();
+    await setTheme(page, 'dark');
+    await page.screenshot({ path: join(SHOT_DIR, 'expanded-detail-flat-dark--mocked.png'), fullPage: false });
+    await setTheme(page, 'light');
+    await page.screenshot({ path: join(SHOT_DIR, 'expanded-detail-flat-light--mocked.png'), fullPage: false });
+  });
+
+  test('deletes one retired runner from its role-row menu; the row disappears without a reload', async ({ page, devBackend: _devBackend }) => {
+    void _devBackend;
+    await stubGroupedHostApis(page);
+    await page.goto('/#/workspace/settings/execution-hosts');
+    await page.getByTestId('remote-hosts-retired-filter').click();
+
+    let deleteCalled = false;
+    await page.route('**/api/clients/e2e-retired-1/permanent', route => {
+      deleteCalled = true;
+      return route.fulfill({ status: 204 });
+    });
+    // A reload would re-list every host; fail loudly if the row removal relies on it.
+    await page.route('**/api/clients', route => route.abort(), { times: 1 });
+
+    const row = page.getByTestId('remote-host-role-row').filter({ hasText: 'e2e-retired-1' });
+    await row.getByTestId('remote-host-action-delete').click();
+
+    await expect(page.getByTestId('remote-host-confirm')).toBeVisible();
+    await expect(page.getByTestId('remote-host-confirm')).toContainText('e2e-retired-1');
+    await page.getByTestId('remote-host-confirm-submit').click();
+
+    await expect(page.getByTestId('remote-host-role-row').filter({ hasText: 'e2e-retired-1' })).toHaveCount(0);
+    await expect(page.getByTestId('remote-hosts-retired-filter')).toContainText('3');
+    expect(deleteCalled).toBe(true);
+  });
+
+  test('purges retired hosts by prefix from the toolbar dry-run dialog', async ({ page, devBackend: _devBackend }) => {
+    void _devBackend;
+    await stubGroupedHostApis(page);
+    await page.goto('/#/workspace/settings/execution-hosts');
+
+    await page.route('**/api/clients/retired/purge', async route => {
+      const body = route.request().postDataJSON() as { prefix: string; dryRun: boolean };
+      const candidates = [1, 2, 3, 4].map(n => ({
+        id: `e2e-retired-${n}`,
+        displayName: `e2e-retired-${n}`,
+        eligible: true,
+        refusalReason: null,
+        deleted: !body.dryRun,
+      }));
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          dryRun: body.dryRun,
+          candidates,
+          deletedCount: body.dryRun ? 0 : candidates.length,
+        }),
+      });
+    });
+
+    await page.getByTestId('remote-hosts-purge-retired').click();
+    await expect(page.getByTestId('purge-retired-dialog')).toBeVisible();
+    await expect(page.getByTestId('purge-retired-prefix')).toHaveValue('e2e-');
+    await setTheme(page, 'light');
+    await page.screenshot({ path: join(SHOT_DIR, 'purge-retired-dialog-light--mocked.png') });
+    await setTheme(page, 'dark');
+    await page.screenshot({ path: join(SHOT_DIR, 'purge-retired-dialog-dark--mocked.png') });
+
+    await page.getByTestId('purge-retired-preview').click();
+    await expect(page.getByTestId('purge-retired-list').locator('li')).toHaveCount(4);
+
+    await page.getByTestId('purge-retired-confirm').click();
+    await expect(page.getByTestId('purge-retired-report')).toContainText('4');
+    await page.getByTestId('purge-retired-close').click();
+
+    // Every retired host was purged: the header's retired-filter toggle disappears.
+    await expect(page.getByTestId('remote-hosts-retired-filter')).toHaveCount(0);
+  });
+
   test('deep-link opens the Execution Hosts section directly', async ({ page }) => {
     await page.goto('/#/workspace/settings/execution-hosts');
     await page.waitForLoadState('domcontentloaded');

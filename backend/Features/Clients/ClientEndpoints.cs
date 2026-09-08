@@ -131,13 +131,106 @@ public static class ClientEndpoints
                 : Results.Ok(ClientSummary.From(updated));
         });
 
-        clients.MapDelete("/{id}/permanent", (string id, ClientIdentityStore store) =>
+        clients.MapDelete("/{id}/permanent", (
+            string id,
+            HttpContext context,
+            ClientIdentityStore store,
+            TaskScannerService scanner,
+            RunLeaseService leases,
+            AgentMessageBusBridge bus,
+            ILogger<ClientIdentityStore> logger) =>
         {
             if (string.Equals(id, DefaultClientIdentity.Id, StringComparison.OrdinalIgnoreCase))
                 return Results.BadRequest(new { error = "default-identity-cannot-be-deleted" });
-            return store.PermanentlyDelete(id)
-                ? Results.NoContent()
-                : Results.BadRequest(new { error = "client-must-be-retired-before-delete" });
+
+            var identity = store.Find(id);
+            if (identity is null) return Results.NotFound(new { error = "client-not-found" });
+
+            var attempts = InspectClientAttempts(id, scanner, leases);
+            var decision = ClientDeletionPolicy.Evaluate(identity, attempts.HasActiveLease, attempts.HasUnresolvedAttempt);
+            if (!decision.Allowed)
+            {
+                var body = new { error = decision.RefusalCode, message = decision.Message };
+                return decision.Refusal == ClientDeletionRefusal.NotRetired
+                    ? Results.BadRequest(body)
+                    : Results.Conflict(body);
+            }
+
+            if (!store.PermanentlyDelete(id))
+                return Results.BadRequest(new { error = "client-must-be-retired-before-delete" });
+
+            var actor = context.Request.Headers["X-Client-Id"].ToString();
+            logger.LogInformation(
+                "client-permanently-deleted id={Id} displayName={DisplayName} actor={Actor}",
+                id, identity.DisplayName, string.IsNullOrWhiteSpace(actor) ? "unknown" : actor);
+            _ = bus.EmitClientLifecycleAsync(
+                id,
+                "client-permanently-deleted",
+                $"{identity.DisplayName} ({id}) was permanently deleted by {(string.IsNullOrWhiteSpace(actor) ? "unknown" : actor)}.",
+                new { actor, displayName = identity.DisplayName });
+            return Results.NoContent();
+        });
+
+        // Bulk cleanup for retired leftovers (e2e runs leave many behind).
+        // A dry run (the default) never mutates state; it only reports which
+        // candidates are eligible so an operator can preview before applying.
+        clients.MapPost("/retired/purge", (
+            PurgeRetiredClientsRequest? request,
+            HttpContext context,
+            ClientIdentityStore store,
+            TaskScannerService scanner,
+            RunLeaseService leases,
+            AgentMessageBusBridge bus,
+            ILogger<ClientIdentityStore> logger) =>
+        {
+            var prefix = request?.Prefix?.Trim();
+            var dryRun = request?.DryRun ?? true;
+            var actor = context.Request.Headers["X-Client-Id"].ToString();
+
+            var retired = store.ListAll()
+                .Where(client => client.Kind == ClientIdentityKind.Retired)
+                .Where(client => !string.Equals(client.Id, DefaultClientIdentity.Id, StringComparison.OrdinalIgnoreCase))
+                .Where(client => string.IsNullOrEmpty(prefix)
+                    || client.Id.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+                    || client.DisplayName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            var candidates = new List<PurgeRetiredClientCandidate>(retired.Count);
+            var deletedCount = 0;
+            foreach (var client in retired)
+            {
+                var attempts = InspectClientAttempts(client.Id, scanner, leases);
+                var decision = ClientDeletionPolicy.Evaluate(client, attempts.HasActiveLease, attempts.HasUnresolvedAttempt);
+                var deleted = false;
+                if (decision.Allowed && !dryRun && store.PermanentlyDelete(client.Id))
+                {
+                    deleted = true;
+                    deletedCount++;
+                    logger.LogInformation(
+                        "client-permanently-deleted id={Id} displayName={DisplayName} actor={Actor} via=purge",
+                        client.Id, client.DisplayName, string.IsNullOrWhiteSpace(actor) ? "unknown" : actor);
+                    _ = bus.EmitClientLifecycleAsync(
+                        client.Id,
+                        "client-permanently-deleted",
+                        $"{client.DisplayName} ({client.Id}) was purged by {(string.IsNullOrWhiteSpace(actor) ? "unknown" : actor)}.",
+                        new { actor, displayName = client.DisplayName, via = "purge", prefix });
+                }
+                candidates.Add(new PurgeRetiredClientCandidate
+                {
+                    Id = client.Id,
+                    DisplayName = client.DisplayName,
+                    Eligible = decision.Allowed,
+                    RefusalReason = decision.Allowed ? null : decision.RefusalCode,
+                    Deleted = deleted,
+                });
+            }
+
+            return Results.Ok(new PurgeRetiredClientsResponse
+            {
+                DryRun = dryRun,
+                Candidates = candidates,
+                DeletedCount = deletedCount,
+            });
         });
 
         clients.MapGet("/{id}/telemetry", (string id, string? window, ClientIdentityStore identities, HostTelemetryStore telemetry) =>
@@ -291,6 +384,35 @@ public static class ClientEndpoints
                 DefaultThinkingLevel = updated.DefaultThinkingLevel
             });
         });
+    }
+
+    /// <summary>
+    /// Scans in-progress tasks for a run lease bound to this client id, the
+    /// same technique <see cref="LeaseEndpoints"/> uses to count a host's
+    /// occupancy. A still-live lease refuses deletion outright; an expired
+    /// but never-released lease is this backend's analogue of the standalone
+    /// Task Server's <c>process-unknown</c> lease state (the last known
+    /// attempt's process fate was never confirmed).
+    /// </summary>
+    private static (bool HasActiveLease, bool HasUnresolvedAttempt) InspectClientAttempts(
+        string clientId, TaskScannerService scanner, RunLeaseService leases)
+    {
+        var hasActiveLease = false;
+        var hasUnresolvedAttempt = false;
+        foreach (var task in scanner.ScanAllJobs())
+        {
+            if (task.Fixture || task.State != TaskStates.Progress) continue;
+            var key = task.Key ?? task.TaskKey ?? task.Id;
+            if (string.IsNullOrWhiteSpace(key)) continue;
+            var inspection = leases.Inspect(key);
+            if (inspection.Lease is null) continue;
+            var matches = string.Equals(inspection.Lease.ClientId, clientId, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(inspection.Lease.RunnerId, clientId, StringComparison.OrdinalIgnoreCase);
+            if (!matches) continue;
+            if (inspection.State == "active") hasActiveLease = true;
+            else if (inspection.State == "expired") hasUnresolvedAttempt = true;
+        }
+        return (hasActiveLease, hasUnresolvedAttempt);
     }
 
     private static ClientSummary DiagnosticSummary(ClientIdentityFileDiagnostic diagnostic) => new()
