@@ -195,6 +195,7 @@
         "src/app/components/task-live-status/task-live-status.component.scss",
         "src/app/components/tooltip/tooltip.scss",
         "src/app/features/board/components/create-task-dialog/create-task-dialog.component.scss",
+        "src/app/features/task-server/components/archive-retention-card/archive-retention-card.scss",
         "src/app/features/board/components/active-board-filters/active-board-filters.component.scss",
         "src/app/features/board/components/model-routing-suggestion/model-routing-suggestion.component.scss",
         "src/app/features/board/components/post-processing-activity/post-processing-activity.component.scss",

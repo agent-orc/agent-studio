@@ -7,7 +7,7 @@ using Microsoft.Data.Sqlite;
 namespace AgentStudio.TaskServer;
 
 /// <summary>Thin application boundary over the retention policy, plan/apply, run history, and archive routes.</summary>
-public sealed class RetentionManagementService(TaskServerStore store)
+public sealed class RetentionManagementService(TaskServerStore store, ITaskServerEventPublisher? events = null)
 {
     public Task<RetentionPolicyDto> GetWorkspacePolicyAsync(CancellationToken ct) => store.GetWorkspaceRetentionPolicyDtoAsync(ct);
 
@@ -37,6 +37,21 @@ public sealed class RetentionManagementService(TaskServerStore store)
 
     public Task<RetentionArchiveManifestDto?> GetManifestAsync(string taskIdentity, CancellationToken ct) => store.GetRetentionManifestAsync(taskIdentity, ct);
 
+    public Task<ArchiveTargetStatusDto> GetTargetStatusAsync(CancellationToken ct) => store.GetArchiveTargetStatusAsync(ct);
+
+    public async Task<RetentionIntegrityCheckResultDto> CheckIntegrityAsync(
+        RetentionIntegrityCheckRequest request, string actorId, string trigger, CancellationToken ct)
+    {
+        var result = await store.CheckArchiveIntegrityAsync(request.SampleCount, actorId, trigger, ct);
+        if (events is not null)
+            await events.PublishAsync(new TaskServerOperationalEvent(
+                result.Discrepancies.Count == 0 ? "retention.integrity.clean" : "retention.integrity.discrepancy",
+                DateTime.UtcNow,
+                actorId,
+                new { result.RunId, result.SampledManifests, result.VerifiedObjects, discrepancyCount = result.Discrepancies.Count }), ct);
+        return result;
+    }
+
     public Task<RetentionApplyResultDto> ArchiveNowAsync(string taskIdentity, RetentionArchiveTaskRequest request, string actorId, CancellationToken ct)
         => store.ArchiveTaskNowAsync(taskIdentity, request, actorId, ct);
 
@@ -62,11 +77,13 @@ public sealed partial class TaskServerStore
 {
     private sealed record RetentionPolicyDocument(
         IReadOnlyDictionary<ArtifactClass, RetentionRule> Rules,
-        FullBackupRetentionPolicy FullBackups);
+        FullBackupRetentionPolicy FullBackups,
+        ArchiveStoragePolicy? ArchiveStorage = null);
 
     private readonly record struct RetentionPolicyRow(
         IReadOnlyDictionary<ArtifactClass, RetentionRule> Rules,
         FullBackupRetentionPolicy FullBackups,
+        ArchiveStoragePolicy ArchiveStorage,
         int Version,
         DateTime UpdatedAt,
         string UpdatedBy);
@@ -89,6 +106,7 @@ public sealed partial class TaskServerStore
                 UpdatedBy = workspaceRow.Value.UpdatedBy,
                 WorkspaceDefaults = workspaceRow.Value.Rules,
                 FullBackups = workspaceRow.Value.FullBackups,
+                ArchiveStorage = workspaceRow.Value.ArchiveStorage,
             };
         return basePolicy with { ProjectOverrides = await ReadProjectRetentionOverridesAsync(connection, transaction, ct) };
     }
@@ -119,6 +137,7 @@ public sealed partial class TaskServerStore
         var json = reader.GetString(0);
         IReadOnlyDictionary<ArtifactClass, RetentionRule> rules;
         var fullBackups = new FullBackupRetentionPolicy();
+        var archiveStorage = new ArchiveStoragePolicy();
         using (var document = JsonDocument.Parse(json))
         {
             if (document.RootElement.TryGetProperty("rules", out _))
@@ -127,6 +146,7 @@ public sealed partial class TaskServerStore
                     ?? throw new InvalidDataException($"Retention policy '{scope}' is invalid.");
                 rules = policyDocument.Rules;
                 fullBackups = policyDocument.FullBackups;
+                archiveStorage = policyDocument.ArchiveStorage ?? new ArchiveStoragePolicy();
             }
             else
             {
@@ -137,6 +157,7 @@ public sealed partial class TaskServerStore
         return new RetentionPolicyRow(
             rules,
             fullBackups,
+            archiveStorage,
             reader.GetInt32(1),
             Parse(reader.GetString(2)),
             reader.GetString(3));
@@ -151,11 +172,13 @@ public sealed partial class TaskServerStore
             var defaults = RetentionPolicy.Default();
             return new RetentionPolicyDto("workspace", 0, defaults.UpdatedAt.UtcDateTime, defaults.UpdatedBy,
                 defaults.WorkspaceDefaults.Values.Select(ToRetentionRuleDto).ToList(),
-                ToFullBackupRetentionDto(defaults.FullBackups));
+                ToFullBackupRetentionDto(defaults.FullBackups),
+                ToArchiveStoragePolicyDto(defaults.ArchiveStorage));
         }
         return new RetentionPolicyDto("workspace", row.Value.Version, row.Value.UpdatedAt, row.Value.UpdatedBy,
             row.Value.Rules.Values.Select(ToRetentionRuleDto).ToList(),
-            ToFullBackupRetentionDto(row.Value.FullBackups));
+            ToFullBackupRetentionDto(row.Value.FullBackups),
+            ToArchiveStoragePolicyDto(row.Value.ArchiveStorage));
     }
 
     internal async Task<RetentionPolicyDto> UpdateWorkspaceRetentionPolicyAsync(
@@ -176,11 +199,15 @@ public sealed partial class TaskServerStore
             var fullBackups = request.FullBackups is null
                 ? existing?.FullBackups ?? new FullBackupRetentionPolicy()
                 : ToFullBackupRetentionPolicy(request.FullBackups);
+            var archiveStorage = request.ArchiveStorage is null
+                ? existing?.ArchiveStorage ?? new ArchiveStoragePolicy()
+                : ToArchiveStoragePolicy(request.ArchiveStorage);
             ValidateRetentionPolicy(new RetentionPolicy
             {
                 WorkspaceDefaults = rules,
                 ProjectOverrides = overrides,
                 FullBackups = fullBackups,
+                ArchiveStorage = archiveStorage,
             });
 
             var now = UtcNow;
@@ -192,7 +219,7 @@ public sealed partial class TaskServerStore
                     policy_json = excluded.policy_json, version = excluded.version,
                     updated_at = excluded.updated_at, updated_by = excluded.updated_by;
                 """, ct, transaction,
-                ("$json", JsonSerializer.Serialize(new RetentionPolicyDocument(rules, fullBackups), RetentionJson)),
+                ("$json", JsonSerializer.Serialize(new RetentionPolicyDocument(rules, fullBackups, archiveStorage), RetentionJson)),
                 ("$version", version), ("$now", Iso(now)), ("$actor", actorId));
             await AuditAsync(connection, transaction, actorId, "retention-policy.updated", "workspace", "workspace",
                 JsonSerializer.Serialize(new { request.ExpectedVersion, version }), ct);
@@ -202,7 +229,8 @@ public sealed partial class TaskServerStore
                 now,
                 actorId,
                 rules.Values.Select(ToRetentionRuleDto).ToList(),
-                ToFullBackupRetentionDto(fullBackups));
+                ToFullBackupRetentionDto(fullBackups),
+                ToArchiveStoragePolicyDto(archiveStorage));
         }, ct);
         return updated!;
     }
@@ -245,6 +273,7 @@ public sealed partial class TaskServerStore
                 WorkspaceDefaults = workspaceDefaults,
                 ProjectOverrides = new Dictionary<string, ProjectRetentionOverride> { [projectId] = new() { Rules = rules } },
                 FullBackups = workspaceRow?.FullBackups ?? new FullBackupRetentionPolicy(),
+                ArchiveStorage = workspaceRow?.ArchiveStorage ?? new ArchiveStoragePolicy(),
             });
 
             var now = UtcNow;
@@ -353,7 +382,8 @@ public sealed partial class TaskServerStore
         var stage = request.Stage ?? (heavy.Count > 0 ? 1 : 2);
         if (stage is < 1 or > 3)
             throw new ArgumentException("Archive stage must be 1, 2, or 3.");
-        if (stage == 3 && (!heavyRule.DeleteArchiveEnabled || !request.ConfirmColdDelete))
+        if (stage == 3 && (!(heavyRule.DeleteArchiveEnabled || policy.ArchiveStorage.DeleteArchivedAfterYears.HasValue)
+                           || !request.ConfirmColdDelete))
             throw new TaskServerConflictException(
                 "cold-delete-confirmation-required",
                 "Stage 3 requires an enabled cold-delete policy and confirmColdDelete=true.");
@@ -458,7 +488,9 @@ public sealed partial class TaskServerStore
         var stages = envelope.Stages.Select(stage => new RetentionArchiveStageDto(
             stage.Stage, stage.ArchivedAt.UtcDateTime, stage.PayloadPath, stage.PayloadSha256, stage.TotalBytes,
             stage.Files.Select(file => new RetentionArchiveFileDto(file.RelativePath, file.Size, file.Sha256)).ToList(),
-            stage.PolicyVersion, stage.ArchivedBy)).ToList();
+            stage.PolicyVersion, stage.ArchivedBy,
+            (stage.Objects ?? []).Select(item => new RetentionArchiveObjectDto(
+                item.Target, item.ObjectKey, item.ETag, item.Sha256, item.Size, item.ServerChecksumSha256)).ToList())).ToList();
         return new RetentionArchiveManifestDto(
             reader.GetString(0), reader.GetString(1), reader.GetString(2), Parse(reader.GetString(3)), reader.GetString(6),
             reader.GetInt64(5), reader.IsDBNull(7) ? null : Parse(reader.GetString(7)), stages,
@@ -540,6 +572,19 @@ public sealed partial class TaskServerStore
 
     private static FullBackupRetentionPolicy ToFullBackupRetentionPolicy(FullBackupRetentionDto dto)
         => new() { Daily = dto.Daily, Weekly = dto.Weekly, Monthly = dto.Monthly };
+
+    private static ArchiveStoragePolicyDto ToArchiveStoragePolicyDto(ArchiveStoragePolicy policy)
+        => new(policy.ArchiveTarget.ToString().ToLowerInvariant(), policy.CopyToSecondary,
+            policy.DeleteLocalAfterVerification, policy.DeleteArchivedAfterYears);
+
+    private static ArchiveStoragePolicy ToArchiveStoragePolicy(ArchiveStoragePolicyDto dto)
+        => new()
+        {
+            ArchiveTarget = Enum.Parse<ArchiveTargetKind>(dto.ArchiveTarget, ignoreCase: true),
+            CopyToSecondary = dto.CopyToSecondary,
+            DeleteLocalAfterVerification = dto.DeleteLocalAfterVerification,
+            DeleteArchivedAfterYears = dto.DeleteArchivedAfterYears,
+        };
 
     private static RetentionRule ToRetentionRule(RetentionRuleDto dto) => new()
     {

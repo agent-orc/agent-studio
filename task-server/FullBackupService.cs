@@ -61,7 +61,8 @@ public sealed partial class TaskServerStore
         long TotalBytes,
         IReadOnlyList<ArchiveManifestFile> Files,
         int PolicyVersion,
-        string ArchivedBy);
+        string ArchivedBy,
+        IReadOnlyList<ArchiveObjectReference>? Objects = null);
 
     /// <summary>
     /// Writes the SQLite snapshot first, then derives every other member from that immutable snapshot.
@@ -106,6 +107,13 @@ public sealed partial class TaskServerStore
                 JsonSerializer.Serialize(new FullBackupCompletion(1, UtcNow, setHash), RetentionJson) + Environment.NewLine,
                 ct);
 
+            var remoteState = "not-configured";
+            if (S3ArchiveConfigured)
+            {
+                await CopyFullBackupToS3Async(root, backup.BackupId, setHash, ct);
+                remoteState = "verified";
+            }
+
             await InWriteTransactionAsync(
                 async (connection, transaction) => await AuditAsync(
                     connection,
@@ -124,7 +132,7 @@ public sealed partial class TaskServerStore
                     ct),
                 ct);
 
-            return ToFullBackupSummary(backup.BackupId, inventory);
+            return ToFullBackupSummary(backup.BackupId, inventory) with { RemoteState = remoteState };
         }
         catch
         {
@@ -136,11 +144,11 @@ public sealed partial class TaskServerStore
         }
     }
 
-    internal Task<IReadOnlyList<FullBackupSummaryDto>> ListFullBackupsAsync(CancellationToken ct)
+    internal async Task<IReadOnlyList<FullBackupSummaryDto>> ListFullBackupsAsync(CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
         var root = _options.ResolveFullBackupDirectory();
-        if (!Directory.Exists(root)) return Task.FromResult<IReadOnlyList<FullBackupSummaryDto>>([]);
+        if (!Directory.Exists(root)) return [];
 
         var result = new List<FullBackupSummaryDto>();
         foreach (var directory in Directory.EnumerateDirectories(root).OrderByDescending(path => path, StringComparer.Ordinal))
@@ -149,9 +157,15 @@ public sealed partial class TaskServerStore
             var inventoryPath = Path.Combine(directory, "inventory.json");
             if (!File.Exists(completePath) || !File.Exists(inventoryPath)) continue;
             var inventory = JsonSerializer.Deserialize<FullBackupInventory>(File.ReadAllText(inventoryPath), RetentionJson);
-            if (inventory is not null) result.Add(ToFullBackupSummary(Path.GetFileName(directory), inventory));
+            if (inventory is not null)
+            {
+                var summary = ToFullBackupSummary(Path.GetFileName(directory), inventory);
+                if (S3ArchiveConfigured)
+                    summary = summary with { RemoteState = await VerifyRemoteFullBackupAsync(summary.Id, inventory.SetSha256, ct) };
+                result.Add(summary);
+            }
         }
-        return Task.FromResult<IReadOnlyList<FullBackupSummaryDto>>(result);
+        return result;
     }
 
     internal async Task<VerifyFullBackupResult> VerifyFullBackupAsync(string backupId, CancellationToken ct)
@@ -211,7 +225,7 @@ public sealed partial class TaskServerStore
                 return new RestoreFullBackupResult(backupId, false, restore.Message);
             databaseRestored = true;
 
-            await RewriteRestoredArchiveManifestPathsAsync(manifests, archiveRoot, ct);
+            await RewriteRestoredArchiveManifestPathsAsync(manifests, archiveRoot, stagedArchive, ct);
 
             if (Directory.Exists(archiveRoot))
             {
@@ -273,6 +287,8 @@ public sealed partial class TaskServerStore
         foreach (var backup in backups.Where(item => !keep.Contains(item.Id)))
         {
             var path = ResolveFullBackupPath(backup.Id);
+            if (S3ArchiveConfigured)
+                await DeleteRemoteFullBackupAsync(path, backup.Id, ct);
             Directory.Delete(path, recursive: true);
             removed++;
         }
@@ -298,6 +314,59 @@ public sealed partial class TaskServerStore
         return path;
     }
 
+    private async Task CopyFullBackupToS3Async(string root, string backupId, string setHash, CancellationToken ct)
+    {
+        using var target = S3ArchiveTarget();
+        var files = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
+            .OrderBy(path => path.EndsWith("complete.json", StringComparison.OrdinalIgnoreCase) ? 1 : 0)
+            .ThenBy(path => path, StringComparer.Ordinal)
+            .ToList();
+        foreach (var path in files)
+        {
+            await using var input = File.OpenRead(path);
+            var hash = Convert.ToHexStringLower(await SHA256.HashDataAsync(input, ct));
+            input.Position = 0;
+            var relative = Path.GetRelativePath(root, path).Replace('\\', '/');
+            await target.PutAsync($"full/{backupId}/{relative}", input, hash, input.Length, ct);
+        }
+        var state = await VerifyRemoteFullBackupAsync(backupId, setHash, ct);
+        if (state != "verified")
+            throw new InvalidDataException($"Remote full backup '{backupId}' failed inventory verification: {state}");
+    }
+
+    private async Task<string> VerifyRemoteFullBackupAsync(string backupId, string setHash, CancellationToken ct)
+    {
+        try
+        {
+            using var target = S3ArchiveTarget();
+            await using var completionStream = await target.OpenReadAsync($"full/{backupId}/complete.json", ct);
+            var completion = await JsonSerializer.DeserializeAsync<FullBackupCompletion>(completionStream, RetentionJson, ct);
+            await using var inventoryStream = await target.OpenReadAsync($"full/{backupId}/inventory.json", ct);
+            var inventory = await JsonSerializer.DeserializeAsync<FullBackupInventory>(inventoryStream, RetentionJson, ct);
+            return completion is not null && inventory is not null
+                   && string.Equals(completion.SetSha256, setHash, StringComparison.OrdinalIgnoreCase)
+                   && string.Equals(inventory.SetSha256, setHash, StringComparison.OrdinalIgnoreCase)
+                ? "verified"
+                : "hash-mismatch";
+        }
+        catch (FileNotFoundException) { return "missing"; }
+        catch (Exception exception) when (exception is IOException or HttpRequestException or JsonException)
+        {
+            return "unavailable";
+        }
+    }
+
+    private async Task DeleteRemoteFullBackupAsync(string root, string backupId, CancellationToken ct)
+    {
+        using var target = S3ArchiveTarget();
+        var relativePaths = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
+            .Select(path => Path.GetRelativePath(root, path).Replace('\\', '/'))
+            .OrderBy(path => path.EndsWith("complete.json", StringComparison.OrdinalIgnoreCase) ? 1 : 0)
+            .ToList();
+        foreach (var relative in relativePaths)
+            await target.DeleteAsync($"full/{backupId}/{relative}", ct);
+    }
+
     private async Task<List<FullBackupArchiveManifest>> ReadBackupArchiveManifestsAsync(string snapshotPath, CancellationToken ct)
     {
         var archiveRoot = Path.GetFullPath(_options.ResolveRetentionArchivePath());
@@ -315,12 +384,17 @@ public sealed partial class TaskServerStore
             var stages = envelope.Stages.Select(stage => new FullBackupArchiveStage(
                 stage.Stage,
                 stage.ArchivedAt,
-                string.IsNullOrWhiteSpace(stage.PayloadPath) ? null : RelativeArchivePayloadPath(archiveRoot, stage.PayloadPath),
+                !string.IsNullOrWhiteSpace(stage.PayloadPath) && Path.IsPathRooted(stage.PayloadPath)
+                    ? RelativeArchivePayloadPath(archiveRoot, stage.PayloadPath)
+                    : stage.Objects is { Count: > 0 }
+                        ? $"remote/{stage.PayloadSha256}/payload.zip"
+                        : null,
                 stage.PayloadSha256,
                 stage.TotalBytes,
                 stage.Files,
                 stage.PolicyVersion,
-                stage.ArchivedBy)).ToList();
+                stage.ArchivedBy,
+                stage.Objects)).ToList();
             manifests.Add(new FullBackupArchiveManifest(
                 1,
                 reader.GetString(0),
@@ -366,40 +440,101 @@ public sealed partial class TaskServerStore
     {
         var archiveRoot = Path.GetFullPath(_options.ResolveRetentionArchivePath());
         foreach (var stage in manifests.SelectMany(item => item.Stages)
-                     .Where(stage => stage.RelativePayloadPath is not null)
+                     .Where(stage => stage.RelativePayloadPath is not null || stage.Objects is { Count: > 0 })
                      .DistinctBy(stage => stage.RelativePayloadPath, StringComparer.OrdinalIgnoreCase))
         {
+            if (stage.RelativePayloadPath is null)
+            {
+                var verified = false;
+                foreach (var reference in stage.Objects ?? [])
+                {
+                    IArchiveTarget archiveTarget;
+                    try { archiveTarget = TargetFor(reference); }
+                    catch { continue; }
+                    try
+                    {
+                        if ((await archiveTarget.VerifyAsync(reference, ct)).Verified)
+                        {
+                            verified = true;
+                            break;
+                        }
+                    }
+                    finally
+                    {
+                        if (archiveTarget is IDisposable disposable) disposable.Dispose();
+                    }
+                }
+                if (!verified)
+                    throw new InvalidDataException("A full backup references a cold payload that no configured archive target can verify.");
+                continue;
+            }
             var source = Path.Combine(archiveRoot, stage.RelativePayloadPath!.Replace('/', Path.DirectorySeparatorChar));
-            if (!File.Exists(source)) throw new InvalidDataException($"Referenced cold payload is missing: {source}");
-            var sourceHash = await HashFileAsync(source, ct);
-            if (!string.Equals(sourceHash, stage.PayloadSha256, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidDataException($"Referenced cold payload hash mismatch: {source}");
             var target = Path.Combine(root, "cold", stage.RelativePayloadPath.Replace('/', Path.DirectorySeparatorChar));
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-            File.Copy(source, target, overwrite: true);
+            if (File.Exists(source))
+            {
+                var sourceHash = await HashFileAsync(source, ct);
+                if (!string.Equals(sourceHash, stage.PayloadSha256, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException($"Referenced cold payload hash mismatch: {source}");
+                File.Copy(source, target, overwrite: true);
+            }
+            else if (stage.Objects is { Count: > 0 })
+            {
+                var materialized = await MaterializeVerifiedPayloadAsync(new RetentionManifestStage(
+                    stage.Stage, stage.ArchivedAt, string.Empty, stage.PayloadSha256, stage.TotalBytes,
+                    stage.Files, stage.PolicyVersion, stage.ArchivedBy, stage.Objects), ct);
+                try { File.Copy(materialized, target, overwrite: true); }
+                finally { if (File.Exists(materialized)) File.Delete(materialized); }
+            }
+            else
+            {
+                throw new InvalidDataException($"Referenced cold payload is missing: {source}");
+            }
         }
     }
 
     private async Task RewriteRestoredArchiveManifestPathsAsync(
         IReadOnlyList<FullBackupArchiveManifest> manifests,
         string archiveRoot,
+        string stagedArchiveRoot,
         CancellationToken ct)
     {
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
             foreach (var manifest in manifests)
             {
-                var stages = manifest.Stages.Select(stage => new RetentionManifestStage(
-                    stage.Stage,
-                    stage.ArchivedAt,
-                    stage.RelativePayloadPath is null
-                        ? string.Empty
-                        : Path.Combine(archiveRoot, stage.RelativePayloadPath.Replace('/', Path.DirectorySeparatorChar)),
-                    stage.PayloadSha256,
-                    stage.TotalBytes,
-                    stage.Files,
-                    stage.PolicyVersion,
-                    stage.ArchivedBy)).ToList();
+                var stages = manifest.Stages.Select(stage =>
+                {
+                    if (stage.RelativePayloadPath is null)
+                        return new RetentionManifestStage(
+                            stage.Stage, stage.ArchivedAt, string.Empty, stage.PayloadSha256, stage.TotalBytes,
+                            stage.Files, stage.PolicyVersion, stage.ArchivedBy, stage.Objects);
+
+                    var relativePath = stage.RelativePayloadPath.Replace('/', Path.DirectorySeparatorChar);
+                    var stagedPayloadPath = Path.Combine(stagedArchiveRoot, relativePath);
+                    if (!File.Exists(stagedPayloadPath))
+                        throw new InvalidDataException($"Full backup payload is missing during manifest rebind: {stage.RelativePayloadPath}");
+                    var localReference = new ArchiveObjectReference(
+                        "local",
+                        stage.RelativePayloadPath.Replace('\\', '/'),
+                        null,
+                        stage.PayloadSha256,
+                        new FileInfo(stagedPayloadPath).Length,
+                        stage.PayloadSha256);
+                    var references = new[] { localReference }
+                        .Concat((stage.Objects ?? []).Where(item => !string.Equals(item.Target, "local", StringComparison.OrdinalIgnoreCase)))
+                        .ToList();
+                    return new RetentionManifestStage(
+                        stage.Stage,
+                        stage.ArchivedAt,
+                        Path.Combine(archiveRoot, relativePath),
+                        stage.PayloadSha256,
+                        stage.TotalBytes,
+                        stage.Files,
+                        stage.PolicyVersion,
+                        stage.ArchivedBy,
+                        references);
+                }).ToList();
                 var envelope = new RetentionManifestEnvelope(stages, manifest.TombstonedAt);
                 var latest = stages.LastOrDefault(stage => !string.IsNullOrWhiteSpace(stage.PayloadPath));
                 var affected = await ExecuteAsync(connection, """

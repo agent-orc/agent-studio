@@ -40,7 +40,7 @@ if (args.command === 'inspect') {
     autonomyPolicy,
     acceptanceSequence: [
       'provision',
-      'retention-archive-restore',
+      's3-retention-archive-verify-restore',
       'reference-task',
       `${autonomyPolicy.mode}-multi-slot-task-server-partition`,
       'studio-partition-and-replacement',
@@ -329,6 +329,25 @@ async function runRetentionScenario() {
   if (emptyPlan.actionCount !== 0 || emptyPlan.totalBytes !== 0) {
     throw new Error(`Fresh retention plan was not empty: ${JSON.stringify(emptyPlan)}`);
   }
+  const policy = await api('/api/v1/management/retention/policy');
+  await api('/api/v1/management/retention/policy', {
+    method: 'PUT',
+    body: {
+      rules: policy.rules,
+      expectedVersion: policy.version,
+      fullBackups: policy.fullBackups,
+      archiveStorage: {
+        archiveTarget: 's3',
+        copyToSecondary: false,
+        deleteLocalAfterVerification: false,
+        deleteArchivedAfterYears: null
+      }
+    }
+  });
+  const target = await api('/api/v1/management/retention/target');
+  if (target.activeTarget !== 's3' || !target.s3Configured) {
+    throw new Error(`Compose S3 archive target is not configured: ${JSON.stringify(target)}`);
+  }
 
   const ids = {
     workspace: `wsp-retention-${args.runId}`,
@@ -409,6 +428,17 @@ async function runRetentionScenario() {
     throw new Error(`Archived artifact read returned ${archivedRead.status}: ${JSON.stringify(archivedRead.value)}`);
   }
   const manifest = await api(`/api/v1/management/retention/archive/${ids.task}`);
+  const objects = manifest.stages.flatMap(stage => stage.objects ?? []);
+  if (objects.length !== 1 || objects[0].target !== 's3') {
+    throw new Error(`Retention payload did not land only on S3: ${JSON.stringify(objects)}`);
+  }
+  const integrity = await api('/api/v1/management/retention/integrity/check', {
+    method: 'POST',
+    body: { sampleCount: 10 }
+  });
+  if (integrity.discrepancies.length !== 0 || integrity.verifiedObjects < 1) {
+    throw new Error(`S3 archive integrity check was not clean: ${JSON.stringify(integrity)}`);
+  }
   await api(`/api/v1/management/retention/archive/${ids.task}/restore`, {
     method: 'POST',
     body: {}
@@ -421,7 +451,8 @@ async function runRetentionScenario() {
   const classAHashAfter = classAInventoryHash(after);
   const assertions = [
     'fresh-plan-zero',
-    'single-task-stage-two-archived',
+    'single-task-stage-two-archived-to-s3',
+    's3-integrity-clean',
     'archived-content-http-409',
     'restore-byte-identical',
     'class-a-inventory-unchanged'
@@ -433,8 +464,10 @@ async function runRetentionScenario() {
     schemaVersion: 1,
     ids,
     emptyPlan,
+    target,
     archiveRunId: archived.runId,
     manifest,
+    integrity,
     archivedReadStatus: archivedRead.status,
     contentSha256: contentSha,
     restoredSha256: restoredSha,
@@ -698,6 +731,7 @@ async function initializeRunRoot() {
     `REMOTE_HARNESS_IMAGE_TAG=local`,
     `REMOTE_HARNESS_REVISION=${revision}`,
     `REMOTE_HARNESS_AUTH_TOKEN=${authToken}`,
+    `REMOTE_HARNESS_S3_CREDENTIALS_FILE=${plan.archiveCredentialFile}`,
     `REMOTE_HARNESS_TASK_SERVER_PORT=${plan.ports.taskServer}`,
     `REMOTE_HARNESS_STUDIO_PORT=${plan.ports.studio}`,
     `REMOTE_HARNESS_FAULT_CONTROL_PORT=${plan.ports.faultControl}`,
@@ -705,12 +739,16 @@ async function initializeRunRoot() {
   ].join('\n') + '\n';
   await writeFile(plan.environmentFile, environment, { mode: 0o600 });
   await writeFile(plan.tokenFile, `${authToken}\n`, { mode: 0o600 });
+  await writeFile(plan.archiveCredentialFile,
+    `${JSON.stringify({ accessKey: 'minioadmin', secretKey: 'minioadmin' })}\n`, { mode: 0o600 });
   await chmod(plan.environmentFile, 0o600);
   await chmod(plan.tokenFile, 0o600);
+  await chmod(plan.archiveCredentialFile, 0o600);
   await writeEvidence('resource-plan.json', {
     ...plan,
     environmentFile: path.relative(plan.repoRoot, plan.environmentFile),
-    tokenFile: '[ephemeral credential removed during teardown]'
+    tokenFile: '[ephemeral credential removed during teardown]',
+    archiveCredentialFile: '[ephemeral credential removed during teardown]'
   });
   await copyFile(plan.composeFile, path.join(plan.evidenceRoot, 'compose-source.yaml'));
 }
@@ -730,7 +768,7 @@ async function loadExistingEnvironment() {
 async function validateCompose() {
   await compose(['config', '--quiet'], 30_000);
   const services = (await compose(['config', '--services'], 30_000)).stdout.trim().split(/\r?\n/).sort();
-  const expected = ['agent-runner', 'fault-proxy', 'studio', 'task-server'];
+  const expected = ['agent-runner', 'fault-proxy', 'minio', 'minio-init', 'studio', 'task-server'];
   if (JSON.stringify(services) !== JSON.stringify(expected)) {
     throw new Error(`Compose profile resolved unexpected services: ${services.join(', ')}`);
   }
@@ -741,7 +779,7 @@ async function collectEvidence(label) {
   await mkdir(plan.evidenceRoot, { recursive: true });
   const ps = await composeAllowFailure(['ps', '--all', '--format', 'json'], 30_000);
   await writeTextEvidence(`compose-ps-${label}.json`, ps.stdout || ps.stderr);
-  for (const service of ['task-server', 'fault-proxy', 'agent-runner', 'studio']) {
+  for (const service of ['task-server', 'minio', 'minio-init', 'fault-proxy', 'agent-runner', 'studio']) {
     const logs = await composeAllowFailure(['logs', '--no-color', '--timestamps', service], 30_000);
     await writeTextEvidence(`logs/${service}.log`, redact(logs.stdout + logs.stderr, [authToken]));
     const id = (await composeAllowFailure(['ps', '--all', '--quiet', service], 15_000)).stdout.trim();
@@ -767,14 +805,18 @@ async function teardown() {
   if (!await exists(plan.environmentFile)) return;
   await assertOwnedResources();
   await composeAllowFailure([
-    'down', '--volumes', '--remove-orphans', '--rmi', 'all', '--timeout', '20'
+    'down', '--volumes', '--remove-orphans', '--timeout', '20'
   ], 120_000);
+  for (const image of plan.resources.images) {
+    await executeAllowFailure(['docker', 'image', 'rm', image], { timeoutMs: 30_000 });
+  }
   const residues = await identityResidues();
   if (residues.containers.length || residues.volumes.length || residues.networks.length) {
     throw new Error(`Identity-scoped teardown left resources: ${JSON.stringify(residues)}`);
   }
   await rm(plan.environmentFile, { force: true });
   await rm(plan.tokenFile, { force: true });
+  await rm(plan.archiveCredentialFile, { force: true });
   await writeEvidence('teardown.json', {
     completedAt: new Date().toISOString(),
     project: plan.project,

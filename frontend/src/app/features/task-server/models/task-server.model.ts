@@ -146,6 +146,25 @@ export interface TaskServerStatus {
   };
 }
 
+export interface ArchiveTargetStatus {
+  activeTarget: 'local' | 's3';
+  copyToSecondary: boolean;
+  deleteLocalAfterVerification: boolean;
+  localConfigured: boolean;
+  s3Configured: boolean;
+  s3Endpoint: string | null;
+  s3Bucket: string | null;
+  s3Prefix: string;
+  deleteArchivedAfterYears: number | null;
+}
+
+export interface RetentionPlan {
+  actionCount: number;
+  totalBytes: number;
+  affectedTasks: number;
+  actions: readonly { kind: string; taskKey: string; bytes: number }[];
+}
+
 // ---------------------------------------------------------------------------
 // Pure display helpers - co-located with the types so the components and their
 // specs share one source of truth. Side-effect free.

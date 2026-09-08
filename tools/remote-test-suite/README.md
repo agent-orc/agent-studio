@@ -113,9 +113,10 @@ future executor provides them, remain per-run telemetry only.
 ## Three-unit Docker Compose harness
 
 The remote-host harness provisions a separate Task Server, deterministic Agent
-Runner protocol process, and production Studio UI. A small TCP proxy is the only
-supporting service. It supplies named Runner and Studio links so partitions are
-deterministic and do not disconnect or enumerate unrelated Docker networks.
+Runner protocol process, and production Studio UI. A small TCP proxy supplies
+named Runner and Studio links so partitions are deterministic and do not
+disconnect or enumerate unrelated Docker networks. An identity-scoped MinIO
+fixture supplies the S3-compatible cold archive target.
 
 Inspect every resource and lifecycle operation without changing Docker:
 
@@ -133,7 +134,8 @@ node tools/remote-test-suite/compose-harness.mjs run \
 ```
 
 That one command uses the explicit `remote-integration` Compose profile,
-builds and health-gates the isolated stack, and runs `reference-change`. The
+builds and health-gates the isolated stack, archives and verifies one task in
+MinIO, restores its byte-identical payload, and then runs `reference-change`. The
 card-safe default partitions the Task Server for 25 real seconds. Override that
 duration with `REMOTE_TEST_AUTONOMY_SECONDS` or
 `--autonomy-duration-seconds`. A duration of 600 seconds or more is rejected

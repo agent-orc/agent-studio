@@ -579,6 +579,12 @@ public static class TaskServerEndpoints
         retention.MapGet("/runs/{runId}", async (string runId, RetentionManagementService retentionManagement, CancellationToken ct)
             => await InvokeNullableAsync(() => retentionManagement.GetRunAsync(runId, ct)))
             .RequireTaskServerScope(TaskServerScopes.TasksRead);
+        retention.MapGet("/target", async (RetentionManagementService retentionManagement, CancellationToken ct)
+            => await InvokeAsync(() => retentionManagement.GetTargetStatusAsync(ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksRead);
+        retention.MapPost("/integrity/check", async (
+            HttpContext context, RetentionIntegrityCheckRequest request, RetentionManagementService retentionManagement, CancellationToken ct)
+            => await InvokeAsync(() => retentionManagement.CheckIntegrityAsync(request, Actor(context), "manual", ct)));
         retention.MapGet("/archive/{taskId}", async (string taskId, RetentionManagementService retentionManagement, CancellationToken ct)
             => await InvokeNullableAsync(() => retentionManagement.GetManifestAsync(taskId, ct)))
             .RequireTaskServerScope(TaskServerScopes.TasksRead);

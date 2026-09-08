@@ -24,14 +24,22 @@ public sealed record RetentionPolicyDto(
     DateTime UpdatedAt,
     string UpdatedBy,
     IReadOnlyList<RetentionRuleDto> Rules,
-    FullBackupRetentionDto? FullBackups = null);
+    FullBackupRetentionDto? FullBackups = null,
+    ArchiveStoragePolicyDto? ArchiveStorage = null);
 
 public sealed record FullBackupRetentionDto(int Daily = 7, int Weekly = 4, int Monthly = 12);
+
+public sealed record ArchiveStoragePolicyDto(
+    string ArchiveTarget = "local",
+    bool CopyToSecondary = false,
+    bool DeleteLocalAfterVerification = false,
+    int? DeleteArchivedAfterYears = null);
 
 public sealed record UpdateRetentionPolicyRequest(
     IReadOnlyList<RetentionRuleDto> Rules,
     long ExpectedVersion,
-    FullBackupRetentionDto? FullBackups = null);
+    FullBackupRetentionDto? FullBackups = null,
+    ArchiveStoragePolicyDto? ArchiveStorage = null);
 
 public sealed record RetentionActionDto(
     string Kind,
@@ -84,6 +92,14 @@ public sealed record RetentionRunDetailDto(
 
 public sealed record RetentionArchiveFileDto(string Name, long Size, string Sha256);
 
+public sealed record RetentionArchiveObjectDto(
+    string Target,
+    string ObjectKey,
+    string? ETag,
+    string Sha256,
+    long Size,
+    string? ServerChecksumSha256);
+
 public sealed record RetentionArchiveStageDto(
     int Stage,
     DateTime ArchivedAt,
@@ -92,7 +108,8 @@ public sealed record RetentionArchiveStageDto(
     long TotalBytes,
     IReadOnlyList<RetentionArchiveFileDto> Files,
     int PolicyVersion,
-    string ArchivedBy);
+    string ArchivedBy,
+    IReadOnlyList<RetentionArchiveObjectDto>? Objects = null);
 
 public sealed record RetentionArchiveManifestDto(
     string TaskId,
@@ -106,3 +123,22 @@ public sealed record RetentionArchiveManifestDto(
     DateTime? TombstonedAt);
 
 public sealed record RetentionArchiveTaskRequest(int? Stage = null, bool ConfirmColdDelete = false);
+
+public sealed record RetentionIntegrityCheckRequest(int? SampleCount = null);
+
+public sealed record RetentionIntegrityCheckResultDto(
+    string RunId,
+    int SampledManifests,
+    int VerifiedObjects,
+    IReadOnlyList<string> Discrepancies);
+
+public sealed record ArchiveTargetStatusDto(
+    string ActiveTarget,
+    bool CopyToSecondary,
+    bool DeleteLocalAfterVerification,
+    bool LocalConfigured,
+    bool S3Configured,
+    string? S3Endpoint,
+    string? S3Bucket,
+    string S3Prefix,
+    int? DeleteArchivedAfterYears);

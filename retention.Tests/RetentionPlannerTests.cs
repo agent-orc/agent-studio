@@ -97,6 +97,22 @@ public sealed class RetentionPlannerTests
         Assert.Equal(3, action.Stage);
     }
 
+    [Theory]
+    [InlineData(364, false)]
+    [InlineData(365, true)]
+    public void Archive_storage_years_enable_stage_three_at_the_policy_boundary(int ageDays, bool expected)
+    {
+        var task = Task("7-archive", Now.AddDays(-ageDays),
+            File("logs/cli-output.log", 100) with { IsArchived = true });
+        var policy = RetentionPolicy.Default() with
+        {
+            ArchiveStorage = new ArchiveStoragePolicy { DeleteArchivedAfterYears = 1 },
+        };
+
+        Assert.Equal(expected, new RetentionPlanner().Plan([task], policy, Now).Actions
+            .Any(action => action.Kind == RetentionActionKind.DeleteCold));
+    }
+
     private RetentionTaskInventory Task(string lane, DateTimeOffset terminalAt, params RetentionFile[] files)
         => new("P", "P-1", "id-1", lane, terminalAt, "projects/P/tasks/7-archive/P-1", files);
 

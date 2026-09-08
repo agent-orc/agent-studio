@@ -114,6 +114,17 @@ public sealed class RetentionSchedulerHostedService(
             logger.LogError(exception, "retention-scheduler full-backup-failed runId={RunId}", result.RunId);
         }
 
+        try
+        {
+            if (clock.GetLocalNow().DayOfWeek == options.Value.RetentionIntegrityDayOfWeek)
+                await retentionManagement.CheckIntegrityAsync(
+                    new RetentionIntegrityCheckRequest(options.Value.RetentionIntegritySampleCount), Actor, "weekly", ct);
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(exception, "retention-scheduler integrity-check-failed runId={RunId}", result.RunId);
+        }
+
         return result;
     }
 

@@ -23,6 +23,13 @@ services:
       LISTEN_URL: http://0.0.0.0:5071
       STORE_PATH: /var/lib/remote-harness/store
       BACKUP_PATH: /var/lib/remote-harness/backups
+      ARCHIVE_PATH: /var/lib/remote-harness/archive
+      ARCHIVE_S3_ENDPOINT: http://minio:9000
+      ARCHIVE_S3_BUCKET: agent-studio-archive
+      ARCHIVE_S3_PREFIX: ${REMOTE_HARNESS_RUN_ID}
+      ARCHIVE_S3_CREDENTIALS_FILE: /run/secrets/archive-s3.json
+      ARCHIVE_S3_PATH_STYLE: "true"
+      ARCHIVE_S3_SERVER_SIDE_CHECKSUM: "true"
       AUTH: bearer
       AUTH_TOKEN: ${REMOTE_HARNESS_AUTH_TOKEN}
       AllowedHosts: "*"
@@ -32,6 +39,7 @@ services:
       TaskServer__ResultRefGcEnabled: "false"
     volumes:
       - task-server-data:/var/lib/remote-harness
+      - ${REMOTE_HARNESS_S3_CREDENTIALS_FILE}:/run/secrets/archive-s3.json:ro
     networks:
       - harness-network
     healthcheck:
@@ -40,6 +48,45 @@ services:
       timeout: 2s
       retries: 30
       start_period: 5s
+    labels: *harness-labels
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+
+  minio:
+    profiles: ["remote-integration"]
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    restart: "no"
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio-data:/data
+    networks:
+      - harness-network
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://127.0.0.1:9000/minio/health/ready"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 3s
+    labels: *harness-labels
+
+  minio-init:
+    profiles: ["remote-integration"]
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        mc alias set local http://minio:9000 minioadmin minioadmin &&
+        mc mb --ignore-existing local/agent-studio-archive
+    networks:
+      - harness-network
     labels: *harness-labels
 
   fault-proxy:
@@ -165,4 +212,7 @@ volumes:
     labels: *harness-labels
   runner-workspace:
     name: ${REMOTE_HARNESS_PROJECT}-runner-workspace
+    labels: *harness-labels
+  minio-data:
+    name: ${REMOTE_HARNESS_PROJECT}-minio-data
     labels: *harness-labels

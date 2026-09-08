@@ -11,7 +11,8 @@ public sealed record FullBackupSummaryDto(
     int TaskCount,
     int ColdPayloadCount,
     string SetSha256,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings,
+    string RemoteState = "not-configured");
 
 public sealed record ListFullBackupsResponse(IReadOnlyList<FullBackupSummaryDto> Backups);
 

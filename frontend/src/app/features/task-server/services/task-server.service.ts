@@ -4,6 +4,8 @@ import { firstValueFrom } from 'rxjs';
 import type {
   ManagementActionKind,
   ManagementActionResult,
+  ArchiveTargetStatus,
+  RetentionPlan,
   TaskServerStatus,
 } from '../models/task-server.model';
 import { isLocalUrl } from '../models/task-server.model';
@@ -49,6 +51,9 @@ export class TaskServerService {
   readonly error = signal<string | null>(null);
   readonly unavailable = signal<TaskServerUnavailable | null>(null);
   readonly busyAction = signal<ManagementActionKind | null>(null);
+  readonly archiveTarget = signal<ArchiveTargetStatus | null>(null);
+  readonly archiveDeletionPlan = signal<RetentionPlan | null>(null);
+  readonly archiveBusy = signal(false);
   readonly recentResults = computed<readonly ManagementActionResult[]>(() => this.status()?.recentResults ?? []);
   private loaded = false;
 
@@ -71,6 +76,54 @@ export class TaskServerService {
     } finally {
       this.loading.set(false);
     }
+  }
+
+  async previewArchiveDeletion(): Promise<void> {
+    if (this.archiveBusy()) return;
+    this.archiveBusy.set(true);
+    this.error.set(null);
+    try {
+      const plan = await firstValueFrom(this.http.post<RetentionPlan>(
+        '/api/v1/management/retention/plan', { confirmColdDelete: false }));
+      this.archiveDeletionPlan.set({ ...plan, actions: plan.actions.filter(action => action.kind === 'DeleteCold') });
+    } catch (error: unknown) {
+      this.error.set(this.message(error, 'The archive deletion preview failed.'));
+    } finally {
+      this.archiveBusy.set(false);
+    }
+  }
+
+  async confirmArchiveDeletion(): Promise<void> {
+    if (this.archiveBusy()) return;
+    this.archiveBusy.set(true);
+    this.error.set(null);
+    try {
+      await firstValueFrom(this.http.post('/api/v1/management/retention/apply', { confirmColdDelete: true }));
+      this.archiveDeletionPlan.set(null);
+      await this.reload();
+    } catch (error: unknown) {
+      this.error.set(this.message(error, 'The confirmed archive deletion failed.'));
+    } finally {
+      this.archiveBusy.set(false);
+    }
+  }
+
+  cancelArchiveDeletion(): void { this.archiveDeletionPlan.set(null); }
+
+  async loadArchiveTarget(): Promise<void> {
+    try {
+      this.archiveTarget.set(await firstValueFrom(
+        this.http.get<ArchiveTargetStatus>('/api/v1/management/retention/target')));
+    } catch {
+      // Compatibility while the local file-tree control plane is still active.
+      this.archiveTarget.set(null);
+    }
+  }
+
+  private message(error: unknown, fallback: string): string {
+    return error instanceof HttpErrorResponse
+      ? error.error?.message ?? error.error?.error ?? fallback
+      : fallback;
   }
 
   requestSignIn(): void {

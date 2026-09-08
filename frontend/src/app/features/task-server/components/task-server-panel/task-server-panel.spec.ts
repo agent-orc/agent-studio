@@ -26,7 +26,8 @@ describe('TaskServerPanelComponent', () => {
     }).compileComponents();
     const fixture = TestBed.createComponent(TaskServerPanelComponent);
     fixture.detectChanges();
-    TestBed.inject(HttpTestingController).expectOne('/api/v1/management/status').flush({
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/v1/management/status').flush({
       server: { id: 'ts-1', url: 'http://localhost:4010', version: '1.0', protocolMinimum: '1.0', protocolMaximum: '1.0', uptimeSeconds: 60 },
       health: { state: 'healthy', ready: true },
       store: { sizeBytes: 1, projectCount: 1, taskCount: 2, archivedTaskCount: 0, eventCount: 3, artifactCount: 4, identityCount: 2 },
@@ -37,6 +38,12 @@ describe('TaskServerPanelComponent', () => {
         { id: 'r2', displayName: 'R2', state: 'running', lastUsedAt: null, activeSlots: 1, drainRequested: false, retireRequested: false },
       ], backups: { directory: '/tmp/backups', retentionCount: 7, lastFailure: null, items: [] },
       security: { available: true, userCount: 1, credentialRunnerCount: 2, sessionUrl: '/api/auth/session', usersUrl: '/api/auth/users', runnerCredentialsUrl: '/api/auth/runners', integration: 'shared' },
+    });
+    http.expectOne('/api/v1/management/retention/target').flush({
+      activeTarget: 's3', copyToSecondary: false, deleteLocalAfterVerification: true,
+      localConfigured: true, s3Configured: true, s3Endpoint: 'https://objects.example',
+      s3Bucket: 'cold-archive', s3Prefix: 'studio',
+      deleteArchivedAfterYears: 2,
     });
     await fixture.whenStable();
     fixture.detectChanges();
@@ -112,6 +119,29 @@ describe('TaskServerPanelComponent', () => {
     const sectionCount = el.querySelector('[data-testid="task-server-clients-section"] .ts__section-count')?.textContent ?? '';
     expect(sectionCount).toContain(String(rows.length));
 
+    fixture.destroy();
+  });
+
+  it('shows target status and requires the typed second confirmation for archive deletion', async () => {
+    const fixture = await mount();
+    const el: HTMLElement = fixture.nativeElement;
+    expect(el.querySelector('[data-testid="archive-target-status"]')?.textContent).toContain('S3');
+
+    (el.querySelector('[data-testid="archive-delete-preview"]') as HTMLButtonElement).click();
+    TestBed.inject(HttpTestingController).expectOne('/api/v1/management/retention/plan').flush({
+      actionCount: 1, totalBytes: 42, affectedTasks: 1,
+      actions: [{ kind: 'DeleteCold', taskKey: 'RET-1', bytes: 42 }],
+    });
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const confirm = el.querySelector('[data-testid="archive-delete-confirm"]') as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+    const input = el.querySelector('[data-testid="archive-delete-confirmation"]') as HTMLInputElement;
+    input.value = 'DELETE ARCHIVED PAYLOADS';
+    input.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    expect(confirm.disabled).toBe(false);
     fixture.destroy();
   });
 

@@ -1,0 +1,48 @@
+<section class="archive" data-testid="archive-retention-card">
+  <header class="archive__head">
+    <div>
+      <h3 class="archive__title">Cold archive</h3>
+      <p class="archive__description">Payload retention is independent from the hot Task Server store.</p>
+    </div>
+    @if (target(); as status) {
+      <span class="archive__badge" [class.archive__badge--warning]="status.activeTarget === 's3' && !status.s3Configured"
+        data-testid="archive-target-status">
+        {{ status.activeTarget === 's3' && !status.s3Configured ? 'S3 unavailable' : status.activeTarget.toUpperCase() }}
+      </span>
+    }
+  </header>
+  @if (target(); as status) {
+    <dl class="archive__rows">
+      <div><dt>Target</dt><dd>{{ status.activeTarget === 's3' ? (status.s3Bucket || 'Not configured') : 'Local archive volume' }}</dd></div>
+      <div><dt>Secondary</dt><dd>{{ status.copyToSecondary ? (status.s3Configured ? 'S3 verified copy' : 'S3 unavailable') : 'Disabled' }}</dd></div>
+      <div><dt>Local copy</dt><dd>{{ status.deleteLocalAfterVerification ? 'Deleted after verification' : 'Retained' }}</dd></div>
+      <div><dt>Payload expiry</dt><dd>{{ status.deleteArchivedAfterYears ? status.deleteArchivedAfterYears + ' years' : 'Never' }}</dd></div>
+    </dl>
+  } @else {
+    <p class="archive__compatibility">Target status becomes available after the standalone Task Server cutover.</p>
+  }
+  <button class="archive__review" type="button" data-testid="archive-delete-preview" [disabled]="busy()" (click)="preview()">
+    Review expired payload deletion
+  </button>
+</section>
+
+@if (plan()) {
+  <div class="archive-dialog__backdrop" data-testid="archive-delete-dialog">
+    <section class="archive-dialog" role="dialog" aria-modal="true" aria-labelledby="archive-delete-title">
+      <h3 id="archive-delete-title">Confirm permanent archive deletion</h3>
+      <p>
+        The active policy selected <strong>{{ deletionActions().length }}</strong> payloads
+        ({{ formatBytes(deletionBytes()) }}). Their manifests remain as tombstones.
+      </p>
+      <p class="archive-dialog__warning">This action is blocked when a retained full backup still references a payload.</p>
+      <label for="archive-delete-confirmation">Type <code>DELETE ARCHIVED PAYLOADS</code> to continue.</label>
+      <input id="archive-delete-confirmation" data-testid="archive-delete-confirmation" autocomplete="off"
+        [value]="confirmation()" (input)="updateConfirmation($event)">
+      <div class="archive-dialog__actions">
+        <button type="button" (click)="cancel()">Cancel</button>
+        <button type="button" class="archive-dialog__delete" data-testid="archive-delete-confirm"
+          [disabled]="!canConfirm()" (click)="confirm()">Delete payloads</button>
+      </div>
+    </section>
+  </div>
+}

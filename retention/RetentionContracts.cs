@@ -80,6 +80,7 @@ public sealed record ArchiveManifest
     public required string ArchivedBy { get; init; }
     public int Stage { get; init; }
     public DateTimeOffset? RestoredAt { get; init; }
+    public IReadOnlyList<ArchiveObjectReference> Objects { get; init; } = [];
 }
 
 public sealed record ArchiveManifestFile(string RelativePath, long Size, string Sha256);

@@ -56,7 +56,8 @@ public sealed record RetentionManifestStage(
     long TotalBytes,
     IReadOnlyList<ArchiveManifestFile> Files,
     int PolicyVersion = 1,
-    string ArchivedBy = "unknown");
+    string ArchivedBy = "unknown",
+    IReadOnlyList<ArchiveObjectReference>? Objects = null);
 
 public sealed record RetentionManifestEnvelope(
     IReadOnlyList<RetentionManifestStage> Stages,
@@ -181,8 +182,11 @@ public sealed partial class TaskServerStore
         var directory = RetentionArchiveDirectory(archivePath, action.Task.Project, action.Task.TaskKey, archivedAt);
         Directory.CreateDirectory(directory);
         var payloadPath = Path.Combine(directory, "payload.zip");
+        var payloadObjectKey = ArchiveObjectKey(action.Task.Project, action.Task.TaskKey, archivedAt, "payload.zip");
+        var manifestObjectKey = ArchiveObjectKey(action.Task.Project, action.Task.TaskKey, archivedAt, "manifest.json");
         var manifestFiles = new List<ArchiveManifestFile>();
         var archivedArtifactIds = new List<string>();
+        var uploadedObjects = new List<ArchiveObjectReference>();
         var manifestCommitted = false;
         try
         {
@@ -208,6 +212,27 @@ public sealed partial class TaskServerStore
 
             var payloadHash = await HashFileAsync(payloadPath, ct);
             var totalBytes = manifestFiles.Sum(file => file.Size);
+            var localReference = new ArchiveObjectReference(
+                "local", payloadObjectKey, null, payloadHash, new FileInfo(payloadPath).Length, payloadHash);
+            var payloadObjects = new List<ArchiveObjectReference> { localReference };
+            var needsS3 = policy.ArchiveStorage.ArchiveTarget == ArchiveTargetKind.S3
+                          || policy.ArchiveStorage.CopyToSecondary;
+            if (needsS3)
+            {
+                using var s3 = S3ArchiveTarget();
+                await using var upload = File.OpenRead(payloadPath);
+                var remote = await s3.PutAsync(payloadObjectKey, upload, payloadHash, upload.Length, ct);
+                uploadedObjects.Add(remote);
+                payloadObjects.Add(remote);
+            }
+            var keepLocal = policy.ArchiveStorage.ArchiveTarget == ArchiveTargetKind.Local
+                            && !policy.ArchiveStorage.DeleteLocalAfterVerification;
+            if (!keepLocal)
+            {
+                File.Delete(payloadPath);
+                payloadObjects.Remove(localReference);
+            }
+
             var manifest = new ArchiveManifest
             {
                 TaskKey = action.Task.TaskKey,
@@ -223,7 +248,24 @@ public sealed partial class TaskServerStore
                 ArchivedAt = archivedAt,
                 ArchivedBy = policy.UpdatedBy,
                 Stage = action.Stage,
+                Objects = payloadObjects,
             };
+
+            var manifestPath = Path.Combine(directory, "manifest.json");
+            var manifestBytes = JsonSerializer.SerializeToUtf8Bytes(manifest, RetentionJson);
+            await File.WriteAllBytesAsync(manifestPath, manifestBytes, ct);
+            if (needsS3)
+            {
+                using var s3 = S3ArchiveTarget();
+                await using var upload = new MemoryStream(manifestBytes, writable: false);
+                var manifestHash = Convert.ToHexStringLower(SHA256.HashData(manifestBytes));
+                uploadedObjects.Add(await s3.PutAsync(manifestObjectKey, upload, manifestHash, manifestBytes.LongLength, ct));
+            }
+            if (!keepLocal)
+            {
+                File.Delete(manifestPath);
+                if (!Directory.EnumerateFileSystemEntries(directory).Any()) Directory.Delete(directory);
+            }
 
             byte[]? excerptContent = null;
             string? excerptRunId = null;
@@ -250,10 +292,27 @@ public sealed partial class TaskServerStore
             }, ct);
             manifestCommitted = true;
 
-            return new ArchiveTransition(directory, payloadPath, archivedAt, action.Stage, totalBytes);
+            return new ArchiveTransition(
+                keepLocal ? manifestPath : manifestObjectKey,
+                keepLocal ? payloadPath : payloadObjects.Single(item => item.Target == "s3").ObjectKey,
+                archivedAt,
+                action.Stage,
+                totalBytes);
         }
         catch
         {
+            foreach (var uploaded in uploadedObjects)
+            {
+                try
+                {
+                    using var s3 = S3ArchiveTarget();
+                    await s3.DeleteAsync(uploaded.ObjectKey, CancellationToken.None);
+                }
+                catch
+                {
+                    // The durable database was not committed. A later object-store inventory may remove this orphan.
+                }
+            }
             if (!manifestCommitted && Directory.Exists(directory))
                 Directory.Delete(directory, recursive: true);
             throw;
@@ -299,16 +358,13 @@ public sealed partial class TaskServerStore
         try
         {
             foreach (var stage in envelope.Stages
-                         .Where(item => !string.IsNullOrWhiteSpace(item.PayloadPath))
+                         .Where(item => !string.IsNullOrWhiteSpace(item.PayloadPath) || item.Objects is { Count: > 0 })
                          .OrderBy(item => item.ArchivedAt))
             {
-                if (!File.Exists(stage.PayloadPath))
-                    throw new InvalidDataException($"Cold payload is missing: {stage.PayloadPath}");
-                var payloadHash = await HashFileAsync(stage.PayloadPath, ct);
-                if (!string.Equals(payloadHash, stage.PayloadSha256, StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidDataException($"Payload hash mismatch for {stage.PayloadPath}");
-
-                using var zip = ZipFile.OpenRead(stage.PayloadPath);
+                var materialized = await MaterializeVerifiedPayloadAsync(stage, ct);
+                try
+                {
+                    using var zip = ZipFile.OpenRead(materialized);
                 var restored = new List<(string ArtifactId, byte[] Content)>();
                 foreach (var file in stage.Files)
                 {
@@ -330,6 +386,13 @@ public sealed partial class TaskServerStore
                         await ExecuteAsync(connection, "UPDATE artifacts SET content = $content, archived = 0 WHERE id = $id;", ct, transaction,
                             ("$content", content), ("$id", artifactId));
                 }, ct);
+                }
+                finally
+                {
+                    if (!string.Equals(materialized, stage.PayloadPath, StringComparison.OrdinalIgnoreCase)
+                        && File.Exists(materialized))
+                        File.Delete(materialized);
+                }
             }
 
             await InWriteTransactionAsync(async (connection, transaction) =>
@@ -355,28 +418,57 @@ public sealed partial class TaskServerStore
         if (envelope.TombstonedAt is not null)
             return;
 
+        EnsureColdPayloadIsNotReferencedByBackup(envelope, action.Task.TaskKey);
+
         var pending = new List<(string Original, string Pending)>();
         var committed = false;
         try
         {
             foreach (var stage in envelope.Stages
-                         .Where(stage => !string.IsNullOrWhiteSpace(stage.PayloadPath))
+                         .Where(stage => !string.IsNullOrWhiteSpace(stage.PayloadPath) || stage.Objects is { Count: > 0 })
                          .DistinctBy(stage => stage.PayloadPath, StringComparer.OrdinalIgnoreCase))
             {
-                if (!File.Exists(stage.PayloadPath))
-                    throw new InvalidDataException($"Cold payload is missing: {stage.PayloadPath}");
-                var payloadHash = await HashFileAsync(stage.PayloadPath, ct);
-                if (!string.Equals(payloadHash, stage.PayloadSha256, StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidDataException($"Payload hash mismatch for {stage.PayloadPath}");
-                var pendingPath = stage.PayloadPath + $".tombstone-{Guid.NewGuid():N}";
-                File.Move(stage.PayloadPath, pendingPath);
-                pending.Add((stage.PayloadPath, pendingPath));
+                if (stage.Objects is { Count: > 0 })
+                {
+                    foreach (var reference in stage.Objects.DistinctBy(item => (item.Target, item.ObjectKey)))
+                    {
+                        var target = TargetFor(reference);
+                        try
+                        {
+                            var verification = await target.VerifyAsync(reference, ct);
+                            if (!verification.Verified)
+                                throw new InvalidDataException(
+                                    $"Cold payload verification failed for {reference.Target}:{reference.ObjectKey}: {verification.Error}");
+                        }
+                        finally
+                        {
+                            if (target is IDisposable disposable) disposable.Dispose();
+                        }
+                    }
+                    foreach (var reference in stage.Objects.DistinctBy(item => (item.Target, item.ObjectKey)))
+                    {
+                        var target = TargetFor(reference);
+                        try { await target.DeleteAsync(reference.ObjectKey, ct); }
+                        finally { if (target is IDisposable disposable) disposable.Dispose(); }
+                    }
+                }
+                else
+                {
+                    if (!File.Exists(stage.PayloadPath))
+                        throw new InvalidDataException($"Cold payload is missing: {stage.PayloadPath}");
+                    var payloadHash = await HashFileAsync(stage.PayloadPath, ct);
+                    if (!string.Equals(payloadHash, stage.PayloadSha256, StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidDataException($"Payload hash mismatch for {stage.PayloadPath}");
+                    var pendingPath = stage.PayloadPath + $".tombstone-{Guid.NewGuid():N}";
+                    File.Move(stage.PayloadPath, pendingPath);
+                    pending.Add((stage.PayloadPath, pendingPath));
+                }
             }
 
             var tombstonedAt = new DateTimeOffset(UtcNow);
             var tombstone = envelope with
             {
-                Stages = envelope.Stages.Select(stage => stage with { PayloadPath = string.Empty }).ToList(),
+                Stages = envelope.Stages.Select(stage => stage with { PayloadPath = string.Empty, Objects = [] }).ToList(),
                 TombstonedAt = tombstonedAt,
             };
             await InWriteTransactionAsync(async (connection, transaction) =>
@@ -391,6 +483,9 @@ public sealed partial class TaskServerStore
                     """, ct, transaction,
                     ("$manifest", JsonSerializer.Serialize(tombstone, RetentionJson)),
                     ("$task", action.Task.StoreKey));
+                await AuditAsync(connection, transaction, "retention-engine", "retention.archive-deleted", "task",
+                    action.Task.StoreKey,
+                    JsonSerializer.Serialize(new { action.Task.TaskKey, tombstonedAt }), ct);
             }, ct);
             committed = true;
 
@@ -411,6 +506,71 @@ public sealed partial class TaskServerStore
         => await InWriteTransactionAsync(async (connection, transaction)
             => await ExecuteAsync(connection, "UPDATE archive_manifests SET state = $state WHERE task_id = $task;", ct, transaction,
                 ("$state", state), ("$task", taskId)), ct);
+
+    private async Task<string> MaterializeVerifiedPayloadAsync(RetentionManifestStage stage, CancellationToken ct)
+    {
+        if (stage.Objects is not { Count: > 0 })
+        {
+            if (!File.Exists(stage.PayloadPath))
+                throw new InvalidDataException($"Cold payload is missing: {stage.PayloadPath}");
+            var localHash = await HashFileAsync(stage.PayloadPath, ct);
+            if (!string.Equals(localHash, stage.PayloadSha256, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException($"Payload hash mismatch for {stage.PayloadPath}");
+            return stage.PayloadPath;
+        }
+
+        var errors = new List<string>();
+        foreach (var reference in stage.Objects.OrderBy(item => item.Target == "local" ? 0 : 1))
+        {
+            IArchiveTarget target;
+            try { target = TargetFor(reference); }
+            catch (Exception exception)
+            {
+                errors.Add($"{reference.Target}: {exception.Message}");
+                continue;
+            }
+            var temporary = Path.Combine(Path.GetTempPath(), $"retention-restore-{Guid.NewGuid():N}.zip");
+            try
+            {
+                await using var input = await target.OpenReadAsync(reference.ObjectKey, ct);
+                await using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                    await input.CopyToAsync(output, ct);
+                var hash = await HashFileAsync(temporary, ct);
+                if (!string.Equals(hash, stage.PayloadSha256, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("sha256-mismatch");
+                return temporary;
+            }
+            catch (Exception exception) when (exception is IOException or HttpRequestException or InvalidDataException)
+            {
+                if (File.Exists(temporary)) File.Delete(temporary);
+                errors.Add($"{reference.Target}:{reference.ObjectKey}: {exception.Message}");
+            }
+            finally
+            {
+                if (target is IDisposable disposable) disposable.Dispose();
+            }
+        }
+        throw new InvalidDataException($"No verified archive target could restore the payload. {string.Join("; ", errors)}");
+    }
+
+    private void EnsureColdPayloadIsNotReferencedByBackup(RetentionManifestEnvelope envelope, string taskKey)
+    {
+        var fullRoot = _options.ResolveFullBackupDirectory();
+        if (!Directory.Exists(fullRoot)) return;
+        var hashes = envelope.Stages.Select(stage => stage.PayloadSha256)
+            .Where(value => !string.IsNullOrWhiteSpace(value)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var set in Directory.EnumerateDirectories(fullRoot))
+        {
+            if (!File.Exists(Path.Combine(set, "complete.json"))) continue;
+            var manifests = Path.Combine(set, "manifests");
+            if (!Directory.Exists(manifests)) continue;
+            foreach (var path in Directory.EnumerateFiles(manifests, "*.json"))
+                if (hashes.Any(hash => File.ReadAllText(path).Contains(hash, StringComparison.OrdinalIgnoreCase)))
+                    throw new TaskServerConflictException(
+                        "archive-referenced-by-backup",
+                        $"Archive deletion for task '{taskKey}' is refused because full backup '{Path.GetFileName(set)}' still references it.");
+        }
+    }
 
     private async Task<ArchiveTransition> MarkWholeTaskArchivedWithoutNewPayloadAsync(
         RetentionAction action,
@@ -523,7 +683,8 @@ public sealed partial class TaskServerStore
             manifest.TotalBytes,
             manifest.Files,
             manifest.PolicyVersion,
-            manifest.ArchivedBy);
+            manifest.ArchivedBy,
+            manifest.Objects);
         var stages = (existing?.Stages ?? []).Where(item => item.Stage != stage.Stage).Append(stage).OrderBy(item => item.Stage).ToList();
         var envelope = new RetentionManifestEnvelope(stages);
         await ExecuteAsync(connection, """

@@ -60,6 +60,18 @@ async function stubBackgroundApis(page: Page) {
   await page.route('**/api/dev-tools/flags', json({ updateStableEnabled: false, deleteE2EJobsEnabled: false }));
   await page.route('**/api/workspaces*', json([]));
   await page.route('**/api/v1/management/status', json(MANAGEMENT_STATUS));
+  await page.route('**/api/v1/management/retention/target', json({
+    activeTarget: 's3', copyToSecondary: false, deleteLocalAfterVerification: true,
+    localConfigured: true, s3Configured: true, s3Endpoint: 'http://minio:9000',
+    s3Bucket: 'agent-studio-archive', s3Prefix: 'studio', deleteArchivedAfterYears: 2,
+  }));
+  await page.route('**/api/v1/management/retention/plan', json({
+    actionCount: 1, totalBytes: 8192, affectedTasks: 1,
+    actions: [{ kind: 'DeleteCold', taskKey: 'AGT-1', bytes: 8192 }],
+  }));
+  await page.route('**/api/v1/management/retention/apply', json({
+    runId: 'retention-apply-1', appliedActions: 1, appliedBytes: 8192, errors: [], warnings: [],
+  }));
   await page.route('**/api/v1/management/commands', async route => {
     const request = route.request().postDataJSON() as { kind: string; dryRun: boolean };
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
@@ -136,6 +148,23 @@ test.describe('Task Server settings section', () => {
     await expect(page.getByTestId('task-server-result-orphan-sweep')).toBeVisible({ timeout: 3_000 });
     await page.getByTestId('task-server-management-section').scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(SHOT_DIR, 'task-server-management--mocked.png'), fullPage: false });
+  });
+
+  test('S3 target status and archive expiry use preview plus typed confirmation', async ({ page }) => {
+    await page.goto('/#/workspace/settings/task-server');
+    await expect(page.getByTestId('archive-target-status')).toContainText('S3');
+    await expect(page.getByTestId('archive-retention-card')).toContainText('2 years');
+
+    await page.getByTestId('archive-delete-preview').click();
+    const dialog = page.getByTestId('archive-delete-dialog');
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText('1 payloads');
+    await expect(page.getByTestId('archive-delete-confirm')).toBeDisabled();
+    await page.getByTestId('archive-delete-confirmation').fill('DELETE ARCHIVED PAYLOADS');
+    await expect(page.getByTestId('archive-delete-confirm')).toBeEnabled();
+    await page.screenshot({ path: join(SHOT_DIR, 'archive-delete-confirmation.png'), fullPage: false });
+    await page.getByTestId('archive-delete-confirm').click();
+    await expect(dialog).toBeHidden();
   });
 
   test('deep-link opens the Task Server section directly', async ({ page }) => {

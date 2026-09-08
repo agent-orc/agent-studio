@@ -280,6 +280,25 @@ policy and `confirmColdDelete: true` on that apply request. Projects cannot
 weaken the built-in never-archive lanes from Backlog through Human Review and
 Escalated.
 
+The workspace policy also contains `archiveStorage`. `archiveTarget` is
+`local` by default and may be set to `s3`. With a local primary,
+`copyToSecondary: true` writes the local object first, uploads it to S3, and
+verifies its SHA-256 before hot content is cleared. Set
+`deleteLocalAfterVerification: true` to retain only the verified S3 copy. A
+direct S3 target also uses a bounded local staging file but removes it before
+committing the manifest. `deleteArchivedAfterYears` defaults to `null` (never)
+and, when set, drives stage 3. Each manifest stage records every target object
+key, size, SHA-256, ETag, and server checksum returned by the endpoint. The
+object layout is `<prefix>/<project>/<task-key>/<archivedAt>/manifest.json`
+and `payload.zip`.
+
+Restore tries the recorded targets that are configured on the receiving host,
+downloads one payload, verifies the payload SHA-256 and every ZIP entry hash,
+and only then writes artifact content back to SQLite. This means an ordinary
+SQLite backup can be restored on a new host without copying the archive: once
+the same S3 target is configured, archived artifacts resolve through the
+manifest object references. A full backup remains the self-contained option.
+
 Archiving a heavy file clears `artifacts.content` to `NULL` and sets
 `archived = 1`; the row keeps its `sha256` and `size_bytes`. A content read on
 an archived artifact,
@@ -297,6 +316,8 @@ Management routes, all under `/api/v1/management/retention`:
 | `POST /plan` | Dry run; returns the plan and records an `archive_runs` row in mode `plan` | `management` |
 | `POST /apply` | Runs now; skips tasks with an active or process-unknown lease; refused with `server-not-writable` in `ReadOnly` and `Maintenance`; cold deletion additionally requires `confirmColdDelete: true` | `management` |
 | `GET /runs`, `GET /runs/{id}` | Run history with the full report | `tasks:read` |
+| `GET /target` | Active archive policy and non-secret local/S3 configuration status | `tasks:read` |
+| `POST /integrity/check` | Sample manifests and re-hash target payloads and ZIP entries; optional body `{"sampleCount":25}` | `management` |
 | `GET /archive/{taskId}` | Manifest for an archived task (accepts a task id or task key) | `tasks:read` |
 | `POST /archive/{taskId}` | Archive one task now, bypassing age thresholds; body is `{"stage":1|2|3,"confirmColdDelete":false}`; active leases and policy-protected lanes are refused | `management` |
 | `POST /archive/{taskId}/restore` | Restore, with every file hash re-verified | `management` |
@@ -313,6 +334,13 @@ and publishes the same event over `/hubs/events` as `taskServerEvent` for the
 Studio feed. It then creates a full backup set and thins complete sets to the
 policy union of 7 daily, 4 weekly, and 12 monthly sets. An archive, event, or
 backup failure is logged and never stops the server.
+
+On the configured weekly day (Sunday by default), the scheduler also runs an
+integrity sample. Clean and discrepant checks are stored in `archive_runs` with
+mode `integrity`; discrepancies append a `retention.integrity-discrepancy`
+audit record and publish a matching Task Server feed event. Configure the
+sample with `TaskServer:RetentionIntegritySampleCount` and the weekday with
+`TaskServer:RetentionIntegrityDayOfWeek`.
 
 The legacy migration import
 (`POST /api/v1/management/migrations/legacy/import`) runs the active policy
@@ -359,6 +387,18 @@ The ordinary SQLite backup and restore routes deliberately include only the
 database. They do not copy cold payloads; use a full backup set whenever
 archived artifacts must be recoverable from that backup alone.
 
+When S3 is configured, creation uploads the complete full-backup directory
+under `<prefix>/full/<backup-id>/` only after local `complete.json` exists;
+`complete.json` is uploaded last. Listing reports `remoteState`, determined by
+reading the remote inventory and completion markers and comparing their set
+hash. The same 7 daily, 4 weekly, and 12 monthly thinning union deletes both
+local and remote copies. Stage 3 archive deletion is refused with
+`archive-referenced-by-backup` while any retained complete backup manifest
+still references the payload. The Admin retention card previews stage 3 and
+requires the operator to type `DELETE ARCHIVED PAYLOADS` before sending the
+confirmed apply; deleted payloads retain their tombstone manifest and audit
+record.
+
 The analysis export is versioned JSONL, one object per line:
 
 | File | Schema version 1 fields |
@@ -392,6 +432,7 @@ settings.
 | `LISTEN_URL` | Kestrel addresses. `AUTH=none` is rejected unless every address is loopback. | `http://127.0.0.1:5071` |
 | `STORE_PATH` | Private database and migration evidence root, outside every version directory | `data` beside the installed service |
 | `BACKUP_PATH` | Verified SQLite backup destination | `<STORE_PATH>/backups` |
+| `BACKUP_PATH_FULL` | Full backup-set root | `<BACKUP_PATH>/full` |
 | `AUTH` | `bearer` in production; `none` is loopback-only | `none` |
 | `STUDIO_AUTH_TOKEN_FILE` | One-time bootstrap input for the initial Studio principal | Generated and written by packaged setup |
 | `ENGINE_AUTH_TOKEN_FILE` | One-time bootstrap input for the initial Engine principal | Generated and written by packaged setup |
@@ -408,11 +449,38 @@ settings.
 | `TaskServer:MaximumPrincipalRotationOverlapSeconds` | Maximum accepted rotation overlap | `3600` |
 | `TaskServer:RequireAuthentication`, `StudioBearerToken`, `RunnerBearerToken` | Deprecated compatibility profile mapped into persisted principals; removal follows Phase B migration | unset |
 | `ARCHIVE_PATH` or `TaskServer:RetentionArchivePath` | Cold archive root for the SQLite retention adapter, outside `STORE_PATH`; `ARCHIVE_PATH` wins | `<STORE_PATH>/archive` |
+| `ARCHIVE_S3_ENDPOINT` | Absolute HTTP(S) endpoint for any S3-compatible service | Unset |
+| `ARCHIVE_S3_BUCKET` | Existing archive bucket | Unset |
+| `ARCHIVE_S3_PREFIX` | Optional object-key prefix | Empty |
+| `ARCHIVE_S3_REGION` | SigV4 signing region | `us-east-1` |
+| `ARCHIVE_S3_CREDENTIALS_FILE` | Protected JSON file with `accessKey` and `secretKey`; credentials are never stored in policy or manifests | Unset |
+| `ARCHIVE_S3_PATH_STYLE` | Put the bucket in the URL path; enable for MinIO | `false` |
+| `ARCHIVE_S3_SERVER_SIDE_CHECKSUM` | Send the S3 SHA-256 checksum header in addition to end-to-end byte verification | `true` |
 | `TaskServer:RetentionSchedulerEnabled` | Enables the daily archive sweep | `true` |
 | `TaskServer:RetentionScheduleHour` | Server-local hour the scheduler checks once per day | `3` |
 | `TaskServer:RetentionSchedulerIntervalMinutes` | Poll interval for the scheduler's daily-hour check | `60` |
 | `TaskServer:RetentionMaximumLoadPerCore` | Maximum one-minute Linux load average per logical core for a scheduled run; unavailable load telemetry is admitted and logged | `1.5` |
 | `TaskServer:BackupPathFull` | Full backup set root | `<BACKUP_PATH>/full` |
+| `TaskServer:RetentionIntegritySampleCount` | Maximum manifests in the weekly integrity sample | `25` |
+| `TaskServer:RetentionIntegrityDayOfWeek` | Server-local integrity weekday | `Sunday` |
+
+The packaged installer and the `distributed` Compose profile both default to
+a separate persistent local archive volume. Leaving every `ARCHIVE_S3_*`
+setting empty preserves that behavior. To use the optional Compose MinIO
+scenario, place `{"accessKey":"minioadmin","secretKey":"minioadmin"}` in a
+mode-0600 credential file and start the profiles with:
+
+```sh
+ARCHIVE_S3_ENDPOINT=http://minio:9000 \
+ARCHIVE_S3_BUCKET=agent-studio-archive \
+ARCHIVE_S3_PATH_STYLE=true \
+ARCHIVE_S3_CREDENTIALS_FILE=./archive-s3-credentials.json \
+docker compose --profile distributed --profile archive-s3 up --build --wait
+```
+
+Production S3 credentials use the same JSON shape. Point the credential-file
+setting at a protected file supplied by the host secret manager; do not put
+keys in `server.env` or the retention policy.
 
 - Configure at most one direct value or file for each bootstrap principal.
 - `GET /api/v1/protocol` and `POST /api/v1/protocol/compatibility` remain open

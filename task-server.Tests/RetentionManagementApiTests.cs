@@ -50,6 +50,13 @@ public sealed class RetentionManagementApiTests
         Assert.Equal(0, (await plan.Content.ReadFromJsonAsync<RetentionPlanDto>())!.ActionCount);
         var runs = await client.GetFromJsonAsync<List<RetentionRunSummaryDto>>("/api/v1/management/retention/runs");
         Assert.Contains(runs!, run => run.Mode == "plan" && run.Trigger == "manual");
+        var target = await client.GetFromJsonAsync<ArchiveTargetStatusDto>("/api/v1/management/retention/target");
+        Assert.Equal("local", target!.ActiveTarget);
+        Assert.False(target.S3Configured);
+        var integrityResponse = await client.PostAsJsonAsync(
+            "/api/v1/management/retention/integrity/check", new RetentionIntegrityCheckRequest(5));
+        integrityResponse.EnsureSuccessStatusCode();
+        Assert.Empty((await integrityResponse.Content.ReadFromJsonAsync<RetentionIntegrityCheckResultDto>())!.Discrepancies);
 
         Assert.Equal(HttpStatusCode.NotFound,
             (await client.GetAsync("/api/v1/management/retention/runs/missing")).StatusCode);

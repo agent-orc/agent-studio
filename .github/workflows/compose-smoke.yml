@@ -31,3 +31,11 @@ jobs:
 
       - name: Build, start, and verify onboarding stack
         run: scripts/compose-smoke-test.sh
+
+      - name: Install .NET 10 for the MinIO archive contract
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Verify S3 archive and restore against MinIO
+        run: scripts/minio-retention-test.sh

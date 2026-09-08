@@ -42,6 +42,22 @@ builder.Services
     {
         if (!string.IsNullOrWhiteSpace(configuration["ARCHIVE_PATH"]))
             options.RetentionArchivePath = configuration["ARCHIVE_PATH"];
+        if (!string.IsNullOrWhiteSpace(configuration["BACKUP_PATH_FULL"]))
+            options.BackupPathFull = configuration["BACKUP_PATH_FULL"];
+        if (!string.IsNullOrWhiteSpace(configuration["ARCHIVE_S3_ENDPOINT"]))
+            options.ArchiveS3Endpoint = configuration["ARCHIVE_S3_ENDPOINT"];
+        if (!string.IsNullOrWhiteSpace(configuration["ARCHIVE_S3_BUCKET"]))
+            options.ArchiveS3Bucket = configuration["ARCHIVE_S3_BUCKET"];
+        if (!string.IsNullOrWhiteSpace(configuration["ARCHIVE_S3_PREFIX"]))
+            options.ArchiveS3Prefix = configuration["ARCHIVE_S3_PREFIX"]!;
+        if (!string.IsNullOrWhiteSpace(configuration["ARCHIVE_S3_REGION"]))
+            options.ArchiveS3Region = configuration["ARCHIVE_S3_REGION"]!;
+        if (!string.IsNullOrWhiteSpace(configuration["ARCHIVE_S3_CREDENTIALS_FILE"]))
+            options.ArchiveS3CredentialsFile = configuration["ARCHIVE_S3_CREDENTIALS_FILE"];
+        if (bool.TryParse(configuration["ARCHIVE_S3_PATH_STYLE"], out var pathStyle))
+            options.ArchiveS3PathStyle = pathStyle;
+        if (bool.TryParse(configuration["ARCHIVE_S3_SERVER_SIDE_CHECKSUM"], out var checksum))
+            options.ArchiveS3ServerSideChecksum = checksum;
     });
 builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 builder.Services.AddSignalR();

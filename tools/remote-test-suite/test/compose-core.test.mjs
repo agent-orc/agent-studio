@@ -22,6 +22,8 @@ test('Compose plan gives every Docker resource an explicit harness identity', ()
   assert.equal(plan.resources.network, `${plan.project}-network`);
   assert.ok(plan.resources.volumes.every(value => value.startsWith(plan.project)));
   assert.ok(plan.resources.images.every(value => value.startsWith(plan.project)));
+  assert.ok(plan.resources.containers.includes(`${plan.project}-minio-1`));
+  assert.ok(plan.resources.volumes.includes(`${plan.project}-minio-data`));
   assert.match(plan.identityLabel, /agt2394-rts-smoke-01/);
   assert.ok(plan.neverTouches.includes('agent-studio'));
   assert.deepEqual(composeCommand(plan, 'config', '--quiet').slice(-2), ['config', '--quiet']);

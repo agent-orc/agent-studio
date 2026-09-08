@@ -35,10 +35,13 @@ if [ "${AGENT_ORCHESTRATOR_SKIP_USER_CREATE:-0}" != "1" ] \
     log "Created system user $SERVICE_USER."
 fi
 
+configured_archive_path=${ARCHIVE_PATH:-$STATE_ROOT/archive}
+configured_full_backup_path=${BACKUP_PATH_FULL:-$STATE_ROOT/backups/full}
 install -d -m 0755 "$OPT_ROOT" "$CONFIG_ROOT" "$SYSTEMD_ROOT"
-install -d -m 0750 "$STATE_ROOT" "$STATE_ROOT/backups"
+install -d -m 0750 "$STATE_ROOT" "$STATE_ROOT/backups" "$configured_full_backup_path" "$configured_archive_path"
 if [ "${AGENT_ORCHESTRATOR_SKIP_USER_CREATE:-0}" != "1" ]; then
     chown -R "$SERVICE_USER:$SERVICE_USER" "$STATE_ROOT"
+    chown "$SERVICE_USER:$SERVICE_USER" "$configured_full_backup_path" "$configured_archive_path"
 fi
 
 prompt()
@@ -82,6 +85,15 @@ loopback_listeners_only()
 if [ ! -f "$CONFIG_ROOT/server.env" ]; then
     listen_url=$(prompt "Private Task Server listen URL" "${LISTEN_URL:-http://127.0.0.1:5071}")
     auth_mode=$(prompt "Authentication mode (none or bearer)" "${AUTH_MODE:-bearer}")
+    archive_path=$configured_archive_path
+    backup_path_full=$configured_full_backup_path
+    archive_s3_endpoint=${ARCHIVE_S3_ENDPOINT:-}
+    archive_s3_bucket=${ARCHIVE_S3_BUCKET:-}
+    archive_s3_prefix=${ARCHIVE_S3_PREFIX:-}
+    archive_s3_region=${ARCHIVE_S3_REGION:-us-east-1}
+    archive_s3_credentials_file=${ARCHIVE_S3_CREDENTIALS_FILE:-}
+    archive_s3_path_style=${ARCHIVE_S3_PATH_STYLE:-false}
+    archive_s3_server_checksum=${ARCHIVE_S3_SERVER_SIDE_CHECKSUM:-true}
     case "$auth_mode" in
         none)
             loopback_listeners_only "$listen_url" \
@@ -117,6 +129,15 @@ if [ ! -f "$CONFIG_ROOT/server.env" ]; then
         -e "s/@LISTEN_URL@/$(escape_sed "$listen_url")/" \
         -e "s/@STORE_PATH@/$(escape_sed "$STATE_ROOT")/" \
         -e "s/@BACKUP_PATH@/$(escape_sed "$STATE_ROOT/backups")/" \
+        -e "s/@ARCHIVE_PATH@/$(escape_sed "$archive_path")/" \
+        -e "s/@BACKUP_PATH_FULL@/$(escape_sed "$backup_path_full")/" \
+        -e "s/@ARCHIVE_S3_ENDPOINT@/$(escape_sed "$archive_s3_endpoint")/" \
+        -e "s/@ARCHIVE_S3_BUCKET@/$(escape_sed "$archive_s3_bucket")/" \
+        -e "s/@ARCHIVE_S3_PREFIX@/$(escape_sed "$archive_s3_prefix")/" \
+        -e "s/@ARCHIVE_S3_REGION@/$(escape_sed "$archive_s3_region")/" \
+        -e "s/@ARCHIVE_S3_CREDENTIALS_FILE@/$(escape_sed "$archive_s3_credentials_file")/" \
+        -e "s/@ARCHIVE_S3_PATH_STYLE@/$(escape_sed "$archive_s3_path_style")/" \
+        -e "s/@ARCHIVE_S3_SERVER_SIDE_CHECKSUM@/$(escape_sed "$archive_s3_server_checksum")/" \
         -e "s/@AUTH_MODE@/$(escape_sed "$auth_mode")/" \
         -e "s/@STUDIO_AUTH_TOKEN_FILE@/$(escape_sed "$studio_token_file")/" \
         -e "s/@ENGINE_AUTH_TOKEN_FILE@/$(escape_sed "$engine_token_file")/" \

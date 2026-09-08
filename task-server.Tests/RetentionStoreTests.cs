@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using AgentStudio.TaskServer;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.Retention;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -165,10 +166,12 @@ public sealed class RetentionStoreTests
             ? rule with { ArchiveAfterDaysTerminal = 14 }
             : rule).ToList();
         var updated = await store.UpdateWorkspaceRetentionPolicyAsync(
-            new UpdateRetentionPolicyRequest(updatedRules, initial.Version, new FullBackupRetentionDto(5, 3, 10)), "operator", default);
+            new UpdateRetentionPolicyRequest(updatedRules, initial.Version, new FullBackupRetentionDto(5, 3, 10),
+                new ArchiveStoragePolicyDto("local", DeleteArchivedAfterYears: 3)), "operator", default);
         Assert.Equal(1, updated.Version);
         Assert.Equal(14, updated.Rules.Single(rule => rule.ArtifactClass == "HeavyWorkingData").ArchiveAfterDaysTerminal);
         Assert.Equal(new FullBackupRetentionDto(5, 3, 10), updated.FullBackups);
+        Assert.Equal(3, updated.ArchiveStorage!.DeleteArchivedAfterYears);
         Assert.Equal(new FullBackupRetentionDto(5, 3, 10), (await store.GetWorkspaceRetentionPolicyDtoAsync(default)).FullBackups);
 
         await Assert.ThrowsAsync<TaskServerConflictException>(() => store.UpdateWorkspaceRetentionPolicyAsync(
@@ -231,15 +234,16 @@ public sealed class RetentionStoreTests
     public async Task Scheduler_skips_while_draining_and_runs_while_normal()
     {
         using var temp = new TempDirectory();
-        var store = Store(temp.Path);
+        var clock = new ManualTimeProvider(DateTimeOffset.Parse("2026-09-06T03:00:00Z"));
+        var store = Store(temp.Path, clock);
         await store.InitializeAsync();
-        var retentionManagement = new RetentionManagementService(store);
+        var events = new RecordingTaskServerEventPublisher();
+        var retentionManagement = new RetentionManagementService(store, events);
         var fullBackupManagement = new FullBackupManagementService(store);
         var admission = new TaskServerStartupExecutionAdmission(new ConfigurationBuilder().Build());
-        var events = new RecordingTaskServerEventPublisher();
         var scheduler = new RetentionSchedulerHostedService(
             store, retentionManagement, fullBackupManagement, new FixedRetentionLoadGate(true), events,
-            Options.Create(new TaskServerOptions()), admission, TimeProvider.System,
+            Options.Create(new TaskServerOptions()), admission, clock,
             NullLogger<RetentionSchedulerHostedService>.Instance);
 
         await store.ChangeModeAsync(new ChangeModeRequest(TaskServerMode.Draining, "rehearsal"), "operator", default);
@@ -250,12 +254,14 @@ public sealed class RetentionStoreTests
         Assert.NotNull(result);
         Assert.Empty(result!.Errors);
         Assert.Contains(await store.ListRetentionRunsAsync(default), run => run.Id == result.RunId && run.Trigger == "scheduled");
+        Assert.Contains(await store.ListRetentionRunsAsync(default), run => run.Mode == "integrity" && run.Trigger == "weekly");
         Assert.Contains(events.Messages, message => message.Kind == "retention.run.completed");
+        Assert.Contains(events.Messages, message => message.Kind == "retention.integrity.clean");
         Assert.Single(await fullBackupManagement.ListAsync(default));
 
         var loaded = new RetentionSchedulerHostedService(
             store, retentionManagement, fullBackupManagement, new FixedRetentionLoadGate(false), events,
-            Options.Create(new TaskServerOptions()), admission, TimeProvider.System,
+            Options.Create(new TaskServerOptions()), admission, clock,
             NullLogger<RetentionSchedulerHostedService>.Instance);
         Assert.Null(await loaded.RunOnceAsync());
     }
@@ -300,8 +306,79 @@ public sealed class RetentionStoreTests
         Assert.Equal("tombstone", tombstone!.State);
         Assert.NotNull(tombstone.TombstonedAt);
         Assert.All(tombstone.Stages, stage => Assert.Empty(stage.PayloadPath));
+        Assert.Contains(await store.ListAuditAsync(0, default), audit => audit.Action == "retention.archive-deleted");
         await Assert.ThrowsAsync<InvalidOperationException>(() => store.RestoreArchivedTaskAsync(task.TaskKey, "operator", default));
         Assert.Equal(0, (await store.PlanRetentionRunAsync(new RunRetentionRequest(), "operator", default)).Plan.ActionCount);
+    }
+
+    [Fact]
+    public async Task Integrity_check_records_clean_and_tampered_payload_runs()
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.Parse("2026-01-01T00:00:00Z"));
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        var seed = await SeedClaimedTaskAsync(store, "runner-integrity");
+        var bytes = Encoding.UTF8.GetBytes(string.Concat(Enumerable.Repeat("integrity log\n", 20)));
+        await store.IngestArtifactAsync(
+            seed.RunId,
+            new ArtifactIngestRequest("art-integrity", "logs/cli-output.log", "text/plain", Convert.ToBase64String(bytes),
+                Convert.ToHexStringLower(SHA256.HashData(bytes)), "ingest-integrity", seed.Fence),
+            "runner-integrity", default);
+        var task = await MakeTerminalAndReleaseAsync(store, seed, "runner-integrity");
+        clock.Advance(TimeSpan.FromDays(31));
+        await store.ApplyRetentionRunAsync(new RunRetentionRequest(), "test", default);
+        var events = new RecordingTaskServerEventPublisher();
+        var management = new RetentionManagementService(store, events);
+
+        var clean = await management.CheckIntegrityAsync(
+            new RetentionIntegrityCheckRequest(10), "integrity-test", "weekly", default);
+        Assert.Equal(1, clean.SampledManifests);
+        Assert.Equal(1, clean.VerifiedObjects);
+        Assert.Empty(clean.Discrepancies);
+
+        var manifest = await store.GetRetentionManifestAsync(task.TaskKey, default);
+        await File.AppendAllTextAsync(Assert.Single(manifest!.Stages).PayloadPath, "tamper");
+        var tampered = await management.CheckIntegrityAsync(
+            new RetentionIntegrityCheckRequest(10), "integrity-test", "weekly", default);
+        Assert.Contains(tampered.Discrepancies, item => item.Contains("sha256-mismatch", StringComparison.Ordinal));
+        Assert.Contains(await store.ListRetentionRunsAsync(default), run => run.Id == tampered.RunId && run.Mode == "integrity");
+        Assert.Contains(await store.ListAuditAsync(0, default), audit => audit.Action == "retention.integrity-discrepancy");
+        Assert.Contains(events.Messages, message => message.Kind == "retention.integrity.clean");
+        Assert.Contains(events.Messages, message => message.Kind == "retention.integrity.discrepancy");
+    }
+
+    [Fact]
+    public async Task Cold_payload_deletion_is_refused_while_a_complete_full_backup_references_it()
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.Parse("2026-01-01T00:00:00Z"));
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        var seed = await SeedClaimedTaskAsync(store, "runner-backup-guard");
+        var bytes = "guarded archive payload"u8.ToArray();
+        await store.IngestArtifactAsync(
+            seed.RunId,
+            new ArtifactIngestRequest("art-guard", "logs/cli-output.log", "text/plain", Convert.ToBase64String(bytes),
+                Convert.ToHexStringLower(SHA256.HashData(bytes)), "ingest-guard", seed.Fence),
+            "runner-backup-guard", default);
+        var task = await MakeTerminalAndReleaseAsync(store, seed, "runner-backup-guard");
+        clock.Advance(TimeSpan.FromDays(31));
+        await store.ApplyRetentionRunAsync(new RunRetentionRequest(), "test", default);
+        var payload = Assert.Single((await store.GetRetentionManifestAsync(task.TaskKey, default))!.Stages).PayloadPath;
+        await store.CreateFullBackupAsync("test", default);
+
+        var current = await store.GetWorkspaceRetentionPolicyDtoAsync(default);
+        var rules = current.Rules.Select(rule => rule.ArtifactClass == "HeavyWorkingData"
+            ? rule with { DeleteArchiveEnabled = true, DeleteArchiveAfterDaysTerminal = 30 }
+            : rule).ToList();
+        await store.UpdateWorkspaceRetentionPolicyAsync(
+            new UpdateRetentionPolicyRequest(rules, current.Version, current.FullBackups, current.ArchiveStorage), "operator", default);
+
+        var result = await store.ApplyRetentionRunAsync(new RunRetentionRequest(ConfirmColdDelete: true), "operator", default);
+        Assert.Equal(0, result.AppliedActions);
+        Assert.Contains(result.Errors, error => error.Contains("still references", StringComparison.Ordinal));
+        Assert.True(File.Exists(payload));
     }
 
     [Fact]
@@ -336,6 +413,79 @@ public sealed class RetentionStoreTests
         await store.RestoreArchivedTaskAsync(task.TaskKey, "operator", default);
         Assert.Equal(bytes, Convert.FromBase64String(
             (await store.GetArtifactContentAsync(seed.RunId, "art-promote", default))!.ContentBase64));
+    }
+
+    [Fact]
+    public async Task S3_archive_restore_integrity_and_missing_object_run_against_configured_MinIO()
+    {
+        var endpoint = Environment.GetEnvironmentVariable("MINIO_ENDPOINT");
+        if (string.IsNullOrWhiteSpace(endpoint)) return;
+        var accessKey = Environment.GetEnvironmentVariable("MINIO_ACCESS_KEY") ?? "minioadmin";
+        var secretKey = Environment.GetEnvironmentVariable("MINIO_SECRET_KEY") ?? "minioadmin";
+        using var temp = new TempDirectory();
+        var credentialFile = Path.Combine(temp.Path, "s3-credentials.json");
+        await File.WriteAllTextAsync(credentialFile,
+            System.Text.Json.JsonSerializer.Serialize(new { accessKey, secretKey }));
+        var clock = new ManualTimeProvider(DateTimeOffset.Parse("2026-01-01T00:00:00Z"));
+        var options = new TaskServerOptions
+        {
+            DataDirectory = temp.Path,
+            RetentionArchivePath = Path.Combine(temp.Path, "local-archive"),
+            ArchiveS3Endpoint = endpoint,
+            ArchiveS3Bucket = Environment.GetEnvironmentVariable("MINIO_BUCKET") ?? "agent-studio-archive",
+            ArchiveS3Prefix = "task-server-integration",
+            ArchiveS3CredentialsFile = credentialFile,
+            ArchiveS3PathStyle = true,
+        };
+        var store = new TaskServerStore(Options.Create(options), clock);
+        await store.InitializeAsync();
+        var seed = await SeedClaimedTaskAsync(store, "runner-minio");
+        var bytes = Encoding.UTF8.GetBytes(string.Concat(Enumerable.Repeat("remote archive\n", 30)));
+        await store.IngestArtifactAsync(seed.RunId,
+            new ArtifactIngestRequest("art-minio", "logs/cli-output.log", "text/plain", Convert.ToBase64String(bytes),
+                Convert.ToHexStringLower(SHA256.HashData(bytes)), "ingest-minio", seed.Fence), "runner-minio", default);
+        var task = await MakeTerminalAndReleaseAsync(store, seed, "runner-minio");
+        var policy = await store.GetWorkspaceRetentionPolicyDtoAsync(default);
+        await store.UpdateWorkspaceRetentionPolicyAsync(
+            new UpdateRetentionPolicyRequest(policy.Rules, policy.Version, policy.FullBackups,
+                new ArchiveStoragePolicyDto("local", CopyToSecondary: true, DeleteLocalAfterVerification: true)), "operator", default);
+        clock.Advance(TimeSpan.FromDays(31));
+
+        Assert.Equal(1, (await store.ApplyRetentionRunAsync(new RunRetentionRequest(), "test", default)).AppliedActions);
+        var manifest = await store.GetRetentionManifestAsync(task.TaskKey, default);
+        var stage = Assert.Single(manifest!.Stages);
+        var remote = Assert.Single(stage.Objects!);
+        Assert.Equal("s3", remote.Target);
+        Assert.False(File.Exists(stage.PayloadPath));
+        using var s3 = new S3Target(new S3TargetOptions
+        {
+            Endpoint = new Uri(endpoint), Bucket = options.ArchiveS3Bucket, Prefix = options.ArchiveS3Prefix,
+            AccessKey = accessKey, SecretKey = secretKey, PathStyle = true, ServerSideChecksum = true,
+        });
+        var backup = await store.CreateFullBackupAsync("test", default);
+        Assert.Equal("verified", backup.RemoteState);
+        Assert.Equal("verified", (await store.ListFullBackupsAsync(default)).Single().RemoteState);
+
+        await s3.DeleteAsync(remote.ObjectKey);
+        await store.ChangeModeAsync(new ChangeModeRequest(TaskServerMode.Maintenance, "full restore"), "operator", default);
+        Assert.True((await store.RestoreFullBackupAsync(backup.Id, "operator", default)).Restored);
+        await store.ChangeModeAsync(new ChangeModeRequest(TaskServerMode.Normal, "archive restore"), "operator", default);
+        manifest = await store.GetRetentionManifestAsync(task.TaskKey, default);
+        Assert.Equal("local", Assert.Single(Assert.Single(manifest!.Stages).Objects!, item => item.Target == "local").Target);
+        await store.RestoreArchivedTaskAsync(task.TaskKey, "operator", default);
+        Assert.Equal(bytes, Convert.FromBase64String(
+            (await store.GetArtifactContentAsync(seed.RunId, "art-minio", default))!.ContentBase64));
+
+        await store.ApplyRetentionRunAsync(new RunRetentionRequest(), "test", default);
+        manifest = await store.GetRetentionManifestAsync(task.TaskKey, default);
+        remote = Assert.Single(Assert.Single(manifest!.Stages).Objects!);
+        var tampered = "tampered remote payload"u8.ToArray();
+        await using (var input = new MemoryStream(tampered))
+            await s3.PutAsync(remote.ObjectKey, input, Convert.ToHexStringLower(SHA256.HashData(tampered)), tampered.Length);
+        var integrity = await store.CheckArchiveIntegrityAsync(10, "test", "weekly", default);
+        Assert.Contains(integrity.Discrepancies, value => value.Contains("sha256-mismatch", StringComparison.Ordinal));
+        await s3.DeleteAsync(remote.ObjectKey);
+        await Assert.ThrowsAsync<InvalidDataException>(() => store.RestoreArchivedTaskAsync(task.TaskKey, "operator", default));
     }
 
     [Fact]

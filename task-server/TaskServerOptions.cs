@@ -33,6 +33,15 @@ public sealed class TaskServerOptions
     public int RetentionSchedulerIntervalMinutes { get; set; } = 60;
     public double RetentionMaximumLoadPerCore { get; set; } = 1.5;
     public string? BackupPathFull { get; set; }
+    public string? ArchiveS3Endpoint { get; set; }
+    public string? ArchiveS3Bucket { get; set; }
+    public string ArchiveS3Prefix { get; set; } = "";
+    public string ArchiveS3Region { get; set; } = "us-east-1";
+    public string? ArchiveS3CredentialsFile { get; set; }
+    public bool ArchiveS3PathStyle { get; set; }
+    public bool ArchiveS3ServerSideChecksum { get; set; } = true;
+    public int RetentionIntegritySampleCount { get; set; } = 25;
+    public DayOfWeek RetentionIntegrityDayOfWeek { get; set; } = DayOfWeek.Sunday;
 
     public string ResolveRetentionArchivePath()
         => string.IsNullOrWhiteSpace(RetentionArchivePath)

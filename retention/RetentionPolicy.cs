@@ -42,6 +42,30 @@ public sealed record FullBackupRetentionPolicy
     }
 }
 
+public enum ArchiveTargetKind
+{
+    Local,
+    S3,
+}
+
+public sealed record ArchiveStoragePolicy
+{
+    public ArchiveTargetKind ArchiveTarget { get; init; } = ArchiveTargetKind.Local;
+    public bool CopyToSecondary { get; init; }
+    public bool DeleteLocalAfterVerification { get; init; }
+    public int? DeleteArchivedAfterYears { get; init; }
+
+    public void Validate()
+    {
+        if (ArchiveTarget == ArchiveTargetKind.S3 && CopyToSecondary)
+            throw new InvalidOperationException("copyToSecondary is only valid when the primary archive target is local.");
+        if (DeleteLocalAfterVerification && ArchiveTarget == ArchiveTargetKind.Local && !CopyToSecondary)
+            throw new InvalidOperationException("Deleting the local archive requires an S3 copy.");
+        if (DeleteArchivedAfterYears is < 1 or > 100)
+            throw new InvalidOperationException("deleteArchivedAfterYears must be between 1 and 100 years, or null.");
+    }
+}
+
 public sealed record RetentionPolicy
 {
     public int Version { get; init; } = 1;
@@ -51,6 +75,7 @@ public sealed record RetentionPolicy
     public IReadOnlyDictionary<string, ProjectRetentionOverride> ProjectOverrides { get; init; }
         = new Dictionary<string, ProjectRetentionOverride>(StringComparer.OrdinalIgnoreCase);
     public FullBackupRetentionPolicy FullBackups { get; init; } = new();
+    public ArchiveStoragePolicy ArchiveStorage { get; init; } = new();
 
     public RetentionRule RuleFor(string project, ArtifactClass artifactClass)
     {
@@ -72,6 +97,7 @@ public sealed record RetentionPolicy
     public void Validate()
     {
         FullBackups.Validate();
+        ArchiveStorage.Validate();
         foreach (var artifactClass in Enum.GetValues<ArtifactClass>())
             _ = RuleFor(string.Empty, artifactClass);
         foreach (var project in ProjectOverrides)

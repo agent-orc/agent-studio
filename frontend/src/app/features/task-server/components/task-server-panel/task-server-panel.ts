@@ -3,6 +3,7 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 import { TaskServerService } from '../../services/task-server.service';
 import { TaskServerClientsCardComponent } from '../task-server-clients-card/task-server-clients-card';
 import { TaskServerManagementPanelComponent } from '../task-server-management-panel/task-server-management-panel';
+import { ArchiveRetentionCardComponent } from '../archive-retention-card/archive-retention-card';
 import {
   evidenceStateLabel,
   evidenceStateTone,
@@ -33,7 +34,7 @@ import {
 @Component({
   selector: 'app-task-server-panel',
   standalone: true,
-  imports: [TaskServerClientsCardComponent, TaskServerManagementPanelComponent, TooltipDirective],
+  imports: [TaskServerClientsCardComponent, TaskServerManagementPanelComponent, ArchiveRetentionCardComponent, TooltipDirective],
   templateUrl: './task-server-panel.html',
   styleUrl: './task-server-panel.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -71,6 +72,7 @@ export class TaskServerPanelComponent implements OnInit, OnDestroy {
 
   ngOnInit(): void {
     this.service.ensureLoaded();
+    void this.service.loadArchiveTarget();
     this.tickHandle = setInterval(() => this.now.set(Date.now()), 30_000);
   }
 

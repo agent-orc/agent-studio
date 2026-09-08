@@ -65,6 +65,7 @@ export function createComposePlan({ repoRoot, runId, ports = defaultPorts }) {
   const suiteRoot = path.resolve(repoRoot, 'tools', 'remote-test-suite');
   const environmentFile = path.join(root, 'compose.env');
   const tokenFile = path.join(root, 'auth.token');
+  const archiveCredentialFile = path.join(root, 'archive-s3.json');
   const evidenceRoot = path.join(root, 'evidence');
   return {
     runId,
@@ -76,6 +77,7 @@ export function createComposePlan({ repoRoot, runId, ports = defaultPorts }) {
     root,
     environmentFile,
     tokenFile,
+    archiveCredentialFile,
     evidenceRoot,
     ports: { ...ports },
     urls: {
@@ -85,10 +87,10 @@ export function createComposePlan({ repoRoot, runId, ports = defaultPorts }) {
       runnerControl: `http://127.0.0.1:${ports.runnerControl}`
     },
     resources: {
-      containers: ['task-server', 'fault-proxy', 'agent-runner', 'studio']
+      containers: ['task-server', 'minio', 'minio-init', 'fault-proxy', 'agent-runner', 'studio']
         .map(service => `${project}-${service}-1`),
       network: `${project}-network`,
-      volumes: [`${project}-task-server-data`, `${project}-runner-workspace`],
+      volumes: [`${project}-task-server-data`, `${project}-runner-workspace`, `${project}-minio-data`],
       images: ['task-server', 'fault-proxy', 'agent-runner', 'studio']
         .map(service => `${project}-${service}:local`)
     },

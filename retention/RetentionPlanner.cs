@@ -21,12 +21,14 @@ public sealed class RetentionPlanner
 
             var age = now - task.TerminalAt.Value;
             var archived = task.Files.Where(file => file.IsArchived).ToList();
-            if (heavyRule.DeleteArchiveEnabled
-                && heavyRule.DeleteArchiveAfterDaysTerminal is int deleteAfterDays
-                && age >= TimeSpan.FromDays(deleteAfterDays))
+            var deleteAfterDays = policy.ArchiveStorage.DeleteArchivedAfterYears is int years
+                ? checked(years * 365)
+                : heavyRule.DeleteArchiveEnabled ? heavyRule.DeleteArchiveAfterDaysTerminal : null;
+            if (deleteAfterDays is int configuredDeleteAfterDays
+                && age >= TimeSpan.FromDays(configuredDeleteAfterDays))
             {
                 Add(actions, RetentionActionKind.DeleteCold, heavyRule.Id, task, archived, 3,
-                    $"terminal for at least {deleteAfterDays} days; explicit cold-delete confirmation required");
+                    $"terminal for at least {configuredDeleteAfterDays} days; explicit cold-delete confirmation required");
                 if (archived.Count > 0)
                     continue;
             }
