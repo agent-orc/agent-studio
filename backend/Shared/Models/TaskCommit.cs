@@ -68,6 +68,29 @@ public record TaskCommitInfo
     public List<string> Files { get; init; } = [];
     public DateTime At { get; init; }
     /// <summary>
+    /// Completed-push backstop bookkeeping, distinct from
+    /// <see cref="SupersededBySha"/>/<see cref="SupersededByAttempt"/> (which
+    /// record a replacement delivery generation). One of
+    /// <see cref="CommitPushStatuses"/>, or null while the commit is still a
+    /// normal push candidate. <see cref="CommitPushStatuses.Superseded"/> means
+    /// the commit is not reachable from the card's integrated result or from
+    /// the remote target branch and the backstop has permanently stopped
+    /// pushing it. <see cref="CommitPushStatuses.Rejected"/> means the remote
+    /// rejected it as non-fast-forward through the full retry backoff and the
+    /// backstop has permanently stopped retrying it.
+    /// </summary>
+    [JsonPropertyName("pushStatus")]
+    public string? PushStatus { get; init; }
+    /// <summary>Count of consecutive non-fast-forward push rejections recorded for this commit.</summary>
+    [JsonPropertyName("pushAttempts")]
+    public int PushAttempts { get; init; }
+    /// <summary>Earliest time the backstop may retry a backed-off rejection. Null while not backing off.</summary>
+    [JsonPropertyName("pushNextRetryAt")]
+    public DateTime? PushNextRetryAtUtc { get; init; }
+    /// <summary>Git error text from the most recent non-fast-forward rejection.</summary>
+    [JsonPropertyName("pushError")]
+    public string? PushError { get; init; }
+    /// <summary>
     /// How the commit got attributed to this task. One of
     /// <see cref="CommitAttributionKinds"/>. Null on legacy job.json entries
     /// that pre-date the attribution step; the reader treats null as
@@ -112,6 +135,39 @@ public static class TaskCommitSupersession
     public static bool IsSuperseded(TaskCommitInfo commit)
         => !string.IsNullOrWhiteSpace(commit.SupersededBySha)
             || !string.IsNullOrWhiteSpace(commit.SupersededByAttempt);
+}
+
+/// <summary>Terminal <see cref="TaskCommitInfo.PushStatus"/> values the completed-push backstop persists.</summary>
+public static class CommitPushStatuses
+{
+    /// <summary>Not an ancestor of the card's integrated result or of the remote target branch; never attempted again.</summary>
+    public const string Superseded = "superseded";
+    /// <summary>Rejected as non-fast-forward through the full retry backoff; never attempted again.</summary>
+    public const string Rejected = "push-rejected";
+}
+
+/// <summary>
+/// New push-bookkeeping values to persist for one commit's <c>task.json</c>
+/// entry, applied by <see cref="TaskMutationService.MarkCommitPushOutcomesOnFolder"/>.
+/// Every field is a full replacement, not a merge, so callers pass the
+/// complete next state for the fields this record owns.
+/// </summary>
+public sealed record CommitPushOutcome(
+    string? PushStatus,
+    int PushAttempts,
+    DateTime? PushNextRetryAtUtc,
+    string? PushError)
+{
+    public static readonly CommitPushOutcome Cleared = new(null, 0, null, null);
+
+    public static CommitPushOutcome Superseded(TaskCommitInfo commit)
+        => new(CommitPushStatuses.Superseded, commit.PushAttempts, null, null);
+
+    public static CommitPushOutcome Backoff(int attempts, DateTime nextRetryAtUtc, string? error)
+        => new(null, attempts, nextRetryAtUtc, error);
+
+    public static CommitPushOutcome Rejected(int attempts, string? error)
+        => new(CommitPushStatuses.Rejected, attempts, null, error);
 }
 
 /// <summary>

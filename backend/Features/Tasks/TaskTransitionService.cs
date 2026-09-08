@@ -38,6 +38,7 @@ public sealed class TaskTransitionService
     private readonly AgentStudio.Pipeline.PipelineExecutionLog? _pipelineLog;
     private readonly AttemptAuthorityService? _attemptAuthority;
     private readonly ReviewAttemptTaskLifecycleService? _reviewAttemptLifecycle;
+    private readonly TimeProvider _time;
     private long _resultScaffoldCreatedCount;
 
     /// <summary>
@@ -79,7 +80,8 @@ public sealed class TaskTransitionService
         OperatorReviewRequeueService? operatorReviewRequeue = null,
         AgentStudio.Pipeline.PipelineExecutionLog? pipelineLog = null,
         AttemptAuthorityService? attemptAuthority = null,
-        ReviewAttemptTaskLifecycleService? reviewAttemptLifecycle = null)
+        ReviewAttemptTaskLifecycleService? reviewAttemptLifecycle = null,
+        TimeProvider? timeProvider = null)
     {
         _scanner = scanner;
         _states = states;
@@ -100,6 +102,7 @@ public sealed class TaskTransitionService
         _pipelineLog = pipelineLog;
         _attemptAuthority = attemptAuthority;
         _reviewAttemptLifecycle = reviewAttemptLifecycle;
+        _time = timeProvider ?? TimeProvider.System;
     }
 
     /// <summary>
@@ -1623,30 +1626,184 @@ public sealed class TaskTransitionService
         }
     }
 
+    public async Task<CompletedPushCommitsResult> PushCompletedJobCommitsDetailedAsync(
+        TaskInfo job, string strategy, CancellationToken ct = default)
+        => await PushJobCommitsDetailedAsync(job, strategy, requireCompletedState: true, ct);
+
     public async Task<int> PushCompletedJobCommitsAsync(TaskInfo job, string strategy, CancellationToken ct = default)
-        => await PushJobCommitsAsync(job, strategy, requireCompletedState: true, ct);
+        => (await PushCompletedJobCommitsDetailedAsync(job, strategy, ct)).Pushed;
 
     public async Task<int> PushJobCommitsAsync(
         TaskInfo job,
         string strategy,
         bool requireCompletedState,
         CancellationToken ct = default)
+        => (await PushJobCommitsDetailedAsync(job, strategy, requireCompletedState, ct)).Pushed;
+
+    /// <summary>
+    /// Pushes a job's commits toward the completed-job target branch
+    /// (<c>main</c>). Only commits reachable from the card's integrated result
+    /// (its <see cref="TaskIntegrationStatus"/> anchor, or its reviewed-result
+    /// SHA when no integration verdict exists yet) and not already on the
+    /// remote are attempted; anything else is marked
+    /// <see cref="CommitPushStatuses.Superseded"/> and never attempted again.
+    /// A non-fast-forward rejection backs off through
+    /// <see cref="CompletedPushSelectionPolicy.RejectionBackoff"/> before
+    /// becoming <see cref="CommitPushStatuses.Rejected"/> and permanently
+    /// skipped. A card whose integrated result is already on the remote is
+    /// skipped entirely - no per-commit push calls at all (AGT-2761).
+    /// </summary>
+    public async Task<CompletedPushCommitsResult> PushJobCommitsDetailedAsync(
+        TaskInfo job,
+        string strategy,
+        bool requireCompletedState,
+        CancellationToken ct = default)
     {
-        if (AutoPushStrategies.Normalize(strategy) == AutoPushStrategies.Never) return 0;
-        if (requireCompletedState && job.State != TaskStates.Completed) return 0;
+        if (AutoPushStrategies.Normalize(strategy) == AutoPushStrategies.Never)
+            return CompletedPushCommitsResult.Empty;
+        if (requireCompletedState && job.State != TaskStates.Completed)
+            return CompletedPushCommitsResult.Empty;
 
-        var commits = job.Commits.Count > 0
-            ? job.Commits
-            : job.Commit is null ? [] : [job.Commit];
+        var pending = (job.Commits.Count > 0 ? job.Commits : job.Commit is null ? [] : [job.Commit])
+            .Where(c => !string.IsNullOrWhiteSpace(c.Sha))
+            .OrderBy(c => c.At)
+            .ToList();
+        if (pending.Count == 0) return CompletedPushCommitsResult.Empty;
 
-        var pushed = 0;
         var reason = requireCompletedState ? "completed" : "auto-commit";
-        foreach (var commit in commits.Where(c => !string.IsNullOrWhiteSpace(c.Sha)).OrderBy(c => c.At))
+        var root = _git.ResolveRepoRootForWatchPath(job.WatchPath);
+        if (string.IsNullOrWhiteSpace(root))
         {
-            if (await TryPushCommitAsync(commit.Sha, job.WatchPath, job.ProjectName, job.Id, reason, ct))
-                pushed++;
+            // Selection needs git to prove reachability. Without a resolvable
+            // repo, fall back to the previous unconditional per-commit attempt
+            // so a misconfigured watch path still surfaces its own error.
+            var legacyPushed = 0;
+            foreach (var commit in pending)
+                if (await TryPushCommitAsync(commit.Sha, job.WatchPath, job.ProjectName, job.Id, reason, ct))
+                    legacyPushed++;
+            return new CompletedPushCommitsResult(legacyPushed, 0, 0, CardSkippedIntegrated: false);
         }
-        return pushed;
+
+        _git.Fetch(root, "origin", ct);
+        var remoteAncestors = _git.GetAncestorShaSet(root, "origin/main");
+        var anchorSha = ResolveIntegratedAnchorSha(job, pending, out var isIntegrated);
+
+        if (isIntegrated && anchorSha is not null && remoteAncestors.Contains(anchorSha))
+            return new CompletedPushCommitsResult(0, 0, 0, CardSkippedIntegrated: true);
+
+        var integratedAncestors = anchorSha is not null
+            ? _git.GetAncestorShaSet(root, anchorSha)
+            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        var now = _time.GetUtcNow();
+        var pushed = 0;
+        var skippedSuperseded = 0;
+        var rejected = 0;
+        var outcomes = new Dictionary<string, CommitPushOutcome>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var commit in pending)
+        {
+            bool? reachableFromIntegration = anchorSha is null
+                ? null
+                : string.Equals(commit.Sha, anchorSha, StringComparison.OrdinalIgnoreCase)
+                    || integratedAncestors.Contains(commit.Sha);
+
+            var action = CompletedPushSelectionPolicy.Classify(
+                commit,
+                isAncestorOfRemote: remoteAncestors.Contains(commit.Sha),
+                isAncestorOfIntegration: reachableFromIntegration,
+                nowUtc: now);
+
+            if (action == CompletedPushSelectionPolicy.Action.AlreadyRemote)
+            {
+                if (commit.PushAttempts > 0 || commit.PushNextRetryAtUtc is not null || commit.PushStatus is not null)
+                    outcomes[commit.Sha] = CommitPushOutcome.Cleared;
+                continue;
+            }
+            if (action == CompletedPushSelectionPolicy.Action.Superseded)
+            {
+                skippedSuperseded++;
+                if (!string.Equals(commit.PushStatus, CommitPushStatuses.Superseded, StringComparison.Ordinal))
+                    outcomes[commit.Sha] = CommitPushOutcome.Superseded(commit);
+                continue;
+            }
+            if (action == CompletedPushSelectionPolicy.Action.Terminal)
+            {
+                rejected++;
+                continue;
+            }
+            if (action == CompletedPushSelectionPolicy.Action.WaitingBackoff) continue;
+
+            var result = await _git.PushShaAsync(commit.Sha, job.WatchPath, ct);
+            if (result.Success)
+            {
+                _logger.LogInformation("Auto-push {Status} for {JobId} at {Sha} ({Reason})", result.Status, job.Id, commit.Sha, reason);
+                if (result.Status == "pushed") pushed++;
+                if (commit.PushAttempts > 0 || commit.PushNextRetryAtUtc is not null)
+                    outcomes[commit.Sha] = CommitPushOutcome.Cleared;
+                continue;
+            }
+
+            if (!string.Equals(result.Status, "remote-rejected", StringComparison.Ordinal))
+            {
+                _logger.LogWarning("Auto-push skipped for {JobId} at {Sha} ({Reason}): {Status} {Error}",
+                    job.Id, commit.Sha, reason, result.Status, result.Error);
+                if (_bus != null)
+                    await _bus.EmitManagedRepoPushFailureAsync(
+                        job.ProjectName, job.Id, job.WatchPath, "main", result.Status, result.Error, 1, ct);
+                continue;
+            }
+
+            // Non-fast-forward: back off instead of retrying every cycle. A
+            // single bus event fires only once, at the moment the commit
+            // becomes permanently terminal - not on every intermediate
+            // rejection, so a diverged remote no longer floods the operator
+            // feed the way it flooded the backend log before this fix.
+            var outcome = CompletedPushSelectionPolicy.NextRejectionOutcome(commit.PushAttempts, now, result.Error);
+            outcomes[commit.Sha] = outcome;
+            if (outcome.PushStatus == CommitPushStatuses.Rejected)
+            {
+                rejected++;
+                _logger.LogWarning(
+                    "Auto-push permanently rejected for {JobId} at {Sha} after {Attempts} non-fast-forward attempts: {Error}",
+                    job.Id, commit.Sha, outcome.PushAttempts, result.Error);
+                if (_bus != null)
+                    await _bus.EmitManagedRepoPushFailureAsync(
+                        job.ProjectName, job.Id, job.WatchPath, "main", result.Status, result.Error, outcome.PushAttempts, ct);
+            }
+        }
+
+        if (outcomes.Count > 0)
+            _mutations.MarkCommitPushOutcomesOnFolder(job.FolderPath, outcomes);
+
+        return new CompletedPushCommitsResult(pushed, skippedSuperseded, rejected, CardSkippedIntegrated: false);
+    }
+
+    /// <summary>
+    /// The SHA that proves this card's delivery is integrated: the newest
+    /// non-superseded pending commit when <see cref="TaskIntegrationStatusService"/>
+    /// already proved every attributed commit landed, otherwise the reviewed
+    /// fenced delivery's result SHA. Null when neither signal is available, in
+    /// which case the caller falls back to attempting every pending commit
+    /// unconditionally rather than guessing a commit is superseded.
+    /// </summary>
+    private string? ResolveIntegratedAnchorSha(
+        TaskInfo job,
+        IReadOnlyList<TaskCommitInfo> pending,
+        out bool isIntegrated)
+    {
+        var status = _integrationStatus?.BuildLookup([job]).GetValueOrDefault(job.TaskKey);
+        isIntegrated = status?.Status == IntegrationStatuses.Integrated;
+        if (isIntegrated)
+        {
+            var anchor = pending.LastOrDefault(c => !TaskCommitSupersession.IsSuperseded(c)) ?? pending[^1];
+            return anchor.Sha;
+        }
+
+        var subject = ReviewSubjectStore.Read(job.FolderPath);
+        return subject is not null && ReviewSubjectStore.IsValidResultSha(subject.ResultSha)
+            ? subject.ResultSha
+            : null;
     }
 
     private enum AutoCommitScope

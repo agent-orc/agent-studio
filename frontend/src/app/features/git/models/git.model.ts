@@ -367,6 +367,21 @@ export interface TaskCommitInfo {
   supersededByAttempt?: string | null;
   /** Exact replacement SHA produced by a conflict-free platform rebase. */
   supersededBySha?: string | null;
+  /**
+   * Completed-push backstop bookkeeping (distinct from `supersededBySha`
+   * /`supersededByAttempt`): `"superseded"` when the commit is not reachable
+   * from the card's integrated result and will never be pushed again,
+   * `"push-rejected"` when the remote rejected it as non-fast-forward through
+   * the full retry backoff. Absent while the commit is a normal push
+   * candidate.
+   */
+  pushStatus?: string | null;
+  /** Count of consecutive non-fast-forward push rejections recorded for this commit. */
+  pushAttempts?: number;
+  /** Earliest time the backstop may retry a backed-off rejection. */
+  pushNextRetryAt?: string | null;
+  /** Git error text from the most recent non-fast-forward rejection. */
+  pushError?: string | null;
 }
 
 export interface TaskCommitDetail {

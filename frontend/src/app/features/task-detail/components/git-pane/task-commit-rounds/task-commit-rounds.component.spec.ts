@@ -75,4 +75,50 @@ describe('TaskCommitRoundsComponent', () => {
     expect(root.querySelector('[data-testid="git-superseded-round"]')?.textContent)
       .toContain(`mechanically replaced by SHA ${current.sha.slice(0, 9)}`);
   });
+
+  it('badges a commit the completed-push backstop permanently stopped pushing', async () => {
+    const notReachable: TaskCommitInfo = {
+      ...superseded,
+      supersededByAttempt: undefined,
+      runAttemptId: undefined,
+      pushStatus: 'superseded',
+    };
+    const rejected: TaskCommitInfo = { ...current, pushStatus: 'push-rejected', pushAttempts: 4 };
+    await TestBed.configureTestingModule({
+      imports: [TaskCommitRoundsComponent],
+      providers: [provideZonelessChangeDetection()],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(TaskCommitRoundsComponent);
+    fixture.componentRef.setInput('commits', [notReachable, rejected]);
+    fixture.detectChanges();
+
+    const root = fixture.nativeElement as HTMLElement;
+    root.querySelector<HTMLButtonElement>('[data-testid="git-commit-group-toggle"]')?.click();
+    fixture.detectChanges();
+
+    const badges = root.querySelectorAll('[data-testid="git-commit-push-status"]');
+    expect(badges).toHaveLength(2);
+    expect(badges[0].textContent).toBe('not pushed');
+    expect(badges[1].textContent).toBe('push rejected');
+    expect(badges[1].className).toContain('commit-chain__push-status--rejected');
+  });
+
+  it('badges a commit backing off after a non-fast-forward rejection', async () => {
+    const backingOff: TaskCommitInfo = { ...current, pushNextRetryAt: '2026-09-08T13:00:00Z' };
+    await TestBed.configureTestingModule({
+      imports: [TaskCommitRoundsComponent],
+      providers: [provideZonelessChangeDetection()],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(TaskCommitRoundsComponent);
+    fixture.componentRef.setInput('commits', [backingOff]);
+    fixture.detectChanges();
+
+    const root = fixture.nativeElement as HTMLElement;
+    root.querySelector<HTMLButtonElement>('[data-testid="git-commit-group-toggle"]')?.click();
+    fixture.detectChanges();
+
+    const badge = root.querySelector('[data-testid="git-commit-push-status"]');
+    expect(badge?.textContent).toBe('push retrying');
+    expect(badge?.className).toContain('commit-chain__push-status--backing-off');
+  });
 });

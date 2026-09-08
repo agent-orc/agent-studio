@@ -31,23 +31,36 @@ public sealed class CompletedPushBackstopHostedService : BackgroundService
 
     public async Task<int> RunOnceAsync(CancellationToken ct = default)
     {
-        var pushed = 0;
         var completed = _scanner.ScanAllAutomationJobs()
             .Where(j => j.State == TaskStates.Completed)
             .OrderBy(j => j.LastActivity)
             .ThenBy(j => j.Id, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
+        var pushed = 0;
+        var skippedSuperseded = 0;
+        var rejected = 0;
+        var skippedIntegrated = 0;
+
         foreach (var job in completed)
         {
             ct.ThrowIfCancellationRequested();
             var strategy = AutoPushStrategies.Normalize(_settings.Get(job.ProjectName).AutoPushStrategy);
             if (strategy == AutoPushStrategies.Never) continue;
-            pushed += await _transitions.PushCompletedJobCommitsAsync(job, strategy, ct);
+            var result = await _transitions.PushCompletedJobCommitsDetailedAsync(job, strategy, ct);
+            pushed += result.Pushed;
+            skippedSuperseded += result.SkippedSuperseded;
+            rejected += result.Rejected;
+            if (result.CardSkippedIntegrated) skippedIntegrated++;
         }
 
-        if (pushed > 0)
-            _logger.LogInformation("Completed auto-push backstop pushed {Count} commit(s)", pushed);
+        // One summary line per cycle instead of a warning per rejected commit
+        // (AGT-2761): a card whose delivery generation left dozens of
+        // superseded intermediate commits behind used to log one non-fast-forward
+        // warning and emit one bus event per commit, every 15 minutes, forever.
+        _logger.LogInformation(
+            "Completed auto-push backstop cycle: {Scanned} scanned, {Pushed} pushed, {SkippedIntegrated} card(s) already integrated, {SkippedSuperseded} commit(s) superseded, {Rejected} commit(s) rejected",
+            completed.Count, pushed, skippedIntegrated, skippedSuperseded, rejected);
         return pushed;
     }
 

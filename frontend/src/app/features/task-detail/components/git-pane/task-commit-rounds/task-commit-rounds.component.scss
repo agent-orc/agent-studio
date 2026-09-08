@@ -173,3 +173,26 @@
 .commit-chain__item--superseded:not(.commit-chain__item--selected) {
   opacity: 0.72;
 }
+
+.commit-chain__push-status {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--studio-bg-elevated);
+  color: var(--studio-fg-muted);
+}
+
+/* Red — the remote rejected every retry as non-fast-forward; the backstop stopped. */
+.commit-chain__push-status--rejected {
+  background: color-mix(in srgb, var(--studio-error) 14%, var(--studio-bg-elevated));
+  color: var(--studio-error);
+}
+
+/* Amber — backing off after a non-fast-forward rejection; still retrying. */
+.commit-chain__push-status--backing-off {
+  background: color-mix(in srgb, var(--studio-warning, #b8860b) 16%, var(--studio-bg-elevated));
+  color: var(--studio-warning, #b8860b);
+}
