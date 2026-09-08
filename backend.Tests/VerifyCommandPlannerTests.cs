@@ -1355,6 +1355,39 @@ public sealed class BuildTestGateClassificationTests
 
         Assert.Equal(BuildTestGateFailureKind.ProcessLaunch, kind);
     }
+
+    [Fact]
+    public void ViteCaseInsensitiveFilesystemCrash_IsGateEnvironment_NotCode()
+    {
+        // The exact CAC-18 (AGT-2720) signature: `npm test` exits 1 before a
+        // single vitest test runs because vite's own case-insensitive
+        // filesystem probe crashes while loading its config. Unlike the
+        // AGT-2110 fixtures above, this is not a completed test run printing
+        // an incidental string - it's the toolchain itself failing to start,
+        // so it must survive the "completed process -> Code" override.
+        var stderr =
+            "Error: EPERM: operation not permitted, open 'C:\\Users\\studio\\AppData\\Local\\Temp\\"
+            + "agentstudio-review-gates\\a1b2c3\\frontend\\node_modules\\.vite-temp\\probe'\n"
+            + "    at testCaseInsensitiveFS (C:\\...\\node_modules\\vite\\dist\\node\\chunks\\config.js:1911:42)";
+        var kind = BuildTestGateRunner.ClassifyFailure(Evidence(exitCode: 1, stderr: stderr));
+
+        Assert.Equal(BuildTestGateFailureKind.GateEnvironment, kind);
+    }
+
+    [Fact]
+    public void ToolchainStackFrame_AfterTestsActuallyRan_IsCodeNotGateEnvironment()
+    {
+        // A stack frame that happens to mention vite/esbuild/typescript AFTER
+        // the harness reported its own test summary means product code ran
+        // (and failed) well past the toolchain bootstrap step - a coincidental
+        // mention must not be misread as an environment crash.
+        var stdout =
+            " Test Files  1 failed (1)\n      Tests  1 failed | 3 passed (4)\n"
+            + "  at resolveConfig (node_modules/vite/dist/node/chunks/config.js:1911:42)";
+        var kind = BuildTestGateRunner.ClassifyFailure(Evidence(exitCode: 1, stdout: stdout));
+
+        Assert.Equal(BuildTestGateFailureKind.Code, kind);
+    }
 }
 
 /// <summary>

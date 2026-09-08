@@ -584,12 +584,24 @@ public sealed class TaskIntegrationStatusService
         if (ReadIntegrationFailure(job) is { } failure)
         {
             var visibleReason = VisibleFailureReason(job, branchName, failure);
+            // AGT-2720/CAC-18: a gate environment failure (toolchain/bundler
+            // crash before a single test ran) is never the card's fault and
+            // never needs an operator decision - it stays pending with the
+            // honest reason and the next integration attempt retries it, exactly
+            // like ordinary not-yet-landed work. Every other typed failure is a
+            // decided conflict that does need one.
+            var isGateEnvironmentFailure =
+                failure.Code == AcceptedIntegrationFailureCodes.GateEnvironmentFailed;
             return new TaskIntegrationStatus
             {
-                Status = IntegrationStatuses.ConflictSkipped,
+                Status = isGateEnvironmentFailure
+                    ? IntegrationStatuses.Pending
+                    : IntegrationStatuses.ConflictSkipped,
                 DeliveryRef = deliveryRef,
                 IntegrationBranch = branchName,
-                Detail = visibleReason,
+                Detail = isGateEnvironmentFailure
+                    ? $"gate environment: {visibleReason}"
+                    : visibleReason,
                 Repositories = repositories ?? [],
                 Failure = new TaskIntegrationFailure
                 {

@@ -708,6 +708,69 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
     }
 
     [Fact]
+    public async Task RunAsync_MainTarget_GateEnvironmentFailure_IsNotProjectedAsAProductFailure()
+    {
+        // AGT-2720/CAC-18 fixture: the pre-main full suite crashed in vite's own
+        // case-insensitive filesystem probe before a single test ran (a
+        // corrupted dependency cache on the Windows studio). This must record a
+        // distinct "gate-environment-failed" merge-step verdict/failure code -
+        // never the same "error"/"build-gate-failed" shape a real code
+        // regression would get - so downstream card projection can tell them
+        // apart and stay pending instead of reading as a decided conflict.
+        var repo = SeedRepo("runner-main-gate-environment");
+        RunGit(repo, "checkout -q -b task/52");
+        File.WriteAllText(Path.Combine(repo, "task.txt"), "CAC-18 delivery");
+        Commit(repo, "feat: CAC-18 delivery");
+        var mainBefore = RunGit(repo, "rev-parse main").Out.Trim();
+        RunGit(repo, "checkout -q main");
+
+        var (git, log, settings) = BuildWithSettings(repo);
+        var gateRunner = new CapturingBuildTestGateRunner(new BuildTestGateResult(
+            BuildTestGateVerdict.Fail,
+            1,
+            20,
+            string.Empty,
+            "dependency preparation `npm test` exit 1; output: stderr: "
+            + "at testCaseInsensitiveFS (node_modules/vite/dist/node/chunks/config.js:1911:42)",
+            true,
+            false)
+        {
+            FailureKind = BuildTestGateFailureKind.GateEnvironment,
+            TestSelection = new TestSelectionAudit
+            {
+                Level = TestExecutionLevels.Full,
+                FullSuiteRequired = true,
+                FullSuiteRan = false,
+            },
+        });
+        var runner = new MergeIntoDevelopRunner(
+            git,
+            log,
+            NullLogger<MergeIntoDevelopRunner>.Instance,
+            projectSettings: settings,
+            preMainTestGate: new PreMainTestGate(gateRunner));
+        var jobFolder = BeginRun(log, repo, jobId: "52");
+
+        var outcome = await runner.RunAsync(
+            "Fixture",
+            "52",
+            jobFolder,
+            repo,
+            "main",
+            CancellationToken.None);
+
+        Assert.Equal(MergeIntoIntegrationOutcome.Error, outcome.Outcome);
+        Assert.Equal(mainBefore, RunGit(repo, "rev-parse main").Out.Trim());
+
+        var step = ReadMergeStep(log, jobFolder);
+        Assert.NotNull(step);
+        Assert.Equal(PipelineStepStatus.Failed, step!.Status);
+        Assert.Equal("gate-environment-failed", step.Verdict);
+        Assert.Equal(AcceptedIntegrationFailureCodes.GateEnvironmentFailed, step.FailureCode);
+        Assert.Contains("testCaseInsensitiveFS", step.Reason);
+    }
+
+    [Fact]
     public async Task RunAsync_MainTarget_SourceMovesDuringSuiteLeavesMainUnchanged()
     {
         var repo = SeedRepo("runner-main-source-moved");

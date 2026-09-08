@@ -1545,6 +1545,27 @@ public sealed class MergeIntoDevelopRunner
         BuildTestGateResult? preMainResult,
         BuildTestGateResult? preDevelopResult)
     {
+        // AGT-2720/CAC-18: a gate that crashed in its own toolchain/bundler
+        // before a single test ran (vite's case-insensitive filesystem probe on
+        // a copied Windows workspace, corrupted dependency cache, etc.) is gate
+        // environment debris, never a defect in the delivered code. Project it
+        // through a distinct verdict so it never reads as a decided
+        // merge-conflict / gate-failed verdict downstream.
+        var environmentGate = preMainResult?.FailureKind == BuildTestGateFailureKind.GateEnvironment
+            ? preMainResult
+            : preDevelopResult?.FailureKind == BuildTestGateFailureKind.GateEnvironment
+                ? preDevelopResult
+                : null;
+        if (environmentGate is not null
+            && result.Outcome is MergeIntoIntegrationOutcome.Error or MergeIntoIntegrationOutcome.GateFailed)
+        {
+            return (
+                PipelineStepStatus.Failed,
+                "gate-environment-failed",
+                result.Error ?? environmentGate.Reason,
+                environmentGate.Reason);
+        }
+
         switch (result.Outcome)
         {
             case MergeIntoIntegrationOutcome.Merged:

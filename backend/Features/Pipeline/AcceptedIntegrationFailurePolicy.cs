@@ -11,6 +11,14 @@ public static class AcceptedIntegrationFailureCodes
     public const string MergeConflict = "merge-conflict";
     public const string DeliveryGateFailed = "delivery-gate-failed";
     public const string BuildGateFailed = "build-gate-failed";
+    /// <summary>
+    /// The gate's toolchain or bundler crashed during startup, before a single
+    /// test ran (<see cref="BuildTestGateFailureKind.GateEnvironment"/>).
+    /// Distinct from <see cref="BuildGateFailed"/>: this is gate environment
+    /// debris the reviewed code never caused, so it projects as a pending
+    /// integration rather than a decided, operator-facing conflict (AGT-2720).
+    /// </summary>
+    public const string GateEnvironmentFailed = "gate-environment-failed";
     public const string SourceNeedsRebase = "source-needs-rebase";
     public const string DeliveryAttributionAmbiguous = "delivery-attribution-ambiguous";
     public const string ReviewSubjectTaskKeyUnavailable = "review-subject-task-key-unavailable";
@@ -76,6 +84,14 @@ public static class AcceptedIntegrationFailurePolicy
                     verdictSummary,
                     "The build gate rejected the merged result."),
                 RebaseRecoveryAvailable: false),
+            AcceptedIntegrationFailureCodes.GateEnvironmentFailed => new(
+                code,
+                "Gate environment failure",
+                FirstNonBlank(
+                    reason,
+                    verdictSummary,
+                    "The gate's toolchain or bundler crashed before a single test ran; this is not a defect in the delivered code."),
+                RebaseRecoveryAvailable: false),
             AcceptedIntegrationFailureCodes.DeliveryGateFailed => new(
                 code,
                 "Delivery gate failed",
@@ -135,6 +151,8 @@ public static class AcceptedIntegrationFailurePolicy
     {
         if (string.Equals(verdict, "conflict", StringComparison.OrdinalIgnoreCase))
             return AcceptedIntegrationFailureCodes.MergeConflict;
+        if (string.Equals(verdict, "gate-environment-failed", StringComparison.OrdinalIgnoreCase))
+            return AcceptedIntegrationFailureCodes.GateEnvironmentFailed;
         if (string.Equals(verdict, "gate-failed", StringComparison.OrdinalIgnoreCase))
             return AcceptedIntegrationFailureCodes.BuildGateFailed;
         if (string.Equals(verdict, "delivery-gate-failed", StringComparison.OrdinalIgnoreCase))
@@ -175,6 +193,7 @@ public static class AcceptedIntegrationFailurePolicy
             AcceptedIntegrationFailureCodes.MergeConflict => AcceptedIntegrationFailureCodes.MergeConflict,
             AcceptedIntegrationFailureCodes.DeliveryGateFailed => AcceptedIntegrationFailureCodes.DeliveryGateFailed,
             AcceptedIntegrationFailureCodes.BuildGateFailed => AcceptedIntegrationFailureCodes.BuildGateFailed,
+            AcceptedIntegrationFailureCodes.GateEnvironmentFailed => AcceptedIntegrationFailureCodes.GateEnvironmentFailed,
             AcceptedIntegrationFailureCodes.SourceNeedsRebase => AcceptedIntegrationFailureCodes.SourceNeedsRebase,
             AcceptedIntegrationFailureCodes.DeliveryAttributionAmbiguous => AcceptedIntegrationFailureCodes.DeliveryAttributionAmbiguous,
             AcceptedIntegrationFailureCodes.ReviewSubjectTaskKeyUnavailable => AcceptedIntegrationFailureCodes.ReviewSubjectTaskKeyUnavailable,

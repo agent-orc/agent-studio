@@ -29,6 +29,13 @@ public enum BuildTestGateFailureKind
     Cancellation,
     MissingSource,
     ReviewModel,
+    /// <summary>
+    /// The toolchain or bundler itself crashed during startup/config-load,
+    /// before a single test executed (e.g. vite's case-insensitive filesystem
+    /// probe dying on a copied Windows workspace, AGT-2720/CAC-18). This is
+    /// gate environment debris, never the reviewed code's fault.
+    /// </summary>
+    GateEnvironment,
 }
 
 public sealed record BuildTestGateRequest(
@@ -416,7 +423,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
 
             if (workspaceLease is not null)
             {
-                completed = SaveDependencyCache(completed!, dependencyCache);
+                completed = FinalizeDependencyCache(completed!, dependencyCache);
                 dependencyCacheSaved = true;
                 var cleanupError = await workspaceLease.RemoveAsync(
                     infrastructureTimeout, CancellationToken.None).ConfigureAwait(false);
@@ -466,7 +473,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 if (!dependencyCacheSaved)
                 {
                     if (completed is not null)
-                        completed = SaveDependencyCache(completed, dependencyCache);
+                        completed = FinalizeDependencyCache(completed, dependencyCache);
                     else
                         dependencyCache?.Save();
                 }
@@ -588,7 +595,8 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                             installRoot,
                             new ReviewDependencyScopeDto(
                                 scope.WorkingSubdir,
-                                scope.Lockfiles)));
+                                scope.Lockfiles),
+                            requireInstallCompleteMarker: true));
                 })
                 .ToArray();
             var installNeeded = decisions.Length == 0
@@ -1545,7 +1553,9 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         // Only a genuine MSBuild build-output lock (MSB3026/MSB3027) is a real,
         // retryable host fault; every other string from a completed process is a
         // code/test defect that must flow through the normal reissue path instead.
-        if (CompletedNormally(process) && !IsGenuineBuildOutputLock(evidence))
+        if (CompletedNormally(process)
+            && classified != BuildTestGateFailureKind.GateEnvironment
+            && !IsGenuineBuildOutputLock(evidence))
             return BuildTestGateFailureKind.Code;
         return classified;
     }
@@ -1561,6 +1571,26 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         => evidence.Contains("MSB3026", StringComparison.OrdinalIgnoreCase)
            || evidence.Contains("MSB3027", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// A crash inside the bundler/toolchain's own code (vite, esbuild, tsc)
+    /// before any test result was reported is gate environment debris, not a
+    /// product defect - the exact CAC-18 signature is vite's case-insensitive
+    /// filesystem probe dying while loading its config on a copied Windows
+    /// workspace. A test harness that reached its own summary line ran
+    /// user/product code far past this bootstrap step, so that output never
+    /// matches even when a stack frame happens to mention one of these tools.
+    /// </summary>
+    private static bool IsToolchainStartupCrash(string value)
+    {
+        if (ContainsAny(value, "testcaseinsensitivefs")) return true;
+        return ToolchainStartupCrashFrame.IsMatch(value)
+               && !ContainsAny(value, "test files", "tests:", " passed (", " failed (");
+    }
+
+    private static readonly Regex ToolchainStartupCrashFrame = new(
+        @"node_modules[\\/](?:vite|esbuild|typescript)[\\/]",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     internal static BuildTestGateFailureKind ClassifyFailure(string? text)
     {
         var value = text ?? string.Empty;
@@ -1568,6 +1598,8 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 "being used by another process", "file is locked", "cannot access the file",
                 "resource temporarily unavailable", "sharing violation", "MSB3026", "MSB3027"))
             return BuildTestGateFailureKind.Lock;
+        if (IsToolchainStartupCrash(value))
+            return BuildTestGateFailureKind.GateEnvironment;
         if (ContainsAny(value,
                 "out of memory", "outofmemoryexception", "cannot allocate memory", "heap limit"))
             return BuildTestGateFailureKind.OutOfMemory;
@@ -1626,6 +1658,20 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         }, kind);
     }
 
+    /// <summary>
+    /// Saves the workspace's dependency tree into the cache, unless this run's
+    /// verdict is a toolchain/bundler startup crash (<see cref="BuildTestGateFailureKind.GateEnvironment"/>):
+    /// that tree is unproven at best and reproduces the CAC-18 corruption at
+    /// worst, so the entry is evicted instead and the next attempt installs
+    /// fresh (AGT-2720).
+    /// </summary>
+    private static BuildTestGateResult FinalizeDependencyCache(
+        BuildTestGateResult result,
+        GateDependencyCacheSession? session)
+        => result.FailureKind == BuildTestGateFailureKind.GateEnvironment
+            ? EvictDependencyCache(result, session)
+            : SaveDependencyCache(result, session);
+
     private static BuildTestGateResult SaveDependencyCache(
         BuildTestGateResult result,
         GateDependencyCacheSession? session)
@@ -1633,6 +1679,17 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         if (session is null) return result;
         var output = result.Output;
         foreach (var message in session.Save())
+            output = AppendOutput(output, $"# {message}");
+        return result with { Output = output };
+    }
+
+    private static BuildTestGateResult EvictDependencyCache(
+        BuildTestGateResult result,
+        GateDependencyCacheSession? session)
+    {
+        if (session is null) return result;
+        var output = result.Output;
+        foreach (var message in session.Evict("toolchain-startup-failure"))
             output = AppendOutput(output, $"# {message}");
         return result with { Output = output };
     }

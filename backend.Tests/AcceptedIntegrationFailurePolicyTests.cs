@@ -25,6 +25,12 @@ public sealed class AcceptedIntegrationFailurePolicyTests
             false
         },
         {
+            "gate-environment-failed",
+            "dependency preparation `npm test` exit 1; output: ... testCaseInsensitiveFS ...",
+            AcceptedIntegrationFailureCodes.GateEnvironmentFailed,
+            false
+        },
+        {
             "error",
             "Release source 'origin/task' must be rebased onto 'main' before the full-suite gate.",
             AcceptedIntegrationFailureCodes.SourceNeedsRebase,

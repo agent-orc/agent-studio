@@ -488,6 +488,50 @@ steer the pipeline in this policy version.
   commands, including `installCmd`, use the same `bash -lc` contract as
   build-profile validation on every host. Convention-derived commands retain
   the host shell.
+- A local exact-subject gate's dependency-cache hit is stricter than a raw
+  `.nm-state` hash match: the cached `node_modules` must also contain
+  `.package-lock.json`, the file npm writes as the last step of a completed
+  `npm ci`. A stamped marker with a matching hash but a missing
+  `.package-lock.json` is still a miss (reason `npm-install-incomplete`) and
+  forces a fresh install, because a stamp alone does not prove the tree it
+  describes actually finished (AGT-2720/CAC-18: a Windows case-insensitive-
+  filesystem install left `node_modules` with 2,580 of 25,748 files and no
+  `.package-lock.json`, yet the marker still read as a hit, so every pre-main
+  full-suite run crashed in vite's own config-load probe before a single test
+  executed). This check is opt-in on `DependencyPreparationState.Evaluate` and
+  is set only by the local gate; Remote Review's preparation commands, which
+  are not guaranteed to run `npm ci`, keep the original hash-only contract.
+  Saving into the cache is transactional: content moves into a temporary
+  sibling of its destination and only replaces it after the whole tree has
+  landed, so a process crash or kill mid-save leaves either the untouched
+  previous entry or an orphaned staging directory next to it, never a
+  half-moved tree masquerading as the cache entry. A gate verdict classified
+  `BuildTestGateFailureKind.GateEnvironment` (see below) evicts the scope's
+  cache entry (moved aside to a `-evicted` sibling, never merged with) instead
+  of saving into it, and records `dependency-cache evicted reason=...` in the
+  gate log, so a corrupted or unproven tree never rides through to the next
+  attempt.
+- A verify command exit is `BuildTestGateFailureKind.GateEnvironment`, not
+  `Code`, when the evidence shows the toolchain or bundler itself crashed
+  during startup/config-load - before a single test executed - rather than the
+  reviewed code failing a build or test (the CAC-18 signature: `npm test`
+  exiting 1 from vite's case-insensitive filesystem probe dying in
+  `node_modules/vite/dist/node/chunks/config.js`, with no vitest summary ever
+  printed). This is gate environment debris and, like every other non-`Code`
+  `BuildTestGateFailureKind`, `IsInfrastructureFailure` is true for it. On the
+  pre-main and pre-develop gates specifically, `MergeIntoDevelopRunner`
+  projects it through a distinct `gate-environment-failed` merge-step verdict
+  and the `AcceptedIntegrationFailureCodes.GateEnvironmentFailed` card failure
+  code, never the generic `error` / `build-gate-failed` shape a real code
+  regression gets. When none of a card's attributed commits have landed on the
+  target branch yet, `TaskIntegrationStatusService` projects this code as
+  `pending` with a `gate environment: ...`-prefixed reason instead of
+  `conflict-skipped`: a toolchain crash never counts as a product failure and
+  never needs an operator decision, so the card stays retryable like ordinary
+  not-yet-landed work rather than parked for a rebase round. A card with some,
+  but not all, attributed commits already landed still reports `partial` -
+  that reflects real, current ancestry, not a verdict about why the rest have
+  not landed yet.
 - Immutable Remote Review plans carry that same preparation command, lockfile
   scopes, and preserve globs to the Review Executor. Preparation runs before
   verification in both the candidate and any materialized baseline workspace.

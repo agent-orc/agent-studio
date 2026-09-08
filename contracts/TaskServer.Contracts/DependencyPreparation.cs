@@ -14,10 +14,24 @@ public static class DependencyPreparationState
     public const string MarkerFileName = ".nm-state";
     public const string DependencyDirectoryName = "node_modules";
 
+    /// <summary>
+    /// npm writes this file as the last step of a completed <c>npm ci</c>. Its
+    /// absence proves the tree is not a genuine full install even when
+    /// <see cref="MarkerFileName"/> matches the current lock hash (AGT-2720:
+    /// a Windows case-insensitive-filesystem install left <c>node_modules</c>
+    /// with 2,580 of 25,748 files and no <c>.package-lock.json</c>, yet the
+    /// stamped marker still read as a hit). Opt-in via
+    /// <paramref name="requireInstallCompleteMarker"/> because this contract is
+    /// also shared by Remote Review preparation commands that never run
+    /// <c>npm ci</c>.
+    /// </summary>
+    public const string NpmInstallCompleteMarkerName = ".package-lock.json";
+
     public static ReviewDependencyCacheEvidenceDto Evaluate(
         string installRoot,
         ReviewDependencyScopeDto scope,
-        bool installRan = false)
+        bool installRan = false,
+        bool requireInstallCompleteMarker = false)
     {
         if (string.IsNullOrWhiteSpace(installRoot) || !Directory.Exists(installRoot))
             return Evidence(scope, "miss", "install-root-missing", "", [], installRan);
@@ -34,6 +48,10 @@ public static class DependencyPreparationState
         var dependencyDirectory = Path.Combine(installRoot, DependencyDirectoryName);
         if (!Directory.Exists(dependencyDirectory))
             return Evidence(scope, "miss", "deps-dir-missing", hash, present, installRan);
+
+        if (requireInstallCompleteMarker
+            && !File.Exists(Path.Combine(dependencyDirectory, NpmInstallCompleteMarkerName)))
+            return Evidence(scope, "miss", "npm-install-incomplete", hash, present, installRan);
 
         var marker = Path.Combine(installRoot, MarkerFileName);
         if (!File.Exists(marker))
@@ -163,6 +181,48 @@ public sealed class DependencyCacheSession
 
     public IReadOnlyList<string> Save() => Transfer(restore: false);
 
+    /// <summary>
+    /// Discards this repository's cached content instead of saving into it. A
+    /// gate failure classified as a toolchain/bundler startup error (AGT-2720)
+    /// means the workspace tree it would otherwise save is unproven at best and
+    /// corrupt at worst; evicting forces the next attempt to install fresh
+    /// rather than re-caching or re-hitting a bad tree.
+    /// </summary>
+    public IReadOnlyList<string> Evict(string reason)
+    {
+        var messages = new List<string>();
+        var contentRoot = Path.Combine(_cacheRoot, "content");
+        var repository = Path.GetFileName(_cacheRoot);
+        if (!Directory.Exists(contentRoot))
+        {
+            var absent = $"dependency-cache evicted repository={repository} reason={reason} state=absent";
+            messages.Add(absent);
+            _log?.Invoke(absent);
+            return messages;
+        }
+
+        var evictedRoot = _cacheRoot + "-evicted";
+        try
+        {
+            if (Directory.Exists(evictedRoot)) Directory.Delete(evictedRoot, recursive: true);
+            Directory.CreateDirectory(Path.GetDirectoryName(evictedRoot)!);
+            Directory.Move(contentRoot, evictedRoot);
+            var moved = $"dependency-cache evicted repository={repository} reason={reason} state=moved";
+            messages.Add(moved);
+            _log?.Invoke(moved);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            var failed =
+                $"dependency-cache evicted repository={repository} reason={reason} state=failed " +
+                $"error={exception.GetType().Name}";
+            messages.Add(failed);
+            _log?.Invoke(failed);
+        }
+
+        return messages;
+    }
+
     private IReadOnlyList<string> Transfer(bool restore)
     {
         var operation = restore ? "restore" : "save";
@@ -289,17 +349,31 @@ public sealed class DependencyCacheSession
         if (!Directory.Exists(source)) return;
         try
         {
-            if (Directory.Exists(destination))
+            if (operation == "restore")
             {
-                if (operation == "restore")
+                if (Directory.Exists(destination))
                 {
                     messages.Add($"dependency-cache restore skipped item={relative} reason=destination-exists");
                     return;
                 }
-                Directory.Delete(destination, recursive: true);
+                Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+                Directory.Move(source, destination);
+                messages.Add($"dependency-cache {operation} item={relative} state=moved");
+                return;
             }
+
+            // Save: stage into a temporary sibling first and only replace the
+            // destination once the whole tree has landed. A process crash or
+            // kill between the two moves leaves either the untouched previous
+            // entry or an orphaned staging directory next to it - never a
+            // half-moved tree masquerading as the cache entry (AGT-2720).
+            var staging = destination + StagingSuffix;
+            if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);
+            Directory.CreateDirectory(Path.GetDirectoryName(staging)!);
+            Directory.Move(source, staging);
+            if (Directory.Exists(destination)) Directory.Delete(destination, recursive: true);
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-            Directory.Move(source, destination);
+            Directory.Move(staging, destination);
             messages.Add($"dependency-cache {operation} item={relative} state=moved");
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
@@ -311,6 +385,8 @@ public sealed class DependencyCacheSession
             _log?.Invoke(message);
         }
     }
+
+    private const string StagingSuffix = ".incoming";
 
     private void MoveFile(
         string source,

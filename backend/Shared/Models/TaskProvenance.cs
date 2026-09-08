@@ -272,7 +272,11 @@ public record TaskIntegrationStatus
     /// <summary>
     /// Typed current failure projected from the durable integration pipeline
     /// step. Null unless <see cref="Status"/> is
-    /// <see cref="IntegrationStatuses.ConflictSkipped"/>.
+    /// <see cref="IntegrationStatuses.ConflictSkipped"/>, or
+    /// <see cref="IntegrationStatuses.Pending"/> with a gate environment
+    /// failure (<c>AcceptedIntegrationFailureCodes.GateEnvironmentFailed</c>,
+    /// AGT-2720): that one never needs an operator decision, so it stays
+    /// pending while still carrying the typed reason for the card.
     /// </summary>
     public TaskIntegrationFailure? Failure { get; init; }
 

@@ -58,6 +58,8 @@ internal sealed class GateDependencyCacheSession
 
     public IReadOnlyList<string> Save() => _session.Save();
 
+    public IReadOnlyList<string> Evict(string reason) => _session.Evict(reason);
+
     internal static string CachePath(string reviewWorkspaceRoot, string repositoryPath)
         => DependencyCacheSession.CachePath(
             Path.Combine(reviewWorkspaceRoot, BuildTestGateRunner.DependencyCacheDirectoryName),

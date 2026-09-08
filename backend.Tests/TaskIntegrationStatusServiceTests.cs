@@ -660,6 +660,44 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         Assert.True(status.Failure?.RebaseRecoveryAvailable);
     }
 
+    [Fact]
+    public void BuildLookup_RecordedGateEnvironmentFailure_IsPendingNotConflictSkipped()
+    {
+        // AGT-2720/CAC-18: the pre-main full suite crashed in vite's own
+        // case-insensitive filesystem probe before a single test ran. That is
+        // gate environment debris, never the delivered code's fault, so the
+        // card must stay `pending` (auto-retryable) instead of `partial` /
+        // `conflict-skipped` (which reads as needing an operator decision).
+        var repo = SeedDevelopMainRepo();
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "checkout -q -b task/gate-environment");
+        File.WriteAllText(Path.Combine(repo, "gate-environment.txt"), "wip");
+        Commit(repo, "feat: gate environment wip");
+        var anchor = RunGit(repo, "rev-parse task/gate-environment").Out.Trim();
+
+        var svc = BuildService(repo, out var project, out var log);
+        var job = Job("gate-environment", "AGT-2720", project, repo, log, commits: new[] { Commit(anchor) },
+            prov: Prov(branch: "task/gate-environment"));
+
+        log.EnsureRun(job.FolderPath, PipelineCatalogue.Standard, project, job.Id);
+        log.RecordStep(job.FolderPath, new PipelineStepExecution
+        {
+            StepId = PipelineCatalogue.MergeIntoDevelopStepId,
+            Kind = StepKind.Tool,
+            Status = PipelineStepStatus.Failed,
+            Verdict = "gate-environment-failed",
+            Reason = "dependency preparation `npm test` exit 1; output: ... testCaseInsensitiveFS ...",
+        });
+
+        var status = svc.BuildLookup(new[] { job })[job.TaskKey];
+
+        Assert.Equal(IntegrationStatuses.Pending, status.Status);
+        Assert.StartsWith("gate environment: ", status.Detail);
+        Assert.Contains("testCaseInsensitiveFS", status.Detail);
+        Assert.Equal(AcceptedIntegrationFailureCodes.GateEnvironmentFailed, status.Failure?.Code);
+        Assert.False(status.Failure?.RebaseRecoveryAvailable);
+    }
+
     [Theory]
     [InlineData(
         "Release source 'origin/result' must be rebased onto 'main' before the full-suite gate.",
