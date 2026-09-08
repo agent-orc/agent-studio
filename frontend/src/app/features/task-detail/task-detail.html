@@ -38,6 +38,12 @@
     (generateCommitMessage)="generateCommitMessage()"
     (addCommit)="addCommitFromMenu()" />
 
+  <app-archived-task-notice
+    [taskId]="detail().info.id"
+    [lane]="detail().info.state"
+    [archiveState]="detail().info.archiveState ?? null"
+    (restored)="fileSaved.emit()" />
+
   <!-- AGT-2378: the live strip reads the board-fresh runtime overlay, not the
        detail snapshot frozen at open time. -->
   <app-task-live-status [task]="liveRunInfo()" variant="detail" />
@@ -117,6 +123,7 @@
         [weight]="paneWeights().prompt"
         [isRunning]="isRunning()"
         [jobId]="detail().info.id"
+        [archived]="(!!detail().info.archiveState && detail().info.archiveState !== 'hot-restored') || detail().info.state === '7-archive'"
         [watchPath]="detail().info.watchPath"
         [availableModels]="availableModels()"
         [cliTypeOverride]="cliTypeDraft()"

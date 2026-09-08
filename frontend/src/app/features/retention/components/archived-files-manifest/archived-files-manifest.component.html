@@ -1,0 +1,18 @@
+@if (manifest(); as archive) {
+  <section class="cold-files" data-testid="archived-files-manifest" aria-labelledby="cold-files-title">
+    <header>
+      <div><h3 id="cold-files-title">Cold storage manifest</h3><p>The archived originals are read-only. Hot Markdown excerpts appear below.</p></div>
+      <span class="cold-files__state">{{ archive.state }}</span>
+    </header>
+    <div class="cold-files__scroll"><table>
+      <thead><tr><th>Name</th><th>Size</th><th>SHA-256</th></tr></thead>
+      <tbody>
+        @for (stage of archive.stages; track stage.stage) {
+          @for (file of stage.files; track file.name) {
+            <tr><td>{{ file.name }}</td><td>{{ bytes(file.size) }}</td><td><code>{{ file.sha256 }}</code></td></tr>
+          }
+        }
+      </tbody>
+    </table></div>
+  </section>
+}

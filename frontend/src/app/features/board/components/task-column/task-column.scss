@@ -526,6 +526,12 @@
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+    .archive-row__cold {
+      color: var(--studio-fg-muted, #64748b);
+      font-size: 10px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
     /* ASS-1727: Archive lane filter + lazy-load controls. */
     .archive-filter {
       position: sticky;

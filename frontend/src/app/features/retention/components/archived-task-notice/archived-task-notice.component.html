@@ -1,0 +1,10 @@
+@if (manifest(); as archive) {
+  <section class="archive-notice" data-testid="archived-task-notice" aria-label="Cold archive status">
+    <span class="archive-notice__dot" aria-hidden="true"></span>
+    <p>Archived on {{ archive.archivedAt | date:'mediumDate' }}, {{ bytes(archive.totalBytes) }} in cold storage</p>
+    <button type="button" data-testid="archived-task-restore" [disabled]="restoring()" (click)="restore()">
+      {{ restoring() ? 'Restoring…' : 'Restore' }}
+    </button>
+    @if (restoreError()) { <span class="archive-notice__error" role="alert">{{ restoreError() }}</span> }
+  </section>
+}

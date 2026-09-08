@@ -50,6 +50,10 @@ public sealed class RetentionManagementApiTests
         Assert.Equal(0, (await plan.Content.ReadFromJsonAsync<RetentionPlanDto>())!.ActionCount);
         var runs = await client.GetFromJsonAsync<List<RetentionRunSummaryDto>>("/api/v1/management/retention/runs");
         Assert.Contains(runs!, run => run.Mode == "plan" && run.Trigger == "manual");
+        var schedule = await client.GetFromJsonAsync<RetentionScheduleDto>("/api/v1/management/retention/schedule");
+        Assert.False(schedule!.Enabled);
+        Assert.InRange(schedule.ServerLocalHour, 0, 23);
+        Assert.Null(schedule.NextRunAt);
 
         Assert.Equal(HttpStatusCode.NotFound,
             (await client.GetAsync("/api/v1/management/retention/runs/missing")).StatusCode);

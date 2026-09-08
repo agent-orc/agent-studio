@@ -1,0 +1,32 @@
+<section class="backups" data-testid="retention-backups">
+  <div class="backups__toolbar">
+    <p>Daily after the archive run · Keep
+      <label><span class="sr-only">Daily sets</span><input type="number" min="1" max="366" [value]="thinning().daily" (input)="setThinning('daily', $any($event.target).value)" /></label> daily,
+      <label><span class="sr-only">Weekly sets</span><input type="number" min="1" max="260" [value]="thinning().weekly" (input)="setThinning('weekly', $any($event.target).value)" /></label> weekly,
+      <label><span class="sr-only">Monthly sets</span><input type="number" min="1" max="120" [value]="thinning().monthly" (input)="setThinning('monthly', $any($event.target).value)" /></label> monthly sets.</p>
+    <button type="button" class="backups__secondary" data-testid="backup-thinning-save" [disabled]="!!busy() || !!thinningError()" (click)="saveThinning()">Save retention</button>
+    <button type="button" data-testid="backup-create" [disabled]="!!busy()" (click)="create()">{{ busy() === 'create' ? 'Creating…' : 'Back up now' }}</button>
+  </div>
+  @if (thinningError()) { <p class="backups__error">{{ thinningError() }}</p> }
+  @if (message()) { <p class="backups__message">{{ message() }}</p> }
+  @if (error()) { <p class="backups__error" role="alert">{{ error() }}</p> }
+  <div class="backups__scroll"><table>
+    <thead><tr><th>Time</th><th>Size</th><th>Inventory hash</th><th>Verification</th><th>Actions</th></tr></thead>
+    <tbody>
+      @for (backup of backups(); track backup.id) {
+        <tr [attr.data-testid]="'backup-row-' + backup.id">
+          <td class="backups__number">{{ date(backup.createdAt) }}</td>
+          <td class="backups__number">{{ bytes(backup.totalBytes) }}</td>
+          <td><code [title]="backup.setSha256">{{ shortHash(backup.setSha256) }}</code></td>
+          <td>{{ verification(backup) }}</td>
+          <td class="backups__actions">
+            <button type="button" class="backups__secondary" [disabled]="!!busy()" (click)="verify(backup)">{{ busy() === 'verify:' + backup.id ? 'Checking…' : 'Check' }}</button>
+            <button type="button" class="backups__secondary" [disabled]="!maintenanceMode() || !!busy()" [title]="maintenanceMode() ? 'Restore this verified backup' : 'Available only in Maintenance mode'" (click)="restore(backup)">{{ busy() === 'restore:' + backup.id ? 'Restoring…' : 'Restore' }}</button>
+          </td>
+        </tr>
+      } @empty {
+        <tr><td colspan="5" class="backups__empty">No full backup sets recorded.</td></tr>
+      }
+    </tbody>
+  </table></div>
+</section>

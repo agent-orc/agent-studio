@@ -412,14 +412,18 @@ public sealed partial class TaskServerStore
         await using var connection = await OpenReadyAsync(ct);
         var result = new List<RetentionRunSummaryDto>();
         await using var command = Command(connection, """
-            SELECT id, started_at, finished_at, trigger_kind, mode, policy_version, action_count, applied_bytes, actor_id
+            SELECT id, started_at, finished_at, trigger_kind, mode, policy_version, action_count, applied_bytes, actor_id, report_json
               FROM archive_runs ORDER BY started_at DESC;
             """);
         await using var reader = await command.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
+        {
+            var (errorCount, warningCount) = ReportCounts(reader.GetString(9));
             result.Add(new RetentionRunSummaryDto(
                 reader.GetString(0), Parse(reader.GetString(1)), reader.IsDBNull(2) ? null : Parse(reader.GetString(2)),
-                reader.GetString(3), reader.GetString(4), reader.GetInt32(5), reader.GetInt32(6), reader.GetInt64(7), reader.GetString(8)));
+                reader.GetString(3), reader.GetString(4), reader.GetInt32(5), reader.GetInt32(6), reader.GetInt64(7), reader.GetString(8),
+                errorCount, warningCount));
+        }
         return result;
     }
 
@@ -432,14 +436,25 @@ public sealed partial class TaskServerStore
             """, ("$id", runId));
         await using var reader = await command.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct)) return null;
+        var reportJson = reader.GetString(9);
+        var counts = ReportCounts(reportJson);
         var summary = new RetentionRunSummaryDto(
             reader.GetString(0), Parse(reader.GetString(1)), reader.IsDBNull(2) ? null : Parse(reader.GetString(2)),
-            reader.GetString(3), reader.GetString(4), reader.GetInt32(5), reader.GetInt32(6), reader.GetInt64(7), reader.GetString(8));
-        using var report = JsonDocument.Parse(reader.GetString(9));
+            reader.GetString(3), reader.GetString(4), reader.GetInt32(5), reader.GetInt32(6), reader.GetInt64(7), reader.GetString(8),
+            counts.ErrorCount, counts.WarningCount);
+        using var report = JsonDocument.Parse(reportJson);
         var plan = JsonSerializer.Deserialize<RetentionPlanDto>(report.RootElement.GetProperty("plan").GetRawText(), RetentionJson)!;
         var errors = JsonSerializer.Deserialize<List<string>>(report.RootElement.GetProperty("errors").GetRawText(), RetentionJson) ?? [];
         var warnings = JsonSerializer.Deserialize<List<string>>(report.RootElement.GetProperty("warnings").GetRawText(), RetentionJson) ?? [];
         return new RetentionRunDetailDto(summary, plan, errors, warnings);
+    }
+
+    private static (int ErrorCount, int WarningCount) ReportCounts(string reportJson)
+    {
+        using var report = JsonDocument.Parse(reportJson);
+        var errors = report.RootElement.TryGetProperty("errors", out var errorList) ? errorList.GetArrayLength() : 0;
+        var warnings = report.RootElement.TryGetProperty("warnings", out var warningList) ? warningList.GetArrayLength() : 0;
+        return (errors, warnings);
     }
 
     internal async Task<RetentionArchiveManifestDto?> GetRetentionManifestAsync(string taskIdentity, CancellationToken ct)
@@ -528,7 +543,7 @@ public sealed partial class TaskServerStore
 
     private static RetentionActionDto ToRetentionActionDto(RetentionAction action) => new(
         action.Kind.ToString(), action.RuleId, action.Task.Project, action.Task.TaskKey, action.Task.StoreKey,
-        action.Stage, action.Bytes, action.Files.Count, action.Reason);
+        action.Stage, action.Bytes, action.Files.Count, action.Reason, action.Task.Lane, action.Task.TerminalAt?.UtcDateTime);
 
     private static RetentionRuleDto ToRetentionRuleDto(RetentionRule rule) => new(
         rule.Id, rule.ArtifactClass.ToString(), rule.HotCapBytesPerFile, rule.HotBudgetBytesPerTask, rule.RefuseAboveBytes,

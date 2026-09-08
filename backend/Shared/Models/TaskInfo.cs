@@ -25,6 +25,8 @@ public record TaskInfo
     /// </summary>
     public TaskAcceptanceScope? AcceptanceScope { get; init; }
     public string State { get; init; } = "draft";
+    /// <summary>Cold-storage marker when this task has an archive manifest.</summary>
+    public string? ArchiveState { get; init; }
     /// <summary>
     /// Explicit content-release approval. This is deliberately independent of
     /// terminal lane state: completion alone must not release dependents whose
@@ -690,6 +692,7 @@ public record ArchivedTaskInfo
     public string TaskType { get; init; } = TaskTypes.Chore;
     public string? CliType { get; init; }
     public string Agent { get; init; } = "";
+    public string? ArchiveState { get; init; }
 
     public static ArchivedTaskInfo From(TaskInfo job) => new()
     {
@@ -707,6 +710,7 @@ public record ArchivedTaskInfo
         TaskType = job.TaskType,
         CliType = job.CliType,
         Agent = job.Agent,
+        ArchiveState = job.ArchiveState,
     };
 }
 
