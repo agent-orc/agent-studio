@@ -125,7 +125,18 @@ CLI execution tests.
   primary model and may have a fallback CLI, model, and thinking level in
   `cli-model-routing.json`. `CliQuotaFallbackService` resolves that policy
   against the latest quota snapshot for every new run; it must not rewrite the
-  task's configured CLI or model.
+  task's configured CLI or model. When the operator has configured no explicit
+  fallback for a CLI, `CliQuotaFallbackService` derives one from
+  `IModelEquivalenceCatalog` (AGT-2751) - an equal-strength model in the other
+  CLI family, e.g. the documented Codex Sol/high <-> Claude Opus 5/high and
+  Codex Mini/high <-> Claude Sonnet 5/medium pairs. The exhaustive, maintained
+  version of that table is Token Economy's model migration catalogue
+  (`model-migration-catalog-safe-auto-rules`); the shipped
+  `ModelEquivalenceCatalog` is an interim table pending that catalogue, and an
+  operator override in `cli-model-routing.json` always wins over the derived
+  pair. `GET /api/cli/quota/model-routes` returns the effective row (configured
+  or derived) for every CLI with an `isFallbackDerived` marker so the picker
+  can label which is which.
 - A model catalog is the union of registry knowledge and live CLI discovery.
   A registry model that the installed CLI does not report remains visible and
   disabled with an availability note. Generation age is separate from
@@ -134,15 +145,40 @@ CLI execution tests.
   `quota_fallback_activated` timeline event, task chat note, task-card badge,
   and status-bar warning aligned. When the primary is below its cap again, the
   next run uses it automatically. Cross-CLI fallback starts a fresh session.
-- Admission is algorithmic and pre-launch (AGT-2055). Before a card is admitted
-  the scheduler evaluates the cached quota snapshots for its target CLI - a
-  strict cap check plus a burn-rate projection over the 5-hour and 7-day windows
-  (`QuotaAdmissionPlanner` / `QuotaWindowProjection`; caps in `cli-quota-caps.json`,
-  default 95%). It decides purely from data, without spawning anything, to launch
-  on primary, pre-emptively switch to the AGT-2040 fallback, throttle parallel
-  admissions, or wait quietly for the next reset - never a burned launch or a
-  reissue-budget charge on an exhausted quota (environmental, per the AGT-1944
-  taxonomy). Every load-steering decision (switch / throttle / wait) is
+- Admission is algorithmic and pre-launch (AGT-2055). `QuotaAdmissionService`
+  is the application-wide boundary over `QuotaAdmissionPlanner`: local coding,
+  remote coding claims, local review and aspect calls, remote review claims,
+  pipeline post-steps, orchestrator preparation and decisions, project chat,
+  and all other shared one-shot consumers resolve through that boundary
+  immediately before execution (AGT-2751). The remote coding claim substitutes
+  the resolved route into `RunSpecDto`. A review claim resolves every
+  `agent-aspect` command against current quota, so an open attempt follows a
+  provider switch without rebuilding its stored plan. A deferred review claim
+  relinquishes its undelivered lease immediately. An idempotent coding-claim
+  replay reads the persisted fallback marker and returns the same resolved
+  route instead of reverting to the card's configured, capped provider. Remote
+  project chat queues the effective route and retains the configured route as
+  provenance, then the runner selects the matching CAR driver. The shared
+  one-shot dispatcher calls the selected raw provider exactly once and never
+  re-enters itself, preventing fallback cycles. Local, remote-claimed, and
+  review-claimed task runs track an
+  active fallback differently (in-memory active-run table versus a durable
+  `quota-fallback.json` sidecar per job, mirroring `quota-wait.json`) because
+  only the local run has a long-lived process to hold it in memory. The
+  task-card badge reads whichever source is live for the current lane.
+- Before a card is admitted the scheduler evaluates the cached quota snapshots
+  for its target CLI - a strict cap check plus a burn-rate projection over the
+  5-hour and 7-day windows (`QuotaAdmissionPlanner` / `QuotaWindowProjection`;
+  caps in `cli-quota-caps.json`, default 95%). It decides purely from data,
+  without spawning anything, to launch on primary, pre-emptively switch to the
+  AGT-2040 fallback, throttle parallel admissions, or wait quietly for the next
+  reset - never a burned launch or a reissue-budget charge on an exhausted
+  quota (environmental, per the AGT-1944 taxonomy). A nearby-reset wait is
+  additionally gated on the card being cheap (AGT-2751): an explicit
+  high/xhigh/ultra/max reasoning pin switches to the equal-strength fallback
+  immediately instead of sitting out the reset inside the configured wait
+  threshold, since an expensive card waiting on a cap is the more expensive
+  choice. Every load-steering decision (switch / throttle / wait) is
   documented, never silent: a `quota_admission_decision` timeline event carrying
   the projection numbers plus a `load-distribution` orchestrator-feed line (the
   data source for the load-distribution view). A healthy primary launch stays a
