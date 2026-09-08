@@ -20,18 +20,32 @@ public sealed class RetentionPlanner
                 continue;
 
             var age = now - task.TerminalAt.Value;
-            var heavy = task.Files.Where(file => file.Classification.ArtifactClass == ArtifactClass.HeavyWorkingData).ToList();
+            var archived = task.Files.Where(file => file.IsArchived).ToList();
+            if (heavyRule.DeleteArchiveEnabled
+                && heavyRule.DeleteArchiveAfterDaysTerminal is int deleteAfterDays
+                && age >= TimeSpan.FromDays(deleteAfterDays))
+            {
+                Add(actions, RetentionActionKind.DeleteCold, heavyRule.Id, task, archived, 3,
+                    $"terminal for at least {deleteAfterDays} days; explicit cold-delete confirmation required");
+                if (archived.Count > 0)
+                    continue;
+            }
+
+            var heavy = task.Files.Where(file => !file.IsArchived
+                && file.Classification.ArtifactClass == ArtifactClass.HeavyWorkingData).ToList();
             var taskDays = heavyRule.ArchiveTaskAfterDaysTerminal;
             if (taskDays.HasValue && age >= TimeSpan.FromDays(taskDays.Value))
             {
-                var stageTwo = task.Files.Where(file =>
-                        file.Classification.ArtifactClass is ArtifactClass.Evidence or ArtifactClass.HeavyWorkingData
-                        && !string.Equals(file.RelativePath, "status.md", StringComparison.OrdinalIgnoreCase)
-                        && !file.RelativePath.StartsWith("retention-excerpt", StringComparison.OrdinalIgnoreCase)
-                        && !string.Equals(file.RelativePath, "archive-manifest.json", StringComparison.OrdinalIgnoreCase))
-                    .ToList();
-                Add(actions, RetentionActionKind.ArchiveTask, heavyRule.Id, task, stageTwo, 2,
-                    $"terminal for at least {taskDays.Value} days");
+                var stageTwo = SelectWholeTaskArchiveFiles(task.Files);
+                if (stageTwo.Count > 0 || archived.Count > 0)
+                    actions.Add(new RetentionAction(
+                        RetentionActionKind.ArchiveTask,
+                        heavyRule.Id,
+                        task,
+                        stageTwo,
+                        stageTwo.Sum(file => file.Size),
+                        2,
+                        $"terminal for at least {taskDays.Value} days"));
                 continue;
             }
 
@@ -65,6 +79,16 @@ public sealed class RetentionPlanner
         return new RetentionPlan(now, policy.Version, actions);
     }
 
+    public static List<RetentionFile> SelectWholeTaskArchiveFiles(IEnumerable<RetentionFile> files)
+        => files.Where(file => !file.IsArchived
+                && file.Classification.ArtifactClass is ArtifactClass.Evidence or ArtifactClass.HeavyWorkingData
+                && !string.Equals(file.RelativePath, "status.md", StringComparison.OrdinalIgnoreCase)
+                && !file.RelativePath.EndsWith("/status.md", StringComparison.OrdinalIgnoreCase)
+                && !file.RelativePath.Contains("retention-excerpt", StringComparison.OrdinalIgnoreCase)
+                && !file.RelativePath.EndsWith("/archive-manifest.json", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(file.RelativePath, "archive-manifest.json", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
     private static void PlanRuntime(
         RetentionTaskInventory task,
         RetentionPolicy policy,
@@ -92,7 +116,8 @@ public sealed class RetentionPlanner
         if (rule.RefuseAboveBytes <= 0)
             return;
         var selected = task.Files.Where(file =>
-            file.Classification.ArtifactClass == ArtifactClass.HeavyWorkingData
+            !file.IsArchived
+            && file.Classification.ArtifactClass == ArtifactClass.HeavyWorkingData
             && file.Size > rule.RefuseAboveBytes).ToList();
         Add(actions, RetentionActionKind.RefuseOversize, rule.Id, task, selected, 0,
             $"single file exceeds {rule.RefuseAboveBytes} bytes");
@@ -128,11 +153,13 @@ public sealed class RetentionExecutor(IRetentionStore store)
     public async Task<RetentionRunResult> ApplyAsync(
         RetentionPlan plan,
         RetentionPolicy policy,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool confirmColdDelete = false)
     {
         var applied = 0;
         long bytes = 0;
         var errors = new List<string>();
+        var warnings = new List<string>();
         foreach (var action in plan.Actions)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -142,6 +169,14 @@ public sealed class RetentionExecutor(IRetentionStore store)
                 {
                     case RetentionActionKind.RefuseOversize:
                         continue;
+                    case RetentionActionKind.DeleteCold:
+                        if (!confirmColdDelete)
+                        {
+                            warnings.Add($"{action.Task.Project}/{action.Task.TaskKey}: cold payload deletion requires explicit confirmation.");
+                            continue;
+                        }
+                        await store.DeleteColdAsync(action, cancellationToken);
+                        break;
                     case RetentionActionKind.DeleteRuntime:
                         await store.DeleteRuntimeAsync(action, cancellationToken);
                         break;
@@ -159,6 +194,6 @@ public sealed class RetentionExecutor(IRetentionStore store)
                 errors.Add($"{action.Task.Project}/{action.Task.TaskKey}/{action.Kind}: {exception.Message}");
             }
         }
-        return new RetentionRunResult(plan, applied, bytes, errors);
+        return new RetentionRunResult(plan, applied, bytes, errors) { Warnings = warnings };
     }
 }

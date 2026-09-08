@@ -1,7 +1,9 @@
 using AgentStudio.Retention;
+using AgentStudio.TaskServer.Contracts;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.Options;
 
 namespace AgentStudio.TaskServer;
 
@@ -23,6 +25,9 @@ public static class RetentionCommand
 
         try
         {
+            if (!string.IsNullOrWhiteSpace(command.Store))
+                return await RunAgainstSqliteStoreAsync(command, cancellationToken);
+
             var backup = new FileTreeFullBackupService();
             if (command.Operation == "verify-full")
             {
@@ -93,6 +98,45 @@ public static class RetentionCommand
         {
             Console.Error.WriteLine($"Retention command failed: {exception.Message}");
             return 1;
+        }
+    }
+
+    /// <summary>
+    /// Runs plan, apply, or restore against the Phase B SQLite store instead of the legacy file tree. The
+    /// store is opened the same way the <c>backup</c> command does: authority is restored without the
+    /// process-unknown quarantine sweep, because a retention pass over an offline copy of the store must not
+    /// mutate lease or fence state.
+    /// </summary>
+    private static async Task<int> RunAgainstSqliteStoreAsync(RetentionCommandLine command, CancellationToken cancellationToken)
+    {
+        var options = Options.Create(new TaskServerOptions { DataDirectory = command.Store! });
+        var store = new TaskServerStore(options, TimeProvider.System);
+        await store.InitializeForBackupAsync(cancellationToken);
+
+        switch (command.Operation)
+        {
+            case "restore":
+                await store.RestoreArchivedTaskAsync(command.Task!, "retention-cli", cancellationToken);
+                Write(command.Json, new { restored = command.Task, store = command.Store }, $"Restored {command.Task}.");
+                return 0;
+            case "plan":
+                {
+                    var (runId, plan) = await store.PlanRetentionRunAsync(
+                        new RunRetentionRequest(command.Project, command.Task), "retention-cli", cancellationToken);
+                    Write(command.Json, new { runId, plan }, $"Retention plan: {plan.ActionCount} actions, {plan.TotalBytes} bytes.");
+                    return 0;
+                }
+            case "apply":
+                {
+                    var result = await store.ApplyRetentionRunAsync(
+                        new RunRetentionRequest(command.Project, command.Task, command.ConfirmColdDelete), "retention-cli", cancellationToken);
+                    Write(command.Json, result,
+                        $"Retention apply: {result.AppliedActions} actions applied, {result.AppliedBytes} bytes, {result.Errors.Count} errors.");
+                    return result.Errors.Count == 0 ? 0 : 1;
+                }
+            default:
+                Console.Error.WriteLine($"retention {command.Operation} does not support --store yet; use --workspace for the legacy tree.");
+                return 1;
         }
     }
 
@@ -329,8 +373,16 @@ public static class RetentionCommand
     {
         var path = Path.Combine(workspace, ".metadata", "retention-audit.jsonl");
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var line = JsonSerializer.Serialize(new { at = DateTimeOffset.UtcNow, actor = "retention-cli", mode = report.Mode,
-            reportPath, report.AppliedActions, report.AppliedBytes, errors = report.Errors.Count }, JsonOptions) + Environment.NewLine;
+        var line = JsonSerializer.Serialize(new
+        {
+            at = DateTimeOffset.UtcNow,
+            actor = "retention-cli",
+            mode = report.Mode,
+            reportPath,
+            report.AppliedActions,
+            report.AppliedBytes,
+            errors = report.Errors.Count
+        }, JsonOptions) + Environment.NewLine;
         return File.AppendAllTextAsync(path, line, cancellationToken);
     }
 

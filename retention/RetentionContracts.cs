@@ -4,7 +4,8 @@ public sealed record RetentionFile(
     string RelativePath,
     long Size,
     DateTimeOffset LastWriteAt,
-    ArtifactClassification Classification);
+    ArtifactClassification Classification,
+    bool IsArchived = false);
 
 public sealed record RetentionTaskInventory(
     string Project,
@@ -19,6 +20,7 @@ public enum RetentionActionKind
 {
     ArchiveHeavy,
     ArchiveTask,
+    DeleteCold,
     DeleteRuntime,
     RefuseOversize,
 }
@@ -55,6 +57,7 @@ public interface IRetentionStore
     Task WriteManifestAsync(RetentionTaskInventory task, ArchiveManifest manifest, CancellationToken cancellationToken = default);
     Task<ArchiveTransition?> MoveToColdAsync(RetentionAction action, RetentionPolicy policy, CancellationToken cancellationToken = default);
     Task WriteStubAsync(RetentionTaskInventory task, ArchivePointer pointer, CancellationToken cancellationToken = default);
+    Task DeleteColdAsync(RetentionAction action, CancellationToken cancellationToken = default);
     Task DeleteRuntimeAsync(RetentionAction action, CancellationToken cancellationToken = default);
     Task RestoreAsync(string taskKey, CancellationToken cancellationToken = default);
 }

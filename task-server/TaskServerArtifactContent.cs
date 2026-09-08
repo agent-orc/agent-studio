@@ -12,12 +12,16 @@ public sealed partial class TaskServerStore
     {
         await using var connection = await OpenReadyAsync(ct);
         await using var command = Command(connection, """
-            SELECT id, run_id, name, media_type, sha256, content, size_bytes
-              FROM artifacts
-             WHERE run_id = $run AND id = $artifact;
+            SELECT a.id, a.run_id, a.name, a.media_type, a.sha256, a.content, a.size_bytes, a.archived, t.id, t.task_key
+              FROM artifacts a
+              JOIN runs r ON r.id = a.run_id
+              JOIN tasks t ON t.id = r.task_id
+             WHERE a.run_id = $run AND a.id = $artifact;
             """, ("$run", runId), ("$artifact", artifactId));
         await using var reader = await command.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct)) return null;
+        if (reader.GetInt64(7) != 0)
+            throw new ArtifactArchivedException(reader.GetString(0), reader.GetString(8), reader.GetString(9));
         var content = (byte[])reader[5];
         return new ArtifactContentDto(
             reader.GetString(0), reader.GetString(1), reader.GetString(2),

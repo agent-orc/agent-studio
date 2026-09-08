@@ -81,6 +81,57 @@ public sealed class TaskServerStoreTests
     }
 
     [Fact]
+    public async Task Task_row_mapping_accepts_the_legacy_nine_column_projection()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT 'task-1' AS id, 'project-1' AS project_id, 'TS-1' AS task_key,
+                   'Legacy projection' AS title, '6-completed' AS state, 3 AS version,
+                   '2026-09-01T01:02:03.0000000Z' AS created_at,
+                   '2026-09-02T01:02:03.0000000Z' AS updated_at,
+                   'body' AS body;
+            """;
+        await using var reader = await command.ExecuteReaderAsync();
+
+        Assert.True(await reader.ReadAsync());
+        var task = TaskServerStore.ReadTask(reader);
+
+        Assert.Equal("TS-1", task.TaskKey);
+        Assert.Equal("body", task.Body);
+        Assert.Null(task.ArchiveState);
+        Assert.Null(task.ArchivedAt);
+    }
+
+    [Fact]
+    public async Task Task_row_mapping_retains_archive_metadata_from_the_extended_projection()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT 'task-2' AS id, 'project-1' AS project_id, 'TS-2' AS task_key,
+                   'Extended projection' AS title, '7-archive' AS state, 4 AS version,
+                   '2026-09-01T01:02:03.0000000Z' AS created_at,
+                   '2026-09-02T01:02:03.0000000Z' AS updated_at,
+                   NULL AS body, 'archived' AS archive_state,
+                   '2026-09-03T04:05:06.0000000Z' AS archived_at;
+            """;
+        await using var reader = await command.ExecuteReaderAsync();
+
+        Assert.True(await reader.ReadAsync());
+        var task = TaskServerStore.ReadTask(reader);
+
+        Assert.Equal("TS-2", task.TaskKey);
+        Assert.Null(task.Body);
+        Assert.Equal("archived", task.ArchiveState);
+        Assert.Equal(
+            DateTime.Parse("2026-09-03T04:05:06.0000000Z").ToUniversalTime(),
+            task.ArchivedAt);
+    }
+
+    [Fact]
     public async Task Version_ten_adds_durable_result_finalization_state()
     {
         using var temp = new TempDirectory();

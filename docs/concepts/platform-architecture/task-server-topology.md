@@ -66,10 +66,10 @@ Runner. All Runner traffic is outbound to whichever server it is pointed at.
 | Cards, lanes, task metadata | Studio backend | `<TaskRepository>/projects/<projectKey>/tasks/<lane>/<KEY>/`, `task.json` per card |
 | Project and workspace registry | Studio backend | `<TaskRepository>/.metadata/projects.json`, `workspaces.json`, fail-closed on load errors |
 | Attempt authority, leases, fences (local profile) | Studio backend `AttemptAuthorityService` | under `<TaskRepository>/.metadata/` |
-| Tasks, runs, leases, fences, events, artifacts, audit, orchestration runs (standalone profile) | Task Server | SQLite under `STORE_PATH`, tables created in `task-server/TaskServerStore.cs` (`tasks`, `runs`, `leases`, `fence_counters`, `events`, `artifacts`, `result_handoffs`, `result_ref_gc`, `orchestration_runs`, and others) |
+| Tasks, runs, leases, fences, events, artifacts, audit, orchestration runs, retention policy and archive history (standalone profile) | Task Server | SQLite under `STORE_PATH`, tables created in `task-server/TaskServerStore.cs` (`tasks`, `runs`, `leases`, `fence_counters`, `events`, `artifacts`, `result_handoffs`, `result_ref_gc`, `orchestration_runs`, `retention_policies`, `archive_runs`, `archive_manifests`, and others) |
 | Orchestrator chat contexts | Switched at composition time, see below | local JSONL, or Task Server `orchestrator_contexts` and `orchestrator_context_turns` |
 | Repository content, worktrees, result commits | Agent Runner host | Git checkouts plus `$RUNNER_WORKDIR/outbox/<run-attempt-id>/` |
-| Backups | Task Server | `BACKUP_PATH`, default `<STORE_PATH>/backups`, SHA-256 verified |
+| Backups and cold archives | Task Server | SQLite snapshots under `BACKUP_PATH`; self-contained full sets under `BACKUP_PATH/full`; manifest-addressed cold payloads under `ARCHIVE_PATH`; all SHA-256 verified |
 
 There is exactly one writer for any logical workspace. The migration runbook in
 [remote-task-server-local-studio.md](../../operations/remote-task-server-local-studio.md)
@@ -161,6 +161,8 @@ loops instead.
 | Reviews | `POST /api/v1/reviews/subjects`, `GET /api/v1/reviews/subjects/{subjectId}`, `GET /api/v1/reviews/attempts/{attemptId}`, `POST .../lease/renew`, `.../report`, `.../cleanup` |
 | Orchestration | `GET|PUT /api/v1/orchestration/projects/{projectId}/flow-definition`, `GET|POST /api/v1/orchestration/runs`, `GET /api/v1/orchestration/runs/{runId}`, `POST /api/v1/orchestration/claims`, `POST .../lease/renew`, `.../lease/release`, `.../stages/complete` |
 | Management | `GET /api/v1/management/status`, `/outboxes`, `/hosts`, `/audit`, `/invariants`, `/remote-hosts`, `PUT /mode`, `POST /prepare-shutdown`, `/backups`, `/restore`, `/attempts/{runId}/resolve-unknown`, `/remote-hosts/{hostId}/operator-drain`, `/remote-hosts/{hostId}/automatic-drain/clear`, `/migrations/legacy/inventory`, `/migrations/legacy/import` |
+| Retention management | `GET|PUT /api/v1/management/retention/policy`, `GET|PUT|DELETE .../policy/projects/{projectId}`, `POST .../plan`, `POST .../apply`, `GET .../runs[/{id}]`, `GET|POST .../archive/{taskId}`, `POST .../archive/{taskId}/restore` |
+| Full backup sets | `POST|GET /api/v1/management/backups/full`, `POST .../backups/full/{id}/verify`, `POST .../backups/full/{id}/restore` |
 
 Modes are `Normal`, `Draining`, `ReadOnly`, `Maintenance`
 (`contracts/TaskServer.Contracts/ManagementContracts.cs`).
@@ -266,6 +268,12 @@ Control stays on HTTP with leases and fences, as described in
   `task-server backup --name timer` command path.
 - Local Transition-Committer evidence commits and result-ref garbage
   collection.
+- Workspace and project retention policies, manual and scheduled archive runs,
+  the SQLite artifact cold-store adapter, manifest-addressed restore, archived
+  content HTTP 409 responses, and analysis-ready full backup sets are owned by
+  the standalone Task Server. Scheduled runs are mode/load gated, publish
+  `retention.run.completed`, create a full set, and apply the 7 daily, 4 weekly,
+  12 monthly thinning policy.
 
 ### Open: what AGT-2663 still has to move
 
