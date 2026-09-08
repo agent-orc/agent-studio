@@ -207,8 +207,14 @@ internal static class TaskEndpointHelpers
         return job with
         {
             Execution = exec,
+            // A local run tracks its fallback in ProjectRunner's in-memory
+            // active-run table; a remote-claimed or review-claimed run has no
+            // such instance, so it falls back to the durable
+            // quota-fallback.json marker TaskScannerService already projected
+            // onto `job` (AGT-2751). The in-memory value wins when both exist
+            // since it is live for the exact run in progress.
             QuotaFallback = job.State == TaskStates.Progress
-                ? runners.GetQuotaFallbackForJob(job.Id, job.ProjectName)
+                ? runners.GetQuotaFallbackForJob(job.Id, job.ProjectName) ?? job.QuotaFallback
                 : null,
             OutcomeIssue = outcomeIssue,
             RunActivity = runActivity,

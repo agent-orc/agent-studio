@@ -53,6 +53,9 @@ public sealed class DriftPostStepRunner
     private readonly ILogger<DriftPostStepRunner> _logger;
     private readonly CliOneShotRegistry? _oneShotRegistry;
     private readonly FileGenerationIndex _fileGenerationIndex;
+    private readonly CliQuotaFallbackService? _quotaFallback;
+    private readonly CliQuotaCapsService? _quotaCaps;
+    private readonly QuotaService? _quotaService;
 
     /// <summary>
     /// CLI invocation seam. Production wires it onto the shared
@@ -77,7 +80,10 @@ public sealed class DriftPostStepRunner
         IConfiguration config,
         ILogger<DriftPostStepRunner> logger,
         CliOneShotRegistry? oneShotRegistry = null,
-        FileGenerationIndex? fileGenerationIndex = null)
+        FileGenerationIndex? fileGenerationIndex = null,
+        CliQuotaFallbackService? quotaFallback = null,
+        CliQuotaCapsService? quotaCaps = null,
+        QuotaService? quotaService = null)
     {
         _prompts = prompts;
         _driftStore = driftStore;
@@ -94,6 +100,9 @@ public sealed class DriftPostStepRunner
         _fileGenerationIndex = fileGenerationIndex ?? new FileGenerationIndex(
             Microsoft.Extensions.Logging.Abstractions.NullLogger<FileGenerationIndex>.Instance,
             pipelineLog);
+        _quotaFallback = quotaFallback;
+        _quotaCaps = quotaCaps;
+        _quotaService = quotaService;
 
         if (_oneShotRegistry != null)
         {
@@ -104,15 +113,25 @@ public sealed class DriftPostStepRunner
     private async Task<DriftCliResult> RunViaOneShotAsync(
         string cliType, string model, string prompt, string? project, string? jobId, string? thinkingLevel, TimeSpan timeout, CancellationToken ct)
     {
-        var oneShot = _oneShotRegistry?.Get(cliType);
+        // AGT-2751: an opt-in drift dimension is itself a pipeline-step CLI
+        // call, so it goes through the same quota routing a launch or a
+        // review aspect does instead of burning a call against an exhausted
+        // provider. Best-effort: a missing quota service (older test doubles,
+        // the AGT-2751 rollout window) just runs the requested cli/model
+        // unchanged, same as today.
+        var (effectiveCli, effectiveModel, effectiveThinking) = _quotaFallback is null || _quotaCaps is null || _quotaService is null
+            ? (cliType, model, thinkingLevel)
+            : ResolveQuota(cliType, model, thinkingLevel);
+
+        var oneShot = _oneShotRegistry?.Get(effectiveCli);
         if (oneShot == null) return new DriftCliResult(false, string.Empty, null);
 
         var result = await oneShot.RunAsync(new CliOneShotRequest(
-            CliType: cliType,
-            Model: model,
+            CliType: effectiveCli,
+            Model: effectiveModel,
             Prompt: prompt)
         {
-            ThinkingLevel = thinkingLevel,
+            ThinkingLevel = effectiveThinking,
             Timeout = timeout,
             Source = AdHocUsageSources.DriftAnalysis,
             RecordUsage = true,
@@ -127,6 +146,19 @@ public sealed class DriftPostStepRunner
                 result.ExitCode, result.Duration.TotalMilliseconds, result.Error);
         }
         return new DriftCliResult(result.Ok, result.ParsedText ?? string.Empty, result.Usage);
+    }
+
+    private (string CliType, string Model, string? ThinkingLevel) ResolveQuota(
+        string cliType, string model, string? thinkingLevel)
+    {
+        var route = _quotaFallback!.Resolve(
+            cliType, model, thinkingLevel,
+            cli => _quotaCaps!.Evaluate(_quotaService!.GetCachedFor(cli ?? CliTypes.Claude)));
+        if (!route.IsFallback) return (cliType, model, thinkingLevel);
+        _logger.LogWarning(
+            "cli_quota_fallback_activated source=drift-post-step primaryCli={PrimaryCli} fallbackCli={FallbackCli} fallbackModel={FallbackModel} reason={Reason}",
+            cliType, route.CliType, route.Model, route.Reason);
+        return (route.CliType, route.Model ?? model, route.ThinkingLevel);
     }
 
     /// <summary>

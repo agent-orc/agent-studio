@@ -74,6 +74,33 @@ public sealed class QuotaAdmissionPlannerTests : IDisposable
         Assert.DoesNotContain("switched", plan.Reason);
     }
 
+    // ── AGT-2751 requirement 4 (situation awareness): an expensive card does
+    // not sit out a nearby reset - it switches to the equal-strength fallback
+    // right away, same reset window as NearbyResetWait_PrecedesUsableFallback
+    // above (which pins no thinking level and still waits). ──
+    [Fact]
+    public void NearbyResetWait_ExpensiveCard_SwitchesInsteadOfWaiting()
+    {
+        var fallback = Routing(new CliModelRouteProfile
+        {
+            CliType = "claude", PrimaryModel = "claude-opus",
+            FallbackCliType = "codex", FallbackModel = "gpt-5.3-codex",
+        });
+        Snapshot("claude", ("5-hour", 100, Now.AddMinutes(12)));
+        Snapshot("codex", ("5-hour", 10, Now.AddHours(3)));
+
+        var plan = QuotaAdmissionPlanner.Plan(
+            "claude", requestedModel: "claude-opus", requestedThinking: "high",
+            fallback, _caps,
+            c => c != null && _snapshots.TryGetValue(c, out var s) ? s : null,
+            Now, occupiedSlots: 1,
+            new ResolvedCliQuotaWaitPolicy(true, 30, "global", null, null, true, 30));
+
+        Assert.Equal(QuotaAdmissionOutcome.LaunchFallback, plan.Outcome);
+        Assert.False(plan.NearbyResetWait);
+        Assert.Equal("codex", plan.CliType);
+    }
+
     [Fact]
     public void DistantReset_UsesFallbackBeforeThrottle()
     {

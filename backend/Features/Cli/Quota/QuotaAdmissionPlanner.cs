@@ -17,6 +17,14 @@ public enum QuotaAdmissionOutcome
     Throttle,
 }
 
+/// <summary>Expected subscription cost of one launch.</summary>
+public enum QuotaExpectedCostClass
+{
+    Cheap,
+    Standard,
+    Expensive,
+}
+
 /// <summary>
 /// The pre-launch quota decision for a card, plus the numbers behind it.
 /// </summary>
@@ -30,7 +38,12 @@ public sealed record QuotaAdmissionPlan(
     DateTime? NextResetAt,
     QuotaProjection? Projection,
     QuotaProjectionWarning? ProjectionWarning = null,
-    bool NearbyResetWait = false)
+    bool NearbyResetWait = false,
+    QuotaExpectedCostClass ExpectedCost = QuotaExpectedCostClass.Cheap,
+    string? ExecutionPath = null,
+    string? RequestedCliType = null,
+    string? RequestedModel = null,
+    string? RequestedThinkingLevel = null)
 {
     /// <summary>True when the runner should proceed to a launch (primary or fallback).</summary>
     public bool ShouldLaunch => Outcome is QuotaAdmissionOutcome.LaunchPrimary or QuotaAdmissionOutcome.LaunchFallback;
@@ -67,11 +80,19 @@ public static class QuotaAdmissionPlanner
         Func<string?, QuotaSnapshot?> snapshotFor,
         DateTime nowUtc,
         int occupiedSlots,
-        ResolvedCliQuotaWaitPolicy? waitPolicy = null)
+        ResolvedCliQuotaWaitPolicy? waitPolicy = null,
+        QuotaExpectedCostClass? expectedCost = null,
+        string? executionPath = null)
     {
         var cli = string.IsNullOrWhiteSpace(requestedCli)
             ? CliTypes.Claude
             : requestedCli!.Trim().ToLowerInvariant();
+        var cost = expectedCost ?? QuotaExpectedCostClassifier.For(
+            taskType: null,
+            taskMode: null,
+            requestedModel,
+            requestedThinking,
+            executionPath);
         var primarySnapshot = snapshotFor(cli);
         var projectionWarning = QuotaWindowProjection.FindWarning(primarySnapshot, nowUtc);
 
@@ -92,18 +113,25 @@ public static class QuotaAdmissionPlanner
         // intentionally before route resolution: nearby wait -> model switch ->
         // throttle. Unknown, elapsed, or distant resets fail open to the
         // existing fallback/admission route.
+        //
+        // Situation awareness (AGT-2751, requirement 4): a nearby reset is
+        // only worth a quiet wait when the card is cheap. An expensive card
+        // (explicit high/xhigh/ultra/max reasoning) switches to an
+        // equal-strength provider immediately instead of sitting in the queue
+        // until the reset, even inside the configured wait threshold.
         var strictPrimaryEarly = Strict(cli);
         var nearbyReset = EarliestReset(primarySnapshot, nowUtc, caps, blockedOnly: true);
         if (waitPolicy?.Enabled == true
             && strictPrimaryEarly.Blocked
             && !strictPrimaryEarly.Suspicious
+            && cost == QuotaExpectedCostClass.Cheap
             && nearbyReset?.ResetAt is { } resetAt)
         {
             var remaining = resetAt - nowUtc;
             if (remaining > TimeSpan.Zero && remaining < TimeSpan.FromMinutes(waitPolicy.ThresholdMinutes))
             {
                 var minutes = Math.Max(1, (int)Math.Ceiling(remaining.TotalMinutes));
-                return new QuotaAdmissionPlan(
+                return Complete(new QuotaAdmissionPlan(
                     QuotaAdmissionOutcome.Wait,
                     cli,
                     requestedModel,
@@ -113,7 +141,7 @@ public static class QuotaAdmissionPlanner
                     NextResetAt: resetAt,
                     Projection: QuotaWindowProjection.WorstProjection(primarySnapshot, caps, nowUtc),
                     ProjectionWarning: projectionWarning,
-                    NearbyResetWait: true);
+                    NearbyResetWait: true));
             }
         }
 
@@ -123,7 +151,7 @@ public static class QuotaAdmissionPlanner
         //    a usable fallback exists). Documented model switch before start.
         if (route?.IsFallback == true)
         {
-            return new QuotaAdmissionPlan(
+            return Complete(new QuotaAdmissionPlan(
                 QuotaAdmissionOutcome.LaunchFallback,
                 route.CliType,
                 route.Model,
@@ -132,7 +160,7 @@ public static class QuotaAdmissionPlanner
                 Reason: BuildSwitchReason(cli, route),
                 NextResetAt: EarliestReset(snapshotFor(cli), nowUtc, caps, blockedOnly: false)?.ResetAt,
                 Projection: QuotaWindowProjection.WorstProjection(snapshotFor(cli), caps, nowUtc),
-                ProjectionWarning: projectionWarning);
+                ProjectionWarning: projectionWarning));
         }
 
         // Primary path (no fallback taken): resolve the concrete primary model
@@ -152,11 +180,11 @@ public static class QuotaAdmissionPlanner
                 ?? EarliestReset(snapshotFor(cli), nowUtc, caps, blockedOnly: false);
             var detail = !string.IsNullOrWhiteSpace(route?.Reason) ? route!.Reason : strictPrimary.DescribeReason();
             var reason = AppendReset($"waiting: all quotas exhausted ({detail})", blockedReset);
-            return new QuotaAdmissionPlan(
+            return Complete(new QuotaAdmissionPlan(
                 QuotaAdmissionOutcome.Wait, cli, model, thinking,
                 IsFallback: false, Reason: reason, NextResetAt: blockedReset?.ResetAt,
                 Projection: QuotaWindowProjection.WorstProjection(snapshotFor(cli), caps, nowUtc),
-                ProjectionWarning: projectionWarning);
+                ProjectionWarning: projectionWarning));
         }
 
         // 4) Primary is only PROJECTED to breach and there is no usable fallback.
@@ -168,21 +196,30 @@ public static class QuotaAdmissionPlanner
             var reset = EarliestReset(snapshotFor(cli), nowUtc, caps, blockedOnly: false);
             var throttle = occupiedSlots > 0;
             var verb = throttle ? "throttling" : "launching (projection-flagged)";
-            return new QuotaAdmissionPlan(
+            return Complete(new QuotaAdmissionPlan(
                 throttle ? QuotaAdmissionOutcome.Throttle : QuotaAdmissionOutcome.LaunchPrimary,
                 cli, model, thinking, IsFallback: false,
                 Reason: AppendReset($"{verb}: {admissionPrimary.DescribeReason()}", reset),
-                NextResetAt: reset?.ResetAt, Projection: proj, ProjectionWarning: projectionWarning);
+                NextResetAt: reset?.ResetAt, Projection: proj, ProjectionWarning: projectionWarning));
         }
 
         // 5) Healthy: launch on primary.
-        return new QuotaAdmissionPlan(
+        return Complete(new QuotaAdmissionPlan(
             QuotaAdmissionOutcome.LaunchPrimary, cli, model, thinking,
             IsFallback: false,
             Reason: projectionWarning is null ? "launch: quota ok" : $"launch: quota projection ignored ({projectionWarning.Reason})",
             NextResetAt: null,
             Projection: QuotaWindowProjection.WorstProjection(snapshotFor(cli), caps, nowUtc),
-            ProjectionWarning: projectionWarning);
+            ProjectionWarning: projectionWarning));
+
+        QuotaAdmissionPlan Complete(QuotaAdmissionPlan plan) => plan with
+        {
+            ExpectedCost = cost,
+            ExecutionPath = executionPath,
+            RequestedCliType = cli,
+            RequestedModel = requestedModel,
+            RequestedThinkingLevel = requestedThinking,
+        };
     }
 
     /// <summary>
@@ -246,5 +283,42 @@ public static class QuotaAdmissionPlanner
             ? resetWindow.ResetLabel!
             : resetWindow.ResetAt.Value.ToString("HH:mm 'UTC'");
         return $"{reason}, next reset {human}";
+    }
+}
+
+/// <summary>Pure expected-cost classification shared by every launch path.</summary>
+public static class QuotaExpectedCostClassifier
+{
+    public static QuotaExpectedCostClass ForTask(TaskInfo task)
+        => For(task.TaskType, task.Mode, task.Model, task.ThinkingLevel, "coding-card");
+
+    public static QuotaExpectedCostClass For(
+        string? taskType,
+        string? taskMode,
+        string? model,
+        string? thinkingLevel,
+        string? executionPath)
+    {
+        var thinking = thinkingLevel?.Trim().ToLowerInvariant();
+        if (thinking is CliThinkingLevels.High or CliThinkingLevels.XHigh
+            or CliThinkingLevels.Ultra or CliThinkingLevels.Max)
+            return QuotaExpectedCostClass.Expensive;
+
+        if (model?.Contains("mini", StringComparison.OrdinalIgnoreCase) == true
+            || model?.Contains("luna", StringComparison.OrdinalIgnoreCase) == true
+            || model?.Contains("haiku", StringComparison.OrdinalIgnoreCase) == true
+            || thinking == "low")
+            return QuotaExpectedCostClass.Cheap;
+
+        if (executionPath?.Contains("chat", StringComparison.OrdinalIgnoreCase) == true
+            || executionPath?.Contains("review", StringComparison.OrdinalIgnoreCase) == true
+            || executionPath?.Contains("pipeline", StringComparison.OrdinalIgnoreCase) == true)
+            return QuotaExpectedCostClass.Cheap;
+
+        if (string.Equals(taskType, TaskTypes.Bug, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(taskMode, TaskModes.Coding, StringComparison.OrdinalIgnoreCase))
+            return QuotaExpectedCostClass.Standard;
+
+        return QuotaExpectedCostClass.Cheap;
     }
 }

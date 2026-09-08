@@ -1,3 +1,4 @@
+using AgentStudio.Cli;
 using AgentStudio.Pipeline;
 using AgentStudio.Runner;
 using System.Text;
@@ -157,6 +158,11 @@ public static class LeaseEndpoints
             PromptEnrichmentService promptEnrichment,
             DossierMaintenanceService dossierMaintenance,
             RemoteDispatchRejectionStore dispatchRejections,
+            CliQuotaCapsService quotaCaps,
+            CliQuotaFallbackService quotaFallback,
+            CliQuotaWaitPolicyService quotaWaitPolicy,
+            QuotaService quotaService,
+            QuotaAdmissionRecorder quotaAdmissionRecorder,
             CancellationToken ct) =>
         {
             var logger = loggerFactory.CreateLogger("AgentStudio.Tasks.RemoteRunnerClaim");
@@ -562,6 +568,7 @@ public static class LeaseEndpoints
                     .ThenBy(t => t.CreatedAt);
 
                 TaskInfo? candidate = null;
+                QuotaAdmissionPlan? candidateQuotaPlan = null;
                 RemoteProjectRepository? repository = null;
                 TaskInfo? failedPreflightCandidate = null;
                 RemoteProjectRepository? failedPreflightRepository = null;
@@ -582,7 +589,37 @@ public static class LeaseEndpoints
                             buildProfileGate.Reason);
                         continue;
                     }
-                    var cliType = CliTypes.Normalize(task.CliType);
+                    // AGT-2751: resolve the pre-launch admission decision
+                    // BEFORE the capability check, and gate capability on the
+                    // RESOLVED cli - the same pre-launch decision the local
+                    // ProjectRunner path applies before it spawns
+                    // (QuotaAdmissionPlanner). A card whose CLI family is
+                    // capped no longer ships to the runner with its raw,
+                    // exhausted spec (AGT-2748/2749); a Wait/Throttle outcome
+                    // skips this candidate for the next one, a LaunchFallback
+                    // outcome both carries the resolved cli/model/thinking
+                    // into BuildRunSpec below AND is what the capability check
+                    // is evaluated against - a runner that only advertises the
+                    // fallback family (e.g. claude-only during a codex outage)
+                    // can still claim a codex-configured card once quota
+                    // routes it to claude.
+                    var quotaPlan = QuotaAdmissionPlanner.Plan(
+                        task.CliType, task.Model, task.ThinkingLevel,
+                        quotaFallback, quotaCaps, c => quotaService.GetCachedFor(c),
+                        DateTime.UtcNow, hostActiveRuns, quotaWaitPolicy.Resolve(taskProjectSettings));
+                    if (quotaPlan.IsDeferred)
+                    {
+                        quotaAdmissionRecorder.EmitAdmissionDecision(task, quotaPlan, source: "remote-claim");
+                        RecordRejection(task, "quota-admission", quotaPlan.Reason);
+                        logger.LogInformation(
+                            "remote-runner-coding-claim-skipped-quota runner={Runner} task={TaskKey} outcome={Outcome} reason={Reason}",
+                            req.RunnerName,
+                            task.Key ?? task.TaskKey ?? task.Id,
+                            quotaPlan.Outcome,
+                            quotaPlan.Reason);
+                        continue;
+                    }
+                    var cliType = quotaPlan.CliType;
                     var requiredCapabilities = (req.RequiredCapabilities ?? [])
                         .Append(CapabilityProtocol.CodingExecutor)
                         .Append(CapabilityProtocol.CliExecution(cliType))
@@ -633,6 +670,7 @@ public static class LeaseEndpoints
                             continue;
                         }
                         candidate = task;
+                        candidateQuotaPlan = quotaPlan;
                         break;
                     }
 
@@ -780,7 +818,7 @@ public static class LeaseEndpoints
 
                 var taskKey = candidate.Key ?? candidate.TaskKey;
                 if (string.IsNullOrWhiteSpace(taskKey)) taskKey = candidate.Id;
-                var runSpec = BuildRunSpec(candidate, settings, prompts, dossierMaintenance);
+                var runSpec = BuildRunSpec(candidate, settings, prompts, dossierMaintenance, candidateQuotaPlan);
                 PromptEnrichmentPreparation? enrichmentPreparation = null;
                 try
                 {
@@ -860,6 +898,39 @@ public static class LeaseEndpoints
                     "remote-runner-task-claimed project={Project} projectId={ProjectId} task={TaskKey} runner={Runner} lease={LeaseId} token={FencingToken} repositorySource={RepositorySource} defaultBranch={DefaultBranch}",
                     candidate.ProjectName, repository.ProjectId, taskKey, req.RunnerName, acquire.Lease.LeaseId,
                     acquire.Lease.FencingToken, repository.Source, repository.DefaultBranch);
+                // AGT-2751: document the admission decision this claim was
+                // actually launched with, and - when it switched CLI families -
+                // persist a durable marker (there is no long-lived ProjectRunner
+                // instance for a remote-claimed job to hold this in memory) so
+                // the card badge / status bar reflect the fallback exactly as
+                // they do for a local run.
+                var claimedFolderPath = move.NewFolderPath ?? candidate.FolderPath;
+                if (candidateQuotaPlan is not null)
+                {
+                    var claimedInfo = candidate with { FolderPath = claimedFolderPath };
+                    quotaAdmissionRecorder.EmitAdmissionDecision(claimedInfo, candidateQuotaPlan, source: "remote-claim");
+                    if (candidateQuotaPlan.IsFallback)
+                    {
+                        QuotaFallbackMarker.Write(claimedFolderPath, new QuotaFallbackRecord
+                        {
+                            CliType = candidateQuotaPlan.CliType,
+                            Model = candidateQuotaPlan.Model,
+                            Reason = candidateQuotaPlan.Reason,
+                        }, logger);
+                        quotaAdmissionRecorder.EmitFallbackActivated(
+                            claimedInfo,
+                            CliTypes.Normalize(candidate.CliType),
+                            candidate.Model,
+                            new CliRouteDecision(
+                                candidateQuotaPlan.CliType, candidateQuotaPlan.Model, candidateQuotaPlan.ThinkingLevel,
+                                true, candidateQuotaPlan.Reason, CapEvaluation.NotBlocked),
+                            source: "remote-claim");
+                    }
+                    else
+                    {
+                        QuotaFallbackMarker.Clear(claimedFolderPath, logger);
+                    }
+                }
                 var graceRunsRemaining = settings.ConsumeBuildProfileRevalidationGraceRun(candidate.ProjectName);
                 if (graceRunsRemaining is not null)
                 {
@@ -2007,23 +2078,33 @@ public static class LeaseEndpoints
     /// rung, so the claim never invents a reasoning flag the operator did not ask
     /// for; the CLI's own default applies remotely, as it does today.
     /// </para>
+    ///
+    /// <para>
+    /// <paramref name="admissionPlan"/> is the quota-admission decision the
+    /// claim candidate loop already computed for this exact task (AGT-2751):
+    /// when it resolved to a fallback, its cli/model/thinking - the
+    /// equal-strength substitute, not the card's raw configured spec - is what
+    /// ships to the runner. Null (no plan resolved, e.g. the replay path)
+    /// falls back to the card's own configured spec unchanged.
+    /// </para>
     /// </summary>
     private static RunSpecDto BuildRunSpec(
         TaskInfo task,
         ProjectSettingsService settings,
         AgentStudio.Prompts.RuntimePromptService prompts,
-        DossierMaintenanceService? dossierMaintenance)
+        DossierMaintenanceService? dossierMaintenance,
+        QuotaAdmissionPlan? admissionPlan = null)
     {
-        var cliType = CliTypes.Normalize(task.CliType);
+        var cliType = CliTypes.Normalize(admissionPlan?.CliType ?? task.CliType);
         var projectSettings = settings.Get(task.ProjectName);
         var isEpicPlanning = TaskKinds.IsEpic(task.Kind);
 
         var model = isEpicPlanning && !string.IsNullOrWhiteSpace(projectSettings.EpicPlanningModel)
             ? projectSettings.EpicPlanningModel
-            : task.Model;
+            : admissionPlan?.Model ?? task.Model;
         var thinkingLevel = isEpicPlanning && projectSettings.EpicPlanningThinkingLevel is not null
             ? projectSettings.EpicPlanningThinkingLevel
-            : task.ThinkingLevel;
+            : admissionPlan?.ThinkingLevel ?? task.ThinkingLevel;
 
         model = string.IsNullOrWhiteSpace(model) ? null : model.Trim();
         // Resolve the requested rung against what this CLI + model can actually

@@ -150,7 +150,7 @@ public class TitleGenerationService
             if (!r.Ok) return (false, null, r.Error);
             _logger.LogInformation("Title generated in {Elapsed}ms ({Bytes} bytes)",
                 (long)r.Duration.TotalMilliseconds, r.Stdout.Length);
-            return (true, r.Stdout, null);
+            return (true, CliOneShotCompatibility.ToClaudeResultEnvelope(r, model), null);
         }
 
         // Fallback for tests that build the service without DI. Still

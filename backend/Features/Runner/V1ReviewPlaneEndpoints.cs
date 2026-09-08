@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using AgentStudio.Cli;
 using AgentStudio.Git;
 using AgentStudio.Pipeline;
 using AgentStudio.Security;
@@ -233,6 +234,10 @@ public static class V1ReviewPlaneEndpoints
             TaskMutationService mutations,
             TimelineLog timeline,
             ILoggerFactory loggerFactory,
+            CliQuotaCapsService quotaCaps,
+            CliQuotaFallbackService quotaFallback,
+            QuotaService quotaService,
+            QuotaAdmissionRecorder quotaAdmissionRecorder,
             CancellationToken ct) =>
         {
             if (!RunnerMatches(context, runnerId)
@@ -321,6 +326,18 @@ public static class V1ReviewPlaneEndpoints
                 mutations,
                 timeline,
                 loggerFactory.CreateLogger(LoggerName));
+            // AGT-2751: resolve each agent-aspect command's cli/model against
+            // the CURRENT quota at hand-out time, not whatever was true when
+            // the plan was built or frozen. This is what lets an already-open
+            // ReviewAttempt (created before a provider hit its cap) pick up an
+            // equal-strength fallback on its next claim without an operator
+            // superseding it with a rebuilt plan. Only the returned DTO
+            // changes; review.Subject.Plan (and any cached copy) is untouched,
+            // so a retry after a rejected/expired claim re-resolves quota
+            // fresh instead of replaying a stale substitution.
+            if (subjectTask is not null)
+                subject = ApplyQuotaFallbackToAspects(
+                    subject, subjectTask, quotaFallback, quotaCaps, quotaService, quotaAdmissionRecorder);
             var lease = ToLease(review);
             return Results.Ok(new Contract.ReviewClaimResponse(
                 "claimed",
@@ -912,6 +929,66 @@ public static class V1ReviewPlaneEndpoints
             review.Subject.ReviewPolicyHash,
             plan,
             review.Subject.CreatedAt);
+    }
+
+    /// <summary>
+    /// AGT-2751: rewrite the <c>agent-aspect</c> commands of a just-claimed
+    /// review plan against the live quota routing
+    /// (<see cref="CliQuotaFallbackService"/>), the same source the local
+    /// coding-run launch path and the remote coding claim path resolve
+    /// against. Deterministic <c>tool</c> commands are untouched - they do
+    /// not spawn a coding-agent CLI. When any aspect switched, the switch is
+    /// documented (timeline + chat + load-distribution feed) and a durable
+    /// marker is written so the task-card badge reflects it exactly like a
+    /// local fallback would, since a review-executor claim has no
+    /// long-lived <c>ProjectRunner</c> to hold the fact in memory.
+    /// </summary>
+    private static Contract.ReviewSubjectDto ApplyQuotaFallbackToAspects(
+        Contract.ReviewSubjectDto subject,
+        TaskInfo task,
+        CliQuotaFallbackService quotaFallback,
+        CliQuotaCapsService quotaCaps,
+        QuotaService quotaService,
+        QuotaAdmissionRecorder recorder)
+    {
+        CapEvaluation Evaluate(string? cli) => quotaCaps.Evaluate(quotaService.GetCachedFor(cli ?? CliTypes.Claude));
+
+        var switched = false;
+        CliRouteDecision? lastSwitch = null;
+        string? lastPrimaryCli = null;
+        string? lastPrimaryModel = null;
+        var resolvedCommands = subject.Plan.Commands.Select(command =>
+        {
+            if (!Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind)) return command;
+            var route = quotaFallback.Resolve(command.CliType, command.Model, command.ThinkingLevel, Evaluate);
+            if (!route.IsFallback) return command;
+            switched = true;
+            lastSwitch = route;
+            lastPrimaryCli = command.CliType;
+            lastPrimaryModel = command.Model;
+            return command with
+            {
+                // FileName carries the CLI type for an agent-aspect command
+                // (there is no on-disk executable for an in-process aspect
+                // call); keep it in lockstep with CliType so a reader of
+                // either field sees the same resolved CLI.
+                FileName = route.CliType,
+                CliType = route.CliType,
+                Model = route.Model,
+                ThinkingLevel = route.ThinkingLevel,
+            };
+        }).ToList();
+
+        if (!switched) { QuotaFallbackMarker.Clear(task.FolderPath); return subject; }
+
+        QuotaFallbackMarker.Write(task.FolderPath, new QuotaFallbackRecord
+        {
+            CliType = lastSwitch!.CliType,
+            Model = lastSwitch.Model,
+            Reason = lastSwitch.Reason,
+        });
+        recorder.EmitFallbackActivated(task, lastPrimaryCli, lastPrimaryModel, lastSwitch, source: "review-claim");
+        return subject with { Plan = subject.Plan with { Commands = resolvedCommands } };
     }
 
     private static (string RepositoryId, string? RepositoryUrl) MaterializableRepository(
