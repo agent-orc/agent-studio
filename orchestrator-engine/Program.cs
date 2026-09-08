@@ -24,8 +24,21 @@ if (args is ["--help"] or ["-h"])
           COMPLETION_JUDGE_CONCURRENCY
           POLL_SECONDS
           LEASE_SECONDS
+          HEALTH_PORT
+
+        --health-check   Connect to the loopback health port and exit
+                          (0 live, 4 unreachable). No Task Server call.
         """);
     return 0;
+}
+
+if (args is ["--health-check"])
+{
+    var port = EngineHealthProbe.ResolvePort(Environment.GetEnvironmentVariable);
+    var healthy = await EngineHealthProbe.IsReachableAsync(port, TimeSpan.FromSeconds(3));
+    if (!healthy)
+        Console.Error.WriteLine($"orchestrator-engine health port unreachable: 127.0.0.1:{port}");
+    return healthy ? 0 : 4;
 }
 
 try
@@ -40,6 +53,7 @@ try
     builder.Services.AddSingleton<IOrchestrationStageHandler, GateDispatchLoop>();
     builder.Services.AddSingleton<IOrchestrationStageHandler, CompletionJudgeLoop>();
     builder.Services.AddHostedService<OrchestratorEngineService>();
+    builder.Services.AddHostedService<EngineHealthServer>();
     await builder.Build().RunAsync();
     return 0;
 }

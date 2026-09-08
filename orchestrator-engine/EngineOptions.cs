@@ -14,6 +14,7 @@ public sealed class EngineOptions
     public int CompletionJudgeConcurrency { get; init; } = 4;
     public int PollSeconds { get; init; } = 2;
     public int LeaseSeconds { get; init; } = 120;
+    public int HealthPort { get; init; } = EngineHealthProbe.DefaultPort;
 
     public static EngineOptions FromEnvironment()
         => Parse(Environment.GetEnvironmentVariable);
@@ -45,6 +46,7 @@ public sealed class EngineOptions
             CompletionJudgeConcurrency = Cap(value, "COMPLETION_JUDGE_CONCURRENCY", 4),
             PollSeconds = Number(value, "POLL_SECONDS", 2, 1, 60),
             LeaseSeconds = Number(value, "LEASE_SECONDS", 120, 30, 600),
+            HealthPort = EngineHealthProbe.ResolvePort(value),
         };
     }
 

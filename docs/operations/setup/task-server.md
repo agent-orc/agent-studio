@@ -1,7 +1,8 @@
 # Task Server deployment and recovery
 
-Status: production bootstrap, scoped service principals, topology release, and
-sole v1 ownership contract, AGT-2192/AGT-2196/AGT-2330/AGT-2730, 2026-09-07.
+Status: production bootstrap, scoped service principals, topology release,
+sole v1 ownership contract, and per-service release container images,
+AGT-2192/AGT-2196/AGT-2330/AGT-2730/AGT-2729, 2026-09-07.
 
 This runbook implements the Task Server boundary from
 [Distributed Agent Studio target architecture](../../concepts/distributed-agent-studio-target-architecture.md).
@@ -181,6 +182,106 @@ targeting the installed executable, mirroring
 ```powershell
 C:\AgentOrchestrator\current\task-server.exe backup --name manual
 ```
+
+## Container images
+
+Every release tag publishes one container image per service to
+`ghcr.io/agent-orc/`, built from the Dockerfile of the same name
+(`backend/Dockerfile`, `frontend/Dockerfile`, `task-server/Dockerfile`,
+`orchestrator-engine/Dockerfile`, `studio-bff/Dockerfile`,
+`runner/Dockerfile`):
+
+| Image | Dockerfile | Service |
+|---|---|---|
+| `agent-studio-api` | `backend/Dockerfile` | `OrchestratorApi` (board API, local orchestration) |
+| `agent-studio-web` | `frontend/Dockerfile` | Production Angular bundle behind Caddy |
+| `agent-task-server` | `task-server/Dockerfile` | Standalone Task Server |
+| `agent-orchestrator-engine` | `orchestrator-engine/Dockerfile` | API-only flow execution service |
+| `agent-studio-bff` | `studio-bff/Dockerfile` | Studio reverse proxy in front of the Task Server |
+| `agent-host` | `runner/Dockerfile` | Agent Runner, coding CLIs baked in |
+
+Each image is tagged three times: `v<version>` (matching the release's Git
+tag), `sha-<short-commit>` (the first 7 characters of the release commit), and
+`latest`. All three tags point at the same image content for that release; use
+the version tag for a normal upgrade, the SHA tag to pin an exact commit
+during a rollback rehearsal, and `latest` only for a first try or a
+non-production demo - `docker-compose.yml` and `.env.example` default
+`AGENT_STUDIO_VERSION` to `latest` so `docker compose up --wait` works before
+any version pin is chosen, but a tracked deployment should set
+`AGENT_STUDIO_VERSION` to an exact `v<version>` instead. Images build for
+`linux/amd64`; `linux/arm64` is not yet published.
+
+Every image carries standard OCI labels -
+`org.opencontainers.image.version`, `.revision`, `.title`, and `.source` - set
+from the same `VERSION` and `SHA` build inputs the
+[release workflow](../../../.github/workflows/release.yml) uses for the
+self-contained binaries. `agent-task-server` and `agent-host` additionally
+answer their existing `--version` contract from inside the container, so the
+value printed by `docker run ... task-server --version` /
+`docker run ... agent-host --version` is the same
+`<release>+sha.<commit>` identity `TaskServerBuildIdentity` and
+`RunnerReleaseIdentity` report from a native install:
+
+```bash
+docker pull ghcr.io/agent-orc/agent-task-server:v1.4.0
+docker inspect ghcr.io/agent-orc/agent-task-server:v1.4.0 \
+  --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
+docker run --rm ghcr.io/agent-orc/agent-task-server:v1.4.0 --version
+```
+
+The printed commit and the label's `.revision` value must match the release
+commit and each other; a mismatch means the image was not built from the
+tagged commit and should not be deployed.
+
+Every image runs as a dedicated non-root user and declares a `HEALTHCHECK`
+that exercises the same signal `docker compose ps` and an operator both read:
+the open `/healthz` route for `agent-studio-api`, `agent-studio-web`,
+`agent-task-server`, and `agent-studio-bff`; the existing `--health-check`
+Task Server reachability probe for `agent-host` (it has no HTTP surface); and
+a loopback TCP accept for `agent-orchestrator-engine`, which has neither an
+HTTP surface nor filesystem access (it is a pure Task Server API client - see
+`EngineContractTests.Engine_project_is_a_pure_contract_api_client`). Its
+hosted `EngineHealthServer` listens on `HEALTH_PORT` and `--health-check`
+treats a successful connect as live.
+
+Each non-root user owns its data directories only inside the image; Docker
+copies that ownership onto a named volume the first time the volume is empty.
+A volume already populated by an older, root-owned image keeps root ownership
+across the upgrade and needs one manual `chown` to the image's UID (`10001`
+for every service except `agent-host`, whose `runner` user is also `10001`)
+before the new container can write to it.
+
+### Running one service from its image
+
+Each image is runnable standalone with `docker run`, using the same
+environment contract as its `deploy/release/agent-orchestrator/config/*.env.template`
+or `deploy/release/agent-host/runner.env.template`:
+
+```bash
+docker run --rm -p 127.0.0.1:5071:5071 \
+  -v agent-task-server-data:/var/lib/agent-orchestrator \
+  -e AUTH=none \
+  ghcr.io/agent-orc/agent-task-server:v1.4.0
+```
+
+### `docker-compose.yml` profiles
+
+[`docker-compose.yml`](../../../docker-compose.yml) at the repository root
+composes these images into four profiles, copy [`.env.example`](../../../.env.example)
+to `.env` to override ports, the pinned `AGENT_STUDIO_VERSION`, and the
+`distributed` profile's bearer credentials:
+
+| Profile | Services | Purpose |
+|---|---|---|
+| (none) | `orchestrator-api`, `frontend` | The default install: a working Studio, pulling pinned images. See [Getting started](./getting-started.md). |
+| `runner` | adds `agent-host-coding`, `agent-host-review` | Coding/review Agent Hosts against `orchestrator-api`. |
+| `distributed` | `task-server`, `orchestrator-engine`, `studio-bff`, `agent-host-distributed`, plus the default two | The target architecture from [Distributed Agent Studio target architecture](../../concepts/distributed-agent-studio-target-architecture.md), previewed locally. |
+| `dev` | a `-dev` sibling of every service above | Builds from this checkout's Dockerfiles instead of pulling. This is the only place `build:` is wired in the compose file; name the exact `-dev` services you want (e.g. `docker compose --profile dev up --build orchestrator-api-dev frontend-dev`) rather than a bare `--profile dev up`, which also starts every profile-less default service and collides on their ports. |
+
+`scripts/compose-smoke-test.sh` exercises all three non-dev topologies (default,
+`distributed`, and a Task-Server-registered agent-host) by building through the
+`dev` profile, so CI proves the Dockerfiles on every commit without needing
+registry access.
 
 ## Retention CLI
 
