@@ -30,6 +30,7 @@ public class TaskRunnerService : BackgroundService
     private readonly CliQuotaWaitPolicyService? _quotaWaitPolicy;
     private readonly ProviderLimitRegistry _providerLimits;
     private readonly CliQuotaFallbackService? _quotaFallback;
+    private readonly QuotaAdmissionService? _quotaAdmission;
     private readonly OrchestratorChatLog _chatLog;
     private readonly OrchestratorLog _orchestratorLog;
     private readonly OrchestratorRunner _orchestratorRunner;
@@ -154,7 +155,8 @@ public class TaskRunnerService : BackgroundService
         DossierMaintenanceService? dossierMaintenance = null,
         VisualQaService? visualQa = null,
         StartupExecutionAdmission? executionAdmission = null,
-        ProviderLimitRegistry? providerLimits = null)
+        ProviderLimitRegistry? providerLimits = null,
+        QuotaAdmissionService? quotaAdmission = null)
     {
         _config = config;
         _logger = logger;
@@ -171,6 +173,7 @@ public class TaskRunnerService : BackgroundService
         _quotaService = quotaService;
         _quotaCaps = quotaCaps;
         _quotaFallback = quotaFallback;
+        _quotaAdmission = quotaAdmission;
         _loadThrottle = loadThrottle;
         _chatLog = chatLog;
         _orchestratorLog = orchestratorLog;
@@ -378,7 +381,8 @@ public class TaskRunnerService : BackgroundService
                 promptEnrichment: _promptEnrichment,
                 dossierMaintenance: _dossierMaintenance,
                 visualQa: _visualQa,
-                providerLimits: _providerLimits);
+                providerLimits: _providerLimits,
+                quotaAdmission: _quotaAdmission);
             runner.ConfigureWatchdog(LoadWatchdogConfig(_config), PhaseBudgetTable.FromConfig(_config));
             runner.ConfigureCircuitBreaker(RunnerCircuitBreakerOptions.FromConfig(_config));
             _stuckLoopBudget = LoadStuckLoopBudget(_config);
@@ -1524,7 +1528,8 @@ public class TaskRunnerService : BackgroundService
             promptEnrichment: _promptEnrichment,
             dossierMaintenance: _dossierMaintenance,
             visualQa: _visualQa,
-            providerLimits: _providerLimits);
+            providerLimits: _providerLimits,
+            quotaAdmission: _quotaAdmission);
         runner.ConfigureWatchdog(LoadWatchdogConfig(_config), PhaseBudgetTable.FromConfig(_config));
         runner.ConfigureCircuitBreaker(RunnerCircuitBreakerOptions.FromConfig(_config));
         runner.ConfigureStuckLoopBudget(LoadStuckLoopBudget(_config));

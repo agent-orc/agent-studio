@@ -1,4 +1,5 @@
-
+using AgentStudio.Shared;
+using AgentStudio.Tasks;
 
 namespace AgentStudio.Cli;
 
@@ -121,6 +122,14 @@ public sealed record CliOneShotRequest(
     /// alongside the prompt. Null when the prompt is built inline.
     /// </summary>
     public string? TemplateRef { get; init; }
+
+    /// <summary>
+    /// Task-server project storage path used for project-scoped quota decision
+    /// feed entries. This is deliberately separate from
+    /// <see cref="WorkingDirectory"/>, which normally points at source code and
+    /// must never receive task-server observability files.
+    /// </summary>
+    public string? WatchPath { get; init; }
 }
 
 /// <summary>
@@ -146,6 +155,17 @@ public sealed record CliOneShotResult(
     AgentMessageLatency Latency,
     string? Error)
 {
+    /// <summary>The quota decision used immediately before this call.</summary>
+    public QuotaAdmissionPlan? QuotaAdmission { get; init; }
+
+    /// <summary>The route actually dispatched after quota admission.</summary>
+    public string? EffectiveCliType { get; init; }
+    public string? EffectiveModel { get; init; }
+    public string? EffectiveThinkingLevel { get; init; }
+
+    /// <summary>True when admission intentionally did not launch a provider.</summary>
+    public bool QuotaDeferred { get; init; }
+
     /// <summary>Convenience: zero-token empty failure used when a child
     /// could not be started at all.</summary>
     public static CliOneShotResult SpawnFailure(string error, DateTime requestedAt, DateTime completedAt) => new(
@@ -169,10 +189,19 @@ public sealed record CliOneShotResult(
 public sealed class CliOneShotRegistry
 {
     private readonly Dictionary<string, ICliOneShot> _byCli;
+    private readonly Dictionary<string, ICliOneShot> _quotaAware = new(StringComparer.OrdinalIgnoreCase);
+    private readonly QuotaAdmissionService? _quotaAdmission;
+    private readonly QuotaAdmissionRecorder? _quotaRecorder;
+    private readonly object _dispatcherLock = new();
 
-    public CliOneShotRegistry(IEnumerable<ICliOneShot> implementations)
+    public CliOneShotRegistry(
+        IEnumerable<ICliOneShot> implementations,
+        QuotaAdmissionService? quotaAdmission = null,
+        QuotaAdmissionRecorder? quotaRecorder = null)
     {
         _byCli = implementations.ToDictionary(i => i.CliType, StringComparer.OrdinalIgnoreCase);
+        _quotaAdmission = quotaAdmission;
+        _quotaRecorder = quotaRecorder;
     }
 
     /// <summary>Returns the implementation for the given CLI type, or null
@@ -181,7 +210,17 @@ public sealed class CliOneShotRegistry
     public ICliOneShot? Get(string? cliType)
     {
         if (string.IsNullOrWhiteSpace(cliType)) return null;
-        return _byCli.TryGetValue(cliType, out var v) ? v : null;
+        if (!_byCli.ContainsKey(cliType)) return null;
+        if (_quotaAdmission is null) return _byCli[cliType];
+        lock (_dispatcherLock)
+        {
+            if (!_quotaAware.TryGetValue(cliType, out var dispatcher))
+            {
+                dispatcher = new QuotaAwareOneShot(this, cliType);
+                _quotaAware[cliType] = dispatcher;
+            }
+            return dispatcher;
+        }
     }
 
     /// <summary>Convenience: get the implementation or throw a clear
@@ -193,4 +232,170 @@ public sealed class CliOneShotRegistry
         if (impl == null) throw new InvalidOperationException($"No ICliOneShot registered for CLI '{cliType}'");
         return impl;
     }
+
+    private async Task<CliOneShotResult> DispatchAsync(
+        CliOneShotRequest request,
+        CancellationToken ct)
+    {
+        if (_quotaAdmission is null)
+            return await _byCli[request.CliType].RunAsync(request, ct).ConfigureAwait(false);
+
+        var source = request.StepId ?? request.Source ?? "one-shot";
+        var plan = _quotaAdmission.Plan(new QuotaAdmissionRequest(
+            request.CliType,
+            request.Model,
+            request.ThinkingLevel,
+            request.Project,
+            OccupiedSlots: 0,
+            ExecutionPath: source));
+        var task = TaskFrom(request);
+        if (task is not null)
+            _quotaRecorder?.EmitAdmissionDecision(task, plan, source);
+        else if (!string.IsNullOrWhiteSpace(request.WatchPath))
+            _quotaRecorder?.EmitProjectAdmissionDecision(
+                request.WatchPath, request.Project, plan, source);
+
+        if (!plan.ShouldLaunch)
+        {
+            var now = DateTime.UtcNow;
+            return CliOneShotResult.SpawnFailure($"[quota-deferred] {plan.Reason}", now, now) with
+            {
+                QuotaAdmission = plan,
+                EffectiveCliType = plan.CliType,
+                EffectiveModel = plan.Model,
+                EffectiveThinkingLevel = plan.ThinkingLevel,
+                QuotaDeferred = true,
+            };
+        }
+
+        if (!_byCli.TryGetValue(plan.CliType, out var implementation))
+        {
+            var now = DateTime.UtcNow;
+            return CliOneShotResult.SpawnFailure(
+                $"Quota admission selected CLI '{plan.CliType}', but no one-shot implementation is registered.",
+                now,
+                now) with
+            {
+                QuotaAdmission = plan,
+                EffectiveCliType = plan.CliType,
+                EffectiveModel = plan.Model,
+                EffectiveThinkingLevel = plan.ThinkingLevel,
+            };
+        }
+
+        var effective = request with
+        {
+            CliType = plan.CliType,
+            Model = plan.Model ?? request.Model,
+            ThinkingLevel = plan.ThinkingLevel,
+            // Provider-native session ids cannot cross CLI families.
+            ExtraArgs = string.Equals(plan.CliType, request.CliType, StringComparison.OrdinalIgnoreCase)
+                ? request.ExtraArgs
+                : null,
+        };
+
+        var transientTaskMarker = false;
+        if (task is not null)
+        {
+            if (plan.IsFallback)
+            {
+                QuotaFallbackMarker.Write(task.FolderPath, new QuotaFallbackRecord
+                {
+                    CliType = effective.CliType,
+                    Model = effective.Model,
+                    ThinkingLevel = effective.ThinkingLevel,
+                    Reason = plan.Reason,
+                });
+                transientTaskMarker = true;
+                _quotaRecorder?.EmitFallbackActivated(
+                    task,
+                    request.CliType,
+                    request.Model,
+                    new CliRouteDecision(
+                        effective.CliType,
+                        effective.Model,
+                        effective.ThinkingLevel,
+                        true,
+                        plan.Reason,
+                        CapEvaluation.NotBlocked),
+                    source);
+            }
+            else
+            {
+                QuotaFallbackMarker.Clear(task.FolderPath);
+            }
+        }
+
+        // Dispatch directly to the concrete target. Re-entering Get/Require
+        // here would plan a second time and could create a fallback cycle.
+        try
+        {
+            var result = await implementation.RunAsync(effective, ct).ConfigureAwait(false);
+            return result with
+            {
+                QuotaAdmission = plan,
+                EffectiveCliType = effective.CliType,
+                EffectiveModel = effective.Model,
+                EffectiveThinkingLevel = effective.ThinkingLevel,
+            };
+        }
+        finally
+        {
+            // A local one-shot marker is only live while the invocation is in
+            // flight. Its durable timeline/feed evidence remains, but leaving
+            // the sidecar behind would make a later primary coding run look as
+            // if it were still using this completed fallback.
+            if (task is not null && transientTaskMarker)
+                QuotaFallbackMarker.Clear(task.FolderPath);
+        }
+    }
+
+    private static TaskInfo? TaskFrom(CliOneShotRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.JobFolderPath)) return null;
+        var lane = Directory.GetParent(request.JobFolderPath);
+        var watch = lane?.Parent?.FullName;
+        if (string.IsNullOrWhiteSpace(watch)) return null;
+        return new TaskInfo
+        {
+            Id = string.IsNullOrWhiteSpace(request.JobId)
+                ? Path.GetFileName(request.JobFolderPath)
+                : request.JobId,
+            ProjectName = request.Project ?? Path.GetFileName(watch),
+            FolderPath = request.JobFolderPath,
+            WatchPath = watch,
+        };
+    }
+
+    private sealed class QuotaAwareOneShot(CliOneShotRegistry owner, string cliType) : ICliOneShot
+    {
+        public string CliType { get; } = cliType;
+
+        public Task<CliOneShotResult> RunAsync(
+            CliOneShotRequest request,
+            CancellationToken ct = default)
+            => owner.DispatchAsync(request, ct);
+    }
+}
+
+/// <summary>
+/// Stable Claude-shaped envelope for legacy pipeline parsers, independent of
+/// which provider the quota-aware dispatcher actually selected.
+/// </summary>
+public static class CliOneShotCompatibility
+{
+    public static string ToClaudeResultEnvelope(CliOneShotResult result, string? configuredModel)
+        => System.Text.Json.JsonSerializer.Serialize(new
+        {
+            type = "result",
+            result = result.ParsedText,
+            usage = result.Usage is null ? null : new
+            {
+                input_tokens = result.Usage.InputTokens,
+                output_tokens = result.Usage.OutputTokens,
+                cache_read_input_tokens = result.Usage.CacheReadTokens,
+                cache_creation_input_tokens = result.Usage.CacheCreationTokens,
+            },
+            model = result.EffectiveModel ?? result.Usage?.Model ?? configuredModel,
+        });
 }

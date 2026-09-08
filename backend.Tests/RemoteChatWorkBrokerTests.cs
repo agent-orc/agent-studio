@@ -20,9 +20,13 @@ public sealed class RemoteChatWorkBrokerTests
         var pending = broker.EnqueueTurnAsync(
             Route,
             "Inspect the repository.",
-            "gpt-5.5",
+            ModelIds.ClaudeOpus5,
             "high",
-            CancellationToken.None);
+            CancellationToken.None,
+            cliType: CliTypes.Claude,
+            configuredCliType: CliTypes.Codex,
+            configuredModel: ModelIds.Gpt56Sol,
+            quotaFallbackReason: "codex weekly cap reached");
 
         var wrongRunner = broker.TryClaim(new RemoteChatWorkClaimRequest(
             "runner-02", "runner-02", "other-host"));
@@ -35,6 +39,10 @@ public sealed class RemoteChatWorkBrokerTests
         Assert.Equal(Route.RepositoryUrl, claim.Work!.RepositoryUrl);
         Assert.Equal(Route.DefaultBranch, claim.Work.DefaultBranch);
         Assert.Equal("Inspect the repository.", claim.Work.Prompt);
+        Assert.Equal(CliTypes.Claude, claim.Work.CliType);
+        Assert.Equal(ModelIds.ClaudeOpus5, claim.Work.Model);
+        Assert.Equal(CliTypes.Codex, claim.Work.ConfiguredCliType);
+        Assert.Equal(ModelIds.Gpt56Sol, claim.Work.ConfiguredModel);
 
         var context = new ChatExecutionContext(
             "remote",
@@ -50,7 +58,7 @@ public sealed class RemoteChatWorkBrokerTests
             "runner-01",
             true,
             $"tool-output cwd={context.RepoPath}",
-            "gpt-5.5",
+            ModelIds.ClaudeOpus5,
             null,
             null,
             context));
@@ -59,10 +67,50 @@ public sealed class RemoteChatWorkBrokerTests
         var result = await pending;
         Assert.True(result.Success);
         Assert.Contains(context.RepoPath!, result.ReplyText);
+        Assert.Equal(CliTypes.Claude, result.CliType);
+        Assert.Equal(ModelIds.Gpt56Sol, result.ConfiguredModel);
+        Assert.Equal("codex weekly cap reached", result.QuotaFallbackReason);
         Assert.Equal(context, broker.GetContext(Route));
 
         var reassigned = Route with { RunnerId = "runner-02" };
         Assert.Null(broker.GetContext(reassigned));
+    }
+
+    [Fact]
+    public async Task Capability_preparation_can_defer_fallback_work_without_consuming_it()
+    {
+        var broker = new RemoteChatWorkBroker(NullLogger<RemoteChatWorkBroker>.Instance);
+        using var cancelled = new CancellationTokenSource();
+        var pending = broker.EnqueueTurnAsync(
+            Route,
+            "Use the fallback family.",
+            ModelIds.ClaudeOpus5,
+            "high",
+            cancelled.Token,
+            cliType: CliTypes.Claude);
+
+        var deferred = broker.TryClaim(
+            new RemoteChatWorkClaimRequest("runner-01", "runner-01", "host"),
+            candidate => new RemoteChatWorkClaimPreparation(
+                candidate.CliType == CliTypes.Codex,
+                "claude capability unavailable"));
+
+        Assert.Equal(RemoteChatWorkClaimStatuses.Empty, deferred.Status);
+        Assert.Equal("claude capability unavailable", deferred.Message);
+        var claimedLater = broker.TryClaim(new RemoteChatWorkClaimRequest(
+            "runner-01", "runner-01", "host"));
+        Assert.Equal(RemoteChatWorkClaimStatuses.Claimed, claimedLater.Status);
+        Assert.True(broker.Complete(new RemoteChatWorkCompletionRequest(
+            claimedLater.Work!.WorkId,
+            claimedLater.Work.ClaimToken,
+            "runner-01",
+            true,
+            "done",
+            ModelIds.ClaudeOpus5,
+            null,
+            null,
+            null)));
+        Assert.True((await pending).Success);
     }
 
     [Fact]
