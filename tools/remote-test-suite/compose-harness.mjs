@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import {
   chmod,
@@ -40,6 +40,7 @@ if (args.command === 'inspect') {
     autonomyPolicy,
     acceptanceSequence: [
       'provision',
+      'retention-archive-restore',
       'reference-task',
       `${autonomyPolicy.mode}-multi-slot-task-server-partition`,
       'studio-partition-and-replacement',
@@ -109,6 +110,9 @@ async function runAcceptance() {
   progress('capturing component and container versions');
   const versions = await captureVersions();
   await writeEvidence('versions.json', versions);
+
+  progress('running the disposable retention archive and restore scenario');
+  const retention = await runRetentionScenario();
 
   progress('running deterministic reference task through the isolated Task Server');
   const reference = await runReferenceScenario();
@@ -260,6 +264,7 @@ async function runAcceptance() {
   const audit = await api('/api/v1/management/audit');
   const invariants = await api('/api/v1/management/invariants');
   const evidence = {
+    retention,
     reference,
     autonomy,
     active,
@@ -277,6 +282,7 @@ async function runAcceptance() {
     invariants
   };
   const assertions = [
+    ...retention.assertions,
     ...autonomy.assertions,
     ...assertRollingEvidence(evidence)
   ];
@@ -286,6 +292,7 @@ async function runAcceptance() {
     project: plan.project,
     completedAt: new Date().toISOString(),
     assertions,
+    retention,
     reference,
     autonomy,
     rollingTask: {
@@ -312,6 +319,150 @@ async function runAcceptance() {
   await writeEvidence('api/outboxes.json', outboxes);
   await writeEvidence('api/rolling-history.json', finalHistory);
   return acceptance;
+}
+
+async function runRetentionScenario() {
+  const emptyPlan = await api('/api/v1/management/retention/plan', {
+    method: 'POST',
+    body: {}
+  });
+  if (emptyPlan.actionCount !== 0 || emptyPlan.totalBytes !== 0) {
+    throw new Error(`Fresh retention plan was not empty: ${JSON.stringify(emptyPlan)}`);
+  }
+
+  const ids = {
+    workspace: `wsp-retention-${args.runId}`,
+    project: `prj-retention-${args.runId}`,
+    task: `tsk-retention-${args.runId}`,
+    taskKey: 'RET-1',
+    artifact: `art-retention-${args.runId}`
+  };
+  await api('/api/v1/workspaces', {
+    method: 'POST',
+    body: { name: `Retention scenario ${args.runId}`, workspaceId: ids.workspace }
+  });
+  await api('/api/v1/projects', {
+    method: 'POST',
+    body: {
+      workspaceId: ids.workspace,
+      name: `Retention scenario ${args.runId}`,
+      taskKeyPrefix: 'RET',
+      projectId: ids.project
+    }
+  });
+  await api(`/api/v1/projects/${ids.project}/tasks`, {
+    method: 'POST',
+    body: {
+      title: 'Disposable retention round trip',
+      body: 'Seeded only inside the identity-scoped Compose fixture.',
+      state: '2-ready',
+      taskId: ids.task,
+      taskKey: ids.taskKey
+    }
+  });
+
+  const claim = await runner('/claim', { method: 'POST' });
+  if (claim.task.taskId !== ids.task) {
+    throw new Error(`Retention runner claimed ${claim.task.taskId}; expected ${ids.task}.`);
+  }
+  const content = Buffer.from('retention-round-trip\n'.repeat(64), 'utf8');
+  const contentSha = createHash('sha256').update(content).digest('hex');
+  await api(`/api/v1/runs/${encodeURIComponent(claim.run.runId)}/artifacts`, {
+    method: 'POST',
+    body: {
+      artifactId: ids.artifact,
+      name: 'logs/cli-output.log',
+      mediaType: 'text/plain',
+      contentBase64: content.toString('base64'),
+      sha256: contentSha,
+      idempotencyKey: `${args.runId}:retention-artifact`,
+      fence: claim.lease.fence,
+      runnerId: claim.lease.runnerId,
+      instanceId: claim.lease.instanceId,
+      leaseId: claim.lease.leaseId,
+      sequence: 1
+    }
+  });
+  await api(`/api/v1/projects/${ids.project}/tasks/${ids.task}`, {
+    method: 'PUT',
+    body: {
+      title: null,
+      body: null,
+      state: '7-archive',
+      expectedVersion: claim.task.version
+    }
+  });
+  await runner('/release', { method: 'POST' });
+  const before = await history(ids.project, ids.task);
+  const classAHashBefore = classAInventoryHash(before);
+
+  const archived = await api(`/api/v1/management/retention/archive/${ids.task}`, {
+    method: 'POST',
+    body: { stage: 2 }
+  });
+  if (archived.appliedActions !== 1 || archived.errors.length !== 0) {
+    throw new Error(`Retention archive failed: ${JSON.stringify(archived)}`);
+  }
+  const archivedRead = await apiRaw(
+    `/api/v1/runs/${encodeURIComponent(claim.run.runId)}/artifacts/${ids.artifact}/content`);
+  if (archivedRead.status !== 409 || archivedRead.value?.code !== 'artifact-archived') {
+    throw new Error(`Archived artifact read returned ${archivedRead.status}: ${JSON.stringify(archivedRead.value)}`);
+  }
+  const manifest = await api(`/api/v1/management/retention/archive/${ids.task}`);
+  await api(`/api/v1/management/retention/archive/${ids.task}/restore`, {
+    method: 'POST',
+    body: {}
+  });
+  const restored = await api(
+    `/api/v1/runs/${encodeURIComponent(claim.run.runId)}/artifacts/${ids.artifact}/content`);
+  const restoredBytes = Buffer.from(restored.contentBase64, 'base64');
+  const restoredSha = createHash('sha256').update(restoredBytes).digest('hex');
+  const after = await history(ids.project, ids.task);
+  const classAHashAfter = classAInventoryHash(after);
+  const assertions = [
+    'fresh-plan-zero',
+    'single-task-stage-two-archived',
+    'archived-content-http-409',
+    'restore-byte-identical',
+    'class-a-inventory-unchanged'
+  ];
+  if (restoredSha !== contentSha || classAHashAfter !== classAHashBefore) {
+    throw new Error('Retention restore changed payload bytes or the class A inventory projection.');
+  }
+  const result = {
+    schemaVersion: 1,
+    ids,
+    emptyPlan,
+    archiveRunId: archived.runId,
+    manifest,
+    archivedReadStatus: archivedRead.status,
+    contentSha256: contentSha,
+    restoredSha256: restoredSha,
+    classAHashBefore,
+    classAHashAfter,
+    assertions
+  };
+  await writeEvidence('retention-scenario.json', result);
+  return result;
+}
+
+function classAInventoryHash(historyValue) {
+  const projection = {
+    task: {
+      taskId: historyValue.task.taskId,
+      projectId: historyValue.task.projectId,
+      taskKey: historyValue.task.taskKey,
+      title: historyValue.task.title,
+      body: historyValue.task.body,
+      state: historyValue.task.state,
+      version: historyValue.task.version,
+      createdAt: historyValue.task.createdAt,
+      updatedAt: historyValue.task.updatedAt
+    },
+    runs: historyValue.runs,
+    events: historyValue.events
+  };
+  return createHash('sha256').update(JSON.stringify(projection)).digest('hex');
 }
 
 async function runAutonomyCanary() {

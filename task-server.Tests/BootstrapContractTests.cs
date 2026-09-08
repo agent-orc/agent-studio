@@ -125,6 +125,26 @@ public sealed class BootstrapContractTests
             backup.HostArguments);
     }
 
+    [Fact]
+    public void Command_line_supports_sqlite_retention_and_full_backup_modes()
+    {
+        var retention = TaskServerCommandLine.Parse(
+            ["retention", "apply", "--store", "/tmp/store", "--task", "AGT-1", "--confirm-cold-delete", "--json"]);
+        var full = TaskServerCommandLine.Parse(
+            ["backup", "full", "--TaskServer:DataDirectory", "/tmp/store", "--json"]);
+        var restore = TaskServerCommandLine.Parse(
+            ["backup", "restore-full", "backup-1", "--TaskServer:DataDirectory", "/tmp/store"]);
+
+        Assert.Equal(TaskServerCommandKind.Retention, retention.Kind);
+        Assert.Equal("/tmp/store", retention.Retention!.Store);
+        Assert.True(retention.Retention.ConfirmColdDelete);
+        Assert.Equal(TaskServerCommandKind.FullBackup, full.Kind);
+        Assert.Null(full.FullBackup!.BackupId);
+        Assert.Equal(["--TaskServer:DataDirectory", "/tmp/store"], full.HostArguments);
+        Assert.Equal("backup-1", restore.FullBackup!.BackupId);
+        Assert.Equal(["--TaskServer:DataDirectory", "/tmp/store"], restore.HostArguments);
+    }
+
     private static IConfiguration Configuration(
         IReadOnlyDictionary<string, string?> values)
         => new ConfigurationBuilder()

@@ -79,4 +79,6 @@ public sealed record LegacyMigrationResult(
     int CodingAttempts = 0,
     int ReviewAttempts = 0,
     int Leases = 0,
-    long AuthorityEpoch = 0);
+    long AuthorityEpoch = 0,
+    int ArchivedTasks = 0,
+    long ArchivedBytes = 0);

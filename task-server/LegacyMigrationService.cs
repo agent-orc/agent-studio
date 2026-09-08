@@ -59,6 +59,19 @@ public sealed class LegacyMigrationService(TaskServerStore store)
         if (request.PreserveEvidenceGit)
             await PreserveEvidenceGitAsync(scan.MigrationId, scan.EvidenceGitRoots, ct);
 
+        // Heavy data older than the active policy's thresholds goes straight to the cold archive during
+        // import, so a migrated workspace never lands with years of stale logs sitting hot.
+        var archived = await store.ApplyRetentionDuringImportAsync(actorId, ct);
+        var archiveCandidates = archived.Plan.Actions
+            .Where(action => action.Kind is "ArchiveHeavy" or "ArchiveTask")
+            .Select(action => action.TaskId)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var archivedTaskCount = 0;
+        foreach (var taskId in archiveCandidates)
+            if (await store.GetRetentionManifestAsync(taskId, ct) is not null)
+                archivedTaskCount++;
+
         var digest = await store.ComputeIntegrityDigestAsync(ct);
         return new LegacyMigrationResult(
             scan.MigrationId,
@@ -74,7 +87,9 @@ public sealed class LegacyMigrationService(TaskServerStore store)
             scan.Authority.CodingAttempts.Count,
             scan.Authority.ReviewAttempts.Count,
             scan.Authority.LeaseCount,
-            scan.Authority.AuthorityEpoch);
+            scan.Authority.AuthorityEpoch,
+            archivedTaskCount,
+            archived.AppliedBytes);
     }
 
     private static string ResolveLegacyRoot(string value)

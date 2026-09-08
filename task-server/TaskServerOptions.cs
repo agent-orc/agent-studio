@@ -27,6 +27,26 @@ public sealed class TaskServerOptions
     public string? RunnerBearerToken { get; set; }
     public int PrincipalRotationOverlapSeconds { get; set; } = 300;
     public int MaximumPrincipalRotationOverlapSeconds { get; set; } = 3600;
+    public string? RetentionArchivePath { get; set; }
+    public bool RetentionSchedulerEnabled { get; set; } = true;
+    public int RetentionScheduleHour { get; set; } = 3;
+    public int RetentionSchedulerIntervalMinutes { get; set; } = 60;
+    public double RetentionMaximumLoadPerCore { get; set; } = 1.5;
+    public string? BackupPathFull { get; set; }
+
+    public string ResolveRetentionArchivePath()
+        => string.IsNullOrWhiteSpace(RetentionArchivePath)
+            ? Path.Combine(ResolveDataDirectory(), "archive")
+            : Path.GetFullPath(Path.IsPathRooted(RetentionArchivePath)
+                ? RetentionArchivePath
+                : Path.Combine(AppContext.BaseDirectory, RetentionArchivePath));
+
+    public string ResolveFullBackupDirectory()
+        => string.IsNullOrWhiteSpace(BackupPathFull)
+            ? Path.Combine(ResolveBackupDirectory(), "full")
+            : Path.GetFullPath(Path.IsPathRooted(BackupPathFull)
+                ? BackupPathFull
+                : Path.Combine(AppContext.BaseDirectory, BackupPathFull));
 
     public string ResolveDataDirectory()
     {

@@ -267,7 +267,7 @@ public sealed partial class TaskServerStore
     {
         await using var command = Command(connection, """
             SELECT t.id, t.project_id, t.task_key, t.title, t.state, t.version,
-                   t.created_at, t.updated_at, t.body,
+                   t.created_at, t.updated_at, t.body, t.archive_state, t.archived_at,
                    r.id, r.task_id, r.status, r.runner_id, r.fence,
                    r.created_at, r.started_at, r.finished_at
               FROM runs r
@@ -278,14 +278,14 @@ public sealed partial class TaskServerStore
         if (!await reader.ReadAsync(ct)) throw new KeyNotFoundException("Run was not found.");
         var task = ReadTask(reader);
         var run = new RunDto(
-            reader.GetString(9),
-            reader.GetString(10),
             reader.GetString(11),
-            reader.IsDBNull(12) ? null : reader.GetString(12),
-            reader.IsDBNull(13) ? null : reader.GetInt64(13),
-            Parse(reader.GetString(14)),
-            reader.IsDBNull(15) ? null : Parse(reader.GetString(15)),
-            reader.IsDBNull(16) ? null : Parse(reader.GetString(16)));
+            reader.GetString(12),
+            reader.GetString(13),
+            reader.IsDBNull(14) ? null : reader.GetString(14),
+            reader.IsDBNull(15) ? null : reader.GetInt64(15),
+            Parse(reader.GetString(16)),
+            reader.IsDBNull(17) ? null : Parse(reader.GetString(17)),
+            reader.IsDBNull(18) ? null : Parse(reader.GetString(18)));
         return (task, run);
     }
 

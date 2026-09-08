@@ -62,6 +62,41 @@ public sealed class RetentionPlannerTests
         Assert.Equal(".metadata/attempt-authority.archive-2026-01-01.json", Assert.Single(action.Files).RelativePath);
     }
 
+    [Fact]
+    public void Stage_two_is_planned_after_stage_one_even_when_only_hot_stubs_remain()
+    {
+        var archivedHeavy = File("logs/cli-output.log", 100) with { IsArchived = true };
+        var task = Task("7-archive", Now.AddDays(-180), archivedHeavy, File("status.md", 20));
+
+        var action = Assert.Single(new RetentionPlanner().Plan([task], RetentionPolicy.Default(), Now).Actions);
+
+        Assert.Equal(RetentionActionKind.ArchiveTask, action.Kind);
+        Assert.Equal(2, action.Stage);
+        Assert.Empty(action.Files);
+    }
+
+    [Fact]
+    public void Stage_three_is_off_by_default_and_requires_an_enabled_policy()
+    {
+        var task = Task("7-archive", Now.AddDays(-730), File("logs/cli-output.log", 100) with { IsArchived = true });
+        Assert.DoesNotContain(
+            new RetentionPlanner().Plan([task], RetentionPolicy.Default(), Now).Actions,
+            action => action.Kind == RetentionActionKind.DeleteCold);
+
+        var defaults = RetentionPolicy.Default();
+        var enabled = defaults with
+        {
+            WorkspaceDefaults = defaults.WorkspaceDefaults.ToDictionary(
+                item => item.Key,
+                item => item.Key == ArtifactClass.HeavyWorkingData
+                    ? item.Value with { DeleteArchiveEnabled = true }
+                    : item.Value),
+        };
+        var action = Assert.Single(new RetentionPlanner().Plan([task], enabled, Now).Actions);
+        Assert.Equal(RetentionActionKind.DeleteCold, action.Kind);
+        Assert.Equal(3, action.Stage);
+    }
+
     private RetentionTaskInventory Task(string lane, DateTimeOffset terminalAt, params RetentionFile[] files)
         => new("P", "P-1", "id-1", lane, terminalAt, "projects/P/tasks/7-archive/P-1", files);
 

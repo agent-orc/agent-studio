@@ -58,9 +58,9 @@ public sealed class FileTreeRetentionStore : IRetentionStore
             var tasksPath = Path.Combine(projectPath, "tasks");
             if (!Directory.Exists(tasksPath)) continue;
             foreach (var bucketPath in Directory.EnumerateDirectories(tasksPath).Order(StringComparer.OrdinalIgnoreCase))
-            foreach (var taskPath in Directory.EnumerateDirectories(bucketPath).Order(StringComparer.OrdinalIgnoreCase))
-                if (File.Exists(Path.Combine(taskPath, "task.json")))
-                    yield return new TaskFolder(projectPath, bucketPath, taskPath);
+                foreach (var taskPath in Directory.EnumerateDirectories(bucketPath).Order(StringComparer.OrdinalIgnoreCase))
+                    if (File.Exists(Path.Combine(taskPath, "task.json")))
+                        yield return new TaskFolder(projectPath, bucketPath, taskPath);
         }
     }
 
@@ -180,6 +180,9 @@ public sealed class FileTreeRetentionStore : IRetentionStore
         ArchivePointer pointer,
         CancellationToken cancellationToken = default)
         => WriteJsonAtomicallyAsync(Path.Combine(TaskRoot(task), "archive-manifest.json"), pointer, cancellationToken);
+
+    public Task DeleteColdAsync(RetentionAction action, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("Cold payload deletion is owned by the SQLite Task Server adapter.");
 
     public Task DeleteRuntimeAsync(RetentionAction action, CancellationToken cancellationToken = default)
     {
