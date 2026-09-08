@@ -1,0 +1,59 @@
+services:
+  agent-host-coding:
+    env_file:
+      - path: ./runner.env
+        required: false
+
+  agent-host-review:
+    env_file:
+      - path: ./runner.env
+        required: false
+
+  task-server:
+    environment:
+      BOOTSTRAP_RUNNER_ID: scenario-coding-runner
+      TaskServer__MinimumLeaseSeconds: "5"
+      TaskServer__MaximumLeaseSeconds: "30"
+    secrets:
+      - source: studio_token
+        target: /run/secrets/studio_token
+        mode: 0400
+      - source: engine_token
+        target: /run/secrets/engine_token
+        mode: 0400
+      - source: runner_token
+        target: /run/secrets/runner_token
+        mode: 0400
+
+  agent-host-distributed:
+    profiles: ["distributed", "runner"]
+    build:
+      context: .
+      dockerfile: testsupport/scenario/runner.Dockerfile
+    environment:
+      RUNNER_ID: scenario-coding-runner
+      RUNNER_NAME: scenario-coding-runner
+      RUNNER_HOSTNAME: scenario-coding-host
+      RUNNER_ROLE: coding
+      RUNNER_GIT_REMOTE: /scenario/origin.git
+      RUNNER_BASE_BRANCH: main
+      RUNNER_BRANCH: main
+      RUNNER_WORKDIR: /scenario/runner-work
+      RUNNER_STATE_DIR: /scenario/runner-state
+      RUNNER_CLI_BIN: /usr/local/bin/scenario-coding-agent
+      RUNNER_EXEC_ENGINE: legacy
+      RUNNER_CLI_ARGS: ""
+      RUNNER_HEARTBEAT_SECONDS: "5"
+      RUNNER_RUN_TIMEOUT_SECONDS: "45"
+      RUNNER_TTL_SECONDS: "15"
+      RUNNER_MAX_PARALLELISM: "1"
+      RUNNER_POLL_SECONDS: "1"
+      SCENARIO_RELEASE_FILE: /scenario/release
+    volumes:
+      - type: bind
+        source: ${SCENARIO_HOST_DIR:?set SCENARIO_HOST_DIR}
+        target: /scenario
+    secrets:
+      - source: runner_token
+        target: /run/secrets/runner_token
+        mode: 0400

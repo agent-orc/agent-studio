@@ -54,6 +54,14 @@ To add execution capacity after the Studio is running, follow the
 contributors use the separate
 [contributor setup](./docs/operations/setup/contributor-setup.md).
 
+## Testing
+
+`scripts/scenario.sh --target inproc --level smoke` runs the deployment
+regression scenario: one seeded fixture driven end to end through bootstrap,
+claim, run, and auto-review against the Task Server / Runner topology, no
+Docker required. See
+[docs/operations/testing/deployment-scenario.md](docs/operations/testing/deployment-scenario.md).
+
 ## More
 
 Agent Studio is part of the agent-orc ecosystem. It uses

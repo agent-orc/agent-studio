@@ -8,7 +8,11 @@ using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.TestSupport;
 using Xunit;
+using static AgentStudio.TestSupport.BuiltProcessLauncher;
+using static AgentStudio.TestSupport.ProcessWaiters;
+using RunningProcess = AgentStudio.TestSupport.ManagedProcess;
 
 namespace TaskServer.Tests;
 
@@ -887,160 +891,6 @@ public sealed class TopologyTests
             $"Task '{taskKey}' did not publish {string.Join(", ", expectedKinds)}. Process output:{Environment.NewLine}{process}");
     }
 
-    private static async Task WaitForOutputAsync(
-        RunningProcess process,
-        string expected,
-        TimeSpan timeout)
-    {
-        var deadline = DateTime.UtcNow.Add(timeout);
-        while (DateTime.UtcNow < deadline)
-        {
-            AssertHealthy(process, process.Process.Id);
-            if (process.Contains(expected)) return;
-            await Task.Delay(100);
-        }
-        throw new TimeoutException(
-            $"Process output did not contain '{expected}'.{Environment.NewLine}{process}");
-    }
-
-    private static async Task WaitForFileAsync(
-        string path,
-        RunningProcess process,
-        TimeSpan timeout)
-    {
-        var deadline = DateTime.UtcNow.Add(timeout);
-        while (DateTime.UtcNow < deadline)
-        {
-            AssertHealthy(process, process.Process.Id);
-            if (File.Exists(path)) return;
-            await Task.Delay(50);
-        }
-        throw new TimeoutException(
-            $"Process did not create '{path}'.{Environment.NewLine}{process}");
-    }
-
-    private static async Task WaitForHttpAsync(string url, RunningProcess process)
-    {
-        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
-        var deadline = DateTime.UtcNow.AddSeconds(20);
-        Exception? last = null;
-        while (DateTime.UtcNow < deadline)
-        {
-            AssertHealthy(process, process.Process.Id);
-            try
-            {
-                using var response = await client.GetAsync(url);
-                if (response.IsSuccessStatusCode) return;
-            }
-            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
-            {
-                last = exception;
-            }
-            await Task.Delay(100);
-        }
-        throw new TimeoutException(
-            $"Process did not become ready at {url}: {last?.Message}{Environment.NewLine}{process}");
-    }
-
-    private static async Task WaitForHttpsAsync(
-        string url,
-        RunningProcess process,
-        string expectedCertificateSha256)
-    {
-        using var handler = PinnedHandler(expectedCertificateSha256);
-        using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(2) };
-        var deadline = DateTime.UtcNow.AddSeconds(20);
-        Exception? last = null;
-        while (DateTime.UtcNow < deadline)
-        {
-            AssertHealthy(process, process.Process.Id);
-            try
-            {
-                using var response = await client.GetAsync(url);
-                if (response.IsSuccessStatusCode) return;
-            }
-            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
-            {
-                last = exception;
-            }
-            await Task.Delay(100);
-        }
-        throw new TimeoutException(
-            $"HTTPS process did not become ready at {url}: {last?.Message}{Environment.NewLine}{process}");
-    }
-
-    private static HttpClientHandler PinnedHandler(string expectedCertificateSha256)
-        => new()
-        {
-            ServerCertificateCustomValidationCallback = (_, certificate, _, _) =>
-                certificate is not null
-                && string.Equals(
-                    Convert.ToHexString(SHA256.HashData(certificate.RawData)),
-                    expectedCertificateSha256,
-                    StringComparison.OrdinalIgnoreCase),
-        };
-
-    private static RunningProcess StartBuilt(
-        string root,
-        string projectDirectory,
-        string assemblyName,
-        params string[] arguments)
-        => StartBuilt(root, projectDirectory, assemblyName, null, arguments);
-
-    private static RunningProcess StartBuilt(
-        string root,
-        string projectDirectory,
-        string assemblyName,
-        IReadOnlyDictionary<string, string?>? environment,
-        params string[] arguments)
-    {
-        var configuration = new DirectoryInfo(AppContext.BaseDirectory).Parent?.Name ?? "Debug";
-        var assembly = Path.Combine(root, projectDirectory, "bin", configuration, "net10.0", assemblyName);
-        if (!File.Exists(assembly))
-            throw new FileNotFoundException(
-                $"Built topology component was not found. Build the solution before the topology test: {assembly}",
-                assembly);
-
-        var start = new ProcessStartInfo("dotnet")
-        {
-            WorkingDirectory = root,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
-        start.ArgumentList.Add(assembly);
-        foreach (var argument in arguments) start.ArgumentList.Add(argument);
-        if (environment is not null)
-            foreach (var (key, value) in environment)
-                start.Environment[key] = value;
-        var process = Process.Start(start)
-            ?? throw new InvalidOperationException($"Could not start {assemblyName}.");
-        var running = new RunningProcess(process);
-        process.OutputDataReceived += (_, eventArgs) => running.Append(eventArgs.Data);
-        process.ErrorDataReceived += (_, eventArgs) => running.Append(eventArgs.Data);
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
-        return running;
-    }
-
-    private static async Task RunAsync(string file, IReadOnlyList<string> arguments, string workingDirectory)
-    {
-        var start = new ProcessStartInfo(file)
-        {
-            WorkingDirectory = workingDirectory,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
-        foreach (var argument in arguments) start.ArgumentList.Add(argument);
-        using var process = Process.Start(start)
-            ?? throw new InvalidOperationException($"Could not start {file}.");
-        var stdout = await process.StandardOutput.ReadToEndAsync();
-        var stderr = await process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync();
-        Assert.True(process.ExitCode == 0, $"{file} exited {process.ExitCode}.{Environment.NewLine}{stdout}{Environment.NewLine}{stderr}");
-    }
-
     private static HttpClient Client(string baseUrl)
         => new() { BaseAddress = new Uri(baseUrl), Timeout = TimeSpan.FromSeconds(5) };
 
@@ -1050,68 +900,6 @@ public sealed class TopologyTests
         client.DefaultRequestHeaders.Add(TaskServerProtocol.HeaderName, TaskServerProtocol.Current.ToString());
         client.DefaultRequestHeaders.Add(TaskServerProtocol.ClientVersionHeaderName, "topology-harness");
         return client;
-    }
-
-    private static int FreePort()
-    {
-        var listener = new TcpListener(System.Net.IPAddress.Loopback, 0);
-        listener.Start();
-        var port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
-        listener.Stop();
-        return port;
-    }
-
-    private sealed class RunningProcess(Process process) : IDisposable
-    {
-        private readonly List<string> _output = [];
-        public Process Process { get; } = process;
-        public IReadOnlyList<string> OutputLines
-        {
-            get
-            {
-                lock (_output) return _output.ToArray();
-            }
-        }
-
-        public void Append(string? line)
-        {
-            if (line is null) return;
-            lock (_output) _output.Add(line);
-        }
-
-        public void Stop()
-        {
-            if (Process.HasExited) return;
-            Process.Kill(entireProcessTree: true);
-            Process.WaitForExit(5000);
-        }
-
-        public bool Contains(string text)
-        {
-            lock (_output)
-                return _output.Any(line => line.Contains(text, StringComparison.Ordinal));
-        }
-
-        public void Dispose() => Stop();
-
-        public async Task WaitForExitAsync(TimeSpan timeout)
-        {
-            using var cancellation = new CancellationTokenSource(timeout);
-            try
-            {
-                await Process.WaitForExitAsync(cancellation.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                throw new TimeoutException(
-                    $"Process {Process.Id} did not exit within {timeout}. Output: {this}");
-            }
-        }
-
-        public override string ToString()
-        {
-            lock (_output) return string.Join(Environment.NewLine, _output.TakeLast(80));
-        }
     }
 
     private sealed class InterruptibleTcpProxy(int listenPort, int targetPort) : IAsyncDisposable
