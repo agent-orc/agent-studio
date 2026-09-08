@@ -102,6 +102,16 @@ for (const serviceName of ["orchestrator-engine", "orchestrator-engine-dev"]) {
     throw new Error(`${serviceName} does not explicitly opt in to private-network HTTP`);
   }
 }
+const healthyDependencies = {
+  "orchestrator-engine": "task-server",
+  "orchestrator-engine-dev": "task-server-dev",
+};
+for (const [serviceName, dependencyName] of Object.entries(healthyDependencies)) {
+  const condition = config.services[serviceName]?.depends_on?.[dependencyName]?.condition;
+  if (condition !== "service_healthy") {
+    throw new Error(`${serviceName} starts before ${dependencyName} is healthy`);
+  }
+}
 for (const [serviceName, sources] of Object.entries(expected)) {
   const mounted = config.services[serviceName]?.secrets ?? [];
   for (const source of sources) {
