@@ -141,3 +141,6 @@ frontend/.frontend-dev.log
 # Container-stack runner identity/tokens (installer writes it from the template)
 /runner.env
 /runner.token
+
+# Local docker-compose overrides (ports, version pin, distributed tokens).
+/.env

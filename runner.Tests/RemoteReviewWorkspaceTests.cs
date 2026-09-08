@@ -436,8 +436,12 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.Equal(9, command.ExitCode);
         Assert.Equal(17_000, command.Budget!.LimitMs);
         Assert.Contains("exit=9", exception.Message, StringComparison.Ordinal);
-        Assert.Equal("complete stdout\n", ArtifactText(evidence.Artifacts, command.StdoutSha256));
-        Assert.Equal("complete stderr\n", ArtifactText(evidence.Artifacts, command.StderrSha256));
+        Assert.Equal(
+            $"complete stdout{Environment.NewLine}",
+            ArtifactText(evidence.Artifacts, command.StdoutSha256));
+        Assert.Equal(
+            $"complete stderr{Environment.NewLine}",
+            ArtifactText(evidence.Artifacts, command.StderrSha256));
     }
 
     [Fact]

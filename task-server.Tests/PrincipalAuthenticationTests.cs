@@ -245,7 +245,8 @@ public sealed class PrincipalAuthenticationTests
             (await runner.GetAsync("/api/v1/workspaces")).StatusCode);
         var bytes = await File.ReadAllBytesAsync(Path.Combine(temp.Path, "task-server.db"));
         Assert.DoesNotContain(issued.Credential, Encoding.UTF8.GetString(bytes), StringComparison.Ordinal);
-        await using var connection = new SqliteConnection($"Data Source={Path.Combine(temp.Path, "task-server.db")}");
+        await using var connection = new SqliteConnection(
+            $"Data Source={Path.Combine(temp.Path, "task-server.db")};Pooling=False");
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT secret_hash FROM principal_credentials WHERE principal_id = 'runner-revoked';";

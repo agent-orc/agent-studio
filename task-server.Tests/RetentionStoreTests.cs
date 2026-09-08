@@ -457,6 +457,7 @@ public sealed class RetentionStoreTests
         {
             DataSource = store.DatabasePath,
             Mode = SqliteOpenMode.ReadOnly,
+            Pooling = false,
         }.ToString());
         connection.Open();
         using var command = connection.CreateCommand();

@@ -56,8 +56,12 @@ digests, injected incident id, fault schedule, assertion evidence, and an
 anchored link into the
 [hardening chronicle](../../operations/haertung-verteilte-ausfuehrung/historie.html).
 
-`contentSha256` is calculated over the canonical JSON with that property
-omitted. It makes fixture and stored-result tampering detectable.
+`contentSha256` is calculated over the UTF-8 canonical JSON with that property
+omitted. Canonical JSON uses the web serializer defaults, two-space indentation,
+LF (`\n`) line endings on every platform, and no trailing newline. Transport or
+checkout line-ending changes therefore do not change the digest. Property or
+value changes still invalidate it, making fixture and stored-result tampering
+detectable.
 
 ## Immutable storage and replay
 
