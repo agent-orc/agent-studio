@@ -219,7 +219,7 @@ public class PromptEnhancementService
                 Source = AdHocUsageSources.PromptEnhancement,
             }, ct).ConfigureAwait(false);
             if (!r.Ok) return (false, null, r.Error);
-            return (true, r.Stdout, null);
+            return (true, CliOneShotCompatibility.ToClaudeResultEnvelope(r, model), null);
         }
 
         var claudePath = _configuration["ClaudeCli:Path"] ?? "claude";

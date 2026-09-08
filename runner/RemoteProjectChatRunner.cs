@@ -14,7 +14,7 @@ namespace AgentRunner;
 /// Executes one claimed project-chat turn in a dedicated read-only worktree of
 /// the same project cache used by card runs. The checkout is persistent across
 /// turns, but every claim fetches and resets it to the configured project branch
-/// before Codex starts.
+/// before the quota-resolved CLI starts.
 /// </summary>
 public sealed class RemoteProjectChatRunner
 {
@@ -77,13 +77,18 @@ public sealed class RemoteProjectChatRunner
                 """;
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(shutdown);
             timeout.CancelAfter(TimeSpan.FromSeconds(_options.RunTimeoutSeconds));
-            _log($"project-chat-codex-start engine=car path={checkout.RepoPath} model={work.Model} thinking={work.ThinkingLevel ?? "default"}");
-            // T1c (AGT-2370): the fourth CLI start path runs through CAR with
-            // PermissionMode=read-only - the same `codex exec --experimental-json
-            // --sandbox read-only` posture as before, now descriptor-built. The
-            // reply parsing below is unchanged and still reads the raw frames.
-            var process = await RunCodexThroughCarAsync(work, checkout, contextPrompt, timeout.Token, shutdown);
-            var parsed = ParseCodex(process, work.Model!);
+            var cliType = string.IsNullOrWhiteSpace(work.CliType)
+                ? "codex"
+                : work.CliType.Trim().ToLowerInvariant();
+            _log($"project-chat-agent-start engine=car cli={cliType} path={checkout.RepoPath} model={work.Model} thinking={work.ThinkingLevel ?? "default"}");
+            // T1c (AGT-2370): this CLI start path runs through CAR with
+            // PermissionMode=read-only. AGT-2751 selects the driver from the
+            // server-resolved CLI family while preserving the same posture.
+            var process = await RunAgentThroughCarAsync(
+                work, cliType, checkout, contextPrompt, timeout.Token, shutdown);
+            var parsed = string.Equals(cliType, "claude", StringComparison.OrdinalIgnoreCase)
+                ? ParseClaude(process, work.Model!)
+                : ParseCodex(process, work.Model!);
             return await CompleteAsync(
                 work, parsed.Success, parsed.ReplyText, parsed.ErrorMessage,
                 work.Model, parsed.TokenUsage, executionContext, shutdown);
@@ -109,15 +114,14 @@ public sealed class RemoteProjectChatRunner
     }
 
     /// <summary>
-    /// One chat turn through the CAR codex driver. Deliberate parity with the
-    /// raw spawn it replaces: read-only sandbox, shared config home (a chat turn
-    /// has always used the operator's global CLI state), delegation off, git
-    /// guard off (the checkout is reset-hard per turn and the posture already
-    /// forbids mutation), prompt on stdin. Returns the same
-    /// <see cref="ProcessResult"/> shape so <see cref="ParseCodex"/> is unchanged.
+    /// One chat turn through the quota-resolved CAR driver. The read-only
+    /// sandbox, shared provider configuration, disabled delegation, and prompt
+    /// transport stay identical across CLI families. Returns one raw
+    /// <see cref="ProcessResult"/> for the provider-specific response parser.
     /// </summary>
-    private async Task<ProcessResult> RunCodexThroughCarAsync(
+    private async Task<ProcessResult> RunAgentThroughCarAsync(
         RemoteChatWorkItem work,
+        string cliType,
         ProjectChatCheckout checkout,
         string contextPrompt,
         CancellationToken timeoutToken,
@@ -128,11 +132,12 @@ public sealed class RemoteProjectChatRunner
             new CliOptions
             {
                 CodexPath = _options.CodexCliBin,
+                ClaudePath = _options.ClaudeCliBin,
                 AllowAgentGitMutation = true,
                 Delegation = new DelegationOptions { Enabled = false },
             },
             logPaths: new ChatRunLogPathProvider(logDirectory));
-        var driver = runner.Codex;
+        var driver = runner.Get(cliType);
         var stdout = new System.Text.StringBuilder();
         var stderr = new System.Text.StringBuilder();
         var finished = new TaskCompletionSource<CliRunInfo>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -144,7 +149,7 @@ public sealed class RemoteProjectChatRunner
             else if (line.Stream == "stderr")
             {
                 stderr.AppendLine(line.Text);
-                _log($"project-chat-codex stderr: {line.Text}");
+                _log($"project-chat-{cliType} stderr: {line.Text}");
             }
         }
 
@@ -170,7 +175,7 @@ public sealed class RemoteProjectChatRunner
                 },
                 shutdown);
             if (run is null)
-                throw new InvalidOperationException($"Codex chat run failed to start: {error}");
+                throw new InvalidOperationException($"{cliType} chat run failed to start: {error}");
 
             var deadline = Task.Delay(Timeout.InfiniteTimeSpan, timeoutToken)
                 .ContinueWith(_ => { }, TaskScheduler.Default);
@@ -224,7 +229,11 @@ public sealed class RemoteProjectChatRunner
                 model,
                 tokenUsage,
                 error,
-                executionContext),
+                executionContext,
+                work.CliType,
+                work.ConfiguredCliType,
+                work.ConfiguredModel,
+                work.QuotaFallbackReason),
             ct);
         if (!accepted)
         {
@@ -305,6 +314,55 @@ public sealed class RemoteProjectChatRunner
             string.Join("\n", replies),
             errorMessage,
             usage);
+    }
+
+    internal static RemoteProjectChatResult ParseClaude(ProcessResult process, string model)
+    {
+        string? reply = null;
+        string? error = null;
+        OrchestratorTokenUsage? usage = null;
+        foreach (var line in process.StdOut.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(line);
+                var root = document.RootElement;
+                if (root.TryGetProperty("type", out var type)
+                    && type.GetString() == "result")
+                {
+                    reply = root.TryGetProperty("result", out var resultText)
+                        ? resultText.GetString()
+                        : reply;
+                    if (root.TryGetProperty("is_error", out var isError)
+                        && isError.ValueKind == JsonValueKind.True)
+                        error = "Claude reported is_error=true.";
+                    if (root.TryGetProperty("usage", out var usageNode))
+                    {
+                        usage = new OrchestratorTokenUsage
+                        {
+                            Model = model,
+                            InputTokens = ReadInt(usageNode, "input_tokens"),
+                            OutputTokens = ReadInt(usageNode, "output_tokens"),
+                            CacheReadTokens = ReadInt(usageNode, "cache_read_input_tokens"),
+                            CacheCreationTokens = ReadInt(usageNode, "cache_creation_input_tokens"),
+                        };
+                    }
+                }
+            }
+            catch (JsonException)
+            {
+                // Protocol traffic can contain non-JSON diagnostic lines.
+            }
+        }
+
+        var success = process.ExitCode == 0 && error is null && !string.IsNullOrWhiteSpace(reply);
+        if (!success && error is null)
+        {
+            error = string.IsNullOrWhiteSpace(process.StdErr)
+                ? $"exitCode={process.ExitCode}"
+                : process.StdErr.Trim();
+        }
+        return new RemoteProjectChatResult(success, reply?.Trim() ?? "", error, usage);
     }
 
     private static int ReadInt(JsonElement node, string property)

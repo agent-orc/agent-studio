@@ -28,10 +28,22 @@ public sealed class RemoteChatWorkBroker
         string prompt,
         string model,
         string? thinkingLevel,
-        CancellationToken ct)
+        CancellationToken ct,
+        string cliType = CliTypes.Codex,
+        string? configuredCliType = null,
+        string? configuredModel = null,
+        string? quotaFallbackReason = null)
     {
         var pending = PendingRemoteChatWork.Create(
-            RemoteChatWorkKinds.Turn, route, prompt, model, thinkingLevel);
+            RemoteChatWorkKinds.Turn,
+            route,
+            prompt,
+            model,
+            thinkingLevel,
+            cliType,
+            configuredCliType,
+            configuredModel,
+            quotaFallbackReason);
         lock (_gate)
         {
             _work.Add(pending);
@@ -68,7 +80,9 @@ public sealed class RemoteChatWorkBroker
                 && item.State is PendingRemoteChatWorkState.Pending or PendingRemoteChatWorkState.Claimed);
             if (alreadyPending) return;
             _work.Add(PendingRemoteChatWork.Create(
-                RemoteChatWorkKinds.Inspect, route, prompt: null, model: null, thinkingLevel: null));
+                RemoteChatWorkKinds.Inspect, route, prompt: null, model: null, thinkingLevel: null,
+                cliType: CliTypes.Codex, configuredCliType: null, configuredModel: null,
+                quotaFallbackReason: null));
         }
     }
 
@@ -82,19 +96,43 @@ public sealed class RemoteChatWorkBroker
         }
     }
 
-    public RemoteChatWorkClaimResponse TryClaim(RemoteChatWorkClaimRequest request)
+    public RemoteChatWorkClaimResponse TryClaim(
+        RemoteChatWorkClaimRequest request,
+        Func<RemoteChatWorkCandidate, RemoteChatWorkClaimPreparation>? prepare = null)
     {
         lock (_gate)
         {
             RequeueExpiredClaimsLocked();
-            var item = _work
+            var candidates = _work
                 .Where(candidate => candidate.State == PendingRemoteChatWorkState.Pending)
                 .Where(candidate => RunnerMatches(candidate.Route.RunnerId, request.RunnerId, request.RunnerName))
                 .OrderBy(candidate => candidate.Kind == RemoteChatWorkKinds.Turn ? 0 : 1)
                 .ThenBy(candidate => candidate.CreatedAt)
-                .FirstOrDefault();
+                .ToArray();
+            PendingRemoteChatWork? item = null;
+            string? deferredMessage = null;
+            foreach (var candidate in candidates)
+            {
+                var preparation = prepare?.Invoke(new RemoteChatWorkCandidate(
+                    candidate.Id,
+                    candidate.Kind,
+                    candidate.Route.ProjectName,
+                    candidate.CliType));
+                if (preparation is { CanClaim: false })
+                {
+                    deferredMessage ??= preparation.Message;
+                    continue;
+                }
+
+                item = candidate;
+                break;
+            }
             if (item == null)
-                return new RemoteChatWorkClaimResponse(RemoteChatWorkClaimStatuses.Empty);
+            {
+                return new RemoteChatWorkClaimResponse(
+                    RemoteChatWorkClaimStatuses.Empty,
+                    Message: deferredMessage);
+            }
 
             item.State = PendingRemoteChatWorkState.Claimed;
             item.ClaimedBy = request.RunnerId;
@@ -114,7 +152,11 @@ public sealed class RemoteChatWorkBroker
                     item.Model,
                     item.ThinkingLevel,
                     item.CreatedAt,
-                    item.ClaimExpiresAt.Value));
+                    item.ClaimExpiresAt.Value,
+                    item.CliType,
+                    item.ConfiguredCliType,
+                    item.ConfiguredModel,
+                    item.QuotaFallbackReason));
         }
     }
 
@@ -149,7 +191,11 @@ public sealed class RemoteChatWorkBroker
             request.Model ?? item.Model ?? "",
             request.TokenUsage,
             request.ErrorMessage,
-            request.ExecutionContext);
+            request.ExecutionContext,
+            item.CliType,
+            item.ConfiguredCliType,
+            item.ConfiguredModel,
+            item.QuotaFallbackReason);
         item.Completion.TrySetResult(result);
         _logger.LogInformation(
             "remote-chat-work-completed workId={WorkId} project={Project} runner={Runner} kind={Kind} success={Success} path={Path}",
@@ -201,6 +247,10 @@ public sealed class RemoteChatWorkBroker
         public string? Prompt { get; init; }
         public string? Model { get; init; }
         public string? ThinkingLevel { get; init; }
+        public string CliType { get; init; } = CliTypes.Codex;
+        public string? ConfiguredCliType { get; init; }
+        public string? ConfiguredModel { get; init; }
+        public string? QuotaFallbackReason { get; init; }
         public required DateTime CreatedAt { get; init; }
         public required TaskCompletionSource<RemoteChatWorkResult> Completion { get; init; }
         public PendingRemoteChatWorkState State { get; set; }
@@ -213,7 +263,11 @@ public sealed class RemoteChatWorkBroker
             RemoteChatWorkRoute route,
             string? prompt,
             string? model,
-            string? thinkingLevel) =>
+            string? thinkingLevel,
+            string cliType,
+            string? configuredCliType,
+            string? configuredModel,
+            string? quotaFallbackReason) =>
             new()
             {
                 Id = Guid.NewGuid().ToString("N"),
@@ -222,6 +276,10 @@ public sealed class RemoteChatWorkBroker
                 Prompt = prompt,
                 Model = model,
                 ThinkingLevel = thinkingLevel,
+                CliType = cliType,
+                ConfiguredCliType = configuredCliType,
+                ConfiguredModel = configuredModel,
+                QuotaFallbackReason = quotaFallbackReason,
                 CreatedAt = DateTime.UtcNow,
                 Completion = new TaskCompletionSource<RemoteChatWorkResult>(
                     TaskCreationOptions.RunContinuationsAsynchronously),
@@ -256,11 +314,23 @@ public sealed record RemoteChatWorkRoute(
 public sealed record RemoteChatWorkClaimRequest(
     string RunnerId,
     string RunnerName,
-    string Hostname);
+    string Hostname,
+    string? CapabilityInstanceId = null);
 
 public sealed record RemoteChatWorkClaimResponse(
     string Status,
-    RemoteChatWorkItem? Work = null);
+    RemoteChatWorkItem? Work = null,
+    string? Message = null);
+
+public sealed record RemoteChatWorkCandidate(
+    string WorkId,
+    string Kind,
+    string ProjectName,
+    string CliType);
+
+public sealed record RemoteChatWorkClaimPreparation(
+    bool CanClaim,
+    string? Message = null);
 
 public sealed record RemoteChatWorkItem(
     string WorkId,
@@ -274,7 +344,11 @@ public sealed record RemoteChatWorkItem(
     string? Model,
     string? ThinkingLevel,
     DateTime CreatedAt,
-    DateTime ClaimExpiresAt);
+    DateTime ClaimExpiresAt,
+    string? CliType = null,
+    string? ConfiguredCliType = null,
+    string? ConfiguredModel = null,
+    string? QuotaFallbackReason = null);
 
 public sealed record RemoteChatWorkRenewRequest(
     string WorkId,
@@ -290,7 +364,11 @@ public sealed record RemoteChatWorkCompletionRequest(
     string? Model,
     OrchestratorTokenUsage? TokenUsage,
     string? ErrorMessage,
-    ChatExecutionContext? ExecutionContext);
+    ChatExecutionContext? ExecutionContext,
+    string? CliType = null,
+    string? ConfiguredCliType = null,
+    string? ConfiguredModel = null,
+    string? QuotaFallbackReason = null);
 
 public sealed record RemoteChatWorkResult(
     bool Success,
@@ -298,7 +376,11 @@ public sealed record RemoteChatWorkResult(
     string Model,
     OrchestratorTokenUsage? TokenUsage,
     string? ErrorMessage,
-    ChatExecutionContext? ExecutionContext);
+    ChatExecutionContext? ExecutionContext,
+    string? CliType = null,
+    string? ConfiguredCliType = null,
+    string? ConfiguredModel = null,
+    string? QuotaFallbackReason = null);
 
 public sealed record ChatExecutionContext(
     string ExecutionKind,

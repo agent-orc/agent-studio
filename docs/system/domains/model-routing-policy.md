@@ -194,6 +194,22 @@ suggestion into an explicit pin. The decision log must retain the policy
 version, recommended tier and route, selected route, selection source, score,
 economy state, correctness floor, and reason.
 
+Step 3's "equivalent-capability provider route" is code, not operator
+judgment, as of AGT-2751: `CliQuotaFallbackService` derives it from
+`IModelEquivalenceCatalog` when no explicit `cli-model-routing.json` fallback
+is configured, and the application-wide `QuotaAdmissionService` applies the
+same admission decision - switch, throttle, or wait - before every execution
+path that launches a coding-agent CLI. This includes local and remote coding,
+local and remote review/aspects, pipeline post-steps, orchestrator calls,
+project chat, and the remaining shared one-shot consumers. See
+[cli.md](cli.md#invariants) for the mechanism; the interim equivalence table
+covers only the tiers already named above (Codex Sol/high <-> Claude Opus
+5/high, Codex Mini/high <-> Claude Sonnet 5/medium) pending Token Economy's
+`model-migration-catalog-safe-auto-rules`, which is the eventual system of
+record for this table. A nearby quota reset is only worth a quiet wait when
+the card is cheap (no explicit high/xhigh/ultra/max reasoning pin); an
+expensive card switches immediately rather than sitting out the reset.
+
 ## Roadmap: what happens next
 
 1. **Policy visible now.** This page is canonical, linked from the documentation

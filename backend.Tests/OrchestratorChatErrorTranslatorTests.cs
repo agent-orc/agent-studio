@@ -338,7 +338,7 @@ public class OrchestratorChatErrorTranslatorTests : IDisposable
 
         public override Task<OrchestratorDecisionResult> DecideCodexAsync(
             string prompt, string model, string? thinkingLevel, string workingDirectory,
-            CancellationToken ct = default)
+            CancellationToken ct = default, string? projectName = null, string? watchPath = null)
             => Task.FromResult(new OrchestratorDecisionResult(
                 Success: false,
                 ReplyText: "",
@@ -383,7 +383,7 @@ public class OrchestratorChatErrorTranslatorTests : IDisposable
 
         public override Task<OrchestratorDecisionResult> DecideCodexAsync(
             string prompt, string model, string? thinkingLevel, string workingDirectory,
-            CancellationToken ct = default)
+            CancellationToken ct = default, string? projectName = null, string? watchPath = null)
             => throw _exception;
 
         public override Task<OrchestratorDecisionResult> ResumeAsync(

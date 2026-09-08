@@ -307,17 +307,19 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 "ReviewDecisionOrchestrator:EscalationRateMinimumDecisions",
                 AutoReviewStatusSnapshot.DefaultEscalationRateMinimumDecisions));
 
-        // Route production CLI calls through ICliOneShot (stdin-piped,
-        // stderr-captured, exit-code-surfaced). The CliRunner property
-        // stays the test seam.
-        if (_oneShotRegistry != null)
-        {
-            CliRunner = (cli, model, prompt, timeout, ct) =>
-                RunViaOneShotAsync(cli, model, prompt, timeout, ct);
-        }
+        // Production calls route through ICliOneShot at the call site so the
+        // task identity can accompany quota telemetry. CliRunner remains the
+        // deterministic seam for tests that construct this service without DI.
     }
 
-    private async Task<string> RunViaOneShotAsync(string cli, string model, string prompt, TimeSpan timeout, CancellationToken ct)
+    private async Task<string> RunViaOneShotAsync(
+        string cli,
+        string model,
+        string prompt,
+        TimeSpan timeout,
+        TaskInfo task,
+        string project,
+        CancellationToken ct)
     {
         var cliType = NormalizeReviewCliType(cli);
         var oneShot = _oneShotRegistry?.Get(cliType);
@@ -331,6 +333,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             Timeout = timeout,
             Source = AgentStudio.Shared.AdHocUsageSources.ReviewDecision,
             RecordUsage = false,
+            Project = project,
+            JobId = task.Id,
+            JobFolderPath = task.FolderPath,
+            StepId = AgentStudio.Pipeline.PipelineCatalogue.OrchestratorDecisionStepId,
         }, ct);
 
         if (!result.Ok)
@@ -339,7 +345,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 "Review-decision CLI call failed: exit={ExitCode} duration={Duration}ms error={Error}",
                 result.ExitCode, result.Duration.TotalMilliseconds, result.Error);
         }
-        return result.Stdout;
+        return AgentStudio.Cli.CliOneShotCompatibility.ToClaudeResultEnvelope(result, model);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -1266,7 +1272,16 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         try
         {
             var sw = AgentStudio.AdHoc.AdHocClaudeInvoker.StartTiming();
-            var rawResponse = await CliRunner(cliBinary, model, prompt, TimeSpan.FromSeconds(120), ct);
+            var rawResponse = _oneShotRegistry is null
+                ? await CliRunner(cliBinary, model, prompt, TimeSpan.FromSeconds(120), ct)
+                : await RunViaOneShotAsync(
+                    cliBinary,
+                    model,
+                    prompt,
+                    TimeSpan.FromSeconds(120),
+                    pending.Job,
+                    entry.Name,
+                    ct);
             sw.Stop();
             var (parsedText, callUsage) = AgentStudio.AdHoc.AdHocClaudeInvoker.ParseOrFallback(rawResponse, model);
             AgentStudio.AdHoc.AdHocClaudeInvoker.Record(
@@ -1632,7 +1647,16 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             try
             {
                 var sw = AgentStudio.AdHoc.AdHocClaudeInvoker.StartTiming();
-                var rawResponse = await CliRunner(cliBinary, model, prompt, TimeSpan.FromSeconds(120), ct);
+                var rawResponse = _oneShotRegistry is null
+                    ? await CliRunner(cliBinary, model, prompt, TimeSpan.FromSeconds(120), ct)
+                    : await RunViaOneShotAsync(
+                        cliBinary,
+                        model,
+                        prompt,
+                        TimeSpan.FromSeconds(120),
+                        pending.Job,
+                        entry.Name,
+                        ct);
                 sw.Stop();
                 var (response, callUsage) = AgentStudio.AdHoc.AdHocClaudeInvoker.ParseOrFallback(rawResponse, model);
                 AgentStudio.AdHoc.AdHocClaudeInvoker.Record(

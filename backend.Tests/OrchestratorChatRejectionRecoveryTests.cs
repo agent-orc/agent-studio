@@ -215,7 +215,7 @@ public class OrchestratorChatRejectionRecoveryTests : IDisposable
 
         public override Task<OrchestratorDecisionResult> DecideCodexAsync(
             string prompt, string model, string? thinkingLevel, string workingDirectory,
-            CancellationToken ct = default)
+            CancellationToken ct = default, string? projectName = null, string? watchPath = null)
         {
             DecideCalls++;
             LastModel = model;

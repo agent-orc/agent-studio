@@ -12,6 +12,35 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "attempt-authority-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
+    public void Deferred_review_claim_is_immediately_claimable_again_with_a_new_fence()
+    {
+        var service = NewService();
+        var (_, review) = CompletedRunWithReview(service, "sha-a");
+        var claimed = service.ClaimReview(
+            review.AttemptId,
+            "reviewer",
+            "host",
+            60,
+            "v1-review-claim:reviewer:instance-a:" + review.AttemptId,
+            "instance-a").ReviewAttempt!;
+
+        Assert.True(service.DeferReviewClaim(review.AttemptId, "reviewer", "instance-a"));
+        var deferred = service.GetReview(review.AttemptId)!;
+        Assert.Equal(AttemptLifecycleState.Pending, deferred.State);
+        Assert.Null(deferred.Lease);
+
+        var reclaimed = service.ClaimReview(
+            review.AttemptId,
+            "reviewer",
+            "host",
+            60,
+            "v1-review-claim:reviewer:instance-a:" + review.AttemptId,
+            "instance-a").ReviewAttempt!;
+        Assert.Equal(review.AttemptId, reclaimed.AttemptId);
+        Assert.True(reclaimed.LastFence > claimed.LastFence);
+    }
+
+    [Fact]
     public void Restart_preserves_attempt_lease_expiry_fence_epoch_and_review_subject()
     {
         var now = new DateTime(2026, 7, 20, 10, 0, 0, DateTimeKind.Utc);

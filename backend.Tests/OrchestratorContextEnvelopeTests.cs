@@ -514,7 +514,9 @@ public sealed class OrchestratorContextEnvelopeTests : IDisposable
             string model,
             string? thinkingLevel,
             string workingDirectory,
-            CancellationToken ct = default)
+            CancellationToken ct = default,
+            string? projectName = null,
+            string? watchPath = null)
         {
             Prompt = prompt;
             return Task.FromResult(new OrchestratorDecisionResult(

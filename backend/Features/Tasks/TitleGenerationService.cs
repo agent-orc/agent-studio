@@ -148,9 +148,10 @@ public class TitleGenerationService
                 Source = AdHocUsageSources.TitleGeneration,
             }, ct).ConfigureAwait(false);
             if (!r.Ok) return (false, null, r.Error);
+            var compatible = CliOneShotCompatibility.ToClaudeResultEnvelope(r, model);
             _logger.LogInformation("Title generated in {Elapsed}ms ({Bytes} bytes)",
-                (long)r.Duration.TotalMilliseconds, r.Stdout.Length);
-            return (true, r.Stdout, null);
+                (long)r.Duration.TotalMilliseconds, compatible.Length);
+            return (true, compatible, null);
         }
 
         // Fallback for tests that build the service without DI. Still

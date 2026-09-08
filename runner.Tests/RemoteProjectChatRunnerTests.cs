@@ -26,6 +26,24 @@ public sealed class RemoteProjectChatRunnerTests : IDisposable
     }
 
     [Fact]
+    public void Claude_result_envelope_is_parsed_for_cross_family_chat_claim()
+    {
+        var process = new ProcessResult(
+            0,
+            "{\"type\":\"result\",\"result\":\"fallback reply\",\"is_error\":false,\"usage\":{\"input_tokens\":7,\"output_tokens\":3,\"cache_read_input_tokens\":2,\"cache_creation_input_tokens\":1}}\n",
+            "");
+
+        var parsed = RemoteProjectChatRunner.ParseClaude(process, "claude-opus-5");
+
+        Assert.True(parsed.Success);
+        Assert.Equal("fallback reply", parsed.ReplyText);
+        Assert.Equal(7, parsed.TokenUsage?.InputTokens);
+        Assert.Equal(3, parsed.TokenUsage?.OutputTokens);
+        Assert.Equal(2, parsed.TokenUsage?.CacheReadTokens);
+        Assert.Equal(1, parsed.TokenUsage?.CacheCreationTokens);
+    }
+
+    [Fact]
     public async Task Turn_runs_from_host_project_checkout_and_reports_path_branch_and_head()
     {
         if (OperatingSystem.IsWindows())
