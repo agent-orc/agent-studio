@@ -4248,21 +4248,36 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             completedFolder,
             $"remote-review-grade-{claim.Attempt.AttemptId}.md");
         Assert.Equal(terminalState, report.TaskState);
-        Assert.Equal(report, replay);
+        // AGT-2762: the replay answers Duplicate from the durable ledger and
+        // is otherwise identical - only the evidence-projection status
+        // differs, since the replay does not re-run projection.
+        Assert.Equal(report with { EvidenceProjection = replay.EvidenceProjection }, replay);
         Assert.False(report.RetryScheduled);
+        Assert.Equal(Contract.ReviewEvidenceProjectionStatus.Queued, report.EvidenceProjection);
+        Assert.Equal(Contract.ReviewEvidenceProjectionStatus.Duplicate, replay.EvidenceProjection);
         Assert.True(Directory.Exists(completedFolder));
         Assert.False(Directory.Exists(Path.Combine(_watchPath, TaskStates.HumanReview, TaskKey)));
-        Assert.True(File.Exists(evidenceFile));
+
+        // AGT-2762: evidence projection (the grade file and its timeline entry)
+        // now runs on the background queue after the settlement response, so
+        // it is polled for rather than asserted synchronously.
+        await WaitUntilAsync(
+            () => File.Exists(evidenceFile),
+            $"Evidence file was never projected: {evidenceFile}");
         Assert.Contains("Remote Review Grade", File.ReadAllText(evidenceFile), StringComparison.Ordinal);
 
-        var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance).ReadAll(completedFolder);
+        var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
+        await WaitUntilAsync(
+            () => timeline.ReadAll(completedFolder)
+                .Any(item => item.Kind == TimelineEventKinds.PostAcceptanceReviewReportRecorded),
+            "post-acceptance review report timeline entry was never recorded");
         var recorded = Assert.Single(
-            timeline,
+            timeline.ReadAll(completedFolder),
             item => item.Kind == TimelineEventKinds.PostAcceptanceReviewReportRecorded);
         Assert.Equal("post-acceptance review report recorded", recorded.Summary);
         Assert.Equal(Path.GetFileName(evidenceFile), recorded.PayloadRef);
         Assert.DoesNotContain(
-            timeline,
+            timeline.ReadAll(completedFolder),
             item => item.Kind == TimelineEventKinds.LaneChanged
                     && item.Details?.GetValueOrDefault("to") == TaskStates.HumanReview);
     }
@@ -4499,13 +4514,36 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             ct);
         Assert.Equal("Pass", report.Outcome);
         Assert.Equal(TaskStates.HumanReview, report.TaskState);
+        Assert.Equal(Contract.ReviewEvidenceProjectionStatus.Queued, report.EvidenceProjection);
         Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.HumanReview, TaskKey)));
 
+        var evidenceFile = Path.Combine(
+            _watchPath, TaskStates.HumanReview, TaskKey,
+            $"remote-review-grade-{claim.Attempt.AttemptId}.md");
+        // Telemetry records after both the grade file and the pipeline
+        // projection finish, so waiting on it (rather than only on the file)
+        // avoids a race with the duplicate-replay assertion below.
+        var evidenceQueue = factory.Services.GetRequiredService<RemoteReviewEvidenceProjectionQueue>();
+        await WaitUntilAsync(
+            () => evidenceQueue.Telemetry.Summarize(DateTime.UtcNow, TimeSpan.FromMinutes(5)).SampleCount >= 1,
+            "Evidence projection was never recorded by the background queue.");
+        Assert.True(File.Exists(evidenceFile));
+
+        // AGT-2762: a replay of the same idempotency key answers Duplicate
+        // from the durable ledger alone, without re-running evidence
+        // projection. Asserted on the queue's own completion count rather
+        // than wall-clock timing, since a timing threshold would be
+        // host-load-dependent (contribution-and-style-guide.html Test
+        // conventions - performance thresholds require MachineBound).
         var duplicate = await reviewClient.ReportReviewAsync(
             claim.Attempt.AttemptId,
             reportRequest,
             ct);
         Assert.Equal(report.ReportId, duplicate.ReportId);
+        Assert.Equal(Contract.ReviewEvidenceProjectionStatus.Duplicate, duplicate.EvidenceProjection);
+        Assert.Equal(
+            1,
+            evidenceQueue.Telemetry.Summarize(DateTime.UtcNow, TimeSpan.FromMinutes(5)).SampleCount);
 
         var reportedAttempt = await http.GetFromJsonAsync<Contract.ReviewAttemptDto>(
             $"/api/v1/reviews/attempts/{claim.Attempt.AttemptId}",

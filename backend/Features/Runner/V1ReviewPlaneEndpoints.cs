@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -383,9 +384,12 @@ public static class V1ReviewPlaneEndpoints
             HumanReviewEscalation escalation,
             RemoteDeliveryIntegrationCoordinator remoteIntegration,
             TimelineLog timeline,
-            RemotePipelineReviewEvidenceProjector remotePipelineEvidence,
+            IRemoteReviewEvidenceProjectionQueue evidenceQueue,
+            ILoggerFactory loggerFactory,
             CancellationToken ct) =>
         {
+            var reportStopwatch = Stopwatch.StartNew();
+            var logger = loggerFactory.CreateLogger(LoggerName);
             if (!RunnerMatches(context, request.ExecutorId))
                 return Results.Unauthorized();
             if (!TryValidateReportLease(
@@ -478,6 +482,34 @@ public static class V1ReviewPlaneEndpoints
                     StringComparison.Ordinal))
                 ?.ReceivedAt
                 ?? DateTime.UtcNow;
+            var payload = JsonSerializer.Serialize(request, Json);
+            var reportHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload)))
+                .ToLowerInvariant();
+
+            // Fast idempotent replay (AGT-2762): the durable ledger already holds
+            // this delivery's settlement, so answer Duplicate without touching
+            // git or the task folder - the original delivery's evidence
+            // projection already ran or is queued, and repeating it would only
+            // redo the same I/O for no new information.
+            if (settled.Status == AttemptWriteStatus.Duplicate)
+            {
+                logger.LogInformation(
+                    "review-report-duplicate attempt={AttemptId} outcome={Outcome} roundTripMs={RoundTripMs}",
+                    attemptId, request.Outcome, (long)reportStopwatch.Elapsed.TotalMilliseconds);
+                return Results.Ok(new Contract.ReviewReportDto(
+                    "rrpt_" + HashId($"{attemptId}:{request.IdempotencyKey}"),
+                    attemptId,
+                    settled.ReviewAttempt.Subject.SubjectId,
+                    request.Outcome,
+                    request.FailureClassification,
+                    request.Summary,
+                    reportHash,
+                    receivedAt,
+                    RetryScheduled: false,
+                    task.State,
+                    EvidenceProjection: Contract.ReviewEvidenceProjectionStatus.Duplicate));
+            }
+
             if (settled.ReviewAttempt.Outcome == ReviewTerminalOutcome.Pass)
             {
                 settings.MarkBuildProfileRemotelyValidated(
@@ -488,48 +520,22 @@ public static class V1ReviewPlaneEndpoints
                     request.Workspace.ActualHead,
                     receivedAt);
             }
-            var payload = JsonSerializer.Serialize(request, Json);
-            var reportHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload)))
-                .ToLowerInvariant();
-            string evidenceFile;
-            try
-            {
-                evidenceFile = await RemoteReviewReportEvidence.WriteAsync(
-                    task.FolderPath,
-                    attemptId,
-                    settled.ReviewAttempt.Subject.SubjectId,
-                    request,
-                    reportHash,
-                    receivedAt,
-                    ct);
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-                return Results.Json(
-                    new Contract.ApiError(
-                        "review-evidence-write-failed",
-                        $"Review grade is durable, but its task evidence file could not be written: {exception.Message}"),
-                    statusCode: StatusCodes.Status503ServiceUnavailable);
-            }
 
-            try
-            {
-                await remotePipelineEvidence.ProjectAsync(
-                    task,
-                    settled.ReviewAttempt,
-                    request,
-                    evidenceFile,
-                    receivedAt,
-                    ct);
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-                return Results.Json(
-                    new Contract.ApiError(
-                        "remote-pipeline-evidence-write-failed",
-                        $"Review grade is durable, but remote pipeline evidence could not be projected: {exception.Message}"),
-                    statusCode: StatusCodes.Status503ServiceUnavailable);
-            }
+            // Two-phase report (AGT-2762): the settlement above is durable and
+            // fenced; task-folder evidence (grade markdown, aspect files,
+            // timeline entries) is projected afterwards on a background queue
+            // so a slow host cannot hold this request open past the runner's
+            // report timeout.
+            var evidenceFile = RemoteReviewReportEvidence.EvidenceFileName(attemptId);
+            evidenceQueue.Enqueue(new RemoteReviewEvidenceProjectionRequest(
+                attemptId,
+                settled.ReviewAttempt.TaskKey,
+                settled.ReviewAttempt,
+                request,
+                evidenceFile,
+                reportHash,
+                receivedAt,
+                EnqueuedAtUtc: DateTime.UtcNow));
 
             var infrastructureFailure = string.Equals(
                 request.Outcome,
@@ -738,6 +744,10 @@ public static class V1ReviewPlaneEndpoints
                 }
             }
 
+            logger.LogInformation(
+                "review-report-accepted attempt={AttemptId} outcome={Outcome} taskState={TaskState} "
+                + "roundTripMs={RoundTripMs} evidenceProjection=queued",
+                attemptId, request.Outcome, taskState, (long)reportStopwatch.Elapsed.TotalMilliseconds);
             return Results.Ok(new Contract.ReviewReportDto(
                 "rrpt_" + HashId($"{attemptId}:{request.IdempotencyKey}"),
                 attemptId,
@@ -748,7 +758,8 @@ public static class V1ReviewPlaneEndpoints
                 reportHash,
                 receivedAt,
                 retry,
-                taskState));
+                taskState,
+                EvidenceProjection: Contract.ReviewEvidenceProjectionStatus.Queued));
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Review);
 
         api.MapPost("/reviews/attempts/{attemptId}/cleanup", (

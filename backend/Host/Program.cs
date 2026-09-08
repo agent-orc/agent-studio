@@ -662,6 +662,14 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.TaskSpawnerPostStepRunner>();
 builder.Services.AddSingleton<AspectRunnerService>();
 builder.Services.AddSingleton<RemoteReviewPlanBuilder>();
 builder.Services.AddSingleton<RemotePipelineReviewEvidenceProjector>();
+// AGT-2762: the report endpoint settles the fenced attempt authority
+// synchronously, then hands task-folder evidence projection to this queue so
+// a slow host cannot hold the runner's report request open. Drained by
+// RemoteReviewEvidenceProjectionWorker, registered alongside the other
+// monolith-only orchestration loops.
+builder.Services.AddSingleton<RemoteReviewEvidenceProjectionQueue>();
+builder.Services.AddSingleton<IRemoteReviewEvidenceProjectionQueue>(sp =>
+    sp.GetRequiredService<RemoteReviewEvidenceProjectionQueue>());
 builder.Services.AddSingleton<AgentStudio.Review.CodeReviewStepService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.WorkspaceArtifactPushQueue>();
 if (!publicDemoExecutionProfile)

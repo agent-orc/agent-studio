@@ -44,4 +44,29 @@ public static class ReviewReportSubmissionPolicy
         ReviewReportSubmissionAction.TerminalSuperseded => "Superseded",
         _ => "ReportRejected",
     };
+
+    /// <summary>Base delay for the first transport-failure retry; doubles per consecutive failure.</summary>
+    public static readonly TimeSpan TransportRetryBaseDelay = TimeSpan.FromSeconds(1);
+
+    /// <summary>Cap for the transport-failure doubling.</summary>
+    public static readonly TimeSpan TransportRetryMaxDelay = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// Delay before the next report submission attempt. Transport failures
+    /// (timeout, connection reset - the class of fault a tunnel outage or a
+    /// momentarily overloaded host produces) back off exponentially so a
+    /// recovering server is not immediately re-hammered; other retryable
+    /// failures (5xx, 429, 408) keep the existing poll-interval-scaled delay,
+    /// since those already came with an authoritative response and do not
+    /// need the same caution.
+    /// </summary>
+    public static TimeSpan RetryDelay(int consecutiveFailures, bool transportFailure, int pollSeconds)
+    {
+        if (!transportFailure)
+            return TaskServerConnectivityMonitor.RetryDelay(pollSeconds, consecutiveFailures);
+
+        var factor = Math.Pow(2, Math.Max(0, consecutiveFailures - 1));
+        var seconds = Math.Min(TransportRetryMaxDelay.TotalSeconds, TransportRetryBaseDelay.TotalSeconds * factor);
+        return TimeSpan.FromSeconds(seconds);
+    }
 }

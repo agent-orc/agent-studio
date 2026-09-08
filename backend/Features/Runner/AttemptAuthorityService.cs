@@ -625,30 +625,99 @@ public sealed class AttemptAuthorityService
         lock (_gate)
         {
             var now = _utcNow();
-            var candidate = _state.ReviewAttempts
-                .Where(review => IsCurrentReview(review) && !Terminal(review.State))
-                .Where(review => review.Lease is null || review.Lease.ExpiresAt <= now)
-                // A subject whose source run carries no Result-Envelope cannot be
-                // materialized by any executor. Inside the terminalization grace it
-                // is not yet evidence of a pre-plane completion either (the
-                // completion ingest may still be in flight), so it is neither killed
-                // nor handed out - it waits for its envelope or for the grace to run
-                // out. Handing it out would burn a fenced attempt on a subject the
-                // executor provably cannot check out.
-                .Where(review => !IsUnmaterializableWithinGrace(review, now))
-                .OrderBy(review => review.CreatedAt)
-                .FirstOrDefault();
-            if (candidate is null)
-                return new AttemptWriteResult(AttemptWriteStatus.NotFound, string.Empty);
+            // Bounded by the review-attempt count at entry: every iteration
+            // either claims (returns) or requeues exactly one stale-leased
+            // attempt into a terminal state, so the "leased and expired" set
+            // strictly shrinks and the loop cannot spin forever.
+            var guard = _state.ReviewAttempts.Count + 1;
+            while (guard-- > 0)
+            {
+                var candidate = _state.ReviewAttempts
+                    .Where(review => IsCurrentReview(review) && !Terminal(review.State))
+                    .Where(review => review.Lease is null || review.Lease.ExpiresAt <= now)
+                    // A subject whose source run carries no Result-Envelope cannot be
+                    // materialized by any executor. Inside the terminalization grace it
+                    // is not yet evidence of a pre-plane completion either (the
+                    // completion ingest may still be in flight), so it is neither killed
+                    // nor handed out - it waits for its envelope or for the grace to run
+                    // out. Handing it out would burn a fenced attempt on a subject the
+                    // executor provably cannot check out.
+                    .Where(review => !IsUnmaterializableWithinGrace(review, now))
+                    .OrderBy(review => review.CreatedAt)
+                    .FirstOrDefault();
+                if (candidate is null)
+                    return new AttemptWriteResult(AttemptWriteStatus.NotFound, string.Empty);
 
-            return ClaimReview(
-                candidate.AttemptId,
-                executorId,
-                hostId,
-                requestedTtlSeconds,
-                $"v1-review-claim:{executorId}:{instanceId}:{candidate.AttemptId}",
-                instanceId);
+                if (candidate.Lease is { } expiredLease && expiredLease.ExpiresAt <= now)
+                {
+                    // AGT-2762: a stale lease at the queue head used to surface
+                    // LeaseExpired to the poller (BP-13's same-delivery-key
+                    // guard against double execution). Settlement is fenced -
+                    // an eventual late report from the old executor resolves
+                    // Superseded once this attempt is no longer current - so
+                    // double execution costs wasted work, not correctness, and
+                    // the poller can move straight to the next claimable
+                    // attempt instead of looping through a full
+                    // re-registration first.
+                    RequeueExpiredReviewLeaseLocked(candidate, expiredLease, now);
+                    continue;
+                }
+
+                return ClaimReview(
+                    candidate.AttemptId,
+                    executorId,
+                    hostId,
+                    requestedTtlSeconds,
+                    $"v1-review-claim:{executorId}:{instanceId}:{candidate.AttemptId}",
+                    instanceId);
+            }
+            return new AttemptWriteResult(AttemptWriteStatus.NotFound, string.Empty);
         }
+    }
+
+    /// <summary>
+    /// Terminalizes a ReviewAttempt whose lease expired before a report was
+    /// delivered, and mints an immediate successor attempt for the same
+    /// immutable subject so the claim queue does not stall behind it. The
+    /// successor carries no Plan; the existing null-Plan fallback in
+    /// <c>ToSubject</c> rebuilds one lazily at claim time (picking up any
+    /// integration-ref correction the way an infrastructure retry already
+    /// does). Caller must hold <see cref="_gate"/>.
+    /// </summary>
+    private void RequeueExpiredReviewLeaseLocked(
+        ReviewAttemptRecord expired,
+        AttemptLeaseRecord expiredLease,
+        DateTime now)
+    {
+        expired.State = AttemptLifecycleState.Failed;
+        expired.Outcome = ReviewTerminalOutcome.InfrastructureFailure;
+        expired.FailureClassification = "LeaseExpired";
+        expired.TerminalReason =
+            $"Lease held by '{expiredLease.ExecutorId}' on '{expiredLease.HostId}' expired at "
+            + $"{expiredLease.ExpiresAt:O} before a report was delivered; requeued as a successor attempt.";
+        expired.TerminalAt = now;
+        expired.Lease = null;
+
+        var successor = new ReviewAttemptRecord
+        {
+            AttemptId = NewId("review"),
+            TaskKey = expired.TaskKey,
+            RepositoryId = expired.RepositoryId,
+            SourceRunAttemptId = expired.SourceRunAttemptId,
+            SourceReviewAttemptId = expired.AttemptId,
+            Subject = CopySubjectWithPlan(expired.Subject, plan: null),
+            State = AttemptLifecycleState.Pending,
+            AuthorityEpoch = _state.AuthorityEpoch,
+            CreatedAt = now,
+        };
+        _state.ReviewAttempts.Add(successor);
+        _state.CurrentReviewByTask[successor.TaskKey] = successor.AttemptId;
+        _state.CurrentSubjectByTask[successor.TaskKey] = successor.Subject;
+        PersistLocked();
+        _logger.LogInformation(
+            "review-attempt-lease-expired-requeued attempt={AttemptId} successor={SuccessorId} "
+            + "task={TaskKey} executor={ExecutorId}",
+            expired.AttemptId, successor.AttemptId, expired.TaskKey, expiredLease.ExecutorId);
     }
 
     /// <summary>
@@ -1760,7 +1829,7 @@ public sealed class AttemptAuthorityService
 
     private static ReviewSubjectRecord CopySubjectWithPlan(
         ReviewSubjectRecord subject,
-        AgentStudio.TaskServer.Contracts.ReviewPlanDto plan)
+        AgentStudio.TaskServer.Contracts.ReviewPlanDto? plan)
         => new()
         {
             SubjectId = subject.SubjectId,

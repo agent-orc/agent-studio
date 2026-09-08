@@ -1371,6 +1371,100 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
             archivedRun.GetProperty("idempotencyKeys").EnumerateArray().Select(key => key.GetString()));
     }
 
+    /// <summary>
+    /// AGT-2762: a stale leased attempt at the queue head used to make
+    /// ClaimNextReview answer LeaseExpired to the poller, which looped the
+    /// daemon into a full re-registration instead of claiming the next
+    /// queued task. It must instead requeue the stale attempt as a successor
+    /// (linked, plan-less, classification LeaseExpired) and hand out the next
+    /// claimable attempt in the same call.
+    /// </summary>
+    [Fact]
+    public void ClaimNextReview_requeues_a_stale_lease_at_the_queue_head_and_hands_out_the_next_claimable_attempt()
+    {
+        var now = new DateTime(2026, 9, 8, 10, 0, 0, DateTimeKind.Utc);
+        var service = NewService(() => now);
+
+        var staleSource = service.AcquireRun(
+            "AGT-STALE", "PROJ-1", null, "runner-a", "host-a", 60, "stale-run").RunAttempt!;
+        SettleRunWithEnvelope(service, staleSource, new string('a', 40), "stale-run-complete");
+        var staleReview = service.CreateReviewAttempt(new CreateReviewAttemptRequest(
+            "AGT-STALE", "PROJ-1", new string('a', 40), staleSource.AttemptId,
+            "requirements", "policy", [], "stale-review-create")).ReviewAttempt!;
+        staleReview = service.ClaimReview(
+            staleReview.AttemptId, "reviewer-a", "review-host-a", 60, "stale-claim").ReviewAttempt!;
+
+        now = now.AddSeconds(5);
+        var freshSource = service.AcquireRun(
+            "AGT-FRESH", "PROJ-1", null, "runner-b", "host-b", 60, "fresh-run").RunAttempt!;
+        SettleRunWithEnvelope(service, freshSource, new string('b', 40), "fresh-run-complete");
+        var freshReview = service.CreateReviewAttempt(new CreateReviewAttemptRequest(
+            "AGT-FRESH", "PROJ-1", new string('b', 40), freshSource.AttemptId,
+            "requirements", "policy", [], "fresh-review-create")).ReviewAttempt!;
+
+        // The stale lease expires; the fresh attempt is still unleased and
+        // queued behind it (older CreatedAt).
+        now = now.AddMinutes(2);
+
+        var claimed = service.ClaimNextReview("reviewer-b", "review-host-b", "instance-b", 60);
+
+        Assert.Equal(AttemptWriteStatus.Accepted, claimed.Status);
+        Assert.Equal(freshReview.AttemptId, claimed.ReviewAttempt!.AttemptId);
+
+        var requeued = service.GetReview(staleReview.AttemptId)!;
+        Assert.Equal(AttemptLifecycleState.Failed, requeued.State);
+        Assert.Equal(ReviewTerminalOutcome.InfrastructureFailure, requeued.Outcome);
+        Assert.Equal("LeaseExpired", requeued.FailureClassification);
+
+        var projection = service.GetTaskProjection("AGT-STALE");
+        var successor = projection.CurrentReviewAttempt!;
+        Assert.NotEqual(staleReview.AttemptId, successor.AttemptId);
+        Assert.Equal(AttemptLifecycleState.Pending, successor.State);
+        Assert.Null(successor.Subject.Plan);
+    }
+
+    /// <summary>
+    /// When nothing else is queued, ClaimNextReview's own successor becomes
+    /// the next claimable attempt instead of returning NotFound.
+    /// </summary>
+    [Fact]
+    public void ClaimNextReview_hands_out_its_own_requeued_successor_when_nothing_else_is_queued()
+    {
+        var now = new DateTime(2026, 9, 8, 10, 0, 0, DateTimeKind.Utc);
+        var service = NewService(() => now);
+        var run = service.AcquireRun("AGT-ONLY", "PROJ-1", null, "runner-a", "host-a", 60, "only-run").RunAttempt!;
+        SettleRunWithEnvelope(service, run, new string('c', 40), "only-run-complete");
+        var review = service.CreateReviewAttempt(new CreateReviewAttemptRequest(
+            "AGT-ONLY", "PROJ-1", new string('c', 40), run.AttemptId,
+            "requirements", "policy", [], "only-review-create")).ReviewAttempt!;
+        service.ClaimReview(review.AttemptId, "reviewer-a", "review-host-a", 60, "only-claim");
+
+        now = now.AddMinutes(2);
+        var claimed = service.ClaimNextReview("reviewer-b", "review-host-b", "instance-b", 60);
+
+        Assert.Equal(AttemptWriteStatus.Accepted, claimed.Status);
+        Assert.NotEqual(review.AttemptId, claimed.ReviewAttempt!.AttemptId);
+        Assert.Equal(review.AttemptId, claimed.ReviewAttempt.SourceReviewAttemptId);
+    }
+
+    private static void SettleRunWithEnvelope(
+        AttemptAuthorityService service, RunAttemptDto run, string resultSha, string idempotencyKey)
+    {
+        var envelope = new AgentStudio.TaskServer.Contracts.ImmutableResultEnvelope(
+            run.RepositoryId, run.AttemptId,
+            new string('0', 40), resultSha,
+            "refs/agent-studio/results/" + run.AttemptId, null,
+            new string('1', 64));
+        service.SettleRun(new SettleRunAttemptRequest
+        {
+            Write = new AttemptWriteReference(run.AttemptId, run.LastFence, run.AuthorityEpoch, idempotencyKey),
+            Outcome = "done",
+            ResultSha = resultSha,
+            ResultEnvelope = envelope,
+            ResultEnvelopeDigest = AgentStudio.TaskServer.Contracts.ResultEnvelopeDigest.Compute(envelope),
+        });
+    }
+
     private (RunAttemptDto Run, ReviewAttemptDto Review) CompletedRunWithReview(AttemptAuthorityService service, string sha)
     {
         var run = service.AcquireRun("AGT-1", "PROJ-1", null, "runner", "host", 60, "run-create").RunAttempt!;

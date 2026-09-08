@@ -239,6 +239,14 @@ steer the pipeline in this policy version.
   accepted, fenced command evidence back into the ordinary
   `pipeline-execution.json`, aspect Markdown/JSON, file provenance, and
   timeline contracts. The projection does not execute work or decide a lane.
+  The report endpoint settles the fenced attempt (durable, in-memory) and
+  performs the lane decision synchronously, but hands this projection to
+  `RemoteReviewEvidenceProjectionQueue` / `RemoteReviewEvidenceProjectionWorker`
+  so a slow host cannot hold the request open past the runner's report
+  timeout (AGT-2762); the response's `evidenceProjection` field is `queued`
+  or, for a report whose idempotency key already settled, `duplicate` (a
+  fast replay from the durable ledger that re-runs neither the projector nor
+  the lane decision).
 - `backend/Features/Runner/ReviewBaselineBranchPolicy.cs`: which integration
   line the baseline merge-base is taken from. Project truth outranks the card:
   configured project integration branch, then the registered checkout's
