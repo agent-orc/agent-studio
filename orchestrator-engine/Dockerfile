@@ -9,4 +9,4 @@ FROM mcr.microsoft.com/dotnet/runtime:10.0
 WORKDIR /app
 COPY --from=build /app ./
 ENV SERVER_URL=http://task-server:5071
-ENTRYPOINT ["dotnet", "OrchestratorEngine.dll"]
+ENTRYPOINT ["dotnet", "orchestrator-engine.dll"]

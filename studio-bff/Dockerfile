@@ -8,7 +8,10 @@ RUN dotnet publish studio-bff/StudioBff.csproj -c Release -o /app /p:UseAppHost=
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
 WORKDIR /app
 COPY --from=build /app ./
-ENV ASPNETCORE_URLS=http://0.0.0.0:5072 \
+# The appsettings Urls key outranks ASPNETCORE_URLS in the minimal-host
+# configuration stack. Override that exact key so the BFF is reachable through
+# the container's published port while the host binding remains loopback-only.
+ENV URLS=http://0.0.0.0:5072 \
     TaskServer__BaseUrl=http://task-server:5071
 EXPOSE 5072
-ENTRYPOINT ["dotnet", "StudioBff.dll"]
+ENTRYPOINT ["dotnet", "agent-studio-bff.dll"]

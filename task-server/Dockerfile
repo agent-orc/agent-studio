@@ -14,4 +14,4 @@ ENV LISTEN_URL=http://0.0.0.0:5071 \
     BACKUP_PATH=/var/lib/agent-orchestrator/backup
 VOLUME ["/var/lib/agent-orchestrator"]
 EXPOSE 5071
-ENTRYPOINT ["dotnet", "TaskServer.dll"]
+ENTRYPOINT ["dotnet", "task-server.dll"]
