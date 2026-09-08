@@ -71,6 +71,10 @@ run_at "$repo" '.NET Release build' \
 run_at "$repo" '.NET full non-machine-bound suite' \
   dotnet test agent-taskboard.sln --configuration Release --no-build \
     --filter 'Category!=MachineBound' --logger 'console;verbosity=minimal' --nologo
+run_at "$repo" 'Deployment regression scenario (smoke)' \
+  dotnet test task-server.Tests/TaskServer.Tests.csproj --configuration Release --no-build \
+    --filter 'FullyQualifiedName~TaskServer.Tests.ScenarioTests.Deployment_regression_scenario_smoke' \
+    --logger 'console;verbosity=normal'
 run_at "$repo/frontend" 'Frontend lint' \
   npm run lint:ci
 run_at "$repo/frontend" 'Frontend type-check' \

@@ -94,6 +94,19 @@ jobs:
             --filter "FullyQualifiedName~TaskServer.Tests.TopologyTests|FullyQualifiedName~TaskServer.Tests.ProtocolTests" \
             --logger "console;verbosity=normal"
 
+      # `--target compose --level full` (the distributed + runner profiles
+      # driving a real coding/review lifecycle in Docker) is not implemented
+      # yet: it needs a deterministic fake coding/review CLI image on those
+      # profiles, which does not exist. See the "known gaps" section of
+      # docs/operations/testing/deployment-scenario.md. `inproc full` is the
+      # deepest scenario proof available today; `compose smoke` proves the
+      # same container boot/health path release/develop already publish.
+      - name: Deployment regression scenario (inproc full)
+        run: scripts/scenario.sh --target inproc --level full --configuration Release
+
+      - name: Deployment regression scenario (compose smoke)
+        run: scripts/scenario.sh --target compose --level smoke
+
       - name: Lint and type-check frontend
         working-directory: frontend
         run: |
