@@ -744,6 +744,12 @@ path.
   `refs/remotes/origin/agent-studio/quarantine/*` copies only when an archived
   card indexes the exact ref. This sweep uses `git update-ref -d` locally and
   never deletes or prunes a ref on origin.
+- Standalone Task Server artifact retention is a separate data lifecycle from
+  Git-ref retention. `retention_policies`, `archive_runs`, and
+  `archive_manifests` govern SQLite artifact BLOBs and cold payloads under
+  `ARCHIVE_PATH`; class A authority rows remain hot. The management API,
+  scheduler, restore behavior, and full backup set are documented in
+  [the Task Server operator guide](../../operations/setup/task-server.md#retention-against-the-sqlite-store).
 - `git-info` inventory telemetry records `refCount`, `computedAt`, and the cache
   decision `hit`, `recompute`, or `coalesced`. Request telemetry records
   `spawns=0`; subprocess timings belong to `git/inventory-refresh`.

@@ -611,6 +611,7 @@ public sealed partial class TaskServerStore
         RunDto run;
         await using (var command = Command(connection, """
             SELECT t.id, t.project_id, t.task_key, t.title, t.state, t.version, t.created_at, t.updated_at, t.body,
+                   t.archive_state, t.archived_at,
                    r.status, r.runner_id, r.fence, r.created_at, r.started_at, r.finished_at
               FROM runs r JOIN tasks t ON t.id = r.task_id
              WHERE r.id = $run;
@@ -622,12 +623,12 @@ public sealed partial class TaskServerStore
             run = new RunDto(
                 runId,
                 task.TaskId,
-                reader.GetString(9),
-                reader.IsDBNull(10) ? null : reader.GetString(10),
-                reader.IsDBNull(11) ? null : reader.GetInt64(11),
-                Parse(reader.GetString(12)),
-                reader.IsDBNull(13) ? null : Parse(reader.GetString(13)),
-                reader.IsDBNull(14) ? null : Parse(reader.GetString(14)));
+                reader.GetString(11),
+                reader.IsDBNull(12) ? null : reader.GetString(12),
+                reader.IsDBNull(13) ? null : reader.GetInt64(13),
+                Parse(reader.GetString(14)),
+                reader.IsDBNull(15) ? null : Parse(reader.GetString(15)),
+                reader.IsDBNull(16) ? null : Parse(reader.GetString(16)));
         }
 
         var steps = await ReadPostStepsAsync(connection, transaction, runId, ct);

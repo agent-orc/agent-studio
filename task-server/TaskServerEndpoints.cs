@@ -545,6 +545,65 @@ public static class TaskServerEndpoints
         management.MapPost("/migrations/legacy/import", async (
             HttpContext context, LegacyMigrationRequest request, LegacyMigrationService migration, CancellationToken ct)
             => await InvokeAsync(() => migration.ImportAsync(request, Actor(context), ct)));
+
+        var retention = management.MapGroup("/retention");
+        retention.MapGet("/policy", async (RetentionManagementService retentionManagement, CancellationToken ct)
+            => await InvokeAsync(() => retentionManagement.GetWorkspacePolicyAsync(ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksRead);
+        retention.MapPut("/policy", async (
+            HttpContext context, UpdateRetentionPolicyRequest request, RetentionManagementService retentionManagement, CancellationToken ct)
+            => await InvokeAsync(() => retentionManagement.UpdateWorkspacePolicyAsync(request, Actor(context), ct)));
+        retention.MapGet("/policy/projects/{projectId}", async (
+            string projectId, RetentionManagementService retentionManagement, CancellationToken ct)
+            => await InvokeAsync(() => retentionManagement.GetProjectPolicyAsync(projectId, ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksRead);
+        retention.MapPut("/policy/projects/{projectId}", async (
+            HttpContext context, string projectId, UpdateRetentionPolicyRequest request, RetentionManagementService retentionManagement, CancellationToken ct)
+            => await InvokeAsync(() => retentionManagement.UpdateProjectPolicyAsync(projectId, request, Actor(context), ct)));
+        retention.MapDelete("/policy/projects/{projectId}", async (
+            HttpContext context, string projectId, long expectedVersion, RetentionManagementService retentionManagement, CancellationToken ct)
+            => await InvokeAsync(async () =>
+            {
+                await retentionManagement.DeleteProjectPolicyAsync(projectId, expectedVersion, Actor(context), ct);
+                return new { deleted = true };
+            }));
+        retention.MapPost("/plan", async (
+            HttpContext context, RunRetentionRequest request, RetentionManagementService retentionManagement, CancellationToken ct)
+            => await InvokeAsync(() => retentionManagement.PlanAsync(request, Actor(context), ct)));
+        retention.MapPost("/apply", async (
+            HttpContext context, RunRetentionRequest request, RetentionManagementService retentionManagement, CancellationToken ct)
+            => await InvokeAsync(() => retentionManagement.ApplyAsync(request, Actor(context), ct)));
+        retention.MapGet("/runs", async (RetentionManagementService retentionManagement, CancellationToken ct)
+            => await InvokeAsync(() => retentionManagement.ListRunsAsync(ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksRead);
+        retention.MapGet("/runs/{runId}", async (string runId, RetentionManagementService retentionManagement, CancellationToken ct)
+            => await InvokeNullableAsync(() => retentionManagement.GetRunAsync(runId, ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksRead);
+        retention.MapGet("/archive/{taskId}", async (string taskId, RetentionManagementService retentionManagement, CancellationToken ct)
+            => await InvokeNullableAsync(() => retentionManagement.GetManifestAsync(taskId, ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksRead);
+        retention.MapPost("/archive/{taskId}", async (
+            HttpContext context, string taskId, RetentionArchiveTaskRequest request, RetentionManagementService retentionManagement, CancellationToken ct)
+            => await InvokeAsync(() => retentionManagement.ArchiveNowAsync(taskId, request, Actor(context), ct)));
+        retention.MapPost("/archive/{taskId}/restore", async (
+            HttpContext context, string taskId, RetentionManagementService retentionManagement, CancellationToken ct)
+            => await InvokeAsync(async () =>
+            {
+                await retentionManagement.RestoreAsync(taskId, Actor(context), ct);
+                return new { restored = true, taskId };
+            }));
+
+        var fullBackups = management.MapGroup("/backups/full");
+        fullBackups.MapPost("", async (HttpContext context, FullBackupManagementService fullBackup, CancellationToken ct)
+            => await InvokeAsync(() => fullBackup.CreateAsync(Actor(context), ct), StatusCodes.Status201Created));
+        fullBackups.MapGet("", async (FullBackupManagementService fullBackup, CancellationToken ct)
+            => await InvokeAsync(async () => new ListFullBackupsResponse(await fullBackup.ListAsync(ct))))
+            .RequireTaskServerScope(TaskServerScopes.TasksRead);
+        fullBackups.MapPost("/{backupId}/verify", async (string backupId, FullBackupManagementService fullBackup, CancellationToken ct)
+            => await InvokeAsync(() => fullBackup.VerifyAsync(backupId, ct)));
+        fullBackups.MapPost("/{backupId}/restore", async (
+            HttpContext context, string backupId, FullBackupManagementService fullBackup, CancellationToken ct)
+            => await InvokeAsync(() => fullBackup.RestoreAsync(backupId, Actor(context), ct)));
     }
 
     private static string Actor(HttpContext context)
@@ -587,6 +646,12 @@ public static class TaskServerEndpoints
 
     private static IResult MapError(Exception exception) => exception switch
     {
+        ArtifactArchivedException archived => Results.Json(
+            new ApiError(
+                "artifact-archived",
+                archived.Message,
+                new { taskId = archived.TaskId, taskKey = archived.TaskKey, manifestUrl = $"/api/v1/management/retention/archive/{archived.TaskId}" }),
+            statusCode: StatusCodes.Status409Conflict),
         HostOrchestratorContractException contract => Results.Json(
             new ApiError(
                 "host-orchestrator-contract-unsupported",

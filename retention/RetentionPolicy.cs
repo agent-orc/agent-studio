@@ -29,6 +29,19 @@ public sealed record ProjectRetentionOverride
         = new Dictionary<ArtifactClass, RetentionRule>();
 }
 
+public sealed record FullBackupRetentionPolicy
+{
+    public int Daily { get; init; } = 7;
+    public int Weekly { get; init; } = 4;
+    public int Monthly { get; init; } = 12;
+
+    public void Validate()
+    {
+        if (Daily is < 1 or > 366 || Weekly is < 1 or > 260 || Monthly is < 1 or > 120)
+            throw new InvalidOperationException("Full backup retention must keep 1..366 daily, 1..260 weekly, and 1..120 monthly sets.");
+    }
+}
+
 public sealed record RetentionPolicy
 {
     public int Version { get; init; } = 1;
@@ -37,6 +50,7 @@ public sealed record RetentionPolicy
     public required IReadOnlyDictionary<ArtifactClass, RetentionRule> WorkspaceDefaults { get; init; }
     public IReadOnlyDictionary<string, ProjectRetentionOverride> ProjectOverrides { get; init; }
         = new Dictionary<string, ProjectRetentionOverride>(StringComparer.OrdinalIgnoreCase);
+    public FullBackupRetentionPolicy FullBackups { get; init; } = new();
 
     public RetentionRule RuleFor(string project, ArtifactClass artifactClass)
     {
@@ -57,6 +71,7 @@ public sealed record RetentionPolicy
 
     public void Validate()
     {
+        FullBackups.Validate();
         foreach (var artifactClass in Enum.GetValues<ArtifactClass>())
             _ = RuleFor(string.Empty, artifactClass);
         foreach (var project in ProjectOverrides)
@@ -71,18 +86,21 @@ public sealed record RetentionPolicy
         {
             [ArtifactClass.Authority] = new()
             {
-                Id = "authority-keep", ArtifactClass = ArtifactClass.Authority,
+                Id = "authority-keep",
+                ArtifactClass = ArtifactClass.Authority,
                 NeverArchiveLanes = DefaultNeverArchiveLanes(),
             },
             [ArtifactClass.Evidence] = new()
             {
-                Id = "evidence-stage-2", ArtifactClass = ArtifactClass.Evidence,
+                Id = "evidence-stage-2",
+                ArtifactClass = ArtifactClass.Evidence,
                 ArchiveTaskAfterDaysTerminal = 180,
                 NeverArchiveLanes = DefaultNeverArchiveLanes(),
             },
             [ArtifactClass.HeavyWorkingData] = new()
             {
-                Id = "heavy-stage-1", ArtifactClass = ArtifactClass.HeavyWorkingData,
+                Id = "heavy-stage-1",
+                ArtifactClass = ArtifactClass.HeavyWorkingData,
                 HotCapBytesPerFile = 10L * 1024 * 1024,
                 HotBudgetBytesPerTask = 64L * 1024 * 1024,
                 RefuseAboveBytes = 50L * 1024 * 1024,
@@ -94,7 +112,8 @@ public sealed record RetentionPolicy
             },
             [ArtifactClass.Runtime] = new()
             {
-                Id = "runtime-delete", ArtifactClass = ArtifactClass.Runtime,
+                Id = "runtime-delete",
+                ArtifactClass = ArtifactClass.Runtime,
                 DeleteAfterDays = 30,
                 NeverArchiveLanes = DefaultNeverArchiveLanes(),
             },
@@ -110,7 +129,13 @@ public sealed record RetentionPolicy
 
     private static void ValidateRule(RetentionRule rule)
     {
-        foreach (var days in new[] { rule.ArchiveAfterDaysTerminal, rule.ArchiveTaskAfterDaysTerminal, rule.DeleteAfterDays })
+        foreach (var days in new[]
+                 {
+                     rule.ArchiveAfterDaysTerminal,
+                     rule.ArchiveTaskAfterDaysTerminal,
+                     rule.DeleteAfterDays,
+                     rule.DeleteArchiveAfterDaysTerminal,
+                 })
             if (days is > 0 and < 7)
                 throw new InvalidOperationException($"Rule '{rule.Id}' has a retention period below 7 days.");
         if (rule.HotCapBytesPerFile > 0 && rule.HotBudgetBytesPerTask > 0
