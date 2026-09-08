@@ -1,0 +1,87 @@
+services:
+  agent-host-coding:
+    profiles: !override ["operator-runner"]
+
+  agent-host-review:
+    profiles: !override ["operator-runner"]
+
+  task-server:
+    image: agent-studio-scenario-task-server
+    restart: "no"
+    ports:
+      - "127.0.0.1:${SCENARIO_TASKSERVER_PORT:?set SCENARIO_TASKSERVER_PORT}:5071"
+    volumes:
+      - type: bind
+        source: ${SCENARIO_WORK_ROOT:?set SCENARIO_WORK_ROOT}
+        target: ${SCENARIO_WORK_ROOT:?set SCENARIO_WORK_ROOT}
+    environment:
+      STORE_PATH: ${SCENARIO_WORK_ROOT}/source-store
+      BACKUP_PATH: ${SCENARIO_WORK_ROOT}/source-store/backups
+      STUDIO_AUTH_TOKEN: ${DISTRIBUTED_STUDIO_TOKEN}
+      STUDIO_AUTH_TOKEN_FILE: ""
+      ENGINE_AUTH_TOKEN: ${DISTRIBUTED_ENGINE_TOKEN}
+      ENGINE_AUTH_TOKEN_FILE: ""
+      BOOTSTRAP_RUNNER_ID: scenario-compose-runner
+      BOOTSTRAP_RUNNER_AUTH_TOKEN: ${DISTRIBUTED_RUNNER_TOKEN}
+      BOOTSTRAP_RUNNER_AUTH_TOKEN_FILE: ""
+
+  studio-bff:
+    restart: "no"
+    environment:
+      TaskServer__AuthToken: ${DISTRIBUTED_STUDIO_TOKEN}
+      TaskServer__AuthTokenFile: ""
+
+  scenario-runner:
+    profiles: ["runner"]
+    build:
+      context: .
+      dockerfile: testsupport/scenario/runner.Dockerfile
+    restart: "no"
+    depends_on:
+      - task-server
+    volumes:
+      - type: bind
+        source: ${SCENARIO_WORK_ROOT}
+        target: ${SCENARIO_WORK_ROOT}
+    environment:
+      SCENARIO_WORK_ROOT: ${SCENARIO_WORK_ROOT}
+      SCENARIO_RELEASE_FILE: ${SCENARIO_WORK_ROOT}/release
+      RUNNER_SERVER_URL: http://task-server:5071
+      RUNNER_ID: scenario-compose-runner
+      RUNNER_NAME: scenario-compose-runner
+      RUNNER_HOSTNAME: scenario-compose-host
+      RUNNER_BACKEND_NAME: deployment-scenario
+      RUNNER_ROLE: coding
+      RUNNER_ALLOW_INSECURE_HTTP: "1"
+      RUNNER_AUTH_TOKEN: ${DISTRIBUTED_RUNNER_TOKEN}
+      RUNNER_GIT_REMOTE: ${SCENARIO_WORK_ROOT}/repository/origin.git
+      RUNNER_BRANCH: main
+      RUNNER_WORKDIR: ${SCENARIO_WORK_ROOT}/runner-work
+      RUNNER_STATE_DIR: ${SCENARIO_WORK_ROOT}/runner-state
+      RUNNER_CLI_BIN: /opt/scenario/scenario-coding-agent.sh
+      RUNNER_CLAUDE_CLI_BIN: /opt/scenario/scenario-coding-agent.sh
+      RUNNER_CODEX_CLI_BIN: /opt/scenario/scenario-coding-agent.sh
+      RUNNER_HEARTBEAT_SECONDS: "5"
+      RUNNER_RUN_TIMEOUT_SECONDS: "45"
+      RUNNER_TTL_SECONDS: "15"
+      RUNNER_MAX_PARALLELISM: "1"
+      RUNNER_POLL_SECONDS: "1"
+
+  scenario-restore-server:
+    image: agent-studio-scenario-task-server
+    profiles: ["distributed"]
+    restart: "no"
+    depends_on:
+      - task-server
+    ports:
+      - "127.0.0.1:${SCENARIO_RESTORE_PORT:?set SCENARIO_RESTORE_PORT}:5071"
+    volumes:
+      - type: bind
+        source: ${SCENARIO_WORK_ROOT}
+        target: ${SCENARIO_WORK_ROOT}
+    environment:
+      LISTEN_URL: http://0.0.0.0:5071
+      STORE_PATH: ${SCENARIO_WORK_ROOT}/restore-store
+      BACKUP_PATH: ${SCENARIO_WORK_ROOT}/restore-store/backups
+      AUTH: bearer
+      STUDIO_AUTH_TOKEN: ${DISTRIBUTED_STUDIO_TOKEN}

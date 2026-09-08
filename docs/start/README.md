@@ -66,6 +66,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Tokens | [domains/tokens.md](../system/domains/tokens.md) |
 | Remote execution outcome and recovery | [contracts/run-outcome.md](../system/contracts/run-outcome.md#remote-execution-outcome-adapter) |
 | Remote infrastructure scenario result contract | [contracts/remote-run-result.md](../system/contracts/remote-run-result.md) |
+| Deployment regression scenario (one seeded fixture, three targets, deployment-card smoke gate, and compose-full release gate; AGT-2739) | [operations/testing/deployment-scenario.md](../operations/testing/deployment-scenario.md) |
 | ADR archive | [architecture/decisions/adr-archive.md](../system/architecture/decisions/adr-archive.md) |
 | Architecture model | [architecture/model.md](../system/architecture/model.md) |
 | Architecture and Quality layer (Project Map, mapped guides, analysis inventory, component grading) | [concept](../concepts/architecture-quality-layer.md) · [interactive Dossier](../quality/architecture-quality-layer/index.html) |

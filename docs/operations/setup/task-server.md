@@ -590,3 +590,16 @@ The test owns only its exact child PIDs and temporary directories. It never
 sweeps by process name. Its parent-PID assertions require Task Server, Studio
 BFF, and Runner to be siblings owned by the harness, so stopping Studio cannot
 implicitly stop either service.
+
+## Deployment regression scenario rehearsal
+
+The topology rehearsal above proves individual failure modes such as outage,
+transport interruption, and HTTPS authentication. The complementary
+[deployment regression scenario](../testing/deployment-scenario.md) drives one
+seeded fixture through the ordered run, review, chat, backup, and restore flow.
+It exposes `inproc`, `compose`, and `remote` targets through one command and is
+the shared deployment-card and release regression gate.
+
+```bash
+scripts/scenario.sh --target inproc --level smoke
+```
