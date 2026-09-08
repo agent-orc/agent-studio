@@ -62,7 +62,7 @@ public sealed class DriftPostStepRunner
     /// </summary>
     public Func<string, string, string, string?, string?, TimeSpan, CancellationToken, Task<DriftCliResult>> CliRunner { get; set; }
         = (_, _, _, _, _, _, _) => Task.FromResult(new DriftCliResult(false, string.Empty, null));
-    private Func<string, string, string, string?, string?, string?, TimeSpan, CancellationToken, Task<DriftCliResult>>? _thinkingAwareCliRunner;
+    private Func<string, string, string, string?, string?, string?, string?, string?, TimeSpan, CancellationToken, Task<DriftCliResult>>? _thinkingAwareCliRunner;
 
     public DriftPostStepRunner(
         RuntimePromptService prompts,
@@ -77,7 +77,10 @@ public sealed class DriftPostStepRunner
         IConfiguration config,
         ILogger<DriftPostStepRunner> logger,
         CliOneShotRegistry? oneShotRegistry = null,
-        FileGenerationIndex? fileGenerationIndex = null)
+        FileGenerationIndex? fileGenerationIndex = null,
+        CliQuotaFallbackService? quotaFallback = null,
+        CliQuotaCapsService? quotaCaps = null,
+        QuotaService? quotaService = null)
     {
         _prompts = prompts;
         _driftStore = driftStore;
@@ -94,6 +97,11 @@ public sealed class DriftPostStepRunner
         _fileGenerationIndex = fileGenerationIndex ?? new FileGenerationIndex(
             Microsoft.Extensions.Logging.Abstractions.NullLogger<FileGenerationIndex>.Instance,
             pipelineLog);
+        // Retain the optional parameters for test/source compatibility. The
+        // shared one-shot dispatcher now owns the single quota decision.
+        _ = quotaFallback;
+        _ = quotaCaps;
+        _ = quotaService;
 
         if (_oneShotRegistry != null)
         {
@@ -102,7 +110,16 @@ public sealed class DriftPostStepRunner
     }
 
     private async Task<DriftCliResult> RunViaOneShotAsync(
-        string cliType, string model, string prompt, string? project, string? jobId, string? thinkingLevel, TimeSpan timeout, CancellationToken ct)
+        string cliType,
+        string model,
+        string prompt,
+        string? project,
+        string? jobId,
+        string? jobFolderPath,
+        string? stepId,
+        string? thinkingLevel,
+        TimeSpan timeout,
+        CancellationToken ct)
     {
         var oneShot = _oneShotRegistry?.Get(cliType);
         if (oneShot == null) return new DriftCliResult(false, string.Empty, null);
@@ -118,6 +135,8 @@ public sealed class DriftPostStepRunner
             RecordUsage = true,
             Project = project,
             JobId = jobId,
+            JobFolderPath = jobFolderPath,
+            StepId = stepId,
         }, ct).ConfigureAwait(false);
 
         if (!result.Ok)
@@ -241,7 +260,17 @@ public sealed class DriftPostStepRunner
         }
         var cli = _thinkingAwareCliRunner is null
             ? await CliRunner(cliType, model, prompt, project, jobId, PerDimensionTimeout, ct).ConfigureAwait(false)
-            : await _thinkingAwareCliRunner(cliType, model, prompt, project, jobId, thinkingLevel, PerDimensionTimeout, ct).ConfigureAwait(false);
+            : await _thinkingAwareCliRunner(
+                cliType,
+                model,
+                prompt,
+                project,
+                jobId,
+                jobFolderPath,
+                step.Id,
+                thinkingLevel,
+                PerDimensionTimeout,
+                ct).ConfigureAwait(false);
         var agentText = cli.Text ?? string.Empty;
         var reportId = NewReportId();
         var markdownBody = !string.IsNullOrWhiteSpace(agentText)

@@ -15,6 +15,7 @@ public sealed class RemoteRunResultCollector(TimeProvider clock)
     internal static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true,
+        NewLine = "\n",
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
     };
 

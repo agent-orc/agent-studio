@@ -895,8 +895,12 @@ public sealed class TaskServerClient : IDisposable
         // Server deliberately does not own.
         if (_useV1)
             return new RemoteChatWorkClaimResponse(RemoteChatWorkClaimStatuses.Empty);
+        var stamped = request with
+        {
+            CapabilityInstanceId = request.CapabilityInstanceId ?? RunnerInstanceId,
+        };
         return await PostJsonAsync<RemoteChatWorkClaimRequest, RemoteChatWorkClaimResponse>(
-                   "/api/runner/project-chat/claim", request, ct)
+                   "/api/runner/project-chat/claim", stamped, ct)
                ?? new RemoteChatWorkClaimResponse(RemoteChatWorkClaimStatuses.Empty);
     }
 
