@@ -246,6 +246,96 @@ public sealed class OrchestratorContextStoreTests
             Assert.Single(contexts.Contexts, context => context.Kind == OrchestratorContextKinds.Project).Summary);
     }
 
+    [Fact]
+    public async Task Workbench_context_is_permanent_isolated_from_the_project_thread_and_never_hidden()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var workspace = await store.CreateWorkspaceAsync(
+            new CreateWorkspaceRequest("Workspace"), "test", default);
+        var project = await store.CreateProjectAsync(
+            new CreateProjectRequest(workspace.WorkspaceId, "Agent Studio", "AGT"),
+            "test",
+            default);
+
+        var workbenchContext = await store.EnsureOrchestratorWorkbenchContextAsync(
+            project.ProjectId, "AGT-W43", "test", default);
+        Assert.Equal("workbench:Agent Studio/AGT-W43", workbenchContext.ContextKey);
+        Assert.Equal(OrchestratorContextKinds.Workbench, workbenchContext.Kind);
+        Assert.Null(workbenchContext.HiddenAt);
+        Assert.Equal(2, (await store.ListOrchestratorContextsAsync(false, default)).Count);
+
+        await store.AppendOrchestratorWorkbenchContextTurnAsync(
+            project.ProjectId,
+            "AGT-W43",
+            new AppendOrchestratorContextTurnRequest(new OrchestratorContextTurnDto(
+                "wb_user", DateTime.UtcNow, "user", "What does this Dossier decide?")),
+            "test",
+            default);
+
+        var workbenchTranscript = await store.ReadOrchestratorWorkbenchContextAsync(
+            project.ProjectId, "AGT-W43", 20, "test", default);
+        Assert.Single(workbenchTranscript.Turns);
+
+        // The project's own thread must stay empty - a Dossier turn is not a
+        // project-chat turn under any read path.
+        var projectTranscript = await store.ReadOrchestratorContextAsync(
+            project.ProjectId, null, 20, "test", default);
+        Assert.Empty(projectTranscript.Turns);
+
+        var listed = await store.ListOrchestratorContextsAsync(false, default);
+        var workbenchRow = Assert.Single(listed, item => item.Kind == OrchestratorContextKinds.Workbench);
+        Assert.Equal("AGT-W43", workbenchRow.WorkbenchKey);
+        Assert.Equal(1, workbenchRow.TurnCount);
+    }
+
+    [Fact]
+    public async Task Http_contract_ensures_reads_and_appends_a_workbench_context_turn()
+    {
+        using var temp = new TempDirectory();
+        await using var factory = new TaskServerFactory(temp.Path);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add(
+            TaskServerProtocol.HeaderName,
+            TaskServerProtocol.Current.ToString());
+        var workspaceResponse = await client.PostAsJsonAsync(
+            "/api/v1/workspaces",
+            new CreateWorkspaceRequest("Workspace"));
+        workspaceResponse.EnsureSuccessStatusCode();
+        var workspace = await workspaceResponse.Content.ReadFromJsonAsync<WorkspaceDto>();
+        var projectResponse = await client.PostAsJsonAsync(
+            "/api/v1/projects",
+            new CreateProjectRequest(workspace!.WorkspaceId, "Agent Studio", "AGT"));
+        projectResponse.EnsureSuccessStatusCode();
+
+        var openedWorkbenchContext = await client.GetFromJsonAsync<OrchestratorContextTranscriptResponse>(
+            "/api/v1/orchestrator-contexts/projects/Agent%20Studio/workbenches/AGT-W43/turns");
+        Assert.Equal("workbench:Agent Studio/AGT-W43", openedWorkbenchContext!.Context.ContextKey);
+        Assert.Empty(openedWorkbenchContext.Turns);
+
+        var userResponse = await client.PostAsJsonAsync(
+            "/api/v1/orchestrator-contexts/projects/Agent%20Studio/workbenches/AGT-W43/turns",
+            new AppendOrchestratorContextTurnRequest(new OrchestratorContextTurnDto(
+                "wb_http_user", DateTime.UtcNow, "user", "What is the Dossier decision state?")));
+        userResponse.EnsureSuccessStatusCode();
+
+        var transcript = await client.GetFromJsonAsync<OrchestratorContextTranscriptResponse>(
+            "/api/v1/orchestrator-contexts/projects/Agent%20Studio/workbenches/AGT-W43/turns");
+        Assert.Single(transcript!.Turns);
+
+        var projectTranscript = await client.GetFromJsonAsync<OrchestratorContextTranscriptResponse>(
+            "/api/v1/orchestrator-contexts/projects/Agent%20Studio/turns");
+        Assert.Empty(projectTranscript!.Turns);
+
+        var contexts = await client.GetFromJsonAsync<OrchestratorContextListResponse>(
+            "/api/v1/orchestrator-contexts");
+        Assert.Equal(2, contexts!.Contexts.Count);
+        Assert.Equal(
+            "AGT-W43",
+            Assert.Single(contexts.Contexts, context => context.Kind == OrchestratorContextKinds.Workbench).WorkbenchKey);
+    }
+
     private static TaskServerStore Store(string dataDirectory)
         => new(
             Options.Create(new TaskServerOptions { DataDirectory = dataDirectory }),

@@ -83,6 +83,41 @@ describe('WorkbenchViewerComponent', () => {
     http.verify();
   });
 
+  it('emits the resolved document once, carrying the catalogue key', async () => {
+    await TestBed.configureTestingModule({
+      imports: [WorkbenchViewerComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        { provide: TaskService, useValue: { getReferenceStatuses: () => of([]), refresh: vi.fn() } },
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(WorkbenchViewerComponent);
+    fixture.componentRef.setInput('projectName', 'Demo');
+    fixture.componentRef.setInput('workbenchId', 'boundary');
+    const resolved = vi.fn();
+    fixture.componentInstance.documentResolved.subscribe(resolved);
+    fixture.detectChanges();
+
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/projects/Demo/workbenches/boundary').flush(DOCUMENT);
+    fixture.detectChanges();
+
+    expect(resolved).toHaveBeenCalledTimes(1);
+    expect(resolved).toHaveBeenCalledWith(DOCUMENT);
+    expect(resolved.mock.calls[0][0].workbench.key).toBe('DEM-W4');
+
+    const pendingReferences = http.match('/api/projects/Demo/workbenches/DEM-W4/references');
+    pendingReferences.forEach(request => request.flush({
+      projectName: 'Demo',
+      workbenchKey: 'DEM-W4',
+      workbenchId: 'boundary',
+      legacyTaskKeys: [],
+      items: [],
+    }));
+  });
+
   it('normalises artifact HTML behind a policy-first fixed wrapper', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', {

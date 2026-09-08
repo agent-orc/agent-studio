@@ -4,10 +4,17 @@ public static class OrchestratorContextKinds
 {
     public const string Project = "project";
     public const string Task = "task";
+    public const string Workbench = "workbench";
 }
 
 public static class OrchestratorContextVisibilityPolicy
 {
+    /// <summary>
+    /// Only task contexts hide on archive. A Dossier (workbench) context has
+    /// no task-server-owned lifecycle row to key off - its descriptor lives in
+    /// the Studio-owned repository checkout, not this store - so it stays
+    /// permanently visible, the same as a project context.
+    /// </summary>
     public static bool IsHidden(string kind, string? taskState)
         => string.Equals(kind, OrchestratorContextKinds.Task, StringComparison.Ordinal)
            && string.Equals(taskState, "7-archive", StringComparison.Ordinal);
@@ -29,7 +36,8 @@ public sealed record OrchestratorContextDto(
     long CumulativeInputTokens = 0,
     long CumulativeOutputTokens = 0,
     long CumulativeCacheReadTokens = 0,
-    long CumulativeCacheCreationTokens = 0);
+    long CumulativeCacheCreationTokens = 0,
+    string? WorkbenchKey = null);
 
 public sealed record OrchestratorContextListResponse(
     IReadOnlyList<OrchestratorContextDto> Contexts);

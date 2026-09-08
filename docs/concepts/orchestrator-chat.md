@@ -80,6 +80,15 @@ orchestrator scopes. The accepted context keys are:
 
 - `global` for the board-level orchestrator.
 - `project:<PROJ-ID>` for one watched project's canonical orchestrator.
+- `workbench:<PROJ-ID>/<DOSSIER-KEY>` for a Dossier-scoped orchestrator
+  context, keyed by the Dossier's catalogue key (e.g. `AGT-W43`; AGT-2725).
+  Unlike every other kind, its implicit context is the Dossier's own
+  `workbench.json` descriptor and entrypoint excerpt only - no board or task
+  digest carries in, and no project transcript is read or written for it. See
+  [the AGT-2514 decision dossier's recorded operator
+  override](../operations/kontext-orchestrator-chats/index.html#task-chat)
+  for why this deviates from "Wiki, Workbench, board, file, and diff remain
+  context inputs, not new transcript owners."
 - `task:<PROJ-ID>/<KEY>` for a task-scoped orchestrator context.
 
 The execution-session registry is lazy: reading a valid context key creates the
@@ -298,10 +307,11 @@ instructs the orchestrator to ask before proposing or creating a task.
 
 The side sheet includes an optional, collapsed-by-default chat switcher. Its
 chip reports the number of active or queued contexts; expanding it groups the
-registry into Global, Projects, and Tasks. Rows expose the central short
+registry into Global, Projects, Dossiers, and Tasks (AGT-2725 added the
+Dossiers group between Projects and Tasks). Rows expose the central short
 summary, runtime state, local unread state, and cumulative token usage. Clicking a row name changes the chat
 context without moving the workspace. The separate arrow navigates to that
-context's all-project board, project board, or task tab.
+context's all-project board, project board, Dossier tab, or task tab.
 
 Active and queued contexts are acute current state. They use a visible status
 dot and label in both the side-sheet list and the central Chat History view.

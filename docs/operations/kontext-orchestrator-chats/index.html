@@ -883,6 +883,11 @@
       <strong>Actor clarity is a safety feature</strong>
       <p>The two composers can look related because both use chat. The UI must state who will answer and whether Send spends task-execution quota or changes runtime state. Color alone is not sufficient.</p>
     </div>
+
+    <div class="callout amber">
+      <strong>Operator override (2026-09-06, AGT-2725): a Dossier owns its transcript</strong>
+      <p>This dossier originally scoped Wiki, Workbench, board, file, and diff surfaces as context inputs only, never new transcript owners. The operator overrode that boundary for Dossiers on 2026-09-06: opening the orchestrator side sheet on a Dossier now starts an empty session scoped to <code>workbench:&lt;PROJ&gt;/&lt;DOSSIER-KEY&gt;</code>, mirroring the task-scoped contract above rather than adding to the project transcript. The dossier's own descriptor and entrypoint excerpt are the entire implicit context; no board or task digest carries in. Wiki pages, board, file, and diff references remain plain context inputs, unchanged by this override.</p>
+    </div>
   </section>
 
   <section id="ux" class="report-section">

@@ -143,6 +143,61 @@ describe('OrchestratorSideSheetComponent context badge and menu', () => {
       .toContain('Runner link health');
   });
 
+  it('derives a workbench (Dossier) context key from a Dossier tab and reverts to project scope when it closes', async () => {
+    const fixture = await makeFixture();
+    fixture.componentRef.setInput('composerContext', { project: 'demo-project', surface: 'Board' });
+    fixture.detectChanges();
+    expect(fixture.componentInstance.contextKind()).toBe('project');
+    expect(fixture.componentInstance.contextKey()).toBe('project:demo-project');
+
+    fixture.componentRef.setInput('composerContext', {
+      project: 'demo-project',
+      surface: 'Dossier',
+      detail: 'Runner link health',
+      referenceKey: 'AGT-W43',
+    });
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.contextKind()).toBe('workbench');
+    expect(fixture.componentInstance.contextKey()).toBe('workbench:demo-project/AGT-W43');
+
+    // Leaving the Dossier returns to the project session.
+    fixture.componentRef.setInput('composerContext', { project: 'demo-project', surface: 'Board' });
+    fixture.detectChanges();
+    expect(fixture.componentInstance.contextKind()).toBe('project');
+    expect(fixture.componentInstance.contextKey()).toBe('project:demo-project');
+
+    // Returning to the same Dossier shows the Dossier session again.
+    fixture.componentRef.setInput('composerContext', {
+      project: 'demo-project',
+      surface: 'Dossier',
+      detail: 'Runner link health',
+      referenceKey: 'AGT-W43',
+    });
+    fixture.detectChanges();
+    expect(fixture.componentInstance.contextKey()).toBe('workbench:demo-project/AGT-W43');
+  });
+
+  it('renders the Dossier automatic context chip as mandatory (not dismissable)', async () => {
+    const fixture = await makeFixture();
+    fixture.componentRef.setInput('composerContext', {
+      project: 'demo-project',
+      surface: 'Dossier',
+      detail: 'Runner link health',
+      referenceKey: 'AGT-W43',
+    });
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.automaticContextIncluded()).toBe(true);
+    const chip = fixture.componentInstance.cacContextAttachments()
+      .find(item => item.id === 'context:automatic');
+    expect(chip?.hint).toContain('always included');
+
+    // The dismiss affordance is a no-op in Dossier scope, same as task scope.
+    fixture.componentInstance.toggleNextMessageContext();
+    expect(fixture.componentInstance.automaticContextIncluded()).toBe(true);
+  });
+
   it('shows the persisted context receipt for the latest orchestrator answer', async () => {
     const fixture = await makeFixture();
     fixture.componentInstance.turns.set([{

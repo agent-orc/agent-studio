@@ -58,6 +58,14 @@ export class WorkbenchViewerComponent {
   readonly projectName = input.required<string>();
   readonly workbenchId = input.required<string>();
   readonly openWiki = output<string>();
+  /**
+   * Emitted once the Dossier document resolves. A route-opened tab (deep
+   * link or reload) starts without the catalogue `key`/title the Explorer
+   * already knows for a click-opened tab; the host patches the active tab
+   * with this resolved data so the orchestrator side sheet's Dossier scope
+   * (AGT-2725) sees the same key regardless of how the tab was opened.
+   */
+  readonly documentResolved = output<WorkbenchDocument>();
   private readonly docs = inject(ProjectDocsService);
   private readonly http = inject(HttpClient);
   private readonly hub = inject(JobsHubClient);
@@ -240,6 +248,7 @@ export class WorkbenchViewerComponent {
       next: (document) => {
         if (generation !== this.requestGeneration) return;
         this.document.set(document);
+        this.documentResolved.emit(document);
         this.lastUpdatedAtUtc.set(new Date().toISOString());
         const discovered = discoverWorkbenchDecisionMarkup(document.html);
         if (document.workbench.decision?.state === 'succeeded')

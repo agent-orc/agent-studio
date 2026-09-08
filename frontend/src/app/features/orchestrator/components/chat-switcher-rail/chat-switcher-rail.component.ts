@@ -17,6 +17,8 @@ export class ChatSwitcherRailComponent {
   readonly sessions = input<readonly OrchestratorContextSession[]>([]);
   readonly projects = input<readonly string[]>([]);
   readonly tasks = input<readonly TaskInfo[]>([]);
+  /** Dossier titles keyed by `workbench:<PROJ>/<KEY>` context key. */
+  readonly workbenchTitles = input<ReadonlyMap<string, string>>(new Map());
   readonly activeContextKey = input<string | null>(null);
   readonly unreadContextKeys = input<ReadonlySet<string>>(new Set());
   readonly pendingContextKeys = input<ReadonlySet<string>>(new Set());
@@ -42,12 +44,15 @@ export class ChatSwitcherRailComponent {
         ? 'Global orchestrator'
         : session.kind === 'project'
           ? (session.projectId ?? session.contextKey)
-          : this.taskLabel(session),
+          : session.kind === 'workbench'
+            ? this.workbenchLabel(session)
+            : this.taskLabel(session),
     }));
   });
 
   readonly globalRows = computed(() => this.rows().filter(row => row.kind === 'global'));
   readonly projectRows = computed(() => this.rows().filter(row => row.kind === 'project'));
+  readonly workbenchRows = computed(() => this.rows().filter(row => row.kind === 'workbench'));
   readonly taskRows = computed(() => this.rows().filter(row => row.kind === 'task'));
 
   select(contextKey: string): void {
@@ -79,5 +84,16 @@ export class ChatSwitcherRailComponent {
       item.projectName === session.projectId
       && (item.taskKey === session.taskKey || item.displayKey === session.taskKey || item.key === session.taskKey));
     return task?.title ?? session.taskKey ?? session.contextKey;
+  }
+
+  /**
+   * Prefers the title of a currently-open Dossier tab; a Dossier session
+   * that is not open in any tab (no app-wide catalogue fetch happens here)
+   * falls back to its stable key. The row's own `summary` (rendered
+   * separately, same as a task row) still carries the Dossier's latest
+   * preview either way.
+   */
+  private workbenchLabel(session: OrchestratorContextSession): string {
+    return this.workbenchTitles().get(session.contextKey) ?? session.workbenchKey ?? session.contextKey;
   }
 }

@@ -411,6 +411,9 @@ public static class RunnerEndpoints
         runnerGroup.MapGet("/project:{projectId}/orchestrator-chat",
             (string projectId, TaskScannerService scanner, OrchestratorChatService chatService, CancellationToken ct) =>
                 ReadContextChat($"project:{projectId}", scanner, chatService, ct));
+        runnerGroup.MapGet("/workbench:{projectId}/{workbenchKey}/orchestrator-chat",
+            (string projectId, string workbenchKey, TaskScannerService scanner, OrchestratorChatService chatService, CancellationToken ct) =>
+                ReadContextChat($"workbench:{projectId}/{workbenchKey}", scanner, chatService, ct));
         runnerGroup.MapGet("/task:{projectId}/{taskKey}/orchestrator-chat",
             (string projectId, string taskKey, TaskScannerService scanner, OrchestratorChatService chatService, CancellationToken ct) =>
                 ReadContextChat($"task:{projectId}/{taskKey}", scanner, chatService, ct));
@@ -418,6 +421,10 @@ public static class RunnerEndpoints
         runnerGroup.MapPost("/project:{projectId}/orchestrator-chat",
             (string projectId, SendOrchestratorChatRequest req, HttpContext ctx, TaskScannerService scanner, OrchestratorChatService chatService, CancellationToken ct) =>
                 SendContextChat($"project:{projectId}", req, ctx, scanner, chatService, ct))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Chat);
+        runnerGroup.MapPost("/workbench:{projectId}/{workbenchKey}/orchestrator-chat",
+            (string projectId, string workbenchKey, SendOrchestratorChatRequest req, HttpContext ctx, TaskScannerService scanner, OrchestratorChatService chatService, CancellationToken ct) =>
+                SendContextChat($"workbench:{projectId}/{workbenchKey}", req, ctx, scanner, chatService, ct))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Chat);
         runnerGroup.MapPost("/task:{projectId}/{taskKey}/orchestrator-chat",
             (string projectId, string taskKey, SendOrchestratorChatRequest req, HttpContext ctx, TaskScannerService scanner, OrchestratorChatService chatService, CancellationToken ct) =>

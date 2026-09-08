@@ -44,6 +44,7 @@ public sealed class OrchestratorTurnService
     private readonly IConfiguration _config;
     private readonly ILogger<OrchestratorTurnService> _logger;
     private readonly OrchestratorContextDigestService? _contextDigests;
+    private readonly OrchestratorWorkbenchPromptContextComposer? _workbenchPromptContext;
     private readonly StartupExecutionAdmission? _executionAdmission;
     private readonly object _gate = new();
     private readonly Queue<OrchestratorTurnWorkItem> _queued = new();
@@ -56,7 +57,8 @@ public sealed class OrchestratorTurnService
         IConfiguration config,
         ILogger<OrchestratorTurnService> logger,
         OrchestratorContextDigestService? contextDigests = null,
-        StartupExecutionAdmission? executionAdmission = null)
+        StartupExecutionAdmission? executionAdmission = null,
+        OrchestratorWorkbenchPromptContextComposer? workbenchPromptContext = null)
     {
         _registry = registry;
         _runner = runner;
@@ -64,6 +66,7 @@ public sealed class OrchestratorTurnService
         _logger = logger;
         _contextDigests = contextDigests;
         _executionAdmission = executionAdmission;
+        _workbenchPromptContext = workbenchPromptContext;
     }
 
     public OrchestratorTurnResponse Enqueue(string rawContextKey, OrchestratorTurnRequest request)
@@ -293,6 +296,33 @@ public sealed class OrchestratorTurnService
 
     private async Task<string> BuildPromptAsync(OrchestratorTurnWorkItem item, CancellationToken ct)
     {
+        // A Dossier (workbench) session is deliberately isolated: it never
+        // reads the board/task digest, only its own descriptor + entrypoint
+        // excerpt. This branch never falls through to _contextDigests below.
+        if (OrchestratorContextKey.TryParse(item.ContextKey, out var key)
+            && key.Kind == OrchestratorContextKey.WorkbenchKind)
+        {
+            try
+            {
+                var workbench = _workbenchPromptContext?.Compose(key.ProjectId!, key.WorkbenchKey);
+                if (workbench != null)
+                    return workbench.PromptBlock + "\n\n=== USER MESSAGE ===\n" + item.Prompt;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "orchestrator_workbench_context_injection_failed contextKey={ContextKey} turnId={TurnId}",
+                    item.ContextKey,
+                    item.TurnId);
+            }
+            return item.Prompt;
+        }
+
         if (_contextDigests == null) return item.Prompt;
         try
         {

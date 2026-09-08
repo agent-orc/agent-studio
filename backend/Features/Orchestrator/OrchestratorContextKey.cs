@@ -5,8 +5,10 @@ namespace AgentStudio.Orchestrator;
 
 /// <summary>
 /// Canonical context key for one orchestrator session (multichat concept,
-/// AGT-1917 Phase 1). Three shapes exist: <c>global</c>,
-/// <c>project:&lt;PROJ-ID&gt;</c> and <c>task:&lt;PROJ-ID&gt;/&lt;TASK-KEY&gt;</c>.
+/// AGT-1917 Phase 1; Dossier scope added AGT-2725). Four shapes exist:
+/// <c>global</c>, <c>project:&lt;PROJ-ID&gt;</c>,
+/// <c>workbench:&lt;PROJ-ID&gt;/&lt;DOSSIER-KEY&gt;</c> and
+/// <c>task:&lt;PROJ-ID&gt;/&lt;TASK-KEY&gt;</c>.
 ///
 /// <para>
 /// The key doubles as the registry folder name after <see cref="Encode"/>,
@@ -20,29 +22,37 @@ public sealed class OrchestratorContextKey : IEquatable<OrchestratorContextKey>
 {
     public const string GlobalKind = "global";
     public const string ProjectKind = "project";
+    public const string WorkbenchKind = "workbench";
     public const string TaskKind = "task";
 
     /// <summary>The canonical string form, e.g. <c>task:AGT/AGT-1917</c>.</summary>
     public string Value { get; }
 
-    /// <summary>One of <see cref="GlobalKind"/> / <see cref="ProjectKind"/> / <see cref="TaskKind"/>.</summary>
+    /// <summary>
+    /// One of <see cref="GlobalKind"/> / <see cref="ProjectKind"/> /
+    /// <see cref="WorkbenchKind"/> / <see cref="TaskKind"/>.
+    /// </summary>
     public string Kind { get; }
 
-    /// <summary>Project id for project / task contexts; null for global.</summary>
+    /// <summary>Project id for project / workbench / task contexts; null for global.</summary>
     public string? ProjectId { get; }
 
     /// <summary>Task key for task contexts; null otherwise.</summary>
     public string? TaskKey { get; }
 
-    /// <summary>The singleton key for the app-wide orchestrator session.</summary>
-    public static readonly OrchestratorContextKey Global = new(GlobalKind, GlobalKind, null, null);
+    /// <summary>Dossier (Workbench) key for workbench contexts; null otherwise.</summary>
+    public string? WorkbenchKey { get; }
 
-    private OrchestratorContextKey(string value, string kind, string? projectId, string? taskKey)
+    /// <summary>The singleton key for the app-wide orchestrator session.</summary>
+    public static readonly OrchestratorContextKey Global = new(GlobalKind, GlobalKind, null, null, null);
+
+    private OrchestratorContextKey(string value, string kind, string? projectId, string? taskKey, string? workbenchKey)
     {
         Value = value;
         Kind = kind;
         ProjectId = projectId;
         TaskKey = taskKey;
+        WorkbenchKey = workbenchKey;
     }
 
     public bool IsGlobal => Kind == GlobalKind;
@@ -86,7 +96,20 @@ public sealed class OrchestratorContextKey : IEquatable<OrchestratorContextKey>
         {
             var id = raw[projectPrefix.Length..];
             if (!IsValidIdPart(id)) return false;
-            key = new OrchestratorContextKey(raw, ProjectKind, id, null);
+            key = new OrchestratorContextKey(raw, ProjectKind, id, null, null);
+            return true;
+        }
+
+        const string workbenchPrefix = WorkbenchKind + ":";
+        if (raw.StartsWith(workbenchPrefix, StringComparison.Ordinal))
+        {
+            var rest = raw[workbenchPrefix.Length..];
+            var slash = rest.IndexOf('/');
+            if (slash < 0) return false;
+            var projectId = rest[..slash];
+            var workbenchKey = rest[(slash + 1)..];
+            if (!IsValidIdPart(projectId) || !IsValidIdPart(workbenchKey)) return false;
+            key = new OrchestratorContextKey(raw, WorkbenchKind, projectId, null, workbenchKey);
             return true;
         }
 
@@ -99,7 +122,7 @@ public sealed class OrchestratorContextKey : IEquatable<OrchestratorContextKey>
             var projectId = rest[..slash];
             var taskKey = rest[(slash + 1)..];
             if (!IsValidIdPart(projectId) || !IsValidIdPart(taskKey)) return false;
-            key = new OrchestratorContextKey(raw, TaskKind, projectId, taskKey);
+            key = new OrchestratorContextKey(raw, TaskKind, projectId, taskKey, null);
             return true;
         }
 
