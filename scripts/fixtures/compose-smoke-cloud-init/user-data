@@ -5,6 +5,8 @@ packages:
   - curl
   - docker.io
   - docker-compose-v2
+  - git
+  - jq
 runcmd:
   - |
     set -eu

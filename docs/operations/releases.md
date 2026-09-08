@@ -4,7 +4,8 @@ Agent Studio releases are tag-bound, create-once GitHub Releases created only
 from an exact `vX.Y.Z` tag whose version matches the repository `VERSION` file.
 The release workflow tests the tagged revision, builds self-contained binaries,
 creates the guided setup executable and three archives, writes `SHA256SUMS`,
-attests the executable and archives, publishes version-pinned demo images, and
+attests the executable and archives, publishes one pinned container image per
+service (see [Container images](setup/task-server.md#container-images)), and
 creates the GitHub Release. A target host never builds from a checkout.
 
 ## Release assets
@@ -35,10 +36,14 @@ gh attestation verify agent-orchestrator-X.Y.Z-linux-x64.tar.gz \
 
 The demo path uses the exact release tag on the public
 `ghcr.io/agent-orc/agent-studio-api` and
-`ghcr.io/agent-orc/agent-studio-web` images. It binds the UI to loopback, uses
+`ghcr.io/agent-orc/agent-studio-web` images - two of the six per-service
+images published for every release. It binds the UI to loopback, uses
 isolated Docker volumes, mounts no host repositories, and starts no Agent Host.
 These images are an evaluation channel, not the native repository execution
-path.
+path. The full `docker compose up --wait` path in
+[Getting started](setup/getting-started.md) is the primary Docker
+installation; it pulls the same images plus `agent-task-server`,
+`agent-orchestrator-engine`, `agent-studio-bff`, and `agent-host`.
 
 ## Guided setup
 
