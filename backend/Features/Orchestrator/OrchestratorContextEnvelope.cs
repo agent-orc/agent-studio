@@ -19,7 +19,8 @@ public sealed record OrchestratorConversationScope(
     string Kind,
     string ContextKey,
     string ProjectId,
-    string? TaskKey = null);
+    string? TaskKey = null,
+    string? WorkbenchKey = null);
 
 public sealed record OrchestratorActiveSurface(
     string Kind,
@@ -139,6 +140,12 @@ public static class OrchestratorContextEnvelopePolicy
         string projectName,
         OrchestratorContextKey? routeContext)
     {
+        if (routeContext?.Kind == OrchestratorContextKey.WorkbenchKind)
+        {
+            var workbenchKey = routeContext.WorkbenchKey;
+            return new OrchestratorConversationScope(
+                "workbench", $"workbench:{projectName}/{workbenchKey}", projectName, null, workbenchKey);
+        }
         var taskKey = routeContext?.Kind == OrchestratorContextKey.TaskKind
             ? routeContext.TaskKey
             : null;
@@ -156,6 +163,7 @@ public static class OrchestratorContextEnvelopePolicy
         if (!string.Equals(expected.Kind, supplied.Kind, StringComparison.OrdinalIgnoreCase)
             || !string.Equals(expected.ProjectId, supplied.ProjectId, StringComparison.OrdinalIgnoreCase)
             || !string.Equals(expected.TaskKey, supplied.TaskKey, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(expected.WorkbenchKey, supplied.WorkbenchKey, StringComparison.OrdinalIgnoreCase)
             || !string.Equals(expected.ContextKey, supplied.ContextKey, StringComparison.OrdinalIgnoreCase))
             throw new OrchestratorContextEnvelopeException(
                 "context-scope-mismatch",

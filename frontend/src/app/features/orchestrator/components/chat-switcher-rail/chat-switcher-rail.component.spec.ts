@@ -66,6 +66,49 @@ describe('ChatSwitcherRailComponent', () => {
       .toHaveLength(1);
   });
 
+  it('groups Dossier sessions under a Dossiers heading between Projects and Tasks', () => {
+    const workbenchSession = {
+      contextKey: 'workbench:Alpha/AGT-W43', kind: 'workbench' as const, projectId: 'Alpha', taskKey: null,
+      workbenchKey: 'AGT-W43', updatedAt: '2026-08-10T10:00:00Z', model: null, cumulativeInputTokens: 0,
+      cumulativeOutputTokens: 0, cumulativeCacheReadTokens: 0, cumulativeCacheCreationTokens: 0,
+      runtimeStatus: 'idle' as const, queuePosition: 0, summary: 'Dossier chat for AGT-W43',
+    };
+    fixture.componentRef.setInput('sessions', [
+      ...fixture.componentInstance.sessions(),
+      workbenchSession,
+    ]);
+    fixture.detectChanges();
+
+    const groupHeadings = [...fixture.nativeElement.querySelectorAll('.context-list__group h3')]
+      .map((el: HTMLElement) => el.textContent);
+    expect(groupHeadings).toEqual(['Global', 'Projects', 'Dossiers', 'Tasks']);
+
+    const row = fixture.nativeElement.querySelector('[data-testid="chat-switcher-row-workbench:Alpha/AGT-W43"]');
+    expect(row).not.toBeNull();
+    expect(row.textContent).toContain('AGT-W43');
+  });
+
+  it('prefers an open Dossier tab title over the bare key in the rail label', () => {
+    const workbenchSession = {
+      contextKey: 'workbench:Alpha/AGT-W43', kind: 'workbench' as const, projectId: 'Alpha', taskKey: null,
+      workbenchKey: 'AGT-W43', updatedAt: '2026-08-10T10:00:00Z', model: null, cumulativeInputTokens: 0,
+      cumulativeOutputTokens: 0, cumulativeCacheReadTokens: 0, cumulativeCacheCreationTokens: 0,
+      runtimeStatus: 'idle' as const, queuePosition: 0,
+    };
+    fixture.componentRef.setInput('sessions', [
+      ...fixture.componentInstance.sessions(),
+      workbenchSession,
+    ]);
+    fixture.componentRef.setInput(
+      'workbenchTitles',
+      new Map([['workbench:Alpha/AGT-W43', 'Context-Aware Orchestrator Chats']]),
+    );
+    fixture.detectChanges();
+
+    const row = fixture.nativeElement.querySelector('[data-testid="chat-switcher-row-workbench:Alpha/AGT-W43"]');
+    expect(row.textContent).toContain('Context-Aware Orchestrator Chats');
+  });
+
   it('uses an acute working marker only while a reply is outstanding', () => {
     fixture.componentRef.setInput('pendingContextKeys', new Set(['task:Alpha/A-1']));
     fixture.detectChanges();

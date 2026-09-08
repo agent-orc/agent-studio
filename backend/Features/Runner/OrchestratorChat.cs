@@ -82,9 +82,9 @@ public class OrchestratorChat
             // new file-tree + FTS index stay current as turns are appended.
             // Best-effort; legacy JSONL remains the fallback if this fails.
             // Only the project-scoped thread mirrors — the project chat tree
-            // is per-project, so folding task-context turns into it would
-            // cross-contaminate the board's history.
-            if (!IsTaskContext(context))
+            // is per-project, so folding an isolated task or Dossier turn
+            // into it would cross-contaminate the board's history.
+            if (!IsIsolatedContext(context))
                 MirrorToProjectChat(watchPath, persisted);
             return true;
         }
@@ -185,7 +185,7 @@ public class OrchestratorChat
 
     internal bool EnsureContext(string watchPath, OrchestratorContextKey? context)
     {
-        if (!IsTaskContext(context)) return true;
+        if (!IsIsolatedContext(context)) return true;
         try
         {
             var path = ResolveContextPath(watchPath, context);
@@ -207,20 +207,26 @@ public class OrchestratorChat
     private static string ResolvePath(string watchPath) =>
         Path.Combine(watchPath, ".orchestrator", "orchestrator-chat.jsonl");
 
-    private static bool IsTaskContext(OrchestratorContextKey? context) =>
-        context != null && context.Kind == OrchestratorContextKey.TaskKind;
+    /// <summary>
+    /// True for a context that owns its own isolated transcript file (task or
+    /// workbench/Dossier), as opposed to the shared per-project thread.
+    /// </summary>
+    private static bool IsIsolatedContext(OrchestratorContextKey? context) =>
+        context != null
+        && (context.Kind == OrchestratorContextKey.TaskKind || context.Kind == OrchestratorContextKey.WorkbenchKind);
 
     /// <summary>
-    /// Resolve the on-disk transcript file for a navigation context. Task
-    /// contexts get a dedicated file under <c>.orchestrator/context-chats/</c>
-    /// keyed by the reversible <see cref="OrchestratorContextKey.Encode"/>
-    /// folder-safe form; every other context (including <c>null</c>) resolves
-    /// to the legacy per-project <c>orchestrator-chat.jsonl</c> so the board
-    /// thread and older callers are byte-for-byte unchanged.
+    /// Resolve the on-disk transcript file for a navigation context. Task and
+    /// workbench (Dossier) contexts each get a dedicated file under
+    /// <c>.orchestrator/context-chats/</c> keyed by the reversible
+    /// <see cref="OrchestratorContextKey.Encode"/> folder-safe form; every
+    /// other context (including <c>null</c>) resolves to the legacy
+    /// per-project <c>orchestrator-chat.jsonl</c> so the board thread and
+    /// older callers are byte-for-byte unchanged.
     /// </summary>
     internal static string ResolveContextPath(string watchPath, OrchestratorContextKey? context)
     {
-        if (!IsTaskContext(context))
+        if (!IsIsolatedContext(context))
             return ResolvePath(watchPath);
         return Path.Combine(watchPath, ".orchestrator", "context-chats", context!.Encode() + ".jsonl");
     }
@@ -460,6 +466,7 @@ public class OrchestratorChatService
     private readonly RemoteChatWorkBroker? _remoteWork;
     private readonly GitService? _git;
     private readonly OrchestratorTaskPromptContextComposer? _taskPromptContext;
+    private readonly OrchestratorWorkbenchPromptContextComposer? _workbenchPromptContext;
     private readonly IOrchestratorChatPersistence? _persistence;
     private readonly StartupExecutionAdmission? _executionAdmission;
 
@@ -494,7 +501,8 @@ public class OrchestratorChatService
         GitService? git = null,
         OrchestratorTaskPromptContextComposer? taskPromptContext = null,
         IOrchestratorChatPersistence? persistence = null,
-        StartupExecutionAdmission? executionAdmission = null)
+        StartupExecutionAdmission? executionAdmission = null,
+        OrchestratorWorkbenchPromptContextComposer? workbenchPromptContext = null)
     {
         _chat = chat;
         _runner = runner;
@@ -511,6 +519,7 @@ public class OrchestratorChatService
         _taskPromptContext = taskPromptContext;
         _persistence = persistence;
         _executionAdmission = executionAdmission;
+        _workbenchPromptContext = workbenchPromptContext;
     }
 
     public List<OrchestratorChatTurn> Read(string watchPath) => _chat.Read(watchPath);
@@ -814,8 +823,13 @@ public class OrchestratorChatService
         OrchestratorContextEnvelope envelope,
         CancellationToken ct)
     {
-        var digestAdded = false;
-        if (_contextDigests is not null)
+        // A Dossier (workbench) turn is deliberately isolated: no project
+        // digest, board pulse, or task bundle carries into it. The Dossier's
+        // own descriptor + entrypoint excerpt (below) is the entire implicit
+        // context, so this whole automatic-project-state section is skipped.
+        var isWorkbenchScope = envelope.Scope.Kind == "workbench";
+        var digestAdded = isWorkbenchScope;
+        if (!isWorkbenchScope && _contextDigests is not null)
         {
             try
             {
@@ -948,7 +962,46 @@ public class OrchestratorChatService
                 projectName);
         }
 
-        if (_componentRouting is not null)
+        try
+        {
+            var workbenchPromptContext = isWorkbenchScope
+                ? _workbenchPromptContext?.Compose(projectName, envelope.Scope.WorkbenchKey)
+                : null;
+            if (workbenchPromptContext is not null)
+            {
+                blocks.Add(ResolvedContextBlock.Included(
+                    $"workbench:{projectName}/{workbenchPromptContext.WorkbenchKey}/bundle",
+                    "workbench-bundle",
+                    workbenchPromptContext.PromptBlock,
+                    revision: null,
+                    freshness: "current",
+                    isExplicit: false));
+            }
+            else if (isWorkbenchScope)
+            {
+                blocks.Add(ResolvedContextBlock.Unavailable(
+                    $"workbench:{projectName}/{envelope.Scope.WorkbenchKey}/bundle",
+                    "workbench-bundle",
+                    "unresolved",
+                    "The Dossier bundle could not be resolved."));
+            }
+        }
+        catch (Exception exception)
+        {
+            blocks.Add(ResolvedContextBlock.Unavailable(
+                $"workbench:{projectName}/{envelope.Scope.WorkbenchKey}/bundle",
+                "workbench-bundle",
+                "unavailable",
+                "The Dossier bundle could not be resolved."));
+            _logger.LogWarning(
+                exception,
+                "orchestrator_workbench_prompt_context_lookup_failed contextKey={ContextKey} workbenchKey={WorkbenchKey} project={Project}",
+                envelope.Scope.ContextKey,
+                envelope.Scope.WorkbenchKey,
+                projectName);
+        }
+
+        if (!isWorkbenchScope && _componentRouting is not null)
         {
             var affectedComponent = request.NavigationContext?.AffectedComponent;
             var routingComponent = string.IsNullOrWhiteSpace(affectedComponent)

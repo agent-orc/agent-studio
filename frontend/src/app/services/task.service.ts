@@ -234,6 +234,7 @@ function uniqueJobsFromGrouped(grouped: GroupedJobs): TaskInfo[] {
  */
 export function orchestratorContextChatSegment(contextKey: string): string {
   const taskPrefix = 'task:';
+  const workbenchPrefix = 'workbench:';
   const projectPrefix = 'project:';
   if (contextKey.startsWith(taskPrefix)) {
     const rest = contextKey.slice(taskPrefix.length);
@@ -242,6 +243,14 @@ export function orchestratorContextChatSegment(contextKey: string): string {
       const proj = rest.slice(0, slash);
       const key = rest.slice(slash + 1);
       return `task:${encodeURIComponent(proj)}/${encodeURIComponent(key)}`;
+    }
+  } else if (contextKey.startsWith(workbenchPrefix)) {
+    const rest = contextKey.slice(workbenchPrefix.length);
+    const slash = rest.indexOf('/');
+    if (slash >= 0) {
+      const proj = rest.slice(0, slash);
+      const key = rest.slice(slash + 1);
+      return `workbench:${encodeURIComponent(proj)}/${encodeURIComponent(key)}`;
     }
   } else if (contextKey.startsWith(projectPrefix)) {
     return `project:${encodeURIComponent(contextKey.slice(projectPrefix.length))}`;

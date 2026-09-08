@@ -45,7 +45,7 @@ export interface ContextChipPresentation {
 export function buildContextChipPresentation(input: {
   project: string | null;
   page: PageContext | null;
-  contextKind: 'task' | 'project';
+  contextKind: 'task' | 'workbench' | 'project';
   taskKey: string | null;
   taskTitle: string | null;
   location: ComposerLocationContext | null;

@@ -111,31 +111,38 @@ public sealed class LocalOrchestratorChatPersistence(
             {
                 ct.ThrowIfCancellationRequested();
                 var encoded = Path.GetFileNameWithoutExtension(path);
-                if (!OrchestratorContextKey.TryDecode(encoded, out var taskContext)
-                    || taskContext.Kind != OrchestratorContextKey.TaskKind
+                if (!OrchestratorContextKey.TryDecode(encoded, out var isolatedContext)
+                    || isolatedContext.Kind is not (OrchestratorContextKey.TaskKind or OrchestratorContextKey.WorkbenchKind)
                     || !string.Equals(
-                        taskContext.ProjectId,
+                        isolatedContext.ProjectId,
                         project.Name,
                         StringComparison.Ordinal))
                 {
                     continue;
                 }
 
-                var task = tasks.FirstOrDefault(candidate =>
-                    string.Equals(candidate.ProjectName, project.Name, StringComparison.OrdinalIgnoreCase)
-                    && (string.Equals(candidate.Key, taskContext.TaskKey, StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(candidate.TaskKey, taskContext.TaskKey, StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(candidate.Id, taskContext.TaskKey, StringComparison.OrdinalIgnoreCase)));
-                var hidden = OrchestratorContextVisibilityPolicy.IsHidden(
-                    OrchestratorContextKinds.Task,
-                    task?.State);
-                if (hidden && !includeHidden) continue;
+                // A Dossier (workbench) context has no task-lifecycle row to
+                // key visibility off - it is never hidden, mirroring the
+                // Task Server's OrchestratorContextVisibilityPolicy.
+                AgentStudio.Shared.TaskInfo? task = null;
+                if (isolatedContext.Kind == OrchestratorContextKey.TaskKind)
+                {
+                    task = tasks.FirstOrDefault(candidate =>
+                        string.Equals(candidate.ProjectName, project.Name, StringComparison.OrdinalIgnoreCase)
+                        && (string.Equals(candidate.Key, isolatedContext.TaskKey, StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(candidate.TaskKey, isolatedContext.TaskKey, StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(candidate.Id, isolatedContext.TaskKey, StringComparison.OrdinalIgnoreCase)));
+                    var hidden = OrchestratorContextVisibilityPolicy.IsHidden(
+                        OrchestratorContextKinds.Task,
+                        task?.State);
+                    if (hidden && !includeHidden) continue;
+                }
 
                 result.Add(BuildContext(
-                    taskContext,
+                    isolatedContext,
                     project.Name,
                     task,
-                    chat.Read(project.Path, taskContext),
+                    chat.Read(project.Path, isolatedContext),
                     path,
                     project.Path));
             }
@@ -164,7 +171,9 @@ public sealed class LocalOrchestratorChatPersistence(
             : (DateTime?)null;
         var fallbackSummary = task?.Title
                               ?? context.TaskKey
-                              ?? $"Project chat for {projectName}";
+                              ?? (context.Kind == OrchestratorContextKey.WorkbenchKind
+                                  ? $"Dossier chat for {context.WorkbenchKey}"
+                                  : $"Project chat for {projectName}");
         var summary = BuildSummary(
             turns.LastOrDefault(turn => turn.Role == OrchestratorChatRoles.User)?.Text,
             fallbackSummary);
@@ -188,7 +197,8 @@ public sealed class LocalOrchestratorChatPersistence(
             turns.Sum(turn => (long)(turn.TokenUsage?.InputTokens ?? 0)),
             turns.Sum(turn => (long)(turn.TokenUsage?.OutputTokens ?? 0)),
             turns.Sum(turn => (long)(turn.TokenUsage?.CacheReadTokens ?? 0)),
-            turns.Sum(turn => (long)(turn.TokenUsage?.CacheCreationTokens ?? 0)));
+            turns.Sum(turn => (long)(turn.TokenUsage?.CacheCreationTokens ?? 0)),
+            context.WorkbenchKey);
     }
 
     private static string BuildSummary(string? body, string fallback)
@@ -257,7 +267,7 @@ public sealed class TaskServerOrchestratorChatPersistence(
         await EnsureSuccessAsync(response, ct).ConfigureAwait(false);
         if (contextBroadcaster is not null)
         {
-            var contextKey = context?.Kind == OrchestratorContextKey.TaskKind
+            var contextKey = context?.Kind is OrchestratorContextKey.TaskKind or OrchestratorContextKey.WorkbenchKind
                 ? context.Value
                 : $"project:{projectName}";
             await contextBroadcaster.ContextChangedAsync(
@@ -304,6 +314,8 @@ public sealed class TaskServerOrchestratorChatPersistence(
     private static string ContextPath(string projectName, OrchestratorContextKey? context)
     {
         var project = Uri.EscapeDataString(projectName);
+        if (context?.Kind == OrchestratorContextKey.WorkbenchKind && !string.IsNullOrWhiteSpace(context.WorkbenchKey))
+            return $"/api/v1/orchestrator-contexts/projects/{project}/workbenches/{Uri.EscapeDataString(context.WorkbenchKey)}";
         var taskKey = context?.Kind == OrchestratorContextKey.TaskKind ? context.TaskKey : null;
         return string.IsNullOrWhiteSpace(taskKey)
             ? $"/api/v1/orchestrator-contexts/projects/{project}"
@@ -388,7 +400,9 @@ public sealed class TaskServerOrchestratorChatPersistence(
         if (turn.Receipt is not null)
         {
             receipt = new OrchestratorContextReceipt(
-                turn.Receipt.ContextKey.StartsWith("task:", StringComparison.Ordinal) ? "task" : "project",
+                turn.Receipt.ContextKey.StartsWith("task:", StringComparison.Ordinal) ? "task"
+                    : turn.Receipt.ContextKey.StartsWith("workbench:", StringComparison.Ordinal) ? "workbench"
+                    : "project",
                 turn.Receipt.ContextKey,
                 TaskKeyFromContext(turn.Receipt.ContextKey),
                 turn.Receipt.Sources.Select(source => source.SourceId).ToArray(),

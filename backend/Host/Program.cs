@@ -362,6 +362,7 @@ builder.Services.AddSingleton<IOrchestratorChatPersistence>(sp =>
         : sp.GetRequiredService<LocalOrchestratorChatPersistence>());
 builder.Services.AddSingleton<OrchestratorContextDigestService>();
 builder.Services.AddSingleton<OrchestratorTaskPromptContextComposer>();
+builder.Services.AddSingleton<OrchestratorWorkbenchPromptContextComposer>();
 builder.Services.AddSingleton<RemoteChatWorkBroker>();
 builder.Services.AddSingleton<OrchestratorChatService>();
 builder.Services.AddSingleton<ProjectChatStore>();

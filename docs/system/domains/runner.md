@@ -163,17 +163,31 @@ state.
   contract.
 - `backend/Features/Orchestrator/OrchestratorContextKey.cs`,
   `OrchestratorSessionRegistry.cs`, `OrchestratorSessionEndpoints.cs`, and
-  `OrchestratorTurnService.cs`: context-keyed global, project, and task
-  orchestrator sessions, the `/api/orchestrator/sessions/{contextKey}/turns`
-  and `/park` API surface, and session turn dispatch through the existing
-  orchestrator CLI runner. Records persist under
+  `OrchestratorTurnService.cs`: context-keyed orchestrator sessions, the
+  `/api/orchestrator/sessions/{contextKey}/turns` and `/park` API surface, and
+  session turn dispatch through the existing orchestrator CLI runner. Four
+  context kinds exist, in canonical rail order:
+
+  | Kind | Key shape | Owns its own transcript | Implicit context |
+  |---|---|---|---|
+  | `global` | `global` | Yes (board-level) | Cross-project digest |
+  | `project` | `project:<PROJ>` | Yes (permanent) | Project-scoped digest |
+  | `workbench` | `workbench:<PROJ>/<DOSSIER-KEY>` | Yes (permanent, never hidden; AGT-2725) | Dossier descriptor + entrypoint excerpt only - no board/task digest |
+  | `task` | `task:<PROJ>/<KEY>` | Yes (hidden, not deleted, after archive) | Task metadata, `prompt.md`, `status.md`, agent plan, last run outcome |
+
+  Records persist under
   `<TaskRepository>/.metadata/orchestrator-sessions/<encoded>/`.
 - `backend/Features/Orchestrator/OrchestratorContextDigestService.cs` and
   `OrchestratorContextEndpoints.cs`: ORCH-1 read context shared by side-sheet
   chat turns and session turns. The bounded digest folds board transitions,
   active lifecycle phases, cached quota, PUB-1 targets, backend/watcher health,
-  and decision-journal excerpts according to the `global|project|task` key.
-  `POST .../refresh` is the explicit expensive path that re-probes quota first.
+  and decision-journal excerpts according to the `global|project|task` key. A
+  `workbench` context never reaches this digest builder - it is composed
+  separately by `OrchestratorWorkbenchPromptContextComposer` from the Dossier's
+  own `workbench.json` descriptor and entrypoint HTML
+  (`WorkbenchCatalogueService`), deliberately excluding board/task state
+  (AGT-2725). `POST .../refresh` is the explicit expensive path that re-probes
+  quota first and applies to `global|project|task` only.
 - `backend/Features/Registry/OrchestratorSettingsResolver.cs`: pure two-tier
   resolver for the workspace-shaped orchestrator knobs (model, thinking level,
   autonomy) - `project override → workspace default → platform constant` - plus

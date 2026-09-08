@@ -69,6 +69,15 @@ public static class TaskServerEndpoints
             => await InvokeAsync(() => store.EnsureOrchestratorContextAsync(
                 projectIdentity, taskIdentity, Actor(context), ct)))
             .RequireTaskServerScope(TaskServerScopes.TasksWrite);
+        orchestratorContexts.MapPut("/projects/{projectIdentity}/workbenches/{workbenchIdentity}", async (
+            HttpContext context,
+            string projectIdentity,
+            string workbenchIdentity,
+            TaskServerStore store,
+            CancellationToken ct)
+            => await InvokeAsync(() => store.EnsureOrchestratorWorkbenchContextAsync(
+                projectIdentity, workbenchIdentity, Actor(context), ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
         orchestratorContexts.MapGet("/projects/{projectIdentity}/turns", async (
             HttpContext context,
             string projectIdentity,
@@ -86,6 +95,15 @@ public static class TaskServerEndpoints
             CancellationToken ct)
             => await InvokeAsync(() => store.ReadOrchestratorContextAsync(
                 projectIdentity, taskIdentity, limit ?? 500, Actor(context), ct)));
+        orchestratorContexts.MapGet("/projects/{projectIdentity}/workbenches/{workbenchIdentity}/turns", async (
+            HttpContext context,
+            string projectIdentity,
+            string workbenchIdentity,
+            int? limit,
+            TaskServerStore store,
+            CancellationToken ct)
+            => await InvokeAsync(() => store.ReadOrchestratorWorkbenchContextAsync(
+                projectIdentity, workbenchIdentity, limit ?? 500, Actor(context), ct)));
         orchestratorContexts.MapPost("/projects/{projectIdentity}/turns", async (
             HttpContext context,
             string projectIdentity,
@@ -105,6 +123,17 @@ public static class TaskServerEndpoints
             CancellationToken ct)
             => await InvokeAsync(() => store.AppendOrchestratorContextTurnAsync(
                 projectIdentity, taskIdentity, request, Actor(context), ct), StatusCodes.Status201Created))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Chat)
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
+        orchestratorContexts.MapPost("/projects/{projectIdentity}/workbenches/{workbenchIdentity}/turns", async (
+            HttpContext context,
+            string projectIdentity,
+            string workbenchIdentity,
+            AppendOrchestratorContextTurnRequest request,
+            TaskServerStore store,
+            CancellationToken ct)
+            => await InvokeAsync(() => store.AppendOrchestratorWorkbenchContextTurnAsync(
+                projectIdentity, workbenchIdentity, request, Actor(context), ct), StatusCodes.Status201Created))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Chat)
             .RequireTaskServerScope(TaskServerScopes.TasksWrite);
         orchestratorContexts.MapPost("/projects/{projectIdentity}/legacy-import", async (
