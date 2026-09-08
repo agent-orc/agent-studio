@@ -57,6 +57,30 @@ public sealed class EngineContractTests
     }
 
     [Fact]
+    public void Insecure_http_requires_explicit_opt_in_and_never_admits_another_scheme()
+    {
+        var values = new Dictionary<string, string?>
+        {
+            ["SERVER_URL"] = "http://task-server:5071",
+            ["CLIENT_ID"] = "engine-a",
+            ["CLIENT_CREDENTIAL"] = "secret",
+        };
+
+        var refused = Assert.Throws<ArgumentException>(
+            () => EngineOptions.Parse(key => values.GetValueOrDefault(key)));
+        Assert.Contains("ENGINE_ALLOW_INSECURE_HTTP", refused.Message, StringComparison.Ordinal);
+
+        values["ENGINE_ALLOW_INSECURE_HTTP"] = "1";
+        var allowed = EngineOptions.Parse(key => values.GetValueOrDefault(key));
+        Assert.True(allowed.AllowInsecureHttp);
+        Assert.Equal("http://task-server:5071", allowed.ServerUrl);
+
+        values["SERVER_URL"] = "ftp://task-server:5071";
+        Assert.Throws<ArgumentException>(
+            () => EngineOptions.Parse(key => values.GetValueOrDefault(key)));
+    }
+
+    [Fact]
     public void Version_surface_contains_release_and_git_sha()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

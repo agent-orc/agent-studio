@@ -36,13 +36,15 @@
 ```bash
 git clone https://github.com/agent-orc/agent-studio.git
 cd agent-studio
-docker compose up --build --wait
+docker compose up --wait
 ```
 
 Open [http://localhost:4011](http://localhost:4011). Docker Compose is the
-primary new-user installation path. It requires at least 8 GB of free disk
-space; no host .NET or Node.js install, local settings file, maintainer switch,
-or neighbouring repository is required. See the
+primary new-user installation path. It pulls pinned, non-root
+[release container images](./docs/operations/setup/task-server.md#container-images)
+per service, so it requires at least 8 GB of free disk space but no host .NET
+or Node.js install, local settings file, maintainer switch, or neighbouring
+repository. See the
 [setup guide](./docs/operations/setup/getting-started.md) for prerequisites,
 persistence, and troubleshooting. As an alternative for Linux x64 release
 installs with no source checkout and no .NET prerequisite, the guided
