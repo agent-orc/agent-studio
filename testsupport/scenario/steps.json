@@ -1,0 +1,81 @@
+{
+  "description": "Ordered step manifest for the deployment regression scenario (AGT-2739). This file is data: id, title, level, and the outcome a reader should expect. The assertions themselves are typed C# in ScenarioSteps.cs, keyed by id. `smoke` runs steps 1-6 in order; `full` runs all steps in order.",
+  "steps": [
+    {
+      "id": "bootstrap-principals",
+      "title": "Bootstrap principals",
+      "level": "smoke",
+      "description": "Issue a runner principal credential from a freshly started Task Server.",
+      "expectedOutcome": "POST /api/v1/management/principals returns a bearer credential for a coding-runner identity."
+    },
+    {
+      "id": "register-runner",
+      "title": "Register runner",
+      "level": "smoke",
+      "description": "Start the real runner binary against the Task Server using the issued credential.",
+      "expectedOutcome": "GET /api/v1/runners lists the runner id before it claims any work."
+    },
+    {
+      "id": "create-task",
+      "title": "Create task",
+      "level": "smoke",
+      "description": "Create the seeded workspace, project, and one ready task from fixture.json.",
+      "expectedOutcome": "The task exists in state 2-ready."
+    },
+    {
+      "id": "claim-task",
+      "title": "Claim task",
+      "level": "smoke",
+      "description": "The runner polls and claims the ready task under a fenced lease.",
+      "expectedOutcome": "Exactly one run is created and audited as work.permit.accepted."
+    },
+    {
+      "id": "run-coding-attempt",
+      "title": "Run with the fake CLI",
+      "level": "smoke",
+      "description": "The runner drives the fake coding CLI, which reports the fixture's known-passing and known-failing checks, commits, and pushes.",
+      "expectedOutcome": "The task reaches 4-auto-review, a new commit lands on the seeded repository's default branch, and the run's evidence artifacts include a results log naming both checks."
+    },
+    {
+      "id": "auto-review",
+      "title": "Auto-review",
+      "level": "smoke",
+      "description": "A review subject is opened against the completed run, claimed, reported as passing, and cleaned up, queuing an orchestration run that is settled to completion.",
+      "expectedOutcome": "The task reaches 5-human-review."
+    },
+    {
+      "id": "orchestrator-chat-turn",
+      "title": "Orchestrator chat turn with context receipt",
+      "level": "full",
+      "description": "Append an orchestrator chat turn for the task and read back its context receipt.",
+      "expectedOutcome": "The appended turn is readable and its receipt reports a token budget and at least one source."
+    },
+    {
+      "id": "backup",
+      "title": "Backup",
+      "level": "full",
+      "description": "Create a management backup of the running Task Server's store.",
+      "expectedOutcome": "POST /api/v1/management/backups returns a backup id, path, and SHA-256 file digest."
+    },
+    {
+      "id": "restore-into-empty-store",
+      "title": "Restore into an empty store, inventory hash equality",
+      "level": "full",
+      "description": "Start a second Task Server instance against a fresh, empty data directory, place the backup file where it expects one, put it in Maintenance mode, and restore.",
+      "expectedOutcome": "POST /api/v1/management/restore reports the restored file's SHA-256 equal to the source backup's SHA-256 (inventory hash equality)."
+    }
+  ],
+  "knownGaps": [
+    {
+      "topic": "dossier decision",
+      "reason": "The distributed Task Server / Studio BFF / Runner topology this scenario boots has no dossier or decision-gate concept yet; it exists only in the separate backend monolith. Tracked as future scenario growth once that concept lands in this topology.",
+      "trackedIn": "docs/operations/testing/deployment-scenario.md"
+    },
+    {
+      "topic": "integrate / complete states",
+      "reason": "task-server has no native 6-completed/7-archive transition; those states are written only by the backend monolith. The auto-review step's 5-human-review is the current ceiling for this topology.",
+      "trackedIn": "docs/operations/testing/deployment-scenario.md"
+    }
+  ]
+}
+
