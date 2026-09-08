@@ -51,6 +51,7 @@ import {
 } from './orchestrator-side-sheet.util';
 import {
   buildNavigationContextKey,
+  buildWorkbenchContextKey,
   orchestratorContextErrorMessage,
   parseOrchestratorContextKey,
   resolveEffectiveContextKey,
@@ -64,6 +65,7 @@ import {
 import { UiPreferencesService } from '../../../shell/state/ui-preferences.service';
 import { PlanStripComponent } from '../../../plan-strip';
 import { OrchestratorTaskPlanStore } from '../../state/orchestrator-task-plan.store';
+import { StudioTabStateService } from '../../../studio-shell/services/studio-tab-state.service';
 
 /**
  * Push-layout side sheet hosting automatic context-keyed orchestrator chats.
@@ -163,6 +165,25 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
   private readonly panelState = inject(OrchestratorPanelStateService);
   readonly chatActivity = inject(OrchestratorChatActivityService);
   private readonly uiPreferences = inject(UiPreferencesService);
+  private readonly studioTabs = inject(StudioTabStateService);
+
+  /**
+   * Dossier titles for the chat switcher rail, keyed by the same
+   * `workbench:<PROJ>/<KEY>` context key used everywhere else. Sourced from
+   * the tabs the operator already has open rather than a dedicated
+   * app-wide Dossier catalogue fetch; a Dossier session not currently
+   * tabbed falls back to its bare key in the rail (see
+   * `ChatSwitcherRailComponent.workbenchLabel`).
+   */
+  readonly workbenchTitles = computed<ReadonlyMap<string, string>>(() => {
+    const titles = new Map<string, string>();
+    for (const tab of this.studioTabs.tabs()) {
+      if (tab.kind !== 'workbench' || !tab.key || !tab.title) continue;
+      const key = buildWorkbenchContextKey(tab.projectName, tab.key);
+      if (key) titles.set(key, tab.title);
+    }
+    return titles;
+  });
   readonly open = this.panelState.open;
   readonly panelWidth = this.panelState.width;
   readonly activeProject = signal<string | null>(null);
@@ -220,6 +241,8 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
     jobKey: string | null;
     jobState: string | null;
     watchPath: string | null;
+    workbenchProject: string | null;
+    workbenchKey: string | null;
   } | null>(null);
 
   /**
@@ -232,6 +255,23 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
     const context = this.composerContext();
     return context?.taskKey ? context : null;
   });
+
+  /**
+   * True while the active Studio tab is a dedicated Dossier tab (the
+   * `#/projects/<slug>/workbenches/<id>` route), as opposed to a Wiki-style
+   * page viewer that merely happens to render a Dossier's `index.html`
+   * (`pageContext()?.pageType === 'workbench'`). Those are two different
+   * navigation surfaces (AGT-2725): only the dedicated tab owns its own
+   * chat session and mandatory context, matching `WorkbenchTab.key`.
+   */
+  private readonly isWorkbenchTab = computed(() =>
+    !this.pageContext()
+    && this.composerContext()?.surface === 'Dossier'
+    && !!this.composerContext()?.referenceKey);
+  private readonly liveWorkbenchProject = computed(() =>
+    this.isWorkbenchTab() ? (this.composerContext()?.project ?? null) : null);
+  private readonly liveWorkbenchKey = computed(() =>
+    this.isWorkbenchTab() ? (this.composerContext()?.referenceKey ?? null) : null);
 
   private readonly navigationProject = computed(() =>
     this.pinned()
@@ -257,10 +297,27 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
     this.pinned()
       ? (this.pinnedSnapshot()?.watchPath ?? null)
       : (this.composerTaskContext()?.taskWatchPath ?? this.activeWatchPath()));
-  private readonly navigationContextKey = computed(() => buildNavigationContextKey(
-    this.navigationProject(),
-    this.navigationJobKey(),
-  ));
+  private readonly navigationWorkbenchProject = computed(() =>
+    this.pinned()
+      ? (this.pinnedSnapshot()?.workbenchProject ?? null)
+      : this.liveWorkbenchProject());
+  private readonly navigationWorkbenchKey = computed(() =>
+    this.pinned()
+      ? (this.pinnedSnapshot()?.workbenchKey ?? null)
+      : this.liveWorkbenchKey());
+  /**
+   * A Dossier tab wins over task navigation the same way a task tab wins
+   * over board scope: leaving the Dossier returns to the project session,
+   * returning to it shows the Dossier session again (AGT-2725).
+   */
+  private readonly navigationContextKey = computed(() => {
+    const workbenchKey = this.navigationWorkbenchKey();
+    if (workbenchKey) {
+      const key = buildWorkbenchContextKey(this.navigationWorkbenchProject(), workbenchKey);
+      if (key) return key;
+    }
+    return buildNavigationContextKey(this.navigationProject(), this.navigationJobKey());
+  });
   private readonly contextResolution = computed(() => resolveEffectiveContextKey(
     this.navigationContextKey(),
     this.selectedContextKey(),
@@ -288,6 +345,8 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
         : (this.navigationJobTitle() ?? this.parsedContext()?.taskKey ?? null));
   readonly effectiveJobKey = computed<string | null>(() =>
     this.parsedContext()?.kind === 'task' ? (this.parsedContext()?.taskKey ?? null) : null);
+  readonly effectiveWorkbenchKey = computed<string | null>(() =>
+    this.parsedContext()?.kind === 'workbench' ? (this.parsedContext()?.workbenchKey ?? null) : null);
   readonly effectiveJobState = computed<string | null>(() =>
     this.parsedContext()?.kind !== 'task'
       ? null
@@ -302,16 +361,19 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
         : this.navigationWatchPath());
 
   /**
-   * Navigation-derived context kind and canonical context key. A task
-   * context needs its canonical task key in scope; anything else is the
-   * project (board) context. The key mirrors the backend registry shape
-   * (`project:<PROJ>` / `task:<PROJ>/<KEY>`, see OrchestratorContextKey) and
-   * the chat body reads and writes through it (see {@link readChat} and the
-   * context-aware send in {@link onSubmit}), so a task page and the board no
-   * longer share one history.
+   * Navigation-derived context kind and canonical context key. A task or
+   * Dossier (workbench) context needs its canonical key in scope; anything
+   * else is the project (board) context. The key mirrors the backend
+   * registry shape (`project:<PROJ>` / `workbench:<PROJ>/<KEY>` /
+   * `task:<PROJ>/<KEY>`, see OrchestratorContextKey) and the chat body reads
+   * and writes through it (see {@link readChat} and the context-aware send
+   * in {@link onSubmit}), so a task page, a Dossier, and the board no longer
+   * share one history.
    */
-  readonly contextKind = computed<'task' | 'project'>(() =>
-    this.parsedContext()?.kind === 'task' ? 'task' : 'project');
+  readonly contextKind = computed<'task' | 'workbench' | 'project'>(() => {
+    const kind = this.parsedContext()?.kind;
+    return kind === 'task' || kind === 'workbench' ? kind : 'project';
+  });
   readonly contextKey = computed<string | null>(() => this.contextResolution().key);
 
   readonly turns = signal<OrchestratorChatTurn[]>([], { equal: sameOrchestratorChatTurns });
@@ -324,7 +386,7 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
   });
   readonly errorMsg = signal<string | null>(null);
   readonly executionContext = signal<ChatExecutionContext | null>(null);
-  /** Project scope may explicitly omit context once. Task scope is mandatory. */
+  /** Project scope may explicitly omit context once. Task and Dossier scope are mandatory. */
   readonly contextDismissed = signal(false);
   readonly contextAttachments = signal<OrchestratorContextSourceOption[]>([]);
   private readonly contextPicker = viewChild<OrchestratorContextPickerComponent>('contextPicker');
@@ -353,9 +415,9 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
       reference,
     };
   });
-  /** Automatic context rides on every task turn; project scope may drop it once. */
+  /** Automatic context rides on every task or Dossier turn; project scope may drop it once. */
   readonly automaticContextIncluded = computed(() =>
-    this.contextKind() === 'task' || !this.contextDismissed());
+    this.contextKind() !== 'project' || !this.contextDismissed());
 
   /**
    * The composer's chip row is the only context surface: the automatic
@@ -367,7 +429,7 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
     buildComposerContextAttachments({
       automatic: this.automaticContextPresentation(),
       automaticIncluded: this.automaticContextIncluded(),
-      automaticMandatory: this.contextKind() === 'task',
+      automaticMandatory: this.contextKind() !== 'project',
       attachments: this.contextAttachments(),
     }));
 
@@ -376,7 +438,7 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
 
   /** Scope-aware prompt. The composer names no agent - the model selector does. */
   readonly composerPlaceholder = computed(() =>
-    `Ask about this ${this.contextKind() === 'task' ? 'task' : 'project'}... `
+    `Ask about this ${this.contextKind() === 'task' ? 'task' : this.contextKind() === 'workbench' ? 'Dossier' : 'project'}... `
     + 'try /bug <description> to file a bug');
 
   /** Locally-buffered user turns shown immediately (server is source of truth on next refresh). */
@@ -419,6 +481,8 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
       ? `${page.pageType} '${page.title}'`
       : this.contextKind() === 'task'
       ? `Task '${this.effectiveJobTitle()}'`
+      : this.contextKind() === 'workbench'
+      ? `Dossier '${this.automaticContextPresentation().label}'`
       : 'Board';
     return `Context: ${proj} · ${tail}`;
   });
@@ -550,6 +614,8 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
       jobKey: this.activeJobKey(),
       jobState: this.activeJobState(),
       watchPath: this.activeWatchPath(),
+      workbenchProject: this.liveWorkbenchProject(),
+      workbenchKey: this.liveWorkbenchKey(),
     });
     this.pinned.set(true);
   }
@@ -727,12 +793,12 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
   }
 
   toggleNextMessageContext(): void {
-    if (this.contextKind() === 'task') return;
+    if (this.contextKind() !== 'project') return;
     this.contextDismissed.update(dismissed => !dismissed);
   }
 
   setNextMessageContextIncluded(included: boolean): void {
-    if (this.contextKind() === 'task') return;
+    if (this.contextKind() !== 'project') return;
     this.contextDismissed.set(!included);
   }
 
@@ -875,9 +941,10 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
     this.chatActivity.start(contextKey);
     const lazy = await import('./orchestrator-side-sheet.lazy');
 
-    // Task scope is attached to every turn. Project scope is also attached by
-    // default, with one explicit one-message exclusion available in the menu.
-    const taskScope = navigationSnapshot.kind === 'task';
+    // Task and Dossier scope are attached to every turn. Project scope is
+    // also attached by default, with one explicit one-message exclusion
+    // available in the menu.
+    const mandatoryScope = navigationSnapshot.kind !== 'project';
     const contextPayload = contextIncludedSnapshot
       ? buildChatNavigationContext({
           activeJobId: navigationSnapshot.jobId,
@@ -912,7 +979,7 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
         if (contextStillVisible && response.executionContext) {
           this.executionContext.set(response.executionContext);
         }
-        if (contextStillVisible && !taskScope && !contextIncludedSnapshot) {
+        if (contextStillVisible && !mandatoryScope && !contextIncludedSnapshot) {
           this.contextDismissed.set(false);
         }
         if (contextStillVisible) this.contextAttachments.set([]);

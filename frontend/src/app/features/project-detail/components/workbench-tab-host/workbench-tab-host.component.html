@@ -14,7 +14,8 @@
         <app-workbench-viewer
           [projectName]="project"
           [workbenchId]="id"
-          (openWiki)="openWiki.emit($event)" />
+          (openWiki)="openWiki.emit($event)"
+          (documentResolved)="onDocumentResolved($event)" />
       }
     }
   } @placeholder {

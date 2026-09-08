@@ -75,6 +75,20 @@ public sealed class OrchestratorContextChatEndpointsTests : IDisposable
     }
 
     [Fact]
+    public void ResolveContextPath_WorkbenchGetsOwnFile_DistinctFromTaskAndProject()
+    {
+        OrchestratorContextKey.TryParse($"task:{Project}/AGT-1930", out var task);
+        OrchestratorContextKey.TryParse($"workbench:{Project}/AGT-W43", out var workbench);
+
+        var workbenchPath = OrchestratorChat.ResolveContextPath(_projectRoot, workbench);
+        var taskPath = OrchestratorChat.ResolveContextPath(_projectRoot, task);
+
+        Assert.Contains(Path.Combine(".orchestrator", "context-chats"), workbenchPath, StringComparison.Ordinal);
+        Assert.EndsWith(workbench!.Encode() + ".jsonl", workbenchPath, StringComparison.Ordinal);
+        Assert.NotEqual(taskPath, workbenchPath);
+    }
+
+    [Fact]
     public void Append_KeepsTaskAndProjectTranscriptsIsolated()
     {
         var chat = new OrchestratorChat(NullLogger<OrchestratorChat>.Instance);
@@ -93,6 +107,27 @@ public sealed class OrchestratorContextChatEndpointsTests : IDisposable
 
         // The legacy context-free read is the project thread — unchanged.
         Assert.Equal(boardTurns.Select(t => t.Text), chat.Read(_projectRoot).Select(t => t.Text));
+    }
+
+    [Fact]
+    public void Append_KeepsWorkbenchTranscriptIsolatedFromProjectAndTask()
+    {
+        var chat = new OrchestratorChat(NullLogger<OrchestratorChat>.Instance);
+        OrchestratorContextKey.TryParse("project:" + Project, out var project);
+        OrchestratorContextKey.TryParse($"task:{Project}/AGT-1930", out var task);
+        OrchestratorContextKey.TryParse($"workbench:{Project}/AGT-W43", out var workbench);
+
+        Assert.True(chat.Append(_projectRoot, Turn("user", "board question"), project));
+        Assert.True(chat.Append(_projectRoot, Turn("user", "task-only question"), task));
+        Assert.True(chat.Append(_projectRoot, Turn("user", "what does this Dossier decide?"), workbench));
+
+        Assert.Equal(new[] { "board question" }, chat.Read(_projectRoot, project).Select(t => t.Text));
+        Assert.Equal(new[] { "task-only question" }, chat.Read(_projectRoot, task).Select(t => t.Text));
+        Assert.Equal(
+            new[] { "what does this Dossier decide?" },
+            chat.Read(_projectRoot, workbench).Select(t => t.Text));
+        // The legacy context-free (board) read never sees the Dossier turn.
+        Assert.Equal(new[] { "board question" }, chat.Read(_projectRoot).Select(t => t.Text));
     }
 
     // ---- endpoint layer ----------------------------------------------------
@@ -207,6 +242,47 @@ public sealed class OrchestratorContextChatEndpointsTests : IDisposable
         Assert.Equal(hostContext.Branch, reported.GetProperty("branch").GetString());
         Assert.Equal(hostContext.HeadSha, reported.GetProperty("headSha").GetString());
         Assert.Equal("ready", reported.GetProperty("state").GetString());
+    }
+
+    [Fact]
+    public async Task Get_WorkbenchContext_IsIsolatedFromTheProjectThread()
+    {
+        SeedTranscript("project:" + Project, ("user", "on the board"), ("orchestrator", "board reply"));
+        SeedTranscript($"workbench:{Project}/AGT-W43", ("user", "what does this Dossier decide?"));
+
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+
+        using var workbenchResp = await client.GetAsync($"/api/runner/workbench:{Project}/AGT-W43/orchestrator-chat");
+        workbenchResp.EnsureSuccessStatusCode();
+        using (var doc = JsonDocument.Parse(await workbenchResp.Content.ReadAsStringAsync()))
+        {
+            Assert.Equal($"workbench:{Project}/AGT-W43", doc.RootElement.GetProperty("contextKey").GetString());
+            var texts = doc.RootElement.GetProperty("turns").EnumerateArray()
+                .Select(t => t.GetProperty("text").GetString()).ToArray();
+            // The Dossier context sees only its own thread, not the board's.
+            Assert.Equal(new[] { "what does this Dossier decide?" }, texts);
+        }
+
+        using var projectResp = await client.GetAsync($"/api/runner/project:{Project}/orchestrator-chat");
+        projectResp.EnsureSuccessStatusCode();
+        using var projectDoc = JsonDocument.Parse(await projectResp.Content.ReadAsStringAsync());
+        var projectTexts = projectDoc.RootElement.GetProperty("turns").EnumerateArray()
+            .Select(t => t.GetProperty("text").GetString()).ToArray();
+        // A Dossier turn must never leak back into the project thread.
+        Assert.Equal(new[] { "on the board", "board reply" }, projectTexts);
+    }
+
+    [Fact]
+    public async Task Get_WorkbenchContext_IsEmpty_OnFirstVisit()
+    {
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+
+        using var resp = await client.GetAsync($"/api/runner/workbench:{Project}/AGT-W99/orchestrator-chat");
+        resp.EnsureSuccessStatusCode();
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+        Assert.Empty(doc.RootElement.GetProperty("turns").EnumerateArray());
     }
 
     [Fact]

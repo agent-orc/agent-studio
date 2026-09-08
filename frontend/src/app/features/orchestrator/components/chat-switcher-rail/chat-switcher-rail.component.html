@@ -1,6 +1,6 @@
 <section class="context-list" data-testid="chat-context-list">
   <div id="chat-context-groups" class="context-list__groups" data-testid="chat-context-groups">
-    @for (group of [{ label: 'Global', rows: globalRows() }, { label: 'Projects', rows: projectRows() }, { label: 'Tasks', rows: taskRows() }]; track group.label) {
+    @for (group of [{ label: 'Global', rows: globalRows() }, { label: 'Projects', rows: projectRows() }, { label: 'Dossiers', rows: workbenchRows() }, { label: 'Tasks', rows: taskRows() }]; track group.label) {
       @if (group.rows.length > 0) {
         <section class="context-list__group">
           <h3>{{ group.label }}</h3>

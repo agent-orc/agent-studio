@@ -424,9 +424,16 @@ describe('orchestratorContextChatSegment', () => {
     );
   });
 
+  it('encodes a workbench (Dossier) key the same way as a task key, as two route segments', () => {
+    expect(orchestratorContextChatSegment('workbench:Agent Studio/AGT-W43')).toBe(
+      'workbench:Agent%20Studio/AGT-W43',
+    );
+  });
+
   it('falls back to a single encoded segment for unrecognized shapes', () => {
     expect(orchestratorContextChatSegment('global')).toBe('global');
     expect(orchestratorContextChatSegment('task:no-slash')).toBe('task%3Ano-slash');
+    expect(orchestratorContextChatSegment('workbench:no-slash')).toBe('workbench%3Ano-slash');
   });
 });
 

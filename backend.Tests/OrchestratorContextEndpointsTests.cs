@@ -114,6 +114,53 @@ public sealed class OrchestratorContextEndpointsTests : IDisposable
         Assert.Equal(HttpStatusCode.NotFound, taskResponse.StatusCode);
     }
 
+    [Fact]
+    public async Task Get_Workbench_ReturnsDossierOnlyDigestWithoutBoardOrTaskState()
+    {
+        WriteWorkbench(_alphaCodeRoot, "runner-link", "Runner Link", "AGT-W43");
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync($"/api/orchestrator/context/workbench:{Alpha}/AGT-W43");
+        response.EnsureSuccessStatusCode();
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var root = body.RootElement;
+        Assert.Equal($"workbench:{Alpha}/AGT-W43", root.GetProperty("contextKey").GetString());
+
+        var digest = root.GetProperty("digest").GetString();
+        Assert.NotNull(digest);
+        Assert.Contains("Key: AGT-W43", digest, StringComparison.Ordinal);
+        Assert.Contains("Title: Runner Link", digest, StringComparison.Ordinal);
+        // No board/task digest sections leak into a Dossier-scoped read.
+        Assert.DoesNotContain("lanes:", digest, StringComparison.Ordinal);
+        Assert.DoesNotContain("task focus:", digest, StringComparison.Ordinal);
+        Assert.DoesNotContain(Beta, digest, StringComparison.Ordinal);
+
+        var source = Assert.Single(root.GetProperty("sources").EnumerateArray());
+        Assert.Equal("dossier", source.GetProperty("name").GetString());
+    }
+
+    [Fact]
+    public async Task Get_UnknownWorkbenchKey_Returns404()
+    {
+        WriteWorkbench(_alphaCodeRoot, "runner-link", "Runner Link", "AGT-W43");
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync($"/api/orchestrator/context/workbench:{Alpha}/AGT-W404");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    private static void WriteWorkbench(string codeRoot, string id, string title, string key)
+    {
+        var dir = Path.Combine(codeRoot, "docs", "workbenches", id);
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "index.html"), $"<h1>{title}</h1>");
+        File.WriteAllText(Path.Combine(dir, "workbench.json"), $$"""
+          {"schemaVersion":1,"id":"{{id}}","title":"{{title}}","summary":"Question","entrypoint":"index.html","status":"decided","phase":"testing","updatedAt":"2026-08-17T00:00:00Z","key":"{{key}}"}
+          """);
+    }
+
     private static void PrepareProject(string projectRoot)
     {
         foreach (var state in TaskStates.All)

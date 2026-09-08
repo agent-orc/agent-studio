@@ -1,6 +1,8 @@
-import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, input, output } from '@angular/core';
 import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
-import type { WorkbenchOverviewItem } from '../../../../models/project-docs.model';
+import type { WorkbenchDocument, WorkbenchOverviewItem } from '../../../../models/project-docs.model';
+import { StudioTabStateService } from '../../../studio-shell/services/studio-tab-state.service';
+import { studioTabKey } from '../../../studio-shell/studio-shell.types';
 import { WorkbenchOverviewComponent } from '../workbench-overview/workbench-overview.component';
 import { WorkbenchViewerComponent } from '../workbench-viewer/workbench-viewer.component';
 
@@ -24,4 +26,25 @@ export class WorkbenchTabHostComponent {
   readonly workbenchId = input<string | null>(null);
   readonly openWorkbench = output<WorkbenchOverviewItem>();
   readonly openWiki = output<string>();
+  private readonly tabState = inject(StudioTabStateService);
+
+  /**
+   * A tab opened by route (deep link or reload) starts without the
+   * catalogue key a click-opened tab already carries. Patch it in once the
+   * viewer resolves the document, so the orchestrator side sheet's Dossier
+   * scope (AGT-2725) is available regardless of how the tab was opened.
+   */
+  onDocumentResolved(document: WorkbenchDocument): void {
+    const projectName = this.projectName();
+    const workbenchId = this.workbenchId();
+    if (!projectName || !workbenchId) return;
+    const sourceKey = studioTabKey({ kind: 'workbench', projectName, workbenchId });
+    this.tabState.retarget(sourceKey, {
+      kind: 'workbench',
+      projectName,
+      workbenchId,
+      title: document.workbench.title,
+      key: document.workbench.key ?? undefined,
+    });
+  }
 }

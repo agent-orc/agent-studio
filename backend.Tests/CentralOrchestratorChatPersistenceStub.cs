@@ -95,7 +95,7 @@ internal sealed class CentralOrchestratorChatPersistenceStub : IOrchestratorChat
     }
 
     private static string ContextKey(string projectName, OrchestratorContextKey? context)
-        => context?.Kind == OrchestratorContextKey.TaskKind
+        => context?.Kind is OrchestratorContextKey.TaskKind or OrchestratorContextKey.WorkbenchKind
             ? context.Value
             : $"project:{projectName}";
 }

@@ -27,6 +27,7 @@ export class OrchestratorContextDigestService {
     const key = this.contextKey();
     if (key === 'global') return 'Global context';
     if (key?.startsWith('task:')) return 'Task context';
+    if (key?.startsWith('workbench:')) return 'Dossier context';
     if (key?.startsWith('project:')) return 'Project context';
     return 'No context';
   });
