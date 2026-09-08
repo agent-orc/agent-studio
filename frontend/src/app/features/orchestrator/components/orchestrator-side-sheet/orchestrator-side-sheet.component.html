@@ -16,6 +16,8 @@
     [project]="effectiveProject()"
     [taskKey]="effectiveJobKey()"
     [taskTitle]="effectiveJobTitle()"
+    [workbenchKey]="effectiveWorkbenchKey()"
+    [workbenchTitle]="contextKind() === 'workbench' ? automaticContextPresentation().label : null"
     [pageContext]="pageContext()"
     [contextKey]="contextKey()"
     [executionContext]="executionContext()"
@@ -31,6 +33,16 @@
       <span class="sheet__task-context-dot" aria-hidden="true"></span>
       <span>Questions automatically refer to <strong>{{ taskKey }}</strong>.</span>
       <span class="sheet__task-context-effect">Answers do not start, pause, or continue the task agent.</span>
+    </div>
+  }
+
+  @if (contextKind() === 'workbench' && effectiveWorkbenchKey(); as workbenchKey) {
+    <div class="sheet__task-context-note"
+         role="note"
+         data-testid="orch-workbench-context-note">
+      <span class="sheet__task-context-dot" aria-hidden="true"></span>
+      <span>Questions automatically refer to Dossier <strong>{{ workbenchKey }}</strong>.</span>
+      <span class="sheet__task-context-effect">This session is separate from the project chat.</span>
     </div>
   }
 
@@ -76,12 +88,14 @@
               {{ contextDigestState.refreshing() ? 'Refreshing...' : (loading() ? 'Loading...' : 'Refresh') }}
             </button>
             <button type="button"
-                    [attr.aria-pressed]="contextKind() === 'task' || !contextDismissed()"
-                    [disabled]="contextKind() === 'task'"
+                    [attr.aria-pressed]="contextKind() !== 'project' || !contextDismissed()"
+                    [disabled]="contextKind() !== 'project'"
                     (click)="toggleNextMessageContext()"
                     data-testid="orch-context-send-toggle">
               {{ contextKind() === 'task'
                 ? 'Task context always included'
+                : contextKind() === 'workbench'
+                ? 'Dossier context always included'
                 : (contextDismissed() ? 'Include context next' : 'Exclude context once') }}
             </button>
           </div>
@@ -112,6 +126,7 @@
           [sessions]="contextSessions()"
           [projects]="projects()"
           [tasks]="jobService.jobs()"
+          [workbenchTitles]="workbenchTitles()"
           [activeContextKey]="contextKey()"
           [unreadContextKeys]="unreadContextKeys()"
           [pendingContextKeys]="chatActivity.pendingContextKeys()"

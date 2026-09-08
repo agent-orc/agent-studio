@@ -73,9 +73,11 @@ export interface OrchestratorSessionResponse {
 
 export interface OrchestratorContextSession {
   contextKey: string;
-  kind: 'global' | 'project' | 'task';
+  kind: 'global' | 'project' | 'workbench' | 'task';
   projectId: string | null;
   taskKey: string | null;
+  /** Dossier (Workbench) catalogue key, e.g. `AGT-W43`, for a workbench-kind session. */
+  workbenchKey?: string | null;
   createdAt?: string;
   updatedAt: string;
   lastUsedAt?: string;
@@ -178,10 +180,11 @@ export interface OrchestratorContextSourceReceipt {
 }
 
 export interface OrchestratorConversationScope {
-  kind: 'project' | 'task';
+  kind: 'project' | 'workbench' | 'task';
   contextKey: string;
   projectId: string;
   taskKey?: string | null;
+  workbenchKey?: string | null;
 }
 
 export interface OrchestratorActiveSurface {

@@ -42,6 +42,40 @@ public sealed class OrchestratorContextEnvelopeTests : IDisposable
     }
 
     [Fact]
+    public void Snapshot_WorkbenchRoute_ProducesWorkbenchScopeWithDossierKeyAndNullTaskKey()
+    {
+        Assert.True(OrchestratorContextKey.TryParse("workbench:project-a/AGT-W43", out var route));
+        var request = new SendOrchestratorChatRequest("Question", null);
+
+        var result = OrchestratorContextEnvelopePolicy.Snapshot(
+            "project-a", route, request, DateTime.UtcNow);
+
+        Assert.Equal("workbench", result.Scope.Kind);
+        Assert.Equal("workbench:project-a/AGT-W43", result.Scope.ContextKey);
+        Assert.Equal("AGT-W43", result.Scope.WorkbenchKey);
+        Assert.Null(result.Scope.TaskKey);
+    }
+
+    [Fact]
+    public void Snapshot_RejectsSuppliedScopeThatDisagreesOnDossierKey()
+    {
+        Assert.True(OrchestratorContextKey.TryParse("workbench:project-a/AGT-W43", out var route));
+        var suppliedForAnotherDossier = new OrchestratorContextEnvelope(
+            new OrchestratorConversationScope("workbench", "workbench:project-a/AGT-W43", "project-a", null, "AGT-W99"),
+            null,
+            [],
+            new OrchestratorContextBudget(),
+            DateTime.UtcNow);
+
+        var error = Assert.Throws<OrchestratorContextEnvelopeException>(() =>
+            OrchestratorContextEnvelopePolicy.Snapshot(
+                "project-a", route,
+                new SendOrchestratorChatRequest("Question", null, ContextEnvelope: suppliedForAnotherDossier),
+                DateTime.UtcNow));
+        Assert.Equal("context-scope-mismatch", error.Code);
+    }
+
+    [Fact]
     public void Snapshot_RejectsCrossProjectReferenceAndMismatchedActiveTask()
     {
         Assert.True(OrchestratorContextKey.TryParse("task:project-a/A-1", out var route));

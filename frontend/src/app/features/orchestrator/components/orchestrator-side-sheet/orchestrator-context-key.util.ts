@@ -2,9 +2,11 @@ import type { OrchestratorContextSession } from '../../models/orchestrator.model
 
 export interface ParsedOrchestratorContextKey {
   key: string;
-  kind: 'global' | 'project' | 'task';
+  kind: 'global' | 'project' | 'workbench' | 'task';
   projectId: string | null;
   taskKey: string | null;
+  /** Dossier (Workbench) catalogue key, e.g. `AGT-W43`, for a workbench-kind key. */
+  workbenchKey: string | null;
 }
 
 function validPart(value: string): boolean {
@@ -21,10 +23,22 @@ function validPart(value: string): boolean {
 /** Mirrors the strict backend OrchestratorContextKey parser. */
 export function parseOrchestratorContextKey(raw: string | null | undefined): ParsedOrchestratorContextKey | null {
   if (!raw || raw !== raw.trim()) return null;
-  if (raw === 'global') return { key: raw, kind: 'global', projectId: null, taskKey: null };
+  if (raw === 'global') return { key: raw, kind: 'global', projectId: null, taskKey: null, workbenchKey: null };
   if (raw.startsWith('project:')) {
     const projectId = raw.slice('project:'.length);
-    return validPart(projectId) ? { key: raw, kind: 'project', projectId, taskKey: null } : null;
+    return validPart(projectId)
+      ? { key: raw, kind: 'project', projectId, taskKey: null, workbenchKey: null }
+      : null;
+  }
+  if (raw.startsWith('workbench:')) {
+    const rest = raw.slice('workbench:'.length);
+    const slash = rest.indexOf('/');
+    if (slash < 0) return null;
+    const projectId = rest.slice(0, slash);
+    const workbenchKey = rest.slice(slash + 1);
+    return validPart(projectId) && validPart(workbenchKey)
+      ? { key: raw, kind: 'workbench', projectId, taskKey: null, workbenchKey }
+      : null;
   }
   if (raw.startsWith('task:')) {
     const rest = raw.slice('task:'.length);
@@ -33,7 +47,7 @@ export function parseOrchestratorContextKey(raw: string | null | undefined): Par
     const projectId = rest.slice(0, slash);
     const taskKey = rest.slice(slash + 1);
     return validPart(projectId) && validPart(taskKey)
-      ? { key: raw, kind: 'task', projectId, taskKey }
+      ? { key: raw, kind: 'task', projectId, taskKey, workbenchKey: null }
       : null;
   }
   return null;
@@ -45,6 +59,14 @@ export function buildNavigationContextKey(project: string | null, taskKey: strin
   if (!validPart(canonicalProject)) return null;
   if (canonicalTask && validPart(canonicalTask)) return `task:${canonicalProject}/${canonicalTask}`;
   return `project:${canonicalProject}`;
+}
+
+/** Builds a `workbench:<PROJ>/<DOSSIER-KEY>` context key for a Dossier session. */
+export function buildWorkbenchContextKey(project: string | null, workbenchKey: string | null): string | null {
+  const canonicalProject = project?.trim() ?? '';
+  const canonicalWorkbench = workbenchKey?.trim() ?? '';
+  if (!validPart(canonicalProject) || !validPart(canonicalWorkbench)) return null;
+  return `workbench:${canonicalProject}/${canonicalWorkbench}`;
 }
 
 export interface EffectiveContextKeyResult {
@@ -75,7 +97,15 @@ export function resolveEffectiveContextKey(
       session.contextKey === selected.key
       && session.kind === 'task'
       && session.projectId === selected.projectId
-      && session.taskKey === selected.taskKey));
+      && session.taskKey === selected.taskKey))
+    // A Dossier session is not derived from the watched-project list like
+    // 'project' is; it exists once the registry (sessions) carries it,
+    // exactly like 'task' above.
+    || (selected?.kind === 'workbench' && sessions.some(session =>
+      session.contextKey === selected.key
+      && session.kind === 'workbench'
+      && session.projectId === selected.projectId
+      && session.workbenchKey === selected.workbenchKey));
 
   if (!selected || !selectionStillAnchored || !selectedStillExists) {
     return { key: navigation?.key ?? null, discardedSelection: true };

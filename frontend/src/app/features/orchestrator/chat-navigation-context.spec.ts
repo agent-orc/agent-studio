@@ -128,6 +128,7 @@ describe('buildOrchestratorContextEnvelope', () => {
         contextKey: 'task:Agent Studio/AGT-2572',
         projectId: 'Agent Studio',
         taskKey: 'AGT-2572',
+        workbenchKey: null,
       },
       activeSurface: {
         kind: 'task',
@@ -143,6 +144,20 @@ describe('buildOrchestratorContextEnvelope', () => {
         charactersPerEstimatedToken: 4,
       },
       capturedAt: '2026-08-10T10:15:00.000Z',
+    });
+  });
+
+  it('freezes a Dossier (workbench) scope with its catalogue key and no task key', () => {
+    const envelope = buildOrchestratorContextEnvelope(
+      'workbench:Agent Studio/AGT-W43', null, [], fixedNow,
+    );
+
+    expect(envelope.scope).toEqual({
+      kind: 'workbench',
+      contextKey: 'workbench:Agent Studio/AGT-W43',
+      projectId: 'Agent Studio',
+      taskKey: null,
+      workbenchKey: 'AGT-W43',
     });
   });
 

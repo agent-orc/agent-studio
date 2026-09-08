@@ -28,6 +28,9 @@ export class OrchestratorPanelHeaderComponent {
   readonly project = input<string | null>(null);
   readonly taskKey = input<string | null>(null);
   readonly taskTitle = input<string | null>(null);
+  /** Dossier catalogue key (e.g. `AGT-W43`), set only for a workbench-scoped chat (AGT-2725). */
+  readonly workbenchKey = input<string | null>(null);
+  readonly workbenchTitle = input<string | null>(null);
   readonly pageContext = input<PageContext | null>(null);
   readonly contextKey = input<string | null>(null);
   readonly executionContext = input<ChatExecutionContext | null>(null);
@@ -49,6 +52,10 @@ export class OrchestratorPanelHeaderComponent {
     if (this.taskKey()) {
       const taskName = [this.taskKey(), this.taskTitle()].filter(Boolean).join(' · ');
       return { icon: 'code', type: 'Task', name: taskName };
+    }
+    if (this.workbenchKey()) {
+      const workbenchName = [this.workbenchKey(), this.workbenchTitle()].filter(Boolean).join(' · ');
+      return { icon: 'eye', type: 'Dossier', name: workbenchName };
     }
     if (this.contextKey() === 'global')
       return { icon: 'bot', type: 'Global', name: 'All projects' };
