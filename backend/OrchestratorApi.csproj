@@ -138,6 +138,13 @@
     <EmbeddedResource Include="..\docs\app\templates\article-document-v2.html"
                       Link="Templates\article-document-v2.html"
                       LogicalName="AgentStudio.Templates.ArticleDocumentV2" />
+    <EmbeddedResource Include="..\docs\studio-route-ownership\routes.json"
+                      Link="Connector\routes.json"
+                      LogicalName="AgentStudio.Connector.Routes" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="AgentStudio.Connector" />
   </ItemGroup>
 
 </Project>

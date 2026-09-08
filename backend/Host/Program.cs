@@ -19,6 +19,7 @@ Log.Logger = new LoggerConfiguration()
     .CreateBootstrapLogger();
 
 var builder = WebApplication.CreateBuilder(args);
+var connectorProfile = ConnectorProfile.IsEnabled(builder.Configuration);
 builder.Services.AddTaskServerPlaneProxy(builder.Configuration);
 var orchestrationExecutionMode = OrchestrationExecutionModeParser.Parse(
     builder.Configuration["Orchestration:ExecutionMode"]);
@@ -933,7 +934,16 @@ if (SecurityProfiles.IsLocal(builder.Configuration))
     });
 }
 
+if (connectorProfile)
+    builder.ConfigureConnectorProfile();
+
 var app = builder.Build();
+
+if (connectorProfile)
+{
+    await app.RunConnectorProfileAsync();
+    return;
+}
 
 // Under a test host, WebApplicationFactory<Program> boots this entry point once
 // per fixture and disposes the host at the end of each. Detach the process-
