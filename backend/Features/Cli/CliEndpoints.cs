@@ -227,8 +227,18 @@ public static class CliEndpoints
             return Results.Ok(policy.SetGlobal(req.Enabled, req.ThresholdMinutes));
         });
 
+        // Every selectable CLI gets an effective row: the operator's persisted
+        // profile when one names a fallback, else the equivalence-catalogue
+        // derived pair (AGT-2751). IsFallbackDerived tells the picker whether
+        // to render "configured" or "auto (equivalence tier)".
         cliGroup.MapGet("/quota/model-routes", (CliQuotaFallbackService routes) =>
-            Results.Ok(new { profiles = routes.GetAll() }));
+            Results.Ok(new
+            {
+                profiles = CliTypes.All.ToDictionary(
+                    cli => cli,
+                    cli => routes.GetEffectiveProfile(cli),
+                    StringComparer.OrdinalIgnoreCase),
+            }));
 
         cliGroup.MapPut("/quota/model-routes", (SetCliModelRouteRequest req, CliQuotaFallbackService routes) =>
         {

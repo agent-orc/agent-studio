@@ -274,11 +274,13 @@ public static class RemoteChatWorkClaimStatuses
 public sealed record RemoteChatWorkClaimRequest(
     string RunnerId,
     string RunnerName,
-    string Hostname);
+    string Hostname,
+    string? CapabilityInstanceId = null);
 
 public sealed record RemoteChatWorkClaimResponse(
     string Status,
-    RemoteChatWorkItem? Work = null);
+    RemoteChatWorkItem? Work = null,
+    string? Message = null);
 
 public sealed record RemoteChatWorkItem(
     string WorkId,
@@ -292,7 +294,11 @@ public sealed record RemoteChatWorkItem(
     string? Model,
     string? ThinkingLevel,
     DateTime CreatedAt,
-    DateTime ClaimExpiresAt);
+    DateTime ClaimExpiresAt,
+    string? CliType = null,
+    string? ConfiguredCliType = null,
+    string? ConfiguredModel = null,
+    string? QuotaFallbackReason = null);
 
 public sealed record RemoteChatWorkRenewRequest(
     string WorkId,
@@ -308,7 +314,11 @@ public sealed record RemoteChatWorkCompletionRequest(
     string? Model,
     OrchestratorTokenUsage? TokenUsage,
     string? ErrorMessage,
-    ChatExecutionContext? ExecutionContext);
+    ChatExecutionContext? ExecutionContext,
+    string? CliType = null,
+    string? ConfiguredCliType = null,
+    string? ConfiguredModel = null,
+    string? QuotaFallbackReason = null);
 
 public sealed record OrchestratorTokenUsage
 {

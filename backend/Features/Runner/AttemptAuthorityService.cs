@@ -652,6 +652,36 @@ public sealed class AttemptAuthorityService
     }
 
     /// <summary>
+    /// Relinquishes a review lease that was selected internally but must not be
+    /// handed to the executor, for example when quota admission says to wait.
+    /// The fence remains consumed, while the undelivered claim key is removed
+    /// so the same executor instance can claim the attempt after recovery.
+    /// </summary>
+    public bool DeferReviewClaim(string attemptId, string executorId, string instanceId)
+    {
+        lock (_gate)
+        {
+            var review = FindReview(attemptId);
+            if (review is null
+                || review.State != AttemptLifecycleState.Leased
+                || review.Lease is null
+                || !Same(review.Lease.ExecutorId, executorId)
+                || !Same(review.Lease.ClientId, instanceId))
+            {
+                return false;
+            }
+
+            if (!Blank(review.CurrentClaimDeliveryKey))
+                review.IdempotencyKeys.Remove(review.CurrentClaimDeliveryKey!);
+            review.CurrentClaimDeliveryKey = null;
+            review.Lease = null;
+            review.State = AttemptLifecycleState.Pending;
+            PersistLocked();
+            return true;
+        }
+    }
+
+    /// <summary>
     /// Revokes every non-terminal ReviewAttempt whose owning task is no longer
     /// eligible for Remote Review. The resolver returns <c>null</c> for an
     /// eligible task and a durable terminal reason for a task that must be
