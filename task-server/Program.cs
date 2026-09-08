@@ -45,9 +45,12 @@ builder.Services.AddSingleton<TaskServerStore>();
 builder.Services.AddSingleton<RuntimeCapacitySettingsService>();
 builder.Services.AddSingleton<HostProjectPolicyService>();
 builder.Services.AddSingleton<LegacyMigrationService>();
+builder.Services.AddSingleton<RetentionManagementService>();
+builder.Services.AddSingleton<FullBackupManagementService>();
 builder.Services.AddSingleton<IResultRefDeleter, GitResultRefDeleter>();
 builder.Services.AddHostedService<TaskServerInvariantReconciliationService>();
 builder.Services.AddHostedService<ResultRefGcHostedService>();
+builder.Services.AddHostedService<RetentionSchedulerHostedService>();
 
 var configuredUrl = builder.Configuration["LISTEN_URL"]
                     ?? builder.Configuration[$"{TaskServerOptions.SectionName}:ListenUrl"];
@@ -75,6 +78,30 @@ if (command.Kind == TaskServerCommandKind.Backup)
     catch (Exception exception)
     {
         Console.Error.WriteLine($"Task Server backup failed: {exception.Message}");
+        return 1;
+    }
+}
+
+if (command.Kind == TaskServerCommandKind.FullBackup)
+{
+    try
+    {
+        await store.InitializeForBackupAsync();
+        var fullBackupCommand = command.FullBackup!;
+        object result = fullBackupCommand.Operation switch
+        {
+            "full" => await store.CreateFullBackupAsync("task-server-backup-command", default),
+            "verify-full" => await store.VerifyFullBackupAsync(fullBackupCommand.BackupId!, default),
+            "restore-full" => await store.RestoreFullBackupAsync(fullBackupCommand.BackupId!, "task-server-backup-command", default),
+            _ => throw new InvalidOperationException($"Unknown full backup operation '{fullBackupCommand.Operation}'."),
+        };
+        Console.WriteLine(JsonSerializer.Serialize(
+            result, new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = fullBackupCommand.Json }));
+        return 0;
+    }
+    catch (Exception exception)
+    {
+        Console.Error.WriteLine($"Task Server full backup failed: {exception.Message}");
         return 1;
     }
 }

@@ -11,10 +11,11 @@ namespace AgentStudio.TaskServer;
 
 public sealed partial class TaskServerStore
 {
-    // 12 adds scoped, revocable, hash-only service principals and credentials.
+    // 13 adds retention policies, archive runs and manifests, task archive
+    // stub columns, and an artifacts.archived flag with nullable content.
     // The migration block is idempotent; the number guards downgrades from
     // binaries that do not know this state.
-    public const int CurrentSchemaVersion = 12;
+    public const int CurrentSchemaVersion = 13;
     private const string TimestampFormat = "O";
     private readonly TaskServerOptions _options;
     private readonly TimeProvider _clock;
@@ -2532,12 +2533,13 @@ public sealed partial class TaskServerStore
                 name TEXT NOT NULL,
                 media_type TEXT NOT NULL,
                 sha256 TEXT NOT NULL,
-                content BLOB NOT NULL,
+                content BLOB,
                 size_bytes INTEGER NOT NULL,
                 idempotency_key TEXT NOT NULL UNIQUE,
                 fence INTEGER NOT NULL,
                 created_at TEXT NOT NULL,
-                sequence INTEGER
+                sequence INTEGER,
+                archived INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS result_finalizations(
                 run_id TEXT PRIMARY KEY REFERENCES runs(id),
@@ -2717,6 +2719,35 @@ public sealed partial class TaskServerStore
                 accept_idempotency_key TEXT UNIQUE,
                 run_id TEXT UNIQUE REFERENCES runs(id)
             );
+            CREATE TABLE IF NOT EXISTS retention_policies(
+                scope TEXT PRIMARY KEY,
+                policy_json TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                updated_at TEXT NOT NULL,
+                updated_by TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS archive_runs(
+                id TEXT PRIMARY KEY,
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                trigger_kind TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                policy_version INTEGER NOT NULL,
+                action_count INTEGER NOT NULL DEFAULT 0,
+                applied_bytes INTEGER NOT NULL DEFAULT 0,
+                report_json TEXT NOT NULL,
+                actor_id TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS archive_manifests(
+                task_id TEXT PRIMARY KEY REFERENCES tasks(id),
+                archived_at TEXT NOT NULL,
+                manifest_json TEXT NOT NULL,
+                payload_path TEXT NOT NULL,
+                payload_sha256 TEXT NOT NULL,
+                total_bytes INTEGER NOT NULL,
+                state TEXT NOT NULL,
+                restored_at TEXT
+            );
             CREATE TABLE IF NOT EXISTS post_step_executions(
                 id TEXT PRIMARY KEY,
                 run_id TEXT NOT NULL REFERENCES runs(id),
@@ -2759,9 +2790,14 @@ public sealed partial class TaskServerStore
                 ON work_permits(status, expires_at);
             CREATE INDEX IF NOT EXISTS ix_post_steps_run_status
                 ON post_step_executions(run_id, status);
+            CREATE INDEX IF NOT EXISTS ix_archive_runs_started ON archive_runs(started_at);
+            CREATE INDEX IF NOT EXISTS ix_archive_manifests_state ON archive_manifests(state);
             """, ct);
         await EnsureColumnAsync(connection, "events", "sequence", "INTEGER", ct);
         await EnsureColumnAsync(connection, "artifacts", "sequence", "INTEGER", ct);
+        await RelaxArtifactContentConstraintAsync(connection, ct);
+        await EnsureColumnAsync(connection, "tasks", "archive_state", "TEXT", ct);
+        await EnsureColumnAsync(connection, "tasks", "archived_at", "TEXT", ct);
         await EnsureColumnAsync(connection, "runs", "required_capabilities_json", "TEXT NOT NULL DEFAULT '[]'", ct);
         await EnsureColumnAsync(connection, "runs", "canary_capabilities_json", "TEXT NOT NULL DEFAULT '[]'", ct);
         await EnsureColumnAsync(connection, "runners", "host_orchestrator_minimum", "TEXT", ct);
@@ -2813,6 +2849,55 @@ public sealed partial class TaskServerStore
         await EnsureColumnAsync(connection, "review_attempts", "required_capabilities_json", "TEXT NOT NULL DEFAULT '[]'", ct);
         await EnsureColumnAsync(connection, "review_attempts", "canary_capabilities_json", "TEXT NOT NULL DEFAULT '[]'", ct);
         await SetMetaAsync(connection, null, "schema_version", CurrentSchemaVersion.ToString(CultureInfo.InvariantCulture), ct);
+    }
+
+    /// <summary>
+    /// Upgrades a pre-retention store where <c>artifacts.content</c> is <c>NOT NULL</c>. Archiving clears
+    /// content to NULL once the cold copy is durable, so the constraint has to be dropped once via a table
+    /// rebuild; SQLite has no <c>ALTER COLUMN</c>. Fresh installs already create the relaxed shape and skip
+    /// this rebuild entirely.
+    /// </summary>
+    private static async Task RelaxArtifactContentConstraintAsync(SqliteConnection connection, CancellationToken ct)
+    {
+        var notNull = false;
+        await using (var command = Command(connection, "PRAGMA table_info(artifacts);"))
+        await using (var reader = await command.ExecuteReaderAsync(ct))
+        {
+            while (await reader.ReadAsync(ct))
+            {
+                if (string.Equals(reader.GetString(1), "content", StringComparison.OrdinalIgnoreCase))
+                {
+                    notNull = reader.GetInt32(3) == 1;
+                    break;
+                }
+            }
+        }
+        if (!notNull) return;
+
+        await ExecuteAsync(connection, """
+            ALTER TABLE artifacts RENAME TO artifacts_pre_retention;
+            CREATE TABLE artifacts(
+                id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                media_type TEXT NOT NULL,
+                sha256 TEXT NOT NULL,
+                content BLOB,
+                size_bytes INTEGER NOT NULL,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                fence INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                sequence INTEGER,
+                archived INTEGER NOT NULL DEFAULT 0
+            );
+            INSERT INTO artifacts(id, run_id, name, media_type, sha256, content, size_bytes,
+                    idempotency_key, fence, created_at, sequence, archived)
+                SELECT id, run_id, name, media_type, sha256, content, size_bytes,
+                       idempotency_key, fence, created_at, sequence, 0
+                  FROM artifacts_pre_retention;
+            DROP TABLE artifacts_pre_retention;
+            CREATE INDEX IF NOT EXISTS ix_artifacts_run ON artifacts(run_id);
+            """, ct);
     }
 
     private static async Task EnsureColumnAsync(
