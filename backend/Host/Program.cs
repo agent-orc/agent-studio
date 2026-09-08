@@ -278,8 +278,10 @@ builder.Services.AddSingleton<IProviderAuthProvisioner, SshProviderAuthProvision
 builder.Services.AddSingleton<ITunnelKeeperManager, WindowsTunnelKeeperManager>();
 builder.Services.AddSingleton<RemoteRunnerLinkService>();
 builder.Services.AddSingleton<ICodexDeviceAuthTransport, SshCodexDeviceAuthTransport>();
+builder.Services.AddSingleton<IClaudeDeviceAuthTransport, SshClaudeDeviceAuthTransport>();
 builder.Services.AddSingleton<IProviderSignInAudit, ProviderSignInOperatorFeed>();
 builder.Services.AddSingleton<CodexSignInCoordinator>();
+builder.Services.AddSingleton<ClaudeSignInCoordinator>();
 builder.Services.AddSingleton<MigrationStateStore>();
 builder.Services.AddSingleton<HostTelemetryStore>();
 builder.Services.AddSingleton<AgentStudio.Persistence.IAtomicJsonFileWriter, AgentStudio.Persistence.AtomicJsonFileWriter>();

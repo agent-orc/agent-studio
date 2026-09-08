@@ -514,7 +514,7 @@ public sealed class RemoteReviewExecutor
         RemoteReviewWorkspace currentWorkspace)
     {
         if (PathsEqual(slot.WorkspacePath, currentWorkspace.RepositoryPath))
-            return await currentWorkspace.CleanupAsync();
+            return await currentWorkspace.CleanupAsync(slot.AttemptId);
 
         // A dead slot can be re-claimed under a fresh fence solely to report its
         // loss. In that case the current claim's derived workspace differs from
@@ -532,6 +532,7 @@ public sealed class RemoteReviewExecutor
                 StringComparison.Ordinal))
             throw new InvalidOperationException(
                 "Refusing persisted review cleanup outside the configured review root.");
+        await CliProcessReaper.ReapWorkspaceAsync(target, slot.AttemptId, _log, CancellationToken.None);
         if (Directory.Exists(target)) Directory.Delete(target, recursive: true);
         return !Directory.Exists(target);
     }

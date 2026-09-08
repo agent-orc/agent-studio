@@ -1207,9 +1207,9 @@ public sealed class RemoteReviewWorkspace
             });
     }
 
-    public Task<bool> CleanupAsync()
+    public async Task<bool> CleanupAsync(string attemptId = "unknown")
     {
-        if (!Directory.Exists(AttemptRoot)) return Task.FromResult(true);
+        if (!Directory.Exists(AttemptRoot)) return true;
         var expectedRoot = Path.GetFullPath(_options.ReviewWorkDir)
             .TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
         var target = Path.GetFullPath(AttemptRoot);
@@ -1218,10 +1218,15 @@ public sealed class RemoteReviewWorkspace
                 expectedRoot.TrimEnd(Path.DirectorySeparatorChar),
                 StringComparison.Ordinal))
             throw new InvalidOperationException("Refusing review cleanup outside the configured attempt root.");
+        // A worker that died without a live daemon watching it can leave its CLI
+        // child running with this attempt root as its cwd. Deleting the tree out
+        // from under a live process turns it into an untraceable "(deleted)" cwd
+        // zombie (AGT-2759), so every process rooted here is reaped first.
+        await CliProcessReaper.ReapWorkspaceAsync(target, attemptId, _log, CancellationToken.None);
         // The attempt root holds a clone, so it contains read-only git objects
         // and possibly reparse points - a plain recursive delete cannot remove it.
         ResilientDirectory.Delete(target);
-        return Task.FromResult(!Directory.Exists(target));
+        return !Directory.Exists(target);
     }
 
     private async Task MaterializeGitAsync(string repositoryUrl, CancellationToken ct)

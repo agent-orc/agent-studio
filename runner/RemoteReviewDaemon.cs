@@ -45,7 +45,7 @@ public sealed class RemoteReviewDaemon
         shutdown = daemonStop.Token;
         var state = new ReviewStateStore(_options.StateDir);
         var persistedAtStartup = state.LoadAll();
-        var reconciler = new ReviewSlotReconciler(state, _client.GetReviewAttemptAsync);
+        var reconciler = new ReviewSlotReconciler(state, _client.GetReviewAttemptAsync, log: _log);
         Task<string> RegisterAsync(CancellationToken ct) => _client.RegisterAsync(
             _options.RunnerName,
             "review-executor",
@@ -155,6 +155,10 @@ public sealed class RemoteReviewDaemon
             DateTime.UtcNow,
             shutdown);
         StartContinuations(startupReconciliation, "startup");
+        CliProcessReaper.RecordExternalReap(CliOrphanSweep.Sweep(
+            [_options.ReviewWorkDir],
+            ReviewSlotReconciler.MaximumDormantAge,
+            _log));
         if (active.Count > 0)
         {
             _log(
@@ -240,6 +244,10 @@ public sealed class RemoteReviewDaemon
                             active.Select(slot => slot.ResourceNamespace),
                             DateTime.UtcNow,
                             _log);
+                        CliProcessReaper.RecordExternalReap(CliOrphanSweep.Sweep(
+                            [_options.ReviewWorkDir],
+                            ReviewSlotReconciler.MaximumDormantAge,
+                            _log));
                     }
                     catch (Exception exception)
                     {

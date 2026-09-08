@@ -108,17 +108,20 @@ internal sealed class ReviewSlotReconciler
     private readonly Func<string, CancellationToken, Task<ReviewAttemptDto?>> _getAttempt;
     private readonly Func<PersistedReviewSlot, ReviewProcessObservation> _observeProcess;
     private readonly Func<PersistedReviewSlot, bool> _hasDurableResult;
+    private readonly Action<string> _log;
 
     internal ReviewSlotReconciler(
         ReviewStateStore state,
         Func<string, CancellationToken, Task<ReviewAttemptDto?>> getAttempt,
         Func<PersistedReviewSlot, ReviewProcessObservation>? observeProcess = null,
-        Func<PersistedReviewSlot, bool>? hasDurableResult = null)
+        Func<PersistedReviewSlot, bool>? hasDurableResult = null,
+        Action<string>? log = null)
     {
         _state = state;
         _getAttempt = getAttempt;
         _observeProcess = observeProcess ?? ObserveProcess;
         _hasDurableResult = hasDurableResult ?? DurableReviewProcess.HasCompleted;
+        _log = log ?? (_ => { });
     }
 
     internal async Task<ReviewSlotReconciliation> ReconcileAsync(
@@ -194,14 +197,15 @@ internal sealed class ReviewSlotReconciler
                         process.Reason));
                     break;
                 case ReviewSlotRecoveryAction.PurgeInvalidAuthority:
-                    MarkCleanedAndDelete(slot, reason);
+                    await MarkCleanedAndDeleteAsync(slot, reason, shutdown);
                     purged++;
                     break;
                 case ReviewSlotRecoveryAction.PurgeAged:
-                    MarkCleanedAndDelete(
+                    await MarkCleanedAndDeleteAsync(
                         slot,
                         $"record age {Math.Max(0, dormantAge.TotalHours):0.0}h exceeded " +
-                        $"the {MaximumDormantAge.TotalHours:0}h dormant limit");
+                        $"the {MaximumDormantAge.TotalHours:0}h dormant limit",
+                        shutdown);
                     purged++;
                     agedPurged++;
                     break;
@@ -240,7 +244,7 @@ internal sealed class ReviewSlotReconciler
         return slot with { AdoptionFailure = reason };
     }
 
-    private void MarkCleanedAndDelete(PersistedReviewSlot slot, string reason)
+    private async Task MarkCleanedAndDeleteAsync(PersistedReviewSlot slot, string reason, CancellationToken ct)
     {
         try
         {
@@ -249,6 +253,12 @@ internal sealed class ReviewSlotReconciler
                 Phase = "cleaned",
                 AdoptionFailure = reason,
             });
+            // The worker generation that owned this workspace is confirmed dead
+            // (both purge branches require !process.Live). Reap any CLI child it
+            // left behind now, on the reconciliation cadence, instead of leaving
+            // it for the day-scale workspace retention sweep to eventually
+            // out-live (AGT-2759).
+            await CliProcessReaper.ReapWorkspaceAsync(slot.WorkspacePath, slot.AttemptId, _log, ct);
         }
         finally
         {
