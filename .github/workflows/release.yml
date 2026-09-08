@@ -94,6 +94,24 @@ jobs:
             --filter "FullyQualifiedName~TaskServer.Tests.TopologyTests|FullyQualifiedName~TaskServer.Tests.ProtocolTests" \
             --logger "console;verbosity=normal"
 
+      - name: Deployment regression scenario (inproc full)
+        run: scripts/scenario.sh --target inproc --level full --configuration Release
+
+      - name: Deployment regression scenario (compose full)
+        run: >-
+          scripts/scenario.sh --target compose --level full
+          --configuration Release
+          --report-dir artifacts/scenario-reports
+
+      - name: Upload deployment regression scenario reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-regression-scenario-${{ github.sha }}
+          path: artifacts/scenario-reports/
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Lint and type-check frontend
         working-directory: frontend
         run: |
