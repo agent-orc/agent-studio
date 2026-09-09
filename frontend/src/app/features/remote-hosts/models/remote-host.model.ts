@@ -37,6 +37,8 @@ export type HostHeartbeatStatus =
 export type HostActionKind =
   | 'reprobe'
   | 'reconnect'
+  | 'pause-link'
+  | 'resume-link'
   | 'drain'
   | 'retire'
   | 'revive'
@@ -237,39 +239,27 @@ export interface TaskServerRunnerCapabilitySnapshot {
   roleMaxParallelism?: number | null;
 }
 
-export interface TunnelKeeperHealth {
-  supported: boolean;
-  taskName: string;
-  state: 'healthy' | 'unhealthy' | 'unsupported';
-  enabled: boolean;
-  running: boolean;
-  sshRunning: boolean;
-  cause: 'task-disabled' | 'not-running' | 'ssh-not-running' | 'probe-failing' | null;
-  observedAt: string | null;
-  logTail: readonly string[];
-  detail: string | null;
+export interface RunnerLinkProbe {
+  at: string;
+  kind: 'adoption' | 'late-heartbeat' | 'listener-cleanup' | string;
+  succeeded: boolean;
+  exitCode: number | null;
+  detail: string;
 }
 
 export interface RemoteRunnerLinkHealth {
   runnerId: string;
-  name: string;
-  linkState: 'connected' | 'stale' | 'down';
-  lastSnapshotAt: string | null;
-  stateSince: string;
-  snapshotAgeSeconds: number | null;
-  readyCardsTargetHost: boolean;
-  keeper: TunnelKeeperHealth | null;
-}
-
-export interface RemoteRunnerReconnectResponse {
-  runnerId: string;
-  succeeded: boolean;
-  enabled: boolean;
-  started: boolean;
-  detail: string;
-  linkState: RemoteRunnerLinkHealth['linkState'];
-  nextSnapshotAgeSeconds: number | null;
-  keeper: TunnelKeeperHealth;
+  kind: 'ssh-reverse';
+  state: 'down' | 'connecting' | 'up' | 'degraded' | 'reconnecting' | 'paused';
+  since: string;
+  lastHeartbeatAt: string | null;
+  lastProbe: RunnerLinkProbe | null;
+  lastError: string | null;
+  attempt: number;
+  nextRetryAt: string | null;
+  childPid: number | null;
+  notificationRaisedAt: string | null;
+  unreachableSince?: string | null;
 }
 
 export interface RemoteHostAdmission {

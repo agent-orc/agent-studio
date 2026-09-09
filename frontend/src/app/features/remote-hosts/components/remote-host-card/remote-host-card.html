@@ -1,5 +1,4 @@
 @let h = host();
-
 <tr class="host__row" [attr.data-tone]="tone()" data-testid="remote-host-primary-row">
   <td class="host__name-cell">
     <button class="host__disclosure"
@@ -20,6 +19,7 @@
       <span>{{ statusLabel() }}</span>
     </span>
   </td>
+  <td class="host__link" data-testid="remote-host-link-state" [attr.title]="linkTooltip()">{{ linkLabel() }}</td>
   <td><span class="host__placeholder" title="Shown per runner role">–</span></td>
   <td class="host__load" data-testid="remote-host-load">
     @if (loadPct() !== null) {
@@ -45,18 +45,14 @@
   </td>
   <td class="host__actions"><span class="host__placeholder" title="Actions are per runner role">–</span></td>
 </tr>
-
 @for (role of roles(); track role.id) {
-  <tr appRemoteHostRoleRow
-      [host]="role"
-      [activeSlots]="activeSlotsFor(role)"
-      [now]="now()"
+  <tr appRemoteHostRoleRow [host]="role" [activeSlots]="activeSlotsFor(role)" [now]="now()"
       (action)="action.emit($event)"></tr>
 }
 
 @if (expanded()) {
   <tr class="host__detail-row" data-testid="remote-host-detail-row">
-    <td colspan="7">
+    <td colspan="8">
       <div class="host__details" [id]="detailId()" data-testid="remote-host-detail-summaries">
         <section class="detail" data-testid="remote-host-detail-section-identity">
           <app-remote-host-detail-summary label="Identity" [summary]="identitySummary()"
@@ -85,13 +81,9 @@
             <div><dt>Task inflow</dt><dd>{{ taskInflowLabel() }}</dd></div>
             <div><dt>Daemon</dt><dd>{{ daemonLabel() }}</dd></div>
             <div data-testid="remote-host-task-server-route"><dt>Task Server route</dt><dd>{{ taskServerRouteLabel() }}</dd></div>
-            <div data-testid="remote-host-link-state-detail"><dt>Runner link</dt><dd>{{ h.runnerLink?.linkState || 'not reported' }} since {{ h.runnerLink?.stateSince || 'unknown' }}</dd></div>
-            @if (h.runnerLink?.keeper; as keeper) {
-              <div><dt>Tunnel keeper</dt><dd>{{ keeper.taskName }} · {{ keeper.cause || keeper.state }}</dd></div>
-              @if (keeper.logTail.length) {
-                <div data-testid="remote-host-keeper-log-tail"><dt>Keeper log tail</dt><dd><code class="keeper-log">{{ keeper.logTail.join('\n') }}</code></dd></div>
-              }
-            }
+            <div data-testid="remote-host-link-state-detail"><dt>Runner link</dt><dd>{{ h.runnerLink?.state || 'not configured' }} since {{ h.runnerLink?.since || 'unknown' }}</dd></div>
+            <div><dt>Last link probe</dt><dd>{{ h.runnerLink?.lastProbe?.detail || 'Never' }}</dd></div>
+            <div><dt>SSH child</dt><dd>{{ h.runnerLink?.childPid || 'Not running' }}</dd></div>
             <div><dt>Last claim</dt><dd>{{ h.lastClaimAt ? (h.lastClaimAt | date:'short') : 'None' }}</dd></div>
             <div><dt>Fallback probe</dt><dd>{{ h.gitPushCheckedAt ? (h.gitPushCheckedAt | date:'short') : 'Never' }}</dd></div>
           </dl>

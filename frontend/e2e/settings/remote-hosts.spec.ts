@@ -71,7 +71,7 @@ async function stubBackgroundApis(page: Page) {
       runnerGitStatus: 'ready', runnerGitCheckedAt: now, runnerDaemonState: 'running', runnerActiveSlots: 0, runnerAvailableSlots: 2 },
   ]));
   await page.route('**/api/v1/management/remote-hosts', json([]));
-  await page.route('**/api/v1/management/remote-hosts/link-health', json([]));
+  await page.route('**/api/v1/management/links', json([]));
   await page.route('**/api/clients/*/telemetry?window=*', json({ clientId: 'mock', window: '14d', points: [{
     timestamp: now, cpuPercent: 7, load1: 0.1, load5: 0.1, load15: 0.1,
     memoryUsedBytes: 4_000_000_000, memoryTotalBytes: 16_000_000_000,
@@ -1293,47 +1293,43 @@ test.describe('Execution Hosts settings section', () => {
     await page.screenshot({ path: join(SHOT_DIR, 'remote-hosts-stale-dark.png'), fullPage: false });
   });
 
-  test('shows a down runner link, raises one keeper notification, and reconnects it', async ({ page }) => {
-    const lastSnapshotAt = '2026-09-06T08:00:00Z';
+  test('shows a down supervised link, raises one notification, and reconnects it', async ({ page }) => {
+    const lastHeartbeatAt = '2026-09-06T08:00:00Z';
     let reconnectCalls = 0;
     const downLink = {
-      runnerId: 'agent-runner-01', name: 'agent-runner-01', linkState: 'down',
-      lastSnapshotAt, stateSince: '2026-09-06T08:03:00Z', snapshotAgeSeconds: 7200,
-      readyCardsTargetHost: true,
-      keeper: {
-        supported: true, taskName: 'AgentRunner-TunnelKeeper', state: 'unhealthy',
-        enabled: false, running: false, sshRunning: false, cause: 'task-disabled',
-        observedAt: '2026-09-06T08:00:00Z',
-        logTail: ['2026-09-06T08:00:00Z status=unreachable'],
-        detail: 'The Scheduled Task is disabled.',
-      },
+      runnerId: 'agent-runner-01', kind: 'ssh-reverse', state: 'reconnecting',
+      since: '2026-09-06T08:03:00Z', lastHeartbeatAt,
+      lastProbe: { at: '2026-09-06T08:04:00Z', kind: 'late-heartbeat', succeeded: false, exitCode: 255, detail: 'ssh route probe exited with code 255.' },
+      lastError: 'ssh route probe exited with code 255.', attempt: 7,
+      nextRetryAt: '2026-09-06T08:05:00Z', childPid: null,
+      notificationRaisedAt: '2026-09-06T08:08:00Z',
     };
-    await page.unroute('**/api/v1/management/remote-hosts/link-health');
-    await page.route('**/api/v1/management/remote-hosts/link-health', route => route.fulfill({
+    await page.unroute('**/api/v1/management/links');
+    await page.route('**/api/v1/management/links', route => route.fulfill({
       status: 200, contentType: 'application/json', body: JSON.stringify([downLink]),
     }));
-    await page.route('**/api/v1/management/remote-hosts/agent-runner-01/reconnect', route => {
+    await page.route('**/api/v1/management/links/agent-runner-01/reconnect', route => {
       reconnectCalls++;
       return route.fulfill({
         status: 200, contentType: 'application/json', body: JSON.stringify({
-          runnerId: 'agent-runner-01', succeeded: true, enabled: true, started: true,
-          detail: 'Enabled and started AgentRunner-TunnelKeeper.', linkState: 'down',
-          nextSnapshotAgeSeconds: 7201,
-          keeper: { ...downLink.keeper, state: 'healthy', enabled: true, running: true, sshRunning: true, cause: null },
+          ...downLink, state: 'reconnecting', since: '2026-09-06T08:09:00Z', attempt: 8,
         }),
       });
     });
 
     await page.goto('/#/workspace/settings/remote-hosts');
+    await expect(page.getByTestId('remote-hosts-table').locator('thead')).toContainText('Link');
     const runnerRole = page.getByTestId('remote-host-role-row').filter({ hasText: 'agent-runner-01' }).first();
-    await expect(runnerRole.getByTestId('remote-host-link-state')).toContainText('Down since 2026-09-06T08:03:00Z');
+    await expect(runnerRole.getByTestId('remote-host-link-state')).toContainText('reconnecting');
     const warning = page.getByTestId('notification-warning').filter({ hasText: 'agent-runner-01 link is down' });
-    await expect(warning).toContainText('Scheduled Task is disabled');
+    await expect(warning).toContainText('Ready cards targeting this host cannot be claimed');
     await expect(page.getByTestId('notification-warning')).toHaveCount(1);
     await expect(page.getByTestId('remote-host-link-notification')).toBeVisible();
-    await expect(page.getByTestId('remote-host-link-notification')).toContainText('Scheduled Task is disabled');
+    await expect(page.getByTestId('remote-host-link-notification')).toContainText('ssh route probe exited with code 255');
+    await setTheme(page, 'light');
+    await page.screenshot({ path: join(SHOT_DIR, 'remote-host-link-down-notification-light--mocked.png'), fullPage: false });
     await setTheme(page, 'dark');
-    await page.screenshot({ path: join(SHOT_DIR, 'remote-host-link-down-notification--mocked.png'), fullPage: false });
+    await page.screenshot({ path: join(SHOT_DIR, 'remote-host-link-down-notification-dark--mocked.png'), fullPage: false });
 
     await page.getByTestId('remote-host-link-reconnect').click();
     await expect.poll(() => reconnectCalls).toBe(1);

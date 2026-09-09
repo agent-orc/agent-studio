@@ -1330,6 +1330,7 @@ public static class V1ReviewPlaneEndpoints
 
 public sealed class V1ReviewExecutorRegistry
 {
+    public event Action<string, DateTime>? CapabilitySnapshotAdvertised;
     /// <summary>Consecutive failures that turn a suspect capability into a drained one.</summary>
     private const int CapabilityFailureThreshold = 2;
     private const int CapabilityBaseCooldownSeconds = 120;
@@ -1510,6 +1511,7 @@ public sealed class V1ReviewExecutorRegistry
             .ThenBy(capability => capability.Key, StringComparer.Ordinal)
             .ToArray();
 
+        Contract.RunnerCapabilitySnapshotDto result;
         lock (_gate)
         {
             if (!_registrations.TryGetValue(runnerId, out var registration))
@@ -1584,7 +1586,7 @@ public sealed class V1ReviewExecutorRegistry
             ClearRecoveredProviderAuthFailuresLocked(runnerId, capabilities);
             if (!HasActiveCapabilityCooldownLocked(runnerId, now))
                 ClearCapabilityFailures(runnerId);
-            return new Contract.RunnerCapabilitySnapshotDto(
+            result = new Contract.RunnerCapabilitySnapshotDto(
                 runnerId,
                 registration.Name,
                 registration.HostId,
@@ -1604,6 +1606,8 @@ public sealed class V1ReviewExecutorRegistry
                 capabilities,
                 request.Telemetry);
         }
+        CapabilitySnapshotAdvertised?.Invoke(runnerId, advertisedAt);
+        return result;
     }
 
     public void RecordReAdoptedSlots(string runnerId, string instanceId, int activeSlots)

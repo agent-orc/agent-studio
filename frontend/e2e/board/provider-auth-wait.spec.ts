@@ -49,7 +49,11 @@ async function installRoutes(page: Page, provider: 'claude' | 'codex' = 'claude'
     if (url.includes('/api/tasks/grouped')) return json(route, grouped);
     if (/\/api\/(?:tasks|jobs)(\?|$)/.test(url)) return json(route, [task]);
     if (url.includes('/api/watch-paths')) return json(route, [{ name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH }]);
-    if (url.includes('/api/v1/management/remote-hosts/link-health')) return json(route, []);
+    if (url.includes('/api/v1/management/links')) return json(route, [{
+      runnerId: 'agent-runner-01', kind: 'ssh-reverse', state: 'up',
+      since: now.toISOString(), lastHeartbeatAt: now.toISOString(), lastProbe: null,
+      lastError: null, attempt: 0, nextRetryAt: null, childPid: 1234, notificationRaisedAt: null,
+    }]);
     if (url.includes('/api/v1/management/remote-hosts')) return json(route, [{
       runnerId: 'agent-runner-01', name: 'runner-berlin', hostId: 'host-berlin',
       instanceId: 'coding', runnerVersion: '1.2.0', protocolVersion: 2, status: 'active',
@@ -100,6 +104,27 @@ test('Ready card shows the provider sign-in wait reason in both themes', async (
       path: join(resultsDir, `ready-card-provider-auth-wait-${theme}--mocked.png`),
     });
   }
+});
+
+test('Ready card prefers the supervised link resource while it reconnects', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.addInitScript(() => localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({
+    v: 1, tabs: [{ kind: 'board', projectName: '__all__' }], activeKey: 'board:__all__',
+  })));
+  await installRoutes(page);
+  await page.route('**/api/v1/management/links', route => json(route, [{
+    runnerId: 'agent-runner-01', kind: 'ssh-reverse', state: 'reconnecting',
+    since: '2026-09-09T18:53:00Z', lastHeartbeatAt: '2026-09-09T18:51:00Z',
+    lastProbe: null, lastError: 'route failed', attempt: 7, nextRetryAt: null,
+    childPid: null, notificationRaisedAt: null,
+  }]));
+
+  await page.goto('/?includeFixtures=true', { waitUntil: 'domcontentloaded' });
+  await dismissDevErrorDialog(page);
+  const wait = page.getByTestId('task-card-provider-auth-wait');
+  await expect(wait).toContainText('agent-runner-01 unreachable since');
+  await expect(wait).toContainText('(link down, reconnecting, attempt 7)');
+  await expect(wait).not.toContainText('sign-in');
 });
 
 test('Codex Ready-card wait chip opens the host-owned device sign-in dialog', async ({ page }) => {

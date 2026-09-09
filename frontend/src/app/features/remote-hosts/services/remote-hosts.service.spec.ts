@@ -5,7 +5,7 @@ import { TestBed } from '@angular/core/testing';
 import { RemoteHostsService } from './remote-hosts.service';
 
 function flushLinkHealth(http: HttpTestingController): void {
-  for (const request of http.match('/api/v1/management/remote-hosts/link-health')) request.flush([]);
+  for (const request of http.match('/api/v1/management/links')) request.flush([]);
 }
 
 describe('RemoteHostsService', () => {

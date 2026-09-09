@@ -101,6 +101,7 @@
   background: var(--studio-accent);
 }
 .host__activity { color: var(--studio-fg-dim) !important; white-space: nowrap; }
+.host__link { color: var(--studio-fg-dim); font-variant-numeric: tabular-nums; text-transform: capitalize; }
 .host__placeholder { color: var(--studio-fg-muted); }
 .host__release code {
   display: block;
@@ -170,7 +171,6 @@
 .detail__facts dt { color: var(--studio-fg-muted); font-size: 10px; }
 .detail__facts dd { margin: 0; color: var(--studio-fg); font-size: 11px; overflow-wrap: anywhere; }
 .detail__facts code { font-family: var(--font-mono, monospace); font-size: 10px; }
-.keeper-log { white-space: pre-wrap; }
 .detail__actions,
 .detail__badges { flex-wrap: wrap; gap: var(--studio-spacing-2); margin-top: var(--studio-spacing-3); }
 

@@ -48,23 +48,19 @@ export class RemoteHostRoleRowComponent {
 function runnerLinkLabel(host: RemoteHost, now: number): string | null {
   const link = host.runnerLink;
   if (!link) return null;
-  const age = link.lastSnapshotAt ? Math.max(0, now - Date.parse(link.lastSnapshotAt)) : null;
+  const age = Math.max(0, now - Date.parse(link.since));
   const ageLabel = age === null || !Number.isFinite(age)
     ? 'no snapshot'
     : age < 60_000 ? `${Math.floor(age / 1000)}s ago`
       : age < 3_600_000 ? `${Math.floor(age / 60_000)}m ago`
         : `${Math.floor(age / 3_600_000)}h ago`;
-  if (link.linkState === 'connected') return `Connected · snapshot ${ageLabel}`;
-  return `${link.linkState === 'stale' ? 'Stale' : 'Down'} since ${link.stateSince} · snapshot ${ageLabel}`;
+  return `${link.state} · ${ageLabel}`;
 }
 
 function runnerLinkTooltip(host: RemoteHost): string | null {
   const link = host.runnerLink;
   if (!link) return null;
-  const base = `Runner link ${link.linkState}. Last capability snapshot: ${link.lastSnapshotAt ?? 'never'}.`;
-  const keeper = link.keeper;
-  if (!keeper) return base;
-  return `${base} Keeper ${keeper.taskName}: ${keeper.cause ?? keeper.state}. ${keeper.detail ?? ''}`.trim();
+  return `Runner link ${link.state} since ${link.since}. Last heartbeat: ${link.lastHeartbeatAt ?? 'never'}. ${link.lastError ?? 'No error reported.'}`;
 }
 
 export function roleSlotTotal(host: RemoteHost): number | null {

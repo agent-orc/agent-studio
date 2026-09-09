@@ -7,6 +7,12 @@ import {
 import type { TaskServerRunnerCapabilitySnapshot } from './remote-host.model';
 
 const NOW = Date.parse('2026-08-04T12:00:00Z');
+const UP_LINK = {
+  runnerId: 'agent-runner-01', kind: 'ssh-reverse' as const, state: 'up' as const,
+  since: '2026-08-04T11:53:00Z', lastHeartbeatAt: '2026-08-04T11:59:50Z',
+  lastProbe: null, lastError: null, attempt: 0, nextRetryAt: null,
+  childPid: 123, notificationRaisedAt: null,
+};
 
 describe('provider auth projection', () => {
   it('maps fresh probe truth to OK, unavailable, and unknown badges with detail', () => {
@@ -76,7 +82,7 @@ describe('provider auth projection', () => {
       NOW,
     );
 
-    expect(providerAuthWaitReason(task, unavailable)).toMatchObject({
+    expect(providerAuthWaitReason(task, unavailable, [UP_LINK])).toMatchObject({
       label: 'Waiting for Claude sign-in on runner-berlin',
       hostNames: ['runner-berlin'],
     });
@@ -140,12 +146,23 @@ describe('provider auth projection', () => {
     );
     expect(unreachable?.label).not.toContain('sign-in');
 
+    const supervised = providerAuthWaitReason(task, stale, [{
+      runnerId: 'agent-runner-01', kind: 'ssh-reverse', state: 'reconnecting',
+      since: '2026-08-04T11:53:00Z', lastHeartbeatAt: '2026-08-04T11:52:00Z',
+      lastProbe: null, lastError: 'route failed', attempt: 7, nextRetryAt: null,
+      childPid: null, notificationRaisedAt: null,
+    }]);
+    expect(supervised?.label).toContain('agent-runner-01 unreachable since');
+    expect(supervised?.label).toContain('(link down, reconnecting, attempt 7)');
+    expect(supervised?.label).not.toContain('sign-in');
+
     const signedOut = providerAuthBadgesForSnapshot(
       snapshot('unavailable', 'healthy', true, 'Not logged in', null, 'signed-out'), NOW,
     );
     const oneLogoutProbe = signedOut.map(status => ({ ...status, consecutiveFailures: 1 }));
     expect(providerAuthWaitReason(task, oneLogoutProbe)?.label).toContain('unreachable since');
-    expect(providerAuthWaitReason(task, signedOut)?.label).toBe('Waiting for Claude sign-in on runner-berlin');
+    expect(providerAuthWaitReason(task, signedOut)?.label).not.toContain('sign-in');
+    expect(providerAuthWaitReason(task, signedOut, [UP_LINK])?.label).toBe('Waiting for Claude sign-in on runner-berlin');
   });
 
   it('attaches a Codex device sign-in target to an unavailable Ready-card wait', () => {
@@ -157,7 +174,7 @@ describe('provider auth projection', () => {
     const waiting = providerAuthWaitReason(task, providerAuthBadgesForSnapshot(
       snapshot('unavailable', 'healthy', true, 'Not logged in', null, 'signed-out', null, 'codex'),
       NOW,
-    ));
+    ), [UP_LINK]);
 
     expect(waiting?.signInTarget).toMatchObject({
       hostId: 'host-berlin',
