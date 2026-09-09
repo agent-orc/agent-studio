@@ -1519,3 +1519,62 @@ switch ship together.
 **Amendment (2026-08-11).** Immediate integration into a repository with both `develop` and `main` has one fixed lineage: merge and gate the delivery on `develop`, then run the release gate on that exact develop merge commit and fast-forward `main`. A raw delivery fence is never a release source in this topology. The path fails before merging when existing history does not make `main` an ancestor of `develop`; it does not create a convergence merge or rewrite history. Deferred publication applies the same order to origin and stops before `main` when the `develop` push fails. A successful prerequisite push is not a terminal receipt, so restart recovery repeats the full ordered publication after a crash window. Main-only repositories retain their existing single-target behavior.
 
 **Amendment (2026-08-11, integration before acceptance).** The canonical Remote order is delivery, settled Review/build gate, integration, Human Review, then acceptance. This applies to every Remote coding project and executor; no project-name flag limits it to AGT, and `RemoteExecutionEnabled` controls dispatch rather than post-delivery integration. A failed delivery gate or immediate integration attempt is persisted visibly before Human Review and is not retried by acceptance. Acceptance validates current-attempt lineage and Git ancestry, then moves an already integrated card without changing Git or the merge-step receipt. An unintegrated card remains in Human Review with `IntegrationFailed`; explicit operator override is the only coding exception. `AcceptedIntegrationWorker` and `AcceptedIntegrationBackstopHostedService` remain only to recover a durable `integrating` transaction written by an older backend process. Local coding retains its existing order of local integration before Auto Review, while report-only, concept, Epic, and other no-code/no-branch modes do not integrate. Remote Review infrastructure retries remain in Auto Review. A configured `pull-request` strategy and any gate, conflict, lineage, or publication failure are explicit non-normal states with visible evidence, never acceptance-time integration. The dual-line `develop` then exact-SHA release-to-`main` rule above remains mandatory.
+
+---
+
+## ADR-0068 - Quota admission is one run-scoped boundary for every CLI execution path (2026-09-08)
+
+**Decision.** Every local or remote coding-agent CLI execution resolves one
+quota admission plan immediately before launch or claim. The plan may use the
+configured route, wait or throttle, or switch to a cross-family route that
+preserves the required capability tier. Stored task, pipeline-step, and review
+configuration remains unchanged; only the run or claimed command receives the
+effective route.
+
+**Context.** A Codex weekly cap stopped local coding, Remote coding claims,
+review aspects, pipeline post-steps, orchestrator work, and project chat while
+Claude still had headroom. The existing fallback was confined to the local
+`ProjectRunner` path. Remote claims shipped the capped card route unchanged,
+open ReviewAttempt plans froze their provider route, and operators had to
+rewrite review attempts and pipeline settings manually. Provider quota is a
+run-time admission fact, so applying it only in one scheduler path made the
+same configured route behave differently depending on where it executed.
+
+**Non-goals.** This decision does not discover models, choose latest-in-family
+defaults, or own the final equivalence catalogue. It does not rewrite explicit
+task or step pins, lower a correctness floor, interrupt a running fallback
+process, supersede an open review attempt, or recursively route from one
+fallback into another. An operator may still configure an explicit fallback;
+that deliberate override wins over the derived catalogue pair.
+
+**Reasoning style.** Separate durable intent from an execution-time constraint.
+Configuration records what the operator or policy requested. One pure planner,
+fed by cached quota windows, caps, reset time, burn projection, wait policy,
+occupied capacity, and the requested thinking level as the cost signal, decides
+whether a new execution may start. Boundary adapters translate that single
+decision into a local launch, an effective Remote `RunSpecDto`, a claim-time
+review command, or a one-shot dispatch. Notable decisions share one
+observability contract so the task and load-distribution views explain the same
+outcome.
+
+**Implementation pointers.** Canonical policy and derived route:
+[QuotaAdmissionService](../../../../backend/Features/Cli/Quota/QuotaAdmissionService.cs),
+[QuotaAdmissionPlanner](../../../../backend/Features/Cli/Quota/QuotaAdmissionPlanner.cs),
+[CliQuotaFallbackService](../../../../backend/Features/Cli/Quota/CliQuotaFallbackService.cs),
+and [ModelEquivalenceCatalog](../../../../backend/Features/Cli/Quota/ModelEquivalenceCatalog.cs).
+Local and Remote coding boundaries:
+[ProjectRunner](../../../../backend/Features/Runner/ProjectRunner.cs) and
+[LeaseEndpoints](../../../../backend/Features/Tasks/LeaseEndpoints.cs).
+Review claim and shared one-shot boundaries:
+[V1ReviewPlaneEndpoints](../../../../backend/Features/Runner/V1ReviewPlaneEndpoints.cs)
+and [CliOneShotRegistry](../../../../backend/Features/Cli/Routing/OneShot/ICliOneShot.cs).
+Project chat host dispatch:
+[OrchestratorChat](../../../../backend/Features/Runner/OrchestratorChat.cs) and
+[RemoteProjectChatRunner](../../../../runner/RemoteProjectChatRunner.cs).
+Shared evidence writer:
+[QuotaAdmissionRecorder](../../../../backend/Features/Cli/Quota/QuotaAdmissionRecorder.cs).
+The complete entry-point and regression map is in the
+[CLI domain](../../domains/cli.md#quota-admission-coverage); capability floors
+remain in the [Model Routing Policy](../../domains/model-routing-policy.md#hard-floors).
+
+**Status.** Accepted.

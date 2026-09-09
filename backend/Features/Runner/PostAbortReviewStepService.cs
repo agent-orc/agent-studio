@@ -43,7 +43,6 @@ public sealed class PostAbortReviewStepService
     /// </summary>
     public Func<string, string, string, TimeSpan, CancellationToken, Task<string>> CliRunner { get; set; }
         = DefaultRunCliAsync;
-    private Func<string, string, string, string?, TimeSpan, CancellationToken, Task<string>>? _thinkingAwareCliRunner;
 
     public PostAbortReviewStepService(
         RuntimePromptService prompts,
@@ -56,10 +55,6 @@ public sealed class PostAbortReviewStepService
         _usage = usage;
         _oneShotRegistry = oneShotRegistry;
 
-        if (_oneShotRegistry != null)
-        {
-            _thinkingAwareCliRunner = RunViaOneShotAsync;
-        }
     }
 
     public const string PromptTemplate = "post-abort-review.md";
@@ -102,9 +97,9 @@ public sealed class PostAbortReviewStepService
         var ok = true;
         try
         {
-            rawResponse = _thinkingAwareCliRunner is null
+            rawResponse = _oneShotRegistry is null
                 ? await CliRunner(request.CliType, request.Model, prompt, request.Timeout, ct)
-                : await _thinkingAwareCliRunner(request.CliType, request.Model, prompt, request.ThinkingLevel, request.Timeout, ct);
+                : await RunViaOneShotAsync(request, prompt, ct);
             sw.Stop();
             var (parsedText, parsedUsage) = AdHocClaudeInvoker.ParseOrFallback(rawResponse, request.Model);
             rawResponse = parsedText;
@@ -361,29 +356,39 @@ public sealed class PostAbortReviewStepService
         return oneLine;
     }
 
-    private async Task<string> RunViaOneShotAsync(string cliType, string model, string prompt, string? thinkingLevel, TimeSpan timeout, CancellationToken ct)
+    private async Task<string> RunViaOneShotAsync(
+        PostAbortReviewRequest request,
+        string prompt,
+        CancellationToken ct)
     {
-        var oneShot = _oneShotRegistry?.Get(cliType);
-        if (oneShot == null) return await DefaultRunCliAsync(cliType, model, prompt, timeout, ct);
+        var oneShot = _oneShotRegistry?.Get(request.CliType);
+        if (oneShot == null)
+            return await DefaultRunCliAsync(
+                request.CliType, request.Model, prompt, request.Timeout, ct);
 
         var result = await oneShot.RunAsync(new CliOneShotRequest(
-            CliType: cliType,
-            Model: model,
+            CliType: request.CliType,
+            Model: request.Model,
             Prompt: prompt)
         {
-            ThinkingLevel = thinkingLevel,
-            Timeout = timeout,
+            ThinkingLevel = request.ThinkingLevel,
+            Timeout = request.Timeout,
             Source = UsageSource,
             RecordUsage = false,
+            Project = request.Project,
+            JobId = request.JobId,
+            JobFolderPath = request.JobFolderPath,
+            StepId = AgentStudio.Pipeline.PipelineCatalogue.PostAbortReviewStepId,
+            TemplateRef = PromptTemplate,
         }, ct);
 
         if (!result.Ok)
         {
             _logger.LogWarning(
                 "post-abort-review: CLI '{Cli}' returned exit={Exit} duration={DurationMs}ms error={Error}",
-                cliType, result.ExitCode, result.Duration.TotalMilliseconds, result.Error);
+                request.CliType, result.ExitCode, result.Duration.TotalMilliseconds, result.Error);
         }
-        return result.Stdout;
+        return CliOneShotCompatibility.ToClaudeResultEnvelope(result, request.Model);
     }
 
     private static Task<string> DefaultRunCliAsync(

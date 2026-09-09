@@ -415,7 +415,8 @@ public class TaskIndexCacheTests : IDisposable
         var releaseSecondScan = new ManualResetEventSlim(false);
         var thirdScanEntered = new ManualResetEventSlim(false);
         var releaseThirdScan = new ManualResetEventSlim(false);
-        var waiterCalling = new ManualResetEventSlim(false);
+        var waiterJoinedRefresh = new ManualResetEventSlim(false);
+        var releaseWaitingReader = new ManualResetEventSlim(false);
         var scans = 0;
         var cache = new TaskIndexCache(
             _scanner,
@@ -435,42 +436,57 @@ public class TaskIndexCacheTests : IDisposable
                     Assert.True(releaseThirdScan.Wait(TimeSpan.FromSeconds(5)));
                 }
                 return [new TaskInfo { Id = $"job-{scan}", State = TaskStates.Ready }];
+            },
+            beforeAwaitRefresh: targetMutationGen =>
+            {
+                if (targetMutationGen != 1) return;
+                waiterJoinedRefresh.Set();
+                releaseWaitingReader.Wait();
             });
 
         Assert.Equal("job-1", Assert.Single(cache.GetSnapshot()).Id);
         cache.Invalidate(TaskIndexCache.InvalidationSource.Mutation);
-        var owner = Task.Run(() => cache.GetSnapshot());
-        Assert.True(secondScanEntered.Wait(TimeSpan.FromSeconds(5)));
-
-        var alreadyWaiting = Task.Run(() =>
-        {
-            waiterCalling.Set();
-            return cache.GetSnapshot();
-        });
-        Assert.True(waiterCalling.Wait(TimeSpan.FromSeconds(5)));
-        Assert.NotSame(alreadyWaiting, await Task.WhenAny(
-            alreadyWaiting, Task.Delay(TimeSpan.FromMilliseconds(150))));
-
-        // This mutation overlaps the waiting read. It must make a later reader
-        // refresh again, but it must not move the older reader's consistency
-        // target and serialize that reader behind another full workspace scan.
-        cache.Invalidate(TaskIndexCache.InvalidationSource.Mutation);
-
+        var owner = Task.Factory.StartNew(
+            () => cache.GetSnapshot(),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+        Task? alreadyWaiting = null;
         try
         {
+            Assert.True(secondScanEntered.Wait(TimeSpan.FromSeconds(5)));
+
+            var waitingReader = Task.Factory.StartNew(
+                () => cache.GetSnapshot(),
+                CancellationToken.None,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default);
+            alreadyWaiting = waitingReader;
+            Assert.True(waiterJoinedRefresh.Wait(TimeSpan.FromSeconds(5)));
+
+            // This mutation overlaps a reader that already froze generation 1
+            // and joined that generation's in-flight refresh. It must make a
+            // later reader refresh again, but it must not move the older
+            // reader's consistency target or serialize it behind scan 3.
+            cache.Invalidate(TaskIndexCache.InvalidationSource.Mutation);
+            releaseWaitingReader.Set();
             releaseSecondScan.Set();
             Assert.Equal("job-2", Assert.Single(await owner).Id);
-            Assert.Same(alreadyWaiting, await Task.WhenAny(
-                alreadyWaiting, Task.Delay(TimeSpan.FromSeconds(2))));
-            Assert.Equal("job-2", Assert.Single(await alreadyWaiting).Id);
+            Assert.Same(waitingReader, await Task.WhenAny(
+                waitingReader, Task.Delay(TimeSpan.FromSeconds(2))));
+            Assert.Equal("job-2", Assert.Single(await waitingReader).Id);
             Assert.False(thirdScanEntered.IsSet);
             Assert.Equal(2, Volatile.Read(ref scans));
         }
         finally
         {
+            releaseWaitingReader.Set();
             releaseSecondScan.Set();
             releaseThirdScan.Set();
-            await Task.WhenAll(owner, alreadyWaiting);
+            if (alreadyWaiting == null)
+                await owner;
+            else
+                await Task.WhenAll(owner, alreadyWaiting);
         }
     }
 

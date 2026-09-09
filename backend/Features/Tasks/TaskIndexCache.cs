@@ -36,6 +36,7 @@ public sealed class TaskIndexCache
     private readonly TimeSpan _safetyTtl;
     private readonly Func<List<TaskInfo>> _scanAllJobsRaw;
     private readonly Action? _beforeRefreshGenerationCapture;
+    private readonly Action<long>? _beforeAwaitRefresh;
     private readonly ILogger<TaskIndexCache> _logger;
 
     // Cache slot: snapshot + when it was taken + whether a mutation/watcher
@@ -102,10 +103,12 @@ public sealed class TaskIndexCache
         ILogger<TaskIndexCache> logger,
         IConfiguration config,
         Func<List<TaskInfo>> scanAllJobsRaw,
-        Action? beforeRefreshGenerationCapture = null)
+        Action? beforeRefreshGenerationCapture = null,
+        Action<long>? beforeAwaitRefresh = null)
     {
         _scanAllJobsRaw = scanAllJobsRaw;
         _beforeRefreshGenerationCapture = beforeRefreshGenerationCapture;
+        _beforeAwaitRefresh = beforeAwaitRefresh;
         _logger = logger;
         var ttlSec = int.TryParse(config["TaskIndexCache:SafetyTtlSeconds"], out var v) ? v : 30;
         _safetyTtl = TimeSpan.FromSeconds(Math.Max(1, ttlSec));
@@ -246,6 +249,7 @@ public sealed class TaskIndexCache
 
             if (coldStartRefresh != null)
             {
+                _beforeAwaitRefresh?.Invoke(targetMutationGen);
                 coldStartRefresh.GetAwaiter().GetResult();
 
                 // The completed refresh may have published this reader's

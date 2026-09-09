@@ -1337,6 +1337,7 @@ public sealed class RemoteReviewAuthorityTests
             {
                 DataSource = store.DatabasePath,
                 Mode = SqliteOpenMode.ReadWrite,
+                Pooling = false,
             }.ToString());
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
@@ -1355,6 +1356,7 @@ public sealed class RemoteReviewAuthorityTests
             {
                 DataSource = store.DatabasePath,
                 Mode = SqliteOpenMode.ReadWrite,
+                Pooling = false,
             }.ToString());
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();

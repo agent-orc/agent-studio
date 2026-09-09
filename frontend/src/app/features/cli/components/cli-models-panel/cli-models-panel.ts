@@ -102,14 +102,17 @@ export class CliModelsPanelComponent implements OnInit {
   }
 
   /** One-line fallback-route summary for the collapsed row, e.g.
-   *  "→ Codex · gpt-5" or "no fallback". */
+   *  "→ Codex · gpt-5" or "→ Claude · Claude Opus 5 (auto)" or "no fallback".
+   *  "(auto)" marks a route the equivalence catalogue derived (AGT-2751)
+   *  because the operator saved no explicit fallback for this CLI. */
   fallbackSummary(cliType: CliType): string {
     const route = this.routes()[cliType];
     const model = route?.fallbackModel;
     if (!model) return 'no fallback';
     const targetCli = (route?.fallbackCliType as CliType | null) ?? cliType;
     const label = this.catalog.modelsFor(targetCli).find((m) => m.id === model)?.label ?? model;
-    return `→ ${cliTypeLabel(targetCli)} · ${label}`;
+    const suffix = route?.isFallbackDerived ? ' (auto)' : '';
+    return `→ ${cliTypeLabel(targetCli)} · ${label}${suffix}`;
   }
 
   hasFallback(cliType: CliType): boolean {
@@ -168,13 +171,19 @@ export class CliModelsPanelComponent implements OnInit {
 
   private save(cliType: CliType, changes: Partial<CliModelRouteProfile>): void {
     const existing = this.routes()[cliType];
+    // A catalogue-derived fallback (AGT-2751) is a display-only default, not
+    // an operator choice: carrying it into an unrelated save (e.g. changing
+    // just the primary model) would silently freeze it into
+    // cli-model-routing.json as if the operator had picked it. Only an
+    // explicit fallback edit (present in `changes`) may persist a fallback.
+    const persistedFallback = existing?.isFallbackDerived ? undefined : existing;
     const profile: CliModelRouteProfile = {
       cliType,
       primaryModel: existing?.primaryModel ?? (this.primaryModel(cliType) || null),
       primaryThinkingLevel: existing?.primaryThinkingLevel ?? null,
-      fallbackCliType: existing?.fallbackCliType ?? cliType,
-      fallbackModel: existing?.fallbackModel ?? null,
-      fallbackThinkingLevel: existing?.fallbackThinkingLevel ?? null,
+      fallbackCliType: persistedFallback?.fallbackCliType ?? cliType,
+      fallbackModel: persistedFallback?.fallbackModel ?? null,
+      fallbackThinkingLevel: persistedFallback?.fallbackThinkingLevel ?? null,
       ...changes,
     };
     this.routes.update((all) => ({ ...all, [cliType]: profile }));

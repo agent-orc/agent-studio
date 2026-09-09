@@ -92,11 +92,18 @@ public static class QuotaAdmissionPlanner
         // intentionally before route resolution: nearby wait -> model switch ->
         // throttle. Unknown, elapsed, or distant resets fail open to the
         // existing fallback/admission route.
+        //
+        // Situation awareness (AGT-2751, requirement 4): a nearby reset is
+        // only worth a quiet wait when the card is cheap. An expensive card
+        // (explicit high/xhigh/ultra/max reasoning) switches to an
+        // equal-strength provider immediately instead of sitting in the queue
+        // until the reset, even inside the configured wait threshold.
         var strictPrimaryEarly = Strict(cli);
         var nearbyReset = EarliestReset(primarySnapshot, nowUtc, caps, blockedOnly: true);
         if (waitPolicy?.Enabled == true
             && strictPrimaryEarly.Blocked
             && !strictPrimaryEarly.Suspicious
+            && IsCheap(requestedThinking)
             && nearbyReset?.ResetAt is { } resetAt)
         {
             var remaining = resetAt - nowUtc;
@@ -123,14 +130,16 @@ public static class QuotaAdmissionPlanner
         //    a usable fallback exists). Documented model switch before start.
         if (route?.IsFallback == true)
         {
+            var primaryReset = EarliestReset(
+                snapshotFor(cli), nowUtc, caps, blockedOnly: false);
             return new QuotaAdmissionPlan(
                 QuotaAdmissionOutcome.LaunchFallback,
                 route.CliType,
                 route.Model,
                 route.ThinkingLevel,
                 IsFallback: true,
-                Reason: BuildSwitchReason(cli, route),
-                NextResetAt: EarliestReset(snapshotFor(cli), nowUtc, caps, blockedOnly: false)?.ResetAt,
+                Reason: AppendReset(BuildSwitchReason(cli, route), primaryReset),
+                NextResetAt: primaryReset?.ResetAt,
                 Projection: QuotaWindowProjection.WorstProjection(snapshotFor(cli), caps, nowUtc),
                 ProjectionWarning: projectionWarning);
         }
@@ -212,6 +221,20 @@ public static class QuotaAdmissionPlanner
             $"burn {p.BurnRatePctPerHour:0.#}%/h, used {p.CurrentUsedPct:0.#}% -> projected {p.ProjectedUsedPct:0.#}% " +
             $"(cap {p.CapPct}%), {budgetLeft:0.#}% budget left, {p.HoursRemaining:0.#}h to reset";
     }
+
+    /// <summary>
+    /// A card's expected cost class, standing in for "how expensive is this
+    /// card" until a richer signal (task type, expected scope) is available.
+    /// Unset/low/medium reasoning is cheap enough to sit out a nearby reset;
+    /// an explicit high/xhigh/ultra/max pin is not - that card switches to the
+    /// equal-strength fallback instead of waiting.
+    /// </summary>
+    private static bool IsCheap(string? thinkingLevel) => thinkingLevel?.Trim().ToLowerInvariant() switch
+    {
+        null or "" => true,
+        CliThinkingLevels.High or CliThinkingLevels.XHigh or CliThinkingLevels.Ultra or CliThinkingLevels.Max => false,
+        _ => true,
+    };
 
     private static string BuildSwitchReason(string primaryCli, CliRouteDecision route)
     {
