@@ -123,7 +123,7 @@
   service, probed functionally, healed automatically, visible and operable in Studio, and finally
   retired together with the reverse tunnel.</p>
   <div class="meta">
-    <span><b>State:</b> 06.09.2026, decision-ready</span>
+    <span><b>State:</b> 09.09.2026, D1 decided (Option B), S2 in Ready as AGT-2763, S3 prepared as AGT-2764</span>
     <span><b>Trigger:</b> Ready lane stalled behind "Waiting for Codex sign-in on agent-runner-01" while the real fault was a disabled tunnel keeper task (02.09. to 06.09.)</span>
     <span><b>Evidence:</b> keeper log, runner journal, Windows scheduler state, the August death diagnosis</span>
   </div>
@@ -442,9 +442,9 @@ is the only state an operator sets by hand.</figcaption>
   <thead><tr><th>Step</th><th>Content</th><th>Card</th><th>State</th></tr></thead>
   <tbody>
     <tr><td><b>S0</b></td><td>Immediate measure: keeper task enabled and started, battery and logon settings corrected, runner units back, seven Ready cards claimed</td><td>none (operator action 06.09.)</td><td><span class="pill done">done</span></td></tr>
-    <tr><td><b>S1</b></td><td>Honest wait reason, link health in Execution Hosts, reconnect action, client heartbeat projection</td><td>AGT-2711</td><td><span class="pill queued">in progress</span> re-scope onto S2's resource when S2 exists</td></tr>
-    <tr><td><b>S2</b></td><td><code>LinkSupervisor</code> hosted service: configuration, state machine, probes, recovery, links API, operator-feed events, tests with a fake ssh</td><td>new card after decision D1</td><td><span class="pill new">decision pending</span></td></tr>
-    <tr><td><b>S3</b></td><td>Migration: adopt the running forward, seven-day soak, disable the scheduled task, runbook update</td><td>new card after S2</td><td><span class="pill new">decision pending</span></td></tr>
+    <tr><td><b>S1</b></td><td>Honest wait reason, link health in Execution Hosts, reconnect action, client heartbeat projection</td><td>AGT-2711</td><td><span class="pill done">done</span> readers re-pointed onto S2's resource by AGT-2763</td></tr>
+    <tr><td><b>S2</b></td><td><code>LinkSupervisor</code> hosted service: configuration, state machine, probes, recovery, links API, operator-feed events, tests with a fake ssh; silent by contract (no console window, child bound to the Task Server process)</td><td>AGT-2763</td><td><span class="pill queued">ready</span> since 09.09.2026 (decision D1)</td></tr>
+    <tr><td><b>S3</b></td><td>Migration: adopt the running forward, seven-day soak, disable the scheduled task, runbook update</td><td>AGT-2764 (depends on AGT-2763)</td><td><span class="pill queued">preparation</span></td></tr>
     <tr><td><b>S4</b></td><td>Codex sign-in from Execution Hosts (device-auth over SSH), the real provider case</td><td>AGT-2712</td><td><span class="pill queued">ready</span></td></tr>
     <tr><td><b>S5</b></td><td>Phase B: <code>task-server-01</code>, WireGuard, scoped credentials, connector, cutover and rollback rehearsal; gates 1 to 5 of the remote Task Server concept</td><td>Phase B cards after decision D2</td><td><span class="pill open">approval pending since 09.08.</span></td></tr>
   </tbody>
@@ -455,7 +455,7 @@ is the only state an operator sets by hand.</figcaption>
 <table>
   <thead><tr><th>#</th><th>Question</th><th>Recommendation</th></tr></thead>
   <tbody>
-    <tr><td><b>D1</b></td><td>Who owns the link in the interim: the Task Server process (Option B) or the Windows scheduler with the prepared assets (Option A)?</td><td>Option B. It is the only interim that makes the link a product fact with UI and self-healing, and its state carries into Phase B.</td></tr>
+    <tr><td><b>D1</b></td><td>Who owns the link in the interim: the Task Server process (Option B) or the Windows scheduler with the prepared assets (Option A)?</td><td>Option B. It is the only interim that makes the link a product fact with UI and self-healing, and its state carries into Phase B. <b>Decided 09.09.2026:</b> Option B, with the explicit requirement that the check runs silently inside the application (the scheduled task produced a console window on the desktop every minute). Cards AGT-2763 and AGT-2764.</td></tr>
     <tr><td><b>D2</b></td><td>Start Phase B now in parallel to S2, or after S2 and S3 have proven the state model?</td><td>Start the Phase B gate work now (credentials, connector, Windows fallback); they do not depend on S2. Cutover only after S3.</td></tr>
     <tr><td><b>D3</b></td><td>Keep the SSH forward as an emergency administration path after Phase B?</td><td>Yes, as a documented manual path, never as a second monitored production route.</td></tr>
   </tbody>
