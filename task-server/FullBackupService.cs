@@ -539,7 +539,27 @@ public sealed partial class TaskServerStore
                 new FileInfo(path).Length,
                 hash));
         }
+        RejectCaseOnlyCollisions(result);
         return result;
+    }
+
+    /// <summary>
+    /// A set with two members whose relative path differs only by case cannot be restored onto a
+    /// case-insensitive filesystem (Windows/NTFS default): the second file silently overwrites the
+    /// first, and the post-restore inventory hash then diverges from the recorded one instead of the
+    /// restore failing loudly. Reject the set here, on creation and verification, so the divergence is
+    /// caught before a cross-platform restore ever runs.
+    /// </summary>
+    private static void RejectCaseOnlyCollisions(IReadOnlyList<FullBackupFileEntry> files)
+    {
+        var collision = files
+            .GroupBy(file => file.RelativePath, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault(group => group.Select(file => file.RelativePath).Distinct(StringComparer.Ordinal).Count() > 1);
+        if (collision is not null)
+            throw new InvalidDataException(
+                "Full backup set contains paths that differ only by case ("
+                + string.Join(", ", collision.Select(file => file.RelativePath).Distinct(StringComparer.Ordinal))
+                + "); it cannot be safely restored onto a case-insensitive filesystem.");
     }
 
     private static string FullBackupSetHash(IEnumerable<FullBackupFileEntry> files)

@@ -1,5 +1,12 @@
 using System.Net.Http.Headers;
+using AgentStudio.Bff;
 using AgentStudio.TaskServer.Contracts;
+
+if (args is ["--version"] or ["-V"])
+{
+    Console.WriteLine(StudioBffVersion.Display);
+    return;
+}
 
 var builder = WebApplication.CreateBuilder(args);
 var taskServerUrl = builder.Configuration["TaskServer:BaseUrl"]
