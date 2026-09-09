@@ -308,6 +308,14 @@ directly to a private authenticated Task Server URL and this scheduled task is
 disabled. Do not retain a reverse tunnel merely because the keeper now makes it
 safer.
 
+Once the Docker control plane's WireGuard origin is live
+([control-plane-docker.md](./control-plane-docker.md)), `agent-runner-01`
+switches `RUNNER_SERVER_URL` to the WireGuard-only origin and stops relying on
+this tunnel for normal operation. Disable the scheduled task or systemd unit
+rather than deleting it: it stays installed, tested, and documented as the
+fallback path for the migration and rollback runbook in
+[remote-task-server-local-studio.md](../remote-task-server-local-studio.md#rollback-in-less-than-15-minutes).
+
 When a tunnel remains necessary, supervision belongs on the side that can
 initiate the connection. The current topology requires Windows to dial the
 public Linux SSH endpoint, so the repository keeper is the applicable option.

@@ -9,8 +9,15 @@ internal enum SetupMode
     AgentHost,
 }
 
+internal enum SetupTarget
+{
+    Systemd,
+    Docker,
+}
+
 internal sealed record SetupOptions(
     SetupMode Mode,
+    SetupTarget Target,
     string? ReleaseVersion,
     string? ReleaseDirectory,
     string? ServerUrl,
@@ -21,6 +28,8 @@ internal sealed record SetupOptions(
     string? AgentCli,
     string? GitRemote,
     string? GitPushRemote,
+    string? WireGuardAddress,
+    string? OffhostBackupPath,
     string Role,
     int MaxParallelism,
     int DemoPort,
@@ -32,6 +41,7 @@ internal sealed record SetupOptions(
     public static SetupOptions Parse(string[] args)
     {
         var mode = SetupMode.Guided;
+        var target = SetupTarget.Systemd;
         string? releaseVersion = null;
         string? releaseDirectory = null;
         string? serverUrl = null;
@@ -42,6 +52,8 @@ internal sealed record SetupOptions(
         string? agentCli = null;
         string? gitRemote = null;
         string? gitPushRemote = null;
+        string? wireGuardAddress = null;
+        string? offhostBackupPath = null;
         var role = "coding";
         var maxParallelism = 2;
         var demoPort = 4011;
@@ -73,6 +85,10 @@ internal sealed record SetupOptions(
                     break;
                 case "--mode":
                     mode = ParseMode(ValueAt(index, "--mode"));
+                    index++;
+                    break;
+                case "--target":
+                    target = ParseTarget(ValueAt(index, "--target"));
                     index++;
                     break;
                 case "--release-version":
@@ -116,6 +132,14 @@ internal sealed record SetupOptions(
                     gitPushRemote = ValueAt(index, "--git-push-remote");
                     index++;
                     break;
+                case "--wg-address":
+                    wireGuardAddress = ValueAt(index, "--wg-address");
+                    index++;
+                    break;
+                case "--offhost-backup-path":
+                    offhostBackupPath = ValueAt(index, "--offhost-backup-path");
+                    index++;
+                    break;
                 case "--role":
                     role = ValueAt(index, "--role").Trim().ToLowerInvariant();
                     index++;
@@ -147,9 +171,12 @@ internal sealed record SetupOptions(
             throw new ArgumentException("--role must be coding or review.");
         if (nonInteractive && mode == SetupMode.Guided && !showHelp && !showVersion)
             throw new ArgumentException("--non-interactive requires --mode.");
+        if (target == SetupTarget.Docker && mode != SetupMode.ControlPlane)
+            throw new ArgumentException("--target docker is supported only with --mode control-plane.");
 
         return new SetupOptions(
             mode,
+            target,
             NormalizeVersion(releaseVersion),
             releaseDirectory,
             serverUrl,
@@ -160,6 +187,8 @@ internal sealed record SetupOptions(
             agentCli,
             gitRemote,
             gitPushRemote,
+            wireGuardAddress,
+            offhostBackupPath,
             role,
             maxParallelism,
             demoPort,
@@ -178,6 +207,14 @@ internal sealed record SetupOptions(
             "host" or "agent-host" => SetupMode.AgentHost,
             _ => throw new ArgumentException(
                 "--mode must be demo, single, control-plane, or agent-host."),
+        };
+
+    internal static SetupTarget ParseTarget(string value)
+        => value.Trim().ToLowerInvariant() switch
+        {
+            "systemd" => SetupTarget.Systemd,
+            "docker" => SetupTarget.Docker,
+            _ => throw new ArgumentException("--target must be systemd or docker."),
         };
 
     internal static string? NormalizeVersion(string? value)

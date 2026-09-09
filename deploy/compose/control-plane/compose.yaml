@@ -1,0 +1,152 @@
+# Agent Orchestrator control plane - production Docker Compose deployment.
+#
+# Boots the Task Server, the Orchestrator Engine, a scheduled backup sidecar,
+# and a private TLS edge (Caddy) bound to the WireGuard interface address
+# only. Task Server and Engine reach each other on the internal
+# `control-plane` network; neither publishes a host port. See
+# docs/operations/setup/control-plane-docker.md for the bootstrap, update,
+# rollback, backup-restore, firewall, and WireGuard runbook.
+name: agent-orchestrator-control-plane
+
+x-logging: &bounded-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  task-server:
+    image: ${TASK_SERVER_IMAGE:-ghcr.io/agent-orc/agent-studio-task-server}:${CONTROL_PLANE_VERSION:?set CONTROL_PLANE_VERSION}
+    restart: unless-stopped
+    networks:
+      - control-plane
+    volumes:
+      - store:/var/lib/agent-orchestrator/store
+      - backup:/var/lib/agent-orchestrator/backup
+    environment:
+      LISTEN_URL: http://0.0.0.0:5071
+      AllowedHosts: "*"
+      STORE_PATH: /var/lib/agent-orchestrator/store
+      BACKUP_PATH: /var/lib/agent-orchestrator/backup
+      AUTH: bearer
+      STUDIO_AUTH_TOKEN_FILE: /run/secrets/studio_token
+      ENGINE_AUTH_TOKEN_FILE: /run/secrets/engine_token
+      BOOTSTRAP_RUNNER_ID: ${CONTROL_PLANE_RUNNER_ID:?set CONTROL_PLANE_RUNNER_ID, e.g. agent-runner-01}
+      BOOTSTRAP_RUNNER_AUTH_TOKEN_FILE: /run/secrets/runner_token
+    secrets:
+      - studio_token
+      - engine_token
+      - runner_token
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:5071/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 10s
+    logging: *bounded-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "${TASK_SERVER_CPU_LIMIT:-2}"
+          memory: ${TASK_SERVER_MEMORY_LIMIT:-1g}
+
+  orchestrator-engine:
+    image: ${ORCHESTRATOR_ENGINE_IMAGE:-ghcr.io/agent-orc/agent-studio-orchestrator-engine}:${CONTROL_PLANE_VERSION:?set CONTROL_PLANE_VERSION}
+    restart: unless-stopped
+    depends_on:
+      task-server:
+        condition: service_healthy
+    networks:
+      - control-plane
+    # The Engine only accepts CLIENT_CREDENTIAL as a plain value (no _FILE
+    # variant), so the secret is read from the mounted file at start.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - 'export CLIENT_CREDENTIAL="$$(cat /run/secrets/engine_token)"; exec dotnet orchestrator-engine.dll'
+    environment:
+      SERVER_URL: http://task-server:5071
+      CLIENT_ID: orchestrator-engine
+    secrets:
+      - engine_token
+    logging: *bounded-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "${ENGINE_CPU_LIMIT:-1}"
+          memory: ${ENGINE_MEMORY_LIMIT:-512m}
+
+  backup:
+    image: ${TASK_SERVER_IMAGE:-ghcr.io/agent-orc/agent-studio-task-server}:${CONTROL_PLANE_VERSION:?set CONTROL_PLANE_VERSION}
+    restart: unless-stopped
+    depends_on:
+      task-server:
+        condition: service_healthy
+    networks:
+      - control-plane
+    entrypoint: ["/bin/sh", "/opt/backup/backup-loop.sh"]
+    volumes:
+      - store:/var/lib/agent-orchestrator/store:ro
+      - backup:/var/lib/agent-orchestrator/backup
+      - ${CONTROL_PLANE_OFFHOST_BACKUP_PATH:?set CONTROL_PLANE_OFFHOST_BACKUP_PATH to an off-host mounted destination}:/mnt/offhost-backup
+      - ./backup-loop.sh:/opt/backup/backup-loop.sh:ro
+    environment:
+      STORE_PATH: /var/lib/agent-orchestrator/store
+      BACKUP_PATH: /var/lib/agent-orchestrator/backup
+      BACKUP_OFFHOST_PATH: /mnt/offhost-backup
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-300}
+    logging: *bounded-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "${BACKUP_CPU_LIMIT:-1}"
+          memory: ${BACKUP_MEMORY_LIMIT:-512m}
+
+  edge:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      task-server:
+        condition: service_healthy
+    networks:
+      - control-plane
+    # Bound to the WireGuard interface address only. A bare "443:443"
+    # publish (implicit 0.0.0.0) is exactly the wildcard bind the network
+    # contract forbids.
+    ports:
+      - "${WG_ADDRESS:?set WG_ADDRESS to the task-server-01 WireGuard interface address}:443:443"
+    volumes:
+      - ${CONTROL_PLANE_CADDYFILE:-./Caddyfile}:/etc/caddy/Caddyfile:ro
+      - edge-tls:/data
+      - edge-config:/config
+    environment:
+      CONTROL_PLANE_DOMAIN: ${CONTROL_PLANE_DOMAIN:?set CONTROL_PLANE_DOMAIN, the private WireGuard-only DNS name}
+    healthcheck:
+      test: ["CMD", "wget", "--no-check-certificate", "--quiet", "--output-document=-", "https://127.0.0.1:443/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 10s
+    logging: *bounded-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "${EDGE_CPU_LIMIT:-1}"
+          memory: ${EDGE_MEMORY_LIMIT:-256m}
+
+networks:
+  control-plane:
+    driver: bridge
+
+volumes:
+  store:
+  backup:
+  edge-tls:
+  edge-config:
+
+secrets:
+  studio_token:
+    file: ${CONTROL_PLANE_SECRETS_DIR:-./secrets}/studio.token
+  engine_token:
+    file: ${CONTROL_PLANE_SECRETS_DIR:-./secrets}/engine.token
+  runner_token:
+    file: ${CONTROL_PLANE_SECRETS_DIR:-./secrets}/runner.token

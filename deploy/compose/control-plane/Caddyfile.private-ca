@@ -1,0 +1,30 @@
+# Private TLS edge using an operator-issued private-CA certificate instead of
+# Caddy's internal self-signed leaf. Mount the leaf and key as Docker secrets
+# (compose override: add `edge_cert`/`edge_key` to the `edge` service's
+# `secrets:` list and to the top-level `secrets:` block) before pointing
+# CONTROL_PLANE_CADDYFILE at this file.
+{
+	auto_https off
+	admin off
+}
+
+https://{$CONTROL_PLANE_DOMAIN} {
+	tls /run/secrets/edge_cert /run/secrets/edge_key
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "same-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+
+	@task_server path /api/* /hubs/* /healthz /readyz
+	handle @task_server {
+		reverse_proxy task-server:5071
+	}
+
+	handle {
+		respond "not found" 404
+	}
+}

@@ -220,4 +220,39 @@ public sealed class SetupContractTests
     {
         Assert.Equal(expected, SetupOptions.ParseMode(value).ToString());
     }
+
+    [Theory]
+    [InlineData("systemd", "Systemd")]
+    [InlineData("docker", "Docker")]
+    public void Targets_AreStableCommandLineContracts(
+        string value,
+        string expected)
+    {
+        Assert.Equal(expected, SetupOptions.ParseTarget(value).ToString());
+    }
+
+    [Fact]
+    public void Target_DefaultsToSystemd()
+    {
+        var options = SetupOptions.Parse(["--mode", "control-plane"]);
+
+        Assert.Equal(SetupTarget.Systemd, options.Target);
+    }
+
+    [Fact]
+    public void Target_DockerRequiresControlPlaneMode()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            SetupOptions.Parse(["--mode", "single", "--target", "docker"]));
+    }
+
+    [Fact]
+    public void Target_DockerIsAcceptedWithControlPlaneMode()
+    {
+        var options = SetupOptions.Parse(
+            ["--mode", "control-plane", "--target", "docker", "--server-url", "task-server-01.wg.internal"]);
+
+        Assert.Equal(SetupTarget.Docker, options.Target);
+        Assert.Equal("task-server-01.wg.internal", options.ServerUrl);
+    }
 }

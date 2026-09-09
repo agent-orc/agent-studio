@@ -1,0 +1,40 @@
+name: Control plane topology
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    paths:
+      - 'deploy/compose/control-plane/**'
+      - 'deploy/release/agent-orchestrator/**'
+      - 'task-server/**'
+      - 'orchestrator-engine/**'
+      - 'contracts/**'
+      - 'scripts/control-plane-topology-test.sh'
+      - '.github/workflows/control-plane-topology.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: control-plane-topology-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  topology:
+    name: Docker Compose control plane, self-signed edge
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Record Docker versions
+        run: |
+          docker version
+          docker compose version
+
+      - name: Boot the control-plane stack and prove the topology contract
+        run: scripts/control-plane-topology-test.sh

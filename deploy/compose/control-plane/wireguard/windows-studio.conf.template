@@ -1,0 +1,14 @@
+# WireGuard interface for Robert's Windows device (client peer, Studio
+# connector). Import into the WireGuard for Windows app after replacing
+# every @PLACEHOLDER@. AllowedIPs is scoped to the single Task Server route
+# only, matching agent-runner-01's peer.
+[Interface]
+Address = 10.60.0.3/32
+PrivateKey = @WINDOWS_STUDIO_PRIVATE_KEY@
+
+[Peer]
+# task-server-01
+PublicKey = @TASK_SERVER_01_PUBLIC_KEY@
+Endpoint = @TASK_SERVER_01_PUBLIC_ENDPOINT@:51820
+AllowedIPs = 10.60.0.1/32
+PersistentKeepalive = 25
