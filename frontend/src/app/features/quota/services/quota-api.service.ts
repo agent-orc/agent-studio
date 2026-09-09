@@ -9,6 +9,9 @@ export interface CliModelRouteProfile {
   fallbackCliType: string | null;
   fallbackModel: string | null;
   fallbackThinkingLevel: string | null;
+  /** True when the fallback fields came from the equivalence catalogue
+   *  (AGT-2751) rather than an explicit operator save via `setModelRoute`. */
+  isFallbackDerived?: boolean;
 }
 
 export interface CliQuotaWaitPolicy {

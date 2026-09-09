@@ -415,7 +415,9 @@ public class TaskIndexCacheTests : IDisposable
         var releaseSecondScan = new ManualResetEventSlim(false);
         var thirdScanEntered = new ManualResetEventSlim(false);
         var releaseThirdScan = new ManualResetEventSlim(false);
-        var waiterCalling = new ManualResetEventSlim(false);
+        var waiterTargetCaptured = new ManualResetEventSlim(false);
+        var waiterManagedThreadId = 0;
+        var waiterTargetMutationGen = -1L;
         var scans = 0;
         var cache = new TaskIndexCache(
             _scanner,
@@ -435,29 +437,45 @@ public class TaskIndexCacheTests : IDisposable
                     Assert.True(releaseThirdScan.Wait(TimeSpan.FromSeconds(5)));
                 }
                 return [new TaskInfo { Id = $"job-{scan}", State = TaskStates.Ready }];
+            },
+            afterReadTargetCapture: targetMutationGen =>
+            {
+                if (Environment.CurrentManagedThreadId != Volatile.Read(ref waiterManagedThreadId)) return;
+                Volatile.Write(ref waiterTargetMutationGen, targetMutationGen);
+                waiterTargetCaptured.Set();
             });
 
         Assert.Equal("job-1", Assert.Single(cache.GetSnapshot()).Id);
         cache.Invalidate(TaskIndexCache.InvalidationSource.Mutation);
-        var owner = Task.Run(() => cache.GetSnapshot());
-        Assert.True(secondScanEntered.Wait(TimeSpan.FromSeconds(5)));
-
-        var alreadyWaiting = Task.Run(() =>
-        {
-            waiterCalling.Set();
-            return cache.GetSnapshot();
-        });
-        Assert.True(waiterCalling.Wait(TimeSpan.FromSeconds(5)));
-        Assert.NotSame(alreadyWaiting, await Task.WhenAny(
-            alreadyWaiting, Task.Delay(TimeSpan.FromMilliseconds(150))));
-
-        // This mutation overlaps the waiting read. It must make a later reader
-        // refresh again, but it must not move the older reader's consistency
-        // target and serialize that reader behind another full workspace scan.
-        cache.Invalidate(TaskIndexCache.InvalidationSource.Mutation);
+        var owner = Task.Factory.StartNew(
+            () => cache.GetSnapshot(),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+        Task? alreadyWaitingParticipant = null;
 
         try
         {
+            Assert.True(secondScanEntered.Wait(TimeSpan.FromSeconds(5)));
+
+            var alreadyWaiting = Task.Factory.StartNew(
+                () =>
+                {
+                    Volatile.Write(ref waiterManagedThreadId, Environment.CurrentManagedThreadId);
+                    return cache.GetSnapshot();
+                },
+                CancellationToken.None,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default);
+            alreadyWaitingParticipant = alreadyWaiting;
+            Assert.True(waiterTargetCaptured.Wait(TimeSpan.FromSeconds(5)));
+            Assert.Equal(1, Volatile.Read(ref waiterTargetMutationGen));
+
+            // This mutation overlaps the waiting read. It must make a later reader
+            // refresh again, but it must not move the older reader's consistency
+            // target and serialize that reader behind another full workspace scan.
+            cache.Invalidate(TaskIndexCache.InvalidationSource.Mutation);
+
             releaseSecondScan.Set();
             Assert.Equal("job-2", Assert.Single(await owner).Id);
             Assert.Same(alreadyWaiting, await Task.WhenAny(
@@ -470,7 +488,10 @@ public class TaskIndexCacheTests : IDisposable
         {
             releaseSecondScan.Set();
             releaseThirdScan.Set();
-            await Task.WhenAll(owner, alreadyWaiting);
+            if (alreadyWaitingParticipant is null)
+                await owner;
+            else
+                await Task.WhenAll(owner, alreadyWaitingParticipant);
         }
     }
 

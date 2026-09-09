@@ -36,6 +36,8 @@ public sealed class TaskIndexCache
     private readonly TimeSpan _safetyTtl;
     private readonly Func<List<TaskInfo>> _scanAllJobsRaw;
     private readonly Action? _beforeRefreshGenerationCapture;
+    // Internal test seam; production construction leaves this null.
+    private readonly Action<long>? _afterReadTargetCapture;
     private readonly ILogger<TaskIndexCache> _logger;
 
     // Cache slot: snapshot + when it was taken + whether a mutation/watcher
@@ -102,10 +104,12 @@ public sealed class TaskIndexCache
         ILogger<TaskIndexCache> logger,
         IConfiguration config,
         Func<List<TaskInfo>> scanAllJobsRaw,
-        Action? beforeRefreshGenerationCapture = null)
+        Action? beforeRefreshGenerationCapture = null,
+        Action<long>? afterReadTargetCapture = null)
     {
         _scanAllJobsRaw = scanAllJobsRaw;
         _beforeRefreshGenerationCapture = beforeRefreshGenerationCapture;
+        _afterReadTargetCapture = afterReadTargetCapture;
         _logger = logger;
         var ttlSec = int.TryParse(config["TaskIndexCache:SafetyTtlSeconds"], out var v) ? v : 30;
         _safetyTtl = TimeSpan.FromSeconds(Math.Max(1, ttlSec));
@@ -208,6 +212,7 @@ public sealed class TaskIndexCache
         // generation has been published.
         long targetMutationGen;
         lock (_lock) targetMutationGen = _requiredMutationGen;
+        _afterReadTargetCapture?.Invoke(targetMutationGen);
 
         while (true)
         {

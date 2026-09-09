@@ -186,7 +186,7 @@ public sealed class SoftReasoningHostedService : BackgroundService
                     "Soft-reasoning CLI call failed: exit={ExitCode} duration={Duration}ms error={Error}",
                     r.ExitCode, r.Duration.TotalMilliseconds, r.Error);
             }
-            return r.Stdout;
+            return CliOneShotCompatibility.ToClaudeResultEnvelope(r, model);
         }
 
         var psi = new ProcessStartInfo

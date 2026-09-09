@@ -112,19 +112,7 @@ public sealed class AspectRunnerService
         }
         // Keep the legacy runner seam stable: its caller expects a Claude-style
         // result envelope so it can reuse ParseOrFallback and usage recording.
-        return JsonSerializer.Serialize(new
-        {
-            type = "result",
-            result = result.ParsedText,
-            usage = result.Usage is null ? null : new
-            {
-                input_tokens = result.Usage.InputTokens,
-                output_tokens = result.Usage.OutputTokens,
-                cache_read_input_tokens = result.Usage.CacheReadTokens,
-                cache_creation_input_tokens = result.Usage.CacheCreationTokens,
-            },
-            model = result.Usage?.Model ?? model,
-        });
+        return CliOneShotCompatibility.ToClaudeResultEnvelope(result, model);
     }
 
     /// <summary>
