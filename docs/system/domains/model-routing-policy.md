@@ -194,6 +194,31 @@ suggestion into an explicit pin. The decision log must retain the policy
 version, recommended tier and route, selected route, selection source, score,
 economy state, correctness floor, and reason.
 
+Step 3's "equivalent-capability provider route" is code, not operator
+judgment, as of AGT-2751. [CliQuotaFallbackService](../../../backend/Features/Cli/Quota/CliQuotaFallbackService.cs)
+derives it from [IModelEquivalenceCatalog](../../../backend/Features/Cli/Quota/ModelEquivalenceCatalog.cs)
+when no explicit `cli-model-routing.json` fallback is configured, and the
+application-wide [QuotaAdmissionService](../../../backend/Features/Cli/Quota/QuotaAdmissionService.cs)
+applies the same switch, throttle, or wait decision before every execution path
+that launches a coding-agent CLI. The exhaustive path-to-source and
+path-to-test map is the CLI domain's
+[quota admission coverage](cli.md#quota-admission-coverage), and the
+load-bearing boundary is recorded in
+[ADR-0069](../architecture/decisions/adr-archive.md#adr-0069---quota-admission-is-one-run-scoped-boundary-for-every-cli-execution-path-2026-09-08).
+
+The interim equivalence table covers only the tiers already named above: Codex
+Sol/high with Claude Opus 5/high, and Codex Mini/high with Claude Sonnet
+5/medium. If quota fallback is needed, an explicit model or thinking pin that
+has no exact cross-family equivalence does not fall through to a weaker route;
+admission waits. Explicit operator fallback overrides remain available and win
+over the derived table.
+Token Economy's `model-migration-catalog-safe-auto-rules` is the eventual
+system of record for equivalence tiers. A nearby quota reset is only worth a
+quiet wait when the run is cheap, with no explicit
+`high`/`xhigh`/`ultra`/`max` reasoning pin. An expensive run switches
+immediately when the equivalent provider has headroom, and waits when no route
+can preserve its floor.
+
 ## Roadmap: what happens next
 
 1. **Policy visible now.** This page is canonical, linked from the documentation

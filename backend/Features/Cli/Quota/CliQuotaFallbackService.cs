@@ -14,14 +14,19 @@ public sealed class CliQuotaFallbackService
     private const string FileName = "cli-model-routing.json";
     private readonly IConfiguration _config;
     private readonly ILogger<CliQuotaFallbackService> _logger;
+    private readonly IModelEquivalenceCatalog? _equivalence;
     private readonly object _lock = new();
     private Dictionary<string, CliModelRouteProfile> _profiles = new(StringComparer.OrdinalIgnoreCase);
     private bool _loaded;
 
-    public CliQuotaFallbackService(IConfiguration config, ILogger<CliQuotaFallbackService> logger)
+    public CliQuotaFallbackService(
+        IConfiguration config,
+        ILogger<CliQuotaFallbackService> logger,
+        IModelEquivalenceCatalog? equivalence = null)
     {
         _config = config;
         _logger = logger;
+        _equivalence = equivalence;
     }
 
     public IReadOnlyDictionary<string, CliModelRouteProfile> GetAll()
@@ -72,10 +77,11 @@ public sealed class CliQuotaFallbackService
         if (!cap.Blocked)
             return new(cli, primaryModel, primaryThinking, false, null, cap);
 
-        if (profile == null || string.IsNullOrWhiteSpace(profile.FallbackModel))
+        var effective = EffectiveFallback(cli, profile, primaryModel, primaryThinking);
+        if (effective is null)
             return new(cli, primaryModel, primaryThinking, false, cap.DescribeReason(), cap);
 
-        var fallbackCli = profile.FallbackCliType ?? cli;
+        var (fallbackCli, fallbackModel, fallbackThinking) = effective.Value;
         var fallbackCap = string.Equals(fallbackCli, cli, StringComparison.OrdinalIgnoreCase)
             ? CapEvaluation.NotBlocked
             : evaluateQuota(fallbackCli);
@@ -83,13 +89,69 @@ public sealed class CliQuotaFallbackService
             return new(cli, primaryModel, primaryThinking, false,
                 $"primary {cap.DescribeReason()}; fallback {fallbackCap.DescribeReason()}", cap);
 
-        return new(
-            fallbackCli,
-            profile.FallbackModel,
-            profile.FallbackThinkingLevel,
-            true,
-            cap.DescribeReason(),
-            cap);
+        return new(fallbackCli, fallbackModel, fallbackThinking, true, cap.DescribeReason(), cap);
+    }
+
+    /// <summary>
+    /// The fallback CLI/model/thinking level that would apply for
+    /// <paramref name="cli"/> right now: the operator's explicit
+    /// <paramref name="profile"/> when it names a fallback model, else the
+    /// equivalence-catalogue-derived pair for the other CLI family. Returns
+    /// null when neither source has an answer (no fallback configured, no
+    /// known equivalence tier, or this CLI has no "other family" partner).
+    /// </summary>
+    private (string CliType, string? Model, string? ThinkingLevel)? EffectiveFallback(
+        string cli, CliModelRouteProfile? profile, string? primaryModel, string? primaryThinking)
+    {
+        if (profile is not null && !string.IsNullOrWhiteSpace(profile.FallbackModel))
+            return (profile.FallbackCliType ?? cli, profile.FallbackModel, profile.FallbackThinkingLevel);
+
+        var otherFamily = OtherFamily(cli);
+        if (otherFamily is null || _equivalence is null) return null;
+        var equivalent = _equivalence.TryGetEquivalent(cli, primaryModel, primaryThinking, otherFamily);
+        return equivalent is null ? null : (otherFamily, equivalent.Value.Model, equivalent.Value.ThinkingLevel);
+    }
+
+    /// <summary>
+    /// The counterpart CLI family a catalogue-derived fallback would route to.
+    /// Only Claude and Codex have a documented equivalence tier today; Gemini
+    /// and any future CLI type have no automatic catalogue partner, so an
+    /// operator override remains required for them.
+    /// </summary>
+    private static string? OtherFamily(string cli) => cli switch
+    {
+        _ when string.Equals(cli, CliTypes.Codex, StringComparison.OrdinalIgnoreCase) => CliTypes.Claude,
+        _ when string.Equals(cli, CliTypes.Claude, StringComparison.OrdinalIgnoreCase) => CliTypes.Codex,
+        _ => null,
+    };
+
+    /// <summary>
+    /// Read-only projection of the profile GET /model-routes returns: the
+    /// operator's persisted profile when one exists, merged with a
+    /// catalogue-derived fallback for display when the operator configured
+    /// none. <see cref="CliModelRouteProfile.IsFallbackDerived"/> tells the
+    /// frontend which case it is.
+    /// </summary>
+    public CliModelRouteProfile GetEffectiveProfile(string cliType)
+    {
+        var cli = Clean(cliType)?.ToLowerInvariant() ?? CliTypes.Claude;
+        EnsureLoaded();
+        CliModelRouteProfile? profile;
+        lock (_lock) _profiles.TryGetValue(cli, out profile);
+        if (profile is not null && !string.IsNullOrWhiteSpace(profile.FallbackModel)) return profile;
+
+        var otherFamily = OtherFamily(cli);
+        var equivalent = otherFamily is null || _equivalence is null
+            ? null
+            : _equivalence.TryGetEquivalent(cli, profile?.PrimaryModel, profile?.PrimaryThinkingLevel, otherFamily);
+        if (equivalent is null) return profile ?? new CliModelRouteProfile { CliType = cli };
+        return (profile ?? new CliModelRouteProfile { CliType = cli }) with
+        {
+            FallbackCliType = otherFamily,
+            FallbackModel = equivalent.Value.Model,
+            FallbackThinkingLevel = equivalent.Value.ThinkingLevel,
+            IsFallbackDerived = true,
+        };
     }
 
     private void EnsureLoaded()
@@ -142,6 +204,14 @@ public sealed record CliModelRouteProfile
     public string? FallbackCliType { get; init; }
     public string? FallbackModel { get; init; }
     public string? FallbackThinkingLevel { get; init; }
+    /// <summary>
+    /// True when <see cref="GetEffectiveProfile"/> filled the fallback fields
+    /// from the equivalence catalogue because the operator configured none.
+    /// Always false on a profile read from <see cref="GetAll"/> or persisted
+    /// via <see cref="Set"/> - this is a read-time display marker, never
+    /// written to <c>cli-model-routing.json</c>.
+    /// </summary>
+    public bool IsFallbackDerived { get; init; }
 }
 
 public sealed record CliRouteDecision(

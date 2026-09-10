@@ -1552,3 +1552,60 @@ CI topology proof:
 [`.github/workflows/control-plane-topology.yml`](../../../../.github/workflows/control-plane-topology.yml).
 
 **Status.** Accepted. The compose stack, host bootstrap scripts, guided-installer `--target` flag, network contract, and CI topology test ship together; WireGuard peer generation, the Hetzner VM, and DNS remain operator actions requested per host.
+
+## ADR-0069 - Quota admission is one run-scoped boundary for every CLI execution path (2026-09-08)
+
+**Decision.** Every local or remote coding-agent CLI execution resolves one
+quota admission plan immediately before launch or claim. The plan may use the
+configured route, wait or throttle, or switch to a cross-family route that
+preserves the required capability tier. Stored task, pipeline-step, and review
+configuration remains unchanged; only the run or claimed command receives the
+effective route.
+
+**Context.** A Codex weekly cap stopped local coding, Remote coding claims,
+review aspects, pipeline post-steps, orchestrator work, and project chat while
+Claude still had headroom. The existing fallback was confined to the local
+`ProjectRunner` path. Remote claims shipped the capped card route unchanged,
+open ReviewAttempt plans froze their provider route, and operators had to
+rewrite review attempts and pipeline settings manually. Provider quota is a
+run-time admission fact, so applying it only in one scheduler path made the
+same configured route behave differently depending on where it executed.
+
+**Non-goals.** This decision does not discover models, choose latest-in-family
+defaults, or own the final equivalence catalogue. It does not rewrite explicit
+task or step pins, lower a correctness floor, interrupt a running fallback
+process, supersede an open review attempt, or recursively route from one
+fallback into another. An operator may still configure an explicit fallback;
+that deliberate override wins over the derived catalogue pair.
+
+**Reasoning style.** Separate durable intent from an execution-time constraint.
+Configuration records what the operator or policy requested. One pure planner,
+fed by cached quota windows, caps, reset time, burn projection, wait policy,
+occupied capacity, and the requested thinking level as the cost signal, decides
+whether a new execution may start. Boundary adapters translate that single
+decision into a local launch, an effective Remote `RunSpecDto`, a claim-time
+review command, or a one-shot dispatch. Notable decisions share one
+observability contract so the task and load-distribution views explain the same
+outcome.
+
+**Implementation pointers.** Canonical policy and derived route:
+[QuotaAdmissionService](../../../../backend/Features/Cli/Quota/QuotaAdmissionService.cs),
+[QuotaAdmissionPlanner](../../../../backend/Features/Cli/Quota/QuotaAdmissionPlanner.cs),
+[CliQuotaFallbackService](../../../../backend/Features/Cli/Quota/CliQuotaFallbackService.cs),
+and [ModelEquivalenceCatalog](../../../../backend/Features/Cli/Quota/ModelEquivalenceCatalog.cs).
+Local and Remote coding boundaries:
+[ProjectRunner](../../../../backend/Features/Runner/ProjectRunner.cs) and
+[LeaseEndpoints](../../../../backend/Features/Tasks/LeaseEndpoints.cs).
+Review claim and shared one-shot boundaries:
+[V1ReviewPlaneEndpoints](../../../../backend/Features/Runner/V1ReviewPlaneEndpoints.cs)
+and [CliOneShotRegistry](../../../../backend/Features/Cli/Routing/OneShot/ICliOneShot.cs).
+Project chat host dispatch:
+[OrchestratorChat](../../../../backend/Features/Runner/OrchestratorChat.cs) and
+[RemoteProjectChatRunner](../../../../runner/RemoteProjectChatRunner.cs).
+Shared evidence writer:
+[QuotaAdmissionRecorder](../../../../backend/Features/Cli/Quota/QuotaAdmissionRecorder.cs).
+The complete entry-point and regression map is in the
+[CLI domain](../../domains/cli.md#quota-admission-coverage); capability floors
+remain in the [Model Routing Policy](../../domains/model-routing-policy.md#hard-floors).
+
+**Status.** Accepted.

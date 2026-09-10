@@ -140,6 +140,7 @@ public class ProjectRunner
     private readonly CliQuotaCapsService _quotaCaps;
     private readonly CliQuotaWaitPolicyService? _quotaWaitPolicy;
     private readonly CliQuotaFallbackService? _quotaFallback;
+    private readonly QuotaAdmissionService? _quotaAdmission;
     private readonly ProviderLimitRegistry _providerLimits;
     private readonly ILoadThrottleGate? _loadThrottle;
     private readonly GitService _git;
@@ -455,7 +456,8 @@ public class ProjectRunner
         PromptEnrichmentService? promptEnrichment = null,
         DossierMaintenanceService? dossierMaintenance = null,
         VisualQaService? visualQa = null,
-        ProviderLimitRegistry? providerLimits = null)
+        ProviderLimitRegistry? providerLimits = null,
+        QuotaAdmissionService? quotaAdmission = null)
     {
         ProjectName = projectName;
         Entry = entry;
@@ -477,6 +479,7 @@ public class ProjectRunner
         _quotaService = quotaService;
         _quotaCaps = quotaCaps;
         _quotaFallback = quotaFallback;
+        _quotaAdmission = quotaAdmission;
         _quotaWaitPolicy = quotaWaitPolicy;
         _providerLimits = providerLimits ?? new ProviderLimitRegistry();
         _loadThrottle = loadThrottle;
@@ -795,13 +798,20 @@ public class ProjectRunner
     /// spawns anything. See <see cref="QuotaAdmissionPlanner"/>.
     /// </summary>
     private QuotaAdmissionPlan PlanQuotaAdmission(TaskInfo info)
-        => QuotaAdmissionPlanner.Plan(
-            info.CliType, info.Model, info.ThinkingLevel,
-            _quotaFallback, _quotaCaps,
-            c => string.IsNullOrWhiteSpace(c) ? null : _quotaService.GetCachedFor(c!),
-            DateTime.UtcNow,
-            _activeRuns.Count,
-            _quotaWaitPolicy?.Resolve(_projectSettings.Get(ProjectName)));
+        => _quotaAdmission?.Plan(new QuotaAdmissionRequest(
+               info.CliType,
+               info.Model,
+               info.ThinkingLevel,
+               ProjectName,
+               _activeRuns.Count,
+               "local-coding-launch"))
+           ?? QuotaAdmissionPlanner.Plan(
+               info.CliType, info.Model, info.ThinkingLevel,
+               _quotaFallback, _quotaCaps,
+               c => string.IsNullOrWhiteSpace(c) ? null : _quotaService.GetCachedFor(c!),
+               DateTime.UtcNow,
+               _activeRuns.Count,
+               _quotaWaitPolicy?.Resolve(_projectSettings.Get(ProjectName)));
 
     private void RecordNearbyQuotaWait(TaskInfo info, QuotaAdmissionPlan plan)
     {
@@ -2369,30 +2379,21 @@ public class ProjectRunner
                 admissionInfo = info;
             }
 
-            // Resolve the workspace route from the latest cached quota. The
-            // decision is per-run and never mutates job.json, so a reset makes
-            // the next invocation return to primary automatically.
-            //
-            // AGT-2055: route against the PROJECTION-AWARE admission view so a
-            // primary that is about to breach its window switches to the AGT-2040
-            // fallback pre-emptively (before the wall), not after a burned launch.
-            // The hard block below stays on the STRICT cap so a manual start is
-            // never refused purely on a projection - only when a model is truly
-            // exhausted and no fallback saved it.
-            var route = _quotaFallback?.Resolve(
-                info.CliType, info.Model, info.ThinkingLevel, EvaluateAdmissionQuota);
-            var strictCap = EvaluateQuotaCap(info.CliType);
-            // AGT-2055: the algorithmic pre-launch decision for THIS run, computed
-            // once here - before the run claims a slot, so its projected-throttle
-            // slot count matches the pickup gate's view. Reused for the quiet-wait
-            // reject just below and emitted at the commit point further down, so
-            // every launch (a healthy primary or a pre-emptive model switch) is
-            // documented with its burn-rate / projection numbers.
+            // Resolve the run through the canonical admission boundary exactly
+            // once. The decision is run-scoped and never mutates job.json, so a
+            // recovered provider is selected again on the next launch.
             var admissionPlan = PlanQuotaAdmission(info);
-            if (admissionPlan.Outcome == QuotaAdmissionOutcome.Wait)
+            var route = new CliRouteDecision(
+                admissionPlan.CliType,
+                admissionPlan.Model,
+                admissionPlan.ThinkingLevel,
+                admissionPlan.IsFallback,
+                admissionPlan.Reason,
+                CapEvaluation.NotBlocked);
+            if (!admissionPlan.ShouldLaunch)
             {
-                // Everything is exhausted: wait quietly with a reason + next
-                // reset, and record the decision. No spawn, no reissue burn.
+                // Quota policy deferred this launch. Record the reason without
+                // spawning or charging the reissue budget.
                 if (admissionPlan.NearbyResetWait) RecordNearbyQuotaWait(info, admissionPlan);
                 else ClearQuotaWait(info);
                 EmitQuotaAdmissionDecision(info, admissionPlan);
