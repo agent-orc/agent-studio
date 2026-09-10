@@ -6,6 +6,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>agent-studio-bff</AssemblyName>
     <RootNamespace>AgentStudio.Bff</RootNamespace>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <InformationalVersion Condition="'$(SourceRevisionId)' != ''">$(Version)+$(SourceRevisionId)</InformationalVersion>
+    <InformationalVersion Condition="'$(SourceRevisionId)' == ''">$(Version)+unknown</InformationalVersion>
   </PropertyGroup>
 
   <ItemGroup>

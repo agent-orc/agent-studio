@@ -94,6 +94,28 @@ public sealed class FullBackupServiceTests
     }
 
     [Fact]
+    public async Task Full_backup_verify_rejects_a_set_with_case_only_path_collisions()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var management = new FullBackupManagementService(store);
+        var summary = await management.CreateAsync("test", default);
+
+        var setRoot = Path.Combine(store.BackupDirectory, "full", summary.Id);
+        var collisionDirectory = Path.Combine(setRoot, "cold");
+        Directory.CreateDirectory(collisionDirectory);
+        await File.WriteAllTextAsync(Path.Combine(collisionDirectory, "note.txt"), "one");
+        await File.WriteAllTextAsync(Path.Combine(collisionDirectory, "NOTE.txt"), "two");
+
+        // The set can never restore correctly onto a case-insensitive filesystem (Windows/NTFS
+        // default) once two members differ only by case, so verification must fail loudly here
+        // rather than let a cross-platform restore silently drop one of the files.
+        var exception = await Assert.ThrowsAsync<InvalidDataException>(() => management.VerifyAsync(summary.Id, default));
+        Assert.Contains("differ only by case", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Full_backup_thinning_keeps_daily_weekly_and_monthly_union()
     {
         var clock = new ManualTimeProvider(DateTimeOffset.Parse("2026-01-01T03:00:00Z"));

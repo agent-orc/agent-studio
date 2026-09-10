@@ -16,10 +16,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  test-build-release:
-    name: Test, build and publish release
+  version:
+    name: Validate tag and repository version
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - name: Check out exact tag
         uses: actions/checkout@v4
@@ -38,6 +40,17 @@ jobs:
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test -z "$(git status --porcelain --untracked-files=all)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  test-build-release:
+    name: Test, build and publish Linux release
+    needs: version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out exact tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up .NET 10
         uses: actions/setup-dotnet@v4
@@ -128,7 +141,7 @@ jobs:
 
       - name: Publish self-contained binaries
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.version.outputs.version }}
           SHA: ${{ github.sha }}
         run: |
           common=(
@@ -155,7 +168,7 @@ jobs:
 
       - name: Verify published identities and platforms
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.version.outputs.version }}
           SHA: ${{ github.sha }}
         run: |
           artifacts/publish/task-server/task-server --version | tee /tmp/task-server.version
@@ -178,7 +191,7 @@ jobs:
         run: |
           export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$GITHUB_SHA")"
           scripts/release/package-release.sh \
-            "${{ steps.version.outputs.version }}" \
+            "${{ needs.version.outputs.version }}" \
             "$GITHUB_SHA" \
             artifacts/publish \
             frontend/dist/frontend/browser \
@@ -187,7 +200,7 @@ jobs:
       - name: Publish pinned demo images
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           docker build -f backend/Dockerfile \
@@ -203,11 +216,142 @@ jobs:
           docker pull "ghcr.io/agent-orc/agent-studio-api:v$VERSION"
           docker pull "ghcr.io/agent-orc/agent-studio-web:v$VERSION"
 
+      - name: Upload Linux release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-release-artifacts
+          path: artifacts/release/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-windows:
+    name: Publish Windows fallback package (win-x64)
+    needs: version
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out exact tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish win-x64 self-contained binaries
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          SHA: ${{ github.sha }}
+        shell: pwsh
+        run: |
+          $common = @(
+            '--configuration', 'Release',
+            '--runtime', 'win-x64',
+            '--self-contained', 'true',
+            '-p:PublishSingleFile=true',
+            '-p:IncludeNativeLibrariesForSelfExtract=true',
+            '-p:DebugType=None',
+            '-p:DebugSymbols=false',
+            '-p:Version=' + $env:VERSION,
+            '-p:SourceRevisionId=' + $env:SHA
+          )
+          dotnet publish task-server/TaskServer.csproj @common --output artifacts/publish/task-server
+          if ($LASTEXITCODE -ne 0) { throw 'task-server win-x64 publish failed.' }
+          dotnet publish orchestrator-engine/OrchestratorEngine.csproj @common --output artifacts/publish/orchestrator-engine
+          if ($LASTEXITCODE -ne 0) { throw 'orchestrator-engine win-x64 publish failed.' }
+          dotnet publish studio-bff/StudioBff.csproj @common --output artifacts/publish/studio-bff
+          if ($LASTEXITCODE -ne 0) { throw 'studio-bff win-x64 publish failed.' }
+
+      - name: Verify published identities
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          SHA: ${{ github.sha }}
+        shell: pwsh
+        run: |
+          $checks = @(
+            @{ Name = 'task-server'; Path = 'artifacts/publish/task-server/task-server.exe' },
+            @{ Name = 'orchestrator-engine'; Path = 'artifacts/publish/orchestrator-engine/orchestrator-engine.exe' },
+            @{ Name = 'studio-bff'; Path = 'artifacts/publish/studio-bff/agent-studio-bff.exe' }
+          )
+          foreach ($check in $checks) {
+            $output = & $check.Path '--version'
+            if ($LASTEXITCODE -ne 0) { throw "$($check.Name) --version failed." }
+            Write-Host "$($check.Name): $output"
+            if ($output -notmatch [regex]::Escape($env:VERSION)) { throw "$($check.Name) does not report version $env:VERSION." }
+            if ($output -notmatch [regex]::Escape($env:SHA)) { throw "$($check.Name) does not report SHA $env:SHA." }
+          }
+
+      - name: Package the Windows fallback archive
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          SHA: ${{ github.sha }}
+        shell: pwsh
+        run: |
+          $component = "agent-orchestrator-$env:VERSION-win-x64"
+          $root = "windows-package/$component"
+          New-Item -ItemType Directory -Path $root -Force | Out-Null
+          Copy-Item artifacts/publish/task-server/task-server.exe $root
+          Copy-Item artifacts/publish/orchestrator-engine/orchestrator-engine.exe $root
+          Copy-Item artifacts/publish/studio-bff/agent-studio-bff.exe $root
+          Copy-Item deploy/windows $root/deploy-windows -Recurse
+          New-Item -ItemType Directory -Path "$root/config" -Force | Out-Null
+          Copy-Item deploy/release/agent-orchestrator/config/*.template "$root/config/"
+          Set-Content -LiteralPath "$root/VERSION" -Value $env:VERSION -NoNewline -Encoding ascii
+          Set-Content -LiteralPath "$root/RELEASE-SHA" -Value $env:SHA -NoNewline -Encoding ascii
+          @(
+            'component=agent-orchestrator',
+            "version=$env:VERSION",
+            "gitSha=$env:SHA",
+            'runtimeIdentifiers=win-x64',
+            'protocolMinimum=1',
+            'protocolMaximum=2'
+          ) | Set-Content -LiteralPath "$root/RELEASE" -Encoding ascii
+          Compress-Archive -Path $root -DestinationPath "windows-package/$component.zip"
+
+      - name: Upload Windows release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release-artifacts
+          path: windows-package/*.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-release:
+    name: Merge artifacts and publish the GitHub Release
+    needs: [version, test-build-release, publish-windows]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out exact tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Linux release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-release-artifacts
+          path: artifacts/release
+
+      - name: Download Windows release artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-release-artifacts
+          path: artifacts/release
+
+      - name: Recompute the combined SHA256SUMS
+        run: |
+          chmod +x artifacts/release/agent-orchestrator-setup
+          (cd artifacts/release && rm -f SHA256SUMS && sha256sum * > SHA256SUMS)
+
       - name: Attest release assets
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: |
             artifacts/release/*.tar.gz
+            artifacts/release/*.zip
             artifacts/release/agent-orchestrator-setup
 
       - name: Create GitHub Release
@@ -216,8 +360,9 @@ jobs:
         run: >-
           gh release create "$GITHUB_REF_NAME"
           artifacts/release/*.tar.gz
+          artifacts/release/*.zip
           artifacts/release/agent-orchestrator-setup
           artifacts/release/SHA256SUMS
           --verify-tag
           --generate-notes
-          --title "Agent Studio ${{ steps.version.outputs.version }}"
+          --title "Agent Studio ${{ needs.version.outputs.version }}"

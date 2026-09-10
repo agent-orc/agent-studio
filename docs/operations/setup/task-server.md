@@ -182,6 +182,25 @@ targeting the installed executable, mirroring
 C:\AgentOrchestrator\current\task-server.exe backup --name manual
 ```
 
+### Windows fallback profile (Orchestrator Engine, Studio connector, warm standby)
+
+[`deploy/windows/orchestrator-engine/`](../../../deploy/windows/orchestrator-engine/)
+and
+[`deploy/windows/studio-connector/`](../../../deploy/windows/studio-connector/)
+add the same register/start Scheduled Task pair for
+`orchestrator-engine.exe` and the loopback Studio connector
+(`agent-studio-bff.exe`) that `deploy/windows/task-server/` already provides
+for the Task Server. `deploy/windows/fallback/` packages all three into one
+installable profile plus the warm-standby backup pull and the switch drill
+scripts described in the
+[Windows fallback runbook](windows-fallback-runbook.md); that page is the
+operator-facing entry point for Phase B slice B4
+([Remote Task Server with local Agent Studio](../remote-task-server-local-studio.md)).
+It is not a second production deployment path: the fallback profile installs
+the same released binaries under the same Scheduled Task and `current`
+junction conventions as this section, rested in `Maintenance` until a drill
+or a real switch.
+
 ## Retention CLI
 
 The Task Server binary owns the retention command surface for the legacy file

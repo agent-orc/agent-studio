@@ -1,0 +1,160 @@
+name: Windows fallback profile validation
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*.*.*']
+    paths:
+      - 'deploy/windows/**'
+      - 'task-server/FullBackupService.cs'
+      - 'task-server.Tests/FullBackupServiceTests.cs'
+      - '.github/workflows/windows-fallback-validation.yml'
+  workflow_dispatch:
+
+jobs:
+  install-uninstall-and-restore:
+    name: Install, uninstall, and restore round trip (windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # Proves the full backup / restore path this profile depends on
+      # (task-server/FullBackupService.cs, including the case-only path
+      # collision guard) on a real Windows/NTFS host, not just Linux CI.
+      - name: Full backup round-trip tests (Windows/NTFS)
+        run: >-
+          dotnet test task-server.Tests/TaskServer.Tests.csproj
+          --filter "FullyQualifiedName~FullBackupServiceTests"
+          --logger "console;verbosity=normal"
+
+      - name: Publish a local win-x64 fallback package
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION -TotalCount 1).Trim()
+          $sha = 'ci' + ('0' * 38)
+          $common = @(
+            '--configuration', 'Release', '--runtime', 'win-x64', '--self-contained', 'true',
+            '-p:PublishSingleFile=true', '-p:IncludeNativeLibrariesForSelfExtract=true',
+            '-p:DebugType=None', '-p:DebugSymbols=false',
+            '-p:Version=' + $version, '-p:SourceRevisionId=' + $sha
+          )
+          $root = 'ci-package/agent-orchestrator-win-x64'
+          New-Item -ItemType Directory -Path $root -Force | Out-Null
+          dotnet publish task-server/TaskServer.csproj @common --output $root
+          if ($LASTEXITCODE -ne 0) { throw 'task-server publish failed.' }
+          dotnet publish orchestrator-engine/OrchestratorEngine.csproj @common --output "$root-engine-staging"
+          if ($LASTEXITCODE -ne 0) { throw 'orchestrator-engine publish failed.' }
+          Copy-Item "$root-engine-staging/orchestrator-engine.exe" $root
+          dotnet publish studio-bff/StudioBff.csproj @common --output "$root-bff-staging"
+          if ($LASTEXITCODE -ne 0) { throw 'studio-bff publish failed.' }
+          Copy-Item "$root-bff-staging/agent-studio-bff.exe" $root
+          Set-Content -LiteralPath "$root/VERSION" -Value $version -NoNewline -Encoding ascii
+          Set-Content -LiteralPath "$root/RELEASE-SHA" -Value $sha -NoNewline -Encoding ascii
+          "PACKAGE_ROOT=$root" >> $env:GITHUB_ENV
+
+      - name: Install the fallback profile (loopback, no bearer auth)
+        shell: pwsh
+        run: |
+          $data = Join-Path $env:RUNNER_TEMP 'agent-orchestrator-data'
+          .\deploy\windows\fallback\install-fallback-profile.ps1 `
+            -ReleasePackageRoot $env:PACKAGE_ROOT `
+            -DataDirectory $data `
+            -AuthMode none `
+            -ListenUrl 'http://127.0.0.1:5071' `
+            -ConnectorListenUrl 'http://127.0.0.1:5031'
+          "AGENT_ORCHESTRATOR_DATA=$data" >> $env:GITHUB_ENV
+
+      - name: Assert the three services were installed
+        shell: pwsh
+        run: |
+          foreach ($taskName in 'AgentOrchestrator-TaskServer', 'AgentOrchestrator-Engine', 'AgentOrchestrator-StudioConnector') {
+            $task = Get-ScheduledTask -TaskName $taskName -ErrorAction Stop
+            Write-Host "$taskName state: $($task.State)"
+          }
+
+      - name: Uninstall the fallback profile
+        shell: pwsh
+        run: |
+          .\deploy\windows\fallback\uninstall-fallback-profile.ps1 -RemoveData -DataDirectory $env:AGENT_ORCHESTRATOR_DATA
+
+      - name: Assert the three services were removed
+        shell: pwsh
+        run: |
+          foreach ($taskName in 'AgentOrchestrator-TaskServer', 'AgentOrchestrator-Engine', 'AgentOrchestrator-StudioConnector') {
+            $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+            if ($null -ne $task) { throw "$taskName is still registered after uninstall." }
+          }
+          if (Test-Path -LiteralPath $env:AGENT_ORCHESTRATOR_DATA) { throw 'Data directory was not removed by -RemoveData.' }
+
+  drill-dry-run:
+    name: Switch drill dry run (windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build a standalone task-server.exe for the offline backup CLI
+        shell: pwsh
+        run: |
+          dotnet publish task-server/TaskServer.csproj --configuration Release --runtime win-x64 `
+            --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+            --output ci-task-server
+          if ($LASTEXITCODE -ne 0) { throw 'task-server publish failed.' }
+          New-Item -ItemType Directory -Path C:\AgentOrchestrator\current -Force | Out-Null
+          Copy-Item ci-task-server\task-server.exe C:\AgentOrchestrator\current\task-server.exe
+
+      - name: Create a local full backup set to drive the drill
+        shell: pwsh
+        run: |
+          $data = Join-Path $env:RUNNER_TEMP 'drill-data'
+          New-Item -ItemType Directory -Path $data -Force | Out-Null
+          $output = & C:\AgentOrchestrator\current\task-server.exe backup full "--TaskServer:DataDirectory" $data --json
+          if ($LASTEXITCODE -ne 0) { throw "backup full failed: $output" }
+          $summary = $output | ConvertFrom-Json
+          "DRILL_DATA=$data" >> $env:GITHUB_ENV
+          "DRILL_BACKUP_ID=$($summary.id)" >> $env:GITHUB_ENV
+
+      # -WhatIf previews every mutating action (remote fence, local restore,
+      # connector switch, SSH repoint) instead of driving a real Hetzner VM
+      # or agent-runner-01. This proves the script parses, the phase
+      # sequence runs end to end, and the report is produced; the timed,
+      # real-infrastructure rehearsal remains an operator drill (Phase B
+      # slice B6).
+      - name: Switch drill dry run (remote to local)
+        shell: pwsh
+        env:
+          JOB_RESULTS_DIR: ${{ runner.temp }}\results
+        run: |
+          .\deploy\windows\fallback\run-switch-drill.ps1 -WhatIf `
+            -RemoteBaseUrl 'http://127.0.0.1:59999' `
+            -LocalDataDirectory $env:DRILL_DATA `
+            -BackupId $env:DRILL_BACKUP_ID `
+            -ConnectorListenUrl 'http://127.0.0.1:5031'
+
+      - name: Reverse drill dry run (local to remote)
+        shell: pwsh
+        env:
+          JOB_RESULTS_DIR: ${{ runner.temp }}\results
+        run: |
+          .\deploy\windows\fallback\run-reverse-drill.ps1 -WhatIf `
+            -RemoteBaseUrl 'http://127.0.0.1:59999' `
+            -ConnectorListenUrl 'http://127.0.0.1:5031' `
+            -RunnerRemoteServerUrl 'https://tasks.example.com'
+
+      - name: Upload drill dry-run reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: switch-drill-dry-run-${{ github.sha }}
+          path: ${{ runner.temp }}\results
+          if-no-files-found: ignore
+          retention-days: 14

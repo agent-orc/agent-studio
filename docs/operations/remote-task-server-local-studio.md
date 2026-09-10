@@ -1,8 +1,11 @@
 # Remote Task Server with local Agent Studio
 
 Status: Phase A architecture delivered. Phase B slice B2 principal and scope
-hardening was implemented by AGT-2730 on 2026-09-07. Deployment and migration
-remain gated on the other Phase B slices and the full release-gate rehearsal.
+hardening was implemented by AGT-2730 on 2026-09-07. Phase B slice B4
+(Windows fallback and switch tooling) was implemented by AGT-2735 on
+2026-09-09; see the [Windows fallback runbook](setup/windows-fallback-runbook.md).
+Deployment and migration remain gated on the other Phase B slices and the
+full release-gate rehearsal.
 
 ## Purpose and scope
 
@@ -246,14 +249,16 @@ These are Phase B work, not assumptions that operations can work around:
    `job.json` as a compatibility fallback. A production remote move still needs
    per-project and per-state counts before its inventory can be accepted at the
    larger Phase B boundary.
-3. **Windows fallback artifact.** The documented control-plane release is
-   `linux-x64`. A version-matched Windows Task Server package or an equally
-   tested Windows service installation, including cross-platform backup
-   restore, is required before the move can be called reversible.
+3. **Windows fallback artifact, closed by B4.** The control-plane release now
+   also publishes a `win-x64` package (`publish-windows` in
+   `.github/workflows/release.yml`) with a version-matched Windows service
+   installation for all three components and a cross-platform full-backup
+   restore path; see the [Windows fallback runbook](setup/windows-fallback-runbook.md).
 4. **Connector security.** The local connector forwards `/api/v1` and `/hubs`
-   with its Studio credential, but still needs complete route coverage,
-   Credential Manager integration, strict Origin checks, CSRF, protocol
-   negotiation, health reporting, and an atomic remote/local upstream switch.
+   with its Studio credential and now has an atomic remote/local upstream
+   switch (`deploy/windows/fallback/switch-upstream.ps1`), but still needs
+   complete route coverage, Credential Manager integration, strict Origin
+   checks, CSRF, and protocol negotiation.
 
 No API listener may open on `wg0` until gaps 3 and 5 pass their negative
 authentication tests.
@@ -538,7 +543,7 @@ concept.
 | B1 | Studio route ownership and secure local connector | Full `/api` and `/hubs` matrix; remote task workflows pass; local-only dev-seat routes are explicit; connector keeps secrets out of Angular and enforces Origin and CSRF | 5 to 8 engineering days |
 | B2 | Task Server principal and scope hardening | Implemented by AGT-2730: separate hash-only Studio, Engine, and per-Runner credentials; route scopes; hub auth boundary; rotation and revoke tests; `X-Client-Id` negative tests | Complete 2026-09-07 |
 | B3 | Current-workspace migration and evidence | `task.json` support; exact per-project and per-state counts; archive, events, artifacts, Git evidence, backup, import, and mismatch-stop tests | 3 to 5 engineering days |
-| B4 | Windows fallback and switch tooling | Version-matched Windows service; Linux-backup restore; warm standby; atomic connector profile; authenticated reverse-tunnel fallback; measured sub-15-minute drill | 3 to 5 engineering days |
+| B4 | Windows fallback and switch tooling | Implemented by AGT-2735 on 2026-09-09: version-matched Windows service for all three components; cross-platform full-backup restore with a case-collision guard; warm standby pull; atomic connector profile switch; scripted reverse-tunnel drill in both directions with a measured sub-15-minute report; Windows CI coverage. The timed real-infrastructure rehearsal remains a B6 operator drill. | Complete 2026-09-09 |
 | B5 | Private Hetzner foundation | Dedicated VM, WireGuard peers, private TLS, dual firewall, systemd packages, off-host backup, monitoring, and proof of no public API listener | 2 to 3 engineering days plus operator access |
 | B6 | Rehearsal and production cutover | Representative dry run, signed evidence, maintenance-window cutover, detached-Studio proof, rollback drill, and operator handoff | 2 to 4 engineering days plus one operator window |
 
