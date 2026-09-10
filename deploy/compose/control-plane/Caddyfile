@@ -1,0 +1,34 @@
+# Private TLS edge for the control plane. Self-signed leaf issued by Caddy's
+# internal CA, pinned by the clients via SHA-256 (RUNNER_TLS_CERTIFICATE_SHA256
+# on the Runner). This is the default for a first bootstrap and for the CI
+# topology test. Swap CONTROL_PLANE_CADDYFILE to Caddyfile.private-ca once an
+# operator-issued private-CA leaf is available.
+#
+# auto_https off: this edge never contacts a public ACME endpoint. admin off:
+# no local admin API inside the container.
+{
+	auto_https off
+	admin off
+}
+
+https://{$CONTROL_PLANE_DOMAIN} {
+	tls internal
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "same-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+
+	@task_server path /api/* /hubs/* /healthz /readyz
+	handle @task_server {
+		reverse_proxy task-server:5071
+	}
+
+	# The control plane never serves Angular or any other Studio surface.
+	handle {
+		respond "not found" 404
+	}
+}

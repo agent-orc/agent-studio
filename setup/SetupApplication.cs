@@ -105,6 +105,44 @@ internal static class SetupApplication
             return;
         }
 
+        if (mode == SetupMode.ControlPlane && options.Target == SetupTarget.Docker)
+        {
+            var controlPlaneDomain = options.ServerUrl
+                                     ?? prompter.Ask(
+                                         "Private control-plane DNS name (WireGuard-only)",
+                                         "task-server-01.wg.internal");
+            var wgAddress = options.WireGuardAddress
+                            ?? prompter.Ask("task-server-01 WireGuard address", "10.60.0.1");
+            var offhostBackupPath = options.OffhostBackupPath
+                                    ?? prompter.Ask(
+                                        "Off-host backup mount path (already mounted)",
+                                        "/mnt/agent-orchestrator-offhost-backup");
+            var runnerId = options.RunnerName ?? "agent-runner-01";
+
+            await using var dockerArtifacts = new ReleaseArtifacts(version, options.ReleaseDirectory);
+            var dockerOrchestratorRelease = await dockerArtifacts.ExtractOrchestratorAsync(cancellationToken);
+            var docker = new DockerInstaller(InstallPaths.Load(), processes, options.DryRun);
+            var dockerControl = await docker.InstallControlPlaneAsync(
+                dockerOrchestratorRelease,
+                wgAddress,
+                controlPlaneDomain,
+                offhostBackupPath,
+                runnerId,
+                version,
+                cancellationToken);
+
+            Console.WriteLine();
+            Console.WriteLine("Docker control-plane setup is complete.");
+            Console.WriteLine($"Task Server: {dockerControl.ServerUrl}");
+            Console.WriteLine($"Runner id: {runnerId}");
+            Console.WriteLine($"  RUNNER_SERVER_URL={dockerControl.ServerUrl}");
+            Console.WriteLine(
+                "  The runner credential is at /etc/agent-orchestrator/secrets/runner.token on task-server-01; copy it to the Runner over an already-trusted channel, never through chat or task text.");
+            Console.WriteLine(
+                "  WireGuard, the host firewall, and DNS are separate steps; see docs/operations/setup/control-plane-docker.md.");
+            return;
+        }
+
         var listenUrl = options.ListenUrl
                         ?? prompter.Ask(
                             "Private Task Server listen URL",
@@ -630,18 +668,22 @@ internal static class SetupApplication
               ./agent-orchestrator-setup --mode demo [--demo-port 4011]
               sudo ./agent-orchestrator-setup --mode single
               sudo ./agent-orchestrator-setup --mode control-plane --server-url https://tasks.example.com
+              sudo ./agent-orchestrator-setup --mode control-plane --target docker --server-url task-server-01.wg.internal
               sudo ./agent-orchestrator-setup --join
               sudo ./agent-orchestrator-setup --join --join-token-file /secure/path/join.token
 
             Options:
               --mode <demo|single|control-plane|agent-host>
+              --target <systemd|docker>   Control Plane runtime; systemd is the default. docker requires --mode control-plane and boots deploy/compose/control-plane/compose.yaml.
               --release-version <X.Y.Z>   Release to install; defaults to this setup binary's version
               --release-dir <path>        Offline directory containing release archives and SHA256SUMS
-              --listen-url <url>          Private Task Server listener
-              --server-url <url>          URL visible from Agent Host machines
+              --listen-url <url>          Private Task Server listener (systemd target only)
+              --server-url <url>          URL visible from Agent Host machines (systemd); private WireGuard-only DNS name (docker)
+              --wg-address <ip>           task-server-01 WireGuard interface address (docker target only)
+              --offhost-backup-path <path> Already-mounted off-host backup destination (docker target only)
               --join                      Join this machine as an Agent Host; token is prompted securely
               --join-token-file <path>    Read the join token from a protected file
-              --runner-name <name>        Host identity shown in the Control Plane
+              --runner-name <name>        Host identity shown in the Control Plane; bootstrap Runner id for the docker target
               --execution-user <user>     Linux user that owns Agent CLI and Git credentials
               --agent-cli <codex|claude>  Host CLI to execute
               --git-remote <url>          Credential-free host Git probe URL

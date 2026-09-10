@@ -1,0 +1,21 @@
+# WireGuard interface for task-server-01 (the WireGuard server / hub).
+# Copy to /etc/wireguard/wg0.conf, replace every @PLACEHOLDER@, chmod 600,
+# then `systemctl enable --now wg-quick@wg0`. See
+# docs/operations/setup/control-plane-docker.md for the key-exchange
+# procedure this template assumes.
+[Interface]
+Address = 10.60.0.1/24
+ListenPort = 51820
+PrivateKey = @TASK_SERVER_01_PRIVATE_KEY@
+# No IP forwarding, no other route: this host only ever talks to its own
+# services on 10.60.0.1. It never forwards traffic between peers.
+
+[Peer]
+# agent-runner-01
+PublicKey = @AGENT_RUNNER_01_PUBLIC_KEY@
+AllowedIPs = 10.60.0.2/32
+
+[Peer]
+# Robert's Windows device (Studio connector)
+PublicKey = @WINDOWS_STUDIO_PUBLIC_KEY@
+AllowedIPs = 10.60.0.3/32

@@ -149,3 +149,20 @@ runner a private authenticated endpoint and removes the workstation from the
 claim, lease, log, and completion path. At that cutover, retain this resource
 and its UI semantics for Task Server connection health, but retire the SSH
 transport rather than adding a second production route.
+
+Once the Docker control plane's WireGuard origin is live
+([control-plane-docker.md](./control-plane-docker.md)), `agent-runner-01`
+switches `RUNNER_SERVER_URL` to the WireGuard-only origin and stops relying on
+this tunnel for normal operation. Disable the scheduled task or systemd unit
+rather than deleting it: it stays installed, tested, and documented as the
+fallback path for the migration and rollback runbook in
+[remote-task-server-local-studio.md](../remote-task-server-local-studio.md#rollback-in-less-than-15-minutes).
+
+When a tunnel remains necessary, supervision belongs on the side that can
+initiate the connection. The current topology requires Windows to dial the
+public Linux SSH endpoint, so the Task Server's `LinkSupervisor` owns it there (the
+repository keeper stays the documented emergency path).
+If the Linux host can reach a protected studio or bastion endpoint, Option B's
+`autossh` plus systemd gives stronger boot-time ownership. A central private
+Task Server is preferable to either form because no workstation process then
+sits on the claim, lease, log, and completion path.

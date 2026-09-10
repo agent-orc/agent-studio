@@ -1,0 +1,15 @@
+# WireGuard interface for agent-runner-01 (client peer). Copy to
+# /etc/wireguard/wg0.conf on agent-runner-01, replace every @PLACEHOLDER@,
+# chmod 600, then `systemctl enable --now wg-quick@wg0`. AllowedIPs is
+# scoped to the single Task Server route only: this peer gets no other VM or
+# home-network access through the tunnel.
+[Interface]
+Address = 10.60.0.2/32
+PrivateKey = @AGENT_RUNNER_01_PRIVATE_KEY@
+
+[Peer]
+# task-server-01
+PublicKey = @TASK_SERVER_01_PUBLIC_KEY@
+Endpoint = @TASK_SERVER_01_PUBLIC_ENDPOINT@:51820
+AllowedIPs = 10.60.0.1/32
+PersistentKeepalive = 25

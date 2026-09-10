@@ -1,0 +1,21 @@
+# CI-only override: build task-server and orchestrator-engine locally from
+# this checkout instead of pulling published images, since the topology test
+# runs before any image is published for the commit under test. Never used
+# outside CI; production always pulls the published, versioned images named
+# by compose.yaml. See scripts/control-plane-topology-test.sh and
+# .github/workflows/control-plane-topology.yml.
+services:
+  task-server:
+    build:
+      context: ../../..
+      dockerfile: task-server/Dockerfile
+
+  orchestrator-engine:
+    build:
+      context: ../../..
+      dockerfile: orchestrator-engine/Dockerfile
+
+  backup:
+    build:
+      context: ../../..
+      dockerfile: task-server/Dockerfile

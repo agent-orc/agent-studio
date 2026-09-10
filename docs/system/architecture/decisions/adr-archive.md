@@ -1519,3 +1519,36 @@ switch ship together.
 **Amendment (2026-08-11).** Immediate integration into a repository with both `develop` and `main` has one fixed lineage: merge and gate the delivery on `develop`, then run the release gate on that exact develop merge commit and fast-forward `main`. A raw delivery fence is never a release source in this topology. The path fails before merging when existing history does not make `main` an ancestor of `develop`; it does not create a convergence merge or rewrite history. Deferred publication applies the same order to origin and stops before `main` when the `develop` push fails. A successful prerequisite push is not a terminal receipt, so restart recovery repeats the full ordered publication after a crash window. Main-only repositories retain their existing single-target behavior.
 
 **Amendment (2026-08-11, integration before acceptance).** The canonical Remote order is delivery, settled Review/build gate, integration, Human Review, then acceptance. This applies to every Remote coding project and executor; no project-name flag limits it to AGT, and `RemoteExecutionEnabled` controls dispatch rather than post-delivery integration. A failed delivery gate or immediate integration attempt is persisted visibly before Human Review and is not retried by acceptance. Acceptance validates current-attempt lineage and Git ancestry, then moves an already integrated card without changing Git or the merge-step receipt. An unintegrated card remains in Human Review with `IntegrationFailed`; explicit operator override is the only coding exception. `AcceptedIntegrationWorker` and `AcceptedIntegrationBackstopHostedService` remain only to recover a durable `integrating` transaction written by an older backend process. Local coding retains its existing order of local integration before Auto Review, while report-only, concept, Epic, and other no-code/no-branch modes do not integrate. Remote Review infrastructure retries remain in Auto Review. A configured `pull-request` strategy and any gate, conflict, lineage, or publication failure are explicit non-normal states with visible evidence, never acceptance-time integration. The dual-line `develop` then exact-SHA release-to-`main` rule above remains mandatory.
+
+---
+
+## ADR-0068 - The remote control plane runs as Docker Compose services, not systemd packages (2026-09-06)
+
+**Decision.** `task-server-01` runs Task Server, Orchestrator Engine, a scheduled backup sidecar, and a private TLS edge as Docker Compose services (`deploy/compose/control-plane/`), installed and updated by `deploy/release/agent-orchestrator/{install,update,rollback}-docker.sh` or `agent-orchestrator-setup --mode control-plane --target docker`. This replaces slice B5 ("Private Hetzner foundation") of [remote-task-server-local-studio.md](../../../operations/remote-task-server-local-studio.md) as originally scoped around systemd packages; every other decision in that plan (dedicated VM, WireGuard-only private edge, bearer principal model, off-host backups, no public API listener) stands unchanged.
+
+**Context.** The plan's original Runtime decision installed the versioned `agent-orchestrator` release under systemd, mirroring the packaged single-machine and agent-host targets. Published container images (D1) and the principal model (D3) were already inputs to Phase B, and the repository already ships `docker-compose.yml`'s `distributed` profile as a target-architecture preview plus a full Docker onboarding path (`scripts/compose-smoke-test.sh`) for the default Studio stack. Building a second, systemd-only packaging path for the one production deployment target would diverge the artifact family the local stack, CI, and every other environment already exercise.
+
+**Non-goals.**
+
+- No change to the network design, authentication model, backup cadence, or migration runbook in remote-task-server-local-studio.md; only the process supervisor and packaging format change.
+- No systemd units for the control plane's own processes. Docker's own service (`dockerd`) still runs under systemd; that is host plumbing, not product packaging.
+- No serving Angular or any Studio surface from the Docker control plane. The edge proxies `/api/*`, `/hubs/*`, `/healthz`, and `/readyz` only and returns 404 for everything else.
+- No shared secret transport between the Engine and the other principals: the Engine's `CLIENT_CREDENTIAL` is read from its own mounted secret file at container start, never baked into the image or another service's environment.
+- No wildcard bind. The edge publishes `${WG_ADDRESS}:443:443` only; a bare `443:443` (implicit `0.0.0.0`) fails the network contract.
+
+**Reasoning style.** Prefer the packaging format the rest of the product already ships and tests over a parallel one scoped to a single host. Keep the systemd target as a documented sibling, not a replacement, since some operators may still prefer it; do not delete `install.sh`/`update.sh`/`rollback.sh`. Drain-before-switch, health-gated update, and automatic rollback-on-failure are runtime-agnostic contracts; reimplement them against the Docker Compose lifecycle exactly, not a weaker approximation, so the update/rollback guarantee in the release gates holds regardless of target.
+
+**Implementation pointers.** Compose stack:
+[`deploy/compose/control-plane/compose.yaml`](../../../../deploy/compose/control-plane/compose.yaml)
+and sibling `Caddyfile`, `backup-loop.sh`, `network/`, `wireguard/`. Host
+bootstrap:
+[`deploy/release/agent-orchestrator/install-docker.sh`](../../../../deploy/release/agent-orchestrator/install-docker.sh),
+`update-docker.sh`, `rollback-docker.sh`, `lib-docker.sh`. Guided installer:
+[`setup/DockerInstaller.cs`](../../../../setup/DockerInstaller.cs) and the
+`--target` option in
+[`setup/SetupOptions.cs`](../../../../setup/SetupOptions.cs). Runbook:
+[`docs/operations/setup/control-plane-docker.md`](../../../operations/setup/control-plane-docker.md).
+CI topology proof:
+[`.github/workflows/control-plane-topology.yml`](../../../../.github/workflows/control-plane-topology.yml).
+
+**Status.** Accepted. The compose stack, host bootstrap scripts, guided-installer `--target` flag, network contract, and CI topology test ship together; WireGuard peer generation, the Hetzner VM, and DNS remain operator actions requested per host.

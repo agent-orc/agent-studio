@@ -30,7 +30,7 @@ transport, fenced Runner authority, and no direct remote filesystem writer.
 | Topic | Decision |
 |---|---|
 | Task Server host | Create a dedicated Hetzner VM named `task-server-01`. Do not co-host it with `agent-runner-01`. |
-| Runtime | Install the versioned `agent-orchestrator` release. Run Task Server, Orchestrator Engine, and backup timer under systemd. Do not deploy the all-in-one legacy `OrchestratorApi` as the target service. |
+| Runtime | Docker Compose instead of systemd packages (2026-09-06). Run Task Server, Orchestrator Engine, backup, and the private TLS edge as Compose services from `deploy/compose/control-plane/`, installed and updated by `deploy/release/agent-orchestrator/{install,update,rollback}-docker.sh` or `agent-orchestrator-setup --mode control-plane --target docker`. Reason: the same published images and the same guided installer as the local stack, one artifact family instead of a second systemd-only packaging path. Do not deploy the all-in-one legacy `OrchestratorApi` as the target service. See [control-plane-docker.md](setup/control-plane-docker.md). |
 | Studio location | Keep Angular and a small loopback-only Studio connector on Robert's Windows machine. Do not serve Angular from Hetzner. |
 | Private transport | Use WireGuard between `task-server-01`, `agent-runner-01`, and Robert's Windows device. The Task Server edge listens only on the WireGuard address; Kestrel remains on VM loopback. |
 | Application authentication | Use distinct, revocable bearer credentials for Studio, Engine, and each Runner. Enforce authorization on reads, mutations, management routes, and event streams. `X-Client-Id` remains audit attribution only. |
@@ -570,6 +570,7 @@ Phase B is complete only when all of the following are true:
 
 - [Distributed Agent Studio target architecture](../concepts/distributed-agent-studio-target-architecture.md)
 - [Task Server deployment and recovery](setup/task-server.md)
+- [Control plane on Docker (task-server-01)](setup/control-plane-docker.md)
 - [Security overview](security/overview.md)
 - [Security requirements](security/requirements.md)
 - [Release, installation, update, and rollback](releases.md)
