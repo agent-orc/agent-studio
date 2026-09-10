@@ -197,24 +197,46 @@ jobs:
             frontend/dist/frontend/browser \
             artifacts/release
 
-      - name: Publish pinned demo images
+      - name: Publish pinned release images
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.version.outputs.version }}
+          SHA: ${{ github.sha }}
         run: |
+          set -euo pipefail
+          short_sha="${SHA:0:7}"
+          declare -A dockerfiles=(
+            [agent-studio-api]=backend/Dockerfile
+            [agent-studio-web]=frontend/Dockerfile
+            [agent-task-server]=task-server/Dockerfile
+            [agent-orchestrator-engine]=orchestrator-engine/Dockerfile
+            [agent-studio-bff]=studio-bff/Dockerfile
+            [agent-host]=runner/Dockerfile
+          )
           printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
-          docker build -f backend/Dockerfile \
-            -t "ghcr.io/agent-orc/agent-studio-api:v$VERSION" .
-          docker build -f frontend/Dockerfile \
-            -t "ghcr.io/agent-orc/agent-studio-web:v$VERSION" .
-          docker push "ghcr.io/agent-orc/agent-studio-api:v$VERSION"
-          docker push "ghcr.io/agent-orc/agent-studio-web:v$VERSION"
+          for name in "${!dockerfiles[@]}"; do
+            image="ghcr.io/agent-orc/$name"
+            docker build -f "${dockerfiles[$name]}" \
+              --build-arg VERSION="$VERSION" \
+              --build-arg SHA="$SHA" \
+              -t "$image:v$VERSION" \
+              -t "$image:sha-$short_sha" \
+              -t "$image:latest" \
+              .
+            docker push "$image:v$VERSION"
+            docker push "$image:sha-$short_sha"
+            docker push "$image:latest"
+          done
           docker logout ghcr.io
-          docker image rm \
-            "ghcr.io/agent-orc/agent-studio-api:v$VERSION" \
-            "ghcr.io/agent-orc/agent-studio-web:v$VERSION"
-          docker pull "ghcr.io/agent-orc/agent-studio-api:v$VERSION"
-          docker pull "ghcr.io/agent-orc/agent-studio-web:v$VERSION"
+          for name in "${!dockerfiles[@]}"; do
+            image="ghcr.io/agent-orc/$name"
+            docker image rm "$image:v$VERSION" "$image:sha-$short_sha" "$image:latest"
+            docker pull "$image:v$VERSION"
+            docker pull "$image:sha-$short_sha"
+          done
+          echo "image size report (v$VERSION):"
+          docker image ls --format '{{.Repository}}:{{.Tag}} {{.Size}}' \
+            | grep "ghcr.io/agent-orc/" | grep ":v$VERSION"
 
       - name: Upload Linux release artifacts
         uses: actions/upload-artifact@v4

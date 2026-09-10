@@ -72,11 +72,13 @@ public sealed class RetentionExcerptWriterTests : IDisposable
         await WriteSyntheticLogAsync(path);
         Assert.True(new FileInfo(path).Length > 10 * 1024 * 1024, "fixture must exceed 10 MiB");
 
-        var excerpt = await new RetentionExcerptWriter().WriteAsync(_root, [Item("logs/cli-output.log")]);
+        var rawExcerpt = await new RetentionExcerptWriter().WriteAsync(_root, [Item("logs/cli-output.log")]);
 
         Assert.True(
-            Encoding.UTF8.GetByteCount(excerpt) <= RetentionExcerptWriter.MaxExcerptBytes,
-            $"excerpt was {Encoding.UTF8.GetByteCount(excerpt)} bytes");
+            Encoding.UTF8.GetByteCount(rawExcerpt) <= RetentionExcerptWriter.MaxExcerptBytes,
+            $"excerpt was {Encoding.UTF8.GetByteCount(rawExcerpt)} bytes");
+
+        var excerpt = NormalizeLineEndings(rawExcerpt);
 
         var windows = Regex.Matches(excerpt, @"^Lines \d+-\d+:$", RegexOptions.Multiline).Count;
         Assert.InRange(windows, 1, RetentionExcerptWriter.MaxErrorWindows);
@@ -101,13 +103,38 @@ public sealed class RetentionExcerptWriterTests : IDisposable
             Path.Combine(_root, "logs", "cli-output.log"),
             Enumerable.Range(1, 5000).Select(index => $"line {index}"));
 
-        var excerpt = await new RetentionExcerptWriter().WriteAsync(_root, [Item("logs/cli-output.log")]);
+        var excerpt = NormalizeLineEndings(
+            await new RetentionExcerptWriter().WriteAsync(_root, [Item("logs/cli-output.log")]));
 
         Assert.Contains("line 1\n", excerpt, StringComparison.Ordinal);
         Assert.Contains($"line {RetentionExcerptWriter.HeadLines}\n", excerpt, StringComparison.Ordinal);
         Assert.DoesNotContain($"line {RetentionExcerptWriter.HeadLines + 1}\n", Section(excerpt, "## Head"), StringComparison.Ordinal);
         Assert.Contains($"line {5000 - RetentionExcerptWriter.TailLines + 1}\n", excerpt, StringComparison.Ordinal);
         Assert.Contains("line 5000\n", excerpt, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("\n")]
+    [InlineData("\r\n")]
+    public void SectionParserHandlesPlatformLineEndings(string newline)
+    {
+        var excerpt = string.Join(newline,
+        [
+            "## Errors",
+            "",
+            "Lines 1-3:",
+            "```text",
+            "error",
+            "```",
+            "",
+            "## Tail",
+            "tail",
+        ]);
+
+        var section = Section(excerpt, "## Errors");
+
+        Assert.Contains("Lines 1-3:\n", section, StringComparison.Ordinal);
+        Assert.DoesNotContain("## Tail", section, StringComparison.Ordinal);
     }
 
     private static async Task WriteSyntheticLogAsync(string path)
@@ -126,11 +153,15 @@ public sealed class RetentionExcerptWriterTests : IDisposable
 
     private static string Section(string excerpt, string heading)
     {
+        excerpt = NormalizeLineEndings(excerpt);
         var start = excerpt.IndexOf(heading, StringComparison.Ordinal);
         if (start < 0) return string.Empty;
         var next = excerpt.IndexOf("\n## ", start + heading.Length, StringComparison.Ordinal);
         return next < 0 ? excerpt[start..] : excerpt[start..next];
     }
+
+    private static string NormalizeLineEndings(string value)
+        => value.ReplaceLineEndings("\n");
 
     private RetentionFile Item(string relative)
     {

@@ -51,7 +51,60 @@ internal sealed class RetentionTestWorkspace : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(Root)) Directory.Delete(Root, recursive: true);
+        if (Directory.Exists(Root)) DeleteFixtureDirectory(Root, Root);
+    }
+
+    private static void DeleteFixtureDirectory(string fixtureRoot, string path)
+    {
+        var directory = new DirectoryInfo(Path.GetFullPath(path));
+        EnsureContained(fixtureRoot, directory.FullName, allowRoot: true);
+        directory.Refresh();
+        if ((directory.Attributes & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidOperationException($"Fixture cleanup root cannot be a reparse point: {directory.FullName}");
+
+        foreach (var entry in directory.EnumerateFileSystemInfos())
+        {
+            EnsureContained(fixtureRoot, entry.FullName, allowRoot: false);
+            entry.Refresh();
+            if ((entry.Attributes & FileAttributes.ReparsePoint) != 0)
+            {
+                // Delete the link itself. Never recurse through a junction or symbolic link.
+                entry.Delete();
+                continue;
+            }
+
+            if (entry is DirectoryInfo child)
+                DeleteFixtureDirectory(fixtureRoot, child.FullName);
+            else
+            {
+                ClearReadOnly(entry);
+                entry.Delete();
+            }
+        }
+
+        ClearReadOnly(directory);
+        directory.Delete();
+    }
+
+    private static void EnsureContained(string fixtureRoot, string path, bool allowRoot)
+    {
+        var root = Path.GetFullPath(fixtureRoot);
+        var candidate = Path.GetFullPath(path);
+        var relative = Path.GetRelativePath(root, candidate);
+        var isRoot = relative == ".";
+        var escapes = Path.IsPathRooted(relative)
+                      || relative == ".."
+                      || relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                      || relative.StartsWith($"..{Path.AltDirectorySeparatorChar}", StringComparison.Ordinal);
+        if (escapes || (isRoot && !allowRoot))
+            throw new InvalidOperationException($"Fixture cleanup path escapes its root: {candidate}");
+    }
+
+    private static void ClearReadOnly(FileSystemInfo entry)
+    {
+        var attributes = entry.Attributes;
+        if ((attributes & FileAttributes.ReadOnly) != 0)
+            entry.Attributes = attributes & ~FileAttributes.ReadOnly;
     }
 
     private void Git(params string[] arguments)

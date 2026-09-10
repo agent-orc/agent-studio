@@ -40,6 +40,24 @@ public sealed class RemoteRunResultContractTests
     }
 
     [Fact]
+    public void V1_digest_is_independent_of_input_line_endings_and_still_rejects_tampering()
+    {
+        var fixture = File.ReadAllText(FixturePath("v1-valid.json"));
+
+        var fromLf = RemoteRunResultMigration.ReadAndMigrate(fixture.ReplaceLineEndings("\n"));
+        var fromCrLf = RemoteRunResultMigration.ReadAndMigrate(fixture.ReplaceLineEndings("\r\n"));
+
+        Assert.Equal("\n", RemoteRunResultCollector.Json.NewLine);
+        Assert.Equal(fromLf.ContentSha256, fromCrLf.ContentSha256);
+        var tampered = fixture.Replace("\"seed\": 2200", "\"seed\": 2201", StringComparison.Ordinal)
+            .ReplaceLineEndings("\r\n");
+        Assert.NotEqual(fixture.ReplaceLineEndings("\r\n"), tampered);
+        var error = Assert.Throws<InvalidDataException>(() =>
+            RemoteRunResultMigration.ReadAndMigrate(tampered));
+        Assert.Contains("digest", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Golden_invalid_fixture_is_rejected()
     {
         var error = Assert.Throws<InvalidDataException>(() =>

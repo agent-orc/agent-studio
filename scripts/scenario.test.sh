@@ -107,6 +107,71 @@ grep -F 'user: "${SCENARIO_UID:?set SCENARIO_UID}:${SCENARIO_GID:?set SCENARIO_G
 grep -F '"--user", $"{RequiredEnvironment("SCENARIO_UID")}:{RequiredEnvironment("SCENARIO_GID")}",' \
     "$repo_root/task-server.Tests/ScenarioContext.cs"
 
+render_host="$test_root/render-host"
+mkdir -p "$render_host"
+scenario_version="$(tr -d '\r\n' < "$repo_root/VERSION")"
+scenario_compose_json="$(
+    SCENARIO_UID="$(id -u)" \
+    SCENARIO_GID="$(id -g)" \
+    SCENARIO_HOST_DIR="$render_host" \
+    SCENARIO_BUILD_VERSION="$scenario_version" \
+    SCENARIO_BUILD_SHA=scenario-contract \
+    SCENARIO_TASK_SERVER_IMAGE=scenario-contract-task-server:local \
+    SCENARIO_STUDIO_BFF_IMAGE=scenario-contract-studio-bff:local \
+    SCENARIO_AGENT_HOST_IMAGE=scenario-contract-agent-host:local \
+    DISTRIBUTED_STUDIO_TOKEN=scenario-contract-studio-token \
+    DISTRIBUTED_ENGINE_TOKEN=scenario-contract-engine-token \
+    DISTRIBUTED_RUNNER_TOKEN=scenario-contract-runner-token \
+    docker compose \
+        --project-name scenario-contract-rendered \
+        --file "$repo_root/docker-compose.yml" \
+        --file "$repo_root/testsupport/scenario/docker-compose.scenario.yml" \
+        --profile distributed \
+        --profile runner \
+        config --format json
+)"
+
+node -e '
+const config = JSON.parse(process.argv[1]);
+const expected = {
+  "task-server": {
+    image: "scenario-contract-task-server:local",
+    dockerfile: "task-server/Dockerfile",
+  },
+  "studio-bff": {
+    image: "scenario-contract-studio-bff:local",
+    dockerfile: "studio-bff/Dockerfile",
+  },
+  "agent-host-distributed": {
+    image: "scenario-contract-agent-host:local",
+    dockerfile: "testsupport/scenario/runner.Dockerfile",
+  },
+};
+for (const [serviceName, contract] of Object.entries(expected)) {
+  const service = config.services[serviceName];
+  if (service?.image !== contract.image) {
+    throw new Error(`${serviceName} image is ${service?.image}, expected ${contract.image}`);
+  }
+  if (service?.build?.dockerfile !== contract.dockerfile) {
+    throw new Error(`${serviceName} does not build ${contract.dockerfile}`);
+  }
+}
+for (const source of ["studio_token", "engine_token", "runner_token"]) {
+  const secret = config.services["task-server"].secrets
+    .find(candidate => candidate.source === source);
+  if (!secret || String(secret.uid) !== "10001" || String(secret.gid) !== "10001") {
+    throw new Error(`task-server/${source} is not readable by UID/GID 10001`);
+  }
+  if (String(secret.mode) !== "0400") {
+    throw new Error(`task-server/${source} mode is not 0400`);
+  }
+}
+if (config.services["task-server"].build.args.VERSION !== process.argv[2]
+    || config.services["studio-bff"].build.args.VERSION !== process.argv[2]) {
+  throw new Error("scenario service builds do not use the canonical repository version");
+}
+' "$scenario_compose_json" "$scenario_version"
+
 success_report="$test_root/success-report"
 PATH="$fake_bin:$PATH" \
 FAKE_DOCKER_STATE="$fake_state" \

@@ -10,6 +10,13 @@ services:
         required: false
 
   task-server:
+    image: "${SCENARIO_TASK_SERVER_IMAGE:?set SCENARIO_TASK_SERVER_IMAGE}"
+    build:
+      context: .
+      dockerfile: task-server/Dockerfile
+      args:
+        VERSION: ${SCENARIO_BUILD_VERSION:?set SCENARIO_BUILD_VERSION}
+        SHA: ${SCENARIO_BUILD_SHA:?set SCENARIO_BUILD_SHA}
     environment:
       BOOTSTRAP_RUNNER_ID: scenario-coding-runner
       TaskServer__MinimumLeaseSeconds: "5"
@@ -17,16 +24,32 @@ services:
     secrets:
       - source: studio_token
         target: /run/secrets/studio_token
+        uid: "10001"
+        gid: "10001"
         mode: 0400
       - source: engine_token
         target: /run/secrets/engine_token
+        uid: "10001"
+        gid: "10001"
         mode: 0400
       - source: runner_token
         target: /run/secrets/runner_token
+        uid: "10001"
+        gid: "10001"
         mode: 0400
+
+  studio-bff:
+    image: "${SCENARIO_STUDIO_BFF_IMAGE:?set SCENARIO_STUDIO_BFF_IMAGE}"
+    build:
+      context: .
+      dockerfile: studio-bff/Dockerfile
+      args:
+        VERSION: ${SCENARIO_BUILD_VERSION:?set SCENARIO_BUILD_VERSION}
+        SHA: ${SCENARIO_BUILD_SHA:?set SCENARIO_BUILD_SHA}
 
   agent-host-distributed:
     profiles: ["distributed", "runner"]
+    image: "${SCENARIO_AGENT_HOST_IMAGE:?set SCENARIO_AGENT_HOST_IMAGE}"
     user: "${SCENARIO_UID:?set SCENARIO_UID}:${SCENARIO_GID:?set SCENARIO_GID}"
     build:
       context: .

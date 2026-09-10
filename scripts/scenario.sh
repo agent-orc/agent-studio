@@ -222,6 +222,12 @@ wait_for_compose_port() {
 
 run_compose_full() {
     local project_name="${COMPOSE_SCENARIO_PROJECT:-agent-studio-scenario-$$}"
+    local build_version
+    build_version="$(tr -d '\r\n' < "$repo_root/VERSION")"
+    if [ -z "$build_version" ]; then
+        echo "VERSION must contain the repository version" >&2
+        return 64
+    fi
     scenario_compose_host_dir="$(mktemp -d "${TMPDIR:-/tmp}/agent-studio-scenario.XXXXXX")"
     scenario_compose_project="$project_name"
     scenario_compose_file="$repo_root/docker-compose.yml"
@@ -247,6 +253,11 @@ run_compose_full() {
     export DISTRIBUTED_STUDIO_TOKEN="$studio_token"
     export DISTRIBUTED_ENGINE_TOKEN="$engine_token"
     export DISTRIBUTED_RUNNER_TOKEN="$runner_token"
+    export SCENARIO_BUILD_VERSION="$build_version"
+    export SCENARIO_BUILD_SHA="${SCENARIO_BUILD_SHA:-scenario}"
+    export SCENARIO_TASK_SERVER_IMAGE="${project_name}-task-server:local"
+    export SCENARIO_STUDIO_BFF_IMAGE="${project_name}-studio-bff:local"
+    export SCENARIO_AGENT_HOST_IMAGE="${project_name}-agent-host:local"
     export SCENARIO_UID
     SCENARIO_UID="$(id -u)"
     export SCENARIO_GID

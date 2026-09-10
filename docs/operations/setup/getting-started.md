@@ -50,12 +50,24 @@ Clone one repository and run one start command:
 ```sh
 git clone https://github.com/agent-orc/agent-studio.git
 cd agent-studio
-docker compose up --build --wait
+docker compose up --wait
 ```
 
-The first build downloads the declared .NET, Node.js, and Caddy base images, so
-it takes longer than later starts. `--wait` returns only after Compose reports
+The default `orchestrator-api` and `frontend` services have no `build:` step;
+`up` pulls the pinned `ghcr.io/agent-orc/agent-studio-api` and
+`agent-studio-web` release images (tag `latest` unless `AGENT_STUDIO_VERSION`
+is set - see [Container images](./task-server.md#container-images)). Cloning
+the repository is only needed for `docker-compose.yml` itself; no source
+checkout is required to run it. `--wait` returns only after Compose reports
 the API and browser endpoint healthy.
+
+Building from this checkout instead of pulling (for example, while working on
+a change to a Dockerfile) uses the `dev` profile, which is the only place
+`build:` is wired in this compose file:
+
+```sh
+docker compose --profile dev up --build --wait orchestrator-api-dev frontend-dev
+```
 
 Open [http://localhost:4011](http://localhost:4011). A successful first run
 shows the empty Agent Studio board. The same end-to-end check is available at:
@@ -82,7 +94,7 @@ container does not delete those volumes.
 The default ports can be changed when they conflict with another local service:
 
 ```sh
-STUDIO_UI_PORT=14011 STUDIO_API_PORT=15031 docker compose up --build --wait
+STUDIO_UI_PORT=14011 STUDIO_API_PORT=15031 docker compose up --wait
 ```
 
 This is the same Compose installation path with port overrides, not a second
@@ -116,9 +128,13 @@ Host is connected.
 
 ## Maintainer verification
 
-CI runs `scripts/compose-smoke-test.sh`, which starts the documented default
-stack, waits for both service health checks, loads the browser shell, and calls
-a real API endpoint.
+CI runs `scripts/compose-smoke-test.sh`, which builds every service from this
+checkout's Dockerfiles through the `dev` profile (so it needs no registry
+access) and proves three topologies: the default two-service stack (health
+checks, browser shell, a real API call), the `distributed` profile with
+OrchestratorApi proxying `/api/v1` to a Task Server, and a containerised
+agent-host that registers against a Task Server and claims a seeded task
+through to `4-auto-review` with a fake CLI fixture.
 
 For a clean-machine proof, `scripts/compose-smoke-vm-test.sh` boots a pinned
 Ubuntu 24.04 cloud image with KVM acceleration, installs only Docker and Compose
