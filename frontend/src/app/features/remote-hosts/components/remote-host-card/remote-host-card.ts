@@ -113,6 +113,19 @@ export class RemoteHostCardComponent {
   readonly heartbeatLabel = computed(() => this.liveLoading()
     ? 'loading…'
     : relativeHeartbeat(this.host().lastHeartbeatAt, this.now()));
+  readonly linkLabel = computed(() => {
+    const link = this.host().runnerLink;
+    if (!link) return this.host().role === 'local' ? 'Local' : 'Not configured';
+    const age = Math.max(0, this.now() - Date.parse(link.since));
+    const ageLabel = age < 60_000 ? `${Math.floor(age / 1000)}s`
+      : age < 3_600_000 ? `${Math.floor(age / 60_000)}m` : `${Math.floor(age / 3_600_000)}h`;
+    return `${link.state} · ${ageLabel}`;
+  });
+  readonly linkTooltip = computed(() => {
+    const link = this.host().runnerLink;
+    if (!link) return null;
+    return `${link.state} since ${link.since}. ${link.lastError ?? 'No error reported.'}`;
+  });
   readonly retired = computed(() => this.host().status === 'retired');
   readonly stale = computed(() => !this.liveLoading() && hostIsStale(this.host().lastHeartbeatAt, this.now()));
   readonly latestTelemetry = computed(() => latestHostTelemetry(this.host()));

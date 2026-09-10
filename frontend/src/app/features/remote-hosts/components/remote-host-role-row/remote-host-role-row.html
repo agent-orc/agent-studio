@@ -10,8 +10,12 @@
     <span class="role__dot" [attr.data-tone]="tone()" aria-hidden="true"></span>
     <span>{{ statusLabel() }}</span>
   </span>
+</td>
+<td>
   @if (linkLabel(); as link) {
     <span class="role__link" data-testid="remote-host-link-state" [attr.title]="linkTooltip()">{{ link }}</span>
+  } @else {
+    <span class="role__placeholder">–</span>
   }
 </td>
 <td class="role__number" data-testid="remote-host-slots-summary">
@@ -30,13 +34,20 @@
         {{ h.busyAction === 'revive' ? 'Reviving…' : 'Revive' }}
       </button>
     } @else {
-      @if (h.runnerLink?.linkState === 'down' && h.runnerLink?.keeper?.supported) {
+      @if (h.runnerLink && h.runnerLink.state !== 'up' && h.runnerLink.state !== 'paused') {
         <button class="role__btn role__btn--primary" type="button"
                 data-testid="remote-host-action-reconnect"
                 [disabled]="!!h.busyAction"
                 (click)="emit('reconnect')">
           {{ h.busyAction === 'reconnect' ? 'Reconnecting…' : 'Reconnect' }}
         </button>
+      }
+      @if (h.runnerLink?.state === 'paused') {
+        <button class="role__btn role__btn--primary" type="button" data-testid="remote-host-action-resume-link"
+                [disabled]="!!h.busyAction" (click)="emit('resume-link')">Resume link</button>
+      } @else if (h.runnerLink) {
+        <button class="role__btn" type="button" data-testid="remote-host-action-pause-link"
+                [disabled]="!!h.busyAction" (click)="emit('pause-link')">Pause link</button>
       }
       <button class="role__btn" type="button"
               data-testid="remote-host-action-drain"
@@ -65,10 +76,15 @@
           {{ h.busyAction === 'revive' ? 'Reviving…' : 'Revive' }}
         </button>
       } @else {
-        @if (h.runnerLink?.linkState === 'down' && h.runnerLink?.keeper?.supported) {
+        @if (h.runnerLink && h.runnerLink.state !== 'up' && h.runnerLink.state !== 'paused') {
           <button type="button" role="menuitem" [disabled]="!!h.busyAction" (click)="emit('reconnect')">
             {{ h.busyAction === 'reconnect' ? 'Reconnecting…' : 'Reconnect' }}
           </button>
+        }
+        @if (h.runnerLink?.state === 'paused') {
+          <button type="button" role="menuitem" [disabled]="!!h.busyAction" (click)="emit('resume-link')">Resume link</button>
+        } @else if (h.runnerLink) {
+          <button type="button" role="menuitem" [disabled]="!!h.busyAction" (click)="emit('pause-link')">Pause link</button>
         }
         <button type="button" role="menuitem"
                 [disabled]="!!h.busyAction || h.status === 'draining'"

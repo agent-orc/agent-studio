@@ -27,31 +27,75 @@ public static class ManagementEndpoints
             if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
             return Results.Ok(registry.ListCapabilitySnapshots());
         });
-        group.MapGet("/remote-hosts/link-health", async (
+        group.MapGet("/links", (
             HttpContext context,
-            RemoteRunnerLinkService links,
-            IConfiguration configuration,
-            CancellationToken ct) =>
+            LinkSupervisor links,
+            IConfiguration configuration) =>
         {
             context.Response.Headers.CacheControl = "no-store";
             if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
-            return Results.Ok(await links.SnapshotAsync(ct));
+            return Results.Ok(links.Snapshot());
         });
-        group.MapPost("/remote-hosts/{id}/reconnect", async (
+        group.MapGet("/remote-hosts/link-health", (
+            HttpContext context,
+            LinkSupervisor links,
+            IConfiguration configuration) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
+            return Results.Ok(links.Snapshot());
+        });
+        group.MapPost("/links/{id}/reconnect", async (
             HttpContext context,
             string id,
-            RemoteRunnerLinkService links,
+            LinkSupervisor links,
+            IRunnerLinkAudit audit,
             IConfiguration configuration,
             CancellationToken ct) =>
         {
             context.Response.Headers.CacheControl = "no-store";
-            if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
-            var result = await links.ReconnectAsync(id, ct);
+            if (!TryAuthorize(context, configuration, out var denied, out var actor, out _)) return denied!;
+            var result = await links.ReconnectAsync(id, actor!, ct);
+            if (result is not null) await audit.ActionAsync(id, "reconnect", actor!, ct);
             return result is null
-                ? Results.Json(new { error = "runner-not-found" }, statusCode: 404)
-                : result.Succeeded
-                    ? Results.Ok(result)
-                    : Results.Json(result, statusCode: 502);
+                ? Results.Json(new { error = "runner-link-not-found" }, statusCode: 404)
+                : Results.Ok(result);
+        });
+        group.MapPost("/remote-hosts/{id}/reconnect", async (
+            HttpContext context, string id, LinkSupervisor links, IRunnerLinkAudit audit,
+            IConfiguration configuration, CancellationToken ct) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            if (!TryAuthorize(context, configuration, out var denied, out var actor, out _)) return denied!;
+            var result = await links.ReconnectAsync(id, actor!, ct);
+            if (result is not null) await audit.ActionAsync(id, "reconnect", actor!, ct);
+            return result is null
+                ? Results.Json(new { error = "runner-link-not-found" }, statusCode: 404)
+                : Results.Ok(result);
+        });
+        group.MapPost("/links/{id}/pause", async (
+            HttpContext context, string id, LinkSupervisor links, IRunnerLinkAudit audit,
+            IConfiguration configuration, CancellationToken ct) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            if (!TryAuthorize(context, configuration, out var denied, out var actor, out _)) return denied!;
+            var result = await links.PauseAsync(id, ct);
+            if (result is not null) await audit.ActionAsync(id, "pause", actor!, ct);
+            return result is null
+                ? Results.Json(new { error = "runner-link-not-found" }, statusCode: 404)
+                : Results.Ok(result);
+        });
+        group.MapPost("/links/{id}/resume", async (
+            HttpContext context, string id, LinkSupervisor links, IRunnerLinkAudit audit,
+            IConfiguration configuration, CancellationToken ct) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            if (!TryAuthorize(context, configuration, out var denied, out var actor, out _)) return denied!;
+            var result = await links.ResumeAsync(id, ct);
+            if (result is not null) await audit.ActionAsync(id, "resume", actor!, ct);
+            return result is null
+                ? Results.Json(new { error = "runner-link-not-found" }, statusCode: 404)
+                : Results.Ok(result);
         });
         group.MapPost("/remote-hosts/provider-auth", async (
             HttpContext context,

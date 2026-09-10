@@ -119,7 +119,7 @@ export function providerAuthBadgesForHost(host: RemoteHost, nowMs: number): Prov
     host.name,
     [host.id, host.clientId, host.capacityHostId ?? '', host.name],
     host.status !== 'offline' && host.status !== 'retired' && isRecent(host.lastHeartbeatAt, nowMs),
-    host.runnerLink?.lastSnapshotAt ?? host.lastHeartbeatAt,
+    host.runnerLink?.lastHeartbeatAt ?? host.lastHeartbeatAt,
     nowMs,
   ));
 }
@@ -153,8 +153,10 @@ export function providerAuthWaitReason(
     && status.consecutiveFailures >= 2);
   const matchingLinks = links.filter(link => !configuredRunner
     || link.runnerId.toLowerCase() === configuredRunner.toLowerCase()
-    || link.name.toLowerCase() === configuredRunner.toLowerCase());
-  const lastSeenAt = [...candidates.map(status => status.lastSeenAt), ...matchingLinks.map(link => link.lastSnapshotAt)]
+  );
+  const blockingLink = matchingLinks.find(link => link.state !== 'up');
+  const providerTextAllowed = !configuredRunner || matchingLinks.some(link => link.state === 'up');
+  const lastSeenAt = [...candidates.map(status => status.lastSeenAt), ...matchingLinks.map(link => link.lastHeartbeatAt)]
     .filter((value): value is string => !!value)
     .sort()
     .at(-1) ?? null;
@@ -167,21 +169,41 @@ export function providerAuthWaitReason(
         : `No reachable runner capability snapshot advertises provider-auth:${provider}.`;
   return {
     provider,
-    label: limited
+    label: blockingLink
+      ? linkWaitLabel(blockingLink)
+      : providerTextAllowed && limited
       ? `${providerLabel} rate-limited on ${target}${limited.limitedUntil ? ` until ${limited.limitedUntil}` : ''}`
-      : unavailable.length > 0
+      : providerTextAllowed && unavailable.length > 0
         ? `Waiting for ${providerLabel} sign-in on ${target}`
         : `${target} unreachable since ${lastSeenAt ?? 'no heartbeat was recorded'} (no runner heartbeat; Task Server link or runner service down)`,
-    tooltip: limited
+    tooltip: blockingLink
+      ? `${blockingLink.lastError ?? 'No fresh runner heartbeat is available.'}\nThe Task Server owns recovery for this link.`
+      : providerTextAllowed && limited
       ? `${limited.detail}\nThe task stays Ready and retries automatically after the provider limit.`
-      : unavailable.length > 0
+      : providerTextAllowed && unavailable.length > 0
         ? `${detail}\nTwo consecutive provider probes reported an explicit logout. The task stays Ready until sign-in is restored.`
         : `${detail}\nNo fresh runner heartbeat is available. Check the Task Server link and runner services.`,
     hostNames: hostNames.length > 0 ? hostNames : configuredRunner ? [configuredRunner] : [],
-    signInTarget: provider === 'codex' && unavailable.length > 0
+    signInTarget: !blockingLink && providerTextAllowed && provider === 'codex' && unavailable.length > 0
       ? signInTarget(unavailable[0])
       : null,
   };
+}
+
+function linkWaitLabel(link: RemoteRunnerLinkHealth): string {
+  const unreachableSince = link.unreachableSince ?? link.since;
+  const since = new Date(unreachableSince);
+  const time = Number.isNaN(since.getTime())
+    ? unreachableSince
+    : since.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+  const state = link.state === 'reconnecting'
+    ? `link down, reconnecting, attempt ${link.attempt}`
+    : link.state === 'connecting'
+      ? `link down, connecting, attempt ${link.attempt}`
+      : link.state === 'down'
+        ? `link down, attempt ${link.attempt}`
+        : `link ${link.state}`;
+  return `${link.runnerId} unreachable since ${time} (${state})`;
 }
 
 export function signInTarget(badge: ProviderAuthBadge, sshTarget?: string | null): CodexSignInTarget {

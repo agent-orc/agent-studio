@@ -480,6 +480,31 @@ public sealed class AgentMessageBusBridge
         return EmitAsync(msg, ct);
     }
 
+    /// <summary>Emits one typed runner-link transition for the operator feed.</summary>
+    public Task EmitRunnerLinkTransitionAsync(
+        string transition,
+        string runnerId,
+        string? error,
+        int attempt,
+        CancellationToken ct = default)
+    {
+        var severity = transition == "link_up" ? "Info" : "Warn";
+        var summary = transition == "link_up"
+            ? $"Runner link {runnerId} is up."
+            : $"Runner link {runnerId}: {transition}{(string.IsNullOrWhiteSpace(error) ? "." : $" ({error})")}";
+        var msg = NewMessage(
+            participantId: ParticipantRuntime,
+            role: "system",
+            kind: transition == "link_up" ? "lifecycle" : "error",
+            severity: severity,
+            project: null,
+            topic: transition,
+            summary: TruncateSummary(summary),
+            payload: new { runnerId, error, attempt },
+            tags: new[] { "runner-link", transition, $"runner:{runnerId}" });
+        return EmitAsync(msg, ct);
+    }
+
     /// <summary>
     /// Token-usage attribution for one orchestrator turn or supporting-agent
     /// call. The aggregate rollup view stays in <c>orchestrator.jsonl</c> /

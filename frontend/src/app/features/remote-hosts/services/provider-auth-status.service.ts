@@ -54,7 +54,7 @@ export class ProviderAuthStatusService implements OnDestroy {
   }
 
   private refreshLinks(): void {
-    this.http?.get<RemoteRunnerLinkHealth[]>('/api/v1/management/remote-hosts/link-health').subscribe({
+    this.http?.get<RemoteRunnerLinkHealth[]>('/api/v1/management/links').subscribe({
       next: links => this.links.set(links ?? []),
       error: () => undefined,
     });

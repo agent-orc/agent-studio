@@ -12,6 +12,23 @@
     "BackendName": "dev"
   },
 
+  "//RunnerLinks": "Stable configuration. Keep this array empty in dev. The SSH alias and key remain in the service account's ~/.ssh directory.",
+  "RunnerLinks": [
+    {
+      "RunnerId": "agent-runner-01",
+      "Kind": "ssh-reverse",
+      "SshTarget": "agent-runner",
+      "RemotePort": 15031,
+      "LocalPort": 5031,
+      "ExtraForwards": [
+        "5031:127.0.0.1:5031",
+        "4011:localhost:4011"
+      ],
+      "HeartbeatTimeoutSeconds": 90,
+      "BackoffSeconds": [5, 10, 30, 60, 120]
+    }
+  ],
+
   "DevTools": {
     "//comment": "Devtools knobs are dev-only conveniences. Leave them off on stable.",
     "UpdateStableEnabled": true,
