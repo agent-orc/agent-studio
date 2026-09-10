@@ -606,19 +606,19 @@ public static class TaskServerEndpoints
             => await InvokeAsync(() => fullBackup.RestoreAsync(backupId, Actor(context), ct)));
     }
 
-    private static string Actor(HttpContext context)
+    internal static string Actor(HttpContext context)
         => context.Request.Headers["X-Actor-Id"].FirstOrDefault()
            ?? context.Request.Headers["X-Client-Id"].FirstOrDefault()
            ?? "local-compatibility";
 
-    private static int ProtocolVersion(HttpContext context)
+    internal static int ProtocolVersion(HttpContext context)
         => int.TryParse(
             context.Request.Headers[TaskServerProtocol.HeaderName].FirstOrDefault(),
             out var version)
             ? version
             : 0;
 
-    private static async Task<IResult> InvokeAsync<T>(Func<Task<T>> action, int successStatus = StatusCodes.Status200OK)
+    internal static async Task<IResult> InvokeAsync<T>(Func<Task<T>> action, int successStatus = StatusCodes.Status200OK)
     {
         try
         {
@@ -631,7 +631,7 @@ public static class TaskServerEndpoints
         }
     }
 
-    private static async Task<IResult> InvokeNullableAsync<T>(Func<Task<T?>> action) where T : class
+    internal static async Task<IResult> InvokeNullableAsync<T>(Func<Task<T?>> action) where T : class
     {
         try
         {
@@ -644,8 +644,11 @@ public static class TaskServerEndpoints
         }
     }
 
-    private static IResult MapError(Exception exception) => exception switch
+    internal static IResult MapError(Exception exception) => exception switch
     {
+        StudioAuthenticationException studioAuth => Results.Json(
+            new ApiError(studioAuth.Code, studioAuth.Message),
+            statusCode: StatusCodes.Status401Unauthorized),
         ArtifactArchivedException archived => Results.Json(
             new ApiError(
                 "artifact-archived",

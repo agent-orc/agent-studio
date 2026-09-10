@@ -13,9 +13,12 @@ public sealed partial class TaskServerStore
 {
     // 13 adds retention policies, archive runs and manifests, task archive
     // stub columns, and an artifacts.archived flag with nullable content.
+    // 14 adds studio human users and sessions, a tasks.rank lane-ordering
+    // column, and the replayable studio_stream_events cursor log backing
+    // the /hubs/v1/studio hub.
     // The migration block is idempotent; the number guards downgrades from
     // binaries that do not know this state.
-    public const int CurrentSchemaVersion = 13;
+    public const int CurrentSchemaVersion = 14;
     private const string TimestampFormat = "O";
     private readonly TaskServerOptions _options;
     private readonly TimeProvider _clock;
@@ -2766,6 +2769,35 @@ public sealed partial class TaskServerStore
                 claim_idempotency_key TEXT UNIQUE,
                 complete_idempotency_key TEXT UNIQUE
             );
+            CREATE TABLE IF NOT EXISTS studio_users(
+                id TEXT PRIMARY KEY,
+                username TEXT NOT NULL UNIQUE,
+                display_name TEXT NOT NULL,
+                role TEXT NOT NULL,
+                password_hash TEXT NOT NULL,
+                project_ids_json TEXT NOT NULL DEFAULT '[]',
+                disabled INTEGER NOT NULL DEFAULT 0,
+                must_change_password INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS studio_sessions(
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES studio_users(id),
+                token_hash TEXT NOT NULL,
+                csrf_token TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                revoked_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS studio_stream_events(
+                cursor INTEGER PRIMARY KEY AUTOINCREMENT,
+                occurred_at TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                project_id TEXT,
+                task_id TEXT,
+                payload_json TEXT NOT NULL
+            );
             CREATE INDEX IF NOT EXISTS ix_tasks_project_state ON tasks(project_id, state);
             CREATE INDEX IF NOT EXISTS ix_orchestrator_contexts_project_visible
                 ON orchestrator_contexts(project_id, hidden_at, updated_at);
@@ -2853,6 +2885,12 @@ public sealed partial class TaskServerStore
         await ApplyReviewMigrationAsync(connection, ct);
         await EnsureColumnAsync(connection, "review_attempts", "required_capabilities_json", "TEXT NOT NULL DEFAULT '[]'", ct);
         await EnsureColumnAsync(connection, "review_attempts", "canary_capabilities_json", "TEXT NOT NULL DEFAULT '[]'", ct);
+        await EnsureColumnAsync(connection, "tasks", "rank", "INTEGER NOT NULL DEFAULT 0", ct);
+        await ExecuteAsync(connection, """
+            CREATE INDEX IF NOT EXISTS ix_tasks_project_state_rank ON tasks(project_id, state, rank);
+            CREATE INDEX IF NOT EXISTS ix_studio_sessions_user ON studio_sessions(user_id, revoked_at);
+            CREATE INDEX IF NOT EXISTS ix_studio_stream_events_project ON studio_stream_events(project_id, cursor);
+            """, ct);
         await SetMetaAsync(connection, null, "schema_version", CurrentSchemaVersion.ToString(CultureInfo.InvariantCulture), ct);
     }
 

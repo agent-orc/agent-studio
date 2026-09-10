@@ -55,6 +55,9 @@ builder.Services.AddSingleton<FullBackupManagementService>();
 builder.Services.AddSingleton<IRetentionRuntimeLoadGate, SystemRetentionRuntimeLoadGate>();
 builder.Services.AddSingleton<ITaskServerEventPublisher, SignalRTaskServerEventPublisher>();
 builder.Services.AddSingleton<IResultRefDeleter, GitResultRefDeleter>();
+builder.Services.AddSingleton<IStudioEventPublisher, SignalRStudioEventPublisher>();
+builder.Services.AddSingleton<StudioChatAttachmentStore>();
+builder.Services.AddSingleton<StudioLifecycleCoordinator>();
 builder.Services.AddHostedService<TaskServerInvariantReconciliationService>();
 builder.Services.AddHostedService<ResultRefGcHostedService>();
 builder.Services.AddHostedService<RetentionSchedulerHostedService>();
@@ -153,7 +156,10 @@ app.UsePublicDemoExecutionLock();
 app.UseMiddleware<TaskServerAuthenticationMiddleware>();
 app.UseMiddleware<TaskServerProtocolMiddleware>();
 app.MapTaskServerEndpoints();
+app.MapStudioEndpoints();
 app.MapHub<TaskServerEventsHub>("/hubs/events")
+    .RequireTaskServerScope(TaskServerScopes.EventsSubscribe);
+app.MapHub<TaskServerStudioHub>("/hubs/v1/studio")
     .RequireTaskServerScope(TaskServerScopes.EventsSubscribe);
 TaskServerPublicDemoExecutionRouteInventory.ValidateStartup(
     app,
