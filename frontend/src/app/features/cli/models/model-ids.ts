@@ -12,6 +12,12 @@ export const MODEL_IDS = {
   // Availability follows the live catalog from /api/cli; this id only seeds
   // fixtures and the effective-model display before the catalog hydrates.
   gpt56Sol: 'gpt-5.6-sol',
+  // Lower cost tiers of the gpt-5.6 family (model-routing-policy.md). Unlike
+  // gpt56Sol these are backend registry entries (AGT-2707 round 2), so the
+  // picker renders one disabled with a reason on a codex-cli that does not
+  // offer it instead of hiding it.
+  gpt56Terra: 'gpt-5.6-terra',
+  gpt56Luna: 'gpt-5.6-luna',
   // Onboarded gpt-6 flagship (AGT-2707). Known to the backend registry, so the
   // picker renders it disabled with a reason on a codex-cli that does not offer
   // it yet instead of hiding it.

@@ -14,6 +14,12 @@ namespace AgentStudio.Tests;
 /// were captured from a live codex-cli run; the <c>gpt-6-astra</c> entry carries
 /// the values AGT-2707 recorded from codex-cli 0.153.4. The <c>v0.151.0</c>
 /// fixture is the same catalog before astra was published.
+/// <c>debug-models-v0.144.1.json</c> is a real, unedited (field-trimmed)
+/// <c>codex debug models</c> capture from codex-cli 0.144.1 on a ChatGPT
+/// account (agent-runner-01, 2026-09-11, AGT-2707 round 2): it lists
+/// <c>gpt-5.6-sol</c>, <c>gpt-5.6-terra</c>, and <c>gpt-5.6-luna</c>, and omits
+/// <c>gpt-6-astra</c>, <c>gpt-5.4-mini</c>, and <c>gpt-5-codex</c> entirely
+/// (the live account rejects those three with HTTP 400).
 ///
 /// Shares <see cref="CodexDetectedDefaultCollection"/> because the parser reads
 /// the process-global detected ladder/default when a model reports neither.
@@ -132,6 +138,50 @@ public class CodexModelDiscoveryTests : IDisposable
     }
 
     [Fact]
+    public void WithKnownButUnavailableModels_OnRealCodex0144Catalog_TerraAndLunaSelectable_MiniCodexAstraDisabled()
+    {
+        // Real codex-cli 0.144.1 evidence (AGT-2707 round 2, 2026-09-11): the
+        // installed CLI lists sol/terra/luna but not astra, mini, or gpt-5-codex.
+        // Terra and luna are now registry entries (round 2), so they carry no
+        // "missing registry metadata" note even though sol - which still has no
+        // registry entry (AGT-2025) - does.
+        var catalog = new CliModelCatalog
+        {
+            Models = CodexModelDiscovery.ParseDebugModelsJson(
+                Fixture("debug-models-v0.144.1.json"), activeModel: ModelIds.Gpt56Sol),
+            Source = "cli-pty",
+            FetchedAt = DateTime.UtcNow
+        };
+
+        var merged = CodexModelDiscovery.WithKnownButUnavailableModels(catalog, "0.144.1");
+
+        var sol = Assert.Single(merged.Models, m => m.Id == ModelIds.Gpt56Sol);
+        Assert.True(sol.Available);
+        Assert.True(sol.IsDefault);
+        Assert.Equal("Discovered from CLI; missing registry metadata.", sol.AvailabilityNote);
+
+        var terra = Assert.Single(merged.Models, m => m.Id == ModelIds.Gpt56Terra);
+        Assert.True(terra.Available);
+        Assert.Null(terra.AvailabilityNote);
+
+        var luna = Assert.Single(merged.Models, m => m.Id == ModelIds.Gpt56Luna);
+        Assert.True(luna.Available);
+        Assert.Null(luna.AvailabilityNote);
+
+        var mini = Assert.Single(merged.Models, m => m.Id == ModelIds.Gpt54Mini);
+        Assert.False(mini.Available);
+        Assert.Equal("Not offered by the installed codex-cli 0.144.1.", mini.AvailabilityNote);
+
+        var codex = Assert.Single(merged.Models, m => m.Id == ModelIds.Gpt5Codex);
+        Assert.False(codex.Available);
+        Assert.Equal("Not offered by the installed codex-cli 0.144.1.", codex.AvailabilityNote);
+
+        var astra = Assert.Single(merged.Models, m => m.Id == ModelIds.Gpt6Astra);
+        Assert.False(astra.Available);
+        Assert.Equal("Not offered by the installed codex-cli 0.144.1.", astra.AvailabilityNote);
+    }
+
+    [Fact]
     public void WithKnownButUnavailableModels_OmitsTheVersion_WhenNoProbeHasSeenOne()
     {
         var merged = CodexModelDiscovery.WithKnownButUnavailableModels(
@@ -158,6 +208,42 @@ public class CodexModelDiscoveryTests : IDisposable
         Assert.Null(astra.InputPricePerMillion);
         Assert.Null(astra.OutputPricePerMillion);
         // The product default is unchanged by onboarding astra.
+        Assert.Equal(ModelIds.Gpt55, ModelMetadataRegistry.DefaultForCli(CliTypes.Codex));
+    }
+
+    [Fact]
+    public void Registry_OnboardsTerraLunaAndMini_WithoutMakingAnyOfThemTheDefault()
+    {
+        foreach (var (id, label) in new[]
+                 {
+                     (ModelIds.Gpt56Terra, "GPT-5.6 Terra"),
+                     (ModelIds.Gpt56Luna, "GPT-5.6 Luna"),
+                     (ModelIds.Gpt54Mini, "GPT-5.4 Mini")
+                 })
+        {
+            var metadata = ModelMetadataRegistry.Find(id);
+            Assert.NotNull(metadata);
+            Assert.Equal(label, metadata.Label);
+            Assert.Equal("openai", metadata.Vendor);
+            Assert.Equal(272_000, metadata.ContextWindow);
+            Assert.False(metadata.IsDefault);
+            Assert.False(metadata.Deprecated);
+        }
+
+        // gpt-5.6-sol still deliberately has no registry entry (AGT-2025): the
+        // flagship's availability stays purely detection-driven.
+        Assert.Null(ModelMetadataRegistry.Find(ModelIds.Gpt56Sol));
+
+        // The whole gpt-5.6 family stays detection-only: terra/luna's registry
+        // baseline is Available:false so a total CLI-probe failure never assumes
+        // one is offered. Mini has no such restriction.
+        Assert.False(ModelMetadataRegistry.Find(ModelIds.Gpt56Terra)!.Available);
+        Assert.False(ModelMetadataRegistry.Find(ModelIds.Gpt56Luna)!.Available);
+        Assert.True(ModelMetadataRegistry.Find(ModelIds.Gpt54Mini)!.Available);
+
+        // The product default and ladder/default resolution are unchanged by
+        // onboarding any of these three (regression coverage for the ladder side
+        // lives in CodexDetectedDefaultTests.Gpt56Ladder_And_Default_StayByteForByte_WhenCliReportsADifferentOne).
         Assert.Equal(ModelIds.Gpt55, ModelMetadataRegistry.DefaultForCli(CliTypes.Codex));
     }
 
@@ -270,8 +356,10 @@ public class CodexModelDiscoveryTests : IDisposable
     public void FallbackCatalog_OffersRegistryOpenAiModels_WithGpt55Default_AndNoGpt56()
     {
         // Task item 1: with no CLI and no cache, the model surface falls back to
-        // today's static registry list. gpt-5.6 is detection-only, so it must
-        // NOT appear here, and gpt-5.5 stays the default.
+        // today's static registry list. gpt-5.6 is detection-only (AGT-2025), so
+        // it must NOT appear here even now that gpt-5.6-terra/luna are registry
+        // entries (AGT-2707 round 2: their Available baseline is false for
+        // exactly this reason), and gpt-5.5 stays the default.
         var catalog = CodexModelDiscovery.FallbackCatalog();
 
         Assert.NotEmpty(catalog.Models);
