@@ -27,6 +27,8 @@ readonly -a review_env_files=(/etc/agent-runner/runner-review.env /etc/agent-run
 readonly default_review_state_dir="/var/lib/agent-runner-review/state"
 readonly agent_host_binary="$current_link/agent-host"
 force_restart=0
+review_guard_state_dir=""
+review_guard_main_pid=""
 
 die() {
   printf 'agent-runner-deploy: %s\n' "$*" >&2
@@ -36,22 +38,82 @@ die() {
 # The busy-slot policy lives in the runner binary, not here, so the deploy
 # script and the daemon cannot drift on what "busy" means.
 review_state_dir() {
+  local main_pid
+  local environment_files
   local file
+  local selected_file=""
   local value=""
 
-  for file in "${review_env_files[@]}"; do
-    [[ -f "$file" && ! -L "$file" ]] || continue
-    value="$(awk -F= '$1 == "RUNNER_STATE_DIR" { print substr($0, index($0, "=") + 1) }' "$file" | tail -n 1)"
-    [[ -n "$value" ]] && break
-  done
-  printf '%s\n' "${value:-$default_review_state_dir}"
+  if systemctl is-active --quiet "$review_unit"; then
+    main_pid="$(unit_main_pid "$review_unit")" || {
+      printf 'agent-runner-deploy: could not resolve the active review MainPID\n' >&2
+      return 1
+    }
+    [[ "$main_pid" =~ ^[1-9][0-9]*$ && -r "/proc/$main_pid/environ" ]] || {
+      printf 'agent-runner-deploy: active review MainPID has no readable environment: %s\n' \
+        "$main_pid" >&2
+      return 1
+    }
+    value="$(read_process_environment_value "$main_pid" RUNNER_STATE_DIR)" || return 1
+    value="$(strip_environment_quotes "$value")"
+    validate_review_state_dir "$value" || return 1
+    printf '%s\n' "$value"
+    return 0
+  fi
+
+  environment_files="$(systemctl show --property=EnvironmentFiles --value "$review_unit" 2>/dev/null)" \
+    || return 1
+  while IFS= read -r file; do
+    local approved_file
+    for approved_file in "${review_env_files[@]}"; do
+      if [[ "$file" == "$approved_file" ]]; then
+        selected_file="$file"
+        break
+      fi
+    done
+  done < <(unit_environment_file_paths "$environment_files")
+  if [[ -n "$selected_file" ]]; then
+    [[ -f "$selected_file" && ! -L "$selected_file" ]] || return 1
+    value="$(awk -F= '$1 == "RUNNER_STATE_DIR" { print substr($0, index($0, "=") + 1) }' "$selected_file" | tail -n 1)"
+    if [[ -n "$value" ]]; then
+      value="$(strip_environment_quotes "$value")"
+      validate_review_state_dir "$value" || return 1
+      printf '%s\n' "$value"
+      return 0
+    fi
+  fi
+
+  validate_review_state_dir "$default_review_state_dir" || return 1
+  printf '%s\n' "$default_review_state_dir"
+}
+
+strip_environment_quotes() {
+  local value="$1"
+  if (( ${#value} >= 2 )); then
+    if [[ "${value:0:1}" == '"' && "${value: -1}" == '"' ]] \
+        || [[ "${value:0:1}" == "'" && "${value: -1}" == "'" ]]; then
+      value="${value:1:${#value}-2}"
+    fi
+  fi
+  printf '%s\n' "$value"
+}
+
+validate_review_state_dir() {
+  local value="$1"
+  [[ -n "$value" && "$value" == /* && "$value" != "/" && "$value" != *$'\n'* ]] || {
+    printf 'agent-runner-deploy: invalid effective RUNNER_STATE_DIR: %q\n' "$value" >&2
+    return 1
+  }
 }
 
 # Refuses a restart that would discard running review gate work. A review
 # takes tens of minutes, so the sanctioned path is a drain; --force stays
 # available for a root operator who requires an immediate lease handoff.
 assert_review_restart_is_safe() {
+  local guard_binary="${1:-$agent_host_binary}"
   local guard_status=0
+  local main_pid_after_state
+  local state_dir
 
   if ((force_restart)); then
     printf 'agent-runner-deploy: --force given; skipping the review restart guard\n' >&2
@@ -60,18 +122,35 @@ assert_review_restart_is_safe() {
   if ! systemctl is-active --quiet "$review_unit"; then
     return 0
   fi
-  [[ -x "$agent_host_binary" ]] \
-    || die "review restart guard is unavailable because agent-host is not executable: $agent_host_binary"
+  [[ -x "$guard_binary" ]] \
+    || die "review restart guard is unavailable because agent-host is not executable: $guard_binary"
+  review_guard_main_pid="$(unit_main_pid "$review_unit")" \
+    || die "could not resolve the active review daemon MainPID"
+  [[ "$review_guard_main_pid" =~ ^[1-9][0-9]*$ ]] \
+    || die "active review daemon returned an invalid MainPID"
+  state_dir="$(review_state_dir)" \
+    || die "could not resolve the active review daemon's effective RUNNER_STATE_DIR"
+  main_pid_after_state="$(unit_main_pid "$review_unit")" \
+    || die "could not recheck the active review daemon MainPID"
+  [[ "$main_pid_after_state" == "$review_guard_main_pid" ]] \
+    || die "review MainPID changed while resolving its state directory; retry the guarded operation"
+  review_guard_state_dir="$state_dir"
 
   env -i PATH="$PATH" \
-    "$agent_host_binary" --restart-guard --role review --state-dir "$(review_state_dir)" \
+    "$guard_binary" --restart-guard --hold-admission --role review --state-dir "$state_dir" \
     || guard_status="$?"
+  if ((guard_status == 0)); then
+    main_pid_after_state="$(unit_main_pid "$review_unit")" \
+      || die "could not verify the guarded review daemon MainPID"
+    [[ "$main_pid_after_state" == "$review_guard_main_pid" ]] \
+      || die "review MainPID changed before guarded replacement; admission remains closed"
+  fi
   case "$guard_status" in
     0) return 0 ;;
     3)
       logger -p authpriv.notice -t agent-runner-deploy \
         "action=restart-guard unit=$review_unit result=refused" || true
-      die "refusing to restart $review_unit while review slots are busy. Run 'agent-runner-deploy drain' first, or use the command's --force form as root."
+      die "refusing to restart $review_unit because slots are busy or the live daemon did not acknowledge closed admission. Run 'agent-runner-deploy drain' first. For the one-time pre-control-protocol upgrade, retire Review admission, verify zero active slots, then use the command's --force form as root."
       ;;
     *)
       die "review restart guard failed with exit $guard_status"
@@ -79,14 +158,13 @@ assert_review_restart_is_safe() {
   esac
 }
 
-# Stop claiming, let the running reviews finish, then hand back. The daemon
-# exits on an empty slot set and systemd starts a fresh one, so a drain leaves
-# the host claiming again without a second operator step.
+# Stop claiming, let the running reviews finish, then leave Review stopped.
+# Restart=on-failure distinguishes this successful operator drain from a crash.
 drain_review_unit() {
   local drain_status=0
   local drain_result
   local previous_main_pid
-  local replacement_main_pid
+  local state_dir
 
   [[ -x "$agent_host_binary" ]] || die "agent-host is not executable: $agent_host_binary"
   systemctl is-active --quiet "$review_unit" \
@@ -95,19 +173,22 @@ drain_review_unit() {
     || die "could not query the review unit MainPID before drain: $review_unit"
   [[ "$previous_main_pid" =~ ^[1-9][0-9]*$ ]] \
     || die "review unit returned an invalid MainPID before drain: $review_unit"
+  state_dir="$(review_state_dir)" \
+    || die "could not resolve the active review daemon's effective RUNNER_STATE_DIR"
 
   env -i PATH="$PATH" \
-    "$agent_host_binary" --drain --role review --state-dir "$(review_state_dir)" \
+    "$agent_host_binary" --drain --role review --state-dir "$state_dir" \
     || drain_status="$?"
   if ((drain_status == 0)); then drain_result="drained"; else drain_result="incomplete"; fi
   logger -p authpriv.notice -t agent-runner-deploy \
     "action=drain unit=$review_unit result=$drain_result exit=$drain_status" || true
   ((drain_status == 0)) || die "review drain did not complete (exit $drain_status)"
-  replacement_main_pid="$(restart_unit_and_wait_for_new_main_pid \
-    "$review_unit" "$previous_main_pid")" \
-    || die "review drained, but systemd did not start a replacement MainPID"
-  printf 'agent-runner-deploy: %s drained and replaced with MainPID %s\n' \
-    "$review_unit" "$replacement_main_pid"
+  wait_for_unit_inactive "$review_unit" "$main_pid_wait_seconds" \
+    || die "review drain was acknowledged, but $review_unit did not stop"
+  logger -p authpriv.notice -t agent-runner-deploy \
+    "action=drain unit=$review_unit result=stopped previousPid=$previous_main_pid" || true
+  printf 'agent-runner-deploy: %s drained and stopped (previous MainPID %s)\n' \
+    "$review_unit" "$previous_main_pid"
 }
 
 audit_config() {
@@ -122,7 +203,22 @@ unit_loads_environment_file() {
   local environment_files="$1"
   local expected_path="$2"
 
-  awk '{ print $1 }' <<<"$environment_files" | grep -Fxq -- "$expected_path"
+  unit_environment_file_paths "$environment_files" | grep -Fxq -- "$expected_path"
+}
+
+unit_environment_file_paths() {
+  local environment_files="$1"
+
+  awk '
+    {
+      for (field_index = 1; field_index <= NF; field_index++) {
+        if ($field_index ~ /^\(/) continue
+        value = $field_index
+        sub(/^-/, "", value)
+        print value
+      }
+    }
+  ' <<<"$environment_files"
 }
 
 read_process_environment_value() {
@@ -159,9 +255,45 @@ wait_for_new_main_pid() {
   done
 }
 
+wait_for_unit_inactive() {
+  local unit="$1"
+  local timeout_seconds="${2:-$main_pid_wait_seconds}"
+  local deadline=$((SECONDS + timeout_seconds))
+  local unit_state
+  local active_state
+  local observed_main_pid
+
+  while true; do
+    if unit_state="$(systemctl show --property=ActiveState --property=MainPID "$unit" 2>/dev/null)"; then
+      active_state="$(awk -F= '$1 == "ActiveState" { print $2 }' <<<"$unit_state")"
+      observed_main_pid="$(awk -F= '$1 == "MainPID" { print $2 }' <<<"$unit_state")"
+      if [[ "$active_state" != "active" \
+          && "$active_state" != "activating" \
+          && "$observed_main_pid" == "0" ]]; then
+        return 0
+      fi
+    fi
+
+    ((SECONDS < deadline)) || return 1
+    sleep "$main_pid_poll_seconds"
+  done
+}
+
+clear_review_drain_state() {
+  local state_dir="${1:-}"
+  if [[ -z "$state_dir" ]]; then
+    state_dir="$(review_state_dir)" || return 1
+  fi
+  validate_review_state_dir "$state_dir" || return 1
+  rm -f -- \
+    "$state_dir/review-drain-requested.json" \
+    "$state_dir/review-drain-acknowledged.json"
+}
+
 # RefuseManualStop blocks systemctl stop/restart for Review. The sanctioned
-# helper instead signals only the active daemon MainPID. Restart=always starts
-# its replacement while KillMode=process leaves detached workers untouched.
+# helper signals only the active daemon MainPID, waits for its successful exit,
+# clears any completed drain request, and explicitly starts the replacement.
+# KillMode=process leaves detached workers untouched.
 replace_review_unit_and_wait_for_new_main_pid() {
   local unit="$1"
   local previous_main_pid="$2"
@@ -169,45 +301,40 @@ replace_review_unit_and_wait_for_new_main_pid() {
   local unit_state
   local active_state
   local observed_main_pid
+  local state_dir="${review_guard_state_dir:-}"
+  local guarded_main_pid="${review_guard_main_pid:-}"
 
   unit_state="$(systemctl show --property=ActiveState --property=MainPID "$unit" 2>/dev/null)" \
     || return 10
   active_state="$(awk -F= '$1 == "ActiveState" { print $2 }' <<<"$unit_state")"
   observed_main_pid="$(awk -F= '$1 == "MainPID" { print $2 }' <<<"$unit_state")"
   [[ "$observed_main_pid" =~ ^[0-9]+$ ]] || return 10
-
-  # A drain can race with Restart=always and finish the handoff before this
-  # helper observes it. Do not signal the already-new generation again.
-  if [[ "$active_state" == "active" \
-      && "$observed_main_pid" =~ ^[1-9][0-9]*$ \
-      && "$observed_main_pid" != "$previous_main_pid" ]]; then
-    printf '%s\n' "$observed_main_pid"
-    return 0
+  if [[ -n "$guarded_main_pid" && "$observed_main_pid" != "$guarded_main_pid" ]]; then
+    return 10
+  fi
+  if [[ -z "$state_dir" ]]; then
+    state_dir="$(review_state_dir)" || return 10
   fi
 
   if [[ "$active_state" == "active" && "$observed_main_pid" =~ ^[1-9][0-9]*$ ]]; then
     if ! systemctl kill --kill-whom=main --signal=SIGTERM "$unit" >/dev/null; then
-      # The daemon can exit between the state query and the signal. Accept a
-      # replacement that won that race, or start the now-inactive unit.
+      # The daemon can exit between the state query and the signal.
       unit_state="$(systemctl show --property=ActiveState --property=MainPID "$unit" 2>/dev/null)" \
         || return 10
       active_state="$(awk -F= '$1 == "ActiveState" { print $2 }' <<<"$unit_state")"
       observed_main_pid="$(awk -F= '$1 == "MainPID" { print $2 }' <<<"$unit_state")"
-      if [[ "$active_state" == "active" \
-          && "$observed_main_pid" =~ ^[1-9][0-9]*$ \
-          && "$observed_main_pid" != "$previous_main_pid" ]]; then
-        printf '%s\n' "$observed_main_pid"
-        return 0
-      fi
       [[ "$active_state" != "active" ]] || return 10
-      systemctl start "$unit" >/dev/null || return 10
     fi
-  else
-    # Start is safe for an inactive or still-activating unit and is not blocked
-    # by RefuseManualStop.
-    systemctl start "$unit" >/dev/null || return 10
+    wait_for_unit_inactive "$unit" "$timeout_seconds" || return 11
+  elif [[ "$active_state" == "activating" ]]; then
+    return 10
   fi
 
+  clear_review_drain_state "$state_dir" || return 10
+  review_guard_state_dir=""
+  review_guard_main_pid=""
+  # Start is safe while RefuseManualStop protects stop/restart.
+  systemctl start "$unit" >/dev/null || return 10
   wait_for_new_main_pid "$unit" "$previous_main_pid" "$timeout_seconds" || return 11
 }
 
@@ -416,7 +543,7 @@ print_rollback_hint() {
   if [[ -n "$previous_release_id" ]]; then
     printf 'agent-runner-deploy: previous release: %s\n' "$previous_release_id" >&2
     printf '%s\n' \
-      "agent-runner-deploy: rollback command: sudo sh -c 'ln -sfnT $releases_root/$previous_release_id $current_link && { systemctl is-active --quiet $review_unit && systemctl kill --kill-whom=main --signal=SIGTERM $review_unit || systemctl start $review_unit; } && systemctl restart agent-runner.service'" >&2
+      "agent-runner-deploy: rollback command: sudo sh -c 'ln -sfnT $releases_root/$previous_release_id $current_link && /usr/local/sbin/agent-runner-deploy restart-review --force && systemctl restart agent-runner.service'" >&2
   else
     printf 'agent-runner-deploy: no previous release was available for rollback\n' >&2
   fi
@@ -626,7 +753,7 @@ promote_release() {
 
   # Refuse before any release path or upload ownership changes. A busy guard
   # must leave current and incoming exactly as the operator staged them.
-  assert_review_restart_is_safe
+  assert_review_restart_is_safe "$staging_root/agent-host"
 
   mv -- "$staging_root" "$release_root"
   trap - EXIT

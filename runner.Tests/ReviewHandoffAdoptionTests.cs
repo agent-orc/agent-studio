@@ -156,6 +156,481 @@ public sealed class ReviewHandoffAdoptionTests : IDisposable
     }
 
     [Fact]
+    public async Task Ambiguous_re_claim_response_replays_the_same_delivery_and_keeps_its_higher_fence()
+    {
+        var server = new FakeReviewServer
+        {
+            RenewFailure = (HttpStatusCode.Conflict, "review-attempt-not-leased"),
+            ReAdoptionStatus = "stale-authority",
+            LoseFirstReClaimResponseAfterCommit = true,
+        };
+        using var http = new HttpClient(server) { BaseAddress = new Uri("http://task-server") };
+        var options = Options();
+        using var client = new TaskServerClient(
+            http, options.RunnerId, usesDurableTaskServer: true, options: options);
+        var logs = new List<string>();
+        var state = new ReviewStateStore(options.StateDir);
+        var slot = await CreateHandedOffSlotAsync(state);
+        var executor = new RemoteReviewExecutor(options, client, state, logs.Add)
+        {
+            AuthorityRetryDelayOverride = _ => TimeSpan.Zero,
+        };
+
+        var exitCode = await executor.ReattachAsync(slot, CancellationToken.None);
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal(2, server.ReClaims.Count);
+        Assert.Equal(server.ReClaims[0], server.ReClaims[1]);
+        Assert.Equal(server.ReClaims[0].IdempotencyKey, server.ReClaims[1].IdempotencyKey);
+        var report = Assert.Single(server.Reports);
+        Assert.Equal(18, report.Fence);
+        Assert.Equal("lease-2", report.LeaseId);
+        Assert.Contains(logs, line =>
+            line.Contains("re-claim response ambiguous", StringComparison.Ordinal)
+            && line.Contains("submissionAttempts=1", StringComparison.Ordinal));
+        Assert.DoesNotContain(logs, line =>
+            line.Contains("review-report-terminal", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("runner-instance-stale")]
+    [InlineData("review-executor-not-registered")]
+    public async Task Uncommitted_pending_re_claim_rotates_to_the_current_daemon_and_reports(
+        string staleGenerationCode)
+    {
+        var server = new FakeReviewServer
+        {
+            RenewFailure = (HttpStatusCode.Conflict, "review-attempt-not-leased"),
+            ReAdoptionStatus = "stale-authority",
+            EnforceReClaimInstanceGeneration = true,
+            StaleReClaimCode = staleGenerationCode,
+            BlockCurrentGenerationReClaimBeforeCommit = true,
+        };
+        using var http = new HttpClient(server) { BaseAddress = new Uri("http://task-server") };
+        var options = Options();
+        using var client = new TaskServerClient(
+            http,
+            options.RunnerId,
+            usesDurableTaskServer: true,
+            options: options,
+            runnerInstanceId: "replacement-2");
+        var logs = new List<string>();
+        var state = new ReviewStateStore(options.StateDir);
+        var slot = await CreateHandedOffSlotAsync(state);
+        var previous = slot.Claim.Lease!;
+        var pendingFromPreviousDaemon = new ReviewReClaimRequest(
+            previous.ExecutorId,
+            "replacement-1",
+            previous.LeaseId,
+            previous.Fence,
+            $"review-reclaim:{previous.AttemptId}:{previous.Fence}:replacement-1",
+            options.TtlSeconds);
+        slot = state.Save(slot with { PendingReClaim = pendingFromPreviousDaemon });
+
+        var execution = new RemoteReviewExecutor(options, client, state, logs.Add)
+            .ReattachAsync(slot, CancellationToken.None);
+        await server.CurrentGenerationReClaimStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var rotated = Assert.IsType<ReviewReClaimRequest>(
+            Assert.Single(state.LoadAll()).PendingReClaim);
+        Assert.Equal("replacement-2", rotated.InstanceId);
+        Assert.NotEqual(pendingFromPreviousDaemon.IdempotencyKey, rotated.IdempotencyKey);
+        server.ReleaseCurrentGenerationReClaim.TrySetResult();
+
+        var exitCode = await execution.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal(2, server.ReClaims.Count);
+        Assert.Equal(pendingFromPreviousDaemon, server.ReClaims[0]);
+        var currentRequest = server.ReClaims[1];
+        Assert.Equal("replacement-2", currentRequest.InstanceId);
+        Assert.NotEqual(pendingFromPreviousDaemon.IdempotencyKey, currentRequest.IdempotencyKey);
+        Assert.Equal(previous.LeaseId, currentRequest.PreviousLeaseId);
+        Assert.Equal(previous.Fence, currentRequest.PreviousFence);
+        var report = Assert.Single(server.Reports);
+        Assert.Equal(18, report.Fence);
+        Assert.Equal("replacement-2", report.InstanceId);
+        Assert.Empty(state.LoadAll());
+        Assert.Contains(logs, line =>
+            line.Contains("replay missed for stale daemon generation", StringComparison.Ordinal)
+            && line.Contains("staleInstance=replacement-1", StringComparison.Ordinal)
+            && line.Contains("currentInstance=replacement-2", StringComparison.Ordinal));
+        Assert.DoesNotContain(logs, line =>
+            line.Contains("review-report-terminal", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Successful_old_lease_renewal_clears_an_uncommitted_pending_re_claim()
+    {
+        var server = new FakeReviewServer();
+        using var http = new HttpClient(server) { BaseAddress = new Uri("http://task-server") };
+        var options = Options();
+        using var client = new TaskServerClient(
+            http,
+            options.RunnerId,
+            usesDurableTaskServer: true,
+            options: options,
+            runnerInstanceId: "replacement-2");
+        var logs = new List<string>();
+        var state = new ReviewStateStore(options.StateDir);
+        var slot = await CreateHandedOffSlotAsync(state);
+        var previous = slot.Claim.Lease!;
+        slot = state.Save(slot with
+        {
+            PendingReClaim = new ReviewReClaimRequest(
+                previous.ExecutorId,
+                "replacement-1",
+                previous.LeaseId,
+                previous.Fence,
+                $"review-reclaim:{previous.AttemptId}:{previous.Fence}:replacement-1",
+                options.TtlSeconds),
+        });
+        var beforeReport = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseReport = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var executor = new RemoteReviewExecutor(options, client, state, logs.Add)
+        {
+            BeforeReportSubmissionOverride = async ct =>
+            {
+                beforeReport.TrySetResult();
+                await releaseReport.Task.WaitAsync(ct);
+            },
+        };
+
+        var execution = executor.ReattachAsync(slot, CancellationToken.None);
+        await beforeReport.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var renewed = Assert.Single(state.LoadAll());
+        Assert.Null(renewed.PendingReClaim);
+        Assert.Equal(previous.Fence, renewed.Claim.Lease!.Fence);
+        releaseReport.TrySetResult();
+
+        Assert.Equal(0, await execution.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Empty(server.ReClaims);
+        Assert.Equal(previous.Fence, Assert.Single(server.Reports).Fence);
+        Assert.Contains(logs, line =>
+            line.Contains("renewal disproved pending re-claim", StringComparison.Ordinal)
+            && line.Contains("journal cleared", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_report_side_lease_expiry_recovers_before_terminal_cleanup()
+    {
+        var server = new FakeReviewServer
+        {
+            ReAdoptionStatus = "stale-authority",
+            ReportFailureSequence =
+            [
+                (HttpStatusCode.Conflict, "LeaseExpired"),
+                null,
+            ],
+        };
+        using var http = new HttpClient(server) { BaseAddress = new Uri("http://task-server") };
+        var options = Options();
+        using var client = new TaskServerClient(
+            http, options.RunnerId, usesDurableTaskServer: true, options: options);
+        var logs = new List<string>();
+        var state = new ReviewStateStore(options.StateDir);
+        var slot = await CreateHandedOffSlotAsync(state);
+
+        var exitCode = await new RemoteReviewExecutor(options, client, state, logs.Add)
+            .ReattachAsync(slot, CancellationToken.None);
+
+        Assert.Equal(0, exitCode);
+        Assert.Single(server.Registrations);
+        Assert.Single(server.ReClaims);
+        Assert.Equal([17L, 18L], server.Reports.Select(report => report.Fence));
+        Assert.Contains(logs, line =>
+            line.Contains("scope=report", StringComparison.Ordinal)
+            && line.Contains("previousFence=17 fence=18", StringComparison.Ordinal));
+        Assert.DoesNotContain(logs, line =>
+            line.Contains("review-report-terminal", StringComparison.Ordinal));
+        Assert.Empty(state.LoadAll());
+    }
+
+    [Fact]
+    public async Task A_lost_re_registration_response_replays_registration_instead_of_re_claiming_a_live_lease()
+    {
+        var server = new FakeReviewServer
+        {
+            RenewFailure = (HttpStatusCode.Conflict, "review-attempt-not-leased"),
+            RenewFailuresBeforeSuccess = 1,
+            LoseFirstRegistrationResponseAfterCommit = true,
+        };
+        using var http = new HttpClient(server) { BaseAddress = new Uri("http://task-server") };
+        var options = Options();
+        using var client = new TaskServerClient(
+            http, options.RunnerId, usesDurableTaskServer: true, options: options);
+        var logs = new List<string>();
+        var state = new ReviewStateStore(options.StateDir);
+        var slot = await CreateHandedOffSlotAsync(state);
+        var executor = new RemoteReviewExecutor(options, client, state, logs.Add)
+        {
+            AuthorityRetryDelayOverride = _ => TimeSpan.Zero,
+        };
+
+        var exitCode = await executor.ReattachAsync(slot, CancellationToken.None);
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal(2, server.Registrations.Count);
+        Assert.Equal(server.Registrations[0].ActiveAttempts, server.Registrations[1].ActiveAttempts);
+        Assert.Empty(server.ReClaims);
+        Assert.Equal(17, Assert.Single(server.Reports).Fence);
+        Assert.Contains(logs, line =>
+            line.Contains("re-adoption response ambiguous", StringComparison.Ordinal)
+            && line.Contains("submissionAttempts=1", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Shutdown_interrupts_ambiguous_re_claim_retry_and_the_next_daemon_replays_it()
+    {
+        var server = new FakeReviewServer
+        {
+            RenewFailure = (HttpStatusCode.Conflict, "review-attempt-not-leased"),
+            ReAdoptionStatus = "stale-authority",
+            LoseFirstReClaimResponseAfterCommit = true,
+            EnforceReClaimInstanceGeneration = true,
+        };
+        using var http = new HttpClient(server) { BaseAddress = new Uri("http://task-server") };
+        var options = Options();
+        using var client = new TaskServerClient(
+            http,
+            options.RunnerId,
+            usesDurableTaskServer: true,
+            options: options,
+            runnerInstanceId: "replacement-1");
+        var logs = new List<string>();
+        var state = new ReviewStateStore(options.StateDir);
+        var slot = await CreateHandedOffSlotAsync(state);
+        var executor = new RemoteReviewExecutor(options, client, state, logs.Add)
+        {
+            AuthorityRetryDelayOverride = _ => TimeSpan.FromMinutes(5),
+        };
+        using var shutdown = new CancellationTokenSource();
+
+        var execution = executor.ReattachAsync(slot, shutdown.Token);
+        await WaitUntilAsync(() => server.ReClaims.Count > 0);
+        await shutdown.CancelAsync();
+
+        Assert.Equal(0, await execution.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Empty(server.Reports);
+        var persisted = Assert.Single(state.LoadAll());
+        Assert.Equal("handed-off", persisted.Phase);
+        Assert.Equal(17, persisted.Claim.Lease!.Fence);
+        var pending = Assert.IsType<ReviewReClaimRequest>(persisted.PendingReClaim);
+        Assert.Equal("replacement-1", pending.InstanceId);
+        Assert.Contains(logs, line =>
+            line.Contains("re-claim response ambiguous", StringComparison.Ordinal));
+        Assert.Contains(logs, line =>
+            line.Contains("review daemon handoff", StringComparison.Ordinal));
+
+        // A distinct daemon generation replays the persisted request. The fake
+        // server returns the already-committed fence 18, after which the result
+        // lands once and terminal cleanup removes the slot.
+        using var replacementHttp = new HttpClient(server)
+        {
+            BaseAddress = new Uri("http://task-server"),
+        };
+        using var replacementClient = new TaskServerClient(
+            replacementHttp,
+            options.RunnerId,
+            usesDurableTaskServer: true,
+            options: options,
+            runnerInstanceId: "replacement-2");
+        var replacementLogs = new List<string>();
+
+        var exitCode = await new RemoteReviewExecutor(
+                options,
+                replacementClient,
+                state,
+                replacementLogs.Add)
+            .ReattachAsync(persisted, CancellationToken.None);
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal(2, server.ReClaims.Count);
+        Assert.Equal(server.ReClaims[0], server.ReClaims[1]);
+        Assert.Equal("replacement-1", server.ReClaims[1].InstanceId);
+        var report = Assert.Single(server.Reports);
+        Assert.Equal(18, report.Fence);
+        Assert.Equal("replacement-1", report.InstanceId);
+        Assert.Empty(state.LoadAll());
+        Assert.Contains(replacementLogs, line =>
+            line.Contains("scope=adoption", StringComparison.Ordinal)
+            && line.Contains("previousFence=17 fence=18", StringComparison.Ordinal));
+    }
+
+    // Linux-only: keeping the main execution path alive until its result is
+    // written uses the persisted /proc process-generation proof.
+    [SkippableFact]
+    [Trait(PlatformGate.TraitName, PlatformGate.Linux)]
+    public async Task Concurrent_phase_save_preserves_pending_re_claim_for_the_next_daemon()
+    {
+        PlatformGate.LinuxOnly("the review worker liveness proof reads /proc/<pid>/cwd");
+        var refusal = (HttpStatusCode.Conflict, "review-attempt-not-leased");
+        var server = new FakeReviewServer
+        {
+            // Adoption succeeds. The heartbeat, handoff extension, and next
+            // daemon adoption are then refused so recovery must use reclaim.
+            RenewFailureSequence = [null, refusal, refusal, refusal],
+            ReAdoptionStatus = "stale-authority",
+            LoseFirstReClaimResponseAfterCommit = true,
+        };
+        using var http = new HttpClient(server) { BaseAddress = new Uri("http://task-server") };
+        var options = Options(heartbeatSeconds: 1);
+        using var client = new TaskServerClient(
+            http,
+            options.RunnerId,
+            usesDurableTaskServer: true,
+            options: options,
+            runnerInstanceId: "replacement-1");
+        var state = new ReviewStateStore(options.StateDir);
+        var workspace = Path.Combine(_root, "review-attempt-1-f17", "repository");
+        Directory.CreateDirectory(workspace);
+        using var worker = StartLivingWorker(workspace);
+        var slot = state.Save(state.Create(Claim(), workspace) with
+        {
+            ProcessId = worker.Id,
+            ProcessStartedAtUtc = worker.StartTime.ToUniversalTime(),
+            Phase = "handed-off",
+        });
+        var executor = new RemoteReviewExecutor(options, client, state, _ => { })
+        {
+            AuthorityRetryDelayOverride = _ => TimeSpan.FromMinutes(5),
+        };
+        using var shutdown = new CancellationTokenSource();
+
+        var execution = executor.ReattachAsync(slot, shutdown.Token);
+        await WaitUntilAsync(() =>
+            server.ReClaims.Count > 0
+            && state.LoadAll().SingleOrDefault()?.PendingReClaim is not null);
+
+        // The main worker path now observes completion and saves "finalizing"
+        // from the snapshot it held before the heartbeat journaled reclaim.
+        await WriteCompletedResultAsync(slot);
+        await WaitUntilAsync(() =>
+            string.Equals(
+                state.LoadAll().SingleOrDefault()?.Phase,
+                "finalizing",
+                StringComparison.Ordinal));
+        var concurrentSave = Assert.Single(state.LoadAll());
+        var pending = Assert.IsType<ReviewReClaimRequest>(concurrentSave.PendingReClaim);
+        Assert.Equal(server.ReClaims[0], pending);
+
+        await shutdown.CancelAsync();
+        Assert.Equal(0, await execution.WaitAsync(TimeSpan.FromSeconds(10)));
+        var handedOff = Assert.Single(state.LoadAll());
+        Assert.Equal("handed-off", handedOff.Phase);
+        Assert.Equal(pending, handedOff.PendingReClaim);
+
+        using var replacementHttp = new HttpClient(server)
+        {
+            BaseAddress = new Uri("http://task-server"),
+        };
+        using var replacementClient = new TaskServerClient(
+            replacementHttp,
+            options.RunnerId,
+            usesDurableTaskServer: true,
+            options: options,
+            runnerInstanceId: "replacement-2");
+
+        var exitCode = await new RemoteReviewExecutor(
+                options,
+                replacementClient,
+                state,
+                _ => { })
+            .ReattachAsync(handedOff, CancellationToken.None);
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal(2, server.ReClaims.Count);
+        Assert.Equal(server.ReClaims[0], server.ReClaims[1]);
+        Assert.Equal(18, server.Reports.Last().Fence);
+        Assert.Empty(state.LoadAll());
+    }
+
+    [Fact]
+    public async Task Transient_re_adoption_verification_recovers_a_report_side_expiry()
+    {
+        var server = new FakeReviewServer
+        {
+            RenewFailureSequence =
+            [
+                (HttpStatusCode.Conflict, "review-attempt-not-leased"),
+                (HttpStatusCode.ServiceUnavailable, "task-server-unavailable"),
+            ],
+            ReportFailureSequence =
+            [
+                (HttpStatusCode.Conflict, "LeaseExpired"),
+                null,
+            ],
+        };
+        using var http = new HttpClient(server) { BaseAddress = new Uri("http://task-server") };
+        var options = Options();
+        using var client = new TaskServerClient(
+            http, options.RunnerId, usesDurableTaskServer: true, options: options);
+        var logs = new List<string>();
+        var state = new ReviewStateStore(options.StateDir);
+        var slot = await CreateHandedOffSlotAsync(state);
+
+        var exitCode = await new RemoteReviewExecutor(options, client, state, logs.Add)
+            .ReattachAsync(slot, CancellationToken.None);
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal(2, server.Registrations.Count);
+        Assert.Equal(3, server.Renewals.Count);
+        Assert.Empty(server.ReClaims);
+        Assert.Equal([17L, 17L], server.Reports.Select(report => report.Fence));
+        Assert.Contains(logs, line =>
+            line.Contains("re-adoption verification transient", StringComparison.Ordinal));
+        Assert.Contains(logs, line =>
+            line.Contains("scope=report", StringComparison.Ordinal)
+            && line.Contains("re-adopted and renewed", StringComparison.Ordinal));
+        Assert.DoesNotContain(logs, line =>
+            line.Contains("attempting a fenced re-claim", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Heartbeat_re_fencing_is_serialized_before_terminal_report_submission()
+    {
+        var server = new FakeReviewServer
+        {
+            RenewFailureSequence =
+            [
+                null,
+                (HttpStatusCode.Conflict, "review-attempt-not-leased"),
+            ],
+            ReAdoptionStatus = "stale-authority",
+            BlockRenewalNumber = 2,
+            WaitForReClaimBeforeValidatingStaleReport = true,
+        };
+        using var http = new HttpClient(server) { BaseAddress = new Uri("http://task-server") };
+        var options = Options(heartbeatSeconds: 1);
+        using var client = new TaskServerClient(
+            http, options.RunnerId, usesDurableTaskServer: true, options: options);
+        var logs = new List<string>();
+        var state = new ReviewStateStore(options.StateDir);
+        var slot = await CreateHandedOffSlotAsync(state);
+        var executor = new RemoteReviewExecutor(options, client, state, logs.Add)
+        {
+            BeforeReportSubmissionOverride = ct =>
+                server.BlockedRenewalStarted.Task.WaitAsync(ct),
+        };
+
+        var execution = executor.ReattachAsync(slot, CancellationToken.None);
+        await server.BlockedRenewalStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        server.ReleaseBlockedRenewal.TrySetResult();
+
+        Assert.Equal(0, await execution.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Single(server.ReClaims);
+        var report = Assert.Single(server.Reports);
+        Assert.Equal(18, report.Fence);
+        Assert.Equal("lease-2", report.LeaseId);
+        Assert.Contains(logs, line =>
+            line.Contains("scope=heartbeat", StringComparison.Ordinal)
+            && line.Contains("previousFence=17 fence=18", StringComparison.Ordinal));
+        Assert.DoesNotContain(logs, line =>
+            line.Contains("review-report-terminal", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task A_deliberately_superseded_attempt_is_never_re_claimed()
     {
         var server = new FakeReviewServer
@@ -304,6 +779,12 @@ public sealed class ReviewHandoffAdoptionTests : IDisposable
         var workspace = Path.Combine(_root, "review-attempt-1-f17", "repository");
         Directory.CreateDirectory(workspace);
         var slot = state.Create(Claim(), workspace);
+        await WriteCompletedResultAsync(slot);
+        return state.Save(slot with { Phase = "handed-off" });
+    }
+
+    private static async Task WriteCompletedResultAsync(PersistedReviewSlot slot)
+    {
         await File.WriteAllTextAsync(
             Path.Combine(slot.WorkerDirectory, "review-result.json"),
             JsonSerializer.Serialize(
@@ -326,10 +807,9 @@ public sealed class ReviewHandoffAdoptionTests : IDisposable
                     null,
                     DateTime.UtcNow),
                 Json));
-        return state.Save(slot with { Phase = "handed-off" });
     }
 
-    private RunnerOptions Options() => new()
+    private RunnerOptions Options(int heartbeatSeconds = 3600) => new()
     {
         ServerUrl = "http://task-server",
         RunnerId = "review-runner",
@@ -346,7 +826,7 @@ public sealed class ReviewHandoffAdoptionTests : IDisposable
         TtlSeconds = 120,
         // An hour of heartbeat silence: every renewal these tests observe is an
         // adoption check or a handoff extension, never a timer tick.
-        HeartbeatSeconds = 3600,
+        HeartbeatSeconds = heartbeatSeconds,
         HandoffLeaseTtlSeconds = 300,
         PollSeconds = 1,
     };
@@ -384,11 +864,35 @@ public sealed class ReviewHandoffAdoptionTests : IDisposable
         public List<RegisterRunnerRequest> Registrations { get; } = [];
 
         public (HttpStatusCode Status, string Code)? RenewFailure { get; init; }
+        public IReadOnlyList<(HttpStatusCode Status, string Code)?>? RenewFailureSequence { get; init; }
         public int? RenewFailuresBeforeSuccess { get; init; }
         public (HttpStatusCode Status, string Code)? ReportFailure { get; init; }
+        public IReadOnlyList<(HttpStatusCode Status, string Code)?>? ReportFailureSequence { get; init; }
         public string ReAdoptionStatus { get; init; } = "adopted";
+        public bool LoseFirstReClaimResponseAfterCommit { get; init; }
+        public bool EnforceReClaimInstanceGeneration { get; init; }
+        public string StaleReClaimCode { get; init; } = "runner-instance-stale";
+        public bool BlockCurrentGenerationReClaimBeforeCommit { get; init; }
+        public bool LoseFirstRegistrationResponseAfterCommit { get; init; }
+        public int? BlockRenewalNumber { get; init; }
+        public bool WaitForReClaimBeforeValidatingStaleReport { get; init; }
+        public TaskCompletionSource BlockedRenewalStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleaseBlockedRenewal { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource CurrentGenerationReClaimStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleaseCurrentGenerationReClaim { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         private int _renewalCount;
+        private int _registrationCount;
+        private int _reportCount;
+        private string? _registeredInstanceId;
+        private ReviewReClaimRequest? _committedReClaimRequest;
+        private ReviewClaimResponse? _committedReClaim;
+        private readonly TaskCompletionSource _reClaimCommitted =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public DateTime LeaseExpiry(int ttlSeconds) => Now.AddSeconds(ttlSeconds);
 
@@ -402,7 +906,15 @@ public sealed class ReviewHandoffAdoptionTests : IDisposable
             {
                 var registration = await ReadAsync<RegisterRunnerRequest>(request);
                 Registrations.Add(registration);
-                return JsonResponse(Runner(registration));
+                _registeredInstanceId = registration.InstanceId;
+                var response = JsonResponse(Runner(registration));
+                if (LoseFirstRegistrationResponseAfterCommit
+                    && Interlocked.Increment(ref _registrationCount) == 1)
+                {
+                    throw new HttpRequestException(
+                        "synthetic lost registration response after committed adoption");
+                }
+                return response;
             }
 
             if (path.EndsWith("/lease/renew", StringComparison.Ordinal))
@@ -410,6 +922,19 @@ public sealed class ReviewHandoffAdoptionTests : IDisposable
                 var renew = await ReadAsync<ReviewLeaseRenewRequest>(request);
                 RenewalQueue.Enqueue(renew);
                 var renewalNumber = Interlocked.Increment(ref _renewalCount);
+                if (BlockRenewalNumber == renewalNumber)
+                {
+                    BlockedRenewalStarted.TrySetResult();
+                    await ReleaseBlockedRenewal.Task.WaitAsync(cancellationToken);
+                }
+                var sequencedFailure = RenewFailureSequence is { } sequence
+                                       && renewalNumber <= sequence.Count
+                    ? sequence[renewalNumber - 1]
+                    : null;
+                if (sequencedFailure is { } sequencedRefusal)
+                {
+                    return ApiError(sequencedRefusal.Status, sequencedRefusal.Code);
+                }
                 if (RenewFailure is { } refusal
                     && (RenewFailuresBeforeSuccess is null
                         || renewalNumber <= RenewFailuresBeforeSuccess.Value))
@@ -427,21 +952,57 @@ public sealed class ReviewHandoffAdoptionTests : IDisposable
             {
                 var reclaim = await ReadAsync<ReviewReClaimRequest>(request);
                 ReClaims.Add(reclaim);
-                var fence = reclaim.PreviousFence + 1;
-                return JsonResponse(new ReviewClaimResponse(
-                    "claimed",
-                    Attempt(fence),
-                    Lease: Lease(
-                        "lease-2",
-                        fence,
+                if (EnforceReClaimInstanceGeneration
+                    && _committedReClaimRequest is not null)
+                {
+                    if (reclaim == _committedReClaimRequest)
+                        return JsonResponse(_committedReClaim!);
+                    if (string.Equals(
+                            reclaim.IdempotencyKey,
+                            _committedReClaimRequest.IdempotencyKey,
+                            StringComparison.Ordinal))
+                    {
+                        return ApiError(HttpStatusCode.Conflict, "idempotency-conflict");
+                    }
+                }
+                if (EnforceReClaimInstanceGeneration
+                    && !string.Equals(
                         reclaim.InstanceId,
-                        LeaseExpiry(reclaim.RequestedTtlSeconds))));
+                        _registeredInstanceId,
+                        StringComparison.Ordinal))
+                {
+                    return ApiError(HttpStatusCode.Conflict, StaleReClaimCode);
+                }
+                if (BlockCurrentGenerationReClaimBeforeCommit)
+                {
+                    CurrentGenerationReClaimStarted.TrySetResult();
+                    await ReleaseCurrentGenerationReClaim.Task.WaitAsync(cancellationToken);
+                }
+                if (_committedReClaim is null)
+                {
+                    var fence = reclaim.PreviousFence + 1;
+                    _committedReClaimRequest = reclaim;
+                    _committedReClaim = new ReviewClaimResponse(
+                        "claimed",
+                        Attempt(fence),
+                        Lease: Lease(
+                            "lease-2",
+                            fence,
+                            reclaim.InstanceId,
+                            LeaseExpiry(reclaim.RequestedTtlSeconds)));
+                    _reClaimCommitted.TrySetResult();
+                }
+                if (LoseFirstReClaimResponseAfterCommit && ReClaims.Count == 1)
+                    throw new HttpRequestException("synthetic lost re-claim response after commit");
+                return JsonResponse(_committedReClaim);
             }
 
             if (path.EndsWith("/report", StringComparison.Ordinal))
             {
                 var report = await ReadAsync<ReviewReportRequest>(request);
                 Reports.Add(report);
+                if (WaitForReClaimBeforeValidatingStaleReport && report.Fence == 17)
+                    await _reClaimCommitted.Task.WaitAsync(cancellationToken);
                 // Mirror the monolith's authority checks, including environment
                 // attribution. The detached workspace itself must still name the
                 // original physical namespace after a fenced takeover.
@@ -473,6 +1034,13 @@ public sealed class ReviewHandoffAdoptionTests : IDisposable
                 {
                     return ApiError(HttpStatusCode.Conflict, "review-workspace-attribution-mismatch");
                 }
+                var reportNumber = Interlocked.Increment(ref _reportCount);
+                var sequencedReportFailure = ReportFailureSequence is { } reportSequence
+                                             && reportNumber <= reportSequence.Count
+                    ? reportSequence[reportNumber - 1]
+                    : null;
+                if (sequencedReportFailure is { } sequencedReportRefusal)
+                    return ApiError(sequencedReportRefusal.Status, sequencedReportRefusal.Code);
                 if (ReportFailure is { } rejected) return ApiError(rejected.Status, rejected.Code);
                 return JsonResponse(new ReviewReportDto(
                     "report-1", "attempt-1", "subject-1", report.Outcome,
@@ -491,11 +1059,9 @@ public sealed class ReviewHandoffAdoptionTests : IDisposable
             };
         }
 
-        private long CurrentFence => ReClaims.Count == 0 ? 17 : ReClaims[^1].PreviousFence + 1;
+        private long CurrentFence => _committedReClaim?.Lease?.Fence ?? 17;
 
-        private string CurrentInstanceId => ReClaims.Count == 0
-            ? "instance-1"
-            : ReClaims[^1].InstanceId;
+        private string CurrentInstanceId => _committedReClaim?.Lease?.InstanceId ?? "instance-1";
 
         private RunnerDto Runner(RegisterRunnerRequest registration)
             => new(

@@ -107,6 +107,8 @@ for unit in agent-runner.service agent-runner-review.service; do
 done
 [[ "$(systemctl show agent-runner-review.service --property=RefuseManualStop --value)" == "yes" ]] \
   || die "agent-runner-review.service did not adopt RefuseManualStop=true"
+[[ "$(systemctl show agent-runner-review.service --property=Restart --value)" == "on-failure" ]] \
+  || die "agent-runner-review.service did not adopt Restart=on-failure"
 [[ "$(systemctl show agent-runner.service --property=RefuseManualStop --value)" != "yes" ]] \
   || die "RefuseManualStop must remain review-only"
 

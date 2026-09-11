@@ -564,8 +564,6 @@ public sealed partial class TaskServerStore
         ReviewClaimResponse? result = null;
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
-            var executor = await ReadReviewExecutorAsync(
-                connection, transaction, request.ExecutorId, request.InstanceId, ct);
             var payloadHash = HashJson(request);
             var replay = await ReadReviewReClaimDeliveryAsync(
                 connection,
@@ -579,6 +577,13 @@ public sealed partial class TaskServerStore
                 result = replay;
                 return;
             }
+
+            // A committed delivery belongs to the authenticated executor, not
+            // to whichever daemon generation is registered now. Exact replay
+            // is therefore resolved above before instance freshness. Any new
+            // mutation still has to prove that its instance is current here.
+            var executor = await ReadReviewExecutorAsync(
+                connection, transaction, request.ExecutorId, request.InstanceId, ct);
 
             var attempt = await ReadReviewAuthorityAsync(connection, transaction, attemptId, ct);
             if (!string.Equals(attempt.ExecutorId, request.ExecutorId, StringComparison.Ordinal)

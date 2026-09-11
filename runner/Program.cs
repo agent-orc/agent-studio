@@ -76,9 +76,9 @@ using var sigterm = !OperatingSystem.IsWindows()
     })
     : null;
 
-// Restart guard and drain are pure host-local operator commands: they inspect
-// (and for a drain, request) review slot state without touching the Task Server.
-// agent-runner-deploy calls the guard before it restarts the review unit.
+// Restart guard and drain are host-local operator commands: each closes claim
+// admission through a request-id marker without touching the Task Server.
+// agent-runner-deploy holds the guard marker through old-MainPID exit.
 if (options.RestartGuardOnly || options.DrainOnly)
 {
     if (options.Role != "review")
@@ -87,7 +87,7 @@ if (options.RestartGuardOnly || options.DrainOnly)
         return 2;
     }
     return options.RestartGuardOnly
-        ? ReviewDrainCommand.RunRestartGuard(options, Log)
+        ? await ReviewDrainCommand.RunRestartGuardAsync(options, Log, shutdown.Token)
         : await ReviewDrainCommand.RunDrainAsync(options, Log, shutdown.Token);
 }
 
@@ -165,7 +165,7 @@ static void PrintUsage()
           agent-host --poll [options]
           agent-host --health-check [--server <url>]
           agent-host --drain --role review [--drain-timeout-seconds <n>]
-          agent-host --restart-guard --role review [--force]
+          agent-host --restart-guard --role review [--hold-admission] [--force]
 
         Most configuration comes from environment variables (see the runbook,
         docs/operations/setup/linux-runner-host.md). Command-line flags override:
@@ -173,11 +173,13 @@ static void PrintUsage()
           --health-check          Probe the Task Server and exit (0 reachable,
                                   4 not). Readiness check for the tunnel service.
           --drain                 Stop claiming reviews, wait for the running
-                                  ones, then let the daemon exit (0 drained,
-                                  3 timed out). The sanctioned way to restart a
-                                  review host without losing gate work.
+                                  ones, then stop the daemon (0 drained,
+                                  3 refused/timed out). Start it later through
+                                  the guarded deploy helper.
           --restart-guard         Report whether stopping now would discard
                                   review gate work (0 safe, 3 refused).
+          --hold-admission        Keep an accepted restart guard closed until
+                                  the replacement helper stops the old daemon.
           --force                 Let --restart-guard pass on busy slots.
           --drain-timeout-seconds <n>
                                   Drain wait bound     (RUNNER_DRAIN_TIMEOUT_SECONDS, default 3600)
