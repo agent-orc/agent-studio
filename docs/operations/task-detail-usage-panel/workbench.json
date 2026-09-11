@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "task-detail-usage-panel",
   "title": "Task-Detail: Verbrauchsblock in Pipeline-Breite",
-  "summary": "Operator-Befund 11.09.2026 am Task-Detail (Overview-Tab): Task-Summe, Tokens je Lauf und Agent-Arbeit stehen unter den Pipeline-Schritten in einem eigenen, schmalen Raster; die Zahlen sitzen auf anderen Spalten als die Schrittmetriken. Drei Alternativen mit Mockups: A dieselben Spalten (ein Raster, Anteilsbalken je Lauf), B Tabelle mit eigener Kopfzeile auf denselben Tracks, C Kennzahlen-Kacheln plus Läufe im Raster. Empfehlung A. Entscheidung per Auswahl im Dossier; die Umsetzungskarte entsteht aus der Auswahl.",
+  "summary": "Operator-Befund 11.09.2026 am Task-Detail (Overview-Tab): Task-Summe, Tokens je Lauf und Agent-Arbeit stehen unter den Pipeline-Schritten in einem eigenen, schmalen Raster; die Zahlen sitzen auf anderen Spalten als die Schrittmetriken. Drei Alternativen mit Mockups: A dieselben Spalten (ein Raster, Anteilsbalken je Lauf), B Tabelle mit eigener Kopfzeile auf denselben Tracks, C Kennzahlen-Kacheln plus L\u00E4ufe im Raster. Empfehlung A. Entscheidung per Auswahl im Dossier; die Umsetzungskarte entsteht aus der Auswahl.",
   "entrypoint": "index.html",
   "status": "active",
   "phase": "decision-ready",
@@ -15,7 +15,8 @@
   "implementationTasks": [
     {
       "title": "Task detail: usage block on the pipeline width and columns (operator-selected alternative)",
-      "promptMarkdown": "Implement the alternative the operator selected in docs/operations/task-detail-usage-panel/index.html (decision usage-panel-layout). The block below the pipeline steps in the task detail Overview tab (Task total, Tokens by run, Agent work) must use the pipeline's width and its metric columns so that tokens and cost sit under the step columns (requirements A1 to A5 in the dossier). Files: overview-pane.component.{html,scss} (.ov-pipeline grid, --ov-pl-grid-cols, .ov-pl-total, Agent Work section) and pipeline-token-usage.component.{html,scss} (Tokens by run). Keep every current content and interaction (collapsible runs with model breakdown, incomplete-cost hint, cost breakdown trigger, Agent work calls/started/last touch), keep the existing data-testids, use only Studio tokens for colours, and make the block follow the same @container ov-pipeline queries as the steps. Add or adjust component specs for the layout, and deliver before/after screenshots at 900 px and at a narrow pane width in light and dark theme."
+      "promptMarkdown": "Implement the alternative the operator selected in docs/operations/task-detail-usage-panel/index.html (decision usage-panel-layout). The block below the pipeline steps in the task detail Overview tab (Task total, Tokens by run, Agent work) must use the pipeline\u0027s width and its metric columns so that tokens and cost sit under the step columns (requirements A1 to A5 in the dossier). Files: overview-pane.component.{html,scss} (.ov-pipeline grid, --ov-pl-grid-cols, .ov-pl-total, Agent Work section) and pipeline-token-usage.component.{html,scss} (Tokens by run). Keep every current content and interaction (collapsible runs with model breakdown, incomplete-cost hint, cost breakdown trigger, Agent work calls/started/last touch), keep the existing data-testids, use only Studio tokens for colours, and make the block follow the same @container ov-pipeline queries as the steps. Add or adjust component specs for the layout, and deliver before/after screenshots at 900 px and at a narrow pane width in light and dark theme."
     }
-  ]
+  ],
+  "key": "AGT-W48"
 }
