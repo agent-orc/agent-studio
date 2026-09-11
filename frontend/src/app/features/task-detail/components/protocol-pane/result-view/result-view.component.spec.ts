@@ -13,6 +13,7 @@ function verdict(overrides: Partial<ProtocolVerdict> = {}): ProtocolVerdict {
     emoji: '🟢',
     label: 'Success',
     detail: 'Last run completed successfully.',
+    lane: null,
     duration: '4 min',
     ...overrides,
   };

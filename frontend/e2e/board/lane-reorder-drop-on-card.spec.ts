@@ -167,7 +167,7 @@ interface LaneCase {
 const LANES: LaneCase[] = [
   { state: '4-auto-review', heading: 'Post Processing', createTarget: '4-auto-review' },
   { state: '2-ready', heading: 'Ready', createTarget: null },
-  { state: '5-human-review', heading: 'Review', createTarget: '5-human-review' },
+  { state: '5-human-review', heading: 'Human review', createTarget: '5-human-review' },
   { state: '0-backlog', heading: 'Backlog', createTarget: null },
 ];
 

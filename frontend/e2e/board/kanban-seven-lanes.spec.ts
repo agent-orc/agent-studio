@@ -185,12 +185,12 @@ test.describe('ADR-0025 seven-lane kanban', () => {
       ).toBeGreaterThan(0);
     }
 
-    // Post Processing and Review carry the distinct icons that
+    // Post Processing and Human review carry the distinct icons that
     // identify their audience (machine vs you). Pin to the column
-    // heading so we don't also match the lowercase state-pill on each
-    // job card.
+    // heading so we don't also match the state-pill on each job card.
+    // AGT-2715: 5-human-review reads "Human review" on every surface.
     await expect(page.getByRole('heading', { name: 'Post Processing' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Review', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Human review', exact: true })).toBeVisible();
 
     // Container shape: Backlog / Active / Done & Decide. The
     // 5-human-review lane lives inside the Done & Decide container,

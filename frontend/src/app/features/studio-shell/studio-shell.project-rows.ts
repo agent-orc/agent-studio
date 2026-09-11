@@ -2,6 +2,8 @@ import { excludeEpics } from '../board';
 import type { GroupedJobs, TaskInfo } from '../../models/task.model';
 import { projectIdentity } from '../../services/project-identity.util';
 import type { StructuredTooltip } from 'coding-agent-chat/shared';
+import { laneName } from '../../models/lane-presentation';
+import { TaskState } from '../../models/task.model';
 
 export interface ExplorerLaneCounts {
   ready: number;
@@ -18,15 +20,15 @@ export interface ExplorerLaneCounts {
  */
 export const BOARD_LANE_COUNT_TOOLTIPS: Record<keyof ExplorerLaneCounts, StructuredTooltip> = {
   ready: {
-    title: 'Ready',
+    title: laneName(TaskState.Ready),
     body: 'Refined tasks queued for a coding agent. The orchestrator runs the top card next when a slot frees up.',
   },
   progress: {
-    title: 'In Progress',
+    title: laneName(TaskState.Progress),
     body: 'Tasks the orchestrator is actively running now, or resuming between attempts. One per project at a time.',
   },
   humanReview: {
-    title: 'Human Review',
+    title: laneName(TaskState.HumanReview),
     body: 'Finished runs waiting for your review, including escalations that need a decision. Accept the work or send it back for another pass.',
   },
 };

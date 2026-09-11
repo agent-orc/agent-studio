@@ -137,7 +137,9 @@ describe('EpicOverviewScreenComponent', () => {
 
     expect(testid(host, 'epic-overview-subs')).toBeTruthy();
     expect(testids(host, 'epic-overview-open-sub')).toHaveLength(2);
-    expect(testids(host, 'epic-overview-open-sub')[0].textContent).toContain('ready');
+    // AGT-2715: sub-task lane chips render the lane's display name from the
+    // presentation catalogue, not the stripped slug ('ready').
+    expect(testids(host, 'epic-overview-open-sub')[0].textContent).toContain('Ready');
     expect(testids(host, 'epic-overview-sub-project')).toHaveLength(2);
     expect(testids(host, 'epic-overview-sub-verdict')[0].textContent).toContain('escalate');
 

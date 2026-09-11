@@ -1,0 +1,37 @@
+[
+  {
+    "file": "src/app/app.ts",
+    "literal": "Backlog",
+    "reason": "Lane-GROUP container label, not a lane. The 'backlog' group holds the Ready, Preparation, and Backlog lanes; it is a different axis that happens to share a word with one of them."
+  },
+  {
+    "file": "src/app/features/project-detail/components/page-action-bar/page-action-bar.html",
+    "literal": "Archive",
+    "reason": "Button verb ('Archive' / 'Archived') for archiving a project. Not the 7-archive lane."
+  },
+  {
+    "file": "src/app/features/shell/components/workspace-management/workspace-management.component.ts",
+    "literal": "Archive",
+    "reason": "Confirm-dialog verb for archiving a project registry entry. Not the 7-archive lane."
+  },
+  {
+    "file": "src/app/features/project-detail/components/project-cli-environment-section/project-cli-environment-section.ts",
+    "literal": "Ready",
+    "reason": "CLI availability status ('Ready' / 'Issue' / 'Not detected'). Not the 2-ready lane."
+  },
+  {
+    "file": "src/app/features/project-detail/components/project-deployment-panel/project-deployment-panel.component.ts",
+    "literal": "Ready",
+    "reason": "Deployment-target runnability ('Ready' / 'Setup required'). Not the 2-ready lane."
+  },
+  {
+    "file": "src/app/features/project-detail/components/project-url-preview-tab/project-url-preview-tab.component.html",
+    "literal": "Ready",
+    "reason": "Embedded-page readiness probe result. Not the 2-ready lane."
+  },
+  {
+    "file": "src/app/features/task-server/components/task-server-panel/task-server-panel.html",
+    "literal": "Ready",
+    "reason": "Task Server connection readiness flag. Not the 2-ready lane."
+  }
+]

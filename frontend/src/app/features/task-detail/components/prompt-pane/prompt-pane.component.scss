@@ -1,3 +1,5 @@
+@use '../../../../../styles/lane-tone';
+
 /*
  * The host element must not introduce its own box: the flex value is
  * applied to the inner <section class="pane">, but for that to drive
@@ -71,18 +73,13 @@
   padding: 2px 8px;
   border-radius: 999px;
   background: var(--studio-bg-hover);
-  color: var(--lane-backlog);
 
-  &.state--0-backlog            { color: var(--lane-backlog); }
-  &.state--1-preparation        { color: var(--lane-prep); }
-  &.state--1a-orchestrator-prep { color: var(--lane-prep); }
-  &.state--2-ready              { color: var(--lane-ready); }
-  &.state--3-progress           { color: var(--lane-progress); }
-  &.state--4-auto-review        { color: var(--lane-auto-review); }
-  &.state--5-human-review       { color: var(--lane-human-review); }
-  &.state--5e-escalated         { color: var(--lane-escalated); }
-  &.state--6-completed          { color: var(--lane-completed); }
-  &.state--7-archive            { color: var(--lane-archive); }
+  // AGT-2715: one tone per lane, resolved from data-lane-tone. This used to
+  // be a per-state colour map maintained here, which is why the chip and the
+  // Result header could disagree about a lane's colour.
+  @include lane-tone.vars;
+
+  color: var(--lane-tone-fg);
 }
 .desc-meta__state-dot {
   font-size: 0.65em;

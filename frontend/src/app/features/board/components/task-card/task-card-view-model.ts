@@ -10,6 +10,7 @@ import { buildThinkingLevelIndicator, type ThinkingLevelIndicator } from '../../
 import { phaseStaticLabel } from '../../../../services/lifecycle-phase.util';
 import { isTaskRunActive } from '../../../../services/run-activity.util';
 import { buildTokenCostTooltip, formatTokenCostDisplay } from '../../../tokens';
+import { lanePresentation } from '../../../../models/lane-presentation';
 
 export interface TaskTypeChip {
   kind: string;
@@ -630,12 +631,6 @@ export function buildOwnerChip(owner: ClientSummary): OwnerChip {
     foreground: '#e2e8f0',
     tooltip: `Owner: ${label} (${owner.id})`
   };
-}
-
-/** Lane label derived from the state slug (`3-progress` -> `progress`). */
-export function formatStateLabel(state: string): string {
-  const name = state.includes('-') ? state.substring(state.indexOf('-') + 1) : state;
-  return name.replace(/-/g, ' ');
 }
 
 export type GitStateBadgeKind = 'pre-merge' | 'post-merge' | 'tagged';
@@ -1408,10 +1403,11 @@ export function buildDecisionDamBadge(job: TaskInfo): HumanReviewBadge | null {
  */
 export function buildHumanReviewBadge(job: TaskInfo): HumanReviewBadge | null {
   if (job.state !== TaskState.Escalated) return null;
+  const lane = lanePresentation(TaskState.Escalated);
   return {
-    label: 'Escalated',
+    label: lane.name,
     tone: 'attention',
-    tooltip: 'This task is currently in the Escalated lane and needs an operator decision.'
+    tooltip: `This task is currently in the ${lane.name} lane and needs an operator decision.`
   };
 }
 

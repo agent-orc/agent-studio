@@ -5,7 +5,7 @@ import { GitSummaryService } from '../../../../services/git-summary.service';
 import { TaskService } from '../../../../services/task.service';
 import { ClientService } from '../../../../services/client.service';
 import { CodeReviewActivityStore } from '../../../../services/code-review-activity.store';
-import { cliTypeIcon, stateLabel } from '../../../../services/format.util';
+import {cliTypeIcon} from '../../../../services/format.util';
 import { projectIdentity } from '../../../../services/project-identity.util';
 import { TagRegistryStore } from '../../../../services/tag-registry.store';
 import {
@@ -68,6 +68,7 @@ import { PostProcessingActivityComponent } from '../post-processing-activity/pos
 import { TestEvidenceStatusComponent } from '../../../test-evidence';
 import { CopyableTaskKeyComponent } from '../../../../components/copyable-task-key/copyable-task-key.component';
 import { CodexSignInDialogService, ProviderAuthStatusService, providerAuthWaitReason } from '../../../remote-hosts';
+import { laneName } from '../../../../models/lane-presentation';
 // Shared 'now' signal that ticks every 30s so all relative timestamps update in lockstep
 // without re-reading Date.now() during change detection (which causes NG0100).
 const nowTick = signal(Date.now());
@@ -407,9 +408,7 @@ export class TaskCardComponent implements OnInit, OnDestroy {
     this.subTaskClick.emit(subTask);
   }
 
-  laneLabel(state: string): string {
-    return stateLabel(state).replace(/-/g, ' ');
-  }
+  readonly laneLabel = laneName;
 
   verdictLabel(verdict: TaskInfo['orchestratorVerdict']): string | null {
     return verdict ? verdict.replace(/-/g, ' ') : null;

@@ -1,4 +1,5 @@
 @use '../../../styles/mixins' as m;
+@use '../../../styles/lane-tone';
 
 // =========================================================================
 // Studio shell — Agent Software Studio (VS-Code-inspired)
@@ -1792,7 +1793,10 @@
   // projected <app-detail-header>, so this <select> is the detail view's
   // path to move the task to an arbitrary lane. Drawn as a bordered pill
   // with an explicit chevron so it reads as an interactive control, not a
-  // static label; the `state--*` class tints it to the active lane color.
+  // static label. AGT-2715: `data-lane-tone` tints it to the lane's one tone —
+  // the same token the detail header chip, the Result header dot, and the
+  // board column header read. It used to lean on the `state--*` rules that
+  // task-detail.scss happened to expose globally.
   &--lane-select {
     appearance: none;
     -webkit-appearance: none;
@@ -1809,6 +1813,14 @@
     background-position: calc(100% - 12px) 55%, calc(100% - 8px) 55%;
     background-size: 5px 5px, 5px 5px;
     background-repeat: no-repeat;
+
+    @include lane-tone.vars;
+
+    &[data-lane-tone] {
+      color: var(--lane-tone-fg);
+      background-color: var(--lane-tone-bg);
+      border-color: var(--lane-tone-border);
+    }
 
     &:hover:not([disabled]) {
       background-color: var(--studio-bg-hover);

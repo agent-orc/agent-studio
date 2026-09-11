@@ -1,5 +1,6 @@
 import { Injectable, computed, signal } from '@angular/core';
-import { TaskInfo, TaskState } from '../../../models/task.model';
+import { TaskInfo } from '../../../models/task.model';
+import { LANE_PRESENTATIONS } from '../../../models/lane-presentation';
 import { taskUrlKey } from './task-url';
 
 /**
@@ -34,19 +35,18 @@ export interface LanePagerSnapshot {
 
 const STORAGE_KEY = 'app:lanePager:v2';
 
-export const LANE_LABELS: Record<string, string> = {
-  [TaskState.Backlog]:          'Backlog',
-  [TaskState.Preparation]:      'Preparation',
-  [TaskState.OrchestratorPrep]: 'Orchestrator Prep',
-  [TaskState.Ready]:            'Ready',
-  [TaskState.Progress]:         'In Progress',
-  [TaskState.CodeNotComplete]:  'Code not complete',
-  [TaskState.AutoReview]:       'Post Processing',
-  [TaskState.HumanReview]:      'Review',
-  [TaskState.Escalated]:        'Escalated',
-  [TaskState.Completed]:        'Delivered',
-  [TaskState.Archive]:          'Archive',
-};
+/**
+ * Lane display names, keyed by lane state.
+ *
+ * AGT-2715: this map used to be one of five hand-maintained copies. It now
+ * projects the lane presentation catalogue, so it cannot drift from the board
+ * header, the Result view, or the settings list. Prefer importing `laneName`
+ * directly in new code; this export stays for the existing call sites that
+ * want a plain lookup record.
+ */
+export const LANE_LABELS: Record<string, string> = Object.fromEntries(
+  LANE_PRESENTATIONS.map((lane) => [lane.state, lane.name]),
+);
 
 @Injectable({ providedIn: 'root' })
 export class LanePagerService {

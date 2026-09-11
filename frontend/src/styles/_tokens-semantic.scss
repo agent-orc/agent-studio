@@ -23,6 +23,7 @@
 // =============================================================================
 
 @use './tokens-primitives';
+@use './lane-tone';
 
 :root {
   // ---------------------------------------------------------------------------
@@ -287,6 +288,12 @@
   --lane-completed:    #5fbf80;
   --lane-archive:      #6e6e6e;
   --lane-failed:       var(--color-mocha-red);
+
+  // Lane tone triplets — the one tint a lane wears on every surface it names
+  // itself on (header chip, Result header dot, board column header). Derived
+  // from the palette directly above, so the hue is still written once.
+  // See styles/_lane-tone.scss and models/lane-presentation.ts (AGT-2715).
+  @include lane-tone.tokens(12%, 24%);
 
   // Board nav lane counters. Subtle, titlebar/sidebar-grade pigments distinct
   // from the saturated kanban lane colours so the Explorer stays calm.
@@ -790,6 +797,10 @@
   --lane-completed:    var(--color-green-700);
   --lane-archive:      var(--color-grey-850);
   --lane-failed:       var(--color-red-700);
+
+  // Same lane tone contract on white; the mixes run weaker so a soft fill
+  // stays legible against the light shell.
+  @include lane-tone.tokens(10%, 22%);
 
   --studio-board-nav-lane-ready-fg:        var(--color-slate-600);
   --studio-board-nav-lane-ready-bg:        color-mix(in srgb, var(--studio-board-nav-lane-ready-fg) 10%, transparent);

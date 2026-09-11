@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import type { TaskDetail } from '../../../../../models/task.model';
+import { laneTone } from '../../../../../models/lane-presentation';
 import type { ProtocolVerdict } from '../protocol-verdict';
 import { buildResultDocument } from '../result-document';
 import { RESULT_CASE_META } from '../result-case';
@@ -61,4 +62,14 @@ export class ResultViewComponent {
     return 'neutral';
   });
 
+  /**
+   * Lane tone when the lane itself is the leading signal, else null. A card
+   * parked in Human review then shows the Result header dot in the lane's own
+   * colour, matching the header chip and the board column, instead of the
+   * generic amber "needs-decision" tone (AGT-2715).
+   */
+  readonly laneTone = computed(() => {
+    const lane = this.verdict().lane;
+    return lane ? laneTone(lane) : null;
+  });
 }

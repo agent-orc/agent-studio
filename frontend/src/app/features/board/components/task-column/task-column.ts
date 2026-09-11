@@ -28,7 +28,7 @@ import { cliTypeIcon } from '../../../../services/format.util';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { groupReviewJobs } from '../review-grouping.util';
 import { InfoButtonComponent } from '../../../../components/info-button/info-button.component';
-import { laneDocTopic } from '../../../../components/info-button/lane-doc-topic';
+import { lanePresentation } from '../../../../models/lane-presentation';
 import { laneSortStrategyMeta, isManualStrategy } from '../../../../services/lane-sort.util';
 import { deriveStalledTaskState } from '../../../../services/run-activity.util';
 import { PostProcessingSummaryComponent } from '../post-processing-summary/post-processing-summary.component';
@@ -370,14 +370,14 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   /**
-   * Every lane carries an info trigger: each one maps to a committed
-   * concept doc under <c>docs/app/help/lane-guides/lane-*.md</c>, served by
-   * <c>GET /api/concept-docs/{topic}</c> and shown in the lane-info
-   * modal. Virtual sub-lanes (e.g. <c>2-ready-intake</c>, <c>4-review</c>)
-   * collapse to their parent's doc. Returns <c>null</c> only for a state
-   * with no doc, in which case the trigger is hidden.
+   * Name, tone, glyph, and help topic for this column's lane, from the one
+   * catalogue (AGT-2715), so a board header can never be worded or tinted
+   * differently from the detail header chip. Virtual sub-lanes collapse to
+   * their parent's entry; a null docTopic hides the info trigger.
    */
-  readonly infoTopic = computed<string | null>(() => laneDocTopic(this.state()));
+  private readonly lane = computed(() => lanePresentation(this.state()));
+  readonly infoTopic = computed<string | null>(() => this.lane().docTopic);
+  readonly laneTone = computed(() => this.lane().tone);
 
   /**
    * The ADR-0025 swim-lanes are now real columns; the in-column

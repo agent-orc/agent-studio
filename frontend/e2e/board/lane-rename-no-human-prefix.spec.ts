@@ -3,9 +3,19 @@ import { test, expect, Page } from '@playwright/test';
 /**
  * Regression guard for the lane-rename task: the board used to surface the
  * 2-ready and 5-human-review lanes as "Human Ready" and "Human Review".
- * The user dropped the human/non-human distinction entirely - those lanes
- * now read simply "Ready" and "Review". The orchestrator-owned pass
- * (4-auto-review) now reads "Post Processing".
+ * The user dropped that human/non-human naming SCHEME - 2-ready reads simply
+ * "Ready", and the orchestrator-owned pass (4-auto-review) reads "Post
+ * Processing" rather than "Auto Review".
+ *
+ * SUPERSEDED IN PART BY AGT-2715. The 5-human-review heading used to read
+ * "Review" here. The operator then reported the opposite problem: one lane
+ * wearing four names at once, because the board said "Review" while the
+ * Result tab said "Human review lane", a badge said "Human review", and the
+ * project workflow section said "Awaiting human review." Every surface now
+ * reads the single name from `src/app/models/lane-presentation.ts`, which is
+ * "Human review". The original intent of this spec is preserved: the retired
+ * SCHEME ("Human Ready", "Auto Review", and the title-cased "Human Review"
+ * that paired with them) must never come back.
  *
  * The underlying state keys (2-ready, 5-human-review, 4-auto-review) are
  * unchanged - this is a display-label change only - so the mock fixture
@@ -78,6 +88,14 @@ async function installBoardMocks(page: Page): Promise<void> {
     }
     await route.fallback();
   });
+  // The shell renders behind an auth gate. Without this the blanket `[]` GET
+  // stub above answers /api/auth/status, the app shows the sign-in card, and
+  // every board assertion below fails on a missing element rather than on a
+  // wrong heading.
+  await page.route('**/api/auth/status', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json',
+      body: JSON.stringify({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }) });
+  });
   await page.route('**/api/watch-paths', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json',
       body: JSON.stringify([{ name: FIXTURE_PROJECT, path: FIXTURE_WATCH, rootPath: FIXTURE_WATCH }]) });
@@ -108,20 +126,23 @@ test.describe('lane rename - no "Human" prefix', () => {
     await installBoardMocks(page);
   });
 
-  test('renders Ready / Review / Post Processing headings and never legacy human or auto-review headings', async ({ page }) => {
+  test('renders Ready / Human review / Post Processing headings and never legacy human-prefixed or auto-review headings', async ({ page }) => {
     await page.goto('/');
     await expect(page.locator('[data-testid="studio-board"], [data-testid="kanban-dashboard"]').first())
       .toBeVisible({ timeout: 10_000 });
 
-    // The renamed lanes.
-    await expect(page.getByRole('heading', { name: 'Review', exact: true })).toBeVisible();
+    // The renamed lanes. 5-human-review reads "Human review" since AGT-2715
+    // gave every surface the same word; see the header note above.
+    await expect(page.getByRole('heading', { name: 'Human review', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Ready', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Post Processing' })).toBeVisible();
 
-    // The dropped labels must be gone from every heading on the board.
-    await expect(page.getByRole('heading', { name: /Human Review/ })).toHaveCount(0);
+    // The dropped SCHEME must be gone from every heading on the board. These
+    // are case-sensitive on purpose: the retired pairing was the title-cased
+    // "Human Ready" / "Human Review" / "Auto Review" family.
     await expect(page.getByRole('heading', { name: /Human Ready/ })).toHaveCount(0);
     await expect(page.getByRole('heading', { name: /Auto Review/ })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: /Human review lane/ })).toHaveCount(0);
 
     await page.screenshot({ path: 'test-results/lane-rename-no-human-prefix-1440x900.png', fullPage: false });
   });

@@ -82,7 +82,7 @@ test('App-Vermessung v1 real stable sweep', async ({ page }) => {
   const lanePreflight: Record<string, number | null> = {};
   for (const [key, label] of Object.entries({
     '2-ready': 'Ready', '1-preparation': 'In Preparation', '0-backlog': 'Backlog',
-    '3-progress': 'In Progress', '4-auto-review': 'Post Processing', '5-human-review': 'Review',
+    '3-progress': 'In Progress', '4-auto-review': 'Post Processing', '5-human-review': 'Human review',
     '6-escalation': 'Escalated', '7-delivered': 'Delivered', '8-archive': 'Archive',
   })) {
     const match = new RegExp(`${label}\\s+(\\d+)`, 'i').exec(body);

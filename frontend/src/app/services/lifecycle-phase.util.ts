@@ -12,6 +12,9 @@
  * task detail ("intake-blocked" instead of "Intake blocked").
  */
 
+import { laneName } from '../models/lane-presentation';
+import { TaskState } from '../models/task.model';
+
 /**
  * Format an elapsed wait as a compact "m:ss" (sub-hour) / "h:mm h" label.
  * Clamps negatives to zero so clock skew never renders a "-1:59" wait. Refreshes
@@ -36,7 +39,9 @@ export function formatPhaseElapsed(elapsedMs: number): string {
  * so no surface ever renders a raw kebab-case id.
  */
 export const PHASE_LABELS: Readonly<Record<string, string>> = {
-  'human-ready': 'Ready',
+  // The task is sitting in the Ready lane, so it is named by that lane
+  // (AGT-2715); the remaining phases are their own vocabulary.
+  'human-ready': laneName(TaskState.Ready),
   'intake-running': 'Intake running',
   'intake-blocked': 'Intake blocked',
   'intake-passed': 'Intake passed',

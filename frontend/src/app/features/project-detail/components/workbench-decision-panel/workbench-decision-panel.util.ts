@@ -1,3 +1,4 @@
+import { laneName } from '../../../../models/lane-presentation';
 import {
   WorkbenchDecisionPoint,
   WorkbenchDecisionResponse,
@@ -54,7 +55,7 @@ export function bounded(value: string, length: number): string {
 }
 
 export function laneLabel(lane: string | null): string {
-  return lane === '1-preparation' ? 'Preparation' : lane ?? 'Unknown lane';
+  return lane ? laneName(lane) : 'Unknown lane';
 }
 
 export function actionErrorMessage(error: unknown): string {
