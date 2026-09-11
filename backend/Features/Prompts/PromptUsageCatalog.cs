@@ -249,6 +249,10 @@ internal static class PromptUsageCatalog
         {
             new PromptUsageRef("WikiSearchService", "TryExpandAsync", "Semantic query expansion for the wiki search (fail-open layer)."),
         },
+        ["watcher-analysis.md"] = new[]
+        {
+            new PromptUsageRef("WatcherAnalysisService", "BuildPrompt", "Bounded strong-model analysis for a Contradiction or Drift watcher case."),
+        },
     };
 
     public static IReadOnlyList<PromptUsageRef> For(string name) =>
