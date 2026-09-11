@@ -1,0 +1,56 @@
+@if (request(); as target) {
+  <app-dialog
+    eyebrow="Execution host authentication"
+    [title]="'Sign in Claude on ' + target.hostName"
+    subtitle="The credential remains in the runner user's Claude store on this host."
+    kind="primary"
+    testid="claude-sign-in-dialog"
+    [closable]="true"
+    (closeRequest)="close()"
+    (backdropClick)="close()">
+    <div class="claude-auth" [attr.data-state]="phase()" aria-live="polite">
+      @if (phase() === 'starting') {
+        <div class="claude-auth__status" data-testid="claude-sign-in-starting">
+          <span class="claude-auth__spinner" aria-hidden="true"></span>
+          <p>{{ detail() }}</p>
+        </div>
+      }
+
+      @if (session(); as activeSession) {
+        @if (phase() === 'pending') {
+          <ol class="claude-auth__steps" data-testid="claude-sign-in-pending">
+            <li>
+              <span>Open the secure Claude sign-in page and complete the browser flow.</span>
+              <a data-testid="claude-sign-in-url"
+                 [href]="activeSession.verificationUrl"
+                 target="_blank"
+                 rel="noopener noreferrer">{{ activeSession.verificationUrl }}</a>
+            </li>
+          </ol>
+          <p class="claude-auth__privacy">Studio does not receive the resulting token. This window detects completion automatically.</p>
+        }
+      }
+
+      @if (phase() === 'verifying') {
+        <div class="claude-auth__status" data-testid="claude-sign-in-verifying">
+          <span class="claude-auth__spinner" aria-hidden="true"></span>
+          <p>{{ detail() }}</p>
+        </div>
+      }
+
+      @if (phase() === 'failed') {
+        <div class="claude-auth__failure" role="alert" data-testid="claude-sign-in-failed">
+          <strong>Claude sign-in needs attention</strong>
+          <p>{{ detail() }}</p>
+        </div>
+      }
+    </div>
+
+    <div footer class="claude-auth__actions">
+      <button type="button" class="claude-auth__secondary" (click)="close()">Close</button>
+      @if (phase() === 'failed') {
+        <button type="button" class="claude-auth__primary" data-testid="claude-sign-in-retry" (click)="retry()">Try again</button>
+      }
+    </div>
+  </app-dialog>
+}

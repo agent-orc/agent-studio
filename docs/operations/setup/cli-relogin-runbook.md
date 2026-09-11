@@ -12,6 +12,12 @@ process environment and CLI status as authentication authority. It may also
 read expiry and modification timestamps from native Claude and Codex credential
 files, but never returns or logs token values.
 
+Claude now has the same host-owned sign-in as Codex (AGT-2759): **Sign in
+Claude** starts `claude setup-token` as the runner user over SSH, streams back
+only the browser verification URL, and writes the resulting token straight
+into the shared EnvironmentFile on the host. The manual paste-token flow in
+section 3 remains a fallback for hosts without a usable SSH target.
+
 ## 1. Confirm the affected provider and host
 
 Open **Workspace Settings > Execution Hosts** and inspect **Provider
@@ -62,6 +68,27 @@ If unit restart is unavailable, the ordinary provider-probe cadence remains the
 fallback.
 
 ## 3. Renew Claude through Studio
+
+**Host-owned sign-in (preferred).**
+
+1. On an **Unavailable** or **Expiring** Claude badge, choose **Sign in
+   Claude**. The same action is available on a Claude Ready-card wait chip.
+2. Open the displayed verification link in a browser and complete the sign-in
+   flow.
+3. Leave the dialog open while it polls the session handle. The resulting
+   long-lived token never leaves the execution host: the remote script writes
+   it directly into `/etc/agent-runner/provider-auth.env` and restarts the
+   installed units.
+4. Wait for the dialog to close after a fresh `provider-auth:claude` probe
+   reports **OK**.
+
+The remote process is killed after 15 minutes. Studio keeps no token and
+discards the displayed URL at terminal completion. One `provider_sign_in`
+operator-feed event records only host, provider, actor, and outcome. If the
+browser flow fails, choose **Try again**; do not fall back to copying
+`~/.claude/.credentials.json` from another machine.
+
+**Manual paste-token fallback**, for a host without a usable SSH target:
 
 1. Open the affected host in **Execution Hosts** and choose **Set up agent
    host**.

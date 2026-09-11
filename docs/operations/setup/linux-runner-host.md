@@ -180,10 +180,14 @@ The controller is intentionally repeatable after a host wipe:
 2. Install or update the `CodingAgentRunner` NuGet global tool and require
    version `0.5.0` or newer, then install the Codex and Claude CLIs.
 3. Before the visible setup task starts, provision provider authentication from
-   the Studio dialog. For Claude, Studio sends `CLAUDE_CODE_OAUTH_TOKEN` or
-   `ANTHROPIC_API_KEY` only through SSH stdin. The host atomically writes
-   `/etc/agent-runner/provider-auth.env` as `root:agent` mode `640`. The value is
-   never persisted in Studio, a task, or the repository. For Codex, choose
+   the Studio dialog. For Claude, choose **Sign in Claude** on its provider
+   badge (AGT-2759). Studio starts `claude setup-token` as the runner user over
+   SSH, shows only its browser verification URL, and polls to completion; the
+   remote script writes the resulting token straight into
+   `/etc/agent-runner/provider-auth.env` as `root:agent` mode `640` and never
+   returns it to Studio. The manual paste flow (Studio sends
+   `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` only through SSH stdin)
+   remains a fallback for a host without a usable SSH target. For Codex, choose
    **Sign in Codex** on its provider badge. Studio starts the host-owned
    `codex login --device-auth` process, shows its browser URL and one-time code,
    and polls to completion. Credential files are never copied from the operator
@@ -222,12 +226,19 @@ Give every host an explicitly provisioned CLI identity. Do **not** copy the
 operator's `~/.claude/.credentials.json` / `~/.codex/auth.json` from the studio.
 A copied credential can share refresh-token lineage with the operator session,
 so an operator-side re-login or rotation can log out a host during a batch. This
-drift occurred on 2026-07-09. Claude's supported headless token environment and
-Codex's host-owned login are the permanent replacements for credential-file
-seeding.
+drift occurred on 2026-07-09. Codex's host-owned login and Claude's host-owned
+sign-in (AGT-2759) are the permanent replacements for credential-file seeding.
+Claude's headless token environment (below) remains the fallback when a host
+has no usable SSH target for the host-owned flow.
 
-- **Claude.** For a headless host, use the setup-token flow below. An interactive
-  host login remains a diagnostic fallback, not the provisioning contract.
+- **Claude.** Choose **Sign in Claude** on the affected Execution Hosts badge
+  or Ready-card wait chip. Studio runs `claude setup-token` as the runner user
+  over SSH; the remote script keeps the resulting long-lived token on the host
+  and writes it straight into `/etc/agent-runner/provider-auth.env`, restarting
+  the installed units. Do not copy the operator's `~/.claude/.credentials.json`.
+  Use `claude auth status --text` for the authentication check and
+  `claude --version` for the installed CLI check. When SSH access is
+  unavailable, fall back to the setup-token flow below.
 - **Codex.** Choose **Sign in Codex** on the affected Execution Hosts badge or
   Ready-card wait chip. Studio runs `codex login --device-auth` as the runner
   user over SSH, so Codex writes the host's own credential store. Do not copy
@@ -244,9 +255,12 @@ file: clean-context launches receive `CLAUDE_CODE_OAUTH_TOKEN` explicitly after
 their isolated config home is prepared. See the clean-context section of
 [`docs/system/cli/supported-clis.md`](../../system/cli/supported-clis.md).
 
-### Claude authentication on headless hosts
+### Claude authentication on headless hosts (fallback)
 
-Create a long-lived token once on an operator-controlled workstation:
+Prefer **Sign in Claude** above, which runs this exact command on the host
+itself over SSH and never surfaces the token to Studio. Use this manual path
+only when the host has no usable SSH target for the host-owned flow. Create a
+long-lived token once on an operator-controlled workstation:
 
 ```bash
 claude setup-token
@@ -339,6 +353,17 @@ the fallback. Studio discards the
 URL and code at terminal completion and emits one `provider_sign_in` operator
 event containing only host, provider, actor, and outcome. The token and Codex
 auth file never leave the host.
+
+**Sign in Claude** (AGT-2759) follows the same 15-minute bounded-session shape:
+Studio returns only a session handle and the browser verification URL (Claude's
+`setup-token` flow has no separate device code). The remote script redacts the
+resulting token out of every line it streams back and instead writes it
+directly into `/etc/agent-runner/provider-auth.env`, then verifies with
+`claude auth status --text` under that same environment and best-effort
+restarts installed units. Studio discards the URL at terminal completion and
+emits one `provider_sign_in` event with the same host/provider/actor/outcome
+shape. The token never leaves the host in any form, including transiently in
+the SSH transcript Studio parses.
 
 Provider capability snapshots refresh every 60 seconds. Execution Hosts shows
 **OK**, **Retrying**, **Limited**, **Expiring**, **Unavailable**, or **Unknown**

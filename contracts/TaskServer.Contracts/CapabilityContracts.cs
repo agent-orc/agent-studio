@@ -85,7 +85,8 @@ public sealed record HostTelemetrySnapshotDto(
     int TaskServerConnectionConsecutiveFailures = 0,
     DateTime? TaskServerConnectionEscalatedAt = null,
     string? TaskServerConnectionLastError = null,
-    DateTime? TaskServerConnectionLastRecoveredAt = null);
+    DateTime? TaskServerConnectionLastRecoveredAt = null,
+    long? CliProcessesReaped = null);
 
 public sealed record CapabilityFailureRequest(
     string RunnerId,

@@ -188,7 +188,8 @@ internal static class RunnerCapabilityProbe
                 sample.TaskServerConnectionConsecutiveFailures,
                 sample.TaskServerConnectionEscalatedAt,
                 sample.TaskServerConnectionLastError,
-                sample.TaskServerConnectionLastRecoveredAt);
+                sample.TaskServerConnectionLastRecoveredAt,
+                CliProcessReaper.ReapedCount);
 
     private static string ConnectivityDetail(TaskServerConnectivitySnapshot? connectivity)
     {

@@ -19,7 +19,9 @@ npm i -g @anthropic-ai/claude-code @openai/codex
 npx playwright install --with-deps chromium
 ```
 
-Provision Claude authentication in the wizard. Studio sends
+Provision Claude authentication in the wizard, or afterward with **Sign in
+Claude** on the host's provider badge (see [Provider
+auth](#provider-auth) below). The wizard's manual path sends
 `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` through SSH stdin and installs
 `/etc/agent-runner/provider-auth.env` as `root:agent` mode `640`. The value is
 never retained in Studio, a task, or the repository. Both runner units load the
@@ -228,6 +230,38 @@ corruption, or Task Server authority uncertainty. The UI labels it
 **Automatic whole-host drain**. An operator action is stored and labeled
 separately as **Operator-requested host drain**. Both block new claims, but
 neither kills an existing lease.
+
+## Provider auth
+
+Every host holds its own Claude and Codex session; never copy a credential
+file from another machine (see the runbook's [prohibited recovery
+paths](setup/cli-relogin-runbook.md#5-prohibited-recovery-paths)). Both
+providers now have a host-owned interactive sign-in reachable from the badge
+or a Ready-card wait chip: **Sign in Claude** and **Sign in Codex** (AGT-2712,
+AGT-2759). Each starts a bounded SSH session as the runner user, shows only a
+browser verification URL (plus a one-time code for Codex), and polls to
+completion; the resulting credential is written on the host and never returns
+to Studio. Full steps live in the [renewal
+runbook](setup/cli-relogin-runbook.md).
+
+The `provider-auth:<cli>` capability is backed by a real periodic probe
+(`claude auth status --text` / `codex login status`), cached for a few
+minutes, not a static advertisement. While that probe reports the host as
+logged out, the capability-admission gate in [Capability
+admission](#capability-admission) above keeps both new claims and review
+commands off it, and a review command that still hits an auth failure is
+classified as review infrastructure (`ReviewInfra`), never a product failure.
+
+**Process hygiene (AGT-2759).** A review or coding worker that dies without a
+live daemon watching it can leave its CLI child process running with no
+attempt left to report against. The review and coding daemons reap any such
+process rooted in the dead attempt's workspace as soon as reconciliation or
+report cleanup notices the worker is gone, logging
+`cli-process-reaped pid=<pid> age=<seconds>s attempt=<id>`. A daemon startup
+and hourly sweep additionally kills any tracked-CLI process whose working
+directory was already removed, or that has run longer than the maximum review
+dormant age, independent of any attempt record. The running total is exposed
+in host telemetry.
 
 ## Drain
 
