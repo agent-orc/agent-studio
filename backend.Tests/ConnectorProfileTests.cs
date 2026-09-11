@@ -20,13 +20,13 @@ namespace AgentStudio.Tests;
 public sealed class ConnectorProfileTests
 {
     [Fact]
-    public void Inventory_is_the_approved_95_local_and_268_proxy_surface()
+    public void Inventory_is_the_approved_97_local_and_268_proxy_surface()
     {
         var inventory = ConnectorRouteInventory.Load();
 
         Assert.Equal(ConnectorRouteInventory.ExpectedInventorySha256, inventory.SourceChecksum);
-        Assert.Equal(363, inventory.Operations.Count);
-        Assert.Equal(95, inventory.DevSeatOperations.Count);
+        Assert.Equal(365, inventory.Operations.Count);
+        Assert.Equal(97, inventory.DevSeatOperations.Count);
         Assert.Equal(268, inventory.TaskServerOperations.Count);
         Assert.Equal(1, inventory.TaskServerOperations.Count(operation => operation.Method == "WS"));
     }
@@ -54,8 +54,8 @@ public sealed class ConnectorProfileTests
 
         Assert.All(endpoints, endpoint => Assert.NotEmpty(
             endpoint.Metadata.GetOrderedMetadata<ConnectorClassifiedEndpointMetadata>()));
-        Assert.Equal(363, metadata.Length);
-        Assert.Equal(95, endpoints
+        Assert.Equal(365, metadata.Length);
+        Assert.Equal(97, endpoints
             .SelectMany(endpoint => endpoint.Metadata.GetOrderedMetadata<ConnectorClassifiedEndpointMetadata>())
             .Where(item => item.Classification == ConnectorRouteInventory.DevSeatClassification)
             .Select(item => new ConnectorRouteKey(item.Method, ConnectorRouteKey.NormalizePath(item.Path)))

@@ -65,6 +65,35 @@ public static class TaskFilesEndpoints
             return FileContentResult(content);
         });
 
+        // Dev-seat twin of `/{jobId}/files/{**path}` for the `scope=code`
+        // read: an arbitrary source file relative to the repo root on this
+        // dev seat's checkout, used by the clickable protocol source
+        // references to open a file in the source viewer. Split onto its own
+        // path (studio-route-ownership dossier, "Split three mixed contracts
+        // before cutover") so the Task Server-backed `/files/{**path}` route
+        // never has to resolve or serve live repository content - only this
+        // dev-seat route does, and the query-string `scope` is fixed here
+        // rather than caller-selectable.
+        group.MapGet("/{jobId}/checkout/{**path}", (
+            string jobId,
+            string path,
+            [FromQuery] string? project,
+            [FromQuery] string? watchPath,
+            [FromQuery] string? at,
+            TaskFileHistoryService files,
+            AgentStudio.Registry.ProjectRegistry projects) =>
+        {
+            watchPath = ResolveWatchPath(projects, project, watchPath);
+            if (TryStripOperationSuffix(path, "history", out var historyPath))
+            {
+                var history = files.GetHistory(jobId, watchPath, historyPath, TaskFileSources.Code);
+                return HistoryResult(history);
+            }
+
+            var content = files.ReadFile(jobId, watchPath, path, at, TaskFileSources.Code);
+            return FileContentResult(content);
+        });
+
         // Lists supported documents directly in the job root (status.md
         // excluded). Drives the detail view's Files tab (F48): prompt, aspect
         // verdicts, operator notes, and interactive isolated HTML surface as a
