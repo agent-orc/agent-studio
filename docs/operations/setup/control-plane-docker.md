@@ -3,7 +3,8 @@
 Status: bootstrap material for Phase B slice B5
 ([remote-task-server-local-studio.md](../remote-task-server-local-studio.md)),
 runtime changed from systemd packages to Docker containers per the
-2026-09-06 operator decision. Reuses the same published images and the same
+2026-09-06 operator decision, plus the S3-compatible cold archive target
+(AGT-2746, 2026-09-11). Reuses the same published images and the same
 `agent-orchestrator-setup` guided installer as the systemd target; only the
 runtime differs.
 
@@ -135,6 +136,50 @@ container: drain, resolve every attempt, enter `Maintenance`, then
 [task-server.md, "Backup and restore rehearsal"](./task-server.md) for the
 full request/response contract; only the transport (compose `exec` instead of
 a bare `curl` on the host) differs.
+
+## Cold archive target
+
+`task-server` archives class C payloads to `ARCHIVE_PATH` exactly as the
+systemd target does
+([task-server.md, "Retention against the SQLite store"](./task-server.md#retention-against-the-sqlite-store)).
+The packaged default is a dedicated `archive` volume mounted at
+`/var/lib/agent-orchestrator/archive`, separate from the `store` and `backup`
+volumes so the cold archive never shares a disk with the hot store; no
+operator action is required to use it.
+
+An off-host S3-compatible target (Hetzner Object Storage in production,
+MinIO in CI) is optional and uses the same seven `ARCHIVE_S3_*` variables
+documented in
+[task-server.md, "Configuration and health"](./task-server.md#configuration-and-health),
+set in `.env` next to `compose.yaml` and passed through to the `task-server`
+service. `ARCHIVE_S3_CREDENTIALS_FILE` is mounted as a Docker secret
+(`archive_s3_credentials`), the same pattern already used for
+`studio_token`/`engine_token`/`runner_token`, so the JSON credential file is
+never a plain environment value. `install-docker.sh` and the guided installer
+prompt for the S3 endpoint, bucket, prefix, region, path-style flag, and
+credential file, and leave every value empty by default, which keeps the
+local-only behavior above.
+
+With `archiveTarget: s3` or `copyToSecondary: true` set on the retention
+policy, the `backup` service's full backup sets are copied off-host and
+thinned remotely alongside the local copies
+([task-server.md, "Full backup sets"](./task-server.md#full-backup-sets)); a
+stage 3 cold-payload deletion is refused while a retained backup set still
+references the payload. The weekly integrity sample
+(`TaskServer:RetentionIntegritySampleCount`,
+`TaskServer:RetentionIntegrityDayOfWeek`) runs inside `task-server` on the
+same schedule as the daily archive sweep; inspect it in the same log stream
+as the Task Server itself:
+
+```bash
+docker compose --project-directory /opt/agent-orchestrator/compose \
+    --env-file /etc/agent-orchestrator/docker.env logs task-server --tail 50
+```
+
+See the
+[retention and archive dossier, §5](../retention-und-archiv/index.html#archiv-s3)
+for the full design rationale behind the target abstraction, the integrity
+check, and archive retention with tombstones.
 
 ## WireGuard
 

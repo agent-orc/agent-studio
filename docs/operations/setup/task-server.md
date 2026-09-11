@@ -1,8 +1,9 @@
 # Task Server deployment and recovery
 
 Status: production bootstrap, scoped service principals, topology release,
-sole v1 ownership contract, and per-service release container images,
-AGT-2192/AGT-2196/AGT-2330/AGT-2730/AGT-2729, 2026-09-07.
+sole v1 ownership contract, per-service release container images, and the
+S3-compatible cold archive target, AGT-2192/AGT-2196/AGT-2330/AGT-2730/
+AGT-2729/AGT-2746, 2026-09-11.
 
 This runbook implements the Task Server boundary from
 [Distributed Agent Studio target architecture](../../concepts/distributed-agent-studio-target-architecture.md).
@@ -300,6 +301,31 @@ policy and `confirmColdDelete: true` on that apply request. Projects cannot
 weaken the built-in never-archive lanes from Backlog through Human Review and
 Escalated.
 
+The workspace policy also carries `archiveStorage`
+(`ArchiveStoragePolicy`). `archiveTarget` is `local` or `s3` (default
+`local`). `copyToSecondary: true` is valid only with a local primary target:
+it writes the local object first, then uploads it to S3 and verifies the
+SHA-256 there before the run counts as complete.
+`deleteLocalAfterVerification: true` requires `copyToSecondary` and removes
+the local object once the S3 copy verifies. `deleteArchivedAfterYears` (1 to
+100, unset by default, meaning never) drives stage 3 in place of the per-rule
+`deleteArchiveAfterDaysTerminal` once set. Every archive stage records one
+`ArchiveObjectReference` per uploaded object (target name, object key, ETag,
+SHA-256, size, and the target's own server-side checksum when it returns one)
+in `ArchiveManifest.Objects`, keyed
+`<project>/<task-key>/<archivedAt:yyyyMMddTHHmmssfffZ>/<file>` under an
+optional bucket prefix. `LocalDirectoryTarget` and `S3Target`
+(`retention/ArchiveTargets.cs`) both implement the same `IArchiveTarget`
+contract, so the planner, restore, and the weekly integrity check below never
+special-case which target holds a payload.
+
+Restore tries every target recorded on a stage's objects until one verifies
+the payload's SHA-256 (and, for a ZIP payload, every entry hash) before
+writing content back to SQLite; a full backup restored onto a host with the
+same S3 target configured resolves archived artifacts through the recorded
+object references without a separate cold-payload copy (see "Full backup
+sets" below).
+
 Archiving a heavy file clears `artifacts.content` to `NULL` and sets
 `archived = 1`; the row keeps its `sha256` and `size_bytes`. A content read on
 an archived artifact,
@@ -317,6 +343,8 @@ Management routes, all under `/api/v1/management/retention`:
 | `POST /plan` | Dry run; returns the plan and records an `archive_runs` row in mode `plan` | `management` |
 | `POST /apply` | Runs now; skips tasks with an active or process-unknown lease; refused with `server-not-writable` in `ReadOnly` and `Maintenance`; cold deletion additionally requires `confirmColdDelete: true` | `management` |
 | `GET /runs`, `GET /runs/{id}` | Run history with the full report | `tasks:read` |
+| `GET /target` | Active archive policy and non-secret local/S3 target configuration status | `tasks:read` |
+| `POST /integrity/check` | Sample manifests and re-verify every recorded object and ZIP entry hash; optional body `{"sampleCount": 25}` | `management` |
 | `GET /archive/{taskId}` | Manifest for an archived task (accepts a task id or task key) | `tasks:read` |
 | `POST /archive/{taskId}` | Archive one task now, bypassing age thresholds; body is `{"stage":1|2|3,"confirmColdDelete":false}`; active leases and policy-protected lanes are refused | `management` |
 | `POST /archive/{taskId}/restore` | Restore, with every file hash re-verified | `management` |
@@ -333,6 +361,16 @@ and publishes the same event over `/hubs/events` as `taskServerEvent` for the
 Studio feed. It then creates a full backup set and thins complete sets to the
 policy union of 7 daily, 4 weekly, and 12 monthly sets. An archive, event, or
 backup failure is logged and never stops the server.
+
+On the configured weekly day (`TaskServer:RetentionIntegrityDayOfWeek`,
+default `Sunday`) the same scheduler also runs an integrity sample of up to
+`TaskServer:RetentionIntegritySampleCount` (default `25`) archive manifests:
+it re-verifies every recorded object against its target and, for anything
+that verifies, re-hashes every ZIP entry against the manifest. The run is
+stored in `archive_runs` with `mode=integrity`; a discrepancy appends a
+`retention.integrity-discrepancy` audit record scoped to that run and
+publishes `retention.integrity.discrepancy` (or `retention.integrity.clean`
+when nothing is wrong) over the same Studio feed hub.
 
 The legacy migration import
 (`POST /api/v1/management/migrations/legacy/import`) runs the active policy
@@ -378,6 +416,23 @@ fails. A full set is therefore relocatable to a different `ARCHIVE_PATH`.
 The ordinary SQLite backup and restore routes deliberately include only the
 database. They do not copy cold payloads; use a full backup set whenever
 archived artifacts must be recoverable from that backup alone.
+
+When an S3 archive target is configured (see "Retention against the SQLite
+store" above), `POST /backups/full` uploads the complete set under
+`<prefix>/full/<backup-id>/` once the local `complete.json` exists,
+uploading `complete.json` itself last. The summary and `GET /backups/full`
+report `remoteState`: `not-configured`, `verified`, `hash-mismatch`,
+`missing`, or `unavailable`, computed by re-reading the remote
+`inventory.json`/`complete.json` pair and comparing `setSha256`. Thinning to
+the 7 daily / 4 weekly / 12 monthly union deletes both the local and the
+remote copy of every set outside the kept union. Stage 3 cold-payload
+deletion (`confirmColdDelete: true`) is refused with
+`archive-referenced-by-backup` for any payload a retained complete backup set
+still references, so a set never silently loses a payload it depends on. A
+deleted payload keeps its manifest as a tombstone and an audit record; the
+"Cold archive" card on the Task Server settings page previews the affected
+payloads and requires typing `DELETE ARCHIVED PAYLOADS` before sending the
+confirmed apply.
 
 The analysis export is versioned JSONL, one object per line:
 
@@ -533,11 +588,29 @@ settings.
 | `TaskServer:MaximumPrincipalRotationOverlapSeconds` | Maximum accepted rotation overlap | `3600` |
 | `TaskServer:RequireAuthentication`, `StudioBearerToken`, `RunnerBearerToken` | Deprecated compatibility profile mapped into persisted principals; removal follows Phase B migration | unset |
 | `ARCHIVE_PATH` or `TaskServer:RetentionArchivePath` | Cold archive root for the SQLite retention adapter, outside `STORE_PATH`; `ARCHIVE_PATH` wins | `<STORE_PATH>/archive` |
+| `ARCHIVE_S3_ENDPOINT` | Absolute `http(s)` endpoint for any S3-compatible service; enables the S3 target together with the three rows below | Unset |
+| `ARCHIVE_S3_BUCKET` | Existing bucket for archive objects | Unset |
+| `ARCHIVE_S3_PREFIX` | Optional object-key prefix | Empty |
+| `ARCHIVE_S3_REGION` | SigV4 signing region | `us-east-1` |
+| `ARCHIVE_S3_CREDENTIALS_FILE` | JSON file with `accessKey`/`secretKey`, mode 0640 or stricter; never stored in the policy or a manifest | Unset |
+| `ARCHIVE_S3_PATH_STYLE` | Put the bucket in the URL path instead of the host; required for MinIO | `false` |
+| `ARCHIVE_S3_SERVER_SIDE_CHECKSUM` | Also send the S3 SHA-256 checksum header, in addition to the end-to-end byte verification every target performs | `true` |
 | `TaskServer:RetentionSchedulerEnabled` | Enables the daily archive sweep | `true` |
 | `TaskServer:RetentionScheduleHour` | Server-local hour the scheduler checks once per day | `3` |
 | `TaskServer:RetentionSchedulerIntervalMinutes` | Poll interval for the scheduler's daily-hour check | `60` |
 | `TaskServer:RetentionMaximumLoadPerCore` | Maximum one-minute Linux load average per logical core for a scheduled run; unavailable load telemetry is admitted and logged | `1.5` |
+| `TaskServer:RetentionIntegritySampleCount` | Maximum manifests in the weekly integrity sample | `25` |
+| `TaskServer:RetentionIntegrityDayOfWeek` | Server-local weekday for the integrity sample | `Sunday` |
 | `TaskServer:BackupPathFull` | Full backup set root | `<BACKUP_PATH>/full` |
+
+Every `ARCHIVE_S3_*` value stays unset by default, which keeps
+`archiveTarget: local` behavior unchanged; local-only archiving needs no S3
+configuration. See
+[control-plane-docker.md, "Cold archive target"](./control-plane-docker.md#cold-archive-target)
+for the Docker control-plane variables and the packaged installer prompts,
+and the
+[retention and archive dossier, §5](../retention-und-archiv/index.html#archiv-s3)
+for the full design rationale.
 
 - Configure at most one direct value or file for each bootstrap principal.
 - `GET /api/v1/protocol` and `POST /api/v1/protocol/compatibility` remain open
