@@ -108,18 +108,46 @@ public sealed class ReviewDrainGuardTests : IDisposable
     }
 
     [Fact]
-    public void A_drain_request_round_trips_and_the_next_daemon_start_clears_it()
+    public void A_drain_request_and_its_daemon_acknowledgement_round_trip()
     {
         Assert.Null(ReviewDrainGuard.ReadDrainRequest(_root));
 
-        ReviewDrainGuard.RequestDrain(_root, "release promotion");
+        var written = ReviewDrainGuard.RequestDrain(_root, "release promotion");
         var request = ReviewDrainGuard.ReadDrainRequest(_root);
 
         Assert.NotNull(request);
+        Assert.Equal(written.RequestId, request!.RequestId);
         Assert.Equal("release promotion", request!.Reason);
+        Assert.Equal(ReviewDrainGuard.DrainMode, request.Mode);
+        Assert.Null(ReviewDrainGuard.ReadDrainAcknowledgement(_root));
 
-        ReviewDrainGuard.ClearDrainRequest(_root);
+        ReviewDrainGuard.AcknowledgeDrain(_root, request, activeSlots: 2);
+        var acknowledgement = ReviewDrainGuard.ReadDrainAcknowledgement(_root);
+
+        Assert.NotNull(acknowledgement);
+        Assert.Equal(request.RequestId, acknowledgement!.RequestId);
+        Assert.Equal(2, acknowledgement.ActiveSlots);
+
+        ReviewDrainGuard.ClearDrainState(_root);
         Assert.Null(ReviewDrainGuard.ReadDrainRequest(_root));
+        Assert.Null(ReviewDrainGuard.ReadDrainAcknowledgement(_root));
+    }
+
+    [Fact]
+    public void Daemon_acknowledgement_needs_only_read_access_to_a_root_created_control_lock()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var request = ReviewDrainGuard.RequestRestartGuard(_root, "root helper simulation");
+        var lockPath = Path.Combine(_root, "review-drain-control.lock");
+        File.SetUnixFileMode(
+            lockPath,
+            UnixFileMode.UserRead | UnixFileMode.GroupRead | UnixFileMode.OtherRead);
+
+        ReviewDrainGuard.AcknowledgeDrain(_root, request, activeSlots: 0);
+
+        Assert.Equal(
+            request.RequestId,
+            ReviewDrainGuard.ReadDrainAcknowledgement(_root)?.RequestId);
     }
 
     [Fact]
@@ -132,23 +160,106 @@ public sealed class ReviewDrainGuardTests : IDisposable
     }
 
     [Fact]
-    public void The_restart_guard_command_refuses_busy_slots_and_names_the_drain()
+    public async Task The_restart_guard_command_refuses_busy_slots_and_withdraws_its_barrier()
     {
         var options = Options();
         var state = new ReviewStateStore(options.StateDir);
         state.Save(Slot("attempt-running", "running"));
         var logs = new List<string>();
 
-        var refused = ReviewDrainCommand.RunRestartGuard(options, logs.Add);
-        var forced = ReviewDrainCommand.RunRestartGuard(Options(force: true), logs.Add);
+        var refused = ReviewDrainCommand.RunRestartGuardAsync(
+            options,
+            logs.Add,
+            CancellationToken.None);
+        ReviewDrainGuard.DrainRequest? request;
+        while ((request = ReviewDrainGuard.ReadDrainRequest(options.StateDir)) is null)
+            await Task.Delay(10);
+        Assert.Equal(ReviewDrainGuard.RestartGuardMode, request.Mode);
+        ReviewDrainGuard.AcknowledgeDrain(options.StateDir, request, activeSlots: 1);
 
-        Assert.Equal(3, refused);
+        var refusedExit = await refused.WaitAsync(TimeSpan.FromSeconds(10));
+        var forced = await ReviewDrainCommand.RunRestartGuardAsync(
+            Options(force: true),
+            logs.Add,
+            CancellationToken.None);
+
+        Assert.Equal(3, refusedExit);
         Assert.Equal(0, forced);
+        Assert.Null(ReviewDrainGuard.ReadDrainRequest(options.StateDir));
         Assert.Contains(logs, line =>
             line.Contains("restart-guard refused", StringComparison.Ordinal)
             && line.Contains("attempt-running", StringComparison.Ordinal)
             && line.Contains("agent-host --drain", StringComparison.Ordinal));
         Assert.Contains(logs, line => line.Contains("restart-guard forced", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task An_idle_restart_guard_withdraws_or_holds_the_acknowledged_barrier(
+        bool holdAdmission)
+    {
+        var options = Options(holdAdmission: holdAdmission);
+        var guard = ReviewDrainCommand.RunRestartGuardAsync(
+            options,
+            _ => { },
+            CancellationToken.None);
+        ReviewDrainGuard.DrainRequest? request;
+        while ((request = ReviewDrainGuard.ReadDrainRequest(options.StateDir)) is null)
+            await Task.Delay(10);
+        ReviewDrainGuard.AcknowledgeDrain(options.StateDir, request, activeSlots: 0);
+
+        Assert.Equal(0, await guard.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal(
+            holdAdmission,
+            ReviewDrainGuard.ReadDrainRequest(options.StateDir) is not null);
+    }
+
+    [Fact]
+    public void An_old_guard_cannot_withdraw_a_newer_control_request()
+    {
+        var first = ReviewDrainGuard.RequestRestartGuard(_root, "first replacement");
+        var second = ReviewDrainGuard.RequestDrain(_root, "operator drain");
+
+        Assert.False(ReviewDrainGuard.WithdrawRequest(_root, first.RequestId));
+        Assert.Equal(second.RequestId, ReviewDrainGuard.ReadDrainRequest(_root)?.RequestId);
+    }
+
+    [Fact]
+    public async Task A_restart_guard_cannot_replace_an_existing_drain_request()
+    {
+        var drain = ReviewDrainGuard.RequestDrain(_root, "operator drain");
+        var logs = new List<string>();
+
+        var exitCode = await ReviewDrainCommand.RunRestartGuardAsync(
+            Options(),
+            logs.Add,
+            CancellationToken.None);
+
+        Assert.Equal(3, exitCode);
+        Assert.Equal(drain.RequestId, ReviewDrainGuard.ReadDrainRequest(_root)?.RequestId);
+        Assert.Contains(logs, line =>
+            line.Contains("already active", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_pre_control_protocol_daemon_fails_the_candidate_guard_closed()
+    {
+        var options = Options();
+        var logs = new List<string>();
+
+        // No daemon acknowledges the candidate's marker. This models the
+        // one-time upgrade from a release that predates host-local control.
+        var exitCode = await ReviewDrainCommand.RunRestartGuardAsync(
+                options,
+                logs.Add,
+                CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(3, exitCode);
+        Assert.Null(ReviewDrainGuard.ReadDrainRequest(options.StateDir));
+        Assert.Contains(logs, line =>
+            line.Contains("did not acknowledge closed admission", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -160,13 +271,55 @@ public sealed class ReviewDrainGuardTests : IDisposable
         var logs = new List<string>();
 
         var drain = ReviewDrainCommand.RunDrainAsync(options, logs.Add, CancellationToken.None);
-        while (ReviewDrainGuard.ReadDrainRequest(options.StateDir) is null)
+        ReviewDrainGuard.DrainRequest? request;
+        while ((request = ReviewDrainGuard.ReadDrainRequest(options.StateDir)) is null)
             await Task.Delay(10);
+        ReviewDrainGuard.AcknowledgeDrain(options.StateDir, request!, activeSlots: 1);
         state.Delete(busy);
+        ReviewDrainGuard.AcknowledgeDrain(options.StateDir, request!, activeSlots: 0);
 
         Assert.Equal(0, await drain.WaitAsync(TimeSpan.FromSeconds(10)));
         Assert.Contains(logs, line => line.Contains("drain requested", StringComparison.Ordinal));
+        Assert.Contains(logs, line => line.Contains("drain acknowledged", StringComparison.Ordinal));
         Assert.Contains(logs, line => line.Contains("drain complete", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task An_empty_census_does_not_complete_before_the_daemon_acknowledges_admission_closed()
+    {
+        var options = Options(drainTimeoutSeconds: 5);
+        var logs = new List<string>();
+
+        var drain = ReviewDrainCommand.RunDrainAsync(options, logs.Add, CancellationToken.None);
+        ReviewDrainGuard.DrainRequest? request;
+        while ((request = ReviewDrainGuard.ReadDrainRequest(options.StateDir)) is null)
+            await Task.Delay(10);
+
+        await Task.Delay(100);
+        Assert.False(drain.IsCompleted);
+
+        ReviewDrainGuard.AcknowledgeDrain(options.StateDir, request!, activeSlots: 0);
+
+        Assert.Equal(0, await drain.WaitAsync(TimeSpan.FromSeconds(10)));
+    }
+
+    [Fact]
+    public async Task Drain_fails_closed_when_any_slot_record_is_unreadable()
+    {
+        var options = Options(drainTimeoutSeconds: 5);
+        var state = new ReviewStateStore(options.StateDir);
+        File.WriteAllText(Path.Combine(state.Root, "attempt-torn.review-slot.json"), "{ not json");
+        var logs = new List<string>();
+
+        var exitCode = await ReviewDrainCommand.RunDrainAsync(
+            options,
+            logs.Add,
+            CancellationToken.None);
+
+        Assert.Equal(3, exitCode);
+        Assert.Contains(logs, line =>
+            line.Contains("drain refused", StringComparison.Ordinal)
+            && line.Contains("could not be read", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -177,9 +330,13 @@ public sealed class ReviewDrainGuardTests : IDisposable
         state.Save(Slot("attempt-running", "running"));
         var logs = new List<string>();
 
-        var exitCode = await ReviewDrainCommand
-            .RunDrainAsync(options, logs.Add, CancellationToken.None)
-            .WaitAsync(TimeSpan.FromSeconds(20));
+        var drain = ReviewDrainCommand.RunDrainAsync(options, logs.Add, CancellationToken.None);
+        ReviewDrainGuard.DrainRequest? request;
+        while ((request = ReviewDrainGuard.ReadDrainRequest(options.StateDir)) is null)
+            await Task.Delay(10);
+        ReviewDrainGuard.AcknowledgeDrain(options.StateDir, request!, activeSlots: 1);
+
+        var exitCode = await drain.WaitAsync(TimeSpan.FromSeconds(20));
 
         Assert.Equal(3, exitCode);
         Assert.Contains(logs, line =>
@@ -187,9 +344,13 @@ public sealed class ReviewDrainGuardTests : IDisposable
             && line.Contains("attempt-running", StringComparison.Ordinal));
     }
 
-    private RunnerOptions Options(bool force = false, int drainTimeoutSeconds = 3600) => new()
+    private RunnerOptions Options(
+        bool force = false,
+        int drainTimeoutSeconds = 3600,
+        bool holdAdmission = false) => new()
     {
         Force = force,
+        HoldAdmission = holdAdmission,
         DrainTimeoutSeconds = drainTimeoutSeconds,
         ServerUrl = "http://127.0.0.1:5030",
         RunnerId = "review-runner",
@@ -206,6 +367,7 @@ public sealed class ReviewDrainGuardTests : IDisposable
         TtlSeconds = 120,
         HeartbeatSeconds = 30,
         PollSeconds = 1,
+        ServerRequestTimeoutSeconds = 2,
     };
 
     private PersistedReviewSlot Slot(string attemptId, string phase)

@@ -7,6 +7,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
@@ -21,6 +22,7 @@ public sealed class RemoteReviewAuthorityTests
     private const string TreeSha = "0123456789abcdef0123456789abcdef01234567";
     private const string RepositoryId = "repo_0123456789abcdef";
     private const string RepositoryUrl = "https://example.invalid/product.git";
+    private const string ReviewHttpToken = "review-http-token-000000000000000000000000000001";
 
     [Fact]
     public async Task Stored_review_subject_limits_dotnet_test_cpu_before_it_becomes_immutable()
@@ -447,6 +449,136 @@ public sealed class RemoteReviewAuthorityTests
     }
 
     [Fact]
+    public async Task Restart_registration_adoption_does_not_shorten_a_longer_handoff_lease()
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.Parse("2026-09-07T03:10:00Z"));
+        using var temp = new TempDirectory();
+        var firstStore = Store(temp.Path, clock);
+        await firstStore.InitializeAsync();
+        await SeedReviewSubjectAsync(firstStore);
+        await RegisterReviewerAsync(firstStore, "review-a", "instance-a", "host-a");
+        var claim = await firstStore.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+        var handoff = await firstStore.RenewReviewLeaseAsync(
+            claim.Attempt!.AttemptId,
+            new ReviewLeaseRenewRequest(
+                "review-a",
+                "instance-a",
+                claim.Lease!.LeaseId,
+                claim.Lease.Fence,
+                "handoff-renew",
+                RequestedTtlSeconds: 900),
+            "review-a",
+            default);
+
+        clock.Advance(TimeSpan.FromSeconds(30));
+        var restarted = Store(temp.Path, clock);
+        await restarted.InitializeAsync();
+        var registered = await restarted.RegisterRunnerAsync(
+            "review-a",
+            new RegisterRunnerRequest(
+                "review-a",
+                "host-a",
+                "replacement-instance",
+                "1.0.0",
+                TaskServerProtocol.Current,
+                [ReviewCapabilities.ReviewExecutor],
+                ActiveAttempts:
+                [
+                    new RunnerActiveAttempt(
+                        RunnerAttemptKinds.Review,
+                        claim.Attempt.AttemptId,
+                        claim.Attempt.TaskId,
+                        claim.Lease.LeaseId,
+                        claim.Lease.Fence,
+                        LeaseInstanceId: claim.Lease.InstanceId),
+                ],
+                AttemptLeaseTtlSeconds: 120),
+            "review-a",
+            default);
+
+        var adoption = Assert.Single(registered.AttemptAdoptions!);
+        Assert.Equal("adopted", adoption.Status);
+        Assert.Equal(handoff.ExpiresAt, adoption.ExpiresAt);
+    }
+
+    [Fact]
+    public async Task Second_restart_counts_a_missing_worker_from_the_original_lease_generation()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var subject = await SeedReviewSubjectAsync(store);
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        var claim = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+        var task = await TaskAsync(store, subject.TaskId);
+
+        var firstRestart = await store.RegisterRunnerAsync(
+            "review-a",
+            new RegisterRunnerRequest(
+                "review-a",
+                "host-a",
+                "replacement-instance",
+                "1.0.0",
+                TaskServerProtocol.Current,
+                [ReviewCapabilities.ReviewExecutor],
+                ActiveAttempts:
+                [
+                    new RunnerActiveAttempt(
+                        RunnerAttemptKinds.Review,
+                        claim.Attempt!.AttemptId,
+                        claim.Attempt.TaskId,
+                        claim.Lease!.LeaseId,
+                        claim.Lease.Fence,
+                        LeaseInstanceId: claim.Lease.InstanceId),
+                ]),
+            "review-a",
+            default);
+        Assert.Equal("adopted", Assert.Single(firstRestart.AttemptAdoptions!).Status);
+        Assert.Equal(
+            0,
+            Assert.Single(
+                await store.ListRunnerCapabilitySnapshotsAsync(default),
+                item => item.RunnerId == "review-a").ReviewsLost);
+
+        var registered = await store.RegisterRunnerAsync(
+            "review-a",
+            new RegisterRunnerRequest(
+                "review-a",
+                "host-a",
+                "successor-instance",
+                "1.0.0",
+                TaskServerProtocol.Current,
+                [ReviewCapabilities.ReviewExecutor],
+                ActiveAttempts: []),
+            "review-a",
+            default);
+
+        Assert.Empty(registered.AttemptAdoptions!);
+        var snapshot = Assert.Single(
+            await store.ListRunnerCapabilitySnapshotsAsync(default),
+            item => item.RunnerId == "review-a");
+        Assert.Equal(1, snapshot.ReviewsLost);
+
+        var loss = Assert.Single(
+            await store.ListAuditAsync(0, default),
+            item => item.Action == "review-attempt.lost-on-restart");
+        Assert.Equal(claim.Attempt!.AttemptId, loss.TargetId);
+        var detail = JsonDocument.Parse(loss.DetailJson).RootElement;
+        Assert.Equal(task.TaskKey, detail.GetProperty("taskKey").GetString());
+        Assert.Equal("worker-not-reported", detail.GetProperty("status").GetString());
+        Assert.Contains("replacement ActiveAttempts", detail.GetProperty("cause").GetString());
+        Assert.Contains(claim.Attempt.AttemptId, detail.GetProperty("message").GetString());
+        Assert.Contains(task.TaskKey, detail.GetProperty("message").GetString());
+
+        var lossEvent = Assert.Single(
+            await store.ListStudioStreamEventsSinceAsync(0, default),
+            item => item.Kind == "review-attempt.lost-on-restart");
+        Assert.Equal(subject.TaskId, lossEvent.TaskId);
+    }
+
+    [Fact]
     public async Task Restart_reclaim_preserves_physical_isolation_replays_and_accepts_the_report()
     {
         using var temp = new TempDirectory();
@@ -533,6 +665,111 @@ public sealed class RemoteReviewAuthorityTests
     }
 
     [Fact]
+    public async Task Ambiguous_reclaim_recovery_reports_success_without_a_false_restart_loss()
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.Parse("2026-09-07T03:10:00Z"));
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        await SeedReviewSubjectAsync(store);
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        var original = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+
+        var firstRestart = await store.RegisterRunnerAsync(
+            "review-a",
+            new RegisterRunnerRequest(
+                "review-a",
+                "host-a",
+                "replacement-instance",
+                "1.0.0",
+                TaskServerProtocol.Current,
+                [ReviewCapabilities.ReviewExecutor],
+                ActiveAttempts:
+                [
+                    new RunnerActiveAttempt(
+                        RunnerAttemptKinds.Review,
+                        original.Attempt!.AttemptId,
+                        original.Attempt.TaskId,
+                        original.Lease!.LeaseId,
+                        original.Lease.Fence,
+                        LeaseInstanceId: original.Lease.InstanceId),
+                ]),
+            "review-a",
+            default);
+        Assert.Equal("adopted", Assert.Single(firstRestart.AttemptAdoptions!).Status);
+
+        clock.Advance(TimeSpan.FromMinutes(11));
+        var request = new ReviewReClaimRequest(
+            "review-a",
+            "replacement-instance",
+            original.Lease!.LeaseId,
+            original.Lease.Fence,
+            "ambiguous-reclaim");
+        var committed = await store.ReClaimReviewAsync(
+            original.Attempt!.AttemptId,
+            request,
+            "review-a",
+            default);
+
+        // The response is lost. The next daemon still reports the old durable
+        // slot while registration observes the already-advanced server fence.
+        var secondRestart = await store.RegisterRunnerAsync(
+            "review-a",
+            new RegisterRunnerRequest(
+                "review-a",
+                "host-a",
+                "successor-instance",
+                "1.0.0",
+                TaskServerProtocol.Current,
+                [ReviewCapabilities.ReviewExecutor],
+                ActiveAttempts:
+                [
+                    new RunnerActiveAttempt(
+                        RunnerAttemptKinds.Review,
+                        original.Attempt.AttemptId,
+                        original.Attempt.TaskId,
+                        original.Lease.LeaseId,
+                        original.Lease.Fence,
+                        LeaseInstanceId: original.Lease.InstanceId),
+                ]),
+            "review-a",
+            default);
+        Assert.Equal("stale-authority", Assert.Single(secondRestart.AttemptAdoptions!).Status);
+
+        var replay = await store.ReClaimReviewAsync(
+            original.Attempt.AttemptId,
+            request,
+            "review-a",
+            default);
+        Assert.Equal(committed, replay);
+        var report = await store.ReportReviewAsync(
+            replay.Attempt!.AttemptId,
+            PassingReport(replay with { Subject = original.Subject }),
+            "review-a",
+            default);
+        Assert.Equal("Pass", report.Outcome);
+
+        var snapshot = Assert.Single(
+            await store.ListRunnerCapabilitySnapshotsAsync(default),
+            item => item.RunnerId == "review-a");
+        Assert.Equal(0, snapshot.ReviewsLost);
+        var audits = await store.ListAuditAsync(0, default);
+        Assert.DoesNotContain(
+            audits,
+            item => item.Action == "review-attempt.lost-on-restart");
+        var latestRestart = audits
+            .Where(item => item.Action == "review-daemon.restarted")
+            .OrderByDescending(item => item.OccurredAt)
+            .First();
+        var detail = JsonDocument.Parse(latestRestart.DetailJson).RootElement;
+        Assert.Equal(0, detail.GetProperty("reviewsLost").GetInt32());
+        Assert.Equal(
+            "stale-authority",
+            detail.GetProperty("attempts")[0].GetProperty("status").GetString());
+    }
+
+    [Fact]
     public async Task Reclaim_never_steals_an_unexpired_live_review_lease()
     {
         using var temp = new TempDirectory();
@@ -591,6 +828,55 @@ public sealed class RemoteReviewAuthorityTests
     }
 
     [Fact]
+    public async Task Uncommitted_stale_generation_reclaim_can_rotate_to_the_current_instance()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        await SeedReviewSubjectAsync(store);
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        var claim = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+        await SetReviewLeaseExpiryAsync(
+            store,
+            claim.Attempt!.AttemptId,
+            DateTime.UtcNow.AddMinutes(-1));
+        await RegisterReviewerAsync(store, "review-a", "replacement-instance", "host-a");
+        await RegisterReviewerAsync(store, "review-a", "successor-instance", "host-a");
+
+        var staleRequest = new ReviewReClaimRequest(
+            "review-a",
+            "replacement-instance",
+            claim.Lease!.LeaseId,
+            claim.Lease.Fence,
+            "uncommitted-replacement-request");
+        var stale = await Assert.ThrowsAsync<TaskServerConflictException>(() =>
+            store.ReClaimReviewAsync(
+                claim.Attempt.AttemptId,
+                staleRequest,
+                "review-a",
+                default));
+        Assert.Equal("runner-instance-stale", stale.Code);
+        Assert.Equal(
+            claim.Lease.Fence,
+            (await store.GetReviewAttemptAsync(claim.Attempt.AttemptId, default))!.Fence);
+
+        var reclaimed = await store.ReClaimReviewAsync(
+            claim.Attempt.AttemptId,
+            staleRequest with
+            {
+                InstanceId = "successor-instance",
+                IdempotencyKey = "current-successor-request",
+            },
+            "review-a",
+            default);
+        Assert.True(reclaimed.Lease!.Fence > claim.Lease.Fence);
+        Assert.Equal("successor-instance", reclaimed.Lease.InstanceId);
+        Assert.Equal(claim.Lease.ResourceNamespace, reclaimed.Lease.ResourceNamespace);
+        Assert.Equal(claim.Lease.PortBase, reclaimed.Lease.PortBase);
+    }
+
+    [Fact]
     public async Task Schema_upgrade_backfills_and_persists_review_physical_isolation()
     {
         using var temp = new TempDirectory();
@@ -608,8 +894,8 @@ public sealed class RemoteReviewAuthorityTests
             await using var command = connection.CreateCommand();
             command.CommandText = """
                 ALTER TABLE review_attempts DROP COLUMN resource_namespace;
-                DELETE FROM schema_migrations WHERE version = 15;
-                UPDATE meta SET value = '14' WHERE key = 'schema_version';
+                DELETE FROM schema_migrations WHERE version > 15;
+                UPDATE meta SET value = '15' WHERE key = 'schema_version';
                 """;
             await command.ExecuteNonQueryAsync();
         }
@@ -650,6 +936,8 @@ public sealed class RemoteReviewAuthorityTests
         var store = factory.Services.GetRequiredService<TaskServerStore>();
         await RegisterReviewerAsync(store, "review-http", "replacement-instance", "host-a");
         using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", ReviewHttpToken);
         client.DefaultRequestHeaders.Add(TaskServerProtocol.HeaderName, TaskServerProtocol.Current.ToString());
         client.DefaultRequestHeaders.Add("X-Client-Id", "review-http");
         var path = $"/api/v1/reviews/attempts/{claim.Attempt!.AttemptId}/reclaim";
@@ -667,6 +955,11 @@ public sealed class RemoteReviewAuthorityTests
         var response = await client.PostAsJsonAsync(path, request);
         response.EnsureSuccessStatusCode();
         var reclaimed = (await response.Content.ReadFromJsonAsync<ReviewClaimResponse>())!;
+        await RegisterReviewerAsync(store, "review-http", "successor-instance", "host-a");
+
+        // The response was committed by replacement-instance. Once a newer
+        // daemon generation is current, only the authenticated executor's
+        // exact delivery may still replay it.
         var replayResponse = await client.PostAsJsonAsync(path, request);
         replayResponse.EnsureSuccessStatusCode();
         var replay = (await replayResponse.Content.ReadFromJsonAsync<ReviewClaimResponse>())!;
@@ -679,6 +972,14 @@ public sealed class RemoteReviewAuthorityTests
             request with { RequestedTtlSeconds = request.RequestedTtlSeconds + 1 });
         Assert.Equal(HttpStatusCode.Conflict, mismatch.StatusCode);
         Assert.Equal("idempotency-conflict", (await mismatch.Content.ReadFromJsonAsync<ApiError>())!.Code);
+
+        var staleMutation = await client.PostAsJsonAsync(
+            path,
+            request with { IdempotencyKey = "http-reclaim-new-mutation" });
+        Assert.Equal(HttpStatusCode.Conflict, staleMutation.StatusCode);
+        Assert.Equal(
+            "runner-instance-stale",
+            (await staleMutation.Content.ReadFromJsonAsync<ApiError>())!.Code);
     }
 
     [Fact]
@@ -1771,6 +2072,9 @@ public sealed class RemoteReviewAuthorityTests
                     ["TaskServer:DataDirectory"] = dataDirectory,
                     ["TaskServer:ListenUrl"] = string.Empty,
                     ["TaskServer:RetentionSchedulerEnabled"] = "false",
+                    ["AUTH"] = "bearer",
+                    ["BOOTSTRAP_RUNNER_ID"] = "review-http",
+                    ["BOOTSTRAP_RUNNER_AUTH_TOKEN"] = ReviewHttpToken,
                 }));
         }
     }

@@ -230,7 +230,9 @@ else
   mv "$stage_root" "$release_root"
 fi
 stage_root=""
-ln -sfnT "$release_root" "$tool_root/current"
+# Candidate is not a service-consumed path. The systemd phase moves current
+# only after an active Review daemon acknowledges closed claim admission.
+ln -sfnT "$release_root" "$tool_root/candidate"
 
 command -v npm >/dev/null || { echo '[remote] Node.js/npm is missing. Install Node 22, then retry.' >&2; exit 33; }
 if ! npm install --global @openai/codex @anthropic-ai/claude-code; then
@@ -332,11 +334,17 @@ runner_user="$(id -un)"
 runner_group="$(id -gn)"
 runner_home="$HOME"
 tool_root="$runner_home/.local/share/agent-host-tools"
-runner_bin="$tool_root/current/$runner_command"
+candidate_release="$(readlink -f -- "$tool_root/candidate")"
+runner_bin="$candidate_release/$runner_command"
 agent_host_root="/opt/agent-host"
 legacy_root="/opt/agent-runner"
 [[ -x "$runner_bin" ]] || {
   printf '[remote] Immutable runner release is missing command %s: %s\n' "$runner_command" "$runner_bin" >&2
+  exit 42
+}
+[[ "$(dirname -- "$candidate_release")" == "$tool_root/releases" ]] || {
+  printf '[remote] Candidate runner release escaped the immutable release root: %s\n' \
+    "$candidate_release" >&2
   exit 42
 }
 
@@ -477,14 +485,69 @@ if [[ "$role" == "review" ]]; then
     printf '[remote] Review service %s did not adopt RefuseManualStop=true.\n' "$service_name" >&2
     exit 48
   }
+  restart_policy="$(sudo systemctl show --property=Restart --value "$service_name")"
+  [[ "$restart_policy" == "on-failure" ]] || {
+    printf '[remote] Review service %s did not adopt Restart=on-failure.\n' "$service_name" >&2
+    exit 49
+  }
   if [[ "$previous_main_pid" =~ ^[1-9][0-9]*$ ]] \
       && sudo systemctl is-active --quiet "$service_name"; then
+    live_state_dir="$(
+      sudo cat "/proc/$previous_main_pid/environ" \
+        | tr '\0' '\n' \
+        | awk -F= '$1 == "RUNNER_STATE_DIR" { print substr($0, index($0, "=") + 1) }'
+    )"
+    [[ -n "$live_state_dir" && "$live_state_dir" == /* && "$live_state_dir" != "/" ]] || {
+      printf '[remote] Could not resolve the active Review RUNNER_STATE_DIR; replacement refused.\n' >&2
+      exit 50
+    }
+    guard_status=0
+    env -i PATH="$PATH" \
+      "$runner_bin" --restart-guard --hold-admission --role review \
+      --state-dir "$live_state_dir" || guard_status="$?"
+    ((guard_status == 0)) || {
+      printf '[remote] Review replacement guard refused (exit %s). Drain first with agent-runner-deploy drain.\n' \
+        "$guard_status" >&2
+      exit 50
+    }
+    guarded_main_pid="$(sudo systemctl show --property=MainPID --value "$service_name")"
+    [[ "$guarded_main_pid" == "$previous_main_pid" ]] \
+        && sudo systemctl is-active --quiet "$service_name" || {
+      printf '[remote] Review MainPID changed before guarded replacement; admission remains closed.\n' >&2
+      exit 50
+    }
     # RefuseManualStop rejects stop/restart. Signal only the main daemon and
-    # let Restart=always replace it without touching detached workers.
+    # wait for its successful handoff exit before explicitly starting the next
+    # generation. Review's on-failure policy leaves a completed drain stopped.
     sudo systemctl kill --kill-whom=main --signal=SIGTERM "$service_name"
-  else
-    sudo systemctl start "$service_name"
+    daemon_stopped=0
+    for _ in $(seq 1 120); do
+      active_state="$(sudo systemctl show --property=ActiveState --value "$service_name")"
+      candidate_main_pid="$(sudo systemctl show --property=MainPID --value "$service_name")"
+      if [[ "$active_state" != "active" \
+          && "$active_state" != "activating" \
+          && "$candidate_main_pid" == "0" ]]; then
+        daemon_stopped=1
+        break
+      fi
+      sleep 1
+    done
+    ((daemon_stopped == 1)) || {
+      printf '[remote] Review service %s did not stop cleanly before replacement.\n' "$service_name" >&2
+      exit 50
+    }
   fi
+  # An explicit install/update resumes a previously drained role only after
+  # the old daemon is confirmed gone.
+  sudo rm -f -- \
+    "$service_root/state/review-drain-requested.json" \
+    "$service_root/state/review-drain-acknowledged.json"
+  if [[ -n "${live_state_dir:-}" && "$live_state_dir" != "$service_root/state" ]]; then
+    sudo rm -f -- \
+      "$live_state_dir/review-drain-requested.json" \
+      "$live_state_dir/review-drain-acknowledged.json"
+  fi
+  sudo systemctl start "$service_name"
 else
   sudo systemctl restart "$service_name"
 fi
