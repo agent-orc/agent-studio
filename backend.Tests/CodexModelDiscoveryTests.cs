@@ -8,12 +8,10 @@ namespace AgentStudio.Tests;
 /// Parser and merged-catalog coverage for Codex model discovery.
 ///
 /// Fixture provenance: <c>Fixtures/cli/codex/debug-models-v0.153.4.json</c> is a
-/// trimmed <c>codex debug models</c> document. Its envelope and per-model field
-/// shape (<c>supported_reasoning_levels</c> as <c>{ effort, description }</c>
-/// objects, <c>default_reasoning_level</c>, <c>visibility</c>, <c>priority</c>)
-/// were captured from a live codex-cli run; the <c>gpt-6-astra</c> entry carries
-/// the values AGT-2707 recorded from codex-cli 0.153.4. The <c>v0.151.0</c>
-/// fixture is the same catalog before astra was published.
+/// real, field-trimmed <c>codex debug models</c> capture from codex-cli 0.153.4,
+/// installed under a scratch npm prefix on agent-studio-runner on 2026-09-11. It
+/// retains every model and every field consumed by <see cref="CodexModelDiscovery"/>.
+/// The <c>v0.151.0</c> fixture is the same catalog before astra was published.
 /// <c>debug-models-v0.144.1.json</c> is a real, unedited (field-trimmed)
 /// <c>codex debug models</c> capture from codex-cli 0.144.1 on a ChatGPT
 /// account (agent-runner-01, 2026-09-11, AGT-2707 round 2): it lists
@@ -117,7 +115,7 @@ public class CodexModelDiscoveryTests : IDisposable
     }
 
     [Fact]
-    public void WithKnownButUnavailableModels_LeavesAstraSelectable_WhenTheCliListsIt()
+    public void WithKnownButUnavailableModels_ParsesRealCodex01534AstraLadder_PreservesSol_AndDisablesMini()
     {
         var catalog = new CliModelCatalog
         {
@@ -131,6 +129,21 @@ public class CodexModelDiscoveryTests : IDisposable
         var astra = Assert.Single(merged.Models, m => m.Id == ModelIds.Gpt6Astra);
         Assert.True(astra.Available);
         Assert.Equal(["low", "medium", "high", "xhigh", "max", "ultra"], astra.ThinkingLevels);
+        Assert.Equal("medium", astra.DefaultThinkingLevel);
+
+        // The 0.153.4 CLI reports low as Sol's default and omits minimal from
+        // its ladder. Sol is not onboarded for live ladder overrides, so the
+        // shipped product ladder and top-rung default remain unchanged.
+        var sol = Assert.Single(merged.Models, m => m.Id == ModelIds.Gpt56Sol);
+        Assert.True(sol.Available);
+        Assert.Equal(["minimal", "low", "medium", "high", "xhigh", "ultra"], sol.ThinkingLevels);
+        Assert.Equal("ultra", sol.DefaultThinkingLevel);
+
+        var mini = Assert.Single(merged.Models, m => m.Id == ModelIds.Gpt54Mini);
+        Assert.False(mini.Available);
+        Assert.False(mini.Deprecated);
+        Assert.Equal("Not offered by the installed codex-cli 0.153.4.", mini.AvailabilityNote);
+
         // gpt-5-codex is a registry model the 0.153.4 catalog no longer lists.
         var codex = Assert.Single(merged.Models, m => m.Id == ModelIds.Gpt5Codex);
         Assert.False(codex.Available);
