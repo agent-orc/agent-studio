@@ -35,7 +35,8 @@ public sealed class TaskListGitProjectionCacheTests
             new Dictionary<string, TaskMergeSignal>(StringComparer.Ordinal) { [task.TaskKey] = signal },
             new Dictionary<string, TaskIntegrationStatus>(StringComparer.Ordinal),
             new Dictionary<string, TaskPublishSignal>(StringComparer.Ordinal),
-            new Dictionary<string, TaskTestRunEvidence>(StringComparer.Ordinal));
+            new Dictionary<string, TaskTestRunEvidence>(StringComparer.Ordinal),
+            new Dictionary<string, AgentStudio.Review.ReviewProjectionView>(StringComparer.Ordinal));
         var stateAt = DateTimeOffset.Parse("2026-09-06T12:00:00Z");
 
         cache.SetSnapshot("watch-a", projection, stateAt);
@@ -110,6 +111,8 @@ public sealed class TaskListGitProjectionCacheTests
             TaskCreationOptions.RunContinuationsAsynchronously);
         var testRuns = new TaskCompletionSource<Dictionary<string, TaskTestRunEvidence>>(
             TaskCreationOptions.RunContinuationsAsynchronously);
+        var reviewProjection = new TaskCompletionSource<Dictionary<string, AgentStudio.Review.ReviewProjectionView>>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
 
         Task<T> Start<T>(TaskCompletionSource<T> completion)
         {
@@ -122,20 +125,23 @@ public sealed class TaskListGitProjectionCacheTests
             _ => Start(merge),
             _ => Start(integration),
             _ => Start(publish),
-            _ => Start(testRuns));
+            _ => Start(testRuns),
+            _ => Start(reviewProjection));
 
-        Assert.Equal(4, started);
+        Assert.Equal(5, started);
         Assert.False(projectionTask.IsCompleted);
         merge.SetResult(new Dictionary<string, TaskMergeSignal>(StringComparer.Ordinal));
         integration.SetResult(new Dictionary<string, TaskIntegrationStatus>(StringComparer.Ordinal));
         publish.SetResult(new Dictionary<string, TaskPublishSignal>(StringComparer.Ordinal));
         testRuns.SetResult(new Dictionary<string, TaskTestRunEvidence>(StringComparer.Ordinal));
+        reviewProjection.SetResult(new Dictionary<string, AgentStudio.Review.ReviewProjectionView>(StringComparer.Ordinal));
         var projection = await projectionTask;
 
         Assert.Empty(projection.Merge);
         Assert.Empty(projection.Integration);
         Assert.Empty(projection.Publish);
         Assert.Empty(projection.TestRuns);
+        Assert.Empty(projection.ReviewProjection);
     }
 
     private static TaskListGitProjection ProjectionFor(TaskInfo task, string branch)
@@ -146,7 +152,8 @@ public sealed class TaskListGitProjectionCacheTests
             },
             new Dictionary<string, TaskIntegrationStatus>(StringComparer.Ordinal),
             new Dictionary<string, TaskPublishSignal>(StringComparer.Ordinal),
-            new Dictionary<string, TaskTestRunEvidence>(StringComparer.Ordinal));
+            new Dictionary<string, TaskTestRunEvidence>(StringComparer.Ordinal),
+            new Dictionary<string, AgentStudio.Review.ReviewProjectionView>(StringComparer.Ordinal));
 
     private static TaskInfo Job(string id, string watchPath)
         => new()
