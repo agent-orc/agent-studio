@@ -597,6 +597,21 @@ as `acceptance-rail-run`.
   typed Result-finalization state (`Retryable`, `Ready`, or `Degraded`) and its
   bounded attempt count, so card reviewability does not depend on inferring
   success from the presence of a scaffold.
+- `task-server/StudioEndpoints.cs`, `StudioLifecycleCoordinator.cs`,
+  `TaskServerStudioAuthStore.cs`, `TaskServerStudioTaskLifecycleStore.cs`,
+  `TaskServerStudioOrchestratorStore.cs`, `TaskServerStudioProjectionsStore.cs`,
+  and `TaskServerStudioEventStreamStore.cs`: the P0 "core-attach" Studio route
+  bundle (AGT-2755) - human session bootstrap, board projection, task
+  lifecycle mutation, orchestrator chat and context digests, and runner
+  status - plus the durable, cursor-ordered `studio_stream_events` log and its
+  `TaskServerStudioHub` at `/hubs/v1/studio`, the standalone Task Server's
+  compatibility path for the legacy `/hubs/jobs` feed. `watchPath` carries no
+  authority anywhere in this bundle; a task is addressed by its Task Server
+  identity, with `TaskServerStore.UnscopedProjectToken` as the reserved
+  `{projectId}` literal the connector substitutes when a legacy single-
+  parameter frontend call has no project id to forward. See
+  [Task Server deployment and recovery](../../operations/setup/task-server.md#studio-core-attach-bundle-p0)
+  for the full route table and the unscoped-project compatibility contract.
 - `backend/Endpoints/Tasks/*`: task CRUD, runner, files, git, review evidence,
   merge, pipeline, and query endpoints.
 - `backend/Services/TaskAccess/*`: typed read/list/mutate/transition/subscribe

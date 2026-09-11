@@ -131,6 +131,33 @@ public sealed class ConnectorProfileTests
     }
 
     [Fact]
+    public async Task Core_attach_task_lifecycle_routes_forward_with_the_unscoped_project_token()
+    {
+        // /api/tasks/{taskId}/move carries only a task id: the frontend does
+        // not yet send a project id or "project" query for this core-attach
+        // mutation. The connector has no task-to-project lookup of its own
+        // (it is a mechanical path translator, not a Task Server client), so
+        // it must forward using the reserved unscoped-project token rather
+        // than failing the request.
+        var transport = new RecordingTransport();
+        await using var factory = BuildFactory(transport);
+        using var client = CreateClient(factory);
+        using var session = await SessionAsync(client);
+        var csrf = ReadCookie(session, ConnectorSessionStore.CsrfCookieName);
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/tasks/tsk_core-attach-demo/move");
+        request.Headers.Add("Origin", ConnectorOptions.DefaultStudioOrigin);
+        request.Headers.Add(ConnectorSessionStore.CsrfHeaderName, csrf);
+        request.Content = JsonContent.Create(new { targetState = "2-ready" });
+
+        Assert.Equal(HttpStatusCode.OK, (await client.SendAsync(request)).StatusCode);
+        var observed = Assert.Single(transport.ProxiedRequests);
+        Assert.Equal(
+            $"/api/v1/projects/{ConnectorProxy.UnscopedProjectToken}/tasks/tsk_core-attach-demo/move",
+            observed.Path);
+    }
+
+    [Fact]
     public async Task Upstream_switch_is_validated_atomic_and_rotates_sessions()
     {
         var options = TestOptions();

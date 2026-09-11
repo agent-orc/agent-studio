@@ -51,7 +51,7 @@ and what is left.
 |---|---|---|---|
 | Studio frontend | `frontend/` | Angular dev server, same-origin `/api` and `/hubs` | Human surface. Consumes the broad legacy `/api/**` surface. The one exception is the remote-host management surface, which calls `/api/v1/management/remote-hosts/**` directly (AGT-2711 link health), so `/api/v1` is no longer runner-only. |
 | Studio backend (OrchestratorApi, the monolith) | `backend/`, composition root `backend/Host/EndpointMapping.cs` | `http://localhost:5030` | Live task authority today: task folders, lanes, review decision, post-processing, SignalR hub `/hubs/jobs`. Also hosts the interim `/api/v1` review plane. |
-| Standalone Task Server | `task-server/`, entry `task-server/Program.cs` | `http://127.0.0.1:5071`; `http://127.0.0.1:5031` under `TASK_SERVER_PROFILE=local-compatibility` | Durable control plane and system of record on SQLite. Not the live authority in the default repo configuration. |
+| Standalone Task Server | `task-server/`, entry `task-server/Program.cs` | `http://127.0.0.1:5071`; `http://127.0.0.1:5031` under `TASK_SERVER_PROFILE=local-compatibility` | Durable control plane and system of record on SQLite. Not the live authority in the default repo configuration. Also serves the P0 "core-attach" Studio bundle (`/api/v1/studio/**`, project-scoped task lifecycle routes, and the replayable `/hubs/v1/studio` hub) since AGT-2755; see [Studio core-attach bundle](../../operations/setup/task-server.md#studio-core-attach-bundle-p0). |
 | Studio BFF | `studio-bff/Program.cs` | `http://127.0.0.1:5072`, upstream `TaskServer:BaseUrl` `http://127.0.0.1:5071` | Stateless same-origin proxy. Forwards `/api/v1/{**path}` and serves `/healthz`. It does not forward `/api/**` or `/hubs`. |
 | Orchestrator Engine | `orchestrator-engine/` | API client only | API-only flow executor. Claims server-owned orchestration runs. Owns no task files and no checkout. |
 | Agent Runner (`agent-host`) | `runner/`, client `runner/TaskServerClient.cs` | outbound only | Execution plane. Registers as exactly one `coding` or `review` service identity, owns worktrees, CLI processes and its durable outbox. |
@@ -67,6 +67,7 @@ Runner. All Runner traffic is outbound to whichever server it is pointed at.
 | Project and workspace registry | Studio backend | `<TaskRepository>/.metadata/projects.json`, `workspaces.json`, fail-closed on load errors |
 | Attempt authority, leases, fences (local profile) | Studio backend `AttemptAuthorityService` | under `<TaskRepository>/.metadata/` |
 | Tasks, runs, leases, fences, events, artifacts, audit, orchestration runs, retention policy and archive history (standalone profile) | Task Server | SQLite under `STORE_PATH`, tables created in `task-server/TaskServerStore.cs` (`tasks`, `runs`, `leases`, `fence_counters`, `events`, `artifacts`, `result_handoffs`, `result_ref_gc`, `orchestration_runs`, `retention_policies`, `archive_runs`, `archive_manifests`, and others) |
+| Human Studio sessions and the replayable Studio notification feed | Task Server | SQLite under `STORE_PATH`: `studio_users`, `studio_sessions`, `studio_stream_events` |
 | Orchestrator chat contexts | Switched at composition time, see below | local JSONL, or Task Server `orchestrator_contexts` and `orchestrator_context_turns` |
 | Repository content, worktrees, result commits | Agent Runner host | Git checkouts plus `$RUNNER_WORKDIR/outbox/<run-attempt-id>/` |
 | Backups and cold archives | Task Server | SQLite snapshots under `BACKUP_PATH`; self-contained full sets under `BACKUP_PATH/full`; manifest-addressed cold payloads under `ARCHIVE_PATH`; all SHA-256 verified |
@@ -274,6 +275,14 @@ Control stays on HTTP with leases and fences, as described in
   the standalone Task Server. Scheduled runs are mode/load gated, publish
   `retention.run.completed`, create a full set, and apply the 7 daily, 4 weekly,
   12 monthly thinning policy.
+- The P0 "core-attach" bundle from the
+  [Studio route ownership](../../studio-route-ownership/index.html) dossier -
+  human login/session bootstrap, the board projection, task lifecycle
+  mutation, orchestrator chat and context digests, runner status, and the
+  replayable `/hubs/v1/studio` event stream (AGT-2755). This is 27 of the 268
+  Studio-classified routes named by that dossier's route inventory; the
+  remaining P1-P3 bundles (task detail and hosts, operations and insight,
+  administration and tail) are still open.
 
 ### Open: what AGT-2663 still has to move
 
@@ -287,10 +296,16 @@ Control stays on HTTP with leases and fences, as described in
 - **Orchestration still defaults to `Monolith`.**
   `Orchestration:ExecutionMode` must be set to `Engine` for the external Engine
   to own the review, council, post-processing, gate and completion loops.
-- **The Studio surface is not on the versioned plane.** Angular consumes the
-  broad legacy `/api/**` plus `/hubs/jobs`. `studio-bff` covers neither.
-  Classifying every Studio route as Task Server, local dev-seat helper, or
-  retired is slice B1 and is the largest open estimate.
+- **The Studio surface is not on the versioned plane by default.** Angular
+  still consumes the broad legacy `/api/**` plus `/hubs/jobs`; `studio-bff`
+  covers neither. The full route inventory, classification, and the connector
+  profile that forwards classified routes to the standalone Task Server are
+  slice B1 (see [Studio route ownership](../../studio-route-ownership/index.html)).
+  The P0 core-attach bundle now has real Task Server v1 handlers (AGT-2755, see
+  above), but the monolith remains the *default* live authority in this
+  repository's configuration until the connector profile and a `TaskServer:BaseUrl`
+  cutover are both live; P1 through P3 remain unclassified-to-unmoved and are
+  the largest remaining open estimate.
 - **The migrator reads the wrong file.**
   `task-server/LegacyMigrationService.cs` enumerates `job.json`, while the
   active backend writes `task.json` (`backend/Features/Tasks/TaskJsonFile.cs`).

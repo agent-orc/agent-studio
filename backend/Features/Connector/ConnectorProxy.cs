@@ -59,6 +59,18 @@ public sealed class ConnectorProxy(
             ? ForwardWebSocketAsync(context, operation)
             : ForwardHubHttpAsync(context, operation);
 
+    /// <summary>
+    /// Reserved <c>{projectId}</c> segment value for a legacy frontend call
+    /// that names only a task, such as <c>/api/tasks/{taskId}/move</c>. The
+    /// target route in the approved inventory is project-scoped, but the
+    /// connector is a mechanical path translator with no task-to-project
+    /// lookup of its own, so it cannot fabricate a real project id. The Task
+    /// Server treats this exact literal as "resolve by task id alone" (see
+    /// <c>TaskServerStore.UnscopedProjectToken</c>) rather than as a project
+    /// that does not exist.
+    /// </summary>
+    internal const string UnscopedProjectToken = "-";
+
     internal static string ExpandTarget(
         ConnectorRouteOperation operation,
         RouteValueDictionary routeValues,
@@ -87,6 +99,8 @@ public sealed class ConnectorProxy(
                 else if (targetName == "projectId" && query.TryGetValue("project", out queryValue))
                     value = queryValue.FirstOrDefault();
             }
+            if (value is null && targetName == "projectId")
+                value = UnscopedProjectToken;
             if (value is null)
                 throw new InvalidOperationException($"Route value '{targetName}' is unavailable.");
             var encoded = string.Join('/', value.ToString()!
