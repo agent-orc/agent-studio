@@ -301,9 +301,17 @@ printf '[onboarding] phase=systemd Writing configuration and enabling the OS-own
 resource_governance_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/agent-host-resource-governance.sh"
 [[ -x "$resource_governance_script" ]] \
   || die "The agent-host resource governance helper is missing or not executable: $resource_governance_script"
+review_restart_guard="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/deploy/agent-host/systemd/20-agent-runner-review-restart-guard.conf"
 "${ssh_base[@]}" -T "$host" \
   'helper_tmp="$(mktemp)"; trap '"'"'rm -f "$helper_tmp"'"'"' EXIT; cat >"$helper_tmp"; chmod 0755 "$helper_tmp"; sudo install -d -m 0755 /usr/local/libexec; sudo install -m 0755 "$helper_tmp" /usr/local/libexec/agent-host-resource-governance' \
   <"$resource_governance_script"
+if [[ "$role" == "review" ]]; then
+  [[ -f "$review_restart_guard" ]] \
+    || die "The Review restart guard is missing: $review_restart_guard"
+  "${ssh_base[@]}" -T "$host" \
+    'guard_tmp="$(mktemp)"; trap '"'"'rm -f "$guard_tmp"'"'"' EXIT; cat >"$guard_tmp"; sudo install -d -m 0755 /usr/local/libexec; sudo install -m 0644 "$guard_tmp" /usr/local/libexec/agent-runner-review-restart-guard.conf' \
+    <"$review_restart_guard"
+fi
 "${ssh_base[@]}" -T "$host" bash -s -- \
   "$server_url" "$client_id" "$runner_id" "$runner_name" "$role" "$git_remote" "$git_push_remote" "$runner_command" "$auth_token_file" "$service_auth" "$provider_auth_file" <<'REMOTE_SYSTEMD'
 set -euo pipefail
@@ -318,6 +326,7 @@ runner_command="$8"
 auth_token_file="$9"
 service_auth="${10}"
 provider_auth_file="${11}"
+restart_guard_source="/usr/local/libexec/agent-runner-review-restart-guard.conf"
 export PATH="$HOME/.dotnet/tools:$HOME/.local/bin:$PATH"
 runner_user="$(id -un)"
 runner_group="$(id -gn)"
@@ -449,15 +458,53 @@ if [[ -f /etc/systemd/system/agent-runner.service && ! -L /etc/systemd/system/ag
   sudo systemctl stop agent-runner.service || true
 fi
 sudo install -m 0644 "$unit_tmp" "/etc/systemd/system/${service_name}.service"
+if [[ "$role" == "review" ]]; then
+  sudo install -d -m 0755 "/etc/systemd/system/${service_name}.service.d"
+  sudo install -m 0644 \
+    "$restart_guard_source" \
+    "/etc/systemd/system/${service_name}.service.d/20-agent-runner-review-restart-guard.conf"
+fi
 sudo systemctl daemon-reload
 sudo systemctl enable "$service_name"
-sudo systemctl restart "$service_name"
-sleep 2
+previous_main_pid="$(sudo systemctl show --property=MainPID --value "$service_name")"
+[[ "$previous_main_pid" =~ ^[0-9]+$ ]] || {
+  printf '[remote] Service %s returned an invalid MainPID before replacement.\n' "$service_name" >&2
+  exit 47
+}
+if [[ "$role" == "review" ]]; then
+  refuse_manual_stop="$(sudo systemctl show --property=RefuseManualStop --value "$service_name")"
+  [[ "$refuse_manual_stop" == "yes" ]] || {
+    printf '[remote] Review service %s did not adopt RefuseManualStop=true.\n' "$service_name" >&2
+    exit 48
+  }
+  if [[ "$previous_main_pid" =~ ^[1-9][0-9]*$ ]] \
+      && sudo systemctl is-active --quiet "$service_name"; then
+    # RefuseManualStop rejects stop/restart. Signal only the main daemon and
+    # let Restart=always replace it without touching detached workers.
+    sudo systemctl kill --kill-whom=main --signal=SIGTERM "$service_name"
+  else
+    sudo systemctl start "$service_name"
+  fi
+else
+  sudo systemctl restart "$service_name"
+fi
+
+main_pid=""
+for _ in $(seq 1 120); do
+  if sudo systemctl is-active --quiet "$service_name"; then
+    candidate_main_pid="$(sudo systemctl show --property=MainPID --value "$service_name")"
+    if [[ "$candidate_main_pid" =~ ^[1-9][0-9]*$ \
+        && "$candidate_main_pid" != "$previous_main_pid" ]]; then
+      main_pid="$candidate_main_pid"
+      break
+    fi
+  fi
+  sleep 1
+done
 sudo systemctl is-enabled "$service_name"
 sudo systemctl is-active "$service_name"
-main_pid="$(sudo systemctl show --property=MainPID --value "$service_name")"
 [[ "$main_pid" =~ ^[1-9][0-9]*$ ]] || {
-  printf '[remote] Service %s did not expose a running MainPID.\n' "$service_name" >&2
+  printf '[remote] Service %s did not expose a replacement MainPID.\n' "$service_name" >&2
   exit 43
 }
 provider_variables="$(sudo cat "/proc/${main_pid}/environ" | tr '\0' '\n' \

@@ -397,12 +397,16 @@ describe('RemoteHostsService client registry hydration', () => {
         activeSlots: 6,
       },
       roleMaxParallelism: 8,
+      restartedAt: now,
+      reviewsLost: 2,
     }]);
 
     expect(svc.hosts().find(host => host.id === 'agent-runner-01')).toMatchObject({
       activeTaskCount: 6,
       roleMaxParallelism: 8,
       serviceRole: 'coding',
+      restartedAt: now,
+      reviewsLost: 2,
     });
     flushLinkHealth(http);
     http.verify();

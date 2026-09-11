@@ -18,7 +18,12 @@
 .role__name-cell,
 .role__status,
 .role__actions-wide { display: flex; align-items: center; }
-.role__name-cell { min-width: 0; gap: var(--studio-spacing-2); }
+.role__name-cell {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  gap: var(--studio-spacing-1) var(--studio-spacing-2);
+}
 .role__branch { color: var(--studio-fg-muted); }
 .role__name-cell strong { flex: 0 0 auto; color: var(--studio-fg-strong); }
 .role__identity {
@@ -26,6 +31,12 @@
   overflow: hidden;
   color: var(--studio-fg-dim);
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.role__restart {
+  grid-column: 2 / -1;
+  color: var(--studio-fg-muted);
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 .role__status { gap: var(--studio-spacing-2); white-space: nowrap; }
