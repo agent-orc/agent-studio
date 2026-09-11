@@ -143,13 +143,13 @@ public sealed class TaskServerStoreTests
         {
             await connection.OpenAsync();
             await using var command = connection.CreateCommand();
-            command.CommandText = """
+            command.CommandText = $"""
                 DROP TABLE legacy_migration_reports;
                 DROP TABLE legacy_migration_orphans;
                 DROP TABLE legacy_migration_entities;
                 ALTER TABLE artifacts DROP COLUMN source_path;
                 ALTER TABLE artifacts DROP COLUMN pointer_only;
-                DELETE FROM schema_migrations WHERE version = 15;
+                DELETE FROM schema_migrations WHERE version = {TaskServerStore.CurrentSchemaVersion};
                 UPDATE meta SET value = '14' WHERE key = 'schema_version';
                 """;
             await command.ExecuteNonQueryAsync();
@@ -176,8 +176,10 @@ public sealed class TaskServerStoreTests
             """;
         Assert.Equal(2L, (long)(await query.ExecuteScalarAsync())!);
         query.CommandText = "SELECT value FROM meta WHERE key = 'schema_version';";
-        Assert.Equal("15", (string)(await query.ExecuteScalarAsync())!);
-        query.CommandText = "SELECT count(*) FROM schema_migrations WHERE version = 15;";
+        Assert.Equal(
+            TaskServerStore.CurrentSchemaVersion.ToString(),
+            (string)(await query.ExecuteScalarAsync())!);
+        query.CommandText = $"SELECT count(*) FROM schema_migrations WHERE version = {TaskServerStore.CurrentSchemaVersion};";
         Assert.Equal(1L, (long)(await query.ExecuteScalarAsync())!);
     }
 

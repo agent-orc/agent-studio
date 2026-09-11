@@ -16,9 +16,12 @@ public sealed partial class TaskServerStore
     // artifact content contract. 14 adds Studio users and sessions, task rank,
     // and the replayable Studio event stream. 15 adds the durable legacy-cutover
     // ledger, orphan ledger, signed reports, and artifact source references.
-    // The migration block is idempotent; the number guards downgrades from
-    // binaries that do not know this state.
-    public const int CurrentSchemaVersion = 15;
+    // 16 adds the fenced studio-operation dispatch ledger and the P2
+    // "operations and insight" projection tables (bus, token usage, drift,
+    // security, deployment, supervisor, crash recovery, and related studio
+    // settings/state). The migration block is idempotent; the number guards
+    // downgrades from binaries that do not know this state.
+    public const int CurrentSchemaVersion = 16;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -3259,6 +3262,10 @@ public sealed partial class TaskServerStore
         await ApplyStudioTaskHistoryMigrationAsync(connection, ct);
         await ApplyStudioTaskReviewMigrationAsync(connection, ct);
         await ApplyStudioWorkspaceMigrationAsync(connection, ct);
+        // Studio route-ownership P2 "operations and insight" bundle
+        // (docs/studio-route-ownership/index.html).
+        await ApplyStudioOperationsMigrationAsync(connection, ct);
+        await ApplyStudioP2MigrationAsync(connection, ct);
         await EnsureColumnAsync(connection, "review_attempts", "required_capabilities_json", "TEXT NOT NULL DEFAULT '[]'", ct);
         await EnsureColumnAsync(connection, "review_attempts", "canary_capabilities_json", "TEXT NOT NULL DEFAULT '[]'", ct);
         await EnsureColumnAsync(connection, "tasks", "rank", "INTEGER NOT NULL DEFAULT 0", ct);

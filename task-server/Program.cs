@@ -58,6 +58,7 @@ builder.Services.AddSingleton<IResultRefDeleter, GitResultRefDeleter>();
 builder.Services.AddSingleton<IStudioEventPublisher, SignalRStudioEventPublisher>();
 builder.Services.AddSingleton<StudioChatAttachmentStore>();
 builder.Services.AddSingleton<StudioLifecycleCoordinator>();
+builder.Services.AddStudioP2Services();
 builder.Services.AddHostedService<TaskServerInvariantReconciliationService>();
 builder.Services.AddHostedService<ResultRefGcHostedService>();
 builder.Services.AddHostedService<RetentionSchedulerHostedService>();
@@ -228,6 +229,10 @@ app.MapStudioTaskArtifactsEndpoints();
 app.MapStudioTaskHistoryEndpoints();
 app.MapStudioTaskReviewEndpoints();
 app.MapStudioWorkspaceEndpoints();
+// Studio route-ownership P2 "operations and insight" bundle
+// (docs/studio-route-ownership/index.html).
+app.MapStudioOperationsEndpoints();
+app.MapStudioP2Endpoints();
 app.MapHub<TaskServerEventsHub>("/hubs/events")
     .RequireTaskServerScope(TaskServerScopes.EventsSubscribe);
 app.MapHub<TaskServerStudioHub>("/hubs/v1/studio")
