@@ -6,6 +6,24 @@ Audience: operators, runner and pipeline authors, coding agents, frontend engine
 
 ## Purpose
 
+This runbook explains how an operator reads and resolves automation-owned and
+human-owned interventions without reconstructing the decision from raw logs.
+
+## Failure-created intervention escalations
+
+When a card is parked with blocker type `failure-intervention`, the park is an
+owned automation hand-off, not a request for an operator to reconstruct the
+failure. The wait reason names the follow-up task, for example
+`waiting on AGT-2810: review toolchain unavailable`. Open that task from the
+board intervention chip or the Task Detail `Raised follow-up` reference.
+
+The follow-up header must say `Created by Orchestrator`, and its `Follow-up of`
+references list every affected origin. The orchestrator feed contains one event
+per attachment, while project reporting contains one row per deduplicated
+intervention. Completing the follow-up closes the reporting item; re-driving
+the waiting origins remains an explicit operator or orchestrator action. The
+detection step never performs automatic remediation.
+
 A task in `5e-escalated` already says that automation could not safely finish
 the decision. It does not, by itself, give the operator the material needed to
 make that decision. The operator should not have to reconstruct the question,
@@ -300,4 +318,3 @@ No new lane, backend table, workflow engine, or decision status is introduced.
   `frontend/src/app/features/project-detail/components/workbench-viewer/`
 - Functional icon example:
   `frontend/e2e/fixtures/decision-surface/icon-pick-decision.html`
-

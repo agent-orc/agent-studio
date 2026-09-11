@@ -34,6 +34,8 @@ public sealed class MergeIntoDevelopRunner
     private readonly PreDevelopBuildGate? _preDevelopBuildGate;
     private readonly AttemptAuthorityService? _attemptAuthority;
     private readonly TaskMutationService? _taskMutations;
+    private readonly TaskScannerService? _taskScanner;
+    private readonly FailureInterventionService? _failureInterventions;
     private readonly TimeSpan _preMainTimeout;
     private readonly TimeSpan _preDevelopTimeout;
     private readonly Func<int, TimeSpan> _environmentalBackoff;
@@ -53,7 +55,9 @@ public sealed class MergeIntoDevelopRunner
         PreDevelopBuildGate? preDevelopBuildGate = null,
         TimeSpan? preDevelopTimeout = null,
         AttemptAuthorityService? attemptAuthority = null,
-        TaskMutationService? taskMutations = null)
+        TaskMutationService? taskMutations = null,
+        TaskScannerService? taskScanner = null,
+        FailureInterventionService? failureInterventions = null)
     {
         _git = git;
         _pipelineLog = pipelineLog;
@@ -64,6 +68,8 @@ public sealed class MergeIntoDevelopRunner
         _preDevelopBuildGate = preDevelopBuildGate;
         _attemptAuthority = attemptAuthority;
         _taskMutations = taskMutations;
+        _taskScanner = taskScanner;
+        _failureInterventions = failureInterventions;
         _preMainTimeout = preMainTimeout is { } configured && configured > TimeSpan.Zero
             ? configured
             : TimeSpan.FromHours(1);
@@ -176,6 +182,8 @@ public sealed class MergeIntoDevelopRunner
                     preMainResult: null,
                     preDevelopResult: null,
                     startedAt);
+                await MaybeRaiseInterventionAsync(project, jobId, watchPath, unresolved,
+                    null, null, startedAt, ct).ConfigureAwait(false);
                 return unresolved;
             }
 
@@ -200,6 +208,8 @@ public sealed class MergeIntoDevelopRunner
                     preMainResult: null,
                     preDevelopResult: null,
                     startedAt);
+                await MaybeRaiseInterventionAsync(project, jobId, watchPath, stale,
+                    null, null, startedAt, ct).ConfigureAwait(false);
                 return stale;
             }
             var delivery = DeliveryRefResolver.Resolve(jobId, jobFolderPath);
@@ -354,6 +364,8 @@ public sealed class MergeIntoDevelopRunner
                 "merge-into-develop project={Project} job={JobId} delivery={Delivery} integration={Integration} strategy={Strategy} outcome={Outcome}",
                 project, jobId, taskBranch, branch, strategy, result.Outcome);
             Record(jobFolderPath, project, jobId, branch, result, preMainResult, preDevelopResult, startedAt);
+            await MaybeRaiseInterventionAsync(project, jobId, watchPath, result,
+                preMainResult, preDevelopResult, startedAt, ct).ConfigureAwait(false);
 
             // AGT-1999: once the accepted task is folded into the integration
             // branch, push that branch to origin so integration is never only
@@ -402,6 +414,8 @@ public sealed class MergeIntoDevelopRunner
                     preMainResult: null,
                     preDevelopResult: null,
                     startedAt);
+                await MaybeRaiseInterventionAsync(project, jobId, watchPath, errored,
+                    null, null, startedAt, ct).ConfigureAwait(false);
             }
             catch (Exception __ex)
             {
@@ -409,6 +423,46 @@ public sealed class MergeIntoDevelopRunner
             }
             return errored;
         }
+    }
+
+    private async Task MaybeRaiseInterventionAsync(
+        string project,
+        string jobId,
+        string? watchPath,
+        MergeIntoIntegrationResult result,
+        BuildTestGateResult? preMainResult,
+        BuildTestGateResult? preDevelopResult,
+        DateTime startedAt,
+        CancellationToken ct)
+    {
+        if (result.Outcome.IsSuccessfulIntegration()
+            || _failureInterventions is null
+            || _taskScanner is null
+            || _projectSettings is null)
+            return;
+        var task = _taskScanner.FindJob(jobId, watchPath);
+        if (task is null) return;
+        var settings = PipelineTypeSettings.ForTask(_projectSettings.Get(project), task);
+        var interventionStep = PipelineCatalogue.FindStep(PipelineCatalogue.FailureInterventionStepId)!;
+        if (!PipelineStepConfigResolver.IsEnabled(settings, interventionStep)) return;
+
+        var gate = new[] { preMainResult, preDevelopResult }
+            .FirstOrDefault(item => item?.Verdict == BuildTestGateVerdict.Fail);
+        var code = gate?.FailureKind == BuildTestGateFailureKind.MissingSource
+            ? "MissingSource"
+            : gate is not null
+                ? AcceptedIntegrationFailureCodes.BuildGateFailed
+                : AcceptedIntegrationFailureCodes.IntegrationError;
+        await _failureInterventions.RaiseAsync(task, new FailureCommandEvidence(
+            code,
+            result.Outcome.ToString(),
+            gate?.ExitCode,
+            (long)(DateTime.UtcNow - startedAt).TotalMilliseconds,
+            gate?.Output ?? result.Error,
+            result.Error ?? gate?.Reason,
+            PipelineCatalogue.MergeIntoDevelopStepId,
+            [PipelineExecutionLog.FileName, "post-steps/"],
+            startedAt), ct).ConfigureAwait(false);
     }
 
     /// <summary>

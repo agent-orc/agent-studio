@@ -38,6 +38,10 @@
         <span class="ov-subline__project-disk" aria-hidden="true">{{ identity().initial }}</span>
         <span class="ov-subline__project-name">{{ job().projectName }}</span>
       </span>
+      @if (job().creationSource === 'orchestrator') {
+        <span class="ov-subline__sep" aria-hidden="true">·</span>
+        <span class="ov-phase-chip" data-testid="overview-created-by-orchestrator">Created by Orchestrator</span>
+      }
       <app-execution-location-badge [execution]="job().executionLocation" /> @if (promptMarkdown()) {
         <span class="ov-subline__sep" aria-hidden="true">·</span>
         <app-task-prompt-popover

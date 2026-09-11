@@ -46,6 +46,7 @@ public sealed class CompletedLaneAuditService
     private readonly ProjectRegistry _projects;
     private readonly ILogger<CompletedLaneAuditService> _logger;
     private readonly TaskIntegrationStatusService? _integrationStatus;
+    private readonly FailureInterventionService? _failureInterventions;
 
     public CompletedLaneAuditService(
         TaskScannerService scanner,
@@ -56,7 +57,8 @@ public sealed class CompletedLaneAuditService
         AuditRunStore runStore,
         ProjectRegistry projects,
         ILogger<CompletedLaneAuditService> logger,
-        TaskIntegrationStatusService? integrationStatus = null)
+        TaskIntegrationStatusService? integrationStatus = null,
+        FailureInterventionService? failureInterventions = null)
     {
         _scanner = scanner;
         _states = states;
@@ -67,6 +69,7 @@ public sealed class CompletedLaneAuditService
         _projects = projects;
         _logger = logger;
         _integrationStatus = integrationStatus;
+        _failureInterventions = failureInterventions;
     }
 
     /// <summary>
@@ -344,6 +347,21 @@ public sealed class CompletedLaneAuditService
         var sb = new StringBuilder();
         sb.AppendLine($"# Completed-lane audit ({project?.DisplayName ?? projectIdOrName}, run {latest.RunId}, {latest.StartedAt:yyyy-MM-dd HH:mm} UTC)");
         sb.AppendLine();
+
+        if (_failureInterventions is not null)
+        {
+            var interventions = _failureInterventions.List(latest.WatchPath);
+            var interventionReport = FailureInterventionReporting.Summarize(interventions);
+            sb.AppendLine("## Orchestrator interventions");
+            sb.AppendLine($"- count: {interventionReport.Count}");
+            sb.AppendLine($"- open: {interventionReport.Open}");
+            sb.AppendLine($"- closed: {interventionReport.Closed}");
+            foreach (var item in interventions)
+            {
+                sb.AppendLine("- " + FailureInterventionReporting.Line(item));
+            }
+            sb.AppendLine();
+        }
         sb.AppendLine("## Verdict counts");
         sb.AppendLine($"- truly done: {latest.TrulyDone}");
         sb.AppendLine($"- not really done: {latest.NotReallyDone}");

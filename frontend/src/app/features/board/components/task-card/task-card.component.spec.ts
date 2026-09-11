@@ -7,6 +7,7 @@ import { provideZonelessChangeDetection } from '@angular/core';
 import { TaskCardComponent } from './task-card.component';
 import { MODEL_IDS } from '../../../cli';
 import { ProviderAuthStatusService } from '../../../remote-hosts';
+import { TaskService } from '../../../../services/task.service';
 import type { TaskInfo, ClientSummary, TagRegistryEntry } from '../../../../models/task.model';
 import {
   buildEffectiveModelChip,
@@ -2196,6 +2197,27 @@ describe('TaskCardComponent — waits-on dependency chip (AGT-2029)', () => {
     expect(
       fixture.nativeElement.querySelector('[data-testid="task-card-waiting-on"]'),
     ).toBeNull();
+  });
+
+  it('renders the orchestrator follow-up as a board chip', async () => {
+    const fixture = await mount(makeJob({
+      state: '5e-escalated',
+      references: {
+        dependsOn: [], relatedTo: [], blockedBy: ['AGT-2801'], supersedes: [],
+        raisedFollowUps: ['AGT-2801'],
+      },
+    }));
+    TestBed.inject(TaskService).jobs.set([
+      makeJob({ id: 'follow-up', key: 'AGT-2801', title: 'Review toolchain unavailable', state: '1-preparation' }),
+    ]);
+    fixture.detectChanges();
+
+    const chip = fixture.nativeElement.querySelector(
+      '[data-testid="task-card-intervention"]',
+    ) as HTMLElement | null;
+    expect(chip).toBeTruthy();
+    expect(chip!.textContent).toContain('AGT-2801 · Preparation · open');
+    expect(chip!.getAttribute('data-intervention-state')).toBe('open');
   });
 });
 

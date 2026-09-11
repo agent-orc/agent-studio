@@ -54,6 +54,35 @@ pipeline view.
   package adapter, repository-owned activation policy, canonical finding
   projection, and the first executable Angular named-rule pass.
 
+## Failure intervention step
+
+`post-failure-intervention` is an opt-in failure-boundary step configured through
+the existing per-project `PipelineSteps` map. It is triggered by failed run,
+review, gate, integration, merge, and crash-completion outcomes rather than by a
+scheduled sweep. `FailureInterventionPolicy` handles known failure codes and
+evidence signatures deterministically. An ambiguous failure alone may use the
+project's economy step route.
+
+The step creates one normal preparation task per open evidence fingerprint.
+Later origins with the same failure class and normalized command signature
+attach to that task. `ReviewInfra/ToolUnavailable` therefore stops before retry
+admission when this step is enabled. The origin is parked with a named follow-up
+instead of spending its infrastructure retry budget.
+
+Canonical code:
+
+- `backend/Features/Pipeline/FailureIntervention/FailureInterventionPolicy.cs`
+- `backend/Features/Pipeline/FailureIntervention/FailureInterventionService.cs`
+- `backend/Features/Runner/V1ReviewPlaneEndpoints.cs`
+- `backend/Features/Runner/ProjectRunner.cs`
+- `backend/Features/Runner/ReviewDecisionOrchestrator.cs`
+- `backend/Features/Pipeline/MergeIntoDevelopRunner.cs`
+- `backend/Features/Pipeline/PipelineCatalogue.cs`
+
+The durable report surface is
+`GET /api/projects/{project}/interventions`; one response item represents one
+deduplicated intervention, not one affected origin or one escalation.
+
 ## Quality Studio analysis steps
 
 Quality Studio analysis is a standard pipeline category (`StepKind.Analysis`),

@@ -27,6 +27,7 @@ import { StudioTabStateService } from '../../../studio-shell/services/studio-tab
 import { ProjectDocsService } from '../../../../services/project-docs.service';
 import type { WorkbenchListItem } from '../../../../models/project-docs.model';
 import { ReleaseGateSectionComponent } from '../release-gate-section/release-gate-section.component';
+import { stateLabel } from '../../../../services/format.util';
 
 /**
  * F34 detail-view reference editor. Renders the typed cross-reference rows
@@ -65,6 +66,8 @@ export class ReferencesSectionComponent {
     relatedTo: 'Related to',
     blockedBy: 'Blocked by',
     supersedes: 'Supersedes',
+    followUpOf: 'Follow-up of',
+    raisedFollowUps: 'Raised follow-up',
     workbenches: 'Sources',
   };
 
@@ -82,6 +85,8 @@ export class ReferencesSectionComponent {
     relatedTo: '',
     blockedBy: '',
     supersedes: '',
+    followUpOf: '',
+    raisedFollowUps: '',
     workbenches: '',
   });
 
@@ -190,7 +195,8 @@ export class ReferencesSectionComponent {
   readonly totalCount = computed(() => {
     const r = this.localRefs();
     return r.dependsOn.length + r.relatedTo.length + r.blockedBy.length
-      + r.supersedes.length + (r.workbenches?.length ?? 0);
+      + r.supersedes.length + (r.followUpOf?.length ?? 0)
+      + (r.raisedFollowUps?.length ?? 0) + (r.workbenches?.length ?? 0);
   });
 
   /** Autocomplete candidates for the selected key namespace. */
@@ -236,7 +242,12 @@ export class ReferencesSectionComponent {
       ?? null;
   }
 
-  chipLabel(key: string): string {
+  chipLabel(kind: TaskReferenceKind, key: string): string {
+    const target = this.keyIndex().get(key.trim().toUpperCase());
+    if ((kind === 'followUpOf' || kind === 'raisedFollowUps') && target) {
+      const state = isTerminalState(target.state) ? 'closed' : 'open';
+      return `${key} · ${stateLabel(target.state)} · ${state}`;
+    }
     const title = this.titleFor(key);
     return title ? `${key} — ${truncate(title, 48)}` : key;
   }
@@ -379,7 +390,7 @@ export class ReferencesSectionComponent {
 }
 
 function emptyRefs(): TaskReferences {
-  return { dependsOn: [], relatedTo: [], blockedBy: [], supersedes: [], workbenches: [] };
+  return { dependsOn: [], relatedTo: [], blockedBy: [], supersedes: [], followUpOf: [], raisedFollowUps: [], workbenches: [] };
 }
 
 function cloneRefs(r: TaskReferences): TaskReferences {
@@ -388,6 +399,8 @@ function cloneRefs(r: TaskReferences): TaskReferences {
     relatedTo: [...r.relatedTo],
     blockedBy: [...r.blockedBy],
     supersedes: [...r.supersedes],
+    followUpOf: [...(r.followUpOf ?? [])],
+    raisedFollowUps: [...(r.raisedFollowUps ?? [])],
     workbenches: [...(r.workbenches ?? [])],
   };
 }

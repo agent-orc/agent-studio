@@ -120,6 +120,7 @@
         <span class="task-card__waiting-glyph" aria-hidden="true">{{ dep.glyph }}</span> {{ dep.label }}
       </button>
     }
+    <app-failure-intervention-chip [origin]="job()" />
     @if (providerAuthWait(); as authWait) {
       @if (authWait.signInTarget) {
         <button type="button"

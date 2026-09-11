@@ -142,6 +142,10 @@ export interface TaskReferences {
   relatedTo: string[];
   blockedBy: string[];
   supersedes: string[];
+  /** Origin tasks carried by an orchestrator-created follow-up. */
+  followUpOf?: string[];
+  /** Follow-up tasks raised from this origin. */
+  raisedFollowUps?: string[];
   /** Stable project-scoped document reference keys. */
   workbenches?: string[];
 }
@@ -155,12 +159,14 @@ export interface RelatedWikiPage {
 }
 
 /** Task and document relation kinds, in display order. */
-export type TaskReferenceKind = 'dependsOn' | 'relatedTo' | 'blockedBy' | 'supersedes' | 'workbenches';
+export type TaskReferenceKind = 'dependsOn' | 'relatedTo' | 'blockedBy' | 'supersedes' | 'followUpOf' | 'raisedFollowUps' | 'workbenches';
 export const TASK_REFERENCE_KINDS: TaskReferenceKind[] = [
   'dependsOn',
   'relatedTo',
   'blockedBy',
   'supersedes',
+  'followUpOf',
+  'raisedFollowUps',
   'workbenches',
 ];
 
@@ -290,6 +296,8 @@ export interface TaskInfo {
   order: number;
   agent: string;
   createdAt: string;
+  creationSource?: 'human' | 'orchestrator' | 'external' | string;
+  createdBy?: string;
   watchPath: string;
   projectName: string;
   folderPath: string;

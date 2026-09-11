@@ -74,6 +74,7 @@ public static class EndpointMapping
         app.MapDesignSurfaceEndpoints();
         app.MapProjectTokenUsageEndpoints();
         app.MapPipelineHealthEndpoints();
+        app.MapFailureInterventionEndpoints();
         app.MapTokenPricingEndpoints();
         app.MapReviewDecisionsEndpoints();
         app.MapProjectSnapshotEndpoints();

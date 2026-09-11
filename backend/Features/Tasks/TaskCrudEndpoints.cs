@@ -1024,7 +1024,7 @@ public static class TaskCrudEndpoints
 
         // F34 reverse-index: tasks that reference this one. Optional ?kind=
         // narrows to a single relation (dependsOn / relatedTo / blockedBy /
-        // supersedes). Drives the detail-view "referenced by" list and the
+        // supersedes / followUpOf / raisedFollowUps). Drives the detail-view "referenced by" list and the
         // "show dependents of X" board filter. A keyless task (pre-F33) can
         // never be referenced, so it returns an empty list.
         group.MapGet("/{jobId}/dependents", (string jobId, string? project, string? watchPath, string? kind,
