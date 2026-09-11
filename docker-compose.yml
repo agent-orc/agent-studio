@@ -6,9 +6,16 @@
 # --profile runner:        adds coding/review agent-hosts (needs runner.env
 #                          with identity, auth token, and git remotes; the
 #                          coding CLIs run INSIDE these containers - the
-#                          container is the isolation boundary).
+#                          container is the isolation boundary). Run
+#                          scripts/compose-runner-bootstrap.sh first; it
+#                          creates runner.env and runner.token from
+#                          runner.env.template instead of you doing it by hand.
 # --profile distributed:   target-architecture preview (task-server, engine,
 #                          studio-bff) - not required for a working install.
+#                          Needs DISTRIBUTED_STUDIO_TOKEN/_ENGINE_TOKEN/
+#                          _RUNNER_TOKEN in .env; run
+#                          scripts/compose-distributed-bootstrap.sh first
+#                          instead of generating and pasting them by hand.
 # --profile dev:            source-built "-dev" siblings of every service
 #                          above, for contributors iterating on this checkout.
 #                          Build is intentionally never wired to the default,
@@ -136,7 +143,14 @@ x-orchestrator-engine: &orchestrator-engine
   restart: unless-stopped
   environment:
     CLIENT_ID: orchestrator-engine
-    CLIENT_CREDENTIAL: ${DISTRIBUTED_ENGINE_TOKEN:?set DISTRIBUTED_ENGINE_TOKEN}
+    # Empty by default: Compose interpolates every service's environment
+    # block up front regardless of which profile is active, so a required
+    # (`:?`) value here would break a bare `docker compose up` even though
+    # orchestrator-engine only ever runs under --profile distributed/dev.
+    # orchestrator-engine itself refuses to start without a real credential
+    # for a non-loopback SERVER_URL (orchestrator-engine/EngineOptions.cs) -
+    # that is the actual enforcement point.
+    CLIENT_CREDENTIAL: ${DISTRIBUTED_ENGINE_TOKEN:-}
   logging: *bounded-logs
 
 x-studio-bff: &studio-bff
@@ -282,7 +296,7 @@ services:
     environment:
       SERVER_URL: http://task-server:5071
       CLIENT_ID: orchestrator-engine
-      CLIENT_CREDENTIAL: ${DISTRIBUTED_ENGINE_TOKEN:?set DISTRIBUTED_ENGINE_TOKEN}
+      CLIENT_CREDENTIAL: ${DISTRIBUTED_ENGINE_TOKEN:-}
       # Explicitly scoped to this private, disposable Compose network.
       ENGINE_ALLOW_INSECURE_HTTP: "1"
 
@@ -299,7 +313,7 @@ services:
     environment:
       SERVER_URL: http://task-server-dev:5071
       CLIENT_ID: orchestrator-engine
-      CLIENT_CREDENTIAL: ${DISTRIBUTED_ENGINE_TOKEN:?set DISTRIBUTED_ENGINE_TOKEN}
+      CLIENT_CREDENTIAL: ${DISTRIBUTED_ENGINE_TOKEN:-}
       ENGINE_ALLOW_INSECURE_HTTP: "1"
     profiles: ["dev"]
 

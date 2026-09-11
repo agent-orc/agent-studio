@@ -13,6 +13,11 @@
 #   3. runner:       a containerised agent-host registers against the Task
 #                    Server and claims a seeded task through to
 #                    4-auto-review, using a fake CLI fixture.
+#   4. runner-legacy: the plain `--profile runner` path (agent-host-coding
+#                    and agent-host-review against the local OrchestratorApi,
+#                    no Task Server), bootstrapped only through
+#                    scripts/compose-runner-bootstrap.sh - the same artifacts
+#                    a first-time operator would generate.
 #
 # Requires: docker compose v2, curl, jq, git.
 set -euo pipefail
@@ -48,6 +53,8 @@ bff_port="${COMPOSE_SMOKE_BFF_PORT:-5072}"
 compose=(docker compose --project-name "$project_name")
 fixture_dir=""
 runner_override=""
+runner_env_created=""
+runner_token_created=""
 
 down()
 {
@@ -66,6 +73,8 @@ finish()
     down
     [ -n "$fixture_dir" ] && rm -rf "$fixture_dir"
     [ -n "$runner_override" ] && rm -f "$runner_override"
+    [ -n "$runner_env_created" ] && rm -f "$repo_root/runner.env"
+    [ -n "$runner_token_created" ] && rm -f "$repo_root/runner.token"
     exit "$status"
 }
 
@@ -291,3 +300,33 @@ printf '%s\n' \
     "task-state=$task_state"
 
 teardown_scenario compose_r3 dev -- task-server-dev agent-host-distributed-dev
+
+# --- Scenario 4: the plain `runner` profile, bootstrapped exactly the way --
+#     a first-time operator would (scripts/compose-runner-bootstrap.sh),
+#     against the local OrchestratorApi rather than a Task Server.
+echo "=== runner (agent-host <-> OrchestratorApi) profile ==="
+[ -e "$repo_root/runner.env" ] || runner_env_created=1
+[ -e "$repo_root/runner.token" ] || runner_token_created=1
+"$repo_root/scripts/compose-runner-bootstrap.sh" >/dev/null
+
+"${compose[@]}" --profile dev up --build --wait \
+    orchestrator-api-dev agent-host-coding-dev agent-host-review-dev
+
+test "$(healthy_count)" -eq 3   # orchestrator-api-dev, agent-host-coding-dev, agent-host-review-dev
+
+printf '%s\n' \
+    "compose-smoke=passed" \
+    "scenario=runner-legacy" \
+    "services=orchestrator-api,agent-host-coding,agent-host-review"
+
+teardown_scenario compose dev -- \
+    orchestrator-api-dev agent-host-coding-dev agent-host-review-dev
+
+if [ -n "$runner_env_created" ]; then
+    rm -f "$repo_root/runner.env"
+    runner_env_created=""
+fi
+if [ -n "$runner_token_created" ]; then
+    rm -f "$repo_root/runner.token"
+    runner_token_created=""
+fi

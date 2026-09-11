@@ -126,15 +126,62 @@ Follow [Linux runner host](./linux-runner-host.md) for that separate,
 credential-bearing host setup. The control plane remains usable while no Agent
 Host is connected.
 
+As a Docker-native alternative to a separately installed host, the same
+`docker-compose.yml` has a `runner` profile that runs the coding and review
+Agent Hosts as two more containers against this same `orchestrator-api`. A
+fresh clone has neither the shared `runner.env` nor the `runner.token` file
+the profile's containers require, so create them first instead of copying
+`runner.env.template` by hand:
+
+```sh
+scripts/compose-runner-bootstrap.sh
+```
+
+It creates both files under `umask 077` (mode `0600`), generates a private
+`runner.token` value, and never overwrites a file that already exists. Edit
+the generated `runner.env` for `RUNNER_GIT_REMOTE`, `RUNNER_GIT_PUSH_REMOTE`,
+and one of `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`, then:
+
+```sh
+docker compose --profile runner up --wait
+```
+
+## Distributed profile
+
+`--profile distributed` replaces the in-process orchestration runtime with
+three separate services - `task-server`, `orchestrator-engine`, and
+`studio-bff` - fronted by `orchestrator-api` acting as a transparent `/api/v1`
+proxy (`TASK_SERVER_BASE_URL`). It needs three independent bearer credentials
+(`DISTRIBUTED_STUDIO_TOKEN`, `DISTRIBUTED_ENGINE_TOKEN`,
+`DISTRIBUTED_RUNNER_TOKEN`) that the Task Server bootstraps as principals on
+first start. Generate them into `.env` instead of creating and pasting your
+own 256-bit values:
+
+```sh
+scripts/compose-distributed-bootstrap.sh
+docker compose --profile distributed up --wait
+```
+
+The script copies `.env.example` to `.env` if it does not exist yet, fills in
+any of the three tokens that are still empty with a fresh
+`openssl rand -hex 32` value, sets `.env` to mode `0600`, and leaves any value
+you already set untouched - re-running it after a token has been generated is
+a no-op for that variable. See
+[task-server.md](./task-server.md#container-images) for what each of the
+three services owns.
+
 ## Maintainer verification
 
 CI runs `scripts/compose-smoke-test.sh`, which builds every service from this
 checkout's Dockerfiles through the `dev` profile (so it needs no registry
-access) and proves three topologies: the default two-service stack (health
+access) and proves four topologies: the default two-service stack (health
 checks, browser shell, a real API call), the `distributed` profile with
-OrchestratorApi proxying `/api/v1` to a Task Server, and a containerised
+OrchestratorApi proxying `/api/v1` to a Task Server, a containerised
 agent-host that registers against a Task Server and claims a seeded task
-through to `4-auto-review` with a fake CLI fixture.
+through to `4-auto-review` with a fake CLI fixture, and the plain `runner`
+profile (agent-host-coding and agent-host-review against OrchestratorApi),
+bootstrapped only through `scripts/compose-runner-bootstrap.sh` - the same
+command a first-time operator runs.
 
 For a clean-machine proof, `scripts/compose-smoke-vm-test.sh` boots a pinned
 Ubuntu 24.04 cloud image with KVM acceleration, installs only Docker and Compose

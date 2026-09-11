@@ -24,6 +24,7 @@ an agent CLI, first tasks, and troubleshooting.
 | [task-server.md](./task-server.md) | Install, configure, supervise, migrate, manage retention policies, run or schedule archive/restore, and create or restore verified full backup sets for the independently deployed Task Server control plane. |
 | [remote-compose-test-harness.md](./remote-compose-test-harness.md) | Run the isolated Task Server, Agent Runner, and Studio Compose acceptance harness on a remote Docker host, with deterministic partitions, rolling replacements, evidence export, and identity-scoped cleanup. |
 | [presentation-capture.md](./presentation-capture.md) | Regenerating deterministic presentation stills and recording safe silent loops or narrated backup footage against the ADR-0056 demo workspace. |
+| [docker-compose-connector-gap.md](./docker-compose-connector-gap.md) | Open gap, needs a decision: why the Connector (D4b) cannot be the root compose's LAN-reachable Studio backend as built, and the three options for the next Docker-deployable card. |
 
 ## Related references
 
