@@ -132,8 +132,9 @@ public sealed class RemoteReviewPlanBuilder
         var baseline = string.IsNullOrWhiteSpace(integrationRef) ? "the configured integration ref" : integrationRef;
         var diff =
             $"This aspect runs on a remote Review Executor at the immutable Result-SHA. " +
-            $"Inspect the materialized repository directly and compare HEAD with {baseline}; " +
-            "do not infer the change from the Studio checkout.";
+            $"The executor appends the authoritative changed-file list and unified diff against " +
+            $"the merge-base with {baseline} before invoking the aspect. " +
+            "Use that appended material; do not infer the change from the Studio checkout.";
         return new AspectRunInputs(
             task.ProjectName,
             task.Id,

@@ -216,7 +216,73 @@ public sealed record ReviewVerdictDto(
     string Aspect,
     string Status,
     string Classification,
-    string Summary);
+    string Summary,
+    string? EvidenceChecked = null,
+    string? Missing = null);
+
+/// <summary>
+/// Enforces the citation contract for semantic review blocks. A model may
+/// refuse a delivery only after naming both the material it checked and the
+/// exact missing file, section, or contract. An uncited refusal remains useful
+/// reviewer feedback, but it is downgraded to a concern and cannot drive the
+/// acceptance rail.
+/// </summary>
+public static class ReviewVerdictCitationPolicy
+{
+    public const string BlockWithoutCitation = "block-without-citation";
+
+    public static ReviewReportRequest NormalizeReport(
+        ReviewReportRequest request,
+        IEnumerable<string> semanticAspects)
+    {
+        var aspects = semanticAspects.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var verdicts = request.Verdicts
+            .Select(verdict => Normalize(verdict, aspects.Contains(verdict.Aspect)))
+            .ToArray();
+        var downgraded = verdicts.Any(verdict => string.Equals(
+            verdict.Classification,
+            BlockWithoutCitation,
+            StringComparison.Ordinal));
+        var stillBlocked = verdicts.Any(verdict => ReviewGradingPolicy.IsBlockingToken(verdict.Status));
+        return request with
+        {
+            Verdicts = verdicts,
+            Outcome = downgraded && !stillBlocked
+                && string.Equals(request.Outcome, "ProductFailure", StringComparison.OrdinalIgnoreCase)
+                    ? "Pass"
+                    : request.Outcome,
+            FailureClassification = downgraded && !stillBlocked
+                ? BlockWithoutCitation
+                : request.FailureClassification,
+        };
+    }
+
+    public static ReviewVerdictDto Normalize(ReviewVerdictDto verdict, bool semanticAspect)
+    {
+        if (!semanticAspect
+            || !ReviewGradingPolicy.IsBlockingToken(verdict.Status)
+            || HasCitation(verdict))
+            return verdict;
+
+        return verdict with
+        {
+            Status = "concerns",
+            Classification = BlockWithoutCitation,
+            Summary = string.IsNullOrWhiteSpace(verdict.Summary)
+                ? "The reviewer requested a block without citing the checked evidence and exact missing gap."
+                : verdict.Summary.Trim() + " (Block downgraded because no review-material citation and exact missing gap were supplied.)",
+        };
+    }
+
+    public static bool HasCitation(ReviewVerdictDto verdict)
+        => Meaningful(verdict.EvidenceChecked)
+           && Meaningful(verdict.Missing);
+
+    private static bool Meaningful(string? value)
+        => !string.IsNullOrWhiteSpace(value)
+           && !string.Equals(value.Trim(), "none", StringComparison.OrdinalIgnoreCase)
+           && !string.Equals(value.Trim(), "n/a", StringComparison.OrdinalIgnoreCase);
+}
 
 public sealed record ReviewArtifactEvidenceDto(
     string Name,

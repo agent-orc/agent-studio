@@ -436,6 +436,12 @@ public static class V1ReviewPlaneEndpoints
                 return error!;
             var currentReview = current!;
             var authoritativeLease = currentReview.Lease!;
+            request = Contract.ReviewVerdictCitationPolicy.NormalizeReport(
+                request,
+                currentReview.Subject.Plan?.Commands
+                    .Where(command => Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind))
+                    .Select(command => command.Aspect)
+                ?? []);
             if (!string.Equals(request.Environment.ExecutorId, authoritativeLease.ExecutorId, StringComparison.Ordinal)
                 || !string.Equals(request.Environment.InstanceId, authoritativeLease.ClientId, StringComparison.Ordinal)
                 || !string.Equals(request.Environment.HostId, authoritativeLease.HostId, StringComparison.Ordinal)
