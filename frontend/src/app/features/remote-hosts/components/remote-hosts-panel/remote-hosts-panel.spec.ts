@@ -117,6 +117,66 @@ describe('RemoteHostsPanelComponent', () => {
     fixture.destroy();
   });
 
+  it('shows the toolbar "Delete retired…" action only once a retired host exists, and opens its dry-run dialog', async () => {
+    await TestBed.configureTestingModule({
+      imports: [RemoteHostsPanelComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+      ],
+    }).compileComponents();
+
+    const fixture = TestBed.createComponent(RemoteHostsPanelComponent);
+    fixture.detectChanges();
+    const el: HTMLElement = fixture.nativeElement;
+
+    expect(el.querySelector('[data-testid="remote-hosts-purge-retired"]')).toBeNull();
+
+    const service = TestBed.inject(RemoteHostsService);
+    service.hosts.update(hosts => hosts.map(host =>
+      host.id === 'agent-runner-01' ? { ...host, status: 'retired' as const } : host));
+    fixture.detectChanges();
+
+    const purgeButton = el.querySelector('[data-testid="remote-hosts-purge-retired"]') as HTMLButtonElement;
+    expect(purgeButton).toBeTruthy();
+    purgeButton.click();
+    fixture.detectChanges();
+    // <app-dialog> portals itself onto <body>, so the rendered dialog is no
+    // longer a descendant of the panel's own root element.
+    expect(document.querySelector('[data-testid="purge-retired-dialog"]')).toBeTruthy();
+
+    fixture.componentInstance.closePurgeRetired();
+    fixture.detectChanges();
+    expect(document.querySelector('[data-testid="purge-retired-dialog"]')).toBeNull();
+    fixture.destroy();
+  });
+
+  it('routes a role-row delete action through the name-bearing confirmation modal', async () => {
+    await TestBed.configureTestingModule({
+      imports: [RemoteHostsPanelComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+      ],
+    }).compileComponents();
+
+    const fixture = TestBed.createComponent(RemoteHostsPanelComponent);
+    fixture.detectChanges();
+
+    fixture.componentInstance.onAction({ kind: 'delete', id: 'agent-runner-01' });
+    fixture.detectChanges();
+
+    const pending = fixture.componentInstance.pendingConfirmation();
+    expect(pending?.kind).toBe('delete');
+    expect(fixture.componentInstance.confirmationTitle()).toContain('agent-runner-01');
+    expect(fixture.componentInstance.confirmationText()).toContain('cannot be undone');
+    fixture.destroy();
+  });
+
   describe('auto-review queue summary', () => {
     async function mountWithReviewSnapshot(snapshot: ReviewQueueSnapshot | null) {
       await TestBed.configureTestingModule({

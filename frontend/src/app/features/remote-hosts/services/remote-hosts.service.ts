@@ -1,10 +1,12 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, inject, signal } from '@angular/core';
+import { Observable, of, tap } from 'rxjs';
 import type { ClientSummary } from '../../../models/task.model';
 import type {
   HostActionKind,
   HostRampStrategy,
   HostTelemetrySeries,
+  PurgeRetiredClientsResponse,
   RemoteRunnerLinkHealth,
   RemoteHost,
   TaskServerTelemetrySnapshot,
@@ -573,6 +575,26 @@ export class RemoteHostsService {
       next: () => this.hosts.update(items => items.filter(item => item.id !== id)),
       error: error => this.actionFailed(id, error),
     });
+  }
+
+  /**
+   * Bulk cleanup for retired leftovers (e2e runs leave many behind). A dry
+   * run (the default) never mutates state; it only reports which candidates
+   * are eligible so the caller can preview before applying. An applied purge
+   * removes every deleted candidate from the registry so the header counts
+   * update without a reload.
+   */
+  purgeRetired(prefix: string, dryRun: boolean): Observable<PurgeRetiredClientsResponse> {
+    if (!this.http) return of({ dryRun, candidates: [], deletedCount: 0 });
+    return this.http.post<PurgeRetiredClientsResponse>('/api/clients/retired/purge', { prefix, dryRun }).pipe(
+      tap(result => {
+        this.log('purge', { prefix, dryRun, deletedCount: result.deletedCount });
+        if (result.dryRun || result.deletedCount === 0) return;
+        const deletedClientIds = new Set(
+          result.candidates.filter(candidate => candidate.deleted).map(candidate => candidate.id));
+        this.hosts.update(hosts => hosts.filter(host => !deletedClientIds.has(host.clientId)));
+      }),
+    );
   }
 
   /**

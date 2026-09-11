@@ -458,6 +458,31 @@ public sealed class AgentMessageBusBridge
     }
 
     /// <summary>
+    /// Client/runner identity lifecycle event (permanent delete, retired-purge
+    /// sweep). Not job-scoped, so it always lands in the <c>_workspace</c> bus
+    /// stream instead of a per-project one.
+    /// </summary>
+    public Task EmitClientLifecycleAsync(
+        string clientId,
+        string topic,
+        string summary,
+        object? payload = null,
+        CancellationToken ct = default)
+    {
+        var msg = NewMessage(
+            participantId: ParticipantRuntime,
+            role: "system",
+            kind: "lifecycle",
+            severity: "Info",
+            project: null,
+            topic: topic,
+            summary: TruncateSummary(summary),
+            payload: payload,
+            tags: new[] { "client-lifecycle", topic.ToLowerInvariant(), $"client:{clientId}" });
+        return EmitAsync(msg, ct);
+    }
+
+    /// <summary>
     /// Emits the final failure of a platform-owned repository push. Producers
     /// call this only after their retry budget is exhausted so the operator
     /// feed stays useful instead of receiving one message per retry attempt.

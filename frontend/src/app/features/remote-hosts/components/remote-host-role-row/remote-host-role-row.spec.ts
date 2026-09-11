@@ -21,7 +21,41 @@ const ROLE: RemoteHost = {
   stats: null,
 };
 
+const RETIRED_ROLE: RemoteHost = {
+  ...ROLE,
+  id: 'e2e-leftover-1',
+  name: 'e2e-leftover-1',
+  clientId: 'e2e-leftover-1',
+  serviceRole: 'runner',
+  status: 'retired',
+};
+
 describe('RemoteHostRoleRowComponent', () => {
+  it('offers Delete next to Revive for a retired role, and emits delete', () => {
+    TestBed.configureTestingModule({
+      imports: [RemoteHostRoleRowComponent],
+      providers: [provideZonelessChangeDetection()],
+    });
+    const fixture = TestBed.createComponent(RemoteHostRoleRowComponent);
+    fixture.componentRef.setInput('host', RETIRED_ROLE);
+    fixture.detectChanges();
+
+    let emitted: { kind: string; id: string } | undefined;
+    fixture.componentInstance.action.subscribe((event) => (emitted = event));
+
+    const reviveButton = fixture.nativeElement.querySelector(
+      '[data-testid="remote-host-action-revive"]',
+    ) as HTMLButtonElement | null;
+    const deleteButton = fixture.nativeElement.querySelector(
+      '[data-testid="remote-host-action-delete"]',
+    ) as HTMLButtonElement | null;
+    expect(reviveButton).toBeTruthy();
+    expect(deleteButton).toBeTruthy();
+
+    deleteButton!.click();
+    expect(emitted).toEqual({ kind: 'delete', id: RETIRED_ROLE.id });
+  });
+
   it('uses the role-local review ceiling instead of n/a', () => {
     expect(roleSlotTotal(ROLE)).toBe(6);
 

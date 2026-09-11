@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { api } from '../helpers/api';
+import { cleanupE2eClients, registerE2eClient } from '../helpers/e2e-clients';
 
 /**
  * Job-card "effective model" indicator.
@@ -22,7 +23,6 @@ import { api } from '../helpers/api';
 
 interface WatchPath { name: string; path: string; rootPath: string; }
 interface ClientDefaults { id: string; defaultCliType: string | null; defaultModel: string | null; }
-interface ClientSummary { id: string; displayName: string; defaultCliType: string | null; defaultModel: string | null; kind: string; }
 
 const TEST_OWNER_PREFIX = 'e2e-effective-model-';
 
@@ -30,13 +30,6 @@ async function ensureWatchPath(): Promise<WatchPath> {
   const list = await api<WatchPath[]>('/api/watch-paths');
   expect(list.length).toBeGreaterThan(0);
   return list[0];
-}
-
-async function registerOwner(displayName: string): Promise<ClientSummary> {
-  return api<ClientSummary>('/api/clients/register', {
-    method: 'POST',
-    body: JSON.stringify({ displayName, emoji: '🧪', colour: '#7c3aed', kind: 'human' })
-  });
 }
 
 async function setDefaults(id: string, cli: string | null, model: string | null): Promise<ClientDefaults> {
@@ -54,7 +47,7 @@ test.describe('job-card effective model', () => {
     // materializer leaves cliType/model null on the new job.json. (The
     // backend stamps defaults onto fresh jobs when the owner has any; we
     // want the legacy "agent: human, cliType: null, model: null" triple.)
-    const owner = await registerOwner(`${TEST_OWNER_PREFIX}default-${Date.now()}`);
+    const owner = await registerE2eClient(`${TEST_OWNER_PREFIX}default-${Date.now()}`);
     await setDefaults(owner.id, null, null);
 
     const title = `effective-default-${Date.now()}`;
@@ -117,13 +110,6 @@ test.describe('job-card effective model', () => {
   });
 
   test.afterAll(async () => {
-    // Best-effort retirement of e2e owner clients. Soft-delete only;
-    // historical attribution is preserved by design.
-    const all = await api<ClientSummary[]>('/api/clients/');
-    for (const c of all) {
-      if (c.id.startsWith(TEST_OWNER_PREFIX) && c.kind !== 'retired') {
-        try { await api(`/api/clients/${c.id}`, { method: 'DELETE' }); } catch { /* ignore */ }
-      }
-    }
+    await cleanupE2eClients(TEST_OWNER_PREFIX);
   });
 });

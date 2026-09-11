@@ -33,6 +33,12 @@
               (click)="emit('revive')">
         {{ h.busyAction === 'revive' ? 'Reviving…' : 'Revive' }}
       </button>
+      <button class="role__btn role__btn--danger" type="button"
+              data-testid="remote-host-action-delete"
+              [disabled]="!!h.busyAction"
+              (click)="emit('delete')">
+        {{ h.busyAction === 'delete' ? 'Deleting…' : 'Delete' }}
+      </button>
     } @else {
       @if (h.runnerLink && h.runnerLink.state !== 'up' && h.runnerLink.state !== 'paused') {
         <button class="role__btn role__btn--primary" type="button"
@@ -74,6 +80,11 @@
       @if (retired()) {
         <button type="button" role="menuitem" [disabled]="!!h.busyAction" (click)="emit('revive')">
           {{ h.busyAction === 'revive' ? 'Reviving…' : 'Revive' }}
+        </button>
+        <button class="role__menu-danger" type="button" role="menuitem"
+                data-testid="remote-host-menu-delete"
+                [disabled]="!!h.busyAction" (click)="emit('delete')">
+          {{ h.busyAction === 'delete' ? 'Deleting…' : 'Delete' }}
         </button>
       } @else {
         @if (h.runnerLink && h.runnerLink.state !== 'up' && h.runnerLink.state !== 'paused') {
