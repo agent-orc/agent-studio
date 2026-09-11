@@ -45,18 +45,28 @@ export class OrchestratorContextSourceService {
   private readonly docs = inject(ProjectDocsService);
 
   search(project: string, query: string) {
-    const params = new HttpParams()
-      .set('q', query)
-      .set('domains', 'tasks,commits,files')
-      .set('limit', 12);
+    // Split per AGT-2758: task results are Task-Server-owned (forwarded to
+    // GET /api/v1/studio/search); commit/file results stay dev-seat-local
+    // (GET /api/search/repository, a local git checkout read). The two calls
+    // are merged into the same KnownSourceResponse shape callers already use.
+    const taskParams = new HttpParams().set('q', query).set('domains', 'tasks').set('limit', 12);
+    const repoParams = new HttpParams().set('q', query).set('domains', 'commits,files').set('limit', 12);
     return forkJoin({
-      known: this.http.get<KnownSourceResponse>('/api/search', { params })
-        .pipe(catchError(() => of<KnownSourceResponse>({ tasks: [], commits: [], files: [] }))),
+      knownTasks: this.http.get<Pick<KnownSourceResponse, 'tasks'>>('/api/search', { params: taskParams })
+        .pipe(catchError(() => of<Pick<KnownSourceResponse, 'tasks'>>({ tasks: [] }))),
+      knownRepository: this.http.get<Pick<KnownSourceResponse, 'commits' | 'files'>>(
+        '/api/search/repository', { params: repoParams },
+      ).pipe(catchError(() => of<Pick<KnownSourceResponse, 'commits' | 'files'>>({ commits: [], files: [] }))),
       wiki: this.docs.searchWiki(project, query, { limit: 12 })
         .pipe(catchError(() => of<WikiSearchResponse | null>(null))),
       workbenches: this.docs.getWorkbenches(project)
         .pipe(catchError(() => of<WorkbenchCatalogue | null>(null))),
-    }).pipe(map(({ known, wiki, workbenches }) => {
+    }).pipe(map(({ knownTasks, knownRepository, wiki, workbenches }) => {
+      const known: KnownSourceResponse = {
+        tasks: knownTasks.tasks ?? [],
+        commits: knownRepository.commits ?? [],
+        files: knownRepository.files ?? [],
+      };
       const sameProject = (item: KnownSourceItem) => item.projectName === project;
       const tasks = known.tasks.filter(sameProject).map(item => this.option(
         'tasks', item.title, `${item.taskKey ?? item.subtitle} · ${item.lane ?? 'Task'}`,

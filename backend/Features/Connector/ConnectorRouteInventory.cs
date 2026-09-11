@@ -16,9 +16,17 @@ public sealed record ConnectorRouteOperation(
 public sealed class ConnectorRouteInventory
 {
     public const string ResourceName = "AgentStudio.Connector.Routes";
-    public const string ExpectedInventorySha256 = "4B0BB4A0D5C0488C7152471BA4D2C76BA2E23BA2F06753E675695DA3B4731ACE";
+    public const string ExpectedInventorySha256 = "74D2297CDF7C299B5AA7CF33405DF67DD6E622D63D1EABE8AA9008EB552ABD0E";
     public const string DevSeatClassification = "dev-seat";
     public const string TaskServerClassification = "task-server";
+
+    /// <summary>
+    /// A frontend operation whose Angular call site was removed (AGT-2758).
+    /// Kept as a row for the audit trail but never mapped or forwarded: it
+    /// carries no route and is excluded from both <see cref="DevSeatOperations"/>
+    /// and <see cref="TaskServerOperations"/>.
+    /// </summary>
+    public const string RetiredClassification = "retired";
 
     private readonly Dictionary<ConnectorRouteKey, ConnectorRouteOperation> _routes;
 
@@ -61,11 +69,18 @@ public sealed class ConnectorRouteInventory
         var document = JsonSerializer.Deserialize<InventoryDocument>(bytes)
             ?? throw new InvalidOperationException("Connector route inventory is empty.");
         var operations = document.FrontendRoutes ?? [];
-        if (operations.Count != 363
-            || operations.Count(operation => operation.Classification == DevSeatClassification) != 95
-            || operations.Count(operation => operation.Classification == TaskServerClassification) != 268)
-            throw new InvalidOperationException("Connector route inventory does not contain the approved 95/268 route split.");
-        if (operations.Any(operation => operation.Classification is not (DevSeatClassification or TaskServerClassification)))
+        // 364/103/260/1 reflects the AGT-2758 P3 resolution: 7 routes
+        // reclassified dev-seat (local checkout/CLI-probe operations the
+        // original heuristic mis-classified task-server), 1 retired (dead
+        // Angular call site removed), and 1 new dev-seat route split off the
+        // former mixed /api/search.
+        if (operations.Count != 364
+            || operations.Count(operation => operation.Classification == DevSeatClassification) != 103
+            || operations.Count(operation => operation.Classification == TaskServerClassification) != 260
+            || operations.Count(operation => operation.Classification == RetiredClassification) != 1)
+            throw new InvalidOperationException("Connector route inventory does not contain the approved 103/260/1 route split.");
+        if (operations.Any(operation => operation.Classification is not (
+                DevSeatClassification or TaskServerClassification or RetiredClassification)))
             throw new InvalidOperationException("Connector route inventory contains an unclassified operation.");
 
         var keys = operations.Select(operation => ConnectorRouteKey.FromInventory(operation.Method, operation.Path)).ToArray();

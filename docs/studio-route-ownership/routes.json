@@ -17,18 +17,18 @@
     ]
   },
   "counts": {
-    "frontendOperations": 363,
-    "frontendApiOperations": 362,
+    "frontendOperations": 364,
+    "frontendApiOperations": 363,
     "frontendHubOperations": 1,
     "byClassification": {
-      "task-server": 268,
-      "dev-seat": 95,
-      "retired": 0
+      "task-server": 260,
+      "dev-seat": 103,
+      "retired": 1
     },
     "orchestratorApiMapGroups": 28,
     "frontendV1Operations": 6,
     "frontendV1OperationsExistingInStandaloneTaskServer": 4,
-    "d4bRoutesToAdd": 264
+    "d4bRoutesToAdd": 256
   },
   "d4bEstimate": {
     "method": "Each must-add route is sized S=1, M=2, L=3, XL=8 weighted route points. Six points equal one engineering day after shared foundations. Add 15 days for connector security, version negotiation, replayable WebSocket infrastructure, contract harnesses, and cutover controls.",
@@ -316,13 +316,12 @@
         "order": 4,
         "title": "Administration and long tail",
         "impact": "Admin configuration and lower-frequency Studio surfaces.",
-        "routeCount": 24,
-        "weightedRoutePoints": 26,
+        "routeCount": 16,
+        "weightedRoutePoints": 18,
         "routeIds": [
           "fe-002",
           "fe-004",
           "fe-006",
-          "fe-011",
           "fe-023",
           "fe-038",
           "fe-039",
@@ -332,17 +331,10 @@
           "fe-106",
           "fe-108",
           "fe-122",
-          "fe-131",
-          "fe-134",
-          "fe-137",
-          "fe-138",
           "fe-143",
-          "fe-146",
-          "fe-184",
           "fe-214",
           "fe-215",
-          "fe-239",
-          "fe-345"
+          "fe-239"
         ]
       }
     ]
@@ -664,26 +656,22 @@
           "query": ""
         }
       ],
-      "classification": "task-server",
-      "owningComponent": "Remote Task Server",
+      "classification": "dev-seat",
+      "owningComponent": "Windows connector dev-seat module",
       "frontendOwner": "Shared frontend services",
-      "v1Status": "must-add",
-      "targetRoute": "/api/v1/studio/admin/prompts/coverage",
+      "v1Status": "not-applicable",
+      "targetRoute": "/api/admin/prompts/coverage",
       "frontendEvidence": [
         "frontend/src/app/services/prompt-admin.service.ts:207"
       ],
       "decisionEvidence": [
-        "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
+        "docs/operations/remote-task-server-local-studio.md:99-106",
         "docs/concepts/distributed-agent-studio-target-architecture.md:110-115"
       ],
-      "classificationReason": "The route exposes durable task, orchestration, identity, event, policy, artifact, or management state assigned to the Task Server by the target architecture.",
-      "ownershipCaveat": null,
-      "d4bPriority": "P3",
-      "estimate": {
-        "size": "S",
-        "weightedRoutePoints": 1,
-        "basis": "GET contract plus authorization, compatibility, and route-level tests"
-      }
+      "classificationReason": "The route directly reads or controls the Windows development seat: repository files, Git, local CLI probes and sessions, project URL launch and diagnosis, Dossier files, and developer tooling.",
+      "ownershipCaveat": "Coverage scans the running backend's own C# source tree for inline prompt violations (PromptCoverageScanner over DriftRepoRootLocator.Resolve()) - a monolith-checkout introspection tool, the same family as the dev-seat drift/devtools routes, not durable Task Server state.",
+      "d4bPriority": null,
+      "estimate": null
     },
     {
       "id": "fe-012",
@@ -4450,26 +4438,22 @@
           "query": ""
         }
       ],
-      "classification": "task-server",
-      "owningComponent": "Remote Task Server",
+      "classification": "dev-seat",
+      "owningComponent": "Windows connector dev-seat module",
       "frontendOwner": "Project hub",
-      "v1Status": "must-add",
-      "targetRoute": "/api/v1/studio/projects/{project}/proposals",
+      "v1Status": "not-applicable",
+      "targetRoute": "/api/projects/{project}/proposals",
       "frontendEvidence": [
         "frontend/src/app/features/project-detail/components/project-proposals-panel/project-proposals-panel.component.ts:195"
       ],
       "decisionEvidence": [
-        "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
+        "docs/operations/remote-task-server-local-studio.md:99-106",
         "docs/concepts/distributed-agent-studio-target-architecture.md:110-115"
       ],
-      "classificationReason": "The route exposes durable task, orchestration, identity, event, policy, artifact, or management state assigned to the Task Server by the target architecture.",
-      "ownershipCaveat": null,
-      "d4bPriority": "P3",
-      "estimate": {
-        "size": "S",
-        "weightedRoutePoints": 1,
-        "basis": "GET contract plus authorization, compatibility, and route-level tests"
-      }
+      "classificationReason": "The route directly reads or controls the Windows development seat: repository files, Git, local CLI probes and sessions, project URL launch and diagnosis, Dossier files, and developer tooling.",
+      "ownershipCaveat": "Proposals are markdown files under the project's local docs/concepts/proposals checkout, parsed from disk on every request (ProjectProposalService.List) - Dossier-file territory, the same family as the other dev-seat Dossier routes.",
+      "d4bPriority": null,
+      "estimate": null
     },
     {
       "id": "fe-132",
@@ -4543,26 +4527,22 @@
           "query": ""
         }
       ],
-      "classification": "task-server",
-      "owningComponent": "Remote Task Server",
+      "classification": "dev-seat",
+      "owningComponent": "Windows connector dev-seat module",
       "frontendOwner": "Project hub",
-      "v1Status": "must-add",
-      "targetRoute": "/api/v1/studio/projects/{project}/proposals/evidence/{path*}",
+      "v1Status": "not-applicable",
+      "targetRoute": "/api/projects/{project}/proposals/evidence/{path*}",
       "frontendEvidence": [
         "frontend/src/app/features/project-detail/components/project-proposals-panel/project-proposals-panel.component.ts:140"
       ],
       "decisionEvidence": [
-        "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
+        "docs/operations/remote-task-server-local-studio.md:99-106",
         "docs/concepts/distributed-agent-studio-target-architecture.md:110-115"
       ],
-      "classificationReason": "The route exposes durable task, orchestration, identity, event, policy, artifact, or management state assigned to the Task Server by the target architecture.",
-      "ownershipCaveat": null,
-      "d4bPriority": "P3",
-      "estimate": {
-        "size": "S",
-        "weightedRoutePoints": 1,
-        "basis": "GET contract plus authorization, compatibility, and route-level tests"
-      }
+      "classificationReason": "The route directly reads or controls the Windows development seat: repository files, Git, local CLI probes and sessions, project URL launch and diagnosis, Dossier files, and developer tooling.",
+      "ownershipCaveat": "Serves a proposal's evidence screenshot by streaming a file from the project's local checkout (Results.File) - no durable Task Server artifact backs it.",
+      "d4bPriority": null,
+      "estimate": null
     },
     {
       "id": "fe-135",
@@ -4636,26 +4616,22 @@
           "query": ""
         }
       ],
-      "classification": "task-server",
-      "owningComponent": "Remote Task Server",
+      "classification": "dev-seat",
+      "owningComponent": "Windows connector dev-seat module",
       "frontendOwner": "Shared frontend services",
-      "v1Status": "must-add",
-      "targetRoute": "/api/v1/studio/projects/{project}/publish/{targetId}/panel",
+      "v1Status": "not-applicable",
+      "targetRoute": "/api/projects/{project}/publish/{targetId}/panel",
       "frontendEvidence": [
         "frontend/src/app/services/task.service.ts:1892"
       ],
       "decisionEvidence": [
-        "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
+        "docs/operations/remote-task-server-local-studio.md:99-106",
         "docs/concepts/distributed-agent-studio-target-architecture.md:110-115"
       ],
-      "classificationReason": "The route exposes durable task, orchestration, identity, event, policy, artifact, or management state assigned to the Task Server by the target architecture.",
-      "ownershipCaveat": null,
-      "d4bPriority": "P3",
-      "estimate": {
-        "size": "S",
-        "weightedRoutePoints": 1,
-        "basis": "GET contract plus authorization, compatibility, and route-level tests"
-      }
+      "classificationReason": "The route directly reads or controls the Windows development seat: repository files, Git, local CLI probes and sessions, project URL launch and diagnosis, Dossier files, and developer tooling.",
+      "ownershipCaveat": "The publish panel is derived entirely from the project's local git checkout (tags, mainline commit ancestry, gh-pages tip, .github/workflows/*.yml on disk) - a Git helper, not durable Task Server state.",
+      "d4bPriority": null,
+      "estimate": null
     },
     {
       "id": "fe-138",
@@ -4667,26 +4643,22 @@
           "query": ""
         }
       ],
-      "classification": "task-server",
-      "owningComponent": "Remote Task Server",
+      "classification": "dev-seat",
+      "owningComponent": "Windows connector dev-seat module",
       "frontendOwner": "Shared frontend services",
-      "v1Status": "must-add",
-      "targetRoute": "/api/v1/studio/projects/{project}/publish/{targetId}/run",
+      "v1Status": "not-applicable",
+      "targetRoute": "/api/projects/{project}/publish/{targetId}/run",
       "frontendEvidence": [
         "frontend/src/app/services/task.service.ts:1919"
       ],
       "decisionEvidence": [
-        "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
+        "docs/operations/remote-task-server-local-studio.md:99-106",
         "docs/concepts/distributed-agent-studio-target-architecture.md:110-115"
       ],
-      "classificationReason": "The route exposes durable task, orchestration, identity, event, policy, artifact, or management state assigned to the Task Server by the target architecture.",
-      "ownershipCaveat": null,
-      "d4bPriority": "P3",
-      "estimate": {
-        "size": "S",
-        "weightedRoutePoints": 1,
-        "basis": "GET contract plus authorization, compatibility, and route-level tests"
-      }
+      "classificationReason": "The route directly reads or controls the Windows development seat: repository files, Git, local CLI probes and sessions, project URL launch and diagnosis, Dossier files, and developer tooling.",
+      "ownershipCaveat": "Publish run status is refreshed by shelling out to the local gh CLI against the project's local checkout, with an in-memory (non-durable) run cache - a local CLI probe, not durable Task Server state.",
+      "d4bPriority": null,
+      "estimate": null
     },
     {
       "id": "fe-139",
@@ -4915,11 +4887,11 @@
           "query": ""
         }
       ],
-      "classification": "task-server",
-      "owningComponent": "Remote Task Server",
+      "classification": "retired",
+      "owningComponent": "Retired",
       "frontendOwner": "Shared frontend services",
-      "v1Status": "must-add",
-      "targetRoute": "/api/v1/studio/projects/{project}/review-decisions-pending",
+      "v1Status": "retired",
+      "targetRoute": null,
       "frontendEvidence": [
         "frontend/src/app/services/task.service.ts:1850"
       ],
@@ -4927,14 +4899,10 @@
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
         "docs/concepts/distributed-agent-studio-target-architecture.md:110-115"
       ],
-      "classificationReason": "The route exposes durable task, orchestration, identity, event, policy, artifact, or management state assigned to the Task Server by the target architecture.",
-      "ownershipCaveat": null,
-      "d4bPriority": "P3",
-      "estimate": {
-        "size": "S",
-        "weightedRoutePoints": 1,
-        "basis": "GET contract plus authorization, compatibility, and route-level tests"
-      }
+      "classificationReason": "The Angular call site (TaskService.getReviewDecisionsPending) has no callers anywhere in frontend/src; superseded by the combined GET .../snapshot projection that project-detail.refreshAll uses instead. Removed in AGT-2758.",
+      "ownershipCaveat": "Backend route retained in the legacy monolith as a compatibility no-op target; no production surface reaches it.",
+      "d4bPriority": null,
+      "estimate": null
     },
     {
       "id": "fe-147",
@@ -6043,26 +6011,22 @@
           "query": ""
         }
       ],
-      "classification": "task-server",
-      "owningComponent": "Remote Task Server",
+      "classification": "dev-seat",
+      "owningComponent": "Windows connector dev-seat module",
       "frontendOwner": "Shared frontend services",
-      "v1Status": "must-add",
-      "targetRoute": "/api/v1/studio/projects/{project}/wiki/grading/status",
+      "v1Status": "not-applicable",
+      "targetRoute": "/api/projects/{project}/wiki/grading/status",
       "frontendEvidence": [
         "frontend/src/app/services/project-docs.service.ts:327"
       ],
       "decisionEvidence": [
-        "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
+        "docs/operations/remote-task-server-local-studio.md:99-106",
         "docs/concepts/distributed-agent-studio-target-architecture.md:110-115"
       ],
-      "classificationReason": "The route exposes durable task, orchestration, identity, event, policy, artifact, or management state assigned to the Task Server by the target architecture.",
-      "ownershipCaveat": null,
-      "d4bPriority": "P3",
-      "estimate": {
-        "size": "S",
-        "weightedRoutePoints": 1,
-        "basis": "GET contract plus authorization, compatibility, and route-level tests"
-      }
+      "classificationReason": "The route directly reads or controls the Windows development seat: repository files, Git, local CLI probes and sessions, project URL launch and diagnosis, Dossier files, and developer tooling.",
+      "ownershipCaveat": "Wiki grading status is an in-memory snapshot fed only by a CLI-spawning maintenance pass over the project's local wiki checkout (WikiGradingService.RunToCompletionAsync) - a local CLI probe/session, not durable Task Server state.",
+      "d4bPriority": null,
+      "estimate": null
     },
     {
       "id": "fe-185",
@@ -7721,7 +7685,7 @@
         "docs/concepts/distributed-agent-studio-target-architecture.md:110-115"
       ],
       "classificationReason": "The route exposes durable task, orchestration, identity, event, policy, artifact, or management state assigned to the Task Server by the target architecture.",
-      "ownershipCaveat": "Task results remain authoritative on the Task Server. Commit and repository-file search must become a separately named dev-seat query or a server index fed by Runner evidence.",
+      "ownershipCaveat": "Split in AGT-2758: this row is the task/board-results half only, served for real by the standalone Task Server (durable task index). Commit and repository-file search moved to the new dev-seat GET /api/search/repository route (fe-364).",
       "d4bPriority": "P3",
       "estimate": {
         "size": "M",
@@ -11378,26 +11342,22 @@
           "query": ""
         }
       ],
-      "classification": "task-server",
-      "owningComponent": "Remote Task Server",
+      "classification": "dev-seat",
+      "owningComponent": "Windows connector dev-seat module",
       "frontendOwner": "Shared frontend services",
-      "v1Status": "must-add",
-      "targetRoute": "/api/v1/studio/watch-paths",
+      "v1Status": "not-applicable",
+      "targetRoute": "/api/watch-paths",
       "frontendEvidence": [
         "frontend/src/app/services/task.service.ts:724"
       ],
       "decisionEvidence": [
-        "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
+        "docs/operations/remote-task-server-local-studio.md:99-106",
         "docs/concepts/distributed-agent-studio-target-architecture.md:110-115"
       ],
-      "classificationReason": "The route exposes durable task, orchestration, identity, event, policy, artifact, or management state assigned to the Task Server by the target architecture.",
-      "ownershipCaveat": null,
-      "d4bPriority": "P3",
-      "estimate": {
-        "size": "S",
-        "weightedRoutePoints": 1,
-        "basis": "GET contract plus authorization, compatibility, and route-level tests"
-      }
+      "classificationReason": "The route directly reads or controls the Windows development seat: repository files, Git, local CLI probes and sessions, project URL launch and diagnosis, Dossier files, and developer tooling.",
+      "ownershipCaveat": "Watch paths are Windows-local filesystem checkout locations (WatchPaths config plus ProjectRegistry) - the literal definition of dev-seat project location data, not durable Task Server state.",
+      "d4bPriority": null,
+      "estimate": null
     },
     {
       "id": "fe-346",
@@ -12004,6 +11964,41 @@
         "weightedRoutePoints": 8,
         "basis": "WS contract plus authorization, compatibility, and route-level tests"
       }
+    },
+    {
+      "id": "fe-364",
+      "method": "GET",
+      "path": "/api/search/repository",
+      "queryVariants": [
+        {
+          "kind": "none",
+          "query": ""
+        },
+        {
+          "kind": "optional-subset",
+          "keys": [
+            "domains",
+            "limit",
+            "q"
+          ]
+        }
+      ],
+      "classification": "dev-seat",
+      "owningComponent": "Windows connector dev-seat module",
+      "frontendOwner": "Orchestrator",
+      "v1Status": "not-applicable",
+      "targetRoute": "/api/search/repository",
+      "frontendEvidence": [
+        "frontend/src/app/features/orchestrator/services/orchestrator-context-source.service.ts:54"
+      ],
+      "decisionEvidence": [
+        "docs/operations/remote-task-server-local-studio.md:99-106",
+        "docs/concepts/distributed-agent-studio-target-architecture.md:110-115"
+      ],
+      "classificationReason": "The route directly reads or controls the Windows development seat: repository files, Git, local CLI probes and sessions, project URL launch and diagnosis, Dossier files, and developer tooling.",
+      "ownershipCaveat": "New route added in AGT-2758 to give the git-backed commits/files/dossiers/wiki domains of the former mixed /api/search an explicit dev-seat boundary, split from the task/board domain (fe-239) that the standalone Task Server now serves.",
+      "d4bPriority": null,
+      "estimate": null
     }
   ],
   "orchestratorApiGroups": [

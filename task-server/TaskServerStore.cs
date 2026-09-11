@@ -16,9 +16,12 @@ public sealed partial class TaskServerStore
     // 14 adds studio human users and sessions, a tasks.rank lane-ordering
     // column, and the replayable studio_stream_events cursor log backing
     // the /hubs/v1/studio hub.
+    // 15 adds studio_settings, a generic (scope, key) durable JSON store
+    // backing the P3 administration bundle (orchestrator/prompt config
+    // overrides, CLI quota policy, per-project CLI and lane-sort settings).
     // The migration block is idempotent; the number guards downgrades from
     // binaries that do not know this state.
-    public const int CurrentSchemaVersion = 14;
+    public const int CurrentSchemaVersion = 15;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -2815,6 +2818,13 @@ public sealed partial class TaskServerStore
                 project_id TEXT,
                 task_id TEXT,
                 payload_json TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS studio_settings(
+                scope TEXT NOT NULL,
+                key TEXT NOT NULL,
+                value_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(scope, key)
             );
             CREATE INDEX IF NOT EXISTS ix_tasks_project_state ON tasks(project_id, state);
             CREATE INDEX IF NOT EXISTS ix_orchestrator_contexts_project_visible
