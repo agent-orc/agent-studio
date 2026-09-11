@@ -26,6 +26,7 @@
     <None Include="Fixtures\quota\claude\**\*" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Fixtures\quota\codex\**\*" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Fixtures\pipeline-health\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\failure-intervention\**\*" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Fixtures\token-aggregation\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 

@@ -120,6 +120,17 @@
         <span class="task-card__waiting-glyph" aria-hidden="true">{{ dep.glyph }}</span> {{ dep.label }}
       </button>
     }
+    @if (interventionFollowUp(); as followUp) {
+      <button type="button"
+              class="task-card__waiting-pill task-card__waiting-pill--open"
+              data-testid="task-card-intervention"
+              [attr.data-intervention-state]="followUp.state"
+              [cacTooltip]="'Orchestrator intervention raised from this failure. Open ' + followUp.key"
+              (click)="navigateToIntervention(followUp.key, $event)">
+        <span class="task-card__waiting-glyph" aria-hidden="true">↗</span>
+        {{ followUp.key }} · {{ followUp.lane }} · {{ followUp.state }}
+      </button>
+    }
     @if (providerAuthWait(); as authWait) {
       @if (authWait.signInTarget) {
         <button type="button"

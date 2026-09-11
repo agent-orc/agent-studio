@@ -215,6 +215,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     // no move). Optional so test fixtures that do not exercise the backfill keep
     // their existing constructor; production DI always supplies it.
     private readonly HumanReviewEscalation? _humanReviewEscalation;
+    private readonly FailureInterventionService? _failureInterventions;
 
     /// <summary>
     /// Stable prefix on the <c>Reason</c> field of every
@@ -266,7 +267,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         PipelineStepEconomyAdvisor? pipelineStepEconomy = null,
         AttemptAuthorityService? attemptAuthority = null,
         DossierMaintenanceService? dossierMaintenance = null,
-        AgentStudio.Pipeline.IQualityAnalysisStepRunner? qualityAnalysisRunner = null)
+        AgentStudio.Pipeline.IQualityAnalysisStepRunner? qualityAnalysisRunner = null,
+        FailureInterventionService? failureInterventions = null)
     {
         _scanner = scanner;
         _taskAccess = taskAccess;
@@ -298,6 +300,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _attemptAuthority = attemptAuthority;
         _dossierMaintenance = dossierMaintenance;
         _qualityAnalysisRunner = qualityAnalysisRunner;
+        _failureInterventions = failureInterventions;
 
         _statusSnapshot.ConfigureEscalationRateAlert(
             _configuration.GetValue(
@@ -2288,6 +2291,12 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         var buildGateResult = await RunBuildTestGatePostStepAsync(workspace, entry, current, ct);
         if (buildGateResult?.Verdict == BuildTestGateVerdict.Fail)
         {
+            var intervention = await TryRaiseBuildGateInterventionAsync(current, entry, buildGateResult, ct);
+            if (intervention is not null)
+            {
+                await HandleFailureInterventionAsync(workspace, entry, current, buildGateResult, intervention, ct);
+                return;
+            }
             if (buildGateResult.IsInfrastructureFailure)
             {
                 await HandleBuildTestGateInfrastructureFailureAsync(
@@ -5409,6 +5418,73 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             FailureKind = result.FailureKind.ToString(),
         }, current.FolderPath, move.NewFolderPath);
         return Task.CompletedTask;
+    }
+
+    private async Task<FailureInterventionResult?> TryRaiseBuildGateInterventionAsync(
+        TaskInfo current,
+        WatchPathEntry entry,
+        BuildTestGateResult result,
+        CancellationToken ct)
+    {
+        if (_failureInterventions is null || _projectSettings is null) return null;
+        var settings = PipelineTypeSettings.ForTask(_projectSettings.Get(entry.Name), current);
+        var step = PipelineCatalogue.FindStep(PipelineCatalogue.FailureInterventionStepId)!;
+        if (!PipelineStepConfigResolver.IsEnabled(settings, step)) return null;
+        var failureCode = result.FailureKind == BuildTestGateFailureKind.MissingSource
+            ? "MissingSource"
+            : "build-gate-failed";
+        return await _failureInterventions.RaiseAsync(current, new FailureCommandEvidence(
+            failureCode,
+            "GateFailure",
+            result.ExitCode,
+            result.DurationMs,
+            result.Output,
+            result.Reason,
+            PipelineCatalogue.BuildTestGateStepId,
+            ["post-steps/build-test-gate-*.log"],
+            result.GateStartedAtUtc?.UtcDateTime), ct);
+    }
+
+    private async Task HandleFailureInterventionAsync(
+        string workspace,
+        WatchPathEntry entry,
+        TaskInfo current,
+        BuildTestGateResult result,
+        FailureInterventionResult intervention,
+        CancellationToken ct)
+    {
+        var move = _humanReviewEscalation is not null
+            ? await _humanReviewEscalation.EscalateAsync(
+                current.Id,
+                current.WatchPath,
+                current.ProjectName,
+                HumanReviewEscalationCategories.FailureIntervention,
+                intervention.WaitReason,
+                ct)
+            : GuardedMoveJob(current.Id, TaskStates.Escalated, entry.Path,
+                transitionCause: LaneChangeCauses.Escalated,
+                transitionDetail: HumanReviewEscalationCategories.FailureIntervention);
+        var movedFolder = move.NewFolderPath ?? current.FolderPath;
+        RecordOrchestratorDecisionStep(movedFolder, PipelineStepStatus.Failed,
+            DecisionVerdictEscalate,
+            $"intervention raised: {intervention.Intervention.FollowUpKey} "
+            + $"({intervention.Intervention.FailureClass}, {intervention.Intervention.Fingerprint}); "
+            + intervention.WaitReason);
+        _pipelineLog?.Complete(movedFolder);
+        AppendReviewDecision(workspace, new ReviewDecisionRecord(
+            CreatedAt: DateTime.UtcNow,
+            JobId: current.Id,
+            Project: entry.Name,
+            Kind: ReviewDecisionKind.Escalate,
+            Reason: intervention.WaitReason,
+            Prompt: "(deterministic failure-intervention post-step)",
+            Response: result.Output,
+            FollowUp: intervention.Intervention.FollowUpKey)
+        {
+            GateId = result.GateId,
+            FailureFingerprint = intervention.Intervention.Fingerprint,
+            FailureKind = intervention.Intervention.FailureClass,
+        }, current.FolderPath, move.NewFolderPath);
     }
 
     private static Dictionary<string, string> BuildBuildTestGateInfrastructureDetails(

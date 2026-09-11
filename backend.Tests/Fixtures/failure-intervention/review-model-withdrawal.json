@@ -1,0 +1,31 @@
+{
+  "failureCode": "ToolUnavailable",
+  "outcome": "ReviewInfra",
+  "firstFailureAt": "2026-09-09T16:06:00Z",
+  "observations": [
+    {
+      "card": "AGT-2707",
+      "exitCode": 1,
+      "durationMs": 4231,
+      "stdoutTail": "HTTP 400: The 'gpt-5.4-mini' model is not supported when using Codex with a ChatGPT account.",
+      "stderrTail": "HTTP 400: The 'gpt-5.4-mini' model is not supported when using Codex with a ChatGPT account.",
+      "stepId": "aspect-code-quality",
+      "evidencePointers": [
+        "logs/AGT-2707/review-attempt.json",
+        "logs/AGT-2707/aspect-code-quality.stdout.log"
+      ]
+    },
+    {
+      "card": "AGT-2755",
+      "exitCode": 1,
+      "durationMs": 3987,
+      "stdoutTail": "AGT-2755 aspect stderr: HTTP 400: The 'gpt-5.4-mini' model is not supported when using Codex with a ChatGPT account.",
+      "stderrTail": "AGT-2755 command wrapper: HTTP 400: The 'gpt-5.4-mini' model is not supported when using Codex with a ChatGPT account.",
+      "stepId": "aspect-architecture",
+      "evidencePointers": [
+        "logs/AGT-2755/review-attempt.json",
+        "logs/AGT-2755/aspect-architecture.stdout.log"
+      ]
+    }
+  ]
+}

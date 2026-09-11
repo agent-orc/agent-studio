@@ -6,6 +6,7 @@ Current system-of-record maps for the major runtime domains.
 |---|---|
 | [runner.md](runner.md) | Pickup, CLI run loop, outcome policy, supervisor loops, and recovery. |
 | [pipeline.md](pipeline.md) | Pre/core/post steps, pipeline history, step contracts, and cost. |
+| [orchestrator.md](orchestrator.md) | Orchestrator decisions, failure interventions, attribution, feed events, and project sessions. |
 | [tasks.md](tasks.md) | Job folders, lanes, API mutations, task access, review evidence, and attribution. |
 | [frontend.md](frontend.md) | Angular surfaces, design system, polling, optimistic mutation, and Playwright proof. |
 | [cli.md](cli.md) | CLI adapters, stream parsing, prompt handoff, quota probes, and models. |

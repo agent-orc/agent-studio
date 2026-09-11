@@ -87,6 +87,7 @@ public class TaskRunnerService : BackgroundService
     private readonly ILoadThrottleGate? _loadThrottle;
     private readonly AgentStudio.Clients.ClientIdentityStore? _clients;
     private readonly StartupExecutionAdmission? _executionAdmission;
+    private readonly AgentStudio.Pipeline.FailureInterventionService? _failureInterventions;
     private readonly ConcurrentDictionary<string, ProjectRunner> _runners = new();
 
     /// <summary>
@@ -156,7 +157,8 @@ public class TaskRunnerService : BackgroundService
         VisualQaService? visualQa = null,
         StartupExecutionAdmission? executionAdmission = null,
         ProviderLimitRegistry? providerLimits = null,
-        QuotaAdmissionService? quotaAdmission = null)
+        QuotaAdmissionService? quotaAdmission = null,
+        AgentStudio.Pipeline.FailureInterventionService? failureInterventions = null)
     {
         _config = config;
         _logger = logger;
@@ -207,6 +209,7 @@ public class TaskRunnerService : BackgroundService
         _quotaWaitPolicy = quotaWaitPolicy;
         _providerLimits = providerLimits ?? new ProviderLimitRegistry();
         _executionAdmission = executionAdmission;
+        _failureInterventions = failureInterventions;
 
         Role = RunnerRoles.ResolveFromConfig(_config);
         BackendName = ResolveBackendName(_config);
@@ -382,7 +385,8 @@ public class TaskRunnerService : BackgroundService
                 dossierMaintenance: _dossierMaintenance,
                 visualQa: _visualQa,
                 providerLimits: _providerLimits,
-                quotaAdmission: _quotaAdmission);
+                quotaAdmission: _quotaAdmission,
+                failureInterventions: _failureInterventions);
             runner.ConfigureWatchdog(LoadWatchdogConfig(_config), PhaseBudgetTable.FromConfig(_config));
             runner.ConfigureCircuitBreaker(RunnerCircuitBreakerOptions.FromConfig(_config));
             _stuckLoopBudget = LoadStuckLoopBudget(_config);
@@ -1529,7 +1533,8 @@ public class TaskRunnerService : BackgroundService
             dossierMaintenance: _dossierMaintenance,
             visualQa: _visualQa,
             providerLimits: _providerLimits,
-            quotaAdmission: _quotaAdmission);
+            quotaAdmission: _quotaAdmission,
+            failureInterventions: _failureInterventions);
         runner.ConfigureWatchdog(LoadWatchdogConfig(_config), PhaseBudgetTable.FromConfig(_config));
         runner.ConfigureCircuitBreaker(RunnerCircuitBreakerOptions.FromConfig(_config));
         runner.ConfigureStuckLoopBudget(LoadStuckLoopBudget(_config));

@@ -31,10 +31,12 @@ public sealed class PipelineStepEconomyAdvisor(
     public async Task<PipelineStepEconomyRecommendation?> SuggestModelAsync(
         ProjectSettings? settings,
         string stepId,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool forceEconomy = false)
     {
         var configured = PipelineStepConfigResolver.Lookup(settings, stepId);
-        if (configured?.EconomyModel != true || !string.IsNullOrWhiteSpace(configured.Model)) return null;
+        if ((!forceEconomy && configured?.EconomyModel != true)
+            || !string.IsNullOrWhiteSpace(configured?.Model)) return null;
 
         try
         {

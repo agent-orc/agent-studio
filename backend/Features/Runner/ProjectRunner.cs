@@ -107,6 +107,7 @@ public class ProjectRunner
     private readonly PromptEnrichmentService? _promptEnrichment;
     private readonly DossierMaintenanceService? _dossierMaintenance;
     private readonly VisualQaService? _visualQa;
+    private readonly FailureInterventionService? _failureInterventions;
     private readonly CliRouter _router;
     private readonly SummaryGenerationService _summaryService;
     private readonly RuntimePromptService _prompts;
@@ -457,7 +458,8 @@ public class ProjectRunner
         DossierMaintenanceService? dossierMaintenance = null,
         VisualQaService? visualQa = null,
         ProviderLimitRegistry? providerLimits = null,
-        QuotaAdmissionService? quotaAdmission = null)
+        QuotaAdmissionService? quotaAdmission = null,
+        FailureInterventionService? failureInterventions = null)
     {
         ProjectName = projectName;
         Entry = entry;
@@ -506,6 +508,7 @@ public class ProjectRunner
         _promptEnrichment = promptEnrichment;
         _dossierMaintenance = dossierMaintenance;
         _visualQa = visualQa;
+        _failureInterventions = failureInterventions;
         _postAbortReview = postAbortReview;
         _sessionInspector = sessionInspector;
 
@@ -5898,6 +5901,38 @@ public class ProjectRunner
                     RunOutcomePolicy.PriorCommitLines(activeInfo))
                 : null;
 
+            FailureInterventionResult? runIntervention = null;
+            if (action is { Kind: not OutcomeActionKind.NotifyUserAndAccept }
+                && activeInfo is not null
+                && !WasDeliberatelyStopped(execution.Status)
+                && FailureInterventionEnabled(activeInfo))
+            {
+                var outputTail = string.Join("\n", liveOutputSnapshot.TakeLast(80).Select(line => line.Text));
+                var failureCode = action.IssueKind == RunIssueKind.InfraCrash
+                    ? "crash-as-completion"
+                    : action.IssueKind.ToString();
+                runIntervention = await _failureInterventions!.RaiseAsync(activeInfo,
+                    new FailureCommandEvidence(
+                        failureCode,
+                        terminalOutcome.Kind,
+                        execution.ExitCode,
+                        execution.DurationSeconds is { } duration ? (long)(duration * 1_000) : null,
+                        outputTail,
+                        outcome.Reason,
+                        PipelineCatalogue.CoreAgentRunStepId,
+                        ["logs/", PipelineExecutionLog.FileName],
+                        execution.StartedAt),
+                    CancellationToken.None);
+                action = new OutcomeAction(
+                    OutcomeActionKind.NotifyUserAndStop,
+                    runIntervention.WaitReason,
+                    IsHeuristicFallback: false)
+                {
+                    IssueKind = action.IssueKind,
+                    MessageKind = OrchestratorMessageKind.GiveUp,
+                };
+            }
+
             // A launch-only follow-up must not erase a prior completed run that
             // already has a code-review grade. Preserve that successful run as
             // the review basis and hand the infrastructure failure to a human;
@@ -6091,6 +6126,7 @@ public class ProjectRunner
                     && activeInfo != null
                     && ShouldRouteIssueToEscalated(action.IssueKind)
                     && !preserveSuccessfulRunContext
+                    && runIntervention is null
                     // Non-retryable task verdicts skip abort-review entirely.
                     // Account-level provider limits never reach this task
                     // escalation path; they return earlier into quota-waiting.
@@ -6123,6 +6159,7 @@ public class ProjectRunner
                 // needs an operator, so both still fall through to escalation below.
                 if (action.Kind == OutcomeActionKind.NotifyUserAndStop
                     && activeInfo != null
+                    && runIntervention is null
                     && CompletionRetriggerDecider.ShouldRetrigger(action.IssueKind, RemainingCompletionRetriggerBudget(jobId, action.IssueKind)))
                 {
                     var used = _completionRetriggerUsed.TryGetValue(jobId, out var spent) ? spent : 0;
@@ -6170,7 +6207,7 @@ public class ProjectRunner
 
                 if (action.Kind == OutcomeActionKind.NotifyUserAndStop
                     && activeInfo != null
-                    && ShouldRouteIssueToEscalated(action.IssueKind))
+                    && (runIntervention is not null || ShouldRouteIssueToEscalated(action.IssueKind)))
                 {
                     _orchestratorLog.Append(activeInfo.WatchPath, new OrchestratorLogEntry
                     {
@@ -6193,7 +6230,9 @@ public class ProjectRunner
                     TeardownWorktreeForJob(jobId);
                     var move = await _humanReviewEscalation.EscalateAsync(
                         jobId, activeInfo.WatchPath, ProjectName,
-                        ResolveEscalationCategory(action.IssueKind, activeInfo.FolderPath),
+                        runIntervention is null
+                            ? ResolveEscalationCategory(action.IssueKind, activeInfo.FolderPath)
+                            : HumanReviewEscalationCategories.FailureIntervention,
                         action.MetaMessage ?? ToIssueTopic(action.IssueKind),
                         CancellationToken.None);
                     if (move.Status != MoveJobStatus.Success)
@@ -6476,6 +6515,22 @@ public class ProjectRunner
                 ApplyPendingModeIfAny(jobId);
                 NotifyStatus();
             }
+        }
+    }
+
+    private bool FailureInterventionEnabled(TaskInfo task)
+    {
+        if (_failureInterventions is null) return false;
+        try
+        {
+            var settings = PipelineTypeSettings.ForTask(_projectSettings.Get(ProjectName), task);
+            var step = PipelineCatalogue.FindStep(PipelineCatalogue.FailureInterventionStepId)!;
+            return PipelineStepConfigResolver.IsEnabled(settings, step);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failure-intervention enablement could not be resolved for {JobId}", task.Id);
+            return false;
         }
     }
 

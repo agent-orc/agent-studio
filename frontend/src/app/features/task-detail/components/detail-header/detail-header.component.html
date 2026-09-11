@@ -75,6 +75,11 @@
           <span class="detail__meta-item"
                 data-testid="detail-created-at"
                 [cacTooltip]="createdAtTooltip()">⏱ erstellt {{ relativeCreated() }}</span>
+          @if (info().creationSource === 'orchestrator') {
+            <span class="detail__meta-item"
+                  data-testid="detail-created-by-orchestrator"
+                  [cacTooltip]="'This follow-up was raised automatically from pipeline failure evidence.'">Created by Orchestrator</span>
+          }
           <app-execution-location-badge [execution]="info().executionLocation" />
         </div>
         <app-remote-dispatch-rejection [execution]="info().executionLocation" />

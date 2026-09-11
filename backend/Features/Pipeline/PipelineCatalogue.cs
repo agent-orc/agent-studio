@@ -350,6 +350,12 @@ public static class PipelineCatalogue
     /// </summary>
     public const string OrchestratorReviewStepId = "post-orchestrator-review";
     public const string OrchestratorDecisionStepId = "post-orchestrator-decision";
+    /// <summary>
+    /// Opt-in failure-boundary step. It classifies failed run, review, gate,
+    /// integration, and crash completions and raises one deduplicated
+    /// orchestrator follow-up task for an actionable failure fingerprint.
+    /// </summary>
+    public const string FailureInterventionStepId = "post-failure-intervention";
 
     /// <summary>
     /// First-class automatic code-review step (ASS-1657): runs post-CORE on the
@@ -900,6 +906,16 @@ public static class PipelineCatalogue
                     // Opt-in: a project turns it on only when it wants a follow-up
                     // card auto-created in another project (Default aus). No spam.
                     DefaultEnabled = false,
+                },
+                new PipelineStep
+                {
+                    Id = FailureInterventionStepId,
+                    DisplayName = "Failure intervention",
+                    Kind = StepKind.Orchestrator,
+                    RunMode = StepRunMode.Sequential,
+                    Idempotent = true,
+                    DefaultEnabled = false,
+                    DependsOn = [OrchestratorReviewStepId],
                 },
                 new PipelineStep
                 {

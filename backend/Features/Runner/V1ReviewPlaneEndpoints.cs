@@ -418,6 +418,7 @@ public static class V1ReviewPlaneEndpoints
             RemoteDeliveryIntegrationCoordinator remoteIntegration,
             TimelineLog timeline,
             RemotePipelineReviewEvidenceProjector remotePipelineEvidence,
+            FailureInterventionService failureInterventions,
             CancellationToken ct) =>
         {
             if (!RunnerMatches(context, request.ExecutorId))
@@ -569,7 +570,24 @@ public static class V1ReviewPlaneEndpoints
                 request.Outcome,
                 "ReviewInfra",
                 StringComparison.OrdinalIgnoreCase);
-            var retry = infrastructureFailure
+            FailureInterventionResult? intervention = null;
+            var interventionStep = PipelineCatalogue.FindStep(PipelineCatalogue.FailureInterventionStepId)!;
+            if (infrastructureFailure
+                && PipelineStepConfigResolver.IsEnabled(settings.Get(task.ProjectName), interventionStep))
+            {
+                var failedCommand = request.Commands.FirstOrDefault(command => command.ExitCode is not null and not 0)
+                    ?? request.Commands.FirstOrDefault();
+                intervention = await failureInterventions.RaiseAsync(task, new FailureCommandEvidence(
+                    request.FailureClassification ?? request.Outcome,
+                    request.Outcome,
+                    failedCommand?.ExitCode,
+                    failedCommand is null ? null : (long)(failedCommand.FinishedAt - failedCommand.StartedAt).TotalMilliseconds,
+                    request.Summary,
+                    request.Summary,
+                    failedCommand?.StepId,
+                    [evidenceFile]), ct);
+            }
+            var retry = infrastructureFailure && intervention is null
                         && authority.HasReviewInfrastructureRetryBudget(settled.ReviewAttempt.AttemptId);
             var repeatDiagnosis = infrastructureFailure
                 ? RecordInfrastructureRepeatDiagnosis(authority, timeline, task, settled.ReviewAttempt)
@@ -742,13 +760,17 @@ public static class V1ReviewPlaneEndpoints
                     // harder failure cannot be hidden behind the majority class
                     // (AGT-2220).
                     var chain = BuildAttemptChainSummary(authority, review.TaskKey);
+                    var category = intervention is null
+                        ? HumanReviewEscalationCategories.ReviewSubjectUnmaterializable
+                        : HumanReviewEscalationCategories.FailureIntervention;
+                    var escalationReason = intervention?.WaitReason
+                        ?? $"The immutable ReviewSubject exhausted its budget of {AttemptAuthorityService.ReviewInfrastructureRetryBudget} infrastructure retries and cannot be materialized. {chain.Headline}";
                     var moved = await escalation.EscalateAsync(
                         task.Id,
                         task.WatchPath,
                         task.ProjectName,
-                        HumanReviewEscalationCategories.ReviewSubjectUnmaterializable,
-                        $"The immutable ReviewSubject exhausted its budget of {AttemptAuthorityService.ReviewInfrastructureRetryBudget} infrastructure retries and cannot be materialized. "
-                        + chain.Headline,
+                        category,
+                        escalationReason,
                         ct,
                         statusDetail: chain.Detail);
                     if (moved.Status != MoveJobStatus.Success)

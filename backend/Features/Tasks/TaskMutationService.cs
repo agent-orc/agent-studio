@@ -833,7 +833,8 @@ public class TaskMutationService
 
     /// <summary>
     /// F34: replace-all write of the structured <c>references</c> object
-    /// (dependsOn / relatedTo / blockedBy / supersedes / workbenches). The supplied set is
+    /// (dependsOn / relatedTo / blockedBy / supersedes / followUpOf /
+    /// raisedFollowUps / workbenches). The supplied set is
     /// normalised (trim, drop blanks, de-duplicate case-insensitively per kind)
     /// and written atomically. Validation that referenced keys exist, that the
     /// task does not reference itself, and that dependsOn stays a DAG is the
@@ -847,9 +848,10 @@ public class TaskMutationService
         var clean = TaskReferenceValidator.Normalize(references ?? new TaskReferences());
         TaskJsonFile.UpdateField(info.FolderPath, "references", clean, _logger);
         _logger.LogInformation(
-            "task-references-set job={JobId} dependsOn={DependsOn} relatedTo={RelatedTo} blockedBy={BlockedBy} supersedes={Supersedes} workbenches={Workbenches}",
+            "task-references-set job={JobId} dependsOn={DependsOn} relatedTo={RelatedTo} blockedBy={BlockedBy} supersedes={Supersedes} followUpOf={FollowUpOf} raisedFollowUps={RaisedFollowUps} workbenches={Workbenches}",
             jobId, clean.DependsOn.Count, clean.RelatedTo.Count, clean.BlockedBy.Count,
-            clean.Supersedes.Count, clean.Workbenches.Count);
+            clean.Supersedes.Count, clean.FollowUpOf.Count, clean.RaisedFollowUps.Count,
+            clean.Workbenches.Count);
         return Updated();
     }
 
@@ -1397,6 +1399,8 @@ public class TaskMutationService
             ["id"] = jobId,
             ["title"] = req.Title,
             ["createdAt"] = DateTime.UtcNow.ToString("o"),
+            ["creationSource"] = string.IsNullOrWhiteSpace(req.CreationSource) ? "human" : req.CreationSource.Trim(),
+            ["createdBy"] = string.IsNullOrWhiteSpace(req.CreatedBy) ? ownerClientId : req.CreatedBy.Trim(),
             // Lane-entry sort anchor: a freshly created task has just entered
             // its initial lane, so stamp it now. Re-stamped on every move.
             ["enteredLaneAt"] = DateTime.UtcNow.ToString("o"),
@@ -1461,13 +1465,17 @@ public class TaskMutationService
         _timeline?.Append(
             jobDir,
             TimelineEventKinds.PromptCreated,
-            string.IsNullOrWhiteSpace(req.Agent) ? TimelineActors.System : TimelineActors.Human(ownerClientId),
+            string.Equals(req.CreationSource, TimelineActors.Orchestrator, StringComparison.OrdinalIgnoreCase)
+                ? TimelineActors.Orchestrator
+                : string.IsNullOrWhiteSpace(req.Agent) ? TimelineActors.System : TimelineActors.Human(ownerClientId),
             summary: string.IsNullOrWhiteSpace(req.Title) ? $"Task {jobId} created" : $"Task created: {req.Title}",
             payloadRef: "prompt.md",
             details: new()
             {
                 ["targetState"] = targetState ?? string.Empty,
                 ["agent"] = effectiveAgent ?? string.Empty,
+                ["creationSource"] = string.IsNullOrWhiteSpace(req.CreationSource) ? "human" : req.CreationSource.Trim(),
+                ["createdBy"] = string.IsNullOrWhiteSpace(req.CreatedBy) ? ownerClientId : req.CreatedBy.Trim(),
             });
 
         _scanner.InvalidateCache();

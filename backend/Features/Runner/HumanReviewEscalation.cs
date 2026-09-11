@@ -12,6 +12,8 @@ public static class HumanReviewEscalationCategories
 {
     /// <summary>Fallback for legacy auto-review escalation paths.</summary>
     public const string AutoReviewEscalation = "auto-review-escalation";
+    /// <summary>A failure boundary raised a deduplicated orchestrator follow-up task.</summary>
+    public const string FailureIntervention = "failure-intervention";
 
     /// <summary>A remote coding claim could not prepare its repository or
     /// execution environment after the durable per-task retry budget.</summary>

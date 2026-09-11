@@ -28,7 +28,7 @@
                     class="refs__chip-link"
                     [cacTooltip]="chipTooltip(key)"
                     (click)="navigate(key)">
-                    {{ chipLabel(key) }}
+                    {{ chipLabel(kind, key) }}
                   </button>
                   @if (adding()) {
                     <button

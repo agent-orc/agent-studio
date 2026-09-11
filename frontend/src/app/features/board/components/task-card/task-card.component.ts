@@ -103,6 +103,7 @@ export class TaskCardComponent implements OnInit, OnDestroy {
    */
   readonly pickNextRequested = output<TaskInfo>();
   private readonly hostRef = inject(ElementRef<HTMLElement>);
+  private readonly jobs = inject(TaskService);
 
   /** True when this card should render the just-created highlight. */
   readonly isJustCreated = computed(() => this.highlightJobId() === this.job().id);
@@ -432,6 +433,19 @@ export class TaskCardComponent implements OnInit, OnDestroy {
    * status (fulfilled/open per target, blocked, cycle). Null when no deps.
    */
   readonly dependencyChip = computed(() => buildVisibleDependencyChip(this.job()));
+  readonly interventionFollowUp = computed(() => {
+    const key = this.job().references?.raisedFollowUps?.[0];
+    if (!key) return null;
+    const target = this.jobs.jobs().find(task =>
+      task.key?.localeCompare(key, undefined, { sensitivity: 'accent' }) === 0);
+    return {
+      key,
+      lane: target ? stateLabel(target.state) : 'not loaded',
+      state: target && (target.state === TaskState.Completed || target.state === TaskState.Archive)
+        ? 'closed'
+        : 'open',
+    };
+  });
   readonly providerAuthWait = computed(() => this.providerAuthStatus.loaded()
     ? providerAuthWaitReason(this.job(), this.providerAuthStatus.statuses(), this.providerAuthStatus.links())
     : null);
@@ -450,7 +464,6 @@ export class TaskCardComponent implements OnInit, OnDestroy {
 
   // Context menu: copy actions + epic assignment (way 2).
   private readonly notifications = inject(NotificationService);
-  private readonly jobs = inject(TaskService);
   private readonly selection = inject(TaskSelectionService);
   private readonly boardFilters = inject(BoardFiltersService);
   readonly cardContextMenu = signal<{ x: number; y: number } | null>(null);
@@ -474,6 +487,14 @@ export class TaskCardComponent implements OnInit, OnDestroy {
         ? `${chip.targetKey} is not loaded in the current workspace view.`
         : 'That dependency could not be opened.',
     );
+  }
+
+  navigateToIntervention(key: string, event: MouseEvent): void {
+    event.preventDefault();
+    event.stopPropagation();
+    const target = this.jobs.jobs().find(task => task.key?.toUpperCase() === key.toUpperCase());
+    if (target) this.selection.openDetail(target);
+    else this.notifications.info(`${key} is not loaded in the current workspace view.`);
   }
 
   openCardContextMenu(event: MouseEvent): void {
