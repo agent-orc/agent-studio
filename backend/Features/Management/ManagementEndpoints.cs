@@ -161,6 +161,41 @@ public static class ManagementEndpoints
                     statusCode: 404)
                 : Results.Ok(status);
         });
+        group.MapPost("/remote-hosts/{id}/claude-sign-in", async (
+            HttpContext context,
+            string id,
+            ClaudeSignInRequest request,
+            ClaudeSignInCoordinator coordinator,
+            IConfiguration configuration,
+            CancellationToken ct) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            if (!TryAuthorize(context, configuration, out var denied, out var actor, out _)) return denied!;
+            try
+            {
+                return Results.Ok(await coordinator.StartAsync(id, request, actor!, ct));
+            }
+            catch (ClaudeSignInException ex)
+            {
+                return Results.Json(new { error = ex.Code, message = ex.Message }, statusCode: ex.StatusCode);
+            }
+        });
+        group.MapGet("/remote-hosts/{id}/claude-sign-in/{handle}", (
+            HttpContext context,
+            string id,
+            string handle,
+            ClaudeSignInCoordinator coordinator,
+            IConfiguration configuration) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
+            var status = coordinator.Get(id, handle);
+            return status is null
+                ? Results.Json(
+                    new { error = "claude-sign-in-session-not-found", message = "The Claude sign-in session was not found for this host." },
+                    statusCode: 404)
+                : Results.Ok(status);
+        });
         group.MapPost("/commands", (HttpContext context, ManagementCommandRequest request, ManagementService service, IConfiguration configuration) =>
         {
             context.Response.Headers.CacheControl = "no-store";

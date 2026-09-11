@@ -128,8 +128,8 @@
                   <strong>{{ auth.providerLabel }}</strong>
                   <span>{{ auth.state }}</span>
                 </span>
-                @if (canSignInCodex(auth)) { <button type="button" class="provider-auth__sign-in"
-                  data-testid="remote-host-codex-sign-in" (click)="openCodexSignIn(auth)">Sign in Codex</button> }
+                @if (signInLabel(auth); as label) { <button type="button" class="provider-auth__sign-in"
+                  [attr.data-testid]="'remote-host-' + auth.provider + '-sign-in'" (click)="openSignIn(auth)">{{ label }}</button> }
                 @if (auth.expiresSoon && auth.expiryLabel) {
                   <span class="provider-auth__expiry"
                         [attr.data-testid]="'remote-host-provider-auth-expiry-' + auth.provider">

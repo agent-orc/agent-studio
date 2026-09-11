@@ -36,8 +36,14 @@ import {
   type RemoteHost,
 } from '../../models/remote-host.model';
 import { freshHostTelemetry, latestHostTelemetry } from '../../models/running-truth';
-import { providerAuthBadgesForHost, signInTarget, type ProviderAuthBadge } from '../../models/provider-auth.model';
+import {
+  claudeSignInTarget,
+  providerAuthBadgesForHost,
+  signInTarget,
+  type ProviderAuthBadge,
+} from '../../models/provider-auth.model';
 import { CodexSignInDialogService } from '../../services/codex-sign-in-dialog.service';
+import { ClaudeSignInDialogService } from '../../services/claude-sign-in-dialog.service';
 
 /** One meter row (RAM / CPU / Disk) resolved for the template. */
 interface Meter {
@@ -84,6 +90,7 @@ interface Meter {
 })
 export class RemoteHostCardComponent {
   private readonly codexSignIn = inject(CodexSignInDialogService);
+  private readonly claudeSignIn = inject(ClaudeSignInDialogService);
   readonly host = input.required<RemoteHost>();
   readonly roles = input<readonly RemoteHost[]>([]);
   readonly roleActiveSlots = input<Readonly<Record<string, number>>>({});
@@ -270,12 +277,14 @@ export class RemoteHostCardComponent {
     return badge.history.at(-1) ?? null;
   }
 
-  canSignInCodex(badge: ProviderAuthBadge): boolean {
-    return badge.provider === 'codex' && ['unavailable', 'expiring'].includes(badge.state);
+  signInLabel(badge: ProviderAuthBadge): string | null {
+    if (!['codex', 'claude'].includes(badge.provider) || !['unavailable', 'expiring'].includes(badge.state)) return null;
+    return badge.provider === 'codex' ? 'Sign in Codex' : 'Sign in Claude';
   }
 
-  openCodexSignIn(badge: ProviderAuthBadge): void {
-    this.codexSignIn.open(signInTarget(badge, this.host().address));
+  openSignIn(badge: ProviderAuthBadge): void {
+    if (badge.provider === 'codex') this.codexSignIn.open(signInTarget(badge, this.host().address));
+    else if (badge.provider === 'claude') this.claudeSignIn.open(claudeSignInTarget(badge, this.host().address));
   }
 
   cliIcon(t: CliType): string { return cliTypeIcon(t); }
