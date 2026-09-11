@@ -147,7 +147,12 @@ SSH stdin and does not persist it. Both remote units load the file after their
 normal runner EnvironmentFile. The probe uses the resulting process environment
 and CLI status as authentication authority. A metadata-only freshness monitor
 may read native Claude and Codex credential files for modification and expiry
-timestamps, but never returns token values.
+timestamps, but never returns token values. Both providers also have a
+host-owned interactive sign-in (**Sign in Claude**, **Sign in Codex**;
+AGT-2712, AGT-2759) that runs the login on the host itself over SSH instead of
+Studio relaying a value: the remote script keeps the resulting credential on
+the host and only ever streams a public verification URL (plus, for Codex, a
+one-time code) back to Studio.
 
 **Remote coding hosts.** The standalone host keeps one primary
 `RUNNER_CLI_BIN` plus `RUNNER_CLAUDE_CLI_BIN` and `RUNNER_CODEX_CLI_BIN`.

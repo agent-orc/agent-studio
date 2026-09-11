@@ -127,6 +127,108 @@ public sealed class ProviderAuthProvisioningTests
         Assert.Equal("-s", startInfo.ArgumentList[^1]);
     }
 
+    [Fact]
+    public async Task ClaudeDeviceAuth_FakeSshTranscriptReturnsUrlAndAuditsOneTerminalOutcome()
+    {
+        var transport = new FakeClaudeDeviceAuthTransport();
+        var audit = new RecordingProviderSignInAudit();
+        var coordinator = new ClaudeSignInCoordinator(transport, audit);
+
+        var started = await coordinator.StartAsync(
+            "agent-runner-01",
+            new ClaudeSignInRequest("agent@runner-01"),
+            "operator-7",
+            CancellationToken.None);
+
+        Assert.Equal("pending", started.State);
+        Assert.Equal("https://claude.ai/setup-token/abc123", started.VerificationUrl);
+        Assert.Equal("agent@runner-01", transport.SshTarget);
+
+        transport.Complete(new ClaudeDeviceAuthTransportResult(
+            0,
+            LoginStatusVerified: true,
+            RestartedServices: ["agent-host.service"]));
+
+        ClaudeSignInStatusResponse? status = null;
+        for (var attempt = 0; attempt < 50; attempt++)
+        {
+            status = coordinator.Get("agent-runner-01", started.Handle);
+            if (status?.State == "completed") break;
+            await Task.Delay(10);
+        }
+
+        Assert.NotNull(status);
+        Assert.Equal("completed", status!.State);
+        Assert.Single(audit.Events);
+        Assert.Equal(new ProviderSignInAuditEvent(
+            "agent-runner-01",
+            "claude",
+            "operator-7",
+            "completed"), audit.Events[0]);
+    }
+
+    [Fact]
+    public async Task ClaudeDeviceAuth_FailedStatusProducesOneAuditOutcome()
+    {
+        var transport = new FakeClaudeDeviceAuthTransport();
+        var audit = new RecordingProviderSignInAudit();
+        var coordinator = new ClaudeSignInCoordinator(transport, audit);
+        var started = await coordinator.StartAsync(
+            "agent-runner-01",
+            new ClaudeSignInRequest("runner-01"),
+            "local-default",
+            CancellationToken.None);
+
+        transport.Complete(new ClaudeDeviceAuthTransportResult(42, false, []));
+        for (var attempt = 0; attempt < 50
+             && coordinator.Get("agent-runner-01", started.Handle)?.State == "pending"; attempt++)
+            await Task.Delay(10);
+
+        var status = coordinator.Get("agent-runner-01", started.Handle);
+        Assert.Equal("failed", status?.State);
+        Assert.Single(audit.Events);
+        Assert.Equal("failed", audit.Events[0].Outcome);
+    }
+
+    [Fact]
+    public void ClaudeSshTransport_UsesFixedScriptOverStdinAndNoInteractiveTerminal()
+    {
+        var startInfo = SshClaudeDeviceAuthTransport.BuildStartInfo("agent@runner-01");
+
+        Assert.Equal(TimeSpan.FromMinutes(15), ClaudeSignInCoordinator.SessionTimeout);
+        Assert.Equal("ssh", startInfo.FileName);
+        Assert.Contains("BatchMode=yes", startInfo.ArgumentList);
+        Assert.Contains("-T", startInfo.ArgumentList);
+        Assert.DoesNotContain("sudo", startInfo.ArgumentList);
+        Assert.Equal("bash", startInfo.ArgumentList[^2]);
+        Assert.Equal("-s", startInfo.ArgumentList[^1]);
+    }
+
+    private sealed class FakeClaudeDeviceAuthTransport : IClaudeDeviceAuthTransport
+    {
+        private readonly TaskCompletionSource<ClaudeDeviceAuthTransportResult> _completion =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public string SshTarget { get; private set; } = "";
+
+        public ClaudeDeviceAuthTransportSession Start(
+            string sshTarget,
+            Action<string> onOutput,
+            CancellationToken cancellationToken)
+        {
+            SshTarget = sshTarget;
+            onOutput("Please visit the following URL to authenticate:");
+            onOutput("https://claude.ai/setup-token/abc123");
+            onOutput("Waiting for authentication to complete in the browser...");
+            cancellationToken.Register(() => _completion.TrySetCanceled(cancellationToken));
+            return new ClaudeDeviceAuthTransportSession(
+                _completion.Task,
+                () => _completion.TrySetCanceled());
+        }
+
+        public void Complete(ClaudeDeviceAuthTransportResult result) => _completion.TrySetResult(result);
+    }
+
     private sealed class FakeCodexDeviceAuthTransport : ICodexDeviceAuthTransport
     {
         private readonly TaskCompletionSource<CodexDeviceAuthTransportResult> _completion =

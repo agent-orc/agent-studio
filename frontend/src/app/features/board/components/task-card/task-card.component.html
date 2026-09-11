@@ -130,6 +130,15 @@
           <span class="task-card__provider-auth-dot" aria-hidden="true"></span>
           {{ authWait.label }} · Sign in
         </button>
+      } @else if (authWait.claudeSignInTarget) {
+        <button type="button"
+                class="task-card__provider-auth-wait"
+                data-testid="task-card-provider-auth-wait"
+                [cacTooltip]="authWait.tooltip"
+                (click)="$event.stopPropagation(); claudeSignIn.open(authWait.claudeSignInTarget)">
+          <span class="task-card__provider-auth-dot" aria-hidden="true"></span>
+          {{ authWait.label }} · Sign in
+        </button>
       } @else {
         <span class="task-card__provider-auth-wait"
               data-testid="task-card-provider-auth-wait"

@@ -866,6 +866,88 @@ test.describe('Execution Hosts settings section', () => {
     await expect(remote.getByTestId('remote-host-provider-auth-codex')).toHaveAttribute('data-state', 'ok');
   });
 
+  test('completes host-owned Claude sign-in and waits for the fresh provider probe', async ({ page, devBackend }) => {
+    void devBackend;
+    const now = Date.now();
+    let allowCompletion = false;
+    let signInCompleted = false;
+    let requestedBody: Record<string, unknown> | null = null;
+    const authCapability = (ready: boolean) => ({
+      key: 'provider-auth:claude', category: 'provider-auth',
+      advertisedStatus: ready ? 'ready' : 'unavailable', healthState: 'healthy',
+      signal: ready ? 'ok' : 'signed-out',
+      reason: null, detail: ready ? 'Active session confirmed.' : 'Not logged in',
+      advertisedAt: new Date(now + (ready ? 30_000 : 0)).toISOString(),
+      freshUntil: new Date(now + 180_000).toISOString(), isFresh: true,
+      firstFailureAt: null, lastFailureAt: null, cooldownUntil: null, canaryClaimId: null,
+      consecutiveFailures: 2, version: null, identity: 'claude', affectedClaims: [], recoveryHistory: [],
+    });
+    const snapshot = () => [{
+      runnerId: 'agent-runner-01', name: 'agent-runner-01', hostId: 'agent-runner-01',
+      instanceId: 'coding', runnerVersion: '1.2.0', protocolVersion: 2, status: 'active',
+      registeredAt: new Date(now - 86_400_000).toISOString(), lastSeenAt: new Date().toISOString(),
+      hostAdmission: { hostId: 'agent-runner-01', admissionState: 'open' },
+      capabilities: [{
+        key: 'cli-execution:claude', category: 'cli-execution', advertisedStatus: 'ready',
+        healthState: 'healthy', advertisedAt: new Date(now).toISOString(),
+        freshUntil: new Date(now + 180_000).toISOString(), isFresh: true,
+        consecutiveFailures: 0, affectedClaims: [], recoveryHistory: [],
+      }, authCapability(signInCompleted)], telemetry: null,
+    }];
+
+    await page.unroute('**/api/v1/management/remote-hosts');
+    await page.route('**/api/v1/management/remote-hosts', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify(snapshot()),
+    }));
+    await page.route('**/api/v1/management/remote-hosts/*/claude-sign-in', async route => {
+      requestedBody = route.request().postDataJSON() as Record<string, unknown>;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          handle: 'claude_fake_session', state: 'pending',
+          verificationUrl: 'https://claude.ai/setup-token/mock',
+          expiresAt: new Date(now + 900_000).toISOString(),
+        }),
+      });
+    });
+    await page.route('**/api/v1/management/remote-hosts/*/claude-sign-in/*', route => {
+      signInCompleted = allowCompletion;
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          handle: 'claude_fake_session', state: allowCompletion ? 'completed' : 'pending',
+          detail: allowCompletion ? 'Claude sign-in completed.' : 'Waiting for browser sign-in.',
+          requestedAt: new Date(now).toISOString(), expiresAt: new Date(now + 900_000).toISOString(),
+          completedAt: allowCompletion ? new Date().toISOString() : null,
+        }),
+      });
+    });
+
+    await page.goto('/#/workspace/settings/remote-hosts');
+    const remote = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
+    const evidenceDir = resolve(process.env.JOB_RESULTS_DIR ?? '../results', 'claude-sign-in');
+    mkdirSync(evidenceDir, { recursive: true });
+    await expandHost(remote);
+    await expect(remote.getByTestId('remote-host-provider-auth-claude')).toHaveAttribute('data-state', 'unavailable');
+    await remote.getByTestId('remote-host-claude-sign-in').click();
+    const dialog = page.getByTestId('claude-sign-in-dialog');
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByTestId('claude-sign-in-url')).toHaveAttribute('href', 'https://claude.ai/setup-token/mock');
+    await expect.poll(() => requestedBody).not.toBeNull();
+    expect(requestedBody).toEqual({ sshTarget: 'agent-runner' });
+
+    await setTheme(page, 'dark');
+    await dialog.screenshot({ path: join(evidenceDir, 'claude-device-sign-in-dark--mocked.png') });
+    await setTheme(page, 'light');
+    await dialog.screenshot({ path: join(evidenceDir, 'claude-device-sign-in-light--mocked.png') });
+
+    allowCompletion = true;
+    await expect(dialog).toBeHidden({ timeout: 10_000 });
+    await expect(remote.getByTestId('remote-host-provider-auth-claude')).toHaveAttribute('data-state', 'ok');
+  });
+
   test('surfaces a failed startup push probe as a read-only host', async ({ page }) => {
     await page.unroute('**/api/clients');
     await page.route('**/api/clients', route => route.fulfill({

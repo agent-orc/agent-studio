@@ -7,6 +7,8 @@ import {
   type ProviderAuthBadge,
   type CodexSignInStartResponse,
   type CodexSignInStatusResponse,
+  type ClaudeSignInStartResponse,
+  type ClaudeSignInStatusResponse,
   type ProviderAuthProvisioningRequest,
   type ProviderAuthProvisioningResponse,
 } from '../models/provider-auth.model';
@@ -112,6 +114,21 @@ export class ProviderAuthStatusService implements OnDestroy {
     if (!this.http) throw new Error('Codex sign-in requires the Studio HTTP client.');
     return this.http.get<CodexSignInStatusResponse>(
       `/api/v1/management/remote-hosts/${encodeURIComponent(hostId)}/codex-sign-in/${encodeURIComponent(handle)}`,
+    );
+  }
+
+  startClaudeSignIn(hostId: string, sshTarget: string): Observable<ClaudeSignInStartResponse> {
+    if (!this.http) throw new Error('Claude sign-in requires the Studio HTTP client.');
+    return this.http.post<ClaudeSignInStartResponse>(
+      `/api/v1/management/remote-hosts/${encodeURIComponent(hostId)}/claude-sign-in`,
+      { sshTarget },
+    );
+  }
+
+  claudeSignInStatus(hostId: string, handle: string): Observable<ClaudeSignInStatusResponse> {
+    if (!this.http) throw new Error('Claude sign-in requires the Studio HTTP client.');
+    return this.http.get<ClaudeSignInStatusResponse>(
+      `/api/v1/management/remote-hosts/${encodeURIComponent(hostId)}/claude-sign-in/${encodeURIComponent(handle)}`,
     );
   }
 

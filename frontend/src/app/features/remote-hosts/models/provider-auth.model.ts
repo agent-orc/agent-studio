@@ -37,6 +37,7 @@ export interface ProviderAuthWaitReason {
   tooltip: string;
   hostNames: readonly string[];
   signInTarget: CodexSignInTarget | null;
+  claudeSignInTarget: ClaudeSignInTarget | null;
 }
 
 export interface ProviderAuthProvisioningRequest {
@@ -75,6 +76,31 @@ export interface CodexSignInStartResponse {
 }
 
 export interface CodexSignInStatusResponse {
+  handle: string;
+  state: 'pending' | 'completed' | 'failed';
+  detail: string;
+  requestedAt: string;
+  expiresAt: string;
+  completedAt: string | null;
+}
+
+export interface ClaudeSignInTarget {
+  hostId: string;
+  runnerId: string;
+  hostName: string;
+  aliases: readonly string[];
+  sshTarget?: string | null;
+  baselineAdvertisedAt: string | null;
+}
+
+export interface ClaudeSignInStartResponse {
+  handle: string;
+  state: 'pending';
+  verificationUrl: string;
+  expiresAt: string;
+}
+
+export interface ClaudeSignInStatusResponse {
   handle: string;
   state: 'pending' | 'completed' | 'failed';
   detail: string;
@@ -187,6 +213,9 @@ export function providerAuthWaitReason(
     signInTarget: !blockingLink && providerTextAllowed && provider === 'codex' && unavailable.length > 0
       ? signInTarget(unavailable[0])
       : null,
+    claudeSignInTarget: provider === 'claude' && unavailable.length > 0
+      ? claudeSignInTarget(unavailable[0])
+      : null,
   };
 }
 
@@ -207,6 +236,17 @@ function linkWaitLabel(link: RemoteRunnerLinkHealth): string {
 }
 
 export function signInTarget(badge: ProviderAuthBadge, sshTarget?: string | null): CodexSignInTarget {
+  return {
+    hostId: badge.hostId || badge.runnerId,
+    runnerId: badge.runnerId,
+    hostName: badge.hostName,
+    aliases: badge.aliases,
+    sshTarget,
+    baselineAdvertisedAt: badge.advertisedAt,
+  };
+}
+
+export function claudeSignInTarget(badge: ProviderAuthBadge, sshTarget?: string | null): ClaudeSignInTarget {
   return {
     hostId: badge.hostId || badge.runnerId,
     runnerId: badge.runnerId,

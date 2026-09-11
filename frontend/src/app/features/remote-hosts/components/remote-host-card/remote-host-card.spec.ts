@@ -7,6 +7,7 @@ import { HostTelemetryHistoryComponent } from '../host-telemetry-history/host-te
 import { RemoteHostCardComponent } from './remote-host-card';
 import type { RemoteHost } from '../../models/remote-host.model';
 import { CodexSignInDialogService } from '../../services/codex-sign-in-dialog.service';
+import { ClaudeSignInDialogService } from '../../services/claude-sign-in-dialog.service';
 
 const HOST: RemoteHost = {
   id: 'hetzner',
@@ -204,6 +205,30 @@ describe('RemoteHostCardComponent', () => {
     expect(signIn).toBeTruthy();
     signIn.click();
     expect(TestBed.inject(CodexSignInDialogService).request()).toMatchObject({
+      hostId: 'hetzner',
+      sshTarget: 'agent@runner.hetzner',
+    });
+  });
+
+  it('offers Claude sign-in for an unavailable host badge and keeps the SSH target host-owned', () => {
+    const fixture = mount({
+      ...HOST,
+      capabilityHealth: [{
+        key: 'provider-auth:claude', category: 'provider-auth', advertisedStatus: 'unavailable',
+        healthState: 'healthy', advertisedAt: '2026-07-10T11:59:30Z',
+        freshUntil: '2026-07-10T12:02:30Z', isFresh: true, consecutiveFailures: 2,
+        detail: 'Not logged in', signal: 'signed-out',
+        affectedClaims: [], recoveryHistory: [],
+      }],
+    });
+    const signIn = fixture.nativeElement.querySelector(
+      '[data-testid="remote-host-claude-sign-in"]',
+    ) as HTMLButtonElement;
+
+    expect(signIn).toBeTruthy();
+    expect(signIn.textContent).toContain('Sign in Claude');
+    signIn.click();
+    expect(TestBed.inject(ClaudeSignInDialogService).request()).toMatchObject({
       hostId: 'hetzner',
       sshTarget: 'agent@runner.hetzner',
     });
