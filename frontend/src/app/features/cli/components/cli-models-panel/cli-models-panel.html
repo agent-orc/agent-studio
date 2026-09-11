@@ -19,6 +19,25 @@
       </label>
     </section>
   }
+  @if (migrations.version(); as migrationVersion) {
+    <section class="cli-models__policy" data-testid="model-migration-catalog">
+      <div class="cli-models__policy-copy">
+        <span class="cli-models__policy-title">Model migrations</span>
+        <span class="cli-models__policy-detail">
+          Migration catalog {{ migrationVersion }} offers safe upgrades for explicit pins and pipeline-step overrides.
+        </span>
+      </div>
+      <label class="cli-models__economy">
+        <input type="checkbox"
+               data-testid="auto-apply-model-migrations"
+               [checked]="autoApplyModelMigrations() === true"
+               [disabled]="autoApplySaving() || autoApplyModelMigrations() === null"
+               (change)="setAutoApplyMigrations($any($event.target).checked)" />
+        <span>Auto-apply {{ autoApplyModelMigrations() ? 'on' : 'off' }}</span>
+        <small>Applies safe migrations automatically for non-explicit task models at run admission</small>
+      </label>
+    </section>
+  }
   @for (g of groups(); track g.cliType) {
     <article class="cli-models__row"
              [class.cli-models__row--open]="isExpanded(g.cliType)"
@@ -41,6 +60,8 @@
                   [class.cli-models__summary-fallback--none]="!hasFallback(g.cliType)">{{ fallbackSummary(g.cliType) }}</span>
           </span>
         </button>
+        <app-model-migration-badge [model]="primaryModel(g.cliType)" [pending]="savingCli() === g.cliType"
+          testId="cli-models-migration" (apply)="setPrimary(g.cliType, $event)" />
         <button class="cli-models__refresh"
                 type="button"
                 [attr.data-testid]="'cli-models-refresh-' + g.cliType"

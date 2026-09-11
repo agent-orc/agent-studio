@@ -131,6 +131,25 @@ public sealed class WorkspaceSettingsService
             clamped, workspaceId);
     }
 
+    /// <summary>
+    /// Sets or clears the workspace-default automatic model-migration switch
+    /// (AGT-2716). Null restores the platform default (on).
+    /// </summary>
+    public void SetAutoApplyModelMigrations(string workspaceId, bool? enabled)
+    {
+        if (string.IsNullOrWhiteSpace(workspaceId)) return;
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var current = _cache.TryGetValue(workspaceId, out var s) ? s : new WorkspaceSettings();
+            _cache[workspaceId] = current with { AutoApplyModelMigrations = enabled };
+            Persist();
+        }
+        _logger.LogInformation(
+            "workspace-settings auto-apply model migrations set to {Enabled} for workspace {Workspace}",
+            enabled is null ? "(default: on)" : enabled.Value.ToString(), workspaceId);
+    }
+
     private void EnsureLoaded()
     {
         lock (_lock)

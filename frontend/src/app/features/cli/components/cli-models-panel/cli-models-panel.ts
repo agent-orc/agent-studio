@@ -2,8 +2,14 @@ import { ChangeDetectionStrategy, Component, OnInit, computed, inject, signal } 
 import { CLI_TYPES, type CliType } from '../../../../models/task.model';
 import type { CliModelInfo } from '../../models/cli.model';
 import { CliCatalogStore } from '../../services/cli-catalog.store';
+import { ModelMigrationCatalogStore } from '../../services/model-migration-catalog.store';
+import { ModelMigrationBadgeComponent } from '../../../../components/model-migration-badge/model-migration-badge.component';
 import { cliTypeIcon, cliTypeLabel } from '../../../../services/format.util';
 import { QuotaApiService, type CliModelRouteProfile, type ModelRoutingPolicyView } from '../../../quota';
+import { TaskService } from '../../../../services/task.service';
+import {
+  WorkspaceOrchestratorSettingsService,
+} from '../../../../services/workspace-orchestrator-settings.service';
 
 interface CliModelGroup {
   cliType: CliType;
@@ -27,7 +33,7 @@ interface CliModelGroup {
 @Component({
   selector: 'app-cli-models-panel',
   standalone: true,
-  imports: [],
+  imports: [ModelMigrationBadgeComponent],
   templateUrl: './cli-models-panel.html',
   styleUrl: './cli-models-panel.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -35,11 +41,24 @@ interface CliModelGroup {
 export class CliModelsPanelComponent implements OnInit {
   private readonly catalog = inject(CliCatalogStore);
   private readonly routesApi = inject(QuotaApiService);
+  private readonly jobs = inject(TaskService);
+  private readonly workspaceOrchestrator = inject(WorkspaceOrchestratorSettingsService);
+  /** AGT-2716 — public so the template can read `migrations.version()` directly. */
+  readonly migrations = inject(ModelMigrationCatalogStore);
   readonly routes = signal<Record<string, CliModelRouteProfile>>({});
   readonly savingCli = signal<string | null>(null);
   readonly policy = signal<ModelRoutingPolicyView | null>(null);
   readonly savingEconomyMode = signal(false);
   readonly cliTypes = CLI_TYPES;
+
+  /** AGT-2716 — workspace that owns the auto-apply-model-migrations toggle.
+   *  Studio operates effectively one workspace at a time; this page has no
+   *  project/route context, so it resolves the registry's default workspace
+   *  the same way the sidebar does. */
+  readonly workspaceId = signal<string | null>(null);
+  /** null while loading; always concrete once the settings GET resolves. */
+  readonly autoApplyModelMigrations = signal<boolean | null>(null);
+  readonly autoApplySaving = signal(false);
 
   /** CLIs whose per-row details (route editor + full model list) are expanded.
    *  Collapsed rows still answer "what's present" via the summary line. */
@@ -66,6 +85,43 @@ export class CliModelsPanelComponent implements OnInit {
     });
     this.routesApi.getModelRoutingPolicy().subscribe({
       next: (policy) => this.policy.set(policy),
+    });
+    this.loadWorkspaceAutoApply();
+  }
+
+  /** AGT-2716 — resolve the registry's default workspace, then load its
+   *  auto-apply-model-migrations toggle. */
+  private loadWorkspaceAutoApply(): void {
+    this.jobs.getRegistryWorkspaces({ includeArchived: true }).subscribe({
+      next: (workspaces) => {
+        const owner = (workspaces ?? []).find((w) => w.isDefault) ?? (workspaces ?? [])[0] ?? null;
+        if (!owner) return;
+        this.workspaceId.set(owner.id);
+        this.workspaceOrchestrator.get(owner.id).subscribe({
+          next: (s) => this.autoApplyModelMigrations.set(s.autoApplyModelMigrations),
+          error: () => { /* toggle stays hidden behind the loading state */ },
+        });
+      },
+      error: () => { /* no workspace context; toggle stays hidden */ },
+    });
+  }
+
+  /** AGT-2716 — persist the workspace-wide automatic model-migration switch. */
+  setAutoApplyMigrations(enabled: boolean): void {
+    const id = this.workspaceId();
+    if (!id || this.autoApplySaving()) return;
+    const previous = this.autoApplyModelMigrations();
+    this.autoApplyModelMigrations.set(enabled);
+    this.autoApplySaving.set(true);
+    this.workspaceOrchestrator.setAutoApplyModelMigrations(id, enabled).subscribe({
+      next: (r) => {
+        this.autoApplyModelMigrations.set(r.autoApplyModelMigrations);
+        this.autoApplySaving.set(false);
+      },
+      error: () => {
+        this.autoApplyModelMigrations.set(previous);
+        this.autoApplySaving.set(false);
+      },
     });
   }
 

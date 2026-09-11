@@ -18,6 +18,10 @@ export interface WorkspaceOrchestratorSettings {
   orchestratorModel: string | null;
   orchestratorThinkingLevel: string | null;
   autonomyLevel: number | null;
+  /** AGT-2716: whether the orchestrator applies a catalog-safe model migration
+   * automatically at run admission for a non-explicit model. Always a concrete
+   * boolean (server defaults a null store value to true). */
+  autoApplyModelMigrations: boolean;
   defaultOrchestratorModel: string;
   defaultAutonomyLevel: number;
 }
@@ -49,6 +53,18 @@ export class WorkspaceOrchestratorSettingsService {
     return this.http.put<{ autonomyLevel: number | null }>(
       `/api/workspaces/${encodeURIComponent(workspaceId)}/autonomy`,
       { level },
+    );
+  }
+
+  /** Set (or clear, with null -> restores the on default) the workspace-wide
+   * automatic model-migration switch (AGT-2716). */
+  setAutoApplyModelMigrations(
+    workspaceId: string,
+    enabled: boolean | null,
+  ): Observable<{ autoApplyModelMigrations: boolean }> {
+    return this.http.put<{ autoApplyModelMigrations: boolean }>(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/auto-apply-model-migrations`,
+      { enabled },
     );
   }
 }

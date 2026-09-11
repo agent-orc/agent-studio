@@ -247,6 +247,12 @@
         [isDefault]="effectiveModelChip().isDefault"
         testId="task-card-effective-model"
         levelTestId="task-card-thinking-level" />
+      <app-model-migration-badge
+        [model]="job().model"
+        [explicit]="job().modelExplicit === true"
+        [jobId]="job().id"
+        [watchPath]="job().watchPath"
+        testId="task-card-model-migration" />
       <app-execution-location-badge [execution]="displayedExecutionLocation()" />
       @if (integrationStatus(); as integ) {
         <app-integration-status-badge

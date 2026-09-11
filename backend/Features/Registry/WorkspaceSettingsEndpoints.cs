@@ -32,12 +32,27 @@ public static class WorkspaceSettingsEndpoints
                 cliExecutionEngineSource = OrchestratorSettingsResolver
                     .ResolveCliExecutionEngine(null, s).Source,
                 autonomyLevel = s.AutonomyLevel,
+                autoApplyModelMigrations = s.AutoApplyModelMigrations ?? true,
                 // Platform fallbacks so the UI can render the effective "inherited"
                 // value without hardcoding it or a second round-trip.
                 defaultOrchestratorModel = OrchestratorRunner.DefaultModel,
                 defaultAutonomyLevel = 2,
                 defaultCliExecutionEngine = CliExecutionEngines.Default,
             });
+        });
+
+        // AGT-2716: workspace-wide switch for automatic model-migration
+        // application at run admission. Null request body value restores the
+        // platform default (on).
+        app.MapPut("/api/workspaces/{id}/auto-apply-model-migrations", (
+            string id, SetWorkspaceAutoApplyModelMigrationsRequest req,
+            WorkspaceRegistry workspaces, WorkspaceSettingsService settings) =>
+        {
+            if (workspaces.Find(id) is null)
+                return Results.NotFound(new { error = $"Unknown workspaceId '{id}'" });
+
+            settings.SetAutoApplyModelMigrations(id, req.Enabled);
+            return Results.Ok(new { autoApplyModelMigrations = settings.Get(id).AutoApplyModelMigrations ?? true });
         });
 
         // Workspace-default orchestrator model (+ optional thinking level). A
@@ -137,4 +152,11 @@ public sealed record SetWorkspaceAutonomyLevelRequest
 {
     /// <summary>Autonomy level 0..4; null clears the workspace default.</summary>
     public int? Level { get; init; }
+}
+
+/// <summary>Body for <c>PUT /api/workspaces/{id}/auto-apply-model-migrations</c>.</summary>
+public sealed record SetWorkspaceAutoApplyModelMigrationsRequest
+{
+    /// <summary>Null restores the platform default (on).</summary>
+    public bool? Enabled { get; init; }
 }

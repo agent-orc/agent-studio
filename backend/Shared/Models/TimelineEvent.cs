@@ -82,6 +82,15 @@ public static class TimelineEventKinds
     /// <summary>A run switched to its configured fallback because primary quota was exhausted.</summary>
     public const string QuotaFallbackActivated = "quota_fallback_activated";
     /// <summary>
+    /// AGT-2716: the orchestrator rewrote a non-explicit task's stored model to
+    /// a newer, catalog-safe replacement at run admission (e.g. a superseded
+    /// Opus/Sonnet generation to the family's current member). Explicit pins
+    /// are never rewritten this way. <see cref="TimelineEvent.Details"/> carries
+    /// <c>fromModel</c>, <c>toModel</c>, <c>family</c>, and the migration
+    /// catalog version that authorized it.
+    /// </summary>
+    public const string ModelMigrated = "model_migrated";
+    /// <summary>
     /// AGT-2055: the algorithmic pre-launch quota check made a load-steering
     /// decision for a card before any launch was attempted - switch model,
     /// throttle, or wait for the next reset. <see cref="TimelineEvent.Details"/>

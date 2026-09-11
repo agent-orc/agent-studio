@@ -24,7 +24,9 @@ namespace AgentStudio.Pipeline;
 public static class PipelineStepModelDefaults
 {
     public const string DefaultCli = CliTypes.Codex;
-    public const string SupportModel = ModelIds.Gpt54Mini;
+
+    public static string SupportModel => ModelFamilyResolver.Resolve(ModelFamilies.GptMini);
+
     public const string SupportThinkingLevel = "high";
 
     public static string QualityModel =>

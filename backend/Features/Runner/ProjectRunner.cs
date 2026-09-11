@@ -103,6 +103,10 @@ public class ProjectRunner
     private readonly AgentStudio.Pipeline.PipelineExecutionLog? _pipelineLog;
     private readonly AgentStudio.Pipeline.IConceptWorkbenchPublisher? _conceptWorkbenchPublisher;
     private readonly AgentStudio.Pipeline.ModelQualificationService? _modelQualification;
+    // AGT-2716: optional so existing test fixtures keep working; production DI
+    // always supplies an instance. Null => the auto-migration check at run
+    // admission is skipped (no catalog available), same as _modelQualification.
+    private readonly AgentStudio.Pipeline.ModelMigrationCatalogRegistry? _modelMigrationCatalog;
     private readonly AgentStudio.Pipeline.IntegrationPushQueue? _integrationPushQueue;
     private readonly PromptEnrichmentService? _promptEnrichment;
     private readonly DossierMaintenanceService? _dossierMaintenance;
@@ -457,7 +461,8 @@ public class ProjectRunner
         DossierMaintenanceService? dossierMaintenance = null,
         VisualQaService? visualQa = null,
         ProviderLimitRegistry? providerLimits = null,
-        QuotaAdmissionService? quotaAdmission = null)
+        QuotaAdmissionService? quotaAdmission = null,
+        AgentStudio.Pipeline.ModelMigrationCatalogRegistry? modelMigrationCatalog = null)
     {
         ProjectName = projectName;
         Entry = entry;
@@ -501,6 +506,7 @@ public class ProjectRunner
         _timeline = timeline;
         _pipelineLog = pipelineLog;
         _modelQualification = modelQualification;
+        _modelMigrationCatalog = modelMigrationCatalog;
         _integrationPushQueue = integrationPushQueue;
         _conceptWorkbenchPublisher = conceptWorkbenchPublisher;
         _promptEnrichment = promptEnrichment;
@@ -2497,6 +2503,8 @@ public class ProjectRunner
                 movedToProgressThisCall = true;
                 admissionInfo = info;
             }
+
+            info = ApplyAutoModelMigration(info);
 
             // Way 3 (non-deterministic half): an epic card runs a planning /
             // decomposition step instead of a coding run. We keep the normal
@@ -4594,6 +4602,45 @@ public class ProjectRunner
         {
             _logger.LogDebug(ex, "MarkSteerPending failed for {JobId}", jobId);
         }
+    }
+
+    /// <summary>
+    /// AGT-2716: rewrite a non-explicit task's stored model to a catalog-safe
+    /// replacement before the run launches, so stale data left over from
+    /// before a family gained a newer generation self-heals instead of aging
+    /// forever. Explicit pins (<c>info.ModelExplicit == true</c>) are never
+    /// touched here - only the catalog's <c>safeAuto</c> entries are applied,
+    /// and only when the workspace has not turned auto-application off.
+    /// Returns <paramref name="info"/> unchanged when no migration applies.
+    /// </summary>
+    private TaskInfo ApplyAutoModelMigration(TaskInfo info)
+    {
+        if (_modelMigrationCatalog == null) return info;
+
+        var autoApplyEnabled = _orchestratorDefaults?.WorkspaceForProject(ProjectName).AutoApplyModelMigrations ?? true;
+        var migration = AgentStudio.Pipeline.ModelMigrationPolicy.DecideAutoMigration(
+            info.ModelExplicit, info.Model, autoApplyEnabled, _modelMigrationCatalog);
+        if (migration == null) return info;
+
+        var fromModel = info.Model!;
+        AgentStudio.Tasks.TaskJsonFile.UpdateField(info.FolderPath, "model", migration.To, _logger);
+        _logger.LogInformation(
+            "[taskboard] model_migrated jobId={JobId} from={From} to={To} family={Family} catalogVersion={CatalogVersion}",
+            info.Id, fromModel, migration.To, migration.Family, _modelMigrationCatalog.Catalog.Version);
+        _timeline?.Append(
+            info.FolderPath,
+            TimelineEventKinds.ModelMigrated,
+            TimelineActors.System,
+            summary: $"Model migrated: {fromModel} -> {migration.To} ({migration.Reason})",
+            details: new()
+            {
+                ["fromModel"] = fromModel,
+                ["toModel"] = migration.To,
+                ["family"] = migration.Family,
+                ["catalogVersion"] = _modelMigrationCatalog.Catalog.Version,
+                ["reason"] = migration.Reason,
+            });
+        return info with { Model = migration.To };
     }
 
     private async Task<ModelQualificationDecision?> QualifyModelAsync(
