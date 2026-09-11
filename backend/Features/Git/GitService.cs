@@ -103,6 +103,15 @@ public enum MergeIntoIntegrationOutcome
     /// needs a steer round - never silently "delivered".
     /// </summary>
     GateFailed,
+    /// <summary>
+    /// The merge itself succeeded but the pre-develop build gate failed before
+    /// verification could reach test discovery (a bundler/toolchain crash, e.g.
+    /// vite's case-insensitive-FS probe on a poisoned dependency cache). The
+    /// integration branch was rolled back the same as <see cref="GateFailed"/>,
+    /// but this is never a product failure: it must not surface as a card
+    /// conflict and must not spend a rebase-recovery steer round (CAC-18).
+    /// </summary>
+    GateEnvironmentFailure,
     /// <summary>A precondition failed (dirty tree, missing branch, checkout failure) or git errored.</summary>
     Error,
     /// <summary>

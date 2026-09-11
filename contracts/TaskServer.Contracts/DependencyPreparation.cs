@@ -161,7 +161,130 @@ public sealed class DependencyCacheSession
 
     public IReadOnlyList<string> Restore() => Transfer(restore: true);
 
-    public IReadOnlyList<string> Save() => Transfer(restore: false);
+    /// <summary>
+    /// Stages the workspace's cacheable content into a temporary sibling of the
+    /// live cache entry, then <see cref="Directory.Move"/>s (renames) that
+    /// sibling onto the entry in one step. A failure while staging discards the
+    /// sibling and leaves the previous entry untouched - a save can never leave
+    /// a half-moved tree as the entry an unrelated lock-hash hit would later
+    /// trust.
+    /// </summary>
+    public IReadOnlyList<string> Save()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var messages = new List<string>();
+        var contentRoot = Path.Combine(_cacheRoot, "content");
+        var stagingRoot = Path.Combine(_cacheRoot, "content.saving-" + Guid.NewGuid().ToString("N"));
+
+        var movedAny = false;
+        var failed = false;
+        foreach (var relative in CacheDirectories(_workspace))
+        {
+            var outcome = MoveDirectory(
+                ResolveWithin(_workspace, relative),
+                ResolveWithin(stagingRoot, relative),
+                "save",
+                relative,
+                messages);
+            movedAny |= outcome == MoveOutcome.Moved;
+            failed |= outcome == MoveOutcome.Failed;
+        }
+
+        foreach (var scope in _scopes)
+        {
+            var marker = Combine(scope.WorkingSubdir, DependencyPreparationState.MarkerFileName);
+            var outcome = MoveFile(
+                ResolveWithin(_workspace, marker),
+                ResolveWithin(stagingRoot, marker),
+                "save",
+                marker,
+                messages);
+            movedAny |= outcome == MoveOutcome.Moved;
+            failed |= outcome == MoveOutcome.Failed;
+        }
+
+        stopwatch.Stop();
+        if (failed || !movedAny)
+        {
+            DeleteBestEffort(stagingRoot);
+            var summary = failed
+                ? $"dependency-cache save repository={Path.GetFileName(_cacheRoot)} state=aborted " +
+                  $"reason=partial-move durationMs={stopwatch.ElapsedMilliseconds}"
+                : $"dependency-cache save repository={Path.GetFileName(_cacheRoot)} state=noop " +
+                  $"reason=nothing-to-save durationMs={stopwatch.ElapsedMilliseconds}";
+            messages.Add(summary);
+            _log?.Invoke(summary);
+            return messages;
+        }
+
+        try
+        {
+            Directory.CreateDirectory(_cacheRoot);
+            if (Directory.Exists(contentRoot)) Directory.Delete(contentRoot, recursive: true);
+            Directory.Move(stagingRoot, contentRoot);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            DeleteBestEffort(stagingRoot);
+            var failure =
+                $"dependency-cache save repository={Path.GetFileName(_cacheRoot)} state=failed " +
+                $"reason={exception.GetType().Name} durationMs={stopwatch.ElapsedMilliseconds}";
+            messages.Add(failure);
+            _log?.Invoke(failure);
+            return messages;
+        }
+
+        var committed =
+            $"dependency-cache save repository={Path.GetFileName(_cacheRoot)} scopes={_scopes.Count} " +
+            $"state=committed durationMs={stopwatch.ElapsedMilliseconds}";
+        messages.Add(committed);
+        _log?.Invoke(committed);
+        return messages;
+    }
+
+    /// <summary>
+    /// Drops the entry for this repository entirely, e.g. after a gate run
+    /// classified its node_modules as poisoned by a toolchain crash (CAC-18).
+    /// The next Restore() is then a deterministic miss that reinstalls.
+    /// </summary>
+    public IReadOnlyList<string> Discard(string reason)
+    {
+        var contentRoot = Path.Combine(_cacheRoot, "content");
+        if (!Directory.Exists(contentRoot))
+        {
+            var noop =
+                $"dependency-cache evicted repository={Path.GetFileName(_cacheRoot)} reason={reason} state=noop-no-entry";
+            _log?.Invoke(noop);
+            return [noop];
+        }
+
+        try
+        {
+            Directory.Delete(contentRoot, recursive: true);
+            var message = $"dependency-cache evicted repository={Path.GetFileName(_cacheRoot)} reason={reason}";
+            _log?.Invoke(message);
+            return [message];
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            var message =
+                $"dependency-cache evict repository={Path.GetFileName(_cacheRoot)} state=failed " +
+                $"reason={exception.GetType().Name}";
+            _log?.Invoke(message);
+            return [message];
+        }
+    }
+
+    private static void DeleteBestEffort(string path)
+    {
+        if (!Directory.Exists(path)) return;
+        try { Directory.Delete(path, recursive: true); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // Best-effort cleanup of an aborted staging attempt; the live
+            // content root was never touched, so the previous entry survives.
+        }
+    }
 
     private IReadOnlyList<string> Transfer(bool restore)
     {
@@ -279,14 +402,16 @@ public sealed class DependencyCacheSession
         }
     }
 
-    private void MoveDirectory(
+    private enum MoveOutcome { Skipped, Moved, Failed }
+
+    private MoveOutcome MoveDirectory(
         string source,
         string destination,
         string operation,
         string relative,
         ICollection<string> messages)
     {
-        if (!Directory.Exists(source)) return;
+        if (!Directory.Exists(source)) return MoveOutcome.Skipped;
         try
         {
             if (Directory.Exists(destination))
@@ -294,13 +419,14 @@ public sealed class DependencyCacheSession
                 if (operation == "restore")
                 {
                     messages.Add($"dependency-cache restore skipped item={relative} reason=destination-exists");
-                    return;
+                    return MoveOutcome.Skipped;
                 }
                 Directory.Delete(destination, recursive: true);
             }
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
             Directory.Move(source, destination);
             messages.Add($"dependency-cache {operation} item={relative} state=moved");
+            return MoveOutcome.Moved;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
@@ -309,22 +435,24 @@ public sealed class DependencyCacheSession
                 $"reason={exception.GetType().Name}";
             messages.Add(message);
             _log?.Invoke(message);
+            return MoveOutcome.Failed;
         }
     }
 
-    private void MoveFile(
+    private MoveOutcome MoveFile(
         string source,
         string destination,
         string operation,
         string relative,
         ICollection<string> messages)
     {
-        if (!File.Exists(source)) return;
+        if (!File.Exists(source)) return MoveOutcome.Skipped;
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
             File.Move(source, destination, overwrite: operation == "save");
             messages.Add($"dependency-cache {operation} item={relative} state=moved");
+            return MoveOutcome.Moved;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
@@ -333,6 +461,7 @@ public sealed class DependencyCacheSession
                 $"reason={exception.GetType().Name}";
             messages.Add(message);
             _log?.Invoke(message);
+            return MoveOutcome.Failed;
         }
     }
 

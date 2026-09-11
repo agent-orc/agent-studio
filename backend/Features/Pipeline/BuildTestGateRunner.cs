@@ -29,6 +29,13 @@ public enum BuildTestGateFailureKind
     Cancellation,
     MissingSource,
     ReviewModel,
+    /// <summary>
+    /// A verify command's own toolchain/bundler crashed before it reached test
+    /// discovery (e.g. vite's case-insensitive-filesystem probe throwing while
+    /// loading its config) rather than running to completion and reporting a
+    /// product result. Never a product failure; see CAC-18.
+    /// </summary>
+    Environment,
 }
 
 public sealed record BuildTestGateRequest(
@@ -1545,7 +1552,13 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         // Only a genuine MSBuild build-output lock (MSB3026/MSB3027) is a real,
         // retryable host fault; every other string from a completed process is a
         // code/test defect that must flow through the normal reissue path instead.
-        if (CompletedNormally(process) && !IsGenuineBuildOutputLock(evidence))
+        // A genuine toolchain/bundler startup crash is the one other exemption:
+        // it is an unambiguous signature that the process never reached test
+        // discovery, so it cannot be a completed process reporting its own
+        // product result the way a logged lock string can (CAC-18).
+        if (CompletedNormally(process)
+            && !IsGenuineBuildOutputLock(evidence)
+            && classified != BuildTestGateFailureKind.Environment)
             return BuildTestGateFailureKind.Code;
         return classified;
     }
@@ -1561,9 +1574,22 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         => evidence.Contains("MSB3026", StringComparison.OrdinalIgnoreCase)
            || evidence.Contains("MSB3027", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Narrow, high-confidence signatures of a bundler/toolchain crash that
+    /// happened before any test could run, e.g. vite's case-insensitive-FS probe
+    /// throwing while loading its config in a corrupted or torn node_modules
+    /// tree (CAC-18). Kept deliberately specific: a broad heuristic here would
+    /// repeat the AGT-2110 mistake of misclassifying genuine product failures.
+    /// </summary>
+    private static bool IsGenuineToolchainStartupCrash(string evidence)
+        => evidence.Contains("testCaseInsensitiveFS", StringComparison.OrdinalIgnoreCase)
+           || evidence.Contains("vite/dist/node/chunks/config.js", StringComparison.OrdinalIgnoreCase);
+
     internal static BuildTestGateFailureKind ClassifyFailure(string? text)
     {
         var value = text ?? string.Empty;
+        if (IsGenuineToolchainStartupCrash(value))
+            return BuildTestGateFailureKind.Environment;
         if (ContainsAny(value,
                 "being used by another process", "file is locked", "cannot access the file",
                 "resource temporarily unavailable", "sharing violation", "MSB3026", "MSB3027"))
@@ -1631,8 +1657,16 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         GateDependencyCacheSession? session)
     {
         if (session is null) return result;
+        // A toolchain/bundler crash before test discovery means node_modules may
+        // be poisoned (CAC-18: an empty vite/dist/client, a missing
+        // .package-lock.json). Saving it back would serve the same broken tree
+        // to every future gate run that hits the lock hit; evict it instead so
+        // the next attempt reinstalls from scratch.
+        var messages = result.FailureKind == BuildTestGateFailureKind.Environment
+            ? session.Evict("gate-environment-failure")
+            : session.Save();
         var output = result.Output;
-        foreach (var message in session.Save())
+        foreach (var message in messages)
             output = AppendOutput(output, $"# {message}");
         return result with { Output = output };
     }
