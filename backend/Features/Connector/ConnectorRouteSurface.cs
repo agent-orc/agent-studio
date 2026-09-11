@@ -192,7 +192,10 @@ public static class ConnectorRouteSurface
             .Select(metadata => ConnectorRouteKey.FromInventory(metadata.Method, metadata.Path))
             .Distinct()
             .ToHashSet();
-        var approved = inventory.Operations
+        // Retired operations (AGT-2758) are inventory rows kept for the audit
+        // trail only; they carry no route and are deliberately excluded here,
+        // the same way DevSeatOperations/TaskServerOperations exclude them.
+        var approved = inventory.DevSeatOperations.Concat(inventory.TaskServerOperations)
             .Select(operation => ConnectorRouteKey.FromInventory(operation.Method, operation.Path))
             .ToHashSet();
         if (!classified.SetEquals(approved))

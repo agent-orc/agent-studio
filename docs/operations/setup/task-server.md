@@ -896,6 +896,70 @@ a separately named local `/checkout/{path*}` dev-seat route
 Task Server, per the connector route inventory
 (`backend/Features/Connector/ConnectorRouteInventory.cs`).
 
+## Studio administration and long-tail bundle (P3)
+
+AGT-2758 resolves the 24-route P3 "administration and long tail" bundle from
+the [Studio route ownership](../../studio-route-ownership/index.html)
+dossier. Unlike P0, not every route became a like-for-like v1 port: several
+were genuinely local-machine operations the original heuristic classifier
+mis-tagged `task-server`, and one had no surviving Angular caller. See
+`docs/studio-route-ownership/index.html` section 07 for the full
+per-route disposition and rationale; the summary:
+
+- **16 routes implemented for real** in the standalone Task Server, backed by
+  the durable `studio_settings` table (a generic `(scope, key) -> JSON` row,
+  the same small-settings-file pattern the legacy backend used per kind) plus
+  two embedded, product-shipped resources: the runtime prompt-template
+  defaults (`prompts/runtime/*.md`) and the model-routing policy
+  (`backend/Policies/model-routing-policy.v1.json`). Handlers live in
+  `TaskServerStudioAdminStore.cs`, `TaskServerStudioQuotaStore.cs`,
+  `TaskServerStudioProjectSettingsStore.cs`, `TaskServerStudioReviewStatusStore.cs`,
+  and `TaskServerStudioSearchStore.cs`; routes are mapped in
+  `TaskServerStudioAdministrationEndpoints.cs`; contracts live in
+  `StudioAdministrationContracts.cs`. Reduced from the legacy backend on
+  purpose where the legacy field required a live CLI probe, a local git
+  checkout, or an unported hosted-service tick loop (prompt review/telemetry,
+  the live model-catalogue probe behind `cli/model-routing/recommendation`,
+  the full 1108-line pipeline step catalogue) — those fields report honest
+  zero/empty/reduced defaults rather than fabricated data. The `cli-modes` /
+  `cli-context-modes` / `quota/model-routes` routes need the platform's CLI
+  type/permission/context-mode vocabulary; rather than referencing the shared
+  coding-CLI driver package the backend and the standalone Runner use for the
+  same ids (forbidden for the Task Server project — see the
+  architecture-boundary test in TaskServer.Tests), that small, stable id set
+  is duplicated locally in `TaskServerStudioCliVocabulary.cs`.
+- **7 routes reclassified `dev-seat`**: `admin/prompts/coverage` (scans the
+  running backend's own C# source tree), the project proposals + evidence
+  routes (Dossier files parsed from the local checkout), the publish
+  panel/run routes (local git + `gh` CLI), `wiki/grading/status` (an
+  in-memory snapshot fed only by a CLI-spawning maintenance pass), and
+  `watch-paths` (Windows-local filesystem checkout locations). Each already
+  had a working handler in the legacy monolith; the connector now serves it
+  locally like the other 95 dev-seat routes instead of forwarding it.
+- **1 route retired**: `GET /projects/{project}/review-decisions-pending`.
+  `TaskService.getReviewDecisionsPending` had no callers anywhere in
+  `frontend/src`, superseded by the combined `getProjectSnapshot` projection;
+  the Angular method was deleted.
+- **Global search split** (the third of the three "mixed contracts" the
+  dossier named): the durable task/board domain is now
+  `GET /api/v1/studio/search` (`TaskServerStudioSearchStore.SearchTasksAsync`,
+  a `LIKE` query over the durable `tasks` table); the git-backed
+  commits/files/dossiers/wiki domains moved to the new dev-seat
+  `GET /api/search/repository`, added beside the legacy `/api/search` in
+  `GlobalSearchEndpoints.cs`. `OrchestratorContextSourceService.search` now
+  issues both calls and merges the results client-side.
+
+| Route | Purpose | Scope |
+|---|---|---|
+| `GET /api/v1/studio/admin/config/orchestrator` | Orchestrator/supervisor config toggle catalog + durable override values | `tasks:read` |
+| `GET /api/v1/studio/admin/prompts[/{name}]` | Runtime prompt template catalog / detail (embedded defaults + durable overrides) | `tasks:read` |
+| `GET /api/v1/studio/auto-review/status` | Tasks currently in the `4-auto-review` lane; tick counters are 0 until the orchestrator tick loop is ported | `tasks:read` |
+| `GET /api/v1/studio/cli/model-routing/{policy,recommendation}` | Durable routing-policy tiers; the recommendation always resolves against the full tier list (no live CLI-catalogue probe) | `tasks:read` |
+| `GET /api/v1/studio/cli/quota/{caps,model-routes,wait-policy}` | Durable global CLI quota settings | `tasks:read` |
+| `GET /api/v1/studio/projects/{project}/{cli-modes,cli-context-modes,lane-sort-strategies,quota-wait-policy}` | Per-project CLI/lane resolution, currently all platform defaults (no write route in this bundle yet) | `tasks:read` |
+| `GET /api/v1/studio/projects/{pipeline-catalogue,settings}` | Pipeline catalogue (reduced step set) and the all-projects settings map | `tasks:read` |
+| `GET /api/v1/studio/search` | Task/board search results only | `tasks:read` |
+
 ## Backup and restore rehearsal
 
 `POST /api/v1/management/backups` creates a consistent SQLite backup, runs an
