@@ -145,6 +145,17 @@ public sealed class TaskReferenceIndex
             if (!string.IsNullOrEmpty(sourceKey))
                 dependsOn[sourceKey] = refs.DependsOn.Select(edge => edge.Key).ToList();
 
+            // AGT-2709: the reverse link carries whether the incoming edge is
+            // release-gated, so the target card can name the dependents its
+            // explicit release would unblock without re-reading their task.json.
+            // Allocated only for the rare task that actually gates an edge.
+            HashSet<string>? gatedTargets = null;
+            foreach (var edge in refs.DependsOn)
+            {
+                if (!edge.ReleaseGate || string.IsNullOrWhiteSpace(edge.Key)) continue;
+                (gatedTargets ??= new HashSet<string>(KeyComparer)).Add(edge.Key.Trim());
+            }
+
             foreach (var (kind, target) in refs.Enumerate())
             {
                 if (string.IsNullOrWhiteSpace(target)) continue;
@@ -156,7 +167,9 @@ public sealed class TaskReferenceIndex
                     SourceTitle: t.Title,
                     SourceState: t.State,
                     SourceWatchPath: t.WatchPath,
-                    Kind: kind));
+                    Kind: kind,
+                    ReleaseGate: kind == TaskReferenceKinds.DependsOn
+                        && gatedTargets?.Contains(target.Trim()) == true));
 
                 if (kind == TaskReferenceKinds.DependsOn && sourceKey.Length > 0)
                 {
@@ -191,10 +204,17 @@ public sealed class TaskReferenceIndex
 /// Carries enough of the source task for the UI to render a chip and route to
 /// it without a second lookup.
 /// </summary>
+/// <param name="ReleaseGate">
+/// AGT-2709 - true when this is a <c>dependsOn</c> edge with
+/// <c>releaseGate: true</c>, i.e. the source stays blocked until the queried
+/// task carries its explicit <c>released</c> flag. Always false for the other
+/// relation kinds.
+/// </param>
 public record TaskReferenceLink(
     string? SourceKey,
     string SourceJobId,
     string SourceTitle,
     string SourceState,
     string SourceWatchPath,
-    string Kind);
+    string Kind,
+    bool ReleaseGate = false);

@@ -26,6 +26,7 @@ import { TaskSelectionService } from '../../state/task-selection.service';
 import { StudioTabStateService } from '../../../studio-shell/services/studio-tab-state.service';
 import { ProjectDocsService } from '../../../../services/project-docs.service';
 import type { WorkbenchListItem } from '../../../../models/project-docs.model';
+import { ReleaseGateSectionComponent } from '../release-gate-section/release-gate-section.component';
 
 /**
  * F34 detail-view reference editor. Renders the typed cross-reference rows
@@ -42,7 +43,7 @@ import type { WorkbenchListItem } from '../../../../models/project-docs.model';
   selector: 'app-references-section',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, TooltipDirective],
+  imports: [FormsModule, TooltipDirective, ReleaseGateSectionComponent],
   templateUrl: './references-section.component.html',
   styleUrl: './references-section.component.scss',
 })

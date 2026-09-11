@@ -369,3 +369,103 @@ describe('BoardFiltersService URL-hash coexistence with a route overlay', () => 
     expect(svc.activeType()).toBe('feature');
   });
 });
+
+/**
+ * AGT-2709 "waiting for release": the facet has to surface BOTH sides of a
+ * release-gated edge - the dependent that is held back and the terminal target
+ * whose release it waits for - so a pending release is discoverable without
+ * opening each card.
+ */
+describe('BoardFiltersService waiting-for-release facet', () => {
+  let svc: BoardFiltersService;
+  let jobs: TaskService;
+
+  const waitsOnTarget = {
+    blocked: true,
+    cycleDetected: false,
+    items: [{
+      key: 'AGT-2372',
+      resolved: true,
+      fulfilled: false,
+      releaseGate: true,
+      targetReleased: false,
+      waitingForRelease: true,
+      targetJobId: 'target',
+      targetWatchPath: 'wp/Agent Task Processor',
+    }],
+  };
+
+  beforeEach(() => {
+    localStorage.clear();
+    history.replaceState(null, '', '/#/board');
+    TestBed.configureTestingModule({
+      providers: [
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+      ],
+    });
+    jobs = TestBed.inject(TaskService);
+    svc = TestBed.inject(BoardFiltersService);
+
+    const dependent = {
+      ...makeJob('dependent', 'Agent Task Processor', '2-ready'),
+      waitsOn: waitsOnTarget,
+    } as unknown as TaskInfo;
+    // The target the dependent waits for; its own `released: false` is
+    // indistinguishable from "no gate", so it is matched via the dependent.
+    const target = makeJob('target', 'Agent Task Processor', '6-completed');
+    const unrelated = makeJob('unrelated', 'Agent Task Processor', '2-ready');
+    const openDependency = {
+      ...makeJob('open-dep', 'Agent Task Processor', '2-ready'),
+      waitsOn: {
+        blocked: true,
+        cycleDetected: false,
+        items: [{ key: 'AGT-9', resolved: true, fulfilled: false, waitingForRelease: false }],
+      },
+    } as unknown as TaskInfo;
+
+    jobs.grouped.set(makeGrouped([dependent, target, unrelated, openDependency]));
+  });
+
+  it('is off by default and leaves the board untouched', () => {
+    expect(svc.waitingForReleaseOnly()).toBe(false);
+    expect(svc.filteredGrouped().ready.length).toBe(3);
+  });
+
+  it('keeps the blocked dependent and its pending-release target, drops the rest', () => {
+    svc.setWaitingForReleaseOnly(true);
+
+    const grouped = svc.filteredGrouped();
+    expect(grouped.ready.map(j => j.id)).toEqual(['dependent']);
+    expect(grouped.completed.map(j => j.id)).toEqual(['target']);
+    expect(svc.filteredTaskCount()).toBe(2);
+  });
+
+  it('counts as an active filter and renders a removable pill', () => {
+    svc.setWaitingForReleaseOnly(true);
+
+    expect(svc.hasActiveFilters()).toBe(true);
+    expect(svc.activeFilterCount()).toBe(1);
+    const pill = svc.activeFilterPills().find(p => p.kind === 'release');
+    expect(pill?.label).toBe('Waiting for release');
+
+    svc.removeFilterPill(pill!);
+    expect(svc.waitingForReleaseOnly()).toBe(false);
+  });
+
+  it('round-trips through the shareable filter hash', () => {
+    svc.toggleWaitingForReleaseOnly();
+    expect(window.location.hash).toContain('release%3Awaiting');
+
+    history.replaceState(null, '', '/#/board&filters=release%3Awaiting');
+    svc.hydrateFromUrl();
+    expect(svc.waitingForReleaseOnly()).toBe(true);
+  });
+
+  it('is cleared by "clear all"', () => {
+    svc.setWaitingForReleaseOnly(true);
+    svc.clearAllFilters();
+    expect(svc.waitingForReleaseOnly()).toBe(false);
+  });
+});

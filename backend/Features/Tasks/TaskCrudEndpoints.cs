@@ -943,10 +943,10 @@ public static class TaskCrudEndpoints
         // Explicit content release for references.dependsOn edges with
         // releaseGate=true. Completion never sets this implicitly: the endpoint
         // is the operator/release-step seam that records the additional approval.
-        group.MapPut("/{jobId}/release", (string jobId, string? project, string? watchPath, SetJobReleasedRequest req, TaskMutationService mutations, AgentStudio.Registry.ProjectRegistry projects) =>
+        group.MapPut("/{jobId}/release", (HttpContext ctx, string jobId, string? project, string? watchPath, SetJobReleasedRequest req, TaskMutationService mutations, AgentStudio.Registry.ProjectRegistry projects) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
-            var success = mutations.SetJobReleased(jobId, req?.Released == true, watchPath);
+            var success = mutations.SetJobReleased(jobId, req?.Released == true, watchPath, OperatorActor(ctx));
             return success ? Results.Ok(new { released = req?.Released == true }) : Results.NotFound();
         });
 

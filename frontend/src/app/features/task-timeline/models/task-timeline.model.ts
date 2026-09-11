@@ -49,6 +49,7 @@ export const TIMELINE_KIND = {
   humanReviewDecided: 'human_review_decided',
   operatorRequeued: 'operator_requeued',
   postAcceptanceReviewReportRecorded: 'post_acceptance_review_report_recorded',
+  taskReleased: 'task_released',
   laneChanged: 'lane_changed',
   epicDecomposed: 'epic_decomposed',
   mergedIn: 'merged_in',

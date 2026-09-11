@@ -34,6 +34,7 @@ const KIND_LABELS: Readonly<Record<string, string>> = {
   [TIMELINE_KIND.humanReviewDecided]: 'Human review decided',
   [TIMELINE_KIND.operatorRequeued]: 'Requeued by operator',
   [TIMELINE_KIND.postAcceptanceReviewReportRecorded]: 'Post-acceptance review recorded',
+  [TIMELINE_KIND.taskReleased]: 'Released for dependents',
   [TIMELINE_KIND.laneChanged]: 'Lane changed',
   [TIMELINE_KIND.epicDecomposed]: 'Epic decomposed',
   [TIMELINE_KIND.mergedIn]: 'Merged in',
@@ -57,6 +58,8 @@ const HIDDEN_BY_KIND: Readonly<Record<string, ReadonlySet<string>>> = {
     'cli', 'source', 'sources', 'sourceItems', 'mcp', 'model', 'thinkingLevel', 'permissionMode',
   ]),
   [TIMELINE_KIND.laneChanged]: new Set(['from', 'to']),
+  // `released` is the title; the dependent key list is the audit value and stays.
+  [TIMELINE_KIND.taskReleased]: new Set(['released']),
   [TIMELINE_KIND.taskSpawned]: new Set(['targetProject', 'targetKey', 'targetJobId']),
   [TIMELINE_KIND.externalCompletion]: new Set(['source']),
 };
@@ -130,6 +133,14 @@ export function timelineEventTitle(event: TaskTimelineEvent): string {
     return `Lane changed · ${event.summary.trim()}`;
   }
 
+  // AGT-2709: the release flag is reversible, so the row has to name the
+  // direction rather than reuse the one kind label for both decisions.
+  if (event.kind === TIMELINE_KIND.taskReleased) {
+    return clean(event.details?.['released']) === 'false'
+      ? 'Release withdrawn'
+      : 'Released for dependents';
+  }
+
   if (event.kind === TIMELINE_KIND.epicDecomposed) {
     const created = clean(event.details?.['created']);
     return `Epic decomposed${created ? ` · ${created} task${created === '1' ? '' : 's'}` : ''}`;
@@ -161,6 +172,7 @@ export function timelineEventSummary(event: TaskTimelineEvent): string | null {
   if (event.kind === TIMELINE_KIND.executionContext
     || event.kind === TIMELINE_KIND.laneChanged
     || event.kind === TIMELINE_KIND.taskSpawned
+    || event.kind === TIMELINE_KIND.taskReleased
     || event.kind === TIMELINE_KIND.externalCompletion
     || event.kind === TIMELINE_KIND.postAcceptanceReviewReportRecorded) {
     return null;

@@ -194,6 +194,16 @@ public static class TimelineEventKinds
     /// came from the live transition, claim guard, or boot sweep.
     /// </summary>
     public const string ReviewAttemptSuperseded = "review_attempt_superseded";
+    /// <summary>
+    /// AGT-2709: the explicit content-release flag consumed by release-gated
+    /// <c>dependsOn</c> edges was set or withdrawn. Terminal completion never
+    /// emits this - only the operator affordance or a dedicated release step
+    /// does, which is why the decision needs its own auditable row.
+    /// <see cref="TimelineEvent.Actor"/> carries who decided;
+    /// <see cref="TimelineEvent.Details"/> carries the new flag value and the
+    /// release-gated dependents the decision unblocks.
+    /// </summary>
+    public const string TaskReleased = "task_released";
     /// <summary>The task's lane changed (any move).</summary>
     public const string LaneChanged = "lane_changed";
     /// <summary>

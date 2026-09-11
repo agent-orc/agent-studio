@@ -946,16 +946,62 @@ public class TaskMutationService
     /// Sets the explicit content-release approval consumed by release-gated
     /// dependsOn edges. Terminal lane movement intentionally does not call this
     /// method: approval must come from an operator or a dedicated release step.
+    ///
+    /// <para>AGT-2709: because nothing else in the lifecycle produces this
+    /// decision, it gets its own <c>task_released</c> timeline row carrying the
+    /// actor and the release-gated dependents it unblocks. <paramref name="actor"/>
+    /// is a <see cref="TimelineActors"/> value; callers that are not an operator
+    /// leave it null and the row is attributed to the system.</para>
     /// </summary>
-    public bool SetJobReleased(string jobId, bool released, string? watchPath = null)
+    public bool SetJobReleased(string jobId, bool released, string? watchPath = null, string? actor = null)
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return false;
         TaskJsonFile.UpdateField(info.FolderPath, "released", released, _logger);
+        var dependents = ReleaseGatedDependentKeys(info);
+        _timeline?.Append(
+            info.FolderPath,
+            TimelineEventKinds.TaskReleased,
+            string.IsNullOrWhiteSpace(actor) ? TimelineActors.System : actor,
+            summary: released
+                ? "Released for release-gated dependents"
+                : "Release withdrawn from release-gated dependents",
+            details: new()
+            {
+                ["released"] = released ? "true" : "false",
+                ["dependents"] = string.Join(", ", dependents),
+            });
         _logger.LogInformation(
-            "task-release-set job={JobId} released={Released}",
-            jobId, released);
+            "task-release-set job={JobId} released={Released} dependents={Dependents}",
+            jobId, released, dependents.Count);
         return Updated();
+    }
+
+    /// <summary>
+    /// Stable keys of the tasks whose <c>dependsOn</c> edge to
+    /// <paramref name="info"/> carries <c>releaseGate: true</c> - the dependents a
+    /// release decision actually moves. Best-effort: a keyless task cannot be
+    /// depended on, and an index miss records an empty list rather than failing
+    /// the write.
+    /// </summary>
+    private List<string> ReleaseGatedDependentKeys(TaskInfo info)
+    {
+        if (string.IsNullOrWhiteSpace(info.Key)) return [];
+        try
+        {
+            return _scanner.GetReferenceIndex()
+                .Dependents(info.Key, TaskReferenceKinds.DependsOn)
+                .Where(link => link.ReleaseGate && !string.IsNullOrWhiteSpace(link.SourceKey))
+                .Select(link => link.SourceKey!)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(key => key, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            SilentCatch.Note(ex, "TaskMutationService: best-effort release-gated dependent list for the timeline row.");
+            return [];
+        }
     }
 
     private static List<TaskCommitInfo>? ReadPersistedCommitChain(string folderPath)

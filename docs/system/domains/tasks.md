@@ -614,6 +614,21 @@ cannot erase an operator decision.
   dedicated release steps set that independent flag through
   `PUT /api/tasks/{id}/release`; ordinary string edges keep their existing
   terminal-state-only semantics.
+- The release flag has an operator affordance on both ends of a gated edge
+  (AGT-2709), because nothing in the lifecycle sets it and a card would
+  otherwise wait for a release screen that did not exist. The detail-view
+  References section shows a **Release** row on a terminal (`6-completed` /
+  `7-archive`) task that at least one dependent gates on: it renders the current
+  flag, names those dependents, and grants or withdraws the release in one
+  click. The same section shows a **Waits for release** row on the dependent
+  side, releasing the target inline so an archived target (absent from the board
+  feed by design) needs no navigation. The board filter panel carries a
+  **Waiting for release** facet, shareable as the `release:waiting` segment of
+  the `filters=` URL hash, that keeps the blocked dependents plus the targets
+  they are waiting for.
+- Every release decision appends one `task_released` timeline event carrying the
+  deciding actor, the new flag value, and the release-gated dependents it moves.
+  Withdrawing a release writes its own row rather than rewriting the grant.
 - Rendered task references resolve through `POST /api/tasks/reference-status`.
   Send `{ "keys": ["AGT-2050", "CAR-2"] }`; keys are trimmed, uppercased,
   deduplicated, and capped at 200. The response is `{ "items": [...] }`, where

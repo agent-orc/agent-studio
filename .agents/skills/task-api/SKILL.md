@@ -203,6 +203,34 @@ immediately. Poll `GET /api/tasks/batch-move/{id}` until `status` is
 `completed` or `failed`. A failed item appears in `results` and does not stop
 the rest of the batch.
 
+## Process: releasing a task for its gated dependents
+
+`PUT /api/tasks/{jobId}/release?watchPath=...` with body `{"released": true}`.
+
+A `references.dependsOn` edge written as `{"key": "AGT-2372", "releaseGate": true}`
+is only fulfilled once the target is terminal **and** carries this explicit flag.
+Reaching `6-completed` never sets it; the approval is a separate decision. Until
+it is set the dependent stays on the board reading `waits for release: <key>` and
+is not auto-picked.
+
+```js
+const body = JSON.stringify({ released: true });   // false withdraws the release
+const path = `/api/tasks/${encodeURIComponent(jobId)}/release` +
+             `?watchPath=${encodeURIComponent(watchPath)}`;
+// PUT, same headers as create
+```
+
+Notes:
+
+- `jobId` is the **target** (the task being released), not the dependent.
+- The call is reversible and idempotent in effect; each call appends one
+  `task_released` timeline event with the acting `X-Client-Id`, so send a real
+  identity rather than a shared one when the audit trail matters.
+- Operators do not need this endpoint: the task detail's References section has
+  a **Release for dependents** action on the target and an inline **Release**
+  on the dependent, and the board filter panel has a **Waiting for release**
+  facet. Use the API for scripted release steps and bulk work.
+
 ## Process: promoting to the top of `2-ready`
 
 `POST /api/tasks/{jobId}/move-to-top?watchPath=...` with no body.

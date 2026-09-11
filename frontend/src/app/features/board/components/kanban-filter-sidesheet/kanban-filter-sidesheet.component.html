@@ -102,6 +102,24 @@
     }
   </section>
 
+  <!-- AGT-2709: the release gate is the one dependency state an operator has to
+       act on; without a facet a pending release is only visible per card. -->
+  <section class="sheet__section">
+    <h3 class="sheet__section-title">Dependencies</h3>
+    <ul class="sheet__list">
+      <li>
+        <label class="sheet__checkbox"
+               data-testid="kanban-filter-waiting-for-release"
+               [cacTooltip]="'Tasks held back by a missing explicit release, plus the completed targets whose release they wait for.'">
+          <input type="checkbox"
+                 [checked]="waitingForRelease()"
+                 (change)="onToggleWaitingForRelease()" />
+          <span class="sheet__checkbox-label">Waiting for release</span>
+        </label>
+      </li>
+    </ul>
+  </section>
+
   <section class="sheet__section">
     <h3 class="sheet__section-title">
       Owner
