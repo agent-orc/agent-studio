@@ -389,6 +389,7 @@ every set outside the kept union.</p>
     <tr><td><code>GET/PUT /api/v1/management/retention/policy/projects/{projectId}</code></td><td>Projekt-Override lesen, setzen, löschen</td><td>management</td></tr>
     <tr><td><code>POST /api/v1/management/retention/plan</code></td><td>Trockenlauf: Report mit Zählungen und Bytes je Regel und Projekt, gespeichert als Lauf im Modus <i>plan</i></td><td>management</td></tr>
     <tr><td><code>POST /api/v1/management/retention/apply</code></td><td>Lauf jetzt; überspringt Tasks mit aktiven Leases; in ReadOnly und Maintenance abgelehnt</td><td>management</td></tr>
+    <tr><td><code>GET /api/v1/management/retention/schedule</code></td><td>Konfigurierten lokalen Laufzeitpunkt und nächsten geplanten Lauf lesen</td><td>tasks:read</td></tr>
     <tr><td><code>GET /api/v1/management/retention/runs[/{id}]</code></td><td>Verlauf mit vollständigen Reports</td><td>tasks:read</td></tr>
     <tr><td><code>GET /api/v1/management/retention/archive/{taskId}</code></td><td>Manifest eines archivierten Tasks</td><td>tasks:read</td></tr>
     <tr><td><code>POST /api/v1/management/retention/archive/{taskId}</code></td><td>Einen Task jetzt archivieren</td><td>management</td></tr>
@@ -447,6 +448,7 @@ Task-Ordner 3,7 GB, kaltes Archiv 1,43 GB. Sicherungssätze liegen unter <code>C
 
 <!-- ============================================================ -->
 <h2 id="admin"><span class="no">§8</span>Admin-UI</h2>
+<p class="stx stx-ok"><b>Status 08.09.2026:</b> R3 is implemented in Studio: workspace and project rules, dry-run and explicit execution reports, run history, full-backup controls, cold-task notice, manifest view, and restore all use the shared Task Server management route family. Component and Playwright coverage includes both themes and narrow width.</p>
 <p>Eine Seite „Aufbewahrung" in den Workspace-Einstellungen nach der Admin-Design-Richtlinie: flache Abschnitte, ein
 Raster je Tabelle, jede Tatsache genau einmal, beide Themes.</p>
 <ul>
@@ -493,7 +495,7 @@ Raster je Tabelle, jede Tatsache genau einmal, beide Themes.</p>
   <tbody>
     <tr><td><b>R1</b> AGT-2743 · Engine und Dateibaum</td><td>Bibliothek <code>retention/</code> (Vertrag, Klassifizierer, Planer, Store-Interface), Dateibaum-Adapter, kaltes Archiv lokal mit Manifest und Restore, CLI, Ablehnungsgrenze, Log nur am Run-Ende, Bus-Log-Rotation, erster Archivlauf am heutigen Repository mit Vorher-Nachher-Zahlen</td><td>keine</td><td><span class="pill queued">Ready</span></td></tr>
     <tr><td><b>R2</b> AGT-2744 · Task-Server</td><td>Tabellen, SQLite-Adapter, Management-API, Zeitplan, 409 bei archiviertem Inhalt, Import-Hook, CLI gegen den Store</td><td>R1</td><td><span class="pill done">Done</span></td></tr>
-    <tr><td><b>R3</b> AGT-2745 · Admin-UI</td><td>Seite „Aufbewahrung", Projekt-Overrides, Vorschau, Verlauf, Stub mit Restore, Suche und Dossiers</td><td>R1, R2</td><td><span class="pill queued">Ready</span></td></tr>
+    <tr><td><b>R3</b> AGT-2745 · Admin-UI</td><td>Seite „Aufbewahrung", Projekt-Overrides, Vorschau, Verlauf, Stub mit Restore, Suche und Dossiers</td><td>R1, R2</td><td><span class="pill done">Done</span></td></tr>
     <tr><td><b>R4</b> AGT-2746 · Objektspeicher</td><td>S3-Ziel, Kopie und Verifikation, wöchentliche Integritätsprobe, Archiv-Löschfrist mit Grabstein, Compose und Installer</td><td>R2</td><td><span class="pill queued">Ready</span></td></tr>
   </tbody>
 </table></div>

@@ -177,6 +177,9 @@
         @case ('prompts') {
           <app-prompt-admin-panel />
         }
+        @case ('retention') {
+          <app-retention-admin />
+        }
         @case ('tokens') {
           <app-token-usage-section
             [page]="overlays.tokenUsagePage()"

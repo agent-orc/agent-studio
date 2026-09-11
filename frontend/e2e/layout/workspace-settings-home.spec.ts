@@ -131,6 +131,10 @@ async function stubBackgroundApis(page: Page) {
   await page.route('**/api/cli/working-memory*', json({ available: false, root: null, capturedAt: new Date().toISOString(), entries: [] }));
   await page.route('**/api/cli/sessions*', json({ sessions: [] }));
   await page.route('**/api/cli/models*', json({ types: [] }));
+  await page.route('**/api/v1/management/retention/policy', json({ scope: 'workspace', version: 0, updatedAt: '', updatedBy: 'platform', rules: [], fullBackups: { daily: 7, weekly: 4, monthly: 12 } }));
+  await page.route('**/api/v1/management/retention/runs', json([]));
+  await page.route('**/api/v1/management/retention/schedule', json({ enabled: false, serverLocalHour: 3, nextRunAt: null }));
+  await page.route('**/api/v1/management/backups/full', json({ backups: [] }));
 }
 
 // AGT-2035 — the consolidated Settings view. Summary was removed; Appearance,
@@ -145,6 +149,7 @@ const SECTIONS: { key: string; overlayTestid: string; innerTestid: string }[] = 
   { key: 'cli-paths', overlayTestid: 'cli-paths-overlay', innerTestid: 'cli-paths-panel' },
   { key: 'working-memory', overlayTestid: 'workspace-working-memory-overlay', innerTestid: 'workspace-working-memory' },
   { key: 'prompts', overlayTestid: 'prompt-admin-overlay', innerTestid: 'prompt-admin-panel' },
+  { key: 'retention', overlayTestid: 'workspace-retention-overlay', innerTestid: 'retention-admin' },
   { key: 'tokens', overlayTestid: 'workspace-tokens-overlay', innerTestid: 'token-usage-section' },
   { key: 'screenshots', overlayTestid: 'workspace-screenshots-overlay', innerTestid: 'workspace-screenshots' },
 ];
@@ -191,11 +196,11 @@ test.describe('Workspace settings home (Dach)', () => {
     await expect(settingsHome(page)).toBeVisible();
     if (SETTINGS_SHOT_PHASE === 'after') {
       const rail = page.getByTestId('workspace-settings-rail');
-      const rows = rail.locator('[data-testid^="workspace-settings-rail-"]');
+      const rows = rail.locator('app-tree-row[data-testid^="workspace-settings-rail-"]');
       await expect(page.getByTestId('workspace-settings-group-general')).toBeVisible();
       await expect(page.getByTestId('workspace-settings-group-global')).toBeVisible();
       await expect(page.getByTestId('workspace-settings-group-workspace')).toBeVisible();
-      await expect(rows).toHaveCount(14);
+      await expect(rows).toHaveCount(15);
       for (const row of await rows.all()) {
         await expect(row.locator('app-studio-icon')).toHaveCount(1);
         await expect(row.locator('svg')).toHaveAttribute('stroke', 'currentColor');

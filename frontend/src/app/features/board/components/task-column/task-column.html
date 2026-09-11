@@ -162,7 +162,7 @@
               <span class="archive-row__date">{{ formatShortDate(item.lastActivity) }}</span>
               <span class="archive-row__disk"
                     [attr.aria-label]="item.projectName">{{ identityFor(item.projectName).initial }}</span>
-              <span class="archive-row__title">{{ item.title || item.id }}</span>
+              <span class="archive-row__title">{{ item.title || item.id }}</span>@if (item.archiveState && item.archiveState !== 'hot-restored') { <span class="archive-row__cold" data-testid="archive-row-cold">cold</span> }
             </button>
           }
           @if (archiveError(); as err) {

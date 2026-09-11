@@ -39,6 +39,10 @@ async function stub(page: Page) {
   await page.route('**/api/dev-tools/flags', json({ updateStableEnabled: false, deleteE2EJobsEnabled: false }));
   await page.route('**/api/admin/prompts', json({ overrideDirectory: 'stub', items: [] }));
   await page.route('**/api/workspaces*', json([]));
+  await page.route('**/api/v1/management/retention/policy', json({ scope: 'workspace', version: 0, updatedAt: '', updatedBy: 'platform', rules: [], fullBackups: { daily: 7, weekly: 4, monthly: 12 } }));
+  await page.route('**/api/v1/management/retention/runs', json([]));
+  await page.route('**/api/v1/management/retention/schedule', json({ enabled: false, serverLocalHour: 3, nextRunAt: null }));
+  await page.route('**/api/v1/management/backups/full', json({ backups: [] }));
   await page.route('**/api/workspace/tokens/timeline*', json({
     windowStart: new Date().toISOString(), windowEnd: new Date().toISOString(),
     windowHours: 24, bucketMinutes: 60, bucketCount: 0, cells: [], projects: [],
@@ -70,7 +74,7 @@ test.describe('Settings consolidation (AGT-2035)', () => {
     await openSettings(page);
     await expect(page.getByTestId('workspace-settings-title')).toHaveText('Settings');
 
-    for (const key of ['overview', 'appearance', 'updates', 'workspaces', 'caps', 'working-memory', 'prompts', 'tokens', 'screenshots']) {
+    for (const key of ['overview', 'appearance', 'updates', 'workspaces', 'caps', 'working-memory', 'prompts', 'retention', 'tokens', 'screenshots']) {
       await expect(page.getByTestId(`workspace-settings-rail-${key}`)).toBeVisible();
     }
     // Summary is gone.

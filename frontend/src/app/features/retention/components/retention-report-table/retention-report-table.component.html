@@ -1,0 +1,28 @@
+<div class="report" data-testid="retention-report-table">
+  @if (actions().length === 0) {
+    <p class="report__empty" data-testid="retention-plan-empty">No tasks are affected by the current policy.</p>
+  } @else {
+    <table>
+      <thead><tr>
+        <th [attr.aria-sort]="ariaSort('taskKey')"><button type="button" (click)="sort('taskKey')">Key</button></th>
+        <th [attr.aria-sort]="ariaSort('project')"><button type="button" (click)="sort('project')">Project</button></th>
+        <th [attr.aria-sort]="ariaSort('lane')"><button type="button" (click)="sort('lane')">Lane</button></th>
+        <th [attr.aria-sort]="ariaSort('terminalAt')"><button type="button" (click)="sort('terminalAt')">Terminal date</button></th>
+        <th [attr.aria-sort]="ariaSort('bytes')"><button type="button" (click)="sort('bytes')">Bytes</button></th>
+        <th [attr.aria-sort]="ariaSort('ruleId')"><button type="button" (click)="sort('ruleId')">Rule</button></th>
+      </tr></thead>
+      <tbody>
+        @for (action of actions(); track action.taskId + ':' + action.kind + ':' + action.stage) {
+          <tr data-testid="retention-report-row">
+            <td><strong>{{ action.taskKey }}</strong></td>
+            <td>{{ action.project }}</td>
+            <td>{{ action.lane || '–' }}</td>
+            <td class="report__number">{{ date(action.terminalAt) }}</td>
+            <td class="report__number">{{ bytes(action.bytes) }}</td>
+            <td><span>{{ action.ruleId }}</span><small>{{ action.kind }}</small></td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  }
+</div>

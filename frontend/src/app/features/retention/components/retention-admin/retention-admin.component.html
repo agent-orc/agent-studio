@@ -1,0 +1,48 @@
+<section class="retention" data-testid="retention-admin">
+  <header class="retention__head">
+    <div>
+      <h2>Retention</h2>
+      <p>Control hot storage, cold archive stages, runtime deletion, and verified full backups.</p>
+    </div>
+  </header>
+
+  <section class="retention__section" aria-labelledby="retention-rules-title">
+    <header><h3 id="retention-rules-title">Rules</h3><p>Periods start when a task enters Delivered or Archive. Protected lanes are never archived.</p></header>
+    <app-retention-rules-table scope="workspace" />
+  </section>
+
+  <section class="retention__section" aria-labelledby="retention-preview-title">
+    <header class="retention__section-head">
+      <div><h3 id="retention-preview-title">Preview and run</h3><p>Preview is read-only. A run starts only from the separate Run now action.</p></div>
+      <div class="retention__actions">
+        <button type="button" class="retention__secondary" data-testid="retention-preview" [disabled]="!!busy()" (click)="preview()">{{ busy() === 'plan' ? 'Planning…' : 'Preview' }}</button>
+        @if (report()) {
+          <button type="button" data-testid="retention-apply" [disabled]="!!busy()" (click)="apply()">{{ busy() === 'apply' ? 'Running…' : 'Run now' }}</button>
+          <button type="button" class="retention__secondary" data-testid="retention-export" [disabled]="!!busy()" (click)="exportJson()">Export JSON</button>
+        }
+      </div>
+    </header>
+    @if (error()) { <p class="retention__error" role="alert">{{ error() }}</p> }
+    @if (warnings().length) { <p class="retention__warning">{{ warnings().join(' · ') }}</p> }
+    @if (report(); as plan) {
+      <p class="retention__summary" data-testid="retention-summary">
+        <strong>{{ reportMode() === 'plan' ? 'Preview' : 'Run report' }}</strong>
+        <span>{{ plan.affectedTasks }} tasks</span>
+        <span>{{ bytes(archiveBytes()) }} to archive</span>
+        <span>{{ bytes(deleteBytes()) }} to delete</span>
+        <span>{{ elapsedMs() ?? 0 }} ms</span>
+      </p>
+      <app-retention-report-table [plan]="plan" />
+    }
+  </section>
+
+  <section class="retention__section" aria-labelledby="retention-history-title">
+    <header><h3 id="retention-history-title">Run history</h3><p>Plans, scheduled runs, and operator runs share one report format.</p></header>
+    <app-retention-run-history />
+  </section>
+
+  <section class="retention__section" aria-labelledby="retention-backups-title">
+    <header><h3 id="retention-backups-title">Backups</h3><p>Each full set contains the store snapshot, referenced cold payloads, inventory hash, and analysis export.</p></header>
+    <app-retention-backups />
+  </section>
+</section>

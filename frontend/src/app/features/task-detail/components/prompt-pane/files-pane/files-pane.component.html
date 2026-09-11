@@ -1,4 +1,6 @@
 <div class="files-pane" data-testid="files-pane">
+  <app-archived-files-manifest [jobId]="jobId()" [archived]="archived()" />
+
   @if (orderedArtifacts().length > 0) {
     <nav class="docs-index" aria-label="Documents in this task" data-testid="docs-index">
       <span class="docs-index__label">On this page</span>

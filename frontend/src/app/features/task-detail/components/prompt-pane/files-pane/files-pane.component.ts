@@ -17,6 +17,7 @@ import {
   type DocumentPresentation,
 } from './document-presentation.util';
 import { DocumentDetailsMenuComponent } from './document-details-menu/document-details-menu.component';
+import { ArchivedFilesManifestComponent } from '../../../../retention/components/archived-files-manifest/archived-files-manifest.component';
 
 /**
  * Docs tab body. Renders supported documents directly in the job folder
@@ -44,7 +45,7 @@ import { DocumentDetailsMenuComponent } from './document-details-menu/document-d
   selector: 'app-files-pane',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FileSourceHistoryComponent, MarkdownRichEditorComponent, MarkdownViewComponent, TooltipDirective, AspectJsonCardComponent, DocumentDetailsMenuComponent],
+  imports: [FileSourceHistoryComponent, MarkdownRichEditorComponent, MarkdownViewComponent, TooltipDirective, AspectJsonCardComponent, DocumentDetailsMenuComponent, ArchivedFilesManifestComponent],
   templateUrl: './files-pane.component.html',
   styleUrl: './files-pane.component.scss',
 })
@@ -57,6 +58,7 @@ export class FilesPaneComponent {
   /** Prefilled body for `prompt.md` so we don't re-fetch what `TaskDetail` already loaded. */
   readonly promptContent = input<string>('');
   readonly jobId = input<string | null>(null);
+  readonly archived = input(false);
   readonly watchPath = input<string | null>(null);
   readonly isRunning = input(false);
   readonly focusRequest = input<{ kind: TaskArtifactKind; requestId: number } | null>(null);

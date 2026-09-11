@@ -42,7 +42,9 @@ public sealed record RetentionActionDto(
     int Stage,
     long Bytes,
     int FileCount,
-    string Reason);
+    string Reason,
+    string? Lane = null,
+    DateTime? TerminalAt = null);
 
 public sealed record RetentionPlanDto(
     DateTime PlannedAt,
@@ -74,13 +76,20 @@ public sealed record RetentionRunSummaryDto(
     int PolicyVersion,
     int ActionCount,
     long AppliedBytes,
-    string ActorId);
+    string ActorId,
+    int ErrorCount = 0,
+    int WarningCount = 0);
 
 public sealed record RetentionRunDetailDto(
     RetentionRunSummaryDto Summary,
     RetentionPlanDto Plan,
     IReadOnlyList<string> Errors,
     IReadOnlyList<string> Warnings);
+
+public sealed record RetentionScheduleDto(
+    bool Enabled,
+    int ServerLocalHour,
+    DateTimeOffset? NextRunAt);
 
 public sealed record RetentionArchiveFileDto(string Name, long Size, string Sha256);
 
