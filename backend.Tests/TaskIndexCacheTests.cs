@@ -203,6 +203,7 @@ public class TaskIndexCacheTests : IDisposable
         Assert.Equal("cold", Assert.Single(_scanner.ScanArchivedJobs()).ArchiveState);
 
         File.WriteAllText(manifestPath, """{"restoredAt":"2026-09-08T12:00:00Z"}""");
+        _cache.Invalidate();
 
         var archived = Assert.Single(_scanner.ScanArchivedJobs());
 
