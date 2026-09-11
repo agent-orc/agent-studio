@@ -82,6 +82,16 @@ CLI execution tests.
   always resolves through the static `CliThinkingLevels` table regardless of
   what the CLI reports for it, byte-for-byte, so onboarding a new model can
   never silently change an already-shipped model's default (AGT-2707).
+  `gpt-5.6-terra` and `gpt-5.6-luna` are registry entries for exactly this
+  disabled-not-hidden rendering (AGT-2707 round 2) with an `Available:false`
+  baseline, so a total CLI-probe failure (the `FallbackCatalog` path) still
+  never assumes a gpt-5.6 model is offered; `gpt-5.6-sol` keeps no registry
+  entry at all (AGT-2025: the flagship stays purely detection-driven). Live
+  discovery overrides the baseline to available whenever the installed CLI
+  actually lists one. `gpt-5.4-mini` is likewise a registry entry so it renders
+  disabled on a CLI that rejects it instead of staying invisible while
+  `PipelineStepModelDefaults` and the review orchestrator keep requesting it by
+  id.
 - Quota probes are observability surfaces. Preserve stable event names and
   useful error context when editing nearby code.
 - Quota reads are cache-only request paths. `GET /api/cli/quota` must never

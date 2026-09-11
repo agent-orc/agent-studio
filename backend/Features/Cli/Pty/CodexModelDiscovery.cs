@@ -304,9 +304,13 @@ public sealed class CodexModelDiscovery
     /// <summary>
     /// Registry-backed static catalog used when the codex CLI cannot be queried
     /// and no cache exists (task item 1's "fall back to today's static list").
-    /// Mirrors <c>ClaudeModelDiscovery.FallbackCatalog</c>. Contains no gpt-5.6
-    /// (that is detection-only), so a Publish of this catalog keeps the default
-    /// on the account-valid gpt-5.5 baseline.
+    /// Mirrors <c>ClaudeModelDiscovery.FallbackCatalog</c>. Contains no gpt-5.6:
+    /// <c>gpt-5.6-sol</c> has no registry entry at all, and the onboarded
+    /// <c>gpt-5.6-terra</c> / <c>gpt-5.6-luna</c> entries carry an
+    /// <c>Available:false</c> baseline (AGT-2707 round 2), so this static list
+    /// never assumes a gpt-5.6 model is offered without a live CLI answer and a
+    /// Publish of this catalog keeps the default on the account-valid gpt-5.5
+    /// baseline.
     /// </summary>
     public static CliModelCatalog FallbackCatalog(string source = "registry-fallback")
     {

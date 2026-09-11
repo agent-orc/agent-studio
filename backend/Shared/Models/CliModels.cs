@@ -138,8 +138,23 @@ public static class ModelIds
     /// tests; <see cref="ModelMetadataRegistry.DefaultForCli"/> returns it when
     /// discovery has detected it, otherwise it falls back to <see cref="Gpt55"/>.</summary>
     public const string Gpt56Sol = "gpt-5.6-sol";
+    /// <summary>Lower cost tiers of the gpt-5.6 family (model-routing-policy.md).
+    /// Unlike <see cref="Gpt56Sol"/> these ARE registry entries (AGT-2707 round 2),
+    /// solely so a codex-cli that does not list one renders it disabled with a
+    /// reason instead of leaving it invisible. Their registry <c>Available</c>
+    /// baseline is false: the whole gpt-5.6 family stays detection-only (AGT-2025),
+    /// so a total CLI-probe failure must never assume one is offered. Their
+    /// reasoning ladder and default are NOT curated here and are NOT onboarded for
+    /// live-discovered per-model ladders either; both keep resolving through the
+    /// static <c>CliThinkingLevels</c> table, same as <see cref="Gpt56Sol"/>.</summary>
+    public const string Gpt56Terra = "gpt-5.6-terra";
+    /// <summary>See <see cref="Gpt56Terra"/>.</summary>
+    public const string Gpt56Luna = "gpt-5.6-luna";
     /// <summary>Economy Codex model for bounded supporting-agent and pipeline work.
-    /// Availability still comes from live CLI discovery.</summary>
+    /// Registry-onboarded (AGT-2707 round 2) so a codex-cli that does not offer it
+    /// (observed on codex-cli 0.144.1, AGT-2707) renders it disabled with a reason
+    /// instead of leaving it invisible while <c>PipelineStepModelDefaults</c> and
+    /// friends keep requesting it by id.</summary>
     public const string Gpt54Mini = "gpt-5.4-mini";
     /// <summary>Onboarded OpenAI flagship of the gpt-6 generation. Unlike the
     /// gpt-5.6 family this one IS a registry entry, so the picker can show it
@@ -301,9 +316,36 @@ public static class ModelMetadataRegistry
         // invented rates), same posture as the GPT-4.1 / GPT-4o entries.
         new(ModelIds.Gpt6Astra, "GPT-6 Astra", "openai", IsDefault: false, Deprecated: false, Available: true,
             ContextWindow: 272_000),
+        // gpt-5.6-terra / gpt-5.6-luna are the lower cost tiers of the gpt-5.6
+        // family used by model-routing-policy.md. Onboarded as registry entries
+        // (AGT-2707 round 2) purely so the picker disables them with a reason on
+        // a codex-cli that does not list one, instead of leaving them invisible -
+        // gpt-5.6-sol deliberately still has no entry (AGT-2025: the flagship
+        // stays detection-only). Available:false here is the same detection-only
+        // rule applied to these two: FallbackCatalog (the total-probe-failure
+        // path) must never assume a gpt-5.6 model is offered without a live
+        // CLI answer. Live discovery overrides this to Available:true whenever
+        // the installed CLI actually lists one (2026-09-11 evidence: codex-cli
+        // 0.144.1 lists sol, terra, and luna). No curated ThinkingLevels /
+        // DefaultThinkingLevel: their ladder keeps resolving through the static
+        // CliThinkingLevels table, and neither is onboarded for a live-discovered
+        // per-model ladder override (that allowlist holds only gpt-6-astra).
+        new(ModelIds.Gpt56Terra, "GPT-5.6 Terra", "openai", IsDefault: false, Deprecated: false, Available: false,
+            ContextWindow: 272_000),
+        new(ModelIds.Gpt56Luna, "GPT-5.6 Luna", "openai", IsDefault: false, Deprecated: false, Available: false,
+            ContextWindow: 272_000),
         // gpt-5-codex is retained (API-key accounts still accept it) but is no
         // longer the default: a ChatGPT-account spawn rejects it outright.
         new(ModelIds.Gpt5Codex, "GPT-5 Codex", "openai", IsDefault: false, Deprecated: false, Available: true,
+            ContextWindow: 272_000),
+        // gpt-5.4-mini backs bounded orchestrator/support steps
+        // (PipelineStepModelDefaults, ReviewDecisionOrchestrator, GitService
+        // commit summaries). Registry-onboarded (AGT-2707 round 2) so the picker
+        // disables it with a reason when the installed CLI does not offer it
+        // (2026-09-11 evidence: codex-cli 0.144.1 rejects it with HTTP 400 and
+        // omits it from `debug models`) instead of leaving it invisible while
+        // production code keeps requesting it by id.
+        new(ModelIds.Gpt54Mini, "GPT-5.4 Mini", "openai", IsDefault: false, Deprecated: false, Available: true,
             ContextWindow: 272_000),
         new(ModelIds.Gpt41, "GPT-4.1", "openai", IsDefault: false, Deprecated: false, Available: true,
             ContextWindow: 1_000_000),

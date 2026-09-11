@@ -216,9 +216,16 @@ wrapper. To refresh, the user clicks the side-sheet refresh button, which calls
 `/api/cli/codex/models?forceRefresh=true`.
 
 **The catalog follows the installed CLI, not a hardcoded list.** This is the
-house rule (convention/derivation over settings). The flagship `gpt-5.6-*`
-family is deliberately **not** a static `ModelMetadataRegistry` entry: it
-appears only when the live CLI advertises it.
+house rule (convention/derivation over settings). The flagship
+`gpt-5.6-sol` is deliberately **not** a static `ModelMetadataRegistry` entry:
+it appears only when the live CLI advertises it (AGT-2025). Its lower cost
+tiers, `gpt-5.6-terra` and `gpt-5.6-luna`, **are** registry entries (AGT-2707
+round 2) so a codex-cli that does not offer one renders it disabled with a
+reason instead of leaving it invisible, but their registry `Available`
+baseline is false, so `FallbackCatalog` (the total-probe-failure path) still
+never assumes a gpt-5.6 model is offered without a live CLI answer; live
+discovery overrides that baseline to available whenever the installed CLI
+actually lists one.
 
 **Merged catalog: registry union live discovery (AGT-2707).** `Publish` runs
 `WithKnownButUnavailableModels`, which appends every OpenAI registry entry the
@@ -240,6 +247,15 @@ carries `"Discovered from CLI; missing registry metadata."`.
 rule can fire, but it is not the product default and is not a routing tier -
 see the "not yet tiered" note in
 [model-routing-policy.md](../../domains/model-routing-policy.md).
+
+**`gpt-5.6-terra`, `gpt-5.6-luna`, and `gpt-5.4-mini` are registry-onboarded
+existing tiers (AGT-2707 round 2).** Unlike astra these already had a routing
+tier in model-routing-policy.md; the registry entry only fixes their catalog
+visibility (disabled-not-hidden on a CLI that does not offer one) and changes
+nothing about which tier or default they resolve to. `gpt-5.6-terra`/
+`gpt-5.6-luna` carry `Available:false` in the registry so `FallbackCatalog`
+still never assumes a gpt-5.6 model without a live CLI answer; `gpt-5.6-sol`
+keeps no registry entry at all.
 
 **Detection-driven product default.** Every catalog path (`fresh`, `mem-cache`,
 `disk-cache`, and the fallback below) runs through `Publish`, which calls
@@ -521,6 +537,10 @@ To extend it for a new frame or `item.type`:
 that cannot consume the shared fixture directly, plus the trimmed
 `codex debug models` catalogs used by `CodexModelDiscoveryTests`
 (`debug-models-v0.153.4.json` with `gpt-6-astra`, `debug-models-v0.151.0.json`
-without it). Keep the reasoning-ladder fields (`supported_reasoning_levels`,
+without it, and `debug-models-v0.144.1.json`, a real, unedited capture from
+codex-cli 0.144.1 on a ChatGPT account (agent-runner-01, 2026-09-11) that lists
+`gpt-5.6-sol`/`gpt-5.6-terra`/`gpt-5.6-luna` and omits `gpt-6-astra`,
+`gpt-5.4-mini`, and `gpt-5-codex` - the account rejects those three with HTTP
+400). Keep the reasoning-ladder fields (`supported_reasoning_levels`,
 `default_reasoning_level`) in any new catalog fixture: they are what the parser
 reads.

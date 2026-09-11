@@ -39,6 +39,17 @@ in the benchmark below. Whether it becomes a tier or the default is a separate
 operator decision; until then it is selectable only as an explicit pin, and an
 explicit pin is not evidence that it clears any correctness floor.
 
+`gpt-5.6-luna`, `gpt-5.6-terra`, and `gpt-5.4-mini` above were already this
+policy's routing tiers, but until AGT-2707 round 2 they had no
+`ModelMetadataRegistry` entry, so a codex-cli that did not offer one left it
+silently invisible in the picker instead of disabled-with-a-reason. They are
+now registry entries for that catalog-visibility reason only: their routing
+tiers, reasoning ladders, and defaults above are unchanged, and (unlike
+`gpt-5.4-mini`) `gpt-5.6-luna`/`gpt-5.6-terra`'s registry `Available` baseline
+is deliberately false so a total CLI-probe failure still never assumes a
+gpt-5.6 model is offered - the same detection-only posture `gpt-5.6-sol` keeps
+by having no registry entry at all (AGT-2025).
+
 ## Weighted decision
 
 Score the task at intake from information available before implementation. Use
