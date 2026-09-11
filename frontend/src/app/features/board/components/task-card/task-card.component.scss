@@ -41,6 +41,36 @@
         var(--task-card-ring),
         var(--studio-card-shadow);
     }
+
+    .task-card__needs-input {
+      display: flex;
+      flex-direction: column;
+      gap: var(--studio-spacing-1);
+      padding: var(--studio-spacing-2);
+      border: 1px solid color-mix(in srgb, var(--severity-warn) 42%, var(--studio-border));
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--severity-warn) 8%, transparent);
+      color: var(--studio-fg-dim);
+      font-size: 11px;
+
+      strong { color: var(--studio-fg-strong); }
+
+      pre {
+        max-height: 112px;
+        margin: 0;
+        overflow: auto;
+        color: var(--studio-fg);
+        font: inherit;
+        line-height: 1.4;
+        white-space: pre-wrap;
+      }
+
+      div {
+        overflow-wrap: anywhere;
+
+        span { color: var(--studio-fg-strong); font-weight: 700; }
+      }
+    }
     /* Keyboard focus: the card is tabbable (tabindex=0) so the context menu —
        now the only place Delete lives — is reachable via the Menu key /
        Shift+F10 without a mouse. Show a clear accent ring on keyboard focus,

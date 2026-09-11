@@ -1124,6 +1124,7 @@ public static class LeaseEndpoints
             GitService git,
             TaskStateMachine states,
             OrchestratorChatLog chatLog,
+            OrchestratorLog orchestratorLog,
             HumanReviewEscalation humanReviewEscalation,
             ILoggerFactory loggerFactory,
             CancellationToken ct) =>
@@ -1630,6 +1631,25 @@ public static class LeaseEndpoints
                 details["gateItems"] = string.Join(" | ", req.GateItems!);
                 artifactCommits.TryCommitArtifactUpload(null, task.Id, task.FolderPath, [gateFile]);
             }
+            NeedsInputStatus? needsInput = null;
+            if (outcome == "needsinput" && !string.IsNullOrWhiteSpace(req.NeedsInputMessage))
+            {
+                var needsInputLogger = loggerFactory.CreateLogger("AgentStudio.Tasks.NeedsInput");
+                var uploadedNeedsInput = NeedsInputArtifact.TryRead(task.FolderPath, needsInputLogger);
+                needsInput = NeedsInputArtifact.Write(
+                    task.FolderPath,
+                    req.NeedsInputMessage,
+                    attemptId,
+                    req.SalvageRecoveryBranch ?? req.SalvageBranch ?? uploadedNeedsInput?.SalvageBranch,
+                    needsInputLogger);
+                if (needsInput is not null)
+                {
+                    details["needsInputFile"] = needsInput.ArtifactPath;
+                    details["needsInputFirstLine"] = needsInput.FirstLine;
+                    artifactCommits.TryCommitArtifactUpload(
+                        null, task.Id, task.FolderPath, [NeedsInputArtifact.RelativePath]);
+                }
+            }
             if (!string.IsNullOrWhiteSpace(salvageBranch)
                 && !string.IsNullOrWhiteSpace(salvageCommitSha))
             {
@@ -1861,7 +1881,7 @@ public static class LeaseEndpoints
                 // boundary reason instead of a generic agent-outcome text.
                 var (category, reason) = unverifiedDelivery is not null
                     ? (HumanReviewEscalationCategories.UnverifiedDelivery, unverifiedDelivery)
-                    : RemoteEscalation(outcome, req.Reason, req.GateItems);
+                    : RemoteEscalation(outcome, req.Reason, req.NeedsInputMessage, req.GateItems);
                 var escalated = await humanReviewEscalation.EscalateAsync(
                     task.Id,
                     task.WatchPath,
@@ -1888,6 +1908,21 @@ public static class LeaseEndpoints
                         ["category"] = category,
                         ["reason"] = reason,
                     });
+                var escalatedFolder = escalated.NewFolderPath ?? task.FolderPath;
+                if (needsInput is not null)
+                    NeedsInputArtifact.ReferenceFromParkedBlocker(
+                        escalatedFolder,
+                        loggerFactory.CreateLogger("AgentStudio.Tasks.NeedsInput"));
+                orchestratorLog.Append(task.WatchPath, new OrchestratorLogEntry
+                {
+                    Kind = OrchestratorLogKinds.Intervention,
+                    Topic = category,
+                    JobId = task.Id,
+                    Summary = needsInput is null
+                        ? $"Escalated \"{task.Title}\": {reason}"
+                        : $"Needs input for \"{task.Title}\": {needsInput.FirstLine}",
+                    Reasoning = reason,
+                });
                 return Results.Ok(new RemoteRunCompletionResponse(
                     req.TaskKey,
                     responseOutcome,
@@ -2288,6 +2323,7 @@ public static class LeaseEndpoints
     private static (string Category, string Reason) RemoteEscalation(
         string outcome,
         string? reportedReason,
+        string? needsInputMessage,
         IReadOnlyList<string>? gateItems)
     {
         var reason = CredentialRedactor.Redact(reportedReason)
@@ -2320,7 +2356,9 @@ public static class LeaseEndpoints
                     : $"The remote agent reported a blocker: {reason}"),
             "needsinput" => (
                 HumanReviewEscalationCategories.NeedsHumanInput,
-                reason.Length == 0
+                FirstNonEmptyLine(needsInputMessage) is { } question
+                    ? question
+                    : reason.Length == 0
                     ? "The remote agent requires operator input before it can continue."
                     : $"The remote agent requires operator input: {reason}"),
             _ => (
@@ -2330,4 +2368,9 @@ public static class LeaseEndpoints
                     : $"The remote runner ended without a recognized terminal outcome: {reason}"),
         };
     }
+
+    private static string? FirstNonEmptyLine(string? text)
+        => text?.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Trim())
+            .FirstOrDefault(line => line.Length > 0);
 }

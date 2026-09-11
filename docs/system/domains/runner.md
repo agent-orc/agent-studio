@@ -846,6 +846,15 @@ state.
   branch state when the question is unambiguous, else a `steer-timeout` blocked
   escalation. A steered card never waits indefinitely. See
   [docs/concepts/run-liveness-and-slot-semantics.md](../../concepts/run-liveness-and-slot-semantics.md).
+- A NeedsInput terminal preserves more than its reason slug. Remote structured
+  output and local transcripts extract the final assistant message before the
+  sentinel, retain at most 16 KiB, and persist it as
+  `results/needs-input.md` with the run-attempt id and salvage branch. The park
+  marker references that artifact. Human Review and a Ready card queued by an
+  operator steer show the question and options; an answer uses the existing
+  steer continuation on the salvage branch. Feed and notification summaries use
+  the first non-empty question line. This separate artifact is authoritative
+  when the 64 KiB CLI log cap has removed the original output frame.
 
 - Supervisor code is advice-first. Emergency primitives must call runner
   services, not poke task state directly.

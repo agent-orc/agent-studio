@@ -1227,6 +1227,58 @@ public sealed class TaskServerStoreTests
     }
 
     [Fact]
+    public async Task Needs_input_completion_persists_question_and_salvage_branch_and_routes_to_human_review()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        var run = claim.Run!;
+        var lease = claim.Lease!;
+        const string question = "Which deployment strategy should I implement?\n\n"
+            + "- Option A: managed connector. Recommended for simpler operations.\n"
+            + "- Option B: direct LAN deployment. Requires customer network access.\n\n"
+            + "Reply with A or B to continue.";
+        const string salvageBranch = "runner/agent-runner-01/AGT-2736";
+        var request = new CompleteRunRequest(
+            "runner-a",
+            "instance-a",
+            lease.LeaseId,
+            lease.Fence,
+            ExecutionOutcomeKind.ExplicitAgentBlocker.ToString(),
+            "choose-connector-vs-lan-deployment-strategy",
+            IdempotencyKey: $"completion:{run.RunId}:needs-input",
+            Sequence: 1,
+            NeedsInputMessage: question,
+            SalvageBranch: salvageBranch);
+
+        await store.CompleteRunAsync(run.RunId, request, "runner-a", default);
+        await store.CompleteRunAsync(run.RunId, request, "runner-a", default);
+
+        Assert.Equal("5-human-review", (await store.GetTaskAsync(
+            project.ProjectId, task.TaskKey, default))!.State);
+        using var completion = JsonDocument.Parse(Assert.Single(
+            await store.ListEventsAsync(run.RunId, 0, default),
+            item => item.Kind == LifecycleEventKinds.RunCompleted).PayloadJson);
+        Assert.Equal(
+            "Which deployment strategy should I implement?",
+            completion.RootElement.GetProperty("needsInputFirstLine").GetString());
+        Assert.Equal(
+            "results/needs-input.md",
+            completion.RootElement.GetProperty("needsInputArtifact").GetString());
+        Assert.Equal(salvageBranch, completion.RootElement.GetProperty("salvageBranch").GetString());
+
+        var audit = Assert.Single(
+            await store.ListAuditAsync(0, default),
+            entry => entry.Action == "run.completed");
+        using var auditPayload = JsonDocument.Parse(audit.DetailJson);
+        Assert.Equal(question, auditPayload.RootElement.GetProperty("NeedsInputMessage").GetString());
+        Assert.Equal(salvageBranch, auditPayload.RootElement.GetProperty("SalvageBranch").GetString());
+    }
+
+    [Fact]
     public async Task Typed_event_payloads_fail_before_persistence_when_the_bound_is_exceeded()
     {
         using var temp = new TempDirectory();

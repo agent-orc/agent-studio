@@ -301,6 +301,9 @@ public record TaskInfo
     /// </summary>
     public ParkedBlockerStatus? ParkedBlocker { get; init; }
 
+    /// <summary>Latest durable agent question while waiting for an operator steer.</summary>
+    public NeedsInputStatus? NeedsInput { get; init; }
+
     /// <summary>
     /// Structural classification of the task. One of <see cref="TaskTypes.Bug"/>,
     /// <see cref="TaskTypes.Feature"/>, or <see cref="TaskTypes.Chore"/>

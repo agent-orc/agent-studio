@@ -131,6 +131,10 @@ public sealed record ParkedBlockerRecord
     [JsonPropertyName("reason")]
     public string Reason { get; init; } = "";
 
+    /// <summary>Task-relative artifact containing the full agent question.</summary>
+    [JsonPropertyName("needsInputFile")]
+    public string? NeedsInputFile { get; init; }
+
     /// <summary>The latest probe verdict, or null when no sweep has run yet.</summary>
     [JsonPropertyName("lastEvaluation")]
     public ParkedBlockerEvaluation? LastEvaluation { get; init; }

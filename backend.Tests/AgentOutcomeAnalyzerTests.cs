@@ -55,6 +55,19 @@ public class AgentOutcomeAnalyzerTests
     }
 
     [Fact]
+    public void Local_transcript_preserves_question_and_options_before_needs_input_sentinel()
+    {
+        var message = "Which deployment should I implement?\n\n- A: connector-first (recommended)\n- B: direct LAN\n\nReply A or B to unblock me.";
+        var outcome = AgentOutcomeAnalyzer.Analyze(
+            Lines(message, "[[TASK_NEEDS_INPUT:choose-deployment]]"),
+            "completed",
+            30.0);
+
+        Assert.Equal(AgentOutcomeKind.NeedsInput, outcome.Kind);
+        Assert.Equal(message, outcome.NeedsInputMessage);
+    }
+
+    [Fact]
     public void Sentinel_Noop_Recognised()
     {
         var lines = Lines("Nothing to do.", "[[TASK_NOOP: already implemented]]");

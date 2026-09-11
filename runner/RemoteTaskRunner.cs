@@ -230,6 +230,11 @@ public sealed class RemoteTaskRunner
             outcomeDecision = execution.Decision;
             outputLines = execution.OutputLines;
             await shipper.FlushAsync(stopRun.Token);
+            NeedsInputArtifactWriter.Write(
+                ResultsDir(taskKey),
+                outcome,
+                lease.AttemptId ?? lease.LeaseId,
+                workspace.WorkBranch);
             artifactManifest = await UploadResultsAsync(
                 taskKey,
                 lease,
@@ -348,7 +353,9 @@ public sealed class RemoteTaskRunner
                             outcomeDecision.Outcome.ToString(),
                             outcome.Reason,
                             envelopeDigest,
-                            outcomeDecision),
+                            outcomeDecision,
+                            outcome.NeedsInputMessage,
+                            teardown.Branch),
                         new JsonSerializerOptions(JsonSerializerDefaults.Web)));
                 await authority!.WaitForConfirmedAsync(stopRun.Token);
                 await _client.SendOutboxItemAsync(
@@ -1221,7 +1228,8 @@ public sealed class RemoteTaskRunner
             BaseSha: envelopeBaseSha,
             ImmutableResultRef: envelopeResultRef,
             ArtifactManifestDigest: envelopeManifestDigest,
-            IntegrationBranch: integrationBranch), ct);
+            IntegrationBranch: integrationBranch,
+            NeedsInputMessage: outcome.NeedsInputMessage), ct);
         _log($"remote-runner-completion recorded: outcome {resp?.Outcome}, state {resp?.TargetState}, result-envelope {(envelopeResultRef is null ? "absent" : "attached")}");
     }
 

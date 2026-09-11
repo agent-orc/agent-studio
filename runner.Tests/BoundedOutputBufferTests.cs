@@ -60,4 +60,22 @@ public class BoundedOutputBufferTests
         var outcome = SentinelScanner.Scan(buffer.ToString());
         Assert.Equal(RunOutcomeKind.Done, outcome.Kind);
     }
+
+    [Fact]
+    public void Agt2736_log_cap_replay_keeps_the_question_and_terminal_sentinel()
+    {
+        var buffer = new BoundedOutputBuffer(maxChars: 64 * 1024);
+        for (var i = 0; i < 10_000; i++) buffer.Append($"old codex frame {i:D5} {new string('x', 32)}");
+        var transcript = File.ReadAllText(Path.Combine(
+            AppContext.BaseDirectory, "Fixtures", "needs-input", "agt-2736.codex.jsonl"));
+        foreach (var line in transcript.Split('\n', StringSplitOptions.RemoveEmptyEntries)) buffer.Append(line);
+
+        var outcome = SentinelScanner.Scan(buffer.ToString());
+
+        Assert.True(buffer.DroppedLines > 0);
+        Assert.Equal(RunOutcomeKind.NeedsInput, outcome.Kind);
+        Assert.Contains("Which deployment strategy should I implement?", outcome.NeedsInputMessage);
+        Assert.Contains("Option A: managed connector", outcome.NeedsInputMessage);
+        Assert.Contains("Option B: direct LAN deployment", outcome.NeedsInputMessage);
+    }
 }

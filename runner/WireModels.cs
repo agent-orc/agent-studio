@@ -385,7 +385,8 @@ public sealed record RemoteRunCompletionRequest(
     string? BaseSha = null,
     string? ImmutableResultRef = null,
     string? ArtifactManifestDigest = null,
-    string? IntegrationBranch = null);
+    string? IntegrationBranch = null,
+    string? NeedsInputMessage = null);
 
 public sealed record RemoteRunCompletionResponse(
     string TaskKey,

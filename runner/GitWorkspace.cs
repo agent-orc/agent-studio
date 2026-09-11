@@ -73,6 +73,8 @@ public sealed class GitWorkspace
     public string SharedRepoPath => Path.Combine(ProjectCachePath, "repo");
     public string RepoPath => Path.Combine(ProjectCachePath, "worktrees", _safeTaskKey);
     public string? RepositoryUrl => _gitRemote;
+    /// <summary>Canonical branch that retains this task's salvage generation.</summary>
+    public string WorkBranch => _workBranch;
     /// <summary>
     /// The commit this workspace started from - the Result-Envelope's BaseSha.
     /// On a reattach nothing in this process ran <see cref="PrepareAsync"/>, so the

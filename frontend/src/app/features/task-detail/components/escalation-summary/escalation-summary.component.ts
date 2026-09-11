@@ -41,8 +41,8 @@ import {
  *
  * The panel owns two cheap fetches (the code-review grade list and the reissue
  * follow-up file) and reads the already-polled task timeline for the steering
- * event; everything else comes off `detail()`. It is otherwise presentational —
- * no mutations, no outputs.
+ * event; everything else comes off `detail()`. A NeedsInput panel also owns
+ * the bounded answer submission through the existing steer continuation API.
  */
 @Component({
   selector: 'app-escalation-summary',
@@ -57,6 +57,9 @@ export class EscalationSummaryComponent {
   readonly mutationsBlocked = input(false);
   readonly triageActingId = input<string | null>(null);
   readonly triageAction = output<TriageActionPayload>();
+  readonly answerDraft = signal('');
+  readonly answering = signal(false);
+  readonly answerError = signal<string | null>(null);
 
   /** The three terminal operator choices shown beside NEEDS DECISION. */
   readonly decisionActions = computed(() =>
@@ -165,8 +168,45 @@ export class EscalationSummaryComponent {
    * escalation ("Escalation") a human judges on its merits.
    */
   readonly headTitle = computed<string>(() =>
-    this.view().escalation?.kind === 'gave-up' ? 'Orchestrator gave up' : 'Escalation',
+    this.detail().info.needsInput
+      ? (this.hasQueuedAnswer() ? 'Answer queued' : 'Agent needs input')
+      : this.view().escalation?.kind === 'gave-up' ? 'Orchestrator gave up' : 'Escalation',
   );
+
+  readonly hasQueuedAnswer = computed(() =>
+    this.detail().info.pendingIntent?.mode === 'steer'
+      && !!this.detail().info.pendingIntent?.prompt?.trim(),
+  );
+
+  updateAnswer(event: Event): void {
+    this.answerDraft.set((event.target as HTMLTextAreaElement).value);
+  }
+
+  submitAnswer(): void {
+    const answer = this.answerDraft().trim();
+    const info = this.detail().info;
+    if (!answer || this.answering() || this.mutationsBlocked()) return;
+    this.answering.set(true);
+    this.answerError.set(null);
+    this.jobs.continueJob(
+      info.id,
+      answer,
+      info.watchPath,
+      undefined,
+      undefined,
+      undefined,
+      'steer',
+    ).subscribe({
+      next: () => {
+        this.answering.set(false);
+        this.answerDraft.set('');
+      },
+      error: (error: { error?: { error?: string }; message?: string }) => {
+        this.answering.set(false);
+        this.answerError.set(error?.error?.error ?? error?.message ?? 'The answer could not be queued.');
+      },
+    });
+  }
 
   /** Toggle the panel open/closed and persist the choice for this task. */
   toggleCollapsed(): void {
@@ -200,7 +240,7 @@ const DECISION_ACTION_IDS: ReadonlySet<string> = new Set([
 function initialCollapsed(info: TaskInfo): boolean {
   const stored = readCollapsePref(info.id);
   if (stored !== null) return stored;
-  return info.state !== TaskState.Escalated;
+  return info.needsInput ? false : info.state !== TaskState.Escalated;
 }
 
 function readCollapseMap(): Record<string, boolean> {

@@ -10,7 +10,9 @@ public sealed record DurableCompletionPayload(
     string Outcome,
     string? Summary,
     string? ResultEnvelopeDigest,
-    AgentStudio.TaskServer.Contracts.ExecutionOutcomeDecision? OutcomeDecision = null);
+    AgentStudio.TaskServer.Contracts.ExecutionOutcomeDecision? OutcomeDecision = null,
+    string? NeedsInputMessage = null,
+    string? SalvageBranch = null);
 
 public sealed record DurableRunContextPayload(
     string RepositoryId,

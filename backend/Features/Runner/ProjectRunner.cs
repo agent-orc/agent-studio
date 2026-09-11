@@ -5820,6 +5820,35 @@ public class ProjectRunner
                 execution.DurationSeconds ?? 0.0,
                 execution.ExitCode);
 
+            if (outcome.Kind == AgentOutcomeKind.NeedsInput
+                && activeInfo is not null
+                && !string.IsNullOrWhiteSpace(outcome.NeedsInputMessage))
+            {
+                var session = _sessions.ReadSessionEvents(jobId, Entry.Path).LastOrDefault(evt =>
+                    evt.Ts == execution.StartedAt || evt.FinishedAt == runFinishedAt);
+                var attemptId = session?.RunAttemptId
+                    ?? session?.CapturedSessionId
+                    ?? session?.InputSessionId
+                    ?? $"local-{execution.StartedAt:yyyyMMddTHHmmssfffZ}";
+                var artifact = NeedsInputArtifact.Write(
+                    activeInfo.FolderPath,
+                    outcome.NeedsInputMessage,
+                    attemptId,
+                    run.Branch ?? activeInfo.Provenance?.Branch,
+                    _logger);
+                if (artifact is not null)
+                {
+                    _orchestratorLog.Append(activeInfo.WatchPath, new OrchestratorLogEntry
+                    {
+                        Kind = OrchestratorLogKinds.Intervention,
+                        Topic = HumanReviewEscalationCategories.NeedsHumanInput,
+                        JobId = jobId,
+                        Summary = $"Needs input for \"{activeInfo.Title}\": {artifact.FirstLine}",
+                        Reasoning = $"The full question is persisted at {artifact.ArtifactPath}; answer it with a steer continuation on {artifact.SalvageBranch ?? "the task branch"}."
+                    });
+                }
+            }
+
             if (outcome.IssueKind == RunIssueKind.QuotaExhausted
                 && activeInfo is not null
                 && !string.IsNullOrWhiteSpace(cliType))
