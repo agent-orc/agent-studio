@@ -451,6 +451,26 @@ public sealed partial class TaskServerStore
                 if (!string.IsNullOrWhiteSpace(json))
                     telemetry = JsonSerializer.Deserialize<HostTelemetrySnapshotDto>(json);
             }
+            DateTime? restartedAt = null;
+            var reviewsLost = 0;
+            await using (var restartCommand = Command(connection, """
+                SELECT restarted_at, reviews_lost
+                  FROM runner_review_restarts
+                 WHERE runner_id = $runner
+                   AND instance_id = $instance;
+                """, ("$runner", runner.Id), ("$instance", runner.InstanceId)))
+            await using (var restartReader = await restartCommand.ExecuteReaderAsync(ct))
+            {
+                if (await restartReader.ReadAsync(ct))
+                {
+                    var observedRestart = Parse(restartReader.GetString(0));
+                    if (observedRestart >= UtcNow.AddHours(-24))
+                    {
+                        restartedAt = observedRestart;
+                        reviewsLost = restartReader.GetInt32(1);
+                    }
+                }
+            }
             result.Add(new RunnerCapabilitySnapshotDto(
                 runner.Id,
                 runner.Name,
@@ -469,7 +489,9 @@ public sealed partial class TaskServerStore
                 runner.RuntimeCapacityAppliedAt,
                 runner.RuntimeCapacityAppliedVersion,
                 projectPolicy,
-                runner.RoleMaxParallelism));
+                runner.RoleMaxParallelism,
+                RestartedAt: restartedAt,
+                ReviewsLost: reviewsLost));
         }
         return result;
     }

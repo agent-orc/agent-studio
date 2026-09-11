@@ -44,6 +44,10 @@ public sealed class RemoteReviewDaemon
             idleWatchdog.AbortToken);
         shutdown = daemonStop.Token;
         var state = new ReviewStateStore(_options.StateDir);
+        // A drain request belongs to the daemon generation that was asked to
+        // stop. The replacement must claim again, so the marker is cleared here
+        // rather than by the operator tool.
+        ReviewDrainGuard.ClearDrainRequest(_options.StateDir);
         var persistedAtStartup = state.LoadAll();
         var reconciler = new ReviewSlotReconciler(state, _client.GetReviewAttemptAsync, log: _log);
         Task<string> RegisterAsync(CancellationToken ct) => _client.RegisterAsync(
@@ -198,6 +202,7 @@ public sealed class RemoteReviewDaemon
         var admissionClosed = false;
         var nextRetentionSweep = DateTime.MinValue;
         var consecutiveFaults = 0;
+        var drainAnnounced = false;
         while (!shutdown.IsCancellationRequested)
         {
             idleWatchdog.RecordActiveSlots(active.Count);
@@ -221,6 +226,39 @@ public sealed class RemoteReviewDaemon
                 active.RemoveAt(index);
             }
             idleWatchdog.RecordActiveSlots(active.Count);
+
+            // A drain stops claiming immediately and lets the running reviews
+            // finish. Exiting on an empty slot set is the clean restart point:
+            // the replacement instance clears the marker and claims again.
+            var drain = ReviewDrainGuard.ReadDrainRequest(_options.StateDir);
+            if (drain is not null)
+            {
+                if (!drainAnnounced)
+                {
+                    drainAnnounced = true;
+                    _log(
+                        $"review daemon draining: {drain.Reason} " +
+                        $"(requested {drain.RequestedAtUtc:O}); no new claims, " +
+                        $"finishing {active.Count} running review(s)");
+                }
+                // A drain can outlast the idle deadline by design, so the
+                // watchdog must not mistake it for a stalled poll loop.
+                idleWatchdog.RecordPollStarted();
+                if (active.Count == 0)
+                {
+                    _log("review daemon drained: no running reviews left; exiting for a clean restart");
+                    break;
+                }
+                await DelayThroughShutdown(
+                    TimeSpan.FromSeconds(_options.PollSeconds),
+                    shutdown);
+                continue;
+            }
+            if (drainAnnounced)
+            {
+                drainAnnounced = false;
+                _log("review drain request withdrawn; resuming review claims");
+            }
 
             try
             {

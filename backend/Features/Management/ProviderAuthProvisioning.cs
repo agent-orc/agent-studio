@@ -148,7 +148,7 @@ public sealed class SshProviderAuthProvisioner : IProviderAuthProvisioner
         var state = processEnvironmentVerified ? "awaiting-probe" : "installed-awaiting-runner";
         var detail = processEnvironmentVerified
             ? "The protected EnvironmentFile was installed, active units were restarted, and /proc confirms that the provider variable reached each daemon. Waiting for the runner probe."
-            : "The protected EnvironmentFile was installed. No active agent-host unit was available yet; the setup task will start the unit and publish the first probe result.";
+            : "The protected EnvironmentFile was installed. At least one runner is not started yet or still needs the guarded Review drain and replacement before it can publish a credential probe.";
 
         return new ProviderAuthProvisioningResponse(
             ProviderAuthProvisioningPolicy.ProviderFor(request.EnvironmentVariable.Trim()),
@@ -289,8 +289,18 @@ fi
 
 systemctl daemon-reload
 verified=0
+pending=0
 for unit in "${configured[@]}"; do
-  systemctl restart "$unit"
+  if [[ "$unit" == agent-runner-review.service ]]; then
+    if [[ ! -x /usr/local/sbin/agent-runner-deploy ]] \
+        || ! /usr/local/sbin/agent-runner-deploy restart-review; then
+      printf 'provider-auth-unit-pending=%s\n' "$unit"
+      pending=$((pending + 1))
+      continue
+    fi
+  else
+    systemctl restart "$unit"
+  fi
   main_pid="$(systemctl show --property=MainPID --value "$unit")"
   [[ "$main_pid" =~ ^[1-9][0-9]*$ ]] || {
     printf '[provider-auth] Unit %s did not expose a running MainPID.\n' "$unit" >&2
@@ -304,8 +314,12 @@ for unit in "${configured[@]}"; do
   verified=$((verified + 1))
   printf 'provider-auth-unit=%s\n' "$unit"
 done
-[[ "$verified" -eq "${#configured[@]}" ]] || exit 38
+[[ "$((verified + pending))" -eq "${#configured[@]}" ]] || exit 38
 echo 'provider-auth-file=installed'
-echo 'provider-auth-process-environment=verified'
+if ((pending == 0)); then
+  echo 'provider-auth-process-environment=verified'
+else
+  echo 'provider-auth-process-environment=pending-runner'
+fi
 """;
 }

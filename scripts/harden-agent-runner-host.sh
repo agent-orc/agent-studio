@@ -33,13 +33,15 @@ helper_source="$repo_root/deploy/agent-host/agent-runner-deploy"
 policy_source="$repo_root/deploy/agent-host/agent-runner-config-policy"
 deps_validator_source="$repo_root/deploy/agent-host/agent-runner-deps-closure.py"
 handoff_source="$repo_root/deploy/agent-host/systemd/10-agent-runner-hardening.conf"
+restart_guard_source="$repo_root/deploy/agent-host/systemd/20-agent-runner-review-restart-guard.conf"
 
 for required_source in \
   "$sudoers_source" \
   "$helper_source" \
   "$policy_source" \
   "$deps_validator_source" \
-  "$handoff_source"; do
+  "$handoff_source" \
+  "$restart_guard_source"; do
   [[ -f "$required_source" ]] || die "versioned host asset is missing: $required_source"
 done
 command -v visudo >/dev/null || die "visudo is required"
@@ -76,6 +78,9 @@ for unit in agent-runner.service agent-runner-review.service; do
   drop_in="/etc/systemd/system/$unit.d/10-agent-runner-hardening.conf"
   [[ ! -e "$drop_in" ]] || cp -a "$drop_in" "$backup_root/previous-$unit-handoff.conf"
 done
+review_restart_guard="/etc/systemd/system/agent-runner-review.service.d/20-agent-runner-review-restart-guard.conf"
+[[ ! -e "$review_restart_guard" ]] \
+  || cp -a "$review_restart_guard" "$backup_root/previous-agent-runner-review-restart-guard.conf"
 
 install -d -o root -g root -m 0755 /usr/local/sbin /usr/local/libexec
 install -o root -g root -m 0755 "$helper_source" "$installed_helper"
@@ -91,11 +96,19 @@ for unit in agent-runner.service agent-runner-review.service; do
   install -o root -g root -m 0644 \
     "$handoff_source" "$drop_in_directory/10-agent-runner-hardening.conf"
 done
+install -o root -g root -m 0644 \
+  "$restart_guard_source" "$review_restart_guard"
 systemctl daemon-reload
 for unit in agent-runner.service agent-runner-review.service; do
   [[ "$(systemctl show "$unit" --property=KillMode --value)" == "process" ]] \
     || die "$unit did not adopt KillMode=process"
+  [[ "$(systemctl show "$unit" --property=PrivateTmp --value)" == "no" ]] \
+    || die "$unit did not adopt PrivateTmp=false"
 done
+[[ "$(systemctl show agent-runner-review.service --property=RefuseManualStop --value)" == "yes" ]] \
+  || die "agent-runner-review.service did not adopt RefuseManualStop=true"
+[[ "$(systemctl show agent-runner.service --property=RefuseManualStop --value)" != "yes" ]] \
+  || die "RefuseManualStop must remain review-only"
 
 for privileged_group in sudo docker; do
   if id -nG "$service_user" | tr ' ' '\n' | grep -Fxq "$privileged_group"; then
@@ -121,8 +134,14 @@ sudo_list="$(sudo -l -U "$service_user")"
   || die "service account still has an unrestricted NOPASSWD rule"
 grep -Fq '/usr/local/sbin/agent-runner-deploy ""' <<<"$sudo_list" \
   || die "deploy helper is missing from the effective sudo policy"
+grep -Fq '/usr/local/sbin/agent-runner-deploy restart-review' <<<"$sudo_list" \
+  || die "sanctioned Review replacement is missing from the effective sudo policy"
 grep -Fq 'config review RUNNER_MAX_PARALLELISM 6' <<<"$sudo_list" \
   || die "bounded role configuration is missing from the effective sudo policy"
+! grep -Fq 'systemctl restart agent-runner-review.service' <<<"$sudo_list" \
+  || die "direct Review restart remains in the effective sudo policy"
+! grep -Fq 'agent-runner-deploy --force' <<<"$sudo_list" \
+  || die "the service account can bypass the Review restart guard"
 
 printf 'agent-runner host hardening: applied\n'
 printf '  backup: %s\n' "$backup_root"
@@ -131,5 +150,6 @@ printf '  sudoers: %s\n' "$installed_sudoers"
 printf '  deploy helper: %s\n' "$installed_helper"
 printf '  config policy: %s\n' "$installed_policy"
 printf '  dependency validator: %s\n' "$installed_deps_validator"
+printf '  review restart guard: %s\n' "$review_restart_guard"
 printf '%s\n' \
-  "Existing login sessions retain supplementary groups. End them and restart both services from an operator session before acceptance."
+  "Existing login sessions retain supplementary groups. End them, restart Coding, and run 'agent-runner-deploy drain' for Review before acceptance."
