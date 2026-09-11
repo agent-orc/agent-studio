@@ -11,14 +11,14 @@ namespace AgentStudio.TaskServer;
 
 public sealed partial class TaskServerStore
 {
-    // 13 adds retention policies, archive runs and manifests, task archive
-    // stub columns, and an artifacts.archived flag with nullable content.
-    // 14 adds studio human users and sessions, a tasks.rank lane-ordering
-    // column, and the replayable studio_stream_events cursor log backing
-    // the /hubs/v1/studio hub.
+    // 12 adds scoped principals and credentials. 13 adds retention policies,
+    // archive runs and manifests, task archive stub columns, and the nullable
+    // artifact content contract. 14 adds Studio users and sessions, task rank,
+    // and the replayable Studio event stream. 15 adds the durable legacy-cutover
+    // ledger, orphan ledger, signed reports, and artifact source references.
     // The migration block is idempotent; the number guards downgrades from
     // binaries that do not know this state.
-    public const int CurrentSchemaVersion = 14;
+    public const int CurrentSchemaVersion = 15;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -95,6 +95,7 @@ public sealed partial class TaskServerStore
                 ? parsedMode
                 : TaskServerMode.Maintenance;
             await RefreshOutboxSummaryAsync(connection, cancellationToken);
+            await MaterializeLegacyMigrationReportsAsync(connection, cancellationToken);
 
             if (quarantineActiveAuthority)
             {
@@ -1680,7 +1681,8 @@ public sealed partial class TaskServerStore
     {
         await using var connection = await OpenReadyAsync(ct);
         await using var command = Command(connection, """
-            SELECT id, run_id, name, media_type, sha256, size_bytes, idempotency_key, fence, created_at, sequence
+            SELECT id, run_id, name, media_type, sha256, size_bytes, idempotency_key, fence, created_at, sequence,
+                   source_path, pointer_only
               FROM artifacts WHERE run_id = $run ORDER BY created_at, id;
             """, ("$run", runId));
         await using var reader = await command.ExecuteReaderAsync(ct);
@@ -1953,7 +1955,14 @@ public sealed partial class TaskServerStore
             await AuditAsync(source, transaction, actorId, "backup.created", "backup", backupId,
                 JsonSerializer.Serialize(new { sha256 = sha, info.Length }), ct);
             await transaction.CommitAsync(ct);
-            return new BackupResult(backupId, path, sha, UtcNow, info.Length);
+            var inventorySha = Convert.ToString(await ScalarAsync(source, """
+                SELECT after_inventory_sha256
+                  FROM legacy_migration_reports
+                 ORDER BY created_at DESC LIMIT 1;
+                """, ct), CultureInfo.InvariantCulture);
+            return new BackupResult(
+                backupId, path, sha, UtcNow, info.Length,
+                string.IsNullOrWhiteSpace(inventorySha) ? null : inventorySha);
         }
         finally
         {
@@ -1989,6 +1998,7 @@ public sealed partial class TaskServerStore
         await _writeGate.WaitAsync(ct);
         try
         {
+            string? restoredInventorySha = null;
             var safety = DatabasePath + $".pre-restore-{Guid.NewGuid():N}";
             await using (var current = Open())
             {
@@ -2038,11 +2048,23 @@ public sealed partial class TaskServerStore
                     await AuditAsync(restored, transaction, actorId, "backup.restored", "backup", request.BackupId,
                         JsonSerializer.Serialize(new { sha256 = sha }), ct);
                     await transaction.CommitAsync(ct);
+                    await MaterializeLegacyMigrationReportsAsync(restored, ct);
+                    restoredInventorySha = Convert.ToString(await ScalarAsync(restored, """
+                        SELECT after_inventory_sha256
+                          FROM legacy_migration_reports
+                         ORDER BY created_at DESC LIMIT 1;
+                        """, ct), CultureInfo.InvariantCulture);
                 }
 
                 AuthorityReady = true;
                 File.Delete(safety);
-                return new RestoreResult(request.BackupId, true, true, sha, "Backup restored with identity and fence continuity.");
+                return new RestoreResult(
+                    request.BackupId,
+                    true,
+                    true,
+                    sha,
+                    "Backup restored with identity, fence, and migration-inventory continuity.",
+                    string.IsNullOrWhiteSpace(restoredInventorySha) ? null : restoredInventorySha);
             }
             catch (Exception restoreException)
             {
@@ -2109,7 +2131,8 @@ public sealed partial class TaskServerStore
                      "review_attempts", "review_fence_counters", "review_deliveries",
                      "result_handoffs", "result_ref_gc",
                      "runner_inventories", "invariant_reports",
-                     "runner_reconciliation_actions",
+                     "runner_reconciliation_actions", "legacy_migration_entities",
+                     "legacy_migration_orphans",
                  })
         {
             var count = Convert.ToInt64(await ScalarAsync(connection, $"SELECT count(*) FROM {table};", ct) ?? 0L, CultureInfo.InvariantCulture);
@@ -2122,16 +2145,219 @@ public sealed partial class TaskServerStore
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(builder.ToString()))).ToLowerInvariant();
     }
 
+    public async Task<LegacyMigrationReport?> GetLegacyMigrationReportAsync(
+        string migrationId,
+        CancellationToken ct)
+    {
+        await using var connection = await OpenReadyAsync(ct);
+        var json = Convert.ToString(await ScalarAsync(connection,
+            "SELECT report_json FROM legacy_migration_reports WHERE migration_id = $migration;",
+            ct, null, ("$migration", migrationId)), CultureInfo.InvariantCulture);
+        return string.IsNullOrWhiteSpace(json)
+            ? null
+            : JsonSerializer.Deserialize<LegacyMigrationReport>(json, OutcomeJson);
+    }
+
+    public async Task<IReadOnlyList<LegacyMigrationReport>> ListLegacyMigrationReportsAsync(CancellationToken ct)
+    {
+        await using var connection = await OpenReadyAsync(ct);
+        await using var command = Command(connection, """
+            SELECT report_json FROM legacy_migration_reports ORDER BY created_at DESC;
+            """);
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        var result = new List<LegacyMigrationReport>();
+        while (await reader.ReadAsync(ct))
+            if (JsonSerializer.Deserialize<LegacyMigrationReport>(reader.GetString(0), OutcomeJson) is { } report)
+                result.Add(report);
+        return result;
+    }
+
+    internal async Task SaveLegacyMigrationReportAsync(
+        LegacyMigrationReport report,
+        string actorId,
+        CancellationToken ct)
+    {
+        await InWriteTransactionAsync(async (connection, transaction) =>
+        {
+            await ExecuteAsync(connection, """
+                INSERT INTO legacy_migration_reports(
+                    report_id, migration_id, inventory_sha256, after_inventory_sha256,
+                    report_json, report_path, report_sha256, report_signature, created_at)
+                VALUES ($id, $migration, $inventory, $after, $json, $path, $sha, $signature, $created)
+                ON CONFLICT(migration_id) DO NOTHING;
+                """, ct, transaction,
+                ("$id", report.ReportId), ("$migration", report.MigrationId),
+                ("$inventory", report.InventorySha256), ("$after", report.AfterInventorySha256),
+                ("$json", JsonSerializer.Serialize(report, OutcomeJson)), ("$path", report.ReportPath),
+                ("$sha", report.ReportSha256), ("$signature", report.Signature),
+                ("$created", Iso(report.CompletedAt)));
+            await AuditAsync(connection, transaction, actorId, "legacy.import-report.created",
+                "legacy-migration", report.MigrationId,
+                JsonSerializer.Serialize(new
+                {
+                    report.ReportId,
+                    report.InventorySha256,
+                    report.AfterInventorySha256,
+                    report.ReportSha256,
+                }), ct);
+        }, ct);
+    }
+
+    internal async Task<byte[]> GetOrCreateMigrationSigningKeyAsync(CancellationToken ct)
+    {
+        string? encoded = null;
+        await InWriteTransactionAsync(async (connection, transaction) =>
+        {
+            encoded = Convert.ToString(await ScalarAsync(connection,
+                "SELECT value FROM meta WHERE key = 'legacy_migration_signing_key';",
+                ct, transaction), CultureInfo.InvariantCulture);
+            if (!string.IsNullOrWhiteSpace(encoded)) return;
+            encoded = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+            await SetMetaAsync(connection, transaction, "legacy_migration_signing_key", encoded, ct);
+        }, ct);
+        return Convert.FromHexString(encoded!);
+    }
+
+    private async Task MaterializeLegacyMigrationReportsAsync(SqliteConnection connection, CancellationToken ct)
+    {
+        var directory = Path.Combine(DataDirectory, "migration-reports");
+        Directory.CreateDirectory(directory);
+        await using var command = Command(connection, "SELECT report_id, report_json FROM legacy_migration_reports;");
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            var reportId = reader.GetString(0);
+            if (!string.Equals(Path.GetFileName(reportId), reportId, StringComparison.Ordinal)) continue;
+            var path = Path.Combine(directory, reportId + ".json");
+            await File.WriteAllTextAsync(path, reader.GetString(1), ct);
+        }
+    }
+
+    internal async Task ValidateLegacyImportAsync(
+        string migrationId,
+        LegacyMigrationInventory expected,
+        CancellationToken ct)
+    {
+        await using var connection = await OpenReadyAsync(ct);
+        async Task<long> Count(string sql, params (string, object?)[] parameters)
+            => Convert.ToInt64(await ScalarAsync(connection, sql, ct, null, parameters) ?? 0L, CultureInfo.InvariantCulture);
+        var actual = new Dictionary<string, long>(StringComparer.Ordinal)
+        {
+            ["projects"] = await Count("""
+                SELECT count(*) FROM legacy_migration_entities e
+                JOIN projects p ON p.id = e.entity_key
+                WHERE e.migration_id = $migration AND e.entity_kind = 'project';
+                """, ("$migration", migrationId)),
+            ["tasks"] = await Count("""
+                SELECT count(*) FROM legacy_migration_entities e
+                JOIN tasks t ON t.id = e.entity_key
+                WHERE e.migration_id = $migration AND e.entity_kind = 'task';
+                """, ("$migration", migrationId)),
+            ["events"] = await Count("""
+                SELECT count(*) FROM legacy_migration_entities e
+                JOIN events x ON x.event_id = e.entity_key
+                WHERE e.migration_id = $migration AND e.entity_kind = 'event';
+                """, ("$migration", migrationId)),
+            ["artifacts"] = await Count("""
+                SELECT count(*) FROM legacy_migration_entities e
+                JOIN artifacts x ON x.id = e.entity_key
+                WHERE e.migration_id = $migration AND e.entity_kind = 'artifact';
+                """, ("$migration", migrationId)),
+        };
+        var expectedCounts = new Dictionary<string, long>(StringComparer.Ordinal)
+        {
+            ["projects"] = expected.Projects,
+            ["tasks"] = expected.Tasks,
+            ["events"] = expected.Events,
+            ["artifacts"] = expected.Artifacts,
+        };
+        foreach (var (name, wanted) in expectedCounts)
+            if (actual[name] != wanted)
+                throw new TaskServerConflictException(
+                    "legacy-post-import-mismatch",
+                    $"Post-import {name} count is {actual[name]}, expected {wanted}. The imported store must not be cut over.");
+
+        foreach (var (kind, wanted) in new (string Kind, long Count)[]
+                 {
+                     ("epic", expected.Epics),
+                     ("dossier", expected.Dossiers),
+                     ("orchestrator-session", expected.OrchestratorSessions),
+                     ("context-chat", expected.ContextChats),
+                     ("context-chat-turn", expected.ContextChatTurns),
+                     ("coding-attempt", expected.CodingAttempts),
+                     ("review-attempt", expected.ReviewAttempts),
+                     ("lease", expected.Leases),
+                     ("runner-identity", expected.RunnerIdentities),
+                     ("pending-integration-record", expected.PendingIntegrationRecords),
+                     ("result-ref", expected.ResultRefs),
+                     ("git-commit", expected.GitCommits),
+                     ("integration-record", expected.IntegrationRecords),
+                     ("delivery-ref", expected.DeliveryRefs),
+                     ("bus-log-reference", expected.BusLogFiles),
+                 })
+        {
+            var found = await Count("""
+                SELECT count(*) FROM legacy_migration_entities
+                WHERE migration_id = $migration AND entity_kind = $kind;
+                """, ("$migration", migrationId), ("$kind", kind));
+            if (found != wanted)
+                throw new TaskServerConflictException(
+                    "legacy-post-import-mismatch",
+                    $"Post-import {kind} count is {found}, expected {wanted}. The imported store must not be cut over.");
+        }
+
+        foreach (var project in expected.ProjectCounts ?? [])
+        foreach (var (state, wanted) in project.States)
+        {
+            var found = await Count("""
+                SELECT count(*) FROM legacy_migration_entities e
+                JOIN tasks t ON t.id = e.entity_key
+                WHERE e.migration_id = $migration AND e.entity_kind = 'task'
+                  AND e.project_name = $project AND e.state = $state;
+                """, ("$migration", migrationId), ("$project", project.Project), ("$state", state));
+            if (found != wanted)
+                throw new TaskServerConflictException(
+                    "legacy-post-import-mismatch",
+                    $"Post-import count for project '{project.Project}' state '{state}' is {found}, expected {wanted}.");
+        }
+
+        var orphanCounts = expected.OrphanedReferences ?? new LegacyMigrationOrphanCounts();
+        foreach (var (kind, wanted) in new (string Kind, long Count)[]
+                 {
+                     ("coding-attempt", orphanCounts.CodingAttempts),
+                     ("review-attempt", orphanCounts.ReviewAttempts),
+                     ("lease", orphanCounts.Leases),
+                     ("fence-counter", orphanCounts.FenceCounters),
+                     ("integration-record", orphanCounts.IntegrationRecords),
+                 })
+        {
+            var found = await Count("""
+                SELECT count(*) FROM legacy_migration_orphans
+                WHERE migration_id = $migration AND entity_kind = $kind;
+                """, ("$migration", migrationId), ("$kind", kind));
+            if (found != wanted)
+                throw new TaskServerConflictException(
+                    "legacy-post-import-mismatch",
+                    $"Post-import orphaned {kind} count is {found}, expected {wanted}. The imported store must not be cut over.");
+        }
+    }
+
     internal async Task ImportLegacyBatchAsync(
         string workspaceName,
         IReadOnlyList<LegacyProjectImport> projects,
         LegacyAuthorityImport authority,
+        string migrationId,
+        IReadOnlyList<LegacySupplementaryImport> supplementary,
+        IReadOnlyList<LegacyOrphanImport> orphans,
+        LegacyMigrationInventory expected,
         string actorId,
         CancellationToken ct)
     {
         if (!AuthorityReady) throw new InvalidOperationException("Lease and fence authority is not ready.");
         if (_mode != TaskServerMode.Maintenance)
-            throw new TaskServerConflictException("maintenance-required", "Legacy import requires maintenance mode.");
+            throw new TaskServerConflictException(
+                "maintenance-required",
+                "Legacy import requires Task Server maintenance mode. Re-run the offline command with '--mode maintenance' or set Maintenance through the management API.");
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
             var workspaceId = DeterministicId("wsp", workspaceName);
@@ -2183,15 +2409,37 @@ public sealed partial class TaskServerStore
                     foreach (var artifact in task.Artifacts)
                     {
                         await ExecuteAsync(connection, """
-                            INSERT INTO artifacts(id, run_id, name, media_type, sha256, content, size_bytes, idempotency_key, fence, created_at)
-                            VALUES ($id, '', $name, $media, $sha, $content, $size, $key, 0, $created)
+                            INSERT INTO artifacts(id, run_id, name, media_type, sha256, content, size_bytes,
+                                                  idempotency_key, fence, created_at, source_path, pointer_only)
+                            VALUES ($id, '', $name, $media, $sha, X'', $size, $key, 0, $created, $source, 1)
                             ON CONFLICT(idempotency_key) DO NOTHING;
                             """, ct, transaction,
                             ("$id", artifact.ArtifactId), ("$name", artifact.Name), ("$media", artifact.MediaType),
-                            ("$sha", artifact.Sha256), ("$content", artifact.Content), ("$size", artifact.Content.LongLength),
+                            ("$sha", artifact.Sha256), ("$size", artifact.SizeBytes), ("$source", artifact.SourcePath),
                             ("$key", artifact.IdempotencyKey), ("$created", Iso(artifact.CreatedAt)));
                     }
                 }
+            }
+
+            foreach (var entity in supplementary)
+                await InsertLegacyEntityAsync(connection, transaction, migrationId, entity, ct);
+            foreach (var orphan in orphans)
+                await InsertLegacyOrphanAsync(connection, transaction, migrationId, orphan, ct);
+
+            foreach (var project in projects)
+            foreach (var task in project.Tasks)
+            {
+                await InsertLegacyEntityAsync(connection, transaction, migrationId,
+                    new LegacySupplementaryImport("task", task.TaskId, project.Name, task.State,
+                        task.MetadataJson, task.SourcePath, "", 0, false), ct);
+                foreach (var item in task.Events)
+                    await InsertLegacyEntityAsync(connection, transaction, migrationId,
+                        new LegacySupplementaryImport("event", item.EventId, project.Name, task.State,
+                            "{}", "", "", 0, false), ct);
+                foreach (var item in task.Artifacts)
+                    await InsertLegacyEntityAsync(connection, transaction, migrationId,
+                        new LegacySupplementaryImport("artifact", item.ArtifactId, project.Name, task.State,
+                            "{}", item.SourcePath, item.Sha256, item.SizeBytes, true), ct);
             }
 
             var tasksByKey = projects.SelectMany(project => project.Tasks)
@@ -2232,7 +2480,7 @@ public sealed partial class TaskServerStore
             foreach (var attempt in authority.CodingAttempts)
             {
                 if (!tasksByKey.TryGetValue(attempt.TaskKey, out var task))
-                    throw new InvalidDataException($"Legacy coding attempt '{attempt.AttemptId}' references unknown task '{attempt.TaskKey}'.");
+                    continue;
                 var runStatus = attempt.State == "leased" ? "process-unknown" : attempt.State;
                 await ExecuteAsync(connection, """
                     INSERT INTO runs(id, task_id, status, runner_id, fence, created_at, started_at,
@@ -2264,7 +2512,7 @@ public sealed partial class TaskServerStore
             foreach (var (taskKey, fence) in authority.LastFenceByTask)
             {
                 if (!tasksByKey.TryGetValue(taskKey, out var task))
-                    throw new InvalidDataException($"Legacy fence counter references unknown task '{taskKey}'.");
+                    continue;
                 await ExecuteAsync(connection, """
                     INSERT INTO fence_counters(task_id, last_fence) VALUES ($task, $fence)
                     ON CONFLICT(task_id) DO UPDATE SET last_fence = max(last_fence, excluded.last_fence);
@@ -2275,9 +2523,11 @@ public sealed partial class TaskServerStore
             foreach (var attempt in authority.ReviewAttempts.OrderBy(item => item.CreatedAt))
             {
                 if (!tasksByKey.TryGetValue(attempt.TaskKey, out var task))
-                    throw new InvalidDataException($"Legacy review attempt '{attempt.AttemptId}' references unknown task '{attempt.TaskKey}'.");
-                if (!authority.CodingAttempts.Any(run => string.Equals(run.AttemptId, attempt.SourceRunAttemptId, StringComparison.Ordinal)))
-                    throw new InvalidDataException($"Legacy review attempt '{attempt.AttemptId}' references unknown run '{attempt.SourceRunAttemptId}'.");
+                    continue;
+                if (!authority.CodingAttempts.Any(run =>
+                        string.Equals(run.AttemptId, attempt.SourceRunAttemptId, StringComparison.Ordinal)
+                        && tasksByKey.ContainsKey(run.TaskKey)))
+                    continue;
                 var subject = attempt.Subject;
                 await ExecuteAsync(connection, """
                     INSERT INTO review_subjects(id, task_id, source_run_id, repository_id, repository_url,
@@ -2320,9 +2570,31 @@ public sealed partial class TaskServerStore
                     ("$created", Iso(attempt.CreatedAt)));
             }
 
+
+            foreach (var (kind, wanted, table, idColumn) in new[]
+                     {
+                         ("project", expected.Projects, "projects", "id"),
+                         ("task", expected.Tasks, "tasks", "id"),
+                         ("event", expected.Events, "events", "event_id"),
+                         ("artifact", expected.Artifacts, "artifacts", "id"),
+                     })
+            {
+                var found = Convert.ToInt64(await ScalarAsync(connection, $"""
+                    SELECT count(*) FROM legacy_migration_entities e
+                    JOIN {table} x ON x.{idColumn} = e.entity_key
+                    WHERE e.migration_id = $migration AND e.entity_kind = $kind;
+                    """, ct, transaction, ("$migration", migrationId), ("$kind", kind)) ?? 0L,
+                    CultureInfo.InvariantCulture);
+                if (found != wanted)
+                    throw new TaskServerConflictException(
+                        "legacy-post-import-mismatch",
+                        $"Post-import {kind} count is {found}, expected {wanted}; the transaction was rolled back.");
+            }
+
             await AuditAsync(connection, transaction, actorId, "legacy.imported", "server", _serverId,
                 JsonSerializer.Serialize(new
                 {
+                    migrationId,
                     workspaceName,
                     projects = projects.Count,
                     tasks = projects.Sum(p => p.Tasks.Count),
@@ -2334,6 +2606,41 @@ public sealed partial class TaskServerStore
                 }), ct);
         }, ct);
     }
+
+    private static async Task InsertLegacyEntityAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string migrationId,
+        LegacySupplementaryImport entity,
+        CancellationToken ct)
+        => await ExecuteAsync(connection, """
+            INSERT INTO legacy_migration_entities(
+                migration_id, entity_kind, entity_key, project_name, state,
+                payload_json, source_path, sha256, size_bytes, pointer_only)
+            VALUES ($migration, $kind, $key, $project, $state,
+                    $payload, $source, $sha, $size, $pointer)
+            ON CONFLICT(migration_id, entity_kind, entity_key) DO NOTHING;
+            """, ct, transaction,
+            ("$migration", migrationId), ("$kind", entity.Kind), ("$key", entity.Key),
+            ("$project", entity.Project), ("$state", entity.State), ("$payload", entity.PayloadJson),
+            ("$source", entity.SourcePath), ("$sha", entity.Sha256), ("$size", entity.SizeBytes),
+            ("$pointer", entity.PointerOnly ? 1 : 0));
+
+    private static async Task InsertLegacyOrphanAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string migrationId,
+        LegacyOrphanImport orphan,
+        CancellationToken ct)
+        => await ExecuteAsync(connection, """
+            INSERT INTO legacy_migration_orphans(
+                migration_id, entity_kind, entity_key, orphaned_task_key, status, payload_json)
+            VALUES ($migration, $kind, $key, $task, $status, $payload)
+            ON CONFLICT(migration_id, entity_kind, entity_key) DO NOTHING;
+            """, ct, transaction,
+            ("$migration", migrationId), ("$kind", orphan.Kind), ("$key", orphan.Key),
+            ("$task", orphan.OrphanedTaskKey), ("$status", orphan.Status),
+            ("$payload", orphan.PayloadJson));
 
     private async Task ApplyMigrationsAsync(SqliteConnection connection, CancellationToken ct)
     {
@@ -2561,7 +2868,42 @@ public sealed partial class TaskServerStore
                 fence INTEGER NOT NULL,
                 created_at TEXT NOT NULL,
                 sequence INTEGER,
+                source_path TEXT,
+                pointer_only INTEGER NOT NULL DEFAULT 0,
                 archived INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS legacy_migration_entities(
+                migration_id TEXT NOT NULL,
+                entity_kind TEXT NOT NULL,
+                entity_key TEXT NOT NULL,
+                project_name TEXT,
+                state TEXT,
+                payload_json TEXT NOT NULL,
+                source_path TEXT NOT NULL,
+                sha256 TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                pointer_only INTEGER NOT NULL,
+                PRIMARY KEY(migration_id, entity_kind, entity_key)
+            );
+            CREATE TABLE IF NOT EXISTS legacy_migration_orphans(
+                migration_id TEXT NOT NULL,
+                entity_kind TEXT NOT NULL,
+                entity_key TEXT NOT NULL,
+                orphaned_task_key TEXT NOT NULL,
+                status TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                PRIMARY KEY(migration_id, entity_kind, entity_key)
+            );
+            CREATE TABLE IF NOT EXISTS legacy_migration_reports(
+                report_id TEXT PRIMARY KEY,
+                migration_id TEXT NOT NULL UNIQUE,
+                inventory_sha256 TEXT NOT NULL,
+                after_inventory_sha256 TEXT NOT NULL,
+                report_json TEXT NOT NULL,
+                report_path TEXT NOT NULL,
+                report_sha256 TEXT NOT NULL,
+                report_signature TEXT NOT NULL,
+                created_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS result_finalizations(
                 run_id TEXT PRIMARY KEY REFERENCES runs(id),
@@ -2824,6 +3166,8 @@ public sealed partial class TaskServerStore
             CREATE INDEX IF NOT EXISTS ix_leases_task_status ON leases(task_id, status);
             CREATE INDEX IF NOT EXISTS ix_events_run_cursor ON events(run_id, cursor);
             CREATE INDEX IF NOT EXISTS ix_artifacts_run ON artifacts(run_id);
+            CREATE INDEX IF NOT EXISTS ix_legacy_entities_migration_kind
+                ON legacy_migration_entities(migration_id, entity_kind);
             CREATE INDEX IF NOT EXISTS ix_result_finalizations_status
                 ON result_finalizations(status);
             CREATE INDEX IF NOT EXISTS ix_result_handoffs_retain_until ON result_handoffs(retain_until);
@@ -2848,6 +3192,8 @@ public sealed partial class TaskServerStore
             """, ct);
         await EnsureColumnAsync(connection, "events", "sequence", "INTEGER", ct);
         await EnsureColumnAsync(connection, "artifacts", "sequence", "INTEGER", ct);
+        await EnsureColumnAsync(connection, "artifacts", "source_path", "TEXT", ct);
+        await EnsureColumnAsync(connection, "artifacts", "pointer_only", "INTEGER NOT NULL DEFAULT 0", ct);
         await RelaxArtifactContentConstraintAsync(connection, ct);
         await EnsureColumnAsync(connection, "tasks", "archive_state", "TEXT", ct);
         await EnsureColumnAsync(connection, "tasks", "archived_at", "TEXT", ct);
@@ -2955,13 +3301,17 @@ public sealed partial class TaskServerStore
                     fence INTEGER NOT NULL,
                     created_at TEXT NOT NULL,
                     sequence INTEGER,
+                    source_path TEXT,
+                    pointer_only INTEGER NOT NULL DEFAULT 0,
                     archived INTEGER NOT NULL DEFAULT 0
                 );
                 INSERT INTO artifacts_retention_upgrade(
                         id, run_id, name, media_type, sha256, content, size_bytes,
-                        idempotency_key, fence, created_at, sequence, archived)
+                        idempotency_key, fence, created_at, sequence, source_path,
+                        pointer_only, archived)
                     SELECT id, run_id, name, media_type, sha256, content, size_bytes,
-                           idempotency_key, fence, created_at, sequence, 0
+                           idempotency_key, fence, created_at, sequence, source_path,
+                           pointer_only, 0
                       FROM artifacts;
                 DROP TABLE artifacts;
                 ALTER TABLE artifacts_retention_upgrade RENAME TO artifacts;
@@ -3580,7 +3930,9 @@ public sealed partial class TaskServerStore
     private static ArtifactDto ReadArtifact(SqliteDataReader reader)
         => new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4),
             reader.GetInt64(5), reader.GetString(6), reader.GetInt64(7), Parse(reader.GetString(8)),
-            reader.IsDBNull(9) ? null : reader.GetInt64(9));
+            reader.IsDBNull(9) ? null : reader.GetInt64(9),
+            reader.FieldCount > 10 && !reader.IsDBNull(10) ? reader.GetString(10) : null,
+            reader.FieldCount > 11 && reader.GetInt64(11) != 0);
 
     private static void ValidateArtifactReplay(
         ArtifactDto? existing,
@@ -3767,7 +4119,15 @@ internal sealed record LegacyTaskImport(
     DateTime CreatedAt,
     DateTime UpdatedAt,
     IReadOnlyList<LegacyEventImport> Events,
-    IReadOnlyList<LegacyArtifactImport> Artifacts);
+    IReadOnlyList<LegacyArtifactImport> Artifacts,
+    string MetadataJson,
+    string SourcePath,
+    bool IsEpic,
+    int GitCommits,
+    int IntegrationRecords,
+    int PendingIntegrationRecords,
+    int ResultRefs,
+    int DeliveryRefs);
 
 internal sealed record LegacyEventImport(
     string EventId,
@@ -3780,10 +4140,29 @@ internal sealed record LegacyArtifactImport(
     string ArtifactId,
     string Name,
     string MediaType,
-    byte[] Content,
     string Sha256,
+    long SizeBytes,
+    string SourcePath,
     string IdempotencyKey,
     DateTime CreatedAt);
+
+internal sealed record LegacySupplementaryImport(
+    string Kind,
+    string Key,
+    string? Project,
+    string? State,
+    string PayloadJson,
+    string SourcePath,
+    string Sha256,
+    long SizeBytes,
+    bool PointerOnly);
+
+internal sealed record LegacyOrphanImport(
+    string Kind,
+    string Key,
+    string OrphanedTaskKey,
+    string Status,
+    string PayloadJson);
 
 internal sealed record LegacyAuthorityImport(
     long AuthorityEpoch,

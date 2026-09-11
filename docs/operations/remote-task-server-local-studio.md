@@ -235,20 +235,24 @@ load and restore rehearsal shows it does not disrupt lease renewal or
 completion. The Windows standby regularly receives and verifies the newest
 backup but never opens it while the remote server is authoritative.
 
-## Current product gaps that block cutover
+## Current cutover gates
 
-These are Phase B work, not assumptions that operations can work around:
+These are the remaining Phase B gates and the delivered milestones whose
+production evidence must be attached before cutover:
 
 1. **Studio API coverage.** Angular still consumes a broad legacy `/api`
    surface, while the standalone Task Server and current `studio-bff` expose
    only the versioned subset. Phase B must classify every Studio route as
    Task Server, local dev-seat helper, or retired, and prove all task,
    orchestration, host, file, event, and management paths remotely.
-2. **Current workspace inventory acceptance.** `LegacyMigrationService` now
-   consumes canonical `task.json` files, prefers their stable `key`, and retains
-   `job.json` as a compatibility fallback. A production remote move still needs
-   per-project and per-state counts before its inventory can be accepted at the
-   larger Phase B boundary.
+2. **Current workspace migration acceptance, implementation delivered by B3.**
+   The standalone CLI and management API now inventory and import canonical
+   `task.json` data, use `job.json` only as a compatibility fallback, enforce
+   exact post-import counts, retain orphaned history as reported degradation,
+   and persist signed import reports. The remaining acceptance step is an
+   operator-run inventory and import against a frozen copy of the Windows
+   workspace, followed by attaching both reports and their per-project and
+   per-state counts to the D7 cutover card.
 3. **Windows fallback artifact, closed by B4.** The control-plane release now
    also publishes a `win-x64` package (`publish-windows` in
    `.github/workflows/release.yml`) with a version-matched Windows service
@@ -260,8 +264,9 @@ These are Phase B work, not assumptions that operations can work around:
    complete route coverage, Credential Manager integration, strict Origin
    checks, CSRF, and protocol negotiation.
 
-No API listener may open on `wg0` until gaps 3 and 5 pass their negative
-authentication tests.
+No API listener may open on `wg0` until Studio route ownership is complete and
+the Task Server, Agent Host, Studio BFF, and connector authentication paths pass
+their negative tests.
 
 ## Post-processing without an attached Studio
 
@@ -542,7 +547,7 @@ concept.
 |---:|---|---|---:|
 | B1 | Studio route ownership and secure local connector | Full `/api` and `/hubs` matrix; remote task workflows pass; local-only dev-seat routes are explicit; connector keeps secrets out of Angular and enforces Origin and CSRF | 5 to 8 engineering days |
 | B2 | Task Server principal and scope hardening | Implemented by AGT-2730: separate hash-only Studio, Engine, and per-Runner credentials; route scopes; hub auth boundary; rotation and revoke tests; `X-Client-Id` negative tests | Complete 2026-09-07 |
-| B3 | Current-workspace migration and evidence | `task.json` support; exact per-project and per-state counts; archive, events, artifacts, Git evidence, backup, import, and mismatch-stop tests | 3 to 5 engineering days |
+| B3 | Current-workspace migration and evidence | Implemented by AGT-2732: `task.json` with `job.json` fallback; canonical per-project and per-state inventory; archive, events, pointer-only artifacts, Git and authority evidence; counted orphan ledger; Maintenance-only idempotent import; signed reports; mismatch stops; and backup/restore inventory-hash continuity. The Windows operator still performs the frozen rehearsal and production cutover and attaches both reports to D7. | Complete 2026-09-11; operator cutover evidence pending |
 | B4 | Windows fallback and switch tooling | Implemented by AGT-2735 on 2026-09-09: version-matched Windows service for all three components; cross-platform full-backup restore with a case-collision guard; warm standby pull; atomic connector profile switch; scripted reverse-tunnel drill in both directions with a measured sub-15-minute report; Windows CI coverage. The timed real-infrastructure rehearsal remains a B6 operator drill. | Complete 2026-09-09 |
 | B5 | Private Hetzner foundation | Dedicated VM, WireGuard peers, private TLS, dual firewall, systemd packages, off-host backup, monitoring, and proof of no public API listener | 2 to 3 engineering days plus operator access |
 | B6 | Rehearsal and production cutover | Representative dry run, signed evidence, maintenance-window cutover, detached-Studio proof, rollback drill, and operator handoff | 2 to 4 engineering days plus one operator window |

@@ -4,9 +4,9 @@ Current system-of-record maps for the major runtime domains.
 
 | File | Owns |
 |---|---|
-| [runner.md](runner.md) | Pickup, CLI run loop, outcome policy, supervisor loops, and recovery. |
+| [runner.md](runner.md) | Pickup, CLI run loop, outcome policy, supervisor loops, recovery, and migrated attempt authority. |
 | [pipeline.md](pipeline.md) | Pre/core/post steps, pipeline history, step contracts, and cost. |
-| [tasks.md](tasks.md) | Job folders, lanes, API mutations, task access, review evidence, and attribution. |
+| [tasks.md](tasks.md) | Job folders, lanes, API mutations, task access, review evidence, attribution, and standalone legacy migration. |
 | [frontend.md](frontend.md) | Angular surfaces, design system, polling, optimistic mutation, and Playwright proof. |
 | [cli.md](cli.md) | CLI adapters, stream parsing, prompt handoff, quota probes, and models. |
 | [model-routing-policy.md](model-routing-policy.md) | Canonical model and thinking-level tiers, weighted selection, correctness floors, benchmark evidence, and quota handling. |
