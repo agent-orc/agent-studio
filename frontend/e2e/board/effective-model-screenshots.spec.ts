@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { api } from '../helpers/api';
+import { cleanupE2eClients, registerE2eClient } from '../helpers/e2e-clients';
 import path from 'node:path';
 
 /**
@@ -10,7 +11,6 @@ import path from 'node:path';
  */
 
 interface WatchPath { name: string; path: string; rootPath: string; }
-interface ClientSummary { id: string; displayName: string; defaultCliType: string | null; defaultModel: string | null; kind: string; }
 
 const TEST_OWNER_PREFIX = 'e2e-effective-model-shot-';
 
@@ -25,13 +25,6 @@ async function ensureWatchPath(): Promise<WatchPath> {
   return list[0];
 }
 
-async function registerOwner(displayName: string): Promise<ClientSummary> {
-  return api<ClientSummary>('/api/clients/register', {
-    method: 'POST',
-    body: JSON.stringify({ displayName, emoji: '🧪', colour: '#7c3aed', kind: 'human' })
-  });
-}
-
 async function setDefaults(id: string, cli: string | null, model: string | null): Promise<void> {
   await api(`/api/clients/${id}/defaults`, {
     method: 'PUT',
@@ -43,7 +36,7 @@ test.describe('effective model screenshots', () => {
   test('captures default + explicit cards side by side', async ({ page }) => {
     const watch = await ensureWatchPath();
 
-    const owner = await registerOwner(`${TEST_OWNER_PREFIX}${Date.now()}`);
+    const owner = await registerE2eClient(`${TEST_OWNER_PREFIX}${Date.now()}`);
     await setDefaults(owner.id, null, null);
 
     const defaultTitle = `effective-model-DEFAULT-${Date.now()}`;
@@ -85,11 +78,6 @@ test.describe('effective model screenshots', () => {
   });
 
   test.afterAll(async () => {
-    const all = await api<ClientSummary[]>('/api/clients/');
-    for (const c of all) {
-      if (c.id.startsWith(TEST_OWNER_PREFIX) && c.kind !== 'retired') {
-        try { await api(`/api/clients/${c.id}`, { method: 'DELETE' }); } catch { /* ignore */ }
-      }
-    }
+    await cleanupE2eClients(TEST_OWNER_PREFIX);
   });
 });

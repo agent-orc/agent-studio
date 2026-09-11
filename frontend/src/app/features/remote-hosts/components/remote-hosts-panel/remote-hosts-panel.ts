@@ -14,6 +14,7 @@ import {
   deriveBoardRunningTruth,
 } from '../../models/running-truth';
 import { AddHostWizardComponent, type ProvisionedHostDraft } from '../add-host-wizard/add-host-wizard';
+import { PurgeRetiredHostsDialogComponent } from '../purge-retired-hosts-dialog/purge-retired-hosts-dialog';
 import { type VisibleCliTaskCreated, type VisibleCliTaskWorkspace } from '../../../visible-cli-task';
 import { RunnerSetupDialogComponent } from '../runner-setup-dialog/runner-setup-dialog';
 import {
@@ -42,7 +43,13 @@ import { NotificationComponent } from '../../../../components/notification/notif
 @Component({
   selector: 'app-remote-hosts-panel',
   standalone: true,
-  imports: [RemoteHostCardComponent, AddHostWizardComponent, RunnerSetupDialogComponent, NotificationComponent],
+  imports: [
+    RemoteHostCardComponent,
+    AddHostWizardComponent,
+    RunnerSetupDialogComponent,
+    NotificationComponent,
+    PurgeRetiredHostsDialogComponent,
+  ],
   templateUrl: './remote-hosts-panel.html',
   styleUrl: './remote-hosts-panel.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -58,6 +65,7 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   readonly error = this.service.error;
   readonly identityDiagnostics = this.service.identityDiagnostics;
   readonly wizardOpen = signal(false);
+  readonly purgeRetiredOpen = signal(false);
   readonly showRetired = signal(false);
   readonly setupHost = signal<RemoteHost | null>(null);
   readonly pendingConfirmation = signal<{ kind: 'retire' | 'delete'; host: RemoteHost } | null>(null);
@@ -172,6 +180,8 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
 
   openWizard(): void { this.wizardOpen.set(true); }
   closeWizard(): void { this.wizardOpen.set(false); }
+  openPurgeRetired(): void { this.purgeRetiredOpen.set(true); }
+  closePurgeRetired(): void { this.purgeRetiredOpen.set(false); }
   openSetup(host: RemoteHost): void { this.setupHost.set(host); }
   closeSetup(): void { this.setupHost.set(null); }
 
