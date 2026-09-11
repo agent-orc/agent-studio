@@ -43,6 +43,8 @@ public sealed class ProviderAuthProvisioningTests
         Assert.Contains("units+=(agent-runner-review.service)", standardInput);
         Assert.Contains("EnvironmentFile=%s", standardInput);
         Assert.Contains("/proc/${main_pid}/environ", standardInput);
+        Assert.Contains("/usr/local/sbin/agent-runner-deploy restart-review", standardInput);
+        Assert.Contains("provider-auth-unit-pending=", standardInput);
         Assert.DoesNotContain("claude.env", standardInput, StringComparison.Ordinal);
     }
 

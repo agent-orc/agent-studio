@@ -534,7 +534,9 @@ public sealed class AttemptAuthorityService
                     "Executor does not own this ReviewAttempt lease.", ReviewAttempt: ToDto(review));
 
             var now = _utcNow();
-            review.Lease.ExpiresAt = now.Add(NormalizeTtl(requestedTtlSeconds));
+            var requestedExpiry = now.Add(NormalizeTtl(requestedTtlSeconds));
+            if (requestedExpiry > review.Lease.ExpiresAt)
+                review.Lease.ExpiresAt = requestedExpiry;
             review.Lease.LastHeartbeat = now;
             review.IdempotencyKeys.Add(deliveryKey);
             PersistLocked();
@@ -601,6 +603,102 @@ public sealed class AttemptAuthorityService
             review.CurrentClaimDeliveryKey = deliveryKey;
             review.IdempotencyKeys.Add(deliveryKey);
             PersistLocked();
+            return new AttemptWriteResult(AttemptWriteStatus.Accepted, review.AttemptId, ReviewAttempt: ToDto(review));
+        }
+    }
+
+    /// <summary>
+    /// Re-fences one ReviewAttempt for the executor that still owns its running
+    /// detached review worker. This is the planned-restart path: the replacement
+    /// daemon adopted a durable slot, proved the worker alive, and had its
+    /// handed-off lease refused. The previous lease identity is the continuity
+    /// proof, so authority moves between generations of one executor and never
+    /// to a stranger. A superseded or terminal attempt is still refused - a
+    /// deliberate supersede must not be undone by a restart.
+    /// </summary>
+    public AttemptWriteResult ReClaimReview(
+        string attemptId,
+        string executorId,
+        string hostId,
+        string instanceId,
+        string previousLeaseId,
+        long previousFence,
+        int? requestedTtlSeconds,
+        string idempotencyKey)
+    {
+        if (Blank(attemptId) || Blank(executorId) || Blank(hostId) || Blank(instanceId)
+            || Blank(previousLeaseId) || previousFence <= 0 || Blank(idempotencyKey))
+        {
+            return new AttemptWriteResult(
+                AttemptWriteStatus.Invalid,
+                Normalize(attemptId),
+                "AttemptId, ExecutorId, HostId, InstanceId, previous lease identity, and IdempotencyKey are required.");
+        }
+
+        lock (_gate)
+        {
+            var review = FindReview(attemptId);
+            if (review is null) return new AttemptWriteResult(AttemptWriteStatus.NotFound, Normalize(attemptId));
+            var deliveryKey = DeliveryKey("claim", idempotencyKey);
+            if (review.IdempotencyKeys.Contains(deliveryKey))
+                return ClassifyReviewLeaseReplay(review, executorId, claimDeliveryKey: deliveryKey);
+            if (!IsCurrentReview(review) || Terminal(review.State))
+                return new AttemptWriteResult(AttemptWriteStatus.Superseded, review.AttemptId, ReviewAttempt: ToDto(review));
+            if (review.Lease is not { } previous
+                || !Same(previous.LeaseId, previousLeaseId)
+                || review.LastFence != previousFence
+                || !Same(previous.ExecutorId, executorId)
+                || !Same(previous.HostId, hostId))
+            {
+                return new AttemptWriteResult(
+                    AttemptWriteStatus.StaleFence,
+                    review.AttemptId,
+                    "ReviewAttempt authority does not match the handed-off review lease.",
+                    ReviewAttempt: ToDto(review));
+            }
+
+            var now = _utcNow();
+            // Nothing may take over an unexpired lease. The current instance
+            // gets an idempotent answer; a different generation must keep
+            // renewing or wait for expiry instead of invalidating live work.
+            if (review.State == AttemptLifecycleState.Leased
+                && previous.ExpiresAt > now)
+            {
+                return Same(previous.ClientId, instanceId)
+                    ? new AttemptWriteResult(
+                        AttemptWriteStatus.Duplicate,
+                        review.AttemptId,
+                        ReviewAttempt: ToDto(review))
+                    : new AttemptWriteResult(
+                        AttemptWriteStatus.InvalidState,
+                        review.AttemptId,
+                        "A different executor instance still holds an unexpired review lease.",
+                        ReviewAttempt: ToDto(review));
+            }
+
+            var fence = NextFenceLocked(review.TaskKey);
+            review.LastFence = fence;
+            review.AuthorityEpoch = _state.AuthorityEpoch;
+            review.State = AttemptLifecycleState.Leased;
+            review.Lease = NewLease(
+                executorId,
+                hostId,
+                fence,
+                requestedTtlSeconds,
+                now,
+                clientId: NormalizeNull(instanceId));
+            review.CurrentClaimDeliveryKey = deliveryKey;
+            review.IdempotencyKeys.Add(deliveryKey);
+            PersistLocked();
+            _logger.LogInformation(
+                "review-attempt-re-claimed attempt={AttemptId} task={TaskKey} executor={ExecutorId} "
+                + "instance={InstanceId} previousFence={PreviousFence} fence={Fence}",
+                review.AttemptId,
+                review.TaskKey,
+                executorId,
+                instanceId,
+                previousFence,
+                fence);
             return new AttemptWriteResult(AttemptWriteStatus.Accepted, review.AttemptId, ReviewAttempt: ToDto(review));
         }
     }

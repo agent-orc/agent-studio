@@ -608,6 +608,12 @@ public sealed class TaskServerStoreTests
                 Assert.Equal(1L, Scalar(connection, "SELECT count(*) FROM runs WHERE id = 'run_legacy_archived' AND status = 'completed';"));
                 Assert.Equal(1L, Scalar(connection, "SELECT count(*) FROM leases WHERE lease_id = 'lease_coding_1' AND fence = 8;"));
                 Assert.Equal(1L, Scalar(connection, "SELECT count(*) FROM review_attempts WHERE id = 'review_legacy_1' AND status = 'process-unknown' AND fence = 3;"));
+                Assert.Equal(1L, Scalar(connection, """
+                    SELECT count(*) FROM review_attempts
+                     WHERE id = 'review_legacy_1'
+                       AND resource_namespace = 'review-review_legacy_1-f3'
+                       AND port_base BETWEEN 24000 AND 55992;
+                    """));
                 Assert.Equal(1L, Scalar(connection, "SELECT count(*) FROM runners WHERE id = 'idle-runner' AND name = 'Idle Runner';"));
                 Assert.Equal(9L, Scalar(connection, "SELECT last_fence FROM fence_counters WHERE task_id = (SELECT id FROM tasks WHERE task_key = 'AGT-1');"));
             });

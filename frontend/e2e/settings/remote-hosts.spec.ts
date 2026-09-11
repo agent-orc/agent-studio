@@ -219,6 +219,8 @@ async function stubGroupedHostApis(page: Page) {
         },
         roleMaxParallelism: 6,
         effectiveMaxParallelism: null,
+        restartedAt: observed,
+        reviewsLost: 6,
       },
     ]),
   }));
@@ -332,6 +334,8 @@ test.describe('Execution Hosts settings section', () => {
       .getByTestId('remote-host-slots-summary')).toHaveText(/0 \/ 2/);
     await expect(machine.getByTestId('remote-host-role-row').filter({ hasText: 'Review' })
       .getByTestId('remote-host-slots-summary')).toHaveText(/0 \/ 6/);
+    await expect(machine.getByTestId('remote-host-role-row').filter({ hasText: 'Review' })
+      .getByTestId('remote-host-role-restart')).toContainText('6 reviews lost');
     await expect(machine.getByTestId('remote-host-release'))
       .toContainText('agt-2650b-20260812T064049Z-ca5cbd6ff');
     await machine.getByTestId('remote-host-release').hover();

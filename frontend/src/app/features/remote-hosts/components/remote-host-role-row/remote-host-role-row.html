@@ -4,6 +4,11 @@
   <span class="role__branch" aria-hidden="true">↳</span>
   <strong data-testid="remote-host-role-label">{{ roleLabel() }}</strong>
   <span class="role__identity" data-testid="remote-host-role-name">{{ h.name }}</span>
+  @if (h.restartedAt) {
+    <span class="role__restart" data-testid="remote-host-role-restart">
+      Restarted at {{ h.restartedAt | date:'short' }}, {{ h.reviewsLost ?? 0 }} reviews lost
+    </span>
+  }
 </td>
 <td>
   <span class="role__status" data-testid="remote-host-role-status">

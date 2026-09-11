@@ -244,6 +244,8 @@ export class RemoteHostsService {
                 snapshot.roleMaxParallelism !== undefined
                   ? snapshot.roleMaxParallelism
                   : current.roleMaxParallelism ?? null,
+              restartedAt: snapshot.restartedAt ?? null,
+              reviewsLost: snapshot.reviewsLost ?? 0,
               runtimeCapacityAppliedAt:
                 snapshot.runtimeCapacityAppliedAt !== undefined
                   ? snapshot.runtimeCapacityAppliedAt

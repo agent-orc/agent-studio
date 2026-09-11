@@ -200,6 +200,31 @@ public sealed class SetupContractTests
         Assert.Contains("RUNNER_CODEX_CLI_BIN=/usr/bin/codex", environment, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void ReviewAgentHost_UsesAReviewOnlyManualStopGuardDropIn()
+    {
+        var guard = NativeInstaller.BuildReviewRestartGuard().ReplaceLineEndings("\n");
+
+        Assert.Equal("20-agent-runner-review-restart-guard.conf", NativeInstaller.ReviewRestartGuardFileName);
+        Assert.Contains("[Unit]\n", guard, StringComparison.Ordinal);
+        Assert.Contains("RefuseManualStop=true\n", guard, StringComparison.Ordinal);
+        Assert.DoesNotContain("KillMode", guard, StringComparison.Ordinal);
+        Assert.DoesNotContain("PrivateTmp", guard, StringComparison.Ordinal);
+        Assert.Equal(
+            Path.Combine(
+                "/etc/systemd/system",
+                "agent-host-review.service.d",
+                NativeInstaller.ReviewRestartGuardFileName),
+            NativeInstaller.ResolveReviewRestartGuardPath(
+                "review",
+                "/etc/systemd/system",
+                "agent-host-review.service"));
+        Assert.Null(NativeInstaller.ResolveReviewRestartGuardPath(
+            "coding",
+            "/etc/systemd/system",
+            "agent-host.service"));
+    }
+
     [Theory]
     [InlineData("https://github.com/agent-orc/agent-studio.git")]
     [InlineData("ssh://git@github.com/agent-orc/agent-studio.git")]

@@ -479,7 +479,14 @@ if sudo -n systemctl cat agent-runner-review.service >/dev/null 2>&1; then
   units+=(agent-runner-review.service)
 fi
 for unit in "${units[@]}"; do
-  if sudo -n systemctl restart "$unit"; then
+  if [[ "$unit" == agent-runner-review.service ]]; then
+    restarted=0
+    sudo -n /usr/local/sbin/agent-runner-deploy restart-review && restarted=1
+  else
+    restarted=0
+    sudo -n systemctl restart "$unit" && restarted=1
+  fi
+  if [[ "$restarted" == 1 ]]; then
     printf 'codex-probe-unit=%s\n' "$unit"
   fi
 done
