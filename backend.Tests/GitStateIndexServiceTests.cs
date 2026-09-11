@@ -239,7 +239,8 @@ public sealed class GitStateIndexServiceTests : IDisposable
             new Dictionary<string, TaskMergeSignal>(StringComparer.Ordinal) { [task.TaskKey] = priorSignal },
             new Dictionary<string, TaskIntegrationStatus>(StringComparer.Ordinal),
             new Dictionary<string, TaskPublishSignal>(StringComparer.Ordinal),
-            new Dictionary<string, TaskTestRunEvidence>(StringComparer.Ordinal)),
+            new Dictionary<string, TaskTestRunEvidence>(StringComparer.Ordinal),
+            new Dictionary<string, AgentStudio.Review.ReviewProjectionView>(StringComparer.Ordinal)),
             DateTimeOffset.UtcNow.AddMinutes(-1));
 
         var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);

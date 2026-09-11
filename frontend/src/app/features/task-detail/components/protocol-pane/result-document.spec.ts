@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { TaskDetail } from '../../../../models/task.model';
+import type { TaskDetail, ReviewProjectionView } from '../../../../models/task.model';
 import type { ProtocolVerdict } from './protocol-verdict';
 import {
   buildResultDocument,
@@ -8,6 +8,7 @@ import {
   compactDurationMetric,
   parseCaseHint,
   parseHeaderMetric,
+  reviewMetricFromProjection,
 } from './result-document';
 
 function verdict(overrides: Partial<ProtocolVerdict> = {}): ProtocolVerdict {
@@ -33,6 +34,7 @@ interface DetailOpts {
   totalTokens?: number;
   commits?: number;
   codeActivityDetected?: boolean;
+  reviewProjection?: ReviewProjectionView | null;
 }
 
 function detail(opts: DetailOpts = {}): TaskDetail {
@@ -51,9 +53,27 @@ function detail(opts: DetailOpts = {}): TaskDetail {
       } as never) : null,
       commits: opts.commits != null ? new Array(opts.commits).fill({}) : [],
       codeActivityDetected: opts.codeActivityDetected,
+      reviewProjection: opts.reviewProjection ?? null,
     },
     statusMarkdown: opts.statusMarkdown ?? null,
   } as unknown as TaskDetail;
+}
+
+function remoteProjection(over: Partial<ReviewProjectionView> = {}): ReviewProjectionView {
+  return {
+    attempts: [],
+    rounds: 7,
+    latestPlane: 'remote',
+    latestOutcome: 'ProductFailure',
+    latestReceivedAt: '2026-08-31T17:11:00Z',
+    blockingAspects: [{
+      aspect: 'documentation-impact',
+      reason: 'Public API and state-file contract changed without corresponding load-bearing doc updates',
+    }],
+    delivery: { status: 'gate-failed', reason: 'Remote delivery gate failed before integration.' },
+    decisionRequired: { required: true, source: 'parked-blocker', reason: null },
+    ...over,
+  };
 }
 
 const STATUS_WITH_OVERVIEW = `# Status
@@ -209,6 +229,24 @@ describe('buildResultDocument', () => {
     expect(grade?.tone).toBe('ok');
   });
 
+  it('falls back to a review-projection stat when the task carries no local grade tag (AGT-2689)', () => {
+    const doc = buildResultDocument(detail({ reviewProjection: remoteProjection() }), verdict());
+    expect(doc.metrics.find((x) => x.id === 'grade')).toBeUndefined();
+    const review = doc.metrics.find((x) => x.id === 'review');
+    expect(review?.value).toBe('7 rounds · ProductFailure');
+    expect(review?.tone).toBe('problem');
+    expect(review?.tooltip).toContain('Blocked by documentation-impact');
+  });
+
+  it('prefers the local grade tag over the review projection when both are present', () => {
+    const doc = buildResultDocument(
+      detail({ tags: ['code-review:grade-b'], reviewProjection: remoteProjection() }),
+      verdict(),
+    );
+    expect(doc.metrics.find((x) => x.id === 'grade')?.value).toBe('Grade B');
+    expect(doc.metrics.find((x) => x.id === 'review')).toBeUndefined();
+  });
+
   it('adds compact duration + token + commit stats when the data is present', () => {
     const doc = buildResultDocument(
       detail({ totalTokens: 1_500_000, commits: 2 }),
@@ -269,5 +307,28 @@ describe('buildResultDocument', () => {
     expect(doc.detailMarkdown).not.toContain('agent-studio:operator-result-backfill');
     expect(doc.detailMarkdown).not.toContain('C:\\Projects');
     expect(doc.detailMarkdown).not.toContain('This honest scaffold exposes');
+  });
+});
+
+describe('reviewMetricFromProjection', () => {
+  it('returns null when there is no projection or zero rounds', () => {
+    expect(reviewMetricFromProjection(null)).toBeNull();
+    expect(reviewMetricFromProjection(remoteProjection({ rounds: 0 }))).toBeNull();
+  });
+
+  it('tones a passing, unblocked round ok', () => {
+    const metric = reviewMetricFromProjection(remoteProjection({
+      rounds: 1,
+      latestOutcome: 'Pass',
+      blockingAspects: [],
+      delivery: { status: 'integrated', reason: null },
+    }));
+    expect(metric).toEqual({ id: 'review', label: 'Review', value: '1 round · Pass', tone: 'ok', tooltip: '1 round of review (latest via remote).' });
+  });
+
+  it('tones a blocked or gate-failed round problem', () => {
+    const metric = reviewMetricFromProjection(remoteProjection());
+    expect(metric?.tone).toBe('problem');
+    expect(metric?.value).toBe('7 rounds · ProductFailure');
   });
 });

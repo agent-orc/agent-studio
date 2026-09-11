@@ -417,6 +417,8 @@ builder.Services.AddSingleton<ProjectDeploymentSummaryService>();
 builder.Services.AddSingleton<ProjectDeploymentCompiler>();
 builder.Services.AddSingleton<TestRunStore>();
 builder.Services.AddSingleton<TestRunService>();
+// AGT-2717: canonical read-time merge of local + remote review attempts.
+builder.Services.AddSingleton<ReviewProjectionService>();
 builder.Services.AddSingleton<TaskTransitionService>();
 builder.Services.AddSingleton<IBatchMoveItemExecutor, BatchMoveItemExecutor>();
 builder.Services.AddSingleton<BatchMoveJobCoordinator>();

@@ -31,6 +31,7 @@ public static class EndpointMapping
         tasks.MapTaskReviewEvidenceEndpoints();
         tasks.MapTaskExternalCompletionEndpoints();
         tasks.MapTaskCodeReviewEndpoints();
+        tasks.MapReviewProjectionEndpoints();
         tasks.MapTaskRegressionRadarEndpoints();
         tasks.MapTaskPipelineEndpoints();
         tasks.MapTaskMergeEndpoints();

@@ -372,7 +372,9 @@
   <p>The recommendation is to approve all three as one information-architecture contract. No UI code, backend code, task creation, or task movement is part of AGT-2643.</p>
 </section>
 
-<footer>Prepared 12 August 2026 from fresh <code>origin/develop</code>. Source card AGT-2643. Operator evidence: AGT-2599 and AGT-2278. Governing design dossier: AGT-W1.</footer>
+<footer>Prepared 12 August 2026 from fresh <code>origin/develop</code>. Source card AGT-2643. Operator evidence: AGT-2599 and AGT-2278. Governing design dossier: AGT-W1.
+<p>Update 8 September 2026 (AGT-2717): the header's <em>data source</em> for review rounds, latest outcome, blocking aspect, and delivery-gate state is now the backend <code>ReviewProjectionView</code> (<code>backend/Features/Review/ReviewProjection.cs</code>, folded onto <code>TaskInfo.reviewProjection</code>), which merges the local and remote review planes so the count is never wrong for a remote-only review history (see <a href="../../system/domains/pipeline.md">pipeline.md</a>). This is a data-source fix, not the header layout/IA change this dossier proposes; the slices above remain open for operator approval.</p>
+</footer>
 </main>
 </body>
 </html>

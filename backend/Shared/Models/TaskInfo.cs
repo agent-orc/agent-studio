@@ -410,6 +410,17 @@ public record TaskInfo
     public TaskTestRunEvidence? TestEvidence { get; init; }
 
     /// <summary>
+    /// AGT-2717: canonical, read-time merge of every review attempt across
+    /// both planes (local <c>code-review-grade-*.md</c> and remote
+    /// <c>remote-review-grade-*.md</c>), plus the derived rounds count,
+    /// blocking aspect, delivery-gate state, and pending-decision source.
+    /// The escalation banner, Evidence tab, Result header, and board chip all
+    /// render off this single projection instead of parsing their own subset
+    /// of review artifacts. Never persisted to <c>task.json</c>.
+    /// </summary>
+    public ReviewProjectionView? ReviewProjection { get; init; }
+
+    /// <summary>
     /// Read-time visibility projection (ASS-1751) for <c>3-progress</c> tasks
     /// that disambiguates a live run, a failed run waiting out the rapid-crash
     /// backoff, and an orphaned run killed by a backend restart. Folded on by

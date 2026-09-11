@@ -61,6 +61,7 @@ public sealed class GitStateIndexService : BackgroundService
         TaskIntegrationStatusService integrationStatus,
         TaskPublishableService publishStatus,
         TestRunService testRuns,
+        AgentStudio.Review.ReviewProjectionService reviewProjection,
         TaskListGitProjectionCache projectionCache,
         ILogger<GitStateIndexService> logger,
         IConfiguration config)
@@ -73,7 +74,8 @@ public sealed class GitStateIndexService : BackgroundService
                 mergeStatus.BuildLookup,
                 integrationStatus.BuildLookup,
                 publishStatus.BuildLookup,
-                testRuns.BuildLookup),
+                testRuns.BuildLookup,
+                reviewProjection.BuildLookup),
             projectName => git.GetProjectInventory(projectName),
             logger,
             GitStateIndexOptions.FromConfiguration(config),
