@@ -3528,6 +3528,24 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         var humanFolder = Path.Combine(_watchPath, TaskStates.HumanReview, TaskKey);
         Assert.True(Directory.Exists(humanFolder));
 
+        // Evidence projection (AGT-2762) now runs on a background queue after
+        // the settlement response, so the aspect files and pipeline/timeline
+        // entries it writes are not guaranteed to exist the instant the report
+        // call returns. Wait on the timeline entries specifically: they are
+        // the last thing ProjectAsync writes, after the pipeline steps and
+        // aspect files, so their presence orders-after everything else below.
+        // A transient IOException (e.g. racing this same request's own lane
+        // move) sends a projection through one 5s-backoff retry, so the
+        // budget here is longer than WaitUntilAsync's default 10s.
+        var timelineLog = factory.Services.GetRequiredService<TimelineLog>();
+        await WaitUntilAsync(
+            () => timelineLog.ReadAll(humanFolder).Any(item =>
+                item.Kind == TimelineEventKinds.PostStepFinished
+                && item.RunId == created.ReviewAttempt!.AttemptId
+                && item.Details?["pipelineStepId"] == PipelineCatalogue.BuildTestGateStepId),
+            () => "Evidence projection did not record the tool-gate timeline entry before the wait budget expired.",
+            attempts: 400);
+
         var pipeline = factory.Services.GetRequiredService<PipelineExecutionLog>().Read(humanFolder)!;
         var tool = Assert.Single(pipeline.Steps, step =>
             step.StepId == PipelineCatalogue.BuildTestGateStepId);
@@ -4082,7 +4100,15 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             TaskStates.AutoReview,
             TaskKey,
             $"remote-review-grade-{created.ReviewAttempt.AttemptId}.md");
-        Assert.True(File.Exists(reportPath));
+        // Evidence projection (AGT-2762) runs on a background queue after the
+        // settlement checked above, so the grade file is not guaranteed to
+        // exist the instant the daemon's run task completes. A transient
+        // IOException sends it through one 5s-backoff retry, so the budget
+        // here is longer than WaitUntilAsync's default 10s.
+        await WaitUntilAsync(
+            () => File.Exists(reportPath),
+            "evidence projection did not write the grade file before the wait budget expired",
+            attempts: 400);
         Assert.Contains("ExecutorRestarted", File.ReadAllText(reportPath), StringComparison.Ordinal);
         Assert.Contains("Lost work extent", File.ReadAllText(reportPath), StringComparison.Ordinal);
     }
@@ -4253,11 +4279,26 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             completedFolder,
             $"remote-review-grade-{claim.Attempt.AttemptId}.md");
         Assert.Equal(terminalState, report.TaskState);
-        Assert.Equal(report, replay);
+        // The replay answers the fast idempotent-duplicate path (AGT-2762): it
+        // matches the original settlement in every field except
+        // EvidenceProjection, which the original leaves queued and the replay
+        // reports as an unrepeated duplicate.
+        Assert.Equal(Contract.ReviewEvidenceProjectionStatus.Queued, report.EvidenceProjection);
+        Assert.Equal(
+            report with { EvidenceProjection = Contract.ReviewEvidenceProjectionStatus.Duplicate },
+            replay);
         Assert.False(report.RetryScheduled);
         Assert.True(Directory.Exists(completedFolder));
         Assert.False(Directory.Exists(Path.Combine(_watchPath, TaskStates.HumanReview, TaskKey)));
-        Assert.True(File.Exists(evidenceFile));
+        // Evidence projection (AGT-2762) now runs on a background queue after
+        // the settlement response, so the grade file is not guaranteed to
+        // exist the instant the report call returns. A transient IOException
+        // sends it through one 5s-backoff retry, so the budget here is longer
+        // than WaitUntilAsync's default 10s.
+        await WaitUntilAsync(
+            () => File.Exists(evidenceFile),
+            "evidence projection did not write the grade file before the wait budget expired",
+            attempts: 400);
         Assert.Contains("Remote Review Grade", File.ReadAllText(evidenceFile), StringComparison.Ordinal);
 
         var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance).ReadAll(completedFolder);

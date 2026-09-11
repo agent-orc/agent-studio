@@ -388,9 +388,10 @@ public sealed class RemoteReviewExecutor
                 }
 
                 var delay = ReportRetryDelayOverride?.Invoke(slot.ReportSubmissionAttempts)
-                            ?? TaskServerConnectivityMonitor.RetryDelay(
-                                _options.PollSeconds,
-                                slot.ReportSubmissionAttempts);
+                            ?? ReviewReportSubmissionPolicy.RetryDelay(
+                                slot.ReportSubmissionAttempts,
+                                transportFailure,
+                                _options.PollSeconds);
                 var age = DateTime.UtcNow - slot.ReportPendingSinceUtc!.Value;
                 _log(
                     $"review-report-pending attempt={attempt.AttemptId} " +
