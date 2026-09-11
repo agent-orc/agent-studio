@@ -325,10 +325,57 @@ auslöst. Klasse A verlässt den heißen Store nie.</figcaption>
   <li><b>Restore:</b> liest die Nutzlast, prüft jede SHA-256, schreibt zurück, setzt <code>restoredAt</code>; niemals verändert
       ein Archiv- oder Restore-Lauf Klasse A.</li>
   <li><b>Zweites Ziel:</b> S3-kompatibel (Hetzner Object Storage, MinIO in CI); lokal zuerst schreiben, dann kopieren und
-      verifizieren; Löschung des lokalen Exemplars ist konfigurierbar. Wöchentliche Stichprobe der Hashes gegen das Ziel.</li>
+      verifizieren; Löschung des lokalen Exemplars ist konfigurierbar. Wöchentliche Stichprobe der Hashes gegen das Ziel.
+      Details: <a href="#archiv-s3">below</a>.</li>
   <li><b>Archiv-Lebensdauer:</b> standardmäßig unbegrenzt; eine Löschfrist in Jahren ist möglich, verlangt eine zweistufige
       Bestätigung und hinterlässt das Manifest als Grabstein.</li>
 </ul>
+
+<p class="stx stx-part"><b>Status 2026-09-11 (documentation rework, AGT-2746, docs only, no code changed this round):</b>
+this subsection, §8, and §9 now spell out the S3-compatible target contract for R4 in full; the deployment runbook
+carries the matching operator-facing detail in
+<a href="../setup/task-server.md#retention-against-the-sqlite-store">task-server.md, "Retention against the SQLite
+store" and "Full backup sets"</a> and
+<a href="../setup/control-plane-docker.md#cold-archive-target">control-plane-docker.md, "Cold archive target"</a>.
+New English prose below substantially revises this subsection per the contribution guide's translation rule; the rest
+of the dossier is unchanged.</p>
+
+<h3 id="archiv-s3">S3-compatible target (R4)</h3>
+<p>The policy's <code>archiveStorage</code> block (<code>ArchiveStoragePolicy</code> in
+<code>retention/RetentionPolicy.cs</code>) makes the second target explicit instead of implying it from other fields:
+<code>archiveTarget</code> is <code>local</code> or <code>s3</code> (default <code>local</code>);
+<code>copyToSecondary</code> is only valid with a local primary target and writes the local object first, then
+uploads it to S3 and verifies the SHA-256 there before the run counts as complete;
+<code>deleteLocalAfterVerification</code> requires <code>copyToSecondary</code> and removes the local object once the
+S3 copy verifies; <code>deleteArchivedAfterYears</code> (1 to 100, default unset/never) drives stage 3 in place of the
+per-rule deletion cutoff from §4 once set. Both targets implement the same contract
+(<code>PutAsync</code>/<code>OpenReadAsync</code>/<code>VerifyAsync</code>/<code>DeleteAsync</code>, exposed as
+<code>LocalDirectoryTarget</code> and <code>S3Target</code> in <code>retention/ArchiveTargets.cs</code>), so the
+planner, restore, and the integrity check below never special-case which target holds a payload. Every archive stage
+records one object reference per uploaded file &mdash; target name, object key, ETag, SHA-256, size, and the target's
+own server-side checksum when the target returns one &mdash; in <code>ArchiveManifest.Objects</code>, addressed by
+key <code>&lt;project&gt;/&lt;task-key&gt;/&lt;archivedAt&gt;/&lt;file&gt;</code> under an optional bucket prefix.
+Credentials live in a protected JSON file (<code>accessKey</code>/<code>secretKey</code>) referenced by path, never
+in the policy or a manifest.</p>
+<p><b>Weekly integrity check:</b> the same scheduler that runs the daily sweep (§6) also samples up to 25 manifests
+(<code>TaskServer:RetentionIntegritySampleCount</code>) every Sunday
+(<code>TaskServer:RetentionIntegrityDayOfWeek</code>): it re-verifies every recorded object against its target, and
+for anything that verifies, re-hashes every ZIP entry against the manifest. The run lands in <code>archive_runs</code>
+with <code>mode=integrity</code>; a discrepancy appends a <code>retention.integrity-discrepancy</code> audit record
+and publishes a Studio feed event instead of only failing silently.
+<code>POST /api/v1/management/retention/integrity/check</code> runs the same sample on demand with an optional
+<code>{"sampleCount": N}</code> body; <code>GET /api/v1/management/retention/target</code> returns the active policy
+and non-secret target configuration status (used by the Admin card in §8).</p>
+<p><b>Archive retention and tombstones:</b> deleting a payload keeps its manifest with a tombstone state and an audit
+record; stage 3 still requires <code>confirmColdDelete: true</code> on the apply request. Deletion is refused with
+<code>archive-referenced-by-backup</code> while any retained full backup set still references the payload (see
+below), so a set never silently loses a payload it depends on.</p>
+<p><b>Full backups follow the same target:</b> once an S3 target is configured, creating a full backup set
+(<a href="#nachtrag-verduennung">§12</a>) uploads it under <code>&lt;prefix&gt;/full/&lt;backup-id&gt;/</code> after
+the local <code>complete.json</code> exists, uploading <code>complete.json</code> itself last; listing reports a
+<code>remoteState</code> computed from the remote <code>inventory.json</code>/<code>complete.json</code> pair and the
+set hash. The 7 daily / 4 weekly / 12 monthly thinning rule from §12 deletes both the local and the remote copy of
+every set outside the kept union.</p>
 
 <!-- ============================================================ -->
 <h2 id="taskserver"><span class="no">§6</span>Schnittstelle des Task-Servers</h2>
@@ -411,6 +458,13 @@ Raster je Tabelle, jede Tatsache genau einmal, beide Themes.</p>
   <li><b>Archivierter Task:</b> Hinweis in voller Breite („Archiviert am …, 41 MB kalt", eine Aktion „Wiederherstellen"), Files-Tab
       zeigt Manifest-Einträge gedämpft statt fehlschlagender Requests; die Archiv-Lane trägt eine leise „kalt"-Markierung; Suche und
       Dossiers lösen weiterhin auf den Stub auf.</li>
+  <li><b>Cold archive card (R4 extension, English strings):</b> a "Cold archive" card on the Task Server settings
+      surface reads <code>GET /retention/target</code> and shows the active target, whether the S3 copy is configured
+      and reachable, whether the local copy is retained or deleted after verification, and payload expiry in years or
+      "Never". A "Review expired payload deletion" action previews the stage 3 plan and opens a confirmation dialog
+      that requires typing <code>DELETE ARCHIVED PAYLOADS</code> before the confirmed apply is sent; the dialog states
+      that deletion is blocked while a retained full backup still references a payload (see
+      <a href="#archiv-s3">§5, "Archive retention and tombstones"</a>).</li>
 </ul>
 
 <!-- ============================================================ -->
@@ -420,7 +474,10 @@ Raster je Tabelle, jede Tatsache genau einmal, beide Themes.</p>
       Import direkt ins kalte Archiv, der Import-Report weist die Bytes aus. Das eingefrorene Workspace-Repository wird nach dem
       Cutover als Git-Bundle ins Archiv gelegt.</li>
   <li><b>AGT-2733 Control-Plane in Docker:</b> Archiv-Volume und Variablen (<code>ARCHIVE_PATH</code>, S3-Zugang) sind Teil der
-      Compose-Datei; AGT-2738 Installer fragt das Ziel ab.</li>
+      Compose-Datei; AGT-2738 Installer fragt das Ziel ab. Operator-facing detail:
+      <a href="../setup/control-plane-docker.md#cold-archive-target">control-plane-docker.md, "Cold archive
+      target"</a>; full <code>ARCHIVE_S3_*</code> variable reference:
+      <a href="../setup/task-server.md#configuration-and-health">task-server.md, "Configuration and health"</a>.</li>
   <li><b>AGT-2739 Regressionsszenario:</b> jede Retention-Karte fügt genau einen Szenario-Schritt hinzu (Plan leer, Task altern,
       archivieren, wiederherstellen, Inventar-Hash von Klasse A unverändert).</li>
   <li><b>AGT-2728 Hygiene:</b> Push-Catch-up und Git-Maintenance bleiben dort; dieses Dossier nimmt ihm die Commit-Scope-Entscheidung
