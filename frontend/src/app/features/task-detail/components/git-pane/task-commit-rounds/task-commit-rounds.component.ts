@@ -46,12 +46,50 @@ export class TaskCommitRoundsComponent {
   }
 
   tooltip(entry: TaskCommitInfo, index: number, total: number): string {
-    return `${index + 1}/${total} · ${entry.shortSha} · ${formatDateTime(entry.at)} · ${entry.message}`;
+    const base = `${index + 1}/${total} · ${entry.shortSha} · ${formatDateTime(entry.at)} · ${entry.message}`;
+    const pushNote = this.pushStatusTooltip(entry);
+    return pushNote ? `${base}\n${pushNote}` : base;
   }
 
   timestamp(entry: TaskCommitInfo): string {
     return formatCompactDateTime(entry.at);
   }
+
+  /** Short push-backstop badge (AGT-2761): permanently skipped or backing off. Null for a normal push candidate. */
+  pushStatusLabel(entry: TaskCommitInfo): string | null {
+    switch (pushStatusKind(entry)) {
+      case 'superseded': return 'not pushed';
+      case 'rejected': return 'push rejected';
+      case 'backing-off': return 'push retrying';
+      default: return null;
+    }
+  }
+
+  pushStatusKindOf(entry: TaskCommitInfo): string {
+    return pushStatusKind(entry) ?? '';
+  }
+
+  private pushStatusTooltip(entry: TaskCommitInfo): string | null {
+    switch (pushStatusKind(entry)) {
+      case 'superseded':
+        return 'Not reachable from the integrated result or the remote; the backstop will never push it.';
+      case 'rejected':
+        return `Rejected by the remote as non-fast-forward after ${entry.pushAttempts ?? 0} attempts; the backstop stopped retrying.${entry.pushError ? ` (${entry.pushError})` : ''}`;
+      case 'backing-off':
+        return `Rejected as non-fast-forward; retrying after ${entry.pushNextRetryAt ? formatDateTime(entry.pushNextRetryAt) : 'a backoff window'}.`;
+      default:
+        return null;
+    }
+  }
+}
+
+type PushStatusKind = 'superseded' | 'rejected' | 'backing-off';
+
+function pushStatusKind(entry: TaskCommitInfo): PushStatusKind | null {
+  if (entry.pushStatus === 'superseded') return 'superseded';
+  if (entry.pushStatus === 'push-rejected') return 'rejected';
+  if (entry.pushNextRetryAt) return 'backing-off';
+  return null;
 }
 
 function buildSupersededRounds(commits: TaskCommitInfo[]): SupersededRound[] {

@@ -604,6 +604,37 @@ public class TaskMutationService
         return new CommitSupersessionWriteResult(written, written ? changed : 0);
     }
 
+    /// <summary>
+    /// Persists completed-push backstop bookkeeping (<see cref="CommitPushOutcome"/>)
+    /// for a subset of a task's commits, keyed by SHA. Every history entry not
+    /// named in <paramref name="outcomes"/> is left untouched.
+    /// </summary>
+    public bool MarkCommitPushOutcomesOnFolder(
+        string folderPath,
+        IReadOnlyDictionary<string, CommitPushOutcome> outcomes)
+    {
+        if (!Directory.Exists(folderPath)) return false;
+        if (outcomes.Count == 0) return true;
+        var persisted = ReadPersistedCommitChain(folderPath);
+        if (persisted is null) return false;
+
+        var changed = 0;
+        var updated = persisted.Select(commit =>
+        {
+            if (!outcomes.TryGetValue(commit.Sha, out var outcome)) return commit;
+            changed++;
+            return commit with
+            {
+                PushStatus = outcome.PushStatus,
+                PushAttempts = outcome.PushAttempts,
+                PushNextRetryAtUtc = outcome.PushNextRetryAtUtc,
+                PushError = outcome.PushError,
+            };
+        }).ToList();
+        if (changed == 0) return true;
+        return WriteCommitState(folderPath, updated);
+    }
+
     public bool SetRunIntegrationBranchOnFolder(string folderPath, string integrationBranch)
     {
         if (!Directory.Exists(folderPath)) return false;
