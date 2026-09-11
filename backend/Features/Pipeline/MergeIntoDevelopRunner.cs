@@ -734,17 +734,28 @@ public sealed class MergeIntoDevelopRunner
                     ? "reset-to-pre-merge-tip"
                     : "FAILED: " + (reset.Error ?? "unknown"));
 
+        // CAC-18: a toolchain/bundler crash before test discovery is never a
+        // product failure. Roll back the unverified merge the same as any other
+        // gate failure, but classify it separately so the card is never marked
+        // a conflict and no rebase-recovery steer round is spent chasing a gate
+        // environment problem the delivery cannot fix.
+        var outcome = gate.FailureKind == BuildTestGateFailureKind.Environment
+            ? MergeIntoIntegrationOutcome.GateEnvironmentFailure
+            : MergeIntoIntegrationOutcome.GateFailed;
         var error = result.Outcome == MergeIntoIntegrationOutcome.AlreadyMerged
             ? $"The build gate blocked recovery of the existing {integrationBranch} commit {Short(gatedSha)}: {gate.Reason}. " +
               "The integration history was left unchanged, no push was released, and the delivery needs manual repair."
             : reset!.Success
             ? $"The build gate blocked the merge into {integrationBranch}: {gate.Reason}. " +
-              $"{integrationBranch} was rolled back to {Short(preMergeTip!)} and nothing was pushed; " +
-              "start a steer round so the delivery builds on top of the current integration branch."
+              (outcome == MergeIntoIntegrationOutcome.GateEnvironmentFailure
+                  ? $"{integrationBranch} was rolled back to {Short(preMergeTip!)} and nothing was pushed; " +
+                    "gate environment: the build/test gate failed before verification could run and will be retried."
+                  : $"{integrationBranch} was rolled back to {Short(preMergeTip!)} and nothing was pushed; " +
+                    "start a steer round so the delivery builds on top of the current integration branch.")
             : $"The build gate blocked the merge into {integrationBranch}: {gate.Reason}. " +
               $"Rolling {integrationBranch} back to {Short(preMergeTip!)} FAILED ({reset.Error ?? "unknown error"}); " +
               "the unverified merge is still on the local integration branch and needs manual repair.";
-        return (MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.GateFailed, error: error), gate);
+        return (MergeIntoIntegrationResult.Of(outcome, error: error), gate);
     }
 
     /// <summary>
@@ -1567,6 +1578,13 @@ public sealed class MergeIntoDevelopRunner
                     PipelineStepStatus.Failed,
                     "gate-failed",
                     result.Error ?? $"The build gate blocked the merge into {integrationBranch}.",
+                    preDevelopResult?.Reason);
+            case MergeIntoIntegrationOutcome.GateEnvironmentFailure:
+                return (
+                    PipelineStepStatus.Failed,
+                    "gate-environment-failure",
+                    result.Error
+                        ?? $"The build gate for {integrationBranch} failed before verification reached test discovery.",
                     preDevelopResult?.Reason);
             case MergeIntoIntegrationOutcome.MergedAfterRebase:
                 var replacementCount = result.RebasedCommits.Count;

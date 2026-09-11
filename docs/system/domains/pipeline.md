@@ -505,6 +505,43 @@ steer the pipeline in this policy version.
   per-process default. A timeout reason, structured completion event, and durable
   gate receipt identify the violated budget with its limit, consumption, and
   phase. The receipt also includes dependency-cache hit/miss evidence.
+- A local exact-subject dependency-cache entry is valid only with an
+  install-complete marker (`.nm-state`, stamped only after a successful `npm
+  ci`/`dotnet restore`) whose hash matches the scope's current lockfiles; a
+  present-but-unstamped or hash-mismatched `node_modules` is always a miss
+  (`DependencyPreparationState.Evaluate`, `contracts/TaskServer.Contracts/DependencyPreparation.cs`).
+  `GateDependencyCacheSession.Save()` (`DependencyCacheSession.Save`) is
+  transactional: it stages the workspace's cacheable content into a temporary
+  sibling of the cache entry and `Directory.Move`s (renames) that sibling onto
+  the entry only once every item staged; a failure partway discards the
+  sibling and leaves the previous entry untouched, so a save can never persist
+  a half-moved tree as a lock-hash hit a later gate would trust (CAC-18).
+- The build/test gate classifies a verify command's own toolchain/bundler
+  crashing before it reaches test discovery (`BuildTestGateFailureKind.Environment`
+  - today, vite's case-insensitive-filesystem probe throwing while loading its
+  config on a poisoned `node_modules` tree) separately from every other
+  completed-process result. This is a narrow, signature-based exemption from
+  the AGT-2110 rule that a completed process's own printed diagnostics are
+  always `Code`: only an unambiguous toolchain-startup signature qualifies, so
+  a genuine product failure that happens to mention the same tool stays
+  `Code`. `BuildTestGateResult.IsInfrastructureFailure` is true for it.
+  `SaveDependencyCache` evicts (never saves) the dependency cache for a
+  gate run classified this way, so the next attempt reinstalls from scratch
+  instead of re-serving the poisoned tree, and logs `dependency-cache evicted
+  reason=gate-environment-failure`.
+- A pre-develop/pre-main gate classified `Environment` still rolls the
+  integration branch back to its exact pre-merge tip like any other red gate,
+  but `MergeIntoDevelopRunner` reports it as the distinct
+  `MergeIntoIntegrationOutcome.GateEnvironmentFailure`, never `GateFailed`.
+  `AcceptedIntegrationFailurePolicy` projects it to the
+  `gate-environment-failure` failure code, and `TaskIntegrationStatusService`
+  keeps the card's integration status `Pending` (never `ConflictSkipped` or
+  `Partial`) with the reason prefixed `gate environment: ` on the card's
+  integration chip and Evidence tab. It is deliberately excluded from
+  `IsDecidedIntegrationAttempt`, so the accepted-integration recovery sweep
+  retries the gate on its next pass instead of returning the card to an
+  operator or spending a rebase-recovery steer round - a toolchain crash is
+  never a product failure and the delivery cannot fix it (CAC-18).
 - A failed preparation or verification command stores a bounded, single-line
   stderr/stdout excerpt in the gate reason that flows into the durable pipeline
   step record. Full streams remain in per-process evidence and the gate log, so

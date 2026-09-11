@@ -24,6 +24,13 @@ public static class AcceptedIntegrationFailureCodes
     /// describes the push step (AGT-2688).
     /// </summary>
     public const string IntegrationPushBlocked = "integration-push-blocked";
+    /// <summary>
+    /// The build/test gate failed before verification reached test discovery
+    /// (a bundler/toolchain crash), not because of anything in the delivery.
+    /// Never a product failure; the card projection keeps this out of
+    /// <c>ConflictSkipped</c>/<c>Partial</c> (CAC-18).
+    /// </summary>
+    public const string GateEnvironmentFailure = "gate-environment-failure";
 }
 
 /// <summary>
@@ -123,6 +130,14 @@ public static class AcceptedIntegrationFailurePolicy
                     verdictSummary,
                     "The delivery merged into the integration branch locally but the push to origin is blocked."),
                 RebaseRecoveryAvailable: false),
+            AcceptedIntegrationFailureCodes.GateEnvironmentFailure => new(
+                code,
+                "Gate environment failure",
+                FirstNonBlank(
+                    reason,
+                    verdictSummary,
+                    "The build/test gate failed before verification reached test discovery."),
+                RebaseRecoveryAvailable: false),
             _ => new(
                 AcceptedIntegrationFailureCodes.IntegrationError,
                 "Integration failed",
@@ -137,6 +152,8 @@ public static class AcceptedIntegrationFailurePolicy
             return AcceptedIntegrationFailureCodes.MergeConflict;
         if (string.Equals(verdict, "gate-failed", StringComparison.OrdinalIgnoreCase))
             return AcceptedIntegrationFailureCodes.BuildGateFailed;
+        if (string.Equals(verdict, "gate-environment-failure", StringComparison.OrdinalIgnoreCase))
+            return AcceptedIntegrationFailureCodes.GateEnvironmentFailure;
         if (string.Equals(verdict, "delivery-gate-failed", StringComparison.OrdinalIgnoreCase))
             return AcceptedIntegrationFailureCodes.DeliveryGateFailed;
         if (string.Equals(verdict, "no-branch", StringComparison.OrdinalIgnoreCase))
@@ -182,6 +199,7 @@ public static class AcceptedIntegrationFailurePolicy
             AcceptedIntegrationFailureCodes.NoTaskBranch => AcceptedIntegrationFailureCodes.NoTaskBranch,
             AcceptedIntegrationFailureCodes.IntegrationError => AcceptedIntegrationFailureCodes.IntegrationError,
             AcceptedIntegrationFailureCodes.IntegrationPushBlocked => AcceptedIntegrationFailureCodes.IntegrationPushBlocked,
+            AcceptedIntegrationFailureCodes.GateEnvironmentFailure => AcceptedIntegrationFailureCodes.GateEnvironmentFailure,
             _ => null,
         };
     }

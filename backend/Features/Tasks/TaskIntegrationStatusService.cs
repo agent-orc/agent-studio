@@ -584,6 +584,30 @@ public sealed class TaskIntegrationStatusService
         if (ReadIntegrationFailure(job) is { } failure)
         {
             var visibleReason = VisibleFailureReason(job, branchName, failure);
+            // CAC-18: a gate environment failure (toolchain/bundler crash before
+            // test discovery) is never a product failure. It must not read as a
+            // conflict or a partial delivery - the card stays Pending with the
+            // gate-environment reason visible on the chip and Evidence tab, and
+            // is eligible to be accepted again instead of needing a steer round.
+            if (failure.Code == AcceptedIntegrationFailureCodes.GateEnvironmentFailure)
+            {
+                return new TaskIntegrationStatus
+                {
+                    Status = IntegrationStatuses.Pending,
+                    DeliveryRef = deliveryRef,
+                    IntegrationBranch = branchName,
+                    Detail = $"gate environment: {visibleReason}",
+                    Repositories = repositories ?? [],
+                    Failure = new TaskIntegrationFailure
+                    {
+                        Code = failure.Code,
+                        Label = failure.Label,
+                        Reason = visibleReason,
+                        RebaseRecoveryAvailable = failure.RebaseRecoveryAvailable,
+                    },
+                };
+            }
+
             return new TaskIntegrationStatus
             {
                 Status = IntegrationStatuses.ConflictSkipped,
@@ -764,6 +788,14 @@ public sealed class TaskIntegrationStatusService
         }
     }
 
+    /// <summary>
+    /// A "decided" attempt needs an operator or a steer round to move forward.
+    /// Deliberately excludes <c>gate-environment-failure</c> (CAC-18): a
+    /// toolchain/bundler crash before test discovery is not something the
+    /// delivery can fix, so <see cref="ResolveAcceptedIntegrationRecovery"/>
+    /// falls through to its plain <c>Retry</c> decision instead, and the next
+    /// recovery sweep re-runs the gate automatically.
+    /// </summary>
     private static bool IsDecidedIntegrationAttempt(PipelineStepExecution? step)
     {
         if (step is null) return false;

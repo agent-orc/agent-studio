@@ -72,6 +72,12 @@ public sealed class AcceptedIntegrationFailurePolicyTests
             AcceptedIntegrationFailureCodes.IntegrationPushBlocked,
             false
         },
+        {
+            "gate-environment-failure",
+            "gate environment: the build/test gate failed before verification reached test discovery.",
+            AcceptedIntegrationFailureCodes.GateEnvironmentFailure,
+            false
+        },
     };
 
     [Theory]

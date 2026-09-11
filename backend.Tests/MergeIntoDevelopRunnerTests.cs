@@ -1472,6 +1472,57 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
     }
 
     [Fact]
+    public async Task RunAsync_DevelopTarget_GateEnvironmentFailure_RollsBackButIsNeverAGateFailed()
+    {
+        // CAC-18: a toolchain/bundler crash before test discovery (e.g. vite's
+        // case-insensitive-FS probe) rolls back the unverified merge the same
+        // as any other red gate, but it must never be classified GateFailed -
+        // that outcome is what makes the card ConflictSkipped and spends a
+        // rebase-recovery steer round, neither of which fixes a gate
+        // environment problem.
+        var repo = SeedRepo("develop-gate-environment");
+        RunGit(repo, "checkout -q -b develop");
+        RunGit(repo, "checkout -q -b task/62");
+        File.WriteAllText(Path.Combine(repo, "task.txt"), "task work");
+        Commit(repo, "feat: task work");
+        RunGit(repo, "checkout -q develop");
+        var developBefore = RunGit(repo, "rev-parse develop").Out.Trim();
+
+        var (git, log, settings) = BuildWithSettings(repo);
+        settings.SetBuildProfile("Fixture", new BuildProfile { BuildCmds = ["cd ."] });
+        var gateRunner = new CapturingBuildTestGateRunner(new BuildTestGateResult(
+            BuildTestGateVerdict.Fail, 1, 20,
+            "at testCaseInsensitiveFS (/repo/node_modules/vite/dist/node/chunks/config.js:1911:42)",
+            "npm test exit 1", true, false)
+        {
+            FailureKind = BuildTestGateFailureKind.Environment,
+        });
+        var queue = new IntegrationPushQueue();
+        var jobFolder = BeginRun(log, repo, jobId: "62");
+        var runner = new MergeIntoDevelopRunner(
+            git, log, NullLogger<MergeIntoDevelopRunner>.Instance,
+            pushQueue: queue,
+            projectSettings: settings,
+            preDevelopBuildGate: new PreDevelopBuildGate(gateRunner),
+            preDevelopTimeout: TimeSpan.FromSeconds(30));
+
+        var outcome = await runner.RunAsync(
+            "Fixture", "62", jobFolder, repo, "develop", CancellationToken.None);
+
+        Assert.Equal(MergeIntoIntegrationOutcome.GateEnvironmentFailure, outcome.Outcome);
+        Assert.NotEqual(MergeIntoIntegrationOutcome.GateFailed, outcome.Outcome);
+        Assert.Equal(developBefore, RunGit(repo, "rev-parse develop").Out.Trim());
+        Assert.Equal(string.Empty, RunGit(repo, "status --porcelain").Out.Trim());
+        Assert.False(queue.Reader.TryRead(out _), "a gate-blocked merge must never enqueue a push");
+
+        var step = ReadMergeStep(log, jobFolder);
+        Assert.NotNull(step);
+        Assert.Equal(PipelineStepStatus.Failed, step!.Status);
+        Assert.Equal("gate-environment-failure", step.Verdict);
+        Assert.Contains("gate environment:", step.Reason);
+    }
+
+    [Fact]
     public async Task RunAsync_DevelopTarget_GreenBuildGate_KeepsTheMergeAndEnqueuesThePush()
     {
         var repo = SeedRepo("develop-gate-green");

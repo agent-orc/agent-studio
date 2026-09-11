@@ -660,6 +660,47 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         Assert.True(status.Failure?.RebaseRecoveryAvailable);
     }
 
+    [Fact]
+    public void BuildLookup_GateEnvironmentFailure_StaysPendingNotConflictSkipped()
+    {
+        // CAC-18: a toolchain/bundler crash before test discovery (e.g. vite's
+        // case-insensitive-FS probe) is never a product failure. It must not
+        // read as a conflict or a partial delivery - the card stays Pending
+        // with the gate-environment reason visible, and is eligible to be
+        // accepted again instead of needing an operator or a steer round.
+        var repo = SeedDevelopMainRepo();
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "checkout -q -b task/gate-environment");
+        File.WriteAllText(Path.Combine(repo, "gate-environment.txt"), "wip");
+        Commit(repo, "feat: gate environment wip");
+        var anchor = RunGit(repo, "rev-parse task/gate-environment").Out.Trim();
+        RunGit(repo, "checkout -q develop");
+
+        var svc = BuildService(repo, out var project, out var log);
+        var job = Job("gate-environment", "AGT-3020", project, repo, log, commits: new[] { Commit(anchor) },
+            prov: Prov(branch: "task/gate-environment"));
+
+        log.EnsureRun(job.FolderPath, PipelineCatalogue.Standard, project, job.Id);
+        log.RecordStep(job.FolderPath, new PipelineStepExecution
+        {
+            StepId = PipelineCatalogue.MergeIntoDevelopStepId,
+            Kind = StepKind.Tool,
+            Status = PipelineStepStatus.Failed,
+            Verdict = "gate-environment-failure",
+            Reason = "The build gate blocked the merge into develop: npm test exit 1 "
+                + "(testCaseInsensitiveFS). develop was rolled back and nothing was pushed; "
+                + "gate environment: the build/test gate failed before verification could run and will be retried.",
+            FailureCode = AcceptedIntegrationFailureCodes.GateEnvironmentFailure,
+        });
+
+        var status = svc.BuildLookup(new[] { job })[job.TaskKey];
+
+        Assert.Equal(IntegrationStatuses.Pending, status.Status);
+        Assert.StartsWith("gate environment:", status.Detail);
+        Assert.Equal(AcceptedIntegrationFailureCodes.GateEnvironmentFailure, status.Failure?.Code);
+        Assert.False(status.Failure?.RebaseRecoveryAvailable);
+    }
+
     [Theory]
     [InlineData(
         "Release source 'origin/result' must be rebased onto 'main' before the full-suite gate.",

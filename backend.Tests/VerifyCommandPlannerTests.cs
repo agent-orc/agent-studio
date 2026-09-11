@@ -1355,6 +1355,51 @@ public sealed class BuildTestGateClassificationTests
 
         Assert.Equal(BuildTestGateFailureKind.ProcessLaunch, kind);
     }
+
+    [Fact]
+    public void CompletedNpmTest_CrashingInViteCaseInsensitiveFsProbe_IsEnvironment()
+    {
+        // CAC-18: the exact studio-gate transcript signature. `npm test` exits 1
+        // before vitest reaches test discovery because vite's config loader
+        // probed a corrupted/torn node_modules tree. This is a completed
+        // process (exit 1, no timeout/cancel/launch failure) - the same shape as
+        // the AGT-2110 "Code" cases above - so only the narrow, unambiguous vite
+        // signature may pull it out of Code and into Environment.
+        var evidence = Evidence(exitCode: 1, stderr:
+            "    at testCaseInsensitiveFS (/repo/node_modules/vite/dist/node/chunks/config.js:1911:42)\n"
+            + "    at async loadConfigFromFile (/repo/node_modules/vite/dist/node/chunks/config.js:2001:27)");
+
+        var kind = BuildTestGateRunner.ClassifyFailure(evidence);
+
+        Assert.Equal(BuildTestGateFailureKind.Environment, kind);
+    }
+
+    [Fact]
+    public void CompletedNpmTest_CrashingInViteCaseInsensitiveFsProbe_IsInfrastructureFailure()
+    {
+        var evidence = Evidence(exitCode: 1, stderr:
+            "at testCaseInsensitiveFS (/repo/node_modules/vite/dist/node/chunks/config.js:1911:42)");
+        var kind = BuildTestGateRunner.ClassifyFailure(evidence);
+        var result = new BuildTestGateResult(
+            BuildTestGateVerdict.Fail, 1, 20, evidence.StandardError, "npm test exit 1", false, true)
+        {
+            FailureKind = kind,
+        };
+
+        Assert.True(result.IsInfrastructureFailure);
+    }
+
+    [Fact]
+    public void UnrelatedNpmTestFailure_MentioningViteInPassing_StaysCode()
+    {
+        // A genuine product test failure that happens to log "vite" somewhere
+        // must not be swept into Environment - only the exact case-insensitive-FS
+        // probe stack signature qualifies.
+        var kind = BuildTestGateRunner.ClassifyFailure(
+            Evidence(exitCode: 1, stdout: "FAIL src/vite.spec.ts > builds the config\n1 test failed"));
+
+        Assert.Equal(BuildTestGateFailureKind.Code, kind);
+    }
 }
 
 /// <summary>
