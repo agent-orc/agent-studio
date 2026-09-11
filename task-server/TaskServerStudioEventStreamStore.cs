@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AgentStudio.TaskServer.Contracts;
+using Microsoft.Data.Sqlite;
 
 namespace AgentStudio.TaskServer;
 
@@ -9,7 +10,8 @@ namespace AgentStudio.TaskServer;
 /// replays every event after it before subscribing the connection to live
 /// delivery, so a period of Studio-detached execution never loses a
 /// mutation. This table is a notification feed, not a second source of
-/// truth: it is written after the owning domain mutation already committed.
+/// truth: it is written alongside the owning domain mutation or immediately
+/// after that mutation commits.
 /// </summary>
 public sealed partial class TaskServerStore
 {
@@ -19,17 +21,52 @@ public sealed partial class TaskServerStore
         StudioStreamEventDto? result = null;
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
-            var now = Iso(UtcNow);
-            var payloadJson = JsonSerializer.Serialize(payload);
-            await ExecuteAsync(connection, """
-                INSERT INTO studio_stream_events(occurred_at, kind, project_id, task_id, payload_json)
-                VALUES ($now, $kind, $project, $task, $payload);
-                """, ct, transaction,
-                ("$now", now), ("$kind", kind), ("$project", projectId), ("$task", taskId), ("$payload", payloadJson));
-            var cursor = Convert.ToInt64(await ScalarAsync(connection, "SELECT last_insert_rowid();", ct, transaction));
-            result = new StudioStreamEventDto(cursor, Parse(now), kind, projectId, taskId, payloadJson);
+            result = await AppendStudioStreamEventAsync(
+                connection,
+                transaction,
+                kind,
+                projectId,
+                taskId,
+                payload,
+                UtcNow,
+                ct);
         }, ct);
         return result!;
+    }
+
+    private static async Task<StudioStreamEventDto> AppendStudioStreamEventAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string kind,
+        string? projectId,
+        string? taskId,
+        object payload,
+        DateTime occurredAt,
+        CancellationToken ct)
+    {
+        var now = Iso(occurredAt);
+        var payloadJson = JsonSerializer.Serialize(payload);
+        await ExecuteAsync(connection, """
+            INSERT INTO studio_stream_events(occurred_at, kind, project_id, task_id, payload_json)
+            VALUES ($now, $kind, $project, $task, $payload);
+            """, ct, transaction,
+            ("$now", now),
+            ("$kind", kind),
+            ("$project", projectId),
+            ("$task", taskId),
+            ("$payload", payloadJson));
+        var cursor = Convert.ToInt64(await ScalarAsync(
+            connection,
+            "SELECT last_insert_rowid();",
+            ct,
+            transaction));
+        return new StudioStreamEventDto(
+            cursor,
+            occurredAt,
+            kind,
+            projectId,
+            taskId,
+            payloadJson);
     }
 
     public async Task<IReadOnlyList<StudioStreamEventDto>> ListStudioStreamEventsSinceAsync(
