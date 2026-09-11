@@ -195,8 +195,8 @@ public sealed class RunnerOptions
     /// <summary>
     /// When set (<c>--drain</c>), the process asks the running review daemon to
     /// stop claiming and waits for its slots to finish instead of starting a
-    /// daemon of its own. This is the sanctioned alternative to a restart that
-    /// lands on busy slots.
+    /// daemon of its own. A successful drain leaves the review role stopped;
+    /// guarded replacement is a separate explicit action.
     /// </summary>
     public bool DrainOnly { get; init; }
 
@@ -209,6 +209,13 @@ public sealed class RunnerOptions
 
     /// <summary>Overrides a refusal from <see cref="RestartGuardOnly"/> (<c>--force</c>).</summary>
     public bool Force { get; init; }
+
+    /// <summary>
+    /// Keeps the restart guard's acknowledged admission barrier in place until
+    /// the replacement helper has stopped the old daemon. Operator diagnostics
+    /// omit this flag and withdraw their temporary request before returning.
+    /// </summary>
+    public bool HoldAdmission { get; init; }
 
     public static string Env(string name, string fallback = "")
     {
@@ -256,6 +263,7 @@ public sealed class RunnerOptions
         var drain = false;
         var restartGuard = false;
         var force = false;
+        var holdAdmission = false;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -270,6 +278,7 @@ public sealed class RunnerOptions
             if (a == "--drain") { drain = true; continue; }
             if (a == "--restart-guard") { restartGuard = true; continue; }
             if (a == "--force") { force = true; continue; }
+            if (a == "--hold-admission") { holdAdmission = true; continue; }
             if (a.StartsWith("--", StringComparison.Ordinal))
             {
                 var key = a[2..];
@@ -374,6 +383,7 @@ public sealed class RunnerOptions
             DrainOnly = drain,
             RestartGuardOnly = restartGuard,
             Force = force,
+            HoldAdmission = holdAdmission,
         };
 
         var serverUri = new Uri(options.ServerUrl, UriKind.Absolute);

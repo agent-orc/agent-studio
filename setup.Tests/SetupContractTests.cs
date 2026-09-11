@@ -208,6 +208,8 @@ public sealed class SetupContractTests
         Assert.Equal("20-agent-runner-review-restart-guard.conf", NativeInstaller.ReviewRestartGuardFileName);
         Assert.Contains("[Unit]\n", guard, StringComparison.Ordinal);
         Assert.Contains("RefuseManualStop=true\n", guard, StringComparison.Ordinal);
+        Assert.Contains("[Service]\n", guard, StringComparison.Ordinal);
+        Assert.Contains("Restart=on-failure\n", guard, StringComparison.Ordinal);
         Assert.DoesNotContain("KillMode", guard, StringComparison.Ordinal);
         Assert.DoesNotContain("PrivateTmp", guard, StringComparison.Ordinal);
         Assert.Equal(
@@ -223,6 +225,17 @@ public sealed class SetupContractTests
             "coding",
             "/etc/systemd/system",
             "agent-host.service"));
+        Assert.Equal(
+            [
+                "--restart-guard",
+                "--hold-admission",
+                "--role",
+                "review",
+                "--state-dir",
+                "/var/lib/agent-runner/review-state",
+            ],
+            NativeInstaller.BuildReviewRestartGuardArguments(
+                "/var/lib/agent-runner/review-state"));
     }
 
     [Theory]

@@ -68,6 +68,8 @@ public sealed class ReviewReClaimEndpointTests : IDisposable
         using var http = factory.CreateClient();
         var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
         var claimed = CreateClaimedReview(authority);
+        var originalIsolation = Assert.IsType<ReviewLeaseIsolation>(
+            authority.GetReviewLeaseIsolation(claimed.AttemptId, claimed.Lease!.LeaseId));
         _now = _now.AddSeconds(31);
 
         var registration = await http.PutAsJsonAsync(
@@ -93,23 +95,103 @@ public sealed class ReviewReClaimEndpointTests : IDisposable
             firstRequest);
         Assert.Equal(HttpStatusCode.OK, first.StatusCode);
 
-        // The caller's exact key replays the minted fence.
+        var nextRegistration = await http.PutAsJsonAsync(
+            "/api/v1/runners/reviewer",
+            new Contract.RegisterRunnerRequest(
+                "reviewer",
+                "review-host",
+                "successor-instance",
+                "test",
+                Contract.TaskServerProtocol.Current,
+                [Contract.ReviewCapabilities.ReviewExecutor]));
+        nextRegistration.EnsureSuccessStatusCode();
+
+        // The caller's exact committed delivery replays the minted authority
+        // even after the registry advances to a newer daemon generation.
         var replay = await http.PostAsJsonAsync(
             $"/api/v1/reviews/attempts/{claimed.AttemptId}/reclaim",
             firstRequest);
         Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
         var firstClaim = await first.Content.ReadFromJsonAsync<Contract.ReviewClaimResponse>();
         var replayedClaim = await replay.Content.ReadFromJsonAsync<Contract.ReviewClaimResponse>();
+        Assert.Equal(firstClaim, replayedClaim);
         Assert.Equal(firstClaim!.Lease!.Fence, replayedClaim!.Lease!.Fence);
+        Assert.True(firstClaim.Lease.Fence > claimed.LastFence);
+        Assert.Equal(originalIsolation.ResourceNamespace, firstClaim.Lease.ResourceNamespace);
+        Assert.Equal(originalIsolation.PortBase, firstClaim.Lease.PortBase);
 
-        // A different key is a new mutation request. It must validate against
-        // the now-current fence instead of replaying an endpoint-derived key.
+        var mismatchedReplay = await http.PostAsJsonAsync(
+            $"/api/v1/reviews/attempts/{claimed.AttemptId}/reclaim",
+            firstRequest with { RequestedTtlSeconds = 121 });
+        Assert.Equal(HttpStatusCode.Conflict, mismatchedReplay.StatusCode);
+        var mismatchError = await mismatchedReplay.Content.ReadFromJsonAsync<Contract.ApiError>();
+        Assert.Equal("idempotency-conflict", mismatchError!.Code);
+
+        // A different key is a new mutation request. The stale instance must
+        // fail registry validation and cannot mint another fence.
         var differentKey = await http.PostAsJsonAsync(
             $"/api/v1/reviews/attempts/{claimed.AttemptId}/reclaim",
             firstRequest with { IdempotencyKey = "caller-reclaim-2" });
         Assert.Equal(HttpStatusCode.Conflict, differentKey.StatusCode);
         var error = await differentKey.Content.ReadFromJsonAsync<Contract.ApiError>();
-        Assert.Equal(nameof(AttemptWriteStatus.StaleFence), error!.Code);
+        Assert.Equal("review-executor-not-registered", error!.Code);
+        Assert.Equal(firstClaim.Lease.Fence, authority.GetReview(claimed.AttemptId)!.LastFence);
+    }
+
+    [Fact]
+    public async Task Uncommitted_stale_generation_reclaim_can_rotate_to_the_current_instance()
+    {
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var claimed = CreateClaimedReview(authority);
+        var originalIsolation = Assert.IsType<ReviewLeaseIsolation>(
+            authority.GetReviewLeaseIsolation(claimed.AttemptId, claimed.Lease!.LeaseId));
+        _now = _now.AddSeconds(31);
+
+        foreach (var instanceId in new[] { "replacement-instance", "successor-instance" })
+        {
+            var registration = await http.PutAsJsonAsync(
+                "/api/v1/runners/reviewer",
+                new Contract.RegisterRunnerRequest(
+                    "reviewer",
+                    "review-host",
+                    instanceId,
+                    "test",
+                    Contract.TaskServerProtocol.Current,
+                    [Contract.ReviewCapabilities.ReviewExecutor]));
+            registration.EnsureSuccessStatusCode();
+        }
+
+        var staleRequest = new Contract.ReviewReClaimRequest(
+            "reviewer",
+            "replacement-instance",
+            claimed.Lease.LeaseId,
+            claimed.LastFence,
+            "uncommitted-replacement-request",
+            120);
+        var stale = await http.PostAsJsonAsync(
+            $"/api/v1/reviews/attempts/{claimed.AttemptId}/reclaim",
+            staleRequest);
+        Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+        Assert.Equal(
+            "review-executor-not-registered",
+            (await stale.Content.ReadFromJsonAsync<Contract.ApiError>())!.Code);
+        Assert.Equal(claimed.LastFence, authority.GetReview(claimed.AttemptId)!.LastFence);
+
+        var current = await http.PostAsJsonAsync(
+            $"/api/v1/reviews/attempts/{claimed.AttemptId}/reclaim",
+            staleRequest with
+            {
+                InstanceId = "successor-instance",
+                IdempotencyKey = "current-successor-request",
+            });
+        current.EnsureSuccessStatusCode();
+        var reclaimed = (await current.Content.ReadFromJsonAsync<Contract.ReviewClaimResponse>())!;
+        Assert.True(reclaimed.Lease!.Fence > claimed.LastFence);
+        Assert.Equal("successor-instance", reclaimed.Lease.InstanceId);
+        Assert.Equal(originalIsolation.ResourceNamespace, reclaimed.Lease.ResourceNamespace);
+        Assert.Equal(originalIsolation.PortBase, reclaimed.Lease.PortBase);
     }
 
     private ReviewAttemptDto CreateClaimedReview(AttemptAuthorityService authority)

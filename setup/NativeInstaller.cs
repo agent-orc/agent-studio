@@ -213,7 +213,12 @@ internal sealed class NativeInstaller(
             }
             else
             {
-                await ReplaceReviewServiceAsync(systemctl, unitName, cancellationToken);
+                await ReplaceReviewServiceAsync(
+                    systemctl,
+                    unitName,
+                    Path.Combine(paths.HostOpt, "current", "agent-host"),
+                    stateRoot,
+                    cancellationToken);
             }
         }
         else
@@ -410,6 +415,10 @@ internal sealed class NativeInstaller(
             # Review replacement must use the sanctioned drain and handoff path.
             RefuseManualStop=true
 
+            [Service]
+            # A successful drain stops; guarded replacement starts explicitly.
+            Restart=on-failure
+
             """;
 
     internal static string? ResolveReviewRestartGuardPath(
@@ -420,9 +429,22 @@ internal sealed class NativeInstaller(
             ? Path.Combine(systemdRoot, $"{unitName}.d", ReviewRestartGuardFileName)
             : null;
 
+    internal static IReadOnlyList<string> BuildReviewRestartGuardArguments(string stateRoot)
+        =>
+        [
+            "--restart-guard",
+            "--hold-admission",
+            "--role",
+            "review",
+            "--state-dir",
+            stateRoot,
+        ];
+
     private async Task ReplaceReviewServiceAsync(
         string systemctl,
         string unitName,
+        string candidateBinary,
+        string stateRoot,
         CancellationToken cancellationToken)
     {
         var guard = await processes.RunAsync(
@@ -436,6 +458,17 @@ internal sealed class NativeInstaller(
             throw new InvalidOperationException(
                 $"{unitName} did not adopt the Review RefuseManualStop guard.");
         }
+        var restart = await processes.RunAsync(
+            systemctl,
+            ["show", "--property=Restart", "--value", unitName],
+            printOutput: false,
+            cancellationToken: cancellationToken);
+        if (restart.ExitCode != 0
+            || !string.Equals(restart.Output.Trim(), "on-failure", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"{unitName} did not adopt the Review Restart=on-failure policy.");
+        }
 
         var previousMainPid = await ReadMainPidAsync(systemctl, unitName, cancellationToken);
         var active = await processes.RunAsync(
@@ -443,20 +476,96 @@ internal sealed class NativeInstaller(
             ["is-active", "--quiet", unitName],
             printOutput: false,
             cancellationToken: cancellationToken);
+        var liveStateRoot = stateRoot;
         if (active.ExitCode == 0 && previousMainPid > 0)
         {
+            liveStateRoot = ReadProcessEnvironmentValue(
+                previousMainPid,
+                "RUNNER_STATE_DIR");
+            if (!Path.IsPathFullyQualified(liveStateRoot)
+                || liveStateRoot.IndexOfAny(['\r', '\n']) >= 0
+                || string.Equals(
+                    Path.GetFullPath(liveStateRoot),
+                    Path.GetPathRoot(Path.GetFullPath(liveStateRoot)),
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"{unitName} exposed an invalid effective RUNNER_STATE_DIR; " +
+                    "guarded replacement was refused.");
+            }
+            var restartGuard = await processes.RunAsync(
+                "env",
+                [
+                    "-i",
+                    "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                    candidateBinary,
+                    .. BuildReviewRestartGuardArguments(liveStateRoot),
+                ],
+                cancellationToken: cancellationToken);
+            if (restartGuard.ExitCode != 0)
+            {
+                throw new InvalidOperationException(
+                    $"{unitName} restart guard refused with exit {restartGuard.ExitCode}. " +
+                    "Drain the Review role before replacing it.");
+            }
+            var guardedMainPid = await ReadMainPidAsync(
+                systemctl,
+                unitName,
+                cancellationToken);
+            var stillActive = await processes.RunAsync(
+                systemctl,
+                ["is-active", "--quiet", unitName],
+                printOutput: false,
+                cancellationToken: cancellationToken);
+            if (guardedMainPid != previousMainPid || stillActive.ExitCode != 0)
+            {
+                throw new InvalidOperationException(
+                    $"{unitName} MainPID changed before guarded replacement; " +
+                    "Review admission remains closed.");
+            }
+
             await processes.RequireAsync(
                 systemctl,
                 ["kill", "--kill-whom=main", "--signal=SIGTERM", unitName],
                 cancellationToken: cancellationToken);
-        }
-        else
-        {
-            await processes.RequireAsync(
+
+            var stopDeadline = DateTime.UtcNow.AddSeconds(120);
+            while (DateTime.UtcNow < stopDeadline)
+            {
+                var stopped = await processes.RunAsync(
+                    systemctl,
+                    ["is-active", "--quiet", unitName],
+                    printOutput: false,
+                    cancellationToken: cancellationToken);
+                var stoppedMainPid = await ReadMainPidAsync(
+                    systemctl,
+                    unitName,
+                    cancellationToken);
+                if (stopped.ExitCode != 0 && stoppedMainPid == 0)
+                    break;
+                await Task.Delay(250, cancellationToken);
+            }
+
+            var finalActive = await processes.RunAsync(
                 systemctl,
-                ["start", unitName],
+                ["is-active", "--quiet", unitName],
+                printOutput: false,
                 cancellationToken: cancellationToken);
+            if (finalActive.ExitCode == 0
+                || await ReadMainPidAsync(systemctl, unitName, cancellationToken) != 0)
+            {
+                throw new InvalidOperationException(
+                    $"{unitName} did not stop before guarded replacement.");
+            }
         }
+
+        ClearReviewControlState(liveStateRoot);
+        if (!string.Equals(liveStateRoot, stateRoot, StringComparison.Ordinal))
+            ClearReviewControlState(stateRoot);
+        await processes.RequireAsync(
+            systemctl,
+            ["start", unitName],
+            cancellationToken: cancellationToken);
 
         var deadline = DateTime.UtcNow.AddSeconds(120);
         while (DateTime.UtcNow < deadline)
@@ -481,6 +590,40 @@ internal sealed class NativeInstaller(
 
         throw new InvalidOperationException(
             $"{unitName} did not expose a replacement MainPID within 120 seconds.");
+    }
+
+    private static void ClearReviewControlState(string stateRoot)
+    {
+        File.Delete(Path.Combine(stateRoot, "review-drain-requested.json"));
+        File.Delete(Path.Combine(stateRoot, "review-drain-acknowledged.json"));
+    }
+
+    private static string ReadProcessEnvironmentValue(int processId, string variable)
+    {
+        var environmentPath = $"/proc/{processId}/environ";
+        byte[] bytes;
+        try
+        {
+            bytes = File.ReadAllBytes(environmentPath);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException)
+        {
+            throw new InvalidOperationException(
+                $"Could not read the active Review process environment at {environmentPath}.",
+                exception);
+        }
+
+        var prefix = variable + "=";
+        var value = System.Text.Encoding.UTF8.GetString(bytes)
+            .Split('\0', StringSplitOptions.RemoveEmptyEntries)
+            .LastOrDefault(item => item.StartsWith(prefix, StringComparison.Ordinal));
+        if (value is null || value.Length == prefix.Length)
+        {
+            throw new InvalidOperationException(
+                $"The active Review process does not expose {variable}.");
+        }
+        return value[prefix.Length..];
     }
 
     private async Task<int> ReadMainPidAsync(

@@ -52,4 +52,23 @@ public sealed class ReviewLeaseRecoveryPolicyTests
         => Assert.Equal(
             expected,
             ReviewLeaseRecoveryPolicy.AfterReRegistration(adopted, workerLive));
+
+    [Theory]
+    [InlineData(409, "LeaseExpired", true)]
+    [InlineData(409, "review-lease-expired", true)]
+    [InlineData(409, "review-lease-not-active", true)]
+    [InlineData(409, "stale-review-fence", true)]
+    [InlineData(409, "review-execution-attribution-mismatch", true)]
+    [InlineData(409, "Superseded", false)]
+    [InlineData(409, "review-subject-mismatch", false)]
+    [InlineData(404, "LeaseExpired", false)]
+    internal void Report_rejections_recover_only_published_authority_conflicts(
+        int? statusCode,
+        string? errorCode,
+        bool expected)
+        => Assert.Equal(
+            expected,
+            ReviewLeaseRecoveryPolicy.IsRecoverableReportAuthorityRejection(
+                statusCode,
+                errorCode));
 }

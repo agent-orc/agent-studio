@@ -11,6 +11,16 @@ using Contract = AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Runner;
 
+internal static class ReviewRestartOutcomePolicy
+{
+    internal static bool IsDefinitiveLoss(Contract.RunnerAttemptAdoption adoption)
+        => string.Equals(
+            adoption.Kind,
+            Contract.RunnerAttemptKinds.Review,
+            StringComparison.Ordinal)
+           && string.Equals(adoption.Status, "worker-not-reported", StringComparison.Ordinal);
+}
+
 /// <summary>
 /// Tranche-0 compatibility mount for the versioned Remote Review plane and
 /// runner capability advertisements. The monolith remains the single task and
@@ -70,12 +80,33 @@ public static class V1ReviewPlaneEndpoints
                     request.AttemptLeaseTtlSeconds);
                 if (registration.ReviewRestartedAt is { } restartedAt)
                 {
+                    var reportedReviewAttemptIds = (request.ActiveAttempts ?? [])
+                        .Where(item => string.Equals(
+                            item.Kind,
+                            Contract.RunnerAttemptKinds.Review,
+                            StringComparison.Ordinal))
+                        .Select(item => item.AttemptId)
+                        .ToHashSet(StringComparer.Ordinal);
+                    var restartObservations = adoptions
+                        .Concat(authority.ListReviewAttemptsOwnedByExecutorHost(
+                                runnerId,
+                                request.HostId)
+                            .Where(review => !reportedReviewAttemptIds.Contains(review.AttemptId))
+                            .Select(review => new Contract.RunnerAttemptAdoption(
+                                Contract.RunnerAttemptKinds.Review,
+                                review.AttemptId,
+                                review.TaskKey,
+                                "worker-not-reported",
+                                Message: $"Persisted ReviewAttempt worker for lease instance "
+                                         + $"'{review.Lease?.ClientId ?? "unknown"}' was absent from "
+                                         + "replacement ActiveAttempts.")))
+                        .ToArray();
                     logger.LogWarning(
                         "review-daemon-restarted runner={RunnerId} instance={InstanceId} restartedAt={RestartedAt} reportedAttempts={ReportedAttempts}",
                         runnerId,
                         request.InstanceId,
                         restartedAt,
-                        adoptions.Count(item => string.Equals(
+                        restartObservations.Count(item => string.Equals(
                             item.Kind,
                             Contract.RunnerAttemptKinds.Review,
                             StringComparison.Ordinal)));
@@ -83,15 +114,29 @@ public static class V1ReviewPlaneEndpoints
                         runnerId,
                         request.InstanceId,
                         restartedAt,
-                        adoptions);
+                        restartObservations);
+                    authority.RecordReviewDaemonRestart(
+                        runnerId,
+                        request.HostId,
+                        request.InstanceId,
+                        restartedAt,
+                        restartObservations.Count(ReviewRestartOutcomePolicy.IsDefinitiveLoss));
                     AppendReviewRestartAdvisories(
                         runnerId,
                         request.InstanceId,
                         restartedAt,
-                        adoptions,
+                        restartObservations,
                         scanner,
                         chat,
                         logger);
+                }
+                if (authority.GetReviewDaemonRestart(runnerId, request.InstanceId) is { } durableRestart)
+                {
+                    registry.RestoreReviewRestartOutcome(
+                        runnerId,
+                        request.InstanceId,
+                        durableRestart.RestartedAt,
+                        durableRestart.ReviewsLost);
                 }
                 if (request.ActiveAttempts is { Count: > 0 })
                 {
@@ -384,7 +429,7 @@ public static class V1ReviewPlaneEndpoints
                     "empty",
                     Message: quotaDeferredReason));
             }
-            var lease = ToLease(review);
+            var lease = ToLease(authority, review);
             return Results.Ok(new Contract.ReviewClaimResponse(
                 "claimed",
                 ToAttempt(review),
@@ -428,7 +473,7 @@ public static class V1ReviewPlaneEndpoints
                 request.ExecutorId,
                 request.RequestedTtlSeconds);
             return renewed.Accepted && renewed.ReviewAttempt is not null
-                ? Results.Ok(ToLease(renewed.ReviewAttempt))
+                ? Results.Ok(ToLease(authority, renewed.ReviewAttempt))
                 : AttemptError(renewed);
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
@@ -459,6 +504,28 @@ public static class V1ReviewPlaneEndpoints
             }
             if (!RunnerMatches(context, request.ExecutorId))
                 return Results.Unauthorized();
+
+            // Authentication remains the outer boundary, but an exact
+            // committed response belongs to the executor across daemon
+            // generations. Resolve only that replay before requiring the old
+            // request instance to still be the current registry generation.
+            var replay = authority.LookupReviewReClaimReplay(
+                attemptId,
+                request.ExecutorId,
+                request.InstanceId,
+                request.PreviousLeaseId,
+                request.PreviousFence,
+                request.IdempotencyKey,
+                request.RequestedTtlSeconds);
+            if (replay.Status == ReviewReClaimReplayStatus.Conflict)
+            {
+                return Results.Conflict(new Contract.ApiError(
+                    "idempotency-conflict",
+                    replay.Message ?? "Review reclaim idempotency payload does not match."));
+            }
+            if (replay.Status == ReviewReClaimReplayStatus.Replayed)
+                return Results.Ok(ToReClaimResponse(replay));
+
             if (!registry.TryGetReviewExecutor(request.ExecutorId, request.InstanceId, out var executor))
                 return Results.Conflict(new Contract.ApiError(
                     "review-executor-not-registered",
@@ -490,7 +557,7 @@ public static class V1ReviewPlaneEndpoints
             return Results.Ok(new Contract.ReviewClaimResponse(
                 "claimed",
                 ToAttempt(reclaimed.ReviewAttempt),
-                Lease: ToLease(reclaimed.ReviewAttempt)));
+                Lease: ToLease(authority, reclaimed.ReviewAttempt)));
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
         api.MapPost("/reviews/attempts/{attemptId}/report", async (
@@ -1382,12 +1449,39 @@ public static class V1ReviewPlaneEndpoints
             review.FailureClassification);
     }
 
-    private static Contract.ReviewLeaseDto ToLease(ReviewAttemptDto review)
+    private static Contract.ReviewLeaseDto ToLease(
+        AttemptAuthorityService authority,
+        ReviewAttemptDto review)
     {
         var lease = review.Lease
                     ?? throw new InvalidOperationException("Claimed ReviewAttempt has no lease.");
-        var resourceNamespace =
-            $"review-{SafeSegment(review.AttemptId).ToLowerInvariant()}-f{review.LastFence}";
+        var isolation = authority.GetReviewLeaseIsolation(review.AttemptId, lease.LeaseId)
+                        ?? throw new InvalidOperationException(
+                            "Claimed ReviewAttempt has no physical isolation authority.");
+        return ToLease(review, isolation);
+    }
+
+    private static Contract.ReviewClaimResponse ToReClaimResponse(
+        ReviewReClaimReplayLookup replay)
+    {
+        var review = replay.ReviewAttempt
+                     ?? throw new InvalidOperationException(
+                         "Committed review reclaim replay has no attempt response.");
+        var isolation = replay.Isolation
+                        ?? throw new InvalidOperationException(
+                            "Committed review reclaim replay has no isolation response.");
+        return new Contract.ReviewClaimResponse(
+            "claimed",
+            ToAttempt(review),
+            Lease: ToLease(review, isolation));
+    }
+
+    private static Contract.ReviewLeaseDto ToLease(
+        ReviewAttemptDto review,
+        ReviewLeaseIsolation isolation)
+    {
+        var lease = review.Lease
+                    ?? throw new InvalidOperationException("Claimed ReviewAttempt has no lease.");
         return new Contract.ReviewLeaseDto(
             lease.LeaseId,
             review.AttemptId,
@@ -1399,8 +1493,8 @@ public static class V1ReviewPlaneEndpoints
             lease.AcquiredAt,
             lease.ExpiresAt,
             "active",
-            resourceNamespace,
-            PortBase(review.AttemptId, review.LastFence),
+            isolation.ResourceNamespace,
+            isolation.PortBase,
             review.AuthorityEpoch);
     }
 
@@ -1567,10 +1661,7 @@ public static class V1ReviewPlaneEndpoints
                 Contract.RunnerAttemptKinds.Review,
                 StringComparison.Ordinal))
             .ToArray();
-        foreach (var adoption in reviewAdoptions.Where(item => !string.Equals(
-                     item.Status,
-                     "adopted",
-                     StringComparison.Ordinal)))
+        foreach (var adoption in reviewAdoptions.Where(ReviewRestartOutcomePolicy.IsDefinitiveLoss))
         {
             logger.LogWarning(
                 "review-attempt-lost-on-restart runner={RunnerId} instance={InstanceId} attempt={AttemptId} card={TaskKey} status={Status} cause={Cause}",
@@ -1599,7 +1690,8 @@ public static class V1ReviewPlaneEndpoints
                 item.Status,
                 "adopted",
                 StringComparison.Ordinal));
-            var lost = card.Count() - adopted;
+            var lost = card.Count(ReviewRestartOutcomePolicy.IsDefinitiveLoss);
+            var recoveryPending = card.Count() - adopted - lost;
             var attempts = string.Join(
                 ", ",
                 card.Select(item => $"{item.AttemptId}:{item.Status}"));
@@ -1607,14 +1699,11 @@ public static class V1ReviewPlaneEndpoints
                 task,
                 "review-daemon-restart",
                 $"Review daemon '{runnerId}' restarted at {restartedAt:O} as instance "
-                + $"'{instanceId}' while review work for card {card.Key} was active. "
-                + $"Attempts={attempts}; adopted={adopted}, lost={lost}; "
+                 + $"'{instanceId}' while review work for card {card.Key} was active. "
+                + $"Attempts={attempts}; adopted={adopted}, recoveryPending={recoveryPending}, lost={lost}; "
                 + "cause=runner instance generation changed.");
 
-            foreach (var adoption in card.Where(item => !string.Equals(
-                         item.Status,
-                         "adopted",
-                         StringComparison.Ordinal)))
+            foreach (var adoption in card.Where(ReviewRestartOutcomePolicy.IsDefinitiveLoss))
             {
                 var cause = (adoption.Message ?? "no server detail").Trim().TrimEnd('.');
                 chat.AppendSupervisor(
@@ -1630,16 +1719,6 @@ public static class V1ReviewPlaneEndpoints
     private static bool RunnerMatches(HttpContext context, string runnerId)
         => context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is not RunnerPrincipal principal
            || string.Equals(principal.RunnerId, runnerId, StringComparison.Ordinal);
-
-    private static int PortBase(string attemptId, long fence)
-    {
-        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes($"{attemptId}:{fence}"));
-        var slot = BitConverter.ToUInt16(bytes, 0) % 4000;
-        return 24000 + slot * 8;
-    }
-
-    private static string SafeSegment(string value)
-        => new(value.Select(ch => char.IsLetterOrDigit(ch) || ch is '-' or '_' ? ch : '-').ToArray());
 
     private static string ShellQuote(string value)
         => "'" + value.Replace("'", "'\"'\"'", StringComparison.Ordinal) + "'";
@@ -1748,6 +1827,7 @@ public sealed class V1ReviewExecutorRegistry
         var now = DateTime.UtcNow;
         Registration registration;
         DateTime? reviewRestartedAt = null;
+        string? previousInstanceId = null;
         lock (_gate)
         {
             registration = _registrations.AddOrUpdate(
@@ -1776,6 +1856,7 @@ public sealed class V1ReviewExecutorRegistry
                             StringComparison.Ordinal))
                     {
                         reviewRestartedAt = now;
+                        previousInstanceId = existing.InstanceId;
                         _reviewRestarts[runnerId] = new ReviewRestartStatus(
                             now,
                             request.InstanceId,
@@ -1816,7 +1897,8 @@ public sealed class V1ReviewExecutorRegistry
                 "active",
                 registration.RegisteredAt,
                 registration.LastSeenAt),
-            reviewRestartedAt);
+            reviewRestartedAt,
+            previousInstanceId);
     }
 
     public bool RecordReviewRestartOutcome(
@@ -1834,10 +1916,30 @@ public sealed class V1ReviewExecutorRegistry
                 return false;
             }
 
-            var lost = adoptions.Count(item =>
-                string.Equals(item.Kind, Contract.RunnerAttemptKinds.Review, StringComparison.Ordinal)
-                && !string.Equals(item.Status, "adopted", StringComparison.Ordinal));
+            var lost = adoptions.Count(ReviewRestartOutcomePolicy.IsDefinitiveLoss);
             _reviewRestarts[runnerId] = restart with { ReviewsLost = lost };
+            return true;
+        }
+    }
+
+    public bool RestoreReviewRestartOutcome(
+        string runnerId,
+        string instanceId,
+        DateTime restartedAt,
+        int reviewsLost)
+    {
+        if (reviewsLost < 0) return false;
+        lock (_gate)
+        {
+            if (!_registrations.TryGetValue(runnerId, out var registration)
+                || !string.Equals(registration.InstanceId, instanceId, StringComparison.Ordinal))
+            {
+                return false;
+            }
+            _reviewRestarts[runnerId] = new ReviewRestartStatus(
+                restartedAt.ToUniversalTime(),
+                instanceId,
+                reviewsLost);
             return true;
         }
     }
@@ -2527,7 +2629,8 @@ public sealed class V1ReviewExecutorRegistry
 
     public sealed record RunnerRegistrationResult(
         Contract.RunnerDto Runner,
-        DateTime? ReviewRestartedAt);
+        DateTime? ReviewRestartedAt,
+        string? PreviousInstanceId);
 
     public sealed record CodingCapabilityAdmission(
         bool Eligible,

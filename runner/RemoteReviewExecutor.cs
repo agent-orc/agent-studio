@@ -14,6 +14,7 @@ public sealed class RemoteReviewExecutor
     private readonly ReviewStateStore _state;
     private readonly Action<string> _log;
     private readonly object _slotGate = new();
+    private readonly SemaphoreSlim _authorityOperationGate = new(1, 1);
 
     /// <summary>
     /// Live write authority for this slot. The heartbeat may re-fence it while
@@ -32,6 +33,8 @@ public sealed class RemoteReviewExecutor
     private string _workspaceNamespace = string.Empty;
 
     internal Func<int, TimeSpan>? ReportRetryDelayOverride { get; set; }
+    internal Func<int, TimeSpan>? AuthorityRetryDelayOverride { get; set; }
+    internal Func<CancellationToken, Task>? BeforeReportSubmissionOverride { get; set; }
 
     public RemoteReviewExecutor(
         RunnerOptions options,
@@ -90,15 +93,43 @@ public sealed class RemoteReviewExecutor
     {
         lock (_slotGate)
         {
-            _slot = _state.Save(slot with { Claim = _authority.Claim });
+            // Phase writers commonly hold a snapshot captured before a
+            // heartbeat began authority recovery. PendingReClaim is an
+            // in-flight mutation journal, so that stale snapshot must never
+            // erase it. Only the explicit authority paths below may set or
+            // clear the pending request.
+            _slot = _state.Save(slot with
+            {
+                Claim = _authority.Claim,
+                PendingReClaim = _slot.PendingReClaim,
+            });
             return _slot;
         }
     }
 
     /// <summary>Writes a re-fenced claim through without changing the phase.</summary>
-    private void PersistAuthority()
+    private void PersistAuthority(bool clearPendingReClaim = false)
     {
-        lock (_slotGate) _slot = _state.Save(_slot with { Claim = _authority.Claim });
+        lock (_slotGate)
+        {
+            _slot = _state.Save(_slot with
+            {
+                Claim = _authority.Claim,
+                PendingReClaim = clearPendingReClaim ? null : _slot.PendingReClaim,
+            });
+        }
+    }
+
+    private void PersistPendingReClaim(ReviewReClaimRequest request)
+    {
+        lock (_slotGate)
+        {
+            _slot = _state.Save(_slot with
+            {
+                Claim = _authority.Claim,
+                PendingReClaim = request,
+            });
+        }
     }
 
     /// <summary>
@@ -152,7 +183,19 @@ public sealed class RemoteReviewExecutor
         // the Task Server no longer honours must be repaired now, while the
         // worker is still provably alive - not thirty seconds later, when the
         // only remaining move is to drop an expensive report.
-        if (reattach) slot = await VerifyAdoptedAuthorityAsync(slot);
+        if (reattach)
+        {
+            try
+            {
+                slot = await VerifyAdoptedAuthorityAsync(slot, shutdown);
+            }
+            catch (OperationCanceledException) when (
+                shutdown.IsCancellationRequested && workerStarted)
+            {
+                await HandOffAsync(attempt);
+                return 0;
+            }
+        }
 
         using var heartbeatStop = CancellationTokenSource.CreateLinkedTokenSource(shutdown);
         var heartbeat = RenewLoopAsync(attempt.TaskId, heartbeatStop.Token);
@@ -272,11 +315,7 @@ public sealed class RemoteReviewExecutor
             // A handoff must not let the lease expire in the restart window. The
             // replacement instance renews with exactly this authority, so the
             // outgoing instance buys it enough runway to get there.
-            await ExtendLeaseForHandoffAsync(attempt.AttemptId);
-            SaveSlot(slot with { Phase = "handed-off" });
-            _log(
-                $"review daemon handoff attempt={attempt.AttemptId} fence={_authority.Lease.Fence} " +
-                $"pid={slot.ProcessId}; detached worker left running for replacement adoption");
+            await HandOffAsync(attempt);
             return 0;
         }
         finally
@@ -379,113 +418,159 @@ public sealed class RemoteReviewExecutor
             }
         }
 
-        ReviewReportDto report;
+        if (BeforeReportSubmissionOverride is not null)
+            await BeforeReportSubmissionOverride(ct);
+
+        ReviewReportDto? report = null;
         while (true)
         {
-            // Built inside the loop: a takeover between two submission attempts
-            // re-fences the slot, and the report must carry the authority that
-            // is current when it is sent.
-            var lease = _authority.Lease;
-            var request = new ReviewReportRequest(
-                lease.ExecutorId,
-                lease.InstanceId,
-                lease.LeaseId,
-                lease.Fence,
-                $"review-report:{attempt.AttemptId}:{lease.Fence}",
-                failureClassification is null ? evidence.Outcome : "ReviewInfra",
-                failureClassification,
-                summary,
-                evidence.Workspace,
-                workspace.EnvironmentEvidence(lease),
-                evidence.Commands,
-                evidence.Artifacts,
-                evidence.Verdicts,
-                AuthorityEpoch: lease.AuthorityEpoch);
-            var submittedAt = DateTime.UtcNow;
-            slot = SaveSlot(slot with
-            {
-                Phase = "report-submitting",
-                ReportPendingSinceUtc = slot.ReportPendingSinceUtc ?? submittedAt,
-                ReportSubmissionAttempts = slot.ReportSubmissionAttempts + 1,
-                LastReportSubmissionAtUtc = submittedAt,
-                LastReportStatusCode = null,
-                LastReportErrorCode = null,
-                LastReportError = null,
-            });
+            TaskServerException? taskServer = null;
+            Exception? retryFailure = null;
+            var authorityAdvanced = false;
+            var delay = TimeSpan.Zero;
+
+            // Renewal recovery and report delivery share one gate. A heartbeat
+            // therefore cannot mint a higher fence after this request snapshots
+            // its lease but before the Task Server validates it.
+            await _authorityOperationGate.WaitAsync(CancellationToken.None);
             try
             {
-                // The idempotency key makes this atomic write replay-safe. Do not
-                // cancel a request once sent; shutdown only interrupts backoff.
-                report = await _client.ReportReviewAsync(
-                    attempt.AttemptId,
-                    request,
-                    CancellationToken.None);
-                break;
-            }
-            catch (Exception exception)
-            {
-                var taskServer = exception as TaskServerException;
-                var transportFailure = exception is HttpRequestException or TaskCanceledException;
-                var action = ReviewReportSubmissionPolicy.Decide(
-                    taskServer?.StatusCode,
-                    taskServer?.ErrorCode,
-                    transportFailure);
-                var error = exception.Message.Length <= 500
-                    ? exception.Message
-                    : exception.Message[..500];
+                // Built inside the gate and inside the retry loop: a takeover
+                // between attempts must make the next report use its new fence.
+                var lease = _authority.Lease;
+                var request = new ReviewReportRequest(
+                    lease.ExecutorId,
+                    lease.InstanceId,
+                    lease.LeaseId,
+                    lease.Fence,
+                    $"review-report:{attempt.AttemptId}:{lease.Fence}",
+                    failureClassification is null ? evidence.Outcome : "ReviewInfra",
+                    failureClassification,
+                    summary,
+                    evidence.Workspace,
+                    workspace.EnvironmentEvidence(lease),
+                    evidence.Commands,
+                    evidence.Artifacts,
+                    evidence.Verdicts,
+                    AuthorityEpoch: lease.AuthorityEpoch);
+                var submittedAt = DateTime.UtcNow;
                 slot = SaveSlot(slot with
                 {
-                    Phase = action == ReviewReportSubmissionAction.Retry
-                        ? "report-pending"
-                        : "report-rejected-terminal",
-                    LastReportStatusCode = taskServer?.StatusCode,
-                    LastReportErrorCode = taskServer?.ErrorCode,
-                    LastReportError = error,
-                    TerminalClassification = action == ReviewReportSubmissionAction.Retry
-                        ? null
-                        : ReviewReportSubmissionPolicy.TerminalClassification(action),
+                    Phase = "report-submitting",
+                    ReportPendingSinceUtc = slot.ReportPendingSinceUtc ?? submittedAt,
+                    ReportSubmissionAttempts = slot.ReportSubmissionAttempts + 1,
+                    LastReportSubmissionAtUtc = submittedAt,
+                    LastReportStatusCode = null,
+                    LastReportErrorCode = null,
+                    LastReportError = null,
                 });
-
-                if (action != ReviewReportSubmissionAction.Retry)
-                {
-                    return await FinalizeTerminalReportRejectionAsync(
-                        slot,
-                        workspace,
-                        action,
-                        taskServer);
-                }
-
-                var delay = ReportRetryDelayOverride?.Invoke(slot.ReportSubmissionAttempts)
-                            ?? TaskServerConnectivityMonitor.RetryDelay(
-                                _options.PollSeconds,
-                                slot.ReportSubmissionAttempts);
-                var age = DateTime.UtcNow - slot.ReportPendingSinceUtc!.Value;
-                _log(
-                    $"review-report-pending attempt={attempt.AttemptId} " +
-                    $"submissionAttempts={slot.ReportSubmissionAttempts} " +
-                    $"ageSeconds={Math.Max(0, age.TotalSeconds):0} " +
-                    $"status={taskServer?.StatusCode.ToString() ?? "transport"} " +
-                    $"code={taskServer?.ErrorCode ?? exception.GetType().Name} " +
-                    $"retryInMs={(long)delay.TotalMilliseconds}");
                 try
                 {
-                    await Task.Delay(delay, ct);
+                    // The idempotency key makes this atomic write replay-safe. Do not
+                    // cancel a request once sent; shutdown only interrupts backoff.
+                    report = await _client.ReportReviewAsync(
+                        attempt.AttemptId,
+                        request,
+                        CancellationToken.None);
                 }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                catch (Exception exception)
                 {
-                    await ExtendLeaseForHandoffAsync(attempt.AttemptId);
-                    PersistAuthority();
-                    _log(
-                        $"review report retry handed off attempt={attempt.AttemptId} " +
-                        $"submissionAttempts={slot.ReportSubmissionAttempts} " +
-                        $"phase=report-pending");
-                    return 0;
+                    taskServer = exception as TaskServerException;
+                    retryFailure = exception;
+                    authorityAdvanced = !SameAuthority(lease, _authority.Lease);
+                    var transportFailure = exception is HttpRequestException or TaskCanceledException;
+                    var authorityRecovered = false;
+                    if (!authorityAdvanced
+                        && ReviewLeaseRecoveryPolicy.IsRecoverableReportAuthorityRejection(
+                            taskServer?.StatusCode,
+                            taskServer?.ErrorCode))
+                    {
+                        authorityRecovered = await TryRecoverAuthorityAsync(
+                            "report",
+                            attempt.TaskId,
+                            exception,
+                            ct);
+                        authorityAdvanced = !SameAuthority(lease, _authority.Lease);
+                    }
+                    var action = authorityAdvanced || authorityRecovered
+                        ? ReviewReportSubmissionAction.Retry
+                        : ReviewReportSubmissionPolicy.Decide(
+                            taskServer?.StatusCode,
+                            taskServer?.ErrorCode,
+                            transportFailure);
+                    var error = exception.Message.Length <= 500
+                        ? exception.Message
+                        : exception.Message[..500];
+                    slot = SaveSlot(slot with
+                    {
+                        Phase = action == ReviewReportSubmissionAction.Retry
+                            ? "report-pending"
+                            : "report-rejected-terminal",
+                        LastReportStatusCode = taskServer?.StatusCode,
+                        LastReportErrorCode = taskServer?.ErrorCode,
+                        LastReportError = error,
+                        TerminalClassification = action == ReviewReportSubmissionAction.Retry
+                            ? null
+                            : ReviewReportSubmissionPolicy.TerminalClassification(action),
+                    });
+
+                    if (action != ReviewReportSubmissionAction.Retry)
+                    {
+                        // Keep recovery outside this destructive terminal path.
+                        // Once a current-authority rejection is classified, the
+                        // heartbeat cannot re-fence the slot during cleanup.
+                        return await FinalizeTerminalReportRejectionAsync(
+                            slot,
+                            workspace,
+                            action,
+                            taskServer);
+                    }
+
+                    delay = authorityAdvanced || authorityRecovered
+                        ? TimeSpan.Zero
+                        : ReportRetryDelayOverride?.Invoke(slot.ReportSubmissionAttempts)
+                          ?? TaskServerConnectivityMonitor.RetryDelay(
+                              _options.PollSeconds,
+                              slot.ReportSubmissionAttempts);
                 }
             }
+            finally
+            {
+                _authorityOperationGate.Release();
+            }
+
+            if (report is not null) break;
+
+            var age = DateTime.UtcNow - slot.ReportPendingSinceUtc!.Value;
+            _log(
+                $"review-report-pending attempt={attempt.AttemptId} " +
+                $"submissionAttempts={slot.ReportSubmissionAttempts} " +
+                $"ageSeconds={Math.Max(0, age.TotalSeconds):0} " +
+                $"status={taskServer?.StatusCode.ToString() ?? "transport"} " +
+                $"code={taskServer?.ErrorCode ?? retryFailure?.GetType().Name ?? "unknown"} " +
+                $"authorityAdvanced={authorityAdvanced.ToString().ToLowerInvariant()} " +
+                $"retryInMs={(long)delay.TotalMilliseconds}");
+            try
+            {
+                await Task.Delay(delay, ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                await ExtendLeaseForHandoffAsync(attempt.AttemptId);
+                PersistAuthority();
+                _log(
+                    $"review report retry handed off attempt={attempt.AttemptId} " +
+                    $"submissionAttempts={slot.ReportSubmissionAttempts} " +
+                    $"phase=report-pending");
+                return 0;
+            }
         }
+        var acceptedReport = report
+                             ?? throw new InvalidOperationException(
+                                 "Review report loop exited without an acknowledgement.");
         _log(
-            $"review report accepted attempt={attempt.AttemptId} outcome={report.Outcome} " +
-            $"classification={report.FailureClassification ?? "none"} taskState={report.TaskState} " +
+            $"review report accepted attempt={attempt.AttemptId} outcome={acceptedReport.Outcome} " +
+            $"classification={acceptedReport.FailureClassification ?? "none"} taskState={acceptedReport.TaskState} " +
             $"submissionAttempts={slot.ReportSubmissionAttempts}");
         slot = SaveSlot(slot with { Phase = "report-accepted" });
 
@@ -529,10 +614,14 @@ public sealed class RemoteReviewExecutor
             _state.Delete(slot);
             _log(
                 $"review slot state deleted attempt={attempt.AttemptId} " +
-                $"terminalOutcome={report.Outcome}");
+                $"terminalOutcome={acceptedReport.Outcome}");
         }
 
-        return report.Outcome == "Pass" ? 0 : report.Outcome == "ProductFailure" ? 2 : 3;
+        return acceptedReport.Outcome == "Pass"
+            ? 0
+            : acceptedReport.Outcome == "ProductFailure"
+                ? 2
+                : 3;
     }
 
     private async Task<int> FinalizeTerminalReportRejectionAsync(
@@ -614,14 +703,28 @@ public sealed class RemoteReviewExecutor
             Math.Max(1, Math.Min(_options.HeartbeatSeconds, Math.Max(1, _options.TtlSeconds / 3)))));
         while (await timer.WaitForNextTickAsync(stop))
         {
+            var recovered = true;
+            await _authorityOperationGate.WaitAsync(stop);
             try
             {
-                await RenewOnceAsync(_options.TtlSeconds, stop);
+                try
+                {
+                    await RenewOnceAsync(_options.TtlSeconds, stop);
+                }
+                catch (Exception exception) when (!stop.IsCancellationRequested)
+                {
+                    recovered = await TryRecoverAuthorityAsync(
+                        "heartbeat",
+                        taskId,
+                        exception,
+                        stop);
+                }
             }
-            catch (Exception exception) when (!stop.IsCancellationRequested)
+            finally
             {
-                if (!await TryRecoverAuthorityAsync("heartbeat", taskId, exception, stop)) return;
+                _authorityOperationGate.Release();
             }
+            if (!recovered) return;
         }
     }
 
@@ -645,7 +748,19 @@ public sealed class RemoteReviewExecutor
                 AuthorityEpoch: lease.AuthorityEpoch),
             ct);
         _authority.Rebind(_authority.Attempt, renewed);
-        PersistAuthority();
+        ReviewReClaimRequest? disprovedPendingReClaim;
+        lock (_slotGate) disprovedPendingReClaim = _slot.PendingReClaim;
+        PersistAuthority(clearPendingReClaim: disprovedPendingReClaim is not null);
+        if (disprovedPendingReClaim is not null)
+        {
+            // A higher-fence reclaim and this old-fence renewal cannot both be
+            // authoritative. The successful renewal proves the journaled
+            // request never committed, so it must not shadow a later recovery.
+            _log(
+                $"review lease renewal disproved pending re-claim " +
+                $"attempt={lease.AttemptId} fence={lease.Fence} " +
+                $"pendingInstance={disprovedPendingReClaim.InstanceId}; journal cleared");
+        }
     }
 
     /// <summary>
@@ -654,27 +769,44 @@ public sealed class RemoteReviewExecutor
     /// under a higher fence) while the worker still exists; only a genuinely
     /// gone or superseded attempt falls through to the report path.
     /// </summary>
-    private async Task<PersistedReviewSlot> VerifyAdoptedAuthorityAsync(PersistedReviewSlot slot)
+    private async Task<PersistedReviewSlot> VerifyAdoptedAuthorityAsync(
+        PersistedReviewSlot slot,
+        CancellationToken shutdown)
     {
         var attempt = slot.Claim.Attempt!;
+        await _authorityOperationGate.WaitAsync(shutdown);
         try
         {
-            // Never cancelled: adoption verification is the whole point of the
-            // restart window and must complete even as the daemon is told to go.
-            await RenewOnceAsync(_options.TtlSeconds, CancellationToken.None);
-            _log(
-                $"review adoption lease verified attempt={attempt.AttemptId} " +
-                $"fence={_authority.Lease.Fence} expiresAt={_authority.Lease.ExpiresAt:O}");
+            try
+            {
+                // A second planned shutdown must interrupt recovery promptly;
+                // the catch in RunPersistedAsync extends and persists the same
+                // handoff authority for the following daemon generation.
+                await RenewOnceAsync(_options.TtlSeconds, shutdown);
+                _log(
+                    $"review adoption lease verified attempt={attempt.AttemptId} " +
+                    $"fence={_authority.Lease.Fence} expiresAt={_authority.Lease.ExpiresAt:O}");
+            }
+            catch (OperationCanceledException) when (shutdown.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                await TryRecoverAuthorityAsync(
+                    "adoption",
+                    attempt.TaskId,
+                    exception,
+                    shutdown);
+            }
         }
-        catch (Exception exception)
+        finally
         {
-            await TryRecoverAuthorityAsync(
-                "adoption",
-                attempt.TaskId,
-                exception,
-                CancellationToken.None);
+            _authorityOperationGate.Release();
         }
-        return SaveSlot(slot);
+        PersistedReviewSlot currentSlot;
+        lock (_slotGate) currentSlot = _slot;
+        return SaveSlot(currentSlot);
     }
 
     /// <summary>
@@ -707,27 +839,18 @@ public sealed class RemoteReviewExecutor
         if (action == ReviewLeaseRecoveryAction.ReRegister)
         {
             var lease = _authority.Lease;
-            var adopted = false;
-            try
-            {
-                adopted = await _client.ReRegisterAttemptAsync(
-                    new RunnerActiveAttempt(
-                        RunnerAttemptKinds.Review,
-                        attemptId,
-                        taskId,
-                        lease.LeaseId,
-                        lease.Fence,
-                        lease.AuthorityEpoch,
-                        lease.InstanceId),
-                    ct);
-            }
-            catch (Exception registrationException) when (
-                registrationException is not OperationCanceledException)
-            {
-                _log(
-                    $"review lease re-adoption failed attempt={attemptId}: " +
-                    registrationException.Message);
-            }
+            var reportedAttempt = new RunnerActiveAttempt(
+                RunnerAttemptKinds.Review,
+                attemptId,
+                taskId,
+                lease.LeaseId,
+                lease.Fence,
+                lease.AuthorityEpoch,
+                lease.InstanceId);
+            var adopted = await TryReRegisterAttemptAsync(
+                reportedAttempt,
+                context,
+                ct);
             action = ReviewLeaseRecoveryPolicy.AfterReRegistration(adopted, WorkerStillLive());
             if (action == ReviewLeaseRecoveryAction.RetryLater)
             {
@@ -747,16 +870,25 @@ public sealed class RemoteReviewExecutor
                     renewalException is not OperationCanceledException)
                 {
                     var renewedTaskServer = renewalException as TaskServerException;
-                    if (ReviewLeaseRecoveryPolicy.Decide(
-                            renewedTaskServer?.StatusCode,
-                            renewedTaskServer?.ErrorCode,
-                            renewalException is HttpRequestException or TaskCanceledException)
-                        == ReviewLeaseRecoveryAction.Abandon)
+                    var verificationAction = ReviewLeaseRecoveryPolicy.Decide(
+                        renewedTaskServer?.StatusCode,
+                        renewedTaskServer?.ErrorCode,
+                        renewalException is HttpRequestException or TaskCanceledException);
+                    if (verificationAction == ReviewLeaseRecoveryAction.Abandon)
                     {
                         _log(
                             $"review lease re-adoption verification refused attempt={attemptId} " +
                             $"scope={context}: {renewalException.Message}");
                         return false;
+                    }
+
+                    if (verificationAction == ReviewLeaseRecoveryAction.RetryLater)
+                    {
+                        _log(
+                            $"review lease re-adoption verification transient attempt={attemptId} " +
+                            $"scope={context}; keeping persisted authority for the next renewal: " +
+                            renewalException.Message);
+                        return true;
                     }
 
                     taskServer = renewedTaskServer ?? taskServer;
@@ -785,6 +917,50 @@ public sealed class RemoteReviewExecutor
     }
 
     /// <summary>
+    /// Registration is a replay-safe PUT, but its response can be lost after
+    /// the server has already extended the old lease. Replaying the identical
+    /// active-attempt inventory resolves that ambiguity; immediately re-claiming
+    /// would be refused because the committed adoption made the lease live.
+    /// </summary>
+    private async Task<bool> TryReRegisterAttemptAsync(
+        RunnerActiveAttempt reportedAttempt,
+        string context,
+        CancellationToken ct)
+    {
+        for (var submissionAttempt = 1; ; submissionAttempt++)
+        {
+            try
+            {
+                return await _client.ReRegisterAttemptAsync(reportedAttempt, ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                if (!IsAmbiguousAuthorityMutation(exception))
+                {
+                    _log(
+                        $"review lease re-adoption failed attempt={reportedAttempt.AttemptId} " +
+                        $"scope={context}: {exception.Message}");
+                    return false;
+                }
+
+                var delay = AuthorityRetryDelayOverride?.Invoke(submissionAttempt)
+                            ?? TaskServerConnectivityMonitor.RetryDelay(
+                                _options.PollSeconds,
+                                submissionAttempt);
+                _log(
+                    $"review lease re-adoption response ambiguous attempt={reportedAttempt.AttemptId} " +
+                    $"scope={context} submissionAttempts={submissionAttempt} " +
+                    $"retryInMs={(long)delay.TotalMilliseconds}: {exception.Message}");
+                await Task.Delay(delay, ct);
+            }
+        }
+    }
+
+    /// <summary>
     /// Takes the attempt over under a higher fence. The running worker and its
     /// workspace are untouched: only the write authority the report will travel
     /// under is replaced.
@@ -795,56 +971,144 @@ public sealed class RemoteReviewExecutor
         CancellationToken ct)
     {
         var previous = _authority.Lease;
-        try
+        PersistedReviewSlot currentSlot;
+        lock (_slotGate) currentSlot = _slot;
+        var request = currentSlot.PendingReClaim
+                      ?? CreateReClaimRequest(previous, _client.RunnerInstanceId);
+        if (currentSlot.PendingReClaim is null)
         {
-            var reclaimed = await _client.ReClaimReviewAsync(
-                previous.AttemptId,
-                new ReviewReClaimRequest(
-                    previous.ExecutorId,
-                    _client.RunnerInstanceId,
-                    previous.LeaseId,
-                    previous.Fence,
-                    $"review-reclaim:{previous.AttemptId}:{previous.Fence}:{_client.RunnerInstanceId}",
-                    _options.TtlSeconds),
-                ct);
-            if (!string.Equals(reclaimed.Status, "claimed", StringComparison.OrdinalIgnoreCase)
-                || reclaimed.Attempt is null
-                || reclaimed.Lease is null)
-            {
-                _log(
-                    $"review lease re-claim refused attempt={previous.AttemptId} " +
-                    $"scope={context} status={reclaimed.Status} " +
-                    $"reason={reclaimed.Message ?? "none"}");
-                return false;
-            }
-            if (!string.Equals(
-                    reclaimed.Attempt.SubjectId,
-                    _authority.Claim.Subject!.SubjectId,
-                    StringComparison.Ordinal))
-            {
-                _log(
-                    $"review lease re-claim rejected attempt={previous.AttemptId} scope={context}: " +
-                    $"server subject {reclaimed.Attempt.SubjectId} is not the running " +
-                    $"subject {_authority.Claim.Subject!.SubjectId}");
-                return false;
-            }
-
-            _authority.Rebind(reclaimed.Attempt, reclaimed.Lease);
-            PersistAuthority();
-            _log(
-                $"review lease re-claimed attempt={previous.AttemptId} scope={context} " +
-                $"previousFence={previous.Fence} fence={reclaimed.Lease.Fence} " +
-                $"after HTTP {refusal?.StatusCode.ToString() ?? "transport"} " +
-                $"{refusal?.ErrorCode ?? "none"}; running worker and workspace kept");
-            return true;
+            // The request and its key are durable before the first byte is sent.
+            // If the server commits and the response is lost during shutdown,
+            // the following daemon replays this exact mutation and learns the
+            // already-minted fence instead of inventing a conflicting request.
+            PersistPendingReClaim(request);
         }
-        catch (Exception exception) when (exception is not OperationCanceledException)
+        var submissionAttempt = 0;
+        while (true)
         {
-            _log(
-                $"review lease re-claim failed attempt={previous.AttemptId} " +
-                $"scope={context}: {exception.Message}");
+            submissionAttempt++;
+            try
+            {
+                var reclaimed = await _client.ReClaimReviewAsync(
+                    previous.AttemptId,
+                    request,
+                    ct);
+                if (!string.Equals(reclaimed.Status, "claimed", StringComparison.OrdinalIgnoreCase)
+                    || reclaimed.Attempt is null
+                    || reclaimed.Lease is null)
+                {
+                    PersistAuthority(clearPendingReClaim: true);
+                    _log(
+                        $"review lease re-claim refused attempt={previous.AttemptId} " +
+                        $"scope={context} status={reclaimed.Status} " +
+                        $"reason={reclaimed.Message ?? "none"}");
+                    return false;
+                }
+                if (!string.Equals(
+                        reclaimed.Attempt.SubjectId,
+                        _authority.Claim.Subject!.SubjectId,
+                        StringComparison.Ordinal))
+                {
+                    PersistAuthority(clearPendingReClaim: true);
+                    _log(
+                        $"review lease re-claim rejected attempt={previous.AttemptId} scope={context}: " +
+                        $"server subject {reclaimed.Attempt.SubjectId} is not the running " +
+                        $"subject {_authority.Claim.Subject!.SubjectId}");
+                    return false;
+                }
+
+                _authority.Rebind(reclaimed.Attempt, reclaimed.Lease);
+                PersistAuthority(clearPendingReClaim: true);
+                _log(
+                    $"review lease re-claimed attempt={previous.AttemptId} scope={context} " +
+                    $"previousFence={previous.Fence} fence={reclaimed.Lease.Fence} " +
+                    $"after HTTP {refusal?.StatusCode.ToString() ?? "transport"} " +
+                    $"{refusal?.ErrorCode ?? "none"}; running worker and workspace kept");
+                return true;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                if (IsDefinitiveStaleGenerationReplayMiss(request, exception))
+                {
+                    var staleRequest = request;
+                    var replayMiss = (TaskServerException)exception;
+                    request = CreateReClaimRequest(previous, _client.RunnerInstanceId);
+                    // The old generation's exact delivery was definitively not
+                    // committed. Replace it durably before the first current-
+                    // generation byte is sent, preserving crash replay safety.
+                    PersistPendingReClaim(request);
+                    submissionAttempt = 0;
+                    _log(
+                        $"review lease re-claim replay missed for stale daemon generation " +
+                        $"attempt={previous.AttemptId} scope={context} " +
+                        $"staleInstance={staleRequest.InstanceId} " +
+                        $"currentInstance={request.InstanceId} " +
+                        $"status={replayMiss.StatusCode} " +
+                        $"code={replayMiss.ErrorCode}; " +
+                        $"durably rotated idempotencyKey={request.IdempotencyKey} and retrying");
+                    continue;
+                }
+
+                if (!IsAmbiguousAuthorityMutation(exception))
+                {
+                    PersistAuthority(clearPendingReClaim: true);
+                    _log(
+                        $"review lease re-claim failed attempt={previous.AttemptId} " +
+                        $"scope={context}: {exception.Message}");
+                    return false;
+                }
+
+                var delay = AuthorityRetryDelayOverride?.Invoke(submissionAttempt)
+                            ?? TaskServerConnectivityMonitor.RetryDelay(
+                                _options.PollSeconds,
+                                submissionAttempt);
+                _log(
+                    $"review lease re-claim response ambiguous attempt={previous.AttemptId} " +
+                    $"scope={context} submissionAttempts={submissionAttempt} " +
+                    $"idempotencyKey={request.IdempotencyKey} " +
+                    $"retryInMs={(long)delay.TotalMilliseconds}: {exception.Message}");
+                await Task.Delay(delay, ct);
+            }
+        }
+    }
+
+    private ReviewReClaimRequest CreateReClaimRequest(
+        ReviewLeaseDto previous,
+        string instanceId)
+        => new(
+            previous.ExecutorId,
+            instanceId,
+            previous.LeaseId,
+            previous.Fence,
+            $"review-reclaim:{previous.AttemptId}:{previous.Fence}:{instanceId}",
+            _options.TtlSeconds);
+
+    private bool IsDefinitiveStaleGenerationReplayMiss(
+        ReviewReClaimRequest request,
+        Exception exception)
+    {
+        if (string.Equals(
+                request.InstanceId,
+                _client.RunnerInstanceId,
+                StringComparison.Ordinal))
+        {
             return false;
         }
+
+        if (exception is not TaskServerException { StatusCode: 409 } taskServer)
+            return false;
+        return string.Equals(
+                   taskServer.ErrorCode,
+                   "runner-instance-stale",
+                   StringComparison.OrdinalIgnoreCase)
+               || string.Equals(
+                   taskServer.ErrorCode,
+                   "review-executor-not-registered",
+                   StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -865,6 +1129,7 @@ public sealed class RemoteReviewExecutor
     /// </summary>
     private async Task ExtendLeaseForHandoffAsync(string attemptId)
     {
+        await _authorityOperationGate.WaitAsync(CancellationToken.None);
         try
         {
             await RenewOnceAsync(_options.HandoffLeaseTtlSeconds, CancellationToken.None);
@@ -880,7 +1145,40 @@ public sealed class RemoteReviewExecutor
                 $"review handoff lease extension failed attempt={attemptId}: {exception.Message}; " +
                 "the replacement instance verifies and re-claims on adoption");
         }
+        finally
+        {
+            _authorityOperationGate.Release();
+        }
     }
+
+    private async Task HandOffAsync(ReviewAttemptDto attempt)
+    {
+        await ExtendLeaseForHandoffAsync(attempt.AttemptId);
+        PersistedReviewSlot currentSlot;
+        lock (_slotGate) currentSlot = _slot;
+        SaveSlot(currentSlot with { Phase = "handed-off" });
+        _log(
+            $"review daemon handoff attempt={attempt.AttemptId} fence={_authority.Lease.Fence} " +
+            $"pid={currentSlot.ProcessId}; detached worker left running for replacement adoption");
+    }
+
+    private static bool IsAmbiguousAuthorityMutation(Exception exception)
+    {
+        if (exception is HttpRequestException or TaskCanceledException) return true;
+        var taskServer = exception as TaskServerException;
+        return ReviewLeaseRecoveryPolicy.Decide(
+                taskServer?.StatusCode,
+                taskServer?.ErrorCode,
+                transportFailure: false)
+            == ReviewLeaseRecoveryAction.RetryLater;
+    }
+
+    private static bool SameAuthority(ReviewLeaseDto left, ReviewLeaseDto right)
+        => string.Equals(left.ExecutorId, right.ExecutorId, StringComparison.Ordinal)
+           && string.Equals(left.InstanceId, right.InstanceId, StringComparison.Ordinal)
+           && string.Equals(left.LeaseId, right.LeaseId, StringComparison.Ordinal)
+           && left.Fence == right.Fence
+           && left.AuthorityEpoch == right.AuthorityEpoch;
 
     private static string LostWorkSummary(PersistedReviewSlot slot, string reason)
     {
