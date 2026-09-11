@@ -53,6 +53,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Runner | [domains/runner.md](../system/domains/runner.md) |
 | Pipeline | [domains/pipeline.md](../system/domains/pipeline.md) |
 | Orchestrator | [domains/orchestrator.md](../system/domains/orchestrator.md) |
+| Review | [domains/review.md](../system/domains/review.md) |
 | Quality Studio pipeline analysis policy | [pipeline domain](../system/domains/pipeline.md#quality-studio-analysis-steps) · [JSON schema](../app/schemas/quality-analysis-policy.schema.json) |
 | Runtime prompt registry, review companions, call telemetry, and costs | [contracts/runtime-prompts.md](../system/contracts/runtime-prompts.md) |
 | Workspace repository lifecycle and backlog recovery | [operations/workspace-repository-lifecycle.md](../operations/workspace-repository-lifecycle.md) |

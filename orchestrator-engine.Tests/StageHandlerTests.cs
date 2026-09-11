@@ -70,6 +70,24 @@ public sealed class StageHandlerTests
     }
 
     [Fact]
+    public async Task Council_does_not_reissue_a_block_downgraded_for_missing_citation()
+    {
+        var decision = await new CouncilLoop().ExecuteAsync(
+            Run("""
+                {"verdicts":[{
+                  "aspect":"documentation-impact",
+                  "status":"concerns",
+                  "classification":"block-without-citation"
+                }]}
+                """),
+            default);
+
+        Assert.Equal(OrchestrationAction.Continue, decision.Action);
+        Assert.Contains("\"findingCount\":1", decision.OutputJson, StringComparison.Ordinal);
+        Assert.Contains("\"blockerCount\":0", decision.OutputJson, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Gate_dispatch_reissues_a_failed_gate()
     {
         var decision = await new GateDispatchLoop().ExecuteAsync(

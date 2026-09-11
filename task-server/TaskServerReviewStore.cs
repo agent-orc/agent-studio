@@ -510,6 +510,13 @@ public sealed partial class TaskServerStore
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
             var attempt = await ReadReviewAuthorityAsync(connection, transaction, attemptId, ct);
+            var subject = await ReadReviewSubjectAsync(connection, transaction, attempt.SubjectId, ct)
+                ?? throw new KeyNotFoundException("Review subject was not found.");
+            request = ReviewVerdictCitationPolicy.NormalizeReport(
+                request,
+                subject.Plan.Commands
+                    .Where(command => ReviewCommandKinds.IsAgent(command.ExecutionKind))
+                    .Select(command => command.Aspect));
             var payloadJson = JsonSerializer.Serialize(request, ReviewJson);
             var payloadHash = Hash(payloadJson);
             if (!string.IsNullOrWhiteSpace(attempt.ReportIdempotencyKey))
@@ -524,8 +531,6 @@ public sealed partial class TaskServerStore
             ValidateReviewAuthority(attempt, request.ExecutorId, request.InstanceId, request.LeaseId, request.Fence, requireLeased: true);
             if (attempt.ExpiresAt <= UtcNow)
                 throw new TaskServerConflictException("review-lease-expired", "Review lease expired and its report is fenced off.");
-            var subject = await ReadReviewSubjectAsync(connection, transaction, attempt.SubjectId, ct)
-                ?? throw new KeyNotFoundException("Review subject was not found.");
             await EnsureReviewSubjectCurrentAsync(connection, transaction, subject, ct);
             var classified = ClassifyReviewReport(subject, request, attempt);
             var received = UtcNow;
@@ -712,9 +717,11 @@ public sealed partial class TaskServerStore
             || preparationIds.Count != (request.Plan.Preparation?.Count ?? 0)
             || commandIds.Overlaps(preparationIds))
             throw new ArgumentException("Review command step ids must be unique.");
-        if (request.Plan.Commands.Any(command => command.CompareToBaseline)
+        if (request.Plan.Commands.Any(command =>
+                command.CompareToBaseline || ReviewCommandKinds.IsAgent(command.ExecutionKind))
             && string.IsNullOrWhiteSpace(request.Plan.IntegrationRef))
-            throw new ArgumentException("A baseline-compared review plan requires an integration ref.");
+            throw new ArgumentException(
+                "A baseline-compared or semantic review plan requires an integration ref.");
         if (request.Plan.Commands.Any(command =>
                 ReviewCommandKinds.IsAgent(command.ExecutionKind)
                 && (string.IsNullOrWhiteSpace(command.Prompt)
@@ -880,7 +887,8 @@ public sealed partial class TaskServerStore
                    || command.NewFailures.Count > 0;
         });
         if (commandFailures
-            || request.Verdicts.Any(verdict => verdict.Status is "concerns" or "block" or "fail"))
+            || ReviewGradingPolicy.Grade(request.Verdicts.Select(verdict => verdict.Status))
+                == ReviewGrade.ProductFailure)
             return ("ProductFailure", request.FailureClassification ?? "ReviewFinding");
         if (string.Equals(request.Outcome, "ReviewInfra", StringComparison.Ordinal))
             return ("ReviewInfra", string.IsNullOrWhiteSpace(request.FailureClassification)
@@ -888,7 +896,7 @@ public sealed partial class TaskServerStore
                 : request.FailureClassification);
         if (string.Equals(request.Outcome, "Pass", StringComparison.Ordinal)
             || string.Equals(request.Outcome, "ProductFailure", StringComparison.Ordinal))
-            return (request.Outcome, request.FailureClassification);
+            return ("Pass", request.FailureClassification);
         return ("ReviewInfra", "InvalidReviewOutcome");
     }
 

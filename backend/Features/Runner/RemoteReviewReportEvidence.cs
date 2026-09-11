@@ -80,12 +80,14 @@ internal static class RemoteReviewReportEvidence
         }
         else
         {
-            text.AppendLine("| Aspect | Status | Classification | Summary |");
-            text.AppendLine("| --- | --- | --- | --- |");
+            text.AppendLine("| Aspect | Status | Classification | Evidence checked | Missing | Summary |");
+            text.AppendLine("| --- | --- | --- | --- | --- | --- |");
             foreach (var verdict in request.Verdicts)
             {
                 text.AppendLine(
-                    $"| {Cell(verdict.Aspect)} | {Cell(verdict.Status)} | {Cell(verdict.Classification)} | {Cell(verdict.Summary)} |");
+                    $"| {Cell(verdict.Aspect)} | {Cell(verdict.Status)} | {Cell(verdict.Classification)} | " +
+                    $"{Cell(verdict.EvidenceChecked ?? "not reported")} | {Cell(verdict.Missing ?? "not reported")} | " +
+                    $"{Cell(verdict.Summary)} |");
             }
         }
 
