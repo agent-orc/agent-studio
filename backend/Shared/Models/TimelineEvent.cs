@@ -107,6 +107,8 @@ public static class TimelineEventKinds
     public const string IntegrationLease = "integration_lease";
     /// <summary>The CLI invocation ended; <see cref="TimelineEvent.Summary"/> carries the outcome.</summary>
     public const string AgentRunFinished = "agent_run_finished";
+    /// <summary>A result producer replaced status.md after preserving the prior version.</summary>
+    public const string ResultReplaced = "result_replaced";
     /// <summary>A Progress requeue was replaced by forward recovery of a completed immutable result.</summary>
     public const string SettledRunRecovered = "settled_run_recovered";
     /// <summary>A pipeline pre-step started (ADR-0045).</summary>

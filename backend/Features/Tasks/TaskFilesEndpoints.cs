@@ -19,6 +19,31 @@ public static class TaskFilesEndpoints
 {
     public static void MapTaskFilesEndpoints(this RouteGroupBuilder group)
     {
+        group.MapGet("/{jobId}/result-history", (
+            string jobId,
+            [FromQuery] string? project,
+            [FromQuery] string? watchPath,
+            ResultHistoryQueryService history,
+            AgentStudio.Registry.ProjectRegistry projects) =>
+        {
+            watchPath = ResolveWatchPath(projects, project, watchPath);
+            var result = history.List(jobId, watchPath);
+            return result.Success ? Results.Ok(result.Value ?? []) : ErrorResult(result);
+        });
+
+        group.MapGet("/{jobId}/result-history/{versionId}", (
+            string jobId,
+            string versionId,
+            [FromQuery] string? project,
+            [FromQuery] string? watchPath,
+            ResultHistoryQueryService history,
+            AgentStudio.Registry.ProjectRegistry projects) =>
+        {
+            watchPath = ResolveWatchPath(projects, project, watchPath);
+            var result = history.Read(jobId, watchPath, versionId);
+            return result.Success ? Results.Ok(result.Value) : ErrorResult(result);
+        });
+
         group.MapGet("/{jobId}/files/{**path}", (
             string jobId,
             string path,

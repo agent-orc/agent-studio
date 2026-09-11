@@ -263,12 +263,16 @@
                                          [content]="detail().statusMarkdown"
                                          [contentTransform]="statusHistoryTransform" />
               } @else {
+                <app-previous-results-control
+                  [jobId]="detail().info.id"
+                  [watchPath]="detail().info.watchPath"
+                  (resultSelected)="selectedPreviousResult.set($event)" />
                 <app-result-view class="notes-panel__body"
                                  data-detail-tab-scroll-owner
                                  data-testid="protocol-beautiful-results"
-                                 [detail]="detail()"
-                                 [verdict]="protocolVerdict()"
-                                 [provenance]="statusProvenance()"
+                                 [detail]="displayedResultDetail()"
+                                 [verdict]="displayedResultVerdict()"
+                                 [provenance]="selectedPreviousResult() ? null : statusProvenance()"
                                  [copyLabel]="copyIconLabel()"
                                  (navigateMetric)="onResultMetricNavigate($event)"
                                  (copyRequested)="copyProtocolMarkdown()"

@@ -93,6 +93,7 @@ async function installRoutes(page: Page): Promise<void> {
   }));
   await page.route('**/api/clients', (route) => json(route, []));
   await page.route('**/api/agent-rules**', (route) => json(route, []));
+  await page.route('**/api/projects/*/workbenches**', (route) => json(route, { items: [] }));
   await page.route('**/api/cli/usage**', (route) => json(route, { items: [] }));
   await page.route('**/api/cli/quota**', (route) => json(route, { at: '2026-06-09T00:00:00Z', snapshots: [] }));
   await page.route(/\/api\/runner\/status(\?|$)/, (route) => json(route, {
@@ -211,7 +212,41 @@ async function installStatusRoutes(page: Page): Promise<void> {
       : '# Status\n\nResult: pass\n\n## Summary\n\nHistorical status body for run two.');
   });
   await page.route(new RegExp(`/api/tasks/${idEsc}(\\?|$)`), (route) =>
-    json(route, detail('# Status\n\nResult: pass\n\nThe current protocol summary.')));
+    json(route, detail(
+      '# Status\n\n- Result: Success\n- Case: feature\n\n## What Was Done\n\n- The current protocol summary.')));
+}
+
+async function installPreviousResultRoutes(page: Page): Promise<void> {
+  const idEsc = JOB_ID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const entries = [
+    {
+      id: 'local-0002',
+      timestamp: '2026-09-11T08:21:00Z',
+      producer: 'review attempt #2',
+      producerKind: 'review-attempt',
+      lane: '4-auto-review',
+      result: 'Success',
+      case: 'blocked',
+      source: 'task-folder',
+      version: 2,
+    },
+    {
+      id: 'git-71c5299b0f',
+      timestamp: '2026-09-07T06:00:00Z',
+      producer: 'run attempt #1',
+      producerKind: 'run-attempt',
+      lane: '5e-escalated',
+      result: 'Success',
+      case: 'feature',
+      source: 'workspace-history',
+      version: null,
+    },
+  ];
+  await page.route(new RegExp(`/api/tasks/${idEsc}/result-history/git-71c5299b0f(\\?|$)`), route => json(route, {
+    entry: entries[1],
+    markdown: '# Status\n\n- Result: Success\n- Case: feature\n\n## What Was Done\n\n- Previous run result remains openable.\n',
+  }));
+  await page.route(new RegExp(`/api/tasks/${idEsc}/result-history(\\?|$)`), route => json(route, entries));
 }
 
 test.describe('File source history viewer', () => {
@@ -278,5 +313,38 @@ test.describe('File source history viewer', () => {
 
     await history.getByTestId('file-source-history-run-1').click();
     await expect(history.getByTestId('file-source-version')).toContainText('Historical status body for run one');
+  });
+
+  test('Result tab lists and opens previous results in the same viewer', async ({ page }) => {
+    await installRoutes(page);
+    await installStatusRoutes(page);
+    await installPreviousResultRoutes(page);
+
+    await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
+    const result = page.getByTestId('protocol-beautiful-results');
+    await expect(result).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId('previous-results-toggle')).toContainText('2');
+
+    await page.getByTestId('previous-results-toggle').click();
+    const list = page.getByTestId('previous-results-list');
+    await expect(list).toContainText('review attempt #2');
+    await expect(list).toContainText('Result: Success');
+    await expect(list).toContainText('Case: blocked');
+    mkdirSync(EVIDENCE_DIR, { recursive: true });
+    await page.getByTestId('pane-protocol').screenshot({
+      path: join(EVIDENCE_DIR, 'previous-results-list--mocked.png'),
+    });
+    await page.getByTestId('previous-result-git-71c5299b0f').click();
+
+    await expect(page.getByTestId('previous-result-banner')).toContainText('Previous result from');
+    await expect(page.getByTestId('previous-result-banner')).toContainText('run attempt #1');
+    await expect(result).toContainText('Previous run result remains openable.');
+    await page.getByTestId('pane-protocol').screenshot({
+      path: join(EVIDENCE_DIR, 'previous-results-open--mocked.png'),
+    });
+
+    await page.getByTestId('previous-results-current').click();
+    await expect(page.getByTestId('previous-result-banner')).toHaveCount(0);
+    await expect(result).toContainText('The current protocol summary.');
   });
 });

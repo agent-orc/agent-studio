@@ -981,6 +981,23 @@ export interface TaskDetail {
   reviewEvidence: ReviewEvidenceEntry[];
 }
 
+export interface ResultHistoryEntry {
+  id: string;
+  timestamp: string;
+  producer: string;
+  producerKind: 'run-attempt' | 'review-attempt' | 'external-completion' | 'scaffold' | string;
+  lane: string;
+  result: string;
+  case: string;
+  source: 'task-folder' | 'workspace-history' | string;
+  version: number | null;
+}
+
+export interface ResultHistoryDocument {
+  entry: ResultHistoryEntry;
+  markdown: string;
+}
+
 export type ReviewEvidenceSource = 'security-audit' | 'code-review' | 'task-check' | 'human-note' | 'other';
 export type ReviewEvidenceSeverity = 'info' | 'warn' | 'high';
 

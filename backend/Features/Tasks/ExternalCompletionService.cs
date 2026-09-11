@@ -35,6 +35,7 @@ public sealed class ExternalCompletionService
     private readonly GitService _git;
     private readonly IConfiguration _configuration;
     private readonly ILogger<ExternalCompletionService> _logger;
+    private readonly ResultVersionStore? _resultVersions;
 
     public ExternalCompletionService(
         TaskScannerService scanner,
@@ -45,7 +46,8 @@ public sealed class ExternalCompletionService
         HumanReviewEscalation escalation,
         GitService git,
         IConfiguration configuration,
-        ILogger<ExternalCompletionService> logger)
+        ILogger<ExternalCompletionService> logger,
+        ResultVersionStore? resultVersions = null)
     {
         _scanner = scanner;
         _mutations = mutations;
@@ -56,6 +58,7 @@ public sealed class ExternalCompletionService
         _git = git;
         _configuration = configuration;
         _logger = logger;
+        _resultVersions = resultVersions;
     }
 
     private static readonly JsonSerializerOptions LifecycleJsonWriteOpts = new()
@@ -133,8 +136,10 @@ public sealed class ExternalCompletionService
         // is best-effort-logged but the endpoint treats a hard failure of the
         // canonical writes (status / deliverables / task.json) as fatal so the
         // caller is not told a half-reconciled card is done.
+        // Replace status first so the archived result keeps the deliverables
+        // that belonged to it, then publish this completion's deliverables.
+        WriteStatus(beforeFolder, info.State, summary, source, now, decisionReason);
         WriteDeliverables(beforeFolder, summary, source, now, request.Deliverables, decisionReason);
-        WriteStatus(beforeFolder, summary, source, now, decisionReason);
         WriteGateItems(beforeFolder, request.GateItems);
         _mutations.SetExternalCompletionOnFolder(beforeFolder, new ExternalCompletionInfo
         {
@@ -258,7 +263,7 @@ public sealed class ExternalCompletionService
         CancellationToken ct)
     {
         var folder = info.FolderPath;
-        WriteUnverifiedDeliveryReport(folder, summary, source, reason, request, verification, now);
+        WriteUnverifiedDeliveryReport(folder, info.State, summary, source, reason, request, verification, now);
         WriteGateItems(folder, request.GateItems);
         _mutations.AddJobTag(jobId, OutOfBandStampPolicy.UnverifiedDeliveryTag, watchPath);
 
@@ -360,6 +365,7 @@ public sealed class ExternalCompletionService
     /// </summary>
     private void WriteUnverifiedDeliveryReport(
         string folderPath,
+        string lane,
         string summary,
         string source,
         string reason,
@@ -410,7 +416,7 @@ public sealed class ExternalCompletionService
                   .Append(source).Append(")\n\n");
             status.Append(reason).Append("\n\n");
             status.Append("- Details in `results/unverified-delivery.md`.\n");
-            File.WriteAllText(Path.Combine(folderPath, "status.md"), status.ToString(), Encoding.UTF8);
+            WriteResult(folderPath, status.ToString(), ResultProducer.ExternalCompletion(source), lane, now);
         }
         catch (Exception ex)
         {
@@ -538,7 +544,7 @@ public sealed class ExternalCompletionService
     /// corpse.
     /// </summary>
     private void WriteStatus(
-        string folderPath, string summary, string source, DateTime now, string verificationNote)
+        string folderPath, string lane, string summary, string source, DateTime now, string verificationNote)
     {
         try
         {
@@ -551,12 +557,34 @@ public sealed class ExternalCompletionService
               .Append(" by ").Append(source).Append(".\n\n");
             sb.Append("- ").Append(verificationNote).Append('\n');
             sb.Append("- See `results/deliverables.md` for what was delivered and where.\n");
-            File.WriteAllText(Path.Combine(folderPath, "status.md"), sb.ToString(), Encoding.UTF8);
+            WriteResult(folderPath, sb.ToString(), ResultProducer.ExternalCompletion(source), lane, now);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "external-completion: failed to write status.md for {Folder}", folderPath);
         }
+    }
+
+    private void WriteResult(
+        string folderPath,
+        string content,
+        ResultProducer producer,
+        string lane,
+        DateTime producedAtUtc)
+    {
+        if (_resultVersions is not null)
+        {
+            _resultVersions.Replace(
+                folderPath,
+                content,
+                producer,
+                lane,
+                producedAtUtc,
+                TimelineActors.External);
+            return;
+        }
+
+        File.WriteAllText(Path.Combine(folderPath, "status.md"), content, Encoding.UTF8);
     }
 
     /// <summary>

@@ -1609,3 +1609,53 @@ The complete entry-point and regression map is in the
 remain in the [Model Routing Policy](../../domains/model-routing-policy.md#hard-floors).
 
 **Status.** Accepted.
+
+---
+
+## ADR-0070 - Result versions live in readable task-folder snapshots with Git backfill (2026-09-11)
+
+**Decision.** `status.md` remains the current Result compatibility file. A
+producer that legitimately replaces it first copies the previous document to
+`results/history/<sequence>-<timestamp>/status.md`, copies the matching
+`results/deliverables.md` when present, and writes `result.json` beside the
+snapshot. The metadata records the sequence, production timestamp, producer
+kind and attempt, and lane at production time. `.metadata/current-result.json`
+records those facts for the current file so its eventual snapshot retains the
+original producer. Producing kinds are run attempt, review attempt, external
+completion, and scaffold. Each replacement appends one `result_replaced`
+timeline event naming the new producer and preserved sequence.
+
+For cards created before this contract, the Result-history read model also
+reads `status.md` changes from the workspace Git repository. It excludes the
+live content and task-folder snapshots already represented by the same bytes,
+then derives timestamp and producer from commit and generation metadata and
+the lane from `task.json` at that commit. This is read-time backfill only. No
+task folders are migrated and no Git history is rewritten.
+
+**Context.** AGT-2707 had a generated successful Result from 2026-09-07. An
+operator moved it from Escalated to Auto Review on 2026-09-11. The requeue
+rotator treated the source lane as proof that every `status.md` there was an
+escalation stub, moved the generated file away, and the Auto Review invariant
+then wrote a scaffold. The operator saw the scaffold as current and could
+recover the generated Result only from workspace commit `71c5299b0f`.
+
+**Non-goals.** Result history does not change how the runner generates
+`status.md`, make the board card version-aware, store binary result trees per
+attempt, or use Git commits as the only durable index for new results. Bounded
+sections appended to the current Result, such as acceptance integration
+status, are not a new producing event.
+
+**Reasoning style.** Keep the current-file contract stable and make destructive
+replacement pass through one bounded write boundary. Store snapshots as plain
+Markdown plus JSON so a task folder remains understandable when copied or read
+without Studio. Use Git as a compatibility reader for the evidence that already
+exists, not as the write model for future versions.
+
+**Implementation pointers.** Snapshot and scaffold policy:
+[`backend/Features/Tasks/Results/`](../../../../backend/Features/Tasks/Results/).
+API:
+[`backend/Features/Tasks/TaskFilesEndpoints.cs`](../../../../backend/Features/Tasks/TaskFilesEndpoints.cs).
+Result-tab control:
+[`frontend/src/app/features/task-detail/components/protocol-pane/previous-results-control/`](../../../../frontend/src/app/features/task-detail/components/protocol-pane/previous-results-control/).
+
+**Status.** Accepted.

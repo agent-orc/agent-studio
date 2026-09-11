@@ -38,6 +38,7 @@ public sealed class TaskTransitionService
     private readonly AgentStudio.Pipeline.PipelineExecutionLog? _pipelineLog;
     private readonly AttemptAuthorityService? _attemptAuthority;
     private readonly ReviewAttemptTaskLifecycleService? _reviewAttemptLifecycle;
+    private readonly ResultVersionStore? _resultVersions;
     private long _resultScaffoldCreatedCount;
 
     /// <summary>
@@ -79,7 +80,8 @@ public sealed class TaskTransitionService
         OperatorReviewRequeueService? operatorReviewRequeue = null,
         AgentStudio.Pipeline.PipelineExecutionLog? pipelineLog = null,
         AttemptAuthorityService? attemptAuthority = null,
-        ReviewAttemptTaskLifecycleService? reviewAttemptLifecycle = null)
+        ReviewAttemptTaskLifecycleService? reviewAttemptLifecycle = null,
+        ResultVersionStore? resultVersions = null)
     {
         _scanner = scanner;
         _states = states;
@@ -100,6 +102,7 @@ public sealed class TaskTransitionService
         _pipelineLog = pipelineLog;
         _attemptAuthority = attemptAuthority;
         _reviewAttemptLifecycle = reviewAttemptLifecycle;
+        _resultVersions = resultVersions;
     }
 
     /// <summary>
@@ -784,9 +787,7 @@ public sealed class TaskTransitionService
             if (File.Exists(path))
             {
                 var existing = File.ReadAllText(path);
-                if (!string.IsNullOrWhiteSpace(existing)
-                    && (!refreshOwnedScaffold
-                        || !existing.Contains(ResultScaffoldMarker, StringComparison.Ordinal)))
+                if (!ResultScaffoldPolicy.ShouldWrite(existing, refreshOwnedScaffold))
                 {
                     error = null;
                     return true;
@@ -796,15 +797,29 @@ public sealed class TaskTransitionService
             }
 
             Directory.CreateDirectory(task.FolderPath);
-            File.WriteAllText(
-                path,
-                BuildResultScaffold(
+            var scaffold = BuildResultScaffold(
                     task,
                     targetState,
                     operatorBackfill,
                     atUtc,
-                    integrationReferenceOverride),
-                new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+                    integrationReferenceOverride);
+            if (_resultVersions is not null)
+            {
+                _resultVersions.Replace(
+                    task.FolderPath,
+                    scaffold,
+                    ResultProducer.Scaffold(),
+                    targetState,
+                    atUtc,
+                    TimelineActors.System);
+            }
+            else
+            {
+                File.WriteAllText(
+                    path,
+                    scaffold,
+                    new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            }
             if (refreshingOwnedScaffold)
             {
                 _logger.LogDebug(
