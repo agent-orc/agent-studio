@@ -6,6 +6,7 @@ import type { PipelineCatalogueStep, PipelineStepSetting, PipelineStepCondition,
   PipelineStepConditionToken, PipelineType } from '../../../task-pipeline';
 import type { ProjectPipelineCostTimeline } from '../../../project-token-usage';
 import { CliModelSelectorComponent } from '../../../../components/cli-model-selector';
+import { ModelMigrationBadgeComponent } from '../../../../components/model-migration-badge/model-migration-badge.component';
 import { TooltipDirective, type StructuredTooltip } from 'coding-agent-chat/shared';
 import {
   PIPELINE_GATE_MODES,
@@ -34,7 +35,7 @@ import { PipelineStepRowStateComponent } from './pipeline-step-row-state/pipelin
 @Component({
   selector: 'app-project-pipeline-panel', standalone: true,
   imports: [FormsModule, CliModelSelectorComponent, TooltipDirective, PipelineHealthBlockComponent, PipelineStepExecutionComponent,
-    PipelineTypePickerComponent, PipelineStepRowStateComponent],
+    PipelineTypePickerComponent, PipelineStepRowStateComponent, ModelMigrationBadgeComponent],
   hostDirectives: [{ directive: PipelineStepFocusDirective, inputs: ['focusStepId'] }],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-pipeline-panel.component.html',
@@ -51,7 +52,6 @@ export class ProjectPipelinePanelComponent {
   readonly order = signal<readonly string[]>([]);
   readonly pipelineCost = signal<ProjectPipelineCostTimeline | null>(null);
   readonly loadError = signal<string | null>(null);
-
   readonly cliTypes = CLI_TYPES;
   readonly gateModes = PIPELINE_GATE_MODES;
   readonly conditions = PIPELINE_CONDITIONS;

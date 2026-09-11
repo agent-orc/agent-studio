@@ -61,7 +61,7 @@ public class TitleGenerationService
 
         var fallbackModel = _configuration["TitleGeneration:Model"]
                             ?? _configuration["ClaudeCli:SummaryModel"]
-                            ?? ModelIds.ClaudeHaiku45;
+                            ?? ModelFamilyResolver.Resolve(ModelFamilies.ClaudeHaiku);
         var prompt = _prompts.Render(TemplateName,
             new Dictionary<string, string?> { ["input"] = bounded },
             new PromptCallContext(Step: "title-generation", Model: fallbackModel));
@@ -136,7 +136,7 @@ public class TitleGenerationService
     {
         var model = _configuration["TitleGeneration:Model"]
                     ?? _configuration["ClaudeCli:SummaryModel"]
-                    ?? ModelIds.ClaudeHaiku45;
+                    ?? ModelFamilyResolver.Resolve(ModelFamilies.ClaudeHaiku);
 
         var oneShot = _oneShotRegistry?.Get("claude");
         if (oneShot != null)

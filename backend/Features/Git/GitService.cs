@@ -2560,7 +2560,7 @@ public class GitService
 
         var intent = ReadTaskIntent(jobId, watchPath);
         var codexPath = _config["CodexCli:Path"] ?? "codex";
-        var model = ModelIds.Gpt54Mini;
+        var model = ModelFamilyResolver.Resolve(ModelFamilies.GptMini);
         var prompt = _prompts.Render(RuntimePromptService.CommitMessage,
             new Dictionary<string, string?>
             {

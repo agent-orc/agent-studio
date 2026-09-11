@@ -136,6 +136,7 @@
     <Content Include="..\prompts\runtime\*.md.meta.json" Link="prompts\runtime\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\build-manifest.json" Link="build-manifest.json" CopyToOutputDirectory="PreserveNewest" Condition="Exists('..\build-manifest.json')" />
     <EmbeddedResource Include="Policies\model-routing-policy.v1.json" />
+    <EmbeddedResource Include="Policies\model-migration-catalog.v1.json" />
     <EmbeddedResource Include="..\docs\app\templates\article-document-v2.html"
                       Link="Templates\article-document-v2.html"
                       LogicalName="AgentStudio.Templates.ArticleDocumentV2" />

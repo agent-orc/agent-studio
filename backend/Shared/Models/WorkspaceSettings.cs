@@ -55,6 +55,17 @@ public record WorkspaceSettings
     /// platform default (balanced, level 2).
     /// </summary>
     public int? AutonomyLevel { get; init; }
+
+    /// <summary>
+    /// AGT-2716: whether the orchestrator may apply a catalog-safe model
+    /// migration automatically at run admission for a non-explicit model (a
+    /// task whose <c>ModelExplicit</c> is false but still carries a concrete,
+    /// now-superseded <c>Model</c> literal). Null means "on" (the platform
+    /// default); an operator sets this to <c>false</c> to turn automatic
+    /// application off workspace-wide. Explicit pins are never touched by this
+    /// switch either way - it only gates the automatic, non-explicit path.
+    /// </summary>
+    public bool? AutoApplyModelMigrations { get; init; }
 }
 
 /// <summary>

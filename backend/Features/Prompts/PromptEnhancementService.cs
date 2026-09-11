@@ -67,7 +67,7 @@ public class PromptEnhancementService
         var fallbackModel = _configuration["PromptEnhancement:Model"]
                             ?? _configuration["TitleGeneration:Model"]
                             ?? _configuration["ClaudeCli:SummaryModel"]
-                            ?? ModelIds.ClaudeHaiku45;
+                            ?? ModelFamilyResolver.Resolve(ModelFamilies.ClaudeHaiku);
         var prompt = _prompts.Render(TemplateName,
             new Dictionary<string, string?> { ["input"] = bounded },
             new PromptCallContext(Step: "prompt-enhancement", Model: fallbackModel));
@@ -207,7 +207,7 @@ public class PromptEnhancementService
         var model = _configuration["PromptEnhancement:Model"]
                     ?? _configuration["TitleGeneration:Model"]
                     ?? _configuration["ClaudeCli:SummaryModel"]
-                    ?? ModelIds.ClaudeHaiku45;
+                    ?? ModelFamilyResolver.Resolve(ModelFamilies.ClaudeHaiku);
 
         var oneShot = _oneShotRegistry?.Get("claude");
         if (oneShot != null)

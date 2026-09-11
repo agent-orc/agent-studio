@@ -123,6 +123,89 @@ broken test host, or missing delivery path. Fix that substrate instead.
 After two semantic failures at the stronger tier, stop model escalation. Narrow
 the task, improve its evidence, or ask for a human decision.
 
+## Model families and migrations
+
+Added 2026-09-08 (AGT-2716). This section governs a different question from
+the routing tiers above: not "which tier of capability", but "which concrete
+model id a family currently resolves to", so a supporting-agent default or a
+pinned card does not quietly age behind the newest generation the installed
+CLI actually offers.
+
+### Families
+
+`ModelFamilyResolver` (`backend/Shared/Models/CliModels.cs`) resolves a family
+id to the newest available model, live-catalog first, falling back to the
+static registry's declared (newest-first) generation order and
+Available/Deprecated flags when discovery has not run yet:
+
+| Family | Members today (newest first) | Resolves to today |
+|---|---|---|
+| `claude-haiku` | claude-haiku-4-5 | claude-haiku-4-5 |
+| `claude-sonnet` | claude-sonnet-5, claude-sonnet-4-6, claude-sonnet-4-5 | claude-sonnet-5 |
+| `claude-opus` | claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-opus-4-5 | claude-opus-5 |
+| `gpt-mini` | gpt-5.4-mini | gpt-5.4-mini |
+| `gpt-flagship` | detected gpt-5.6-\* else gpt-5.5 | alias of the existing Codex detection layer (`ModelMetadataRegistry.DefaultForCli`) |
+
+Every former hardcoded `ModelIds.ClaudeHaiku45` / `ModelIds.Gpt54Mini` runtime
+default (`OrchestratorRunner.DefaultModel`, `SummaryGenerationService`,
+`TitleGenerationService`, `PromptEnhancementService`, `WikiSearchService`,
+`SoftReasoningHostedService`, `CodePatternDriftAnalysisService`,
+`ProjectProposalDraftingService`, `GenericCliExecutionService.DefaultOpusModel`,
+`WikiMaintenanceModelService.DefaultModel`, `PipelineStepModelDefaults.SupportModel`,
+`DriftPostStepRunner.DefaultModel`, `GitService`'s commit-message model, and both
+Codex supporting-call defaults in `ReviewDecisionOrchestrator`) now resolves
+through this family layer instead of a pinned literal. Configuration keys
+(e.g. `ClaudeCli:SummaryModel`) still win when an operator sets one - a
+configuration pin is an explicit choice and is never overridden.
+
+There is deliberately no Haiku-5 or newer gpt-mini entry: the 2026-09-06 fact
+check against the installed Claude Code 2.1.263 `/model` picker found no
+Haiku generation beyond 4.5, and whether a cheap pipeline step should leave
+the gpt-mini family for Sonnet is a Token Economy cost decision, not a
+family-generation rule.
+
+### Migration catalog
+
+`backend/Policies/model-migration-catalog.v1.json` (loaded by
+`ModelMigrationCatalogRegistry`, served at `GET /api/cli/model-migrations`) is
+the versioned list of known-safe "from model -> to model" replacements: same
+family, newer generation, `safeAuto: true` when the orchestrator may apply it
+without operator confirmation. Today it holds exactly the superseded Opus and
+Sonnet generations pointing at `claude-opus-5` / `claude-sonnet-5`; it holds no
+Haiku or gpt-mini entry for the reason above.
+
+This catalog is currently an interim Studio-owned copy, following the same
+replaceable-seam posture as `IModelEconomyAdvisor` and the TokenEconomy pricing
+adapter (`ITokenPriceProvider`): `IModelMigrationCatalogSource` is the data
+seam, `EmbeddedModelMigrationCatalogSource` is the built-in implementation, and
+a Token Economy package can implement the same contract once it ships a
+migration-catalog artifact of its own, without changing
+`ModelMigrationCatalogRegistry` or any call site. Studio does not vendor or
+modify the separate TokenEconomy repository as part of this policy; TE
+ownership of this catalog's actual content is a follow-up integration, not
+implemented by AGT-2716.
+
+### Where a superseded model surfaces, and who may touch it
+
+| Surface | Visible when superseded | Applied automatically | Explicit pin protection |
+|---|---|---|---|
+| Task/card pinned model (`modelExplicit == true`) | Card model badge shows "update available" with a one-click apply | Never | Always - the orchestrator only rewrites `modelExplicit == false` models |
+| Task/card model when `modelExplicit == false` | N/A - already resolves live via `ModelQualificationService`; a stale stored literal self-heals at run admission | Yes, when the workspace switch is on and the catalog entry is `safeAuto` | N/A |
+| Project pipeline-step override | Pipeline settings row shows "update available" with a one-click apply | Never - an explicit project choice | Always |
+| Configuration pin (e.g. `ClaudeCli:SummaryModel`) | Not surfaced by this policy; an operator-edited config key is out of the runtime settings surface | Never | Always |
+
+Automatic application happens at run admission
+(`ProjectRunner.ApplyAutoModelMigration`, decided by the pure
+`ModelMigrationPolicy.DecideAutoMigration`): a non-explicit task whose stored
+`Model` matches a `safeAuto` catalog entry is rewritten, the change is
+persisted to `task.json`, and a `model_migrated` timeline event records
+`fromModel`, `toModel`, `family`, and the catalog version that authorized it.
+A workspace can turn this off entirely with
+`PUT /api/workspaces/{id}/auto-apply-model-migrations`
+(`WorkspaceSettings.AutoApplyModelMigrations`, default on); the switch never
+affects the visibility of the "update available" offer, only whether it can
+apply itself.
+
 ## Benchmark basis
 
 AGT-2243 produced `results/model-benchmark.md` and

@@ -442,7 +442,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     {
         var maxPerHour = _configuration.GetValue("ReviewDecisionOrchestrator:CallsPerHour", DefaultCallsPerHour);
         var cliBinary = _configuration.GetValue("ReviewDecisionOrchestrator:Cli", CliTypes.Codex);
-        var model = _configuration.GetValue("ReviewDecisionOrchestrator:Model", ModelIds.Gpt54Mini);
+        var model = _configuration.GetValue(
+            "ReviewDecisionOrchestrator:Model", ModelFamilyResolver.Resolve(ModelFamilies.GptMini));
         var aspectModel = _configuration.GetValue("ReviewDecisionOrchestrator:AspectModel", model);
         // AGT-2749: per-toolchain budget, not one flat 60s number that starved Claude aspect calls.
         var aspectTimeoutSeconds = ReviewAspectTimeoutPolicy.SecondsFor(cliBinary, _configuration);
@@ -687,7 +688,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             return PostProcessingCardResult.Blocked("review-decision-orchestrator-disabled");
 
         var cliBinary = _configuration.GetValue("ReviewDecisionOrchestrator:Cli", CliTypes.Codex);
-        var model = _configuration.GetValue("ReviewDecisionOrchestrator:Model", ModelIds.Gpt54Mini);
+        var model = _configuration.GetValue(
+            "ReviewDecisionOrchestrator:Model", ModelFamilyResolver.Resolve(ModelFamilies.GptMini));
         var aspectModel = _configuration.GetValue("ReviewDecisionOrchestrator:AspectModel", model);
         // AGT-2749: per-toolchain budget, not one flat 60s number that starved Claude aspect calls.
         var aspectTimeoutSeconds = ReviewAspectTimeoutPolicy.SecondsFor(cliBinary, _configuration);

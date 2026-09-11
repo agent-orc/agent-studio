@@ -154,6 +154,93 @@ public static class ModelIds
     public const string Gemini25Flash = "gemini-2.5-flash";
 }
 
+/// <summary>Model family ids used by <see cref="ModelFamilyResolver"/> to pick the
+/// newest available member of a generation lineage instead of a pinned literal.
+/// Only families that today have more than one generation, or are expected to
+/// gain one, are onboarded here (haiku/sonnet/opus for Claude, mini/flagship
+/// for Codex). Fable and the non-tiered vendors have no family entry.</summary>
+public static class ModelFamilies
+{
+    public const string ClaudeHaiku = "claude-haiku";
+    public const string ClaudeSonnet = "claude-sonnet";
+    public const string ClaudeOpus = "claude-opus";
+    public const string GptMini = "gpt-mini";
+    public const string GptFlagship = "gpt-flagship";
+}
+
+/// <summary>
+/// Resolves "the newest available model in a family" so runtime defaults never
+/// hardcode a generation literal (AGT-2716). Two source layers, most
+/// authoritative first:
+/// <list type="number">
+/// <item>Live CLI discovery: <see cref="ModelMetadataRegistry.DetectedVendorAvailability"/>,
+/// published by <c>ClaudeModelDiscovery</c>/<c>CodexModelDiscovery</c> after
+/// every catalogue read. When discovery has run for the family's vendor, only
+/// a member that catalogue actually reported is returned.</item>
+/// <item>Static registry fallback: the family's members in declared order
+/// (already newest-first) filtered to <c>Available &amp;&amp; !Deprecated</c>. Used
+/// when discovery has not run yet (process just started) or reported nothing
+/// useful for the family.</item>
+/// </list>
+/// Gpt-flagship is a thin alias over the already-live <see cref="ModelMetadataRegistry.DefaultForCli"/>
+/// Codex detection layer, so it stays in lockstep with the existing gpt-5.6
+/// mechanism instead of duplicating it. Gpt-mini has exactly one member today
+/// (<see cref="ModelIds.Gpt54Mini"/>, not a static registry entry - "availability
+/// comes from live CLI discovery" per its declaration comment) and resolves to
+/// it directly until a second mini generation is onboarded.
+/// </summary>
+public static class ModelFamilyResolver
+{
+    /// <summary>Family members in declared (newest-first) order. Claude entries are
+    /// registry ids; gpt-mini's sole member is not a registry entry (see class doc).</summary>
+    private static readonly IReadOnlyDictionary<string, string[]> StaticMembers =
+        new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            [ModelFamilies.ClaudeHaiku] = [ModelIds.ClaudeHaiku45],
+            [ModelFamilies.ClaudeSonnet] = [ModelIds.ClaudeSonnet5, ModelIds.ClaudeSonnet46, ModelIds.ClaudeSonnet45],
+            [ModelFamilies.ClaudeOpus] =
+                [ModelIds.ClaudeOpus5, ModelIds.ClaudeOpus48, ModelIds.ClaudeOpus47, ModelIds.ClaudeOpus46, ModelIds.ClaudeOpus45],
+            [ModelFamilies.GptMini] = [ModelIds.Gpt54Mini],
+        };
+
+    private static readonly IReadOnlyDictionary<string, string> VendorForFamily =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            [ModelFamilies.ClaudeHaiku] = "anthropic",
+            [ModelFamilies.ClaudeSonnet] = "anthropic",
+            [ModelFamilies.ClaudeOpus] = "anthropic",
+            [ModelFamilies.GptMini] = "openai",
+        };
+
+    /// <summary>Resolve the newest available model id for <paramref name="family"/>
+    /// (one of <see cref="ModelFamilies"/>). Never returns null: when discovery
+    /// or the registry rules out every member (e.g. a transient discovery
+    /// hiccup), the family's newest declared member is the last resort so a
+    /// caller never has to null-check a runtime default.</summary>
+    public static string Resolve(string family)
+    {
+        if (string.Equals(family, ModelFamilies.GptFlagship, StringComparison.OrdinalIgnoreCase))
+            return ModelMetadataRegistry.DefaultForCli(CliTypes.Codex) ?? ModelIds.Gpt55;
+
+        if (!StaticMembers.TryGetValue(family, out var members) || members.Length == 0)
+            throw new ArgumentException($"Unknown model family '{family}'.", nameof(family));
+
+        var vendor = VendorForFamily[family];
+        var detected = ModelMetadataRegistry.DetectedVendorAvailability(vendor);
+        foreach (var id in members)
+        {
+            if (detected != null)
+            {
+                if (detected.Contains(id)) return id;
+                continue;
+            }
+            var metadata = ModelMetadataRegistry.Find(id);
+            if (metadata is null || (metadata.Available && !metadata.Deprecated)) return id;
+        }
+        return members[0];
+    }
+}
+
 public sealed record ModelMetadata(
     string Id,
     string Label,
@@ -317,6 +404,42 @@ public static class ModelMetadataRegistry
         if (!UsesLiveDiscoveredThinkingLadder(model)) return null;
         return _detectedCodexLadders.TryGetValue(model.Trim(), out var ladder) ? ladder : null;
     }
+
+    // Family-scoped live availability, keyed by vendor and published by
+    // ClaudeModelDiscovery/CodexModelDiscovery after every catalogue read
+    // (fresh, mem-cache, or disk-cache), mirroring the existing
+    // _detectedCodexDefaultId pattern above but generalized across vendors so
+    // ModelFamilyResolver can ask "did discovery actually report this id" for
+    // any family, not just the single Codex flagship scalar. Vendor absent =>
+    // discovery has not run yet for that vendor, so callers fall back to the
+    // static registry's Available/Deprecated flags.
+    private static volatile IReadOnlyDictionary<string, IReadOnlySet<string>> _detectedVendorAvailability =
+        new Dictionary<string, IReadOnlySet<string>>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Publish the model ids the installed CLI actually reported as
+    /// available for a vendor. Replaces any previously published set for that
+    /// vendor (does not merge), so a model the CLI stops advertising drops out.</summary>
+    public static void SetDetectedVendorAvailability(string vendor, IEnumerable<string> availableModelIds)
+    {
+        if (string.IsNullOrWhiteSpace(vendor)) return;
+        var next = new Dictionary<string, IReadOnlySet<string>>(_detectedVendorAvailability, StringComparer.OrdinalIgnoreCase)
+        {
+            [vendor.Trim()] = new HashSet<string>(availableModelIds ?? [], StringComparer.OrdinalIgnoreCase)
+        };
+        _detectedVendorAvailability = next;
+    }
+
+    /// <summary>The last set of available model ids discovery published for a
+    /// vendor, or null when discovery has not run yet for that vendor.</summary>
+    public static IReadOnlySet<string>? DetectedVendorAvailability(string vendor)
+        => !string.IsNullOrWhiteSpace(vendor) && _detectedVendorAvailability.TryGetValue(vendor.Trim(), out var ids)
+            ? ids
+            : null;
+
+    /// <summary>Test/reset hook: clears every previously published vendor
+    /// availability set, restoring "discovery has not run" for every vendor.</summary>
+    public static void ClearDetectedVendorAvailability()
+        => _detectedVendorAvailability = new Dictionary<string, IReadOnlySet<string>>(StringComparer.OrdinalIgnoreCase);
 
     public static IReadOnlyList<ModelMetadata> All => Entries;
 

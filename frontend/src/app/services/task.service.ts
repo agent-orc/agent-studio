@@ -42,7 +42,7 @@ import type {
 } from '../models/task.model';
 import { TaskState } from '../models/task.model';
 import type { ClaudeSessionResponse } from '../features/claude';
-import type { CliModelCatalog, CliCompletionContract, CliUsageReport, CliSessionDetail, CliSessionDeleteResult, CliWorkingMemoryReport, CliWorkingMemoryDeleteResult } from '../features/cli';
+import type { CliModelCatalog, CliCompletionContract, CliUsageReport, CliSessionDetail, CliSessionDeleteResult, CliWorkingMemoryReport, CliWorkingMemoryDeleteResult, ModelMigrationCatalog } from '../features/cli';
 import type { GitFileChange, GitStatus, TaskCommitDetail, TaskProvenanceView } from '../features/git';
 import type {
   OrchestratorLogResponse,
@@ -1694,6 +1694,11 @@ export class TaskService {
       `${this.baseUrl}/cli/${cliType}/models`,
       params ? { params } : {},
     );
+  }
+
+  /** AGT-2716 — the model-family migration catalog (safe upgrades from a superseded model id). */
+  getModelMigrationCatalog() {
+    return this.http.get<ModelMigrationCatalog>(`${this.baseUrl}/cli/model-migrations`);
   }
 
   getCliUsageReport() {
