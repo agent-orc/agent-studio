@@ -99,6 +99,7 @@ import {
   replaceTaskViewRoute,
   studioProjectSlug,
   studioRouteForTab,
+  taskTabProjectScope,
   type StudioTab,
   type TaskDetailRouteTab,
   type TaskInspectorRouteTab,
@@ -973,8 +974,13 @@ export class App implements OnInit, OnDestroy {
           project = tab.projectName;
           break;
         case 'task':
+          // AGT-2692: the scope stamped when the tab was opened wins over the
+          // task's own project, so opening a card from the All-projects board
+          // keeps the app workspace-wide instead of switching projects.
+          project = taskTabProjectScope(tab, key => this.taskProjectName(key));
+          break;
         case 'activity':
-          project = this.jobService.jobs().find(j => j.taskKey === tab.taskKey)?.projectName ?? undefined;
+          project = this.taskProjectName(tab.taskKey);
           break;
         default:
           project = undefined;
@@ -1915,6 +1921,15 @@ export class App implements OnInit, OnDestroy {
         });
       },
     });
+  }
+
+  /**
+   * Owning project of a loaded task, or `undefined` while the board feed has
+   * not produced it yet. This is task identity, not app scope: the scope the
+   * shell follows comes from the tab (see {@link taskTabProjectScope}).
+   */
+  private taskProjectName(taskKey: string): string | undefined {
+    return this.jobService.jobs().find(j => j.taskKey === taskKey)?.projectName ?? undefined;
   }
 
   /**
