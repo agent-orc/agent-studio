@@ -299,17 +299,22 @@ unset claude_setup_token
 ```
 
 For rotation, generate a replacement with `claude setup-token`, repeat the
-atomic stdin provisioning command, then restart every installed runner role:
+atomic stdin provisioning command, then replace every installed runner role.
+Coding still accepts an ordinary restart. Review must use the guarded helper:
 
 ```bash
-ssh agent-runner-01 \
-  'sudo systemctl restart agent-runner.service agent-runner-review.service'
+ssh agent-runner-01 '
+  sudo systemctl restart agent-runner.service
+  sudo /usr/local/sbin/agent-runner-deploy restart-review
+'
 ```
 
-Omit a unit that is not installed on that host. Never append a token with an
-interactive editor or pass it as an SSH argument. When more providers gain
-environment-token support, send the complete replacement file through the same
-stdin path so this remains the single provider-auth source.
+Omit a unit that is not installed on that host. If Review is busy, the helper
+refuses with the drain hint; run `agent-runner-deploy drain` so the current
+reviews finish before the credential-bearing daemon is replaced. Never append
+a token with an interactive editor or pass it as an SSH argument. When more
+providers gain environment-token support, send the complete replacement file
+through the same stdin path so this remains the single provider-auth source.
 
 Verify without printing the secret:
 
@@ -338,18 +343,20 @@ token. Provider-auth details and task output must never contain the token.
 
 The Execution Hosts dialog performs the same SSH-stdin provisioning without
 placing the secret in a task. It atomically updates the shared file, restarts
-both installed units, verifies the variable name in each daemon's
-`/proc/<MainPID>/environ`, and waits for a fresh runner probe. It never persists
-the value in the Studio database, repository, task, log, or evidence artifact.
+Coding, requests the guarded Review replacement, verifies the variable name in
+each replacement daemon's `/proc/<MainPID>/environ`, and waits for a fresh
+runner probe. A busy Review replacement remains pending until it can drain; it
+never bypasses the guard. Studio never persists the value in the database,
+repository, task, log, or evidence artifact.
 
 Codex renewal uses the adjacent **Sign in Codex** action when the provider state
 is **Unavailable** or **Expiring**. Studio starts a 15-minute SSH session as the
 runner user and returns only a session handle, the official verification URL,
 and the one-time browser code. After the browser flow, the host runs
-`codex login status`. A successful login best-effort restarts installed runner
-units so their startup probe publishes `provider-auth:codex` promptly; if no
-unit is installed or restart is unavailable, the ordinary probe cadence remains
-the fallback. Studio discards the
+`codex login status`. A successful login best-effort restarts Coding and asks
+the guarded helper to replace Review so their startup probes publish
+`provider-auth:codex` promptly. A busy Review is left running and the ordinary
+probe cadence remains the fallback. Studio discards the
 URL and code at terminal completion and emits one `provider_sign_in` operator
 event containing only host, provider, actor, and outcome. The token and Codex
 auth file never leave the host.
@@ -425,12 +432,15 @@ candidate that passes both checks becomes an immutable release.
 The validator uses the host's `/usr/bin/python3` standard library. The hardening
 migration refuses to install the helper when that interpreter is absent.
 
-Promotion restarts the fixed Coding and Review units, then observes their
-systemd `NRestarts` counters and active state for 15 seconds. A counter change,
-restart failure, or inactive unit makes the command fail and prints the previous
-release id plus an operator one-liner that re-points `current` and restarts both
-units. The failed release remains immutable for investigation. The helper does
-not add a rollback command or any new sudo argument shape.
+Promotion replaces both fixed service processes, then observes their systemd
+`NRestarts` counters and active state for 15 seconds. Review is replaced first:
+it receives SIGTERM only on its active MainPID, and
+`Restart=always` starts the replacement without stopping detached workers. The
+Coding unit then uses an ordinary restart. The single planned Review
+replacement may advance `NRestarts` once; any further
+counter change, replacement failure, or inactive unit makes the command fail
+and prints the previous release id plus an operator rollback one-liner. The
+failed release remains immutable for investigation.
 
 ## 3. Configure
 
@@ -497,21 +507,21 @@ operator provisioning action.
 
 The installed helper currently accepts one variable only:
 
-| Role | Unit restarted | Preferred role EnvironmentFile | Clean-install fallback | Accepted value |
+| Role | Service control | Preferred role EnvironmentFile | Clean-install fallback | Accepted value |
 |---|---|---|---|---|
-| `coding` | `agent-runner.service` | `/etc/agent-runner/runner-coding.env` | `/etc/agent-runner/runner.env` | `RUNNER_MAX_PARALLELISM=1..6` |
-| `review` | `agent-runner-review.service` | `/etc/agent-runner/runner-review.env` | `/etc/agent-runner/review.env` | `RUNNER_MAX_PARALLELISM=1..6` |
+| `coding` | Restart `agent-runner.service` | `/etc/agent-runner/runner-coding.env` | `/etc/agent-runner/runner.env` | `RUNNER_MAX_PARALLELISM=1..6` |
+| `review` | Signal the MainPID and adopt the `agent-runner-review.service` replacement | `/etc/agent-runner/runner-review.env` | `/etc/agent-runner/review.env` | `RUNNER_MAX_PARALLELISM=1..6` |
 
 The helper selects only an approved file that the target unit actually loads,
-requires `root:agent` mode `0640`, replaces the value atomically, and restarts
-only the mapped role unit. Systemd applies `EnvironmentFile=` values after
+requires `root:agent` mode `0640`, replaces the value atomically, and replaces
+only the mapped role process. Systemd applies `EnvironmentFile=` values after
 `Environment=` values, so the selected role file's
 `RUNNER_MAX_PARALLELISM` value overrides a default such as
 `Environment=RUNNER_MAX_PARALLELISM=2` in the main unit. After restart, the
-helper waits up to 30 seconds for the unit to be active with a nonzero MainPID
+helper waits up to 120 seconds for the unit to be active with a nonzero MainPID
 that differs from the pre-restart MainPID. Only then does it read
 `/proc/<MainPID>/environ`, which avoids selecting either the old daemon or a
-detached worker preserved by `KillMode=process`. A restart, handoff timeout, or
+detached worker preserved by `KillMode=process`. A replacement, handoff timeout, or
 process-environment mismatch restores the previous file and retries the old
 configuration. Every accepted change writes an `authpriv.notice` journal
 record tagged `agent-runner-deploy` with the role, variable, old value, new
@@ -892,7 +902,9 @@ bash scripts/remote-runner-onboard.sh \
 Use `--role review`, a separate enrolled identity, and a separate credential
 file to install or update `agent-runner-review.service`. The controller derives
 role resource policy, writes it into the main unit, migrates legacy resource
-drop-ins, runs `daemon-reload`, and restarts the selected service. Do not copy
+drop-ins, runs `daemon-reload`, and replaces the selected service process.
+Review installation writes the versioned `RefuseManualStop=true` drop-in before
+it signals the current MainPID or starts an inactive unit. Do not copy
 `deploy/systemd/agent-runner.service` directly for a managed host; that file is
 the legacy static unit reference and cannot derive a host quota.
 
@@ -916,25 +928,87 @@ The managed units deliberately use `KillMode=process`. This is required:
 `control-group` kills detached job workers and makes safe reattachment
 impossible. `StartLimitIntervalSec=300`, `StartLimitBurst=5`, and
 `RestartSec=10s` bound a broken-binary restart loop while allowing ordinary
-recovery. Installing or changing the unit requires root, followed by
-`systemctl daemon-reload`.
+recovery. Review alone also loads `RefuseManualStop=true`, so direct
+`systemctl stop` and `systemctl restart` requests are refused. Installing or
+changing the unit requires root, followed by `systemctl daemon-reload`.
+
+### Restart, drain, handoff
+
+**Drain the Review Executor; never restart it while slots are busy.** A review
+holds thirty to sixty minutes of gate work in a detached worker. Stopping the
+daemon on top of it can cost that work and put the card back in the queue.
+Systemd therefore refuses every direct Review `stop` or `restart`. The deploy
+helper is the only service-control path: it checks durable slot markers first,
+then signals only the active daemon MainPID and waits for its replacement.
+
+```bash
+# Would a restart discard review work right now?
+sudo -u agent /opt/agent-host/current/agent-host --restart-guard --role review \
+  --state-dir /var/lib/agent-runner-review/state   # 0 safe, 3 refused
+
+# Replace an idle Review daemon, or get the drain hint when slots are busy.
+sudo /usr/local/sbin/agent-runner-deploy restart-review
+
+# Busy host: stop claiming, finish the running reviews, then replace the daemon.
+sudo /usr/local/sbin/agent-runner-deploy drain
+```
+
+`drain` writes `review-drain-requested.json` into the review `RUNNER_STATE_DIR`.
+The daemon stops claiming on its next poll, logs `review daemon draining`,
+finishes its running reviews, and exits with `review daemon drained` once the
+slot set is empty. The helper handles the race with that exit, signals the old
+MainPID when it has not exited yet, and waits for a different active MainPID.
+`Restart=always` starts the fresh instance, which clears the marker and resumes
+claiming, so a drain needs no second operator step. The wait is bounded by
+`RUNNER_DRAIN_TIMEOUT_SECONDS` (default one hour); a drain that runs out names
+the slots it could not finish and exits 3.
+
+A direct `systemctl restart agent-runner-review.service` is refused even when
+the role is idle. A helper refusal prints the drain hint and does not signal the
+unit. A root operator can explicitly bypass the busy-slot check while retaining
+the SIGTERM handoff path:
+
+```bash
+sudo /usr/local/sbin/agent-runner-deploy restart-review --force
+# For an already staged release:
+sudo /usr/local/sbin/agent-runner-deploy --force
+```
+
+The guard also covers `agent-runner-deploy config review RUNNER_MAX_PARALLELISM
+<n>` and release promotion, because those paths replace the Review daemon too.
+The service account's
+sudoers policy deliberately does **not** allow `--force`: automation drains, and
+only a human operator overrides.
+
+A daemon replaced through the helper keeps its leases alive across the restart
+window. Before it hands off a worker, the outgoing instance sends one final
+renewal with `RUNNER_HANDOFF_LEASE_TTL_SECONDS` (default 300, clamped by the
+Task Server) and logs `review handoff lease extended`. The replacement instance
+renews with exactly that persisted authority **before** its first heartbeat and
+logs `review adoption lease verified`. If the Task Server refuses that
+verification, the replacement re-registers and, failing that, takes the attempt
+over under a higher fence (`review lease re-claimed ... previousFence=N
+fence=N+1`), keeping the running worker and its workspace. Only an attempt that
+is gone or was deliberately superseded ends as `review lease authority lost`.
 
 ### Planned daemon restart and deploy
 
 A planned Runner deploy no longer waits for host idle. On a hardened host, stage
 the complete application and invoke the no-argument deploy helper as described
-in section 2. The helper records the previous release, validates the dependency
-closure, runs the service-user boot smoke check, atomically switches
-`/opt/agent-host/current`, restarts both main service processes, and watches for
-an immediate restart loop.
+in section 2. Drain the Review Executor first, or the helper refuses. The helper
+records the previous release, validates the dependency closure, runs the
+service-user boot smoke check, atomically switches `/opt/agent-host/current`,
+signals only the Review MainPID, restarts Coding, waits for both replacement
+processes, and watches for an immediate restart loop.
 
 ```bash
+sudo /usr/local/sbin/agent-runner-deploy drain
 sudo /usr/local/sbin/agent-runner-deploy
 sudo journalctl -u agent-host --since '-2 minutes' \
   | grep -E 'planned shutdown|persisted attempt accepted|recovered .* persisted slot|releasing dead persisted attempt'
 
 sudo journalctl -u agent-runner-review --since '-2 minutes' \
-  | grep -E 'planned shutdown|review daemon handoff|persisted review accepted|adopting persisted review|review adoption failed'
+  | grep -E 'planned shutdown|review daemon draining|review handoff lease extended|review daemon handoff|persisted review accepted|adopting persisted review|review adoption lease verified|review lease re-claimed|review adoption failed'
 ```
 
 On SIGTERM the old daemon stops making claims, leaves detached coding and review
@@ -944,15 +1018,18 @@ opening any freed slot to claims. For Coding, confirm every occupied slot report
 either `persisted attempt accepted` or `releasing dead persisted attempt`; the
 latter must be followed by a Ready card and a later higher-fence claim. For
 Review, confirm `review daemon handoff` is followed by `persisted review
-accepted` and `adopting persisted review` under the same attempt and fence. A
-`review adoption failed` line must be followed by an accepted
-`ExecutorRestarted` infrastructure report with explicit loss extent and retry
-reason. Do not change either unit back to `KillMode=control-group`. Retain every release referenced by a
+accepted`, `adopting persisted review`, and `review adoption lease verified`
+under the same attempt and fence. A verified adoption whose fence moved
+(`review lease re-claimed`) is also a success: the worker kept running and the
+report lands under the new fence. A `review adoption failed` line must be
+followed by an accepted `ExecutorRestarted` infrastructure report with explicit
+loss extent and retry reason. Do not change either unit back to
+`KillMode=control-group`. Retain every release referenced by a
 daemon or detached worker; garbage collection is a separate, process-aware
 operation. If post-restart observation fails, use the exact rollback one-liner
 printed by the helper. Rollback switches `current` to the recorded previous
-release and restarts both daemons. It never copies old files over the active
-release.
+release, restarts Coding, and signals the Review MainPID for replacement. It
+never copies old files over the active release.
 
 This procedure covers a planned daemon binary restart, not a machine reboot,
 power loss, Task Server authority restart, or forced `SIGKILL`. Those cases

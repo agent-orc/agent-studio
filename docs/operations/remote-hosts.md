@@ -279,6 +279,27 @@ curl -sS -X POST https://tasks.example.com/api/clients/agent-runner-01/drain \
   -H 'X-Client-Id: local-default'
 ```
 
+### Restarting a Review Executor: drain, never restart
+
+The server-side drain above blocks new leases but does not stop the daemon
+process. To stop or restart a Remote Review Executor host, drain it on the host
+instead. A running review carries thirty to sixty minutes of gate work in a
+detached worker, and restarting on top of it loses that work and requeues the
+card.
+
+```bash
+sudo /usr/local/sbin/agent-runner-deploy drain     # stop claiming, finish, exit
+sudo /usr/local/sbin/agent-runner-deploy           # promote a release
+```
+
+A direct `systemctl stop` or `systemctl restart` is always refused for Review.
+Use `agent-runner-deploy restart-review` when the role is idle; it prints the
+drain hint when slots are busy. A root operator's explicit override is
+`agent-runner-deploy restart-review --force`. Release promotion uses the same
+guarded MainPID handoff path. The full procedure, the log lines to check, and
+the lease-handoff contract are in
+[Restart, drain, handoff](setup/linux-runner-host.md#restart-drain-handoff).
+
 ## Retire, revive, delete
 
 ### Retire

@@ -1,3 +1,4 @@
+import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
 import {
   hostStatusLabel,
@@ -12,6 +13,7 @@ import {
   // eslint-disable-next-line @angular-eslint/component-selector -- Native table semantics require a tr host.
   selector: 'tr[appRemoteHostRoleRow]',
   standalone: true,
+  imports: [DatePipe],
   templateUrl: './remote-host-role-row.html',
   styleUrl: './remote-host-role-row.scss',
   host: {

@@ -831,6 +831,22 @@ public sealed class TaskServerClient : IDisposable
                ct)
            ?? throw new TaskServerException(500, "Empty review lease renewal response.");
 
+    /// <summary>
+    /// Takes one specific ReviewAttempt over under a higher fence. Only a
+    /// replacement daemon that still owns the attempt's live detached worker may
+    /// call this; the previous lease identity travels with the request as the
+    /// continuity proof.
+    /// </summary>
+    public async Task<Contract.ReviewClaimResponse> ReClaimReviewAsync(
+        string attemptId,
+        Contract.ReviewReClaimRequest request,
+        CancellationToken ct)
+        => await PostJsonAsync<Contract.ReviewReClaimRequest, Contract.ReviewClaimResponse>(
+               $"/api/v1/reviews/attempts/{Uri.EscapeDataString(attemptId)}/reclaim",
+               request,
+               ct)
+           ?? throw new TaskServerException(500, "Empty review re-claim response.");
+
     public async Task<Contract.ReviewAttemptDto?> GetReviewAttemptAsync(
         string attemptId,
         CancellationToken ct)

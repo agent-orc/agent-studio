@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -143,6 +144,116 @@ public sealed class V1ReviewPlaneDiagnosticsEndpointTests : IDisposable
         var resumed = await ClaimAsync(http);
         Assert.Equal("empty", resumed.Status);
         Assert.DoesNotContain("paused", resumed.Message ?? string.Empty, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Review_restart_snapshot_is_bound_to_the_changed_instance_registration()
+    {
+        var registry = new V1ReviewExecutorRegistry();
+        var first = registry.RegisterWithRestartObservation(
+            RunnerId,
+            Registration("review-host:first"));
+        Assert.Null(first.ReviewRestartedAt);
+
+        var restarted = registry.RegisterWithRestartObservation(
+            RunnerId,
+            Registration("review-host:replacement"));
+        var restartedAt = Assert.IsType<DateTime>(restarted.ReviewRestartedAt);
+        Assert.True(registry.RecordReviewRestartOutcome(
+            RunnerId,
+            "review-host:replacement",
+            restartedAt,
+            [
+                new Contract.RunnerAttemptAdoption(
+                    Contract.RunnerAttemptKinds.Review,
+                    "rat_adopted",
+                    "AGT-RESTART-VISIBILITY",
+                    "adopted"),
+                new Contract.RunnerAttemptAdoption(
+                    Contract.RunnerAttemptKinds.Review,
+                    "rat_lost",
+                    "AGT-RESTART-VISIBILITY",
+                    "stale-authority",
+                    Message: "The persisted fence no longer owns the attempt."),
+            ]));
+
+        var snapshot = Assert.Single(registry.ListCapabilitySnapshots());
+        Assert.Equal(restartedAt, snapshot.RestartedAt);
+        Assert.Equal(1, snapshot.ReviewsLost);
+
+        var routineRegistration = registry.RegisterWithRestartObservation(
+            RunnerId,
+            Registration("review-host:replacement"));
+        Assert.Null(routineRegistration.ReviewRestartedAt);
+        var unchanged = Assert.Single(registry.ListCapabilitySnapshots());
+        Assert.Equal(restartedAt, unchanged.RestartedAt);
+        Assert.Equal(1, unchanged.ReviewsLost);
+    }
+
+    [Fact]
+    public async Task Changed_review_instance_emits_one_restart_advisory_and_the_lost_attempt_cause()
+    {
+        const string taskKey = "AGT-RESTART-VISIBILITY";
+        const string replacementInstance = "review-host:replacement";
+        var taskFolder = SeedTask(taskKey);
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+
+        await RegisterReviewExecutorAsync(http);
+        var activeAttempts = new[]
+        {
+            new Contract.RunnerActiveAttempt(
+                Contract.RunnerAttemptKinds.Review,
+                "rat_missing_after_restart",
+                taskKey,
+                "lease-before-restart",
+                41,
+                7,
+                Instance),
+        };
+        var restart = await http.PutAsJsonAsync(
+            $"/api/v1/runners/{RunnerId}",
+            Registration(replacementInstance, activeAttempts));
+        restart.EnsureSuccessStatusCode();
+        var response = await restart.Content.ReadFromJsonAsync<Contract.RunnerDto>();
+        var lost = Assert.Single(response!.AttemptAdoptions!);
+        Assert.Equal("not-found", lost.Status);
+        Assert.Equal(taskKey, lost.TaskKey);
+
+        var logPath = Path.Combine(taskFolder, "logs", "cli-output.log");
+        var firstLog = await File.ReadAllTextAsync(logPath);
+        Assert.Contains("[supervisor] [review-daemon-restart]", firstLog);
+        Assert.Contains(RunnerId, firstLog);
+        Assert.Contains(taskKey, firstLog);
+        Assert.Contains("[supervisor] [review-lost-on-restart]", firstLog);
+        Assert.Contains("rat_missing_after_restart", firstLog);
+        Assert.Contains("status=not-found", firstLog);
+        Assert.Contains("cause=ReviewAttempt was not found", firstLog);
+
+        var snapshot = Assert.Single(factory.Services
+            .GetRequiredService<V1ReviewExecutorRegistry>()
+            .ListCapabilitySnapshots());
+        Assert.NotNull(snapshot.RestartedAt);
+        Assert.Equal(1, snapshot.ReviewsLost);
+
+        // A routine registration from the already-current replacement may
+        // re-report its slots, but it is not another daemon restart event.
+        var repeated = await http.PutAsJsonAsync(
+            $"/api/v1/runners/{RunnerId}",
+            Registration(replacementInstance, activeAttempts));
+        repeated.EnsureSuccessStatusCode();
+        var repeatedLog = await File.ReadAllTextAsync(logPath);
+        Assert.Equal(
+            1,
+            repeatedLog.Split("[review-daemon-restart]", StringSplitOptions.None).Length - 1);
+        Assert.Equal(
+            1,
+            repeatedLog.Split("[review-lost-on-restart]", StringSplitOptions.None).Length - 1);
+        var unchanged = Assert.Single(factory.Services
+            .GetRequiredService<V1ReviewExecutorRegistry>()
+            .ListCapabilitySnapshots());
+        Assert.Equal(snapshot.RestartedAt, unchanged.RestartedAt);
+        Assert.Equal(1, unchanged.ReviewsLost);
     }
 
     [Fact]
@@ -364,6 +475,45 @@ public sealed class V1ReviewPlaneDiagnosticsEndpointTests : IDisposable
                     Contract.ReviewCapabilities.SemanticReview,
                 ]));
         registration.EnsureSuccessStatusCode();
+    }
+
+    private static Contract.RegisterRunnerRequest Registration(
+        string instanceId,
+        IReadOnlyList<Contract.RunnerActiveAttempt>? activeAttempts = null)
+        => new(
+            RunnerId,
+            "review-host",
+            instanceId,
+            "1.0.0",
+            Contract.TaskServerProtocol.Current,
+            [
+                Contract.ReviewCapabilities.ReviewExecutor,
+                Contract.ReviewCapabilities.BaselineComparison,
+                Contract.ReviewCapabilities.DependencyPreparation,
+                Contract.ReviewCapabilities.GitMaterialization,
+                Contract.ReviewCapabilities.SemanticReview,
+            ],
+            ActiveAttempts: activeAttempts);
+
+    private string SeedTask(string taskKey)
+    {
+        var taskFolder = Path.Combine(_watchPath, TaskStates.AutoReview, taskKey);
+        Directory.CreateDirectory(taskFolder);
+        File.WriteAllText(
+            Path.Combine(taskFolder, "task.json"),
+            JsonSerializer.Serialize(new
+            {
+                id = taskKey,
+                key = taskKey,
+                title = "Restart visibility",
+                state = TaskStates.AutoReview,
+                order = 1,
+                agent = "codex",
+                kind = TaskKinds.Task,
+            }));
+        File.WriteAllText(Path.Combine(taskFolder, "prompt.md"), "Preserve review work.");
+        File.WriteAllText(Path.Combine(taskFolder, "status.md"), "Result: pending.");
+        return taskFolder;
     }
 
     private static async Task<Contract.ReviewClaimResponse> ClaimAsync(HttpClient http)

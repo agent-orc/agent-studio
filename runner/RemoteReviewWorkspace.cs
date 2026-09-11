@@ -1370,8 +1370,13 @@ public sealed class RemoteReviewWorkspace
         }
     }
 
-    public ReviewEnvironmentDto EnvironmentEvidence()
+    public ReviewEnvironmentDto EnvironmentEvidence(ReviewLeaseDto? authority = null)
     {
+        // A re-claim changes who may submit the report without moving the
+        // detached worker. Attribute the execution to the current authority,
+        // while retaining the paths, ports, and namespace that were physically
+        // materialized for the original lease.
+        var attribution = authority ?? _lease;
         var toolchain = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["runtime"] = RuntimeInformation.FrameworkDescription,
@@ -1383,9 +1388,9 @@ public sealed class RemoteReviewWorkspace
         foreach (var command in _subject.Plan.Preparation ?? [])
             toolchain[$"command:{command.StepId}"] = ExecutableIdentity(command.FileName);
         return new ReviewEnvironmentDto(
-            _lease.HostId,
-            _lease.ExecutorId,
-            _lease.InstanceId,
+            attribution.HostId,
+            attribution.ExecutorId,
+            attribution.InstanceId,
             RuntimeInformation.OSDescription,
             RuntimeInformation.ProcessArchitecture.ToString(),
             RuntimeInformation.FrameworkDescription,

@@ -3588,75 +3588,83 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
     }
 
     [Fact]
-    public async Task Review_daemon_restart_adopts_in_flight_worker_without_repeating_completed_commands()
+    public async Task Review_daemon_restart_adopts_six_in_flight_workers_without_losing_or_repeating_commands()
     {
         const string reviewRunnerId = "review-runner-restart";
+        const int reviewCount = 6;
         var origin = await SeedOriginAsync();
         var resultSha = (await GitAsync(origin, "rev-parse", "refs/heads/main")).StdOut.Trim();
-        var marker = Path.Combine(_workspace, "review-command-marker.txt");
         var release = Path.Combine(_workspace, "release-review-command");
-        SeedTask(
-            TaskStates.AutoReview,
-            TaskKey,
-            "Adopt review across daemon restart",
-            "Run both review commands once.");
 
         using var factory = BuildFactory();
         using var httpOne = factory.CreateClient();
         var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
         var repositoryId = Contract.RepositoryIdentityContract.FromUrl(origin)!;
-        var run = authority.AcquireRun(
-            TaskKey,
-            repositoryId,
-            null,
-            RunnerId,
-            "coding-host",
-            120,
-            "restart-review-run").RunAttempt!;
-        var completed = authority.SettleRun(new SettleRunAttemptRequest
+        var reviews = new List<(string TaskKey, string Marker, string AttemptId)>();
+        for (var index = 1; index <= reviewCount; index++)
         {
-            Write = new AttemptWriteReference(
-                run.AttemptId,
-                run.LastFence,
-                run.AuthorityEpoch,
-                "restart-review-run-complete"),
-            Outcome = "done",
-            ResultSha = resultSha,
-            Reason = null,
-            ResultEnvelope = new Contract.ImmutableResultEnvelope(
+            var taskKey = $"{TaskKey}-{index:D2}";
+            var marker = Path.Combine(_workspace, $"review-command-marker-{index:D2}.txt");
+            SeedTask(
+                TaskStates.AutoReview,
+                taskKey,
+                $"Adopt review {index} across daemon restart",
+                "Run both review commands once.",
+                order: index);
+            var run = authority.AcquireRun(
+                taskKey,
                 repositoryId,
-                run.AttemptId,
-                resultSha,
-                resultSha,
-                "refs/heads/main",
                 null,
-                new string('a', 64),
-                RepositoryUrl: origin),
-        });
-        Assert.True(completed.Accepted);
-        var created = authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
-            TaskKey,
-            repositoryId,
-            resultSha,
-            run.AttemptId,
-            "requirements",
-            "restart-adoption-policy",
-            [],
-            "restart-review-create",
-            RepositoryUrl: origin,
-            ResultRef: "refs/heads/main",
-            Plan: new Contract.ReviewPlanDto(
-                [
-                    AppendLineCommand("completed-before-restart", marker, "first"),
-                    AwaitFileThenAppendLineCommand(
-                        "in-flight-during-restart", release, marker, "second"),
-                ],
-                ["build-tests"])));
-        Assert.True(created.Accepted);
+                RunnerId,
+                "coding-host",
+                120,
+                $"restart-review-run-{index:D2}").RunAttempt!;
+            var completed = authority.SettleRun(new SettleRunAttemptRequest
+            {
+                Write = new AttemptWriteReference(
+                    run.AttemptId,
+                    run.LastFence,
+                    run.AuthorityEpoch,
+                    $"restart-review-run-complete-{index:D2}"),
+                Outcome = "done",
+                ResultSha = resultSha,
+                Reason = null,
+                ResultEnvelope = new Contract.ImmutableResultEnvelope(
+                    repositoryId,
+                    run.AttemptId,
+                    resultSha,
+                    resultSha,
+                    "refs/heads/main",
+                    null,
+                    new string('a', 64),
+                    RepositoryUrl: origin),
+            });
+            Assert.True(completed.Accepted);
+            var created = authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
+                taskKey,
+                repositoryId,
+                resultSha,
+                run.AttemptId,
+                "requirements",
+                "restart-adoption-policy",
+                [],
+                $"restart-review-create-{index:D2}",
+                RepositoryUrl: origin,
+                ResultRef: "refs/heads/main",
+                Plan: new Contract.ReviewPlanDto(
+                    [
+                        AppendLineCommand("completed-before-restart", marker, "first"),
+                        AwaitFileThenAppendLineCommand(
+                            "in-flight-during-restart", release, marker, "second"),
+                    ],
+                    ["build-tests"])));
+            Assert.True(created.Accepted);
+            reviews.Add((taskKey, marker, created.ReviewAttempt!.AttemptId));
+        }
 
         var options = ReviewRunnerOptions(
             reviewRunnerId,
-            hostMaxParallelism: 2,
+            hostMaxParallelism: reviewCount,
             claimMaxLoadPerCore: double.MaxValue);
         var firstLogs = new System.Collections.Concurrent.ConcurrentQueue<string>();
         using var firstClient = new RClient(
@@ -3677,29 +3685,46 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             telemetryProbe: (activeSlots, _) => IdleHostTelemetry(activeSlots));
         var firstRun = firstDaemon.RunAsync(firstStop.Token);
 
-        // The detached review worker is a separate dotnet process; its cold
-        // boot alone can take several seconds on a loaded host, so this first
-        // observation gets triple the usual budget. The poll may collide with
-        // the writer's open handle for an instant; that read simply retries.
+        // Each detached worker is a separate dotnet process. Seeing the first
+        // checkpoint from every slot proves that all six reviews are running
+        // concurrently and parked inside their second command at shutdown.
         await WaitUntilAsync(
-            () => TryReadAllLines(marker) is { } lines && lines.SequenceEqual(["first"]),
-            () => "first review command did not complete; daemon log:\n"
+            () => reviews.All(review =>
+                TryReadAllLines(review.Marker) is { } lines
+                && lines.SequenceEqual(["first"])),
+            () => "not all first review commands completed; daemon log:\n"
                   + string.Join("\n", firstLogs),
-            attempts: 600);
-        var firstSlot = Assert.Single(new RReviewStateStore(options.StateDir).LoadAll());
-        var originalFence = firstSlot.Claim.Lease!.Fence;
-        Assert.Equal("review-host:generation-1", firstSlot.Claim.Lease.InstanceId);
+            attempts: 1200);
+        var firstSlots = new RReviewStateStore(options.StateDir).LoadAll();
+        Assert.Equal(reviewCount, firstSlots.Count);
+        Assert.Equal(reviewCount, firstSlots.Select(slot => slot.ProcessId).Distinct().Count());
+        Assert.All(firstSlots, slot =>
+        {
+            Assert.NotNull(slot.ProcessId);
+            Assert.Equal("review-host:generation-1", slot.Claim.Lease!.InstanceId);
+            using var process = Process.GetProcessById(slot.ProcessId.Value);
+            Assert.False(process.HasExited);
+        });
+        var originalFences = firstSlots.ToDictionary(
+            slot => slot.AttemptId,
+            slot => slot.Claim.Lease!.Fence,
+            StringComparer.Ordinal);
 
         firstStop.Cancel();
-        await firstRun.WaitAsync(TimeSpan.FromSeconds(10));
-        Assert.Contains(firstLogs, line => line.Contains(
-            "detached worker left running for replacement adoption",
-            StringComparison.Ordinal));
+        await firstRun.WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.All(reviews, review => Assert.Contains(firstLogs, line => line.Contains(
+            $"attempt={review.AttemptId}",
+            StringComparison.Ordinal)
+            && line.Contains(
+                "detached worker left running for replacement adoption",
+                StringComparison.Ordinal)));
 
         using var httpTwo = factory.CreateClient();
         var replacementOptions = ReviewRunnerOptions(
             reviewRunnerId,
-            hostMaxParallelism: 2,
+            // Leave one nominal slot so the busy-host admission signal, not
+            // the capacity ceiling, proves that no fresh claim can slip in.
+            hostMaxParallelism: reviewCount + 1,
             claimMaxLoadPerCore: double.Epsilon);
         var secondLogs = new System.Collections.Concurrent.ConcurrentQueue<string>();
         using var secondClient = new RClient(
@@ -3722,11 +3747,19 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         var secondRun = secondDaemon.RunAsync(secondStop.Token);
 
         await WaitUntilAsync(
-            () => secondLogs.Any(line => line.Contains(
-                "adopting persisted review",
-                StringComparison.Ordinal)),
-            "replacement daemon did not adopt the persisted review",
-            attempts: 600);
+            () => reviews.All(review => secondLogs.Any(line =>
+                line.Contains($"attempt={review.AttemptId}", StringComparison.Ordinal)
+                && line.Contains("adopting persisted review", StringComparison.Ordinal))),
+            () => "replacement daemon did not adopt all persisted reviews; daemon log:\n"
+                  + string.Join("\n", secondLogs),
+            attempts: 1200);
+        await WaitUntilAsync(
+            () => reviews.All(review => secondLogs.Any(line =>
+                line.Contains($"attempt={review.AttemptId}", StringComparison.Ordinal)
+                && line.Contains("review adoption lease verified", StringComparison.Ordinal))),
+            () => "replacement daemon did not verify every adopted lease; daemon log:\n"
+                  + string.Join("\n", secondLogs),
+            attempts: 1200);
         await WaitUntilAsync(
             () => secondLogs.Any(line => line.Contains(
                 "review slot admission closed: load/core",
@@ -3738,9 +3771,11 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         // daemon poll plus server-side moves; each observation gets the same
         // generous budget instead of a knife-edge 10 s.
         await WaitUntilAsync(
-            () => Directory.Exists(Path.Combine(_watchPath, TaskStates.HumanReview, TaskKey)),
-            "adopted review did not reach Human Review",
-            attempts: 600);
+            () => reviews.All(review => Directory.Exists(
+                Path.Combine(_watchPath, TaskStates.HumanReview, review.TaskKey))),
+            () => "not every adopted review reached Human Review; daemon log:\n"
+                  + string.Join("\n", secondLogs),
+            attempts: 1200);
         // Slot-state hygiene rides on the adopting daemon noticing the worker's
         // exit and removing the workspace (read-only git objects, Windows file
         // handles) before it deletes the state file. Poll gently - a tight
@@ -3756,12 +3791,18 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         secondStop.Cancel();
         await secondRun.WaitAsync(TimeSpan.FromSeconds(10));
 
-        Assert.Equal(["first", "second"], File.ReadAllLines(marker));
-        var terminal = authority.GetReview(created.ReviewAttempt!.AttemptId)!;
-        Assert.Equal(AttemptLifecycleState.Completed, terminal.State);
-        Assert.Equal(ReviewTerminalOutcome.Pass, terminal.Outcome);
-        Assert.Equal(originalFence, terminal.LastFence);
-        Assert.Single(terminal.Reports);
+        Assert.All(reviews, review =>
+        {
+            Assert.Equal(["first", "second"], File.ReadAllLines(review.Marker));
+            Assert.Contains(secondLogs, line =>
+                line.Contains($"attempt={review.AttemptId}", StringComparison.Ordinal)
+                && line.Contains("review report accepted", StringComparison.Ordinal));
+            var terminal = authority.GetReview(review.AttemptId)!;
+            Assert.Equal(AttemptLifecycleState.Completed, terminal.State);
+            Assert.Equal(ReviewTerminalOutcome.Pass, terminal.Outcome);
+            Assert.Equal(originalFences[review.AttemptId], terminal.LastFence);
+            Assert.Single(terminal.Reports);
+        });
     }
 
     [Fact]
