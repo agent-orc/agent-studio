@@ -3,9 +3,16 @@ using Contract = AgentStudio.TaskServer.Contracts;
 namespace AgentRunner;
 
 /// <summary>
-/// Builds the fenced authority inventory sent with runner registration. A slot
-/// is reported only when the host can still prove its exact process generation
-/// or has a durable terminal result waiting to be delivered.
+/// Builds the fenced authority inventory sent with runner registration. A
+/// coding slot is reported when the host can still prove its exact process
+/// generation or has a durable terminal result waiting to be delivered. A
+/// review slot is reported only while it can still prove its exact process
+/// generation is live: once verification has produced a durable terminal
+/// result, delivering the report is pure idempotency-key replay against the
+/// attempt authority and needs no re-adoption (AGT-2762 - reporting a
+/// report-pending slot as active made the server reject its next
+/// re-registration as "claim authority lost" once the attempt had already
+/// settled).
 /// </summary>
 public static class RunnerActiveAttemptReporter
 {
@@ -49,11 +56,13 @@ public static class RunnerActiveAttemptReporter
             {
                 observed = recovered;
             }
-            if (!DurableReviewProcess.HasCompleted(observed)
-                && !DurableReviewProcess.VerifyLive(observed, out _))
-            {
+            // A durable terminal result means verification already finished;
+            // only report delivery remains, and that is a fenced, idempotent
+            // replay the authority does not need to re-adopt.
+            if (DurableReviewProcess.HasCompleted(observed))
                 continue;
-            }
+            if (!DurableReviewProcess.VerifyLive(observed, out _))
+                continue;
             var lease = observed.Claim.Lease;
             if (lease is null) continue;
             active.Add(new Contract.RunnerActiveAttempt(
