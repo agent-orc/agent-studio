@@ -3757,6 +3757,10 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             TaskKey,
             "Review survives backend restart",
             "Report the review after authority is re-adopted.");
+        var generatedResultPath = Path.Combine(_watchPath, TaskStates.AutoReview, TaskKey, "status.md");
+        var generatedResult = Encoding.UTF8.GetBytes(
+            "# Status\n\n- Result: Success\n- Case: feature\n\n## What Was Done\n\n- Result predates backend restart.\n");
+        File.WriteAllBytes(generatedResultPath, generatedResult);
 
         Contract.ReviewClaimResponse claim;
         using (var firstFactory = BuildFactory(authorityNow: () => now))
@@ -3846,6 +3850,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         registration.EnsureSuccessStatusCode();
         var registered = await registration.Content.ReadFromJsonAsync<Contract.RunnerDto>();
         Assert.Equal("adopted", Assert.Single(registered!.AttemptAdoptions!).Status);
+        Assert.Equal(generatedResult, File.ReadAllBytes(generatedResultPath));
         var reviewHosts = await restartedHttp.GetFromJsonAsync<
             IReadOnlyList<Contract.RunnerCapabilitySnapshotDto>>(
             "/api/v1/management/remote-hosts");

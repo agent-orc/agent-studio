@@ -475,6 +475,17 @@ Results in `5-human-review`, `6-completed`, and `7-archive`. Agents may read the
 file for recovery context, but durable evidence should live in logs or
 `results/`.
 
+A non-empty generated `status.md` is never replaced by lane movement, review
+requeue, runner re-adoption, or pipeline restart. A producer that creates a new
+Result preserves the prior file under
+`results/history/<sequence>-<timestamp>/status.md`, together with
+`result.json` and the prior `deliverables.md` when present. The JSON records the
+production timestamp, producer, and lane, keeping the folder understandable
+without Studio. `.metadata/current-result.json` carries the same provenance for
+the current file. Existing cards gain previous versions from workspace Git at
+read time and are not migrated. See
+[ADR-0070](../architecture/decisions/adr-archive.md#adr-0070---result-versions-live-in-readable-task-folder-snapshots-with-git-backfill-2026-09-11).
+
 ```markdown
 # Status
 

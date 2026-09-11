@@ -518,6 +518,39 @@ public sealed class TaskTransitionAutoCommitAttributionTests : IDisposable
     }
 
     [Fact]
+    public async Task Agt2707_OperatorMoveFromEscalatedToAutoReview_PreservesGeneratedResultByteForByte()
+    {
+        const string slug = "agt-2707-result-replay";
+        WriteJob(TaskStates.Escalated, slug);
+        var sourceFolder = Path.Combine(_watchPath, TaskStates.Escalated, slug);
+        var generated = Encoding.UTF8.GetBytes(
+            "# Status\n\n- Result: Success\n- Case: blocked\n- Duration: 2h 30m\n- Files: 12\n- Tests: 41 passed\n\n" +
+            "## What Was Done\n\n- Preserved the generated run result.\n\n" +
+            "## Open Items\n\n- Operator review remains.\n\n## Notes\n\n- Original bytes matter.\n");
+        File.WriteAllBytes(Path.Combine(sourceFolder, "status.md"), generated);
+
+        var queue = new RecordingAutoReviewQueue();
+        var deps = BuildDeps(queue);
+        var outcome = await deps.Transitions.MoveAsync(
+            slug,
+            TaskStates.AutoReview,
+            _watchPath,
+            cause: TimelineActors.Human(""),
+            reason: "Replay the 2026-09-11 AGT-2707 review requeue.");
+
+        Assert.Equal(MoveJobStatus.Success, outcome.Status);
+        var moved = Assert.IsType<TaskInfo>(deps.Scanner.FindJob(slug, _watchPath));
+        Assert.Equal(TaskStates.AutoReview, moved.State);
+        Assert.Equal(generated, File.ReadAllBytes(Path.Combine(moved.FolderPath, "status.md")));
+        Assert.DoesNotContain(
+            Directory.Exists(Path.Combine(moved.FolderPath, "results", "history"))
+                ? Directory.EnumerateFiles(Path.Combine(moved.FolderPath, "results", "history"), "status.md", SearchOption.AllDirectories)
+                : [],
+            path => File.ReadAllText(path).Contains("Original bytes matter", StringComparison.Ordinal));
+        Assert.Single(queue.Requests);
+    }
+
+    [Fact]
     public async Task AutomaticMoves_DoNotChangeExistingOperatorEpoch()
     {
         const string slug = "automatic-recovery";

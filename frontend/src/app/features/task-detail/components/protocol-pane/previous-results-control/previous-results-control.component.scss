@@ -1,0 +1,110 @@
+:host {
+  display: block;
+}
+
+.previous-results {
+  position: relative;
+  padding: var(--studio-spacing-2) var(--studio-spacing-3) 0;
+
+  &__controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--studio-spacing-2);
+  }
+
+  &__toggle,
+  &__current,
+  &__entry {
+    border: 1px solid var(--studio-border);
+    border-radius: var(--studio-card-compact-radius);
+    background: var(--studio-surface);
+    color: var(--studio-fg);
+    cursor: pointer;
+  }
+
+  &__toggle,
+  &__current {
+    padding: var(--studio-spacing-1) var(--studio-spacing-2);
+  }
+
+  &__toggle:focus-visible,
+  &__current:focus-visible,
+  &__entry:focus-visible {
+    outline: 2px solid var(--studio-accent);
+    outline-offset: 2px;
+  }
+
+  &__count {
+    font-variant-numeric: tabular-nums;
+  }
+
+  &__menu {
+    position: absolute;
+    z-index: 3;
+    top: 100%;
+    min-width: min(520px, calc(100vw - var(--studio-spacing-6)));
+    max-height: 320px;
+    overflow: auto;
+    border: 1px solid var(--studio-border);
+    border-radius: var(--studio-card-radius);
+    background: var(--studio-surface);
+    box-shadow: var(--elevation-dropdown);
+    padding: var(--studio-spacing-2);
+
+    ol {
+      display: grid;
+      gap: var(--studio-spacing-1);
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+  }
+
+  &__entry {
+    display: grid;
+    grid-template-columns: minmax(10rem, 1.2fr) minmax(8rem, 1fr) minmax(7rem, 1fr) minmax(6rem, 0.8fr);
+    gap: var(--studio-spacing-2);
+    width: 100%;
+    padding: var(--studio-spacing-2);
+    text-align: left;
+
+    &:hover {
+      background: var(--studio-bg-hover);
+    }
+  }
+
+  &__timestamp,
+  &__field {
+    font-variant-numeric: tabular-nums;
+  }
+
+  &__producer,
+  &__field {
+    color: var(--studio-fg-muted);
+  }
+
+  &__banner,
+  &__error,
+  &__empty {
+    margin: var(--studio-spacing-2) 0 0;
+    border-radius: var(--studio-card-compact-radius);
+    padding: var(--studio-spacing-2);
+  }
+
+  &__banner {
+    background: color-mix(in srgb, var(--studio-accent) 12%, var(--studio-surface));
+    color: var(--studio-fg-strong);
+  }
+
+  &__error {
+    background: color-mix(in srgb, var(--studio-error) 12%, var(--studio-surface));
+    color: var(--studio-error);
+  }
+}
+
+@media (max-width: 720px) {
+  .previous-results__entry {
+    grid-template-columns: 1fr 1fr;
+  }
+}

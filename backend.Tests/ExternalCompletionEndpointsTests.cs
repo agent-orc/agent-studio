@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 
 using Xunit;
 
@@ -98,6 +99,18 @@ public sealed class ExternalCompletionEndpointsTests : IDisposable
         Assert.Contains("operator-chat", status);
         Assert.DoesNotContain("no agent-written summary", status);
 
+        // The replaced result remains readable from the task folder with its
+        // producer and lane provenance.
+        var previous = Assert.Single(factory.Services
+            .GetRequiredService<ResultVersionStore>()
+            .ReadLocalHistory(moved));
+        Assert.Equal(ResultProducerKinds.RunAttempt, previous.Producer.Kind);
+        Assert.Equal(TaskStates.Escalated, previous.Lane);
+        Assert.Contains(
+            "no agent-written summary",
+            factory.Services.GetRequiredService<ResultVersionStore>()
+                .ReadLocalVersion(moved, previous.Number));
+
         // results/deliverables.md written with the deliverable + provenance.
         var deliverables = File.ReadAllText(Path.Combine(moved, "results", "deliverables.md"));
         Assert.Contains("out-of-band-task-completion.md@abc1234", deliverables);
@@ -119,6 +132,8 @@ public sealed class ExternalCompletionEndpointsTests : IDisposable
         var timeline = File.ReadAllText(TaskPaths.TimelineLog(moved));
         Assert.Contains(TimelineEventKinds.ExternalCompletion, timeline);
         Assert.Contains("Completed externally by operator-chat", timeline);
+        Assert.Contains(TimelineEventKinds.ResultReplaced, timeline);
+        Assert.Contains("previous version kept as #1", timeline);
 
         // A remote salvage failure arrives as an explicit open gate item. The
         // escalation summary consumes this checklist on the moved card.

@@ -18,6 +18,7 @@ import type {
   TaskDetail,
   TaskSummaryStatus,
   ReviewEvidenceEntry,
+  ResultHistoryDocument,
 } from '../../../../../models/task.model';
 import { TaskState } from '../../../../../models/task.model';
 import type { RunRecord } from '../../../../../features/run-timeline';
@@ -47,6 +48,7 @@ import { ConversationViewComponent } from 'coding-agent-chat/conversation';
 import { mergeByTimestamp, projectConversation } from 'coding-agent-chat/core';
 import { BeautifulResultsComponent } from '../../beautiful-results/beautiful-results.component';
 import { ResultViewComponent } from '../result-view/result-view.component';
+import { PreviousResultsControlComponent } from '../previous-results-control/previous-results-control.component';
 import { FileSourceHistoryComponent } from '../../../../../components/file-source-history/file-source-history.component';
 import { SourceViewerComponent, type SourceViewerRequest } from '../../source-viewer/source-viewer.component';
 import { MenuComponent } from '../../../../../components/menu';
@@ -121,6 +123,7 @@ interface InterimSummaryState {
     VerboseDebugOverlayComponent,
     BeautifulResultsComponent,
     ResultViewComponent,
+    PreviousResultsControlComponent,
     FileSourceHistoryComponent,
     SourceViewerComponent,
     MenuComponent,
@@ -477,6 +480,25 @@ export class ProtocolPaneComponent implements OnDestroy {
       activityOutcome: this.outcome(),
     }),
   );
+
+  readonly selectedPreviousResult = signal<ResultHistoryDocument | null>(null);
+  readonly displayedResultDetail = computed<TaskDetail>(() => {
+    const previous = this.selectedPreviousResult();
+    return previous
+      ? { ...this.detail(), statusMarkdown: previous.markdown, statusGeneration: null }
+      : this.detail();
+  });
+  readonly displayedResultVerdict = computed<ProtocolVerdict>(() => {
+    const previous = this.selectedPreviousResult();
+    if (!previous) return this.protocolVerdict();
+    return deriveProtocolVerdict({
+      isRunning: false,
+      summaryStatus: 'ready',
+      statusMarkdown: previous.markdown,
+      outcomeIssue: null,
+      hasActivity: true,
+    });
+  });
 
   onResultMetricNavigate(metricId: string): void {
     if (metricId === 'grade') this.layout.openPromptTab('description', 'codeReview');
@@ -1013,9 +1035,11 @@ export class ProtocolPaneComponent implements OnDestroy {
         this.protocolViewMode.set('rendered');
         break;
       case 'view-raw':
+        this.selectedPreviousResult.set(null);
         this.protocolViewMode.set('raw');
         break;
       case 'view-history':
+        this.selectedPreviousResult.set(null);
         this.protocolViewMode.set('history');
         break;
     }
@@ -1023,7 +1047,7 @@ export class ProtocolPaneComponent implements OnDestroy {
   }
 
   async copyProtocolMarkdown(): Promise<void> {
-    const md = this.detail().statusMarkdown ?? '';
+    const md = this.displayedResultDetail().statusMarkdown ?? '';
     if (!md) return;
     const ok = await copyTextToClipboard(md);
     this.copyState.set(ok ? 'copied' : 'failed');

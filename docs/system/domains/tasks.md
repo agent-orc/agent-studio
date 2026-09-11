@@ -78,6 +78,24 @@ or commit attribution.
   and [docs/app/schemas/task-find-result.schema.json](../schemas/task-find-result.schema.json)
   pin task API shapes.
 
+## Result history
+
+`status.md` is the current Result. Lane moves, review requeues, runner
+re-adoption, and pipeline restarts must preserve any non-empty generated Result
+byte for byte. The application may write its marked Result scaffold only when
+the file is missing, or when it is refreshing a file that already
+contains `<!-- agent-studio:result-scaffold -->`.
+
+Legitimate producers replace the current Result through the result-version
+store. Before replacement it preserves the previous version in
+`results/history/<sequence>-<timestamp>/`, with `status.md`, an optional
+`deliverables.md`, and readable `result.json` provenance. The replacement also
+adds one `result_replaced` row to `logs/timeline.jsonl`. Studio lists these
+snapshots beside the current Result. For older cards, the same API supplements
+the list from workspace Git history at read time, without migrating the task
+folder. The storage decision and producer taxonomy are in
+[ADR-0070](../architecture/decisions/adr-archive.md#adr-0070---result-versions-live-in-readable-task-folder-snapshots-with-git-backfill-2026-09-11).
+
 ## Project onboarding contract
 
 Project onboarding is one product workflow, not a configurable project-source

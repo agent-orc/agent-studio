@@ -236,9 +236,12 @@ public sealed class OperatorReviewRequeueService
         AddNonEmptyDirectory(candidates, folderPath, PostAbortReviewStepService.ContractsDirName);
 
         var statusPath = Path.Combine(folderPath, "status.md");
-        if (File.Exists(statusPath)
-            && (string.Equals(fromState, TaskStates.Escalated, StringComparison.Ordinal)
-                || IsEscalationStatus(statusPath)))
+        // The source lane is not provenance. AGT-2707 carried a generated
+        // successful run result while parked in Escalated; rotating every
+        // status.md from that lane erased it and let the transition scaffold
+        // take its place. Rotate only the explicit escalation stub that the
+        // fresh review must not consume.
+        if (File.Exists(statusPath) && IsEscalationStatus(statusPath))
         {
             candidates.Add(statusPath);
         }

@@ -1,0 +1,53 @@
+<section class="previous-results" data-testid="previous-results-control">
+  <div class="previous-results__controls">
+    <button type="button"
+            class="previous-results__toggle"
+            data-testid="previous-results-toggle"
+            [disabled]="loading() && entries().length === 0"
+            [attr.aria-expanded]="open()"
+            (click)="toggle()">
+      Previous results <span class="previous-results__count">{{ entries().length }}</span>
+    </button>
+    @if (selected()) {
+      <button type="button"
+              class="previous-results__current"
+              data-testid="previous-results-current"
+              (click)="showCurrent()">Back to current result</button>
+    }
+  </div>
+
+  @if (open()) {
+    <div class="previous-results__menu" data-testid="previous-results-list">
+      @if (entries().length === 0) {
+        <p class="previous-results__empty">No previous results found.</p>
+      } @else {
+        <ol>
+          @for (entry of entries(); track entry.id) {
+            <li>
+              <button type="button"
+                      class="previous-results__entry"
+                      [attr.data-testid]="'previous-result-' + entry.id"
+                      (click)="select(entry)">
+                <span class="previous-results__timestamp">{{ timestamp(entry.timestamp) }}</span>
+                <span class="previous-results__producer">{{ entry.producer }}</span>
+                <span class="previous-results__field">Result: {{ entry.result }}</span>
+                <span class="previous-results__field">Case: {{ entry.case }}</span>
+              </button>
+            </li>
+          }
+        </ol>
+      }
+    </div>
+  }
+
+  @if (selected(); as previous) {
+    <div class="previous-results__banner"
+         role="status"
+         data-testid="previous-result-banner">
+      Previous result from {{ timestamp(previous.timestamp) }} · {{ previous.producer }} · {{ previous.lane }}
+    </div>
+  }
+  @if (error()) {
+    <p class="previous-results__error" role="alert">{{ error() }}</p>
+  }
+</section>

@@ -115,6 +115,115 @@ public sealed class TaskFileHistoryService
         return TaskFileLookupResult<TaskFileContent>.Fail(StatusCodes.Status404NotFound, "File was not found at the requested commit.");
     }
 
+    /// <summary>
+    /// Reads historical status.md versions across physical lane-folder moves.
+    /// Generic file history follows one path; task Results must also search the
+    /// same task folder under every lane because moving a card renames that
+    /// portion of its workspace-repository path.
+    /// </summary>
+    public TaskFileLookupResult<IReadOnlyList<WorkspaceResultFileVersion>> GetWorkspaceResultHistory(
+        string jobId,
+        string? watchPath)
+    {
+        var info = _scanner.FindJob(jobId, watchPath);
+        if (info is null)
+            return TaskFileLookupResult<IReadOnlyList<WorkspaceResultFileVersion>>.Fail(404, "Job not found.");
+        var candidate = BuildWorkspaceCandidate(info, "status.md");
+        if (candidate?.GitRoot is null)
+            return TaskFileLookupResult<IReadOnlyList<WorkspaceResultFileVersion>>.Ok([], TaskFileSources.Workspace);
+
+        var possiblePaths = LanePaths(candidate.GitPath, info.State).Distinct(StringComparer.Ordinal).ToList();
+        var args = new List<string> { "log", "--all", "--format=%H", "--" };
+        args.AddRange(possiblePaths);
+        var log = RunGit(candidate.GitRoot, args.ToArray());
+        if (log.Code != 0)
+            return TaskFileLookupResult<IReadOnlyList<WorkspaceResultFileVersion>>.Fail(400, log.Err);
+
+        var versions = new List<WorkspaceResultFileVersion>();
+        foreach (var sha in log.Out.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var historicalPath = possiblePaths.FirstOrDefault(path =>
+                RunGit(candidate.GitRoot, "cat-file", "-e", $"{sha}:{path}").Code == 0);
+            if (historicalPath is null) continue;
+            var content = RunGit(candidate.GitRoot, "show", $"{sha}:{historicalPath}");
+            if (content.Code != 0) continue;
+            var commit = RunGit(
+                candidate.GitRoot,
+                "show",
+                "-s",
+                "--format=%aI%x1f%an <%ae>%x1f%s%x1f%B",
+                sha);
+            if (commit.Code != 0) continue;
+            var parts = commit.Out.Split(UnitSeparator, 4);
+            DateTime? at = DateTimeOffset.TryParse(
+                parts.ElementAtOrDefault(0)?.Trim(), CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var dto)
+                ? dto.UtcDateTime
+                : null;
+            var body = parts.ElementAtOrDefault(3) ?? string.Empty;
+            var runRaw = ReadTrailer(body, "Run-Index");
+            int? runIndex = int.TryParse(runRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var run)
+                ? run
+                : null;
+            var historicalFolder = Path.GetDirectoryName(historicalPath)!.Replace('\\', '/');
+            var historicalCandidate = candidate with
+            {
+                GitPath = historicalPath,
+                JobFolderPath = Path.Combine(candidate.GitRoot, historicalFolder.Replace('/', Path.DirectorySeparatorChar)),
+            };
+            var taskJson = ReadFirstAt(
+                candidate.GitRoot,
+                sha,
+                $"{historicalFolder}/task.json",
+                $"{historicalFolder}/job.json");
+            versions.Add(new WorkspaceResultFileVersion(
+                new TaskFileHistoryEntry(
+                    sha,
+                    at,
+                    runIndex,
+                    NullIfEmpty(ReadTrailer(body, "Verdict")),
+                    NullIfEmpty(parts.ElementAtOrDefault(2)?.Trim()) ?? FirstLine(body),
+                    parts.ElementAtOrDefault(1)?.Trim() ?? string.Empty,
+                    new TaskFileVersionProvenance(
+                        TaskFileSources.Workspace,
+                        historicalPath,
+                        NullIfEmpty(ReadTrailer(body, "Steps")),
+                        ReadGenerationAt(historicalCandidate, sha))),
+                content.Out,
+                taskJson));
+        }
+
+        return TaskFileLookupResult<IReadOnlyList<WorkspaceResultFileVersion>>.Ok(versions, TaskFileSources.Workspace);
+    }
+
+    private static IEnumerable<string> LanePaths(string currentGitPath, string currentState)
+    {
+        yield return currentGitPath;
+        var segments = currentGitPath.Split('/');
+        var index = Array.FindIndex(segments, segment => string.Equals(segment, currentState, StringComparison.Ordinal));
+        if (index < 0) yield break;
+        foreach (var lane in TaskStates.All)
+        {
+            var copy = segments.ToArray();
+            copy[index] = lane;
+            yield return string.Join('/', copy);
+        }
+    }
+
+    private static string? ReadFirstAt(string gitRoot, string sha, params string[] paths)
+    {
+        foreach (var path in paths)
+        {
+            var value = RunGit(gitRoot, "show", $"{sha}:{path}");
+            if (value.Code == 0) return value.Out;
+        }
+        return null;
+    }
+
+    private static string? NullIfEmpty(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
     private TaskFileLookupResult<TaskFileContent> ReadLiveFile(
         string jobId,
         string? watchPath,
@@ -545,3 +654,8 @@ public sealed record TaskFileVersionProvenance(
     FileGenerationMeta? Generation);
 
 public sealed record TaskFileContent(string Content, string ContentType, string Path);
+
+public sealed record WorkspaceResultFileVersion(
+    TaskFileHistoryEntry Entry,
+    string Content,
+    string? TaskJson);

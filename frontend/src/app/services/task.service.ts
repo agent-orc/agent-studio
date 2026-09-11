@@ -10,6 +10,8 @@ import type {
   GroupedJobsResponse,
   TaskArtifactsResponse,
   TaskFileHistoryEntry,
+  ResultHistoryDocument,
+  ResultHistoryEntry,
   TaskFileSourceScope,
   TaskDetail,
   TaskInfo,
@@ -1227,6 +1229,22 @@ export class TaskService {
     return this.http.get<TaskFileHistoryEntry[]>(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/files/${this.encodeTaskFilePath(path)}/history`,
       this.withFileSourceParams(watchPath, scope),
+    );
+  }
+
+  /** Previous generated Results, including workspace-git backfill for legacy cards. */
+  getResultHistory(jobId: string, watchPath?: string) {
+    return this.http.get<ResultHistoryEntry[]>(
+      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/result-history`,
+      this.withWatchPath(watchPath),
+    );
+  }
+
+  /** Read one immutable previous Result selected from the Result tab. */
+  readResultHistory(jobId: string, versionId: string, watchPath?: string) {
+    return this.http.get<ResultHistoryDocument>(
+      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/result-history/${encodeURIComponent(versionId)}`,
+      this.withWatchPath(watchPath),
     );
   }
 

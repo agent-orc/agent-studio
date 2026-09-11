@@ -1,9 +1,11 @@
 using System.Diagnostics;
+using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 
@@ -196,6 +198,147 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
         using var contentResponse = await client.GetAsync($"/api/tasks/ASS-900/files/src/app.cs?watchPath={watchPath}&scope=code&at={firstSha}");
         contentResponse.EnsureSuccessStatusCode();
         Assert.Equal("class App { }\n", await contentResponse.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task ResultHistory_ListsAndReadsTaskFolderVersions()
+    {
+        var job = WriteJob("ASS-RESULT-HISTORY");
+        using var factory = CreateFactory();
+        var versions = factory.Services.GetRequiredService<ResultVersionStore>();
+        versions.Replace(
+            job,
+            "# Status\n\n- Result: Partial\n- Case: blocked\n",
+            ResultProducer.RunAttempt("1"),
+            TaskStates.AutoReview,
+            new DateTime(2026, 9, 7, 6, 0, 0, DateTimeKind.Utc));
+        versions.Replace(
+            job,
+            "# Status\n\n- Result: Success\n- Case: feature\n",
+            ResultProducer.ReviewAttempt("2"),
+            TaskStates.HumanReview,
+            new DateTime(2026, 9, 11, 8, 21, 0, DateTimeKind.Utc));
+
+        using var client = factory.CreateClient();
+        var watchPath = Uri.EscapeDataString(_workspaceProjectRoot);
+        using var listResponse = await client.GetAsync(
+            $"/api/tasks/ASS-RESULT-HISTORY/result-history?watchPath={watchPath}");
+        listResponse.EnsureSuccessStatusCode();
+        using var list = JsonDocument.Parse(await listResponse.Content.ReadAsStringAsync());
+        var entries = list.RootElement.EnumerateArray().ToList();
+        Assert.Equal(2, entries.Count);
+        var entry = Assert.Single(entries, candidate =>
+            candidate.GetProperty("producerKind").GetString() == ResultProducerKinds.RunAttempt);
+        Assert.Equal("local-0002", entry.GetProperty("id").GetString());
+        Assert.Equal("run attempt #1", entry.GetProperty("producer").GetString());
+        Assert.Equal("Partial", entry.GetProperty("result").GetString());
+        Assert.Equal("blocked", entry.GetProperty("case").GetString());
+        Assert.Equal(TaskStates.AutoReview, entry.GetProperty("lane").GetString());
+
+        using var readResponse = await client.GetAsync(
+            $"/api/tasks/ASS-RESULT-HISTORY/result-history/local-0002?watchPath={watchPath}");
+        readResponse.EnsureSuccessStatusCode();
+        using var document = JsonDocument.Parse(await readResponse.Content.ReadAsStringAsync());
+        Assert.Contains("Result: Partial", document.RootElement.GetProperty("markdown").GetString());
+    }
+
+    [Fact]
+    public async Task ResultHistory_BackfillsPreviousStatusFromWorkspaceGitWithoutMigration()
+    {
+        const string id = "ASS-LEGACY-RESULT-HISTORY";
+        var job = Path.Combine(_workspaceProjectRoot, TaskStates.Escalated, id);
+        Directory.CreateDirectory(job);
+        File.WriteAllText(Path.Combine(job, "task.json"), JsonSerializer.Serialize(new
+        {
+            id,
+            title = id,
+            state = TaskStates.Escalated,
+            order = 1,
+            agent = "claude",
+            createdAt = DateTime.UtcNow,
+        }), Encoding.UTF8);
+        File.WriteAllText(Path.Combine(job, "prompt.md"), "Do the thing.\n", Encoding.UTF8);
+        var status = Path.Combine(job, "status.md");
+        File.WriteAllText(status, "# Status\n\n- Result: Partial\n- Case: blocked\n", Encoding.UTF8);
+        RunGit(_workspaceRoot, "add", "-A");
+        RunGit(_workspaceRoot, "commit", "-q", "-m", "chore(workspace): record run result");
+        var previousSha = RunGitCapture(_workspaceRoot, "rev-parse", "HEAD").Trim();
+        var moved = Path.Combine(_workspaceProjectRoot, TaskStates.AutoReview, id);
+        Directory.CreateDirectory(Path.GetDirectoryName(moved)!);
+        Directory.Move(job, moved);
+        job = moved;
+        status = Path.Combine(job, "status.md");
+        File.WriteAllText(Path.Combine(job, "task.json"), JsonSerializer.Serialize(new
+        {
+            id,
+            title = id,
+            state = TaskStates.AutoReview,
+            order = 1,
+            agent = "claude",
+            createdAt = DateTime.UtcNow,
+        }), Encoding.UTF8);
+        File.WriteAllText(status, "# Status\n\n- Result: Success\n- Case: feature\n", Encoding.UTF8);
+        RunGit(_workspaceRoot, "add", "-A");
+        RunGit(_workspaceRoot, "commit", "-q", "-m", "chore(workspace): record current result");
+
+        using var factory = CreateFactory();
+        var rawHistory = factory.Services.GetRequiredService<TaskFileHistoryService>()
+            .GetWorkspaceResultHistory(id, _workspaceProjectRoot);
+        Assert.True(rawHistory.Success, rawHistory.Error);
+        Assert.Equal(2, rawHistory.Value?.Count);
+        using var client = factory.CreateClient();
+        var watchPath = Uri.EscapeDataString(_workspaceProjectRoot);
+        using var listResponse = await client.GetAsync(
+            $"/api/tasks/{id}/result-history?watchPath={watchPath}");
+        listResponse.EnsureSuccessStatusCode();
+        using var list = JsonDocument.Parse(await listResponse.Content.ReadAsStringAsync());
+        var entry = Assert.Single(list.RootElement.EnumerateArray());
+        Assert.Equal("git-" + previousSha, entry.GetProperty("id").GetString());
+        Assert.Equal("workspace-history", entry.GetProperty("source").GetString());
+        Assert.Equal("Partial", entry.GetProperty("result").GetString());
+        Assert.Equal(TaskStates.Escalated, entry.GetProperty("lane").GetString());
+
+        using var readResponse = await client.GetAsync(
+            $"/api/tasks/{id}/result-history/git-{previousSha}?watchPath={watchPath}");
+        readResponse.EnsureSuccessStatusCode();
+        using var document = JsonDocument.Parse(await readResponse.Content.ReadAsStringAsync());
+        Assert.Contains("Case: blocked", document.RootElement.GetProperty("markdown").GetString());
+    }
+
+    [Fact]
+    public async Task MoveEndpoint_Agt2707Replay_KeepsGeneratedResultByteIdenticalOnAutoReviewEntry()
+    {
+        const string id = "AGT-2707-REPLAY";
+        var source = Path.Combine(_workspaceProjectRoot, TaskStates.Escalated, id);
+        Directory.CreateDirectory(source);
+        File.WriteAllText(Path.Combine(source, "task.json"), JsonSerializer.Serialize(new
+        {
+            id,
+            title = "AGT-2707 result replay",
+            state = TaskStates.Escalated,
+            order = 1,
+            agent = "claude",
+            createdAt = DateTime.UtcNow,
+        }), Encoding.UTF8);
+        File.WriteAllText(Path.Combine(source, "prompt.md"), "Review again.\n", Encoding.UTF8);
+        var original = Encoding.UTF8.GetBytes(
+            "# Status\n\n- Result: Success\n- Case: blocked\n- Duration: 2h 30m\n- Files: 12\n\n" +
+            "## What Was Done\n\n- Original generated Result.\n");
+        File.WriteAllBytes(Path.Combine(source, "status.md"), original);
+        Directory.CreateDirectory(Path.Combine(_workspaceProjectRoot, TaskStates.AutoReview));
+
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var watchPath = Uri.EscapeDataString(_workspaceProjectRoot);
+        using var response = await client.PostAsJsonAsync(
+            $"/api/tasks/{id}/move?watchPath={watchPath}",
+            new MoveJobRequest { TargetState = TaskStates.AutoReview, Reason = "Fresh review attempt." });
+        response.EnsureSuccessStatusCode();
+
+        var destination = Path.Combine(_workspaceProjectRoot, TaskStates.AutoReview, id, "status.md");
+        Assert.True(File.Exists(destination));
+        Assert.Equal(original, File.ReadAllBytes(destination));
     }
 
     private WebApplicationFactory<Program> CreateFactory()

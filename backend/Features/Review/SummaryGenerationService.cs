@@ -26,6 +26,7 @@ public sealed class SummaryGenerationService
     private readonly RuntimePromptService _prompts;
     private readonly AdHocUsageRecorder? _usage;
     private readonly FileGenerationIndex? _fileGenerationIndex;
+    private readonly ResultVersionStore? _resultVersions;
     private readonly ConcurrentDictionary<string, TaskSummaryState> _states = new();
 
     public SummaryGenerationService(ILogger<SummaryGenerationService> logger, IConfiguration configuration)
@@ -39,7 +40,8 @@ public sealed class SummaryGenerationService
         RuntimePromptService prompts,
         AdHocUsageRecorder? usage = null,
         CliOneShotRegistry? oneShotRegistry = null,
-        FileGenerationIndex? fileGenerationIndex = null)
+        FileGenerationIndex? fileGenerationIndex = null,
+        ResultVersionStore? resultVersions = null)
     {
         _logger = logger;
         _configuration = configuration;
@@ -47,6 +49,7 @@ public sealed class SummaryGenerationService
         _usage = usage;
         _oneShotRegistry = oneShotRegistry;
         _fileGenerationIndex = fileGenerationIndex;
+        _resultVersions = resultVersions;
     }
 
     private readonly CliOneShotRegistry? _oneShotRegistry;
@@ -223,7 +226,20 @@ public sealed class SummaryGenerationService
             }
 
             var target = Path.Combine(info.FolderPath, "status.md");
-            WriteAllTextWithRetry(target, summary);
+            if (_resultVersions is not null)
+            {
+                _resultVersions.Replace(
+                    info.FolderPath,
+                    summary,
+                    ResultProducer.RunAttempt(runIndex?.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                    info.State,
+                    result.EndedAt,
+                    TimelineActors.Agent);
+            }
+            else
+            {
+                WriteAllTextWithRetry(target, summary);
+            }
             RegisterGeneratedStatus(info, result, runIndex);
             RecordBrokenImageReferences(info, summary);
 
