@@ -8,12 +8,10 @@ namespace AgentStudio.Tests;
 /// Parser and merged-catalog coverage for Codex model discovery.
 ///
 /// Fixture provenance: <c>Fixtures/cli/codex/debug-models-v0.153.4.json</c> is a
-/// trimmed <c>codex debug models</c> document. Its envelope and per-model field
-/// shape (<c>supported_reasoning_levels</c> as <c>{ effort, description }</c>
-/// objects, <c>default_reasoning_level</c>, <c>visibility</c>, <c>priority</c>)
-/// were captured from a live codex-cli run; the <c>gpt-6-astra</c> entry carries
-/// the values AGT-2707 recorded from codex-cli 0.153.4. The <c>v0.151.0</c>
-/// fixture is the same catalog before astra was published.
+/// real field-trimmed <c>codex debug models</c> capture from codex-cli 0.153.4,
+/// installed under <c>/tmp/codex-0153</c> with npm on 2026-09-11 for AGT-2772.
+/// It preserves the model order plus every field consumed by this parser. The
+/// <c>v0.151.0</c> fixture is the same catalog before astra was published.
 /// <c>debug-models-v0.144.1.json</c> is a real, unedited (field-trimmed)
 /// <c>codex debug models</c> capture from codex-cli 0.144.1 on a ChatGPT
 /// account (agent-runner-01, 2026-09-11, AGT-2707 round 2): it lists
@@ -117,7 +115,7 @@ public class CodexModelDiscoveryTests : IDisposable
     }
 
     [Fact]
-    public void WithKnownButUnavailableModels_LeavesAstraSelectable_WhenTheCliListsIt()
+    public void WithKnownButUnavailableModels_OnRealCodex01534Catalog_AstraUsesCliLadder_SolStaysStatic_MiniDisabled()
     {
         var catalog = new CliModelCatalog
         {
@@ -131,6 +129,22 @@ public class CodexModelDiscoveryTests : IDisposable
         var astra = Assert.Single(merged.Models, m => m.Id == ModelIds.Gpt6Astra);
         Assert.True(astra.Available);
         Assert.Equal(["low", "medium", "high", "xhigh", "max", "ultra"], astra.ThinkingLevels);
+        Assert.Equal("medium", astra.DefaultThinkingLevel);
+
+        // Although this CLI reports low as Sol's default and omits minimal from
+        // its ladder, already-shipped models retain the product's static order
+        // and top-rung default.
+        var sol = Assert.Single(merged.Models, m => m.Id == ModelIds.Gpt56Sol);
+        Assert.True(sol.Available);
+        Assert.Equal(["minimal", "low", "medium", "high", "xhigh", "ultra"], sol.ThinkingLevels);
+        Assert.Equal("ultra", sol.DefaultThinkingLevel);
+
+        // The real 0.153.4 catalog does not list Mini, so registry merging keeps
+        // it visible but disabled with the installed-version explanation.
+        var mini = Assert.Single(merged.Models, m => m.Id == ModelIds.Gpt54Mini);
+        Assert.False(mini.Available);
+        Assert.Equal("Not offered by the installed codex-cli 0.153.4.", mini.AvailabilityNote);
+
         // gpt-5-codex is a registry model the 0.153.4 catalog no longer lists.
         var codex = Assert.Single(merged.Models, m => m.Id == ModelIds.Gpt5Codex);
         Assert.False(codex.Available);
