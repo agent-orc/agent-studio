@@ -1,0 +1,73 @@
+// Flat, hairline-separated rows (ADM-01/ADM-03) - no boxed tiles inside the
+// dialog body.
+
+.field {
+  display: grid;
+  gap: var(--studio-spacing-1);
+  font-size: 12px;
+  color: var(--studio-fg-dim);
+}
+.field input {
+  height: 32px;
+  padding: 0 var(--studio-spacing-2);
+  border: 1px solid var(--studio-border-strong);
+  border-radius: 6px;
+  background: var(--studio-bg);
+  color: var(--studio-fg);
+  font: inherit;
+}
+.field input:focus-visible {
+  outline: 2px solid var(--studio-accent);
+  outline-offset: 1px;
+}
+
+.empty {
+  padding: var(--studio-spacing-4) 0;
+  color: var(--studio-fg-muted);
+  font-size: 12px;
+}
+.empty--error { color: var(--severity-high); }
+
+.list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--studio-spacing-2);
+  padding: var(--studio-spacing-2) 0;
+  border-top: 1px solid var(--studio-border);
+  font-size: 12px;
+}
+.list .row:first-child { border-top: 0; }
+.row__name { flex: 1 1 auto; min-width: 0; overflow: hidden; color: var(--studio-fg-strong); text-overflow: ellipsis; white-space: nowrap; }
+.row__id { flex: 0 0 auto; color: var(--studio-fg-muted); font-family: var(--font-mono, monospace); font-size: 11px; }
+.row__state { flex: 0 0 auto; font-size: 11px; font-weight: 600; }
+.row__state--ok { color: var(--severity-pass); }
+.row--blocked .row__state--blocked { color: var(--notify-warning-icon-fg); }
+
+.report { display: grid; gap: var(--studio-spacing-2); }
+.report__line { margin: 0; font-size: 13px; color: var(--studio-fg); }
+
+.btn {
+  min-height: 32px;
+  padding: 0 var(--studio-spacing-3);
+  border: 1px solid var(--studio-border-strong);
+  border-radius: 6px;
+  background: var(--studio-bg-hover);
+  color: var(--studio-fg-strong);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+}
+.btn:hover:not(:disabled) { background: var(--studio-bg-selected); }
+.btn:disabled { cursor: not-allowed; opacity: 0.5; }
+.btn--ghost { background: transparent; }
+.btn--danger { border-color: var(--notify-error-border); color: var(--severity-high); }
+.btn--danger:hover:not(:disabled) { background: var(--notify-error-tint); }

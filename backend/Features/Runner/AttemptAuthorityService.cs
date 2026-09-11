@@ -874,6 +874,26 @@ public sealed class AttemptAuthorityService
         }
     }
 
+    /// <summary>
+    /// Test seam: backdates a RunAttempt's lease past its TTL so the
+    /// "expired but never released" path (this backend's analogue of the
+    /// standalone Task Server's <c>process-unknown</c> lease state) can be
+    /// exercised without waiting out the real clock. Never called in
+    /// production.
+    /// </summary>
+    internal void AgeRunLeaseForTests(string runAttemptId, TimeSpan age)
+    {
+        lock (_gate)
+        {
+            var run = FindRun(runAttemptId)
+                ?? throw new InvalidOperationException($"Unknown run '{runAttemptId}'.");
+            if (run.Lease is null)
+                throw new InvalidOperationException($"Run '{runAttemptId}' has no lease.");
+            run.Lease.ExpiresAt -= age;
+            PersistLocked();
+        }
+    }
+
     public AttemptWriteResult SettleReview(SettleReviewAttemptRequest request)
     {
         lock (_gate)

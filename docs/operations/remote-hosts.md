@@ -245,7 +245,9 @@ curl -sS -X POST https://tasks.example.com/api/clients/agent-runner-01/drain \
   -H 'X-Client-Id: local-default'
 ```
 
-## Retire
+## Retire, revive, delete
+
+### Retire
 
 Use **Retire**, read the confirmation, then choose **Drain and retire**. If work
 is running, the server drains first and changes the identity to `retired` only
@@ -258,7 +260,7 @@ curl -sS -X POST https://tasks.example.com/api/clients/agent-runner-01/retire \
   -H 'X-Client-Id: local-default'
 ```
 
-## Revive
+### Revive
 
 Choose **Show retired**, then **Revive** on the role row. Start or re-register the daemon
 afterward so `LastSeenAt`, daemon state, and the push probe become fresh again.
@@ -269,13 +271,63 @@ curl -sS -X POST https://tasks.example.com/api/clients/agent-runner-01/revive \
 sudo systemctl restart agent-host
 ```
 
-## Remove permanently
+### Delete permanently
 
-Permanent removal is only available for an already-retired client. It deletes
-the identity record and cannot be undone. Use it only after deciding that the
-revive path and the visible historical host entry are no longer needed.
+Choose **Show retired**, then **Delete** on the retired role row (next to
+**Revive**, and also available from the expanded row's Connection section).
+Confirm against the runner's own name; the row disappears immediately, no
+reload needed. Deletion is only offered for an already-retired client and
+cannot be undone.
+
+The server refuses a delete with `409 Conflict` while any of these hold, so an
+operator never loses live state by mistake:
+
+| `error` | Meaning |
+|---|---|
+| `client-online` | The identity is still reporting active work (active slots, or the daemon reports `running`). |
+| `client-has-active-lease` | The client currently holds a live run lease on an in-progress task. |
+| `client-attempt-process-unknown` | A run lease for this client expired without a confirmed outcome - the local analogue of the standalone Task Server's `process-unknown` lease state. Resolve the task before retrying. |
+
+A client that has not been retired first is refused with `400 Bad Request`
+(`client-must-be-retired-before-delete`), not `409`.
 
 ```bash
 curl -sS -X DELETE https://tasks.example.com/api/clients/agent-runner-01/permanent \
   -H 'X-Client-Id: local-default'
 ```
+
+A successful delete writes a structured `client-permanently-deleted` log entry
+and an Agent Message Bus `lifecycle` event (workspace-scoped, actor and
+display name in the payload) alongside removing the identity file.
+
+### Delete retired in bulk
+
+Leftover e2e runs are the common case: dozens of retired identities named
+`e2e-<something>-<timestamp>` that will never be revived. The toolbar's
+**Delete retired...** action (shown once at least one retired host exists)
+opens a dry-run preview: enter a name/id prefix (defaults to `e2e-`), preview
+the matching retired identities and their eligibility, then apply. Each
+candidate is evaluated with the exact same guards as the single-row delete;
+a still-online or still-leased straggler is reported as blocked instead of
+silently skipped, and stays retired for a later sweep.
+
+The same flow is available directly over the API:
+
+```bash
+# Dry run (default): preview only, never deletes.
+curl -sS -X POST https://tasks.example.com/api/clients/retired/purge \
+  -H 'X-Client-Id: local-default' -H 'Content-Type: application/json' \
+  -d '{"prefix":"e2e-","dryRun":true}'
+
+# Apply: deletes every eligible match.
+curl -sS -X POST https://tasks.example.com/api/clients/retired/purge \
+  -H 'X-Client-Id: local-default' -H 'Content-Type: application/json' \
+  -d '{"prefix":"e2e-","dryRun":false}'
+```
+
+The response lists every matched candidate with `eligible`, `refusalReason`
+(one of the codes above, or `null`), and `deleted`, plus a `deletedCount`
+total. Playwright specs that register throwaway client identities use the
+shared `e2e/helpers/e2e-clients.ts` helper, which prefixes every id with
+`e2e-` and retires-then-deletes on teardown, so this prefix reliably targets
+every fixture leftover even when a spec's own teardown never ran.

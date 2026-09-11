@@ -330,6 +330,21 @@ state.
   reopens renewal and final-write delivery, restores the coding runner badge,
   and projects leased ReviewAttempts back into Auto Review activity. Omitted,
   mismatched, terminal, or superseded records are never reopened.
+- `backend/Features/Clients/ClientDeletionPolicy.cs` (AGT-2748): the pure
+  eligibility decision for permanently deleting a retired client identity,
+  shared by `DELETE /api/clients/{id}/permanent` and the bulk
+  `POST /api/clients/retired/purge` sweep in `ClientEndpoints.cs`. Delete is
+  refused with `409 Conflict` when the identity is not `Retired`, still
+  reports active work (`RunnerActiveSlots` or a `running` daemon state), holds
+  a live `RunLeaseService` lease, or owns a `RunAttempt` whose lease expired
+  without a confirmed outcome - this backend's analogue of the standalone Task
+  Server's `process-unknown` lease state, and it takes priority over an
+  ordinary active-lease refusal. Purge evaluates every retired identity
+  matching an optional id/display-name prefix through the same policy; a
+  dry run never mutates state, and an applied purge deletes only the eligible
+  matches, leaving a blocked straggler retired for a later sweep. A successful
+  delete, single or via purge, emits `AgentMessageBusBridge.EmitClientLifecycleAsync`
+  in addition to the identity file removal.
 - `orchestrator-engine/`: the separate API-only flow executor. Its bounded
   ReviewDecision, Council, PostProcessing, GateDispatch, and CompletionJudge
   loops claim server-owned orchestration runs through

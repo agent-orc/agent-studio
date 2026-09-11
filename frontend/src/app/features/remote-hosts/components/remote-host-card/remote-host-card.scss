@@ -14,7 +14,12 @@
 
 :host([data-tone='warn']) .host__row td { background: var(--notify-warning-tint); }
 :host([data-tone='error']) .host__row td { background: var(--notify-error-tint); }
-:host([data-retired='true']) .host__row td { color: var(--studio-fg-muted); }
+// A retired group's machine row shares its role rows' muted tint (ADM-03: same
+// row geometry as an online group, only the tint changes) so the whole group
+// reads as one calm, settled band (R4) instead of alternating between the page
+// background and the muted role tint every ~35px - the pattern that reads as
+// broken/uneven lines when several single-role retired groups stack.
+:host([data-retired='true']) .host__row td { background: var(--studio-surface-muted); color: var(--studio-fg-muted); }
 .host__row:hover td { background: var(--studio-bg-hover); }
 
 .host__name-cell,
@@ -136,9 +141,11 @@
   border-top: 1px solid var(--studio-border);
   background: var(--studio-surface-muted);
 }
+// Left/right inset matches the row cells above it (ADM-01/ADM-04: one shared
+// left edge for the row and its disclosed detail, not a wider inset).
 .host__details {
   display: grid;
-  padding: var(--studio-spacing-2) var(--studio-spacing-5) var(--studio-spacing-4);
+  padding: var(--studio-spacing-2) var(--studio-spacing-2) var(--studio-spacing-4);
 }
 .detail {
   min-width: 0;
@@ -276,7 +283,6 @@
 
 @container remote-host-table (max-width: 36rem) {
   .host__load { display: none; }
-  .host__details { padding-inline: var(--studio-spacing-3); }
 }
 
 @media (prefers-reduced-motion: reduce) {

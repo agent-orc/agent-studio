@@ -1,10 +1,12 @@
 :host { display: contents; }
 
+// Full-width notice lines (ADM-02): span the section's full content width, no
+// outer margin, rounded corner, or floating shadow - a whole-row tint plus a
+// vertical hairline is the only separator, never a boxed frame.
 .route {
   display: grid;
   gap: var(--studio-spacing-1);
-  margin-top: var(--studio-spacing-3);
-  padding: var(--studio-spacing-3);
+  padding: var(--studio-spacing-2) 0;
   border-top: 1px solid var(--studio-border);
   color: var(--studio-fg);
   font-size: 12px;
@@ -22,8 +24,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--studio-spacing-2);
-  margin-top: var(--studio-spacing-3);
-  padding: var(--studio-spacing-3);
+  padding: var(--studio-spacing-2) 0;
   border-top: 1px solid var(--studio-border);
   color: var(--studio-fg-dim);
   font-size: 12px;
@@ -45,14 +46,15 @@
   color: var(--studio-fg-dim);
   font-size: 11px;
 }
+// One grid for one stream (ADM-03): every capability is a full-width row with
+// a hairline top border, not a tile in a multi-column masonry grid - the
+// two-column auto-fit layout made each entry read as a framed card.
 .health__list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 0 var(--studio-spacing-4);
   margin-top: var(--studio-spacing-3);
 }
 .capability {
-  padding: var(--studio-spacing-3) 0;
+  padding: var(--studio-spacing-2) 0;
   border-top: 1px solid var(--studio-border);
 }
 .capability[data-state='suspect'],

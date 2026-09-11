@@ -135,8 +135,10 @@ test.describe('Settings — Workspaces section (F47)', () => {
 
   test('create → rename → delete round-trip via the REST API surface', async ({ page, request }) => {
     // The mutation endpoints require an X-Client-Id header on every write.
-    // Register a throwaway identity for the run.
-    const clientId = `pw-f47-${Date.now().toString(36)}`;
+    // Register a throwaway identity for the run. The `e2e-` prefix (AGT-2748)
+    // lets a later "Delete retired..." purge sweep clean this up even if the
+    // finally block below never runs (a crashed or interrupted test).
+    const clientId = `e2e-workspace-f47-${Date.now().toString(36)}`;
     const regRes = await request.post('/api/clients/register', { data: { displayName: clientId } });
     expect(regRes.ok(), 'client register should succeed').toBeTruthy();
     const headers = { 'X-Client-Id': clientId };
@@ -181,6 +183,10 @@ test.describe('Settings — Workspaces section (F47)', () => {
     } finally {
       const deleted = await request.delete(`/api/workspaces/${wsId}`, { headers });
       expect(deleted.ok() || deleted.status() === 404).toBeTruthy();
+      // Retire then permanently delete the throwaway identity so it never
+      // accumulates as retired Execution Hosts history (AGT-2748).
+      await request.post(`/api/clients/${clientId}/retire`, { headers }).catch(() => undefined);
+      await request.delete(`/api/clients/${clientId}/permanent`, { headers }).catch(() => undefined);
     }
   });
 });
