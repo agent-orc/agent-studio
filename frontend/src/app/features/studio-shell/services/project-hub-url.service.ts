@@ -4,6 +4,7 @@ import {
   isProjectHubRoute,
   isProjectRailKey,
   parseProjectHubRoute,
+  projectHubRoute,
   type ProjectHubRouteProject,
   withProjectHubRoute,
 } from '../../project-detail';
@@ -96,20 +97,27 @@ export class ProjectHubUrlService {
     }
 
     if (target.legacySlug) {
-      this.writeHash(withProjectHubRoute(
-        window.location.hash,
-        target.project.id,
-        target.section,
-        target.query,
-      ), 'replace');
+      const canonicalRoute = target.section === 'workbenches'
+        ? projectDossierRoute(target.project.id, target.workbenchId) + target.query
+        : projectHubRoute(target.project.id, target.section) + target.query;
+      this.writeHash(withRouteSegment(window.location.hash, canonicalRoute), 'replace');
     }
 
-    this.tabs.open({
-      kind: 'hub',
-      projectName: target.project.displayName,
-      section: target.section,
-      ...(target.section === 'wiki' ? { wikiTarget: wikiTargetFromQuery(target.query) } : {}),
-    });
+    if (target.workbenchId) {
+      this.tabs.open({
+        kind: 'workbench', projectName: target.project.displayName,
+        projectId: target.project.id, workbenchId: target.workbenchId,
+      });
+    } else if (target.section === 'workbenches') {
+      this.tabs.open({ kind: 'workbenches', projectName: target.project.displayName });
+    } else {
+      this.tabs.open({
+        kind: 'hub',
+        projectName: target.project.displayName,
+        section: target.section,
+        ...(target.section === 'wiki' ? { wikiTarget: wikiTargetFromQuery(target.query) } : {}),
+      });
+    }
     this.appliedRevision.update(revision => revision + 1);
     return true;
   }
@@ -143,6 +151,21 @@ export class ProjectHubUrlService {
       return;
     }
 
+    if (tab?.kind === 'workbench') {
+      const project = this.projects().find(candidate => candidate.displayName === tab.projectName);
+      if (!project) return;
+      const route = projectDossierRoute(project.id, tab.workbenchId);
+      this.writeHash(withRouteSegment(window.location.hash, route), 'push');
+      return;
+    }
+
+    if (tab?.kind === 'workbenches' && tab.projectName) {
+      const project = this.projects().find(candidate => candidate.displayName === tab.projectName);
+      if (!project) return;
+      this.writeHash(withRouteSegment(window.location.hash, projectDossierRoute(project.id, null)), 'push');
+      return;
+    }
+
     // Unknown future `/projects/...` shapes stay untouched for their owner.
     if (current && isProjectHubRoute(window.location.hash)) {
       this.writeHash(withRouteSegment(window.location.hash, null), 'push');
@@ -161,6 +184,11 @@ export class ProjectHubUrlService {
       /* Browser history may be unavailable in embedded/test environments. */
     }
   }
+}
+
+function projectDossierRoute(projectId: string, workbenchId: string | null): string {
+  const base = `/projects/${encodeURIComponent(projectId.trim().toUpperCase())}/workbenches`;
+  return workbenchId ? `${base}/${encodeURIComponent(workbenchId)}` : base;
 }
 
 function wikiTargetFromQuery(query: string): WikiTabTarget {

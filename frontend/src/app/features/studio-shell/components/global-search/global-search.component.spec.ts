@@ -218,6 +218,38 @@ describe('GlobalSearchComponent', () => {
     });
   });
 
+  it('puts an exact Dossier key group before task title matches', () => {
+    fixture.componentRef.setInput('tasks', [
+      { taskKey: 'task', key: 'AGT-1', title: 'Follow-up for AGT-W48', projectName: 'P', state: '2-ready', id: 'task' },
+    ] as TaskInfo[]);
+    component.query.set('agtw48');
+    component.remote.set({
+      tasks: [], commits: [], files: [], wiki: [],
+      dossiers: [{
+        domain: 'dossiers', projectName: 'P', projectColor: '#fff', title: 'Usage panel',
+        subtitle: 'Summary', dossierKey: 'AGT-W48', referenceKey: 'AGT-W48', workbenchId: 'usage-panel',
+      }],
+    });
+
+    expect(component.groups()[0].domain).toBe('dossiers');
+    expect(component.flatResults()[0].dossierKey).toBe('AGT-W48');
+  });
+
+  it('opens a Wiki result in the Project Hub page reader', () => {
+    const tabs = TestBed.inject(StudioTabStateService);
+    const open = vi.spyOn(tabs, 'open');
+
+    component.choose({
+      domain: 'wiki', projectName: 'P', projectColor: '#fff', title: 'Routing',
+      subtitle: 'Recovery', path: 'concepts/routing.md', isWiki: true,
+    });
+
+    expect(open).toHaveBeenCalledWith({
+      kind: 'hub', projectName: 'P', section: 'wiki',
+      wikiTarget: { kind: 'page', relPath: 'concepts/routing.md' },
+    });
+  });
+
   it('merges indexed task matches the board snapshot does not carry', async () => {
     vi.useFakeTimers();
     fixture.componentRef.setInput('tasks', [
@@ -236,5 +268,21 @@ describe('GlobalSearchComponent', () => {
 
     // The board match stays first and is not duplicated by the indexed copy.
     expect(component.taskResults().map(x => x.taskKey)).toEqual(['live', 'archived']);
+  });
+
+  it('keeps an exact indexed task key ahead of local title matches', () => {
+    fixture.componentRef.setInput('tasks', [
+      { taskKey: 'live', key: 'AGT-1', title: 'Follow-up for AGT2034', projectName: 'P', state: '2-ready', id: 'live' },
+    ] as TaskInfo[]);
+    component.query.set('AGT2034');
+    component.remote.set({
+      dossiers: [], wiki: [], commits: [], files: [],
+      tasks: [{
+        domain: 'tasks', projectName: 'P', projectColor: '#fff', title: 'Archived exact task',
+        subtitle: 'archive', taskKey: 'archived', referenceKey: 'AGT-2034',
+      }],
+    });
+
+    expect(component.taskResults().map(item => item.taskKey)).toEqual(['archived', 'live']);
   });
 });

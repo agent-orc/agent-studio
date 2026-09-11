@@ -18,6 +18,7 @@ that origin.
 | Project Hub overview | `/#/projects/PROJ-002` | Immutable project registry id |
 | Project Hub rail | `/#/projects/PROJ-002/<rail-key>` | Project id plus documented rail key |
 | Project Dossier overview | `/#/projects/PROJ-002/workbenches[?dossier=<encoded-view-state>]` | Project id plus optional view state |
+| Project Dossier detail | `/#/projects/PROJ-002/workbenches/<dossier-id>` | Project id plus catalogued Dossier id |
 | Project Wiki page | `/#/projects/PROJ-002/wiki?page=concepts%2Foverview.md` | Project id plus repository-relative page path |
 | Project Wiki folder | `/#/projects/PROJ-002/wiki?folder=concepts` | Project id plus repository-relative folder path |
 | Workspace settings home | `/#/workspace/settings` | Global route |

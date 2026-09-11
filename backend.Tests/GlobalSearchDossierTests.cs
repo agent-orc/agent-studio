@@ -70,6 +70,40 @@ public sealed class GlobalSearchDossierTests : IDisposable
     }
 
     [Fact]
+    public void Search_MatchesHyphenlessKeyAndDescriptorTaskKeys()
+    {
+        var (service, registry) = Build();
+        var root = RegisterProject(registry, "Reference Project");
+        WriteWorkbench(root, "usage-panel", "Usage panel", "Pipeline-wide metrics.",
+            "active", "testing", key: "AGT-W48", sourceTaskKeys: ["AGT-2701"]);
+
+        Assert.Equal("AGT-W48", Assert.Single(service.Search("agtw48", Domains(), 20).Dossiers).DossierKey);
+        Assert.Equal("AGT-W48", Assert.Single(service.Search("AGT2701", Domains(), 20).Dossiers).DossierKey);
+
+        var item = new WorkbenchListItem("usage-panel", "Usage panel", "Summary", "active", "testing",
+            DateTime.UtcNow, "docs/usage-panel/index.html", true, null, [])
+        {
+            Key = "AGT-W48",
+            RelatedTaskKeys = ["AGT-2767"],
+        };
+        Assert.True(GlobalSearchService.DossierMatches(item, "agt2767"));
+    }
+
+    [Fact]
+    public void Search_SeesANewCatalogueEntryWithoutRecreatingTheService()
+    {
+        var (service, registry) = Build();
+        var root = RegisterProject(registry, "Fresh Project");
+        Assert.Empty(service.Search("AGT-W49", Domains(), 20).Dossiers);
+
+        WriteWorkbench(root, "fresh-entry", "Fresh entry", "Just added.",
+            "active", "shaping", key: "AGT-W49");
+
+        var item = Assert.Single(service.Search("AGT-W49", Domains(), 20).Dossiers);
+        Assert.Equal(new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc), item.UpdatedAt);
+    }
+
+    [Fact]
     public void Search_IncludesHistoryStatusesForAnArchivedDossier()
     {
         var (service, registry) = Build();
@@ -111,7 +145,8 @@ public sealed class GlobalSearchDossierTests : IDisposable
         var workbenches = new WorkbenchCatalogueService(scanner, registry, git);
         var docs = new ProjectDocsService(
             scanner, registry, NullLogger<ProjectDocsService>.Instance, git, workbenches);
-        var service = new GlobalSearchService(scanner, indexes, registry, docs, NullLogger<GlobalSearchService>.Instance);
+        var service = new GlobalSearchService(scanner, indexes, registry, docs,
+            NullLogger<GlobalSearchService>.Instance, workbenchCatalogue: workbenches);
         return (service, registry);
     }
 
@@ -124,14 +159,18 @@ public sealed class GlobalSearchDossierTests : IDisposable
     }
 
     private static void WriteWorkbench(
-        string root, string id, string title, string summary, string status, string? phase, string key)
+        string root, string id, string title, string summary, string status, string? phase, string key,
+        string[]? sourceTaskKeys = null)
     {
         var dir = Path.Combine(root, "docs", "workbenches", id);
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "index.html"), $"<h1>{title}</h1>");
         var phaseProperty = phase == null ? "" : $",\"phase\":\"{phase}\"";
+        var sourceKeysProperty = sourceTaskKeys == null
+            ? ""
+            : $",\"sourceTaskKeys\":{System.Text.Json.JsonSerializer.Serialize(sourceTaskKeys)}";
         File.WriteAllText(Path.Combine(dir, "workbench.json"), $$"""
-          {"schemaVersion":1,"id":"{{id}}","key":"{{key}}","title":"{{title}}","summary":"{{summary}}","entrypoint":"index.html","status":"{{status}}","updatedAt":"2026-08-01T10:00:00Z"{{phaseProperty}}}
+          {"schemaVersion":1,"id":"{{id}}","key":"{{key}}","title":"{{title}}","summary":"{{summary}}","entrypoint":"index.html","status":"{{status}}","updatedAt":"2026-08-01T10:00:00Z"{{phaseProperty}}{{sourceKeysProperty}}}
           """);
     }
 }

@@ -1,7 +1,9 @@
 import { Injectable } from '@angular/core';
 import { sessionFetch } from '../../../../services/session-fetch';
 
-export type SearchDomain = 'tasks' | 'dossiers' | 'commits' | 'files';
+export type SearchDomain = 'tasks' | 'dossiers' | 'wiki' | 'commits' | 'files';
+
+export const SEARCH_DOMAINS: readonly SearchDomain[] = ['tasks', 'dossiers', 'wiki', 'commits', 'files'];
 
 export interface GlobalSearchItem {
   domain: SearchDomain;
@@ -17,6 +19,9 @@ export interface GlobalSearchItem {
   dossierKey?: string;
   workbenchId?: string;
   phase?: string;
+  updatedAt?: string;
+  referenceKey?: string;
+  projectId?: string;
 }
 
 /** Task matches. Served from the in-memory index, so this frame lands first. */
@@ -31,6 +36,13 @@ export interface SearchTasksFrame {
  * repository, so this frame lands alongside `tasks` instead of waiting on git.
  */
 export interface SearchDossiersFrame {
+  items: GlobalSearchItem[];
+  durationMs: number;
+  error: string | null;
+}
+
+/** Wiki title and heading matches. */
+export interface SearchWikiFrame {
   items: GlobalSearchItem[];
   durationMs: number;
   error: string | null;
@@ -64,6 +76,7 @@ export interface SearchDoneFrame {
 export type GlobalSearchFrame =
   | { event: 'tasks'; data: SearchTasksFrame }
   | { event: 'dossiers'; data: SearchDossiersFrame }
+  | { event: 'wiki'; data: SearchWikiFrame }
   | { event: 'progress'; data: SearchProgressFrame }
   | { event: 'repository'; data: SearchRepositoryFrame }
   | { event: 'done'; data: SearchDoneFrame };
@@ -78,8 +91,12 @@ export class GlobalSearchService {
    * attribution headers ride along through {@link sessionFetch}. Aborting the
    * signal closes the response body, which cancels the fan-out server-side.
    */
-  async *stream(query: string, signal: AbortSignal): AsyncGenerator<GlobalSearchFrame> {
-    const params = new URLSearchParams({ q: query, domains: 'tasks,dossiers,commits,files', limit: '20' });
+  async *stream(
+    query: string,
+    signal: AbortSignal,
+    domains: readonly SearchDomain[] = SEARCH_DOMAINS,
+  ): AsyncGenerator<GlobalSearchFrame> {
+    const params = new URLSearchParams({ q: query, domains: domains.join(','), limit: '20' });
     const response = await sessionFetch(`/api/search/stream?${params.toString()}`, { signal });
     if (!response.ok || !response.body) throw new Error(`Search stream failed with status ${response.status}.`);
 

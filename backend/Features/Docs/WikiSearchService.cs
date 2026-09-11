@@ -132,6 +132,42 @@ public class WikiSearchService
         return new WikiSearchResponse(query, semanticUsed, expandedDisplay, sw.ElapsedMilliseconds, results);
     }
 
+    /// <summary>
+    /// Lightweight lexical projection for workspace-wide search. Only page
+    /// titles and heading text participate, so a global result never implies
+    /// full-body search. It deliberately reuses this service's existing index
+    /// and freshness fingerprint instead of introducing another docs scanner.
+    /// </summary>
+    public IReadOnlyList<WikiHeadingSearchResult>? SearchTitlesAndHeadings(
+        string projectName, string query, int limit)
+    {
+        var baseDir = ProjectRepoResolver.ResolveForProject(projectName, _scanner, _registry);
+        if (baseDir == null) return null;
+
+        var wikiDir = Path.GetFullPath(Path.Combine(baseDir, ProjectDocsService.WikiRel));
+        var index = GetOrBuildIndex(projectName, wikiDir);
+        return index.Docs
+            .Select(doc => new
+            {
+                Doc = doc,
+                TitleMatch = doc.Title.Contains(query, StringComparison.OrdinalIgnoreCase),
+                Heading = doc.Headings.FirstOrDefault(heading =>
+                    heading.Contains(query, StringComparison.OrdinalIgnoreCase)),
+            })
+            .Where(match => match.TitleMatch || match.Heading != null)
+            .OrderBy(match => string.Equals(match.Doc.Title, query, StringComparison.OrdinalIgnoreCase) ? 0
+                : match.TitleMatch ? 1 : 2)
+            .ThenBy(match => match.Doc.Title.Length)
+            .ThenBy(match => match.Doc.RelPath, StringComparer.OrdinalIgnoreCase)
+            .Take(Math.Max(0, limit))
+            .Select(match => new WikiHeadingSearchResult(
+                match.Doc.RelPath,
+                match.Doc.Title,
+                match.Heading ?? match.Doc.RelPath,
+                match.Doc.UpdatedAt))
+            .ToList();
+    }
+
     // -------- Scoring --------
 
     private static List<WikiSearchResult> Score(
@@ -316,6 +352,7 @@ public class WikiSearchService
         string Title,
         string Kind,
         DateTime UpdatedAt,
+        IReadOnlyList<string> Headings,
         string PlainText,
         IReadOnlyDictionary<string, double> WeightedTf,
         double WeightedLength);
@@ -459,6 +496,7 @@ public class WikiSearchService
                 Title: title,
                 Kind: isMd ? "md" : "html",
                 UpdatedAt: file.LastWriteTimeUtc,
+                Headings: headings,
                 PlainText: plainText,
                 WeightedTf: tf,
                 WeightedLength: weightedLength));
@@ -594,4 +632,11 @@ public record WikiSearchResult(
     string Kind,
     string Snippet,
     double Score,
+    DateTime UpdatedAt);
+
+/// <summary>Title-or-heading-only hit used by the workspace search palette.</summary>
+public sealed record WikiHeadingSearchResult(
+    string RelPath,
+    string Title,
+    string MatchingHeadingOrPath,
     DateTime UpdatedAt);

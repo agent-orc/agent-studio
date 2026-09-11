@@ -127,7 +127,7 @@ export function studioRouteForTab(
       return !tab.section || tab.section === 'overview' ? base : `${base}/${encodeURIComponent(tab.section)}`;
     }
     case 'workbench':
-      return `/projects/${studioProjectSlug(tab.projectName)}/workbenches/${encodeURIComponent(tab.workbenchId)}`;
+      return `/projects/${encodeURIComponent(tab.projectId || studioProjectSlug(tab.projectName))}/workbenches/${encodeURIComponent(tab.workbenchId)}`;
     case 'workbenches':
       return tab.projectName
         ? `/projects/${studioProjectSlug(tab.projectName)}/workbenches`

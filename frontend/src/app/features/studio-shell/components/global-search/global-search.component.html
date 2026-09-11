@@ -1,13 +1,23 @@
 @if (open()) {
   <div class="search-backdrop" data-testid="global-search-backdrop" (mousedown)="close()">
-    <section class="search-palette" role="dialog" aria-modal="true" aria-label="Search tasks, dossiers, commits, and files" (mousedown)="$event.stopPropagation()">
+    <section class="search-palette" role="dialog" aria-modal="true" aria-label="Search tasks, dossiers, wiki pages, commits, and files" (mousedown)="$event.stopPropagation()">
       <label class="search-input-row">
         <span aria-hidden="true">⌕</span>
         <input #searchInput data-testid="global-search-input" type="search" autocomplete="off"
-               placeholder="Search tasks, dossiers, commits, files…" [ngModel]="query()" (ngModelChange)="onQuery($event)" />
+               placeholder="Search tasks, dossiers, wiki pages, commits, files…" [ngModel]="query()" (ngModelChange)="onQuery($event)" />
         @if (searching()) { <span class="search-elapsed" data-testid="global-search-elapsed">{{ elapsedLabel() }}</span> }
         <kbd>Esc</kbd>
       </label>
+
+      <div class="search-domain-filters" aria-label="Search domains">
+        @for (option of domainOptions; track option.domain) {
+          <button type="button" class="search-domain-chip"
+                  [class.search-domain-chip--enabled]="enabledDomains()[option.domain]"
+                  [attr.aria-pressed]="enabledDomains()[option.domain]"
+                  [attr.data-testid]="'global-search-domain-' + option.domain"
+                  (click)="toggleDomain(option.domain)">{{ option.label }}</button>
+        }
+      </div>
 
       <div class="search-results" role="listbox" aria-label="Search results">
         @if (query().trim().length < 2) {
@@ -31,7 +41,7 @@
                     }
                   </span>
                 </header>
-                @for (item of group.items; track item.domain + ':' + item.projectName + ':' + item.subtitle) {
+                @for (item of group.items; track item.domain + ':' + item.projectName + ':' + (item.taskKey || item.workbenchId || item.path || item.sha || item.subtitle)) {
                   <button type="button" role="option" class="search-result"
                           [class.search-result--active]="resultIndex(item) === activeIndex()"
                           [attr.aria-selected]="resultIndex(item) === activeIndex()"
@@ -41,14 +51,15 @@
                     @if (item.dossierKey) { <span class="search-badge">{{ item.dossierKey }}</span> }
                     @if (item.lane) { <span class="search-badge">{{ item.lane }}</span> }
                     @if (item.phase) { <span class="search-badge">{{ item.phase }}</span> }
-                    @if (item.isWiki) { <span class="search-badge">Wiki</span> }
+                    @if (updatedLabel(item); as updated) { <span class="search-updated">{{ updated }}</span> }
+                    @if (item.domain === 'wiki' || item.isWiki) { <span class="search-badge">Wiki</span> }
                   </button>
                 }
                 @if (state.status !== 'failed' && state.error) { <p class="search-error">{{ state.error }}</p> }
               </section>
             }
           }
-          @if (!flatResults().length && !searching()) { <p class="search-hint">No matching tasks, dossiers, commits, or files.</p> }
+          @if (!flatResults().length && !searching()) { <p class="search-hint">No matching tasks, dossiers, wiki pages, commits, or files.</p> }
           @if (showSlowNotice()) {
             <p class="search-loading" data-testid="global-search-slow-notice">Repository search can take a moment on large histories.</p>
           }

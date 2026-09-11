@@ -6,7 +6,7 @@ namespace AgentStudio.Search;
 
 public static class GlobalSearchEndpoints
 {
-    private static readonly HashSet<string> AllowedDomains = new(StringComparer.OrdinalIgnoreCase) { "tasks", "dossiers", "commits", "files" };
+    private static readonly HashSet<string> AllowedDomains = new(StringComparer.OrdinalIgnoreCase) { "tasks", "dossiers", "wiki", "commits", "files" };
 
     public static void MapGlobalSearchEndpoints(this WebApplication app)
     {
@@ -16,7 +16,7 @@ public static class GlobalSearchEndpoints
             var query = q?.Trim() ?? "";
             var selected = ParseDomains(domains);
             if (query.Length < 2)
-                return Results.Ok(new GlobalSearchResponse(query, [], [], [], [], new Dictionary<string, string>(), 0));
+                return Results.Ok(new GlobalSearchResponse(query, [], [], [], [], [], new Dictionary<string, string>(), 0));
             var response = search.Search(query, selected, limit ?? 20);
             var allowed = AccessFilter(context, projects);
             if (allowed == null)
@@ -25,6 +25,7 @@ public static class GlobalSearchEndpoints
             {
                 Tasks = response.Tasks.Where(allowed).ToList(),
                 Dossiers = response.Dossiers.Where(allowed).ToList(),
+                Wiki = response.Wiki.Where(allowed).ToList(),
                 Commits = response.Commits.Where(allowed).ToList(),
                 Files = response.Files.Where(allowed).ToList(),
             });
@@ -81,20 +82,21 @@ public static class GlobalSearchEndpoints
     /// Project-access predicate for the calling principal, or null when the
     /// caller is not a human principal and every project is visible.
     /// </summary>
-    private static Func<GlobalSearchItem, bool>? AccessFilter(HttpContext context, AgentStudio.Registry.ProjectRegistry projects)
+    internal static Func<GlobalSearchItem, bool>? AccessFilter(HttpContext context, AgentStudio.Registry.ProjectRegistry projects)
     {
         if (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is not HumanPrincipal human) return null;
         return item => ProjectAccessAuthorization.Allows(human.User, item.ProjectName, projects);
     }
 
     /// <summary>Applies the caller's project access to a frame's item arrays.</summary>
-    private static object Authorize(GlobalSearchStreamEvent frame, Func<GlobalSearchItem, bool>? allowed) =>
+    internal static object Authorize(GlobalSearchStreamEvent frame, Func<GlobalSearchItem, bool>? allowed) =>
         allowed == null
             ? frame.Payload
             : frame.Payload switch
             {
                 GlobalSearchTasksFrame tasks => tasks with { Items = tasks.Items.Where(allowed).ToList() },
                 GlobalSearchDossiersFrame dossiers => dossiers with { Items = dossiers.Items.Where(allowed).ToList() },
+                GlobalSearchWikiFrame wiki => wiki with { Items = wiki.Items.Where(allowed).ToList() },
                 GlobalSearchRepositoryFrame repository => repository with
                 {
                     Commits = repository.Commits.Where(allowed).ToList(),

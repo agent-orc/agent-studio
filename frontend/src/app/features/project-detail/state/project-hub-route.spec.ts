@@ -27,6 +27,7 @@ describe('Project Hub URL contract', () => {
       section: 'wiki',
       legacySlug: false,
       query: '?page=concepts%2Foverview.md',
+      workbenchId: null,
     });
   });
 
@@ -36,6 +37,16 @@ describe('Project Hub URL contract', () => {
       section: 'settings',
       legacySlug: true,
       query: '',
+      workbenchId: null,
+    });
+  });
+
+  it('resolves a canonical Dossier detail under the Project Hub', () => {
+    expect(parseProjectHubRoute(
+      '#/projects/PROJ-002/workbenches/task-detail-usage-panel', PROJECTS,
+    )).toEqual({
+      project: PROJECTS[0], section: 'workbenches', legacySlug: false,
+      query: '', workbenchId: 'task-detail-usage-panel',
     });
   });
 

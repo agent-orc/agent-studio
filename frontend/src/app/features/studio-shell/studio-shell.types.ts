@@ -63,6 +63,8 @@ export interface WorkbenchesTab { kind: 'workbenches'; projectName: string | nul
 export interface WorkbenchTab {
   kind: 'workbench';
   projectName: string;
+  /** Immutable registry id used by the canonical Project Hub URL. */
+  projectId?: string;
   workbenchId: string;
   title?: string;
   /** Stable short reference shown by compact context surfaces when available. */

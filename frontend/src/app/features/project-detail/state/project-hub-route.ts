@@ -14,11 +14,13 @@ export interface ProjectHubRouteProject {
 
 export interface ProjectHubRouteTarget {
   project: ProjectHubRouteProject;
-  section: ProjectRailKey;
+  section: ProjectRailKey | 'workbenches';
   /** Name-derived routes remain readable, but writers always emit the id. */
   legacySlug: boolean;
   /** Rail-owned query such as the Wiki's `?page=` target. */
   query: string;
+  /** Exact Dossier detail when the route extends the workbenches rail. */
+  workbenchId: string | null;
 }
 
 const PROJECTS_PREFIX = '/projects/';
@@ -46,7 +48,7 @@ export function parseProjectHubRoute(
   const path = queryIndex >= 0 ? route.slice(0, queryIndex) : route;
   const query = queryIndex >= 0 ? route.slice(queryIndex) : '';
   const parts = path.slice(PROJECTS_PREFIX.length).split('/');
-  if (parts.length < 1 || parts.length > 2 || !parts[0]) return null;
+  if (parts.length < 1 || parts.length > 3 || !parts[0]) return null;
 
   let reference: string;
   try {
@@ -60,14 +62,22 @@ export function parseProjectHubRoute(
     ?? projects.find(candidate => toProjectSlug(candidate.displayName) === reference.toLowerCase());
   if (!project) return null;
 
+  if (parts.length === 3 && (parts[1] !== 'workbenches' || !parts[2])) return null;
+  const workbenchId = parts.length === 3 ? safeDecode(parts[2]) : null;
+  if (parts.length === 3 && !workbenchId) return null;
   const rawSection = parts[1] || DEFAULT_PROJECT_RAIL_KEY;
-  if (!isProjectRailKey(rawSection)) return null;
+  if (rawSection !== 'workbenches' && !isProjectRailKey(rawSection)) return null;
   return {
     project,
     section: rawSection,
     legacySlug: byId == null,
     query,
+    workbenchId,
   };
+}
+
+function safeDecode(value: string): string {
+  try { return decodeURIComponent(value); } catch { return ''; }
 }
 
 /** Replace only the hash route, retaining filters and other hash segments. */

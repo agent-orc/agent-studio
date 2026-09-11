@@ -382,6 +382,7 @@ export class StudioTabStateService {
         return {
           kind: 'workbench',
           projectName: tab.projectName,
+          ...(tab.projectId ? { projectId: tab.projectId } : {}),
           workbenchId: tab.workbenchId,
           title: tab.title,
           key: tab.key,
