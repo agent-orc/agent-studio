@@ -132,6 +132,56 @@ public sealed class TaskServerStoreTests
     }
 
     [Fact]
+    public async Task Version_thirteen_store_upgrades_to_legacy_migration_ledger_and_artifact_pointers()
+    {
+        using var temp = new TempDirectory();
+        var first = Store(temp.Path);
+        await first.InitializeAsync();
+
+        await using (var connection = new SqliteConnection(
+                         $"Data Source={first.DatabasePath};Pooling=False"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                DROP TABLE legacy_migration_reports;
+                DROP TABLE legacy_migration_orphans;
+                DROP TABLE legacy_migration_entities;
+                ALTER TABLE artifacts DROP COLUMN source_path;
+                ALTER TABLE artifacts DROP COLUMN pointer_only;
+                DELETE FROM schema_migrations WHERE version = 14;
+                UPDATE meta SET value = '13' WHERE key = 'schema_version';
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var upgraded = Store(temp.Path);
+        await upgraded.InitializeForBackupAsync();
+
+        await using var upgradedConnection = new SqliteConnection(
+            $"Data Source={upgraded.DatabasePath};Pooling=False");
+        await upgradedConnection.OpenAsync();
+        await using var query = upgradedConnection.CreateCommand();
+        query.CommandText = """
+            SELECT count(*) FROM sqlite_master
+             WHERE type = 'table'
+               AND name IN ('legacy_migration_entities',
+                            'legacy_migration_orphans',
+                            'legacy_migration_reports');
+            """;
+        Assert.Equal(3L, (long)(await query.ExecuteScalarAsync())!);
+        query.CommandText = """
+            SELECT count(*) FROM pragma_table_info('artifacts')
+             WHERE name IN ('source_path', 'pointer_only');
+            """;
+        Assert.Equal(2L, (long)(await query.ExecuteScalarAsync())!);
+        query.CommandText = "SELECT value FROM meta WHERE key = 'schema_version';";
+        Assert.Equal("14", (string)(await query.ExecuteScalarAsync())!);
+        query.CommandText = "SELECT count(*) FROM schema_migrations WHERE version = 14;";
+        Assert.Equal(1L, (long)(await query.ExecuteScalarAsync())!);
+    }
+
+    [Fact]
     public async Task Version_ten_adds_durable_result_finalization_state_and_reaches_current_schema()
     {
         using var temp = new TempDirectory();

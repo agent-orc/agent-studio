@@ -11,12 +11,13 @@ namespace AgentStudio.TaskServer;
 
 public sealed partial class TaskServerStore
 {
-    // 12 adds the durable legacy-cutover ledger and artifact references. 13
-    // adds retention policies, archive runs and manifests, task archive stub
-    // columns, and an artifacts.archived flag with nullable content.
+    // 12 adds scoped principals and credentials. 13 adds retention policies,
+    // archive runs and manifests, task archive stub columns, and the nullable
+    // artifact content contract. 14 adds the durable legacy-cutover ledger and
+    // artifact source references.
     // The migration block is idempotent; the number guards downgrades from
     // binaries that do not know this state.
-    public const int CurrentSchemaVersion = 13;
+    public const int CurrentSchemaVersion = 14;
     private const string TimestampFormat = "O";
     private readonly TaskServerOptions _options;
     private readonly TimeProvider _clock;

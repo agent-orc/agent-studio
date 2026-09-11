@@ -724,9 +724,10 @@ project/task/run identities, task state, events, artifact content, audit,
 principal and credential hashes, Runner records, coding and review leases,
 immutable review subjects, fenced reports, and fence counters.
 
-When the store contains a completed legacy import, backup and restore responses
-also return that report's `inventorySha256`. A restore rehearsal into an empty
-store must return the same value before cutover evidence is accepted.
+When the store contains a completed legacy import, the backup response and a
+successful non-verify-only restore response also return that report's
+`inventorySha256`. A restore rehearsal into an empty store must return the same
+value before cutover evidence is accepted.
 
 The packaged timer calls the same implementation through the binary:
 
@@ -793,12 +794,43 @@ a fresh store does not require a manual `meta` table edit. If the option is
 omitted while the store is not already in `Maintenance`, the command fails with
 `maintenance-required` and prints the exact `--mode maintenance` remedy.
 
-The command rejects a modified inventory as `legacy-inventory-invalid`, a
-source that no longer matches it as `legacy-inventory-mismatch`, and any target
-count disagreement as `legacy-post-import-mismatch`. Target-count validation is
-inside the import transaction for tasks, events, and artifacts. A repeated
-import of the same migration ID returns the existing signed report and does not
-create another backup or duplicate data.
+### Migration CLI and API contract
+
+Use a Task Server binary that reports store schema 14 or newer for this
+contract. Schema 14 is the compatibility boundary for the migration ledger,
+orphan ledger, signed reports, and artifact source pointers; once such a binary
+opens the store, a schema-13 binary fails closed through the newer-schema guard.
+
+| Surface | Required input | Optional input | Success output |
+|---|---|---|---|
+| `inventory --source <path>` | Frozen or still-readable legacy workspace path | `--workspace <name>`; defaults to the source directory name | Indented `LegacyMigrationInventory` JSON on stdout; human project/state counts, aggregate counts, orphan warnings, bus-log bytes, and the inventory SHA-256 on stderr |
+| `import --source <path> --inventory <file>` | Frozen workspace plus the exact JSON emitted by `inventory` | `--workspace <name>`; defaults to the inventoried root name. `--mode maintenance` initializes the store and persists `Maintenance`; without it, the store must already be in `Maintenance` | `LegacyMigrationResult` JSON on stdout, including both inventory hashes, idempotence, report identity/path/hash/signature, before/after inventories, and orphan counts |
+
+Both commands exit `0` on success, `1` on an inventory, store, or import
+failure, and `2` when command-line parsing fails. They read the normal Task
+Server store configuration, including `STORE_PATH`. `import` validates the
+saved inventory SHA-256 before it initializes or writes the target store.
+
+The management API uses the same wire records from
+`contracts/TaskServer.Contracts/ManagementContracts.cs`:
+
+| Route | Request and response contract |
+|---|---|
+| `POST /api/v1/management/migrations/legacy/inventory` | Accepts `LegacyMigrationRequest`. `legacyRoot` and `workspaceName` identify the source; `requireAttemptAuthority:true` makes missing authority a hard stop. Returns `LegacyMigrationInventory`. |
+| `POST /api/v1/management/migrations/legacy/import` | Requires `legacyRoot`, `workspaceName`, `freezeConfirmed:true`, and the saved `expectedMigrationId`; `preserveEvidenceGit` defaults to true. Task Server must already be in `Maintenance`. Returns `LegacyMigrationResult`. |
+| `GET /api/v1/management/migrations/legacy/reports` | Returns completed `LegacyMigrationReport` records, newest first. |
+| `GET /api/v1/management/migrations/legacy/reports/{migrationId}` | Returns the report selected by migration ID. A missing report is `404 legacy-migration-report-not-found`. |
+
+The named import stops are `legacy-freeze-required`, `maintenance-required`,
+`legacy-inventory-required`, `legacy-inventory-mismatch`,
+`legacy-attempt-authority-required`, and `legacy-post-import-mismatch`. The
+offline command additionally reports `legacy-inventory-invalid` when the saved
+JSON does not reproduce its embedded SHA-256. Any of these failures prohibits
+cutover.
+
+Core target-count validation is inside the import transaction for tasks,
+events, and artifacts. A repeated import of the same migration ID returns the
+existing signed report and does not create another backup or duplicate data.
 
 1. Call `POST /api/v1/management/migrations/legacy/inventory` with the legacy
    root and workspace name. Save the project/task/event/artifact counts,
@@ -848,15 +880,30 @@ authority. Bus logs use a different policy: each JSONL file is counted, hashed,
 sized, and stored as a pointer to the frozen root, but its messages are not
 replayed into the Task Server event stream.
 
-Two further source conditions degrade instead of aborting, and both are listed
-in the inventory warnings and the signed report. A registered project without a
-`shortCode` falls back to a shared task-key prefix; because store prefixes are
-unique, a second project with the same fallback is imported under a numbered
-prefix such as `LEG2` and the rename is reported. An `.metadata` integration
-file that cannot be read or parsed is skipped as a whole file, so one corrupt
-record set does not cost the entire inventory run. A Dossier descriptor reachable
-from both the legacy root and a registered repository nested inside it is counted
-once, which keeps the inventory count equal to the rows the import inserts.
+Other source conditions can degrade instead of aborting; each degradation is
+listed in the inventory warnings and the signed report. Selected task metadata
+or runner identity JSON that is readable but syntactically invalid remains in
+the hashed source-file manifest but is skipped as an entity. A persistently
+inaccessible selected task or identity file instead fails inventory during
+manifest hashing. A missing live attempt-authority file is a warning when the
+request does not require it. A registered project without a `shortCode` falls
+back to a shared task-key prefix; because store prefixes are unique, a second
+project with the same fallback is imported under a numbered prefix such as
+`LEG2`, and the rename is reported. An `.metadata` integration file that cannot
+be read or parsed is
+skipped as a whole file and is not added to the manifest, so one corrupt record
+set does not cost the entire inventory run.
+
+Separately, a Dossier descriptor reachable from both the legacy root and a
+registered repository nested inside it is counted once, which keeps the
+inventory count equal to the rows the import inserts.
+
+These warnings are part of the cutover evidence, not permission to overlook
+source loss. Repair unreadable task, identity, authority, or integration data
+and regenerate the inventory before production cutover, or record explicit D7
+acceptance when an omission is intentional. The planned API cutover below sets
+`requireAttemptAuthority:true`; the offline CLI has no equivalent switch, so a
+missing-authority warning is an operator stop on that path.
 
 ### Planned local Windows cutover
 
@@ -869,10 +916,10 @@ as a release hold until all of these steps have durable evidence:
    still on the held release. Inventory and import that copy into an empty
    rehearsal Task Server store. The inventory and import counts must agree for
    runner identities, tasks, coding attempts, review attempts, and leases, and the returned
-   authority epoch and integrity SHA-256 must be recorded. Any missing or
-   unreadable live or archived attempt-authority store aborts the cutover. Imported live leases
-   become `process-unknown`; they are never made claimable merely because the
-   owner process was stopped.
+   authority epoch and integrity SHA-256 must be recorded. A missing live
+   attempt-authority store, or an unreadable live store or discovered archive,
+   aborts the cutover. Imported live leases become `process-unknown`; they are
+   never made claimable merely because the owner process was stopped.
 
    Set `requireAttemptAuthority:true` on both migration requests. This converts
    a missing authority file from an inventory warning into the blocking

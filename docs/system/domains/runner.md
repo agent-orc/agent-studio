@@ -1,6 +1,6 @@
 # Runner Domain Map
 
-Version: 2026-09-09
+Version: 2026-09-11
 Status: System-of-record map for runner-side changes.
 
 Use this when a change touches task pickup, active execution, post-run outcome
@@ -627,6 +627,7 @@ state.
   deliveries therefore continue under their original attempt, fence, epoch,
   lease, and lease instance instead of receiving a false unknown-attempt or
   Superseded response.
+
 - A failed lease renewal consumes the last server-issued authority window. The
   default requested window is 15 minutes, with a durable stop-before boundary
   one renewal interval before expiry. The standalone Runner persists that
@@ -961,6 +962,25 @@ state.
   lifecycle flags stay platform-global in `OrchestratorConfigService` and are
   **not** workspace-shaped. See
   [ADR-0061](../architecture/decisions/adr-archive.md#adr-0061---orchestrator-settings-are-a-two-tier-config-project-override-wins-over-workspace-default-wins-over-platform-constant-2026-07-11).
+
+### Legacy authority migration
+
+Legacy import retains closed coding and review attempts as history. A live
+lease keeps its attempt identity, lease identity, fence, and authority epoch,
+but enters `process-unknown` until the normal audited containment path resolves
+it. Cutover inventory and import requests set `requireAttemptAuthority:true` so
+a missing live authority store stops migration with
+`legacy-attempt-authority-required`. An unreadable live store or discovered
+archive is also a hard inventory failure.
+
+Authority, lease, fence, and integration records whose task folder is missing
+are retained in the explicit legacy orphan ledger with their
+`orphaned_task_key`; they never enter the live authority tables and cannot
+become runnable work. Bus-log files are counted, hashed, and referenced at the
+frozen source, but their messages are not replayed as Task Server events. See
+the [Tasks domain map](tasks.md) for migrated task-state ownership and the
+[Task Server operator guide](../../operations/setup/task-server.md#legacy-single-writer-migration)
+for the inventory, import, mismatch-stop, and cutover sequence.
 
 ## Live execution ownership projection
 
