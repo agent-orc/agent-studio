@@ -42,6 +42,19 @@
     <Content Update="appsettings*.json" CopyToPublishDirectory="Never" />
   </ItemGroup>
 
+  <!-- The runtime prompt template defaults and the model-routing policy ship with the
+       product, not with one process's checkout: embed the same source files the
+       monolith reads from disk so the standalone Task Server can serve the P3
+       admin/prompts and cli/model-routing/policy routes without a shared filesystem. -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\prompts\runtime\*.md">
+      <LogicalName>AgentStudio.TaskServer.Prompts.%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\backend\Policies\model-routing-policy.v1.json"
+                      Link="Policies\model-routing-policy.v1.json"
+                      LogicalName="AgentStudio.TaskServer.ModelRoutingPolicy" />
+  </ItemGroup>
+
   <Target
     Name="RemoveSingleFilePublishSidecars"
     AfterTargets="Publish"

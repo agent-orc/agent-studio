@@ -1914,24 +1914,12 @@ export class TaskService {
   }
 
   /**
-   * Read the per-project list of 4-review jobs whose latest CLI output
-   * carries an unresolved [[TASK_NEEDS_INPUT]] sentinel. Drives the
-   * project-detail banner: when non-empty, the orchestrator owes a
-   * decision (or is about to make one in the next tick).
-   */
-  getReviewDecisionsPending(projectName: string) {
-    return this.http.get<{
-      project: string;
-      items: { jobId: string; title: string; reason: string | null }[];
-    }>(`${this.baseUrl}/projects/${encodeURIComponent(projectName)}/review-decisions-pending`);
-  }
-
-  /**
    * ADR-0027: read the *live, in-progress* decision sentinel(s) the named
-   * project's running job has emitted. Distinct from
-   * getReviewDecisionsPending (post-run, scoped to 4-auto-review): this
-   * surface fires while the job is still in 3-progress, the moment the
-   * agent prints [[TASK_NEEDS_INPUT]] / [[TASK_BLOCKED]] to stdout.
+   * project's running job has emitted. This surface fires while the job is
+   * still in 3-progress, the moment the agent prints
+   * [[TASK_NEEDS_INPUT]] / [[TASK_BLOCKED]] to stdout - distinct from the
+   * post-run, 4-auto-review-scoped decision surface folded into
+   * getProjectSnapshot.
    */
   getRunnerPendingDecisions(projectName: string) {
     return this.http.get<{

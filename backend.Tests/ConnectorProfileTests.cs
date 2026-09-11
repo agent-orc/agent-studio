@@ -20,14 +20,15 @@ namespace AgentStudio.Tests;
 public sealed class ConnectorProfileTests
 {
     [Fact]
-    public void Inventory_is_the_approved_97_local_and_268_proxy_surface()
+    public void Inventory_is_the_approved_105_local_and_260_proxy_surface()
     {
         var inventory = ConnectorRouteInventory.Load();
 
         Assert.Equal(ConnectorRouteInventory.ExpectedInventorySha256, inventory.SourceChecksum);
-        Assert.Equal(365, inventory.Operations.Count);
-        Assert.Equal(97, inventory.DevSeatOperations.Count);
-        Assert.Equal(268, inventory.TaskServerOperations.Count);
+        Assert.Equal(366, inventory.Operations.Count);
+        Assert.Equal(105, inventory.DevSeatOperations.Count);
+        Assert.Equal(260, inventory.TaskServerOperations.Count);
+        Assert.Equal(1, inventory.Operations.Count(operation => operation.Classification == ConnectorRouteInventory.RetiredClassification));
         Assert.Equal(1, inventory.TaskServerOperations.Count(operation => operation.Method == "WS"));
     }
 
@@ -54,8 +55,8 @@ public sealed class ConnectorProfileTests
 
         Assert.All(endpoints, endpoint => Assert.NotEmpty(
             endpoint.Metadata.GetOrderedMetadata<ConnectorClassifiedEndpointMetadata>()));
-        Assert.Equal(365, metadata.Length);
-        Assert.Equal(97, endpoints
+        Assert.Equal(365, metadata.Length); // 366 inventory rows minus 1 retired row, which is never mapped.
+        Assert.Equal(105, endpoints
             .SelectMany(endpoint => endpoint.Metadata.GetOrderedMetadata<ConnectorClassifiedEndpointMetadata>())
             .Where(item => item.Classification == ConnectorRouteInventory.DevSeatClassification)
             .Select(item => new ConnectorRouteKey(item.Method, ConnectorRouteKey.NormalizePath(item.Path)))

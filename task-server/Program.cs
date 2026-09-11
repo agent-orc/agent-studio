@@ -228,6 +228,9 @@ app.MapStudioTaskArtifactsEndpoints();
 app.MapStudioTaskHistoryEndpoints();
 app.MapStudioTaskReviewEndpoints();
 app.MapStudioWorkspaceEndpoints();
+// Studio route-ownership P3 "administration and long tail" bundle
+// (docs/studio-route-ownership/index.html).
+app.MapStudioAdministrationEndpoints();
 app.MapHub<TaskServerEventsHub>("/hubs/events")
     .RequireTaskServerScope(TaskServerScopes.EventsSubscribe);
 app.MapHub<TaskServerStudioHub>("/hubs/v1/studio")

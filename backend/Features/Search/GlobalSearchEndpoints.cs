@@ -31,6 +31,33 @@ public static class GlobalSearchEndpoints
             });
         });
 
+        // AGT-2758: the dev-seat half of the split /api/search. Task results
+        // moved to the standalone Task Server's durable board index
+        // (GET /api/v1/studio/search); this route keeps the git-backed
+        // domains - commits, files, dossiers, and wiki all read the project's
+        // local checkout - on an explicit dev-seat boundary. "tasks" is not
+        // an accepted domain here even if requested; it always empties out.
+        app.MapGet("/api/search/repository", (string? q, string? domains, int? limit, HttpContext context,
+            GlobalSearchService search, AgentStudio.Registry.ProjectRegistry projects) =>
+        {
+            var query = q?.Trim() ?? "";
+            var selected = ParseDomains(domains);
+            selected.Remove("tasks");
+            if (query.Length < 2)
+                return Results.Ok(new GlobalSearchResponse(query, [], [], [], [], [], new Dictionary<string, string>(), 0));
+            var response = search.Search(query, selected, limit ?? 20) with { Tasks = [] };
+            var allowed = AccessFilter(context, projects);
+            if (allowed == null)
+                return Results.Ok(response);
+            return Results.Ok(response with
+            {
+                Dossiers = response.Dossiers.Where(allowed).ToList(),
+                Wiki = response.Wiki.Where(allowed).ToList(),
+                Commits = response.Commits.Where(allowed).ToList(),
+                Files = response.Files.Where(allowed).ToList(),
+            });
+        });
+
         // Per-domain delivery. The palette renders task matches as soon as the
         // first frame lands and fills the git domains in as each repository
         // answers, so one slow checkout no longer holds the whole result set.
