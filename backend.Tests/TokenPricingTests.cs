@@ -23,7 +23,7 @@ public class TokenPricingTests
             .InformationalVersion;
 
         Assert.Equal("TokenEconomy", assembly.GetName().Name);
-        Assert.StartsWith("0.3.1", informationalVersion, StringComparison.Ordinal);
+        Assert.StartsWith("0.3.3", informationalVersion, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -184,5 +184,60 @@ public class TokenPricingTests
         Assert.True(dotted.ModelKnown);
         Assert.Equal(dashed.Total, dotted.Total);
         Assert.Equal(ModelIds.ClaudeOpus47, dotted.ModelId);
+    }
+
+    [Fact]
+    public void Estimate_Gpt55HistoricalRun_UsesCatalogPriceAtTimestamp()
+    {
+        var at = new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc);
+        var expectedPrice = TokenPricing.Catalog["gpt-5.5"].History
+            .Where(price => price.ValidFrom <= at)
+            .MaxBy(price => price.ValidFrom)!;
+
+        var c = _provider.Estimate("gpt-5.5", 1_000_000, 100_000, 0, 0, at);
+
+        Assert.True(c.ModelKnown);
+        Assert.Equal(TokenEconomy.PriceStatus.Resolved, c.Status);
+        Assert.True(c.Total > 0m);
+        Assert.NotNull(c.PriceBasis);
+        Assert.Equal(expectedPrice.ValidFrom, c.PriceBasis.ValidFrom);
+        Assert.Equal(expectedPrice.InputPerMTok, c.PriceBasis.InputPerMillion);
+        Assert.Equal(expectedPrice.OutputPerMTok, c.PriceBasis.OutputPerMillion);
+    }
+
+    [Fact]
+    public void Estimate_Gpt55DisplayNameCasing_ResolvesLikeCanonicalId()
+    {
+        // The persisted receipt bug (AGT-2752): a receipt recorded the catalog
+        // display name "GPT-5.5" instead of the canonical "gpt-5.5". TokenEconomy's
+        // own case/dot-dash-insensitive lookup must still resolve it.
+        var at = new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc);
+        var canonical = _provider.Estimate("gpt-5.5", 1_000_000, 100_000, 0, 0, at);
+        var displayName = _provider.Estimate("GPT-5.5", 1_000_000, 100_000, 0, 0, at);
+
+        Assert.True(displayName.ModelKnown);
+        Assert.Equal(canonical.Total, displayName.Total);
+    }
+
+    [Theory]
+    [InlineData("gpt-5.5")]
+    [InlineData("GPT-5.5")]
+    [InlineData("gpt-5.5-2026-04-23")]
+    public void CanonicalModelId_ResolvesIdAliasAndDisplayNameToTheSameId(string value)
+    {
+        Assert.Equal("gpt-5.5", TokenPricing.CanonicalModelId(value));
+    }
+
+    [Fact]
+    public void CanonicalModelId_UnknownModel_ReturnsNull()
+    {
+        Assert.Null(TokenPricing.CanonicalModelId("not-a-real-model"));
+    }
+
+    [Fact]
+    public void CanonicalModelId_NullOrBlank_ReturnsNull()
+    {
+        Assert.Null(TokenPricing.CanonicalModelId(null));
+        Assert.Null(TokenPricing.CanonicalModelId("   "));
     }
 }

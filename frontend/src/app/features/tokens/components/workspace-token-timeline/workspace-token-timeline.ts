@@ -11,6 +11,7 @@ import { TaskService } from '../../../../services/task.service';
 import { setVisibleInterval, clearVisibleInterval, VisibleIntervalHandle } from '../../../../utils/visible-interval';
 import type { TokenTimeline, TokenTimelineCell } from '../../../../features/tokens';
 import { TokensApiService } from '../../../../features/tokens';
+import { formatCompactTokens, formatCompactUsd } from '../../token-number-format.util';
 
 const STORAGE_DISABLED_KEY = 'workspaceTokens.disabledProjects';
 const STORAGE_WINDOW_KEY = 'workspaceTokens.windowHours';
@@ -388,17 +389,11 @@ export class WorkspaceTokenTimelineComponent implements OnInit, OnDestroy {
   // ---- Formatting ----
 
   formatTokens(n: number): string {
-    if (!Number.isFinite(n)) return '0';
-    if (n < 1_000) return n.toString();
-    if (n < 1_000_000) return (n / 1_000).toFixed(n < 10_000 ? 1 : 0) + 'K';
-    return (n / 1_000_000).toFixed(n < 10_000_000 ? 2 : 1) + 'M';
+    return formatCompactTokens(n);
   }
 
   formatUsd(n: number): string {
-    if (!Number.isFinite(n) || n === 0) return '$0.00';
-    if (n < 0.1) return '$' + n.toFixed(4);
-    if (n < 1)   return '$' + n.toFixed(3);
-    return '$' + n.toFixed(2);
+    return formatCompactUsd(n);
   }
 
   formatBucketRange(c: TokenTimelineCell): string {

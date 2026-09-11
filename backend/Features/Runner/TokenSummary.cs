@@ -315,10 +315,26 @@ public class TokenSummaryService
 
             foreach (var m in summary.ByModel)
             {
-                if (!perModel.TryGetValue(m.Model, out var bucket))
+                // A project's per-model label already went through
+                // TokenModelDisplay.Label once, but that only normalizes
+                // against Studio's own small registry. A receipt that
+                // persisted a raw catalog display name or a dated alias
+                // (e.g. "GPT-5.5" or "gpt-5.5-2026-04-23") instead of the
+                // canonical id would otherwise key its own row here,
+                // splitting one model's usage across the workspace fold.
+                // Re-resolve through the pricing catalog so every label
+                // variant of the same model folds into one row.
+                var canonicalId = TokenPricing.CanonicalModelId(m.Model);
+                var key = canonicalId ?? m.Model;
+                if (!perModel.TryGetValue(key, out var bucket))
                 {
-                    bucket = new ModelBucket(m.Model, m.Model);
-                    perModel[m.Model] = bucket;
+                    var label = canonicalId != null ? (TokenModelDisplay.Label(canonicalId) ?? m.Model) : m.Model;
+                    // AggregateSummaries reads ModelBucket.Model (not
+                    // .DisplayModel, unlike Summarize below) for the row it
+                    // emits, so both constructor args carry the label; only
+                    // the dictionary key uses the resolved canonical id.
+                    bucket = new ModelBucket(label, label);
+                    perModel[key] = bucket;
                 }
                 bucket.Calls += m.Calls;
                 bucket.Input += m.InputTokens;

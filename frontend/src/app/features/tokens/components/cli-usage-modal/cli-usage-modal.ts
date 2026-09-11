@@ -7,6 +7,8 @@ import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.
 import type { CliUsageQuotaRow } from '../../services/cli-usage.store';
 import type { AdHocUsageAggregate, TokenSummaryAggregate } from '../../models/tokens.model';
 import { CostBreakdownService } from '../../services/cost-breakdown.service';
+import { formatCompactTokens, formatCompactUsd } from '../../token-number-format.util';
+import { RecordedModelUsageGroupingStore } from '../../services/recorded-model-usage-grouping.store';
 
 interface ModelUsageRow {
   model: string;
@@ -20,6 +22,13 @@ interface ModelUsageRow {
   cacheCreationTokens: number;
   estimatedApiCostUsd: number;
   modelPriced: boolean;
+  /** True for the synthetic "Other (n models)" row that folds every
+   *  below-threshold model together. */
+  isOtherSummary?: boolean;
+  /** Number of models folded into the "Other" row. */
+  otherCount?: number;
+  /** True for a real model row shown because the "Other" group is expanded. */
+  isOtherChild?: boolean;
 }
 
 type WindowTone = 'ok' | 'warn' | 'hot' | 'unknown';
@@ -48,6 +57,8 @@ interface UsageTotals {
   costUsd: number;
   tokens: number;
   models: number;
+  /** Distinct models (across every row, grouped or not) with no resolved price. */
+  unpricedModels: number;
   anyPriced: boolean;
   allPriced: boolean;
 }
@@ -75,6 +86,7 @@ interface UsageTotals {
 })
 export class CliUsageModalComponent {
   private readonly costBreakdown = inject(CostBreakdownService);
+  private readonly grouping = inject(RecordedModelUsageGroupingStore);
   readonly cliType = input.required<CliType>();
   readonly row = input<CliUsageQuotaRow | null>(null);
   readonly tokens = input<TokenSummaryAggregate | null>(null);
@@ -123,22 +135,40 @@ export class CliUsageModalComponent {
     }),
   );
 
-  /** Summed cost / token totals across the shown model rows — the
-   *  "Summen-Kopf" over the model table. Presentational only. */
+  /** Summed cost / token totals across every recorded model row, grouped
+   *  or not — the "Summen-Kopf" over the model table. The grouped "Other"
+   *  row folds display, but every underlying model still counts toward
+   *  the total (style-guide R3: aggregate = sum of visible children).
+   *  Presentational only. */
   readonly totals = computed<UsageTotals>(() => {
-    const rows = this.modelRows();
+    const rows = this.allModelRows();
     let costUsd = 0;
     let tokens = 0;
-    let anyPriced = false;
+    let unpricedModels = 0;
     for (const r of rows) {
       tokens += this.totalTokens(r);
-      if (r.modelPriced) {
-        costUsd += r.estimatedApiCostUsd;
-        anyPriced = true;
-      }
+      if (r.modelPriced) costUsd += r.estimatedApiCostUsd;
+      else unpricedModels++;
     }
-    return { costUsd, tokens, models: rows.length, anyPriced, allPriced: rows.length > 0 && rows.every(r => r.modelPriced) };
+    return {
+      costUsd,
+      tokens,
+      models: rows.length,
+      unpricedModels,
+      anyPriced: rows.length > 0 && unpricedModels < rows.length,
+      allPriced: rows.length > 0 && unpricedModels === 0,
+    };
   });
+
+  /** Total cost label used by both the header tile and the table footer:
+   *  the sum over every priced row, with a "+n unpriced" marker instead
+   *  of ever rendering "Unknown" for the whole total. */
+  totalCostLabel(): string {
+    const t = this.totals();
+    if (t.models === 0) return 'n/a';
+    const marker = t.unpricedModels > 0 ? ` + ${t.unpricedModels} unpriced` : '';
+    return this.formatUsd(t.costUsd) + marker;
+  }
 
   /** Date range of the recorded telemetry, derived from data — not config.
    *  Returns a compact "since <date> · as of <date>" string, or null when
@@ -176,7 +206,9 @@ export class CliUsageModalComponent {
     }
   }
 
-  readonly modelRows = computed<ModelUsageRow[]>(() => {
+  /** Every recorded model row for this CLI, busiest first. Not capped —
+   *  callers that need a compact view use {@link modelRows} instead. */
+  private readonly allModelRows = computed<ModelUsageRow[]>(() => {
     const cli = this.cliType();
     const rows: ModelUsageRow[] = [];
     for (const m of this.tokens()?.byModel ?? []) {
@@ -189,8 +221,57 @@ export class CliUsageModalComponent {
       const row = { ...m, source: 'ad-hoc', cacheIncludedInInput: cli === 'codex' };
       if (this.totalTokens(row) > 0) rows.push(row);
     }
-    return rows.sort((a, b) => this.totalTokens(b) - this.totalTokens(a)).slice(0, 5);
+    return rows.sort((a, b) => this.totalTokens(b) - this.totalTokens(a));
   });
+
+  /** Whether the "Other (n models)" group is left expanded, remembered per viewer. */
+  readonly otherExpanded = computed(() => this.grouping.expanded(this.cliType()));
+
+  /**
+   * Table rows: models at or above the token-share threshold render
+   * individually; the rest fold into one "Other (n models)" row so a long
+   * tail of rarely used models does not crowd out the ones that matter.
+   * The group still counts fully toward {@link totals} and expands in
+   * place to show its members.
+   */
+  readonly modelRows = computed<ModelUsageRow[]>(() => {
+    const rows = this.allModelRows();
+    if (rows.length === 0) return rows;
+
+    const totalTokens = rows.reduce((sum, r) => sum + this.totalTokens(r), 0);
+    const threshold = this.grouping.threshold(this.cliType());
+    const major: ModelUsageRow[] = [];
+    const minor: ModelUsageRow[] = [];
+    for (const row of rows) {
+      const share = totalTokens > 0 ? this.totalTokens(row) / totalTokens : 0;
+      (share >= threshold ? major : minor).push(row);
+    }
+    if (minor.length === 0) return major;
+
+    const summary = this.otherSummaryRow(minor);
+    if (!this.otherExpanded()) return [...major, summary];
+    return [...major, summary, ...minor.map(row => ({ ...row, isOtherChild: true }))];
+  });
+
+  private otherSummaryRow(minor: ModelUsageRow[]): ModelUsageRow {
+    return {
+      model: `Other (${minor.length} model${minor.length === 1 ? '' : 's'})`,
+      source: '',
+      cacheIncludedInInput: minor[0]?.cacheIncludedInInput ?? false,
+      inputTokens: minor.reduce((s, r) => s + r.inputTokens, 0),
+      outputTokens: minor.reduce((s, r) => s + r.outputTokens, 0),
+      cacheReadTokens: minor.reduce((s, r) => s + r.cacheReadTokens, 0),
+      cacheCreationTokens: minor.reduce((s, r) => s + r.cacheCreationTokens, 0),
+      estimatedApiCostUsd: minor.reduce((s, r) => s + (r.modelPriced ? r.estimatedApiCostUsd : 0), 0),
+      modelPriced: minor.every(r => r.modelPriced),
+      isOtherSummary: true,
+      otherCount: minor.length,
+    };
+  }
+
+  toggleOther(): void {
+    this.grouping.toggleExpanded(this.cliType());
+  }
 
   limitText(window: QuotaWindow): string {
     if (window.used !== null && window.limit !== null) {
@@ -223,11 +304,17 @@ export class CliUsageModalComponent {
   }
 
   showTotalCalculation(): void {
-    this.costBreakdown.show(this.modelRows().map(row => this.priceItem(row)),
+    // Every underlying model, not the display-grouped rows: the synthetic
+    // "Other" row has no real model id the pricing dialog could look up.
+    this.costBreakdown.show(this.allModelRows().map(row => this.priceItem(row)),
       `${this.title()} recorded usage cost`);
   }
 
   showModelCalculation(row: ModelUsageRow): void {
+    if (row.isOtherSummary) {
+      this.toggleOther();
+      return;
+    }
     this.costBreakdown.show([this.priceItem(row)], `${row.model} cost calculation`);
   }
 
@@ -250,17 +337,11 @@ export class CliUsageModalComponent {
   }
 
   formatTokens(n: number): string {
-    if (!Number.isFinite(n)) return '0';
-    if (n < 1_000) return n.toString();
-    if (n < 1_000_000) return (n / 1_000).toFixed(n < 10_000 ? 1 : 0) + 'K';
-    return (n / 1_000_000).toFixed(n < 10_000_000 ? 2 : 1) + 'M';
+    return formatCompactTokens(n);
   }
 
   formatUsd(n: number): string {
-    if (!Number.isFinite(n) || n === 0) return '$0.00';
-    if (n < 0.1) return '$' + n.toFixed(4);
-    if (n < 1) return '$' + n.toFixed(3);
-    return '$' + n.toFixed(2);
+    return formatCompactUsd(n);
   }
 
   private modelBelongsToCli(model: string, cliType: CliType): boolean {

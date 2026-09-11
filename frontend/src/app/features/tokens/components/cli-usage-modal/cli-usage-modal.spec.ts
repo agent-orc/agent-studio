@@ -1,9 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, beforeEach } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { CliUsageModalComponent } from './cli-usage-modal';
 import type { CliUsageQuotaRow } from '../../services/cli-usage.store';
-import type { AdHocUsageAggregate, TokenSummaryAggregate } from '../../models/tokens.model';
+import type { AdHocUsageAggregate, TokenSummaryAggregate, TokenSummaryByModel } from '../../models/tokens.model';
 
 /**
  * Smoke + contract for the per-CLI usage modal. Confirms it instantiates,
@@ -205,5 +205,77 @@ describe('CliUsageModalComponent', () => {
     expect(
       c.limitText({ label: 'x', usedPct: null, used: null, limit: null, unit: null, resetAt: null, resetLabel: null }),
     ).toBe('n/a');
+  });
+
+  describe('below-threshold grouping and the total marker', () => {
+    beforeEach(() => {
+      try { localStorage.clear(); } catch { /* jsdom always has it, but be defensive */ }
+    });
+
+    function byModel(model: string, input: number, cost: number, priced: boolean): TokenSummaryByModel {
+      return {
+        model, calls: 1, inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0,
+        estimatedApiCostUsd: cost, modelPriced: priced,
+      };
+    }
+
+    // 99% / 0.9% / 0.1% of 1,000,000 tokens: the last two fall under the
+    // default 1% share threshold and fold into one "Other" row.
+    const groupedTokens: TokenSummaryAggregate = {
+      projects: 1, orchestratorEntries: 3, orchestratorLlmCalls: 3,
+      totalInputTokens: 1_000_000, totalOutputTokens: 0, totalCacheReadTokens: 0, totalCacheCreationTokens: 0,
+      estimatedApiCostUsd: 10.5, allModelsPriced: false,
+      byModel: [
+        byModel('gpt-5.6-sol', 990_000, 10, true),
+        byModel('gpt-4o', 9_000, 0.5, true),
+        byModel('gpt-4.1', 1_000, 0, false),
+      ],
+      byProject: [], fetchedAt: new Date().toISOString(), disclaimer: '',
+    };
+
+    it('folds below-threshold models into one "Other" row, collapsed by default', async () => {
+      const fixture = await build(codexRow, 'codex', groupedTokens);
+      const rows = fixture.componentInstance.modelRows();
+
+      expect(rows).toHaveLength(2);
+      expect(rows[0].model).toBe('gpt-5.6-sol');
+      expect(rows[1].isOtherSummary).toBe(true);
+      expect(rows[1].otherCount).toBe(2);
+      expect(rows[1].inputTokens).toBe(10_000);
+      expect(rows[1].modelPriced).toBe(false);
+    });
+
+    it('counts every underlying model toward the total, even while collapsed', async () => {
+      const fixture = await build(codexRow, 'codex', groupedTokens);
+      const totals = fixture.componentInstance.totals();
+
+      expect(totals.models).toBe(3);
+      expect(totals.unpricedModels).toBe(1);
+      expect(totals.costUsd).toBe(10.5);
+    });
+
+    it('never renders "Unknown" for the total; shows the priced sum plus an unpriced marker', async () => {
+      const fixture = await build(codexRow, 'codex', groupedTokens);
+      expect(fixture.componentInstance.totalCostLabel()).toBe('$10.50 + 1 unpriced');
+    });
+
+    it('expands the "Other" row in place on toggle, and a fresh instance remembers it', async () => {
+      const fixture = await build(codexRow, 'codex', groupedTokens);
+      const component = fixture.componentInstance;
+      expect(component.otherExpanded()).toBe(false);
+
+      component.toggleOther();
+      expect(component.otherExpanded()).toBe(true);
+      const expandedRows = component.modelRows();
+      expect(expandedRows).toHaveLength(4);
+      expect(expandedRows.filter(r => r.isOtherChild).map(r => r.model)).toEqual(['gpt-4o', 'gpt-4.1']);
+
+      // Re-opening the modal (a fresh component instance in a fresh
+      // injector) keeps the choice: the preference lives in localStorage,
+      // not just the torn-down component's in-memory state.
+      TestBed.resetTestingModule();
+      const reopened = await build(codexRow, 'codex', groupedTokens);
+      expect(reopened.componentInstance.otherExpanded()).toBe(true);
+    });
   });
 });

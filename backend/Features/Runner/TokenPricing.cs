@@ -70,4 +70,30 @@ public static class TokenPricing
         return Provider.Estimate(modelId, inputTokens, outputTokens, cacheReadTokens,
             cacheCreationTokens, recordedAt);
     }
+
+    /// <summary>
+    /// Resolve a persisted model value (canonical id, catalog alias, or catalog
+    /// display name) to the catalog's canonical model id. Returns null when the
+    /// catalog does not recognize the value at all, so the caller can keep the
+    /// original label rather than inventing a mapping.
+    /// <para>
+    /// A receipt persisted before the AGT-2740 fix stores the display name
+    /// (<c>"GPT-5.5"</c>); one persisted after it stores the canonical id
+    /// (<c>"gpt-5.5"</c>). Both must resolve to the same key so a workspace
+    /// fold across old and new receipts produces one row per model, not one
+    /// per label variant ever recorded.
+    /// </para>
+    /// </summary>
+    public static string? CanonicalModelId(string? modelOrLabel)
+    {
+        if (string.IsNullOrWhiteSpace(modelOrLabel)) return null;
+        var trimmed = modelOrLabel.Trim();
+
+        var byIdOrAlias = Source.Find(trimmed);
+        if (byIdOrAlias != null) return byIdOrAlias.ModelId;
+
+        return Source.Listings
+            .FirstOrDefault(listing => string.Equals(listing.DisplayName, trimmed, StringComparison.OrdinalIgnoreCase))
+            ?.ModelId;
+    }
 }

@@ -1,8 +1,9 @@
 # Token pricing
 
-> **Status (2026-08-10):** Live on exactly pinned `TokenEconomy` 0.3.1,
-> including historical prices for the GPT-5.6 family. Studio contains no model
-> rates.
+> **Status (2026-09-08):** Live on exactly pinned `TokenEconomy` 0.3.3,
+> including historical prices for the GPT-5.6 family, the GPT-5.5 family
+> (GPT-5.5, GPT-5.5 Pro, the GPT-5.5 Cyber preview), and the Claude 5 /
+> Sonnet 4.6 family. Studio contains no model rates.
 
 ## Contract
 
@@ -13,9 +14,19 @@ in `backend/Features/Runner/TokenEconomyPriceProvider.cs` adapts
 
 The adapter is exposed through `ITokenPriceProvider`; the active
 `TokenPricing.Provider` configuration selects `TokenEconomyPriceProvider`, the
-package-specific implementation from the exactly pinned `TokenEconomy` 0.3.1
+package-specific implementation from the exactly pinned `TokenEconomy` 0.3.3
 dependency. Aggregators and frontend contracts do not depend on the provider
 package directly.
+
+`TokenPricing.CanonicalModelId` resolves a persisted model id, catalog alias,
+or catalog display name back to the catalog's canonical model id. The
+workspace-wide fold (`TokenSummaryService.AggregateSummaries`) uses it to key
+each `byModel` row, so a receipt that persisted a display name (before the
+AGT-2740 persistence fix) and a receipt that persisted the canonical id (after
+it) still fold into one row instead of splitting the same model's usage across
+two. `GET /api/token-pricing/unpriced-models` lists every distinct model id
+currently active in recorded usage that the pinned catalog does not recognize
+at all, so a catalog gap is visible instead of silently rendering "Unknown".
 
 Callers must supply the run or event timestamp. TokenEconomy selects the catalog entry
 whose `ValidFrom` applies at that time. Repricing old usage with today's rate is
