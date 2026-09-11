@@ -215,6 +215,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             sha,
             [command],
             24100,
+            integrationRef: "refs/heads/main",
             codexCliBin: fakeCodex);
 
         await workspace.PrepareAsync(null!, default);
@@ -236,6 +237,78 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             artifact.Sha256 == executed.StdoutSha256 && artifact.ContentBase64 is not null);
         Assert.Equal("pass", Assert.Single(evidence.Verdicts).Status);
         Assert.False(evidence.Workspace.DirtyAfter);
+    }
+
+    [Fact]
+    public async Task Fixture_delivery_docs_change_is_present_in_every_aspect_input()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        const string documentationPath = "docs/system/domains/review.md";
+        var (baselineSha, subjectSha) = await SeedSubjectBranchWithFileAsync(
+            "task/review-material",
+            documentationPath,
+            "# Review\n\nThe delivery diff is authoritative.\n");
+        var promptCapture = Path.Combine(_root, "aspect-prompt.txt");
+        var fakeCodex = Path.Combine(_root, "capture-codex.sh");
+        await File.WriteAllTextAsync(
+            fakeCodex,
+            "#!/bin/sh\n" +
+            $"cat > '{promptCapture}'\n" +
+            "printf '%s\\n' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"Checked the documentation diff.\\n[[ASPECT_VERDICT: status=pass; summary=Documentation is present.; evidence_checked=docs/system/domains/review.md; missing=none]]\"}}'\n");
+        File.SetUnixFileMode(
+            fakeCodex,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var command = new ReviewCommandDto(
+            "aspect-documentation-impact",
+            "documentation-impact",
+            "codex",
+            [],
+            TimeoutSeconds: 30,
+            ExecutionKind: ReviewCommandKinds.AgentAspect,
+            Prompt: "Review documentation impact.",
+            CliType: AgentCliProcess.CodexCli,
+            Model: "gpt-5.4-mini",
+            ThinkingLevel: "high");
+        var (workspace, _) = Workspace(
+            "attempt-doc-material",
+            subjectSha,
+            [command],
+            24110,
+            resultRef: "refs/heads/task/review-material",
+            integrationRef: "refs/heads/main",
+            codexCliBin: fakeCodex);
+
+        await workspace.PrepareAsync(null!, default);
+        var evidence = await workspace.ExecutePlanAsync(default);
+        var prompt = await File.ReadAllTextAsync(promptCapture);
+
+        Assert.Equal("Pass", evidence.Outcome);
+        Assert.Contains($"- Merge base: `{baselineSha}`", prompt, StringComparison.Ordinal);
+        Assert.Contains($"- `{documentationPath}`", prompt, StringComparison.Ordinal);
+        Assert.Contains("+# Review", prompt, StringComparison.Ordinal);
+        Assert.Contains("### Unified diff", prompt, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Review_material_emits_explicit_truncation_note_when_budget_is_exceeded()
+    {
+        var (_, subjectSha) = await SeedSubjectBranchWithFileAsync(
+            "task/truncated-material",
+            "docs/large.md",
+            string.Join('\n', Enumerable.Range(1, 30).Select(index => $"line {index}")));
+        var (workspace, _) = Workspace(
+            "attempt-truncated-material",
+            subjectSha,
+            [new ReviewCommandDto("verify", "build-tests", "git", ["status", "--short"])],
+            24120,
+            resultRef: "refs/heads/task/truncated-material",
+            integrationRef: "refs/heads/main");
+
+        await workspace.PrepareAsync(null!, default);
+        var material = await workspace.BuildReviewMaterialAsync(10, 5, default);
+
+        Assert.Contains("diff truncated at 1 files/5 lines", material, StringComparison.Ordinal);
+        Assert.Contains("budget 10 files/5 lines", material, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1005,6 +1078,24 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         }
         var subjectSha = (await GitAsync(seed, "rev-parse", "task/new-failure")).StdOut.Trim();
         return (baselineSha, subjectSha);
+    }
+
+    private async Task<(string BaselineSha, string SubjectSha)> SeedSubjectBranchWithFileAsync(
+        string branch,
+        string relativePath,
+        string content)
+    {
+        var baselineSha = await SeedOriginAsync();
+        var seed = Path.Combine(_root, "seed");
+        await GitAsync(seed, "checkout", "-b", branch);
+        var path = Path.Combine(seed, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await File.WriteAllTextAsync(path, content);
+        await GitAsync(seed, "add", relativePath);
+        await GitAsync(seed, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+            "commit", "-m", "fixture delivery");
+        await GitAsync(seed, "push", "origin", branch);
+        return (baselineSha, (await GitAsync(seed, "rev-parse", "HEAD")).StdOut.Trim());
     }
 
     private async Task<string> SeedOriginAsync()

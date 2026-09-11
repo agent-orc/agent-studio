@@ -50,4 +50,51 @@ public sealed class ReviewGradingPolicyTests
     [InlineData("block", false)]
     public void IsConcernToken_matches_case_insensitively(string? status, bool expected)
         => Assert.Equal(expected, ReviewGradingPolicy.IsConcernToken(status));
+
+    [Fact]
+    public void Semantic_block_without_cited_evidence_and_exact_gap_is_downgraded()
+    {
+        var request = new ReviewReportRequest(
+            "executor", "instance", "lease", 1, "report", "ProductFailure",
+            "ReviewFinding", "Documentation is allegedly missing.",
+            new ReviewWorkspaceProofDto("repo", new string('a', 40), new string('a', 40),
+                new string('b', 40), false, false, "workspace", "namespace"),
+            new ReviewEnvironmentDto("host", "executor", "instance", "linux", "x64", ".NET",
+                new Dictionary<string, string>(), new Dictionary<string, string>()),
+            [], [],
+            [new ReviewVerdictDto(
+                "documentation-impact",
+                "block",
+                "RemoteAspectVerdict",
+                "Required documentation was not evidenced.")]);
+
+        var normalized = ReviewVerdictCitationPolicy.NormalizeReport(
+            request,
+            ["documentation-impact"]);
+        var verdict = Assert.Single(normalized.Verdicts);
+
+        Assert.Equal("concerns", verdict.Status);
+        Assert.Equal(ReviewVerdictCitationPolicy.BlockWithoutCitation, verdict.Classification);
+        Assert.Equal("Pass", normalized.Outcome);
+        Assert.Equal(ReviewVerdictCitationPolicy.BlockWithoutCitation, normalized.FailureClassification);
+        Assert.Equal(ReviewGrade.PassWithConcerns,
+            ReviewGradingPolicy.Grade(normalized.Verdicts.Select(item => item.Status)));
+    }
+
+    [Fact]
+    public void Semantic_block_with_checked_evidence_and_named_gap_remains_blocking()
+    {
+        var verdict = new ReviewVerdictDto(
+            "documentation-impact",
+            "block",
+            "RemoteAspectVerdict",
+            "The review domain contract is absent.",
+            "docs/system/domains/README.md; unified diff",
+            "docs/system/domains/review.md");
+
+        var normalized = ReviewVerdictCitationPolicy.Normalize(verdict, semanticAspect: true);
+
+        Assert.Equal("block", normalized.Status);
+        Assert.Equal(ReviewGrade.ProductFailure, ReviewGradingPolicy.Grade([normalized.Status]));
+    }
 }

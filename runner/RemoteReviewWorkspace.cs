@@ -15,6 +15,8 @@ namespace AgentRunner;
 public sealed class RemoteReviewWorkspace
 {
     private const int TestFailureParserVersion = 3;
+    internal const int ReviewMaterialMaximumFiles = 200;
+    internal const int ReviewMaterialMaximumLines = 12_000;
     private readonly RunnerOptions _options;
     private readonly ReviewSubjectDto _subject;
     private readonly ReviewLeaseDto _lease;
@@ -196,6 +198,7 @@ public sealed class RemoteReviewWorkspace
         var verdicts = new List<ReviewVerdictDto>();
         var artifacts = new List<ReviewArtifactEvidenceDto>();
         DependencyCacheSession? candidateCache = null;
+        string? reviewMaterial = null;
         try
         {
             candidateCache = await ExecutePreparationAsync(
@@ -216,7 +219,17 @@ public sealed class RemoteReviewWorkspace
                         "CommandSubjectMismatch",
                         $"Step '{command.StepId}' would run at '{headBefore}', not '{_subject.ExpectedResultSha}'.");
                 var execution = ReviewCommandKinds.IsAgent(command.ExecutionKind)
-                    ? await _agentCommands.RunAsync(command, ct)
+                    ? await _agentCommands.RunAsync(
+                        command with
+                        {
+                            Prompt = AppendReviewMaterial(
+                                command.Prompt!,
+                                reviewMaterial ??= await BuildReviewMaterialAsync(
+                                    ReviewMaterialMaximumFiles,
+                                    ReviewMaterialMaximumLines,
+                                    ct)),
+                        },
+                        ct)
                     : await RunCommandAsync(command, RepositoryPath, ct);
                 if (AspectCommandTimedOut(command, execution))
                 {
@@ -450,9 +463,12 @@ public sealed class RemoteReviewWorkspace
                     ct,
                     command,
                     execution.AgentUsage));
-                verdicts.Add(comparison is null
+                var verdict = comparison is null
                     ? ParseVerdict(command, execution.Process)
-                    : BaselineVerdict(command, comparison));
+                    : BaselineVerdict(command, comparison);
+                verdicts.Add(ReviewVerdictCitationPolicy.Normalize(
+                    verdict,
+                    ReviewCommandKinds.IsAgent(command.ExecutionKind)));
                 if (checkpoint is not null)
                 {
                     await checkpoint(
@@ -1106,6 +1122,141 @@ public sealed class RemoteReviewWorkspace
     }
 
     /// <summary>
+    /// Builds the immutable delivery material appended to every semantic aspect
+    /// prompt. The comparison base is always the merge-base between the exact
+    /// Result-SHA and a freshly fetched integration ref. Both Git streams are
+    /// counted while only their bounded heads are retained, so exceeding either
+    /// budget can never look like a complete diff.
+    /// </summary>
+    internal async Task<string> BuildReviewMaterialAsync(
+        int maximumFiles,
+        int maximumLines,
+        CancellationToken ct)
+    {
+        if (maximumFiles <= 0) throw new ArgumentOutOfRangeException(nameof(maximumFiles));
+        if (maximumLines <= 0) throw new ArgumentOutOfRangeException(nameof(maximumLines));
+
+        var baselineSha = await ResolveBaselineShaAsync(ct);
+        var changedFiles = new List<string>(Math.Min(maximumFiles, 256));
+        var totalFiles = 0;
+        var names = await ProcessRunner.RunAsync(
+            "git",
+            [
+                "-c", "credential.helper=", "-c", "core.quotePath=false",
+                "diff", "--name-only", "--find-renames", baselineSha,
+                _subject.ExpectedResultSha,
+            ],
+            RepositoryPath,
+            onStdOut: line =>
+            {
+                if (string.IsNullOrEmpty(line)) return;
+                totalFiles++;
+                if (changedFiles.Count < maximumFiles) changedFiles.Add(line);
+            },
+            environment: ProcessEnvironment(),
+            clearEnvironment: true,
+            ct: ct);
+        if (!names.Success)
+            throw BaselineUnavailable(
+                $"Changed-file enumeration failed against merge-base '{baselineSha}': {names.StdErr.Trim()}",
+                baselineSha,
+                command: null);
+
+        var diffLines = new List<string>(Math.Min(maximumLines, 16_384));
+        var totalDiffLines = 0;
+        var currentFile = 0;
+        var diff = await ProcessRunner.RunAsync(
+            "git",
+            [
+                "-c", "credential.helper=", "-c", "core.quotePath=false",
+                "diff", "--no-ext-diff", "--find-renames", "--unified=3",
+                baselineSha, _subject.ExpectedResultSha,
+            ],
+            RepositoryPath,
+            onStdOut: line =>
+            {
+                totalDiffLines++;
+                if (line.StartsWith("diff --git ", StringComparison.Ordinal)) currentFile++;
+                if (currentFile <= maximumFiles && diffLines.Count < maximumLines)
+                    diffLines.Add(line);
+            },
+            environment: ProcessEnvironment(),
+            clearEnvironment: true,
+            ct: ct);
+        if (!diff.Success)
+            throw BaselineUnavailable(
+                $"Unified diff failed against merge-base '{baselineSha}': {diff.StdErr.Trim()}",
+                baselineSha,
+                command: null);
+
+        var truncated = totalFiles > maximumFiles || totalDiffLines > maximumLines;
+        var shownFiles = Math.Min(totalFiles, maximumFiles);
+        var shownLines = diffLines.Count;
+        _log(
+            $"review material prepared ref={_subject.Plan.IntegrationRef} base={baselineSha} " +
+            $"result={_subject.ExpectedResultSha} files={shownFiles}/{totalFiles} " +
+            $"lines={shownLines}/{totalDiffLines} truncated={truncated.ToString().ToLowerInvariant()}");
+        return RenderReviewMaterial(
+            _subject.Plan.IntegrationRef!,
+            baselineSha,
+            _subject.ExpectedResultSha,
+            changedFiles,
+            diffLines,
+            totalFiles,
+            totalDiffLines,
+            maximumFiles,
+            maximumLines,
+            truncated);
+    }
+
+    private static string AppendReviewMaterial(string prompt, string reviewMaterial)
+        => prompt.TrimEnd() + Environment.NewLine + Environment.NewLine + reviewMaterial;
+
+    private static string RenderReviewMaterial(
+        string integrationRef,
+        string baselineSha,
+        string resultSha,
+        IReadOnlyList<string> changedFiles,
+        IReadOnlyList<string> diffLines,
+        int totalFiles,
+        int totalDiffLines,
+        int maximumFiles,
+        int maximumLines,
+        bool truncated)
+    {
+        var text = new StringBuilder();
+        text.AppendLine("## Authoritative delivery review material");
+        text.AppendLine();
+        text.AppendLine($"- Integration ref: `{integrationRef}` (freshly fetched)");
+        text.AppendLine($"- Merge base: `{baselineSha}`");
+        text.AppendLine($"- Delivery Result-SHA: `{resultSha}`");
+        text.AppendLine($"- Changed files: {totalFiles}");
+        text.AppendLine();
+        text.AppendLine("### Changed-file list");
+        text.AppendLine();
+        if (changedFiles.Count == 0) text.AppendLine("_No changed files._");
+        else foreach (var file in changedFiles) text.Append("- `").Append(file).AppendLine("`");
+        text.AppendLine();
+        text.AppendLine("### Unified diff");
+        text.AppendLine();
+        text.AppendLine("```diff");
+        foreach (var line in diffLines) text.AppendLine(line);
+        text.AppendLine("```");
+        if (truncated)
+        {
+            text.AppendLine();
+            text.Append("[[REVIEW_DIFF_TRUNCATED: diff truncated at ")
+                .Append(Math.Min(totalFiles, maximumFiles)).Append(" files/")
+                .Append(diffLines.Count).Append(" lines; delivery has ")
+                .Append(totalFiles).Append(" changed files/")
+                .Append(totalDiffLines).Append(" diff lines; budget ")
+                .Append(maximumFiles).Append(" files/")
+                .Append(maximumLines).AppendLine(" lines.]]");
+        }
+        return text.ToString();
+    }
+
+    /// <summary>
     /// Every <c>BaselineUnavailable</c> carries the base it used, the ref it
     /// resolved that base from, and the command that died. AGT-2220 repeated the
     /// bare classification four times, so nothing on the card ever showed that
@@ -1394,7 +1545,9 @@ public sealed class RemoteReviewWorkspace
                 command.Aspect,
                 status,
                 Field(marker, "classification") ?? "RemoteAspectVerdict",
-                Field(marker, "summary") ?? $"Remote aspect '{command.Aspect}' returned {status}.");
+                Field(marker, "summary") ?? $"Remote aspect '{command.Aspect}' returned {status}.",
+                Field(marker, "evidence_checked"),
+                Field(marker, "missing"));
         }
         return new ReviewVerdictDto(
             command.Aspect,
@@ -1402,7 +1555,9 @@ public sealed class RemoteReviewWorkspace
             result.Success ? "CommandPassed" : "CommandFailed",
             result.Success
                 ? $"Review command '{command.StepId}' passed."
-                : $"Review command '{command.StepId}' exited {result.ExitCode}.");
+                : $"Review command '{command.StepId}' exited {result.ExitCode}.",
+            $"command:{command.StepId}",
+            result.Success ? "none" : $"successful execution of {command.StepId}");
     }
 
     internal static ReviewVerdictDto BaselineVerdict(
@@ -1427,7 +1582,11 @@ public sealed class RemoteReviewWorkspace
             command.Aspect,
             comparison.NewFailures.Count == 0 ? "pass" : "block",
             classification,
-            $"{newFailures}; {preExisting}; {quarantined}. Baseline {comparison.BaselineSha} ({(comparison.CacheHit ? "cache hit" : "cache fill")}).");
+            $"{newFailures}; {preExisting}; {quarantined}. Baseline {comparison.BaselineSha} ({(comparison.CacheHit ? "cache hit" : "cache fill")}).",
+            $"command:{command.StepId}; baseline:{comparison.BaselineSha}",
+            comparison.NewFailures.Count == 0
+                ? "none"
+                : string.Join(", ", comparison.NewFailures));
     }
 
     private static IReadOnlyList<string> SubjectFailures(

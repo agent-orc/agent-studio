@@ -120,6 +120,13 @@ public sealed class CouncilLoop : IOrchestrationStageHandler
                     || value == "pass")
                     continue;
                 findingCount++;
+                var uncitedBlock = verdict.TryGetProperty("classification", out var classification)
+                    && classification.ValueKind == JsonValueKind.String
+                    && string.Equals(
+                        classification.GetString(),
+                        ReviewVerdictCitationPolicy.BlockWithoutCitation,
+                        StringComparison.OrdinalIgnoreCase);
+                if (uncitedBlock) continue;
                 if (value is "concerns" or "block" or "fail")
                     blockerCount++;
             }

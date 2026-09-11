@@ -61,11 +61,14 @@ working diff.
 
 ## What you must emit
 
-A brief paragraph (under 150 words) explaining your reasoning, then
-exactly one verdict sentinel on its own line:
+A brief paragraph (under 150 words) explaining your reasoning. Name the files
+or diff sections you actually checked. For a `block`, `missing` must name the
+exact absent load-bearing document or contract section. A block with
+`evidence_checked=none` or `missing=none` is downgraded to `concerns` and marked
+`block-without-citation`. Then emit exactly one verdict sentinel on its own line:
 
 ```
-[[ASPECT_VERDICT: status=<pass|concerns|block>; summary=<one short sentence>]]
+[[ASPECT_VERDICT: status=<pass|concerns|block>; summary=<one short sentence>; evidence_checked=<files or diff sections checked>; missing=<exact gap, or none>]]
 ```
 
 Then end with `[[TASK_DONE]]` on its own line.

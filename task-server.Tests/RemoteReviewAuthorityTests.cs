@@ -779,6 +779,53 @@ public sealed class RemoteReviewAuthorityTests
     }
 
     [Fact]
+    public async Task Semantic_block_without_citation_is_admitted_as_non_escalating_concern()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var plan = new ReviewPlanDto(
+            [new ReviewCommandDto(
+                "aspect-documentation-impact",
+                "documentation-impact",
+                "codex",
+                [],
+                ExecutionKind: ReviewCommandKinds.AgentAspect,
+                Prompt: "Review the delivery documentation.",
+                CliType: "codex",
+                Model: "gpt-5.4-mini")],
+            ["documentation-impact"],
+            IntegrationRef: "refs/heads/develop");
+        await SeedReviewSubjectAsync(store, plan: plan);
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        var claim = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+        var request = PassingReport(claim) with
+        {
+            Outcome = "ProductFailure",
+            FailureClassification = "ReviewFinding",
+            Verdicts =
+            [
+                new ReviewVerdictDto(
+                    "documentation-impact",
+                    "block",
+                    "RemoteAspectVerdict",
+                    "Required documentation was not evidenced.")
+            ],
+        };
+
+        var report = await store.ReportReviewAsync(
+            claim.Attempt!.AttemptId,
+            request,
+            "review-a",
+            default);
+
+        Assert.Equal("Pass", report.Outcome);
+        Assert.Equal(ReviewVerdictCitationPolicy.BlockWithoutCitation, report.FailureClassification);
+        Assert.False(report.RetryScheduled);
+    }
+
+    [Fact]
     public async Task Stale_review_subject_cannot_overwrite_a_newer_task_lifecycle()
     {
         using var temp = new TempDirectory();
@@ -1250,6 +1297,8 @@ public sealed class RemoteReviewAuthorityTests
                     ReviewCapabilities.VisionReview,
                     ReviewCapabilities.BaselineComparison,
                     ReviewCapabilities.DependencyPreparation,
+                    CapabilityProtocol.CliExecution("codex"),
+                    CapabilityProtocol.ProviderAuthentication("codex"),
                 ]),
             id,
             default);
