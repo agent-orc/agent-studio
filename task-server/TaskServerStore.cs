@@ -2901,6 +2901,18 @@ public sealed partial class TaskServerStore
             ON CONFLICT(version) DO NOTHING;
             """, ct, ("$version", CurrentSchemaVersion), ("$now", Iso(UtcNow)));
         await ApplyReviewMigrationAsync(connection, ct);
+        // Studio route-ownership P1 "task detail and hosts" bundle
+        // (docs/studio-route-ownership/index.html): each group below owns a
+        // disjoint set of new tables and touches no other group's schema.
+        await ApplyStudioHostsMigrationAsync(connection, ct);
+        await ApplyStudioProjectMetaMigrationAsync(connection, ct);
+        await ApplyStudioRunnerOrchestratorMigrationAsync(connection, ct);
+        await ApplyStudioTaskMetadataMigrationAsync(connection, ct);
+        await ApplyStudioTaskLifecycleExtrasMigrationAsync(connection, ct);
+        await ApplyStudioTaskArtifactsMigrationAsync(connection, ct);
+        await ApplyStudioTaskHistoryMigrationAsync(connection, ct);
+        await ApplyStudioTaskReviewMigrationAsync(connection, ct);
+        await ApplyStudioWorkspaceMigrationAsync(connection, ct);
         await EnsureColumnAsync(connection, "review_attempts", "required_capabilities_json", "TEXT NOT NULL DEFAULT '[]'", ct);
         await EnsureColumnAsync(connection, "review_attempts", "canary_capabilities_json", "TEXT NOT NULL DEFAULT '[]'", ct);
         await EnsureColumnAsync(connection, "tasks", "rank", "INTEGER NOT NULL DEFAULT 0", ct);

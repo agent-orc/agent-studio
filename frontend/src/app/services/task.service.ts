@@ -1219,16 +1219,25 @@ export class TaskService {
     );
   }
 
-  /** Git-backed history for one task file, served by the Slice 2 file-source API. */
+  /**
+   * Git-backed history for one task file, served by the Slice 2 file-source
+   * API. `scope: 'code'` reads the dev-seat repository checkout, so it is
+   * routed to the separately named local `/checkout/{path}/history` route
+   * instead of the Task Server-backed default (see `readTaskFile`).
+   */
   getTaskFileHistory(
     jobId: string,
     path: string,
     watchPath?: string,
     scope: TaskFileSourceScope = 'auto',
   ) {
+    const base =
+      scope === 'code'
+        ? `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/checkout/${this.encodeTaskFilePath(path)}/history`
+        : `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/files/${this.encodeTaskFilePath(path)}/history`;
     return this.http.get<TaskFileHistoryEntry[]>(
-      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/files/${this.encodeTaskFilePath(path)}/history`,
-      this.withFileSourceParams(watchPath, scope),
+      base,
+      this.withFileSourceParams(watchPath, scope === 'code' ? undefined : scope),
     );
   }
 
@@ -1254,6 +1263,12 @@ export class TaskService {
    * backend resolves + guards it with `IsWithin`), which is what the
    * clickable protocol source references use to open a file in the
    * source viewer. Returns the body as plain UTF-8 text.
+   *
+   * Task-owned file reads (the default `auto`/`workspace` scope) are Task
+   * Server authority and stay on `/files/{path}`. A repository-checkout read
+   * (`scope: 'code'`) crosses into the dev seat, so it is routed to the
+   * separately named local `/checkout/{path}` route instead - the Task
+   * Server never resolves or serves live repository content.
    */
   readTaskFile(
     jobId: string,
@@ -1261,13 +1276,17 @@ export class TaskService {
     watchPath?: string,
     scope: TaskFileSourceScope = 'auto',
   ) {
+    const base =
+      scope === 'code'
+        ? `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/checkout/${this.encodeTaskFilePath(path)}`
+        : `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/files/${this.encodeTaskFilePath(path)}`;
     return this.getUtf8Text(
-      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/files/${this.encodeTaskFilePath(path)}`,
-      this.withFileSourceParams(watchPath, scope),
+      base,
+      this.withFileSourceParams(watchPath, scope === 'code' ? undefined : scope),
     );
   }
 
-  /** Read one file version at a specific commit SHA. */
+  /** Read one file version at a specific commit SHA. See {@link readTaskFile} for the scope=code routing split. */
   readTaskFileAt(
     jobId: string,
     path: string,
@@ -1275,9 +1294,13 @@ export class TaskService {
     watchPath?: string,
     scope: TaskFileSourceScope = 'auto',
   ) {
+    const base =
+      scope === 'code'
+        ? `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/checkout/${this.encodeTaskFilePath(path)}`
+        : `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/files/${this.encodeTaskFilePath(path)}`;
     return this.getUtf8Text(
-      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/files/${this.encodeTaskFilePath(path)}`,
-      this.withFileSourceParams(watchPath, scope, { at: sha }),
+      base,
+      this.withFileSourceParams(watchPath, scope === 'code' ? undefined : scope, { at: sha }),
     );
   }
 

@@ -157,6 +157,17 @@ app.UseMiddleware<TaskServerAuthenticationMiddleware>();
 app.UseMiddleware<TaskServerProtocolMiddleware>();
 app.MapTaskServerEndpoints();
 app.MapStudioEndpoints();
+// Studio route-ownership P1 "task detail and hosts" bundle
+// (docs/studio-route-ownership/index.html).
+app.MapStudioHostsEndpoints();
+app.MapStudioProjectMetaEndpoints();
+app.MapStudioRunnerOrchestratorEndpoints();
+app.MapStudioTaskMetadataEndpoints();
+app.MapStudioTaskLifecycleExtrasEndpoints();
+app.MapStudioTaskArtifactsEndpoints();
+app.MapStudioTaskHistoryEndpoints();
+app.MapStudioTaskReviewEndpoints();
+app.MapStudioWorkspaceEndpoints();
 app.MapHub<TaskServerEventsHub>("/hubs/events")
     .RequireTaskServerScope(TaskServerScopes.EventsSubscribe);
 app.MapHub<TaskServerStudioHub>("/hubs/v1/studio")
