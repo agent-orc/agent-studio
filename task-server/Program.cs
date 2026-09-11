@@ -58,6 +58,7 @@ builder.Services.AddSingleton<IResultRefDeleter, GitResultRefDeleter>();
 builder.Services.AddSingleton<IStudioEventPublisher, SignalRStudioEventPublisher>();
 builder.Services.AddSingleton<StudioChatAttachmentStore>();
 builder.Services.AddSingleton<StudioLifecycleCoordinator>();
+builder.Services.AddStudioP2Services();
 builder.Services.AddHostedService<TaskServerInvariantReconciliationService>();
 builder.Services.AddHostedService<ResultRefGcHostedService>();
 builder.Services.AddHostedService<RetentionSchedulerHostedService>();
@@ -217,6 +218,8 @@ app.UseMiddleware<TaskServerAuthenticationMiddleware>();
 app.UseMiddleware<TaskServerProtocolMiddleware>();
 app.MapTaskServerEndpoints();
 app.MapStudioEndpoints();
+app.MapStudioOperationsEndpoints();
+app.MapStudioP2Endpoints();
 app.MapHub<TaskServerEventsHub>("/hubs/events")
     .RequireTaskServerScope(TaskServerScopes.EventsSubscribe);
 app.MapHub<TaskServerStudioHub>("/hubs/v1/studio")

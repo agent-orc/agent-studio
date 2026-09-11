@@ -850,6 +850,104 @@ this literal, so the substitution cannot collide with an actual project. Every
 other v1 route, and every call that already supplies a real project id or the
 `?project=` query compatibility fallback, is unaffected.
 
+## Studio operations-and-insight bundle (P2)
+
+AGT-2757 implements the 102-route P2 "operations and insight" bundle from the
+[Studio route ownership](../../studio-route-ownership/index.html) dossier:
+bus messages and token usage, runtime events, cycle time and throughput,
+deployment and publish, security review, code and architecture analysis and
+drift, supervisor intervention, crash recovery, and the remaining project
+settings, admin, and utility routes in that bundle. All 102 handlers live
+under `/api/v1/studio/**`, split across eight feature-area files that each
+own their own contracts, durable SQLite tables, and route mapping, plus one
+shared dispatch subsystem:
+
+- **Fenced Runner-operation dispatch** — `StudioOperationsContracts.cs`,
+  `TaskServerStudioOperationsStore.cs`, `StudioOperationsEndpoints.cs`. A P2
+  route that needs a checkout or CLI (drift and security analysis,
+  deployment compile, publish package/website, wiki grading, design and
+  proposal generation, prompt/title generation) never runs that work
+  in-process — `task-server/*.cs` cannot spawn a process at all
+  (`ArchitectureBoundaryTests` enforces this). Instead it creates a durable
+  `studio_operations` row and returns `202 Accepted` with a
+  `StudioOperationAcceptedResponse`. A Runner claims the operation under its
+  own fenced lease and fence token (`POST
+  /api/v1/runners/{runnerId}/studio-operation-claims`, disjoint from the
+  `leases`/`fence_counters` a coding or review attempt uses, since a studio
+  operation is never a task run: no branch, no push, no board lane), reports
+  progress and evidence through `POST
+  /api/v1/studio-operations/{operationId}/{heartbeat,events,artifacts}`, and
+  completes through `POST
+  /api/v1/studio-operations/{operationId}/completion`. `studio_operations`
+  is itself the durable projection every P2 GET route reads once an
+  operation succeeds (`result_json`, or a list of the most recent completed
+  operations of one kind for a "reports" view) — there is no second,
+  separately materialized results table for most feature areas. The one
+  exception is proposals, where one completed operation can describe many
+  independently acceptable/rejectable rows: `IStudioOperationCompletionProjector`
+  is a DI extension point the completion route invokes for every matching
+  registered projector once an operation succeeds, after the operation's own
+  result already committed; `StudioP2DesignEndpoints.cs` registers
+  `ProposalsCompletionProjector` for this.
+- **Admin, prompts, and utility** — `StudioP2AdminContracts.cs`,
+  `TaskServerStudioP2AdminStore.cs`, `StudioP2AdminEndpoints.cs`.
+- **Analysis and drift** — `StudioP2AnalysisDriftContracts.cs`,
+  `TaskServerStudioP2AnalysisDriftStore.cs`, `StudioP2AnalysisDriftEndpoints.cs`.
+- **Bus messages, token usage, runtime events, token pricing** —
+  `StudioP2InsightContracts.cs`, `TaskServerStudioP2InsightStore.cs`,
+  `StudioP2InsightEndpoints.cs`. These projections read durable tables fed by
+  their own small fenced ingestion routes (`POST
+  .../{bus,token-usage,runtime}/{project}/.../ingest`, scope `runs:write`),
+  the same role `/api/v1/runs/{runId}/events` plays for the board.
+- **Global CLI/quota settings, crash recovery, watch paths** —
+  `StudioP2SettingsContracts.cs`, `TaskServerStudioP2SettingsStore.cs`,
+  `StudioP2SettingsEndpoints.cs`.
+- **Supervisor intervention and queue metrics** —
+  `StudioP2SupervisorContracts.cs`, `TaskServerStudioP2SupervisorStore.cs`,
+  `StudioP2SupervisorEndpoints.cs`. Cycle time, throughput, and regression
+  radar are folded from the existing `audit` ledger rather than a second copy
+  of task history; cancel-run/force-fail reuse the existing
+  `TaskServerStore.ReleaseLeaseAsync` authority path; recent-events reuses
+  the P0 `studio_stream_events` log.
+- **Project settings and CRUD** — `StudioP2ProjectSettingsContracts.cs`,
+  `TaskServerStudioP2ProjectSettingsStore.cs`,
+  `StudioP2ProjectSettingsEndpoints.cs`.
+- **Design, proposals, visual evidence, skill readiness, snapshot** —
+  `StudioP2DesignContracts.cs`, `TaskServerStudioP2DesignStore.cs`,
+  `StudioP2DesignEndpoints.cs`.
+- **Security review, deployment, publish, wiki grading** —
+  `StudioP2ComplianceContracts.cs`, `TaskServerStudioP2ComplianceStore.cs`,
+  `StudioP2ComplianceEndpoints.cs`.
+
+`StudioP2Endpoints.cs` and `TaskServerStudioP2AggregateStore.cs` are the only
+two files `Program.cs` and the schema migration call into; each adds no
+behavior of its own; it just calls each feature area's `Map*Endpoints`/
+`Apply*MigrationAsync` once, so a future bundle only adds a line here rather
+than growing `Program.cs` or the central migration method directly. Schema
+version 16 adds the studio-operation dispatch ledger and every P2 table.
+
+| Route group | Purpose | Scope |
+|---|---|---|
+| `PUT /api/v1/studio/admin/config/orchestrator`, `{DELETE,PUT,POST} /api/v1/studio/admin/prompts/{name}[/{preview,rebaseline,review}]`, `POST .../admin/prompts/review-all` | Orchestrator config and prompt-override admin, in-process only | `tasks:write` |
+| `POST /api/v1/studio/component-routing/resolve`, `POST /api/v1/studio/{prompt/enhance,title/generate}` | Route-ownership lookup (pure); prompt/title generation (fenced dispatch) | `tasks:write` |
+| `GET/POST /api/v1/studio/analysis/{project}/reports[/{reportId}]`, `GET/PUT .../analysis/{project}/schedule` | Durable analysis-report log and schedule | `tasks:read` / `tasks:write` |
+| `POST .../drift/{project}/actions/{adr-code-drift,docs-marketing-drift,software-architecture-drift}`, `POST /api/v1/studio/drift/actions/code-pattern-drift`, `GET .../drift/{project}/{architecture,reports[/{reportId}]}`, `POST .../architecture/{modelId}/elements/{elementId}/status`, `GET .../drift/actions/code-pattern-drift/rules` | Drift analysis dispatch and durable reports | `tasks:read` / `tasks:write` |
+| `GET /api/v1/studio/bus/{project}/{messages[/{id}],recent,summary,token-aggregate}` | Durable bus-message projection | `tasks:read` |
+| `GET /api/v1/studio/projects/{project}/token-usage/{expensive,heatmap,job/{taskId},pipeline-cost,summary}`, `POST /api/v1/studio/token-pricing/calculate` | Token-usage projections and pricing calculator | `tasks:read` / `tasks:write` |
+| `GET /api/v1/studio/runtime/{project}/events` | Durable runtime-event projection | `tasks:read` |
+| `PUT /api/v1/studio/cli/{model-routing/economy-mode,quota/caps,quota/model-routes,quota/wait-policy}` | Global CLI/quota settings singleton | `tasks:write` |
+| `GET/POST /api/v1/studio/crash-recovery/pending[/{id}/{commit,dismiss}]`, `POST/DELETE /api/v1/studio/watch-paths[/{name}]` | Crash-recovery queue and watch-path registry | `tasks:read` / `tasks:write` |
+| `GET /api/v1/studio/pipeline/accepted-integration-alert`, `GET .../projects/{project}/{cycle-time[/tasks/{taskKey}],throughput,regression-radar}` | Durable queue-health signals folded from `audit`/`result_finalizations` | `tasks:read` |
+| `POST .../supervisor/{project}/intervene/{cancel-run,force-fail,pause-pickup,resume}`, `GET .../supervisor/{project}/{meta-cycle,observation,recent-events}` | Supervisor intervention and observation | `tasks:read` / `tasks:write` |
+| `POST .../projects/{project}/queue-health/repair`, `GET/POST .../projects/{project}/test-runs[/ingest]` | Bounded per-project queue repair; test-run log | `tasks:write` / `runs:write` |
+| `PUT .../projects/{project}/{auto-commit,auto-push-strategy,cli-context-mode,cli-mode,crash-recovery,lane-sort-strategy,max-parallelism,orchestrator-model,quota-wait-policy}` | Per-project settings singleton | `tasks:write` |
+| `{PUT,DELETE} /api/v1/studio/projects/{id}`, `PUT .../ownership-mappings/{mappingId}`, `{POST,PUT,DELETE} .../urls[/{urlId}]` | Project rename/delete, ownership mappings, project URLs | `tasks:write` |
+| `POST .../design/actions/{action}`, `GET .../design/{council[/{fileName}],overview,references}`, `POST .../design/council/{fileName}/accept` | Design analysis dispatch and durable council/overview reads | `tasks:read` / `tasks:write` |
+| `{DELETE,POST} .../proposals[/{proposalId}[/decision]]`, `POST .../proposals/{generate,refine-feedback}` | Proposal generation dispatch and durable proposal rows | `tasks:write` |
+| `POST .../skill-readiness/fix-task`, `GET .../snapshot`, `GET/POST .../visual-evidence[/{itemId}/acknowledge]` | Skill-readiness fix dispatch; project+queue snapshot (no checkout paths); visual-evidence log | `tasks:read` / `tasks:write` |
+| `POST .../security/audit`, `GET .../security/{baseline,reviews[/{fileName}]}` | Security-audit dispatch and durable reviews | `tasks:read` / `tasks:write` |
+| `POST .../deployment/compile`, `GET .../deployment/summary`, `PUT .../publish/automation`, `POST .../publish/{package,website}`, `POST .../wiki/grading/{run,abort}` | Deployment/publish dispatch and durable summaries | `tasks:read` / `tasks:write` |
+
 ## Backup and restore rehearsal
 
 `POST /api/v1/management/backups` creates a consistent SQLite backup, runs an
