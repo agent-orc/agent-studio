@@ -43,7 +43,10 @@ public record TaskTokenSummary
 public record TaskTokenCall
 {
     public DateTime Ts { get; init; }
+    /// <summary>Canonical catalog model id (e.g. <c>claude-sonnet-5</c>), or a raw unrecognized id. Never a display label - see <see cref="DisplayModel"/>.</summary>
     public string? Model { get; init; }
+    /// <summary>Human-readable model label for the UI (e.g. <c>Claude Sonnet 5</c>). Falls back to <see cref="Model"/> for ids absent from the registry.</summary>
+    public string? DisplayModel { get; init; }
     /// <summary>Bus participant that produced this token usage row, e.g. <c>agent:codex</c> or <c>orchestrator:Project</c>.</summary>
     public string? ParticipantId { get; init; }
     public long InputTokens { get; init; }

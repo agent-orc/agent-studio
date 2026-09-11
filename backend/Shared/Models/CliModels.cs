@@ -232,6 +232,13 @@ public static class ModelMetadataRegistry
         .SelectMany(e => new[] { e.Id }.Concat(e.Aliases ?? []).Select(id => (id, e)))
         .ToDictionary(x => x.id, x => x.e, StringComparer.OrdinalIgnoreCase);
 
+    // Case-insensitive index from display label (e.g. "Claude Sonnet 5") back
+    // to the entry. Durable token receipts historically persisted the label
+    // as the model field (AGT-2740); this index is what lets a stored label
+    // resolve back to a catalog id on read without migrating task.json files.
+    private static readonly IReadOnlyDictionary<string, ModelMetadata> ByLabel = Entries
+        .ToDictionary(e => e.Label, e => e, StringComparer.OrdinalIgnoreCase);
+
     // Detection-driven Codex default id, published by CodexModelDiscovery after
     // a live catalog fetch (house rule: derive from the installed CLI, do not
     // hardcode a catalog - AGT-2025). Volatile because it is read on request
@@ -403,19 +410,34 @@ public static class ModelMetadataRegistry
         return ById.TryGetValue(id.Trim(), out var metadata) ? metadata : null;
     }
 
+    /// <summary>Case-insensitive lookup by exact display label (e.g. <c>"Claude Sonnet 5"</c>).</summary>
+    public static ModelMetadata? FindByLabel(string? label)
+    {
+        if (string.IsNullOrWhiteSpace(label)) return null;
+        var normalized = Regex.Replace(label.Trim(), @"\s+", " ");
+        return ByLabel.TryGetValue(normalized, out var metadata) ? metadata : null;
+    }
+
     public static ModelMetadata? FindByLabelOrAlias(string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return null;
         var normalized = Regex.Replace(value.Trim(), @"\s+", " ");
         return Find(normalized)
+               ?? FindByLabel(normalized)
                ?? Entries.FirstOrDefault(entry =>
-                   string.Equals(entry.Label, normalized, StringComparison.OrdinalIgnoreCase)
-                   || (entry.Aliases?.Any(alias =>
-                       string.Equals(alias, normalized, StringComparison.OrdinalIgnoreCase)) ?? false));
+                   entry.Aliases?.Any(alias =>
+                       string.Equals(alias, normalized, StringComparison.OrdinalIgnoreCase)) ?? false);
     }
 
+    /// <summary>
+    /// Resolve any known spelling of a model - raw id, alias, or display
+    /// label - to its canonical catalog id. The label fallback exists so a
+    /// durable receipt that persisted <see cref="ModelMetadata.Label"/> as its
+    /// model field (a historical bug, AGT-2740) still resolves to a priceable
+    /// id on read, without a task.json migration.
+    /// </summary>
     public static string NormalizeId(string? id)
-        => Find(id)?.Id ?? id?.Trim() ?? "";
+        => FindByLabelOrAlias(id)?.Id ?? id?.Trim() ?? "";
 
     public static long? ContextWindowFor(string? id)
     {

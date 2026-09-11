@@ -260,7 +260,7 @@ export function buildTokenBubble(tokenSummary: TaskInfo['tokenSummary']): TaskTo
     return {
       ts: entry.ts,
       tsLabel: formatShortTime(entry.ts),
-      model: entry.model,
+      model: entry.displayModel ?? entry.model,
       total: entryTotal,
       // Each run is priced with the rate valid on its own timestamp
       // (entry.estimatedApiCostUsd), never today's rate.

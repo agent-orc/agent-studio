@@ -213,8 +213,11 @@ public class TokenSummaryTests
 
         Assert.Equal(3_300, summary.TotalTokens);
         Assert.Equal("GPT-5 Codex", summary.LastModel);
-        Assert.Equal("GPT-5 Codex", summary.Entries[0].Model);
-        Assert.Equal("Claude Haiku 4.5", summary.Entries[1].Model);
+        // Model carries the canonical catalog id, never the label - DisplayModel is the label (AGT-2740).
+        Assert.Equal("gpt-5-codex", summary.Entries[0].Model);
+        Assert.Equal("GPT-5 Codex", summary.Entries[0].DisplayModel);
+        Assert.Equal("claude-haiku-4-5", summary.Entries[1].Model);
+        Assert.Equal("Claude Haiku 4.5", summary.Entries[1].DisplayModel);
         Assert.Equal(t.AddMinutes(5), summary.LastUpdate);
         Assert.False(summary.AllModelsPriced);
         Assert.True(summary.EstimatedApiCostUsd > 0m);
@@ -258,9 +261,10 @@ public class TokenSummaryTests
         var summary = TokenSummaryService.SummarizePerJob(entries)["job-a"];
 
         Assert.Equal("GPT-5 Codex", summary.LastModel);
-        Assert.Equal("GPT-5 Codex", summary.Entries[0].Model);
+        Assert.Equal("gpt-5-codex", summary.Entries[0].Model);
         Assert.Null(summary.Entries[1].Model);
-        Assert.Equal("Claude Haiku 4.5", summary.Entries[2].Model);
+        Assert.Equal("claude-haiku-4-5", summary.Entries[2].Model);
+        Assert.Equal("Claude Haiku 4.5", summary.Entries[2].DisplayModel);
         Assert.Equal(t.AddMinutes(10), summary.LastUpdate);
     }
 
@@ -287,7 +291,8 @@ public class TokenSummaryTests
         var filled = TokenSummaryService.WithModelFallback(summary, "claude-sonnet-4.6");
 
         Assert.Equal("Claude Sonnet 4.6", filled.LastModel);
-        Assert.Equal("Claude Sonnet 4.6", filled.Entries[0].Model);
+        Assert.Equal("claude-sonnet-4-6", filled.Entries[0].Model);
+        Assert.Equal("Claude Sonnet 4.6", filled.Entries[0].DisplayModel);
     }
 
     [Fact]
@@ -320,7 +325,8 @@ public class TokenSummaryTests
         var filled = TokenSummaryService.WithModelFallback(summary, "gpt-5-codex");
 
         Assert.Equal("GPT-5 Codex", filled.LastModel);
-        Assert.Equal("GPT-5 Codex", filled.Entries[0].Model);
+        Assert.Equal("gpt-5-codex", filled.Entries[0].Model);
+        Assert.Equal("GPT-5 Codex", filled.Entries[0].DisplayModel);
         Assert.Null(filled.Entries[1].Model);
     }
 
