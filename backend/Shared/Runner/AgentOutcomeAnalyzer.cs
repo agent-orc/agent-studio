@@ -199,6 +199,11 @@ public sealed record AgentOutcome(
     double DurationSeconds)
 {
     public RunIssueKind IssueKind { get; init; } = RunIssueKind.None;
+    /// <summary>
+    /// Verbatim final assistant text before a NeedsInput sentinel, bounded to
+    /// 16 KiB for persistence and completion-envelope transport.
+    /// </summary>
+    public string? NeedsInputMessage { get; init; }
 }
 
 /// <summary>
@@ -234,6 +239,7 @@ public sealed record AgentOutcome(
 /// </summary>
 public static class AgentOutcomeAnalyzer
 {
+    public const int MaxNeedsInputMessageBytes = 16 * 1024;
     /// <summary>Sub-threshold duration below which a run with no agent text is treated as a failed start.</summary>
     public const double NoOpDurationThresholdSeconds = 10.0;
 
@@ -284,7 +290,12 @@ public static class AgentOutcomeAnalyzer
                 Reason: sentinel.Value.Reason,
                 AgentTextChars: agentText.Length,
                 OutputLineCount: lineCount,
-                DurationSeconds: durationSeconds);
+                DurationSeconds: durationSeconds)
+            {
+                NeedsInputMessage = sentinel.Value.Kind == AgentOutcomeKind.NeedsInput
+                    ? ExtractNeedsInputMessage(agentText)
+                    : null
+            };
         }
 
         var failed = string.Equals(status, "failed", StringComparison.OrdinalIgnoreCase)
@@ -1188,6 +1199,38 @@ public static class AgentOutcomeAnalyzer
             if (!string.IsNullOrWhiteSpace(line.Text)) parts.Add(line.Text);
         }
         return string.Join("\n", parts).Trim();
+    }
+
+    /// <summary>
+    /// Extracts the assistant turn that owns the final NeedsInput sentinel.
+    /// A previous sentinel is treated as the turn boundary for transcript
+    /// replays. The sentinel itself is excluded from the verbatim payload.
+    /// </summary>
+    public static string? ExtractNeedsInputMessage(IReadOnlyList<CliOutputLine> lines)
+        => ExtractNeedsInputMessage(JoinAgentText(lines ?? Array.Empty<CliOutputLine>()));
+
+    private static string? ExtractNeedsInputMessage(string agentText)
+    {
+        var matches = SentinelRegex.Matches(agentText);
+        if (matches.Count == 0) return null;
+        var terminal = matches[^1];
+        var keyword = Regex.Replace(terminal.Groups["keyword"].Value, @"[\s_-]+", "_")
+            .ToUpperInvariant();
+        if (keyword != "NEEDS_INPUT") return null;
+        var start = matches.Count > 1 ? matches[^2].Index + matches[^2].Length : 0;
+        var message = agentText[start..terminal.Index].Trim('\r', '\n');
+        if (string.IsNullOrWhiteSpace(message)) return null;
+        return TruncateUtf8(message, MaxNeedsInputMessageBytes);
+    }
+
+    private static string TruncateUtf8(string value, int maximumBytes)
+    {
+        if (System.Text.Encoding.UTF8.GetByteCount(value) <= maximumBytes) return value;
+        var end = Math.Min(value.Length, maximumBytes);
+        while (end > 0 && System.Text.Encoding.UTF8.GetByteCount(value.AsSpan(0, end)) > maximumBytes)
+            end--;
+        if (end > 0 && char.IsHighSurrogate(value[end - 1])) end--;
+        return value[..end];
     }
 
     private static string JoinRawText(IReadOnlyList<CliOutputLine> lines)

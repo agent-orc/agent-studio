@@ -77,6 +77,47 @@
 
     @if (!collapsed()) {
       <div class="escalation__body" id="escalation-body" data-testid="escalation-body">
+        @if (detail().info.needsInput; as needsInput) {
+          <section class="escalation__needs-input" data-testid="needs-input-question" aria-label="Agent question">
+            <div class="escalation__needs-input-meta">
+              <strong>Question and options</strong>
+              <span>Run {{ needsInput.runAttemptId }}</span>
+              @if (needsInput.salvageBranch) {
+                <span>Continue on {{ needsInput.salvageBranch }}</span>
+              }
+            </div>
+            <pre data-testid="needs-input-message">{{ needsInput.message }}</pre>
+            @if (hasQueuedAnswer()) {
+              <div class="escalation__queued-answer" data-testid="needs-input-answer-queued">
+                <strong>Queued answer</strong>
+                <span>{{ detail().info.pendingIntent?.prompt }}</span>
+              </div>
+            } @else {
+              <label class="escalation__answer-label" for="needs-input-answer">Your answer</label>
+              <textarea
+                id="needs-input-answer"
+                data-testid="needs-input-answer"
+                rows="4"
+                [value]="answerDraft()"
+                [disabled]="answering() || mutationsBlocked()"
+                (input)="updateAnswer($event)"></textarea>
+              @if (answerError(); as error) {
+                <p class="escalation__answer-error" role="alert">{{ error }}</p>
+              }
+              <button
+                type="button"
+                class="escalation__submit-answer"
+                data-testid="needs-input-submit"
+                [disabled]="!answerDraft().trim() || answering() || mutationsBlocked()"
+                [appPendingButton]="answering()"
+                pendingLabel="Queueing answer…"
+                (click)="submitAnswer()">
+                Queue steer on salvage branch
+              </button>
+            }
+          </section>
+        }
+
         @if (v.escalation?.kind === 'gave-up') {
           <div class="escalation__giveup" data-testid="escalation-gave-up">
             <div class="escalation__giveup-head">
@@ -127,6 +168,7 @@
           !followUpMarkdown() &&
           v.delivery.commitCount === 0 &&
           v.delivery.filesChanged === 0
+          && !detail().info.needsInput
         ) {
           <p class="escalation__empty" data-testid="escalation-context-empty">
             No structured findings, review artifacts, or delivery context were recorded.

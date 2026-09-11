@@ -196,4 +196,6 @@ public sealed record CompleteRunRequest(
     string? ResultEnvelopeDigest = null,
     string? IdempotencyKey = null,
     long? Sequence = null,
-    ExecutionOutcomeDecision? OutcomeDecision = null);
+    ExecutionOutcomeDecision? OutcomeDecision = null,
+    string? NeedsInputMessage = null,
+    string? SalvageBranch = null);

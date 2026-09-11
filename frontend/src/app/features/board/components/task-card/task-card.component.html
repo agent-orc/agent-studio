@@ -95,6 +95,15 @@
     }
   </h3>
   <app-task-live-status [task]="job()" [dense]="compact()" />
+  @if (job().state === '2-ready' && job().needsInput; as needsInput) {
+    <section class="task-card__needs-input" data-testid="ready-needs-input" aria-label="Queued agent question">
+      <strong>Waiting to steer</strong>
+      <pre>{{ needsInput.message }}</pre>
+      @if (job().pendingIntent?.mode === 'steer' && job().pendingIntent?.prompt) {
+        <div data-testid="ready-needs-input-answer"><span>Answer:</span> {{ job().pendingIntent?.prompt }}</div>
+      }
+    </section>
+  }
   <div class="task-card__badges">
     @if (stalledState(); as stalled) {
       <span class="task-card__stalled-pill" data-testid="task-card-stalled" [attr.data-reason]="stalled.reason"

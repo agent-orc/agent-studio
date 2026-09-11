@@ -49,7 +49,7 @@
       (openEpic)="openEpicRequested.emit($event)" />
   }
 
-  @if (isEscalated()) {
+  @if (isEscalated() || detail().info.needsInput) {
     <app-escalation-summary
       [detail]="detail()"
       [mutationsBlocked]="mutationsBlocked()"

@@ -19,7 +19,12 @@ host shutdown, lease loss, invalid session, explicit blocker, successful
 completion, and protocol-inconclusive are distinct. `ExplicitAgentBlocker`
 preserves the exact `TASK_BLOCKED` or `TASK_NEEDS_INPUT` reason in `Detail`, so
 the Task Server timeline and board consumers can show the blocking reason.
-`ProtocolInconclusive` remains visible and never aliases a product defect.
+`ProtocolInconclusive` remains visible and never aliases a product defect. A
+NeedsInput completion additionally carries the final assistant text before the
+sentinel, bounded to 16 KiB. The Task Server preserves the question and salvage
+branch on idempotent completion replay, while compatibility execution writes
+the same payload to `results/needs-input.md` before teardown or capped-log
+cleanup.
 
 Review infrastructure recovery is constrained by an immutable
 `RepositoryIdentity + ResultSha|ArtifactDigest` subject and can only select
@@ -110,7 +115,7 @@ Hard sentinel matches win over process exit code. This is load-bearing on Window
 | `[[TASK_DONE]]` | any | `success` | `Success` | `4-auto-review` | no |
 | `[[TASK_NOOP]]` | any | `noop` | `NoOp` | `4-auto-review` | no |
 | `[[TASK_BLOCKED:...]]` | any | `blocked` | `Blocked` | `4-auto-review` | no |
-| `[[TASK_NEEDS_INPUT:...]]` | any | `needs-input` | `NeedsInput` | `4-auto-review` unless auto-mode intercepts it first | no |
+| `[[TASK_NEEDS_INPUT:...]]` | any | `needs-input` | `NeedsInput` | `5-human-review`, or an unattended bounded steer wait before escalation | no |
 | no terminal signal, no commits | `failed` | `failed` | `Failed` | stays in `3-progress` | yes |
 | no terminal signal, committed work | `failed` (exit `-1`) | `committed-partial` | `Partial` | `4-auto-review` | no |
 | deliberate stop | `stopped` | `interrupted` | `Failed` | stays in `3-progress` | no |

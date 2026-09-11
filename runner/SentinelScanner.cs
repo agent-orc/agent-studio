@@ -6,7 +6,7 @@ namespace AgentRunner;
 /// <summary>The terminal outcome an agent signs its run off with.</summary>
 public enum RunOutcomeKind { Done, Blocked, NeedsInput, NoOp, Unknown, EnvironmentFailure }
 
-public sealed record RunOutcome(RunOutcomeKind Kind, string? Reason)
+public sealed record RunOutcome(RunOutcomeKind Kind, string? Reason, string? NeedsInputMessage = null)
 {
     /// <summary>
     /// Lane expected from the server's normal remote-run completion policy for
@@ -43,6 +43,9 @@ public sealed record RunOutcome(RunOutcomeKind Kind, string? Reason)
 /// </summary>
 public static class SentinelScanner
 {
+    /// <summary>Maximum UTF-8 payload carried in a NeedsInput completion envelope.</summary>
+    public const int MaxNeedsInputMessageBytes = 16 * 1024;
+
     private static readonly Regex TerminalSentinel = new(
         @"(?:\A|(?<=\n))[ \t]*\[\[\s*TASK[\s_-]*(?<keyword>DONE|BLOCKED|NEEDS[\s_-]*INPUT|NOOP)\s*(?::\s*(?<reason>[^\]\r\n]*?))?\s*\]\][ \t]*(?:\r?\n)?[ \t]*\z",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
@@ -75,7 +78,38 @@ public static class SentinelScanner
             reason = "Agent emitted TASK_BLOCKED without a stated reason.";
         else if (reason is null && kind == RunOutcomeKind.NeedsInput)
             reason = "Agent emitted TASK_NEEDS_INPUT without a stated question.";
-        return new RunOutcome(kind, reason);
+        var needsInputMessage = kind == RunOutcomeKind.NeedsInput
+            ? ExtractNeedsInputMessage(replyToScan, match)
+            : null;
+        return new RunOutcome(kind, reason, needsInputMessage);
+    }
+
+    /// <summary>
+    /// Returns the final assistant text preceding the terminal sentinel. An
+    /// earlier terminal sentinel marks the preceding assistant turn, so replay
+    /// transcripts with multiple turns retain only the question belonging to
+    /// the final NeedsInput outcome. The first 16 KiB are retained because the
+    /// question and recommendation lead the message.
+    /// </summary>
+    private static string? ExtractNeedsInputMessage(string reply, Match sentinel)
+    {
+        var start = 0;
+        foreach (Match prior in TerminalSentinel.Matches(reply[..sentinel.Index]))
+            start = prior.Index + prior.Length;
+
+        var message = reply[start..sentinel.Index].Trim('\r', '\n');
+        if (string.IsNullOrWhiteSpace(message)) return null;
+        return TruncateUtf8(message, MaxNeedsInputMessageBytes);
+    }
+
+    private static string TruncateUtf8(string value, int maximumBytes)
+    {
+        if (System.Text.Encoding.UTF8.GetByteCount(value) <= maximumBytes) return value;
+        var end = Math.Min(value.Length, maximumBytes);
+        while (end > 0 && System.Text.Encoding.UTF8.GetByteCount(value.AsSpan(0, end)) > maximumBytes)
+            end--;
+        if (end > 0 && char.IsHighSurrogate(value[end - 1])) end--;
+        return value[..end];
     }
 
     private static string? ExtractFinalAgentReply(string output, out bool structuredOutput)

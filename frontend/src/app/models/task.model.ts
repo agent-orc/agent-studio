@@ -113,6 +113,15 @@ export type TaskKind = 'task' | 'epic';
  */
 export type TaskMode = 'coding' | 'planning' | 'research' | 'concept';
 
+export interface NeedsInputStatus {
+  /** Verbatim final assistant message before TASK_NEEDS_INPUT, capped at 16 KiB. */
+  message: string;
+  firstLine: string;
+  runAttemptId: string;
+  salvageBranch: string | null;
+  artifactPath: string;
+}
+
 /**
  * F34 — structured cross-references between tasks, keyed by F33 stable keys
  * (e.g. `ATP-19`). Mirrors backend `TaskReferences`. Four relation kinds:
@@ -383,6 +392,8 @@ export interface TaskInfo {
   codeActivityDetected?: boolean;
   /** Saved user intent waiting for the auto-pickup loop. Surfaces in the UI as a ⏳ badge. */
   pendingIntent?: PendingIntent | null;
+  /** Durable question that caused a NeedsInput completion or queued steer. */
+  needsInput?: NeedsInputStatus | null;
   /**
    * Auto-mode "stuck loop" snapshot - populated only while the orchestrator is
    * actively answering NEEDS_INPUT for this job. Mirrors backend

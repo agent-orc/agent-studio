@@ -258,6 +258,8 @@ public sealed class HumanReviewEscalation
         if (outcome.Status == MoveJobStatus.Success)
         {
             RecordVerdictAndStatus(project, jobId, outcome.NewFolderPath, category, reason, statusDetail);
+            if (CarriesNeedsInputArtifact(category) && outcome.NewFolderPath is not null)
+                NeedsInputArtifact.ReferenceFromParkedBlocker(outcome.NewFolderPath, _logger);
             TryCommitArtifacts(project, jobId, beforeFolder, outcome.NewFolderPath);
         }
         else
@@ -293,6 +295,8 @@ public sealed class HumanReviewEscalation
         if (outcome.Status == MoveJobStatus.Success)
         {
             RecordVerdictAndStatus(project, jobId, outcome.NewFolderPath, category, reason);
+            if (CarriesNeedsInputArtifact(category) && outcome.NewFolderPath is not null)
+                NeedsInputArtifact.ReferenceFromParkedBlocker(outcome.NewFolderPath, _logger);
             TryCommitArtifacts(project, jobId, beforeFolder, outcome.NewFolderPath);
         }
         else
@@ -301,6 +305,11 @@ public sealed class HumanReviewEscalation
                 project, jobId, outcome.Status, outcome.Message);
         return outcome;
     }
+
+    private static bool CarriesNeedsInputArtifact(string category)
+        => category is HumanReviewEscalationCategories.AgentNeedsInput
+            or HumanReviewEscalationCategories.NeedsHumanInput
+            or HumanReviewEscalationCategories.SteerUnanswered;
 
     /// <summary>
     /// Journal half of the board contract for a REMOTE v1 review verdict that

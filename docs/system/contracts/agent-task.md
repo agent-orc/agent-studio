@@ -113,6 +113,12 @@ End every run with exactly one of these tokens on its own line:
 
 Do not paraphrase the tokens or wrap them in code fences. Multiple tokens in a single run are not allowed; the orchestrator treats only the last one as authoritative.
 
+For `TASK_NEEDS_INPUT`, put the complete operator-facing question immediately
+before the token. Include the options you considered, your assessment, and the
+specific answer that will unblock the run. The runner preserves that final
+assistant text verbatim up to 16 KiB; the short token reason remains an index
+slug, not a substitute for the question.
+
 `[[TASK_NOOP]]` is a **recoverable signal, not a terminal state**. When a job lands in `4-auto-review` ending in NOOP, the orchestrator inspects the task and decides deterministically:
 
 - If the task title and prompt body are real (non-empty, non-placeholder) and the per-job reissue budget has not been exhausted, the orchestrator reissues the task to `2-ready` at order 0 (the runner picks it as the very next task without displacing whatever is currently in `3-progress`) with a sharpened framing built from `RunOutcomePolicy.BuildReissueFollowupPrompt` and writes it as `orchestrator-follow-up.md`. The card is also stamped with the `reissue:autoreview` tag so the kanban can highlight it distinctly from a fresh queued task.

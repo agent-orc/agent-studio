@@ -692,6 +692,7 @@ public class TaskScannerService : ITaskScanner
                 PostProcessingChecks = ReadPostProcessingChecks(jobDir, resolvedState),
                 SteerPendingSince = ReadSteerPendingSince(jobDir, resolvedState),
                 ParkedBlocker = ReadParkedBlocker(jobDir, resolvedState),
+                NeedsInput = ReadNeedsInput(jobDir, resolvedState),
                 TaskType = ReadTaskType(raw),
                 Tags = ReadTags(raw),
                 References = ReadReferences(raw),
@@ -1315,6 +1316,28 @@ public class TaskScannerService : ITaskScanner
         => ParkedBlockerCatalog.IsParkedLane(state)
             ? ParkedBlockerMarker.ToStatus(ParkedBlockerMarker.TryRead(jobFolder, _logger), DateTime.UtcNow)
             : null;
+
+    private NeedsInputStatus? ReadNeedsInput(string jobFolder, string state)
+    {
+        if (state is not (TaskStates.Escalated or TaskStates.HumanReview or TaskStates.Ready or TaskStates.Progress))
+            return null;
+        var artifact = NeedsInputArtifact.TryRead(jobFolder, _logger);
+        if (artifact is null) return null;
+        if (state == TaskStates.Escalated)
+        {
+            var blocker = ParkedBlockerMarker.TryRead(jobFolder, _logger);
+            return string.Equals(blocker?.NeedsInputFile, NeedsInputArtifact.RelativePath, StringComparison.Ordinal)
+                ? artifact
+                : null;
+        }
+        if (state == TaskStates.HumanReview) return artifact;
+        if (state == TaskStates.Progress)
+            return ReadSteerPendingSince(jobFolder, state) is not null ? artifact : null;
+        var pending = ReadPendingIntent(jobFolder);
+        return string.Equals(pending?.Mode, ContinueModes.Steer, StringComparison.OrdinalIgnoreCase)
+            ? artifact
+            : null;
+    }
 
     private const int OutcomeIssueTailBytes = 16 * 1024;
 
@@ -2056,6 +2079,7 @@ public class TaskScannerService : ITaskScanner
             PostProcessingChecks = ReadPostProcessingChecks(jobDir, cached.State),
             SteerPendingSince = ReadSteerPendingSince(jobDir, cached.State),
             ParkedBlocker = ReadParkedBlocker(jobDir, cached.State),
+            NeedsInput = ReadNeedsInput(jobDir, cached.State),
         };
 
     private static DateTime GetLastActivityTime(string dir)

@@ -1331,6 +1331,11 @@ public sealed partial class TaskServerStore
     public async Task<RunDto> CompleteRunAsync(string runId, CompleteRunRequest request, string actorId, CancellationToken ct)
     {
         RequireWritable();
+        if (request.NeedsInputMessage is not null
+            && Encoding.UTF8.GetByteCount(request.NeedsInputMessage) > 16 * 1024)
+            throw new ArgumentException("NeedsInputMessage exceeds the 16 KiB completion-envelope limit.");
+        var needsInput = !string.IsNullOrWhiteSpace(request.NeedsInputMessage);
+        var nextState = needsInput ? "5-human-review" : "4-auto-review";
         RunDto? completed = null;
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
@@ -1463,15 +1468,15 @@ public sealed partial class TaskServerStore
                        source_bundle_artifact_id = NULL,
                        source_bundle_sha256 = $bundleSha
                  WHERE id = $run;
-                UPDATE tasks SET state = '4-auto-review', version = version + 1, updated_at = $now WHERE id = $task;
+                UPDATE tasks SET state = $nextState, version = version + 1, updated_at = $now WHERE id = $task;
                 UPDATE work_permits SET status = 'completed'
                  WHERE run_id = $run AND status = 'accepted';
                 INSERT INTO run_completions(
                     run_id, outcome, summary, envelope_digest, sequence,
-                    idempotency_key, completed_at)
+                    idempotency_key, completed_at, needs_input_message, salvage_branch)
                 VALUES (
                     $run, $outcome, $summary, $envelope_digest, $sequence,
-                    $key, $now);
+                    $key, $now, $needsInputMessage, $salvageBranch);
                 """, ct, transaction,
                 ("$run", runId),
                 ("$outcome", request.Outcome),
@@ -1481,6 +1486,9 @@ public sealed partial class TaskServerStore
                 ("$key", request.IdempotencyKey),
                 ("$now", Iso(now)),
                 ("$task", lease.TaskId),
+                ("$nextState", nextState),
+                ("$needsInputMessage", request.NeedsInputMessage),
+                ("$salvageBranch", request.SalvageBranch),
                 ("$resultSha", resultHandoff?.Envelope.ResultSha),
                 ("$repositoryId", resultHandoff?.Envelope.RepositoryId),
                 ("$repositoryUrl", resultHandoff?.Envelope.RepositoryUrl),
@@ -1507,7 +1515,10 @@ public sealed partial class TaskServerStore
                     request.Outcome,
                     request.Summary,
                     authority = "task-server",
-                    nextState = "4-auto-review",
+                    nextState,
+                    needsInputFirstLine = FirstNonEmptyLine(request.NeedsInputMessage),
+                    needsInputArtifact = needsInput ? "results/needs-input.md" : null,
+                    salvageBranch = request.SalvageBranch,
                 },
                 ct);
             await AppendLifecycleEventAsync(
@@ -1532,6 +1543,8 @@ public sealed partial class TaskServerStore
                     request.ResultEnvelopeDigest,
                     request.Sequence,
                     request.IdempotencyKey,
+                    request.NeedsInputMessage,
+                    request.SalvageBranch,
                     classifierVersion = request.OutcomeDecision?.ClassifierVersion,
                     recoveryAction = request.OutcomeDecision?.RecoveryAction.ToString(),
                 }), ct);
@@ -2955,7 +2968,9 @@ public sealed partial class TaskServerStore
                 envelope_digest TEXT,
                 sequence INTEGER NOT NULL,
                 idempotency_key TEXT NOT NULL UNIQUE,
-                completed_at TEXT NOT NULL
+                completed_at TEXT NOT NULL,
+                needs_input_message TEXT,
+                salvage_branch TEXT
             );
             CREATE TABLE IF NOT EXISTS runner_outbox_status(
                 runner_id TEXT NOT NULL REFERENCES runners(id),
@@ -3191,6 +3206,8 @@ public sealed partial class TaskServerStore
             CREATE INDEX IF NOT EXISTS ix_archive_manifests_state ON archive_manifests(state);
             """, ct);
         await EnsureColumnAsync(connection, "events", "sequence", "INTEGER", ct);
+        await EnsureColumnAsync(connection, "run_completions", "needs_input_message", "TEXT", ct);
+        await EnsureColumnAsync(connection, "run_completions", "salvage_branch", "TEXT", ct);
         await EnsureColumnAsync(connection, "artifacts", "sequence", "INTEGER", ct);
         await EnsureColumnAsync(connection, "artifacts", "source_path", "TEXT", ct);
         await EnsureColumnAsync(connection, "artifacts", "pointer_only", "INTEGER NOT NULL DEFAULT 0", ct);
@@ -3568,7 +3585,9 @@ public sealed partial class TaskServerStore
         if (!string.Equals(existing.IdempotencyKey, request.IdempotencyKey, StringComparison.Ordinal)
             || !string.Equals(existing.Run.Status, request.Outcome, StringComparison.Ordinal)
             || !string.Equals(existing.EnvelopeDigest, request.ResultEnvelopeDigest, StringComparison.OrdinalIgnoreCase)
-            || existing.Sequence != request.Sequence)
+            || existing.Sequence != request.Sequence
+            || !string.Equals(existing.NeedsInputMessage, request.NeedsInputMessage, StringComparison.Ordinal)
+            || !string.Equals(existing.SalvageBranch, request.SalvageBranch, StringComparison.Ordinal))
         {
             throw new TaskServerConflictException(
                 "idempotency-conflict",
@@ -3656,7 +3675,8 @@ public sealed partial class TaskServerStore
         await using var command = Command(connection, """
             SELECT r.id, r.task_id, r.status, r.runner_id, r.fence,
                    r.created_at, r.started_at, r.finished_at,
-                   c.envelope_digest, c.sequence, c.idempotency_key
+                   c.envelope_digest, c.sequence, c.idempotency_key,
+                   c.needs_input_message, c.salvage_branch
               FROM run_completions c
               JOIN runs r ON r.id = c.run_id
              WHERE c.run_id = $run;
@@ -3676,7 +3696,9 @@ public sealed partial class TaskServerStore
             run,
             reader.IsDBNull(8) ? null : reader.GetString(8),
             reader.GetInt64(9),
-            reader.GetString(10));
+            reader.GetString(10),
+            reader.IsDBNull(11) ? null : reader.GetString(11),
+            reader.IsDBNull(12) ? null : reader.GetString(12));
     }
 
     private async Task RefreshOutboxSummaryAsync(
@@ -3759,7 +3781,14 @@ public sealed partial class TaskServerStore
         RunDto Run,
         string? EnvelopeDigest,
         long Sequence,
-        string IdempotencyKey);
+        string IdempotencyKey,
+        string? NeedsInputMessage,
+        string? SalvageBranch);
+
+    private static string? FirstNonEmptyLine(string? text)
+        => text?.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Trim())
+            .FirstOrDefault(line => line.Length > 0);
 
     private static async Task ValidateRunnerAsync(SqliteConnection connection, SqliteTransaction transaction, string runnerId, string instanceId, CancellationToken ct)
     {

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { of, throwError } from 'rxjs';
@@ -41,6 +41,8 @@ function detail(over: {
   state?: string;
   orchestratorVerdict?: string;
   reviewProjection?: ReviewProjectionView | null;
+  needsInput?: TaskDetail['info']['needsInput'];
+  pendingIntent?: TaskDetail['info']['pendingIntent'];
 } = {}): TaskDetail {
   return {
     info: {
@@ -61,6 +63,8 @@ function detail(over: {
         releaseSha: '1a526e9',
       },
       reviewProjection: over.reviewProjection ?? null,
+      needsInput: over.needsInput ?? null,
+      pendingIntent: over.pendingIntent ?? null,
     },
     reviewEvidence: [],
   } as unknown as TaskDetail;
@@ -71,11 +75,13 @@ function mount(opts: {
   reviews?: unknown[];
   events?: TaskTimelineEvent[];
   detail?: TaskDetail;
+  continueJob?: ReturnType<typeof vi.fn>;
 }) {
   const taskStub = {
     listCodeReviews: () => of({ entries: opts.reviews ?? [] }),
     readJobFile: () =>
       opts.followUp == null ? throwError(() => ({ status: 404 })) : of(opts.followUp),
+    continueJob: opts.continueJob ?? vi.fn(() => of({ status: 'queued' })),
   };
   const timelineStub = { events: signal<TaskTimelineEvent[]>(opts.events ?? []) };
 
@@ -98,6 +104,42 @@ beforeEach(() => {
 });
 
 describe('EscalationSummaryComponent', () => {
+  it('renders the AGT-2736 question and options and submits the answer as a steer', () => {
+    const continueJob = vi.fn(() => of({ status: 'queued' }));
+    const fixture = mount({
+      reviews: [],
+      continueJob,
+      detail: detail({
+        needsInput: {
+          message: 'Which deployment strategy?\n\n- A: managed connector (recommended)\n- B: direct LAN',
+          firstLine: 'Which deployment strategy?',
+          runAttemptId: 'run_4e53d6d6',
+          salvageBranch: 'runner/agent-runner-01/AGT-2736',
+          artifactPath: 'results/needs-input.md',
+        },
+      }),
+    });
+    const root: HTMLElement = fixture.nativeElement;
+    expect(root.querySelector('[data-testid="needs-input-message"]')?.textContent).toContain('A: managed connector');
+    expect(root.querySelector('[data-testid="needs-input-message"]')?.textContent).toContain('B: direct LAN');
+
+    const answer = root.querySelector('[data-testid="needs-input-answer"]') as HTMLTextAreaElement;
+    answer.value = 'Choose A. Keep a LAN fallback for isolated networks.';
+    answer.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    (root.querySelector('[data-testid="needs-input-submit"]') as HTMLButtonElement).click();
+
+    expect(continueJob).toHaveBeenCalledWith(
+      'AGT-1994',
+      'Choose A. Keep a LAN fallback for isolated networks.',
+      '/ws',
+      undefined,
+      undefined,
+      undefined,
+      'steer',
+    );
+  });
+
   it('renders the structured council findings, artifacts, delivery context and recommendation', () => {
     const fixture = mount({
       followUp: '- [ ] Frontend Playwright verification skipped.\n- [ ] Live Haiku probe not run.',

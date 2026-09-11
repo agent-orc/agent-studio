@@ -2079,6 +2079,45 @@ describe('TaskCardComponent external-done badge render', () => {
   });
 });
 
+describe('TaskCardComponent NeedsInput wait reason', () => {
+  it('shows the persisted question, options, and queued steer answer on Ready', async () => {
+    await TestBed.configureTestingModule({
+      imports: [TaskCardComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(TaskCardComponent);
+    fixture.componentRef.setInput('job', makeJob({
+      state: '2-ready',
+      needsInput: {
+        message: 'Which deployment strategy?\n\n- A: connector\n- B: LAN',
+        firstLine: 'Which deployment strategy?',
+        runAttemptId: 'run_4e53d6d6',
+        salvageBranch: 'runner/agent-runner-01/AGT-2736',
+        artifactPath: 'results/needs-input.md',
+      },
+      pendingIntent: {
+        version: 1,
+        mode: 'steer',
+        prompt: 'Choose A.',
+        savedAt: '2026-09-11T16:45:00Z',
+        savedReason: 'remote-execution',
+        savedAgainstActiveJobId: null,
+      },
+    }));
+    fixture.detectChanges();
+
+    const wait = fixture.nativeElement.querySelector('[data-testid="ready-needs-input"]') as HTMLElement;
+    expect(wait.textContent).toContain('A: connector');
+    expect(wait.textContent).toContain('B: LAN');
+    expect(wait.textContent).toContain('Choose A.');
+  });
+});
+
 describe('TaskCardComponent — waits-on dependency chip (AGT-2029)', () => {
   async function mount(job: TaskInfo) {
     await TestBed.configureTestingModule({

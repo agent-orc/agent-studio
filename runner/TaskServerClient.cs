@@ -1313,7 +1313,9 @@ public sealed class TaskServerClient : IDisposable
                 typedOutcome,
                 req.Reason,
                 IdempotencyKey: req.IdempotencyKey,
-                OutcomeDecision: req.OutcomeDecision),
+                OutcomeDecision: req.OutcomeDecision,
+                NeedsInputMessage: req.NeedsInputMessage,
+                SalvageBranch: req.SalvageRecoveryBranch ?? req.SalvageBranch),
             ct);
         _v1Leases.TryRemove(req.TaskKey, out _);
         _v1TaskBodies.TryRemove(req.TaskKey, out _);
@@ -1401,7 +1403,9 @@ public sealed class TaskServerClient : IDisposable
                         payload.ResultEnvelopeDigest,
                         item.IdempotencyKey,
                         item.Sequence,
-                        payload.OutcomeDecision),
+                        payload.OutcomeDecision,
+                        payload.NeedsInputMessage,
+                        payload.SalvageBranch),
                     ct);
                 _v1Leases.TryRemove(authority.TaskKey, out _);
                 _v1TaskBodies.TryRemove(authority.TaskKey, out _);

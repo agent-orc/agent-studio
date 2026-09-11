@@ -2303,6 +2303,29 @@
             drop-in on agent-runner-01 (04:55) is superseded by the shipped fix.
           </td>
         </tr>
+        <tr id="case-agt-2736-needs-input-question-lost">
+          <td>2026-09-11</td>
+          <td><code>AGT-2736</code><br><span class="small">NeedsInput question lost behind reason slug</span></td>
+          <td>
+            Remote run <code>run_4e53d6d6</code> ended with a valid
+            <code>TASK_NEEDS_INPUT</code> terminal and reached NeedsInput, but every durable operator surface showed only
+            <code>choose-connector-vs-lan-deployment-strategy</code>. The question, compared options, and unblock condition
+            existed only in CLI output that was cut by the 64 KiB cap; teardown then removed the runner task directory.
+          </td>
+          <td>
+            Completion transported the sentinel classification and short reason but not the preceding assistant message.
+            The salvage commit protected source files only, the parked blocker had no question-artifact reference, and the
+            escalation UI had no answer-to-steer path.
+          </td>
+          <td>
+            <span class="pill ok">fixed in dev</span> local and remote classifiers now carry the bounded final assistant
+            message through the completion envelope. The runner persists <code>results/needs-input.md</code> before result
+            upload and teardown, with attempt and salvage identity, and the parked marker references it. Escalation and
+            Ready views render the full question and options; the submitted answer queues the existing steer continuation
+            on the salvage branch. Operator feed and notification text use the first question line. Fixture replay covers
+            the original capped-log shape and terminal <span class="lane">5-human-review</span>.
+          </td>
+        </tr>
       </tbody>
     </table>
 
