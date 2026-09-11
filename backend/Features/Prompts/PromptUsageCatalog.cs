@@ -199,6 +199,10 @@ internal static class PromptUsageCatalog
         {
             new PromptUsageRef("TaskSpawnerPostStepRunner", "BuildPrompt", "Decides whether a completed change should spawn a related task."),
         },
+        ["failure-intervention-classifier.md"] = new[]
+        {
+            new PromptUsageRef("FailureInterventionService", "ClassifyAmbiguousAsync", "Classifies an ambiguous pipeline failure using the project's economy route."),
+        },
 
         // --- Templates introduced by the T3a inline-migration ---
         ["code-pattern-drift-review.md"] = new[]

@@ -79,6 +79,14 @@ const WEB_UPDATE = makeTask({
   watchPath: '/ws/web',
 });
 
+const INTERVENTION = makeTask({
+  id: 'agt-2801',
+  taskKey: 'agt::agt-2801',
+  key: 'AGT-2801',
+  title: 'Review toolchain unavailable',
+  state: TaskState.Preparation,
+});
+
 const BLOCKING_LINK: TaskReferenceLink = {
   sourceKey: 'WEB-UPDATE',
   sourceJobId: 'web-update',
@@ -90,7 +98,7 @@ const BLOCKING_LINK: TaskReferenceLink = {
 
 function makeFakeTaskService(dependents: TaskReferenceLink[]) {
   return {
-    jobs: signal<TaskInfo[]>([CAR_3, WEB_UPDATE]),
+    jobs: signal<TaskInfo[]>([CAR_3, WEB_UPDATE, INTERVENTION]),
     getTaskDependents: vi.fn().mockReturnValue(of(dependents)),
     setTaskReferences: vi.fn().mockReturnValue(of({ references: {}, warnings: [] })),
   } as unknown as TaskService;
@@ -190,6 +198,21 @@ describe('ReferencesSectionComponent (render — both dependency directions)', (
 
     expect(host.querySelector('[data-testid="reference-chip-CAR-3"]')).not.toBeNull();
     expect(host.querySelector('[data-testid="blocking-chip-WEB-UPDATE"]')).not.toBeNull();
+  });
+
+  it('shows a raised follow-up with its key, lane, and open state', async () => {
+    const info = makeTask({
+      references: {
+        dependsOn: [], relatedTo: [], blockedBy: ['AGT-2801'], supersedes: [],
+        raisedFollowUps: ['AGT-2801'],
+      },
+    });
+    const { fixture } = await mount(info, []);
+    const chip = fixture.nativeElement.querySelector(
+      '[data-testid="references-row-raisedFollowUps"] [data-testid="reference-chip-AGT-2801"]',
+    ) as HTMLElement | null;
+
+    expect(chip?.textContent).toContain('AGT-2801 · Preparation · open');
   });
 
   it('clicking a blocking chip navigates to the task that waits on this one', async () => {

@@ -1,0 +1,43 @@
+:host {
+  display: contents;
+}
+
+.intervention-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--studio-spacing-1);
+  min-height: var(--studio-card-pill-height);
+  padding: 0 var(--studio-card-pill-padding-x);
+  border: 1px solid color-mix(in srgb, var(--severity-warn) 38%, transparent);
+  border-radius: var(--studio-card-pill-radius);
+  color: var(--severity-warn);
+  background: color-mix(in srgb, var(--severity-warn) 12%, transparent);
+  font: inherit;
+  font-size: var(--studio-card-meta-size);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.intervention-chip:hover {
+  background: color-mix(in srgb, var(--severity-warn) 20%, transparent);
+  border-color: color-mix(in srgb, var(--severity-warn) 55%, transparent);
+}
+
+.intervention-chip:focus-visible {
+  outline: 2px solid var(--studio-accent);
+  outline-offset: 1px;
+}
+
+.intervention-chip__glyph {
+  font-size: 11px;
+  line-height: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .intervention-chip {
+    transition-duration: 0s;
+  }
+}

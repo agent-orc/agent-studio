@@ -173,6 +173,7 @@ public static class OrchestratorLogKinds
 public static class OrchestratorLogTopics
 {
     public const string PipelineHealth = "pipeline-health";
+    public const string FailureIntervention = "failure-intervention";
     public const string TaskQueued = "task-queued";
     public const string Watchdog = "watchdog";
     public const string Recovery = "recovery";

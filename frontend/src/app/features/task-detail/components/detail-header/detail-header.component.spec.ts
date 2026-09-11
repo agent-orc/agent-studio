@@ -96,6 +96,25 @@ describe('DetailHeaderComponent (smoke)', () => {
     expect(fixture.componentInstance).toBeTruthy();
   });
 
+  it('attributes an automatically raised follow-up to the orchestrator', async () => {
+    await TestBed.configureTestingModule({
+      imports: [DetailHeaderComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(DetailHeaderComponent);
+    fixture.componentRef.setInput('info', {
+      ...taskInfo,
+      creationSource: 'orchestrator',
+      createdBy: 'Orchestrator',
+    });
+    fixture.detectChanges();
+
+    const attribution = fixture.nativeElement.querySelector(
+      '[data-testid="detail-created-by-orchestrator"]',
+    ) as HTMLElement | null;
+    expect(attribution?.textContent).toContain('Created by Orchestrator');
+  });
+
   it('adds worktree commit actions to the text-only overflow menu model', async () => {
     await TestBed.configureTestingModule({
       imports: [DetailHeaderComponent],

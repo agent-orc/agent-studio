@@ -667,6 +667,7 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.WikiTaskCrossReferenceService
 // orchestrator; default-OFF per project (ProjectSettings.TaskSpawner + the
 // post-task-spawner pipeline-step enable flag).
 builder.Services.AddSingleton<AgentStudio.Pipeline.TaskSpawnerPostStepRunner>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.FailureInterventionService>();
 builder.Services.AddSingleton<AspectRunnerService>();
 builder.Services.AddSingleton<RemoteReviewPlanBuilder>();
 builder.Services.AddSingleton<RemotePipelineReviewEvidenceProjector>();

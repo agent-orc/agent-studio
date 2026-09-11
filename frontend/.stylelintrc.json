@@ -196,6 +196,7 @@
         "src/app/components/tooltip/tooltip.scss",
         "src/app/features/board/components/create-task-dialog/create-task-dialog.component.scss",
         "src/app/features/board/components/active-board-filters/active-board-filters.component.scss",
+        "src/app/features/board/components/failure-intervention-chip/failure-intervention-chip.component.scss",
         "src/app/features/board/components/model-routing-suggestion/model-routing-suggestion.component.scss",
         "src/app/features/board/components/post-processing-activity/post-processing-activity.component.scss",
         "src/app/features/board/components/post-processing-summary/post-processing-summary.component.scss",

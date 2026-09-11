@@ -61,6 +61,7 @@ public static class AdHocUsageSources
     public const string WikiGrading       = "wiki-grading";
     public const string TaskSpawner       = "task-spawner";
     public const string Watcher           = "watcher-analysis";
+    public const string FailureIntervention = "failure-intervention";
     public const string Unknown           = "unknown";
 }
 

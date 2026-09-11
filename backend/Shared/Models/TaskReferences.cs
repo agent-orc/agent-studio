@@ -82,6 +82,8 @@ public sealed class TaskDependencyReferenceJsonConverter : JsonConverter<TaskDep
 /// <item><b>relatedTo</b>: thematic link, non-blocking.</item>
 /// <item><b>blockedBy</b>: this task is currently blocked by the target.</item>
 /// <item><b>supersedes</b>: this task replaces an obsolete target.</item>
+/// <item><b>followUpOf</b>: this task was raised from the target origin.</item>
+/// <item><b>raisedFollowUps</b>: this origin raised the target follow-up.</item>
 /// <item><b>workbenches</b>: stable project-scoped document reference keys.</item>
 /// </list>
 /// </summary>
@@ -95,13 +97,18 @@ public record TaskReferences
     public List<string> BlockedBy { get; init; } = [];
     [JsonPropertyName("supersedes")]
     public List<string> Supersedes { get; init; } = [];
+    [JsonPropertyName("followUpOf")]
+    public List<string> FollowUpOf { get; init; } = [];
+    [JsonPropertyName("raisedFollowUps")]
+    public List<string> RaisedFollowUps { get; init; } = [];
     [JsonPropertyName("workbenches")]
     public List<string> Workbenches { get; init; } = [];
 
     /// <summary>True when every relation list is empty.</summary>
     public bool IsEmpty =>
         DependsOn.Count == 0 && RelatedTo.Count == 0 &&
-        BlockedBy.Count == 0 && Supersedes.Count == 0 && Workbenches.Count == 0;
+        BlockedBy.Count == 0 && Supersedes.Count == 0 && FollowUpOf.Count == 0 &&
+        RaisedFollowUps.Count == 0 && Workbenches.Count == 0;
 
     /// <summary>Flattens task-target lists into (kind, target) pairs, in kind order.</summary>
     public IEnumerable<(string Kind, string Target)> Enumerate()
@@ -110,6 +117,8 @@ public record TaskReferences
         foreach (var t in RelatedTo) yield return (TaskReferenceKinds.RelatedTo, t);
         foreach (var t in BlockedBy) yield return (TaskReferenceKinds.BlockedBy, t);
         foreach (var t in Supersedes) yield return (TaskReferenceKinds.Supersedes, t);
+        foreach (var t in FollowUpOf) yield return (TaskReferenceKinds.FollowUpOf, t);
+        foreach (var t in RaisedFollowUps) yield return (TaskReferenceKinds.RaisedFollowUps, t);
     }
 }
 
@@ -124,9 +133,11 @@ public static class TaskReferenceKinds
     public const string RelatedTo = "relatedTo";
     public const string BlockedBy = "blockedBy";
     public const string Supersedes = "supersedes";
+    public const string FollowUpOf = "followUpOf";
+    public const string RaisedFollowUps = "raisedFollowUps";
     public const string Workbenches = "workbenches";
 
-    public static readonly string[] All = [DependsOn, RelatedTo, BlockedBy, Supersedes, Workbenches];
+    public static readonly string[] All = [DependsOn, RelatedTo, BlockedBy, Supersedes, FollowUpOf, RaisedFollowUps, Workbenches];
 }
 
 /// <summary>
@@ -141,6 +152,8 @@ public record SetTaskReferencesRequest
     public List<string>? RelatedTo { get; init; }
     public List<string>? BlockedBy { get; init; }
     public List<string>? Supersedes { get; init; }
+    public List<string>? FollowUpOf { get; init; }
+    public List<string>? RaisedFollowUps { get; init; }
     public List<string>? Workbenches { get; init; }
 
     /// <summary>Projects the request into a normalised <see cref="TaskReferences"/>.</summary>
@@ -150,6 +163,8 @@ public record SetTaskReferencesRequest
         RelatedTo = RelatedTo ?? [],
         BlockedBy = BlockedBy ?? [],
         Supersedes = Supersedes ?? [],
+        FollowUpOf = FollowUpOf ?? [],
+        RaisedFollowUps = RaisedFollowUps ?? [],
         Workbenches = Workbenches ?? [],
     });
 }
@@ -269,6 +284,8 @@ public static class TaskReferenceValidator
         RelatedTo = NormalizeList(refs.RelatedTo),
         BlockedBy = NormalizeList(refs.BlockedBy),
         Supersedes = NormalizeList(refs.Supersedes),
+        FollowUpOf = NormalizeList(refs.FollowUpOf),
+        RaisedFollowUps = NormalizeList(refs.RaisedFollowUps),
         Workbenches = NormalizeList(refs.Workbenches),
     };
 

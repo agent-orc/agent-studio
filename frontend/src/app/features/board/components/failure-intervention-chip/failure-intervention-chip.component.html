@@ -1,0 +1,11 @@
+@if (followUp(); as item) {
+  <button type="button"
+          class="intervention-chip"
+          data-testid="task-card-intervention"
+          [attr.data-intervention-state]="item.state"
+          [cacTooltip]="'Orchestrator intervention raised from this failure. Open ' + item.key"
+          (click)="navigate($event)">
+    <span class="intervention-chip__glyph" aria-hidden="true">↗</span>
+    {{ item.key }} · {{ item.lane }} · {{ item.state }}
+  </button>
+}

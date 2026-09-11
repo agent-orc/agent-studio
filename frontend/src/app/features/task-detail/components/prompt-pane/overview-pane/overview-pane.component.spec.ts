@@ -143,6 +143,15 @@ describe('OverviewPaneComponent (smoke)', () => {
     expect(fixture.componentInstance).toBeTruthy();
   });
 
+  it('shows orchestrator creation provenance in the visible task heading', async () => {
+    const fixture = await build(baseJob({ creationSource: 'orchestrator', createdBy: 'Orchestrator' }));
+    const provenance = fixture.nativeElement.querySelector(
+      '[data-testid="overview-created-by-orchestrator"]',
+    ) as HTMLElement | null;
+
+    expect(provenance?.textContent).toContain('Created by Orchestrator');
+  });
+
   it('tokens: standalone section is removed even when lastUsage exists', async () => {
     const fixture = await build(baseJob({
       state: '4-auto-review',

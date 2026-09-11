@@ -418,6 +418,7 @@ public static class V1ReviewPlaneEndpoints
             RemoteDeliveryIntegrationCoordinator remoteIntegration,
             TimelineLog timeline,
             RemotePipelineReviewEvidenceProjector remotePipelineEvidence,
+            FailureInterventionService failureInterventions,
             CancellationToken ct) =>
         {
             if (!RunnerMatches(context, request.ExecutorId))
@@ -569,7 +570,36 @@ public static class V1ReviewPlaneEndpoints
                 request.Outcome,
                 "ReviewInfra",
                 StringComparison.OrdinalIgnoreCase);
-            var retry = infrastructureFailure
+            FailureInterventionResult? intervention = null;
+            var interventionStep = PipelineCatalogue.FindStep(PipelineCatalogue.FailureInterventionStepId)!;
+            if (infrastructureFailure
+                && PipelineStepConfigResolver.IsEnabled(settings.Get(task.ProjectName), interventionStep))
+            {
+                var failedCommand = request.Commands.FirstOrDefault(command => command.ExitCode is not null and not 0)
+                    ?? request.Commands.FirstOrDefault();
+                var stdoutTail = ReviewArtifactTail(request.Artifacts, failedCommand?.StdoutSha256)
+                    ?? request.Summary;
+                var stderrTail = ReviewArtifactTail(request.Artifacts, failedCommand?.StderrSha256)
+                    ?? request.Summary;
+                var evidencePointers = request.Artifacts
+                    .Where(artifact => failedCommand is not null
+                        && (string.Equals(artifact.Sha256, failedCommand.StdoutSha256, StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(artifact.Sha256, failedCommand.StderrSha256, StringComparison.OrdinalIgnoreCase)))
+                    .Select(artifact => artifact.Name)
+                    .Prepend(evidenceFile)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                intervention = await failureInterventions.RaiseAsync(task, new FailureCommandEvidence(
+                    request.FailureClassification ?? request.Outcome,
+                    request.Outcome,
+                    failedCommand?.ExitCode,
+                    failedCommand is null ? null : (long)(failedCommand.FinishedAt - failedCommand.StartedAt).TotalMilliseconds,
+                    stdoutTail,
+                    stderrTail,
+                    failedCommand?.StepId,
+                    evidencePointers), ct);
+            }
+            var retry = infrastructureFailure && intervention is null
                         && authority.HasReviewInfrastructureRetryBudget(settled.ReviewAttempt.AttemptId);
             var repeatDiagnosis = infrastructureFailure
                 ? RecordInfrastructureRepeatDiagnosis(authority, timeline, task, settled.ReviewAttempt)
@@ -742,13 +772,17 @@ public static class V1ReviewPlaneEndpoints
                     // harder failure cannot be hidden behind the majority class
                     // (AGT-2220).
                     var chain = BuildAttemptChainSummary(authority, review.TaskKey);
+                    var category = intervention is null
+                        ? HumanReviewEscalationCategories.ReviewSubjectUnmaterializable
+                        : HumanReviewEscalationCategories.FailureIntervention;
+                    var escalationReason = intervention?.WaitReason
+                        ?? $"The immutable ReviewSubject exhausted its budget of {AttemptAuthorityService.ReviewInfrastructureRetryBudget} infrastructure retries and cannot be materialized. {chain.Headline}";
                     var moved = await escalation.EscalateAsync(
                         task.Id,
                         task.WatchPath,
                         task.ProjectName,
-                        HumanReviewEscalationCategories.ReviewSubjectUnmaterializable,
-                        $"The immutable ReviewSubject exhausted its budget of {AttemptAuthorityService.ReviewInfrastructureRetryBudget} infrastructure retries and cannot be materialized. "
-                        + chain.Headline,
+                        category,
+                        escalationReason,
                         ct,
                         statusDetail: chain.Detail);
                     if (moved.Status != MoveJobStatus.Success)
@@ -1444,6 +1478,26 @@ public static class V1ReviewPlaneEndpoints
 
     private static string ShellQuote(string value)
         => "'" + value.Replace("'", "'\"'\"'", StringComparison.Ordinal) + "'";
+
+    private static string? ReviewArtifactTail(
+        IReadOnlyList<Contract.ReviewArtifactEvidenceDto> artifacts,
+        string? sha256)
+    {
+        if (string.IsNullOrWhiteSpace(sha256)) return null;
+        var encoded = artifacts.FirstOrDefault(artifact =>
+            string.Equals(artifact.Sha256, sha256, StringComparison.OrdinalIgnoreCase))?.ContentBase64;
+        if (string.IsNullOrWhiteSpace(encoded)) return null;
+        try
+        {
+            const int maxTailLength = 4_000;
+            var text = Encoding.UTF8.GetString(Convert.FromBase64String(encoded));
+            return text.Length <= maxTailLength ? text : text[^maxTailLength..];
+        }
+        catch (FormatException)
+        {
+            return null;
+        }
+    }
 
     private static string HashId(string value)
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)))

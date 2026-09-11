@@ -264,6 +264,8 @@ public static class TimelineEventKinds
     /// never changes the source task's lane decision.
     /// </summary>
     public const string TaskSpawned = "task_spawned";
+    /// <summary>A failed pipeline boundary raised or attached to an orchestrator follow-up task.</summary>
+    public const string FailureInterventionRaised = "failure_intervention_raised";
     /// <summary>
     /// The task was completed out-of-band (operator chat, external agent, a
     /// remote host) and reconciled through

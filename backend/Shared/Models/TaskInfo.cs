@@ -34,6 +34,8 @@ public record TaskInfo
     public int Order { get; init; } = 999;
     public string Agent { get; init; } = "";
     public DateTime CreatedAt { get; init; }
+    public string CreationSource { get; init; } = "human";
+    public string CreatedBy { get; init; } = "human";
     public string WatchPath { get; init; } = "";
     public string ProjectName { get; init; } = "";
     public string FolderPath { get; init; } = "";

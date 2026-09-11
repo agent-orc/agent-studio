@@ -1659,3 +1659,19 @@ Result-tab control:
 [`frontend/src/app/features/task-detail/components/protocol-pane/previous-results-control/`](../../../../frontend/src/app/features/task-detail/components/protocol-pane/previous-results-control/).
 
 **Status.** Accepted.
+
+---
+
+## ADR-0071 - Pipeline failures raise deduplicated orchestrator intervention tasks (2026-09-11)
+
+**Decision.** An opt-in `post-failure-intervention` pipeline step observes failed run, review, gate, integration, merge, and crash-completion boundaries. A pure rule table classifies known failure codes and command signatures as delivery defects or infrastructure, toolchain, and configuration failures. Only an unknown signature reaches the project's economy-model route. The step fingerprints the normalized failure class and evidence signature. One open fingerprint owns one ordinary follow-up task, even when the same failure affects several cards.
+
+Task relations use two explicit, non-scheduling reference fields. The intervention task carries `followUpOf` for every origin. Each origin carries `raisedFollowUps` and `blockedBy` for the intervention. This preserves the existing `dependsOn` scheduler semantics: an intervention is a visible wait and provenance edge, not an accidental content-release dependency. The intervention task is created through `TaskMutationService` in the origin project by default, with `creationSource: orchestrator` and `createdBy: Orchestrator`. Its creation timeline actor is `orchestrator`.
+
+**Context.** From 2026-09-09 18:06 through 2026-09-11 08:20, every review aspect failed in under five seconds because `codex read-only (gpt-5.4-mini)` returned HTTP 400 that the model was unsupported for a ChatGPT account. The platform classified the reports as `ReviewInfra/ToolUnavailable`, spent three retries per card, and parked multiple origins. The actionable error remained only in command output for 38 hours. Identical evidence never became owned work.
+
+**Consequences.** When enabled, an actionable review infrastructure failure raises or attaches to an intervention before retry admission. The origin parks with `waiting on AGT-nnnn: ...`, so it does not spend the remaining retry budget against the same fingerprint. The project intervention ledger is the dedupe and reporting authority. Task state and relations remain in the normal task store. The orchestrator feed and origin timeline record `intervention raised`, and `GET /api/projects/{project}/interventions` lists open or historical items with class, origins, creation latency, and resolution latency. Completed-lane audit reports render interventions separately from escalations.
+
+**Non-goals.** Detection does not switch models, rewrite configuration, retry commands, or otherwise remediate the underlying failure. The follow-up task owns remediation. No scheduler, external script, or second task store is introduced.
+
+**Status.** Accepted.
