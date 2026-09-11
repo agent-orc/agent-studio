@@ -297,6 +297,28 @@
     </div>
     <p class="dim"><b>Release gate:</b> the complete P0 attach path works through the connector and remote execution continues while Studio is detached. The accepted D4b estimate is 88 engineering days, with a planning range of 71 to 115.</p>
   </section>
+
+  <!-- agent-studio:implementation-section:start -->
+  <section id="implementation">
+    <h2><span class="number">07</span> Implementation</h2>
+    <p>Delivery slices append their current implementation status here. Decision content above remains unchanged.</p>
+    <table>
+      <thead><tr><th>Bundle</th><th>State</th><th>What exists in the product</th></tr></thead>
+      <tbody>
+        <tr><td><b>P0</b> Core attach path</td><td><b>Delivered</b></td><td>All 27 core-attach routes have real handlers in the standalone Task Server v1 API: human login/session bootstrap, the board projection, task lifecycle mutation, orchestrator chat and context digests, runner status, and the replayable event stream behind <code>/hubs/jobs</code>. See <a href="../operations/setup/task-server.md#studio-core-attach-bundle-p0">the route table</a>.</td></tr>
+        <tr><td><b>P1</b> Task detail and host control</td><td>Not started</td><td>111 routes remain unimplemented in standalone v1.</td></tr>
+        <tr><td><b>P2</b> Operations and insight</td><td>Not started</td><td>102 routes remain unimplemented in standalone v1.</td></tr>
+        <tr><td><b>P3</b> Administration and long tail</td><td>Not started</td><td>24 routes remain unimplemented in standalone v1.</td></tr>
+      </tbody>
+    </table>
+    <p>The connector profile (AGT-2754) forwards every classified <code>task-server</code> route to whichever handler exists at its <code>targetRoute</code>; it needed no change to start reaching the new P0 handlers, with one exception. A legacy frontend call such as <code>POST /api/tasks/{taskId}/move</code> carries only a task id, but its P0 target route is project-scoped (<code>/api/v1/projects/{projectId}/tasks/{taskId}/move</code>), and the connector has no task-to-project lookup of its own. The connector now substitutes the reserved literal <code>-</code> for an unresolvable <code>{projectId}</code>, and the Task Server resolves the task by id alone when it sees that literal, rather than treating <code>-</code> as an unknown project.</p>
+    <ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+      <li data-implementation-entry="" data-task-key="AGT-2755" data-delivered-at="2026-09-11" data-slice="core-attach"><b>P0 core attach path.</b> Implemented all 27 core-attach route ids from <code>routes.json</code> in the standalone Task Server v1 API (<code>/api/v1/studio/**</code> plus project-scoped task lifecycle routes), backed by stable workspace, project, task, and run identities with no <code>watchPath</code> authority anywhere in the bundle. Added the durable, cursor-ordered <code>studio_stream_events</code> log and its <code>/hubs/v1/studio</code> hub as the standalone Task Server's compatibility path for the legacy <code>/hubs/jobs</code> feed: a reconnecting client replays every missed event in order before live delivery resumes. Closed a connector routing gap the remote proof surfaced: task lifecycle mutations addressed by task id alone (no project id anywhere in the legacy call) now resolve through a reserved unscoped-project token instead of failing closed. Proven end to end - login/session bootstrap, board load, task create/move/start/stop/continue, orchestrator chat, reconnect from a cursor, and Studio-detached execution - against a real out-of-process Task Server reached over a real loopback connection, not only an in-process test host.</li>
+<!-- agent-studio:implementation-log:end -->
+    </ol>
+  </section>
+  <!-- agent-studio:implementation-section:end -->
 </main>
 </body>
 </html>

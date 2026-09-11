@@ -716,6 +716,67 @@ After draining, `POST /api/v1/management/prepare-shutdown` verifies that no
 reason, and enters `Maintenance`. A safe response is permission for the service
 manager to stop the process; the API does not try to stop its own host process.
 
+## Studio core-attach bundle (P0)
+
+AGT-2755 implements the 27-route P0 "core-attach" bundle from the
+[Studio route ownership](../../studio-route-ownership/index.html) dossier:
+human login/session bootstrap, the lane-grouped board projection, task
+lifecycle mutation, orchestrator chat and context digests, runner status, and
+the replayable event stream behind `/hubs/jobs`. The remaining four routes in
+that bundle (`GET`/`POST /api/v1/workspaces`, `GET`/`POST /api/v1/projects`)
+already existed in standalone v1 and are not duplicated here. Handlers live in
+`StudioEndpoints.cs`, `StudioLifecycleCoordinator.cs`,
+`TaskServerStudioAuthStore.cs`, `TaskServerStudioTaskLifecycleStore.cs`,
+`TaskServerStudioOrchestratorStore.cs`, `TaskServerStudioProjectionsStore.cs`,
+and `TaskServerStudioEventStreamStore.cs`; wire contracts live in
+`StudioContracts.cs`.
+
+| Route | Purpose | Scope |
+|---|---|---|
+| `GET`/`POST /api/v1/studio/auth/{status,bootstrap,login,logout,change-password}` | Human Studio session lifecycle | `tasks:read` / `tasks:write` |
+| `GET /api/v1/studio/board` | Lane-grouped board projection across every project | `tasks:read` |
+| `GET/POST /api/v1/studio/orchestrator/context/{global,project:{id},task:{id}/{id}}[/refresh]` | Orchestrator context digest, matching the legacy `OrchestratorApi` context-key shape | `tasks:read` / `tasks:write` |
+| `GET /api/v1/studio/orchestrator/sessions` | Orchestrator session listing, derived from durable orchestrator contexts | `tasks:read` |
+| `GET /api/v1/studio/runner/status` | Active runs grouped by project | `tasks:read` |
+| `GET`/`POST /api/v1/studio/runner/{project}/orchestrator-chat[/attachments[/{fileName}]]` | Orchestrator chat send/read and image attachment upload/download | `tasks:read` / `tasks:write` |
+| `DELETE`/`POST`/`PUT /api/v1/projects/{projectId}/tasks/{taskId}/{-,move,move-to-top,start,state,stop,continue}` | Task lifecycle mutation | `tasks:write` |
+
+A human Studio session (`ts-studio-session` / `ts-studio-csrf` cookies, or the
+`X-Studio-Session-Token` header) is a second, nested identity layer above the
+existing machine-principal bearer: the connector still authenticates every
+call with its own scoped bearer, and a signed-in Studio user lives underneath
+that call. This mirrors the nested-identity note in
+[remote Task Server, local Studio](../remote-task-server-local-studio.md).
+
+Every task lifecycle mutation appends one durable, cursor-ordered
+`studio_stream_events` row after its owning mutation commits, then publishes
+it live over `/hubs/v1/studio` (`TaskServerStudioHub`, mapped beside the
+existing `/hubs/events`). This is the standalone Task Server's compatibility
+path for the legacy `/hubs/jobs` SignalR feed named in the connector dossier:
+a client that supplies `?cursor=<last-seen-cursor>` on connect receives every
+missed event, in cursor order, before any live event, so a Studio-detached
+period (backend restart, Windows sleep, lost network) never loses a
+mutation and never needs a full board re-pull to catch up. The hub is a
+notification feed only; it is written after the owning domain mutation has
+already committed and is never a second source of truth.
+
+### Unscoped-project compatibility token
+
+The task lifecycle routes above are project-scoped
+(`/api/v1/projects/{projectId}/tasks/{taskId}/...`), matching every other
+task-owned v1 route. The legacy Angular frontend calls their pre-cutover
+equivalents (for example `POST /api/tasks/{taskId}/move`) with only a task id;
+the OrchestratorApi connector profile (AGT-2754) is a mechanical path
+translator with no task-to-project lookup of its own, so it cannot fabricate
+a real project id for these calls. The connector substitutes the reserved
+literal `-` for `{projectId}` in that case
+(`ConnectorProxy.UnscopedProjectToken`), and the Task Server resolves the task
+by id alone when it sees that literal (`TaskServerStore.UnscopedProjectToken`)
+rather than treating `-` as an unknown project. A real project id is never
+this literal, so the substitution cannot collide with an actual project. Every
+other v1 route, and every call that already supplies a real project id or the
+`?project=` query compatibility fallback, is unaffected.
+
 ## Backup and restore rehearsal
 
 `POST /api/v1/management/backups` creates a consistent SQLite backup, runs an
