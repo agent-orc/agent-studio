@@ -45,6 +45,10 @@
             <span class="commit-chain__subject">{{ entry.message.split('\n')[0] }}</span>
             <span class="commit-chain__meta"
                   data-testid="git-commit-chain-meta">{{ entry.filesChanged }}f · {{ timestamp(entry) }}</span>
+            @if (pushStatusLabel(entry); as pushLabel) {
+              <span class="commit-chain__push-status commit-chain__push-status--{{ pushStatusKindOf(entry) }}"
+                    data-testid="git-commit-push-status">{{ pushLabel }}</span>
+            }
           </button>
         </li>
       }

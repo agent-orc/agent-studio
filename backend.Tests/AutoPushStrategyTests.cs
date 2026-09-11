@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 
 using Xunit;
 
@@ -12,6 +13,7 @@ public sealed class AutoPushStrategyTests : IDisposable
     private readonly string _watchPath;
     private readonly string _repoRoot;
     private readonly string _remoteRoot;
+    private readonly string _seedSha;
     private const string ProjectName = "demo";
 
     public AutoPushStrategyTests()
@@ -33,6 +35,7 @@ public sealed class AutoPushStrategyTests : IDisposable
         RunGit(_repoRoot, "commit", "-q", "-m", "seed");
         RunGit(_repoRoot, "remote", "add", "origin", _remoteRoot);
         RunGit(_repoRoot, "push", "-q", "-u", "origin", "main");
+        _seedSha = RunGitCapture(_repoRoot, "rev-parse", "HEAD");
     }
 
     public void Dispose()
@@ -252,6 +255,164 @@ public sealed class AutoPushStrategyTests : IDisposable
         Assert.Equal(sha, RunGitCapture(_remoteRoot, "rev-parse", "refs/heads/main"));
     }
 
+    // AGT-2761: QS-85 attributed 42 commits across 73 fences, but only the two
+    // commits of the final delivery generation were ancestors of origin/main.
+    // The backstop used to push every attributed commit unconditionally, so
+    // GitHub rejected the other 40 as non-fast-forward every 15-minute cycle
+    // forever. Selection must push only what is reachable from the card's
+    // integrated result (here, the reviewed-result SHA) and permanently mark
+    // everything else superseded.
+    [Fact]
+    public async Task PushJobCommitsDetailedAsync_SkipsSupersededCommitsNotReachableFromReviewedResult()
+    {
+        var supersededSha = CommitDivergentFromSeed("fence attempt 12 (superseded)");
+        var finalSha = CommitDivergentFromSeed("fence attempt 13 (final)");
+        WriteJobWithCommits(TaskStates.Completed, "qs85", [
+            (supersededSha, "attempt 12", DateTime.UtcNow.AddMinutes(-2)),
+            (finalSha, "attempt 13", DateTime.UtcNow.AddMinutes(-1)),
+        ]);
+        ReviewSubjectStore.Write(
+            Path.Combine(_watchPath, TaskStates.Completed, "qs85"),
+            new ReviewSubjectRecord
+            {
+                TaskKey = "qs85",
+                RunAttemptId = "attempt-13",
+                Project = ProjectName,
+                Repository = _repoRoot,
+                ResultSha = finalSha,
+                AttemptChainId = "chain-1",
+            });
+        var deps = BuildDeps();
+        var job = deps.Scanner.FindJob("qs85", _watchPath)!;
+
+        var result = await deps.Transitions.PushCompletedJobCommitsDetailedAsync(job, AutoPushStrategies.AlwaysImmediate);
+
+        Assert.Equal(1, result.Pushed);
+        Assert.Equal(1, result.SkippedSuperseded);
+        Assert.Equal(finalSha, RunGitCapture(_remoteRoot, "rev-parse", "refs/heads/main"));
+
+        var persisted = deps.Scanner.FindJob("qs85", _watchPath)!;
+        var superseded = persisted.Commits.Single(c => c.Sha == supersededSha);
+        var pushedCommit = persisted.Commits.Single(c => c.Sha == finalSha);
+        Assert.Equal(CommitPushStatuses.Superseded, superseded.PushStatus);
+        Assert.Null(pushedCommit.PushStatus);
+
+        // A second cycle must not re-attempt the permanently superseded commit
+        // or re-push the already-remote final commit.
+        var second = await deps.Transitions.PushCompletedJobCommitsDetailedAsync(persisted, AutoPushStrategies.AlwaysImmediate);
+        Assert.Equal(0, second.Pushed);
+        Assert.Equal(1, second.SkippedSuperseded);
+    }
+
+    [Fact]
+    public async Task PushJobCommitsDetailedAsync_SkipsCardEntirelyWhenIntegratedResultAlreadyOnRemoteMain()
+    {
+        var sha = CommitLocalChange("already delivered and promoted");
+        RunGit(_repoRoot, "push", "-q", "origin", "main");
+        WriteJob(TaskStates.Completed, "already-integrated", sha);
+        var deps = BuildDeps(withIntegrationStatus: true);
+        var job = deps.Scanner.FindJob("already-integrated", _watchPath)!;
+
+        var result = await deps.Transitions.PushJobCommitsDetailedAsync(
+            job, AutoPushStrategies.AlwaysImmediate, requireCompletedState: true);
+
+        Assert.True(result.CardSkippedIntegrated);
+        Assert.Equal(0, result.Pushed);
+        Assert.Equal(0, result.SkippedSuperseded);
+        Assert.Equal(0, result.Rejected);
+    }
+
+    [Fact]
+    public async Task PushJobCommitsDetailedAsync_BacksOffThenPermanentlyRejectsNonFastForwardCommit()
+    {
+        var localSha = CommitLocalChange("local reviewed change");
+        CommitFromSecondClone("remote operator change"); // diverges the remote so every push attempt is non-fast-forward
+        WriteJob(TaskStates.Completed, "diverged-task", localSha);
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 9, 8, 12, 0, 0, TimeSpan.Zero));
+        var store = new AgentStudio.Bus.AgentMessageBusStore();
+        var bus = new AgentStudio.Bus.AgentMessageBusBridge(
+            store,
+            new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["TaskRepository"] = _watchPath }).Build(),
+            NullLogger<AgentStudio.Bus.AgentMessageBusBridge>.Instance);
+        var deps = BuildDeps(bus: bus, timeProvider: clock);
+
+        // Rejections 1-3 back off with increasing delays and stay non-terminal.
+        var expectedDelays = new[] { TimeSpan.FromMinutes(15), TimeSpan.FromHours(1), TimeSpan.FromHours(6) };
+        for (var i = 0; i < expectedDelays.Length; i++)
+        {
+            var job = deps.Scanner.FindJob("diverged-task", _watchPath)!;
+            var before = clock.GetUtcNow();
+            var result = await deps.Transitions.PushCompletedJobCommitsDetailedAsync(job, AutoPushStrategies.AlwaysImmediate);
+
+            Assert.Equal(0, result.Pushed);
+            Assert.Equal(0, result.Rejected);
+            var commit = deps.Scanner.FindJob("diverged-task", _watchPath)!.Commit!;
+            Assert.Equal(i + 1, commit.PushAttempts);
+            Assert.Null(commit.PushStatus);
+            Assert.Equal(before.UtcDateTime + expectedDelays[i], commit.PushNextRetryAtUtc);
+
+            clock.Advance(expectedDelays[i] + TimeSpan.FromMinutes(1));
+        }
+
+        // The 4th rejection is terminal: permanently marked push-rejected and
+        // never attempted again, with exactly one operator-feed event for the
+        // whole sequence (not one per rejection).
+        var terminalJob = deps.Scanner.FindJob("diverged-task", _watchPath)!;
+        var terminalResult = await deps.Transitions.PushCompletedJobCommitsDetailedAsync(terminalJob, AutoPushStrategies.AlwaysImmediate);
+        Assert.Equal(0, terminalResult.Pushed);
+        Assert.Equal(1, terminalResult.Rejected);
+        var terminalCommit = deps.Scanner.FindJob("diverged-task", _watchPath)!.Commit!;
+        Assert.Equal(CommitPushStatuses.Rejected, terminalCommit.PushStatus);
+        Assert.Equal(4, terminalCommit.PushAttempts);
+
+        clock.Advance(TimeSpan.FromDays(2));
+        var afterTerminalJob = deps.Scanner.FindJob("diverged-task", _watchPath)!;
+        var afterTerminal = await deps.Transitions.PushCompletedJobCommitsDetailedAsync(afterTerminalJob, AutoPushStrategies.AlwaysImmediate);
+        Assert.Equal(1, afterTerminal.Rejected);
+        Assert.Equal(4, deps.Scanner.FindJob("diverged-task", _watchPath)!.Commit!.PushAttempts);
+
+        var pushFailureEvents = store.Recent(_watchPath, project: ProjectName, limit: 50)
+            .Where(m => m.Topic == "managed-repo-push-failed")
+            .ToList();
+        Assert.Single(pushFailureEvents);
+    }
+
+    [Fact]
+    public async Task Backstop_CycleLogsOneSummaryLine()
+    {
+        var sha = CommitLocalChange("missed trigger");
+        WriteJob(TaskStates.Completed, "completed-task", sha);
+        var deps = BuildDeps();
+        var logs = new List<string>();
+        var backstop = new CompletedPushBackstopHostedService(
+            deps.Scanner,
+            deps.Settings,
+            deps.Transitions,
+            deps.Config,
+            new CollectingLogger<CompletedPushBackstopHostedService>(logs));
+
+        var pushed = await backstop.RunOnceAsync();
+
+        Assert.Equal(1, pushed);
+        Assert.Equal(sha, RunGitCapture(_remoteRoot, "rev-parse", "refs/heads/main"));
+        var summary = Assert.Single(logs, l => l.Contains("Completed auto-push backstop cycle", StringComparison.Ordinal));
+        Assert.Contains("1 scanned", summary, StringComparison.Ordinal);
+        Assert.Contains("1 pushed", summary, StringComparison.Ordinal);
+    }
+
+    private sealed class CollectingLogger<T>(List<string> entries) : ILogger<T>
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+            => entries.Add(formatter(state, exception));
+    }
+
     [Fact]
     public async Task MoveToCompleted_DoesNotForcePushDivergedRemote()
     {
@@ -270,7 +431,11 @@ public sealed class AutoPushStrategyTests : IDisposable
         Assert.Equal(remoteSha, RunGitCapture(_remoteRoot, "rev-parse", "refs/heads/main"));
     }
 
-    private Deps BuildDeps(CompletedPushQueue? pushQueue = null)
+    private Deps BuildDeps(
+        CompletedPushQueue? pushQueue = null,
+        bool withIntegrationStatus = false,
+        AgentStudio.Bus.AgentMessageBusBridge? bus = null,
+        TimeProvider? timeProvider = null)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -290,7 +455,21 @@ public sealed class AutoPushStrategyTests : IDisposable
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config, prompts);
         var sessions = new TaskSessionLog(scanner, NullLogger<TaskSessionLog>.Instance);
-        var transitions = new TaskTransitionService(scanner, states, mutations, git, settings, NullLogger<TaskTransitionService>.Instance, sessions: sessions, pushQueue: pushQueue);
+        var integrationStatus = withIntegrationStatus
+            ? new TaskIntegrationStatusService(
+                git,
+                settings,
+                new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance),
+                NullLogger<TaskIntegrationStatusService>.Instance,
+                new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance))
+            : null;
+        var transitions = new TaskTransitionService(
+            scanner, states, mutations, git, settings, NullLogger<TaskTransitionService>.Instance,
+            sessions: sessions,
+            pushQueue: pushQueue,
+            bus: bus,
+            integrationStatus: integrationStatus,
+            timeProvider: timeProvider);
         return new Deps(config, scanner, settings, transitions);
     }
 
@@ -335,6 +514,42 @@ public sealed class AutoPushStrategyTests : IDisposable
                 "files": ["work.txt"],
                 "at": "{{DateTime.UtcNow:o}}"
               }
+            }
+            """);
+    }
+
+    /// <summary>Commits off the seed instead of the current tip, so the result is a sibling of - not a descendant of - whatever was committed before it.</summary>
+    private string CommitDivergentFromSeed(string content)
+    {
+        RunGit(_repoRoot, "reset", "-q", "--hard", _seedSha);
+        return CommitLocalChange(content);
+    }
+
+    private void WriteJobWithCommits(string state, string slug, IReadOnlyList<(string Sha, string Message, DateTime At)> commits)
+    {
+        var dir = Path.Combine(_watchPath, state, slug);
+        Directory.CreateDirectory(dir);
+        var commitsJson = string.Join(",\n", commits.Select(c => $$"""
+            {
+              "sha": "{{c.Sha}}",
+              "shortSha": "{{c.Sha[..7]}}",
+              "message": "{{c.Message}}",
+              "filesChanged": 1,
+              "files": ["work.txt"],
+              "at": "{{c.At:o}}"
+            }
+            """));
+        File.WriteAllText(Path.Combine(dir, "task.json"),
+            $$"""
+            {
+              "id": "{{slug}}",
+              "title": "{{slug}}",
+              "state": "{{state}}",
+              "order": 1,
+              "agent": "copilot",
+              "commits": [
+                {{commitsJson}}
+              ]
             }
             """);
     }
