@@ -44,15 +44,20 @@ public class RemoteRunnerDaemonFaultTests
         => Assert.False(RemoteRunnerDaemon.IsTransientServerFault(
             new InvalidOperationException("Git push capability is read-only")));
 
+    [Fact]
+    public void Unregistered_review_claim_requires_full_registration()
+        => Assert.True(ReviewClaimRegistrationRecovery.IsRequired(
+            new TaskServerException(409, "claim rejected", "review-executor-not-registered")));
+
+    // AGT-2762: ClaimNextReview now requeues a stale lease at the queue head
+    // itself instead of surfacing LeaseExpired to the poller, so a claim
+    // response answering LeaseExpired no longer means this daemon identity
+    // lost registration - treating it as one caused an unnecessary
+    // re-registration loop while the identity was still valid.
     [Theory]
     [InlineData("LeaseExpired")]
-    [InlineData("review-executor-not-registered")]
-    public void Expired_or_unregistered_review_claim_requires_full_registration(string errorCode)
-        => Assert.True(ReviewClaimRegistrationRecovery.IsRequired(
-            new TaskServerException(409, "claim rejected", errorCode)));
-
-    [Fact]
-    public void Other_claim_conflicts_do_not_trigger_registration_recovery()
+    [InlineData("review-baseline-comparison-required")]
+    public void Other_claim_conflicts_do_not_trigger_registration_recovery(string errorCode)
         => Assert.False(ReviewClaimRegistrationRecovery.IsRequired(
-            new TaskServerException(409, "claim rejected", "review-baseline-comparison-required")));
+            new TaskServerException(409, "claim rejected", errorCode)));
 }

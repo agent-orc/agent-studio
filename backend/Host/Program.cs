@@ -397,6 +397,9 @@ builder.Services.AddSingleton<WorkspaceSummaryService>();
 builder.Services.AddSingleton<AutoReviewPostProcessingQueue>();
 builder.Services.AddSingleton<IAutoReviewPostProcessingQueue>(sp =>
     sp.GetRequiredService<AutoReviewPostProcessingQueue>());
+builder.Services.AddSingleton<RemoteReviewEvidenceProjectionQueue>();
+builder.Services.AddSingleton<IRemoteReviewEvidenceProjectionQueue>(sp =>
+    sp.GetRequiredService<RemoteReviewEvidenceProjectionQueue>());
 builder.Services.AddSingleton<TaskProvenanceService>();
 builder.Services.AddSingleton<BoardMergeStatusService>();
 builder.Services.AddSingleton<ProjectGitGraphService>();
