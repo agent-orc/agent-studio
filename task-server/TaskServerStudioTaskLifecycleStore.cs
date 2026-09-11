@@ -195,6 +195,7 @@ public sealed partial class TaskServerStore
                 DELETE FROM orchestrator_context_turns WHERE context_key IN (
                     SELECT context_key FROM orchestrator_contexts WHERE task_id = $task);
                 DELETE FROM orchestrator_contexts WHERE task_id = $task;
+                DELETE FROM studio_operations WHERE task_id = $task;
                 DELETE FROM tasks WHERE id = $task;
                 """, ct, transaction, ("$task", existing.TaskId));
             await AuditAsync(connection, transaction, actorId, "task.deleted", "task", existing.TaskId, "{}", ct);

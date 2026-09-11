@@ -16,9 +16,15 @@ public sealed partial class TaskServerStore
     // 14 adds studio human users and sessions, a tasks.rank lane-ordering
     // column, and the replayable studio_stream_events cursor log backing
     // the /hubs/v1/studio hub.
+    // 15 adds the P2 "operations and insight" bundle: the studio_operations
+    // dispatch ledger, per-project studio settings/urls/ownership mappings,
+    // durable prompts, architecture element status, crash-recovery and
+    // visual-evidence decisions, watch paths, CLI/admin settings, and
+    // per-domain schedules. See docs/operations/setup/task-server.md,
+    // "Studio operations-and-insight bundle (P2)".
     // The migration block is idempotent; the number guards downgrades from
     // binaries that do not know this state.
-    public const int CurrentSchemaVersion = 14;
+    public const int CurrentSchemaVersion = 15;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -2816,6 +2822,104 @@ public sealed partial class TaskServerStore
                 task_id TEXT,
                 payload_json TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS studio_operations(
+                id TEXT PRIMARY KEY,
+                project_id TEXT REFERENCES projects(id),
+                domain TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                title TEXT NOT NULL,
+                task_id TEXT REFERENCES tasks(id),
+                status TEXT NOT NULL,
+                request_json TEXT NOT NULL,
+                result_json TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                created_by TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS studio_project_settings(
+                project_id TEXT PRIMARY KEY REFERENCES projects(id),
+                auto_commit INTEGER,
+                auto_push_strategy TEXT,
+                cli_context_mode TEXT,
+                cli_mode TEXT,
+                crash_recovery_enabled INTEGER,
+                lane_sort_strategy TEXT,
+                max_parallelism INTEGER,
+                orchestrator_model TEXT,
+                quota_wait_policy TEXT,
+                publish_automation_json TEXT,
+                design_references_json TEXT NOT NULL DEFAULT '[]',
+                pickup_paused INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL,
+                updated_by TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS studio_project_urls(
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL REFERENCES projects(id),
+                url TEXT NOT NULL,
+                label TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS studio_ownership_mappings(
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL REFERENCES projects(id),
+                pattern TEXT NOT NULL,
+                owner TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS studio_prompts(
+                name TEXT PRIMARY KEY,
+                content TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                updated_by TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS studio_architecture_elements(
+                project_id TEXT NOT NULL REFERENCES projects(id),
+                model_id TEXT NOT NULL,
+                element_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                updated_by TEXT NOT NULL,
+                PRIMARY KEY(project_id, model_id, element_id)
+            );
+            CREATE TABLE IF NOT EXISTS studio_crash_recovery_decisions(
+                run_id TEXT PRIMARY KEY,
+                decision TEXT NOT NULL,
+                decided_by TEXT NOT NULL,
+                decided_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS studio_visual_evidence_acks(
+                event_cursor INTEGER PRIMARY KEY,
+                acknowledged_by TEXT NOT NULL,
+                acknowledged_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS studio_watch_paths(
+                name TEXT PRIMARY KEY,
+                pattern TEXT NOT NULL,
+                project_id TEXT REFERENCES projects(id),
+                created_at TEXT NOT NULL,
+                created_by TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS studio_cli_settings(
+                id TEXT PRIMARY KEY,
+                value_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                updated_by TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS studio_admin_settings(
+                key TEXT PRIMARY KEY,
+                value_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                updated_by TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS studio_schedules(
+                project_id TEXT NOT NULL REFERENCES projects(id),
+                domain TEXT NOT NULL,
+                schedule_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(project_id, domain)
+            );
             CREATE INDEX IF NOT EXISTS ix_tasks_project_state ON tasks(project_id, state);
             CREATE INDEX IF NOT EXISTS ix_orchestrator_contexts_project_visible
                 ON orchestrator_contexts(project_id, hidden_at, updated_at);
@@ -2908,6 +3012,10 @@ public sealed partial class TaskServerStore
             CREATE INDEX IF NOT EXISTS ix_tasks_project_state_rank ON tasks(project_id, state, rank);
             CREATE INDEX IF NOT EXISTS ix_studio_sessions_user ON studio_sessions(user_id, revoked_at);
             CREATE INDEX IF NOT EXISTS ix_studio_stream_events_project ON studio_stream_events(project_id, cursor);
+            CREATE INDEX IF NOT EXISTS ix_studio_operations_project_domain ON studio_operations(project_id, domain, created_at);
+            CREATE INDEX IF NOT EXISTS ix_studio_operations_task ON studio_operations(task_id);
+            CREATE INDEX IF NOT EXISTS ix_studio_project_urls_project ON studio_project_urls(project_id);
+            CREATE INDEX IF NOT EXISTS ix_studio_ownership_mappings_project ON studio_ownership_mappings(project_id);
             """, ct);
         await SetMetaAsync(connection, null, "schema_version", CurrentSchemaVersion.ToString(CultureInfo.InvariantCulture), ct);
     }

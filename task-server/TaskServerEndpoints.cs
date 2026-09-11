@@ -324,7 +324,12 @@ public static class TaskServerEndpoints
                         "protocol-upgrade-required",
                         "Durable result handoff and idempotent completion require runner protocol 2."),
                     statusCode: StatusCodes.Status426UpgradeRequired);
-            return await InvokeAsync(() => store.CompleteRunAsync(runId, request, Actor(context), ct));
+            return await InvokeAsync(async () =>
+            {
+                var run = await store.CompleteRunAsync(runId, request, Actor(context), ct);
+                await store.TryMaterializeStudioOperationForRunAsync(run, ct);
+                return run;
+            });
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
         runs.MapPut("/{runId}/result-handoff", async (
             HttpContext context,

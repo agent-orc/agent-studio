@@ -157,6 +157,7 @@ app.UseMiddleware<TaskServerAuthenticationMiddleware>();
 app.UseMiddleware<TaskServerProtocolMiddleware>();
 app.MapTaskServerEndpoints();
 app.MapStudioEndpoints();
+app.MapStudioOperationsAndInsightEndpoints();
 app.MapHub<TaskServerEventsHub>("/hubs/events")
     .RequireTaskServerScope(TaskServerScopes.EventsSubscribe);
 app.MapHub<TaskServerStudioHub>("/hubs/v1/studio")

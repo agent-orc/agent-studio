@@ -612,6 +612,19 @@ as `acceptance-rail-run`.
   parameter frontend call has no project id to forward. See
   [Task Server deployment and recovery](../../operations/setup/task-server.md#studio-core-attach-bundle-p0)
   for the full route table and the unscoped-project compatibility contract.
+- `task-server/StudioOperationsAndInsightEndpoints.cs` and the
+  `TaskServerStudio{Operations,Settings,Admin,InsightProjections,Supervisor,
+  DriftAnalysisSecurity,DesignProposalsPublish,Misc}Store.cs` partial-class
+  files: the P2 "operations and insight" Studio route bundle (AGT-2757) - bus,
+  runtime, cycle time, token, deployment, security review, analysis, drift,
+  supervisor, and recovery projections, plus project settings and admin
+  mutations. Generated or reviewed items (reports, reviews, proposals,
+  publish/deployment runs) are rows in the shared `studio_operations` ledger;
+  computation that needs a checkout or CLI dispatches through the existing
+  ready-lane task and fenced claim/lease/event/artifact contracts, never
+  through a second workflow mechanism in the connector. See
+  [Task Server deployment and recovery](../../operations/setup/task-server.md#studio-operations-and-insight-bundle-p2)
+  for the full route table and the durable-projection design.
 - `backend/Endpoints/Tasks/*`: task CRUD, runner, files, git, review evidence,
   merge, pipeline, and query endpoints.
 - `backend/Services/TaskAccess/*`: typed read/list/mutate/transition/subscribe

@@ -850,6 +850,143 @@ this literal, so the substitution cannot collide with an actual project. Every
 other v1 route, and every call that already supplies a real project id or the
 `?project=` query compatibility fallback, is unaffected.
 
+## Studio operations-and-insight bundle (P2)
+
+AGT-2757 implements the 102-route P2 "operations and insight" bundle from the
+[Studio route ownership](../../studio-route-ownership/index.html) dossier:
+bus, runtime, cycle time, token, deployment, security review, analysis,
+drift, supervisor, and recovery projections, plus the project-settings,
+admin, and CLI mutations D4b groups into the same bundle. Handlers live in
+`StudioOperationsAndInsightEndpoints.cs` (route mapping only) and a set of
+domain-named `TaskServerStudio*Store.cs` partial-class files
+(`TaskServerStudioOperationsStore.cs`, `TaskServerStudioSettingsStore.cs`,
+`TaskServerStudioAdminStore.cs`, `TaskServerStudioInsightProjectionsStore.cs`,
+`TaskServerStudioSupervisorStore.cs`,
+`TaskServerStudioDriftAnalysisSecurityStore.cs`,
+`TaskServerStudioDesignProposalsPublishStore.cs`,
+`TaskServerStudioMiscStore.cs`); wire contracts live in
+`StudioOperationsContracts.cs`. All routes are mounted under
+`/api/v1/studio/**`, matching every route's `targetRoute` in
+[`routes.json`](../../studio-route-ownership/routes.json).
+
+### Durable projections, not a second disk-backed store
+
+Every P2 legacy handler in `OrchestratorApi` reads or writes a disk-backed
+tree under `IConfiguration["TaskRepository"]` (Markdown reports, JSONL bus
+logs). The standalone Task Server has no such tree, so this bundle does not
+port that storage model; it represents the same information as SQLite state,
+following three patterns depending on what the route actually needs:
+
+1. **Generated or reviewed items** (analysis reports, drift reports and
+   architecture-drift actions, security reviews, design council items and
+   actions, proposals, publish/deployment runs, skill-readiness fixes, wiki
+   grading runs, admin prompt review/rebaseline) are rows in one shared
+   ledger table, `studio_operations` (id, project id, domain, kind, title,
+   dispatched task id, status, request/result JSON, timestamps). List and
+   detail routes read this table directly; accept/decision routes are a
+   plain status update on the same row.
+2. **Live feeds** (bus messages, runtime events, token usage, test runs,
+   regression-radar findings, visual evidence, the global pipeline alert)
+   read the existing, already-fenced `events` table, filtered by a
+   `studio.*` event-kind convention (`StudioInsightEventKinds`). A Runner
+   reports these the same way it reports any other typed event, over the
+   existing `POST /api/v1/runs/{runId}/events` contract; there is no second
+   ingestion path.
+3. **Computed projections** (cycle time, throughput, supervisor observation
+   and meta-cycle) are plain queries over the existing `tasks`, `runs`,
+   `leases`, and `audit` tables - the same "fold what already exists rather
+   than track a second copy" rule the P0 board and runner-status projections
+   follow.
+
+A handful of routes own small, purpose-built tables because they are
+genuinely structured state with no natural home in the patterns above:
+`studio_project_settings` (one row per project: auto-commit, auto-push
+strategy, CLI context/mode, crash-recovery flag, lane-sort strategy, max
+parallelism, orchestrator model, quota-wait policy, publish automation,
+supervisor pickup-paused), `studio_project_urls`,
+`studio_ownership_mappings` (also the source `component-routing/resolve`
+matches against), `studio_prompts`, `studio_architecture_elements`,
+`studio_crash_recovery_decisions`, `studio_visual_evidence_acks`,
+`studio_watch_paths`, `studio_cli_settings`, `studio_admin_settings`, and
+`studio_schedules`.
+
+### Dispatch through the existing fenced Runner contracts
+
+Every route whose computation needs a checkout or a CLI call (an analysis or
+drift report, a security review, a design or proposals action, a publish or
+deployment run, a skill-readiness fix, a wiki grading run, an admin prompt
+review) dispatches by creating a normal task in the `2-ready` lane through
+the existing `TaskServerStore.CreateTaskAsync`, exactly as a human-started
+task would. A Runner claims it through the existing
+`/runners/{runnerId}/claims`, lease, event, and artifact contracts - the same
+fenced authority every other run already goes through. This bundle adds no
+new dispatch mechanism and the connector never spawns or supervises this
+work itself; the connector remains a credential and transport boundary, and
+the workflow (ready lane to claim to lease to completion) lives entirely in
+the Task Server's pre-existing run lifecycle.
+
+A small coordinator hook closes the loop without touching the shared
+completion method's internals: `TaskServerEndpoints`'s
+`POST /api/v1/runs/{runId}/completion` handler calls the existing
+`TaskServerStore.CompleteRunAsync` first, and only once that commit succeeds
+does it call `TaskServerStore.TryMaterializeStudioOperationForRunAsync` to
+fold the run's terminal status and artifact list into the owning
+`studio_operations` row - the same "commit the domain mutation first, then
+append a bounded side effect" ordering `StudioLifecycleCoordinator` uses for
+P0. Generated content itself is never duplicated into `studio_operations`;
+detail routes reference the run's artifacts through the existing artifact
+content route.
+
+One route, `POST /api/v1/studio/drift/actions/code-pattern-drift`, evaluates
+a small built-in rule set in process and records a `studio_operations` row
+with `status: completed` immediately, mirroring the legacy handler's
+deterministic, no-LLM behavior; it is the one generated-item route that never
+dispatches.
+
+### Split project snapshot
+
+The concept dossier calls out the legacy project snapshot as a mixed
+contract that must split before cutover: task authority facts belong to the
+Task Server, but working-tree/checkout facts stay with the dev-seat
+connector. `GET /api/v1/studio/projects/{project}/snapshot` returns only the
+authority half (project identity, lane-grouped task counts, durable
+settings); it does not attempt to represent checkout state that the Task
+Server has no way to observe.
+
+| Route | Purpose | Scope |
+|---|---|---|
+| `PUT /api/v1/studio/admin/config/orchestrator` | Default orchestrator model/thinking-level config | `management` |
+| `DELETE`/`PUT /api/v1/studio/admin/prompts/{name}` | Named prompt document CRUD | `management` |
+| `POST /api/v1/studio/admin/prompts/{name}/{preview,rebaseline,review}`, `POST .../prompts/review-all` | Prompt preview render and review dispatch | `management` |
+| `GET`/`POST /api/v1/studio/analysis/{project}/reports[/{reportId}]`, `GET`/`PUT .../schedule` | Analysis report dispatch/list/detail and schedule | `tasks:read` / `tasks:write` |
+| `GET /api/v1/studio/bus/{project}/{messages[/{id}],recent,summary,token-aggregate}` | Agent message bus projections | `tasks:read` |
+| `PUT /api/v1/studio/cli/{model-routing/economy-mode,quota/caps,quota/model-routes,quota/wait-policy}` | Instance-wide CLI quota and routing settings | `management` |
+| `POST /api/v1/studio/component-routing/resolve` | Deterministic path-to-owner match against ownership mappings | `tasks:write` |
+| `GET /api/v1/studio/crash-recovery/pending`, `POST .../pending/{id}/{commit,dismiss}` | Expired-lease recovery queue, computed from `leases` | `tasks:read` / `tasks:write` |
+| `POST /api/v1/studio/drift/actions/code-pattern-drift[/rules]`, `POST /api/v1/studio/drift/{project}/actions/{action}[/prompt]`, `GET/POST .../architecture[/{modelId}/elements/{elementId}/status]`, `GET .../reports[/{reportId}]` | Drift actions, architecture element status, and reports | `tasks:read` / `tasks:write` |
+| `GET /api/v1/studio/pipeline/accepted-integration-alert` | Instance-wide latest accepted-integration alert | `tasks:read` |
+| `GET /api/v1/studio/runtime/{project}/events` | Runtime event feed | `tasks:read` |
+| `POST /api/v1/studio/supervisor/{project}/intervene/{cancel-run,force-fail,pause-pickup,resume}`, `GET .../{meta-cycle,observation,recent-events}` | Supervisor interventions and observation | `tasks:write` / `tasks:read` |
+| `POST /api/v1/studio/prompt/enhance`, `POST /api/v1/studio/title/generate` | Instance-wide text helpers | `tasks:write` |
+| `POST /api/v1/studio/token-pricing/calculate` | Pure token-cost calculator | `tasks:write` |
+| `POST/DELETE /api/v1/studio/watch-paths[/{name}]` | Watch path registration | `tasks:write` |
+| `PUT`/`DELETE /api/v1/studio/projects/{projectId}`, `PUT .../ownership-mappings/{mappingId}`, `POST/PUT/DELETE .../urls[/{urlId}]` | Project identity, ownership mapping, and URL mutation | `tasks:write` |
+| `PUT /api/v1/studio/projects/{project}/{auto-commit,auto-push-strategy,cli-context-mode,cli-mode,crash-recovery,lane-sort-strategy,max-parallelism,orchestrator-model,quota-wait-policy}` | Per-project Studio settings | `tasks:write` |
+| `GET /api/v1/studio/projects/{project}/{cycle-time[/tasks/{taskKey}],throughput,snapshot,regression-radar,test-runs}` | Computed and event-backed project projections | `tasks:read` |
+| `GET/POST .../visual-evidence[/{itemId}/acknowledge]`, `GET .../token-usage/{expensive,heatmap,job/{taskId},pipeline-cost,summary}` | Visual evidence and token-usage projections | `tasks:read` / `tasks:write` |
+| `POST .../deployment/compile`, `GET .../deployment/summary` | Deployment dispatch and summary | `tasks:write` / `tasks:read` |
+| `POST .../design/actions/{action}`, `GET .../design/{council[/{fileName}],overview,references}`, `POST .../design/council/{fileName}/accept` | Design council and actions | `tasks:write` / `tasks:read` |
+| `DELETE .../proposals[/{proposalId}]`, `POST .../proposals/{generate,refine-feedback}`, `POST .../proposals/{proposalId}/decision` | Proposal generation, decision, and deletion | `tasks:write` |
+| `PUT .../publish/automation`, `POST .../publish/{package,website}` | Publish settings and dispatch | `tasks:write` |
+| `POST .../queue-health/repair` | Releases expired leases for the project | `tasks:write` |
+| `POST .../security/audit`, `GET .../security/{baseline,reviews[/{fileName}]}` | Security review dispatch, baseline, and list | `tasks:write` / `tasks:read` |
+| `POST .../skill-readiness/fix-task` | Skill-readiness fix dispatch | `tasks:write` |
+| `POST .../wiki/grading/{abort,run}` | Wiki grading dispatch and abort | `tasks:write` |
+
+No new `TaskServerScopes` member was added; every route reuses `tasks:read`,
+`tasks:write`, or `management`, matching P0's precedent that this bundle
+needs no new scope taxonomy.
+
 ## Backup and restore rehearsal
 
 `POST /api/v1/management/backups` creates a consistent SQLite backup, runs an
