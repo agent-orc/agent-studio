@@ -176,9 +176,33 @@ public sealed class RunnerServiceUnitTests
 
         Assert.Contains("releases_root=\"$tool_root/releases\"", content);
         Assert.Contains("dotnet tool install --tool-path \"$stage_root\"", content);
-        Assert.Contains("ln -sfnT \"$release_root\" \"$tool_root/current\"", content);
+        Assert.Contains("ln -sfnT \"$release_root\" \"$tool_root/candidate\"", content);
+        Assert.Contains("ln -sfnT \"$candidate_release\" \"$tool_root/current\"", content);
         Assert.Contains("ExecStart=$agent_host_root/current/$runner_command --poll", content);
         Assert.DoesNotContain("dotnet tool update --global", content);
+
+        var stopped = content.IndexOf("((daemon_stopped == 1))", StringComparison.Ordinal);
+        var reviewPromotion = content.IndexOf(
+            "ln -sfnT \"$candidate_release\" \"$tool_root/current\"",
+            stopped,
+            StringComparison.Ordinal);
+        var reviewStart = content.IndexOf(
+            "sudo systemctl start \"$service_name\"",
+            reviewPromotion,
+            StringComparison.Ordinal);
+        var codingPromotion = content.LastIndexOf(
+            "ln -sfnT \"$candidate_release\" \"$tool_root/current\"",
+            StringComparison.Ordinal);
+        var codingRestart = content.IndexOf(
+            "sudo systemctl restart \"$service_name\"",
+            codingPromotion,
+            StringComparison.Ordinal);
+
+        Assert.True(stopped >= 0);
+        Assert.True(reviewPromotion > stopped);
+        Assert.True(reviewStart > reviewPromotion);
+        Assert.True(codingPromotion > reviewStart);
+        Assert.True(codingRestart > codingPromotion);
     }
 
     [Fact]
