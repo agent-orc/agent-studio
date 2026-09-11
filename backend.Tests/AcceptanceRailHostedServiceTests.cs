@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using AgentStudio.TaskServer.Contracts;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -124,6 +125,80 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task InfrastructureCard_IsRequeuedToAutoReviewWithoutARebaseSteer()
+    {
+        var stack = Build();
+        var deliverySha = CreateUnintegratedDelivery("infrastructure");
+        SeedTask(stack, "infrastructure", deliverySha, infrastructureFailure: true);
+
+        var snapshot = await stack.Rail.RunOnceAsync();
+
+        Assert.True(snapshot.Requeued == 1, Describe(stack, snapshot));
+        var requeued = stack.Scanner.FindJob("infrastructure", _watchPath)!;
+        Assert.Equal(TaskStates.AutoReview, requeued.State);
+        Assert.Null(requeued.PendingIntent);
+        var prompt = File.ReadAllText(Path.Combine(requeued.FolderPath, "prompt.md"));
+        Assert.DoesNotContain("## STEER", prompt, StringComparison.Ordinal);
+        Assert.Contains(
+            stack.Timeline.ReadAll(requeued.FolderPath),
+            entry => entry.Kind == TimelineEventKinds.AcceptanceRailActed
+                     && entry.Details?.GetValueOrDefault("action") == "requeued-infrastructure"
+                     && entry.Details?.GetValueOrDefault("retryNumber") == "1");
+        var laneChange = Assert.Single(
+            stack.Timeline.ReadAll(requeued.FolderPath),
+            entry => entry.Kind == TimelineEventKinds.LaneChanged
+                     && entry.Details?.GetValueOrDefault("to") == TaskStates.AutoReview);
+        Assert.Contains(
+            RunFailureSignatures.GitNetworkTimeout,
+            laneChange.Details!["reason"],
+            StringComparison.Ordinal);
+        Assert.Equal(
+            LaneChangeCauses.ReviewInfrastructure,
+            laneChange.Details.GetValueOrDefault(LaneChangeCauses.DetailKey));
+    }
+
+    [Fact]
+    public async Task InfrastructureAtRetryLimit_IsEscalatedWithClassAndSignature()
+    {
+        var stack = Build(maxInfrastructureRequeues: 1);
+        var deliverySha = CreateUnintegratedDelivery("infrastructure-exhausted");
+        var folder = SeedTask(
+            stack,
+            "infrastructure-exhausted",
+            deliverySha,
+            infrastructureFailure: true);
+        stack.Timeline.Append(
+            folder,
+            TimelineEventKinds.AcceptanceRailActed,
+            TimelineActors.System,
+            "Prior infrastructure replay.",
+            details: new Dictionary<string, string>
+            {
+                ["action"] = "requeued-infrastructure",
+                ["source"] = TaskIntegrationRecoveryService.AcceptanceRailSource,
+                ["retryNumber"] = "1",
+            });
+
+        var snapshot = await stack.Rail.RunOnceAsync();
+
+        Assert.True(snapshot.Escalated == 1, Describe(stack, snapshot));
+        var escalated = stack.Scanner.FindJob("infrastructure-exhausted", _watchPath)!;
+        Assert.Equal(TaskStates.Escalated, escalated.State);
+        var laneChange = Assert.Single(
+            stack.Timeline.ReadAll(escalated.FolderPath),
+            entry => entry.Kind == TimelineEventKinds.LaneChanged
+                     && entry.Details?.GetValueOrDefault("to") == TaskStates.Escalated);
+        Assert.Contains(
+            "1/1 infrastructure requeues",
+            laneChange.Details!["reason"],
+            StringComparison.Ordinal);
+        Assert.Contains(
+            RunFailureSignatures.GitNetworkTimeout,
+            laneChange.Details["reason"],
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ConceptCard_IsUntouched()
     {
         var stack = Build();
@@ -167,7 +242,9 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
         Assert.Equal(TaskStates.Ready, stack.Scanner.FindJob("escalated-conflict", _watchPath)!.State);
     }
 
-    private Stack Build(int maxRequeues = AcceptanceRailDefaults.MaxRequeues)
+    private Stack Build(
+        int maxRequeues = AcceptanceRailDefaults.MaxRequeues,
+        int maxInfrastructureRequeues = AcceptanceRailDefaults.MaxInfrastructureRequeues)
     {
         var logs = new List<string>();
         var values = new Dictionary<string, string?>
@@ -180,6 +257,8 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
             ["AcceptanceRail:Enabled"] = "true",
             ["AcceptanceRail:IntervalSeconds"] = "180",
             ["AcceptanceRail:MaxRequeues"] = maxRequeues.ToString(
+                System.Globalization.CultureInfo.InvariantCulture),
+            ["AcceptanceRail:MaxInfrastructureRequeues"] = maxInfrastructureRequeues.ToString(
                 System.Globalization.CultureInfo.InvariantCulture),
             ["AcceptanceRail:HoldList:0"] = AcceptanceRailDefaults.OperatorHoldTag,
         };
@@ -250,6 +329,7 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
         string id,
         string commitSha,
         bool conflict = false,
+        bool infrastructureFailure = false,
         string mode = TaskModes.Coding,
         IReadOnlyList<string>? tags = null,
         string state = TaskStates.HumanReview)
@@ -292,7 +372,7 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
             CompletedAtUtc = DateTimeOffset.UtcNow,
         });
         stack.Pipeline.Begin(folder, PipelineCatalogue.Standard, Project, id);
-        if (conflict)
+        if (conflict || infrastructureFailure)
         {
             var now = DateTime.UtcNow;
             stack.Pipeline.RecordStep(folder, new PipelineStepExecution
@@ -302,10 +382,19 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
                 Status = PipelineStepStatus.Failed,
                 StartedAt = now,
                 CompletedAt = now,
-                Verdict = "conflict",
-                FailureCode = AcceptedIntegrationFailureCodes.MergeConflict,
-                VerdictSummary = "Delivery conflicts with develop.",
-                Reason = "Merge conflict in shared.txt.",
+                Verdict = infrastructureFailure ? "error" : "conflict",
+                FailureCode = infrastructureFailure
+                    ? AcceptedIntegrationFailureCodes.IntegrationError
+                    : AcceptedIntegrationFailureCodes.MergeConflict,
+                VerdictSummary = infrastructureFailure
+                    ? "Integration branch could not be synchronized."
+                    : "Delivery conflicts with develop.",
+                // Verbatim 2026-09-06 evidence: a 30-second git network cap,
+                // which says nothing about the reviewed change.
+                Reason = infrastructureFailure
+                    ? "Integration branch 'develop' could not be fetched from origin: "
+                      + "git operation timed out after 30 seconds"
+                    : "Merge conflict in shared.txt.",
             });
         }
         stack.Scanner.InvalidateCache();

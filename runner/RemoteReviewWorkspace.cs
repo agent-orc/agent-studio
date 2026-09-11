@@ -218,6 +218,49 @@ public sealed class RemoteReviewWorkspace
                 var execution = ReviewCommandKinds.IsAgent(command.ExecutionKind)
                     ? await _agentCommands.RunAsync(command, ct)
                     : await RunCommandAsync(command, RepositoryPath, ct);
+                if (AspectCommandTimedOut(command, execution))
+                {
+                    // AGT-2749 addendum (2026-09-07 19:20): a review aspect call
+                    // killed on its own timeout is a budget problem, not a
+                    // broken toolchain. Before this check it fell into
+                    // AgentCommandUnavailable() below and was classified
+                    // ToolUnavailable - exit=124 on every card whose CLI budget
+                    // was too small, most visibly Claude aspect calls under the
+                    // old flat 60s budget.
+                    commands.Add(await AddCommandEvidenceAsync(
+                        command.StepId,
+                        command.Aspect,
+                        command.FileName,
+                        command.Arguments,
+                        headBefore,
+                        treeBefore,
+                        execution.Process,
+                        execution.StartedAt,
+                        execution.FinishedAt,
+                        execution.Signal,
+                        command.TimeoutSeconds,
+                        "verification",
+                        "candidate",
+                        baselineSha: null,
+                        comparison: null,
+                        retryPerformed: false,
+                        dependencyCacheHit: false,
+                        dependencyCache: null,
+                        artifacts,
+                        ct,
+                        command,
+                        execution.AgentUsage));
+                    SaveCaches(candidateCache);
+                    throw await InfrastructureFailureAsync(
+                        "AspectTimeout",
+                        $"Review aspect '{command.StepId}' was killed on its timeout, not its toolchain: " +
+                        $"{CommandLine(command)}; exit={execution.Process.ExitCode}; " +
+                        $"budget={BudgetSummary(command.TimeoutSeconds, execution)}.",
+                        commands,
+                        artifacts,
+                        ct);
+                }
+
                 if (MissingToolchain(execution.Process)
                     || AgentCommandUnavailable(command, execution.Process))
                 {
@@ -430,8 +473,12 @@ public sealed class RemoteReviewWorkspace
         }
 
         var proof = await CurrentProofAsync(ct);
-        var outcome = verdicts.Any(verdict =>
-            verdict.Status is "block" or "concerns" or "fail")
+        // AGT-2749: a lone "concerns" verdict is a reservation, not a refusal
+        // (AGT-2706 settled ProductFailure with every aspect pass and one
+        // documentation-impact concern). ReviewGradingPolicy is the single
+        // place that decides this; only a blocking token fails the review.
+        var outcome = ReviewGradingPolicy.Grade(verdicts.Select(verdict => verdict.Status))
+            == ReviewGrade.ProductFailure
             ? "ProductFailure"
             : "Pass";
         return new ReviewExecutionEvidence(outcome, proof, commands, artifacts, verdicts);
@@ -1553,6 +1600,17 @@ public sealed class RemoteReviewWorkspace
         => ReviewCommandKinds.IsAgent(command.ExecutionKind)
            && !result.Success
            && !result.StdOut.Contains("[[ASPECT_VERDICT:", StringComparison.Ordinal);
+
+    /// <summary>
+    /// True when an agent-aspect call was killed on its own timeout budget
+    /// (AGT-2749 addendum). <see cref="CarWorkerExecution"/> reports this as
+    /// exit code 124 with a <c>"timeout"</c> signal; distinct from a genuinely
+    /// missing or crashed toolchain, which <see cref="AgentCommandUnavailable"/>
+    /// still classifies as <c>ToolUnavailable</c>.
+    /// </summary>
+    private static bool AspectCommandTimedOut(ReviewCommandDto command, CommandExecution execution)
+        => ReviewCommandKinds.IsAgent(command.ExecutionKind)
+           && (execution.Signal == "timeout" || execution.Process.ExitCode == 124);
 
     private static string HashText(string value)
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();

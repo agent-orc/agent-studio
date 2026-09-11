@@ -60,10 +60,6 @@ public sealed class RemoteReviewPlanBuilder
             _configuration.GetValue(
                 "ReviewDecisionOrchestrator:Cli",
                 PipelineStepModelDefaults.DefaultCli));
-        var timeoutSeconds = Math.Clamp(
-            _configuration.GetValue("ReviewDecisionOrchestrator:AspectTimeoutSeconds", 60),
-            1,
-            7200);
 
         var commands = toolPlan.Commands.ToList();
         foreach (var step in pipeline.Post.Where(step => step.Kind == StepKind.Aspect))
@@ -90,6 +86,9 @@ public sealed class RemoteReviewPlanBuilder
                 model,
                 PipelineStepConfigResolver.ResolvePrompt(settings, step.Id),
                 step.Id);
+            // AGT-2749: per-toolchain budget, not one flat number - a Claude
+            // aspect call regularly needs longer than a Codex one.
+            var timeoutSeconds = ReviewAspectTimeoutPolicy.SecondsFor(cliType, _configuration);
             commands.Add(new Contract.ReviewCommandDto(
                 step.Id,
                 aspectId,

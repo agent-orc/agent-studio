@@ -77,8 +77,26 @@ export class IntegrationStatusBadgeComponent {
       case 'integrated': return value.sha ? `merged @${value.sha}` : 'merged';
       case 'partial': return 'teilweise integriert';
       case 'pending': return 'NICHT integriert';
-      case 'conflict-skipped': return value.failure?.label ?? 'Integration failed';
+      case 'conflict-skipped': {
+        const base = value.failure?.label ?? 'Integration failed';
+        const requeueLabel = this.requeueClassLabel();
+        return requeueLabel ? `${base} · ${requeueLabel}` : base;
+      }
       default: return 'kein Branch';
+    }
+  });
+
+  /**
+   * AGT-2749: display name for a failure the shared taxonomy attributes to
+   * the host or the provider account. Null for `product`/`unknown` (and for
+   * legacy records without a class) — those keep the plain failure label,
+   * with no implication that a retry is in flight.
+   */
+  readonly requeueClassLabel = computed<'Infrastructure' | 'Quota' | null>(() => {
+    switch (this.integration()?.failure?.failureClass) {
+      case 'infrastructure': return 'Infrastructure';
+      case 'quota': return 'Quota';
+      default: return null;
     }
   });
 
@@ -106,10 +124,15 @@ export class IntegrationStatusBadgeComponent {
           return `Partially integrated into ${branch} — some attributed commits are NOT in ${branch}`;
         case 'pending':
           return `Accepted, but NOT integrated into ${branch}`;
-        case 'conflict-skipped':
-          return value.failure?.label
+        case 'conflict-skipped': {
+          const requeueLabel = this.requeueClassLabel();
+          const failureLabel = value.failure?.label
             ? `${value.failure.label}; the work is NOT integrated into ${branch}`
             : `Integration into ${branch} failed; the work is NOT integrated`;
+          return requeueLabel
+            ? `${failureLabel} — ${requeueLabel} fault, will be retried automatically`
+            : failureLabel;
+        }
         default:
           return 'No task branch or commit to integrate';
       }

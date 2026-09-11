@@ -1,3 +1,5 @@
+using AgentStudio.TaskServer.Contracts;
+
 namespace AgentStudio.Pipeline;
 
 /// <summary>
@@ -29,11 +31,20 @@ public static class AcceptedIntegrationFailureCodes
 /// <summary>
 /// Card-safe classification of one terminal accepted-integration failure.
 /// </summary>
+/// <param name="FailureClass">
+/// AGT-2749: whether the raw evidence attributes this failure to the reviewed
+/// change, the host, or the provider account (see <see cref="RunFailureClass"/>).
+/// The acceptance rail requeues <see cref="RunFailureClass.Infrastructure"/> and
+/// <see cref="RunFailureClass.Quota"/> instead of parking them.
+/// </param>
+/// <param name="FailureSignature">Stable signature slug behind <see cref="FailureClass"/>; see <see cref="RunFailureSignatures"/>.</param>
 public sealed record AcceptedIntegrationFailure(
     string Code,
     string Label,
     string Reason,
-    bool RebaseRecoveryAvailable);
+    bool RebaseRecoveryAvailable,
+    RunFailureClass FailureClass = RunFailureClass.Unknown,
+    string FailureSignature = RunFailureSignatures.Unclassified);
 
 /// <summary>
 /// Pure policy that turns a durable merge-step verdict into an operator-facing
@@ -58,7 +69,19 @@ public static class AcceptedIntegrationFailurePolicy
 
         var code = NormalizePersistedCode(persistedCode)
             ?? InferCode(verdict, reason);
-        return code switch
+
+        // AGT-2749: classify off the raw evidence (not the code-specific
+        // fallback copy below) so a git network timeout or a gate-run budget
+        // overrun is attributed to the host even when the persisted code is
+        // a generic "integration-error". A merge conflict / rebase-required
+        // code carries its own recovery path (RebaseRecoveryAvailable) that
+        // the acceptance rail checks first, so its class is informational.
+        var classified = RunFailureClassifier.Classify(new RunFailureEvidence
+        {
+            Text = reason ?? verdictSummary ?? string.Empty,
+        });
+
+        AcceptedIntegrationFailure failure = code switch
         {
             AcceptedIntegrationFailureCodes.MergeConflict => new(
                 code,
@@ -128,6 +151,11 @@ public static class AcceptedIntegrationFailurePolicy
                 "Integration failed",
                 FirstNonBlank(reason, verdictSummary, "Integration failed without a diagnostic."),
                 RebaseRecoveryAvailable: false),
+        };
+        return failure with
+        {
+            FailureClass = classified.Class,
+            FailureSignature = classified.Signature,
         };
     }
 

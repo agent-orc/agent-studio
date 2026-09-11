@@ -1,6 +1,6 @@
 # Pipeline Domain Map
 
-Version: 2026-08-27
+Version: 2026-09-08
 Status: System-of-record map for task-processing pipeline changes.
 
 Use this when a change touches pre/core/post steps, pipeline catalog entries,
@@ -1034,6 +1034,73 @@ operator changes cause the step to fail before its writer runs.
 - If a new step emits a disk or wire shape, add or update a schema and the
   corresponding fixture tests.
 
+## Failure classes and requeue
+
+AGT-2749 (2026-09-06 overload night): a saturated operator host made every gate
+and review that ran in that window fail for infrastructure reasons, and the
+pipeline parked all thirteen cards in `5-human-review` as if the product were
+broken. An operator had to requeue every one by hand.
+
+- **Taxonomy.** `AgentStudio.TaskServer.Contracts.RunFailureClass` (`contracts/TaskServer.Contracts/RunFailureTaxonomy.cs`)
+  classifies one gate, review, or integration failure as `Product`,
+  `Infrastructure`, `Quota`, or `Unknown`. `RunFailureClassifier.Classify` is
+  pure and table-driven: caller-established facts (a quota probe, a violated
+  budget, a killed process) outrank text signatures; a parsed failing test name
+  or a reviewer's blocking verdict outranks a log that merely mentions a
+  timeout; a compiler diagnostic is a product fault only once host signatures
+  (MSBuild node crash, unmounted `/tmp`, unparsed test output) are ruled out.
+  `RunFailureSignatures` are stable, additive-only slugs persisted on cards and
+  rendered in the lane - never renamed.
+- **Wiring.** `AcceptedIntegrationFailurePolicy.Classify` (`backend/Features/Pipeline/AcceptedIntegrationFailurePolicy.cs`)
+  runs the classifier over the accepted-integration step's raw reason text and
+  attaches `FailureClass` / `FailureSignature` to `AcceptedIntegrationFailure`;
+  `TaskIntegrationStatusService` carries them onto `TaskIntegrationFailure`
+  (`backend/Shared/Models/TaskProvenance.cs`).
+- **Requeue instead of park.** `AcceptanceRailPolicy.Decide` (`backend/Features/Tasks/Acceptance/AcceptanceRailPolicy.cs`)
+  checks `RebaseRecoveryAvailable` first (unchanged rebase-recovery path), then
+  routes an `Infrastructure` or `Quota` failure to `RequeueInfrastructure`
+  instead of parking it: the card returns to `4-auto-review` unchanged (no
+  rebase steer) with a bounded, exponentially backed-off retry budget
+  (`AcceptanceRailDefaults.MaxInfrastructureRequeues`, default 3; a known quota
+  reset instant is waited for exactly, not backed off). Only after the budget
+  is exhausted does the card escalate to Human Review, carrying the class and
+  signature in the escalation reason. `AcceptanceRailReceipts` counts a card's
+  own `requeued-infrastructure` timeline receipts so the rail and the card
+  projection agree on the retry number.
+- **Grading consistency.** `ReviewGradingPolicy.Grade` (`contracts/TaskServer.Contracts/ReviewGradingPolicy.cs`)
+  is the single place a set of aspect verdict tokens becomes one review grade:
+  a blocking token (`block` / `blocked` / `fail`) yields `ProductFailure`; a
+  `concerns` token alone yields `PassWithConcerns`, never `ProductFailure`
+  (AGT-2706 regression - every aspect passed except one `documentation-impact`
+  concern, and the review still failed). `runner/RemoteReviewWorkspace.cs`
+  computes the remote review outcome through this policy.
+- **Per-toolchain aspect budgets.** `ReviewAspectTimeoutPolicy` (`backend/Features/Runner/ReviewAspectTimeoutPolicy.cs`)
+  replaces the old flat `ReviewDecisionOrchestrator:AspectTimeoutSeconds` (60s
+  for every CLI) with per-toolchain defaults - codex 120s, claude 240s, gemini
+  180s - each with its own configuration key
+  (`ReviewDecisionOrchestrator:AspectTimeoutSeconds:<cliType>`), so raising one
+  CLI's budget cannot silently narrow another's. An aspect call killed on its
+  own timeout classifies as `AspectTimeout` (infrastructure), never
+  `ToolUnavailable` - the toolchain was not the problem, the budget was.
+- **Gate-run and git-network budgets.** `GateRunBudgetPolicy.ResolveSeconds`
+  (`backend/Features/Pipeline/GateRunBudgetPolicy.cs`) sizes the build/test
+  gate-run budget: an explicit `ProjectSettings.BuildTestGateTimeoutSeconds`
+  override wins outright; absent that, 20+ samples of recent run duration size
+  the budget from their p95 times 1.5; absent both, the platform default is 60
+  minutes (up from 300 seconds). `GitService.FetchWithCatchUpBudget`
+  (`backend/Features/Git/GitService.cs`) retries a develop/delivery branch
+  fetch exactly once at a longer, separately configured timeout
+  (`GitNetwork:IntegrationFetchCatchUpTimeoutSeconds`, default 300s) when the
+  first attempt hits the flat 30-second `GitNetworkProcessRunner.DefaultTimeout`
+  - mirroring `WorkspaceArtifactPushWorker`'s push catch-up.
+- **Live-CLI tests.** Tests that spawn a real CLI binary (`[Collection("LiveCli")]`)
+  also carry `[Trait("Category", "MachineBound")]` so `TestSelectionPlanner`'s
+  auto-generated `--filter Category!=MachineBound` excludes them from gate runs
+  by default; they stay opt-in via `RUN_CLI_INTEGRATION=1` for a host that
+  wants to run them explicitly. A live-CLI test failing on an exhausted
+  provider quota must never fail a gate run it was never supposed to be part
+  of.
+
 ## Verification
 
 - Catalogue changes need `PipelineCatalogueTests` and any step-specific test
@@ -1070,3 +1137,10 @@ operator changes cause the step to fail before its writer runs.
 - Pipeline health changes need `PipelineHealthNightReplayTests`, the
   `pipeline-health-block` component spec, and the mocked night-alarm screenshot
   in `pipeline-page-evidence.spec.ts`.
+- Failure-class and requeue changes need `RunFailureClassifierTests` (the
+  September-6 incident replay plus the classifier's fact-before-text
+  ordering), `ReviewGradingPolicyTests` (the AGT-2706 concerns-vs-block
+  regression), `AcceptedIntegrationFailurePolicyTests`,
+  `AcceptanceRailPolicyTests` and `AcceptanceRailHostedServiceTests` (the
+  infrastructure requeue/backoff/escalation matrix), `ReviewAspectTimeoutPolicyTests`,
+  and `GateRunBudgetPolicyTests`.

@@ -533,6 +533,9 @@ export interface TaskRepositoryCommitMembership {
   onReleaseBranch: boolean;
 }
 
+/** Mirrors `AgentStudio.TaskServer.Contracts.RunFailureClass` (AGT-2749). */
+export type RunFailureClass = 'unknown' | 'product' | 'infrastructure' | 'quota';
+
 export interface TaskIntegrationFailure {
   /** Stable machine-readable failure class. */
   code: string;
@@ -542,4 +545,12 @@ export interface TaskIntegrationFailure {
   reason: string;
   /** Whether the focused rebase recovery action can resolve this class. */
   rebaseRecoveryAvailable: boolean;
+  /**
+   * AGT-2749: whether the shared taxonomy attributes this failure to the
+   * reviewed change, the host, or the provider account. `infrastructure` and
+   * `quota` are requeued instead of parked; absent on legacy records.
+   */
+  failureClass?: RunFailureClass;
+  /** Stable signature slug behind `failureClass` (e.g. `git-network-timeout`). */
+  failureSignature?: string;
 }

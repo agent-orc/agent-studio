@@ -597,6 +597,8 @@ public sealed class TaskIntegrationStatusService
                     Label = failure.Label,
                     Reason = visibleReason,
                     RebaseRecoveryAvailable = failure.RebaseRecoveryAvailable,
+                    FailureClass = failure.FailureClass,
+                    FailureSignature = failure.FailureSignature,
                 },
             };
         }

@@ -3,6 +3,7 @@
         [class.integration-badge--acute]="acute()"
         [attr.data-integration-status]="value.status"
         [attr.data-integration-failure-code]="value.failure?.code ?? null"
+        [attr.data-integration-failure-class]="value.failure?.failureClass ?? null"
         [attr.data-kind]="kind()"
         data-testid="integration-status-badge"
         role="img"

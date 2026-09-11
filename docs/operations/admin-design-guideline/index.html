@@ -970,7 +970,18 @@
     <p class="muted">Evidence: deterministic mocked before and after captures for light and dark themes at wide and narrow widths in the AGT-2606 results.</p>
   </section>
 
-  <footer>Prepared 10 August 2026; flat outcome-summary, panel keyboard containment, lane-header, and Dossier-list guidance extended 12 August 2026; promoted to living standard with visual dos-and-donts and applied-surfaces subpages by AGT-2617 on 16 August 2026. Source card AGT-2583. Related evidence: AGT-2565, AGT-2567, AGT-2568, AGT-2549, AGT-2579, AGT-2606, AGT-2638, AGT-2642, AGT-2643, and AGT-2644. Multi-page format (index.html + pages/) introduced by AGT-2617; task-header status pair added by AGT-2637.</footer>
+  <section id="human-review-requeue-addendum" data-concept-section="decision-log">
+    <h2><span class="section-no">13</span>Human Review requeue addendum</h2>
+    <p>AGT-2749 (2026-09-06 overload night): thirteen cards parked in Human Review read as broken product when every one was a host or account fault. The failure taxonomy now requeues an infrastructure or quota fault instead of parking it; this addendum applies ADM-06 (sober operational copy) to what the lane and the card header show while that retry budget is being spent.</p>
+    <ul>
+      <li><strong>State the class, not a narrative.</strong> A card mid-retry shows its failure class (<q>Infrastructure</q> or <q>Quota</q>) and the bounded retry counter (<q>retry 2/3</q>) as one quiet metadata line, not a paragraph explaining what went wrong or apologizing for it.</li>
+      <li><strong>Human Review keeps its meaning.</strong> A card visible in Human Review carries a verdict worth an operator's judgment: a real product failure, or a retry budget the taxonomy has exhausted. A card still spending its infrastructure or quota retry budget stays in the auto-review lane; it does not occupy Human Review while the platform is still trying.</li>
+      <li><strong>Escalation names the budget it exhausted.</strong> When the retry budget is gone, the escalation reason states the class, the signature, and the ratio spent (<q>Integration recovery stopped after 3/3 infrastructure requeues (git-network-timeout)</q>) — the current fact and the next action (fix the host or the account, then requeue), never a speculative diagnosis.</li>
+    </ul>
+    <p class="muted">Evidence: <code>RunFailureClassifierTests</code>, <code>AcceptanceRailPolicyTests</code>, and <code>AcceptanceRailHostedServiceTests</code> pin the classification and requeue behaviour; a Playwright capture of the lane showing class and retry counter lands with the card that applies this addendum's visual surface.</p>
+  </section>
+
+  <footer>Prepared 10 August 2026; flat outcome-summary, panel keyboard containment, lane-header, and Dossier-list guidance extended 12 August 2026; promoted to living standard with visual dos-and-donts and applied-surfaces subpages by AGT-2617 on 16 August 2026; Human Review requeue addendum (AGT-2749) added 8 September 2026. Source card AGT-2583. Related evidence: AGT-2565, AGT-2567, AGT-2568, AGT-2549, AGT-2579, AGT-2606, AGT-2638, AGT-2642, AGT-2643, AGT-2644, and AGT-2749. Multi-page format (index.html + pages/) introduced by AGT-2617; task-header status pair added by AGT-2637.</footer>
 </main>
 </body>
 </html>

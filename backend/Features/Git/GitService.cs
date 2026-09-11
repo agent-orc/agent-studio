@@ -4060,7 +4060,7 @@ public class GitService
 
         var deliveryRef = $"refs/remotes/origin/{branch}";
         var fetchDelivery = $"+refs/heads/{branch}:{deliveryRef}";
-        var (_, deliveryError, deliveryCode) = RunGitArgs(
+        var (_, deliveryError, deliveryCode) = FetchWithCatchUpBudget(
             repoRoot, cancellationToken, "fetch", "--no-tags", "origin", fetchDelivery);
         if (deliveryCode != 0)
             return Failed(
@@ -4458,7 +4458,7 @@ public class GitService
 
         var remoteIntegrationRef = $"refs/remotes/origin/{integrationBranch}";
         var fetchTarget = $"+refs/heads/{integrationBranch}:{remoteIntegrationRef}";
-        var (_, fetchError, fetchCode) = RunGitArgs(
+        var (_, fetchError, fetchCode) = FetchWithCatchUpBudget(
             repoRoot, cancellationToken, "fetch", "--no-tags", "origin", fetchTarget);
         if (fetchCode != 0)
         {
@@ -4508,7 +4508,7 @@ public class GitService
         var remoteRef = $"refs/remotes/origin/{deliveryBranch}";
         var fetchSource = $"refs/heads/{deliveryBranch}";
         var fetchTarget = $"+{fetchSource}:{remoteRef}";
-        var (_, fetchError, fetchCode) = RunGitArgs(
+        var (_, fetchError, fetchCode) = FetchWithCatchUpBudget(
             repoRoot, cancellationToken, "fetch", "--no-tags", "origin", fetchTarget);
         if (fetchCode != 0)
         {
@@ -6729,6 +6729,55 @@ public class GitService
 
         return RunGitProcess(psi, stdin, cancellationToken);
     }
+
+    /// <summary>
+    /// AGT-2749: fetch with a catch-up retry. The 2026-09-06 overload night
+    /// killed the develop and delivery branch fetches on the flat 30-second
+    /// <see cref="GitNetworkProcessRunner.DefaultTimeout"/>
+    /// ("git operation timed out after 30 seconds") and the pipeline treated
+    /// the resulting error as a plain integration failure. A fetch that only
+    /// timed out - not one that failed for a real git reason - gets exactly
+    /// one retry at a longer, separately configured budget, mirroring
+    /// <c>WorkspaceArtifactPushWorker</c>'s push catch-up.
+    /// </summary>
+    private (string Out, string Err, int Code) FetchWithCatchUpBudget(
+        string cwd,
+        CancellationToken cancellationToken,
+        params string[] args)
+    {
+        var timeout = GitNetworkProcessRunner.DefaultTimeout;
+        while (true)
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = "git",
+                WorkingDirectory = cwd,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            foreach (var arg in args) psi.ArgumentList.Add(arg);
+            var command = CommandLabel(psi);
+            var sw = Stopwatch.StartNew();
+            var result = GitNetworkProcessRunner.Run(psi, stdin: null, timeout, cancellationToken);
+            sw.Stop();
+            GitProcessTelemetry.Record(command, sw.ElapsedMilliseconds, result.ExitCode);
+            if (result.FailureKind != GitProcessFailureKind.TimedOut || timeout == IntegrationFetchCatchUpTimeout)
+                return (result.StandardOutput, result.StandardError, result.ExitCode);
+            _logger.LogWarning(
+                "git-fetch-catch-up cwd={Cwd} args={Args} firstAttemptTimeoutSeconds={TimeoutSeconds}",
+                cwd,
+                string.Join(' ', args),
+                timeout.TotalSeconds);
+            timeout = IntegrationFetchCatchUpTimeout;
+        }
+    }
+
+    private TimeSpan IntegrationFetchCatchUpTimeout => TimeSpan.FromSeconds(Math.Clamp(
+        _config.GetValue<int?>("GitNetwork:IntegrationFetchCatchUpTimeoutSeconds") ?? 300,
+        30,
+        3600));
 
     private static (string Out, string Err, int Code) RunGitProcess(
         ProcessStartInfo psi,

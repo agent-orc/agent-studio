@@ -444,7 +444,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         var cliBinary = _configuration.GetValue("ReviewDecisionOrchestrator:Cli", CliTypes.Codex);
         var model = _configuration.GetValue("ReviewDecisionOrchestrator:Model", ModelIds.Gpt54Mini);
         var aspectModel = _configuration.GetValue("ReviewDecisionOrchestrator:AspectModel", model);
-        var aspectTimeoutSeconds = _configuration.GetValue("ReviewDecisionOrchestrator:AspectTimeoutSeconds", 60);
+        // AGT-2749: per-toolchain budget, not one flat 60s number that starved Claude aspect calls.
+        var aspectTimeoutSeconds = ReviewAspectTimeoutPolicy.SecondsFor(cliBinary, _configuration);
         var maxReissues = _configuration.GetValue("ReviewDecisionOrchestrator:MaxAutoReissueAttempts", MaxAutoReissueAttempts);
         var maxParallelReviews = ParallelSlotPolicy.ClampMax(
             _configuration.GetValue("ReviewDecisionOrchestrator:MaxParallelReviews", DefaultMaxParallelReviews));
@@ -688,7 +689,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         var cliBinary = _configuration.GetValue("ReviewDecisionOrchestrator:Cli", CliTypes.Codex);
         var model = _configuration.GetValue("ReviewDecisionOrchestrator:Model", ModelIds.Gpt54Mini);
         var aspectModel = _configuration.GetValue("ReviewDecisionOrchestrator:AspectModel", model);
-        var aspectTimeoutSeconds = _configuration.GetValue("ReviewDecisionOrchestrator:AspectTimeoutSeconds", 60);
+        // AGT-2749: per-toolchain budget, not one flat 60s number that starved Claude aspect calls.
+        var aspectTimeoutSeconds = ReviewAspectTimeoutPolicy.SecondsFor(cliBinary, _configuration);
         var maxPerHour = _configuration.GetValue("ReviewDecisionOrchestrator:CallsPerHour", DefaultCallsPerHour);
         var maxReissues = _configuration.GetValue("ReviewDecisionOrchestrator:MaxAutoReissueAttempts", MaxAutoReissueAttempts);
 
@@ -3656,7 +3658,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     {
         if (_buildTestGateRunner == null) return null;
 
-        var settings = PipelineTypeSettings.ForTask(_projectSettings?.Get(entry.Name), current);
+        var projectSettings = _projectSettings?.Get(entry.Name);
+        var settings = PipelineTypeSettings.ForTask(projectSettings, current);
         var step = PipelineCatalogue.Standard.Post.FirstOrDefault(s =>
             string.Equals(s.Id, PipelineCatalogue.BuildTestGateStepId, StringComparison.OrdinalIgnoreCase));
         if (step is not null
@@ -3696,7 +3699,12 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
 
         var repoPath = ResolveBuildTestGateRepositoryPath(entry);
         var subject = ResolveBuildTestGateSubject(current, entry.Path);
-        var timeoutSeconds = _configuration.GetValue($"PostSteps:{PipelineCatalogue.BuildTestGateStepId}:TimeoutSeconds", 300);
+        // AGT-2749: a per-project override wins outright; absent one the
+        // platform default is 60 minutes, not the old 300s that a real suite
+        // (or a config override sized to just barely fit) kept violating.
+        var timeoutSeconds = _configuration.GetValue<int?>(
+                $"PostSteps:{PipelineCatalogue.BuildTestGateStepId}:TimeoutSeconds")
+            ?? GateRunBudgetPolicy.ResolveSeconds(projectSettings?.BuildTestGateTimeoutSeconds);
         var infrastructureTimeoutSeconds = _configuration.GetValue(
             $"PostSteps:{PipelineCatalogue.BuildTestGateStepId}:InfrastructureTimeoutSeconds", 120);
         // The machine gate is held for a whole build+test run, so a card queued
