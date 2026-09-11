@@ -36,6 +36,18 @@ internal static class ReviewLeaseRecoveryPolicy
     /// <summary>Superseded authority is deliberate and must never be re-claimed.</summary>
     private const string Superseded = "Superseded";
 
+    private static readonly HashSet<string> RecoverableReportAuthorityCodes =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            "LeaseExpired",
+            "review-lease-expired",
+            "review-attempt-not-leased",
+            "review-lease-not-active",
+            "stale-review-authority",
+            "stale-review-fence",
+            "review-execution-attribution-mismatch",
+        };
+
     internal static ReviewLeaseRecoveryAction Decide(
         int? statusCode,
         string? errorCode,
@@ -69,4 +81,17 @@ internal static class ReviewLeaseRecoveryPolicy
             : workerLive
                 ? ReviewLeaseRecoveryAction.ReClaim
                 : ReviewLeaseRecoveryAction.Abandon;
+
+    /// <summary>
+    /// A report-side 409 is not automatically terminal. These codes mean the
+    /// report was built from authority the server no longer accepts, so the
+    /// executor must run the same re-adopt/re-claim flow as a heartbeat before
+    /// it is allowed to delete the expensive completed workspace.
+    /// </summary>
+    internal static bool IsRecoverableReportAuthorityRejection(
+        int? statusCode,
+        string? errorCode)
+        => statusCode == 409
+           && errorCode is not null
+           && RecoverableReportAuthorityCodes.Contains(errorCode);
 }

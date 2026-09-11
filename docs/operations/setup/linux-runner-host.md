@@ -310,9 +310,10 @@ ssh agent-runner-01 '
 ```
 
 Omit a unit that is not installed on that host. If Review is busy, the helper
-refuses with the drain hint; run `agent-runner-deploy drain` so the current
-reviews finish before the credential-bearing daemon is replaced. Never append
-a token with an interactive editor or pass it as an SSH argument. When more
+refuses with the drain hint. Run `agent-runner-deploy drain` so the current
+reviews finish and the role stops, then rerun `agent-runner-deploy
+restart-review` to start the credential-bearing daemon. Never append a token
+with an interactive editor or pass it as an SSH argument. When more
 providers gain environment-token support, send the complete replacement file
 through the same stdin path so this remains the single provider-auth source.
 
@@ -434,10 +435,10 @@ migration refuses to install the helper when that interpreter is absent.
 
 Promotion replaces both fixed service processes, then observes their systemd
 `NRestarts` counters and active state for 15 seconds. Review is replaced first:
-it receives SIGTERM only on its active MainPID, and
-`Restart=always` starts the replacement without stopping detached workers. The
-Coding unit then uses an ordinary restart. The single planned Review
-replacement may advance `NRestarts` once; any further
+it receives SIGTERM only on its active MainPID, the helper waits for the clean
+handoff exit, and then explicitly starts the replacement without stopping
+detached workers. The Coding unit then uses an ordinary restart. The single
+planned Review replacement may advance `NRestarts` once; any further
 counter change, replacement failure, or inactive unit makes the command fail
 and prints the previous release id plus an operator rollback one-liner. The
 failed release remains immutable for investigation.
@@ -903,8 +904,9 @@ Use `--role review`, a separate enrolled identity, and a separate credential
 file to install or update `agent-runner-review.service`. The controller derives
 role resource policy, writes it into the main unit, migrates legacy resource
 drop-ins, runs `daemon-reload`, and replaces the selected service process.
-Review installation writes the versioned `RefuseManualStop=true` drop-in before
-it signals the current MainPID or starts an inactive unit. Do not copy
+Review installation writes the versioned `RefuseManualStop=true` and
+`Restart=on-failure` drop-in before it signals the current MainPID or starts an
+inactive unit. Do not copy
 `deploy/systemd/agent-runner.service` directly for a managed host; that file is
 the legacy static unit reference and cannot derive a host quota.
 
@@ -929,8 +931,10 @@ The managed units deliberately use `KillMode=process`. This is required:
 impossible. `StartLimitIntervalSec=300`, `StartLimitBurst=5`, and
 `RestartSec=10s` bound a broken-binary restart loop while allowing ordinary
 recovery. Review alone also loads `RefuseManualStop=true`, so direct
-`systemctl stop` and `systemctl restart` requests are refused. Installing or
-changing the unit requires root, followed by `systemctl daemon-reload`.
+`systemctl stop` and `systemctl restart` requests are refused. Its
+`Restart=on-failure` override restarts crashes but leaves a successful drain
+stopped. Installing or changing the unit requires root, followed by
+`systemctl daemon-reload`.
 
 ### Restart, drain, handoff
 
@@ -938,8 +942,13 @@ changing the unit requires root, followed by `systemctl daemon-reload`.
 holds thirty to sixty minutes of gate work in a detached worker. Stopping the
 daemon on top of it can cost that work and put the card back in the queue.
 Systemd therefore refuses every direct Review `stop` or `restart`. The deploy
-helper is the only service-control path: it checks durable slot markers first,
-then signals only the active daemon MainPID and waits for its replacement.
+helper is the only service-control path: it asks that exact daemon generation
+to close claim admission, signals only the active daemon MainPID after its
+request-id-matched acknowledgement, waits for it to stop, and starts a
+replacement only when the requested operation is a replacement. `ExecStop`
+cannot veto a stop after systemd has scheduled it, so the unconditional
+`RefuseManualStop` guard protects direct commands while the helper supplies the
+conditional busy-slot check and drain hint.
 
 ```bash
 # Would a restart discard review work right now?
@@ -949,19 +958,36 @@ sudo -u agent /opt/agent-host/current/agent-host --restart-guard --role review \
 # Replace an idle Review daemon, or get the drain hint when slots are busy.
 sudo /usr/local/sbin/agent-runner-deploy restart-review
 
-# Busy host: stop claiming, finish the running reviews, then replace the daemon.
+# Busy host: stop claiming, finish the running reviews, then stop the role.
 sudo /usr/local/sbin/agent-runner-deploy drain
 ```
 
 `drain` writes `review-drain-requested.json` into the review `RUNNER_STATE_DIR`.
-The daemon stops claiming on its next poll, logs `review daemon draining`,
-finishes its running reviews, and exits with `review daemon drained` once the
-slot set is empty. The helper handles the race with that exit, signals the old
-MainPID when it has not exited yet, and waits for a different active MainPID.
-`Restart=always` starts the fresh instance, which clears the marker and resumes
-claiming, so a drain needs no second operator step. The wait is bounded by
-`RUNNER_DRAIN_TIMEOUT_SECONDS` (default one hour); a drain that runs out names
-the slots it could not finish and exits 3.
+The daemon stops claiming on its next poll and writes the matching
+`review-drain-acknowledged.json` only after any claim request already in flight
+has returned and its accepted slot is durable. The command does not accept an
+empty file census before this acknowledgement. It also refuses when any slot
+record is unreadable, because an empty slot set cannot then be proved.
+
+After acknowledgement, the daemon logs `review daemon draining`, finishes its
+running reviews, and exits successfully with `review daemon drained` once both
+its active set and the readable busy-slot census are empty. The Review-only
+`Restart=on-failure` policy leaves the service stopped. The request remains in
+place so an accidental start cannot resume claims; the next explicit
+`agent-runner-deploy restart-review`, configuration replacement, or release
+promotion clears the completed drain state only after the old daemon is gone,
+then starts the new generation. The wait is bounded by
+`RUNNER_DRAIN_TIMEOUT_SECONDS` (default one hour); a missing acknowledgement,
+unreadable record, or unfinished slot exits 3 and leaves admission closed.
+
+The non-force restart guard uses the same control records in `restart-guard`
+mode. An idle daemon acknowledges after any in-flight claim has returned, then
+remains alive and claim-free while the deploy helper signals it. A refusal or a
+standalone diagnostic withdraws only its own request ID so the daemon can resume;
+an accepted helper guard keeps admission closed through old-MainPID exit. This
+also works while startup registration or capability advertisement is retrying:
+an idle drain is acknowledged and stops locally without waiting for the Task
+Server, while persisted busy slots remain available for later reconciliation.
 
 A direct `systemctl restart agent-runner-review.service` is refused even when
 the role is idle. A helper refusal prints the drain hint and does not signal the
@@ -974,8 +1000,24 @@ sudo /usr/local/sbin/agent-runner-deploy restart-review --force
 sudo /usr/local/sbin/agent-runner-deploy --force
 ```
 
+The first upgrade from a daemon that predates the host-local control protocol
+is deliberately fail closed: the staged candidate understands
+`--restart-guard`, but the still-running old daemon cannot acknowledge its
+admission barrier, so an ordinary promotion is refused without signaling the
+daemon or flipping `current`. For that one-time migration, retire or otherwise
+pause the Review identity at the Task Server, wait until Execution Hosts reports
+zero active Review slots, run the root-only forced promotion, then revive the
+identity. Do not use `--force` while the old identity can still claim work.
+
 The guard also covers `agent-runner-deploy config review RUNNER_MAX_PARALLELISM
 <n>` and release promotion, because those paths replace the Review daemon too.
+For an active unit, the helper reads the effective `RUNNER_STATE_DIR` from that
+MainPID's `/proc/<pid>/environ` and fails closed if it cannot. Release promotion
+runs the already validated staged `agent-host` for the guard, so upgrading from
+a current binary that predates the guard flag cannot bypass or deadlock the
+check. Onboarding and the native installer apply the same admission barrier
+before signaling an existing Review daemon; only a genuinely inactive first
+install skips it.
 The service account's
 sudoers policy deliberately does **not** allow `--force`: automation drains, and
 only a human operator overrides.
@@ -993,13 +1035,14 @@ is gone or was deliberately superseded ends as `review lease authority lost`.
 
 ### Planned daemon restart and deploy
 
-A planned Runner deploy no longer waits for host idle. On a hardened host, stage
-the complete application and invoke the no-argument deploy helper as described
-in section 2. Drain the Review Executor first, or the helper refuses. The helper
-records the previous release, validates the dependency closure, runs the
+A planned Runner deploy uses the bounded Review drain rather than replacing a
+busy role. On a hardened host, stage the complete application and invoke the
+no-argument deploy helper as described in section 2. Drain the Review Executor
+first, or the helper refuses. The helper records the previous release,
+validates the dependency closure, runs the
 service-user boot smoke check, atomically switches `/opt/agent-host/current`,
-signals only the Review MainPID, restarts Coding, waits for both replacement
-processes, and watches for an immediate restart loop.
+starts the already-drained Review role, restarts Coding, waits for both
+replacement processes, and watches for an immediate restart loop.
 
 ```bash
 sudo /usr/local/sbin/agent-runner-deploy drain
@@ -1012,9 +1055,10 @@ sudo journalctl -u agent-runner-review --since '-2 minutes' \
 ```
 
 On SIGTERM the old daemon stops making claims, leaves detached coding and review
-workers running, flushes its already-atomic slot records, and exits. systemd
-starts the replacement, which verifies and reattaches those workers before
-opening any freed slot to claims. For Coding, confirm every occupied slot reports
+workers running, flushes its already-atomic slot records, and exits. For a
+guarded Review replacement, the helper then starts the new daemon, which
+verifies and reattaches those workers before opening any freed slot to claims.
+For Coding, confirm every occupied slot reports
 either `persisted attempt accepted` or `releasing dead persisted attempt`; the
 latter must be followed by a Ready card and a later higher-fence claim. For
 Review, confirm `review daemon handoff` is followed by `persisted review
@@ -1273,8 +1317,8 @@ proof.
   connectivity backoff.
 - **`daemon-idle-watchdog status=fatal`** - a slot-free daemon did not start a
   claim poll within `RUNNER_IDLE_WATCHDOG_MINUTES`. It exits deliberately so
-  `Restart=always` can replace a process whose main loop is no longer making
-  progress.
+  the service failure-restart policy can replace a process whose main loop is
+  no longer making progress.
 ## Reading host telemetry
 
 The runner samples the host every 30 seconds and piggybacks the sample on its existing Task Server claim poll. The Execution Hosts view keeps CPU, memory, Linux load averages, swap traffic, CPU steal time, I/O wait, core count, active runner slots, and the last locally observed Task Server connection state together. Use the 1h, 6h, 48h, and 14d controls to compare load with concurrency. For example, `6 active slots · load 6.4 of 12 cores` is direct evidence for whether the current slot limit leaves headroom.

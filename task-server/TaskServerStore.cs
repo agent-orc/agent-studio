@@ -770,11 +770,22 @@ public sealed partial class TaskServerStore
                         task.ProjectId,
                         task.TaskId));
                 }
-                var lostAttempts = reviewAttempts
-                    .Where(item => !string.Equals(
-                        item.Status,
-                        "adopted",
+                var reportedReviewAttemptIds = activeAttempts
+                    .Where(item => string.Equals(
+                        item.Kind,
+                        RunnerAttemptKinds.Review,
                         StringComparison.Ordinal))
+                    .Select(item => item.AttemptId)
+                    .ToHashSet(StringComparer.Ordinal);
+                reviewAttempts.AddRange(await ReadUnreportedReviewRestartAttemptsAsync(
+                    connection,
+                    transaction,
+                    id,
+                    request.HostId.Trim(),
+                    reportedReviewAttemptIds,
+                    ct));
+                var lostAttempts = reviewAttempts
+                    .Where(IsDefinitiveReviewRestartLoss)
                     .ToArray();
                 await ExecuteAsync(connection, """
                     INSERT INTO runner_review_restarts(
@@ -1022,7 +1033,8 @@ public sealed partial class TaskServerStore
         CancellationToken ct)
     {
         await using var command = Command(connection, """
-            SELECT task_id, status, executor_id, instance_id, host_id, lease_id, fence
+            SELECT task_id, status, executor_id, instance_id, host_id, lease_id, fence,
+                   expires_at
               FROM review_attempts
              WHERE id = $attempt;
             """, transaction, ("$attempt", reported.AttemptId));
@@ -1036,8 +1048,11 @@ public sealed partial class TaskServerStore
         var leaseHost = reader.IsDBNull(4) ? null : reader.GetString(4);
         var leaseId = reader.IsDBNull(5) ? null : reader.GetString(5);
         var fence = reader.GetInt64(6);
+        var currentExpiresAt = reader.IsDBNull(7) ? (DateTime?)null : Parse(reader.GetString(7));
         await reader.DisposeAsync();
-        if (status is not ("leased" or "process-unknown") || leaseId is null)
+        if (status is not ("leased" or "process-unknown")
+            || leaseId is null
+            || currentExpiresAt is null)
             return Adoption(reported, "invalid-state", $"ReviewAttempt is {status}.");
         if (!string.Equals(taskKey, reported.TaskKey, StringComparison.Ordinal)
             || !string.Equals(executorId, runnerId, StringComparison.Ordinal)
@@ -1049,14 +1064,17 @@ public sealed partial class TaskServerStore
         {
             return Adoption(reported, "stale-authority", "ReviewAttempt authority does not match the durable server record.");
         }
+        var adoptedExpiresAt = currentExpiresAt.Value > expiresAt
+            ? currentExpiresAt.Value
+            : expiresAt;
         await ExecuteAsync(connection, """
             UPDATE review_attempts
                SET status = 'leased', expires_at = $expires
              WHERE id = $attempt;
             """, ct, transaction,
-            ("$expires", Iso(expiresAt)),
+            ("$expires", Iso(adoptedExpiresAt)),
             ("$attempt", reported.AttemptId));
-        return Adoption(reported, "adopted", expiresAt: expiresAt);
+        return Adoption(reported, "adopted", expiresAt: adoptedExpiresAt);
     }
 
     private static RunnerAttemptAdoption Adoption(
@@ -1089,6 +1107,48 @@ public sealed partial class TaskServerStore
             : new ReviewRestartTaskReference(null, null, reportedTaskKey);
     }
 
+    private static async Task<IReadOnlyList<ReviewRestartAttemptObservation>>
+        ReadUnreportedReviewRestartAttemptsAsync(
+            SqliteConnection connection,
+            SqliteTransaction transaction,
+            string runnerId,
+            string hostId,
+            IReadOnlySet<string> reportedAttemptIds,
+            CancellationToken ct)
+    {
+        var missing = new List<ReviewRestartAttemptObservation>();
+        await using var command = Command(connection, """
+            SELECT review.id, task.task_key, task.project_id, task.id,
+                   review.instance_id
+              FROM review_attempts review
+              JOIN tasks task ON task.id = review.task_id
+             WHERE review.executor_id = $runner
+               AND review.host_id = $host
+               AND review.status IN ('leased', 'process-unknown')
+             ORDER BY review.created_at, review.id;
+            """, transaction,
+            ("$runner", runnerId),
+            ("$host", hostId));
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            var attemptId = reader.GetString(0);
+            if (reportedAttemptIds.Contains(attemptId))
+                continue;
+            var taskKey = reader.GetString(1);
+            var leaseInstanceId = reader.IsDBNull(4) ? "unknown" : reader.GetString(4);
+            missing.Add(new ReviewRestartAttemptObservation(
+                attemptId,
+                taskKey,
+                "worker-not-reported",
+                $"Persisted ReviewAttempt worker for lease instance '{leaseInstanceId}' "
+                + "was absent from replacement ActiveAttempts.",
+                reader.GetString(2),
+                reader.GetString(3)));
+        }
+        return missing;
+    }
+
     private async Task PublishOperationalEventsAsync(
         IReadOnlyList<TaskServerOperationalEvent> messages,
         CancellationToken ct)
@@ -1112,6 +1172,9 @@ public sealed partial class TaskServerStore
 
     private static string EffectiveActor(string actorId)
         => string.IsNullOrWhiteSpace(actorId) ? "anonymous-local" : actorId;
+
+    private static bool IsDefinitiveReviewRestartLoss(ReviewRestartAttemptObservation observation)
+        => string.Equals(observation.Status, "worker-not-reported", StringComparison.Ordinal);
 
     private sealed record ReviewRestartTaskReference(
         string? TaskId,

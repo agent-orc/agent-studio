@@ -97,6 +97,80 @@ public sealed class ReviewLeaseHandoffAuthorityTests : IDisposable
     }
 
     [Fact]
+    public void Re_claim_preserves_the_running_workers_physical_isolation_authority()
+    {
+        var now = new DateTime(2026, 9, 7, 3, 10, 0, DateTimeKind.Utc);
+        var service = NewService(() => now);
+        ClaimedReview(service, out var claimed);
+        var original = Assert.IsType<ReviewLeaseIsolation>(
+            service.GetReviewLeaseIsolation(claimed.AttemptId, claimed.Lease!.LeaseId));
+
+        RewriteAsSchemaFourWithoutReviewIsolation(claimed.AttemptId);
+        service = NewService(() => now);
+        var migrated = Assert.IsType<ReviewLeaseIsolation>(
+            service.GetReviewLeaseIsolation(claimed.AttemptId, claimed.Lease.LeaseId));
+        Assert.Equal(original, migrated);
+
+        now = now.AddSeconds(600);
+        service = NewService(() => now);
+        var reclaimed = service.ReClaimReview(
+            claimed.AttemptId,
+            "reviewer",
+            "review-host",
+            "review-host:replacement",
+            claimed.Lease.LeaseId,
+            claimed.LastFence,
+            120,
+            "reclaim-preserve-isolation");
+
+        Assert.Equal(AttemptWriteStatus.Accepted, reclaimed.Status);
+        Assert.True(reclaimed.ReviewAttempt!.LastFence > claimed.LastFence);
+        var preserved = Assert.IsType<ReviewLeaseIsolation>(
+            service.GetReviewLeaseIsolation(
+                reclaimed.AttemptId,
+                reclaimed.ReviewAttempt.Lease!.LeaseId));
+        Assert.Equal(original.ResourceNamespace, preserved.ResourceNamespace);
+        Assert.Equal(original.PortBase, preserved.PortBase);
+    }
+
+    [Fact]
+    public void Registration_adoption_does_not_shorten_a_longer_review_handoff_lease()
+    {
+        var now = new DateTime(2026, 9, 7, 3, 10, 0, DateTimeKind.Utc);
+        var service = NewService(() => now);
+        ClaimedReview(service, out var claimed);
+        var handoff = service.RenewReview(
+            new AttemptWriteReference(
+                claimed.AttemptId,
+                claimed.LastFence,
+                claimed.AuthorityEpoch,
+                "handoff-long-renew"),
+            "reviewer",
+            600).ReviewAttempt!;
+
+        now = now.AddSeconds(30);
+        var adoption = Assert.Single(service.ReAdoptRunnerAttempts(
+            "reviewer",
+            "review-host",
+            "review-host:replacement",
+            [new AgentStudio.TaskServer.Contracts.RunnerActiveAttempt(
+                AgentStudio.TaskServer.Contracts.RunnerAttemptKinds.Review,
+                claimed.AttemptId,
+                claimed.TaskKey,
+                claimed.Lease!.LeaseId,
+                claimed.LastFence,
+                claimed.AuthorityEpoch,
+                "review-host:1234")],
+            120));
+
+        Assert.Equal("adopted", adoption.Status);
+        Assert.Equal(handoff.Lease!.ExpiresAt, adoption.ExpiresAt);
+        Assert.Equal(
+            handoff.Lease.ExpiresAt,
+            service.GetReview(claimed.AttemptId)!.Lease!.ExpiresAt);
+    }
+
+    [Fact]
     public void Re_claim_repairs_an_attempt_that_left_the_leased_state_with_a_live_lease()
     {
         // This is the 409 review-attempt-not-leased shape: the lease identity
@@ -206,6 +280,7 @@ public sealed class ReviewLeaseHandoffAuthorityTests : IDisposable
         var first = service.ReClaimReview(
             claimed.AttemptId, "reviewer", "review-host", "review-host:4242",
             claimed.Lease!.LeaseId, claimed.LastFence, 120, "reclaim-1");
+        service = NewService(() => now);
         var replay = service.ReClaimReview(
             claimed.AttemptId, "reviewer", "review-host", "review-host:4242",
             claimed.Lease.LeaseId, claimed.LastFence, 120, "reclaim-1");
@@ -282,6 +357,22 @@ public sealed class ReviewLeaseHandoffAuthorityTests : IDisposable
                 attemptId,
                 StringComparison.Ordinal));
         review["state"] = (int)state;
+        File.WriteAllText(path, root.ToJsonString());
+    }
+
+    private void RewriteAsSchemaFourWithoutReviewIsolation(string attemptId)
+    {
+        var path = Path.Combine(_root, AttemptAuthorityService.RelativePath);
+        var root = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+        root["schemaVersion"] = 4;
+        var review = root["reviewAttempts"]!.AsArray()
+            .Select(node => node!.AsObject())
+            .Single(node => string.Equals(
+                node["attemptId"]!.GetValue<string>(),
+                attemptId,
+                StringComparison.Ordinal));
+        review.Remove("resourceNamespace");
+        review.Remove("portBase");
         File.WriteAllText(path, root.ToJsonString());
     }
 }

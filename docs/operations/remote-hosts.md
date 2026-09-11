@@ -292,12 +292,24 @@ sudo /usr/local/sbin/agent-runner-deploy drain     # stop claiming, finish, exit
 sudo /usr/local/sbin/agent-runner-deploy           # promote a release
 ```
 
+The host-side drain waits for a request-id-matched daemon acknowledgement
+before trusting the slot census. That acknowledgement is written only after an
+already-started claim has returned, so an empty census cannot race a claim in
+flight. Guarded replacement keeps that acknowledged admission barrier in place
+through old-MainPID exit and resolves the live state directory from that
+process, not from whichever legacy environment file happens to exist. An
+unreadable slot record fails closed. A successful drain leaves the
+Review service stopped; release promotion or an explicit
+`agent-runner-deploy restart-review` clears the completed drain state and starts
+the next generation.
+
 A direct `systemctl stop` or `systemctl restart` is always refused for Review.
 Use `agent-runner-deploy restart-review` when the role is idle; it prints the
 drain hint when slots are busy. A root operator's explicit override is
 `agent-runner-deploy restart-review --force`. Release promotion uses the same
 guarded MainPID handoff path. The full procedure, the log lines to check, and
-the lease-handoff contract are in
+the deliberate fail-closed first-upgrade procedure for daemons that cannot yet
+acknowledge the admission barrier are in
 [Restart, drain, handoff](setup/linux-runner-host.md#restart-drain-handoff).
 
 ## Retire, revive, delete

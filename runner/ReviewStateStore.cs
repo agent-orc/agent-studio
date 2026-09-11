@@ -24,7 +24,8 @@ public sealed record PersistedReviewSlot(
     int? LastReportStatusCode = null,
     string? LastReportErrorCode = null,
     string? LastReportError = null,
-    string? TerminalClassification = null)
+    string? TerminalClassification = null,
+    ReviewReClaimRequest? PendingReClaim = null)
 {
     public string AttemptId => Claim.Attempt?.AttemptId
                                ?? throw new InvalidDataException("Persisted review claim has no attempt.");
@@ -67,6 +68,7 @@ public sealed class ReviewStateStore
     public PersistedReviewSlot Save(PersistedReviewSlot slot)
     {
         ValidateClaim(slot.Claim);
+        ValidatePendingReClaim(slot);
         slot = slot with { UpdatedAtUtc = DateTime.UtcNow };
         var path = StatePath(slot.AttemptId);
         var temporary = path + $".{Environment.ProcessId}.{Guid.NewGuid():N}.tmp";
@@ -104,6 +106,7 @@ public sealed class ReviewStateStore
                     if (slot is not null)
                     {
                         ValidateClaim(slot.Claim);
+                        ValidatePendingReClaim(slot);
                         slots.Add(slot);
                     }
                 }
@@ -176,6 +179,21 @@ public sealed class ReviewStateStore
             || !string.Equals(claim.Attempt.SubjectId, claim.Subject.SubjectId, StringComparison.Ordinal)
             || !string.Equals(claim.Subject.SubjectId, claim.Lease.SubjectId, StringComparison.Ordinal))
             throw new InvalidDataException("Persisted review attempt, subject, and lease identities disagree.");
+    }
+
+    private static void ValidatePendingReClaim(PersistedReviewSlot slot)
+    {
+        if (slot.PendingReClaim is not { } pending) return;
+        var lease = slot.Claim.Lease!;
+        if (!string.Equals(pending.ExecutorId, lease.ExecutorId, StringComparison.Ordinal)
+            || !string.Equals(pending.PreviousLeaseId, lease.LeaseId, StringComparison.Ordinal)
+            || pending.PreviousFence != lease.Fence
+            || string.IsNullOrWhiteSpace(pending.InstanceId)
+            || string.IsNullOrWhiteSpace(pending.IdempotencyKey))
+        {
+            throw new InvalidDataException(
+                "Persisted review reclaim request does not match its previous fenced lease.");
+        }
     }
 }
 

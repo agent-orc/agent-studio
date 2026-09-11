@@ -56,7 +56,6 @@ systemctl() {
     kill)
       [[ "$*" == "--kill-whom=main --signal=SIGTERM agent-runner-review.service" ]]
       printf 'kill %s\n' "$*" >>"$actions_file"
-      start_replacement
       ;;
     start)
       [[ "$*" == "agent-runner-review.service" ]]
@@ -73,7 +72,7 @@ systemctl() {
             printf 'ActiveState=active\nMainPID=%s\n' "$old_main_pid"
             ;;
           2)
-            printf 'ActiveState=activating\nMainPID=0\n'
+            printf 'ActiveState=inactive\nMainPID=0\n'
             ;;
           *)
             printf 'ActiveState=active\nMainPID=%s\n' "$(<"$new_main_pid_file")"
@@ -104,6 +103,12 @@ sleep() {
   fi
 }
 
+clear_review_drain_state() {
+  :
+}
+
+review_guard_state_dir="$fixture_root/state"
+mkdir -p "$review_guard_state_dir"
 selected_pid="$(restart_unit_and_wait_for_new_main_pid \
   agent-runner-review.service "$old_main_pid" 2)"
 new_main_pid="$(<"$new_main_pid_file")"
@@ -115,7 +120,7 @@ new_main_pid="$(<"$new_main_pid_file")"
 [[ "$(read_process_environment_value "$selected_pid" RUNNER_MAX_PARALLELISM)" == "6" ]]
 kill -0 "$detached_worker_pid"
 [[ "$(<"$actions_file")" == \
-  "kill --kill-whom=main --signal=SIGTERM agent-runner-review.service" ]]
+  $'kill --kill-whom=main --signal=SIGTERM agent-runner-review.service\nstart agent-runner-review.service' ]]
 
 # RefuseManualStop also applies while the unit is inactive. The helper must
 # start that unit rather than attempting either stop or restart.
@@ -124,6 +129,7 @@ wait "$new_main_pid" >/dev/null 2>&1 || true
 new_main_pid=""
 rm -f -- "$new_main_pid_file"
 scenario="inactive"
+review_guard_state_dir="$fixture_root/state"
 printf '0\n' >"$show_count_file"
 inactive_selected_pid="$(restart_unit_and_wait_for_new_main_pid \
   agent-runner-review.service 0 2)"

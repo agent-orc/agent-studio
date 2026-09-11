@@ -10,6 +10,30 @@ public sealed record AttemptIndexedDeliveryRef(
     string ResultSha,
     DateTime RecordedAt);
 
+internal sealed record ReviewLeaseIsolation(
+    string ResourceNamespace,
+    int PortBase);
+
+internal enum ReviewReClaimReplayStatus
+{
+    Missing,
+    Replayed,
+    Conflict,
+}
+
+internal sealed record ReviewReClaimReplayLookup(
+    ReviewReClaimReplayStatus Status,
+    ReviewAttemptDto? ReviewAttempt = null,
+    ReviewLeaseIsolation? Isolation = null,
+    string? Message = null);
+
+internal sealed record ReviewDaemonRestartObservation(
+    string RunnerId,
+    string HostId,
+    string InstanceId,
+    DateTime RestartedAt,
+    int ReviewsLost);
+
 /// <summary>
 /// Durable Task Server authority for coding and review attempts. This store owns
 /// identity, leases, monotonically increasing fences, the authority epoch,
@@ -22,7 +46,7 @@ public sealed class AttemptAuthorityService
     public const int DefaultTerminalRetentionCount = 2_000;
     public const int ReviewInfrastructureRetryBudget = 3;
     public const string UnmaterializableReviewSubjectReason = "review-subject-unmaterialisierbar";
-    private const int CurrentSchemaVersion = 4;
+    private const int CurrentSchemaVersion = 6;
     private const int ArchiveSchemaVersion = 1;
     private const string ArchiveFilePattern = "attempt-authority.archive-*.json";
     private static readonly TimeSpan MinTtl = TimeSpan.FromSeconds(30);
@@ -600,6 +624,7 @@ public sealed class AttemptAuthorityService
                 requestedTtlSeconds,
                 now,
                 clientId: NormalizeNull(instanceId));
+            SetReviewLeaseIsolation(review, fence);
             review.CurrentClaimDeliveryKey = deliveryKey;
             review.IdempotencyKeys.Add(deliveryKey);
             PersistLocked();
@@ -639,9 +664,31 @@ public sealed class AttemptAuthorityService
         {
             var review = FindReview(attemptId);
             if (review is null) return new AttemptWriteResult(AttemptWriteStatus.NotFound, Normalize(attemptId));
-            var deliveryKey = DeliveryKey("claim", idempotencyKey);
-            if (review.IdempotencyKeys.Contains(deliveryKey))
-                return ClassifyReviewLeaseReplay(review, executorId, claimDeliveryKey: deliveryKey);
+            var deliveryKey = DeliveryKey("reclaim", idempotencyKey);
+            var payloadHash = ReviewReClaimPayloadHash(
+                executorId,
+                instanceId,
+                previousLeaseId,
+                previousFence,
+                idempotencyKey,
+                requestedTtlSeconds);
+            var replay = FindReviewReClaimDelivery(review, idempotencyKey);
+            if (replay is not null)
+            {
+                if (!string.Equals(replay.PayloadHash, payloadHash, StringComparison.Ordinal))
+                {
+                    return new AttemptWriteResult(
+                        AttemptWriteStatus.InvalidState,
+                        review.AttemptId,
+                        "Review reclaim idempotency key is bound to a different payload.",
+                        ReviewAttempt: ToDto(review));
+                }
+
+                return new AttemptWriteResult(
+                    AttemptWriteStatus.Duplicate,
+                    review.AttemptId,
+                    ReviewAttempt: replay.ReviewAttempt);
+            }
             if (!IsCurrentReview(review) || Terminal(review.State))
                 return new AttemptWriteResult(AttemptWriteStatus.Superseded, review.AttemptId, ReviewAttempt: ToDto(review));
             if (review.Lease is not { } previous
@@ -677,6 +724,7 @@ public sealed class AttemptAuthorityService
             }
 
             var fence = NextFenceLocked(review.TaskKey);
+            var isolation = ReviewLeaseIsolationFor(review, previous);
             review.LastFence = fence;
             review.AuthorityEpoch = _state.AuthorityEpoch;
             review.State = AttemptLifecycleState.Leased;
@@ -687,8 +735,19 @@ public sealed class AttemptAuthorityService
                 requestedTtlSeconds,
                 now,
                 clientId: NormalizeNull(instanceId));
+            review.ResourceNamespace = isolation.ResourceNamespace;
+            review.PortBase = isolation.PortBase;
             review.CurrentClaimDeliveryKey = deliveryKey;
             review.IdempotencyKeys.Add(deliveryKey);
+            var response = ToDto(review);
+            review.ReClaimDeliveries.Add(new ReviewReClaimDeliveryRecord
+            {
+                IdempotencyKey = Normalize(idempotencyKey),
+                PayloadHash = payloadHash,
+                ReviewAttempt = response,
+                ResourceNamespace = isolation.ResourceNamespace,
+                PortBase = isolation.PortBase,
+            });
             PersistLocked();
             _logger.LogInformation(
                 "review-attempt-re-claimed attempt={AttemptId} task={TaskKey} executor={ExecutorId} "
@@ -699,7 +758,7 @@ public sealed class AttemptAuthorityService
                 instanceId,
                 previousFence,
                 fence);
-            return new AttemptWriteResult(AttemptWriteStatus.Accepted, review.AttemptId, ReviewAttempt: ToDto(review));
+            return new AttemptWriteResult(AttemptWriteStatus.Accepted, review.AttemptId, ReviewAttempt: response);
         }
     }
 
@@ -1241,6 +1300,142 @@ public sealed class AttemptAuthorityService
         }
     }
 
+    internal IReadOnlyList<ReviewAttemptDto> ListReviewAttemptsOwnedByExecutorHost(
+        string executorId,
+        string hostId)
+    {
+        lock (_gate)
+        {
+            return _state.ReviewAttempts
+                .Where(review =>
+                    review.State == AttemptLifecycleState.Leased
+                    && review.Lease is { } lease
+                    && Same(lease.ExecutorId, executorId)
+                    && Same(lease.HostId, hostId))
+                .Select(ToDto)
+                .ToList();
+        }
+    }
+
+    internal void RecordReviewDaemonRestart(
+        string runnerId,
+        string hostId,
+        string instanceId,
+        DateTime restartedAt,
+        int reviewsLost)
+    {
+        if (Blank(runnerId) || Blank(hostId) || Blank(instanceId) || reviewsLost < 0)
+            throw new ArgumentException(
+                "Runner, host, instance, and a non-negative lost-review count are required.");
+        lock (_gate)
+        {
+            _state.ReviewDaemonRestarts[Normalize(runnerId)] = new ReviewDaemonRestartRecord
+            {
+                RunnerId = Normalize(runnerId),
+                HostId = Normalize(hostId),
+                InstanceId = Normalize(instanceId),
+                RestartedAt = restartedAt.ToUniversalTime(),
+                ReviewsLost = reviewsLost,
+            };
+            PersistLocked();
+        }
+    }
+
+    internal ReviewDaemonRestartObservation? GetReviewDaemonRestart(
+        string runnerId,
+        string instanceId)
+    {
+        lock (_gate)
+        {
+            if (!_state.ReviewDaemonRestarts.TryGetValue(Normalize(runnerId), out var restart)
+                || !Same(restart.InstanceId, instanceId))
+            {
+                return null;
+            }
+            return new ReviewDaemonRestartObservation(
+                restart.RunnerId,
+                restart.HostId,
+                restart.InstanceId,
+                restart.RestartedAt,
+                restart.ReviewsLost);
+        }
+    }
+
+    internal ReviewLeaseIsolation? GetReviewLeaseIsolation(
+        string attemptId,
+        string leaseId)
+    {
+        lock (_gate)
+        {
+            var review = FindReview(attemptId);
+            if (review?.Lease is not { } lease
+                || !Same(lease.LeaseId, leaseId))
+            {
+                return null;
+            }
+
+            return ValidReviewLeaseIsolation(review)
+                ? new ReviewLeaseIsolation(review.ResourceNamespace!, review.PortBase)
+                : null;
+        }
+    }
+
+    /// <summary>
+    /// Looks up the immutable response for an already committed review
+    /// reclaim. Callers may use an exact replay before checking whether the
+    /// request's daemon generation is still the registered one. A missing
+    /// delivery grants no authority and must continue through normal current
+    /// instance validation before any mutation is attempted.
+    /// </summary>
+    internal ReviewReClaimReplayLookup LookupReviewReClaimReplay(
+        string attemptId,
+        string executorId,
+        string instanceId,
+        string previousLeaseId,
+        long previousFence,
+        string idempotencyKey,
+        int? requestedTtlSeconds)
+    {
+        lock (_gate)
+        {
+            var review = FindReview(attemptId);
+            var delivery = review is null
+                ? null
+                : FindReviewReClaimDelivery(review, idempotencyKey);
+            if (delivery is null)
+                return new ReviewReClaimReplayLookup(ReviewReClaimReplayStatus.Missing);
+
+            var payloadHash = ReviewReClaimPayloadHash(
+                executorId,
+                instanceId,
+                previousLeaseId,
+                previousFence,
+                idempotencyKey,
+                requestedTtlSeconds);
+            if (!string.Equals(delivery.PayloadHash, payloadHash, StringComparison.Ordinal))
+            {
+                return new ReviewReClaimReplayLookup(
+                    ReviewReClaimReplayStatus.Conflict,
+                    Message: "Review reclaim idempotency key is bound to a different payload.");
+            }
+
+            if (delivery.ReviewAttempt is null
+                || Blank(delivery.ResourceNamespace)
+                || delivery.PortBase <= 0
+                || delivery.PortBase > ushort.MaxValue - 7)
+            {
+                return new ReviewReClaimReplayLookup(
+                    ReviewReClaimReplayStatus.Conflict,
+                    Message: "Review reclaim delivery has no complete durable response.");
+            }
+
+            return new ReviewReClaimReplayLookup(
+                ReviewReClaimReplayStatus.Replayed,
+                delivery.ReviewAttempt,
+                new ReviewLeaseIsolation(delivery.ResourceNamespace, delivery.PortBase));
+        }
+    }
+
     public RunAttemptDto? GetRun(string attemptId)
     {
         lock (_gate) return FindRun(attemptId) is { } run ? ToDto(run) : null;
@@ -1304,10 +1499,13 @@ public sealed class AttemptAuthorityService
             return Adoption(reported, "stale-authority", message: "ReviewAttempt authority does not match the durable server record.");
         }
 
-        review.Lease.ExpiresAt = expiresAt;
+        var adoptedExpiresAt = review.Lease.ExpiresAt > expiresAt
+            ? review.Lease.ExpiresAt
+            : expiresAt;
+        review.Lease.ExpiresAt = adoptedExpiresAt;
         review.Lease.LastHeartbeat = now;
         adopted = true;
-        return Adoption(reported, "adopted", expiresAt);
+        return Adoption(reported, "adopted", adoptedExpiresAt);
     }
 
     private static AgentStudio.TaskServer.Contracts.RunnerAttemptAdoption Adoption(
@@ -1677,11 +1875,15 @@ public sealed class AttemptAuthorityService
             _state.CurrentReviewByTask ?? [], StringComparer.OrdinalIgnoreCase);
         _state.CurrentSubjectByTask = new Dictionary<string, ReviewSubjectRecord>(
             _state.CurrentSubjectByTask ?? [], StringComparer.OrdinalIgnoreCase);
+        _state.ReviewDaemonRestarts = new Dictionary<string, ReviewDaemonRestartRecord>(
+            _state.ReviewDaemonRestarts ?? [], StringComparer.OrdinalIgnoreCase);
         _state.RunAttempts ??= [];
         _state.ReviewAttempts ??= [];
         NormalizeRecords(_state.RunAttempts, _state.ReviewAttempts, migrateUnscopedIdempotency);
         foreach (var review in _state.ReviewAttempts)
         {
+            if (review.Lease is { } lease && !ValidReviewLeaseIsolation(review))
+                SetReviewLeaseIsolation(review, lease.Fence);
             if (Blank(review.CurrentClaimDeliveryKey)
                 && review.State == AttemptLifecycleState.Leased)
             {
@@ -1922,6 +2124,7 @@ public sealed class AttemptAuthorityService
                 review.IdempotencyKeys = ExpandLegacyDeliveryKeys(
                     review.IdempotencyKeys, ["create", "renew", "claim", "settle"]);
             review.Reports ??= [];
+            review.ReClaimDeliveries ??= [];
             review.Subject ??= new ReviewSubjectRecord();
             review.Subject.EvidenceDigestInputs ??= [];
         }
@@ -1933,6 +2136,57 @@ public sealed class AttemptAuthorityService
     public static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value ?? string.Empty))).ToLowerInvariant();
     private static string DeliveryKey(string scope, string key) => $"{scope}:{Normalize(key)}";
     private static string NewId(string prefix) => prefix + "_" + Guid.NewGuid().ToString("N");
+    private static ReviewReClaimDeliveryRecord? FindReviewReClaimDelivery(
+        ReviewAttemptRecord review,
+        string idempotencyKey)
+        => review.ReClaimDeliveries.FirstOrDefault(delivery =>
+            string.Equals(
+                delivery.IdempotencyKey,
+                Normalize(idempotencyKey),
+                StringComparison.Ordinal));
+    private static string ReviewReClaimPayloadHash(
+        string executorId,
+        string instanceId,
+        string previousLeaseId,
+        long previousFence,
+        string idempotencyKey,
+        int? requestedTtlSeconds)
+        => Hash(JsonSerializer.Serialize(new
+        {
+            ExecutorId = executorId,
+            InstanceId = instanceId,
+            PreviousLeaseId = previousLeaseId,
+            PreviousFence = previousFence,
+            IdempotencyKey = idempotencyKey,
+            RequestedTtlSeconds = requestedTtlSeconds,
+        }, JsonOptions));
+    private static ReviewLeaseIsolation ReviewLeaseIsolationFor(
+        ReviewAttemptRecord review,
+        AttemptLeaseRecord lease)
+        => ValidReviewLeaseIsolation(review)
+            ? new ReviewLeaseIsolation(review.ResourceNamespace!, review.PortBase)
+            : CreateReviewLeaseIsolation(review.AttemptId, lease.Fence);
+    private static void SetReviewLeaseIsolation(ReviewAttemptRecord review, long fence)
+    {
+        var isolation = CreateReviewLeaseIsolation(review.AttemptId, fence);
+        review.ResourceNamespace = isolation.ResourceNamespace;
+        review.PortBase = isolation.PortBase;
+    }
+    private static bool ValidReviewLeaseIsolation(ReviewAttemptRecord review)
+        => !Blank(review.ResourceNamespace)
+           && review.PortBase > 0
+           && review.PortBase <= ushort.MaxValue - 7;
+    private static ReviewLeaseIsolation CreateReviewLeaseIsolation(string attemptId, long fence)
+    {
+        var safeAttemptId = new string(attemptId
+            .Select(ch => char.IsLetterOrDigit(ch) || ch is '-' or '_' ? ch : '-')
+            .ToArray());
+        var resourceNamespace =
+            $"review-{safeAttemptId.ToLowerInvariant()}-f{fence}";
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes($"{attemptId}:{fence}"));
+        var slot = BitConverter.ToUInt16(bytes, 0) % 4000;
+        return new ReviewLeaseIsolation(resourceNamespace, 24000 + slot * 8);
+    }
     private bool KnownAttemptEpoch(long attemptEpoch)
         => attemptEpoch > 0 && attemptEpoch <= _state.AuthorityEpoch;
     private bool MatchesAttemptEpoch(long writeEpoch, long attemptEpoch)
@@ -2065,6 +2319,17 @@ public sealed class AttemptAuthorityService
         public Dictionary<string, string> CurrentRunByTask { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, string> CurrentReviewByTask { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, ReviewSubjectRecord> CurrentSubjectByTask { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, ReviewDaemonRestartRecord> ReviewDaemonRestarts { get; set; } =
+            new(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private sealed class ReviewDaemonRestartRecord
+    {
+        public string RunnerId { get; set; } = string.Empty;
+        public string HostId { get; set; } = string.Empty;
+        public string InstanceId { get; set; } = string.Empty;
+        public DateTime RestartedAt { get; set; }
+        public int ReviewsLost { get; set; }
     }
 
     private sealed class AuthorityArchive
@@ -2138,8 +2403,20 @@ public sealed class AttemptAuthorityService
         public string? TestedResultSha { get; set; }
         public string? TerminalReason { get; set; }
         public string? CurrentClaimDeliveryKey { get; set; }
+        public string? ResourceNamespace { get; set; }
+        public int PortBase { get; set; }
         public HashSet<string> IdempotencyKeys { get; set; } = [];
+        public List<ReviewReClaimDeliveryRecord> ReClaimDeliveries { get; set; } = [];
         public List<ReviewReportDeliveryRecord> Reports { get; set; } = [];
+    }
+
+    private sealed class ReviewReClaimDeliveryRecord
+    {
+        public string IdempotencyKey { get; set; } = string.Empty;
+        public string PayloadHash { get; set; } = string.Empty;
+        public ReviewAttemptDto? ReviewAttempt { get; set; }
+        public string ResourceNamespace { get; set; } = string.Empty;
+        public int PortBase { get; set; }
     }
 
     private sealed class ReviewReportDeliveryRecord

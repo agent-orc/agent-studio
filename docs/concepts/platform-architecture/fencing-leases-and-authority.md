@@ -303,7 +303,7 @@ Delivered and load-bearing today:
 
 | Capability | Evidence |
 |---|---|
-| Persisted attempt authority with per-task monotonic fences and a global epoch | `backend/Features/Runner/AttemptAuthorityService.cs`, store at `.metadata/attempt-authority.json`, schema v4 |
+| Persisted attempt authority with per-task monotonic fences, a global epoch, review lease namespace and port authority retained across same-worker re-fencing, and exact reclaim responses replayable across daemon generations | `backend/Features/Runner/AttemptAuthorityService.cs`, store at `.metadata/attempt-authority.json`, schema v6 |
 | Soft-drain epoch rotation that does not requeue live work | `AttemptAuthorityService.RotateAuthorityEpoch` |
 | Ordered single-writer validation with a stable rejection vocabulary | `backend/Shared/Attempts/AttemptAuthorityModels.cs`, `ValidateRunWriteLocked` |
 | Fenced, fsynced, at-least-once host outbox with digest-bound final handoff | `runner/DurableRunOutbox.cs` |

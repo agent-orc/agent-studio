@@ -280,11 +280,20 @@ state.
   no-argument ingress. Before the atomic link flip, it validates the selected
   `agent-host.deps.json` runtime-assembly closure and runs the staged binary as
   the service user under a short timeout. It then signals only the Review
-  MainPID, restarts the fixed Coding unit, waits for both replacement processes,
-  and detects an immediate crash loop from systemd restart counters. A
-  Review-only `RefuseManualStop=true` drop-in rejects direct stop and restart;
-  the helper checks durable busy-slot state before it signals Review, or starts
-  the unit when it is inactive. Failure output names the previous release and
+  MainPID, waits for its clean exit, explicitly starts its replacement, restarts
+  the fixed Coding unit, and detects an immediate crash loop from systemd
+  restart counters. A Review-only `RefuseManualStop=true` and
+  `Restart=on-failure` drop-in rejects direct stop and restart while allowing a
+  successful drain to remain stopped. A drain waits for a request-id-matched
+  daemon admission acknowledgement and a readable empty slot census. A guarded
+  replacement first installs a request-ID admission barrier, reads the active
+  daemon's effective state directory from `/proc/<MainPID>/environ`, and keeps
+  that barrier through old-MainPID exit. Release promotion runs the validated
+  staged binary for this check. Startup and Task Server retry loops also honor
+  the host-local control request, so an idle drain does not depend on server
+  availability. The helper clears completed drain state and starts the unit
+  when it is inactive. Failure output names the
+  previous release and
   prints the operator rollback command. Role configuration accepts only Coding
   or Review
   `RUNNER_MAX_PARALLELISM` values from 1 through 6, updates an EnvironmentFile
