@@ -3,12 +3,12 @@ id: platform-architecture-task-server-topology
 title: "Task Server topology: processes, planes, and the cutover state"
 status: active
 category: concept
-updatedAt: 2026-08-17
-last-updated: 2026-08-17
-reason: "Consolidate the scattered task-server topology material into one architecture page while the AGT-2663 cutover is in progress"
+updatedAt: 2026-09-11
+last-updated: 2026-09-11
+reason: "Record the delivered AGT-2732 workspace migration contract while the operator-owned AGT-2663 production cutover remains in progress"
 taskKey: AGT-2671
 tags: [task-server, topology, distributed, api-plane, git-sync, migration]
-related-tasks: [AGT-2663]
+related-tasks: [AGT-2663, AGT-2732]
 related-adrs: []
 related-docs:
   - "docs/concepts/platform-architecture/README.md"
@@ -68,6 +68,7 @@ Runner. All Runner traffic is outbound to whichever server it is pointed at.
 | Attempt authority, leases, fences (local profile) | Studio backend `AttemptAuthorityService` | under `<TaskRepository>/.metadata/` |
 | Tasks, runs, leases, fences, events, artifacts, audit, orchestration runs, retention policy and archive history (standalone profile) | Task Server | SQLite under `STORE_PATH`, tables created in `task-server/TaskServerStore.cs` (`tasks`, `runs`, `leases`, `fence_counters`, `events`, `artifacts`, `result_handoffs`, `result_ref_gc`, `orchestration_runs`, `retention_policies`, `archive_runs`, `archive_manifests`, and others) |
 | Human Studio sessions and the replayable Studio notification feed | Task Server | SQLite under `STORE_PATH`: `studio_users`, `studio_sessions`, `studio_stream_events` |
+| Legacy migration entities, removed-task orphans, and signed import reports | Task Server | SQLite tables `legacy_migration_entities`, `legacy_migration_orphans`, and `legacy_migration_reports`, with materialized reports under `STORE_PATH/migration-reports/`. Result, attachment, task-log, and bus-log source references retain the frozen source path, size, and SHA-256 as pointer-only records. File bodies are not copied, and bus messages are not replayed. |
 | Orchestrator chat contexts | Switched at composition time, see below | local JSONL, or Task Server `orchestrator_contexts` and `orchestrator_context_turns` |
 | Repository content, worktrees, result commits | Agent Runner host | Git checkouts plus `$RUNNER_WORKDIR/outbox/<run-attempt-id>/` |
 | Backups and cold archives | Task Server | SQLite snapshots under `BACKUP_PATH`; self-contained full sets under `BACKUP_PATH/full`; manifest-addressed cold payloads under `ARCHIVE_PATH`; all SHA-256 verified |
@@ -161,7 +162,7 @@ loops instead.
 | Runs | `POST /api/v1/runs/{runId}/reconcile`, `POST .../post-steps/{stepExecutionId}/claim`, `.../complete`, `POST .../lease/renew`, `.../lease/release`, `POST .../result-finalization`, `POST .../completion`, `GET|PUT .../result-handoff`, `GET|POST .../events`, `GET|POST .../artifacts`, `GET .../artifacts/{artifactId}/content` |
 | Reviews | `POST /api/v1/reviews/subjects`, `GET /api/v1/reviews/subjects/{subjectId}`, `GET /api/v1/reviews/attempts/{attemptId}`, `POST .../lease/renew`, `.../report`, `.../cleanup` |
 | Orchestration | `GET|PUT /api/v1/orchestration/projects/{projectId}/flow-definition`, `GET|POST /api/v1/orchestration/runs`, `GET /api/v1/orchestration/runs/{runId}`, `POST /api/v1/orchestration/claims`, `POST .../lease/renew`, `.../lease/release`, `.../stages/complete` |
-| Management | `GET /api/v1/management/status`, `/outboxes`, `/hosts`, `/audit`, `/invariants`, `/remote-hosts`, `PUT /mode`, `POST /prepare-shutdown`, `/backups`, `/restore`, `/attempts/{runId}/resolve-unknown`, `/remote-hosts/{hostId}/operator-drain`, `/remote-hosts/{hostId}/automatic-drain/clear`, `/migrations/legacy/inventory`, `/migrations/legacy/import` |
+| Management | `GET /api/v1/management/status`, `/outboxes`, `/hosts`, `/audit`, `/invariants`, `/remote-hosts`, `/migrations/legacy/reports`, `/migrations/legacy/reports/{migrationId}`, `PUT /mode`, `POST /prepare-shutdown`, `/backups`, `/restore`, `/attempts/{runId}/resolve-unknown`, `/remote-hosts/{hostId}/operator-drain`, `/remote-hosts/{hostId}/automatic-drain/clear`, `/migrations/legacy/inventory`, `/migrations/legacy/import` |
 | Retention management | `GET|PUT /api/v1/management/retention/policy`, `GET|PUT|DELETE .../policy/projects/{projectId}`, `POST .../plan`, `POST .../apply`, `GET .../runs[/{id}]`, `GET|POST .../archive/{taskId}`, `POST .../archive/{taskId}/restore` |
 | Full backup sets | `POST|GET /api/v1/management/backups/full`, `POST .../backups/full/{id}/verify`, `POST .../backups/full/{id}/restore` |
 
@@ -267,6 +268,13 @@ Control stays on HTTP with leases and fences, as described in
   sibling-process harness `task-server.Tests/TopologyTests.cs`.
 - Systemd packaging and the backup timer under `deploy/systemd/`, plus the
   `task-server backup --name timer` command path.
+- Separate hash-only Studio, Engine, and per-Runner principals, route scopes,
+  hub authentication, and management-only rotation and revocation are delivered
+  by Phase B slice B2.
+- The version-matched Windows Task Server, Engine, and connector fallback,
+  verified full-backup transfer, warm-standby pull, atomic profile switch, and
+  scripted reverse-tunnel drill are delivered by Phase B slice B4. The timed
+  production-infrastructure rehearsal remains operator-owned.
 - Local Transition-Committer evidence commits and result-ref garbage
   collection.
 - Workspace and project retention policies, manual and scheduled archive runs,
@@ -283,6 +291,24 @@ Control stays on HTTP with leases and fences, as described in
   Studio-classified routes named by that dossier's route inventory; the
   remaining P1-P3 bundles (task detail and hosts, operations and insight,
   administration and tail) are still open.
+- Phase B slice B3 is delivered in code and automated tests. The standalone
+  binary inventories canonical `task.json` files with `job.json` fallback,
+  emits per-project and per-state counts plus a canonical SHA-256, and imports
+  only in `Maintenance`. Import is idempotent, includes live and archive lanes,
+  task events and timelines, Git evidence, delivery and result references,
+  Dossiers, orchestrator sessions and chats, attempt authority, and integration
+  history. Source artifacts and bus logs remain pointer-only references to the
+  frozen workspace.
+- Store schema 15 is the B3 compatibility boundary for the migration and orphan
+  ledgers, signed reports, and artifact source pointers. Older schema-14
+  binaries reject a store after that upgrade.
+- B3 also delivers the named `legacy-inventory-mismatch` and
+  `legacy-post-import-mismatch` stops, a pre-import backup, exact post-import
+  validation including removed-task orphan counts, a signed report exposed by
+  the management API, and backup/restore continuity for the inventory hash.
+  Closed authority is retained as history. Open leases become
+  `process-unknown`; removed-task authority and integration records are retained
+  in the explicit orphan ledger and cannot become runnable authority.
 
 ### Open: what AGT-2663 still has to move
 
@@ -306,11 +332,6 @@ Control stays on HTTP with leases and fences, as described in
   repository's configuration until the connector profile and a `TaskServer:BaseUrl`
   cutover are both live; P1 through P3 remain unclassified-to-unmoved and are
   the largest remaining open estimate.
-- **The migrator reads the wrong file.**
-  `task-server/LegacyMigrationService.cs` enumerates `job.json`, while the
-  active backend writes `task.json` (`backend/Features/Tasks/TaskJsonFile.cs`).
-  A production inventory would report a false zero. This is a hard stop for any
-  real import.
 - **Credentials are not yet scoped.** The packaged install defaults to one
   shared bearer through `AUTH=bearer`. The interim alternative
   (`TaskServer:RequireAuthentication` with separate `StudioBearerToken` and
@@ -319,6 +340,12 @@ Control stays on HTTP with leases and fences, as described in
 - **No Windows fallback artifact.** The documented control-plane release
   profile is `linux-x64`, so the move is not yet reversible in the sense the
   rollback drill requires.
+- **Production migration evidence remains operator-owned.** Repository agents
+  cannot access `C:\Projects\agent-taskboard-workspace`. The Windows operator
+  must run the updated binary against a frozen copy, confirm every project and
+  state count, complete the backup/restore rehearsal, and attach the signed
+  import report to cutover card D7. This is an open deployment acceptance step,
+  not an open B3 implementation item.
 - **The local connector is incomplete.** It needs full `/api` and `/hubs`
   forwarding, secret-file integration, strict Origin checks, CSRF and an atomic
   remote or local upstream switch before any listener is opened.
@@ -341,8 +368,19 @@ that approval.
 
 ## Living knowledge log
 
+- **2026-09-11 (AGT-2732):** Phase B slice B3 now inventories canonical
+  `task.json` with `job.json` fallback and imports the full migration ledger,
+  pointer-only source references, removed-task orphans, and signed evidence.
+  The 2026-09-07 operator run inventoried the live Windows workspace as 9
+  projects, 2,304 tasks, 87,971 events, and 31,726 artifacts. Import correctly
+  stopped with `legacy-inventory-mismatch` after the live writer changed the
+  source. A frozen 8.1 GB copy then inventoried 2,304 tasks, 87,979 events, and
+  31,701 artifacts, but exposed three stale authority references to removed
+  task `QS-50`. Those references now degrade into the counted orphan ledger;
+  open authority becomes `process-unknown`. The operator still owns the updated
+  frozen-source import, restore-hash proof, and D7 report attachment before
+  production cutover.
 - **2026-08-17 (AGT-2671):** Page created by the Dossier curation sweep, which
   found the task-server topology spread across four documents and the sources
-  with no single entry point. Extraction surfaced one defect worth a card:
-  `task-server/LegacyMigrationService.cs` enumerates `job.json` while the
-  backend writes `task.json`, so the legacy inventory reports a false zero.
+  with no single entry point. Extraction surfaced the canonical-file mismatch
+  that AGT-2732 subsequently fixed.

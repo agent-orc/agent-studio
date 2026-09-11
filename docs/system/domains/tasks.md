@@ -1,6 +1,6 @@
 # Tasks Domain Map
 
-Version: 2026-09-07
+Version: 2026-09-11
 Status: System-of-record map for task storage, lanes, and API mutation changes.
 
 Use this when a change touches job folders, lane states, task metadata,
@@ -77,6 +77,9 @@ or commit attribution.
 - [docs/app/schemas/task-mutation-request.schema.json](../schemas/task-mutation-request.schema.json)
   and [docs/app/schemas/task-find-result.schema.json](../schemas/task-find-result.schema.json)
   pin task API shapes.
+- [docs/operations/setup/task-server.md#legacy-single-writer-migration](../../operations/setup/task-server.md#legacy-single-writer-migration)
+  is the operator sequence for inventorying, freezing, importing, proving, and
+  cutting over a legacy workspace.
 
 ## Result history
 
@@ -138,6 +141,85 @@ an already discovered project is skipped and logged as
 `registry-bootstrap-watchpath-name-collision`. This prevents two storage paths
 with the same operator-facing name from creating a second, unconfigured ghost
 project.
+
+## Standalone Task Server legacy migration
+
+The standalone Task Server migration is the only supported bridge from a
+folder-backed workspace into the SQLite authority store. Discovery examines
+selected task metadata in every live and archive state. For each successfully
+scanned task directory, `task.json` wins when present, with `job.json` accepted
+only as the fallback.
+
+Task Server store schema 15 is the first combined migration-capable format:
+schema 12 owns scoped principals and credentials, schema 13 owns retention and
+archive state, schema 14 owns Studio sessions, lane ranking, and its replayable
+event stream, and schema 15 owns the legacy migration ledger and artifact
+source pointers. A version-14 binary therefore rejects a store already opened
+by the migration-capable binary through the normal newer-schema guard.
+
+The saved inventory is the cutover contract. It records:
+
+- projects and per-project, per-state task totals, plus tasks, Epics, timeline
+  events, result and attachment artifacts, attributed Git commits, historical
+  and pending integration records, and delivery and result refs;
+- Dossier workbench descriptors, orchestrator sessions, context chats and
+  turns, runner identities, coding and review attempts, leases, attempt
+  authority records and epoch, and bus-log file and byte totals;
+- orphan totals for coding attempts, review attempts, leases, fence counters,
+  and integration records, plus an ordered source-file manifest containing
+  relative path, size, kind, and SHA-256.
+
+`inventorySha256` is SHA-256 over the schema-versioned canonical projection of
+those sorted counts and the ordered source-file manifest. The source root,
+creation time, warnings, and absolute evidence-Git roots are not hash inputs,
+so an exact frozen copy reproduces the hash. Inventory JSON is authoritative;
+the command's human table is its review projection.
+
+Selected task metadata and runner-identity JSON that is readable but
+syntactically invalid remain in the hashed source-file manifest but are skipped
+as entities and produce inventory warnings. A persistently inaccessible
+selected task or identity file fails inventory when the manifest is hashed. A
+missing live attempt-authority file is also a warning unless an API request
+sets `requireAttemptAuthority:true`, which turns it into
+`legacy-attempt-authority-required`. These degradations do not bypass the exact
+count check: the import must reproduce the warned inventory. For production
+cutover, the operator repairs the source and regenerates the inventory or
+records explicit D7 acceptance for an intentional omission.
+
+Import requires an explicit writer-freeze confirmation, the saved inventory,
+and Task Server `Maintenance` mode. The offline `import --mode maintenance`
+command initializes an empty store and persists that mode. A saved inventory
+whose contents do not reproduce its embedded hash fails as
+`legacy-inventory-invalid`; any change to the inventoried source-file set fails
+as `legacy-inventory-mismatch`; any post-import global,
+per-project/state, entity-kind, or orphan count disagreement fails as
+`legacy-post-import-mismatch`. The store must not be cut over after any of
+these failures. Repeating a successful migration ID returns its existing
+signed report without another backup or duplicate rows.
+
+Task metadata, timelines, attempt authority, and Git evidence become durable
+store records. Result, attachment, and task-log artifacts remain pointer-only,
+content-hashed references to the untouched frozen source; their bodies,
+including `cli-output.log`, are not copied. Bus JSONL files are likewise
+counted, sized, hashed, and referenced, but their messages are not replayed as
+Task Server events. The frozen source therefore remains required recovery
+material.
+
+Closed coding and review attempts remain closed history. Open leases retain
+their identity, runner, host, fence, and epoch but become `process-unknown`.
+Authority and integration records for removed task folders do not abort the
+import: they enter `legacy_migration_orphans` with `orphaned_task_key` and an
+effective status, are counted exactly in inventory and validation, and never
+enter runnable authority tables.
+
+A successful import creates a pre-import backup and writes
+`migration-reports/legacy-{migrationId}.json` under the store. The
+HMAC-SHA256-signed report contains before and after inventories and hashes,
+server and schema versions, duration, source and policy statements, backup
+identity and hash, and the store integrity hash. The management API lists the
+reports and reads one by migration ID. A post-import backup and verified
+restore into an empty `Maintenance` store must preserve the migration report
+and reproduce its inventory hash before cutover evidence is accepted.
 
 ## API-First Task Organization
 
@@ -612,6 +694,14 @@ as `acceptance-rail-run`.
   parameter frontend call has no project id to forward. See
   [Task Server deployment and recovery](../../operations/setup/task-server.md#studio-core-attach-bundle-p0)
   for the full route table and the unscoped-project compatibility contract.
+- `task-server/LegacyMigrationService.cs`, `Program.cs`, and
+  `TaskServerCommandLine.cs`: canonical legacy discovery and inventory hashing,
+  offline Maintenance import, source mismatch stop, evidence policy, and
+  signed report production.
+- `contracts/TaskServer.Contracts/ManagementContracts.cs` and
+  `task-server/TaskServerStore.cs`: inventory, orphan-count, result, and report
+  wire shapes plus transactional import, exact post-import validation, orphan
+  ledger persistence, and backup/restore inventory continuity.
 - `backend/Endpoints/Tasks/*`: task CRUD, runner, files, git, review evidence,
   merge, pipeline, and query endpoints.
 - `backend/Services/TaskAccess/*`: typed read/list/mutate/transition/subscribe
@@ -878,3 +968,9 @@ failure sentence while retaining the full diagnostic under the disclosure.
   isolation test and justify why it belongs inside the bounded layer.
 - Visual-evidence, status, or protocol changes need fixtures that prove old and
   new task folders still render.
+- Legacy migration changes need the complete-entity fixture in
+  `task-server.Tests/TaskServerStoreTests.cs` and the offline command coverage
+  in `task-server.Tests/TopologyTests.cs`. Together they must prove canonical
+  metadata selection, archive and orphan counts, tamper mismatch, idempotent
+  replay, Maintenance initialization, pointer-only evidence, and an empty-store
+  backup/restore with the same inventory hash.
