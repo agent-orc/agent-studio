@@ -695,6 +695,22 @@ as `acceptance-rail-run`.
   parameter frontend call has no project id to forward. See
   [Task Server deployment and recovery](../../operations/setup/task-server.md#studio-core-attach-bundle-p0)
   for the full route table and the unscoped-project compatibility contract.
+- `task-server/StudioHostsEndpoints.cs`, `StudioProjectMetaEndpoints.cs`,
+  `StudioRunnerOrchestratorEndpoints.cs`, `StudioTaskMetadataEndpoints.cs`,
+  `StudioTaskLifecycleExtrasEndpoints.cs`, `StudioTaskArtifactsEndpoints.cs`,
+  `StudioTaskHistoryEndpoints.cs`, `StudioTaskReviewEndpoints.cs`, and
+  `StudioWorkspaceEndpoints.cs` (with their `TaskServerStudio*Store.cs`
+  counterparts and `contracts/TaskServer.Contracts/Studio*Contracts.cs` wire
+  types): the P1 "task detail and host control" Studio route bundle
+  (AGT-2756) - task history/attempts/runs, task-owned files/attachments/
+  artifacts/screenshots/results, code review and the regression radar,
+  pipeline detail, per-field task metadata, epics and tags, remote-host
+  lifecycle, orchestrator chat/log/token projections, and workspace
+  aggregates. Every group's schema migration runs from
+  `TaskServerStore.ApplyMigrationsAsync` and every group's endpoints are
+  mapped from `Program.cs` alongside the P0 bundle. See
+  [Task Server deployment and recovery](../../operations/setup/task-server.md#studio-task-detail-and-hosts-bundle-p1)
+  for the per-group route table.
 - `task-server/LegacyMigrationService.cs`, `Program.cs`, and
   `TaskServerCommandLine.cs`: canonical legacy discovery and inventory hashing,
   offline Maintenance import, source mismatch stop, evidence policy, and

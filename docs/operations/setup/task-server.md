@@ -850,6 +850,52 @@ this literal, so the substitution cannot collide with an actual project. Every
 other v1 route, and every call that already supplies a real project id or the
 `?project=` query compatibility fallback, is unaffected.
 
+## Studio task-detail-and-hosts bundle (P1)
+
+AGT-2756 implements the 111-route P1 "task detail and host control" bundle
+from the [Studio route ownership](../../studio-route-ownership/index.html)
+dossier: task history/attempt/run projections, task-owned files/attachments/
+artifacts/screenshots/results, code review findings and the regression
+radar, pipeline detail and step-run requests, durable task summaries,
+per-field task metadata (epic, tags, references, cli-type, model,
+thinking-level, task-type, title, release, change-project), task creation
+and archive/reorder/batch-move, epics and tags, per-project autonomy and
+execution-runner settings, raw-context-key orchestrator chat and the
+orchestrator log/token/queue projections, remote-host ("client") lifecycle
+and management commands, and workspace-wide aggregates plus per-row
+workspace settings. Every task-scoped route lives under the same
+unscoped-project-aware `/api/v1/projects/{projectId}/tasks/{taskId}` group
+the P0 bundle established, so the connector's reserved unscoped-project
+literal (`-`) keeps working here too.
+
+| Group | Routes | Purpose | Handler / store |
+|---|---|---|---|
+| G1 Hosts | 12 | Remote-host ("client") drain/retire/revive/runner-capacity/telemetry/defaults, preflight invalidation, and the two `/api/v1/management/*` routes kept on their legacy path (`commands`, `remote-hosts/provider-auth`) | `StudioHostsEndpoints.cs` / `TaskServerStudioHostsStore.cs` |
+| G2 Project meta | 14 | Epics (list/detail/sub-task/completed-count), tags (list/create/delete), per-project autonomy and execution-runner settings, pipeline health/step/step-order/probe | `StudioProjectMetaEndpoints.cs` / `TaskServerStudioProjectMetaStore.cs` |
+| G3 Runner orchestrator | 16 | Raw-context-key orchestrator chat (two of these route ids resolve to the same `/{project}/orchestrator-chat` handler the P0 bundle already mapped in `StudioEndpoints.cs`), per-project runner mode/start/stop, orchestrator log and its override channel, pending decisions, token-usage summaries (live and cached), cross-project orchestrator feed, auto-review queue, queue starvation | `StudioRunnerOrchestratorEndpoints.cs` / `TaskServerStudioRunnerOrchestratorStore.cs` |
+| G4 Task metadata | 10 | Single-field task mutations: title, cli-type, model, thinking-level, task-type, release, change-project, epic, tags, references | `StudioTaskMetadataEndpoints.cs` / `TaskServerStudioTaskMetadataStore.cs` |
+| G5 Task lifecycle extras | 14 | Unscoped task creation, dependents, archive listing, reorder/batch-move, concept dossier, context-usage refresh, integration rebase, planning closure, promote-concept, promote-to-coding, reference-status | `StudioTaskLifecycleExtrasEndpoints.cs` / `TaskServerStudioTaskLifecycleExtrasStore.cs` |
+| G6 Task artifacts | 10 | Task-owned files (put/get/history), attachments, artifacts, screenshots, results, output summary; `scope=code` is rejected here (`dev-seat-scope-required`) since a repository-checkout read is a separate dev-seat route, not Task Server authority | `StudioTaskArtifactsEndpoints.cs` / `TaskServerStudioTaskArtifactsStore.cs` |
+| G7 Task history | 12 | Task run/attempt history projections: agent-work detail/summary, runs, commits, context, diff, files, session-events, step-prompts, timeline | `StudioTaskHistoryEndpoints.cs` / (`TaskServerStore.GetTaskHistoryAsync`, `ListAttemptsAsync`) |
+| G8 Task review | 11 | Code review findings (submit/list/by-file) and defaults, pipeline view and step-run requests, regression radar, review evidence acknowledge/follow-up, interim/regenerate task summaries | `StudioTaskReviewEndpoints.cs` / `TaskServerStudioTaskReviewStore.cs` |
+| G9 Workspace | 12 | Workspace-wide aggregates (screenshots, summary, token timeline/expensive-jobs, live and cached) and per-row workspace CRUD, reorder, autonomy, orchestrator-model, settings | `StudioWorkspaceEndpoints.cs` / `TaskServerStudioWorkspaceStore.cs` |
+
+Wire contracts for every group live in `contracts/TaskServer.Contracts/Studio*Contracts.cs`
+(one file per group, matching the naming above). Each group's schema is
+applied by its own `ApplyStudio*MigrationAsync` method, called in sequence
+from `TaskServerStore.ApplyMigrationsAsync` alongside the P0 bundle's
+migration, so a fresh store gets every P1 table on first boot; each group's
+`Map*Endpoints()` extension is called from `Program.cs` alongside
+`MapStudioEndpoints()`. The legacy Angular file-read contract that mixed
+Task Server authority with a dev-seat repository checkout
+(`GET /api/tasks/{taskId}/files/{path*}?scope=code`) is split at the
+connector: the default (`auto`/`workspace`) scope stays on the Task
+Server-backed `/files/{path*}` route above, while `scope=code` is routed to
+a separately named local `/checkout/{path*}` dev-seat route
+(`backend/Features/Tasks/TaskFilesEndpoints.cs`) that never reaches the
+Task Server, per the connector route inventory
+(`backend/Features/Connector/ConnectorRouteInventory.cs`).
+
 ## Backup and restore rehearsal
 
 `POST /api/v1/management/backups` creates a consistent SQLite backup, runs an

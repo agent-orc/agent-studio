@@ -17,12 +17,12 @@
     ]
   },
   "counts": {
-    "frontendOperations": 363,
-    "frontendApiOperations": 362,
+    "frontendOperations": 365,
+    "frontendApiOperations": 364,
     "frontendHubOperations": 1,
     "byClassification": {
       "task-server": 268,
-      "dev-seat": 95,
+      "dev-seat": 97,
       "retired": 0
     },
     "orchestratorApiMapGroups": 28,
@@ -9188,7 +9188,7 @@
         "docs/concepts/distributed-agent-studio-target-architecture.md:110-115"
       ],
       "classificationReason": "The route exposes durable task, orchestration, identity, event, policy, artifact, or management state assigned to the Task Server by the target architecture.",
-      "ownershipCaveat": "The default task-file read moves to the Task Server. The current scope=code variant crosses into a repository checkout and must be split onto a new dev-seat route before cutover.",
+      "ownershipCaveat": "Resolved: the default task-file read stays on this Task Server route. The scope=code variant was split onto the new dev-seat route fe-364 (GET /api/tasks/{taskId}/checkout/{path*}); this route now rejects any non-default scope with 400 dev-seat-scope-required.",
       "d4bPriority": "P1",
       "estimate": {
         "size": "S",
@@ -9226,7 +9226,7 @@
         "docs/concepts/distributed-agent-studio-target-architecture.md:110-115"
       ],
       "classificationReason": "The route exposes durable task, orchestration, identity, event, policy, artifact, or management state assigned to the Task Server by the target architecture.",
-      "ownershipCaveat": null,
+      "ownershipCaveat": "Resolved: split onto the new dev-seat route fe-365 (GET /api/tasks/{taskId}/checkout/{path*}/history) for scope=code; this route now rejects any non-default scope with 400 dev-seat-scope-required.",
       "d4bPriority": "P1",
       "estimate": {
         "size": "S",
@@ -12004,6 +12004,74 @@
         "weightedRoutePoints": 8,
         "basis": "WS contract plus authorization, compatibility, and route-level tests"
       }
+    },
+    {
+      "id": "fe-364",
+      "method": "GET",
+      "path": "/api/tasks/{taskId}/checkout/{path*}",
+      "queryVariants": [
+        {
+          "kind": "none",
+          "query": ""
+        },
+        {
+          "kind": "optional-subset",
+          "keys": [
+            "at",
+            "watchPath"
+          ]
+        }
+      ],
+      "classification": "dev-seat",
+      "owningComponent": "Windows connector dev-seat module",
+      "frontendOwner": "Shared frontend services",
+      "v1Status": "not-applicable",
+      "targetRoute": "/api/tasks/{taskId}/checkout/{path*}",
+      "frontendEvidence": [
+        "frontend/src/app/services/task.service.ts:1281",
+        "frontend/src/app/services/task.service.ts:1299"
+      ],
+      "decisionEvidence": [
+        "docs/studio-route-ownership/index.html#recommendation",
+        "docs/concepts/distributed-agent-studio-target-architecture.md:17-23"
+      ],
+      "classificationReason": "Split from fe-282 per the recommendation's 'scope=code' mixed-contract requirement: this route reads a live repository checkout on the dev seat and must not become Task Server authority.",
+      "ownershipCaveat": null,
+      "d4bPriority": null,
+      "estimate": null
+    },
+    {
+      "id": "fe-365",
+      "method": "GET",
+      "path": "/api/tasks/{taskId}/checkout/{path*}/history",
+      "queryVariants": [
+        {
+          "kind": "none",
+          "query": ""
+        },
+        {
+          "kind": "optional-subset",
+          "keys": [
+            "watchPath"
+          ]
+        }
+      ],
+      "classification": "dev-seat",
+      "owningComponent": "Windows connector dev-seat module",
+      "frontendOwner": "Shared frontend services",
+      "v1Status": "not-applicable",
+      "targetRoute": "/api/tasks/{taskId}/checkout/{path*}/history",
+      "frontendEvidence": [
+        "frontend/src/app/services/task.service.ts:1236"
+      ],
+      "decisionEvidence": [
+        "docs/studio-route-ownership/index.html#recommendation",
+        "docs/concepts/distributed-agent-studio-target-architecture.md:17-23"
+      ],
+      "classificationReason": "Split from fe-283 per the recommendation's 'scope=code' mixed-contract requirement: this route reads live repository checkout history on the dev seat and must not become Task Server authority.",
+      "ownershipCaveat": null,
+      "d4bPriority": null,
+      "estimate": null
     }
   ],
   "orchestratorApiGroups": [
