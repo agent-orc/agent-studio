@@ -537,6 +537,7 @@ if [[ "$role" == "review" ]]; then
       exit 50
     }
   fi
+  ln -sfnT "$candidate_release" "$tool_root/current"
   # An explicit install/update resumes a previously drained role only after
   # the old daemon is confirmed gone.
   sudo rm -f -- \
@@ -549,6 +550,7 @@ if [[ "$role" == "review" ]]; then
   fi
   sudo systemctl start "$service_name"
 else
+  ln -sfnT "$candidate_release" "$tool_root/current"
   sudo systemctl restart "$service_name"
 fi
 
