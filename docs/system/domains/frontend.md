@@ -1,6 +1,6 @@
 # Frontend Domain Map
 
-Version: 2026-08-12
+Version: 2026-09-11
 Status: System-of-record map for frontend changes.
 
 Use this when a change touches Angular code, visual design, task-detail,
@@ -11,18 +11,19 @@ coverage.
 
 The title-bar search opens a Ctrl+K command palette. It covers tasks (key,
 title, prompt, and status text), Dossiers (discovery key, id, title, summary,
-status, and phase, across every registered project's Wiki catalogue, history
-included), commit messages and SHA prefixes, and file names or paths on each
+status, phase, and source or related task keys, across every registered project's Wiki catalogue, history
+included), Wiki pages (title and heading text), commit messages and SHA prefixes, and file names or paths on each
 project's working branch. Task matches are ranked immediately from the
 in-memory board snapshot, with an exact task key first; the indexed task
 domain has a warm response target below 100 ms. Dossier matches rank an exact
-discovery-key match first, then a title match, then a summary match, and are
-read from the same cached Wiki catalogue the Dossier list and viewer use, so
-they never scan `docs/` per query.
+discovery-key match first, including input without the key hyphen, then a title match, then a summary match, and are
+read through the same `WorkbenchCatalogueService` that serves the Dossier list,
+so newly catalogued repository entries appear without a backend restart and no
+second discovery implementation exists.
 
 The palette streams from
-`GET /api/search/stream?q=<query>&domains=tasks,dossiers,commits,files&limit=<count>`
-as server-sent events. Frames arrive in this order: `tasks` and `dossiers`
+`GET /api/search/stream?q=<query>&domains=tasks,dossiers,wiki,commits,files&limit=<count>`
+as server-sent events. Frames arrive in this order: `tasks`, `dossiers`, and `wiki`
 (the memory-only domains, so neither is blocked by git), `progress` announcing
 how many repositories will be visited, one `repository` frame per checkout as
 it finishes, and a terminal `done` carrying the durations. The palette
@@ -34,7 +35,7 @@ Disconnecting cancels the fan-out server-side.
 with an unchanged wire contract: the normalized `query`, an array per requested
 domain, per-domain `errors`, and `durationMs`. It is what the orchestrator's
 context-source picker reads. Both routes accept the same comma-separated
-`domains` subset of `tasks`, `dossiers`, `commits`, and `files`, both default to
+`domains` subset of `tasks`, `dossiers`, `wiki`, `commits`, and `files`, both default to
 every domain when `domains` is omitted, and both bound `limit` in the backend.
 
 Neither route derives its git corpus per query. Task text (prompt and status
@@ -45,9 +46,9 @@ an unchanged repository spawns no git process. Repositories are searched in
 parallel with a bounded degree. `Search:CommitWindow` (default 2000, clamped to
 100-20000) sets how deep the commit index goes.
 
-Results are grouped by domain and carry project identity. Commit results open
+Results are grouped by domain, can be filtered with domain chips, and carry project identity. An exact task or Dossier key moves its group to the first row. Commit results open
 the diff surface, documentation files open the Wiki, Dossier results open the
-Dossier viewer (never a raw file path, even though the descriptor lives under
+Dossier viewer at its immutable-project Project Hub URL (never a raw file path, even though the descriptor lives under
 `docs/`), and other files open the project Git view. Queries shorter than two
 characters return empty result groups, and a failed repository reports against
 the domains it broke without hiding the domains that succeeded.

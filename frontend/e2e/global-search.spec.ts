@@ -106,49 +106,76 @@ test('palette shows task results and repository progress before repository resul
 
 const DOSSIER_MATCH = {
   domain: 'dossiers', projectName: 'Agent Studio', projectColor: '#569cd6',
-  title: 'Global Orchestrator Watcher',
-  subtitle: 'Triggers, recovery authority, and observe-first slices.',
-  dossierKey: 'AGT-W15', workbenchId: 'orchestrator-waechter', lane: 'active', phase: 'shaping',
+  title: 'Task-Detail: Verbrauchsblock in Pipeline-Breite',
+  subtitle: 'Usage metrics span the task-detail pipeline width.',
+  dossierKey: 'AGT-W48', referenceKey: 'AGT-W48', workbenchId: 'task-detail-usage-panel',
+  projectId: 'PROJ-002', lane: 'active', phase: 'testing', updatedAt: '2026-09-11T10:00:00Z',
+};
+
+const WIKI_MATCH = {
+  domain: 'wiki', projectName: 'Agent Studio', projectColor: '#569cd6',
+  title: 'Task detail usage notes', subtitle: 'AGT-W48 acceptance evidence',
+  path: 'operations/task-detail-usage-panel/notes.md', isWiki: true,
 };
 
 const DOSSIER_STREAM_BODY = [
   frame('tasks', { items: [], durationMs: 4, error: null }),
   frame('dossiers', { items: [DOSSIER_MATCH], durationMs: 5, error: null }),
+  frame('wiki', { items: [WIKI_MATCH], durationMs: 5, error: null }),
   frame('progress', { completed: 0, total: 0 }),
   frame('done', { durationMs: 9, tasksMs: 4, repositoriesMs: 0, repositories: 0 }),
 ].join('');
 
-test('typing a Dossier key opens the Dossier viewer from the palette', async ({ page }) => {
+test('palette groups Dossier and Wiki results and keyboard navigation opens the exact Dossier', async ({ page, devBackend }) => {
+  void devBackend;
+  await page.route('**/api/auth/status', route => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }),
+  }));
   await page.route('**/api/search/stream?**', route => route.fulfill({
     contentType: 'text/event-stream', body: DOSSIER_STREAM_BODY,
   }));
-  await page.route('**/api/projects/Agent%20Studio/workbenches/orchestrator-waechter', route => route.fulfill({
+  await page.route('**/api/projects/Agent%20Studio/workbenches/task-detail-usage-panel', route => route.fulfill({
     contentType: 'application/json',
     body: JSON.stringify({
       workbench: {
-        id: 'orchestrator-waechter', key: 'AGT-W15', title: 'Global Orchestrator Watcher',
-        summary: DOSSIER_MATCH.subtitle, status: 'active', phase: 'shaping',
-        updatedAtUtc: '2026-08-01T10:00:00Z', entryPath: 'docs/operations/orchestrator-waechter/index.html',
+        id: 'task-detail-usage-panel', key: 'AGT-W48', title: DOSSIER_MATCH.title,
+        summary: DOSSIER_MATCH.subtitle, status: 'active', phase: 'testing',
+        updatedAtUtc: '2026-09-11T10:00:00Z', entryPath: 'docs/operations/task-detail-usage-panel/index.html',
         valid: true, error: null, sourceTaskKeys: [], relatedTaskKeys: [],
       },
-      html: '<!doctype html><html><body><h1>Global Orchestrator Watcher</h1></body></html>',
+      html: `<!doctype html><html><body><h1>${DOSSIER_MATCH.title}</h1></body></html>`,
       branch: 'main', revision: 'a'.repeat(40), workingTreeModified: false, fingerprint: 'b'.repeat(64),
     }),
   }));
 
   await page.addInitScript(() => localStorage.setItem('atp.studio.theme', 'light'));
   await page.goto('/');
+  await page.getByTestId('error-dialog-close').click({ timeout: 5_000 }).catch(() => {});
   await page.getByTestId('studio-global-search-trigger').dispatchEvent('click');
   const input = page.getByTestId('global-search-input');
   await expect(input).toBeFocused();
-  await input.fill('AGT-W15');
+  await input.fill('AGT-W48');
 
   const dossierGroup = page.getByTestId('global-search-group-dossiers');
-  await expect(dossierGroup).toContainText('Global Orchestrator Watcher');
-  await expect(dossierGroup).toContainText('AGT-W15');
-  await dossierGroup.getByRole('option').click();
+  await expect(dossierGroup).toContainText(DOSSIER_MATCH.title);
+  await expect(dossierGroup).toContainText('AGT-W48');
+  await expect(dossierGroup).toContainText('testing');
+  await expect(page.getByTestId('global-search-group-wiki')).toContainText('Task detail usage notes');
+  await expect(page.getByTestId('global-search-domain-dossiers')).toHaveText('Dossiers');
+  await expect(page.getByTestId('global-search-domain-wiki')).toHaveText('Wiki');
+  const domainsShot = process.env.GLOBAL_SEARCH_DOMAINS_SCREENSHOT;
+  if (domainsShot) await page.screenshot({ path: domainsShot, fullPage: true });
 
-  await expect(page).toHaveURL(/#\/projects\/agent-studio\/workbenches\/orchestrator-waechter(?:&|$)/);
+  // Exact Dossier key ranks first. Exercise both arrow directions and Enter
+  // so the new domains share the task-row keyboard contract.
+  await expect(page.locator('[role="option"][aria-selected="true"]')).toContainText(DOSSIER_MATCH.title);
+  await page.keyboard.press('ArrowDown');
+  await expect(page.locator('[role="option"][aria-selected="true"]')).toContainText('Task detail usage notes');
+  await page.keyboard.press('ArrowUp');
+  await page.keyboard.press('Enter');
+
+  await expect(page).toHaveURL(/#\/projects\/PROJ-002\/workbenches\/task-detail-usage-panel(?:&|$)/);
   await expect(page.frameLocator('[data-testid="workbench-viewer-frame"]')
-    .getByRole('heading', { name: 'Global Orchestrator Watcher' })).toBeVisible({ timeout: 30_000 });
+    .getByRole('heading', { name: DOSSIER_MATCH.title })).toBeVisible({ timeout: 30_000 });
 });

@@ -3,7 +3,7 @@ import { FormsModule } from '@angular/forms';
 import type { TaskInfo } from '../../../../models/task.model';
 import { BoardFiltersService } from '../../../board';
 import { StudioTabStateService } from '../../services/studio-tab-state.service';
-import { GlobalSearchItem, GlobalSearchService, SearchDomain } from './global-search.service';
+import { GlobalSearchItem, GlobalSearchService, SEARCH_DOMAINS, SearchDomain } from './global-search.service';
 
 /** Debounce before a keystroke turns into a request. */
 const DEBOUNCE_MS = 250;
@@ -23,6 +23,9 @@ export interface SearchDomainState {
 }
 
 const IDLE: SearchDomainState = { status: 'idle', completed: 0, total: 0, error: null };
+const DOMAIN_LABELS: Readonly<Record<SearchDomain, string>> = {
+  tasks: 'Tasks', dossiers: 'Dossiers', wiki: 'Wiki', commits: 'Commits', files: 'Files',
+};
 
 @Component({
   selector: 'app-global-search',
@@ -40,10 +43,13 @@ export class GlobalSearchComponent {
   readonly open = model(false);
   readonly query = signal('');
   readonly remote = signal<
-    { tasks: GlobalSearchItem[]; dossiers: GlobalSearchItem[]; commits: GlobalSearchItem[]; files: GlobalSearchItem[] }
-  >({ tasks: [], dossiers: [], commits: [], files: [] });
+    Record<SearchDomain, GlobalSearchItem[]>
+  >({ tasks: [], dossiers: [], wiki: [], commits: [], files: [] });
   readonly domains = signal<Record<SearchDomain, SearchDomainState>>(
-    { tasks: IDLE, dossiers: IDLE, commits: IDLE, files: IDLE });
+    idleDomains());
+  readonly domainOptions = SEARCH_DOMAINS.map(domain => ({ domain, label: DOMAIN_LABELS[domain] }));
+  readonly enabledDomains = signal<Record<SearchDomain, boolean>>(
+    { tasks: true, dossiers: true, wiki: true, commits: true, files: true });
   readonly elapsedMs = signal(0);
   readonly activeIndex = signal(0);
   readonly inputRef = viewChild<ElementRef<HTMLInputElement>>('searchInput');
@@ -70,25 +76,39 @@ export class GlobalSearchComponent {
    */
   readonly taskResults = computed<GlobalSearchItem[]>(() => {
     const q = this.query().trim().toLowerCase();
+    const keyQuery = normalizeKey(q);
     if (q.length < 2) return [];
     const local = this.tasks()
-      .filter(task => [task.key, task.title, task.state].some(value => value?.toLowerCase().includes(q)))
-      .sort((a, b) => Number(b.key?.toLowerCase() === q) - Number(a.key?.toLowerCase() === q))
+      .filter(task => (keyQuery.length > 0 && normalizeKey(task.key).includes(keyQuery))
+        || [task.title, task.state].some(value => value?.toLowerCase().includes(q)))
+      .sort((a, b) => Number(normalizeKey(b.key) === keyQuery) - Number(normalizeKey(a.key) === keyQuery))
       .slice(0, 20)
       .map(task => ({
         domain: 'tasks' as const, projectName: task.projectName, projectColor: this.projectColor(task.projectName),
         title: task.title, subtitle: task.key || task.id, taskKey: task.taskKey, lane: task.state,
+        referenceKey: task.key ?? undefined,
       }));
     const seen = new Set<string | undefined>(local.map(item => item.taskKey));
-    return [...local, ...this.remote().tasks.filter(item => !seen.has(item.taskKey))].slice(0, 20);
+    return [...local, ...this.remote().tasks.filter(item => !seen.has(item.taskKey))]
+      .sort((left, right) => Number(normalizeKey(right.referenceKey) === keyQuery)
+        - Number(normalizeKey(left.referenceKey) === keyQuery))
+      .slice(0, 20);
   });
 
-  readonly groups = computed(() => [
-    { domain: 'tasks' as const, label: 'Tasks', items: this.taskResults() },
-    { domain: 'dossiers' as const, label: 'Dossiers', items: this.remote().dossiers },
-    { domain: 'commits' as const, label: 'Commits', items: this.remote().commits },
-    { domain: 'files' as const, label: 'Files', items: this.remote().files },
-  ]);
+  readonly groups = computed(() => {
+    const remote = this.remote();
+    const enabled = this.enabledDomains();
+    const groups = [
+      { domain: 'tasks' as const, label: 'Tasks', items: this.taskResults() },
+      { domain: 'dossiers' as const, label: 'Dossiers', items: remote.dossiers },
+      { domain: 'wiki' as const, label: 'Wiki', items: remote.wiki },
+      { domain: 'commits' as const, label: 'Commits', items: remote.commits },
+      { domain: 'files' as const, label: 'Files', items: remote.files },
+    ].filter(group => enabled[group.domain]);
+    const keyQuery = normalizeKey(this.query());
+    return groups.sort((left, right) =>
+      Number(hasExactKey(right.items, keyQuery)) - Number(hasExactKey(left.items, keyQuery)));
+  });
   readonly flatResults = computed(() => this.groups().flatMap(group => group.items));
 
   show(): void {
@@ -119,6 +139,13 @@ export class GlobalSearchComponent {
     this.timer = setTimeout(() => this.run(q), DEBOUNCE_MS);
   }
 
+  toggleDomain(domain: SearchDomain): void {
+    const enabledCount = Object.values(this.enabledDomains()).filter(Boolean).length;
+    if (this.enabledDomains()[domain] && enabledCount === 1) return;
+    this.enabledDomains.update(current => ({ ...current, [domain]: !current[domain] }));
+    this.onQuery(this.query());
+  }
+
   /** Stops the search in flight without closing the palette or dropping results. */
   cancel(): void {
     if (this.timer) { clearTimeout(this.timer); this.timer = null; }
@@ -130,21 +157,23 @@ export class GlobalSearchComponent {
   }
 
   private reset(): void {
-    this.remote.set({ tasks: [], dossiers: [], commits: [], files: [] });
-    this.domains.set({ tasks: IDLE, dossiers: IDLE, commits: IDLE, files: IDLE });
+    this.remote.set({ tasks: [], dossiers: [], wiki: [], commits: [], files: [] });
+    this.domains.set(idleDomains());
     this.elapsedMs.set(0);
   }
 
   private async run(query: string): Promise<void> {
     const controller = new AbortController();
     this.controller = controller;
-    this.remote.set({ tasks: [], dossiers: [], commits: [], files: [] });
-    this.domains.set(mapDomains({ tasks: IDLE, dossiers: IDLE, commits: IDLE, files: IDLE },
-      state => ({ ...state, status: 'searching' })));
+    this.remote.set({ tasks: [], dossiers: [], wiki: [], commits: [], files: [] });
+    const enabled = this.enabledDomains();
+    this.domains.set(mapDomains(idleDomains(), (state, domain) =>
+      enabled[domain] ? { ...state, status: 'searching' } : state));
     this.startTicker();
 
     try {
-      for await (const frame of this.api.stream(query, controller.signal)) {
+      const selected = SEARCH_DOMAINS.filter(domain => enabled[domain]);
+      for await (const frame of this.api.stream(query, controller.signal, selected)) {
         if (controller.signal.aborted) return;
         if (frame.event === 'tasks') {
           this.remote.update(current => ({ ...current, tasks: frame.data.items }));
@@ -152,6 +181,9 @@ export class GlobalSearchComponent {
         } else if (frame.event === 'dossiers') {
           this.remote.update(current => ({ ...current, dossiers: frame.data.items }));
           this.patch('dossiers', { status: frame.data.error ? 'failed' : 'done', error: frame.data.error });
+        } else if (frame.event === 'wiki') {
+          this.remote.update(current => ({ ...current, wiki: frame.data.items }));
+          this.patch('wiki', { status: frame.data.error ? 'failed' : 'done', error: frame.data.error });
         } else if (frame.event === 'progress') {
           this.patchGit({ completed: frame.data.completed, total: frame.data.total });
         } else if (frame.event === 'repository') {
@@ -197,8 +229,8 @@ export class GlobalSearchComponent {
   }
 
   private patchGit(change: Partial<SearchDomainState>): void {
-    this.patch('commits', change);
-    this.patch('files', change);
+    if (this.enabledDomains().commits) this.patch('commits', change);
+    if (this.enabledDomains().files) this.patch('files', change);
   }
 
   private startTicker(): void {
@@ -223,17 +255,18 @@ export class GlobalSearchComponent {
     } else if (item.domain === 'dossiers' && item.workbenchId) {
       this.tabs.open({
         kind: 'workbench', projectName: item.projectName, workbenchId: item.workbenchId,
-        title: item.title, key: item.dossierKey,
+        ...(item.projectId ? { projectId: item.projectId } : {}), title: item.title, key: item.dossierKey,
       });
     } else if (item.domain === 'commits' && item.sha) {
       this.boardFilters.setSoleProject(item.projectName);
       this.tabs.open({ kind: 'diff', commitSha: item.sha });
-    } else if (item.domain === 'files') {
-      const wikiPath = item.isWiki ? item.path?.replace(/^docs\//i, '') : null;
+    } else if (item.domain === 'wiki' || item.domain === 'files') {
+      const isWiki = item.domain === 'wiki' || item.isWiki;
+      const wikiPath = isWiki ? item.path?.replace(/^docs\//i, '') : null;
       this.tabs.open({
         kind: 'hub',
         projectName: item.projectName,
-        section: item.isWiki ? 'wiki' : 'git',
+        section: isWiki ? 'wiki' : 'git',
         ...(wikiPath ? { wikiTarget: { kind: 'page' as const, relPath: wikiPath } } : {}),
       });
     }
@@ -264,6 +297,12 @@ export class GlobalSearchComponent {
 
   resultIndex(item: GlobalSearchItem): number { return this.flatResults().indexOf(item); }
 
+  updatedLabel(item: GlobalSearchItem): string | null {
+    if (!item.updatedAt) return null;
+    const value = new Date(item.updatedAt);
+    return Number.isNaN(value.getTime()) ? item.updatedAt : value.toLocaleDateString();
+  }
+
   private projectColor(name: string): string {
     let hash = 0;
     for (const char of name) hash = ((hash << 5) - hash + char.charCodeAt(0)) | 0;
@@ -273,12 +312,25 @@ export class GlobalSearchComponent {
 
 function mapDomains(
   current: Record<SearchDomain, SearchDomainState>,
-  change: (state: SearchDomainState) => SearchDomainState,
+  change: (state: SearchDomainState, domain: SearchDomain) => SearchDomainState,
 ): Record<SearchDomain, SearchDomainState> {
   return {
-    tasks: change(current.tasks),
-    dossiers: change(current.dossiers),
-    commits: change(current.commits),
-    files: change(current.files),
+    tasks: change(current.tasks, 'tasks'),
+    dossiers: change(current.dossiers, 'dossiers'),
+    wiki: change(current.wiki, 'wiki'),
+    commits: change(current.commits, 'commits'),
+    files: change(current.files, 'files'),
   };
+}
+
+function idleDomains(): Record<SearchDomain, SearchDomainState> {
+  return { tasks: IDLE, dossiers: IDLE, wiki: IDLE, commits: IDLE, files: IDLE };
+}
+
+function normalizeKey(value: string | null | undefined): string {
+  return (value ?? '').replace(/[^a-z0-9]/gi, '').toLowerCase();
+}
+
+function hasExactKey(items: readonly GlobalSearchItem[], query: string): boolean {
+  return query.length > 0 && items.some(item => normalizeKey(item.referenceKey) === query);
 }

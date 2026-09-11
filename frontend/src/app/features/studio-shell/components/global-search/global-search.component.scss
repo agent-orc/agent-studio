@@ -37,6 +37,29 @@
 
 .search-elapsed { color: var(--studio-fg-muted); font: 10px var(--font-mono); font-variant-numeric: tabular-nums; }
 
+.search-domain-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--studio-spacing-2);
+  padding: var(--studio-spacing-2) var(--studio-spacing-4);
+  border-bottom: 1px solid var(--studio-border);
+}
+
+.search-domain-chip {
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
+  color: var(--studio-fg-muted);
+  background: var(--studio-bg-editor);
+  border: 1px solid var(--studio-border);
+  border-radius: 999px;
+  font-size: 10px;
+
+  &--enabled {
+    color: var(--studio-nav-active-fg);
+    background: var(--studio-nav-active-bg);
+    border-color: var(--studio-nav-active-bar);
+  }
+}
+
 .search-results { min-height: 100px; overflow: auto; padding: var(--studio-spacing-2); }
 .search-group-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--studio-spacing-3); }
 .search-group h2 { margin: var(--studio-spacing-2) var(--studio-spacing-2) var(--studio-spacing-1); color: var(--studio-fg-muted); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
@@ -66,6 +89,7 @@
 .search-project-dot { width: 9px; height: 9px; flex: 0 0 auto; border-radius: 50%; }
 .search-result-copy { min-width: 0; flex: 1; display: grid; gap: var(--studio-spacing-1); strong, small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } strong { font-weight: 500; } small { color: var(--studio-fg-muted); } }
 .search-badge { padding: var(--studio-spacing-1) var(--studio-spacing-2); color: var(--studio-fg-dim); background: var(--studio-bg-editor); border: 1px solid var(--studio-border); border-radius: 9px; font-size: 10px; }
+.search-updated { color: var(--studio-fg-muted); font: 10px var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .search-hint, .search-loading, .search-error { margin: var(--studio-spacing-4); color: var(--studio-fg-muted); text-align: center; }
 .search-error { color: var(--studio-fg-dim); }
 footer { display: flex; gap: var(--studio-spacing-4); padding: var(--studio-spacing-2) var(--studio-spacing-4); color: var(--studio-fg-muted); border-top: 1px solid var(--studio-border); font-size: 10px; }

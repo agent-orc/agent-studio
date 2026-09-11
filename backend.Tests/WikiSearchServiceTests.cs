@@ -118,6 +118,21 @@ public class WikiSearchServiceTests : IDisposable
         Assert.Contains("<em>begriffxyz</em>", hit.Snippet);
     }
 
+    [Fact]
+    public void GlobalSearchProjection_MatchesTitlesAndHeadingsButNotBodyText()
+    {
+        WritePage("heading.md", "# Deployment guide\n\n## Recovery authority\n\nBody copy.\n");
+        WritePage("body-only.md", "# Notes\n\nRecovery authority appears only in body copy.\n");
+        var search = BuildSearchService();
+
+        var headingHits = search.SearchTitlesAndHeadings(ProjectName, "Recovery authority", 20);
+        var titleHits = search.SearchTitlesAndHeadings(ProjectName, "Deployment guide", 20);
+
+        Assert.Equal("heading.md", Assert.Single(headingHits!).RelPath);
+        Assert.Equal("Recovery authority", headingHits![0].MatchingHeadingOrPath);
+        Assert.Equal("heading.md", Assert.Single(titleHits!).RelPath);
+    }
+
     // ---- Index invalidation ----
 
     [Fact]

@@ -90,9 +90,9 @@ describe('Studio route contract', () => {
       [{ kind: 'board', projectName: 'Agent Studio' }, null, '/projects/agent-studio/board'],
       [{ kind: 'hub', projectName: 'Agent Studio', section: 'wiki' }, null, '/projects/agent-studio/wiki'],
       [
-        { kind: 'workbench', projectName: 'Agent Studio', workbenchId: 'route lab' },
+        { kind: 'workbench', projectName: 'Agent Studio', projectId: 'PROJ-002', workbenchId: 'route lab' },
         null,
-        '/projects/agent-studio/workbenches/route%20lab',
+        '/projects/PROJ-002/workbenches/route%20lab',
       ],
       [{ kind: 'workbenches', projectName: null }, null, '/workbenches'],
       [{ kind: 'workbenches', projectName: 'Agent Studio' }, null, '/projects/agent-studio/workbenches'],
