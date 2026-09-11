@@ -1,10 +1,15 @@
 import { Injectable, computed, signal } from '@angular/core';
 import type { BoardTab, StudioTab } from '../studio-shell.types';
 import { studioTabKey } from '../studio-shell.types';
+import {
+  ALL_PROJECTS_BOARD_NAME,
+  normalizeTaskTabScope,
+  resolveTaskTabScope,
+} from './task-tab-scope';
 
 const STORAGE_KEY = 'atp.studio.tabs.v1';
 const STORAGE_VERSION = 1;
-const ALL_PROJECTS = '__all__';
+const ALL_PROJECTS = ALL_PROJECTS_BOARD_NAME;
 const ALL_BOARD_TAB: BoardTab = { kind: 'board', projectName: ALL_PROJECTS };
 const ALL_BOARD_KEY = studioTabKey(ALL_BOARD_TAB);
 
@@ -81,9 +86,13 @@ export class StudioTabStateService {
    * `open()` that carries a new section must be able to move the open tab to
    * it. Without this, re-opening the Deck on a different section (Project vs.
    * Wiki) would silently drop the section and "do nothing".
+   *
+   * A brand-new task tab is stamped with the scope it is opened from
+   * (AGT-2692) so the app-wide project selection follows the context the user
+   * navigated from, not the task's own project.
    */
   open(tab: StudioTab): void {
-    const normalized = this.normalizeTab(tab);
+    const normalized = this.stampTaskTabScope(this.normalizeTab(tab));
     const emptyProjectEntry = this._tabs().length === 0
       && ((normalized.kind === 'board' && normalized.projectName !== ALL_PROJECTS)
         || normalized.kind === 'hub');
@@ -114,19 +123,22 @@ export class StudioTabStateService {
    * the source, and focus the target instead of duplicating.
    */
   retarget(sourceKey: string, tab: StudioTab): void {
-    const normalized = this.normalizeTab(tab);
-    const targetKey = studioTabKey(normalized);
     const list = this._tabs();
     const sourceIdx = list.findIndex(t => studioTabKey(t) === sourceKey);
     if (sourceIdx < 0) {
-      this.open(normalized);
+      this.open(this.normalizeTab(tab));
       return;
     }
+    // Reusing a tab is one continuous navigation, so an unstamped replacement
+    // keeps the scope the tab it replaces was opened in (AGT-2692).
+    const normalized = this.carryTaskTabScope(this.normalizeTab(tab), list[sourceIdx]);
+    const targetKey = studioTabKey(normalized);
     const existingIdx = list.findIndex((t, i) => i !== sourceIdx && studioTabKey(t) === targetKey);
     if (existingIdx >= 0) {
+      const adopted = this.carryTaskTabScope(normalized, list[existingIdx]);
       this._tabs.set(
         list
-          .map((t, i) => i === existingIdx ? normalized : t)
+          .map((t, i) => i === existingIdx ? adopted : t)
           .filter((_, i) => i !== sourceIdx),
       );
       this.activationHistory = this.activationHistory.filter(key => key !== sourceKey);
@@ -364,8 +376,10 @@ export class StudioTabStateService {
           epicKey: tab.epicKey,
           viewTaskKey: tab.viewTaskKey || undefined,
         };
-      case 'task':
-        return { kind: 'task', taskKey: tab.taskKey };
+      case 'task': {
+        const scope = normalizeTaskTabScope(tab.scope);
+        return { kind: 'task', taskKey: tab.taskKey, ...(scope ? { scope } : {}) };
+      }
       case 'hub':
         return {
           kind: 'hub',
@@ -398,6 +412,28 @@ export class StudioTabStateService {
       case 'welcome':
         return { kind: 'welcome' };
     }
+  }
+
+  /**
+   * Stamp a new task tab with the scope it is opened in (AGT-2692). An
+   * explicit scope from the caller wins; a task that is already open keeps the
+   * scope it was created with, because focusing an open tab is not a fresh
+   * navigation and must not silently re-scope the app.
+   */
+  private stampTaskTabScope(tab: StudioTab): StudioTab {
+    if (tab.kind !== 'task' || tab.scope) return tab;
+    const key = studioTabKey(tab);
+    const carried = this.carryTaskTabScope(tab, this._tabs().find(t => studioTabKey(t) === key));
+    if (carried !== tab) return carried;
+    const scope = resolveTaskTabScope(this.activeTab());
+    return scope ? { ...tab, scope } : tab;
+  }
+
+  /** Keep the scope a task tab already carries when the incoming payload omits one. */
+  private carryTaskTabScope(tab: StudioTab, previous: StudioTab | undefined): StudioTab {
+    if (tab.kind !== 'task' || tab.scope) return tab;
+    if (previous?.kind !== 'task' || !previous.scope) return tab;
+    return { ...tab, scope: previous.scope };
   }
 
   /** Collapse duplicate keys, preserving first-seen order. */

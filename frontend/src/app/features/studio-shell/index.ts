@@ -25,4 +25,9 @@ export {
 // does not pull StudioShellComponent through this barrel and re-form the
 // shell <-> studio-shell import cycle (AGT-2035).
 export { studioTabKey } from './studio-shell.types';
-export type { StudioTab, StudioTabKind, StudioPanelKind, WikiTabTarget } from './studio-shell.types';
+export type { StudioTab, StudioTabKind, StudioPanelKind, TaskTabScope, WikiTabTarget } from './studio-shell.types';
+export {
+  ALL_PROJECTS_BOARD_NAME,
+  resolveTaskTabScope,
+  taskTabProjectScope,
+} from './services/task-tab-scope';
