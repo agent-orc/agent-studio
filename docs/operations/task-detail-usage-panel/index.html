@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Task-Detail: Verbrauchsblock in Pipeline-Breite | Konzept-Dossier</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1: #fcfcfb;
+    --surface-2: #f2f1ee;
+    --surface-3: #e9e8e3;
+    --ink-1: #0b0b0b;
+    --ink-2: #52514e;
+    --ink-3: #8a8983;
+    --line: #d8d6cf;
+    --develop: #2a78d6;
+    --ok: #008300;
+    --bad: #c93736;
+    --warn: #9a6b00;
+    --accent-soft: #eaf1fb;
+    --bad-soft: #fbecec;
+    --ok-soft: #eaf4ea;
+    --warn-soft: #f8f0dd;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --surface-1: #1a1a19;
+      --surface-2: #232322;
+      --surface-3: #2c2c2a;
+      --ink-1: #ffffff;
+      --ink-2: #c3c2b7;
+      --ink-3: #8a8983;
+      --line: #3d3d3a;
+      --develop: #3987e5;
+      --ok: #4eae4e;
+      --bad: #e66767;
+      --warn: #d9a63f;
+      --accent-soft: #1e2a3a;
+      --bad-soft: #382222;
+      --ok-soft: #1f2f1f;
+      --warn-soft: #33301e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 0 0 80px; background: var(--surface-1); color: var(--ink-1); font: 16px/1.6 system-ui, "Segoe UI", sans-serif; }
+  main { max-width: 1080px; margin: 0 auto; padding: 0 28px; }
+  header.page { border-bottom: 1px solid var(--line); padding: 44px 0 26px; margin-bottom: 8px; }
+  .kicker { font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); margin: 0 0 10px; }
+  h1 { font-size: 34px; line-height: 1.2; margin: 0 0 12px; }
+  .lede { font-size: 18px; color: var(--ink-2); max-width: 62ch; margin: 0; }
+  .meta { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 18px; font-size: 13px; color: var(--ink-3); }
+  .meta b { color: var(--ink-2); font-weight: 600; }
+  h2 { font-size: 24px; margin: 56px 0 6px; scroll-margin-top: 20px; }
+  h2 .no { color: var(--ink-3); font-weight: 600; margin-right: 10px; }
+  h3 { font-size: 18px; margin: 34px 0 4px; }
+  p { max-width: 76ch; }
+  .box { border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); padding: 18px 22px; margin: 20px 0; }
+  .box.accent { background: var(--accent-soft); }
+  .box h4 { margin: 0 0 8px; font-size: 15px; }
+  .box p:last-child, .box ul:last-child { margin-bottom: 0; }
+  table.t { border-collapse: collapse; width: 100%; margin: 18px 0; font-size: 14.5px; }
+  .t th, .t td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .t th { font-size: 12.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); }
+  code { font: 13px/1.5 ui-monospace, Consolas, monospace; background: var(--surface-3); border-radius: 4px; padding: 1px 5px; }
+  ul { padding-left: 22px; }
+  li { margin: 5px 0; max-width: 76ch; }
+  figcaption { font-size: 13.5px; color: var(--ink-2); margin-top: 10px; max-width: 86ch; }
+  figcaption b { color: var(--ink-1); }
+
+  /* ---------- Mockup-Rahmen: Nachbildung des Overview-Panes ---------- */
+  .mock { border: 1px solid var(--line); border-radius: 10px; background: var(--surface-1); padding: 16px 18px 14px; margin: 14px 0 0; overflow-x: auto; }
+  .mock-inner { width: 100%; max-width: 900px; font: 12px/1.45 system-ui, "Segoe UI", sans-serif; color: var(--ink-1); }
+  .mono { font-family: ui-monospace, Consolas, monospace; font-variant-numeric: tabular-nums; }
+  .num { text-align: right; }
+  .dim { color: var(--ink-3); font-weight: 500; }
+  .strong { font-weight: 700; color: var(--ink-1); }
+  .sec-title { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-2); margin: 10px 0 6px; display: flex; gap: 10px; align-items: baseline; }
+  .sec-title .sub { font-size: 10.5px; font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--ink-3); }
+  /* Pipeline-Grid: Marker | Label | Bar | Zeit | Dauer | Tokens | Kosten */
+  .pl { display: grid; grid-template-columns: 14px 150px minmax(120px, 1fr) 84px 60px 64px 80px; column-gap: 10px; align-items: center; padding: 3px 0; }
+  .pl-head { color: var(--ink-3); font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+  .pl-phase { grid-template-columns: 14px 1fr; font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-2); background: var(--surface-2); border-radius: 4px; padding: 3px 6px; margin-top: 6px; }
+  .mark { width: 10px; height: 10px; border-radius: 999px; background: var(--ink-3); opacity: .55; justify-self: center; }
+  .mark.ok { background: var(--ok); opacity: 1; }
+  .mark.bad { background: var(--bad); opacity: 1; }
+  .mark.pend { background: var(--develop); opacity: .8; }
+  .bar { height: 6px; border-radius: 3px; background: var(--surface-3); position: relative; overflow: hidden; }
+  .bar > i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--ink-3); opacity: .55; border-radius: 3px; }
+  .bar > i.ok { background: var(--ok); opacity: .8; }
+  .bar > i.bad { background: var(--bad); opacity: .8; }
+  .bar > i.acc { background: var(--develop); opacity: .75; }
+  .pill { display: inline-block; font-size: 9px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; border-radius: 999px; padding: 0 6px; margin-left: 6px; vertical-align: 1px; }
+  .pill.cur { background: var(--warn-soft); color: var(--warn); }
+  .pill.bad { background: var(--bad-soft); color: var(--bad); }
+  .pill.ok { background: var(--ok-soft); color: var(--ok); }
+  .note { font-size: 10px; color: var(--ink-3); display: block; line-height: 1.2; }
+  .dashed { border-top: 1px dashed var(--line); margin-top: 6px; padding-top: 4px; }
+  .solid { border-top: 1px solid var(--line); margin-top: 8px; padding-top: 6px; }
+  /* Ist-Zustand: schmale, rechtsbuendige Spalten */
+  .ist { display: grid; grid-template-columns: 1fr 70px 120px; column-gap: 10px; align-items: baseline; padding: 4px 0; }
+  .ist.total { font-size: 12px; }
+  .ist .label { font-weight: 700; text-transform: uppercase; font-size: 11px; letter-spacing: .04em; }
+  .caret { color: var(--ink-3); margin-right: 6px; font-size: 10px; }
+  .kv { display: grid; grid-template-columns: 90px 1fr; column-gap: 12px; row-gap: 3px; padding: 3px 0; }
+  .kv .k { font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-3); }
+  /* Variante B: Tabelle */
+  .tb { display: grid; grid-template-columns: 14px 150px minmax(120px, 1fr) 84px 60px 64px 80px; column-gap: 10px; align-items: center; padding: 4px 0; border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent); }
+  .tb.head { color: var(--ink-3); font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase; }
+  .tb.foot { border-bottom: 0; border-top: 1px solid var(--line); margin-top: 2px; padding-top: 6px; }
+  .strip { display: flex; gap: 22px; flex-wrap: wrap; padding: 6px 0 2px; }
+  .strip .k { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-3); margin-right: 6px; }
+  /* Variante C: Kacheln */
+  .tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 8px 0 6px; }
+  .tile { border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); padding: 8px 12px; }
+  .tile .k { font-size: 9.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); }
+  .tile .v { font-size: 17px; font-weight: 700; line-height: 1.25; }
+  .tile .s { font-size: 10px; color: var(--ink-3); }
+  .tile.acc { border-color: color-mix(in srgb, var(--develop) 40%, var(--line)); background: var(--accent-soft); }
+  /* Entscheidungsblock */
+  .decision { border: 1px solid color-mix(in srgb, var(--develop) 35%, var(--line)); border-radius: 10px; padding: 18px 22px; margin: 22px 0; background: var(--accent-soft); }
+  .decision h3 { margin: 0 0 10px; font-size: 17px; }
+  .decision label { display: flex; gap: 12px; align-items: flex-start; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-1); margin: 8px 0; cursor: pointer; }
+  .decision label input { margin-top: 4px; }
+  .decision label b { display: block; }
+  .decision label span.d { display: block; color: var(--ink-2); font-size: 14px; }
+  .decision textarea { width: 100%; min-height: 64px; margin-top: 8px; font: 14px system-ui, sans-serif; border: 1px solid var(--line); border-radius: 6px; padding: 8px; background: var(--surface-1); color: var(--ink-1); }
+  @media (max-width: 760px) { h1 { font-size: 27px; } .tiles { grid-template-columns: repeat(2, 1fr); } }
+</style>
+</head>
+<body>
+<main>
+
+<header class="page">
+  <p class="kicker">Konzept-Dossier · Agent Studio · UI</p>
+  <h1>Task-Detail: Verbrauchsblock in Pipeline-Breite</h1>
+  <p class="lede">Unter den Pipeline-Schritten stehen Task-Summe, Tokens je Lauf und Agent-Arbeit in einem
+  eigenen, schmalen Raster. Die Zahlen sitzen rechts auf anderen Spalten als die Schrittmetriken darüber.
+  Drei Alternativen bringen den Block auf die Breite und die Spalten der Pipeline.</p>
+  <div class="meta">
+    <span><b>Stand:</b> 11.09.2026, entscheidungsreif</span>
+    <span><b>Auslöser:</b> Operator-Befund am Task-Detail von AGT-2707 (Overview-Tab)</span>
+    <span><b>Ort im Code:</b> <code>overview-pane.component</code> (Pipeline, Task total, Agent Work), <code>pipeline-token-usage.component</code> (Tokens by run)</span>
+  </div>
+</header>
+
+<section id="befund" class="box">
+  <h4>Befund</h4>
+  <p>Die Pipeline-Schritte nutzen ein Raster mit festen Metrikspalten (Zeit, Dauer, Tokens, Kosten) in
+  der Breite <code>--studio-measure-tabular-compact</code> (900 px). Der Block darunter besteht aus drei
+  Komponenten mit je eigenem Layout: <code>.ov-pl-total</code> (Flex, Tokens 56 px, Kosten bis 11 rem),
+  <code>pipeline-token-usage</code> (eigene Spaltenbreiten <code>--ptu-total-w</code>, <code>--ptu-cost-w</code>)
+  und <code>Agent Work</code> (Label-Wert-Grid in <code>--studio-measure-tabular</code>, 960 px). Ergebnis:
+  vier verschiedene rechte Kanten und Zahlen, die nicht unter den Spalten der Schritte stehen.</p>
+</section>
+
+<h2 id="ist"><span class="no">§1</span>Ist-Zustand</h2>
+<figure>
+  <div class="mock"><div class="mock-inner">
+    <div class="pl pl-head"><span></span><span>Schritt</span><span></span><span>Zeit</span><span>Dauer</span><span class="num">Tokens</span><span class="num">Kosten</span></div>
+    <div class="pl pl-phase"><span></span><span>Aspect <span class="pill bad">Attention 1/4</span></span></div>
+    <div class="pl"><span class="mark bad"></span><span>Requirement fit</span><span class="bar"><i class="bad" style="width:12%"></i></span><span class="dim">11:21 PM</span><span>5s</span><span class="num mono">–</span><span class="num mono">–</span></div>
+    <div class="pl"><span class="mark"></span><span>Code quality</span><span class="bar"></span><span class="dim">not run</span><span></span><span class="num mono">–</span><span class="num mono">–</span></div>
+    <div class="pl"><span class="mark"></span><span>Documentation</span><span class="bar"></span><span class="dim">not run</span><span></span><span class="num mono">–</span><span class="num mono">–</span></div>
+    <div class="pl pl-phase"><span></span><span>Drift <span class="dim">disabled · 5 steps</span></span></div>
+
+    <div class="ist total dashed"><span class="label">Task total <span class="dim">Sum</span></span><span class="num mono strong">–</span><span class="num mono strong">$0.00</span></div>
+    <div class="ist"><span><span class="caret">▸</span><span class="label">Task total sum</span> <span class="dim">all models</span></span><span class="num mono strong">79.98M</span><span class="num mono strong">$157.40<span class="note">incomplete (2 runs without usage)</span></span></div>
+    <div class="sec-title">Tokens by run <span class="sub">4 runs</span></div>
+    <div class="ist"><span><span class="caret">▸</span><b>Run #4</b> <span class="pill cur">Current</span> <span class="dim">3d ago</span></span><span class="num mono">-</span><span class="num mono">- no usage data<span class="note">usage not recorded</span></span></div>
+    <div class="ist"><span><span class="caret">▸</span><b>Run #3</b> <span class="dim">3d ago</span></span><span class="num mono">-</span><span class="num mono">- no usage data<span class="note">usage not recorded</span></span></div>
+    <div class="ist"><span><span class="caret">▸</span><b>Run #2</b> <span class="dim">4d ago</span></span><span class="num mono">30.94M</span><span class="num mono">$20.65</span></div>
+    <div class="ist"><span><span class="caret">▸</span><b>Run #1</b> <span class="dim">5d ago</span></span><span class="num mono">49.03M</span><span class="num mono">$136.75</span></div>
+    <div class="sec-title solid">Agent work</div>
+    <div class="kv"><span class="k">Calls</span><span><span class="pill ok" style="margin-left:0">4 calls</span> <span class="pill" style="background:var(--surface-3);color:var(--ink-2)">recovered</span> &nbsp; <span class="k">Started</span> 5d ago (9/6/2026, 7:15:28 PM)</span></div>
+    <div class="kv"><span class="k">Last touch</span><span>3d ago (9/7/2026, 9:32:56 PM)</span></div>
+  </div></div>
+  <figcaption><b>Abb. 1: Ist.</b> Oben das Pipeline-Raster mit vier Metrikspalten. Darunter drei Blöcke mit
+  eigenen Spalten: Summe und Läufe enden auf einer anderen Kante als die Schritte, „Agent work" ist ein
+  Label-Wert-Grid ohne Bezug zu den Spalten. Die Zahlen springen beim Lesen von oben nach unten.</figcaption>
+</figure>
+
+<h2 id="anforderungen"><span class="no">§2</span>Anforderungen</h2>
+<ul>
+  <li><b>A1</b> Der Block ist genau so breit wie die Pipeline-Schritte und nutzt dieselbe rechte Kante.</li>
+  <li><b>A2</b> Tokens und Kosten stehen unter den Spalten Tokens und Kosten der Schritte; ein Blick von oben nach unten liest eine Spalte.</li>
+  <li><b>A3</b> Die drei Inhalte bleiben erhalten: Task-Summe (mit „incomplete"-Hinweis), Tokens je Lauf (aufklappbar, Modell-Aufschlüsselung), Agent-Arbeit (Calls, Started, Last touch).</li>
+  <li><b>A4</b> Keine neuen Farben; Status- und Akzentfarben kommen aus den Studio-Tokens. Dunkles Theme ohne Sonderfall.</li>
+  <li><b>A5</b> Die Container-Query der Pipeline (<code>@container ov-pipeline</code>) gilt auch für den Block: schmale Panes klappen dieselben Spalten weg.</li>
+</ul>
+
+<h2 id="alternativen" data-concept-section="alternatives"><span class="no">§3</span>Drei Alternativen</h2>
+
+<h3 id="a">A · Dieselben Spalten</h3>
+<p>Summe, Läufe und Agent-Arbeit werden Zeilen des Pipeline-Rasters. Die Spurspalte zeigt je Lauf den
+Anteil an der Task-Summe als Balken, wie bei den Schritten die Dauer. Agent-Arbeit ist eine Zeile mit
+Calls in der Spurspalte und Started/Last touch in den Zeitspalten.</p>
+<figure>
+  <div class="mock"><div class="mock-inner">
+    <div class="pl pl-head"><span></span><span>Schritt</span><span></span><span>Zeit</span><span>Dauer</span><span class="num">Tokens</span><span class="num">Kosten</span></div>
+    <div class="pl pl-phase"><span></span><span>Aspect <span class="pill bad">Attention 1/4</span></span></div>
+    <div class="pl"><span class="mark bad"></span><span>Requirement fit</span><span class="bar"><i class="bad" style="width:12%"></i></span><span class="dim">11:21 PM</span><span>5s</span><span class="num mono">–</span><span class="num mono">–</span></div>
+    <div class="pl"><span class="mark"></span><span>Code quality</span><span class="bar"></span><span class="dim">not run</span><span></span><span class="num mono">–</span><span class="num mono">–</span></div>
+    <div class="pl pl-phase"><span></span><span>Drift <span class="dim">disabled · 5 steps</span></span></div>
+
+    <div class="pl dashed"><span></span><span class="strong" style="text-transform:uppercase;font-size:11px;letter-spacing:.04em">Task total <span class="dim">Sum</span></span><span class="dim" style="font-size:10.5px">all models · <span class="mono">79.98M</span> across 4 runs</span><span></span><span></span><span class="num mono strong">–</span><span class="num mono strong">$0.00</span></div>
+    <div class="pl pl-phase"><span></span><span>Tokens by run <span class="dim">4 runs · <span class="mono">79.98M</span> · $157.40 incomplete (2 runs without usage)</span></span></div>
+    <div class="pl"><span class="mark pend"></span><span>Run #4 <span class="pill cur">Current</span></span><span class="bar"></span><span class="dim">3d ago</span><span class="dim">–</span><span class="num mono dim">–</span><span class="num mono dim">no usage</span></div>
+    <div class="pl"><span class="mark"></span><span>Run #3</span><span class="bar"></span><span class="dim">3d ago</span><span class="dim">–</span><span class="num mono dim">–</span><span class="num mono dim">no usage</span></div>
+    <div class="pl"><span class="mark ok"></span><span>Run #2</span><span class="bar"><i class="acc" style="width:39%"></i></span><span class="dim">4d ago</span><span>2h 06m</span><span class="num mono">30.94M</span><span class="num mono">$20.65</span></div>
+    <div class="pl"><span class="mark ok"></span><span>Run #1</span><span class="bar"><i class="acc" style="width:61%"></i></span><span class="dim">5d ago</span><span>2h 30m</span><span class="num mono">49.03M</span><span class="num mono">$136.75</span></div>
+    <div class="pl pl-phase"><span></span><span>Agent work</span></div>
+    <div class="pl"><span class="mark ok"></span><span>Calls</span><span><span class="pill ok" style="margin-left:0">4 calls</span><span class="pill" style="background:var(--surface-3);color:var(--ink-2)">recovered</span></span><span class="dim">started 5d ago</span><span class="dim">last 3d</span><span class="num mono dim">–</span><span class="num mono dim">–</span></div>
+  </div></div>
+  <figcaption><b>Abb. 2: Alternative A.</b> Ein Raster für alles. Der Anteilsbalken je Lauf ist neu und
+  zeigt sofort, welcher Lauf die Kosten gemacht hat. Kosten des Ist-Blocks liegen in derselben Spalte wie
+  die Schrittkosten. Preis: die Laufzeilen verlieren ihre Aufklapp-Fläche in voller Breite; die
+  Modell-Aufschlüsselung öffnet als eingerückte Unterzeilen im selben Raster.</figcaption>
+</figure>
+
+<h3 id="b">B · Tabelle mit eigener Kopfzeile</h3>
+<p>Unter der Pipeline steht eine Tabelle in Pipeline-Breite mit eigener Kopfzeile (Lauf, Gestartet,
+Dauer, Tokens, Kosten). Die Spaltenbreiten sind dieselben Tracks wie im Pipeline-Raster, deshalb
+liegen Tokens und Kosten exakt unter den Schrittspalten. Die Task-Summe ist die Fußzeile der Tabelle,
+Agent-Arbeit eine Kennzahlenzeile darunter in voller Breite.</p>
+<figure>
+  <div class="mock"><div class="mock-inner">
+    <div class="pl pl-head"><span></span><span>Schritt</span><span></span><span>Zeit</span><span>Dauer</span><span class="num">Tokens</span><span class="num">Kosten</span></div>
+    <div class="pl pl-phase"><span></span><span>Aspect <span class="pill bad">Attention 1/4</span></span></div>
+    <div class="pl"><span class="mark bad"></span><span>Requirement fit</span><span class="bar"><i class="bad" style="width:12%"></i></span><span class="dim">11:21 PM</span><span>5s</span><span class="num mono">–</span><span class="num mono">–</span></div>
+    <div class="pl pl-phase"><span></span><span>Drift <span class="dim">disabled · 5 steps</span></span></div>
+
+    <div class="sec-title solid">Tokens by run <span class="sub">4 runs</span></div>
+    <div class="tb head"><span></span><span>Lauf</span><span>Modelle</span><span>Gestartet</span><span>Dauer</span><span class="num">Tokens</span><span class="num">Kosten</span></div>
+    <div class="tb"><span class="caret">▸</span><span><b>Run #4</b> <span class="pill cur">Current</span></span><span class="dim">–</span><span class="dim">3d ago</span><span class="dim">–</span><span class="num mono dim">–</span><span class="num mono dim">usage not recorded</span></div>
+    <div class="tb"><span class="caret">▸</span><span><b>Run #3</b></span><span class="dim">–</span><span class="dim">3d ago</span><span class="dim">–</span><span class="num mono dim">–</span><span class="num mono dim">usage not recorded</span></div>
+    <div class="tb"><span class="caret">▸</span><span><b>Run #2</b></span><span class="dim">sonnet 5 · opus 5</span><span class="dim">4d ago</span><span>2h 06m</span><span class="num mono">30.94M</span><span class="num mono">$20.65</span></div>
+    <div class="tb"><span class="caret">▸</span><span><b>Run #1</b></span><span class="dim">sonnet 5</span><span class="dim">5d ago</span><span>2h 30m</span><span class="num mono">49.03M</span><span class="num mono">$136.75</span></div>
+    <div class="tb foot"><span></span><span class="strong" style="text-transform:uppercase;font-size:11px;letter-spacing:.04em">Task total <span class="dim">Sum</span></span><span class="dim" style="font-size:10.5px">all models · incomplete (2 runs without usage)</span><span></span><span></span><span class="num mono strong">79.98M</span><span class="num mono strong">$157.40</span></div>
+    <div class="sec-title solid">Agent work</div>
+    <div class="strip"><span><span class="k">Calls</span><span class="pill ok" style="margin-left:0">4 calls</span><span class="pill" style="background:var(--surface-3);color:var(--ink-2)">recovered</span></span><span><span class="k">Started</span>5d ago · 9/6/2026 7:15 PM</span><span><span class="k">Last touch</span>3d ago · 9/7/2026 9:32 PM</span></div>
+  </div></div>
+  <figcaption><b>Abb. 3: Alternative B.</b> Die Läufe werden eine echte Tabelle mit Kopfzeile; die
+  „Modelle"-Spalte nutzt den Platz der Spurspalte für die Modellnamen des Laufs. Die Summe steht als
+  Fußzeile unter den Zahlen, die sie summiert. Agent-Arbeit bleibt ein eigener, flacher Streifen.
+  Preis: eine zweite Kopfzeile im Tab; die Pipeline-Summe „Task total" wandert aus dem Pipeline-Block
+  in die Tabelle.</figcaption>
+</figure>
+
+<h3 id="c">C · Kennzahlen-Kacheln, Läufe im Raster</h3>
+<p>Vier Kacheln in Pipeline-Breite tragen die Kennzahlen: Tokens gesamt, Kosten gesamt, Läufe,
+Agent-Calls. Darunter stehen die Läufe als kompakte Zeilen im Pipeline-Raster, ohne Balken. Agent-Arbeit
+geht in die Kacheln auf (Calls) und in eine Zeitzeile (Started, Last touch).</p>
+<figure>
+  <div class="mock"><div class="mock-inner">
+    <div class="pl pl-head"><span></span><span>Schritt</span><span></span><span>Zeit</span><span>Dauer</span><span class="num">Tokens</span><span class="num">Kosten</span></div>
+    <div class="pl pl-phase"><span></span><span>Aspect <span class="pill bad">Attention 1/4</span></span></div>
+    <div class="pl"><span class="mark bad"></span><span>Requirement fit</span><span class="bar"><i class="bad" style="width:12%"></i></span><span class="dim">11:21 PM</span><span>5s</span><span class="num mono">–</span><span class="num mono">–</span></div>
+    <div class="pl pl-phase"><span></span><span>Drift <span class="dim">disabled · 5 steps</span></span></div>
+
+    <div class="tiles">
+      <div class="tile acc"><div class="k">Tokens gesamt</div><div class="v mono">79.98M</div><div class="s">all models · 4 runs</div></div>
+      <div class="tile acc"><div class="k">Kosten gesamt</div><div class="v mono">$157.40</div><div class="s">incomplete · 2 runs without usage</div></div>
+      <div class="tile"><div class="k">Läufe</div><div class="v">4</div><div class="s">Run #4 current · 3d ago</div></div>
+      <div class="tile"><div class="k">Agent-Calls</div><div class="v">4</div><div class="s">recovered · last touch 3d ago</div></div>
+    </div>
+    <div class="pl pl-head"><span></span><span>Lauf</span><span></span><span>Gestartet</span><span>Dauer</span><span class="num">Tokens</span><span class="num">Kosten</span></div>
+    <div class="pl"><span class="caret">▸</span><span><b>Run #4</b> <span class="pill cur">Current</span></span><span></span><span class="dim">3d ago</span><span class="dim">–</span><span class="num mono dim">–</span><span class="num mono dim">no usage</span></div>
+    <div class="pl"><span class="caret">▸</span><span><b>Run #3</b></span><span></span><span class="dim">3d ago</span><span class="dim">–</span><span class="num mono dim">–</span><span class="num mono dim">no usage</span></div>
+    <div class="pl"><span class="caret">▸</span><span><b>Run #2</b></span><span></span><span class="dim">4d ago</span><span>2h 06m</span><span class="num mono">30.94M</span><span class="num mono">$20.65</span></div>
+    <div class="pl"><span class="caret">▸</span><span><b>Run #1</b></span><span></span><span class="dim">5d ago</span><span>2h 30m</span><span class="num mono">49.03M</span><span class="num mono">$136.75</span></div>
+  </div></div>
+  <figcaption><b>Abb. 4: Alternative C.</b> Die Kennzahlen bekommen Gewicht und stehen in einer Reihe auf
+  der Pipeline-Breite; die Läufe darunter teilen sich die Metrikspalten mit den Schritten. Preis: mehr
+  Höhe, und die Kacheln sind ein neues Element im Task-Detail, das es sonst nur im Projekt-Cockpit gibt.</figcaption>
+</figure>
+
+<h2 id="vergleich" data-concept-section="evidence"><span class="no">§4</span>Vergleich</h2>
+<table class="t">
+  <thead><tr><th>Kriterium</th><th>A · Dieselben Spalten</th><th>B · Tabelle</th><th>C · Kacheln</th></tr></thead>
+  <tbody>
+    <tr><td>A1 Breite und rechte Kante</td><td>erfüllt</td><td>erfüllt</td><td>erfüllt</td></tr>
+    <tr><td>A2 Spalten decken sich</td><td>erfüllt, ein Raster</td><td>erfüllt, gleiche Tracks</td><td>Läufe ja, Kennzahlen nein (Kacheln)</td></tr>
+    <tr><td>A3 Inhalte erhalten</td><td>ja; Aufklappen als Unterzeilen</td><td>ja; Aufklappen unter der Zeile</td><td>ja; Agent-Arbeit auf Kachel und Zeitzeile verteilt</td></tr>
+    <tr><td>Neue Information</td><td>Anteilsbalken je Lauf</td><td>Modelle je Lauf sichtbar</td><td>Kennzahlen auf einen Blick</td></tr>
+    <tr><td>Höhe</td><td>gleich wie heute</td><td>+ eine Kopfzeile</td><td>+ eine Kachelreihe</td></tr>
+    <tr><td>Aufwand</td><td>mittel: <code>pipeline-token-usage</code> übernimmt <code>--ov-pl-grid-cols</code></td><td>mittel: Tabelle plus Summenzeile verschieben</td><td>mittel bis hoch: neue Kachel-Komponente</td></tr>
+    <tr><td>Konsistenz mit Studio</td><td>hoch</td><td>hoch</td><td>mittel (Kacheln bisher nur im Cockpit)</td></tr>
+  </tbody>
+</table>
+
+<h2 id="empfehlung" data-concept-section="recommendation"><span class="no">§5</span>Empfehlung</h2>
+<p>Alternative A. Sie erfüllt A1 bis A5 mit dem geringsten neuen Vokabular: ein Raster, dieselben
+Container-Queries, und der Anteilsbalken macht die Verteilung der Kosten auf die Läufe ohne zusätzliche
+Zahl sichtbar. B ist die zweite Wahl, wenn die Modellnamen je Lauf wichtiger sind als der Anteil.</p>
+
+<h2 id="entscheidung" data-concept-section="open-decisions"><span class="no">§6</span>Entscheidung</h2>
+<div class="decision" data-decision-id="usage-panel-layout" data-decision-kind="single" data-decision-label="Layout des Verbrauchsblocks im Task-Detail">
+  <h3>Welche Alternative wird umgesetzt?</h3>
+  <label data-option-id="a-same-grid" data-option-label="A · Dieselben Spalten (Empfehlung)"><input type="radio" name="usage-panel-layout" value="a-same-grid"><span><b>A · Dieselben Spalten</b><span class="d">Summe, Läufe und Agent-Arbeit als Zeilen des Pipeline-Rasters, Anteilsbalken je Lauf.</span></span></label>
+  <label data-option-id="b-table" data-option-label="B · Tabelle mit eigener Kopfzeile"><input type="radio" name="usage-panel-layout" value="b-table"><span><b>B · Tabelle mit eigener Kopfzeile</b><span class="d">Läufe als Tabelle auf denselben Spalten-Tracks, Summe als Fußzeile, Agent-Arbeit als Streifen.</span></span></label>
+  <label data-option-id="c-tiles" data-option-label="C · Kennzahlen-Kacheln, Läufe im Raster"><input type="radio" name="usage-panel-layout" value="c-tiles"><span><b>C · Kennzahlen-Kacheln, Läufe im Raster</b><span class="d">Vier Kacheln in Pipeline-Breite, darunter die Läufe im Pipeline-Raster.</span></span></label>
+  <div data-comment="Anmerkung zur Umsetzung (optional)"><textarea placeholder="Anmerkung zur Umsetzung (optional)"></textarea></div>
+</div>
+
+<h2 id="quellen"><span class="no">§</span>Quellen</h2>
+<ul>
+  <li><code>frontend/src/app/features/task-detail/components/prompt-pane/overview-pane/overview-pane.component.{html,scss}</code>: Pipeline-Raster (<code>.ov-pipeline</code>, <code>--ov-pl-grid-cols</code>, Container-Query), <code>.ov-pl-total</code>, Agent-Work-Block.</li>
+  <li><code>frontend/src/app/features/task-detail/components/prompt-pane/pipeline-token-usage/pipeline-token-usage.component.{html,scss}</code>: Tokens by run, eigene Spaltenbreiten.</li>
+  <li><code>frontend/src/styles/_tokens-semantic.scss</code>: <code>--studio-measure-tabular-compact</code> (900 px), <code>--studio-measure-tabular</code> (960 px).</li>
+  <li>Operator-Screenshot vom 11.09.2026, Task-Detail AGT-2707, Overview-Tab.</li>
+</ul>
+
+</main>
+</body>
+</html>
