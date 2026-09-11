@@ -352,6 +352,15 @@ public static class TimelineEventKinds
     /// operator can prove a queued steer actually reached an agent.
     /// </summary>
     public const string FollowUpConsumed = "follow_up_consumed";
+
+    /// <summary>
+    /// A Global Orchestrator Watcher case (orchestrator-waechter dossier §10)
+    /// recurred against a card that already has an open Watcher proposal, so
+    /// W2 appended a comment here instead of drafting a second card. Details
+    /// carry <c>caseId</c>, <c>fingerprint</c>, <c>detectorClass</c>, and
+    /// <c>evidenceDigest</c>.
+    /// </summary>
+    public const string WatcherCaseLinked = "watcher_case_linked";
 }
 
 /// <summary>

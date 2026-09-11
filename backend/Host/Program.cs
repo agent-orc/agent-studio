@@ -767,6 +767,26 @@ if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService<AgentStudio.Pipeline.IntegrationPushBackstopHostedService>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<AcceptanceRailHostedService>());
 }
+// Global Orchestrator Watcher (orchestrator-waechter dossier §10, W1+W2):
+// detector sweep + ticket-proposal drafting. Off by default (Watcher:Enabled),
+// same convention as Supervisor:SoftReasoningEnabled - it drafts real task
+// cards, so a workspace opts in explicitly.
+builder.Services.AddSingleton<AgentStudio.Watcher.WatcherCaseStore>();
+builder.Services.AddSingleton<AgentStudio.Watcher.WatcherProposalStore>();
+builder.Services.AddSingleton<AgentStudio.Watcher.WatcherSuppressionStore>();
+builder.Services.AddSingleton<AgentStudio.Watcher.WatcherContingentService>();
+builder.Services.AddSingleton<AgentStudio.Watcher.WatcherCaseEngine>();
+builder.Services.AddSingleton<AgentStudio.Watcher.WatcherEvidencePackBuilder>();
+builder.Services.AddSingleton<AgentStudio.Watcher.WatcherAnalysisService>();
+builder.Services.AddSingleton<AgentStudio.Watcher.WatcherProposalDraftingService>();
+builder.Services.AddSingleton<AgentStudio.Watcher.WatcherActivityProjector>();
+builder.Services.AddSingleton<AgentStudio.Watcher.IWatcherSignalProbe, AgentStudio.Watcher.HygieneDescriptorProbe>();
+builder.Services.AddSingleton<AgentStudio.Watcher.IWatcherSignalProbe, AgentStudio.Watcher.IntegrationFailureRepetitionProbe>();
+builder.Services.AddSingleton<AgentStudio.Watcher.IWatcherSignalProbe, AgentStudio.Watcher.TaskLaneIntegrationContradictionProbe>();
+builder.Services.AddSingleton<AgentStudio.Watcher.IWatcherSignalProbe, AgentStudio.Watcher.QuotaProbeSignalProbe>();
+builder.Services.AddSingleton<AgentStudio.Watcher.WatcherHostedService>();
+if (!publicDemoExecutionProfile)
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Watcher.WatcherHostedService>());
 // Periodic reap of orphaned CLI process trees (codex/node) that a finished or
 // crashed run left behind. Closes the days-long accumulation gap the startup
 // reaper alone cannot: those survivors hold job-folder handles and wedge the

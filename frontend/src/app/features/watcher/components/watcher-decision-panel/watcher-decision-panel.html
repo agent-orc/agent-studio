@@ -1,0 +1,59 @@
+<section class="watcher-decision" data-testid="watcher-decision-panel">
+  <h4>Watcher proposal decision</h4>
+  @if (proposal(); as p) {
+    <dl class="watcher-decision__meta">
+      <div><dt>Recommended model</dt><dd>{{ p.recommendedModel || '(unavailable)' }}</dd></div>
+      <div><dt>Detector class</dt><dd>{{ p.detectorClass }}</dd></div>
+      @if (p.decision; as decision) {
+        <div><dt>Decision</dt><dd data-testid="watcher-decision-outcome">{{ decision.outcome }} by {{ decision.decidedBy }}</dd></div>
+      }
+    </dl>
+
+    @if (!p.decision) {
+      @if (rejecting()) {
+        <div class="watcher-decision__form">
+          <textarea class="watcher-decision__input" placeholder="Why reject this proposal? Feeds the suppression list."
+                    [(ngModel)]="reasonDraft" data-testid="watcher-reject-reason" rows="3"></textarea>
+          <div class="watcher-decision__form-actions">
+            <button type="button" class="watcher-decision__cancel" (click)="cancel()">Cancel</button>
+            <button type="button" class="watcher-decision__submit" data-testid="watcher-reject-confirm"
+                    [disabled]="decidingProposalId() === p.id || !reasonDraft.trim()"
+                    (click)="decide('rejected')">Confirm reject</button>
+          </div>
+        </div>
+      } @else if (merging()) {
+        <div class="watcher-decision__form">
+          <input class="watcher-decision__input" placeholder="Existing card id to merge into"
+                 [(ngModel)]="mergeTargetDraft" data-testid="watcher-merge-target" />
+          <div class="watcher-decision__form-actions">
+            <button type="button" class="watcher-decision__cancel" (click)="cancel()">Cancel</button>
+            <button type="button" class="watcher-decision__submit" data-testid="watcher-merge-confirm"
+                    [disabled]="decidingProposalId() === p.id || !mergeTargetDraft.trim()"
+                    (click)="decide('merged')">Confirm merge</button>
+          </div>
+        </div>
+      } @else {
+        <div class="watcher-decision__actions">
+          <button type="button" class="watcher-decision__approve" data-testid="watcher-approve"
+                  [disabled]="decidingProposalId() === p.id"
+                  (click)="decide('approved')">Approve</button>
+          <button type="button" class="watcher-decision__edit" data-testid="watcher-edit"
+                  [disabled]="decidingProposalId() === p.id"
+                  title="Records that you changed the draft before accepting it (feeds the auto-approval promotion rule)."
+                  (click)="decide('edited')">Edited, accept</button>
+          <button type="button" class="watcher-decision__merge" data-testid="watcher-merge-start"
+                  [disabled]="decidingProposalId() === p.id"
+                  (click)="startMerge()">Merge into existing card</button>
+          <button type="button" class="watcher-decision__reject" data-testid="watcher-reject-start"
+                  [disabled]="decidingProposalId() === p.id"
+                  (click)="startReject()">Reject</button>
+        </div>
+      }
+    }
+    @if (decisionError(); as err) {
+      <p class="watcher-decision__error" data-testid="watcher-decision-error">{{ err }}</p>
+    }
+  } @else {
+    <p class="watcher-decision__empty">No pending proposal found for this entry (already decided or contingent-blocked).</p>
+  }
+</section>
