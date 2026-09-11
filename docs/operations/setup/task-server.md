@@ -937,8 +937,8 @@ opens the store, a schema-14 binary fails closed through the newer-schema guard.
 
 | Surface | Required input | Optional input | Success output |
 |---|---|---|---|
-| `inventory --source <path>` | Frozen or still-readable legacy workspace path | `--workspace <name>`; defaults to the source directory name | Indented `LegacyMigrationInventory` JSON on stdout; human project/state counts, aggregate counts, orphan warnings, bus-log bytes, and the inventory SHA-256 on stderr |
-| `import --source <path> --inventory <file>` | Frozen workspace plus the exact JSON emitted by `inventory` | `--workspace <name>`; defaults to the inventoried root name. `--mode maintenance` initializes the store and persists `Maintenance`; without it, the store must already be in `Maintenance` | `LegacyMigrationResult` JSON on stdout, including both inventory hashes, idempotence, report identity/path/hash/signature, before/after inventories, and orphan counts |
+| `inventory --source <path>` | Frozen or still-readable legacy workspace path | `--workspace <name>` is accepted for command symmetry; inventory identity and hashing do not use it | Indented `LegacyMigrationInventory` JSON on stdout; human project/state counts, aggregate counts, orphan warnings, bus-log bytes, and the inventory SHA-256 on stderr |
+| `import --source <path> --inventory <file>` | Frozen workspace plus the exact JSON emitted by `inventory` | `--workspace <name>` selects the target workspace name and otherwise defaults to the basename of the inventoried root. `--mode maintenance` initializes the store and persists `Maintenance`; without it, the store must already be in `Maintenance` | `LegacyMigrationResult` JSON on stdout, including both inventory hashes, idempotence, report identity/path/hash/signature, before/after inventories, and orphan counts |
 
 Both commands exit `0` on success, `1` on an inventory, store, or import
 failure, and `2` when command-line parsing fails. They read the normal Task
@@ -950,21 +950,28 @@ The management API uses the same wire records from
 
 | Route | Request and response contract |
 |---|---|
-| `POST /api/v1/management/migrations/legacy/inventory` | Accepts `LegacyMigrationRequest`. `legacyRoot` and `workspaceName` identify the source; `requireAttemptAuthority:true` makes missing authority a hard stop. Returns `LegacyMigrationInventory`. |
+| `POST /api/v1/management/migrations/legacy/inventory` | Accepts `LegacyMigrationRequest`. `legacyRoot` identifies the source. `workspaceName` is required by the shared request shape but is not used for inventory identity or hashing; `requireAttemptAuthority:true` makes missing authority a hard stop. Returns `LegacyMigrationInventory`. |
 | `POST /api/v1/management/migrations/legacy/import` | Requires `legacyRoot`, `workspaceName`, `freezeConfirmed:true`, and the saved `expectedMigrationId`; `preserveEvidenceGit` defaults to true. Task Server must already be in `Maintenance`. Returns `LegacyMigrationResult`. |
 | `GET /api/v1/management/migrations/legacy/reports` | Returns completed `LegacyMigrationReport` records, newest first. |
 | `GET /api/v1/management/migrations/legacy/reports/{migrationId}` | Returns the report selected by migration ID. A missing report is `404 legacy-migration-report-not-found`. |
+
+All four routes require the management scope. Pointer-only artifact responses
+expose `sourcePath` and `pointerOnly` on both `ArtifactDto` and
+`ArtifactContentDto`. The latter carries an empty content body, and the frozen
+source remains the recovery authority.
 
 The named import stops are `legacy-freeze-required`, `maintenance-required`,
 `legacy-inventory-required`, `legacy-inventory-mismatch`,
 `legacy-attempt-authority-required`, and `legacy-post-import-mismatch`. The
 offline command additionally reports `legacy-inventory-invalid` when the saved
-JSON does not reproduce its embedded SHA-256. Any of these failures prohibits
-cutover.
+JSON does not reproduce its embedded SHA-256. The API maps each named conflict
+to HTTP 409. Any of these failures prohibits cutover.
 
-Core target-count validation is inside the import transaction for tasks,
-events, and artifacts. A repeated import of the same migration ID returns the
-existing signed report and does not create another backup or duplicate data.
+Core target-count validation is inside the import transaction for projects,
+tasks, events, and artifacts. Supplementary entity, per-project/state, and
+orphan counts are checked exactly after that transaction. A repeated import of
+the same migration ID returns the existing signed report and does not create
+another backup or duplicate data.
 
 1. Call `POST /api/v1/management/migrations/legacy/inventory` with the legacy
    root and workspace name. Save the project/task/event/artifact counts,
@@ -976,11 +983,14 @@ existing signed report and does not create another backup or duplicate data.
    `freezeConfirmed:true` and `expectedMigrationId` set to the saved inventory
    ID. Import fails if task metadata, prompts, timelines, or result artifacts
    changed after inventory.
-4. The server creates a pre-import backup and imports the inventory in one
-   transaction. Task metadata, timeline events, stable identities, and Git
-   evidence are durable records. Result, attachment, and task-log files are
-   content-hashed references to the untouched frozen root. File bodies,
-   including `cli-output.log` at any size, are not copied into SQLite.
+4. The server creates a pre-import backup and writes the core project, task,
+   event, and artifact batch plus supplementary and orphan ledger rows in one
+   transaction. After commit it runs the remaining supplementary,
+   per-project/state, and orphan exact-count checks. Task metadata, timeline
+   events, stable identities, and Git evidence are durable records. Result,
+   attachment, and task-log files are content-hashed references to the
+   untouched frozen root. File bodies, including `cli-output.log` at any size,
+   are not copied into SQLite.
 5. Compare counts and retain the signed report from
    `migration-reports/legacy-{migrationId}.json`. It contains before and after
    inventories, hashes, server and schema versions, duration, backup identity,
@@ -1005,14 +1015,16 @@ and epoch but enters `process-unknown`; only the normal audited containment
 proof can release it. Every `attempt-authority.archive-*.json` file participates
 in the source hash. Authority, lease, fence, or integration records that name a
 task folder which no longer exists are reported as degradations rather than
-aborting import. They are retained in `legacy_migration_orphans` with an
-`orphaned_task_key` marker and effective status; open orphaned authority is
-`process-unknown`. The inventory and signed report count each orphan kind, and
-post-import validation checks those counts exactly. The live execution tables
-keep their non-null task foreign keys, so orphan records cannot become runnable
-authority. Bus logs use a different policy: each JSONL file is counted, hashed,
-sized, and stored as a pointer to the frozen root, but its messages are not
-replayed into the Task Server event stream.
+aborting import. A review attempt is also orphaned when its source coding
+attempt cannot be imported. These records are retained in
+`legacy_migration_orphans` with an `orphaned_task_key` marker and effective
+status; open orphaned authority is `process-unknown`. The inventory and signed
+report count each orphan kind, and post-import validation checks those counts
+exactly. The live execution tables keep their non-null task foreign keys, so
+orphan records cannot become runnable authority. Bus logs use a different
+policy: each JSONL file is counted, hashed, sized, and stored as a pointer to
+the frozen root, but its messages are not replayed into the Task Server event
+stream.
 
 Other source conditions can degrade instead of aborting; each degradation is
 listed in the inventory warnings and the signed report. Selected task metadata

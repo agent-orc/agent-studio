@@ -983,16 +983,19 @@ state.
 Legacy import retains closed coding and review attempts as history. A live
 lease keeps its attempt identity, lease identity, fence, and authority epoch,
 but enters `process-unknown` until the normal audited containment path resolves
-it. Cutover inventory and import requests set `requireAttemptAuthority:true` so
-a missing live authority store stops migration with
-`legacy-attempt-authority-required`. An unreadable live store or discovered
-archive is also a hard inventory failure.
+it. API cutover inventory and import requests should set
+`requireAttemptAuthority:true` so a missing live authority store stops
+migration with `legacy-attempt-authority-required`. The offline import command
+derives that requirement from a non-zero authority epoch in the saved
+inventory; its inventory command has no separate requirement flag. An
+unreadable live store or discovered archive is also a hard inventory failure.
 
-Authority, lease, fence, and integration records whose task folder is missing
-are retained in the explicit legacy orphan ledger with their
-`orphaned_task_key`; they never enter the live authority tables and cannot
-become runnable work. Bus-log files are counted, hashed, and referenced at the
-frozen source, but their messages are not replayed as Task Server events. See
+Authority, lease, fence, and integration records whose task folder is missing,
+plus review attempts whose source coding attempt cannot be imported, are
+retained in the explicit legacy orphan ledger with their `orphaned_task_key`;
+they never enter the live authority tables and cannot become runnable work.
+Bus-log files are counted, hashed, and referenced at the frozen source, but
+their messages are not replayed as Task Server events. See
 the [Tasks domain map](tasks.md) for migrated task-state ownership and the
 [Task Server operator guide](../../operations/setup/task-server.md#legacy-single-writer-migration)
 for the inventory, import, mismatch-stop, and cutover sequence.

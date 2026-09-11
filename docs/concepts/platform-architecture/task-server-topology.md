@@ -332,14 +332,6 @@ Control stays on HTTP with leases and fences, as described in
   repository's configuration until the connector profile and a `TaskServer:BaseUrl`
   cutover are both live; P1 through P3 remain unclassified-to-unmoved and are
   the largest remaining open estimate.
-- **Credentials are not yet scoped.** The packaged install defaults to one
-  shared bearer through `AUTH=bearer`. The interim alternative
-  (`TaskServer:RequireAuthentication` with separate `StudioBearerToken` and
-  `RunnerBearerToken`) is a transition, not the target of distinct hash-only
-  per-principal credentials with route scopes.
-- **No Windows fallback artifact.** The documented control-plane release
-  profile is `linux-x64`, so the move is not yet reversible in the sense the
-  rollback drill requires.
 - **Production migration evidence remains operator-owned.** Repository agents
   cannot access `C:\Projects\agent-taskboard-workspace`. The Windows operator
   must run the updated binary against a frozen copy, confirm every project and

@@ -208,9 +208,10 @@ material.
 Closed coding and review attempts remain closed history. Open leases retain
 their identity, runner, host, fence, and epoch but become `process-unknown`.
 Authority and integration records for removed task folders do not abort the
-import: they enter `legacy_migration_orphans` with `orphaned_task_key` and an
-effective status, are counted exactly in inventory and validation, and never
-enter runnable authority tables.
+import. A review attempt whose source coding attempt cannot be imported follows
+the same policy. These records enter `legacy_migration_orphans` with
+`orphaned_task_key` and an effective status, are counted exactly in inventory
+and validation, and never enter runnable authority tables.
 
 A successful import creates a pre-import backup and writes
 `migration-reports/legacy-{migrationId}.json` under the store. The
