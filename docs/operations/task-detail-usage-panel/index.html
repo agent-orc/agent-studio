@@ -98,7 +98,11 @@
   .note { font-size: 10px; color: var(--ink-3); display: block; line-height: 1.2; }
   .dashed { border-top: 1px dashed var(--line); margin-top: 6px; padding-top: 4px; }
   .solid { border-top: 1px solid var(--line); margin-top: 8px; padding-top: 6px; }
-  /* Ist-Zustand: schmale, rechtsbuendige Spalten */
+  /* Ist-Zustand: der Block ist deutlich schmaler als die Pipeline und endet weit vor deren rechter Kante */
+  .ist-box { width: 66%; max-width: 600px; position: relative; }
+  .ist-box::after { content: "rechte Kante des Blocks"; position: absolute; right: -6px; top: 0; bottom: 0; border-right: 1px dashed var(--bad); color: var(--bad); font-size: 9.5px; padding-right: 8px; writing-mode: vertical-rl; transform: rotate(180deg); opacity: .8; }
+  .pl-edge { position: relative; }
+  .pl-edge::after { content: "rechte Kante der Pipeline"; position: absolute; right: -6px; top: 0; height: 100%; border-right: 1px dashed var(--develop); color: var(--develop); font-size: 9.5px; padding-right: 8px; writing-mode: vertical-rl; transform: rotate(180deg); opacity: .8; }
   .ist { display: grid; grid-template-columns: 1fr 70px 120px; column-gap: 10px; align-items: baseline; padding: 4px 0; }
   .ist.total { font-size: 12px; }
   .ist .label { font-weight: 700; text-transform: uppercase; font-size: 11px; letter-spacing: .04em; }
@@ -163,8 +167,9 @@
     <div class="pl"><span class="mark bad"></span><span>Requirement fit</span><span class="bar"><i class="bad" style="width:12%"></i></span><span class="dim">11:21 PM</span><span>5s</span><span class="num mono">–</span><span class="num mono">–</span></div>
     <div class="pl"><span class="mark"></span><span>Code quality</span><span class="bar"></span><span class="dim">not run</span><span></span><span class="num mono">–</span><span class="num mono">–</span></div>
     <div class="pl"><span class="mark"></span><span>Documentation</span><span class="bar"></span><span class="dim">not run</span><span></span><span class="num mono">–</span><span class="num mono">–</span></div>
-    <div class="pl pl-phase"><span></span><span>Drift <span class="dim">disabled · 5 steps</span></span></div>
+    <div class="pl pl-phase pl-edge"><span></span><span>Drift <span class="dim">disabled · 5 steps · 5 off</span></span></div>
 
+    <div class="ist-box">
     <div class="ist total dashed"><span class="label">Task total <span class="dim">Sum</span></span><span class="num mono strong">–</span><span class="num mono strong">$0.00</span></div>
     <div class="ist"><span><span class="caret">▸</span><span class="label">Task total sum</span> <span class="dim">all models</span></span><span class="num mono strong">79.98M</span><span class="num mono strong">$157.40<span class="note">incomplete (2 runs without usage)</span></span></div>
     <div class="sec-title">Tokens by run <span class="sub">4 runs</span></div>
@@ -175,10 +180,12 @@
     <div class="sec-title solid">Agent work</div>
     <div class="kv"><span class="k">Calls</span><span><span class="pill ok" style="margin-left:0">4 calls</span> <span class="pill" style="background:var(--surface-3);color:var(--ink-2)">recovered</span> &nbsp; <span class="k">Started</span> 5d ago (9/6/2026, 7:15:28 PM)</span></div>
     <div class="kv"><span class="k">Last touch</span><span>3d ago (9/7/2026, 9:32:56 PM)</span></div>
+    </div>
   </div></div>
-  <figcaption><b>Abb. 1: Ist.</b> Oben das Pipeline-Raster mit vier Metrikspalten. Darunter drei Blöcke mit
-  eigenen Spalten: Summe und Läufe enden auf einer anderen Kante als die Schritte, „Agent work" ist ein
-  Label-Wert-Grid ohne Bezug zu den Spalten. Die Zahlen springen beim Lesen von oben nach unten.</figcaption>
+  <figcaption><b>Abb. 1: Ist.</b> Oben das Pipeline-Raster in voller Pane-Breite mit vier Metrikspalten.
+  Der Block darunter (Summe, Läufe, Agent-Arbeit) ist deutlich schmaler: er endet bei etwa zwei Dritteln
+  der Pipeline-Breite, rechts davon bleibt Leerraum. Die Zahlen stehen auf eigenen, engen Spalten und
+  nicht unter Tokens und Kosten der Schritte. Das ist die Unwucht aus dem Operator-Screenshot.</figcaption>
 </figure>
 
 <h2 id="anforderungen"><span class="no">§2</span>Anforderungen</h2>
