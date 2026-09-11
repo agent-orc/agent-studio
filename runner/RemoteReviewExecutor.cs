@@ -13,6 +13,23 @@ public sealed class RemoteReviewExecutor
     private readonly TaskServerClient _client;
     private readonly ReviewStateStore _state;
     private readonly Action<string> _log;
+    private readonly object _slotGate = new();
+
+    /// <summary>
+    /// Live write authority for this slot. The heartbeat may re-fence it while
+    /// the executor is saving phases, so nothing captures the lease by value.
+    /// </summary>
+    private ReviewAuthorityHandle _authority = null!;
+
+    private PersistedReviewSlot _slot = null!;
+    private long _renewSequence;
+
+    /// <summary>
+    /// Namespace the detached worker physically materialized under. A takeover
+    /// mints a new fence, but the running workspace keeps its original name, so
+    /// evidence must report the one that was used.
+    /// </summary>
+    private string _workspaceNamespace = string.Empty;
 
     internal Func<int, TimeSpan>? ReportRetryDelayOverride { get; set; }
 
@@ -33,6 +50,7 @@ public sealed class RemoteReviewExecutor
         ValidateClaim(claim);
         var workspace = new RemoteReviewWorkspace(_options, claim.Subject!, claim.Lease!, _log);
         var slot = _state.Create(claim, workspace.RepositoryPath);
+        BindAuthority(slot);
         return await RunPersistedAsync(slot, workspace, shutdown, reattach: false);
     }
 
@@ -47,7 +65,40 @@ public sealed class RemoteReviewExecutor
             slot.Claim.Subject!,
             slot.Claim.Lease!,
             _log);
+        BindAuthority(slot);
         return await RunPersistedAsync(slot, workspace, shutdown, reattach: true);
+    }
+
+    private void BindAuthority(PersistedReviewSlot slot)
+    {
+        // One executor drives exactly one review slot: its authority, sequence,
+        // and workspace namespace are per-run state, not per-instance settings.
+        if (_authority is not null)
+            throw new InvalidOperationException(
+                "This RemoteReviewExecutor already drives a review slot. Create one per slot.");
+        _authority = new ReviewAuthorityHandle(slot.Claim);
+        _workspaceNamespace = slot.Claim.Lease!.ResourceNamespace;
+        lock (_slotGate) _slot = slot;
+    }
+
+    /// <summary>
+    /// Persists a phase transition together with whatever write authority the
+    /// heartbeat holds right now, so a takeover is never overwritten by a stale
+    /// captured claim.
+    /// </summary>
+    private PersistedReviewSlot SaveSlot(PersistedReviewSlot slot)
+    {
+        lock (_slotGate)
+        {
+            _slot = _state.Save(slot with { Claim = _authority.Claim });
+            return _slot;
+        }
+    }
+
+    /// <summary>Writes a re-fenced claim through without changing the phase.</summary>
+    private void PersistAuthority()
+    {
+        lock (_slotGate) _slot = _state.Save(_slot with { Claim = _authority.Claim });
     }
 
     /// <summary>
@@ -61,7 +112,8 @@ public sealed class RemoteReviewExecutor
         CancellationToken shutdown)
     {
         ValidateClaim(slot.Claim);
-        slot = _state.Save(slot with
+        BindAuthority(slot);
+        slot = SaveSlot(slot with
         {
             Phase = "adoption-failed",
             AdoptionFailure = reason,
@@ -94,10 +146,16 @@ public sealed class RemoteReviewExecutor
         var attempt = slot.Claim.Attempt!;
         var subject = slot.Claim.Subject!;
         var lease = slot.Claim.Lease!;
-        using var heartbeatStop = CancellationTokenSource.CreateLinkedTokenSource(shutdown);
-        var heartbeat = RenewLoopAsync(
-            attempt.AttemptId, attempt.TaskId, lease, heartbeatStop.Token);
         var workerStarted = slot.ProcessId is not null || DurableReviewProcess.HasCompleted(slot);
+
+        // Adoption verifies before the first heartbeat. A handed-off lease that
+        // the Task Server no longer honours must be repaired now, while the
+        // worker is still provably alive - not thirty seconds later, when the
+        // only remaining move is to drop an expensive report.
+        if (reattach) slot = await VerifyAdoptedAuthorityAsync(slot);
+
+        using var heartbeatStop = CancellationTokenSource.CreateLinkedTokenSource(shutdown);
+        var heartbeat = RenewLoopAsync(attempt.TaskId, heartbeatStop.Token);
         try
         {
             // A completed persisted slot is terminal work from the previous
@@ -108,7 +166,7 @@ public sealed class RemoteReviewExecutor
                 var completedResult = DurableReviewProcess.Attach(slot).ReadResult();
                 if (completedResult is not null)
                 {
-                    slot = _state.Save(slot with { Phase = "finalizing" });
+                    slot = SaveSlot(slot with { Phase = "finalizing" });
                     return await FinalizeResultAsync(
                         slot,
                         workspace,
@@ -145,7 +203,7 @@ public sealed class RemoteReviewExecutor
                         shutdown);
                 }
 
-                slot = _state.Save(slot with { Phase = "launching" });
+                slot = SaveSlot(slot with { Phase = "launching" });
                 DurableReviewProcess process;
                 try
                 {
@@ -160,7 +218,7 @@ public sealed class RemoteReviewExecutor
                         $"Detached review worker could not start: {exception.Message}",
                         shutdown);
                 }
-                slot = _state.Save(slot with
+                slot = SaveSlot(slot with
                 {
                     ProcessId = process.ProcessId,
                     ProcessStartedAtUtc = process.ProcessStartedAtUtc,
@@ -178,7 +236,7 @@ public sealed class RemoteReviewExecutor
                 var result = attached.ReadResult();
                 if (result is not null)
                 {
-                    slot = _state.Save(slot with { Phase = "finalizing" });
+                    slot = SaveSlot(slot with { Phase = "finalizing" });
                     return await FinalizeResultAsync(slot, workspace, result, shutdown);
                 }
                 if (!DurableReviewProcess.VerifyLive(slot, out var processProof))
@@ -194,7 +252,7 @@ public sealed class RemoteReviewExecutor
                                 out var recovered,
                                 out processProof))
                         {
-                            slot = _state.Save(recovered with { Phase = "running" });
+                            slot = SaveSlot(recovered with { Phase = "running" });
                             attached = DurableReviewProcess.Attach(slot);
                             continue;
                         }
@@ -211,9 +269,13 @@ public sealed class RemoteReviewExecutor
         }
         catch (OperationCanceledException) when (shutdown.IsCancellationRequested && workerStarted)
         {
-            _state.Save(slot with { Phase = "handed-off" });
+            // A handoff must not let the lease expire in the restart window. The
+            // replacement instance renews with exactly this authority, so the
+            // outgoing instance buys it enough runway to get there.
+            await ExtendLeaseForHandoffAsync(attempt.AttemptId);
+            SaveSlot(slot with { Phase = "handed-off" });
             _log(
-                $"review daemon handoff attempt={attempt.AttemptId} fence={lease.Fence} " +
+                $"review daemon handoff attempt={attempt.AttemptId} fence={_authority.Lease.Fence} " +
                 $"pid={slot.ProcessId}; detached worker left running for replacement adoption");
             return 0;
         }
@@ -267,8 +329,11 @@ public sealed class RemoteReviewExecutor
         CancellationToken ct)
     {
         var subject = slot.Claim.Subject!;
-        var lease = slot.Claim.Lease!;
-        var evidence = InfrastructureEvidence(workspace, subject, lease, classification);
+        var evidence = InfrastructureEvidence(
+            workspace,
+            subject,
+            _workspaceNamespace,
+            classification);
         slot = slot with
         {
             ReportPendingSinceUtc = slot.ReportPendingSinceUtc ?? DateTime.UtcNow,
@@ -291,9 +356,9 @@ public sealed class RemoteReviewExecutor
         CancellationToken ct)
     {
         var attempt = slot.Claim.Attempt!;
-        var lease = slot.Claim.Lease!;
         if (failureClassification is not null)
         {
+            var capabilityLease = _authority.Lease;
             _log(
                 $"review infrastructure outcome attempt={attempt.AttemptId} " +
                 $"classification={failureClassification}: {summary}");
@@ -306,35 +371,38 @@ public sealed class RemoteReviewExecutor
                     failedCapability,
                     failureClassification,
                     summary.Length <= 500 ? summary : summary[..500],
-                    $"review-capability:{attempt.AttemptId}:{lease.Fence}:{failedCapability}",
+                    $"review-capability:{attempt.AttemptId}:{capabilityLease.Fence}:{failedCapability}",
                     "review",
                     attempt.AttemptId,
-                    lease.Fence,
+                    capabilityLease.Fence,
                     CancellationToken.None);
             }
         }
 
-        var request = new ReviewReportRequest(
-            lease.ExecutorId,
-            lease.InstanceId,
-            lease.LeaseId,
-            lease.Fence,
-            $"review-report:{attempt.AttemptId}:{lease.Fence}",
-            failureClassification is null ? evidence.Outcome : "ReviewInfra",
-            failureClassification,
-            summary,
-            evidence.Workspace,
-            workspace.EnvironmentEvidence(),
-            evidence.Commands,
-            evidence.Artifacts,
-            evidence.Verdicts,
-            AuthorityEpoch: lease.AuthorityEpoch);
-
         ReviewReportDto report;
         while (true)
         {
+            // Built inside the loop: a takeover between two submission attempts
+            // re-fences the slot, and the report must carry the authority that
+            // is current when it is sent.
+            var lease = _authority.Lease;
+            var request = new ReviewReportRequest(
+                lease.ExecutorId,
+                lease.InstanceId,
+                lease.LeaseId,
+                lease.Fence,
+                $"review-report:{attempt.AttemptId}:{lease.Fence}",
+                failureClassification is null ? evidence.Outcome : "ReviewInfra",
+                failureClassification,
+                summary,
+                evidence.Workspace,
+                workspace.EnvironmentEvidence(),
+                evidence.Commands,
+                evidence.Artifacts,
+                evidence.Verdicts,
+                AuthorityEpoch: lease.AuthorityEpoch);
             var submittedAt = DateTime.UtcNow;
-            slot = _state.Save(slot with
+            slot = SaveSlot(slot with
             {
                 Phase = "report-submitting",
                 ReportPendingSinceUtc = slot.ReportPendingSinceUtc ?? submittedAt,
@@ -365,7 +433,7 @@ public sealed class RemoteReviewExecutor
                 var error = exception.Message.Length <= 500
                     ? exception.Message
                     : exception.Message[..500];
-                slot = _state.Save(slot with
+                slot = SaveSlot(slot with
                 {
                     Phase = action == ReviewReportSubmissionAction.Retry
                         ? "report-pending"
@@ -417,7 +485,7 @@ public sealed class RemoteReviewExecutor
             $"review report accepted attempt={attempt.AttemptId} outcome={report.Outcome} " +
             $"classification={report.FailureClassification ?? "none"} taskState={report.TaskState} " +
             $"submissionAttempts={slot.ReportSubmissionAttempts}");
-        slot = _state.Save(slot with { Phase = "report-accepted" });
+        slot = SaveSlot(slot with { Phase = "report-accepted" });
 
         var removed = false;
         try
@@ -433,17 +501,18 @@ public sealed class RemoteReviewExecutor
 
         try
         {
+            var cleanupLease = _authority.Lease;
             var cleanup = await _client.CleanupReviewAsync(
                 attempt.AttemptId,
                 new ReviewCleanupRequest(
-                    lease.ExecutorId,
-                    lease.InstanceId,
-                    lease.LeaseId,
-                    lease.Fence,
-                    $"review-cleanup:{attempt.AttemptId}:{lease.Fence}",
+                    cleanupLease.ExecutorId,
+                    cleanupLease.InstanceId,
+                    cleanupLease.LeaseId,
+                    cleanupLease.Fence,
+                    $"review-cleanup:{attempt.AttemptId}:{cleanupLease.Fence}",
                     removed,
                     removed ? null : "WorkspaceCleanupFailed",
-                    AuthorityEpoch: lease.AuthorityEpoch),
+                    AuthorityEpoch: cleanupLease.AuthorityEpoch),
                 CancellationToken.None);
             _log(
                 $"review cleanup recorded attempt={attempt.AttemptId} " +
@@ -479,7 +548,7 @@ public sealed class RemoteReviewExecutor
         }
         catch (Exception cleanupException)
         {
-            slot = _state.Save(slot with { Phase = "terminal-cleanup-pending" });
+            slot = SaveSlot(slot with { Phase = "terminal-cleanup-pending" });
             _log(
                 $"review-report-terminal attempt={slot.AttemptId} classification={classification} " +
                 $"status={exception?.StatusCode.ToString() ?? "none"} " +
@@ -505,7 +574,7 @@ public sealed class RemoteReviewExecutor
                 $"terminalOutcome={classification}");
         }
         else
-            _state.Save(slot with { Phase = "terminal-cleanup-pending" });
+            SaveSlot(slot with { Phase = "terminal-cleanup-pending" });
         return 3;
     }
 
@@ -536,69 +605,244 @@ public sealed class RemoteReviewExecutor
         return !Directory.Exists(target);
     }
 
-    private async Task RenewLoopAsync(
-        string attemptId,
-        string taskId,
-        ReviewLeaseDto lease,
-        CancellationToken stop)
+    private async Task RenewLoopAsync(string taskId, CancellationToken stop)
     {
-        var sequence = 0L;
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(
             Math.Max(1, Math.Min(_options.HeartbeatSeconds, Math.Max(1, _options.TtlSeconds / 3)))));
         while (await timer.WaitForNextTickAsync(stop))
         {
             try
             {
-                await _client.RenewReviewLeaseAsync(
-                    attemptId,
-                    new ReviewLeaseRenewRequest(
-                        lease.ExecutorId,
-                        lease.InstanceId,
-                        lease.LeaseId,
-                        lease.Fence,
-                        $"review-renew:{attemptId}:{lease.Fence}:{_client.RunnerInstanceId}:{++sequence}",
-                        _options.TtlSeconds,
-                        AuthorityEpoch: lease.AuthorityEpoch),
-                    stop);
+                await RenewOnceAsync(_options.TtlSeconds, stop);
             }
-            catch (TaskServerException dead) when (dead.StatusCode is 404 or 409)
+            catch (Exception exception) when (!stop.IsCancellationRequested)
             {
-                try
-                {
-                    var reported = new RunnerActiveAttempt(
+                if (!await TryRecoverAuthorityAsync("heartbeat", taskId, exception, stop)) return;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Renews the current lease and adopts the server's answer, so the persisted
+    /// slot carries a live expiry for the next reconciliation pass.
+    /// </summary>
+    private async Task RenewOnceAsync(int ttlSeconds, CancellationToken ct)
+    {
+        var lease = _authority.Lease;
+        var sequence = Interlocked.Increment(ref _renewSequence);
+        var renewed = await _client.RenewReviewLeaseAsync(
+            lease.AttemptId,
+            new ReviewLeaseRenewRequest(
+                lease.ExecutorId,
+                lease.InstanceId,
+                lease.LeaseId,
+                lease.Fence,
+                $"review-renew:{lease.AttemptId}:{lease.Fence}:{_client.RunnerInstanceId}:{sequence}",
+                ttlSeconds,
+                AuthorityEpoch: lease.AuthorityEpoch),
+            ct);
+        _authority.Rebind(_authority.Attempt, renewed);
+    }
+
+    /// <summary>
+    /// Confirms the adopted authority before the replacement instance starts
+    /// heartbeating. A refusal here is repaired (re-registration, then takeover
+    /// under a higher fence) while the worker still exists; only a genuinely
+    /// gone or superseded attempt falls through to the report path.
+    /// </summary>
+    private async Task<PersistedReviewSlot> VerifyAdoptedAuthorityAsync(PersistedReviewSlot slot)
+    {
+        var attempt = slot.Claim.Attempt!;
+        try
+        {
+            // Never cancelled: adoption verification is the whole point of the
+            // restart window and must complete even as the daemon is told to go.
+            await RenewOnceAsync(_options.TtlSeconds, CancellationToken.None);
+            _log(
+                $"review adoption lease verified attempt={attempt.AttemptId} " +
+                $"fence={_authority.Lease.Fence} expiresAt={_authority.Lease.ExpiresAt:O}");
+        }
+        catch (Exception exception)
+        {
+            await TryRecoverAuthorityAsync(
+                "adoption",
+                attempt.TaskId,
+                exception,
+                CancellationToken.None);
+        }
+        return SaveSlot(slot);
+    }
+
+    /// <summary>
+    /// Repairs a refused lease renewal. Returns true when the slot still holds
+    /// write authority (kept, re-adopted, or re-claimed under a higher fence)
+    /// and false when nothing can be recovered.
+    /// </summary>
+    private async Task<bool> TryRecoverAuthorityAsync(
+        string context,
+        string taskId,
+        Exception exception,
+        CancellationToken ct)
+    {
+        var attemptId = _authority.Lease.AttemptId;
+        var taskServer = exception as TaskServerException;
+        var transportFailure = exception is HttpRequestException or TaskCanceledException;
+        var action = ReviewLeaseRecoveryPolicy.Decide(
+            taskServer?.StatusCode,
+            taskServer?.ErrorCode,
+            transportFailure);
+
+        if (action == ReviewLeaseRecoveryAction.RetryLater)
+        {
+            _log(
+                $"review lease renew failed attempt={attemptId} scope={context}; " +
+                $"retrying next tick: {exception.Message}");
+            return true;
+        }
+
+        if (action == ReviewLeaseRecoveryAction.ReRegister)
+        {
+            var lease = _authority.Lease;
+            var adopted = false;
+            try
+            {
+                adopted = await _client.ReRegisterAttemptAsync(
+                    new RunnerActiveAttempt(
                         RunnerAttemptKinds.Review,
                         attemptId,
                         taskId,
                         lease.LeaseId,
                         lease.Fence,
                         lease.AuthorityEpoch,
-                        lease.InstanceId);
-                    if (await _client.ReRegisterAttemptAsync(reported, stop))
-                    {
-                        _log(
-                            $"review lease authority re-adopted attempt={attemptId} " +
-                            $"fence={lease.Fence} after HTTP {dead.StatusCode}");
-                        continue;
-                    }
-                }
-                catch (Exception registrationException) when (
-                    registrationException is not OperationCanceledException)
-                {
-                    _log(
-                        $"review lease re-adoption failed attempt={attemptId}: " +
-                        registrationException.Message);
-                }
-                _log(
-                    $"review lease authority lost attempt={attemptId} ({dead.StatusCode}); " +
-                    $"stopping heartbeat: {dead.Message}");
-                return;
+                        lease.InstanceId),
+                    ct);
             }
-            catch (Exception exception) when (exception is not OperationCanceledException)
+            catch (Exception registrationException) when (
+                registrationException is not OperationCanceledException)
             {
                 _log(
-                    $"review lease renew failed attempt={attemptId}; " +
-                    $"retrying next tick: {exception.Message}");
+                    $"review lease re-adoption failed attempt={attemptId}: " +
+                    registrationException.Message);
             }
+            action = ReviewLeaseRecoveryPolicy.AfterReRegistration(adopted, WorkerStillLive());
+            if (action == ReviewLeaseRecoveryAction.RetryLater)
+            {
+                _log(
+                    $"review lease authority re-adopted attempt={attemptId} " +
+                    $"fence={lease.Fence} scope={context} after HTTP {taskServer?.StatusCode}");
+                return true;
+            }
+        }
+
+        if (action == ReviewLeaseRecoveryAction.ReClaim
+            && await TryReClaimAsync(context, taskServer, ct))
+        {
+            return true;
+        }
+
+        _log(
+            $"review lease authority lost attempt={attemptId} " +
+            $"({taskServer?.StatusCode.ToString() ?? "transport"}) scope={context} " +
+            $"code={taskServer?.ErrorCode ?? exception.GetType().Name}; " +
+            $"stopping heartbeat: {exception.Message}");
+        return false;
+    }
+
+    /// <summary>
+    /// Takes the attempt over under a higher fence. The running worker and its
+    /// workspace are untouched: only the write authority the report will travel
+    /// under is replaced.
+    /// </summary>
+    private async Task<bool> TryReClaimAsync(
+        string context,
+        TaskServerException? refusal,
+        CancellationToken ct)
+    {
+        var previous = _authority.Lease;
+        try
+        {
+            var reclaimed = await _client.ReClaimReviewAsync(
+                previous.AttemptId,
+                new ReviewReClaimRequest(
+                    previous.ExecutorId,
+                    _client.RunnerInstanceId,
+                    previous.LeaseId,
+                    previous.Fence,
+                    $"review-reclaim:{previous.AttemptId}:{previous.Fence}:{_client.RunnerInstanceId}",
+                    _options.TtlSeconds),
+                ct);
+            if (!string.Equals(reclaimed.Status, "claimed", StringComparison.OrdinalIgnoreCase)
+                || reclaimed.Attempt is null
+                || reclaimed.Lease is null)
+            {
+                _log(
+                    $"review lease re-claim refused attempt={previous.AttemptId} " +
+                    $"scope={context} status={reclaimed.Status} " +
+                    $"reason={reclaimed.Message ?? "none"}");
+                return false;
+            }
+            if (!string.Equals(
+                    reclaimed.Attempt.SubjectId,
+                    _authority.Claim.Subject!.SubjectId,
+                    StringComparison.Ordinal))
+            {
+                _log(
+                    $"review lease re-claim rejected attempt={previous.AttemptId} scope={context}: " +
+                    $"server subject {reclaimed.Attempt.SubjectId} is not the running " +
+                    $"subject {_authority.Claim.Subject!.SubjectId}");
+                return false;
+            }
+
+            _authority.Rebind(reclaimed.Attempt, reclaimed.Lease);
+            PersistAuthority();
+            _log(
+                $"review lease re-claimed attempt={previous.AttemptId} scope={context} " +
+                $"previousFence={previous.Fence} fence={reclaimed.Lease.Fence} " +
+                $"after HTTP {refusal?.StatusCode.ToString() ?? "transport"} " +
+                $"{refusal?.ErrorCode ?? "none"}; running worker and workspace kept");
+            return true;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _log(
+                $"review lease re-claim failed attempt={previous.AttemptId} " +
+                $"scope={context}: {exception.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// A takeover is only legitimate while this host still owns the work: either
+    /// the detached worker runs or it left a durable result to deliver.
+    /// </summary>
+    private bool WorkerStillLive()
+    {
+        PersistedReviewSlot slot;
+        lock (_slotGate) slot = _slot;
+        return DurableReviewProcess.HasCompleted(slot)
+               || DurableReviewProcess.VerifyLive(slot, out _);
+    }
+
+    /// <summary>
+    /// Buys the handed-off lease enough runway to survive the restart window.
+    /// The Task Server clamps the request to its own ceiling.
+    /// </summary>
+    private async Task ExtendLeaseForHandoffAsync(string attemptId)
+    {
+        try
+        {
+            await RenewOnceAsync(_options.HandoffLeaseTtlSeconds, CancellationToken.None);
+            _log(
+                $"review handoff lease extended attempt={attemptId} " +
+                $"fence={_authority.Lease.Fence} " +
+                $"requestedTtlSeconds={_options.HandoffLeaseTtlSeconds} " +
+                $"expiresAt={_authority.Lease.ExpiresAt:O}");
+        }
+        catch (Exception exception)
+        {
+            _log(
+                $"review handoff lease extension failed attempt={attemptId}: {exception.Message}; " +
+                "the replacement instance verifies and re-claims on adoption");
         }
     }
 
@@ -634,7 +878,7 @@ public sealed class RemoteReviewExecutor
     private static ReviewExecutionEvidence InfrastructureEvidence(
         RemoteReviewWorkspace workspace,
         ReviewSubjectDto subject,
-        ReviewLeaseDto lease,
+        string workspaceNamespace,
         string classification)
     {
         var repositoryId = classification == "RepositoryMismatch" ? "unknown" : subject.RepositoryId;
@@ -649,7 +893,7 @@ public sealed class RemoteReviewExecutor
             false,
             Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
                 System.Text.Encoding.UTF8.GetBytes(workspace.AttemptRoot))).ToLowerInvariant(),
-            lease.ResourceNamespace);
+            workspaceNamespace);
         return new ReviewExecutionEvidence("ReviewInfra", proof, [], [], []);
     }
 

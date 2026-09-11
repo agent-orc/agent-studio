@@ -7,8 +7,13 @@ Cmnd_Alias AGENT_RUNNER_SERVICE_CONTROL = \
     /usr/bin/systemctl status agent-runner.service --no-pager, \
     /usr/bin/systemctl status agent-runner-review.service --no-pager
 
-# Release promotion remains a no-argument operation over fixed paths.
-Cmnd_Alias AGENT_RUNNER_DEPLOY = /usr/local/sbin/agent-runner-deploy ""
+# Release promotion remains a no-argument operation over fixed paths. The
+# drain is the sanctioned way to stop a review host without discarding gate
+# work; --force is the explicit override for an operator who accepts the loss.
+Cmnd_Alias AGENT_RUNNER_DEPLOY = \
+    /usr/local/sbin/agent-runner-deploy "", \
+    /usr/local/sbin/agent-runner-deploy drain, \
+    /usr/local/sbin/agent-runner-deploy --force
 
 # Defense in depth: sudoers enumerates every role and accepted value. The
 # root-owned helper independently enforces the same role, variable, and 1..6

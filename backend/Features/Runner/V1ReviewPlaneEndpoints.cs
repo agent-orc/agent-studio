@@ -403,6 +403,56 @@ public static class V1ReviewPlaneEndpoints
                 : AttemptError(renewed);
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
+        // Planned-restart takeover. The adopting daemon proved its detached
+        // worker alive but had the handed-off lease refused; re-fencing here is
+        // what keeps thirty to sixty minutes of gate work instead of dropping
+        // the report. Selection is not involved: this route can only touch the
+        // one attempt whose recorded authority is the caller's own handed-off
+        // lease.
+        api.MapPost("/reviews/attempts/{attemptId}/reclaim", (
+            HttpContext context,
+            string attemptId,
+            Contract.ReviewReClaimRequest request,
+            V1ReviewExecutorRegistry registry,
+            AttemptAuthorityService authority,
+            ILoggerFactory loggerFactory) =>
+        {
+            if (!RunnerMatches(context, request.ExecutorId))
+                return Results.Unauthorized();
+            if (!registry.TryGetReviewExecutor(request.ExecutorId, request.InstanceId, out var executor))
+                return Results.Conflict(new Contract.ApiError(
+                    "review-executor-not-registered",
+                    "Register this identity with the review-executor capability before re-claiming."));
+
+            var reclaimed = authority.ReClaimReview(
+                attemptId,
+                request.ExecutorId,
+                executor.HostId,
+                request.InstanceId,
+                request.PreviousLeaseId,
+                request.PreviousFence,
+                request.RequestedTtlSeconds,
+                $"v1-review-reclaim:{request.ExecutorId}:{request.InstanceId}:{attemptId}:{request.PreviousFence}");
+            if (!reclaimed.Accepted || reclaimed.ReviewAttempt is null)
+                return AttemptError(reclaimed);
+
+            loggerFactory.CreateLogger(LoggerName).LogWarning(
+                "review-lease-re-claimed attempt={AttemptId} executor={ExecutorId} instance={InstanceId} "
+                + "previousFence={PreviousFence} fence={Fence}",
+                attemptId,
+                request.ExecutorId,
+                request.InstanceId,
+                request.PreviousFence,
+                reclaimed.ReviewAttempt.LastFence);
+            // The immutable subject is deliberately absent: the running worker
+            // already materialized it, and handing back a rebuilt plan would
+            // invite a mid-flight plan swap.
+            return Results.Ok(new Contract.ReviewClaimResponse(
+                "claimed",
+                ToAttempt(reclaimed.ReviewAttempt),
+                Lease: ToLease(reclaimed.ReviewAttempt)));
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
+
         api.MapPost("/reviews/attempts/{attemptId}/report", async (
             HttpContext context,
             string attemptId,

@@ -894,22 +894,70 @@ impossible. `StartLimitIntervalSec=300`, `StartLimitBurst=5`, and
 recovery. Installing or changing the unit requires root, followed by
 `systemctl daemon-reload`.
 
+### Restart, drain, handoff
+
+**Drain the Review Executor; never restart it while slots are busy.** A review
+holds thirty to sixty minutes of gate work in a detached worker. Stopping the
+daemon on top of it costs that work and puts the card back in the queue, so the
+deploy helper refuses a plain restart while review slots are busy.
+
+```bash
+# Would a restart discard review work right now?
+sudo -u agent /opt/agent-host/agent-host --restart-guard --role review \
+  --state-dir /var/lib/agent-runner-review/state   # 0 safe, 3 refused
+
+# The sanctioned stop: no new claims, finish the running reviews, then exit.
+sudo /usr/local/sbin/agent-runner-deploy drain
+```
+
+`drain` writes `review-drain-requested.json` into the review `RUNNER_STATE_DIR`.
+The daemon stops claiming on its next poll, logs `review daemon draining`,
+finishes its running reviews, and exits with `review daemon drained` once the
+slot set is empty. `Restart=always` then starts a fresh instance, which clears
+the marker and resumes claiming, so a drain needs no second operator step. The
+wait is bounded by `RUNNER_DRAIN_TIMEOUT_SECONDS` (default one hour); a drain
+that runs out names the slots it could not finish and exits 3.
+
+A refused restart prints the drain hint and does not touch the unit. `--force`
+overrides it for an operator who has decided the loss is acceptable:
+
+```bash
+sudo /usr/local/sbin/agent-runner-deploy --force
+```
+
+The guard also covers `agent-runner-deploy config review RUNNER_MAX_PARALLELISM
+<n>`, because that path restarts the review unit too. The service account's
+sudoers policy deliberately does **not** allow `--force`: automation drains, and
+only a human operator overrides.
+
+A daemon that is stopped anyway keeps its leases alive across the restart
+window. Before it detaches a worker, the outgoing instance sends one final
+renewal with `RUNNER_HANDOFF_LEASE_TTL_SECONDS` (default 300, clamped by the
+Task Server) and logs `review handoff lease extended`. The replacement instance
+renews with exactly that persisted authority **before** its first heartbeat and
+logs `review adoption lease verified`. If the Task Server refuses that
+verification, the replacement re-registers and, failing that, takes the attempt
+over under a higher fence (`review lease re-claimed ... previousFence=N
+fence=N+1`), keeping the running worker and its workspace. Only an attempt that
+is gone or was deliberately superseded ends as `review lease authority lost`.
+
 ### Planned daemon restart and deploy
 
 A planned Runner deploy no longer waits for host idle. On a hardened host, stage
 the complete application and invoke the no-argument deploy helper as described
-in section 2. The helper records the previous release, validates the dependency
-closure, runs the service-user boot smoke check, atomically switches
-`/opt/agent-host/current`, restarts both main service processes, and watches for
-an immediate restart loop.
+in section 2. Drain the Review Executor first, or the helper refuses. The helper
+records the previous release, validates the dependency closure, runs the
+service-user boot smoke check, atomically switches `/opt/agent-host/current`,
+restarts both main service processes, and watches for an immediate restart loop.
 
 ```bash
+sudo /usr/local/sbin/agent-runner-deploy drain
 sudo /usr/local/sbin/agent-runner-deploy
 sudo journalctl -u agent-host --since '-2 minutes' \
   | grep -E 'planned shutdown|persisted attempt accepted|recovered .* persisted slot|releasing dead persisted attempt'
 
 sudo journalctl -u agent-runner-review --since '-2 minutes' \
-  | grep -E 'planned shutdown|review daemon handoff|persisted review accepted|adopting persisted review|review adoption failed'
+  | grep -E 'planned shutdown|review daemon draining|review handoff lease extended|review daemon handoff|persisted review accepted|adopting persisted review|review adoption lease verified|review lease re-claimed|review adoption failed'
 ```
 
 On SIGTERM the old daemon stops making claims, leaves detached coding and review
@@ -919,10 +967,13 @@ opening any freed slot to claims. For Coding, confirm every occupied slot report
 either `persisted attempt accepted` or `releasing dead persisted attempt`; the
 latter must be followed by a Ready card and a later higher-fence claim. For
 Review, confirm `review daemon handoff` is followed by `persisted review
-accepted` and `adopting persisted review` under the same attempt and fence. A
-`review adoption failed` line must be followed by an accepted
-`ExecutorRestarted` infrastructure report with explicit loss extent and retry
-reason. Do not change either unit back to `KillMode=control-group`. Retain every release referenced by a
+accepted`, `adopting persisted review`, and `review adoption lease verified`
+under the same attempt and fence. A verified adoption whose fence moved
+(`review lease re-claimed`) is also a success: the worker kept running and the
+report lands under the new fence. A `review adoption failed` line must be
+followed by an accepted `ExecutorRestarted` infrastructure report with explicit
+loss extent and retry reason. Do not change either unit back to
+`KillMode=control-group`. Retain every release referenced by a
 daemon or detached worker; garbage collection is a separate, process-aware
 operation. If post-restart observation fails, use the exact rollback one-liner
 printed by the helper. Rollback switches `current` to the recorded previous

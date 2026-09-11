@@ -22,10 +22,85 @@ readonly maximum_deps_json_bytes=$((16 * 1024 * 1024))
 readonly smoke_timeout_seconds=10
 readonly restart_observation_seconds=15
 readonly -a release_units=(agent-runner.service agent-runner-review.service)
+readonly review_unit="agent-runner-review.service"
+readonly -a review_env_files=(/etc/agent-runner/runner-review.env /etc/agent-runner/review.env)
+readonly default_review_state_dir="/var/lib/agent-runner-review/state"
+readonly agent_host_binary="$product_root/agent-host"
+force_restart=0
 
 die() {
   printf 'agent-runner-deploy: %s\n' "$*" >&2
   exit 2
+}
+
+# The busy-slot policy lives in the runner binary, not here, so the deploy
+# script and the daemon cannot drift on what "busy" means.
+review_state_dir() {
+  local file
+  local value=""
+
+  for file in "${review_env_files[@]}"; do
+    [[ -f "$file" && ! -L "$file" ]] || continue
+    value="$(awk -F= '$1 == "RUNNER_STATE_DIR" { print substr($0, index($0, "=") + 1) }' "$file" | tail -n 1)"
+    [[ -n "$value" ]] && break
+  done
+  printf '%s\n' "${value:-$default_review_state_dir}"
+}
+
+# Refuses a restart that would discard running review gate work. A review
+# takes tens of minutes, so the sanctioned path is a drain; --force stays
+# available for an operator who has decided the loss is acceptable.
+assert_review_restart_is_safe() {
+  local guard_status=0
+
+  if ((force_restart)); then
+    printf 'agent-runner-deploy: --force given; skipping the review restart guard\n' >&2
+    return 0
+  fi
+  if [[ ! -x "$agent_host_binary" ]]; then
+    printf 'agent-runner-deploy: review restart guard unavailable (%s is not executable); continuing\n' \
+      "$agent_host_binary" >&2
+    return 0
+  fi
+  if ! systemctl is-active --quiet "$review_unit"; then
+    return 0
+  fi
+
+  env -i PATH="$PATH" HOME=/root \
+    "$agent_host_binary" --restart-guard --role review --state-dir "$(review_state_dir)" \
+    || guard_status="$?"
+  case "$guard_status" in
+    0) return 0 ;;
+    3)
+      logger -p authpriv.notice -t agent-runner-deploy \
+        "action=restart-guard unit=$review_unit result=refused" || true
+      die "refusing to restart $review_unit while review slots are busy. Run 'agent-runner-deploy drain' first, or re-run with --force."
+      ;;
+    *)
+      die "review restart guard failed with exit $guard_status"
+      ;;
+  esac
+}
+
+# Stop claiming, let the running reviews finish, then hand back. The daemon
+# exits on an empty slot set and systemd starts a fresh one, so a drain leaves
+# the host claiming again without a second operator step.
+drain_review_unit() {
+  local drain_status=0
+  local drain_result
+
+  [[ -x "$agent_host_binary" ]] || die "agent-host is not executable: $agent_host_binary"
+  systemctl is-active --quiet "$review_unit" \
+    || die "$review_unit is not running; there is nothing to drain"
+
+  env -i PATH="$PATH" HOME=/root \
+    "$agent_host_binary" --drain --role review --state-dir "$(review_state_dir)" \
+    || drain_status="$?"
+  if ((drain_status == 0)); then drain_result="drained"; else drain_result="incomplete"; fi
+  logger -p authpriv.notice -t agent-runner-deploy \
+    "action=drain unit=$review_unit result=$drain_result exit=$drain_status" || true
+  ((drain_status == 0)) || die "review drain did not complete (exit $drain_status)"
+  printf 'agent-runner-deploy: %s drained; a restart no longer discards review work\n' "$review_unit"
 }
 
 audit_config() {
@@ -143,6 +218,10 @@ configure_role() {
     || die "role EnvironmentFile contains duplicate $AGENT_RUNNER_CONFIG_VARIABLE entries"
   old_value="$(awk -F= -v key="$AGENT_RUNNER_CONFIG_VARIABLE" '$1 == key { print substr($0, index($0, "=") + 1) }' "$config_env_file")"
   old_value="${old_value:-unset}"
+
+  if [[ "$AGENT_RUNNER_CONFIG_UNIT" == "$review_unit" ]]; then
+    assert_review_restart_is_safe
+  fi
 
   local previous_main_pid
   if ! previous_main_pid="$(systemctl show --property=MainPID --value "$AGENT_RUNNER_CONFIG_UNIT")"; then
@@ -266,6 +345,8 @@ restart_release_services() {
   local unit_index
   local count
   local deadline
+
+  assert_review_restart_is_safe
 
   for unit_index in "${!release_units[@]}"; do
     unit="${release_units[$unit_index]}"
@@ -461,11 +542,23 @@ main() {
     0:)
       promote_release
       ;;
+    1:--force)
+      force_restart=1
+      promote_release
+      ;;
+    1:drain)
+      drain_review_unit
+      ;;
     4:config)
       configure_role "$2" "$3" "$4"
       ;;
+    5:config)
+      [[ "$5" == "--force" ]] || die "unknown configuration flag: $5"
+      force_restart=1
+      configure_role "$2" "$3" "$4"
+      ;;
     *)
-      die "usage: agent-runner-deploy [config <coding|review> RUNNER_MAX_PARALLELISM <1-6>]"
+      die "usage: agent-runner-deploy [--force] | drain | config <coding|review> RUNNER_MAX_PARALLELISM <1-6> [--force]"
       ;;
   esac
 }
