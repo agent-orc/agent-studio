@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
   "id": "docker-ausfuehrungswelt-migration",
-  "title": "Isolierte Ausführung: Vorbereitungsskripte, Isolation, heilender Orchestrator",
-  "summary": "Operator-Entscheidungen 12.09.2026 (Vormittag: Windows keine Ausführungswelt, Docker für alles; Nachmittag präzisiert: Onboarding darf nicht komplizierter werden, Worktree-Vorbereitung als Skript, das sich um alles kümmert, Docker-Image nur optionale Beschleunigung, Kernproblem sind Versionen, dazu ein Orchestrator, der Probleme gründlich bewertet, Folgeprompts ergänzt und die Pipeline heilt; für die Produktversion reichen Coding-Agents in isolierten Umgebungen, Kommunikation und Heilung laufen durch Agent Studio). Zielbild in drei Schichten: Vorbereitung als Basis vom Produkt (stabile, laufend aktualisierte Checkouts, Worktrees mit Lease), Technologie-Bausteinen mit Caches (npm, NuGet, Node, SDK, Playwright) und projekteigenem Skript (project.yml + prepare), das der Orchestrator mit dem Nutzer entwickelt und auf eigene Initiative pflegt, Isolation je Lauf nach Executor-Profil (Sandbox-Prozess Standard, Container optional, Micro-VM für Docker-Beweise), Orchestrator mit Diagnose, Heilung, Folgeprompt und Frage in der Karte. Produkterfahrung für Installierende, Auswirkungen je Studio-Komponente und je Projekt (17), Migration M1–M7 (9–12 Wochen), Risiken, Tests und CI/CD als Produktfeature (Inventar, Testlauf-Historie mit Laufzeiten und Läufen, Stabilisierung durch den Orchestrator, Pipeline-Engine mit Stufen aus project.yml, Deploy als Stufe, Dauer und Kosten je Schritt im Lauf und als Statistikseite je Projekt (Dauer, CPU, IO, Tokens, Fehlerhäufigkeit je Schritt); AGT: 7.296 Backend-Tests in 24 min), Entscheidungen D1–D8, Karten MK1–MK14. Vormittagsfassung „Docker als einzige Ausführungswelt\" in der Git-Historie.",
+  "title": "Isolierte Ausf\u00FChrung: Vorbereitungsskripte, Isolation, heilender Orchestrator",
+  "summary": "Operator-Entscheidungen 12.09.2026 (Vormittag: Windows keine Ausf\u00FChrungswelt, Docker f\u00FCr alles; Nachmittag pr\u00E4zisiert: Onboarding darf nicht komplizierter werden, Worktree-Vorbereitung als Skript, das sich um alles k\u00FCmmert, Docker-Image nur optionale Beschleunigung, Kernproblem sind Versionen, dazu ein Orchestrator, der Probleme gr\u00FCndlich bewertet, Folgeprompts erg\u00E4nzt und die Pipeline heilt; f\u00FCr die Produktversion reichen Coding-Agents in isolierten Umgebungen, Kommunikation und Heilung laufen durch Agent Studio). Zielbild in drei Schichten: Vorbereitung als Basis vom Produkt (stabile, laufend aktualisierte Checkouts, Worktrees mit Lease), Technologie-Bausteinen mit Caches (npm, NuGet, Node, SDK, Playwright) und projekteigenem Skript (project.yml \u002B prepare), das der Orchestrator mit dem Nutzer entwickelt und auf eigene Initiative pflegt, Isolation je Lauf nach Executor-Profil (Sandbox-Prozess Standard, Container optional, Micro-VM f\u00FCr Docker-Beweise), Orchestrator mit Diagnose, Heilung, Folgeprompt und Frage in der Karte. Produkterfahrung f\u00FCr Installierende, Auswirkungen je Studio-Komponente und je Projekt (17), Migration M1\u2013M7 (9\u201312 Wochen), Risiken, Tests und CI/CD als Produktfeature (Inventar, Testlauf-Historie mit Laufzeiten und L\u00E4ufen, Stabilisierung durch den Orchestrator, Pipeline-Engine mit Stufen aus project.yml, Deploy als Stufe, Dauer und Kosten je Schritt im Lauf und als Statistikseite je Projekt (Dauer, CPU, IO, Tokens, Fehlerh\u00E4ufigkeit je Schritt); AGT: 7.296 Backend-Tests in 24 min), Entscheidungen D1\u2013D8, Karten MK1\u2013MK14. Vormittagsfassung \u201EDocker als einzige Ausf\u00FChrungswelt\u0022 in der Git-Historie.",
   "entrypoint": "index.html",
-  "status": "decision-pending",
+  "status": "decided",
   "phase": "decision-ready",
   "pattern": "architecture",
-  "updatedAt": "2026-09-12T13:40:00Z",
+  "updatedAt": "2026-09-12T20:58:55Z",
   "sourceTaskKeys": [],
   "relatedTaskKeys": [
     "AGT-2780",
@@ -21,13 +21,134 @@
     "AGT-2738",
     "AGT-2763",
     "AGT-2739",
-    "AGT-2740"
+    "AGT-2740",
+    "AGT-2787"
   ],
   "implementationTasks": [
     {
-      "title": "Isolated execution, stage M1: stable auto-updated checkouts and leased worktrees, technology building blocks (npm, NuGet, Node, SDK, Playwright) with content-addressed caches, manifest, project.yml + prepare as composition, validator, generator, settings view with justified override (operator decisions D1-D8)",
-      "promptMarkdown": "Implement stage M1 of docs/operations/docker-ausfuehrungswelt-migration/index.html according to the recorded operator decisions (D1 to D8). Base layer (product): per project and executor one stable checkout of the integration branch that the executor keeps current (fetch, fast-forward only, never modified locally) and from which every run gets a leased worktree on the subject commit; the stable checkout is where caches are kept warm and the baseline runs. Technology building blocks (product): general, tested solutions for installing libraries and selecting versions: npm ci against a content-addressed npm cache, dotnet restore against a NuGet cache keyed by lockfile hash, Node via .nvmrc, SDK via global.json, browsers via the Playwright cache; each block knows its cache keys, its \"everything present\" check and its failure signatures; cache entries are write-once with manifest and never written back after a failed run. Project script: a schema for .agent-studio/project.yml (stack, tool versions referencing manifests, prepare/build/test/lint commands, test suites with category and expected duration, cache paths, capabilities, environment, dev-server start rules, optional image) and .agent-studio/prepare as a composition of the building blocks; manifest output; validator; the generator turns the existing stack detection into a proposal card that writes both files into the project repository; the orchestrator proposes script changes as cards after preparation failures and manifest deviations (the co-author role, D5). Settings area \"Execution\" shows the repository definition, the last manifest and allows an override only with a mandatory justification. The build-test gate and the coding run use the same preparation step and read the definition from the subject commit; remove the gate-owned dependency cache (supersedes the cache part of AGT-2782) and the ensure-deps hook pattern. Pilots: Agent Studio, Quality Studio, Token Economy. Evidence: gate and run of the three pilots pass through the preparation step with manifest; the second run of each pilot is a cache hit; an onboarding probe on a fresh registration of quality-studio-website reaches the first green card without manual steps (duration and questions logged); a provoked preparation failure produces a script proposal card with reasoning; ADR; docs/operations setup page \"Vorbereitung, Isolation, Orchestrator\"; changelog. Isolation techniques (M2) and the orchestrator diagnosis/healing (M3) are separate cards."
+      "title": "Isolated execution, stage M1: stable auto-updated checkouts and leased worktrees, technology building blocks (npm, NuGet, Node, SDK, Playwright) with content-addressed caches, manifest, project.yml \u002B prepare as composition, validator, generator, settings view with justified override (operator decisions D1-D8)",
+      "promptMarkdown": "Implement stage M1 of docs/operations/docker-ausfuehrungswelt-migration/index.html according to the recorded operator decisions (D1 to D8). Base layer (product): per project and executor one stable checkout of the integration branch that the executor keeps current (fetch, fast-forward only, never modified locally) and from which every run gets a leased worktree on the subject commit; the stable checkout is where caches are kept warm and the baseline runs. Technology building blocks (product): general, tested solutions for installing libraries and selecting versions: npm ci against a content-addressed npm cache, dotnet restore against a NuGet cache keyed by lockfile hash, Node via .nvmrc, SDK via global.json, browsers via the Playwright cache; each block knows its cache keys, its \u0022everything present\u0022 check and its failure signatures; cache entries are write-once with manifest and never written back after a failed run. Project script: a schema for .agent-studio/project.yml (stack, tool versions referencing manifests, prepare/build/test/lint commands, test suites with category and expected duration, cache paths, capabilities, environment, dev-server start rules, optional image) and .agent-studio/prepare as a composition of the building blocks; manifest output; validator; the generator turns the existing stack detection into a proposal card that writes both files into the project repository; the orchestrator proposes script changes as cards after preparation failures and manifest deviations (the co-author role, D5). Settings area \u0022Execution\u0022 shows the repository definition, the last manifest and allows an override only with a mandatory justification. The build-test gate and the coding run use the same preparation step and read the definition from the subject commit; remove the gate-owned dependency cache (supersedes the cache part of AGT-2782) and the ensure-deps hook pattern. Pilots: Agent Studio, Quality Studio, Token Economy. Evidence: gate and run of the three pilots pass through the preparation step with manifest; the second run of each pilot is a cache hit; an onboarding probe on a fresh registration of quality-studio-website reaches the first green card without manual steps (duration and questions logged); a provoked preparation failure produces a script proposal card with reasoning; ADR; docs/operations setup page \u0022Vorbereitung, Isolation, Orchestrator\u0022; changelog. Isolation techniques (M2) and the orchestrator diagnosis/healing (M3) are separate cards."
     }
   ],
-  "key": "AGT-W51"
+  "key": "AGT-W51",
+  "decision": {
+    "outcome": "feature-spawn",
+    "state": "succeeded",
+    "operationId": "workbench-ui-9adcfbe4-1d4e-4641-9012-e35133359935",
+    "sourceRevision": "fc2e505fab31616478c04eb4f5a376a80124ab25",
+    "sourceFingerprint": "d5d7ca6457f383b4be290e8b3732c6284726adf33c6f11ab7d5ff99542d5d768",
+    "preparedAt": "2026-09-12T20:58:55Z",
+    "preparedBy": "Operator",
+    "confirmedAt": "2026-09-12T20:58:55Z",
+    "confirmedBy": "Operator",
+    "decidedAt": "2026-09-12T20:58:55Z",
+    "spawnedTaskKeys": [
+      "AGT-2787"
+    ],
+    "responses": [
+      {
+        "decisionId": "windows-isolation",
+        "kind": "single",
+        "selectedOptionIds": [
+          "docker-pflicht"
+        ],
+        "comment": null
+      },
+      {
+        "decisionId": "reihenfolge",
+        "kind": "single",
+        "selectedOptionIds": [
+          "linux-zuerst"
+        ],
+        "comment": null
+      },
+      {
+        "decisionId": "pilotprojekte",
+        "kind": "multi",
+        "selectedOptionIds": [
+          "te",
+          "qs",
+          "web",
+          "agt"
+        ],
+        "comment": null
+      },
+      {
+        "decisionId": "windows-tests",
+        "kind": "single",
+        "selectedOptionIds": [
+          "profil"
+        ],
+        "comment": null
+      },
+      {
+        "decisionId": "definition-besitz",
+        "kind": "single",
+        "selectedOptionIds": [
+          "im-repo"
+        ],
+        "comment": null
+      },
+      {
+        "decisionId": "orchestrator-heilung",
+        "kind": "multi",
+        "selectedOptionIds": [
+          "cache-prepare",
+          "version-install",
+          "test-quarantaene",
+          "projekt-karte",
+          "folgeprompt",
+          "ursachen-karte"
+        ],
+        "comment": null
+      },
+      {
+        "decisionId": "parallelbetrieb",
+        "kind": "confirm",
+        "selectedOptionIds": [
+          "bestaetigt"
+        ],
+        "comment": "Nach vorne fixen!"
+      },
+      {
+        "decisionId": "ci-feature",
+        "kind": "single",
+        "selectedOptionIds": [
+          "ci-integriert"
+        ],
+        "comment": null
+      }
+    ],
+    "taskDraft": {
+      "title": "Implement Isolierte Ausf\u00FChrung: Vorbereitungsskripte, Isolation, heilender Orchestrator",
+      "goal": "Operator-Entscheidungen 12.09.2026 (Vormittag: Windows keine Ausf\u00FChrungswelt, Docker f\u00FCr alles; Nachmittag pr\u00E4zisiert: Onboarding darf nicht komplizierter werden, Worktree-Vorbereitung als Skript, das sich um alles k\u00FCmmert, Docker-Image nur optionale Beschleunigung, Kernproblem sind Versionen, dazu ein Orchestrator, der Probleme gr\u00FCndlich bewertet, Folgeprompts erg\u00E4nzt und die Pipeline heilt; f\u00FCr die Produktversion reichen Coding-Agents in isolierten Umgebungen, Kommunikation und Heilung laufen durch Agent Studio). Zielbild in drei Schichten: Vorbereitung als Basis vom Produkt (stabile, laufend aktualisierte Checkouts, Worktrees mit Lease), Technologie-Bausteinen mit Caches (npm, NuGet, Node, SDK, Playwright) und projekteigenem Skript (project.yml \u002B prepare), das der Orchestrator mit dem Nutzer entwickelt und auf eigene Initiative pflegt, Isolation je Lauf nach Executor-Profil (Sandbox-Prozess Standard, Container optional, Micro-VM f\u00FCr Docker-Beweise), Orchestrator mit Diagnose, Heilung, Folgeprompt und Frage in der Karte. Produkterfahrung f\u00FCr Installierende, Auswirkungen je Studio-Komponente und je Projekt (17), Migration M1\u2013M7 (9\u201312 Wochen), Risiken, Tests und CI/CD als Produktfeature (Inventar, Testlauf-Historie mit Laufzeiten und L\u00E4ufen, Stabilisierung durch den Orchestrator, Pipeline-Engine mit Stufen aus project.yml, Deploy als Stufe, Dauer und Kosten je Schritt im Lauf und als Statistikseite je Projekt (Dauer, CPU, IO, Tokens, Fehlerh\u00E4ufigkeit je Schritt); AGT: 7.296 Backend-Tests in 24 min), Entscheidungen D1\u2013D8, Karten MK1\u2013MK14. Vormittagsfassung \u201EDocker als einzige Ausf\u00FChrungswelt\u0022 in der Git-Historie.\n\nRecorded decisions:\nIsolationstechnik auf Windows: C \u00B7 Docker mandatory (Vormittagsfassung)\nReihenfolge der Migration: A \u00B7 Vorbereitung und Isolation auf dem Linux-Runner zuerst, Orchestrator parallel, Workstation zuletzt (Empfehlung)\nPilotprojekte f\u00FCr M1/M2: Token Economy (klein, dotnet), Quality Studio (eigenes Dockerfile, flaky Gates), Agent Studio Website (erstes lokales Projekt), Agent Studio selbst\nZukunft der Windows-Tests: A \u00B7 Profil windows-host: nur Host-Manager, Installer, Connector (Empfehlung)\nOrt und Besitz der Projekt-Definition: A \u00B7 Im Repo des Projekts (project.yml \u002B prepare), vom Orchestrator mit dem Nutzer entwickelt, Bausteine und Caches vom Produkt, nur begr\u00FCndet \u00FCbersteuert (Empfehlung)\nHeilungen des Orchestrators: Cache verwerfen und Vorbereitung wiederholen, Fehlende Tool-Version installieren und wiederholen, Flaky Test unter Quarant\u00E4ne stellen und Stabilisierungs-Karte anlegen, \u00C4nderung an project.yml als Karte ins Projekt legen, Folgeprompt an die Karte h\u00E4ngen und neu starten, Ursachen-Karte anlegen, Betroffene warten lassen\nGrenze f\u00FCr den Parallelbetrieb: Best\u00E4tigt. Note: Nach vorne fixen!\nCI/CD als Produktfeature: A \u00B7 Ja: Pipeline-Engine mit Stufen aus project.yml, Testlauf-Historie, Integrationsbranch-L\u00E4ufe, Deploy als Stufe; externe CI optional (Empfehlung)",
+      "acceptanceCriteria": [
+        "Implement every recorded Dossier selection and preserve its stated constraints.",
+        "Verify the resulting behavior with the checks required by the affected surface."
+      ],
+      "evidenceLinks": [
+        "docs/operations/docker-ausfuehrungswelt-migration/index.html"
+      ],
+      "chosenOption": "Isolationstechnik auf Windows: C \u00B7 Docker mandatory (Vormittagsfassung)\nReihenfolge der Migration: A \u00B7 Vorbereitung und Isolation auf dem Linux-Runner zuerst, Orchestrator parallel, Workstation zuletzt (Empfehlung)\nPilotprojekte f\u00FCr M1/M2: Token Economy (klein, dotnet), Quality Studio (eigenes Dockerfile, flaky Gates), Agent Studio Website (erstes lokales Projekt), Agent Studio selbst\nZukunft der Windows-Tests: A \u00B7 Profil windows-host: nur Host-Manager, Installer, Connector (Empfehlung)\nOrt und Besitz der Projekt-Definition: A \u00B7 Im Repo des Projekts (project.yml \u002B prepare), vom Orchestrator mit dem Nutzer entwickelt, Bausteine und Caches vom Produkt, nur begr\u00FCndet \u00FCbersteuert (Empfehlung)\nHeilungen des Orchestrators: Cache verwerfen und Vorbereitung wiederholen, Fehlende Tool-Version installieren und wiederholen, Flaky Test unter Quarant\u00E4ne stellen und Stabilisierungs-Karte anlegen, \u00C4nderung an project.yml als Karte ins Projekt legen, Folgeprompt an die Karte h\u00E4ngen und neu starten, Ursachen-Karte anlegen, Betroffene warten lassen\nGrenze f\u00FCr den Parallelbetrieb: Best\u00E4tigt. Note: Nach vorne fixen!\nCI/CD als Produktfeature: A \u00B7 Ja: Pipeline-Engine mit Stufen aus project.yml, Testlauf-Historie, Integrationsbranch-L\u00E4ufe, Deploy als Stufe; externe CI optional (Empfehlung)",
+      "relatedTaskKeys": [
+        "AGT-2780",
+        "AGT-2781",
+        "AGT-2782",
+        "AGT-2778",
+        "AGT-2765",
+        "AGT-2773",
+        "AGT-2733",
+        "AGT-2736",
+        "AGT-2738",
+        "AGT-2763",
+        "AGT-2739",
+        "AGT-2740"
+      ],
+      "targetProject": "Agent Studio",
+      "initialLane": "1-preparation",
+      "mode": "coding",
+      "taskType": "feature"
+    }
+  },
+  "editedBy": "Operator"
 }
