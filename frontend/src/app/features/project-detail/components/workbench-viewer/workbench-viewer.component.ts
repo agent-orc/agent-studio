@@ -66,7 +66,7 @@ import { WorkbenchDecisionPanelComponent } from '../workbench-decision-panel/wor
 export class WorkbenchViewerComponent {
   readonly projectName = input.required<string>();
   readonly workbenchId = input.required<string>();
-  readonly openWiki = output<string>();
+  readonly openWiki = output<{ relPath: string; reuse: 'replace-current' | 'new' }>();
   /**
    * Emitted once the Dossier document resolves. A route-opened tab (deep
    * link or reload) starts without the catalogue `key`/title the Explorer
@@ -162,6 +162,9 @@ export class WorkbenchViewerComponent {
     const message = event.data as {
       type?: unknown;
       href?: unknown;
+      button?: unknown;
+      ctrlKey?: unknown;
+      metaKey?: unknown;
       responses?: unknown;
       rect?: unknown;
       visible?: unknown;
@@ -204,7 +207,12 @@ export class WorkbenchViewerComponent {
     if (!entryPath) return;
     const navigation = resolveIsolatedHtmlNavigation(entryPath, message.href);
     if (navigation?.kind === 'wiki') {
-      this.openWiki.emit(navigation.relPath);
+      this.openWiki.emit({
+        relPath: navigation.relPath,
+        reuse: message.button === 1 || message.ctrlKey === true || message.metaKey === true
+          ? 'new'
+          : 'replace-current',
+      });
     } else if (navigation?.kind === 'external') {
       window.open(navigation.url, '_blank', 'noopener,noreferrer');
     }

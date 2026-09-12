@@ -14,7 +14,9 @@
            [attr.data-anchor-state]="linkedElementState(link)"
            [attr.aria-current]="linkedElementState(link) === 'active' ? 'location' : null"
            [attr.aria-disabled]="linkedElementState(link) === 'missing' ? 'true' : null"
-           (click)="openLinkedElement($event, link)">
+           (click)="openLinkedElement($event, link)"
+           (auxclick)="openLinkedElementInNewTab($event, link)"
+           (contextmenu)="openContextMenu($event, link)">
           <span class="linked-element__kind">{{ linkKindLabel(link.kind) }}</span>
           <span class="linked-element__label">{{ link.label }}</span>
           @if (linkedElementState(link) === 'missing') {
@@ -28,3 +30,11 @@
 } @else if (relatedTasks().length === 0) {
   <p class="linked-elements__empty">No page or task links detected.</p>
 }
+<app-menu
+  [items]="contextItems"
+  [open]="contextLink() !== null"
+  [position]="contextPosition()"
+  ariaLabel="Wiki link actions"
+  testIdPrefix="project-wiki-link-context"
+  (itemClick)="onContextItem($event)"
+  (closeRequest)="contextLink.set(null)" />

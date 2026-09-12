@@ -700,6 +700,34 @@ describe('StudioShellComponent tab closing', () => {
 
     expect(tabState.tabs().some(item => item.kind === 'board' && item.projectName === 'Project A')).toBe(false);
   });
+
+  it('maps Alt+Left to the active Wiki tab history', () => {
+    localStorage.removeItem('atp.studio.tabs.v1');
+    TestBed.configureTestingModule({
+      imports: [StudioShellComponent],
+      providers: [
+        provideZonelessChangeDetection(), provideHttpClient(),
+        provideHttpClientTesting(), provideRouter([]),
+      ],
+    });
+    const fixture = TestBed.createComponent(StudioShellComponent);
+    const tabState = TestBed.inject(StudioTabStateService);
+    tabState.closeAll();
+    tabState.open({ kind: 'hub', projectName: 'Project A', section: 'wiki' }, 'new');
+    tabState.open({
+      kind: 'hub', projectName: 'Project A', section: 'wiki',
+      wikiTarget: { kind: 'page', relPath: 'a.md' },
+    }, 'replace-current');
+    const go = vi.spyOn(history, 'go').mockImplementation(() => undefined);
+    const event = new KeyboardEvent('keydown', {
+      key: 'ArrowLeft', altKey: true, bubbles: true, cancelable: true,
+    });
+
+    fixture.componentInstance.onDocumentHistoryShortcut(event);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(go).toHaveBeenCalledWith(-1);
+  });
 });
 
 describe('StudioShellComponent active-tab scroll-into-view (AGT-2135)', () => {

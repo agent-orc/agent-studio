@@ -259,7 +259,7 @@ describe('WorkbenchViewerComponent', () => {
     referenceChip.click();
     expect(writeText).toHaveBeenCalledWith('DEM-W4');
 
-    const wikiTargets: string[] = [];
+    const wikiTargets: { relPath: string; reuse: 'replace-current' | 'new' }[] = [];
     fixture.componentInstance.openWiki.subscribe((path) => wikiTargets.push(path));
     expect(document.querySelector('[data-testid="workbench-viewer-open-wiki"]')).toBeNull();
 
@@ -267,7 +267,9 @@ describe('WorkbenchViewerComponent', () => {
       source: frame.contentWindow,
       data: { type: ISOLATED_HTML_LINK_MESSAGE, href: '../target/index.html' },
     } as MessageEvent);
-    expect(wikiTargets).toEqual(['workbenches/target/index.html']);
+    expect(wikiTargets).toEqual([{
+      relPath: 'workbenches/target/index.html', reuse: 'replace-current',
+    }]);
 
     const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
     fixture.componentInstance.onFrameMessage({

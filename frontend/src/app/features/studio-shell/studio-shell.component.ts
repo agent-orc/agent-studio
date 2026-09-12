@@ -57,6 +57,7 @@ import { AppTooltipDirective } from '../../components/tooltip/app-tooltip.direct
 import { TaskStatusPopoverDirective } from '../../components/task-status-card';
 import { buildProjectPickerItems, buildTabCtxMenuItems } from './studio-shell.menu-builders';
 import { StudioTabStateService } from './services/studio-tab-state.service';
+import { ProjectHubUrlService } from './services/project-hub-url.service';
 import { StudioPanelStateService } from './services/studio-panel-state.service';
 import { ExplorerSectionsService } from './services/explorer-sections.service';
 import { ExplorerWorkbenchStateService } from './services/explorer-workbench-state.service';
@@ -134,6 +135,7 @@ export class StudioShellComponent {
 
   private readonly featureFlags = inject(FeatureFlagsService);
   private readonly tabState = inject(StudioTabStateService);
+  private readonly projectHubUrls = inject(ProjectHubUrlService);
   private readonly panelState = inject(StudioPanelStateService);
   private readonly jobSelection = inject(TaskSelectionService);
   readonly uiPrefs = inject(UiPreferencesService);
@@ -154,6 +156,18 @@ export class StudioShellComponent {
   readonly activeTab = this.tabState.activeTab;
   readonly tabKey = studioTabKey;
   private readonly tabElements = viewChildren<ElementRef<HTMLElement>>('studioTab');
+
+  @HostListener('keydown', ['$event'])
+  onDocumentHistoryShortcut(event: KeyboardEvent): void {
+    if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    const target = event.target as HTMLElement | null;
+    if (target?.matches('input, textarea, select, [contenteditable="true"]')) return;
+    const active = this.activeTab();
+    if (active?.kind !== 'workbench' && !(active?.kind === 'hub' && active.section === 'wiki')) return;
+    event.preventDefault();
+    this.projectHubUrls.navigateDocumentHistory(event.key === 'ArrowLeft' ? -1 : 1);
+  }
 
   /** Keep every newly activated editor tab inside the horizontally scrolling
    *  strip without moving the page or disturbing an already visible tab. */

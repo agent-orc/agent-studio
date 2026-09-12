@@ -251,15 +251,15 @@ export class GlobalSearchComponent {
       // The key alone addresses the card. Indexed matches can come from the
       // archive, which the board snapshot deliberately omits, so looking the
       // task up in it first would silently swallow those results.
-      this.tabs.open({ kind: 'task', taskKey: item.taskKey });
+      this.tabs.open({ kind: 'task', taskKey: item.taskKey }, 'new');
     } else if (item.domain === 'dossiers' && item.workbenchId) {
       this.tabs.open({
         kind: 'workbench', projectName: item.projectName, workbenchId: item.workbenchId,
         ...(item.projectId ? { projectId: item.projectId } : {}), title: item.title, key: item.dossierKey,
-      });
+      }, 'new');
     } else if (item.domain === 'commits' && item.sha) {
       this.boardFilters.setSoleProject(item.projectName);
-      this.tabs.open({ kind: 'diff', commitSha: item.sha });
+      this.tabs.open({ kind: 'diff', commitSha: item.sha }, 'new');
     } else if (item.domain === 'wiki' || item.domain === 'files') {
       const isWiki = item.domain === 'wiki' || item.isWiki;
       const wikiPath = isWiki ? item.path?.replace(/^docs\//i, '') : null;
@@ -268,7 +268,7 @@ export class GlobalSearchComponent {
         projectName: item.projectName,
         section: isWiki ? 'wiki' : 'git',
         ...(wikiPath ? { wikiTarget: { kind: 'page' as const, relPath: wikiPath } } : {}),
-      });
+      }, 'new');
     }
     this.close();
   }

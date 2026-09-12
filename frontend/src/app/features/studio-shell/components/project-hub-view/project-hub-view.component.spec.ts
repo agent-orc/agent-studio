@@ -113,8 +113,12 @@ describe('ProjectHubViewComponent (smoke)', () => {
     fixture.componentRef.setInput('projectName', 'Alpha');
     fixture.detectChanges();
 
-    fixture.componentInstance.openWikiTarget({ kind: 'page', relPath: 'concepts/routing.md' });
-    fixture.componentInstance.openWikiTarget({ kind: 'page', relPath: 'concepts/routing.md' });
+    fixture.componentInstance.openWikiTarget({
+      target: { kind: 'page', relPath: 'concepts/routing.md' }, reuse: 'new',
+    });
+    fixture.componentInstance.openWikiTarget({
+      target: { kind: 'page', relPath: 'concepts/routing.md' }, reuse: 'new',
+    });
 
     expect(tabState.tabs().filter(tab => studioTabKey(tab)
       === 'hub:Alpha:wiki:page:concepts%2Frouting.md')).toHaveLength(1);

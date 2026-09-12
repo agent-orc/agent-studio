@@ -31,7 +31,7 @@ import {
 } from '../../../project-detail/components/project-shell/project-shell.config';
 import { ProjectOverlaysService } from '../../../project-detail/state/project-overlays.service';
 import { StudioTabStateService } from '../../services/studio-tab-state.service';
-import type { WikiTabTarget } from '../../studio-shell.types';
+import type { WikiTabNavigationRequest, WikiTabTarget } from '../../studio-shell.types';
 import type { WorkbenchListItem } from '../../../../models/project-docs.model';
 
 /** Rails whose content panel is real (not the project-shell placeholder). */
@@ -158,13 +158,13 @@ export class ProjectHubViewComponent {
     });
   }
 
-  openWikiTarget(target: WikiTabTarget): void {
+  openWikiTarget(request: WikiTabNavigationRequest): void {
     this.tabState.open({
       kind: 'hub',
       projectName: this.projectName(),
       section: 'wiki',
-      wikiTarget: target,
-    });
+      wikiTarget: request.target,
+    }, request.reuse);
   }
 
   /**
@@ -190,7 +190,7 @@ export class ProjectHubViewComponent {
    * opens (open-or-focus by key), so both entry points land on one tab.
    */
   openUrlPreview(url: { id: string }): void {
-    this.tabState.open({ kind: 'url-preview', projectName: this.projectName(), urlId: url.id });
+    this.tabState.open({ kind: 'url-preview', projectName: this.projectName(), urlId: url.id }, 'new');
   }
 
   openWorkbench(workbench: WorkbenchListItem): void {
@@ -201,7 +201,7 @@ export class ProjectHubViewComponent {
       workbenchId: workbench.id,
       title: workbench.title,
       key: workbench.key ?? undefined,
-    });
+    }, 'replace-current');
   }
 
   /** Deck closes when the user closes the editor tab; the in-rail button only collapses navigation. */

@@ -96,6 +96,21 @@
              tab gets filter + compact + add-task; task tabs reuse the
              existing detail-pane toggles via the TaskDetail's own header. -->
         <div studioTabActions class="studio-tab-actions">
+          @if (isDocumentTabActive()) {
+            <div class="studio-document-history" data-testid="studio-document-history"
+                 [attr.data-history-length]="studioTabState.activeDocumentHistoryLength()">
+              <button type="button" class="studio-tab-action"
+                      data-testid="studio-document-back"
+                      aria-label="Back in this document tab"
+                      [disabled]="!studioTabState.canNavigateDocumentBack()"
+                      (click)="projectHubUrls.navigateDocumentHistory(-1)">←</button>
+              <button type="button" class="studio-tab-action"
+                      data-testid="studio-document-forward"
+                      aria-label="Forward in this document tab"
+                      [disabled]="!studioTabState.canNavigateDocumentForward()"
+                      (click)="projectHubUrls.navigateDocumentHistory(1)">→</button>
+            </div>
+          }
           @if (studioTabState.activeTab()?.kind === 'board') {
             <div class="studio-board-actions" data-testid="studio-board-actions">
               <button type="button"

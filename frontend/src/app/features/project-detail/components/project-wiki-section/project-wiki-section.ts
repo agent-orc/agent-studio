@@ -178,9 +178,9 @@ export class ProjectWikiSectionComponent implements OnDestroy {
   readonly projectId = input<string | null>(null);
   /** Shell-owned target when this Wiki is mounted in a Studio editor tab. */
   readonly studioTabTarget = input<WikiDeepLinkTarget | null>(null);
-  /** Legacy project overlays navigate in place; Studio opens internal targets as tabs. */
+  /** Legacy overlays navigate locally; Studio delegates targets to shell tab policy. */
   readonly openInternalTargetsInTabs = input(false);
-  readonly openWikiTarget = output<WikiDeepLinkTarget>();
+  readonly openWikiTarget = output<{ target: WikiDeepLinkTarget; reuse: 'replace-current' | 'new' }>();
   readonly openWorkbench = output<WorkbenchListItem>();
 
   private readonly docs = inject(ProjectDocsService);
@@ -377,7 +377,9 @@ export class ProjectWikiSectionComponent implements OnDestroy {
   @HostListener('window:message', ['$event'])
   onHtmlFrameMessage(event: MessageEvent): void {
     if (!this.htmlFrames().some(frame => event.source === frame.nativeElement.contentWindow)) return;
-    const message = event.data as { type?: unknown; href?: unknown } | null;
+    const message = event.data as {
+      type?: unknown; href?: unknown; button?: unknown; ctrlKey?: unknown; metaKey?: unknown;
+    } | null;
     if (message?.type !== ISOLATED_HTML_LINK_MESSAGE || typeof message.href !== 'string') return;
     const openedRel = this.openedRel();
     if (!openedRel) return;
@@ -389,7 +391,8 @@ export class ProjectWikiSectionComponent implements OnDestroy {
     if (navigation?.kind !== 'wiki') return;
     const node = this.findNode(this.roots(), navigation.relPath);
     if (!node || node.type === 'folder' || !node.relPath) return;
-    this.openFile(node.relPath, node.type);
+    this.openFile(node.relPath, node.type, 'doc', null,
+      message.button === 1 || message.ctrlKey === true || message.metaKey === true ? 'new' : 'replace-current');
   }
 
   ngOnDestroy(): void {
@@ -430,9 +433,15 @@ export class ProjectWikiSectionComponent implements OnDestroy {
     const t = this.menuTarget();
     if (!t) return [];
     if (!this.wikiWritable())
-      return t.type === 'folder' ? [] : [{ kind: 'row', id: 'history', label: 'View history' }];
+      return t.type === 'folder'
+        ? [{ kind: 'row', id: 'open-new-tab', label: 'Open in new tab' }]
+        : [
+            { kind: 'row', id: 'open-new-tab', label: 'Open in new tab' },
+            { kind: 'row', id: 'history', label: 'View history' },
+          ];
     if (t.type === 'folder') {
       return [
+        { kind: 'row', id: 'open-new-tab', label: 'Open in new tab' },
         { kind: 'row', id: 'new-page', label: 'New page' },
         { kind: 'row', id: 'new-folder', label: 'New category' },
         { kind: 'row', id: 'copy-link', label: 'Link kopieren' },
@@ -442,6 +451,7 @@ export class ProjectWikiSectionComponent implements OnDestroy {
       ];
     }
     return [
+      { kind: 'row', id: 'open-new-tab', label: 'Open in new tab' },
       { kind: 'row', id: 'copy-link', label: 'Link kopieren' },
       { kind: 'row', id: 'rename', label: 'Rename' },
       { kind: 'row', id: 'history', label: 'View history' },
@@ -627,16 +637,23 @@ export class ProjectWikiSectionComponent implements OnDestroy {
     this.openFolderOverview(node.relPath);
   }
 
+  openTreeTarget(event: MouseEvent, node: WikiTreeNode): void {
+    const reuse = event.ctrlKey || event.metaKey || event.button === 1 ? 'new' : 'replace-current';
+    if (event.button === 1) event.preventDefault();
+    if (node.type === 'folder') this.openFolderOverview(node.relPath ?? '', false, reuse);
+    else if (node.relPath) this.openFile(node.relPath, node.type, 'doc', null, reuse);
+  }
+
   /**
    * Shows a folder's overview page in the content pane (also used to drill
    * into subfolders from the overview table and breadcrumb). The folder is
    * expanded in the tree so the selection stays visible.
    */
-  openFolderOverview(relPath: string, inPlace = false): void {
+  openFolderOverview(relPath: string, inPlace = false, reuse: 'replace-current' | 'new' = 'replace-current'): void {
     const target: WikiDeepLinkTarget = relPath
       ? { kind: 'folder', relPath }
       : { kind: 'overview' };
-    if (!inPlace && this.requestStudioTab(target)) return;
+    if (!inPlace && this.requestStudioTab(target, reuse)) return;
     this.resetSearchState();
     this.deepLinkMissing.set(null);
     if (this.openedRel()) this.closeFile(inPlace);
@@ -936,8 +953,9 @@ export class ProjectWikiSectionComponent implements OnDestroy {
 
   // ---- viewer ----
 
-  openFile(rel: string, type: WikiNodeType = 'md', tab: WikiViewerTab = 'doc', reportAnchor: string | null = null): void {
-    if (this.requestStudioTab({ kind: 'page', relPath: rel })) return;
+  openFile(rel: string, type: WikiNodeType = 'md', tab: WikiViewerTab = 'doc', reportAnchor: string | null = null,
+    reuse: 'replace-current' | 'new' = 'replace-current'): void {
+    if (this.requestStudioTab({ kind: 'page', relPath: rel }, reuse)) return;
     this.resetSearchState();
     this.deepLinkMissing.set(null);
     this.selectedFolderRel.set(null);
@@ -1161,7 +1179,8 @@ export class ProjectWikiSectionComponent implements OnDestroy {
       : link.target;
   };
 
-  openLinkedElement(link: WikiLinkedElement): void {
+  openLinkedElement(request: { link: WikiLinkedElement; reuse: 'replace-current' | 'new' }): void {
+    const link = request.link;
     if (link.kind === 'task') {
       const reference = link.taskReference ?? link.label;
       const match = this.taskNavigation.markdownReferences()
@@ -1170,7 +1189,23 @@ export class ProjectWikiSectionComponent implements OnDestroy {
       return;
     }
     const rel = this.resolveLinkedWikiPage(link);
-    if (rel) this.openFile(rel, this.wikiTypeForRel(rel));
+    if (rel) this.openFile(rel, this.wikiTypeForRel(rel), 'doc', null, request.reuse);
+  }
+
+  onRenderedWikiLink(event: MouseEvent): void {
+    const anchor = event.composedPath().find((item): item is HTMLAnchorElement =>
+      item instanceof HTMLAnchorElement && item.hasAttribute('href'));
+    if (!anchor) return;
+    const href = anchor.getAttribute('href');
+    const openedRel = this.openedRel();
+    if (!href || !openedRel || href.startsWith('#') || /^[a-z][a-z0-9+.-]*:/i.test(href)) return;
+    const rel = resolveWikiPageTarget(href, openedRel);
+    const node = rel ? this.findNode(this.roots(), rel) : null;
+    if (!node || node.type === 'folder' || !node.relPath) return;
+    if (event.type === 'auxclick' && event.button !== 1) return;
+    event.preventDefault();
+    this.openFile(node.relPath, node.type, 'doc', null,
+      event.button === 1 || event.ctrlKey || event.metaKey ? 'new' : 'replace-current');
   }
 
   startPanelResize(event: PointerEvent, panel: WikiResizablePanel): void {
@@ -1469,6 +1504,14 @@ export class ProjectWikiSectionComponent implements OnDestroy {
     const t = this.menuTarget();
     if (!t) return;
     switch (ev.id) {
+      case 'open-new-tab':
+        if (t.relPath) {
+          const target: WikiDeepLinkTarget = t.type === 'folder'
+            ? { kind: 'folder', relPath: t.relPath }
+            : { kind: 'page', relPath: t.relPath };
+          this.requestStudioTab(target, 'new');
+        }
+        break;
       case 'rename':
         this.startRename(t);
         break;
@@ -1847,10 +1890,10 @@ export class ProjectWikiSectionComponent implements OnDestroy {
     return { kind: 'overview' };
   }
 
-  private requestStudioTab(target: WikiDeepLinkTarget): boolean {
+  private requestStudioTab(target: WikiDeepLinkTarget, reuse: 'replace-current' | 'new' = 'replace-current'): boolean {
     if (!this.openInternalTargetsInTabs() || this.restoringOpen) return false;
     if (this.sameWikiTarget(target, this.currentDeepLinkTarget())) return false;
-    this.openWikiTarget.emit(target);
+    this.openWikiTarget.emit({ target, reuse });
     return true;
   }
 
