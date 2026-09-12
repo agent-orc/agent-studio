@@ -2,7 +2,10 @@ using System.Diagnostics;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 
 using Xunit;
@@ -145,11 +148,19 @@ public sealed class ProjectIntegrationViewServiceTests : IDisposable
             builder.ConfigureAppConfiguration((_, config) =>
                 config.AddInMemoryCollection(new Dictionary<string, string?>
                 {
+                    ["TaskRepository"] = Path.Combine(_temp, "host-state"),
+                    ["Logging:BackendFile:LogDirectory"] = Path.Combine(_temp, "host-logs"),
                     ["WatchPaths:0:Name"] = "Endpoint Demo",
                     ["WatchPaths:0:RootPath"] = repo,
                     ["WatchPaths:0:RepositoryPath"] = repo,
                     ["WatchPaths:0:Path"] = tasks,
                 }));
+            // This fixture verifies a read-only endpoint against a fully built
+            // host. Background workers are outside its subject and can rewrite
+            // completed-card metadata or run Git concurrently while the request
+            // is being asserted, which is especially visible with Windows Git's
+            // higher spawn cost and exclusive file locking.
+            builder.ConfigureTestServices(services => services.RemoveAll<IHostedService>());
         });
         using var client = factory.CreateClient();
 
