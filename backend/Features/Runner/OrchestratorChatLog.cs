@@ -234,6 +234,12 @@ public enum OrchestratorMessageKind
     /// </summary>
     EnvironmentalRetry,
     /// <summary>
+    /// Worktree preparation failed before the CLI process started. The marker
+    /// carries the stable failure code, Git message, retry count, and path so a
+    /// Ready card remains visibly failed during bounded backoff.
+    /// </summary>
+    WorktreePreparationFailed,
+    /// <summary>
     /// A worktree-isolated run modified the shared main checkout. The runner
     /// skipped integration and surfaced the harness integrity violation.
     /// </summary>
@@ -298,6 +304,7 @@ internal static class OrchestratorMessageKindExtensions
         OrchestratorMessageKind.QuotaExhausted    => "quota-exhausted",
         OrchestratorMessageKind.AuthRefreshFailed => "auth-refresh-failed",
         OrchestratorMessageKind.EnvironmentalRetry => "environmental-retry",
+        OrchestratorMessageKind.WorktreePreparationFailed => "worktree-preparation-failed",
         OrchestratorMessageKind.WorktreeContainment => "worktree-containment",
         OrchestratorMessageKind.AgentGitViolation => "agent-git-violation",
         OrchestratorMessageKind.WorkerHeadAdvanced => "worker-head-advanced",
@@ -329,6 +336,7 @@ internal static class OrchestratorMessageKindExtensions
         OrchestratorMessageKind.QuotaExhausted    => "quota-exhausted",
         OrchestratorMessageKind.AuthRefreshFailed => "auth-refresh-failed",
         OrchestratorMessageKind.EnvironmentalRetry => "environmental-retry",
+        OrchestratorMessageKind.WorktreePreparationFailed => "worktree-preparation-failed",
         OrchestratorMessageKind.WorktreeContainment => "worktree-containment",
         OrchestratorMessageKind.AgentGitViolation => "agent-git-violation",
         OrchestratorMessageKind.WorkerHeadAdvanced => "worker-head-advanced",

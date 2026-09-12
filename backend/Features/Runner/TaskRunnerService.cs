@@ -89,6 +89,7 @@ public class TaskRunnerService : BackgroundService
     private readonly AgentStudio.Clients.ClientIdentityStore? _clients;
     private readonly StartupExecutionAdmission? _executionAdmission;
     private readonly AgentStudio.Pipeline.FailureInterventionService? _failureInterventions;
+    private readonly AgentStudio.Registry.IProjectUrlPortInspector? _projectUrlPortInspector;
     private readonly ConcurrentDictionary<string, ProjectRunner> _runners = new();
 
     /// <summary>
@@ -160,7 +161,8 @@ public class TaskRunnerService : BackgroundService
         StartupExecutionAdmission? executionAdmission = null,
         ProviderLimitRegistry? providerLimits = null,
         QuotaAdmissionService? quotaAdmission = null,
-        AgentStudio.Pipeline.FailureInterventionService? failureInterventions = null)
+        AgentStudio.Pipeline.FailureInterventionService? failureInterventions = null,
+        AgentStudio.Registry.IProjectUrlPortInspector? projectUrlPortInspector = null)
     {
         _config = config;
         _logger = logger;
@@ -213,6 +215,7 @@ public class TaskRunnerService : BackgroundService
         _providerLimits = providerLimits ?? new ProviderLimitRegistry();
         _executionAdmission = executionAdmission;
         _failureInterventions = failureInterventions;
+        _projectUrlPortInspector = projectUrlPortInspector;
 
         Role = RunnerRoles.ResolveFromConfig(_config);
         BackendName = ResolveBackendName(_config);
@@ -390,7 +393,9 @@ public class TaskRunnerService : BackgroundService
                 visualQa: _visualQa,
                 providerLimits: _providerLimits,
                 quotaAdmission: _quotaAdmission,
-                failureInterventions: _failureInterventions);
+                failureInterventions: _failureInterventions,
+                projectUrls: registryProject?.Urls,
+                projectUrlPortInspector: _projectUrlPortInspector);
             runner.ConfigureWatchdog(LoadWatchdogConfig(_config), PhaseBudgetTable.FromConfig(_config));
             runner.ConfigureCircuitBreaker(RunnerCircuitBreakerOptions.FromConfig(_config));
             _stuckLoopBudget = LoadStuckLoopBudget(_config);
@@ -1545,7 +1550,9 @@ public class TaskRunnerService : BackgroundService
             visualQa: _visualQa,
             providerLimits: _providerLimits,
             quotaAdmission: _quotaAdmission,
-            failureInterventions: _failureInterventions);
+            failureInterventions: _failureInterventions,
+            projectUrls: registryProject?.Urls,
+            projectUrlPortInspector: _projectUrlPortInspector);
         runner.ConfigureWatchdog(LoadWatchdogConfig(_config), PhaseBudgetTable.FromConfig(_config));
         runner.ConfigureCircuitBreaker(RunnerCircuitBreakerOptions.FromConfig(_config));
         runner.ConfigureStuckLoopBudget(LoadStuckLoopBudget(_config));

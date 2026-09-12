@@ -1532,6 +1532,16 @@ public class TaskScannerService : ITaskScanner
             issue = BuildOutcomeIssue("worktree-containment", "Worktree containment", "High", line, lastSeenAt);
             return true;
         }
+        if (line.Contains("[worktree-preparation-failed]", StringComparison.OrdinalIgnoreCase))
+        {
+            issue = BuildOutcomeIssue(
+                "worktree-preparation-failed",
+                "worktree-preparation-failed",
+                "High",
+                line,
+                lastSeenAt);
+            return true;
+        }
         if (line.Contains("[agent-git-violation]", StringComparison.OrdinalIgnoreCase))
         {
             issue = BuildOutcomeIssue("agent-git-violation", "Agent git violation", "High", line, lastSeenAt);
