@@ -281,8 +281,10 @@ internal sealed class DurableReviewProcess
         try
         {
             await workspace.AdoptPreparedAsync(CancellationToken.None);
+            var resume = new DurableReviewProcess(directory, -1, DateTime.MinValue).ReadProgress();
             var evidence = await workspace.ExecutePlanAsync(
                 CancellationToken.None,
+                resume,
                 async (progress, _) =>
                 {
                     if (!await WriteAtomicAsync(

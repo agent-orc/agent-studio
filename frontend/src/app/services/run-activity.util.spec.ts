@@ -62,6 +62,22 @@ describe('buildRunActivityBadge — 3-progress run states (ASS-1751)', () => {
   });
 
   describe('(c) active run', () => {
+    it('shows the restart bridge instead of a generic active label', () => {
+      const badge = buildRunActivityBadge(makeJob({
+        kind: 'continuing-after-restart',
+        processId: 2780,
+        attempt: 0,
+      }), NOW);
+
+      expect(badge).toMatchObject({
+        kind: 'continuing-after-restart',
+        tone: 'active',
+        label: 'Continuing after restart',
+      });
+      expect(badge!.tooltip.body).toContain('same durable worker');
+      expect(badge!.tooltip.body).toContain('2780');
+    });
+
     it('shows "Run aktiv" with the PID in the tooltip', () => {
       const badge = buildRunActivityBadge(makeJob({ kind: 'active', processId: 4242, attempt: 0 }), NOW);
       expect(badge).not.toBeNull();

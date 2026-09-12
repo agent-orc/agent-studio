@@ -388,6 +388,29 @@ public sealed class PipelineExecutionLog
     }
 
     /// <summary>
+    /// Returns a terminal step from the current, still-open pipeline attempt.
+    /// This is the restart checkpoint used by aspect and post-step executors:
+    /// completed evidence is reused, while Pending and interrupted Running
+    /// entries are eligible to execute after the replacement host starts.
+    /// A completed pipeline is deliberately excluded because its rows belong
+    /// to a terminal attempt, not a continuation.
+    /// </summary>
+    public PipelineStepExecution? ReadRestartCheckpoint(
+        string jobFolderPath,
+        string stepId)
+    {
+        var record = Read(jobFolderPath);
+        if (record is null || record.IsComplete) return null;
+        return record.Steps.FirstOrDefault(step =>
+            string.Equals(step.StepId, stepId, StringComparison.OrdinalIgnoreCase)
+            && step.CompletedAt.HasValue
+            && step.Status is PipelineStepStatus.Passed
+                or PipelineStepStatus.Failed
+                or PipelineStepStatus.Skipped
+                or PipelineStepStatus.NotApplicable);
+    }
+
+    /// <summary>
     /// Compatibility projection for records written before <see cref="Complete"/>
     /// terminalized unreached rows. It is deliberately pure: callers receive an
     /// honest read model, while the historical JSON file remains untouched.

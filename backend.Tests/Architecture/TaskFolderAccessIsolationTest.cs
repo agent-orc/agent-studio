@@ -137,6 +137,8 @@ public class TaskFolderAccessIsolationTest
                 "Adapts the external task clean-home store; failed-start cleanup never targets the job-folder tree.",
             ["backend/Features/Cli/Execution/CliWorkingMemoryService.cs"] =
                 "Deletes a CLI's own working-memory state under its config home (guarded by a known-state whitelist), not lane folders.",
+            ["backend/Features/Cli/Execution/DurableLocalCliProcess.cs"] =
+                "AGT-2780 worker spool directory is outside the task folder tree and owned by the durable worker lifecycle.",
             ["backend/Features/Cli/Routing/OneShot/CodexOneShot.cs"] =
                 "Deletes only the per-call OS temp directory created for bounded multimodal image arguments, never task storage.",
 

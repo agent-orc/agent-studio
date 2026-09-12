@@ -77,6 +77,9 @@ public sealed class RunnerSlotWiringTests : IDisposable
     [Fact]
     public void RegisterRecoveredRun_BooksLiveRunsIntoSlots_OccupancyMatchesLiveRuns()
     {
+        SeedProgressTask("t6a");
+        SeedProgressTask("t6b");
+        SeedProgressTask("t6c");
         var (runner, settings) = BuildRunner();
         settings.SetMaxParallelism(ProjectName, 3);
         Assert.Equal(0, runner.GetStatus().OccupiedSlots);
@@ -106,8 +109,9 @@ public sealed class RunnerSlotWiringTests : IDisposable
     /// "Run aktiv" instead of the false "kein aktiver Run" the operator saw.
     /// </summary>
     [Fact]
-    public void RecoveredRun_ClassifiesAsActive_SoBadgeReadsRunActive()
+    public void RecoveredRun_ClassifiesAsContinuingAfterRestart()
     {
+        SeedProgressTask("t6a");
         var (runner, _) = BuildRunner();
 
         // Before recovery the slot is empty and the classifier paints the
@@ -120,7 +124,7 @@ public sealed class RunnerSlotWiringTests : IDisposable
 
         var after = TaskRunActivityClassifier.Classify(
             runner.GetRunActivity("t6a"), execution: null, outcomeIssue: null, DateTime.UtcNow);
-        Assert.Equal(TaskRunActivityKinds.Active, after.Kind);
+        Assert.Equal(TaskRunActivityKinds.ContinuingAfterRestart, after.Kind);
     }
 
     [Fact]
@@ -131,6 +135,15 @@ public sealed class RunnerSlotWiringTests : IDisposable
         Assert.False(runner.RegisterRecoveredRun("", "claude"));
         Assert.False(runner.RegisterRecoveredRun("   ", "claude"));
         Assert.Equal(0, runner.GetStatus().OccupiedSlots);
+    }
+
+    private void SeedProgressTask(string id)
+    {
+        var folder = Path.Combine(_watchPath, TaskStates.Progress, id);
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(
+            Path.Combine(folder, "task.json"),
+            $"{{\"id\":\"{id}\",\"title\":\"Recovered {id}\",\"state\":\"3-progress\",\"agent\":\"codex\",\"cliType\":\"codex\"}}");
     }
 
     [Fact]

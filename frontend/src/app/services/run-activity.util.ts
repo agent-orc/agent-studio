@@ -69,7 +69,9 @@ export function deriveActiveTaskRun(job: TaskInfo): ActiveTaskRun | null {
     };
   }
 
-  if (job.execution?.status === 'running' || job.runActivity?.kind === 'active') {
+  if (job.execution?.status === 'running'
+    || job.runActivity?.kind === 'active'
+    || job.runActivity?.kind === 'continuing-after-restart') {
     return {
       kind: 'local',
       runnerId: null,
@@ -106,7 +108,8 @@ function latestActivityMs(job: TaskInfo): number | null {
 export function isTaskRunActive(job: TaskInfo): boolean {
   if (job.liveStatus?.activeStep != null
     || job.execution?.status === 'running'
-    || job.runActivity?.kind === 'active') {
+    || job.runActivity?.kind === 'active'
+    || job.runActivity?.kind === 'continuing-after-restart') {
     return true;
   }
   const location = job.executionLocation;
@@ -261,7 +264,9 @@ export function buildRunActivityBadge(job: TaskInfo, nowMs: number = Date.now())
   // Positive live evidence wins over a stale negative runner classification.
   // This is most visible during pre-steps (activeStep, no CLI execution yet)
   // and in the hand-off between pipeline steps.
-  const effectiveKind: TaskRunActivityKind = isTaskRunActive(job) ? 'active' : activity.kind;
+  const effectiveKind: TaskRunActivityKind = activity.kind === 'continuing-after-restart'
+    ? activity.kind
+    : isTaskRunActive(job) ? 'active' : activity.kind;
 
   switch (effectiveKind) {
     case 'active': {
@@ -276,6 +281,21 @@ export function buildRunActivityBadge(job: TaskInfo, nowMs: number = Date.now())
         tooltip: {
           title: 'Run aktiv (PID lebt)',
           body: `<div>Ein Run-Prozess läuft und belegt einen Slot.</div>${pid !== null ? `<div><b>PID:</b> ${pid}</div>` : ''}${attemptLine}${errorLine}`,
+        },
+      };
+    }
+    case 'continuing-after-restart': {
+      const projectedPid = activity.processId
+        ?? job.execution?.processId
+        ?? job.executionLocation?.processId;
+      const pid = typeof projectedPid === 'number' && projectedPid > 0 ? projectedPid : null;
+      return {
+        kind: activity.kind,
+        label: 'Continuing after restart',
+        tone: 'active',
+        tooltip: {
+          title: 'Continuing after restart',
+          body: `<div>The replacement backend verified and reattached the same durable worker.</div>${pid !== null ? `<div><b>PID:</b> ${pid}</div>` : ''}${attemptLine}${errorLine}`,
         },
       };
     }

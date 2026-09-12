@@ -6,6 +6,12 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Serilog;
 using Serilog.Events;
 
+if (args is ["--durable-local-cli-worker", var durableLocalCliSpec])
+{
+    Environment.ExitCode = await DurableLocalCliProcess.RunWorkerAsync(durableLocalCliSpec);
+    return;
+}
+
 // Static Serilog logger so DI-less / static contexts (TryReadEnteredLaneAt,
 // path + parser helpers, the SilentCatch standard) have a real logger before -
 // and independently of - the DI container. CreateBootstrapLogger publishes it

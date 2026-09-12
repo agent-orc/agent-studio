@@ -969,6 +969,21 @@ Settled session events preserve the same projection as historical run evidence.
 Historical entries never reuse disconnected warning treatment. See the
 [execution location schema](../schemas/task-execution-location.schema.json).
 
+During local restart recovery, `runActivity.kind` is
+`continuing-after-restart` only after the replacement backend has verified the
+durable worker identity and the card's current Progress authority. The card
+therefore remains visibly active instead of falling to `no-active-execution`.
+The timeline records `run_continued_after_restart` against the same run. If the
+identity cannot be bridged, it records `run_lost_across_restart` with failure
+class `run-lost-across-restart`; restart recovery itself does not consume a
+reissue budget.
+
+Worker files, Runner outbox envelopes, review verdict checkpoints, and pipeline
+step terminals are execution journals, not task state. Lane generation,
+attempt authority, lease identity, and fences remain the only admission and
+completion authority. Any recovered completion whose fence was superseded
+while a host was unavailable is rejected by the normal fenced completion path.
+
 For a Ready card offered to a remote Runner, `executionLocation.lastRejection`
 contains the latest refusal for the current lane stay. It names the Runner and
 preserves the admission reason, including missing `repositoryUrl`, capability

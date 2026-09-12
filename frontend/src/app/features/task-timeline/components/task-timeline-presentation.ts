@@ -20,6 +20,8 @@ const KIND_LABELS: Readonly<Record<string, string>> = {
   [TIMELINE_KIND.quotaAdmissionDecision]: 'Quota admission decision',
   [TIMELINE_KIND.loadThrottleDecision]: 'Run deferred for host load',
   [TIMELINE_KIND.runnerSlotAdmission]: 'Slot admitted',
+  [TIMELINE_KIND.runContinuedAfterRestart]: 'Continuing after restart',
+  [TIMELINE_KIND.runLostAcrossRestart]: 'Run lost across restart',
   [TIMELINE_KIND.integrationLease]: 'Integration lease',
   [TIMELINE_KIND.agentRunFinished]: 'Run finished',
   [TIMELINE_KIND.preStepStarted]: 'Pre-step started',
@@ -288,6 +290,8 @@ function compactSummary(kind: string, summary: string): string {
   const patterns: Readonly<Partial<Record<string, RegExp>>> = {
     [TIMELINE_KIND.loadThrottleDecision]: /^launch deferred while\s+/i,
     [TIMELINE_KIND.runnerSlotAdmission]: /^admitted to slot \d+\s*\/\s*\d+\s*:\s*/i,
+    [TIMELINE_KIND.runContinuedAfterRestart]: /^continuing after restart\s*:\s*/i,
+    [TIMELINE_KIND.runLostAcrossRestart]: /^run lost across restart\s*:\s*/i,
     [TIMELINE_KIND.integrationLease]: /^integration lease\s+/i,
     [TIMELINE_KIND.orchestratorSteered]: /^steered\s+/i,
     [TIMELINE_KIND.steerTimeoutResolved]: /^steer timeout\s+/i,

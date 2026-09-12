@@ -129,6 +129,15 @@ public partial class GenericCliExecutionService
         // instance for host active-job tracking. PROJ-011/public-cli-launch-overlay
         // and public-hardened-spawner-composition record the missing library APIs.
         TaskProcessReaper? processReaper = null;
+        var durableEnabled = _configuration.GetValue("LocalCliDurability:Enabled", true)
+                             && baseOptions.Spawner == null
+                             && CarAfterSpawnForTest == null;
+        DurableLocalCliProcessSpawner? durableSpawner = null;
+        if (durableEnabled)
+        {
+            durableSpawner = new DurableLocalCliProcessSpawner(
+                GetDurableWorkerDirectory(jobKey));
+        }
         var processSpawner = new DecoratingCliProcessSpawner(
             startInfo =>
             {
@@ -136,10 +145,13 @@ public partial class GenericCliExecutionService
                 if (usesStudioThinkingCompatibility)
                     AddClaudeThinkingArgument(startInfo, invocationThinkingLevel);
             },
-            baseOptions.Spawner,
+            durableSpawner ?? baseOptions.Spawner,
             process =>
             {
-                if (OperatingSystem.IsWindows())
+                // A durable worker must remain outside the host-owned
+                // kill-on-close job. Its own process tree is reaped explicitly
+                // on cancellation or after terminal collection.
+                if (OperatingSystem.IsWindows() && durableSpawner == null)
                 {
                     try { processReaper = TaskProcessReaper.CreateForProcess(process, _logger); }
                     catch (Exception ex)
@@ -242,6 +254,7 @@ public partial class GenericCliExecutionService
                 CleanContext = cleanContext,
                 ProcessReaper = processReaper,
                 CarDriver = driver,
+                DurableWorker = durableSpawner?.Worker,
             };
             var info = adoptedInfo;
             try { info.OutputLog.Reset(); }
@@ -258,6 +271,14 @@ public partial class GenericCliExecutionService
                     ProcessName = SafeProcessName(process),
                     ProcessStartTimeUtc = SafeProcessStartTime(process),
                     StartedAt = execution.StartedAt,
+                    WorkerDirectory = durableSpawner?.Worker?.DirectoryPath,
+                    WorkingDirectory = workingDirectory,
+                    JobFolderPath = jobFolderPath,
+                    Model = execution.Model,
+                    ThinkingLevel = execution.ThinkingLevel,
+                    PermissionMode = permissionMode,
+                    ContextMode = CliContextModes.Normalize(contextMode),
+                    SessionName = sessionName,
                 });
             }
             catch (Exception ex)
@@ -452,6 +473,13 @@ public partial class GenericCliExecutionService
             try { OnOutput?.Invoke(jobKey, outputLine); }
             catch (Exception ex) { _logger.LogWarning(ex, "OnOutput subscriber threw for CAR job {JobId}", jobKey); }
         }
+
+        // The detached worker has already flushed this raw line to its own
+        // append-only log. Persist the consumed sequence after all host-side
+        // transforms and subscribers complete so a replacement starts at the
+        // first line the old backend did not fully publish.
+        try { info.DurableWorker?.AcknowledgeLiveLine(rawLine.Stream, rawLine.Text); }
+        catch (Exception ex) { _logger.LogDebug(ex, "Durable output cursor write failed for {JobId}", jobKey); }
     }
 
     private CliRunEvent NormalizeCarEvent(CliRunEvent evt, CliOutputLine? sourceLine = null)
@@ -488,8 +516,11 @@ public partial class GenericCliExecutionService
             catch (Exception __ex) { SilentCatch.Note(__ex, "BackendCarExecution: liveness dispose"); }
             info.SessionLiveness = null;
 
-            try { RemoveActiveJob(jobKey); }
-            catch (Exception ex) { _logger.LogDebug(ex, "Failed to clear active-job entry for {TaskKey}", jobKey); }
+            if (info.DurableWorker is null)
+            {
+                try { RemoveActiveJob(jobKey); }
+                catch (Exception ex) { _logger.LogDebug(ex, "Failed to clear active-job entry for {TaskKey}", jobKey); }
+            }
 
             var duration = carRun.DurationSeconds
                            ?? (DateTime.UtcNow - info.Execution.StartedAt).TotalSeconds;
@@ -555,6 +586,15 @@ public partial class GenericCliExecutionService
             try { OnFinished?.Invoke(jobKey, finalExecution); }
             catch (Exception ex) { _logger.LogWarning(ex, "OnFinished subscriber threw for CAR job {JobId}", jobKey); }
 
+            if (info.DurableWorker is { } durableWorker)
+            {
+                // Keep the result discoverable until the normal post-run path
+                // returns. Recovery can then redeliver under the current fence
+                // or reject it after task authority has advanced.
+                RemoveActiveJob(jobKey);
+                durableWorker.Delete();
+            }
+
             ReleaseOutputResources(jobKey);
             _logger.LogInformation(
                 "{Cli} CAR run finished for job {JobId}: exit={ExitCode}, duration={Duration:F1}s",
@@ -575,6 +615,205 @@ public partial class GenericCliExecutionService
             catch (Exception ex) { _logger.LogDebug(ex, "CAR Forget failed for {JobId}", jobKey); }
             carLogPaths.DeleteRun(jobKey);
         }
+    }
+
+    private void AdoptDurableWorker(
+        ActiveJob entry,
+        DurableLocalCliProcess worker,
+        DurableLocalCliObservation observation)
+    {
+        var carrier = observation.IsLive
+            ? worker.OpenProcess()
+            : Process.GetCurrentProcess();
+        var execution = new CliExecution
+        {
+            JobId = entry.JobId,
+            TaskKey = entry.TaskKey,
+            ProcessId = entry.ProcessId,
+            StartedAt = entry.StartedAt,
+            Status = RunStatuses.Running,
+            Model = entry.Model,
+            ThinkingLevel = entry.ThinkingLevel,
+        };
+        var logDirectory = GetOutputLogDir(entry.TaskKey);
+        var info = new ProcInfo(carrier, execution, entry.WorkingDirectory!)
+        {
+            OutputLogPath = logDirectory,
+            OutputLog = new RunLogStore(logDirectory),
+            LastStreamedAt = entry.StartedAt,
+            PermissionMode = entry.PermissionMode,
+            ContextMode = entry.ContextMode,
+            SessionName = entry.SessionName,
+            DurableWorker = worker,
+            RecoveredTerminalPending = !observation.IsLive,
+            RecoveredAfterStartup = true,
+        };
+        info.OutputBuffer.AddRange(RunLogStore.ReadMerged(logDirectory));
+        _processes[entry.TaskKey] = info;
+
+        _logger.LogInformation(
+            "Reattached durable {Cli} worker for {JobId} (PID {Pid}, state={State}, cursor={Cursor})",
+            CliType,
+            entry.JobId,
+            entry.ProcessId,
+            observation.IsLive ? "running" : observation.Result is null ? "lost" : "result-ready",
+            worker.ReadUnacknowledged().Count);
+
+        _ = MonitorRecoveredDurableWorkerAsync(entry, info, worker);
+    }
+
+    private async Task MonitorRecoveredDurableWorkerAsync(
+        ActiveJob entry,
+        ProcInfo info,
+        DurableLocalCliProcess worker)
+    {
+        // ProjectRunner is the authority bridge. Do not publish output or a
+        // terminal callback until it has revalidated the card's Progress fence.
+        var authorityDeadline = DateTime.UtcNow.AddSeconds(30);
+        while (Volatile.Read(ref info.RecoveryDisposition) == 0
+               && DateTime.UtcNow < authorityDeadline)
+            await Task.Delay(TimeSpan.FromMilliseconds(50), CancellationToken.None);
+        if (Volatile.Read(ref info.RecoveryDisposition) != 1)
+        {
+            worker.Kill();
+            RemoveActiveJob(entry.TaskKey);
+            info.RecoveredTerminalPending = false;
+            ReleaseOutputResources(entry.TaskKey);
+            info.DurableWorker?.Delete();
+            return;
+        }
+
+        while (true)
+        {
+            DrainRecoveredDurableOutput(entry.TaskKey, info, worker);
+            var observation = worker.Inspect(entry.WorkingDirectory!);
+            if (observation.Result is not null)
+            {
+                DrainRecoveredDurableOutput(entry.TaskKey, info, worker);
+                FinishRecoveredDurableRun(entry.TaskKey, info, observation.Result, lostDetail: null);
+                return;
+            }
+            if (!observation.IsLive)
+            {
+                FinishRecoveredDurableRun(entry.TaskKey, info, result: null, observation.Detail);
+                return;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(250), CancellationToken.None);
+        }
+    }
+
+    private void DrainRecoveredDurableOutput(
+        string jobKey,
+        ProcInfo info,
+        DurableLocalCliProcess worker)
+    {
+        foreach (var line in worker.ReadUnacknowledged())
+        {
+            HandleCarOutput(jobKey, info, new CliOutputLine
+            {
+                Timestamp = line.Timestamp,
+                Stream = line.Stream,
+                Text = line.Text,
+            });
+            worker.Acknowledge(line.Sequence);
+        }
+    }
+
+    private void FinishRecoveredDurableRun(
+        string jobKey,
+        ProcInfo info,
+        DurableLocalCliResult? result,
+        string? lostDetail)
+    {
+        if (Interlocked.Exchange(ref info.FinalizationStarted, 1) != 0) return;
+
+        try
+        {
+            info.RecoveredTerminalPending = false;
+            var exitCode = result?.ExitCode ?? -1;
+            if (result is null)
+            {
+                var lost = new CliOutputLine
+                {
+                    Timestamp = DateTime.UtcNow,
+                    Stream = "system",
+                    Text = "[taskboard] [run-lost-across-restart] The durable worker could not be "
+                           + $"reattached: {lostDetail ?? "worker and result are absent"}.",
+                };
+                info.OutputBuffer.Add(lost);
+                info.OutputLog.Append(lost);
+                try { OnOutput?.Invoke(jobKey, lost); }
+                catch (Exception ex) { _logger.LogWarning(ex, "Lost-run output subscriber threw for {JobId}", jobKey); }
+            }
+
+            var completedAt = result?.CompletedAtUtc ?? DateTime.UtcNow;
+            var duration = Math.Max(0, (completedAt - info.Execution.StartedAt).TotalSeconds);
+            var status = RunStatusClassifier.Classify(exitCode, info.StopReason);
+            var terminal = TerminalRunOutcomeClassifier.Classify(
+                status,
+                info.OutputBuffer.ToList(),
+                duration,
+                exitCode: exitCode);
+            status = TerminalRunOutcomeClassifier.ExecutionStatusFor(terminal, status);
+            var finalExecution = info.Execution with
+            {
+                Status = status,
+                ExitCode = exitCode,
+                DurationSeconds = duration,
+                RunOutcome = terminal.Kind,
+            };
+            info.Execution = finalExecution;
+
+            var exitLine = new CliOutputLine
+            {
+                Timestamp = DateTime.UtcNow,
+                Stream = "system",
+                Text = $"[taskboard] {CliType} CLI exited after restart bridge: status={status}, "
+                       + $"exitCode={exitCode}, duration={duration:F1}s",
+            };
+            info.OutputBuffer.Add(exitLine);
+            info.OutputLog.Append(exitLine);
+            try { OnOutput?.Invoke(jobKey, exitLine); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Recovered exit output subscriber threw for {JobId}", jobKey); }
+
+            var endOutcome = string.Equals(status, RunStatuses.Completed, StringComparison.OrdinalIgnoreCase)
+                ? LibOutcome.Completed
+                : string.Equals(status, RunStatuses.Stopped, StringComparison.OrdinalIgnoreCase)
+                    ? LibOutcome.Stopped
+                    : LibOutcome.Failed;
+            RaiseRunEvent(jobKey, new CliRunEvent.RunEnded(
+                endOutcome,
+                result is null ? "run lost across restart" : null,
+                exitCode,
+                duration)
+            {
+                RunId = jobKey,
+            });
+
+            try { OnFinished?.Invoke(jobKey, finalExecution); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Recovered OnFinished subscriber threw for {JobId}", jobKey); }
+            RemoveActiveJob(jobKey);
+            ReleaseOutputResources(jobKey);
+            info.DurableWorker?.Delete();
+            ScheduleEviction(jobKey, info);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Recovered durable finalization crashed for {JobId}", jobKey);
+        }
+    }
+
+    private void ReportDurableWorkerLost(ActiveJob entry, string detail)
+    {
+        var logDirectory = GetOutputLogDir(entry.TaskKey);
+        using var log = new RunLogStore(logDirectory);
+        log.Append(new CliOutputLine
+        {
+            Timestamp = DateTime.UtcNow,
+            Stream = "system",
+            Text = $"[taskboard] [run-lost-across-restart] Durable worker adoption failed: {detail}",
+        });
     }
 
     /// <summary>

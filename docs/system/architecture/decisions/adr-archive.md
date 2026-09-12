@@ -1675,3 +1675,72 @@ Task relations use two explicit, non-scheduling reference fields. The interventi
 **Non-goals.** Detection does not switch models, rewrite configuration, retry commands, or otherwise remediate the underlying failure. The follow-up task owns remediation. No scheduler, external script, or second task store is introduced.
 
 **Status.** Accepted.
+
+---
+
+## ADR-0072 - In-flight execution survives Studio and Runner restarts (2026-09-12)
+
+**Decision.** A backend restart is an execution-link interruption, not a run
+failure. Local coding CLIs are owned by a durable worker process outside the
+Studio backend job object. The backend writes an immutable launch spec before
+spawn, then the worker persists its PID, process start time, working directory,
+session, append-only output, and terminal result. The active-jobs ledger stores
+that identity and the last output offset acknowledged by Studio. A replacement
+backend adopts only a worker whose PID generation and working directory match,
+tails from the acknowledged offset, and invokes the post-run boundary once.
+This path defaults on through `LocalCliDurability:Enabled` and retains the old
+orphan reaper for legacy entries and rollback.
+
+Remote continuity uses the existing Task Server attempt authority and Runner
+durability model. On Task Server startup, live authorities become
+`process-unknown`. The same Runner may register idempotently and adopt the exact
+attempt, lease, fence, and authority epoch while the server-issued lease TTL is
+still valid. That TTL is the restart grace window. Heartbeats retry with bounded
+backoff and the Runner outbox replays durable handoffs and completions after the
+link returns. A lease beyond the window expires once and worker containment
+continues to apply. A Runner unit restart adopts its durable coding or review
+worker by the same process identity rules.
+
+Review aspect verdicts and reporting-only pipeline post-step terminals in the
+current incomplete attempt are checkpoints. A replacement host rehydrates that
+evidence and schedules only pending work. Evidence from another attempt or a
+completed attempt is never a resume point.
+
+**Authority and fencing.** Worker specs, output, results, outbox envelopes, and
+checkpoints are execution journals. They do not form a second task state store
+and cannot grant authority. Task lane generation, attempt authority, lease,
+authority epoch, and fence remain the source of truth. Local adoption requires
+the card to remain in its current Progress generation. Remote completion still
+passes the normal fence check, so a result superseded while either endpoint was
+unavailable is rejected.
+
+**Operator contract.** A verified adoption produces
+`continuing-after-restart` on the card and `run_continued_after_restart` on the
+timeline. An identity that cannot be bridged produces the distinct
+`run-lost-across-restart` failure class and never silently spends reissue
+budget. LinkSupervisor owns visibility for Remote connectivity gaps. The
+[restart-continuity release drill](../../../operations/testing/restart-continuity-drill.md)
+is the post-integration Windows gate and covers a real UpdateService restart
+with local and Remote runs in flight.
+
+**Consequences.** Windows and Linux use the same file contract and process
+generation validation. Studio no longer places the durable worker in its own
+kill-on-close job object. Disk use grows with unacknowledged output and is
+cleaned after terminal delivery. Host or machine failure remains a real lost
+run, is reported explicitly, and can be handled by the existing retry policy.
+The grace window is bounded by the issued lease rather than an unbounded clock
+extension, preserving split-brain protection.
+
+**Implementation pointers.** Local worker and recovery:
+[`DurableLocalCliProcess`](../../../../backend/Features/Cli/Execution/DurableLocalCliProcess.cs),
+[`BackendCarExecution`](../../../../backend/Features/Cli/Execution/BackendCarExecution.cs),
+and [`ProjectRunner`](../../../../backend/Features/Runner/ProjectRunner.cs).
+Remote adoption and replay:
+[`LeaseHeartbeat`](../../../../runner/LeaseHeartbeat.cs),
+[`DurableAgentProcess`](../../../../runner/DurableAgentProcess.cs), and the
+Task Server authority store. Review and pipeline checkpoints:
+[`RemoteReviewWorkspace`](../../../../runner/RemoteReviewWorkspace.cs),
+[`AspectRunnerService`](../../../../backend/Features/Runner/AspectRunnerService.cs),
+and [`PipelineExecutionLog`](../../../../backend/Features/Pipeline/PipelineExecutionLog.cs).
+
+**Status.** Accepted.

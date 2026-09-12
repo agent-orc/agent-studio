@@ -2443,27 +2443,31 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // status + duration. Reporting only - the verdict never gates the move
         // to review (unlike lint Fail above), so it sits between lint and the
         // Complete mark and feeds nothing into the decision branches below.
-        RunRegressionRadarPostStep(entry, current);
+        if (!HasRestartCheckpoint(current.FolderPath, PipelineCatalogue.RegressionRadarStepId))
+            RunRegressionRadarPostStep(entry, current);
 
         // Wiki maintenance post-step: opt-in project-scoped knowledge upkeep.
         // It dedupes recurring problem entries by slug, records this task as
         // occurrence evidence, and regenerates the project wiki index. It is
         // reporting-only and never changes the task lane decision.
-        RunWikiMaintenancePostStep(entry, current);
+        if (!HasRestartCheckpoint(current.FolderPath, PipelineCatalogue.WikiMaintenanceStepId))
+            RunWikiMaintenancePostStep(entry, current);
 
         // Wiki learnings post-step: opt-in project-scoped knowledge distillation.
         // It folds the derived verdict, the per-aspect review findings, the
         // agent's close-out notes, and the typed outcome stumbling block into a
         // per-task page under docs/learnings and regenerates that index. It
         // is reporting-only and never changes the task lane decision.
-        RunWikiLearningsPostStep(entry, current, report, statusSummary, diffSummary);
+        if (!HasRestartCheckpoint(current.FolderPath, PipelineCatalogue.WikiLearningsStepId))
+            RunWikiLearningsPostStep(entry, current, report, statusSummary, diffSummary);
 
         // AGENTS/wiki-sync post-step (AGT-1782): opt-in project-scoped upkeep that
         // keeps the AGENTS.md -> wiki pointers for the designated topics consistent
         // (no dead/missing link) and collects each designated topic's current state
         // from the task's own change set, so agents stop re-discovering the same
         // ground. Reporting-only and never changes the task lane decision.
-        RunAgentsWikiSyncPostStep(entry, current);
+        if (!HasRestartCheckpoint(current.FolderPath, PipelineCatalogue.AgentsWikiSyncStepId))
+            RunAgentsWikiSyncPostStep(entry, current);
 
         // AGT-2053: append bidirectional task/wiki associations after the wiki
         // producers have settled. This is reporting-only and deliberately does
@@ -2476,7 +2480,11 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // Reporting-only and deduped; it never gates the source task's decision.
         // Runs after the aspects settle and before the Complete mark so its step
         // record lands in the in-flight pipeline-execution.json.
-        await RunTaskSpawnerPostStepAsync(entry, current, report, taskBody, statusSummary, diffSummary, resultsInventory, ct);
+        if (!HasRestartCheckpoint(current.FolderPath, PipelineCatalogue.TaskSpawnerStepId))
+        {
+            await RunTaskSpawnerPostStepAsync(
+                entry, current, report, taskBody, statusSummary, diffSummary, resultsInventory, ct);
+        }
 
         // Council pattern: the quality-grade reviewer is advisory, while this
         // orchestrator owns the explicit per-finding ruling. A named deficiency
@@ -4929,6 +4937,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         var (status, verdict, reason) = MapRegressionRadarOutcome(result);
         RecordRegressionRadarStep(current.FolderPath, status, sw.ElapsedMilliseconds, verdict, reason);
     }
+
+    private bool HasRestartCheckpoint(string jobFolderPath, string stepId)
+        => _pipelineLog?.ReadRestartCheckpoint(jobFolderPath, stepId) is not null;
 
     private void RecordRegressionRadarStep(
         string jobFolderPath,

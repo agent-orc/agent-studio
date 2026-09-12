@@ -14,6 +14,9 @@ release yet.
 
 ### Added
 
+- Durable restart continuity for local and Remote runs, review aspects, and
+  pipeline post-steps, including operator-visible bridge and loss events plus a
+  Windows Studio release drill.
 - Initial open source community and release-hygiene baseline.
 - Dossier relevance-review metadata, managed review writes and history,
   configurable review-due policy, and review tags, tooltips, filtering,
