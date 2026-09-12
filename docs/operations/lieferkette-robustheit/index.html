@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lieferkette: Robustheit statt Rezepte | Konzept-Dossier</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1: #fcfcfb; --surface-2: #f2f1ee; --surface-3: #e9e8e3;
+    --ink-1: #0b0b0b; --ink-2: #52514e; --ink-3: #8a8983; --line: #d8d6cf;
+    --develop: #2a78d6; --ok: #008300; --bad: #c93736; --warn: #9a6b00;
+    --accent-soft: #eaf1fb; --bad-soft: #fbecec; --ok-soft: #eaf4ea; --warn-soft: #f8f0dd;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --surface-1: #1a1a19; --surface-2: #232322; --surface-3: #2c2c2a;
+      --ink-1: #ffffff; --ink-2: #c3c2b7; --ink-3: #8a8983; --line: #3d3d3a;
+      --develop: #3987e5; --ok: #4eae4e; --bad: #e66767; --warn: #d9a63f;
+      --accent-soft: #1e2a3a; --bad-soft: #382222; --ok-soft: #1f2f1f; --warn-soft: #33301e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 0 0 80px; background: var(--surface-1); color: var(--ink-1); font: 16px/1.6 system-ui, "Segoe UI", sans-serif; }
+  main { max-width: 1080px; margin: 0 auto; padding: 0 28px; }
+  header.page { border-bottom: 1px solid var(--line); padding: 44px 0 26px; margin-bottom: 8px; }
+  .kicker { font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); margin: 0 0 10px; }
+  h1 { font-size: 34px; line-height: 1.2; margin: 0 0 12px; }
+  .lede { font-size: 18px; color: var(--ink-2); max-width: 62ch; margin: 0; }
+  .meta { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 18px; font-size: 13px; color: var(--ink-3); }
+  .meta b { color: var(--ink-2); font-weight: 600; }
+  h2 { font-size: 24px; margin: 56px 0 6px; scroll-margin-top: 20px; }
+  h2 .no { color: var(--ink-3); font-weight: 600; margin-right: 10px; }
+  h3 { font-size: 18px; margin: 34px 0 4px; }
+  p { max-width: 76ch; }
+  .box { border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); padding: 18px 22px; margin: 20px 0; }
+  .box.accent { background: var(--accent-soft); }
+  .box.warn { background: var(--warn-soft); }
+  table { border-collapse: collapse; width: 100%; margin: 14px 0 22px; font-size: 14.5px; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--ink-2); font-weight: 600; background: var(--surface-2); }
+  td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  code { font: 13.5px ui-monospace, "Cascadia Mono", Consolas, monospace; background: var(--surface-3); padding: 1px 5px; border-radius: 4px; }
+  .tag { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--ink-2); margin-right: 4px; white-space: nowrap; }
+  .tag.bad { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
+  .tag.ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+  .tag.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+  .card { border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; background: var(--surface-2); }
+  .card h4 { margin: 0 0 6px; font-size: 16px; }
+  .card p { margin: 6px 0; font-size: 14.5px; }
+  figure { margin: 22px 0; }
+  figure svg { width: 100%; height: auto; display: block; }
+  figcaption { font-size: 13px; color: var(--ink-3); margin-top: 6px; }
+  .decision { border: 1px solid color-mix(in srgb, var(--develop) 35%, var(--line)); border-radius: 10px; padding: 18px 22px; margin: 22px 0; background: var(--accent-soft); }
+  .decision h3 { margin: 0 0 10px; font-size: 17px; }
+  .decision label { display: flex; gap: 12px; align-items: flex-start; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-1); margin: 8px 0; cursor: pointer; }
+  .decision label input { margin-top: 4px; }
+  .decision label b { display: block; }
+  .decision label span.d { display: block; color: var(--ink-2); font-size: 14px; }
+  .decision textarea { width: 100%; min-height: 64px; margin-top: 8px; font: 14px system-ui, sans-serif; border: 1px solid var(--line); border-radius: 6px; padding: 8px; background: var(--surface-1); color: var(--ink-1); }
+  ul, ol { max-width: 80ch; }
+  li { margin: 4px 0; }
+  .toc { columns: 2; gap: 28px; font-size: 14.5px; }
+  .toc a { color: var(--ink-2); text-decoration: none; }
+  .toc a:hover { color: var(--develop); }
+  .muted { color: var(--ink-3); }
+</style>
+</head>
+<body>
+<main>
+<header class="page">
+  <p class="kicker">Konzept-Dossier · Agent Studio</p>
+  <h1>Lieferkette: Robustheit statt Rezepte</h1>
+  <p class="lede">Warum die Fleet immer wieder an denselben Stellen bricht, obwohl jeder Einzelfall gefixt wurde. Fünf strukturelle Muster hinter den Vorfällen der letzten 30 Tage, fünf Richtungen für eine dauerhafte Lösung, eine Reihenfolge und die Entscheidungen, die dafür fallen müssen.</p>
+  <div class="meta">
+    <span><b>Stand</b> 12.09.2026</span>
+    <span><b>Anlass</b> Operator-Auftrag 12.09.: „nachhaltige Lösung, in verschiedene Richtungen denken, tiefe Analyse"</span>
+    <span><b>Datenbasis</b> attempt-authority.json 13.08.–12.09., Gate-Logs, Parkgründe, Backend-Log, Operator-Rezepte</span>
+    <span><b>Baut auf</b> AGT-W42 Operative Resilienz, AGT-W15 Wächter, AGT-W36 Batch Gate, AGT-W45 Eskalationsansicht</span>
+  </div>
+</header>
+
+<div class="box accent">
+  <b>Kernaussage.</b> Die Vorfälle sind keine Sammlung von Einzelfehlern. Sie sind fünf Muster, die in jedem Vorfall wiederkehren: veränderlicher Zustand, der Läufe überlebt; falsch klassifizierte Fehler; Wiederholung ohne Abbruch; drei verschiedene Ausführungswelten; niemand besitzt Prozesse und Lebenszyklen. Jeder bisherige Fix hat ein Symptom entfernt und ein Muster stehen lassen. Die nachhaltige Lösung greift die Muster an, nicht die Symptome: hermetische Ausführung, Fehlerklassifikation als Kontrakt mit Differentialdiagnose, Unterbrecher auf Ursachen-Fingerprints, Lebenszyklus-Besitz mit ausführbaren Heilungen. Die Operator-Rezepte im Gedächtnis sind das Backlog dieses Dossiers.
+</div>
+
+<nav class="toc">
+  <a href="#s1">§1 Befund in Zahlen</a><br>
+  <a href="#s2">§2 Fünf Muster hinter den Vorfällen</a><br>
+  <a href="#s3">§3 Warum die bisherigen Fixes nicht reichen</a><br>
+  <a href="#s4">§4 Richtungen</a><br>
+  <a href="#s5">§5 Bewertung</a><br>
+  <a href="#s6">§6 Empfehlung und Reihenfolge</a><br>
+  <a href="#s7">§7 Messgrößen</a><br>
+  <a href="#s8">§8 Entscheidungen</a><br>
+  <a href="#s9">§9 Kartenschnitt</a><br>
+  <a href="#quellen">§ Quellen</a>
+</nav>
+
+<h2 id="s1"><span class="no">§1</span>Befund in Zahlen</h2>
+<p>Zeitraum 13.08. bis 12.09.2026, alle Projekte, Quelle <code>.metadata/attempt-authority.json</code> des Workspace, ergänzt um die Gate-Logs der Task-Ordner und das Backend-Log.</p>
+<table>
+  <thead><tr><th>Kennzahl</th><th class="n">Wert</th><th>Lesart</th></tr></thead>
+  <tbody>
+    <tr><td>Review-Versuche (alle Projekte)</td><td class="n">1.077</td><td>für 157 Karten, also 6,9 Versuche je Karte; im AGT-Projekt 320 Versuche für 120 Karten, 61 davon mit mehr als einem Versuch</td></tr>
+    <tr><td>Versuche mit <code>PreparationFailed</code></td><td class="n">412</td><td>davon 408 identisch: CAC-18, <code>npm ci</code> exit 127 (Befehl nicht gefunden), 411 Versuche in sechs Tagen, kein Abbruch</td></tr>
+    <tr><td>Versuche mit <code>ToolUnavailable</code></td><td class="n">59</td><td>07.–10.09., Review-Modell gpt-5.4-mini vom Anbieter zurückgezogen; 38 Stunden bis zur Entdeckung, zwei Fleet-Stillstände</td></tr>
+    <tr><td>Gate-Ergebnisse „neue Testfehler"</td><td class="n">166</td><td>davon 344 Einzelnennungen aus genau fünf QS-Tests (<code>ReviewRunStoreTests</code>), die als flaky bekannt sind; QS: 138 rote Gates in 331 Versuchen</td></tr>
+    <tr><td>Post-Processing „build-test-gate failed"</td><td class="n">588</td><td>über alle Task-Ordner; WEB-19 heute dreimal identisch durch einen seit 11.08. unvollständigen node_modules-Cache des Gates</td></tr>
+    <tr><td>Review-Dauer AGT seit 01.09.</td><td class="n">100 / 366 / 473 min</td><td>Median / p90 / Maximum; vier parallele Vollsuiten auf einem Host, Leases laufen 27 Minuten</td></tr>
+    <tr><td>Parkgründe in 5e-escalated</td><td class="n">11</td><td>neun davon mit leerem <code>reason</code>: die Karte weiß nicht, warum sie steht</td></tr>
+    <tr><td>Operator-Rezepte im Session-Gedächtnis</td><td class="n">≈25</td><td>jedes ein manueller Eingriff (Cache evakuieren, Attempt neu planen, Worktree räumen, Merge von Hand, Karte verschieben), keines im Produkt</td></tr>
+  </tbody>
+</table>
+<p>Die Zahlen sagen zweierlei. Erstens: der größte Teil der Arbeit der Review-Ebene ist Wiederholung ohne neue Information (CAC-18, QS-Flakes, ToolUnavailable, WEB-19). Zweitens: die Fleet hält nur, weil ein Mensch täglich eingreift. Das ist das Gegenteil des Zielbilds.</p>
+
+<h2 id="s2"><span class="no">§2</span>Fünf Muster hinter den Vorfällen</h2>
+<p>AGT-W42 hat elf Ausfallklassen beschrieben und die These „Ausfall ist still" belegt. Dieses Dossier geht eine Ebene tiefer: welche Eigenschaften des Systems erzeugen die Klassen immer wieder neu. Fünf Muster erklären jeden Vorfall seit August.</p>
+
+<h3>M1 · Veränderlicher Zustand, der Läufe überlebt</h3>
+<p>Das System hält an vielen Stellen Zustand, der zwischen Läufen weiterlebt, ohne Besitzer, ohne Gültigkeitsnachweis und ohne Ablauf. Jede dieser Stellen war schon Ursache eines Vorfalls.</p>
+<table>
+  <thead><tr><th>Zustand</th><th>Vorfall</th><th>Warum er zum Problem wurde</th></tr></thead>
+  <tbody>
+    <tr><td>Dependency-Cache des Build-Gates (<code>.dependency-cache/&lt;repo&gt;</code>)</td><td>WEB-19, 12.09.</td><td>Eintrag vom 11.08. unvollständig; wird bei jedem Fehlschlag zurückgespeichert, weil der Fehler als Code-Fehler gilt</td></tr>
+    <tr><td>NuGet-Cache mit lokalem Scratch-Feed</td><td>06.09.</td><td>Paket 0.7.0 aus einem Scratch-Feed im Cache, NU1403 in CI</td></tr>
+    <tr><td>Eingefrorener Review-Plan je Attempt</td><td>07.–11.09.</td><td>Infra-Retry kopiert den Plan mit dem zurückgezogenen Modell; Heilung nur durch planlosen Attempt von Hand</td></tr>
+    <tr><td>Worktree-Verzeichnisse in <code>%TEMP%\ass-worktrees</code></td><td>WEB-19, 12.09.</td><td>Teardown scheitert an Kindprozessen; Verzeichnis ohne <code>.git</code> blockiert jeden Pickup, Karte flappt still</td></tr>
+    <tr><td>Runner-Snapshot, Tunnel-Zombie, Lease</td><td>06.09., 13.08.</td><td>„Waiting for Codex sign-in" aus stalem Snapshot; LeaseExpired-Schleifen nach Host-Standby</td></tr>
+    <tr><td>Git-State-Cache, TaskIndex, Integrationsstatus-Cache</td><td>10.09.</td><td>Status „pending" bis der Cache kippt; divergierter lokaler develop skippt jeden Merge</td></tr>
+  </tbody>
+</table>
+<p>Gemeinsam ist allen: der Zustand wird beim Schreiben nicht validiert, beim Lesen nicht geprüft und beim Fehler nicht verworfen. Ein Cache ohne Integritätsnachweis ist keine Optimierung, sondern ein zweiter Quellcode, den niemand reviewt.</p>
+
+<h3>M2 · Fehler bekommen die falsche Klasse</h3>
+<p>Die Pipeline muss bei jedem Fehler entscheiden: Produkt (die Lieferung ist falsch), Umgebung (Toolchain, Host, Cache), oder flaky. Diese Entscheidung fällt heute über Signaturlisten, und Signaturlisten sind immer unvollständig.</p>
+<ul>
+  <li><code>ClassifyFailure</code> kennt als Umgebung nur zwei vite-Signaturen (CAC-18). Der Angular-Fehler von WEB-19 („Cannot find module" unter <code>node_modules</code>) galt als Code, also wurde der Cache gespeichert und die Anti-Churn-Grenze belastet.</li>
+  <li>Ein Review mit Concerns endet als <code>ProductFailure</code>; AGT-2779 war grün und stand trotzdem mit „Delivery gate failed" in der Lane.</li>
+  <li><code>ToolUnavailable</code> wird dreimal je Karte wiederholt und dann eskaliert. Die Karte hat nichts falsch gemacht.</li>
+  <li>Windows-Flakes und echte Windows-Produktbugs (AGT-2774 bis 2776) sind aus dem Gate-Ergebnis nicht unterscheidbar; Guard-Tests (AGT-2778) sehen im Ergebnis aus wie Flakes.</li>
+  <li>Der Reviewer blockt wegen Doku oder Implementierung, die in der Lieferung enthalten ist (AGT-2771). Ein „block" ohne Beweisprüfung kostet eine Runde.</li>
+</ul>
+<p>Die falsche Klasse ist teurer als der Fehler selbst: sie bestimmt, ob ein Cache bleibt, ob ein Budget belastet wird, ob eine Karte eskaliert, ob ein Mensch gerufen wird.</p>
+
+<h3>M3 · Wiederholung ohne Abbruch</h3>
+<p>Das System wiederholt, aber es lernt nicht aus der Wiederholung. Retry-Budgets sind je Karte gezählt, nicht je Ursache. Identische Fehler auf verschiedenen Karten werden nicht als eine Ursache erkannt.</p>
+<ul>
+  <li>CAC-18: 411 Versuche mit demselben exit 127. Jeder Versuch kostete Host-Zeit und Lease; nie hat etwas „das ist derselbe Fehler" gesagt.</li>
+  <li>gpt-5.4-mini: 59 Versuche über vier Karten mit demselben HTTP-400-Text. Die Information stand im Aspekt-Log, nichts machte daraus eine Ursachen-Karte (AGT-2765 ist die Antwort, aber noch nicht integriert).</li>
+  <li>AGT-2707 verbrannte sieben Versuche, AGT-2755 vier. WEB-19 heute drei identische Gate-Runden bis zur Anti-Churn-Grenze; die Grenze parkt die Karte, ohne die Ursache zu nennen.</li>
+</ul>
+
+<h3>M4 · Drei Ausführungswelten</h3>
+<p>Dieselbe Karte läuft in drei Umgebungen, die sich in Betriebssystem, Toolchain, Umgebungsvariablen, Prozessmodell und Beweisfähigkeit unterscheiden:</p>
+<div class="grid2">
+  <div class="card"><h4>Windows-Studio, lokaler Lauf</h4><p>Erbt die Umgebung des Startenden (heute: <code>ELECTRON_RUN_AS_NODE=1</code> aus VS Code). Datei-Locks, ReplaceFile, SQLite-Pool, bash-PATH (die „roten Sechs"). Backend-Restart tötet den Lauf.</p></div>
+  <div class="card"><h4>Linux-Runner agent-runner-01</h4><p>PrivateTmp und KillMode kollidieren mit detached Workern, Sudo-Allowlist verhindert CLI-Upgrades, kein Windows-Workspace, kein Docker, kein Stable-Deploy. Karten mit solchen Beweisen eskalieren zwangsläufig.</p></div>
+  <div class="card"><h4>Gate-Worktree in <code>%TEMP%</code></h4><p>Eigene Cache-Schicht, eigene Prozessumgebung, eigene Fehlerklassifikation. Baut Dinge, die im Lauf gebaut wurden, noch einmal anders.</p></div>
+</div>
+<p>Jede Welt hat ihre eigenen Bugs, und ein Beweis, der nur in einer Welt möglich ist, führt in den anderen zur Eskalation (AGT-2763 „stable-deployment-required", AGT-2733 Docker, AGT-2780 „disposable restart drill targets"). Reproduzierbarkeit ist so nicht herstellbar: derselbe Commit hat kein definiertes Ergebnis.</p>
+
+<h3>M5 · Niemand besitzt Prozesse und Lebenszyklen</h3>
+<ul>
+  <li>Ein Lauf startet Kindprozesse (Server, Browser, Watcher), die den Lauf überleben; Teardown scheitert, Worktree bleibt, Pickup flappt (AGT-2781).</li>
+  <li>Ein Backend-Restart verwaist lokale Läufe (<code>ReattachOnStartup</code> ist <code>ReapOrphans</code>), ein Task-Server-Restart reißt Leases; Deploys sind deshalb Ausnahmesituationen statt Routine (AGT-2780).</li>
+  <li>Abnahme-Tick, Supervision und Tunnel-Keeper hingen an Sitzungen (W42 §3, §5); heute noch: Quota-Guard und Tunnel-Keeper als Scheduled Tasks außerhalb der App (AGT-2763 integriert, nicht deployt).</li>
+  <li>Der Operator ist das Sicherheitsnetz. Die 25 Rezepte sind das eigentliche Betriebshandbuch, und sie existieren nur in einem Sitzungsgedächtnis.</li>
+</ul>
+
+<figure>
+<svg viewBox="0 0 1040 300" role="img" aria-label="Fünf Muster und wie sie einen Vorfall erzeugen">
+  <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--ink-3)"/></marker></defs>
+  <g font-family="system-ui, sans-serif" font-size="14" fill="var(--ink-1)">
+    <rect x="20" y="30" width="180" height="70" rx="10" fill="var(--surface-2)" stroke="var(--line)"/>
+    <text x="110" y="58" text-anchor="middle" font-weight="600">M1 Zustand</text>
+    <text x="110" y="80" text-anchor="middle" fill="var(--ink-2)" font-size="12.5">Cache ohne Nachweis</text>
+    <rect x="230" y="30" width="180" height="70" rx="10" fill="var(--surface-2)" stroke="var(--line)"/>
+    <text x="320" y="58" text-anchor="middle" font-weight="600">M4 Drei Welten</text>
+    <text x="320" y="80" text-anchor="middle" fill="var(--ink-2)" font-size="12.5">Gate baut anders als Lauf</text>
+    <rect x="440" y="30" width="180" height="70" rx="10" fill="var(--bad-soft)" stroke="var(--bad)"/>
+    <text x="530" y="58" text-anchor="middle" font-weight="600">Fehler</text>
+    <text x="530" y="80" text-anchor="middle" fill="var(--ink-2)" font-size="12.5">„Cannot find module"</text>
+    <rect x="650" y="30" width="180" height="70" rx="10" fill="var(--surface-2)" stroke="var(--line)"/>
+    <text x="740" y="58" text-anchor="middle" font-weight="600">M2 Klasse</text>
+    <text x="740" y="80" text-anchor="middle" fill="var(--ink-2)" font-size="12.5">gilt als Code-Fehler</text>
+    <rect x="860" y="30" width="160" height="70" rx="10" fill="var(--surface-2)" stroke="var(--line)"/>
+    <text x="940" y="58" text-anchor="middle" font-weight="600">M3 Retry</text>
+    <text x="940" y="80" text-anchor="middle" fill="var(--ink-2)" font-size="12.5">3× identisch</text>
+    <line x1="200" y1="65" x2="228" y2="65" stroke="var(--ink-3)" stroke-width="1.5" marker-end="url(#ar)"/>
+    <line x1="410" y1="65" x2="438" y2="65" stroke="var(--ink-3)" stroke-width="1.5" marker-end="url(#ar)"/>
+    <line x1="620" y1="65" x2="648" y2="65" stroke="var(--ink-3)" stroke-width="1.5" marker-end="url(#ar)"/>
+    <line x1="830" y1="65" x2="858" y2="65" stroke="var(--ink-3)" stroke-width="1.5" marker-end="url(#ar)"/>
+    <path d="M940,100 L940,150 L740,150" fill="none" stroke="var(--ink-3)" stroke-width="1.5" marker-end="url(#ar)"/>
+    <rect x="650" y="130" width="180" height="60" rx="10" fill="var(--warn-soft)" stroke="var(--warn)"/>
+    <text x="740" y="155" text-anchor="middle" font-weight="600">Cache zurückgespeichert</text>
+    <text x="740" y="175" text-anchor="middle" fill="var(--ink-2)" font-size="12.5">nächste Runde identisch</text>
+    <path d="M650,160 L110,160 L110,102" fill="none" stroke="var(--ink-3)" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#ar)"/>
+    <rect x="440" y="220" width="180" height="60" rx="10" fill="var(--surface-2)" stroke="var(--line)"/>
+    <text x="530" y="245" text-anchor="middle" font-weight="600">M5 Besitz</text>
+    <text x="530" y="265" text-anchor="middle" fill="var(--ink-2)" font-size="12.5">Karte parkt, Mensch räumt</text>
+    <path d="M940,190 L940,250 L622,250" fill="none" stroke="var(--ink-3)" stroke-width="1.5" marker-end="url(#ar)"/>
+    <text x="780" y="243" text-anchor="middle" fill="var(--ink-2)" font-size="12.5">Anti-Churn-Grenze, Grund leer</text>
+  </g>
+</svg>
+<figcaption>WEB-19 am 12.09. als Kette der fünf Muster. Jeder Vorfall seit August lässt sich so zeichnen, mit anderen Namen in den Kästen.</figcaption>
+</figure>
+
+<h2 id="s3"><span class="no">§3</span>Warum die bisherigen Fixes nicht reichen</h2>
+<p>Seit August wurden über dreißig Härtungskarten integriert (W42 §13 listet sie). Sie waren nötig und sie haben gewirkt: Tunnel-Tode, Abnahmeschleife, Restart-Stille und Limit-Sturm treten so nicht mehr auf. Trotzdem stehen heute neue Vorfälle in der Lane, und sie sehen den alten strukturell gleich. Drei Gründe:</p>
+<ol>
+  <li><b>Jeder Fix fügt eine Signatur hinzu.</b> Umgebungs-Klassifikation für vite (CAC-18), Windows-Flake-Erkennung, ToolUnavailable-Retry, Missing-Source-Klasse. Die Liste wächst, die nächste unbekannte Signatur landet wieder als Produktfehler. Eine Liste kann nie vollständig sein; das Verfahren muss ohne vollständige Liste richtig entscheiden.</li>
+  <li><b>Die Fixes härten Welten, statt Welten zu reduzieren.</b> Windows-Produktbugs, Runner-PrivateTmp, Gate-Cache: drei Umgebungen, drei Fehlerklassen, dreifacher Aufwand. Solange derselbe Commit in drei Umgebungen drei Ergebnisse haben kann, gibt es keinen Beweis, nur Stichproben.</li>
+  <li><b>Die Sichtbarkeit wurde gebaut, die Handlung nicht.</b> W42 und W45 machen Stille sichtbar, W15 beschreibt einen Wächter, der meldet. Aber jede Heilung ist bis heute ein Mensch mit einem Rezept. Ein Wächter, der nur meldet, verlagert die Arbeit vom Log in den Feed.</li>
+</ol>
+<div class="box warn">
+  <b>Das Bindeglied fehlt.</b> Zwischen „Fehler erkannt" und „Karte eskaliert" gibt es heute keinen Schritt, der die Frage stellt: <i>Ist das ein Problem der Lieferung oder ein Problem von uns?</i> Genau diese Frage beantwortet der Operator jeden Tag von Hand, mit immer denselben Handgriffen: dieselben Tests auf develop laufen lassen, ohne Cache neu bauen, das Diff gegen den Block prüfen, den Fingerprint mit anderen Karten vergleichen. Das ist ein Algorithmus, kein Urteil.
+</div>
+
+<h2 id="s4"><span class="no">§4</span>Richtungen</h2>
+<p>Fünf Richtungen, bewusst unterschiedlich im Ansatz. Sie schließen sich nicht aus; §6 ordnet sie.</p>
+
+<h3>R1 · Hermetische Ausführung: eine Welt, unveränderliche Artefakte</h3>
+<p>Läufe und Gates laufen in derselben, definierten Umgebung: ein Container-Image je Projekt mit gepinnter Toolchain (SDK, Node, CLIs), auf Linux, unabhängig davon, ob der Auftrag vom Windows-Studio oder vom Runner kommt. Das Windows-Studio bleibt Steuerung und Oberfläche, keine Ausführungswelt. Das ist die konsequente Fortsetzung von Phase B (Task-Server in Docker, AGT-2729 ff.) auf die Ausführung selbst.</p>
+<ul>
+  <li>Caches werden zu <b>unveränderlichen, inhaltsadressierten Artefakten</b>: Schlüssel = Lockfile-Hash + Toolchain-Version + Plattform, Inhalt mit Manifest (Dateiliste, Hashes), einmal geschrieben nach grünem Install und Build, nie zurückgeschrieben, vor Nutzung gegen das Manifest geprüft. Ein Treffer ist ein Beweis, kein Glück.</li>
+  <li>Umgebungsvariablen werden nicht vererbt, sondern deklariert: der Lauf bekommt genau die Variablen, die das Projekt-Profil nennt. <code>ELECTRON_RUN_AS_NODE</code> aus VS Code kann dann nicht mehr in ein Gate gelangen.</li>
+  <li>Beweise, die eine bestimmte Welt brauchen (Docker-Laufzeit, Stable-Deploy, Windows-Tests), werden als solche deklariert und auf einem Executor mit dieser Fähigkeit geplant, statt in der falschen Welt zu eskalieren.</li>
+</ul>
+<p class="muted">Löst M1 (Zustand) und M4 (Welten) an der Wurzel. Größter Umbau, aber der einzige, der Reproduzierbarkeit herstellt.</p>
+
+<h3>R2 · Fehlerklassifikation als Kontrakt mit Differentialdiagnose</h3>
+<p>Statt Signaturlisten entscheidet ein Experiment. Jeder Gate- oder Review-Fehler durchläuft, bevor er eine Karte belastet, eine feste Diagnose:</p>
+<ol>
+  <li><b>Baseline-Vergleich</b>: dieselben Tests auf dem Integrationsstand ohne die Lieferung (die Baseline existiert bereits als Cache; sie wird zum Pflichtschritt, nicht zur Option).</li>
+  <li><b>Sauberer Wiederholungslauf</b>: einmal ohne wiederhergestellten Cache, bei Bedarf auf einem anderen Executor.</li>
+  <li><b>Fingerprint-Abgleich</b>: derselbe Fehler auf anderen Karten oder auf der Baseline in den letzten 24 Stunden.</li>
+</ol>
+<p>Das Ergebnis ist eine Klasse mit Beweis und Konfidenz: <span class="tag bad">Produkt</span> nur wenn Baseline grün, sauberer Lauf rot und der Fingerprint karten-spezifisch ist; <span class="tag warn">Umgebung</span> wenn der saubere Lauf grün ist oder die Baseline denselben Fehler zeigt; <span class="tag">Flaky</span> wenn der Fehler auf beiden Seiten sporadisch ist. Concerns sind keine Fehlerklasse. Ein Reviewer-Block ohne Beweis gegen das Diff ist ein Concern.</p>
+<p>Nur bestätigte Produktfehler belasten Retry-Budget, Anti-Churn-Grenze und Reissue-Zähler. Umgebungsfehler evakuieren den beteiligten Zustand (Cache, Plan, Worktree) und zählen nicht. Flaky-Tests kommen in eine Quarantäne mit Ablaufdatum und eigener Karte; sie blockieren nie mehr eine Lieferung, aber sie verschwinden auch nicht still.</p>
+<p class="muted">Löst M2 direkt, entschärft M3. Kleiner Umbau, weil alle Bausteine (Baseline-Cache, Evict, Fingerprints) existieren; neu ist der Pflichtablauf.</p>
+
+<h3>R3 · Unterbrecher auf Ursachen-Fingerprints</h3>
+<p>Fehler bekommen einen stabilen Fingerprint (Fehlerklasse + normalisierter Text + Toolchain-Kontext) und werden fleetweit gezählt, nicht je Karte. Ab einer Schwelle identischer Fingerprints (Vorschlag: 3 Versuche oder 2 Karten) öffnet der Unterbrecher:</p>
+<ul>
+  <li>Eine <b>Ursachen-Karte</b> entsteht automatisch (der Mechanismus aus AGT-2765), mit Fingerprint, betroffenen Karten und Beweispfaden.</li>
+  <li>Betroffene Karten <b>warten auf die Ursache</b> statt zu wiederholen; die Lane zeigt „wartet auf AGT-nnnn", nicht „eskaliert".</li>
+  <li>Review-Pläne werden nicht eingefroren, sondern bei jedem Versuch aus den aktuellen Projekt-Einstellungen neu geplant; ein zurückgezogenes Modell trifft dann genau einen Versuch.</li>
+  <li>Der Unterbrecher schließt sich, wenn die Ursachen-Karte integriert ist oder ein Probe-Lauf grün wird.</li>
+</ul>
+<p class="muted">CAC-18 hätte nach dem dritten Versuch gestanden, gpt-5.4-mini nach einer Stunde statt 38. Löst M3, macht M2-Fehlurteile billig.</p>
+
+<h3>R4 · Lebenszyklus-Besitz und Heilungen als Code</h3>
+<p>Jeder Lauf besitzt seinen Prozessbaum (Job-Objekt auf Windows, cgroup/Prozessgruppe auf Linux), seinen Worktree (mit Lease und Ablauf) und seine Leases; Teardown beendet den Baum, unlöschbare Verzeichnisse werden beiseitegelegt, ein Restart bindet laufende Arbeit wieder an (AGT-2780, AGT-2781). Und die Operator-Rezepte werden zu <b>ausführbaren Heilungen im Produkt</b>: Cache evakuieren, Attempt neu planen, Worktree räumen, Karte aus Escalated zurückholen, Integrationsstatus neu rechnen. Der Wächter aus W15 bekommt damit Hände, nicht nur Augen: er erkennt eine bekannte Lage, führt die Heilung aus, protokolliert sie als Intervention und ruft den Menschen nur, wenn die Heilung nicht greift.</p>
+<p>Als Beweis dient ein <b>Regressionsszenario</b> (AGT-2739-Stil): eine Test-Studio-Instanz, durch die synthetische Karten laufen, mit Restart, vergiftetem Cache, zurückgezogenem Modell, hängendem Kindprozess. Es läuft nachts und vor jeder develop→main-Promotion. Was das Szenario nicht überlebt, wird nicht promotet.</p>
+<p class="muted">Löst M5, macht die Heilungen aus R2 und R3 zu Produktverhalten. Erst sinnvoll, wenn R2 die Lagen sauber erkennt.</p>
+
+<h3>R5 · Durchsatz als Ursache behandeln</h3>
+<p>Median 100 Minuten und p90 sechs Stunden je Review sind nicht nur langsam, sie erzeugen Fehler: Leases laufen ab, Worker verklemmen unter vier parallelen Vollsuiten, Baselines veralten, Karten überholen einander. Zwei Hebel existieren als Konzepte: das Batch-Gate (W36, eine Vollsuite für eine Lieferwelle) und Test-Sharding auf mehrere Executor. Dazu die Regel: Guard- und Architekturtests laufen zuerst und allein (Sekunden), die Vollsuite erst nach grünem Guard.</p>
+<p class="muted">Kein eigenes Muster, aber ein Verstärker für M3 und M5. Entscheidung liegt in W36.</p>
+
+<h2 id="s5"><span class="no">§5</span>Bewertung</h2>
+<table>
+  <thead><tr><th>Richtung</th><th>M1 Zustand</th><th>M2 Klasse</th><th>M3 Retry</th><th>M4 Welten</th><th>M5 Besitz</th><th>Aufwand</th><th>Risiko</th></tr></thead>
+  <tbody>
+    <tr><td>R1 Hermetik</td><td><span class="tag ok">löst</span></td><td><span class="tag">hilft</span></td><td>–</td><td><span class="tag ok">löst</span></td><td><span class="tag">hilft</span></td><td>groß (Wochen)</td><td>Container-Betrieb, Windows-Beweise brauchen eigenen Executor</td></tr>
+    <tr><td>R2 Diagnose</td><td><span class="tag">hilft</span></td><td><span class="tag ok">löst</span></td><td><span class="tag">hilft</span></td><td>–</td><td>–</td><td>klein (Tage)</td><td>doppelte Gate-Laufzeit im Fehlerfall; Baseline-Cache muss stimmen</td></tr>
+    <tr><td>R3 Unterbrecher</td><td>–</td><td><span class="tag">hilft</span></td><td><span class="tag ok">löst</span></td><td>–</td><td>–</td><td>klein (Tage)</td><td>Fingerprint zu grob = falsche Zusammenlegung; Schwelle zu niedrig = Stillstand</td></tr>
+    <tr><td>R4 Besitz + Heilungen</td><td><span class="tag">hilft</span></td><td>–</td><td>–</td><td>–</td><td><span class="tag ok">löst</span></td><td>mittel</td><td>Wächter mit Händen braucht Autoritätsgrenzen (W15 §6)</td></tr>
+    <tr><td>R5 Durchsatz</td><td>–</td><td>–</td><td><span class="tag">hilft</span></td><td>–</td><td><span class="tag">hilft</span></td><td>mittel</td><td>W36 offen</td></tr>
+  </tbody>
+</table>
+<p>Keine Richtung allein reicht. R2 und R3 stoppen die Verschwendung heute und sind klein. R1 stellt Reproduzierbarkeit her und macht R2 seltener nötig. R4 macht das Ganze selbsttragend. R5 senkt den Druck, unter dem die anderen Muster zuschlagen.</p>
+
+<h2 id="s6"><span class="no">§6</span>Empfehlung und Reihenfolge</h2>
+<div class="box accent">
+  <p><b>Welle 1 (sofort, klein): R2 + R3.</b> Diagnosekontrakt mit Baseline-Vergleich, sauberem Wiederholungslauf und Fingerprint-Abgleich als Pflichtschritt vor jeder Belastung einer Karte; Concerns von Fehlern getrennt; Flaky-Quarantäne mit Ablauf; Unterbrecher auf Fingerprints mit automatischer Ursachen-Karte und „wartet auf". Erwartung: Versuche je Karte von 6,9 auf unter 1,5, keine Eskalation mehr ohne benannte Ursache.</p>
+  <p><b>Welle 2: R1 zuerst für Gates, dann für Läufe.</b> Gate im Container mit unveränderlichen, inhaltsadressierten Caches und deklarierter Umgebung; danach Läufe auf demselben Substrat (Anschluss Phase B). Das Windows-Studio wird Steuerung.</p>
+  <p><b>Welle 3: R4.</b> Prozess- und Worktree-Besitz (AGT-2780/2781 laufen), Heilungen als Produkt, Wächter als Ausführer, Regressionsszenario als Promotion-Gate.</p>
+  <p><b>Parallel: R5 über W36 entscheiden.</b> Guard-first-Reihenfolge sofort, Batch-Gate oder Sharding nach W36.</p>
+</div>
+<p>Warum diese Reihenfolge: Welle 1 hätte jeden Vorfall der letzten zwei Wochen auf einen Versuch begrenzt und ist in Tagen baubar. Welle 2 ist der größte Hebel, braucht aber Betriebsentscheidungen (D1). Welle 3 setzt voraus, dass die Lagen erkannt werden, sonst heilt der Wächter ins Blaue.</p>
+
+<h2 id="s7"><span class="no">§7</span>Messgrößen</h2>
+<p>Die Wirkung wird nicht an Vorfällen gemessen, sondern an vier Zahlen im Fleet-Report, wöchentlich:</p>
+<table>
+  <thead><tr><th>Messgröße</th><th class="n">Heute</th><th class="n">Ziel</th></tr></thead>
+  <tbody>
+    <tr><td>Review-Versuche je Karte (30 Tage, alle Projekte)</td><td class="n">6,9</td><td class="n">&lt; 1,5</td></tr>
+    <tr><td>Anteil der Karten, die durch Umgebungsfehler belastet wurden</td><td class="n">≈ 50 %</td><td class="n">0 %</td></tr>
+    <tr><td>Operator-Eingriffe je Woche (Heilung von Hand)</td><td class="n">&gt; 10</td><td class="n">&lt; 2</td></tr>
+    <tr><td>Review-Dauer p90 (AGT)</td><td class="n">366 min</td><td class="n">&lt; 90 min</td></tr>
+  </tbody>
+</table>
+
+<h2 id="s8"><span class="no">§8</span>Entscheidungen</h2>
+
+<div class="decision" data-decision-id="ausfuehrungswelt" data-decision-kind="single" data-decision-label="Zielbild der Ausführungswelt">
+  <h3>D1 · Welches Zielbild gilt für die Ausführung?</h3>
+  <label data-option-id="container-alles" data-option-label="A · Container für Gates und Läufe, Windows-Studio nur Steuerung (Empfehlung)"><input type="radio" name="ausfuehrungswelt" value="container-alles"><span><b>A · Container für Gates und Läufe, Windows-Studio nur Steuerung</b><span class="d">Eine definierte Welt, unveränderliche Caches, deklarierte Umgebung. Windows-Beweise laufen auf einem eigens fähigen Executor. Größter Umbau, einzige Richtung mit Reproduzierbarkeit.</span></span></label>
+  <label data-option-id="container-gates" data-option-label="B · Container nur für Gates, Läufe bleiben wie heute"><input type="radio" name="ausfuehrungswelt" value="container-gates"><span><b>B · Container nur für Gates</b><span class="d">Gates werden reproduzierbar, Läufe behalten drei Welten. Halber Umbau, halber Effekt.</span></span></label>
+  <label data-option-id="haerten" data-option-label="C · Drei Welten behalten, weiter härten"><input type="radio" name="ausfuehrungswelt" value="haerten"><span><b>C · Drei Welten behalten, weiter härten</b><span class="d">Nur R2 bis R4. Kein Substratwechsel; die Signaturliste bleibt das Verfahren.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="reihenfolge" data-decision-kind="single" data-decision-label="Reihenfolge der Wellen">
+  <h3>D2 · In welcher Reihenfolge?</h3>
+  <label data-option-id="diagnose-zuerst" data-option-label="A · Welle 1 (Diagnose + Unterbrecher) zuerst, dann Hermetik, dann Besitz (Empfehlung)"><input type="radio" name="reihenfolge" value="diagnose-zuerst"><span><b>A · Welle 1 zuerst, dann Hermetik, dann Besitz</b><span class="d">Stoppt die Verschwendung in Tagen, der Umbau folgt.</span></span></label>
+  <label data-option-id="hermetik-zuerst" data-option-label="B · Hermetik zuerst"><input type="radio" name="reihenfolge" value="hermetik-zuerst"><span><b>B · Hermetik zuerst</b><span class="d">Wurzelbehandlung vor Symptombehandlung; bis dahin bleibt der Operator das Netz.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="waechter-haende" data-decision-kind="multi" data-decision-label="Was der Wächter selbst ausführen darf">
+  <h3>D3 · Welche Heilungen darf das System ohne Rückfrage ausführen?</h3>
+  <label data-option-id="cache-evict" data-option-label="Caches und eingefrorene Pläne verwerfen, sauber wiederholen"><input type="checkbox" name="waechter-haende" value="cache-evict"><span><b>Caches und Pläne verwerfen, sauber wiederholen</b><span class="d">Reversibel, kostet nur Rechenzeit.</span></span></label>
+  <label data-option-id="worktree-prozesse" data-option-label="Kindprozesse beenden, Worktrees räumen, Karten aus Escalated zurückholen"><input type="checkbox" name="waechter-haende" value="worktree-prozesse"><span><b>Prozesse beenden, Worktrees räumen, Karten zurückholen</b><span class="d">Greift in laufende Arbeit ein; nur für Prozesse, die das System selbst gestartet hat.</span></span></label>
+  <label data-option-id="ursachen-karten" data-option-label="Ursachen-Karten anlegen und betroffene Karten warten lassen"><input type="checkbox" name="waechter-haende" value="ursachen-karten"><span><b>Ursachen-Karten anlegen, Betroffene warten lassen</b><span class="d">Erzeugt Arbeit im Board; sichtbar als Intervention (AGT-2765).</span></span></label>
+  <label data-option-id="restart" data-option-label="Backend- und Runner-Dienste neu starten"><input type="checkbox" name="waechter-haende" value="restart"><span><b>Dienste neu starten</b><span class="d">Erst sinnvoll, wenn AGT-2780 Restarts unterbrechungsfrei macht.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="flaky-politik" data-decision-kind="single" data-decision-label="Umgang mit flaky Tests">
+  <h3>D4 · Wie werden flaky Tests behandelt?</h3>
+  <label data-option-id="quarantaene" data-option-label="A · Quarantäne mit Ablauf (14 Tage) und eigener Karte (Empfehlung)"><input type="radio" name="flaky-politik" value="quarantaene"><span><b>A · Quarantäne mit Ablauf und Karte</b><span class="d">Blockiert keine Lieferung mehr, verschwindet aber nicht: nach Ablauf wieder scharf oder Karte gelöst.</span></span></label>
+  <label data-option-id="entfernen" data-option-label="B · Flaky Tests entfernen"><input type="radio" name="flaky-politik" value="entfernen"><span><b>B · Entfernen</b><span class="d">Schnell, verliert Abdeckung.</span></span></label>
+  <label data-option-id="scharf" data-option-label="C · Scharf lassen, Wiederholung entscheidet"><input type="radio" name="flaky-politik" value="scharf"><span><b>C · Scharf lassen</b><span class="d">Die Diagnose aus R2 (zweiter Lauf) entscheidet je Fall; kostet Gate-Zeit.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="messgroessen" data-decision-kind="confirm" data-decision-label="Messgrößen im Fleet-Report">
+  <h3>D5 · Die vier Messgrößen aus §7 werden Teil des wöchentlichen Fleet-Reports.</h3>
+  <label data-option-id="bestaetigt" data-option-label="Bestätigt"><input type="checkbox" name="messgroessen" value="bestaetigt"><span><b>Bestätigt</b><span class="d">Ohne Messung bleibt „nachhaltig" ein Gefühl.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<h2 id="s9"><span class="no">§9</span>Kartenschnitt</h2>
+<p>Die Karten entstehen nach den Entscheidungen aus §8. Vorgeschlagener Schnitt, workflow-groß, jede mit eigenem Beweis:</p>
+<table>
+  <thead><tr><th>Welle</th><th>Karte</th><th>Inhalt</th><th>Beweis</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>K1 Diagnosekontrakt</td><td>Klassen Produkt/Umgebung/Flaky mit Beweis und Konfidenz; Pflichtablauf Baseline-Vergleich, sauberer Wiederholungslauf, Fingerprint-Abgleich; Concerns ≠ Fehler; nur bestätigte Produktfehler belasten Budgets (ersetzt die Signaturlisten in <code>ClassifyFailure</code> und der Review-Grade-Abbildung)</td><td>Replay der Fälle WEB-19, AGT-2779, AGT-2778, CAC-18 aus den Logs: vier richtige Klassen</td></tr>
+    <tr><td>1</td><td>K2 Unterbrecher</td><td>Fleetweite Fingerprint-Zählung, Schwelle, Ursachen-Karte via AGT-2765, „wartet auf" statt Retry, Review-Plan je Versuch neu</td><td>Replay gpt-5.4-mini und CAC-18: Stopp nach 3 Versuchen, eine Ursachen-Karte</td></tr>
+    <tr><td>1</td><td>K3 Flaky-Quarantäne</td><td>Liste mit Ablauf und Karte je Test, Gate ignoriert quarantänisierte Fehler, Report zeigt sie</td><td>QS-ReviewRunStoreTests blockieren keine Lieferung mehr, bleiben sichtbar</td></tr>
+    <tr><td>1</td><td>K4 Guard zuerst</td><td>Architektur-/Guard-Tests als eigener erster Gate-Schritt, Vollsuite nur nach Grün</td><td>AGT-2778-Fall: Ergebnis nach Sekunden statt Stunden</td></tr>
+    <tr><td>2</td><td>K5 Unveränderliche Caches</td><td>Inhaltsadressierte, manifestgeprüfte Artefakte für node_modules/NuGet, write-once, Ersatz für <code>.dependency-cache</code> (erweitert AGT-2782)</td><td>Vergifteter Eintrag wird erkannt und nie benutzt</td></tr>
+    <tr><td>2</td><td>K6 Gate im Container</td><td>Gate-Ausführung im Projekt-Image mit deklarierter Umgebung, Executor-Fähigkeiten als Planungsmerkmal</td><td>Derselbe Commit, zwei Gates, gleiches Ergebnis</td></tr>
+    <tr><td>2</td><td>K7 Läufe im Container</td><td>Ausführung auf demselben Substrat, Windows-Studio als Steuerung (Anschluss Phase B)</td><td>Karte mit Docker-Beweis eskaliert nicht mehr</td></tr>
+    <tr><td>3</td><td>K8 Heilungen als Produkt</td><td>Operator-Rezepte als ausführbare, protokollierte Heilungen; Wächter (W15) als Ausführer innerhalb der in D3 gewährten Grenzen</td><td>Vier heutige Rezepte laufen ohne Menschen</td></tr>
+    <tr><td>3</td><td>K9 Regressionsszenario als Promotion-Gate</td><td>Test-Studio mit synthetischen Karten, Restart, Cache-Gift, Modell-Entzug, Kindprozess; nachts und vor develop→main</td><td>Ein Szenario-Lauf mit allen Lagen grün</td></tr>
+  </tbody>
+</table>
+<p>Bereits laufend und hier eingeordnet: AGT-2780 (Restart-Kontinuität, R4), AGT-2781 (Teardown, R4), AGT-2782 (Cache-Validierung, Vorstufe zu K5), AGT-2765 (Intervention, Baustein für K2), AGT-2771 (Reviewer-Block gegen Diff, Baustein für K1).</p>
+
+<h2 id="quellen"><span class="no">§</span>Quellen</h2>
+<ul>
+  <li><code>C:\Projects\agent-taskboard-workspace\.metadata\attempt-authority.json</code>: reviewAttempts 13.08.–12.09. (Outcome, failureClassification, terminalReason, Dauer).</li>
+  <li>Task-Ordner <code>post-steps/build-test-gate-N.log</code>, <code>post-processing-outcomes.jsonl</code>, <code>parked-blocker.json</code> (WEB-19, QSW-1, AGT-2778, AGT-2779, AGT-2780, CAC-18).</li>
+  <li>Backend-Log 12.09.: <code>dependency-cache restore/save</code>, <code>Worktree remove failed</code>, task-transition-Flapping WEB-19.</li>
+  <li><code>backend/Features/Pipeline/BuildTestGateRunner.cs</code> (<code>ClassifyFailure</code>, <code>SaveDependencyCache</code>), <code>GateDependencyCache.cs</code>, <code>CliExecutionServiceBase.ReattachOnStartup</code>.</li>
+  <li>Dossiers AGT-W42 (Operative Resilienz, 27.08.), AGT-W15 (Wächter), AGT-W36 (Batch Gate), AGT-W45 (Eskalationsansicht), AGT-W49 (Operations-Server).</li>
+  <li>Operator-Rezepte 13.08.–12.09. aus dem Sitzungsgedächtnis (Review-Lane-Triage, Operator-Integrationswelle, Gate-Dependency-Cache, Remote-Runner ohne Windows-Workspace, Review-Host PrivateTmp, Quota-Fallback, Tunnel-Keeper).</li>
+</ul>
+
+<!-- agent-studio:implementation-section:start -->
+<section id="implementation" data-document-section="implementation">
+  <h2>Implementation</h2>
+  <p>Delivery slices append their current implementation status here.</p>
+  <ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<!-- agent-studio:implementation-log:end -->
+  </ol>
+</section>
+<!-- agent-studio:implementation-section:end -->
+</main>
+</body>
+</html>

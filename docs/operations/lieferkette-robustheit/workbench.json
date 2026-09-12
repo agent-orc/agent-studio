@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "lieferkette-robustheit",
+  "title": "Lieferkette: Robustheit statt Rezepte",
+  "summary": "Operator-Auftrag 12.09.2026: nachhaltige Lösung für die wiederkehrenden Ausfälle der Lieferkette. Datenbasis 13.08.–12.09.: 1.077 Review-Versuche für 157 Karten (6,9 je Karte), 411 identische Fehlversuche einer Karte ohne Abbruch, 138 rote QS-Gates aus fünf flaky Tests, Review-Dauer p90 sechs Stunden, rund 25 Operator-Rezepte als einziges Sicherheitsnetz. Fünf strukturelle Muster (veränderlicher Zustand ohne Nachweis, falsche Fehlerklasse, Wiederholung ohne Abbruch, drei Ausführungswelten, fehlender Lebenszyklus-Besitz), fünf Richtungen (Hermetik, Diagnosekontrakt, Unterbrecher auf Fingerprints, Besitz und Heilungen als Code, Durchsatz), Empfehlung in drei Wellen, vier Messgrößen, fünf Entscheidungen D1–D5, Kartenschnitt K1–K9.",
+  "entrypoint": "index.html",
+  "status": "decision-pending",
+  "phase": "decision-ready",
+  "pattern": "architecture",
+  "updatedAt": "2026-09-12T11:20:00Z",
+  "sourceTaskKeys": [],
+  "relatedTaskKeys": [
+    "AGT-2780",
+    "AGT-2781",
+    "AGT-2782",
+    "AGT-2765",
+    "AGT-2771",
+    "AGT-2776",
+    "AGT-2753",
+    "AGT-2739"
+  ],
+  "implementationTasks": [
+    {
+      "title": "Delivery chain wave 1: failure diagnosis contract, cause fingerprint breaker, flaky quarantine, guard-first gate (operator decisions D1-D5)",
+      "promptMarkdown": "Implement wave 1 of docs/operations/lieferkette-robustheit/index.html according to the recorded operator decisions (D1 to D5). Scope: K1 diagnosis contract (classes Product/Environment/Flaky with evidence and confidence; mandatory baseline comparison, one clean rerun without restored caches, fleet-wide fingerprint match before any card budget, anti-churn ceiling or reissue counter is charged; concerns are not failures; replaces the signature lists in BuildTestGateRunner.ClassifyFailure and the review-grade outcome mapping), K2 cause breaker (stable failure fingerprints counted fleet-wide, threshold, automatic cause card through the orchestrator-intervention path of AGT-2765, affected cards wait on the cause instead of retrying, review plans re-planned per attempt from current project settings), K3 flaky quarantine (list with expiry and a card per test, gate ignores quarantined failures, report shows them) and K4 guard-first gate step (architecture and guard tests as the first, separate gate step; the full suite runs only after green). Evidence: replay of the logged cases WEB-19, AGT-2779, AGT-2778 and CAC-18 producing the correct classes and the breaker stopping after three attempts with one cause card; ADRs for the contract and the breaker; docs/system/domains updated; changelog. Cut into slices if needed, but wave 1 is done only when all four parts and the replays are green."
+    }
+  ]
+}
