@@ -21,6 +21,11 @@ for relative in "${dockerfiles[@]}"; do
     grep -q '^HEALTHCHECK ' "$dockerfile"
 done
 
+grep -F 'ARG CODEX_CLI_VERSION=0.154.0' "$repo_root/runner/Dockerfile" > /dev/null
+grep -F 'ARG CLAUDE_CLI_VERSION=2.1.269' "$repo_root/runner/Dockerfile" > /dev/null
+grep -F '"@openai/codex@${CODEX_CLI_VERSION}"' "$repo_root/runner/Dockerfile" > /dev/null
+grep -F '"@anthropic-ai/claude-code@${CLAUDE_CLI_VERSION}"' "$repo_root/runner/Dockerfile" > /dev/null
+
 # .NET 10 base images already reserve the app account. Creating it again makes
 # an otherwise valid image fail during its runtime stage.
 for relative in \

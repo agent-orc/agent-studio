@@ -82,6 +82,24 @@ async function stubBackgroundApis(page: Page) {
   await page.route('**/api/workspaces*', json([]));
 }
 
+async function stubOnlineJobsHub(page: Page) {
+  await page.route('**/hubs/jobs/negotiate?*', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      negotiateVersion: 1,
+      connectionId: 'execution-hosts-e2e',
+      connectionToken: 'execution-hosts-e2e',
+      availableTransports: [{ transport: 'WebSockets', transferFormats: ['Text', 'Binary'] }],
+    }),
+  }));
+  await page.routeWebSocket('**/hubs/jobs*', socket => {
+    socket.onMessage(message => {
+      if (typeof message === 'string' && message.includes('"protocol":"json"')) socket.send(`{}\u001e`);
+    });
+  });
+}
+
 async function stubGroupedHostApis(page: Page) {
   const now = new Date();
   const observed = now.toISOString();
@@ -197,6 +215,16 @@ async function stubGroupedHostApis(page: Page) {
         },
         roleMaxParallelism: 2,
         effectiveMaxParallelism: 2,
+        installedClis: [
+          {
+            name: 'codex', version: '0.144.1', installPath: '/usr/local/bin/codex',
+            checkedAt: codingObserved, targetVersion: '0.154.0', isBelowTarget: true,
+          },
+          {
+            name: 'claude', version: '2.1.269', installPath: '/usr/local/bin/claude',
+            checkedAt: codingObserved, targetVersion: '2.1.269', isBelowTarget: false,
+          },
+        ],
       },
       {
         runnerId: 'agent-runner-01-review',
@@ -236,6 +264,7 @@ test.describe('Execution Hosts settings section', () => {
     // settings overlay (same choice as workspace-settings-home.spec).
     await page.addInitScript(() => { try { localStorage.setItem('atp.flag.vsCodeLayout', '0'); } catch { /* ignore */ } });
     await stubBackgroundApis(page);
+    await stubOnlineJobsHub(page);
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(400);
@@ -326,7 +355,7 @@ test.describe('Execution Hosts settings section', () => {
     await stubGroupedHostApis(page);
     await page.goto('/#/workspace/settings/execution-hosts');
 
-    const machine = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
+    const machine = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
     await expect(machine).toHaveCount(1);
     await expect(machine.getByTestId('remote-host-load')).toContainText('37%');
     await expect(machine.getByTestId('remote-host-role-row')).toHaveCount(2);
@@ -380,12 +409,12 @@ test.describe('Execution Hosts settings section', () => {
     await stubGroupedHostApis(page);
     await page.goto('/#/workspace/settings/execution-hosts');
 
-    const machine = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' });
+    const machine = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
     await expandHost(machine, true);
     const summaries = machine.locator('[data-testid^="remote-host-detail-toggle-"]');
     await expect(summaries).toHaveCount(7);
     await expect(machine.getByTestId('remote-host-detail-toggle-capabilities'))
-      .toContainText('14 capabilities ok');
+      .toContainText('1 CLI update due');
     await expect(machine.getByTestId('remote-host-detail-toggle-projects'))
       .toContainText('1 project block');
     await expect(machine.locator('[aria-label="Capabilities"]')).toHaveCount(0);
@@ -402,6 +431,38 @@ test.describe('Execution Hosts settings section', () => {
     await machine.screenshot({ path: join(SHOT_DIR, 'execution-hosts-expanded-summary-light--mocked.png') });
     await setTheme(page, 'dark');
     await machine.screenshot({ path: join(SHOT_DIR, 'execution-hosts-expanded-summary-dark--mocked.png') });
+  });
+
+  test('shows installed versions, check age, drift, and the host-owned update action', async ({ page, devBackend: _devBackend }) => {
+    void _devBackend;
+    await stubGroupedHostApis(page);
+    await page.route('**/api/v1/management/remote-hosts/agent-runner-01/cli-update', async route => {
+      expect(route.request().method()).toBe('POST');
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        hostId: 'agent-runner-01', state: 'draining', codexTargetVersion: '0.154.0',
+        claudeTargetVersion: '2.1.269', requestedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+        activeSlots: 2, canCancel: true, detail: 'Waiting for active host slots to reach zero.',
+      }) });
+    });
+    await page.goto('/#/workspace/settings/execution-hosts');
+    const machine = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
+    await expandHost(machine, true);
+    await machine.getByTestId('remote-host-detail-toggle-capabilities').click();
+
+    const versions = machine.getByTestId('remote-host-cli-versions');
+    await expect(versions).toContainText('codex 0.144.1');
+    await expect(versions).toContainText('/usr/local/bin/codex');
+    await expect(versions).toContainText('Checked');
+    await expect(machine.getByTestId('remote-host-cli-drift')).toContainText('target 0.154.0');
+    await machine.getByTestId('remote-host-action-update-clis').click();
+    await expect(machine.getByTestId('remote-host-cli-update-status')).toContainText('2 active');
+    await expect(machine.getByTestId('remote-host-action-cancel-cli-update')).toBeVisible();
+
+    await setTheme(page, 'light');
+    await versions.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(SHOT_DIR, 'execution-hosts-cli-drift-light--mocked.png'), fullPage: false });
+    await setTheme(page, 'dark');
+    await page.screenshot({ path: join(SHOT_DIR, 'execution-hosts-cli-drift-dark--mocked.png'), fullPage: false });
   });
 
   test('shows a corrupt identity with its restore path in both themes', async ({ page }) => {

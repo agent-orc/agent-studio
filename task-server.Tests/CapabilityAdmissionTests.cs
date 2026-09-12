@@ -330,6 +330,12 @@ public sealed class CapabilityAdmissionTests
         Assert.Equal("operator-draining", operatorDrain.AdmissionState);
         Assert.Equal("planned maintenance", operatorDrain.OperatorDrainReason);
         Assert.Null(operatorDrain.AutomaticDrainReason);
+        var blockedByOperatorDrain = await store.ClaimAsync(
+            new ClaimRequest("host-b-runner", "instance-b", RequiredCapabilities: [CapabilityProtocol.CodingExecutor]),
+            "host-b-runner",
+            default);
+        Assert.Equal("empty", blockedByOperatorDrain.Status);
+        Assert.Contains("operator-requested whole-host drain", blockedByOperatorDrain.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

@@ -219,6 +219,47 @@ export function providerAuthWaitReason(
   };
 }
 
+/** Model-specific CLI floor shown on a Ready card before generic auth/link waits. */
+export function modelCliVersionWaitReason(
+  task: TaskInfo,
+  snapshots: readonly TaskServerRunnerCapabilitySnapshot[],
+): ProviderAuthWaitReason | null {
+  if (task.state !== '2-ready' || task.model !== 'gpt-6-astra') return null;
+  const configuredRunner = task.executionLocation?.configuredRunnerId
+    ?? (task.executionLocation?.state === 'queued-remote' ? task.executionLocation.runnerId : null);
+  const candidates = snapshots.filter(snapshot => !configuredRunner
+    || [snapshot.runnerId, snapshot.hostId, snapshot.name]
+      .some(alias => alias.toLowerCase() === configuredRunner.toLowerCase()));
+  const blocked = candidates
+    .map(snapshot => ({ snapshot, cli: snapshot.installedClis?.find(cli => cli.name === 'codex') }))
+    .filter((item): item is { snapshot: TaskServerRunnerCapabilitySnapshot; cli: NonNullable<typeof item.cli> } =>
+      !!item.cli && semverBelow(item.cli.version, '0.153.0'));
+  if (!blocked.length) return null;
+  const item = blocked[0];
+  const label = `Needs codex-cli ≥ 0.153 (host has ${item.cli.version})`;
+  return {
+    provider: 'codex',
+    label,
+    tooltip: `${label}. Update CLIs on ${item.snapshot.hostId} to make gpt-6-astra available.`,
+    hostNames: [item.snapshot.name],
+    signInTarget: null,
+    claudeSignInTarget: null,
+  };
+}
+
+function semverBelow(installed: string, minimum: string): boolean {
+  const parse = (value: string) => value.replace(/^v/i, '').split(/[+-]/, 1)[0]
+    .split('.').map(part => Number.parseInt(part, 10));
+  const left = parse(installed);
+  const right = parse(minimum);
+  if (left.some(Number.isNaN) || right.some(Number.isNaN)) return false;
+  for (let index = 0; index < 3; index += 1) {
+    const compared = (left[index] ?? 0) - (right[index] ?? 0);
+    if (compared !== 0) return compared < 0;
+  }
+  return installed.includes('-') && !minimum.includes('-');
+}
+
 function linkWaitLabel(link: RemoteRunnerLinkHealth): string {
   const unreachableSince = link.unreachableSince ?? link.since;
   const since = new Date(unreachableSince);
