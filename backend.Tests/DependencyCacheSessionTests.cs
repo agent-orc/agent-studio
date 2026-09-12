@@ -25,7 +25,6 @@ public sealed class DependencyCacheSessionTests : IDisposable
     {
         try
         {
-            RestoreWritable(_root);
             Directory.Delete(_root, recursive: true);
         }
         catch { /* best-effort cleanup */ }
@@ -103,21 +102,23 @@ public sealed class DependencyCacheSessionTests : IDisposable
         File.WriteAllText(Path.Combine(contentRoot, "node_modules", "marker.txt"), "old-install");
         File.WriteAllText(Path.Combine(contentRoot, ".nm-state"), "old-hash");
 
-        var session = DependencyCacheSession.Create(cacheParent, "repo-identity", workspace, scopes);
+        // A file at the injected staging path makes Directory.CreateDirectory
+        // fail with IOException on both Windows and Unix. This exercises the
+        // real staging-write failure path without relying on Unix permissions.
+        var blockedStagingRoot = Path.Combine(cacheRoot, "blocked-staging");
+        File.WriteAllText(blockedStagingRoot, "blocks the staging directory");
+        var session = DependencyCacheSession.Create(
+            cacheParent,
+            "repo-identity",
+            workspace,
+            scopes,
+            _ => blockedStagingRoot);
 
-        // Strip write permission from the cache root so staging the new save
-        // (which creates a temporary sibling under it) cannot proceed -
-        // simulates an interrupted save.
-        MakeReadOnly(cacheRoot);
-        try
-        {
-            var messages = session.Save();
-            Assert.Contains(messages, m => m.Contains("state=aborted") || m.Contains("state=failed"));
-        }
-        finally
-        {
-            RestoreWritable(cacheRoot);
-        }
+        var messages = session.Save();
+        Assert.Contains(
+            messages,
+            m => m.Contains("save item=node_modules state=failed reason=IOException"));
+        Assert.Contains(messages, m => m.Contains("state=aborted"));
 
         Assert.True(File.Exists(Path.Combine(contentRoot, "node_modules", "marker.txt")));
         Assert.Equal("old-install", File.ReadAllText(Path.Combine(contentRoot, "node_modules", "marker.txt")));
@@ -151,24 +152,4 @@ public sealed class DependencyCacheSessionTests : IDisposable
         Assert.NotNull(restoreMessages);
     }
 
-    private static void MakeReadOnly(string path)
-        => File.SetUnixFileMode(
-            path,
-            UnixFileMode.UserRead | UnixFileMode.UserExecute
-            | UnixFileMode.GroupRead | UnixFileMode.GroupExecute
-            | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
-
-    private static void RestoreWritable(string path)
-    {
-        if (!Directory.Exists(path)) return;
-        try
-        {
-            File.SetUnixFileMode(
-                path,
-                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
-                | UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute
-                | UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute);
-        }
-        catch { /* best-effort */ }
-    }
 }

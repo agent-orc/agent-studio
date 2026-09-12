@@ -116,3 +116,14 @@ temporary directory, set `Pooling=False` (or `Pooling = false` with
 native file handle for the process lifetime. Linux permits the fixture directory
 to be unlinked in that state, but Windows reports a sharing violation and turns
 an otherwise passing test into a cleanup failure.
+
+## Portable filesystem-failure fixtures
+
+Do not use `File.SetUnixFileMode` to make a portable write path fail. Windows
+does not enforce Unix mode bits, and a test running as the directory owner may
+still write successfully. Prefer a deterministic filesystem conflict that has
+the same result on every supported platform. For generated temporary paths,
+inject the path factory and put a regular file where the code must create a
+directory. `Directory.CreateDirectory` then reports the intended write failure
+on Windows and Unix while the test can keep asserting that the previous durable
+entry remains unchanged.
