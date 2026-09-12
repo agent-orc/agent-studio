@@ -33,3 +33,8 @@ release yet.
 - Dossier list cards now use a wide clamped summary, anchored footer actions,
   copyable keys, and labelled lane-colour references with immediate complete
   tooltips.
+
+### Fixed
+
+- Public-demo execution-route inventory now includes
+  `POST /api/v1/reviews/attempts/{attemptId}/reclaim` in the `Continue` path.
