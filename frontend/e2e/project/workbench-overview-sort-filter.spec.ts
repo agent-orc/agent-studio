@@ -270,3 +270,120 @@ test('collapsing pending decisions brings the active Dossiers into the first vie
   await expect(decisionHeader).toHaveAttribute('aria-expanded', 'false');
   await expect(activeList).toBeInViewport();
 });
+
+test('Dossier cards keep long and short summaries readable across widths and themes', async ({ page }, testInfo) => {
+  test.setTimeout(90_000);
+  await installMocks(page);
+  const longSummary = Array.from({ length: 21 }, (_, index) =>
+    `Isolation checkpoint ${index + 1} keeps preparation, execution, recovery, and operator evidence connected.`
+  ).join(' ');
+  const visualItems = [
+    {
+      ...dossier('isolated-execution', 'AGT-W51', 'Isolated execution', 'decision-pending', '2026-09-12T12:00:00Z', 3),
+      workbench: {
+        ...dossier('isolated-execution', 'AGT-W51', 'Isolated execution', 'decision-pending', '2026-09-12T12:00:00Z', 3).workbench,
+        summary: longSummary,
+        relatedTaskKeys: ['AGT-2783', 'AGT-2778', 'AGT-404'],
+      },
+    },
+    {
+      ...dossier('supply-chain', 'AGT-W48', 'Supply-chain boundary', 'active', '2026-09-12T11:00:00Z'),
+      workbench: {
+        ...dossier('supply-chain', 'AGT-W48', 'Supply-chain boundary', 'active', '2026-09-12T11:00:00Z').workbench,
+        summary: 'Build inputs remain explicit, reviewable, and recoverable.',
+      },
+    },
+  ];
+  await page.route('**/api/tasks/reference-status', route => json(route, {
+    items: [
+      {
+        key: 'AGT-2783', exists: true, taskKey: 'Agent Studio::agt-2783',
+        title: 'Dossiers list visual improvement round', lane: '3-progress',
+        projectId: PROJECT_ID, projectName: PROJECT, projectColor: '#6c8cff', merge: null, reviewGrade: null,
+      },
+      {
+        key: 'AGT-2778', exists: true, taskKey: 'Agent Studio::agt-2778',
+        title: 'Runner isolation review', lane: '5-human-review',
+        projectId: PROJECT_ID, projectName: PROJECT, projectColor: '#6c8cff', merge: null, reviewGrade: 'A',
+      },
+      {
+        key: 'AGT-404', exists: false, taskKey: null, title: null, lane: null,
+        projectId: PROJECT_ID, projectName: PROJECT, projectColor: '#6c8cff', merge: null, reviewGrade: null,
+      },
+    ],
+  }));
+  await page.route(/\/api\/workbenches(?:\?.*)?$/, route => json(route, {
+    projectName: PROJECT,
+    count: visualItems.length,
+    currentCount: visualItems.length,
+    historyCount: 0,
+    items: visualItems,
+  }));
+
+  for (const width of [1536, 900]) {
+    await page.setViewportSize({ width, height: 1100 });
+    await page.goto('/');
+    await page.addStyleTag({ content: '[data-testid="offline-banner"] { display: none !important; }' });
+    await page.getByTestId('studio-ab-workbenches').click();
+    const longCard = page.getByTestId(`workbench-overview-item-${PROJECT}-isolated-execution`);
+    await expect(longCard).toBeVisible();
+    await expect(longCard.getByTestId(`workbench-overview-key-${PROJECT}-isolated-execution`))
+      .toContainText('AGT-W51');
+    await expect(longCard.getByText('Linked cards:')).toBeVisible();
+    const toggle = longCard.getByTestId(`workbench-overview-excerpt-toggle-${PROJECT}-isolated-execution`);
+    await expect(toggle).toHaveText('Show more');
+    await expect(page.getByTestId(`workbench-overview-excerpt-toggle-${PROJECT}-supply-chain`)).toHaveCount(0);
+    const excerptId = 'workbench-overview-excerpt-Dossier-Demo-isolated-execution';
+    const excerpt = page.locator(`#${excerptId}`);
+    await expect(excerpt).toHaveCSS('-webkit-line-clamp', '8');
+    const actionRow = longCard.getByTestId(`workbench-overview-actions-${PROJECT}-isolated-execution`);
+    expect(await actionRow.evaluate((actions, excerptId) => {
+      const summary = document.getElementById(excerptId as string);
+      return !!summary && actions.getBoundingClientRect().top >= summary.getBoundingClientRect().bottom;
+    }, excerptId)).toBe(true);
+
+    await toggle.click();
+    await expect(toggle).toHaveText('Show less');
+    await expect(excerpt).toHaveClass(/workbench-overview__excerpt--expanded/);
+    await toggle.click();
+    const linkedCard = page.getByTestId(`workbench-overview-task-${PROJECT}-isolated-execution-AGT-2783`);
+    await linkedCard.hover();
+    const linkedTooltip = page.getByTestId(
+      `workbench-overview-task-${PROJECT}-isolated-execution-AGT-2783-tooltip`,
+    );
+    await expect(linkedTooltip)
+      .toContainText('Key: AGT-2783\nTitle: Dossiers list visual improvement round\nLane: In Progress\nState:');
+    if (width === 1536) {
+      await setTheme(page, 'light');
+      await page.screenshot({
+        path: evidencePath(testInfo, 'agt-2783--linked-card-tooltip--1536px--light--mocked.png'),
+        fullPage: true,
+      });
+    }
+    await page.mouse.move(width - 16, 96);
+    await expect(linkedTooltip).toHaveCount(0);
+
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      const phase = process.env['DOSSIER_EVIDENCE_PHASE'] === 'before' ? 'before' : 'after';
+      await page.screenshot({
+        path: evidencePath(
+          testInfo,
+          `agt-2783--dossier-cards--${phase}--${width}px--${theme}--mocked.png`,
+        ),
+        fullPage: true,
+      });
+    }
+  }
+
+  await page.setViewportSize({ width: 720, height: 900 });
+  await page.goto('/');
+  await page.addStyleTag({ content: '[data-testid="offline-banner"] { display: none !important; }' });
+  await page.getByTestId('studio-ab-workbenches').click();
+  const narrowActions = page.getByTestId(
+    `workbench-overview-actions-${PROJECT}-isolated-execution`,
+  );
+  expect(await narrowActions.evaluate(actions =>
+    getComputedStyle(actions.parentElement as HTMLElement).flexDirection
+  )).toBe('column');
+});

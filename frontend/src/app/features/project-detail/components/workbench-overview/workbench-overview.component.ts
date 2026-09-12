@@ -12,6 +12,7 @@ import {
 } from '@angular/core';
 import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
 import { CountBadgeComponent } from '../../../../components/count-badge/count-badge.component';
+import { CopyableTaskKeyComponent } from '../../../../components/copyable-task-key/copyable-task-key.component';
 import {
   TaskReferenceMicrocardComponent,
   type TaskReferenceStatus,
@@ -39,6 +40,7 @@ import type {
   imports: [
     LoadingSurfaceComponent,
     CountBadgeComponent,
+    CopyableTaskKeyComponent,
     StudioIconComponent,
     TaskReferenceMicrocardComponent,
     WorkbenchOverviewControlsComponent,
@@ -68,6 +70,7 @@ export class WorkbenchOverviewComponent {
   readonly loading = signal(false);
   readonly error = signal(false);
   readonly expandedDecisionKey = signal<string | null>(null);
+  readonly expandedExcerptKeys = signal<ReadonlySet<string>>(new Set());
   readonly referenceStatusesByItem = signal<ReadonlyMap<string, readonly TaskReferenceStatus[]>>(new Map());
   readonly referenceStatusesLoading = signal(false);
 
@@ -94,6 +97,7 @@ export class WorkbenchOverviewComponent {
       untracked(() => {
         this.viewState.setScope(projectName);
         this.expandedDecisionKey.set(null);
+        this.expandedExcerptKeys.set(new Set());
         this.load(projectName, true);
       });
     });
@@ -134,6 +138,22 @@ export class WorkbenchOverviewComponent {
   }
   inlineDecisionExpanded(item: WorkbenchOverviewItem): boolean {
     return this.expandedDecisionKey() === this.itemKey(item);
+  }
+  excerptExpanded(item: WorkbenchOverviewItem): boolean {
+    return this.expandedExcerptKeys().has(this.itemKey(item));
+  }
+  excerptCanExpand(item: WorkbenchOverviewItem): boolean {
+    const summary = item.workbench.error || item.workbench.summary;
+    return summary.split(/\r?\n/).length > 6 || summary.length > 520;
+  }
+  toggleExcerpt(item: WorkbenchOverviewItem): void {
+    const key = this.itemKey(item);
+    this.expandedExcerptKeys.update(current => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   }
   sectionExpanded(section: DossierSectionId): boolean {
     return this.sectionState.expanded(this.sectionScope(), section);
@@ -178,6 +198,9 @@ export class WorkbenchOverviewComponent {
   }
   keyLabel(item: WorkbenchOverviewItem): string {
     return item.workbench.key ?? item.workbench.id;
+  }
+  itemDomId(item: WorkbenchOverviewItem): string {
+    return this.itemKey(item).replace(/[^a-zA-Z0-9_-]+/g, '-');
   }
   private filteredItemsWithStatus(status: string): WorkbenchOverviewItem[] {
     return this.filteredItems().filter(item => item.workbench.status === status);

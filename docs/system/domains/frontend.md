@@ -278,6 +278,13 @@ without a parallel surface.
   state wins when a link is opened.
   Pending overview cards expand the existing isolated viewer and inline decision
   controls in place, while retaining a direct link to the full viewer.
+  Every overview card reads top-down through title, a copyable Dossier-key-first
+  metadata row, a labelled linked-card row, a wide summary preview, and a
+  right-aligned footer action row. Summary previews use the shared wide prose
+  measure, clamp at eight lines, and expand per card without persistence.
+  Linked-card dots use the canonical lane tone; their immediate application
+  tooltip names the key, title, lane, state, and project, while missing cards
+  remain neutral and explicitly identify the deleted-or-unknown reason.
   Explorer project children stay available as quick links. Created, updated,
   decision-recorded, and status-changed events travel over the existing jobs
   hub and converge the Explorer catalogue, both overview scopes, and an open

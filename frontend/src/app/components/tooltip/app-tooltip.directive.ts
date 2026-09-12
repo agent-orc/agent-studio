@@ -17,6 +17,7 @@ let nextTooltipId = 0;
 export class AppTooltipDirective implements OnDestroy {
   readonly appTooltip = input<string | null>(null);
   readonly appTooltipTestId = input<string | null>(null);
+  readonly appTooltipDelayMs = input(300);
 
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
   private readonly document = inject(DOCUMENT);
@@ -27,7 +28,12 @@ export class AppTooltipDirective implements OnDestroy {
   scheduleShow(): void {
     this.cancelShow();
     if (!this.appTooltip()?.trim()) return;
-    this.showTimer = setTimeout(() => this.show(), 300);
+    const delay = Math.max(0, this.appTooltipDelayMs());
+    if (delay === 0) {
+      this.show();
+      return;
+    }
+    this.showTimer = setTimeout(() => this.show(), delay);
   }
 
   onFocusOut(event: FocusEvent): void {
