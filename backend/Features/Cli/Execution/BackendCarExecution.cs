@@ -49,7 +49,7 @@ public partial class GenericCliExecutionService
         ProcInfo? previousExited = null;
         if (_processes.TryGetValue(jobKey, out var existing))
         {
-            if (!existing.Process.HasExited)
+            if (!SafeHasExited(existing.Process))
                 return (null, $"{CliType} CLI process already running for job '{jobId}'");
             // Keep the retained attempt in place until the replacement has
             // been adopted. If startup fails, its identity-guarded retention
@@ -228,6 +228,7 @@ public partial class GenericCliExecutionService
                 Model = carRun.Model,
                 ThinkingLevel = carRun.ThinkingLevel
                                 ?? (usesStudioThinkingCompatibility ? invocationThinkingLevel : null),
+                WorkingDirectory = workingDirectory,
             };
 
             var logDir = GetOutputLogDir(jobKey);
@@ -258,6 +259,8 @@ public partial class GenericCliExecutionService
                     ProcessName = SafeProcessName(process),
                     ProcessStartTimeUtc = SafeProcessStartTime(process),
                     StartedAt = execution.StartedAt,
+                    WorkingDirectory = workingDirectory,
+                    JobFolderPath = jobFolderPath,
                 });
             }
             catch (Exception ex)

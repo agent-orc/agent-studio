@@ -3920,6 +3920,31 @@ public class ProjectRunner
         if (info != null && !string.IsNullOrWhiteSpace(info.FolderPath))
         {
             recoveredRun.JobFolder = info.FolderPath;
+            recoveredRun.WorkerHeadShaBefore = _sessions
+                .ReadSessionEvents(jobId, Entry.Path)
+                .LastOrDefault()?.HeadShaBefore;
+            var recoveredWorkingDirectory = _router.Get(cliType)
+                .GetExecution(GetJobKey(jobId))?.WorkingDirectory;
+            if (!string.IsNullOrWhiteSpace(recoveredWorkingDirectory))
+            {
+                try
+                {
+                    if (!string.Equals(
+                            Path.GetFullPath(recoveredWorkingDirectory),
+                            Path.GetFullPath(Entry.RootPath),
+                            OperatingSystem.IsWindows()
+                                ? StringComparison.OrdinalIgnoreCase
+                                : StringComparison.Ordinal))
+                    {
+                        recoveredRun.WorktreePath = recoveredWorkingDirectory;
+                        recoveredRun.WorktreeReused = true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Could not restore worktree ownership for recovered run {JobId}", jobId);
+                }
+            }
             _timeline?.Append(
                 info.FolderPath,
                 TimelineEventKinds.RunnerSlotAdmission,
@@ -3934,6 +3959,7 @@ public class ProjectRunner
                 });
         }
 
+        recoveredRun.CompleteStartHandshake();
         NotifyStatus();
         return true;
     }
@@ -3951,7 +3977,7 @@ public class ProjectRunner
     /// run". Runs once per process; the normal claim/release path keeps the
     /// registry accurate from then on.
     /// </summary>
-    private void ReconcileRecoveredRunsIntoSlots()
+    internal void ReconcileRecoveredRunsIntoSlots()
     {
         if (_recoveredRunsReconciled) return;
         _recoveredRunsReconciled = true;
@@ -5390,6 +5416,26 @@ public class ProjectRunner
         // Find the slot whose run this finish belongs to (by job key), so a
         // second parallel slot's finish is not dropped by a Single-based check.
         var finishedRun = _activeRuns.ByJobKey(GetJobKey, jobKey);
+        if (finishedRun == null && execution.ContinuedAfterRestart)
+        {
+            var prefix = TaskIdentity.CreateKey(Entry.Path, string.Empty);
+            if (jobKey.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                var recoveredJobId = jobKey.Substring(prefix.Length);
+                TaskInfo? recovered = null;
+                try { recovered = _scanner.FindJob(recoveredJobId, Entry.Path); }
+                catch (Exception ex) { _logger.LogDebug(ex, "Recovered finish lookup failed for {JobId}", recoveredJobId); }
+
+                // Lane ownership is the local attempt fence. An operator move
+                // or newer attempt while Studio was down supersedes this late
+                // result, so only the unchanged Progress card may be booked.
+                if (recovered?.State == TaskStates.Progress)
+                {
+                    RegisterRecoveredRun(recoveredJobId, cliType);
+                    finishedRun = _activeRuns.ByJobKey(GetJobKey, jobKey);
+                }
+            }
+        }
         if (finishedRun == null) return;
         if (finishedRun.CliType != null && !string.Equals(cliType, finishedRun.CliType, StringComparison.OrdinalIgnoreCase)) return;
 
@@ -5576,6 +5622,24 @@ public class ProjectRunner
             // can fold a run-pair into one collapsible line.
             if (finishedInfo != null)
             {
+                if (execution.ContinuedAfterRestart)
+                {
+                    var bridgedRunId = _timeline?.ReadAll(finishedInfo.FolderPath)
+                        .LastOrDefault(item => item.Kind == TimelineEventKinds.AgentRunStarted)?.RunId
+                        ?? planSnapshot?.EventInputSessionId
+                        ?? execution.TaskKey;
+                    _timeline?.Append(
+                        finishedInfo.FolderPath,
+                        TimelineEventKinds.RunRestartBridged,
+                        TimelineActors.System,
+                        summary: "Studio restarted and reattached to the same durable worker.",
+                        runId: bridgedRunId,
+                        details: new()
+                        {
+                            ["processId"] = execution.ProcessId.ToString(CultureInfo.InvariantCulture),
+                            ["outcome"] = execution.RunOutcome ?? execution.Status,
+                        });
+                }
                 _timeline?.Append(
                     finishedInfo.FolderPath,
                     RunTimelineEventFactory.AgentRunFinished(

@@ -1631,6 +1631,8 @@ export interface TaskRunActivity {
   attempt: number;
   /** One-line last-error summary mirrored from the outcome issue; null when unknown. */
   lastError?: string | null;
+  /** The live worker was adopted by a replacement Studio host. */
+  continuingAfterRestart?: boolean;
 }
 
 export interface TaskLiveStep {

@@ -14,4 +14,5 @@ release yet.
 
 ### Added
 
+- Restart-continuous local CLI workers, attempt-fenced review and post-step checkpoints, restart visibility, and an operator deployment drill.
 - Initial open source community and release-hygiene baseline.

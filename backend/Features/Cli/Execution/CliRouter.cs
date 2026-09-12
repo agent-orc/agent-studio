@@ -47,6 +47,9 @@ public sealed class CliRouter
         foreach (var svc in _byType.Values) svc.ReattachOnStartup();
     }
 
+    public bool CanReattach(string jobKey)
+        => _byType.Values.Any(service => service.CanReattach(jobKey));
+
     /// <summary>
     /// Run each backend's periodic stale-orphan sweep. Driven by
     /// <c>OrphanReaperHostedService</c> on a timer so orphaned CLI process

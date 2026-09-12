@@ -633,6 +633,18 @@ state.
   card runs. A project without a remote assignment executes chat locally. Each
   response projects the actual local or remote hostname, repository path,
   branch, and HEAD; a reassignment invalidates a cached host context.
+- A Studio restart is not a local run boundary. Local CLI commands run inside a
+  detached worker that persists `spec.json`, `worker.json`, `output.jsonl`, and
+  an atomic `result.json` below the configured TaskRepository. The active-jobs
+  record stores worker PID, process start time, working directory, output
+  sequence, and invocation metadata. A replacement Studio verifies the PID
+  generation and working directory, reattaches, tails from the persisted
+  sequence, and delivers the existing post-run callback once. A result written
+  during the gap is replayed without starting another CLI. A dead or mismatched
+  process with no result is classified as `run lost across restart`. Windows
+  launch uses `CREATE_BREAKAWAY_FROM_JOB` plus a new process group; Linux uses a
+  detached session. Reattachment never changes attempt or fence authority, so
+  a superseded attempt still fails its normal downstream fence checks.
 - A planned `agent-host` daemon restart is an execution handoff, not an attempt
   boundary. Coding persists lease, fence, Task Server run/instance, worktree,
   detached-worker PID/start time, and file-log progress below
@@ -675,6 +687,14 @@ state.
   deliveries therefore continue under their original attempt, fence, epoch,
   lease, and lease instance instead of receiving a false unknown-attempt or
   Superseded response.
+
+- Review aspects and pipeline post-steps resume from the current
+  `pipeline-execution.json` attempt. A terminal aspect verdict with fresh
+  structured evidence is reused. Gating post-steps store their serializable
+  return payload under `post-step-checkpoints/`, but the current attempt's
+  terminal pipeline row remains the only authority for reading it. Running or
+  missing steps execute again; Passed, Failed, Skipped, and NotApplicable steps
+  are not repeated. A newer attempt invalidates every older payload.
 
 - A failed lease renewal consumes the last server-issued authority window. The
   default requested window is 15 minutes, with a durable stop-before boundary

@@ -48,6 +48,7 @@ public sealed class CrashRecoveryService
     private readonly ILogger<CrashRecoveryService> _logger;
     private readonly IJsonlAppender _appender;
     private readonly PickupLockFile _pickupLock;
+    private readonly CliRouter? _cliRouter;
     private readonly object _pendingLock = new();
     private readonly List<PendingCrashRecovery> _pendingOrphanRecoveries = [];
 
@@ -61,7 +62,8 @@ public sealed class CrashRecoveryService
         IOptions<BackendFileLoggerOptions> logOptions,
         ILogger<CrashRecoveryService> logger,
         IJsonlAppender? appender = null,
-        PickupLockFile? pickupLock = null)
+        PickupLockFile? pickupLock = null,
+        CliRouter? cliRouter = null)
     {
         _scanner = scanner;
         _transitions = transitions;
@@ -74,6 +76,7 @@ public sealed class CrashRecoveryService
         _appender = appender ?? new JsonlAppender();
         _pickupLock = pickupLock ?? new PickupLockFile(
             Microsoft.Extensions.Logging.Abstractions.NullLogger<PickupLockFile>.Instance);
+        _cliRouter = cliRouter;
     }
 
     /// <summary>Path of the recovery audit log. Absolute, alongside daily backend logs.</summary>
@@ -722,6 +725,16 @@ public sealed class CrashRecoveryService
             var existing = _pickupLock.Peek(jobFolder);
             if (existing == null) continue;
 
+            var jobId = Path.GetFileName(jobFolder);
+            var durableJobKey = TaskIdentity.CreateKey(entry.Path, jobId);
+            if (_cliRouter?.CanReattach(durableJobKey) == true)
+            {
+                _logger.LogInformation(
+                    "CrashRecoveryService: durable worker/result for {JobId} bridges the backend restart; leaving the run and pickup lock in place",
+                    jobId);
+                continue;
+            }
+
             // ClearIfStale removes the lock only when its owner pid is dead on
             // this host. A live foreign owner returns false and is left alone.
             if (!_pickupLock.ClearIfStale(jobFolder))
@@ -731,8 +744,6 @@ public sealed class CrashRecoveryService
                     jobFolder, existing.BackendName, existing.Pid);
                 continue;
             }
-
-            var jobId = Path.GetFileName(jobFolder);
 
             try
             {

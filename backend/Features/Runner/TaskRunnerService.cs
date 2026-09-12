@@ -434,6 +434,14 @@ public class TaskRunnerService : BackgroundService
             _logger.LogInformation("Initialized runner for project '{Name}' (Root: {RootPath})", entry.Name, entry.RootPath);
         }
 
+        // All ProjectRunner instances have now subscribed to CLI completion.
+        // Only at this point may durable local workers be reattached: a worker
+        // can finish while Studio is down, and replaying that result before the
+        // subscriber exists would drop the sole post-run handoff.
+        _router.ReattachAll();
+        foreach (var runner in _runners.Values)
+            runner.ReconcileRecoveredRunsIntoSlots();
+
         // Check CLI availability (default backend = Claude)
         if (!_router.Get(CliTypes.Claude).IsAvailable())
         {

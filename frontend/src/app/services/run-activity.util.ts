@@ -269,6 +269,17 @@ export function buildRunActivityBadge(job: TaskInfo, nowMs: number = Date.now())
         ?? job.execution?.processId
         ?? job.executionLocation?.processId;
       const pid = typeof projectedPid === 'number' && projectedPid > 0 ? projectedPid : null;
+      if (activity.continuingAfterRestart) {
+        return {
+          kind: 'active',
+          label: 'continuing after restart',
+          tone: 'active',
+          tooltip: {
+            title: 'Continuing after restart',
+            body: `<div>Studio reattached to the durable worker and is continuing the same run.</div>${pid !== null ? `<div><b>PID:</b> ${pid}</div>` : ''}${attemptLine}${errorLine}`,
+          },
+        };
+      }
       return {
         kind: 'active',
         label: 'Run aktiv',

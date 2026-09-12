@@ -62,6 +62,22 @@ describe('buildRunActivityBadge — 3-progress run states (ASS-1751)', () => {
   });
 
   describe('(c) active run', () => {
+    it('shows restart adoption instead of an orphaned-run label', () => {
+      const badge = buildRunActivityBadge(makeJob({
+        kind: 'active',
+        processId: 4242,
+        attempt: 0,
+        continuingAfterRestart: true,
+      }), NOW);
+
+      expect(badge).toMatchObject({
+        kind: 'active',
+        label: 'continuing after restart',
+        tone: 'active',
+      });
+      expect(badge?.tooltip.title).toBe('Continuing after restart');
+    });
+
     it('shows "Run aktiv" with the PID in the tooltip', () => {
       const badge = buildRunActivityBadge(makeJob({ kind: 'active', processId: 4242, attempt: 0 }), NOW);
       expect(badge).not.toBeNull();

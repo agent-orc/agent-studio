@@ -28,4 +28,5 @@ public sealed record ChildHandle(
     Stream Stdin,
     StreamReader Stdout,
     StreamReader Stderr,
-    Action<RunStopReason>? KillOverride = null);
+    Action<RunStopReason>? KillOverride = null,
+    string? DurableWorkerDirectory = null);

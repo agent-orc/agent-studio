@@ -1675,3 +1675,69 @@ Task relations use two explicit, non-scheduling reference fields. The interventi
 **Non-goals.** Detection does not switch models, rewrite configuration, retry commands, or otherwise remediate the underlying failure. The follow-up task owns remediation. No scheduler, external script, or second task store is introduced.
 
 **Status.** Accepted.
+
+---
+
+## ADR-0072 - Backend and Runner restarts preserve in-flight execution (2026-09-12)
+
+**Decision.** A Studio, Task Server, or Runner service restart is an observer
+gap, not an attempt boundary. Local CLI execution moves into a detached worker
+that persists its command specification, PID generation, ordered output, and
+atomic terminal result outside the Studio process. A replacement Studio may
+adopt that worker only after PID start-time and working-directory verification,
+then resumes the original output sequence and post-run path. Windows workers
+break away from the Studio Job Object and use a new process group; Linux
+workers use a detached session. The durable active-jobs entry remains an index,
+not attempt authority.
+
+Remote coding and review retain the current Task Server attempt, lease instance,
+and monotonic fence across a bounded server gap. The last server-issued lease
+window is the restart grace window. Heartbeats retry with bounded backoff,
+registration is idempotent and reports positively verified live slots, and the
+Runner replays its ordered outbox only after exact authority is renewed. A miss
+inside the window does not expire the attempt. Exhausting the window expires it
+once and prevents any later replay under that fence.
+
+Review aspects and post-processing steps checkpoint within the current pipeline
+attempt. Terminal aspect evidence and post-step payloads are reusable only when
+the current `pipeline-execution.json` row is terminal and carries the same
+attempt. Running, missing, torn, or stale evidence is rerun. A fence or attempt
+superseded while a process was unavailable always wins over a late worker,
+checkpoint, completion, or outbox delivery.
+
+**Context.** Studio previously treated startup as an orphan-reaping boundary.
+It killed local CLI trees from the active-jobs file and left cards in Progress
+until secondary recovery noticed them. Remote workers already survived Runner
+unit restarts, but server connectivity and post-processing recovery were not one
+end-to-end deployment guarantee. Operators therefore had to drain active work
+before deploying accumulated changes.
+
+**Consequences.** `continuingAfterRestart` is a live board state and
+`run_restart_bridged` is the matching timeline fact. A verified terminal result
+written during the gap runs downstream completion once without charging reissue
+budget. A worker that is neither live nor terminal is reported as the distinct
+`run lost across restart` failure class. Pipeline payload files are evidence,
+not a second lifecycle store: the attempt row and fence always decide whether
+they may be read.
+
+**Non-goals.** This does not weaken fencing, introduce lease-free settlement,
+create an active-active backend, or make a stale PID sufficient proof. It does
+not preserve a process after its authority deadline or infer success when both
+the worker and terminal result are absent.
+
+**Implementation pointers.** Local worker and adoption:
+[`LocalCliDurableWorker.cs`](../../../../backend/Features/Cli/Execution/LocalCliDurableWorker.cs)
+and
+[`CliExecutionServiceBase.cs`](../../../../backend/Features/Cli/Execution/CliExecutionServiceBase.cs).
+Pipeline authority and payload evidence:
+[`PipelineExecutionLog.cs`](../../../../backend/Features/Pipeline/PipelineExecutionLog.cs)
+and
+[`PostStepCheckpointStore.cs`](../../../../backend/Features/Pipeline/PostStepCheckpointStore.cs).
+Remote authority and replay:
+[`LeaseHeartbeat.cs`](../../../../runner/LeaseHeartbeat.cs),
+[`DurableRunOutbox.cs`](../../../../runner/DurableRunOutbox.cs), and
+[`TaskServerStore.cs`](../../../../task-server/TaskServerStore.cs).
+Operator proof:
+[`restart-continuity-drill.sh`](../../../operations/restart-continuity-drill.sh).
+
+**Status.** Accepted.

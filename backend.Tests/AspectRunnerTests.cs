@@ -717,6 +717,58 @@ public class AspectRunnerTests : IDisposable
         Assert.Equal(1, calls["code-quality"]); // no retry for a real (if garbage) reply
     }
 
+    [Fact]
+    public async Task BackendRestart_ResumesTwoOfFourCheckpointedAspects_WithoutRerunningThem()
+    {
+        var pipeline = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var attempt = pipeline.Begin(_jobFolder, PipelineCatalogue.Standard, "demo", "test-job");
+        var checkpointed = new[] { "requirement-fit", "code-quality" };
+        foreach (var aspect in checkpointed)
+        {
+            var verdict = new AspectVerdict(aspect, AspectStatus.Pass, $"{aspect} already graded", "persisted", null);
+            File.WriteAllText(
+                Path.Combine(_jobFolder, $"aspect-{aspect}.json"),
+                AspectVerdictParsing.RenderJson(verdict, "claude-haiku-4-5", attempt.StartedAt.AddSeconds(1)));
+            pipeline.RecordStep(_jobFolder, new PipelineStepExecution
+            {
+                StepId = $"aspect-{aspect}",
+                Kind = StepKind.Aspect,
+                Status = PipelineStepStatus.Passed,
+                StartedAt = attempt.StartedAt,
+                CompletedAt = attempt.StartedAt.AddSeconds(1),
+            });
+        }
+
+        var calls = new System.Collections.Concurrent.ConcurrentBag<string>();
+        var config = new ConfigurationBuilder().Build();
+        var prompts = new RuntimePromptService(config, NullLogger<RuntimePromptService>.Instance);
+        var runner = new AspectRunnerService(
+            prompts,
+            NullLogger<AspectRunnerService>.Instance,
+            pipelineLog: pipeline);
+        runner.CliRunner = (aspectId, _, _, _, _, _) =>
+        {
+            calls.Add(aspectId);
+            return Task.FromResult($"[[ASPECT_VERDICT: status=pass; summary={aspectId} newly graded]]");
+        };
+
+        var report = await runner.RunAsync(
+            BuildInputs(),
+            ["requirement-fit", "code-quality", "documentation-impact", "tests-and-evidence"],
+            "claude",
+            "claude-haiku-4-5",
+            TimeSpan.FromSeconds(5),
+            CancellationToken.None);
+
+        Assert.Equal(4, report.Verdicts.Count);
+        Assert.Equal(2, calls.Count);
+        Assert.DoesNotContain("requirement-fit", calls);
+        Assert.DoesNotContain("code-quality", calls);
+        Assert.Contains("documentation-impact", calls);
+        Assert.Contains("tests-and-evidence", calls);
+        Assert.Equal(attempt.Attempt, pipeline.Read(_jobFolder)!.Attempt);
+    }
+
     private AspectRunInputs BuildInputs() => new(
         Project: "demo",
         JobId: "test-job",

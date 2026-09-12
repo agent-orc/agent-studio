@@ -208,7 +208,21 @@ public sealed class AspectRunnerService
         var maxParallel = Math.Min(resolved.Count, 4);
         using var gate = new SemaphoreSlim(maxParallel, maxParallel);
 
-        var tasks = resolved
+        // A backend restart resumes the same pipeline attempt. Completed
+        // aspects carry both a terminal step row and a structured verdict
+        // artifact; only that pair is a checkpoint. A stale artifact from a
+        // prior attempt, or a Running step with no verdict, is rerun.
+        var checkpoint = _pipelineLog?.Read(inputs.JobFolderPath);
+        var resumed = new List<(int Index, AspectVerdict Verdict)>();
+        var pending = new List<(int Index, string AspectId, AspectDefinition Def)>();
+        foreach (var entry in resolved)
+        {
+            var verdict = TryReadCheckpointedVerdict(entry.Def, inputs, checkpoint);
+            if (verdict is null) pending.Add(entry);
+            else resumed.Add((entry.Index, verdict));
+        }
+
+        var tasks = pending
             .Select(entry =>
             {
                 // Per-step model routing: the orchestrator hands us a
@@ -225,7 +239,7 @@ public sealed class AspectRunnerService
             })
             .ToArray();
 
-        var perIndex = await Task.WhenAll(tasks);
+        var perIndex = resumed.Concat(await Task.WhenAll(tasks));
 
         // Re-sort to match the requested aspect order; WhenAll's array is
         // already index-aligned (Select preserved order), but a future
@@ -237,6 +251,51 @@ public sealed class AspectRunnerService
             .ToList();
 
         return AspectRunReport.From(verdicts);
+    }
+
+    private AspectVerdict? TryReadCheckpointedVerdict(
+        AspectDefinition definition,
+        AspectRunInputs inputs,
+        PipelineExecutionRecord? execution)
+    {
+        if (execution is null || execution.IsComplete) return null;
+        var step = execution.Steps.FirstOrDefault(candidate =>
+            string.Equals(candidate.StepId, $"aspect-{definition.Id}", StringComparison.OrdinalIgnoreCase));
+        if (step?.Attempt != execution.Attempt
+            || step.Status is not (PipelineStepStatus.Passed or PipelineStepStatus.Failed)) return null;
+
+        var path = Path.Combine(inputs.JobFolderPath, $"aspect-{definition.Id}.json");
+        if (!File.Exists(path)) return null;
+        try
+        {
+            var document = AspectVerdictParsing.TryParseJson(File.ReadAllText(path));
+            if (document is null
+                || document.CreatedAt < execution.StartedAt
+                || !string.Equals(document.Aspect, definition.Id, StringComparison.OrdinalIgnoreCase))
+                return null;
+            var status = document.Status.ToLowerInvariant() switch
+            {
+                "pass" => AspectStatus.Pass,
+                "concerns" => AspectStatus.Concerns,
+                "block" => AspectStatus.Block,
+                _ => (AspectStatus?)null,
+            };
+            if (status is null) return null;
+            _logger.LogInformation(
+                "Resuming review attempt {Attempt}: aspect {AspectId} already has a fenced verdict and will not be charged again",
+                execution.Attempt, definition.Id);
+            return new AspectVerdict(
+                document.Aspect,
+                status.Value,
+                document.Summary,
+                document.Details,
+                document.Tag);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(ex, "Could not read aspect checkpoint {Path}; the aspect will run again", path);
+            return null;
+        }
     }
 
     private async Task<(int Index, AspectVerdict Verdict)> RunOneAspectAsync(

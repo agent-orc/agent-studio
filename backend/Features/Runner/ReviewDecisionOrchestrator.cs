@@ -3418,6 +3418,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             CancellationToken ct)
     {
         if (_qualityAnalysisRunner is null) return null;
+        if (PostStepCheckpointStore.TryRead<AgentStudio.Pipeline.QualityAnalysisStepResult>(
+                _pipelineLog, current.FolderPath, PipelineCatalogue.QualityAngularRulesStepId, out var checkpoint))
+            return checkpoint;
         var repositoryPath = string.IsNullOrWhiteSpace(entry.RepositoryPath)
             ? entry.RootPath
             : entry.RepositoryPath;
@@ -3471,6 +3474,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 EvidenceRef = result.EvidencePath,
             });
         }
+        PostStepCheckpointStore.Write(
+            _pipelineLog, current.FolderPath, PipelineCatalogue.QualityAngularRulesStepId, result);
         return result;
     }
 
@@ -3515,6 +3520,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         CancellationToken ct)
     {
         if (_lintScssRunner == null) return null;
+        if (PostStepCheckpointStore.TryRead<LintScssResult>(
+                _pipelineLog, current.FolderPath, PipelineCatalogue.LintScssStepId, out var checkpoint))
+            return checkpoint;
 
         var settings = PipelineTypeSettings.ForTask(_projectSettings?.Get(entry.Name), current);
         var lintStep = PipelineCatalogue.Standard.Post.FirstOrDefault(s =>
@@ -3583,6 +3591,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         };
         RecordLintScssStep(current.FolderPath, status, result.DurationMs, verdictToken, result.Reason);
         WriteLintScssLog(current.FolderPath, result);
+        PostStepCheckpointStore.Write(
+            _pipelineLog, current.FolderPath, PipelineCatalogue.LintScssStepId, result);
         return result;
     }
 
@@ -3668,6 +3678,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         CancellationToken ct)
     {
         if (_buildTestGateRunner == null) return null;
+        if (PostStepCheckpointStore.TryRead<BuildTestGateResult>(
+                _pipelineLog, current.FolderPath, PipelineCatalogue.BuildTestGateStepId, out var checkpoint))
+            return checkpoint;
 
         var projectSettings = _projectSettings?.Get(entry.Name);
         var settings = PipelineTypeSettings.ForTask(projectSettings, current);
@@ -3844,6 +3857,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             _ => "skipped",
         };
         RecordBuildTestGateStep(current.FolderPath, status, result.DurationMs, verdictToken, result.Reason);
+        PostStepCheckpointStore.Write(
+            _pipelineLog, current.FolderPath, PipelineCatalogue.BuildTestGateStepId, result);
 
         _logger.LogInformation(
             "ReviewDecisionOrchestrator: build-test gate {Verdict} for {Project}/{JobId} in {DurationMs}ms (backend={Backend} frontend={Frontend} changedFiles={ChangedFiles})",
@@ -4171,6 +4186,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         CancellationToken ct)
     {
         var stepId = PipelineCatalogue.CodeReviewGradeStepId;
+        if (PostStepCheckpointStore.TryRead<AgentStudio.Review.CodeReviewStepReport>(
+                _pipelineLog, job.FolderPath, stepId, out var checkpoint))
+            return checkpoint;
         if (_codeReviewStep == null)
         {
             RecordCodeReviewGradeTerminal(
@@ -4278,6 +4296,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     startedAt,
                     report.Model,
                     report.ThinkingLevel);
+                PostStepCheckpointStore.Write(_pipelineLog, job.FolderPath, stepId, report);
                 return report;
             }
 
@@ -4313,6 +4332,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             _logger.LogInformation(
                 "code-review-grade: project={Project} job={JobId} grade={Grade} model={Model} file={File}",
                 entry.Name, job.Id, gradeToken, report.Model, report.FileName);
+            PostStepCheckpointStore.Write(_pipelineLog, job.FolderPath, stepId, report);
             return report;
         }
         catch (OperationCanceledException)
@@ -4394,6 +4414,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         if (_taskSpawner == null) return;
 
         var stepId = PipelineCatalogue.TaskSpawnerStepId;
+        if (_pipelineLog?.TryGetTerminalStep(current.FolderPath, stepId, out _, out _) == true)
+            return;
         var settings = PipelineTypeSettings.ForTask(_projectSettings?.Get(entry.Name), current);
         var catalogueStep = PipelineCatalogue.Standard.Post.FirstOrDefault(s =>
             string.Equals(s.Id, stepId, StringComparison.OrdinalIgnoreCase));
@@ -4870,6 +4892,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     /// </summary>
     private void RunRegressionRadarPostStep(WatchPathEntry entry, TaskInfo current)
     {
+        if (_pipelineLog?.TryGetTerminalStep(
+                current.FolderPath, PipelineCatalogue.RegressionRadarStepId, out _, out _) == true)
+            return;
         var analyze = RegressionRadarAnalyzer
             ?? (_regressionRadar != null
                 ? _regressionRadar.Analyze
@@ -4957,6 +4982,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         TaskInfo current)
     {
         if (_dossierMaintenance == null) return null;
+        if (PostStepCheckpointStore.TryRead<DossierMaintenanceReview>(
+                _pipelineLog, current.FolderPath, PipelineCatalogue.DossierMaintenanceStepId, out var checkpoint))
+            return checkpoint;
         var startedAt = DateTime.UtcNow;
         DossierMaintenanceReview review;
         try
@@ -4983,6 +5011,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _pipelineLog?.RecordStep(
             current.FolderPath,
             DossierMaintenanceStepPolicy.ToExecution(review, startedAt, completedAt));
+        PostStepCheckpointStore.Write(
+            _pipelineLog, current.FolderPath, PipelineCatalogue.DossierMaintenanceStepId, review);
         return review;
     }
 
@@ -4994,6 +5024,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     private void RunWikiMaintenancePostStep(WatchPathEntry entry, TaskInfo current)
     {
         if (_wikiMaintenance == null) return;
+        if (_pipelineLog?.TryGetTerminalStep(
+                current.FolderPath, PipelineCatalogue.WikiMaintenanceStepId, out _, out _) == true)
+            return;
 
         var settings = PipelineTypeSettings.ForTask(_projectSettings?.Get(entry.Name), current);
         var wikiStep = PipelineCatalogue.Standard.Post.FirstOrDefault(s =>
@@ -5082,6 +5115,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         string diffSummary)
     {
         if (_wikiLearnings == null) return;
+        if (_pipelineLog?.TryGetTerminalStep(
+                current.FolderPath, PipelineCatalogue.WikiLearningsStepId, out _, out _) == true)
+            return;
 
         var settings = PipelineTypeSettings.ForTask(_projectSettings?.Get(entry.Name), current);
         var step = PipelineCatalogue.Standard.Post.FirstOrDefault(s =>
@@ -5267,6 +5303,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     private void RunAgentsWikiSyncPostStep(WatchPathEntry entry, TaskInfo current)
     {
         if (_agentsWikiSync == null) return;
+        if (_pipelineLog?.TryGetTerminalStep(
+                current.FolderPath, PipelineCatalogue.AgentsWikiSyncStepId, out _, out _) == true)
+            return;
 
         var settings = PipelineTypeSettings.ForTask(_projectSettings?.Get(entry.Name), current);
         var step = PipelineCatalogue.Standard.Post.FirstOrDefault(s =>

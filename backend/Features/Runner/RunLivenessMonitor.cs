@@ -67,6 +67,7 @@ public sealed class RunLivenessMonitor
     private readonly ILogger<RunLivenessMonitor> _logger;
     private readonly IJsonlAppender _appender;
     private readonly RunLeaseService? _leases;
+    private readonly CliRouter? _cliRouter;
 
     /// <summary>Default uptime grace: silence tolerated before a missing heartbeat counts as process-lost.</summary>
     public const int DefaultGraceSeconds = 30;
@@ -85,7 +86,8 @@ public sealed class RunLivenessMonitor
         ITaskAccess taskAccess,
         ILogger<RunLivenessMonitor> logger,
         IJsonlAppender? appender = null,
-        RunLeaseService? leases = null)
+        RunLeaseService? leases = null,
+        CliRouter? cliRouter = null)
     {
         _scanner = scanner;
         _transitions = transitions;
@@ -98,6 +100,7 @@ public sealed class RunLivenessMonitor
         _logger = logger;
         _appender = appender ?? new JsonlAppender();
         _leases = leases;
+        _cliRouter = cliRouter;
     }
 
     /// <summary>
@@ -168,13 +171,16 @@ public sealed class RunLivenessMonitor
                 // leave it to StaleProgressArchiver's debris/mid-move handling.
                 var hasJobJson = File.Exists(Path.Combine(folder, "task.json"));
                 var taskKey = hasJobJson ? TryReadTaskKey(folder) ?? laneFolder.Slug : laneFolder.Slug;
+                var durableJobKey = TaskIdentity.CreateKey(entry.Path, laneFolder.Slug);
                 candidates.Add(new Candidate(
                     laneFolder.Slug,
                     folder,
                     hasJobJson,
                     isActiveHere,
                     HasRemoteLeaseHistory: _leases?.Inspect(taskKey).Lease is not null,
-                    HasLiveHeartbeat: isActiveHere || _pickupLock.HasLiveOwner(folder),
+                    HasLiveHeartbeat: isActiveHere
+                                      || _pickupLock.HasLiveOwner(folder)
+                                      || (_cliRouter?.CanReattach(durableJobKey) ?? false),
                     HasVisibleWaitingState: hasJobJson && HasVisibleWaitingState(folder),
                     CoreRunFinished: hasJobJson && RunFinishedSignal.CoreRunFinished(folder),
                     SecondsSinceActivity: (now - MeasureLastActivity(folder)).TotalSeconds));

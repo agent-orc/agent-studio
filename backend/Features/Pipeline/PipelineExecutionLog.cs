@@ -14,8 +14,9 @@ namespace AgentStudio.Pipeline;
 /// non-deterministic order, so the log holds an in-memory record per
 /// (jobFolder, pipelineId) keyed pair under a lock; finishing a step
 /// merges into that record and rewrites the file atomically. Failures
-/// to write are logged and swallowed - the persistence is observability,
-/// not a state-machine input.
+/// to write are logged and swallowed. Terminal rows are also restart
+/// checkpoints: consumers may reuse their persisted result payload only while
+/// the row still belongs to the current attempt.
 /// </summary>
 public sealed class PipelineExecutionLog
 {
@@ -347,6 +348,30 @@ public sealed class PipelineExecutionLog
             var completed = current with { CompletedAt = nowUtc ?? DateTime.UtcNow };
             WriteAtomic(jobFolderPath, NormalizeCompletedRecord(completed, pendingStepReason));
         }
+    }
+
+    /// <summary>
+    /// Resolve a terminal step from the current attempt. Result-payload
+    /// checkpoints use this as their authority check, so an artifact from a
+    /// superseded attempt can never suppress work in the active attempt.
+    /// </summary>
+    public bool TryGetTerminalStep(
+        string jobFolderPath,
+        string stepId,
+        out PipelineStepExecution? step,
+        out int attempt)
+    {
+        var current = Read(jobFolderPath);
+        attempt = current?.Attempt ?? 0;
+        step = current?.Steps.FirstOrDefault(candidate =>
+            string.Equals(candidate.StepId, stepId, StringComparison.OrdinalIgnoreCase));
+        return current is { IsComplete: false }
+               && step is not null
+               && step.Attempt == current.Attempt
+               && step.Status is PipelineStepStatus.Passed
+                   or PipelineStepStatus.Failed
+                   or PipelineStepStatus.Skipped
+                   or PipelineStepStatus.NotApplicable;
     }
 
     /// <summary>

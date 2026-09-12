@@ -127,6 +127,15 @@ loopback listener with a generated 256-bit bearer credential. Selecting
 
 ## Update
 
+Before promoting a release that changes Studio, Runner, Task Server, review, or
+pipeline lifecycle code, run
+[`restart-continuity-drill.sh`](restart-continuity-drill.sh) against a disposable
+test subject with one local and one Remote task already in Progress. Retain its
+PASS log with the release evidence. The drill must observe both tasks settle and
+exactly one `run_restart_bridged` timeline event for the local run. Its before
+and after timeline counts must also prove that neither task opened a replacement
+agent run, which is the release-level check that the restart charged no reissue.
+
 Run the updater from the installed `current` tree or from the extracted
 candidate:
 

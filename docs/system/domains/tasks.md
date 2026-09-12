@@ -205,6 +205,17 @@ counted, sized, hashed, and referenced, but their messages are not replayed as
 Task Server events. The frozen source therefore remains required recovery
 material.
 
+Restart continuation does not create an attempt. The attempt ledger and its
+monotonic fence remain authoritative while local workers, Remote outboxes,
+review verdicts, and pipeline result payloads provide resumable execution
+evidence. A replacement process may reuse evidence only when it matches the
+current attempt. If an operator superseded that fence during the restart gap,
+the ordinary stale-fence rejection wins and the late worker result has no task
+state authority. The read model exposes a live adopted local run as
+`continuingAfterRestart`; the timeline pairs `run_restart_bridged` with the
+original run identifier. An unbridgeable local worker is reported separately
+as `run lost across restart`.
+
 Closed coding and review attempts remain closed history. Open leases retain
 their identity, runner, host, fence, and epoch but become `process-unknown`.
 Authority and integration records for removed task folders do not abort the

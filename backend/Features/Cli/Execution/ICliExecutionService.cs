@@ -177,6 +177,14 @@ public interface ICliExecutionService
     void ReattachOnStartup();
 
     /// <summary>
+    /// Returns true when startup recovery can prove that this exact local run
+    /// still has either a live durable worker or an atomic terminal result.
+    /// Recovery services use this before the project runner has initialized,
+    /// so a restart bridge is not mistaken for a dead execution.
+    /// </summary>
+    bool CanReattach(string jobKey) => false;
+
+    /// <summary>
     /// Periodic orphan sweep, run on a timer <b>while the backend is up</b>
     /// (unlike <see cref="ReattachOnStartup"/>, which only fires once at boot).
     /// Closes the days-long accumulation gap: when the backend stays up for

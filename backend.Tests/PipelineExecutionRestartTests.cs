@@ -409,4 +409,81 @@ public class PipelineExecutionRestartTests : IDisposable
         Assert.Equal(PipelineStepStatus.Pending, decision.Status);
         Assert.Null(decision.Verdict);
     }
+
+    [Fact]
+    public void BackendRestart_ResumesPostStepChain_FromFirstUnfinishedStep()
+    {
+        var firstHost = _log.Begin(
+            _jobFolder, PipelineCatalogue.Standard, project: "demo", jobId: "job-1");
+        using (var attempt = _log.EnterAttempt(_jobFolder, firstHost.Attempt))
+        {
+            var completedAt = DateTime.UtcNow;
+            _log.RecordStep(_jobFolder, new PipelineStepExecution
+            {
+                StepId = PipelineCatalogue.BuildTestGateStepId,
+                Kind = StepKind.Tool,
+                Status = PipelineStepStatus.Passed,
+                StartedAt = completedAt.AddSeconds(-1),
+                CompletedAt = completedAt,
+                Verdict = "ok",
+            });
+            PostStepCheckpointStore.Write(
+                _log,
+                _jobFolder,
+                PipelineCatalogue.BuildTestGateStepId,
+                new BuildTestGateResult(BuildTestGateVerdict.Ok, 0, 1000, "green", "passed", true, false));
+            _log.RecordStep(_jobFolder, new PipelineStepExecution
+            {
+                StepId = PipelineCatalogue.LintScssStepId,
+                Kind = StepKind.Tool,
+                Status = PipelineStepStatus.Running,
+                StartedAt = completedAt,
+            });
+        }
+
+        // A replacement host gets a new in-memory logger instance but reads the
+        // same attempt authority and payload evidence from the task folder.
+        var replacement = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var buildInvocations = 0;
+        var lintInvocations = 0;
+        var radarInvocations = 0;
+        using (replacement.EnterAttempt(_jobFolder, firstHost.Attempt))
+        {
+            if (!PostStepCheckpointStore.TryRead<BuildTestGateResult>(
+                    replacement, _jobFolder, PipelineCatalogue.BuildTestGateStepId, out var build))
+            {
+                buildInvocations++;
+            }
+            Assert.Equal(BuildTestGateVerdict.Ok, build!.Verdict);
+
+            Assert.False(PostStepCheckpointStore.TryRead<LintScssResult>(
+                replacement, _jobFolder, PipelineCatalogue.LintScssStepId, out _));
+            lintInvocations++;
+            replacement.RecordStep(_jobFolder, new PipelineStepExecution
+            {
+                StepId = PipelineCatalogue.LintScssStepId,
+                Kind = StepKind.Tool,
+                Status = PipelineStepStatus.Passed,
+                StartedAt = DateTime.UtcNow,
+                CompletedAt = DateTime.UtcNow,
+                Verdict = "ok",
+            });
+
+            radarInvocations++;
+            replacement.RecordStep(_jobFolder, new PipelineStepExecution
+            {
+                StepId = PipelineCatalogue.RegressionRadarStepId,
+                Kind = StepKind.Tool,
+                Status = PipelineStepStatus.Passed,
+                StartedAt = DateTime.UtcNow,
+                CompletedAt = DateTime.UtcNow,
+                Verdict = "clean",
+            });
+        }
+
+        Assert.Equal(0, buildInvocations);
+        Assert.Equal(1, lintInvocations);
+        Assert.Equal(1, radarInvocations);
+        Assert.Equal(firstHost.Attempt, replacement.Read(_jobFolder)!.Attempt);
+    }
 }

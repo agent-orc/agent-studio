@@ -19,12 +19,16 @@ public record CliExecution
     public double? DurationSeconds { get; init; }
     public string? Model { get; init; }
     public string? ThinkingLevel { get; init; }
+    /// <summary>CLI working directory, retained so restart recovery can restore worktree ownership.</summary>
+    public string? WorkingDirectory { get; init; }
     /// <summary>
     /// Canonical terminal run outcome once known: success, failed, noop,
     /// blocked, needs-input, interrupted, or unknown. Null while running and
     /// on legacy in-memory records.
     /// </summary>
     public string? RunOutcome { get; init; }
+    /// <summary>True when a replacement Studio host adopted this durable local worker.</summary>
+    public bool ContinuedAfterRestart { get; init; }
 }
 
 public static class TaskIdentity
@@ -39,8 +43,9 @@ public static class TaskIdentity
 /// can be re-picked, and an orphan whose run was killed by a backend restart and
 /// has not been re-picked yet. Purely additive and never persisted - it is
 /// folded onto <see cref="TaskInfo"/> at endpoint-read time from the project
-/// runner's in-memory state and only for Progress-lane tasks. Carries NO
-/// behavior; the UI renders a small, quiet status pill from it.
+/// runner's in-memory state and only for Progress-lane tasks. A durable worker
+/// is re-booked into that state during startup. Carries NO behavior; the UI
+/// renders a small, quiet status pill from it.
 /// </summary>
 public record TaskRunActivity
 {
@@ -54,6 +59,8 @@ public record TaskRunActivity
     public int Attempt { get; init; }
     /// <summary>One-line last-error summary mirrored from <see cref="TaskOutcomeIssue.Summary"/>; null when no issue is known.</summary>
     public string? LastError { get; init; }
+    /// <summary>True while a replacement Studio host monitors the same durable worker.</summary>
+    public bool ContinuingAfterRestart { get; init; }
 }
 
 /// <summary>
@@ -123,6 +130,7 @@ public static class TaskRunActivityClassifier
                 ProcessId = execution is { ProcessId: > 0 } ? execution.ProcessId : null,
                 Attempt = attempt,
                 LastError = lastError,
+                ContinuingAfterRestart = execution?.ContinuedAfterRestart == true,
             };
         }
 

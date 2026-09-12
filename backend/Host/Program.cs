@@ -6,6 +6,13 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Serilog;
 using Serilog.Events;
 
+if (args.Length == 2
+    && string.Equals(args[0], LocalCliDurableWorker.WorkerArgument, StringComparison.Ordinal))
+{
+    await LocalCliDurableWorker.RunAsync(args[1]);
+    return;
+}
+
 // Static Serilog logger so DI-less / static contexts (TryReadEnteredLaneAt,
 // path + parser helpers, the SilentCatch standard) have a real logger before -
 // and independently of - the DI container. CreateBootstrapLogger publishes it
@@ -1583,21 +1590,9 @@ cliRouter.OnRunEvent += (cliType, jobId, evt) =>
         TaskEventClients(jobId).SendAsync("planUpdated", jobId, cliType);
 };
 
-// Per-CLI startup hook. Claude / Codex / Gemini reap orphans - see
-// GenericCliExecutionService.ReattachOnStartup. Must run before any new CLI run
-// is started so we never have two processes editing the same repo.
-//
-// Skipped under a test host: a WebApplicationFactory<Program> in-process boot
-// has no "previous backend run" of its own to reap, and the reaper reads a
-// PROCESS-SHARED active-jobs file (GetActiveJobsPath falls back to
-// <bin>/runtime/active-jobs-*.json when TaskRepository is unset) and calls
-// Process.Kill(entireProcessTree) on the recorded PIDs. A stale entry left by
-// an earlier run whose PID has since been recycled - on Linux, potentially to
-// the test host itself - would be blind-killed, taking the whole run down with
-// a "died silently" signature. Boot orphan-reaping belongs to the real,
-// long-lived backend, not to ephemeral test boots.
-if (!underTestHost)
-    cliRouter.ReattachAll();
+// Local CLI reattachment runs from TaskRunnerService after every ProjectRunner
+// has subscribed to completion. Boot recovery uses the durable active-job
+// proof before then, so it does not mistake a bridgeable run for an orphan.
 // A detached ng/esbuild helper is no longer reachable from its original CLI
 // PID and therefore has no useful active-jobs entry. At boot there are no live
 // runs yet, so reclaim helpers whose command line still points into an

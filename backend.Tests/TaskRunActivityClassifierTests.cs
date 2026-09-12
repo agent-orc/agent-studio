@@ -14,6 +14,23 @@ namespace AgentStudio.Tests;
 /// </summary>
 public sealed class TaskRunActivityClassifierTests
 {
+    [Fact]
+    public void ActiveReattachedExecution_ProjectsContinuingAfterRestart()
+    {
+        var execution = new CliExecution
+        {
+            Status = "running",
+            ProcessId = 321,
+            ContinuedAfterRestart = true,
+        };
+
+        var activity = TaskRunActivityClassifier.Classify(default, execution, null, Now);
+
+        Assert.Equal(TaskRunActivityKinds.Active, activity.Kind);
+        Assert.True(activity.ContinuingAfterRestart);
+        Assert.Equal(321, activity.ProcessId);
+    }
+
     private static readonly DateTime Now = new(2026, 6, 10, 12, 0, 0, DateTimeKind.Utc);
 
     private static CliExecution Exec(string status, int pid = 0) =>

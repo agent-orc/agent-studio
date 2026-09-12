@@ -219,6 +219,20 @@ public class TaskScannerOutcomeIssueTests : IDisposable
     }
 
     [Fact]
+    public void RunLostAcrossRestartMarker_SurfacesDistinctHighSeverityOutcome()
+    {
+        SeedJob("restart-loss", TaskStates.HumanReview,
+            $"[09:10:00.000] [system] [taskboard] run lost across restart: worker PID 412 no longer exists{Environment.NewLine}");
+
+        var issue = Outcome("restart-loss");
+
+        Assert.NotNull(issue);
+        Assert.Equal("run-lost-across-restart", issue!.Kind);
+        Assert.Equal("Run lost across restart", issue.Label);
+        Assert.Equal("High", issue.Severity);
+    }
+
+    [Fact]
     public void WorktreeContainmentMarker_SurfacesHighSeverityOutcome()
     {
         SeedJob("worktree-containment", TaskStates.HumanReview,

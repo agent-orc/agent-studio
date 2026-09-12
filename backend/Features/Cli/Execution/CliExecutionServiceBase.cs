@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
 using AgentStudio.CliHosting;
+using AgentStudio.Tasks;
 using LibOutcome = CodingAgentRunner.Model.RunOutcome;
 
 namespace AgentStudio.Cli;
@@ -391,7 +392,8 @@ public partial class GenericCliExecutionService : ICliExecutionService
         CancellationToken ct = default)
     {
         var engine = CliExecutionEngines.Normalize(executionEngine);
-        if (engine == CliExecutionEngines.Car && SupportsCarExecution)
+        var durableLocalWorker = _configuration.GetValue("CliExecution:DurableLocalWorkers", false);
+        if (engine == CliExecutionEngines.Car && SupportsCarExecution && !durableLocalWorker)
         {
             return StartCarAsync(
                 jobId, jobKey, prompt, workingDirectory, sessionName,
@@ -428,7 +430,7 @@ public partial class GenericCliExecutionService : ICliExecutionService
     {
         if (_processes.TryGetValue(jobKey, out var existing))
         {
-            if (!existing.Process.HasExited)
+            if (!SafeHasExited(existing.Process))
                 return (null, $"{CliType} CLI process already running for job '{jobId}'");
             // Keep the finished attempt until the new process is adopted. Its
             // retention timer remains the fallback owner of a reused clean
@@ -616,7 +618,7 @@ public partial class GenericCliExecutionService : ICliExecutionService
         // here, immediately after spawn, so the CLI's later children inherit
         // group membership. Best-effort + Windows-only; null leaves the
         // existing tree-kill path in force.
-        var processReaper = OperatingSystem.IsWindows()
+        var processReaper = OperatingSystem.IsWindows() && child.DurableWorkerDirectory is null
             ? TaskProcessReaper.CreateForProcess(process, _logger)
             : null;
 
@@ -628,7 +630,8 @@ public partial class GenericCliExecutionService : ICliExecutionService
             StartedAt = DateTime.UtcNow,
             Status = "running",
             Model = string.IsNullOrWhiteSpace(invocationModel) ? null : invocationModel,
-            ThinkingLevel = invocationThinkingLevel
+            ThinkingLevel = invocationThinkingLevel,
+            WorkingDirectory = workingDirectory,
         };
 
         var logDir = GetOutputLogDir(jobKey);
@@ -643,7 +646,8 @@ public partial class GenericCliExecutionService : ICliExecutionService
             PermissionMode = permissionMode,
             ContextMode = CliContextModes.Normalize(contextMode),
             CleanContext = cleanContext,
-            ProcessReaper = processReaper
+            ProcessReaper = processReaper,
+            DurableWorkerDirectory = child.DurableWorkerDirectory,
         };
         try { info.OutputLog.Reset(); }
         catch (Exception ex) { _logger.LogWarning(ex, "Failed to reset CLI output log dir {Path}", logDir); }
@@ -662,7 +666,15 @@ public partial class GenericCliExecutionService : ICliExecutionService
                 ProcessId = process.Id,
                 ProcessName = SafeProcessName(process),
                 ProcessStartTimeUtc = SafeProcessStartTime(process),
-                StartedAt = execution.StartedAt
+                StartedAt = execution.StartedAt,
+                WorkingDirectory = workingDirectory,
+                JobFolderPath = jobFolderPath,
+                DurableWorkerDirectory = child.DurableWorkerDirectory,
+                Model = execution.Model,
+                ThinkingLevel = execution.ThinkingLevel,
+                SessionName = sessionName,
+                PermissionMode = permissionMode,
+                ContextMode = CliContextModes.Normalize(contextMode),
             });
         }
         catch (Exception ex)
@@ -703,8 +715,12 @@ public partial class GenericCliExecutionService : ICliExecutionService
             _logger.LogWarning("Failed to persist 'started' line for job {JobId} to {Path}", jobId, info.OutputLogPath);
         try { OnOutput?.Invoke(jobKey, startedLine); } catch (Exception __ex) { SilentCatch.Note(__ex, "CliExecutionServiceBase:501"); }
 
-        var stdoutTask = ReadStreamAsync(jobKey, child.Stdout, "stdout", info, ct);
-        var stderrTask = ReadStreamAsync(jobKey, child.Stderr, "stderr", info, ct);
+        var stdoutTask = child.DurableWorkerDirectory is { } durableDirectory
+            ? FollowDurableWorkerOutputAsync(jobKey, durableDirectory, info, ct)
+            : ReadStreamAsync(jobKey, child.Stdout, "stdout", info, ct);
+        var stderrTask = child.DurableWorkerDirectory is null
+            ? ReadStreamAsync(jobKey, child.Stderr, "stderr", info, ct)
+            : Task.CompletedTask;
         info.StdoutReadTask = stdoutTask;
         info.StderrReadTask = stderrTask;
         _ = MonitorProcessAsync(jobKey, process, info, ct);
@@ -739,8 +755,30 @@ public partial class GenericCliExecutionService : ICliExecutionService
         bool resumeSession,
         string? model,
         CancellationToken ct)
-        => _behavior.SpawnChild?.Invoke(this, psi, prompt, sessionName, resumeSession, model, ct)
-           ?? DefaultSpawnChildAsync(psi, prompt, sessionName, resumeSession, model, ct);
+    {
+        if (_configuration.GetValue("CliExecution:DurableLocalWorkers", false))
+        {
+            var stdin = psi.RedirectStandardInput
+                ? GetPromptStdinPayload(prompt, sessionName, resumeSession, model)
+                : null;
+            var directory = Path.Combine(
+                Path.GetDirectoryName(GetActiveJobsPath())!,
+                "local-workers",
+                SanitizeForFile(CliType),
+                Guid.NewGuid().ToString("N"));
+            var spec = LocalCliDurableWorker.BuildSpec(psi, stdin);
+            var worker = LocalCliDurableWorker.Start(directory, spec);
+            return Task.FromResult(new ChildHandle(
+                worker,
+                Stream.Null,
+                new StreamReader(Stream.Null),
+                new StreamReader(Stream.Null),
+                DurableWorkerDirectory: directory));
+        }
+
+        return _behavior.SpawnChild?.Invoke(this, psi, prompt, sessionName, resumeSession, model, ct)
+               ?? DefaultSpawnChildAsync(psi, prompt, sessionName, resumeSession, model, ct);
+    }
 
     internal Task<ChildHandle> DefaultSpawnChildAsync(
         ProcessStartInfo psi,
@@ -768,7 +806,7 @@ public partial class GenericCliExecutionService : ICliExecutionService
         if (!_processes.TryGetValue(jobKey, out var info)) return false;
         try
         {
-            if (!info.Process.HasExited)
+            if (!SafeHasExited(info.Process))
             {
                 // Record the intent BEFORE Kill so MonitorProcessAsync's
                 // classifier can tell the deliberate kill apart from a real
@@ -805,7 +843,7 @@ public partial class GenericCliExecutionService : ICliExecutionService
     public bool SendInput(string jobKey, string input)
     {
         if (!_processes.TryGetValue(jobKey, out var info)) return false;
-        if (info.Process.HasExited) return false;
+        if (SafeHasExited(info.Process)) return false;
         if (info.CarDriver != null) return info.CarDriver.SendInput(jobKey, input);
         try
         {
@@ -954,7 +992,7 @@ public partial class GenericCliExecutionService : ICliExecutionService
     public bool NeedsPostHocUsageReconstruction => _behavior.NeedsPostHocUsageReconstruction;
 
     public bool IsRunningForProject(string rootPath) =>
-        _processes.Values.Any(p => p.WorkingDirectory == rootPath && !p.Process.HasExited);
+        _processes.Values.Any(p => p.WorkingDirectory == rootPath && !SafeHasExited(p.Process));
 
     public IReadOnlyList<(string JobKey, CliExecution Execution)> RunningExecutions()
     {
@@ -962,7 +1000,7 @@ public partial class GenericCliExecutionService : ICliExecutionService
         foreach (var kv in _processes)
         {
             var info = kv.Value;
-            if (info.Process.HasExited) continue;
+            if (SafeHasExited(info.Process)) continue;
             var exec = info.Execution;
             if (exec == null) continue;
             if (!string.Equals(exec.Status, "running", StringComparison.OrdinalIgnoreCase)) continue;
@@ -1147,18 +1185,60 @@ public partial class GenericCliExecutionService : ICliExecutionService
     }
 
     /// <summary>
-    /// Startup hook. Default behaviour for base-class CLIs (Claude / Codex /
-    /// Gemini) is to <b>reap</b> orphaned processes — kill any CLI process that
-    /// outlived a previous backend run. We deliberately do not re-attach: the
-    /// stdout pipe is unrecoverable, so an orphan would keep mutating the repo
-    /// while the user's UI is blind. Killing on startup eliminates the
-    /// double-execution risk and lets the resume-prompt logic in
-    /// <see cref="ProjectRunner"/> drive a clean fresh continuation.
-    /// <para>
-    /// Subclasses that genuinely want re-attach semantics can override this.
-    /// </para>
+    /// Startup hook. Durable entries are verified and adopted with their file
+    /// journal or completed from their atomic result. Pre-durable entries have
+    /// no recoverable stdout and retain the legacy identity-checked reap path.
     /// </summary>
-    public void ReattachOnStartup() => ReapOrphans();
+    public void ReattachOnStartup()
+    {
+        var entries = ReadActiveJobs();
+        if (entries.Count == 0) return;
+
+        foreach (var entry in entries)
+        {
+            if (string.IsNullOrWhiteSpace(entry.DurableWorkerDirectory))
+            {
+                ReapLegacyEntry(entry);
+                continue;
+            }
+
+            var result = LocalCliDurableWorker.ReadResult(entry.DurableWorkerDirectory);
+            if (result is not null)
+            {
+                _ = CompleteRecoveredResultAsync(entry, result);
+                continue;
+            }
+
+            if (!LocalCliDurableWorker.VerifyLive(
+                    entry.ProcessId,
+                    entry.ProcessStartTimeUtc,
+                    entry.WorkingDirectory ?? string.Empty,
+                    out var process,
+                    out var detail)
+                || process is null)
+            {
+                MarkRunLostAcrossRestart(entry, detail);
+                continue;
+            }
+
+            AttachDurableWorker(entry, process);
+        }
+    }
+
+    public bool CanReattach(string jobKey)
+    {
+        var entry = ReadActiveJobs().LastOrDefault(candidate => candidate.TaskKey == jobKey);
+        if (entry?.DurableWorkerDirectory is null) return false;
+        if (LocalCliDurableWorker.ReadResult(entry.DurableWorkerDirectory) is not null) return true;
+        var live = LocalCliDurableWorker.VerifyLive(
+            entry.ProcessId,
+            entry.ProcessStartTimeUtc,
+            entry.WorkingDirectory ?? string.Empty,
+            out var process,
+            out _);
+        process?.Dispose();
+        return live;
+    }
 
     /// <summary>
     /// Runs the canonical <see cref="AgentEnvironmentDetector"/> against a
@@ -1245,6 +1325,137 @@ public partial class GenericCliExecutionService : ICliExecutionService
 
     private static readonly TimeSpan PersistWarnInterval = TimeSpan.FromSeconds(30);
 
+    private async Task FollowDurableWorkerOutputAsync(
+        string jobKey,
+        string workerDirectory,
+        ProcInfo info,
+        CancellationToken ct)
+    {
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                var lines = LocalCliDurableWorker.ReadAfter(workerDirectory, info.DurableOutputSequence);
+                foreach (var line in lines)
+                {
+                    ProcessRawLine(jobKey, info, new CliOutputLine
+                    {
+                        Timestamp = line.Timestamp,
+                        Stream = line.Stream,
+                        Text = line.Text,
+                    });
+                    info.DurableOutputSequence = line.Sequence;
+                    UpdateActiveJobOffset(jobKey, line.Sequence);
+                }
+
+                if (LocalCliDurableWorker.ReadResult(workerDirectory) is not null)
+                {
+                    // One final read closes the result-vs-last-log-line race.
+                    foreach (var line in LocalCliDurableWorker.ReadAfter(workerDirectory, info.DurableOutputSequence))
+                    {
+                        ProcessRawLine(jobKey, info, new CliOutputLine
+                        {
+                            Timestamp = line.Timestamp,
+                            Stream = line.Stream,
+                            Text = line.Text,
+                        });
+                        info.DurableOutputSequence = line.Sequence;
+                        UpdateActiveJobOffset(jobKey, line.Sequence);
+                    }
+                    return;
+                }
+
+                await Task.Delay(TimeSpan.FromMilliseconds(100), ct);
+            }
+        }
+        catch (OperationCanceledException ex)
+        {
+            // Host shutdown intentionally drops the observer while the worker
+            // remains alive. The replacement host resumes at the stored sequence.
+            SilentCatch.Note(ex, "CliExecutionServiceBase: durable worker observer stopped for host shutdown.");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error following durable output for {Cli} job {JobId}", CliType, jobKey);
+        }
+    }
+
+    private void ProcessRawLine(string jobKey, ProcInfo info, CliOutputLine rawLine)
+    {
+        if (!info.OutputLog.Append(rawLine))
+            NotePersistFailure(jobKey, info);
+        else if (info.PersistFailureCount > 0)
+        {
+            _logger.LogInformation(
+                "CLI output persistence recovered for {JobId} after {Count} dropped line(s)",
+                jobKey, info.PersistFailureCount);
+            info.PersistFailureCount = 0;
+        }
+
+        info.LastStreamedAt = DateTime.UtcNow;
+        CheckEnvironmentBlocker(jobKey, info, rawLine);
+        try { CaptureRawLine(jobKey, rawLine); }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "CaptureRawLine threw for {JobId}; continuing without metadata from this frame", jobKey);
+        }
+
+        IEnumerable<CliRunEvent>? runEvents = null;
+        try { runEvents = MapLineToRunEvents(jobKey, rawLine); }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "MapLineToRunEvents threw for {JobId}; skipping typed events for this line", jobKey);
+        }
+        if (runEvents != null)
+            foreach (var evt in runEvents) RaiseRunEvent(jobKey, evt);
+
+        IEnumerable<CliOutputLine> transformed;
+        try { transformed = TransformReadLine(rawLine); }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "TransformReadLine threw for {JobId}; falling back to raw", jobKey);
+            transformed = new[] { rawLine };
+        }
+
+        foreach (var outputLine in transformed)
+        {
+            info.OutputBuffer.Add(outputLine);
+            while (info.OutputBuffer.Count > 5000) info.OutputBuffer.RemoveAt(0);
+            try { OnOutputLine(info, outputLine); }
+            catch (Exception ex) { _logger.LogWarning(ex, "OnOutputLine subclass hook threw for {JobId}", jobKey); }
+            try { OnOutput?.Invoke(jobKey, outputLine); }
+            catch (Exception ex) { _logger.LogWarning(ex, "OnOutput subscriber threw for {JobId}", jobKey); }
+        }
+    }
+
+    private IReadOnlyList<CliOutputLine> GetTerminalClassificationLines(ProcInfo info)
+    {
+        if (info.DurableWorkerDirectory is not { } workerDirectory)
+            return info.OutputBuffer.ToList();
+
+        // The durable journal is the restart boundary. An outgoing host can
+        // persist its sequence immediately before the replacement host opens
+        // the rendered RunLogStore, especially on Windows where both handles
+        // can overlap briefly. Classify from the complete worker journal so a
+        // final sentinel can never fall into that hand-off window.
+        var lines = info.OutputBuffer
+            .Where(line => string.Equals(line.Stream, "system", StringComparison.OrdinalIgnoreCase)
+                           || string.Equals(line.Stream, "orchestrator", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        foreach (var durableLine in LocalCliDurableWorker.ReadAfter(workerDirectory, 0))
+        {
+            var raw = new CliOutputLine
+            {
+                Timestamp = durableLine.Timestamp,
+                Stream = durableLine.Stream,
+                Text = durableLine.Text,
+            };
+            try { lines.AddRange(TransformReadLine(raw)); }
+            catch (Exception) { lines.Add(raw); }
+        }
+        return lines;
+    }
+
     private async Task ReadStreamAsync(string jobKey, StreamReader reader, string stream, ProcInfo info, CancellationToken ct)
     {
         try
@@ -1260,82 +1471,7 @@ public partial class GenericCliExecutionService : ICliExecutionService
                     Stream = stream,
                     Text = line
                 };
-
-                // Persist the raw line to the on-disk log unconditionally so
-                // we never lose the source-of-truth bytes from the CLI — the
-                // store flushes to disk per line so a backend crash here can
-                // lose at most an in-flight write, never an acknowledged one.
-                // The visible buffer + event stream get the transformed lines.
-                if (!info.OutputLog.Append(rawLine))
-                    NotePersistFailure(jobKey, info);
-                else if (info.PersistFailureCount > 0)
-                {
-                    _logger.LogInformation(
-                        "CLI output persistence recovered for {JobId} after {Count} dropped line(s)",
-                        jobKey, info.PersistFailureCount);
-                    info.PersistFailureCount = 0;
-                }
-
-                // Watchdog silence-clock reset: any real stdout/stderr line
-                // counts as activity. Synthetic taskboard / orchestrator /
-                // watchdog lines arrive via different paths (Append on the
-                // OutputBuffer, not via this read loop) and therefore do not
-                // reset the clock.
-                info.LastStreamedAt = DateTime.UtcNow;
-
-                // Pre-emptive environment-blocker check: a recognised
-                // sandbox / OS-permission error means the agent cannot
-                // self-recover. Trip a synthetic marker line + Stop()
-                // immediately so the run finalizes with the correct
-                // typed outcome instead of consuming the silence budget
-                // while the agent retries against the same wall.
-                CheckEnvironmentBlocker(jobKey, info, rawLine);
-
-                // Capture usage/session metadata before publishing the typed
-                // event for this frame. ProjectRunner reads that metadata
-                // synchronously from its TurnCompleted subscriber.
-                try { CaptureRawLine(jobKey, rawLine); }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "CaptureRawLine threw for {JobId}; continuing without metadata from this frame", jobKey);
-                }
-
-                // ADR-0013: typed events. Map this raw line to zero or more
-                // CliRunEvent instances and raise them on OnRunEvent. The
-                // mapping runs alongside (not instead of) TransformReadLine
-                // so the legacy activity-log marker stream stays intact.
-                IEnumerable<CliRunEvent>? runEvents = null;
-                try { runEvents = MapLineToRunEvents(jobKey, rawLine); }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "MapLineToRunEvents threw for {JobId}; skipping typed events for this line", jobKey);
-                }
-                if (runEvents != null)
-                {
-                    foreach (var evt in runEvents) RaiseRunEvent(jobKey, evt);
-                }
-
-                IEnumerable<CliOutputLine> transformed;
-                try { transformed = TransformReadLine(rawLine); }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "TransformReadLine threw for {JobId}; falling back to raw", jobKey);
-                    transformed = new[] { rawLine };
-                }
-
-                foreach (var outputLine in transformed)
-                {
-                    info.OutputBuffer.Add(outputLine);
-                    while (info.OutputBuffer.Count > 5000) info.OutputBuffer.RemoveAt(0);
-
-                    try { OnOutputLine(info, outputLine); }
-                    catch (Exception ex) { _logger.LogWarning(ex, "OnOutputLine subclass hook threw for {JobId}", jobKey); }
-
-                    // Event subscribers are out of our control (SignalR hub, etc).
-                    // A throw here used to kill the whole API process — guard it.
-                    try { OnOutput?.Invoke(jobKey, outputLine); }
-                    catch (Exception ex) { _logger.LogWarning(ex, "OnOutput subscriber threw for {JobId}", jobKey); }
-                }
+                ProcessRawLine(jobKey, info, rawLine);
             }
         }
         catch (OperationCanceledException __ex) { SilentCatch.Note(__ex, "CliExecutionServiceBase:899"); }
@@ -1350,6 +1486,13 @@ public partial class GenericCliExecutionService : ICliExecutionService
         try
         {
             try { await process.WaitForExitAsync(ct); }
+            catch (OperationCanceledException) when (info.DurableWorkerDirectory is not null)
+            {
+                _logger.LogInformation(
+                    "Studio observer stopped for durable {Cli} job {JobId}; worker PID {Pid} remains available for restart adoption",
+                    CliType, jobKey, process.Id);
+                return;
+            }
             catch (OperationCanceledException) { Stop(jobKey, RunStopReason.Cancelled); }
 
             // Drain the read loops before we write the synthetic "exited"
@@ -1392,7 +1535,11 @@ public partial class GenericCliExecutionService : ICliExecutionService
 
             var duration = (DateTime.UtcNow - info.Execution.StartedAt).TotalSeconds;
             int? exitCode = null;
-            try { exitCode = process.ExitCode; } catch (Exception __ex) { SilentCatch.Note(__ex, "CliExecutionServiceBase:953"); }
+            var durableResult = info.DurableWorkerDirectory is { } durableDirectory
+                ? LocalCliDurableWorker.ReadResult(durableDirectory)
+                : null;
+            try { exitCode = durableResult?.ExitCode ?? process.ExitCode; }
+            catch (Exception __ex) { SilentCatch.Note(__ex, "CliExecutionServiceBase:953"); }
             // [crash-diag] orchestrator-only mid-run termination probe: when a child
             // exits with a negative code and we never called Stop(), capture the read-task
             // state + silence gap so we can tell an external/self termination apart from a
@@ -1414,7 +1561,7 @@ public partial class GenericCliExecutionService : ICliExecutionService
             var status = RunStatusClassifier.Classify(exitCode, info.StopReason);
             var terminalOutcome = TerminalRunOutcomeClassifier.Classify(
                 status,
-                info.OutputBuffer.ToList(),
+                GetTerminalClassificationLines(info),
                 duration,
                 exitCode: exitCode);
             status = TerminalRunOutcomeClassifier.ExecutionStatusFor(terminalOutcome, status);
@@ -1515,6 +1662,15 @@ public partial class GenericCliExecutionService : ICliExecutionService
             try { info.CleanContext?.Dispose(); }
             catch (Exception __ex) { SilentCatch.Note(__ex, "CliExecutionServiceBase: clean-context dispose"); }
 
+            if (info.DurableWorkerDirectory is { } durableDirectory)
+            {
+                try { Directory.Delete(durableDirectory, recursive: true); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    _logger.LogDebug(ex, "Could not remove retained durable worker directory {Path}", durableDirectory);
+                }
+            }
+
             if (OperatingSystem.IsWindows())
             {
                 try { info.ProcessReaper?.Dispose(); }
@@ -1559,14 +1715,10 @@ public partial class GenericCliExecutionService : ICliExecutionService
 
     // ── Active-job tracking + orphan reaper ──────────────────────────────
     //
-    // Why this exists: a CLI run is a child process of the backend. On a
-    // backend crash / `dotnet watch` rebuild / IDE stop, that child can
-    // outlive its parent — silently editing files, calling APIs, burning
-    // quota with no UI to watch it. The next backend start therefore reaps:
-    // reads the persisted PIDs, kills any that are still alive (with a
-    // PID-recycling check via process name + start time), and clears the
-    // file. Cheaper and less risky than re-attaching, which would need a
-    // working stdout pipe we can't get back.
+    // Durable entries point at detached, file-journaled workers and are
+    // adopted after identity verification. Legacy entries still point at
+    // anonymous-pipe children and therefore retain the identity-checked reap
+    // behavior.
 
     private record ActiveJob
     {
@@ -1576,6 +1728,15 @@ public partial class GenericCliExecutionService : ICliExecutionService
         public string? ProcessName { get; init; }
         public DateTime? ProcessStartTimeUtc { get; init; }
         public DateTime StartedAt { get; init; }
+        public string? WorkingDirectory { get; init; }
+        public string? JobFolderPath { get; init; }
+        public string? DurableWorkerDirectory { get; init; }
+        public long OutputSequence { get; init; }
+        public string? Model { get; init; }
+        public string? ThinkingLevel { get; init; }
+        public string? SessionName { get; init; }
+        public string? PermissionMode { get; init; }
+        public string? ContextMode { get; init; }
     }
 
     private readonly object _activeJobsLock = new();
@@ -1610,7 +1771,9 @@ public partial class GenericCliExecutionService : ICliExecutionService
     {
         try
         {
-            File.WriteAllText(GetActiveJobsPath(), JsonSerializer.Serialize(list, ActiveJobsJsonOpts));
+            LocalCliDurableWorker.WriteAtomic(
+                GetActiveJobsPath(),
+                JsonSerializer.Serialize(list, ActiveJobsJsonOpts));
         }
         catch (Exception ex)
         {
@@ -1639,6 +1802,18 @@ public partial class GenericCliExecutionService : ICliExecutionService
         }
     }
 
+    private void UpdateActiveJobOffset(string jobKey, long sequence)
+    {
+        lock (_activeJobsLock)
+        {
+            var list = ReadActiveJobs();
+            var index = list.FindIndex(entry => entry.TaskKey == jobKey);
+            if (index < 0 || list[index].OutputSequence >= sequence) return;
+            list[index] = list[index] with { OutputSequence = sequence };
+            WriteActiveJobs(list);
+        }
+    }
+
     private static string? SafeProcessName(Process p)
     {
         try { return p.ProcessName; } catch { return null; }
@@ -1647,6 +1822,213 @@ public partial class GenericCliExecutionService : ICliExecutionService
     private static DateTime? SafeProcessStartTime(Process p)
     {
         try { return p.StartTime.ToUniversalTime(); } catch { return null; }
+    }
+
+    private void AttachDurableWorker(ActiveJob entry, Process process)
+    {
+        var execution = new CliExecution
+        {
+            JobId = entry.JobId,
+            TaskKey = entry.TaskKey,
+            ProcessId = entry.ProcessId,
+            StartedAt = entry.StartedAt,
+            Status = "running",
+            Model = entry.Model,
+            ThinkingLevel = entry.ThinkingLevel,
+            WorkingDirectory = entry.WorkingDirectory,
+            ContinuedAfterRestart = true,
+        };
+        var logDirectory = GetOutputLogDir(entry.TaskKey);
+        var info = new ProcInfo(process, execution, entry.WorkingDirectory ?? string.Empty)
+        {
+            OutputLogPath = logDirectory,
+            OutputLog = new RunLogStore(logDirectory),
+            SessionName = entry.SessionName,
+            LastStreamedAt = DateTime.UtcNow,
+            PermissionMode = entry.PermissionMode,
+            ContextMode = entry.ContextMode,
+            DurableWorkerDirectory = entry.DurableWorkerDirectory,
+            DurableOutputSequence = entry.OutputSequence,
+        };
+        info.OutputBuffer.AddRange(RunLogStore.ReadMerged(logDirectory).TakeLast(5000));
+        _processes[entry.TaskKey] = info;
+
+        var continuing = new CliOutputLine
+        {
+            Timestamp = DateTime.UtcNow,
+            Stream = "system",
+            Text = $"[taskboard] Continuing after restart: reattached {CliType} worker PID {entry.ProcessId} at output sequence {entry.OutputSequence}."
+        };
+        info.OutputBuffer.Add(continuing);
+        info.OutputLog.Append(continuing);
+        try { OnOutput?.Invoke(entry.TaskKey, continuing); }
+        catch (Exception ex) { _logger.LogWarning(ex, "OnOutput subscriber threw during restart adoption for {JobId}", entry.TaskKey); }
+
+        info.StdoutReadTask = FollowDurableWorkerOutputAsync(
+            entry.TaskKey,
+            entry.DurableWorkerDirectory!,
+            info,
+            CancellationToken.None);
+        info.StderrReadTask = Task.CompletedTask;
+        _ = MonitorProcessAsync(entry.TaskKey, process, info, CancellationToken.None);
+        _logger.LogInformation(
+            "Reattached durable {Cli} run {JobId} to worker PID {Pid} at sequence {Sequence}",
+            CliType, entry.JobId, entry.ProcessId, entry.OutputSequence);
+    }
+
+    private async Task CompleteRecoveredResultAsync(ActiveJob entry, LocalCliWorkerResult result)
+    {
+        try
+        {
+            // Subscribers are already installed when TaskRunnerService calls
+            // ReattachAll. Yield once so all project runners finish their own
+            // startup bookkeeping before the terminal callback is delivered.
+            await Task.Yield();
+            var execution = new CliExecution
+            {
+                JobId = entry.JobId,
+                TaskKey = entry.TaskKey,
+                ProcessId = entry.ProcessId,
+                StartedAt = entry.StartedAt,
+                Status = "running",
+                Model = entry.Model,
+                ThinkingLevel = entry.ThinkingLevel,
+                WorkingDirectory = entry.WorkingDirectory,
+                ContinuedAfterRestart = true,
+            };
+            using var placeholder = new Process();
+            var logDirectory = GetOutputLogDir(entry.TaskKey);
+            var info = new ProcInfo(placeholder, execution, entry.WorkingDirectory ?? string.Empty)
+            {
+                OutputLogPath = logDirectory,
+                OutputLog = new RunLogStore(logDirectory),
+                SessionName = entry.SessionName,
+                LastStreamedAt = result.CompletedAtUtc,
+                PermissionMode = entry.PermissionMode,
+                ContextMode = entry.ContextMode,
+                DurableWorkerDirectory = entry.DurableWorkerDirectory,
+                DurableOutputSequence = entry.OutputSequence,
+            };
+            info.OutputBuffer.AddRange(RunLogStore.ReadMerged(logDirectory).TakeLast(5000));
+            _processes[entry.TaskKey] = info;
+            foreach (var line in LocalCliDurableWorker.ReadAfter(entry.DurableWorkerDirectory!, entry.OutputSequence))
+            {
+                ProcessRawLine(entry.TaskKey, info, new CliOutputLine
+                {
+                    Timestamp = line.Timestamp,
+                    Stream = line.Stream,
+                    Text = line.Text,
+                });
+                info.DurableOutputSequence = line.Sequence;
+                UpdateActiveJobOffset(entry.TaskKey, line.Sequence);
+            }
+
+            var duration = Math.Max(0, (result.CompletedAtUtc - entry.StartedAt).TotalSeconds);
+            var provisionalStatus = RunStatusClassifier.Classify(result.ExitCode, RunStopReason.None);
+            var terminal = TerminalRunOutcomeClassifier.Classify(
+                provisionalStatus,
+                GetTerminalClassificationLines(info),
+                duration,
+                exitCode: result.ExitCode);
+            var status = TerminalRunOutcomeClassifier.ExecutionStatusFor(terminal, provisionalStatus);
+            var final = execution with
+            {
+                Status = status,
+                ExitCode = result.ExitCode,
+                DurationSeconds = duration,
+                RunOutcome = terminal.Kind,
+            };
+            info.Execution = final;
+            var endOutcome = string.Equals(status, RunStatuses.Completed, StringComparison.OrdinalIgnoreCase)
+                ? LibOutcome.Completed
+                : LibOutcome.Failed;
+            RaiseRunEvent(entry.TaskKey, new CliRunEvent.RunEnded(
+                endOutcome,
+                endOutcome == LibOutcome.Failed ? terminal.Reason : null,
+                result.ExitCode,
+                duration) { RunId = entry.TaskKey });
+            try { OnFinished?.Invoke(entry.TaskKey, final); }
+            catch (Exception ex) { _logger.LogWarning(ex, "OnFinished subscriber threw for recovered result {JobId}", entry.TaskKey); }
+            RemoveActiveJob(entry.TaskKey);
+            ReleaseOutputResources(entry.TaskKey);
+            ScheduleEviction(entry.TaskKey, info);
+            _logger.LogInformation(
+                "Completed durable {Cli} run {JobId} from result written during the Studio restart gap",
+                CliType, entry.JobId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Could not complete durable result for {Cli} run {JobId}", CliType, entry.JobId);
+        }
+    }
+
+    private void MarkRunLostAcrossRestart(ActiveJob entry, string detail)
+    {
+        var marker = new CliOutputLine
+        {
+            Timestamp = DateTime.UtcNow,
+            Stream = "system",
+            Text = $"[taskboard] run lost across restart: {detail}"
+        };
+        using var output = new RunLogStore(GetOutputLogDir(entry.TaskKey));
+        output.Append(marker);
+        try
+        {
+            var jobFolder = ResolveCurrentJobFolder(entry);
+            if (jobFolder is not null)
+            {
+                CliOutputLogFile.Append(
+                    TaskPaths.CliOutputLog(jobFolder),
+                    $"[{marker.Timestamp:HH:mm:ss.fff}] [system] {marker.Text}",
+                    duplicateMarker: "run lost across restart");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not persist run-lost-across-restart marker for {JobId}", entry.JobId);
+        }
+        RemoveActiveJob(entry.TaskKey);
+        _logger.LogError(
+            "run-lost-across-restart cli={Cli} job={JobId} pid={Pid} detail={Detail}",
+            CliType, entry.JobId, entry.ProcessId, detail);
+    }
+
+    private static string? ResolveCurrentJobFolder(ActiveJob entry)
+    {
+        if (!string.IsNullOrWhiteSpace(entry.JobFolderPath) && Directory.Exists(entry.JobFolderPath))
+            return entry.JobFolderPath;
+        if (string.IsNullOrWhiteSpace(entry.JobFolderPath)) return null;
+        var lane = Directory.GetParent(entry.JobFolderPath);
+        var watchPath = lane?.Parent?.FullName;
+        if (string.IsNullOrWhiteSpace(watchPath)) return null;
+        return TaskStates.All
+            .Select(state => Path.Combine(watchPath, state, entry.JobId))
+            .FirstOrDefault(Directory.Exists);
+    }
+
+    private void ReapLegacyEntry(ActiveJob entry)
+    {
+        Process? process = null;
+        try
+        {
+            process = Process.GetProcessById(entry.ProcessId);
+            if (!process.HasExited && MatchesRecordedIdentity(process, entry))
+                SafeKillReap(process, entry);
+        }
+        catch (ArgumentException ex)
+        {
+            // Legacy child already exited.
+            SilentCatch.Note(ex, "CliExecutionServiceBase: legacy active child already exited during startup reap.");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to reap legacy active job {JobId}", entry.JobId);
+        }
+        finally
+        {
+            process?.Dispose();
+            RemoveActiveJob(entry.TaskKey);
+        }
     }
 
     /// <summary>
@@ -1977,6 +2359,10 @@ public partial class GenericCliExecutionService : ICliExecutionService
         public SessionUsage? LastUsage { get; set; }
         public string? OutputLogPath { get; init; }
         public RunLogStore OutputLog { get; init; } = null!;
+        /// <summary>Directory containing the detached worker spec, output journal, identity, and result.</summary>
+        public string? DurableWorkerDirectory { get; init; }
+        /// <summary>Last detached-worker output sequence durably mirrored by Studio.</summary>
+        public long DurableOutputSequence { get; set; }
         public string? SessionName { get; set; }
         /// <summary>For Codex: the UUID extracted from the first <c>session_meta</c> JSON line.</summary>
         public string? CapturedSessionId { get; set; }

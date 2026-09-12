@@ -61,6 +61,17 @@ interface Scenario {
 
 const SCENARIOS: readonly Scenario[] = [
   {
+    id: 'continuing-after-restart',
+    title: 'Studio restart bridged to the same worker',
+    truth: 'The replacement Studio reattached to the original PID and attempt.',
+    job: makeProgressJob({
+      kind: 'active',
+      processId: 48212,
+      attempt: 0,
+      continuingAfterRestart: true,
+    }),
+  },
+  {
     id: 'active',
     title: '(c) Run aktiv — PID lebt, belegt einen Slot',
     truth: 'Ein Run-Prozess läuft und arbeitet (ggf. still). Belegt einen Slot.',

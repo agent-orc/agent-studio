@@ -1562,6 +1562,12 @@ public class TaskScannerService : ITaskScanner
             issue = BuildOutcomeIssue("context-overflow", "Context overflow", "High", line, lastSeenAt);
             return true;
         }
+        if (line.Contains("run lost across restart", StringComparison.OrdinalIgnoreCase))
+        {
+            issue = BuildOutcomeIssue(
+                "run-lost-across-restart", "Run lost across restart", "High", line, lastSeenAt);
+            return true;
+        }
         if (line.Contains("missing-terminal-sentinel", StringComparison.OrdinalIgnoreCase))
         {
             issue = BuildOutcomeIssue("missing-terminal-sentinel", "Missing sentinel", "Warn", line, lastSeenAt);
