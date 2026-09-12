@@ -17,7 +17,8 @@
            role="dialog"
            [attr.aria-label]="'Model migration to ' + p.to"
            [attr.data-testid]="testId() + '-panel'"
-           (click)="onPanelClick($event)">
+           (click)="onPanelClick($event)"
+           (keydown.enter)="onPanelClick($event)">
         <div class="model-migration__row">
           <span class="model-migration__from" [attr.data-testid]="testId() + '-from'">{{ p.from }}</span>
           <span class="model-migration__arrow" aria-hidden="true">→</span>
