@@ -118,19 +118,22 @@ public sealed class DependencyCacheSession
     private readonly IReadOnlyList<ReviewDependencyScopeDto> _scopes;
     private readonly IReadOnlyList<string> _preserveGlobs;
     private readonly Action<string>? _log;
+    private readonly Func<string, string> _stagingRootFactory;
 
     private DependencyCacheSession(
         string workspace,
         string cacheRoot,
         IReadOnlyList<ReviewDependencyScopeDto> scopes,
         IReadOnlyList<string> preserveGlobs,
-        Action<string>? log)
+        Action<string>? log,
+        Func<string, string> stagingRootFactory)
     {
         _workspace = workspace;
         _cacheRoot = cacheRoot;
         _scopes = scopes;
         _preserveGlobs = preserveGlobs;
         _log = log;
+        _stagingRootFactory = stagingRootFactory;
     }
 
     public static DependencyCacheSession Create(
@@ -146,7 +149,22 @@ public sealed class DependencyCacheSession
             CachePath(cacheParent, repositoryIdentity, role),
             NormalizeScopes(scopes),
             NormalizeGlobs(preserveGlobs),
-            log);
+            log,
+            NewStagingRoot);
+
+    internal static DependencyCacheSession Create(
+        string cacheParent,
+        string repositoryIdentity,
+        string workspace,
+        IReadOnlyList<ReviewDependencyScopeDto> scopes,
+        Func<string, string> stagingRootFactory)
+        => new(
+            workspace,
+            CachePath(cacheParent, repositoryIdentity),
+            NormalizeScopes(scopes),
+            [],
+            null,
+            stagingRootFactory);
 
     public static string CachePath(
         string cacheParent,
@@ -174,7 +192,7 @@ public sealed class DependencyCacheSession
         var stopwatch = Stopwatch.StartNew();
         var messages = new List<string>();
         var contentRoot = Path.Combine(_cacheRoot, "content");
-        var stagingRoot = Path.Combine(_cacheRoot, "content.saving-" + Guid.NewGuid().ToString("N"));
+        var stagingRoot = _stagingRootFactory(_cacheRoot);
 
         var movedAny = false;
         var failed = false;
@@ -562,6 +580,9 @@ public sealed class DependencyCacheSession
            || candidate.StartsWith(parent + "/", StringComparison.OrdinalIgnoreCase);
 
     private static bool HasWildcard(string value) => value.IndexOfAny(['*', '?']) >= 0;
+
+    private static string NewStagingRoot(string cacheRoot)
+        => Path.Combine(cacheRoot, "content.saving-" + Guid.NewGuid().ToString("N"));
 
     private static string Combine(string left, string right)
         => string.IsNullOrWhiteSpace(left) ? right : left.TrimEnd('/') + "/" + right;

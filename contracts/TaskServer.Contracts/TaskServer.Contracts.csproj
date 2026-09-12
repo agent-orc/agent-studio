@@ -12,4 +12,8 @@
     <None Include="..\fixtures\**\*" Pack="true" PackagePath="fixtures\" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="OrchestratorApi.Tests" />
+  </ItemGroup>
+
 </Project>
