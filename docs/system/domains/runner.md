@@ -1064,6 +1064,41 @@ Run timeline context events retain exact source members so count disclosures
 are inspectable. Terminal run events retain status and duration as structured
 details; the frontend owns their compact, non-redundant sentence projection.
 
+### Restart continuity
+
+Local coding CLIs run through a durable worker that is separate from the Studio
+backend process. The worker directory contains its immutable launch spec,
+process identity, append-only output, terminal result, and the backend's
+acknowledged output offset. `LocalCliDurability:Enabled` controls this path and
+defaults to `true`. On startup the replacement backend validates PID, process
+start time, and working directory before adopting a worker. It resumes output
+from the acknowledged offset and executes the terminal callback exactly once,
+including when the worker finished while Studio was unavailable. A legacy
+active-job entry still follows the bounded orphan-reaper path.
+
+Adoption never grants authority. `ProjectRunner` first resolves the current
+card and requires the same Progress generation before it registers the
+recovered slot. A superseded or missing card causes the worker to be stopped.
+An unverifiable or dead worker is classified as `run-lost-across-restart`, with
+`InfraCrash` evidence and `reissueBudgetCharged: false`. A successful adoption
+projects `continuing-after-restart` and records `run_continued_after_restart`
+in the task timeline.
+
+Task Server startup moves a live Remote authority to `process-unknown`. The
+Runner treats this as a bounded link gap: heartbeat retries use backoff, exact
+runner registration is idempotent, and the same attempt, lease, fence, and
+authority epoch are adopted while the server-issued lease TTL remains valid.
+The durable Runner outbox replays claims and completions after the link returns.
+Expiry past that grace boundary is final exactly once and still terminates the
+worker. LinkSupervisor reports the disconnected interval as link health, not a
+run outcome.
+
+Review aspect evidence and reporting-only pipeline post-step terminals are
+attempt-fenced restart checkpoints. A replacement host reuses verdicts and
+terminal steps from the current incomplete attempt, but ignores evidence from
+older or completed attempts. The architecture decision is
+[ADR-0072](../architecture/decisions/adr-archive.md#adr-0072---in-flight-execution-survives-studio-and-runner-restarts-2026-09-12).
+
 A remote claim refusal is durable task state, not log-only evidence. Claim
 admission records the Runner identity, a stable reason code, readable detail,
 and timestamp in `task.json.remoteDispatchRejection`. Task reads expose the

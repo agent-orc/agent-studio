@@ -66,6 +66,8 @@ public static class TaskRunActivityKinds
 {
     /// <summary>The run process is alive and occupies a parallelism slot.</summary>
     public const string Active = "active";
+    /// <summary>A live local worker adopted by a replacement Studio backend.</summary>
+    public const string ContinuingAfterRestart = "continuing-after-restart";
     /// <summary>Last run failed and a rapid-crash backoff is still in effect; the task waits for re-pickup.</summary>
     public const string FailedBackoff = "failed-backoff";
     /// <summary>Last run failed (or a fail-without-progress attempt is recorded) but no backoff is active and nothing is running.</summary>
@@ -80,7 +82,11 @@ public static class TaskRunActivityKinds
 /// on a backend restart (the recovery boundary), so an orphaned task naturally
 /// classifies as <see cref="TaskRunActivityKinds.NoActiveRun"/>.
 /// </summary>
-public readonly record struct RunActivityFacts(bool SlotActive, DateTime? BackoffUntil, int ConsecutiveFailures);
+public readonly record struct RunActivityFacts(
+    bool SlotActive,
+    DateTime? BackoffUntil,
+    int ConsecutiveFailures,
+    bool ContinuingAfterRestart = false);
 
 /// <summary>
 /// Pure rules that map the runner's in-memory <see cref="RunActivityFacts"/>
@@ -119,7 +125,9 @@ public static class TaskRunActivityClassifier
         {
             return new TaskRunActivity
             {
-                Kind = TaskRunActivityKinds.Active,
+                Kind = facts.ContinuingAfterRestart
+                    ? TaskRunActivityKinds.ContinuingAfterRestart
+                    : TaskRunActivityKinds.Active,
                 ProcessId = execution is { ProcessId: > 0 } ? execution.ProcessId : null,
                 Attempt = attempt,
                 LastError = lastError,

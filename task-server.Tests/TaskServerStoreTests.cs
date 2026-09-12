@@ -396,6 +396,23 @@ public sealed class TaskServerStoreTests
             default);
 
         Assert.Equal("adopted", Assert.Single(registered.AttemptAdoptions!).Status);
+        var duplicate = await restarted.RegisterRunnerAsync(
+            "runner-a",
+            Runner("replacement-instance") with { ActiveAttempts = registered.AttemptAdoptions!
+                .Select(adoption => new RunnerActiveAttempt(
+                    adoption.Kind,
+                    adoption.AttemptId,
+                    task.TaskKey,
+                    claim.Lease!.LeaseId,
+                    claim.Lease.Fence,
+                    LeaseInstanceId: claim.Lease.InstanceId))
+                .ToArray() },
+            "runner-a",
+            default);
+        Assert.Equal("adopted", Assert.Single(duplicate.AttemptAdoptions!).Status);
+        Assert.Single(
+            await restarted.ListRunnerCapabilitySnapshotsAsync(default),
+            snapshot => snapshot.RunnerId == "runner-a");
         Assert.Equal(1, Assert.Single(
             await restarted.ListRunnerCapabilitySnapshotsAsync(default),
             snapshot => snapshot.RunnerId == "runner-a").Telemetry!.ActiveSlots);
@@ -415,6 +432,59 @@ public sealed class TaskServerStoreTests
         Assert.Equal("blocked", completed.Status);
         Assert.Equal("4-auto-review", (await restarted.GetTaskAsync(
             project.ProjectId, task.TaskKey, default))!.State);
+    }
+
+    [Fact]
+    public async Task Task_Server_restart_gap_inside_grace_re_adopts_and_renews_same_lease()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(
+            new DateTimeOffset(2026, 9, 12, 10, 0, 0, TimeSpan.Zero));
+        var first = Store(temp.Path, clock);
+        await first.InitializeAsync();
+        var (_, _, task) = await SeedReadyTaskAsync(first);
+        await first.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var claim = await first.ClaimAsync(
+            new ClaimRequest("runner-a", "instance-a", RequestedTtlSeconds: 120),
+            "runner-a",
+            default);
+
+        clock.Advance(TimeSpan.FromSeconds(45));
+        var restarted = Store(temp.Path, clock);
+        await restarted.InitializeAsync();
+        var registration = await restarted.RegisterRunnerAsync(
+            "runner-a",
+            Runner("replacement-instance") with
+            {
+                ActiveAttempts =
+                [
+                    new RunnerActiveAttempt(
+                        RunnerAttemptKinds.Coding,
+                        claim.Run!.RunId,
+                        task.TaskKey,
+                        claim.Lease!.LeaseId,
+                        claim.Lease.Fence,
+                        LeaseInstanceId: claim.Lease.InstanceId),
+                ],
+            },
+            "runner-a",
+            default);
+        Assert.Equal("adopted", Assert.Single(registration.AttemptAdoptions!).Status);
+
+        var renewed = await restarted.RenewLeaseAsync(
+            claim.Run.RunId,
+            new LeaseRenewRequest(
+                "runner-a",
+                claim.Lease.InstanceId,
+                claim.Lease.LeaseId,
+                claim.Lease.Fence,
+                RequestedTtlSeconds: 120),
+            "runner-a",
+            default);
+
+        Assert.Equal(claim.Lease.LeaseId, renewed.Lease!.LeaseId);
+        Assert.Equal(claim.Lease.Fence, renewed.Lease.Fence);
+        Assert.True(renewed.Lease.ExpiresAt > claim.Lease.ExpiresAt);
     }
 
     [Fact]

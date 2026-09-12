@@ -199,6 +199,66 @@ public class AspectRunnerTests : IDisposable
     }
 
     [Fact]
+    public async Task Backend_restart_with_two_of_four_graded_aspects_resumes_only_remaining_aspects()
+    {
+        var pipeline = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        pipeline.Begin(_jobFolder, PipelineCatalogue.Standard, "demo", "test-job");
+        foreach (var aspect in new[] { "requirement-fit", "code-quality" })
+        {
+            var verdict = new AspectVerdict(
+                aspect,
+                AspectStatus.Pass,
+                $"{aspect} was already graded.",
+                "Persisted review evidence.",
+                null);
+            File.WriteAllText(
+                Path.Combine(_jobFolder, $"aspect-{aspect}.json"),
+                AspectVerdictParsing.RenderJson(verdict, "checkpoint-model", DateTime.UtcNow));
+            pipeline.RecordStep(_jobFolder, new PipelineStepExecution
+            {
+                StepId = $"aspect-{aspect}",
+                Kind = StepKind.Aspect,
+                Status = PipelineStepStatus.Passed,
+                StartedAt = DateTime.UtcNow.AddSeconds(-1),
+                CompletedAt = DateTime.UtcNow,
+                Verdict = "pass",
+            });
+        }
+
+        var calls = new List<string>();
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>())
+            .Build();
+        var prompts = new RuntimePromptService(config, NullLogger<RuntimePromptService>.Instance);
+        var replacement = new AspectRunnerService(
+            prompts,
+            NullLogger<AspectRunnerService>.Instance,
+            pipelineLog: new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance));
+        replacement.CliRunner = (aspect, _, _, _, _, _) =>
+        {
+            lock (calls) calls.Add(aspect);
+            return Task.FromResult(
+                $"[[ASPECT_VERDICT: status=pass; summary={aspect} completed after restart.]]\n[[TASK_DONE]]");
+        };
+
+        var report = await replacement.RunAsync(
+            BuildInputs(),
+            ["requirement-fit", "code-quality", "documentation-impact", "tests-and-evidence"],
+            "claude",
+            "claude-haiku-4-5",
+            TimeSpan.FromSeconds(5),
+            CancellationToken.None);
+
+        Assert.Equal(4, report.Verdicts.Count);
+        Assert.Equal(
+            ["documentation-impact", "tests-and-evidence"],
+            calls.OrderBy(value => value, StringComparer.Ordinal).ToArray());
+        Assert.Contains(report.Verdicts, verdict =>
+            verdict.Aspect == "requirement-fit"
+            && verdict.Summary == "requirement-fit was already graded.");
+    }
+
+    [Fact]
     public async Task SparkReply_WithMalformedVerdict_UsesDeterministicUnparseableConcern()
     {
         var runner = BuildRunner(_ => "Analysis complete. [[ASPECT_VERDICT: status=maybe; summary=looks fine]]");

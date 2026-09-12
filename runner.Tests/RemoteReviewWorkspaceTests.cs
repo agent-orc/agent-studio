@@ -240,6 +240,67 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     [Fact]
+    public async Task Restart_after_two_of_four_graded_aspects_resumes_without_rerunning_them()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var sha = await SeedOriginAsync();
+        var invocationLog = Path.Combine(_root, "aspect-invocations.log");
+        var fakeCodex = Path.Combine(_root, "checkpoint-codex.sh");
+        await File.WriteAllTextAsync(
+            fakeCodex,
+            "#!/bin/sh\n"
+            + $"printf 'aspect\\n' >> '{invocationLog}'\n"
+            + "printf '%s\\n' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"Checkpointed verdict.\\\\n[[ASPECT_VERDICT: status=pass; summary=Checkpointed aspect passed.; evidence_checked=delivery diff; missing=none]]\"}}'\n");
+        File.SetUnixFileMode(
+            fakeCodex,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var commands = Enumerable.Range(1, 4)
+            .Select(index => new ReviewCommandDto(
+                $"aspect-{index}",
+                $"aspect-{index}",
+                "codex",
+                [],
+                TimeoutSeconds: 30,
+                ExecutionKind: ReviewCommandKinds.AgentAspect,
+                Prompt: $"Grade aspect {index}.",
+                CliType: AgentCliProcess.CodexCli,
+                Model: "gpt-5.4-mini",
+                ThinkingLevel: "high"))
+            .ToArray();
+        var (workspace, _) = Workspace(
+            "attempt-checkpoint-resume",
+            sha,
+            commands,
+            24120,
+            integrationRef: "refs/heads/main",
+            codexCliBin: fakeCodex);
+        await workspace.PrepareAsync(null!, default);
+
+        ReviewExecutionCheckpoint? saved = null;
+        await Assert.ThrowsAsync<StopAfterCheckpointException>(() => workspace.ExecutePlanAsync(
+            default,
+            resume: null,
+            checkpoint: (progress, _) =>
+            {
+                saved = progress;
+                if (progress.CompletedStepIds.Count == 2)
+                    throw new StopAfterCheckpointException();
+                return Task.CompletedTask;
+            }));
+
+        Assert.NotNull(saved);
+        Assert.Equal(2, saved!.Verdicts?.Count);
+        var evidence = await workspace.ExecutePlanAsync(default, saved, checkpoint: null);
+
+        Assert.Equal(4, evidence.Commands.Count);
+        Assert.Equal(4, evidence.Verdicts.Count);
+        Assert.Equal(4, File.ReadAllLines(invocationLog).Length);
+        Assert.Equal(4, evidence.Commands.Select(command => command.StepId).Distinct().Count());
+    }
+
+    private sealed class StopAfterCheckpointException : Exception;
+
+    [Fact]
     public async Task Fixture_delivery_docs_change_is_present_in_every_aspect_input()
     {
         if (OperatingSystem.IsWindows()) return;

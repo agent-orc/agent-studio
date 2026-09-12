@@ -73,6 +73,10 @@ const EVENTS = [
     cli: 'codex', model: 'gpt-5.6-sol', quotaFallback: 'false',
     fallbackReason: '', intent: 'start', resumed: 'false',
   }),
+  event('run_continued_after_restart', 'system', 'Continuing after restart: reattached live codex run in slot 1/2', {
+    recovered: 'true', restartBridge: 'local-durable-worker', cli: 'codex',
+    occupied: '1', maxParallelism: '2',
+  }),
   event('pre_step_started', 'system', 'Context retrieval started', {
     step: 'context-retrieval', attempt: '1',
   }),
@@ -231,6 +235,9 @@ async function stubApp(page: Page, activeEvent: () => (typeof EVENTS)[number]): 
       });
     }
     if (pathname === '/api/runner/global') return json(route, { mode: 'paused', activeProjects: [] });
+    if (pathname === '/api/runner/links') return json(route, []);
+    if (pathname === '/api/v1/management/links'
+      || pathname === '/api/v1/management/remote-hosts') return json(route, []);
     if (pathname === '/api/crash-recovery/pending') return json(route, { pending: [] });
     if (pathname === '/api/cli/quota') return json(route, { snapshots: [], ttlSeconds: 600 });
     if (pathname === '/api/cli/usage') return json(route, { items: [] });
@@ -375,6 +382,11 @@ for (const eventFixture of fixtures) {
     if (phase === 'after' && selected.kind === 'agent_run_finished') {
       await expect(row.getByTestId('timeline-event-kind')).toContainText('Run finished');
       await expect(row.getByTestId('timeline-event-summary')).toHaveCount(0);
+    }
+
+    if (selected.kind === 'run_continued_after_restart') {
+      await expect(row.getByTestId('timeline-event-kind')).toContainText('Continuing after restart');
+      await expect(row).toContainText('local-durable-worker');
     }
   });
 }

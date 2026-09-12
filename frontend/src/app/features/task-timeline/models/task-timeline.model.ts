@@ -35,6 +35,8 @@ export const TIMELINE_KIND = {
   quotaAdmissionDecision: 'quota_admission_decision',
   loadThrottleDecision: 'load_throttle_decision',
   runnerSlotAdmission: 'runner_slot_admission',
+  runContinuedAfterRestart: 'run_continued_after_restart',
+  runLostAcrossRestart: 'run_lost_across_restart',
   integrationLease: 'integration_lease',
   agentRunFinished: 'agent_run_finished',
   preStepStarted: 'pre_step_started',

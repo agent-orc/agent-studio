@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using AgentStudio.CliHosting;
 using LibOutcome = CodingAgentRunner.Model.RunOutcome;
@@ -768,13 +769,23 @@ public partial class GenericCliExecutionService : ICliExecutionService
         if (!_processes.TryGetValue(jobKey, out var info)) return false;
         try
         {
-            if (!info.Process.HasExited)
+            if (IsLive(info))
             {
                 // Record the intent BEFORE Kill so MonitorProcessAsync's
                 // classifier can tell the deliberate kill apart from a real
                 // crash - even if Kill races the natural exit by a tick, the
                 // marker is set and the classifier does the right thing.
                 info.StopReason = reason;
+                if (info.DurableWorker != null && info.CarDriver == null)
+                {
+                    info.DurableWorker.Kill();
+                    _logger.LogInformation(
+                        "Stopped reattached durable {Cli} worker for job {JobId} (reason={Reason})",
+                        CliType,
+                        jobKey,
+                        reason);
+                    return true;
+                }
                 if (info.CarDriver != null)
                 {
                     var stopped = info.CarDriver.Stop(jobKey, reason);
@@ -805,7 +816,7 @@ public partial class GenericCliExecutionService : ICliExecutionService
     public bool SendInput(string jobKey, string input)
     {
         if (!_processes.TryGetValue(jobKey, out var info)) return false;
-        if (info.Process.HasExited) return false;
+        if (!IsLive(info)) return false;
         if (info.CarDriver != null) return info.CarDriver.SendInput(jobKey, input);
         try
         {
@@ -863,6 +874,24 @@ public partial class GenericCliExecutionService : ICliExecutionService
 
     public CliExecution? GetExecution(string jobKey) =>
         _processes.TryGetValue(jobKey, out var info) ? info.Execution : null;
+
+    public string? GetWorkingDirectory(string jobKey) =>
+        _processes.TryGetValue(jobKey, out var info) ? info.WorkingDirectory : null;
+
+    public bool ConfirmRecoveredExecution(string jobKey)
+    {
+        if (!_processes.TryGetValue(jobKey, out var info) || !info.RecoveredAfterStartup)
+            return false;
+        return Interlocked.CompareExchange(ref info.RecoveryDisposition, 1, 0) == 0;
+    }
+
+    public bool RejectRecoveredExecution(string jobKey)
+    {
+        if (!_processes.TryGetValue(jobKey, out var info) || !info.RecoveredAfterStartup)
+            return false;
+        Interlocked.Exchange(ref info.RecoveryDisposition, 2);
+        return true;
+    }
 
     public SessionUsage? GetLastUsage(string jobKey) =>
         _processes.TryGetValue(jobKey, out var info) ? info.LastUsage : null;
@@ -954,7 +983,7 @@ public partial class GenericCliExecutionService : ICliExecutionService
     public bool NeedsPostHocUsageReconstruction => _behavior.NeedsPostHocUsageReconstruction;
 
     public bool IsRunningForProject(string rootPath) =>
-        _processes.Values.Any(p => p.WorkingDirectory == rootPath && !p.Process.HasExited);
+        _processes.Values.Any(p => p.WorkingDirectory == rootPath && IsLive(p));
 
     public IReadOnlyList<(string JobKey, CliExecution Execution)> RunningExecutions()
     {
@@ -962,13 +991,20 @@ public partial class GenericCliExecutionService : ICliExecutionService
         foreach (var kv in _processes)
         {
             var info = kv.Value;
-            if (info.Process.HasExited) continue;
+            if (!IsLive(info) && !info.RecoveredTerminalPending) continue;
             var exec = info.Execution;
             if (exec == null) continue;
             if (!string.Equals(exec.Status, "running", StringComparison.OrdinalIgnoreCase)) continue;
             result.Add((kv.Key, exec));
         }
         return result;
+    }
+
+    private static bool IsLive(ProcInfo info)
+    {
+        if (info.DurableWorker != null)
+            return info.DurableWorker.Inspect(info.WorkingDirectory).IsLive;
+        return !SafeHasExited(info.Process);
     }
 
     /// <summary>
@@ -1158,7 +1194,7 @@ public partial class GenericCliExecutionService : ICliExecutionService
     /// Subclasses that genuinely want re-attach semantics can override this.
     /// </para>
     /// </summary>
-    public void ReattachOnStartup() => ReapOrphans();
+    public void ReattachOnStartup() => ReattachDurableWorkersAndReapLegacyOrphans();
 
     /// <summary>
     /// Runs the canonical <see cref="AgentEnvironmentDetector"/> against a
@@ -1576,6 +1612,14 @@ public partial class GenericCliExecutionService : ICliExecutionService
         public string? ProcessName { get; init; }
         public DateTime? ProcessStartTimeUtc { get; init; }
         public DateTime StartedAt { get; init; }
+        public string? WorkerDirectory { get; init; }
+        public string? WorkingDirectory { get; init; }
+        public string? JobFolderPath { get; init; }
+        public string? Model { get; init; }
+        public string? ThinkingLevel { get; init; }
+        public string? PermissionMode { get; init; }
+        public string? ContextMode { get; init; }
+        public string? SessionName { get; init; }
     }
 
     private readonly object _activeJobsLock = new();
@@ -1589,6 +1633,16 @@ public partial class GenericCliExecutionService : ICliExecutionService
             : Path.Combine(AppContext.BaseDirectory, "runtime");
         Directory.CreateDirectory(baseDir);
         return Path.Combine(baseDir, $"active-jobs-{CliType}.json");
+    }
+
+    private string GetDurableWorkerDirectory(string jobKey)
+    {
+        var taskRepo = _configuration["TaskRepository"];
+        var baseDir = !string.IsNullOrWhiteSpace(taskRepo)
+            ? Path.Combine(taskRepo, ".runtime", "local-cli-workers")
+            : Path.Combine(AppContext.BaseDirectory, "runtime", "local-cli-workers");
+        Directory.CreateDirectory(baseDir);
+        return Path.Combine(baseDir, SanitizeForFile($"{CliType}-{jobKey}"));
     }
 
     private List<ActiveJob> ReadActiveJobs()
@@ -1610,7 +1664,15 @@ public partial class GenericCliExecutionService : ICliExecutionService
     {
         try
         {
-            File.WriteAllText(GetActiveJobsPath(), JsonSerializer.Serialize(list, ActiveJobsJsonOpts));
+            var path = GetActiveJobsPath();
+            var temporary = path + $".{Environment.ProcessId}.{Guid.NewGuid():N}.tmp";
+            File.WriteAllText(
+                temporary,
+                JsonSerializer.Serialize(list, ActiveJobsJsonOpts),
+                new UTF8Encoding(false));
+            using (var stream = new FileStream(temporary, FileMode.Open, FileAccess.Read, FileShare.Read))
+                stream.Flush(flushToDisk: true);
+            File.Move(temporary, path, overwrite: true);
         }
         catch (Exception ex)
         {
@@ -1658,6 +1720,81 @@ public partial class GenericCliExecutionService : ICliExecutionService
     /// time and what Windows reports back. The file is always cleared at
     /// the end so a half-clean run never leaves partial state behind.
     /// </summary>
+    private void ReattachDurableWorkersAndReapLegacyOrphans()
+    {
+        lock (_activeJobsLock)
+        {
+            var entries = ReadActiveJobs();
+            if (entries.Count == 0) return;
+            var retained = new List<ActiveJob>();
+
+            foreach (var entry in entries)
+            {
+                if (!string.IsNullOrWhiteSpace(entry.WorkerDirectory)
+                    && !string.IsNullOrWhiteSpace(entry.WorkingDirectory))
+                {
+                    try
+                    {
+                        var worker = DurableLocalCliProcess.Attach(
+                            entry.WorkerDirectory!,
+                            entry.ProcessId,
+                            entry.ProcessStartTimeUtc ?? DateTime.MinValue);
+                        AdoptDurableWorker(entry, worker, worker.Inspect(entry.WorkingDirectory!));
+                        retained.Add(entry);
+                        continue;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(
+                            ex,
+                            "Could not adopt durable {Cli} worker for {JobId}; reporting it as lost",
+                            CliType,
+                            entry.JobId);
+                        ReportDurableWorkerLost(entry, ex.Message);
+                        continue;
+                    }
+                }
+
+                ReapLegacyEntry(entry);
+            }
+
+            WriteActiveJobs(retained);
+        }
+    }
+
+    private void ReapLegacyEntry(ActiveJob entry)
+    {
+        Process? process = null;
+        try { process = Process.GetProcessById(entry.ProcessId); }
+        catch (ArgumentException ex) { _ = ex; }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Legacy orphan lookup failed for PID {Pid} ({Cli})", entry.ProcessId, CliType);
+            return;
+        }
+        if (process == null) return;
+        try
+        {
+            if (!process.HasExited && MatchesRecordedIdentity(process, entry))
+            {
+                SafeKillReap(process, entry);
+                _logger.LogWarning(
+                    "Reaped pre-durability orphan {Cli} process for {JobId} (PID {Pid})",
+                    CliType,
+                    entry.JobId,
+                    entry.ProcessId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to reap pre-durability PID {Pid} ({Cli})", entry.ProcessId, CliType);
+        }
+        finally
+        {
+            process.Dispose();
+        }
+    }
+
     protected void ReapOrphans()
     {
         lock (_activeJobsLock)
@@ -2108,6 +2245,26 @@ public partial class GenericCliExecutionService : ICliExecutionService
         public CodingAgentRunner.Execution.ICliDriver? CarDriver { get; init; }
 
         /// <summary>
+        /// Durable worker ownership for a CAR run. It remains available after
+        /// startup adoption when the original CAR driver and anonymous pipes
+        /// no longer exist.
+        /// </summary>
+        internal DurableLocalCliProcess? DurableWorker { get; init; }
+
+        /// <summary>
+        /// Keeps a result that was written while Studio was down visible as an
+        /// occupied recovered slot until ProjectRunner has rebooked it and the
+        /// delayed terminal callback can run.
+        /// </summary>
+        internal bool RecoveredTerminalPending { get; set; }
+
+        /// <summary>True only for a worker discovered from the startup ledger.</summary>
+        internal bool RecoveredAfterStartup { get; init; }
+
+        /// <summary>0 pending, 1 authority confirmed, 2 rejected.</summary>
+        internal int RecoveryDisposition;
+
+        /// <summary>
         /// Number of <see cref="AgentEnvironmentDetector"/> hits observed
         /// in this run's raw output. The base class read loop increments
         /// this per matching line; the threshold check decides whether
@@ -2173,6 +2330,9 @@ public partial class GenericCliExecutionService : ICliExecutionService
 
         /// <summary>UTC timestamp of the most recent emitted persist-failure warning.</summary>
         public DateTime LastPersistWarnAtUtc { get; set; }
+
+        /// <summary>Identity guard for competing durable terminal observations.</summary>
+        internal int FinalizationStarted;
 
         public ProcInfo(Process process, CliExecution execution, string workingDirectory)
         {

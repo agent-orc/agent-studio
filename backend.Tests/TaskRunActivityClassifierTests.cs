@@ -35,6 +35,21 @@ public sealed class TaskRunActivityClassifierTests
     }
 
     [Fact]
+    public void Reattached_slot_is_distinctly_visible_as_continuing_after_restart()
+    {
+        var facts = new RunActivityFacts(
+            SlotActive: true,
+            BackoffUntil: null,
+            ConsecutiveFailures: 0,
+            ContinuingAfterRestart: true);
+
+        var result = TaskRunActivityClassifier.Classify(facts, Exec("running", pid: 2780), null, Now);
+
+        Assert.Equal(TaskRunActivityKinds.ContinuingAfterRestart, result.Kind);
+        Assert.Equal(2780, result.ProcessId);
+    }
+
+    [Fact]
     public void Active_wins_even_when_a_backoff_is_also_armed()
     {
         // A live slot is the authoritative "occupies a slot / PID lives" signal

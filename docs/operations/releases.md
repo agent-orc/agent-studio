@@ -160,6 +160,16 @@ restores the old link, starts the old release, reopens admission only after its
 own readiness gate, and exits nonzero. A failed candidate is never reported as
 a successful update.
 
+### Restart-continuity release gate
+
+Before promoting a candidate, run the
+[restart continuity drill](testing/restart-continuity-drill.md) on the Windows
+Studio with one local and one Remote test run in flight. Retain the drill log
+and the local card timeline screenshot with the release evidence. Promotion is
+blocked unless both original runs finish, the local timeline contains the
+restart bridge, neither timeline contains `run_lost_across_restart`, and the
+UpdateService run settles as successful.
+
 ## Rollback
 
 The last successful update records the former target in the `previous`
