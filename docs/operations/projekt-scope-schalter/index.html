@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Projekt-Scope: ein Schalter, ein Klick zu allen Projekten | Konzept-Dossier</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1: #fcfcfb; --surface-2: #f2f1ee; --surface-3: #e9e8e3;
+    --ink-1: #0b0b0b; --ink-2: #52514e; --ink-3: #8a8983; --line: #d8d6cf;
+    --develop: #2a78d6; --ok: #008300; --bad: #c93736; --warn: #9a6b00;
+    --accent-soft: #eaf1fb; --bad-soft: #fbecec; --ok-soft: #eaf4ea; --warn-soft: #f8f0dd;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --surface-1: #1a1a19; --surface-2: #232322; --surface-3: #2c2c2a;
+      --ink-1: #ffffff; --ink-2: #c3c2b7; --ink-3: #8a8983; --line: #3d3d3a;
+      --develop: #3987e5; --ok: #4eae4e; --bad: #e66767; --warn: #d9a63f;
+      --accent-soft: #1e2a3a; --bad-soft: #382222; --ok-soft: #1f2f1f; --warn-soft: #33301e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 0 0 80px; background: var(--surface-1); color: var(--ink-1); font: 16px/1.6 system-ui, "Segoe UI", sans-serif; }
+  main { max-width: 1080px; margin: 0 auto; padding: 0 28px; }
+  header.page { border-bottom: 1px solid var(--line); padding: 44px 0 26px; margin-bottom: 8px; }
+  .kicker { font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); margin: 0 0 10px; }
+  h1 { font-size: 34px; line-height: 1.2; margin: 0 0 12px; }
+  .lede { font-size: 18px; color: var(--ink-2); max-width: 62ch; margin: 0; }
+  .meta { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 18px; font-size: 13px; color: var(--ink-3); }
+  .meta b { color: var(--ink-2); font-weight: 600; }
+  h2 { font-size: 24px; margin: 56px 0 6px; scroll-margin-top: 20px; }
+  h2 .no { color: var(--ink-3); font-weight: 600; margin-right: 10px; }
+  h3 { font-size: 18px; margin: 34px 0 4px; }
+  p { max-width: 76ch; }
+  .box { border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); padding: 18px 22px; margin: 20px 0; }
+  .box.accent { background: var(--accent-soft); }
+  .tablewrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; margin: 14px 0 22px; font-size: 14px; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--ink-2); font-weight: 600; background: var(--surface-2); white-space: nowrap; }
+  td .d { display: block; color: var(--ink-2); font-size: 12.5px; line-height: 1.4; margin-top: 3px; }
+  code { font: 13px ui-monospace, "Cascadia Mono", Consolas, monospace; background: var(--surface-3); padding: 1px 5px; border-radius: 4px; }
+  .tag { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--ink-2); margin-right: 4px; white-space: nowrap; }
+  .tag.ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+  .tag.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+  .tag.bad { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
+  figure { margin: 22px 0; }
+  figure svg { width: 100%; height: auto; display: block; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-1); }
+  figcaption { font-size: 13px; color: var(--ink-3); margin-top: 6px; }
+  .decision { border: 1px solid color-mix(in srgb, var(--develop) 35%, var(--line)); border-radius: 10px; padding: 18px 22px; margin: 22px 0; background: var(--accent-soft); }
+  .decision h3 { margin: 0 0 10px; font-size: 17px; }
+  .decision label { display: flex; gap: 12px; align-items: flex-start; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-1); margin: 8px 0; cursor: pointer; }
+  .decision label input { margin-top: 4px; }
+  .decision label b { display: block; }
+  .decision label span.d { display: block; color: var(--ink-2); font-size: 14px; }
+  .decision textarea { width: 100%; min-height: 64px; margin-top: 8px; font: 14px system-ui, sans-serif; border: 1px solid var(--line); border-radius: 6px; padding: 8px; background: var(--surface-1); color: var(--ink-1); }
+  ul, ol { max-width: 80ch; }
+  li { margin: 4px 0; }
+  [data-tip] { text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; position: relative; }
+  html:not(.js) [data-tip]::after { content: attr(data-tip); position: absolute; left: 0; top: calc(100% + 6px); z-index: 20; width: max-content; max-width: 340px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-1); color: var(--ink-1); font-size: 12.5px; line-height: 1.4; font-weight: 400; white-space: normal; box-shadow: 0 6px 20px rgba(0,0,0,.14); opacity: 0; pointer-events: none; transition: opacity .06s; }
+  html:not(.js) [data-tip]:hover::after, html:not(.js) [data-tip]:focus-visible::after { opacity: 1; }
+  #tipbox { position: fixed; z-index: 1000; max-width: 360px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-1); color: var(--ink-1); font-size: 12.5px; line-height: 1.45; box-shadow: 0 8px 24px rgba(0,0,0,.16); pointer-events: none; display: none; }
+</style>
+</head>
+<body>
+<main>
+<header class="page">
+  <p class="kicker">Konzept-Dossier · Agent Studio</p>
+  <h1>Projekt-Scope: ein Schalter, ein Klick zu allen Projekten</h1>
+  <p class="lede">Der Projekt-Scope hat heute zwei Bedienelemente mit verschiedener Optik, die Sicht „Alle Projekte" braucht zwei Klicks, und der Scope springt still mit dem aktiven Tab. Drei Alternativen mit Mockups, eine Empfehlung, drei Entscheidungen.</p>
+  <div class="meta">
+    <span><b>Stand</b> 12.09.2026</span>
+    <span><b>Anlass</b> Operator-Befund 12.09.: „Ich benutze oft die All-projects-Anzeige. Die sollte mit einem Klick erreichbar sein. Visuell ist es gerade auch ein bisschen inkonsistent."</span>
+    <span><b>Quellen</b> studio-shell.component.html (Titlebar, Project picker), studio-activity-bar, task-tab-scope.ts, app.ts (Scope-Effekt), Screenshots des Operators</span>
+    <span><b>Verwandt</b> AGT-W21 Task-Kopf und Chat-Chips, AGT-W1 Admin Surface Design Guideline, AGT-2783 Dossier-Liste</span>
+  </div>
+</header>
+
+<div class="box accent">
+  <b>Kernaussage.</b> Der Scope „welches Projekt sehe ich" ist eine einzige Größe und braucht genau einen Besitzer in der Oberfläche. Heute sitzt er in der Kopfzeile als Pill mit eingebettetem Auto-Pickup-Schalter, und im Explorer-Kopf noch einmal als Rasterknopf „All projects"; dazu setzt ein Effekt den Scope beim Tab-Wechsel neu. Vorschlag: ein Segment in der Kopfzeile mit einem festen „Alle"-Knopf und dem Projekt-Pill daneben (ein Klick in jede Richtung), der Auto-Pickup-Schalter wandert aus dem Pill in ein eigenes Status-Chip, der Explorer zeigt den Scope nur noch an, und Tabs ändern den Scope nicht mehr still.
+</div>
+
+<h2 id="s1"><span class="no">§1</span>Ist-Zustand</h2>
+<figure>
+<svg viewBox="0 0 1040 250" role="img" aria-label="Ist: Kopfzeile und Explorer-Kopf">
+  <g font-family="system-ui, sans-serif" font-size="13" fill="var(--ink-1)">
+    <text x="20" y="26" fill="var(--ink-3)" font-size="12" letter-spacing="1.5">KOPFZEILE (studio-titlebar)</text>
+    <rect x="20" y="36" width="1000" height="44" rx="8" fill="var(--surface-2)" stroke="var(--line)"/>
+    <text x="36" y="63">Agent Orchestrator</text>
+    <text x="170" y="63" fill="var(--ink-3)">/</text>
+    <rect x="186" y="44" width="250" height="28" rx="14" fill="var(--surface-1)" stroke="var(--line)"/>
+    <circle cx="204" cy="58" r="9" fill="#5b7fc7"/><text x="200" y="62" fill="#fff" font-size="11" font-weight="700">A</text>
+    <text x="220" y="63" font-weight="600">Agent Studio</text>
+    <circle cx="326" cy="58" r="5" fill="#e0573b"/><text x="336" y="63" fill="#e0573b" font-size="11" font-weight="700">AUTO</text>
+    <circle cx="384" cy="58" r="9" fill="#f0c2b6"/><text x="380" y="62" fill="#7a2c1c" font-size="11" font-weight="700">8</text>
+    <text x="404" y="63" fill="var(--ink-3)">▾</text>
+    <text x="460" y="63" fill="var(--ink-2)" font-size="12">Pill = Projektwahl + Auto-Pickup-Umschalter + Parallelität + Caret: vier Ziele in einem Element</text>
+    <text x="20" y="116" fill="var(--ink-3)" font-size="12" letter-spacing="1.5">EXPLORER-KOPF (studio-sidebar-header)</text>
+    <rect x="20" y="126" width="300" height="44" rx="8" fill="var(--surface-2)" stroke="var(--line)"/>
+    <rect x="34" y="138" width="20" height="20" rx="4" fill="var(--ink-3)"/>
+    <text x="62" y="153" font-weight="600">All projects</text>
+    <text x="150" y="153" fill="var(--ink-3)">▾</text>
+    <text x="340" y="153" fill="var(--ink-2)" font-size="12">Rasterknopf: öffnet das projektübergreifende Board (board:__all__), andere Optik als der Pill</text>
+    <rect x="20" y="180" width="300" height="30" rx="6" fill="var(--surface-2)" stroke="var(--line)"/>
+    <text x="34" y="200" fill="var(--ink-3)" font-size="11" letter-spacing="1.5">EXPLORER</text>
+    <text x="340" y="200" fill="var(--ink-2)" font-size="12">Weg zu „Alle Projekte" aus der Kopfzeile: Pill öffnen, „All projects" wählen (zwei Klicks)</text>
+    <text x="20" y="238" fill="var(--ink-2)" font-size="12">Dazu: ein Effekt in app.ts setzt den Scope beim Tab-Wechsel (Board __all__ → alle; Hub/Dossier/Epics → Projekt des Tabs; Feed → alle). Der Scope folgt dem Tab, nicht der Wahl.</text>
+  </g>
+</svg>
+<figcaption>Nachgezeichnet nach den Screenshots des Operators vom 12.09. und dem Markup der Shell.</figcaption>
+</figure>
+<table>
+  <thead><tr><th>Element</th><th>Wo</th><th>Tut</th><th>Befund</th></tr></thead>
+  <tbody>
+    <tr><td>Projekt-Pill (<code>studio-project-picker</code>)</td><td>Kopfzeile, nach dem Workspace-Krümel</td><td>Klick öffnet Dropdown mit „All projects" plus jedem Projekt; im Pill sitzen der Auto-Pickup-Punkt (Klick schaltet auto/paused, mit stopPropagation) und die Parallelität</td><td>Vier Klickziele auf 250 px; „Alle" nur über das Dropdown; Tooltip „click to switch project" erklärt den Punkt nicht</td></tr>
+    <tr><td>Rasterknopf „All projects" (Explorer-Kopf)</td><td>Sidebar, über EXPLORER</td><td>Öffnet das projektübergreifende Board; laut Kommentar in der Activity-Bar der einzige Weg dorthin</td><td>Zweites Bedienelement für denselben Begriff, andere Optik (Icon plus Text plus Caret), anderer Ort, anderes Verhalten (öffnet Tab statt Scope zu setzen)</td></tr>
+    <tr><td>Scope-Effekt (app.ts)</td><td>Studio-Shell</td><td>Setzt <code>BoardFilters.activeProjects</code> beim Tab-Wechsel je Tab-Art</td><td>Die Wahl des Nutzers wird vom nächsten Tab überschrieben; „Alle" zu wählen hält nicht</td></tr>
+    <tr><td>Workspace-Krümel</td><td>Kopfzeile, links</td><td>Zeigt den Workspace (Agent Orchestrator)</td><td>Reiner Text ohne Aktion, aber im selben Krümelpfad wie der klickbare Pill</td></tr>
+  </tbody>
+</table>
+
+<h2 id="s2"><span class="no">§2</span>Anforderungen</h2>
+<ol>
+  <li>„Alle Projekte" ist von überall mit <b>einem Klick</b> erreichbar und mit einem Klick wieder verlassbar (zurück zum letzten Projekt).</li>
+  <li>Es gibt <b>ein</b> Bedienelement für den Scope. Andere Stellen zeigen den Scope an, setzen ihn aber nicht.</li>
+  <li>Der Scope hält, bis der Nutzer ihn ändert. Tabs zeigen ihren Projektkontext, ohne den Scope still zu überschreiben; Ausnahme nur, wenn der Nutzer das ausdrücklich will (D2).</li>
+  <li>Auto-Pickup und Parallelität sind Projektstatus, kein Teil der Projektwahl: eigenes Chip mit eigenem Tooltip, eigenem Klickziel, auch für „Alle" (aggregiert).</li>
+  <li>Kopfzeile und Explorer benutzen dieselben Bausteine (Glyphe, Farbe, Schrift, Chip-Form) aus den Studio-Tokens.</li>
+  <li>Tastatur: Alle/Projekt umschalten und Projektwechsel ohne Maus (Ctrl+Shift+P für den Picker, Ctrl+Shift+A für Alle, in der Command-Palette gelistet).</li>
+</ol>
+
+<h2 id="s3"><span class="no">§3</span>Alternativen</h2>
+
+<h3>A · Segment in der Kopfzeile: „Alle" fest, Projekt-Pill daneben, Status als eigenes Chip (Empfehlung)</h3>
+<figure>
+<svg viewBox="0 0 1040 120" role="img" aria-label="Alternative A">
+  <g font-family="system-ui, sans-serif" font-size="13" fill="var(--ink-1)">
+    <rect x="20" y="20" width="1000" height="44" rx="8" fill="var(--surface-2)" stroke="var(--line)"/>
+    <text x="36" y="47" fill="var(--ink-2)">Agent Orchestrator</text>
+    <text x="170" y="47" fill="var(--ink-3)">/</text>
+    <rect x="186" y="28" width="330" height="28" rx="14" fill="var(--surface-1)" stroke="var(--line)"/>
+    <rect x="187" y="29" width="62" height="26" rx="13" fill="var(--surface-3)"/>
+    <text x="200" y="47" fill="var(--ink-2)" font-weight="600">Alle</text>
+    <rect x="251" y="29" width="264" height="26" rx="13" fill="var(--accent-soft)"/>
+    <circle cx="270" cy="42" r="9" fill="#5b7fc7"/><text x="266" y="46" fill="#fff" font-size="11" font-weight="700">A</text>
+    <text x="286" y="47" font-weight="600">Agent Studio</text>
+    <text x="494" y="47" fill="var(--ink-3)">▾</text>
+    <rect x="530" y="28" width="118" height="28" rx="14" fill="var(--surface-1)" stroke="var(--line)"/>
+    <circle cx="548" cy="42" r="5" fill="#2e9e4f"/>
+    <text x="560" y="47" font-size="12" font-weight="600">Auto · 3/8</text>
+    <text x="670" y="47" fill="var(--ink-2)" font-size="12">Segment: linkes Teil = Alle (ein Klick), rechtes Teil = aktives Projekt, Caret = Wechsel. Status-Chip separat.</text>
+    <text x="20" y="96" fill="var(--ink-2)" font-size="12">Bei „Alle" aktiv: linkes Segment gefüllt, rechtes zeigt das zuletzt gewählte Projekt abgeschwächt („zurück zu Agent Studio" mit einem Klick). Status-Chip zeigt dann die Fleet-Summe (Auto · 5/14).</text>
+  </g>
+</svg>
+<figcaption>A: ein Segment, zwei Zustände, ein Klick in jede Richtung; der Explorer-Kopf verliert den Rasterknopf und zeigt den Scope als Überschrift.</figcaption>
+</figure>
+<ul>
+  <li>Explorer-Kopf: statt Rasterknopf eine Zeile „Scope: Alle Projekte" oder „Scope: Agent Studio" mit derselben Glyphe; Klick darauf fokussiert das Segment in der Kopfzeile (kein zweiter Setzer).</li>
+  <li>Das projektübergreifende Board wird zu einer Ansicht des Scopes „Alle", nicht zu einem eigenen Knopf: Board, Feed, Dossiers zeigen unter „Alle" die Fleet-Sicht.</li>
+  <li>Status-Chip: Auto-Punkt, Modus und „laufend/Parallelität" (3/8 statt nur 8), Klick öffnet ein kleines Menü (Auto, Pausiert, Manuell) statt blind zu toggeln; Tooltip nennt Modus, Runner und Zahlen.</li>
+</ul>
+
+<h3>B · Explorer als einziger Besitzer</h3>
+<figure>
+<svg viewBox="0 0 1040 150" role="img" aria-label="Alternative B">
+  <g font-family="system-ui, sans-serif" font-size="13" fill="var(--ink-1)">
+    <rect x="20" y="20" width="1000" height="40" rx="8" fill="var(--surface-2)" stroke="var(--line)"/>
+    <text x="36" y="45" fill="var(--ink-2)">Agent Orchestrator</text><text x="170" y="45" fill="var(--ink-3)">/</text>
+    <text x="186" y="45" fill="var(--ink-2)">Agent Studio</text>
+    <text x="300" y="45" fill="var(--ink-3)" font-size="12">Krümelpfad nur Anzeige</text>
+    <rect x="20" y="72" width="300" height="70" rx="8" fill="var(--surface-2)" stroke="var(--line)"/>
+    <rect x="32" y="82" width="276" height="22" rx="11" fill="var(--surface-3)"/><text x="44" y="97" font-weight="600">Alle Projekte</text>
+    <rect x="32" y="110" width="276" height="22" rx="11" fill="var(--accent-soft)"/><circle cx="46" cy="121" r="8" fill="#5b7fc7"/><text x="60" y="125" font-weight="600">Agent Studio</text><text x="230" y="125" fill="#2e9e4f" font-size="11">● Auto 3/8</text>
+    <text x="340" y="97" fill="var(--ink-2)" font-size="12">Explorer-Liste: „Alle Projekte" fest oben, darunter Projekte mit Status-Punkt; ein Klick setzt den Scope.</text>
+    <text x="340" y="125" fill="var(--ink-2)" font-size="12">Kopfzeile wird reine Anzeige. Nachteil: Scope-Wechsel nur bei offenem Explorer-Panel.</text>
+  </g>
+</svg>
+<figcaption>B: der Explorer ist die Projektliste und damit der natürliche Setzer; die Kopfzeile verliert den Picker.</figcaption>
+</figure>
+
+<h3>C · Minimal: Tastenkürzel und Zuletzt-Umschalter, Elemente bleiben</h3>
+<p>Kopfzeile und Explorer bleiben wie heute; neu sind Ctrl+Shift+A (Alle/zurück) und ein Eintrag in der Command-Palette. Erfüllt Anforderung 1 für Tastaturnutzer, lässt die Inkonsistenz und den Tab-Effekt stehen.</p>
+
+<h2 id="s4"><span class="no">§4</span>Bewertung</h2>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Alternative</th><th><span data-tip="Anforderung 1: Alle Projekte mit einem Klick erreichbar und verlassbar">Ein Klick</span></th><th><span data-tip="Anforderung 2: genau ein Bedienelement setzt den Scope, alle anderen zeigen ihn nur">Ein Besitzer</span></th><th><span data-tip="Anforderung 5: gleiche Bausteine in Kopfzeile und Explorer">Konsistenz</span></th><th><span data-tip="Anforderung 4: Auto-Pickup und Parallelität als eigenes Chip">Status getrennt</span></th><th>Aufwand</th><th>Risiko</th></tr></thead>
+  <tbody>
+    <tr><td><b>A Segment</b></td><td><span class="tag ok">ja</span></td><td><span class="tag ok">ja</span></td><td><span class="tag ok">ja</span></td><td><span class="tag ok">ja</span></td><td>mittel (Titlebar, Sidebar-Header, Scope-Service, Specs)</td><td>Kopfzeile wird auf schmalen Fenstern eng; Segment muss unter 900 px auf Glyphe plus Caret zusammenfallen</td></tr>
+    <tr><td><b>B Explorer</b></td><td><span class="tag warn">nur bei offenem Panel</span></td><td><span class="tag ok">ja</span></td><td><span class="tag ok">ja</span></td><td><span class="tag ok">ja</span></td><td>mittel</td><td>Nutzer mit eingeklapptem Explorer müssen es erst öffnen; Kopfzeile ohne Aktion wirkt leer</td></tr>
+    <tr><td><b>C Minimal</b></td><td><span class="tag warn">Tastatur</span></td><td><span class="tag bad">nein</span></td><td><span class="tag bad">nein</span></td><td><span class="tag bad">nein</span></td><td>klein</td><td>Löst den Befund nur für Tastaturnutzer</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="s5"><span class="no">§5</span>Empfehlung</h2>
+<div class="box accent">
+  <p><b>A</b>, in zwei Schritten. Schritt 1: Segment „Alle | Projekt ▾" in der Kopfzeile, Status-Chip getrennt, Rasterknopf im Explorer durch die Scope-Anzeige ersetzt, Tastenkürzel. Schritt 2: der Tab-Effekt wird von „Scope folgt Tab" auf „Tab zeigt Kontext" umgestellt (D2); bis dahin gilt: ein ausdrücklich gewählter Scope hält für die Sitzung, der Effekt setzt nur, wenn der Nutzer nichts gewählt hat.</p>
+  <p>Begründung: A erfüllt alle sechs Anforderungen, bleibt an der Stelle, die der Nutzer heute schon benutzt (Kopfzeile), und trennt die vier Klickziele des Pills in zwei Elemente mit je einem Zweck.</p>
+</div>
+
+<h2 id="s6"><span class="no">§6</span>Entscheidungen</h2>
+<div class="decision" data-decision-id="scope-schalter" data-decision-kind="single" data-decision-label="Bedienelement für den Projekt-Scope">
+  <h3>D1 · Welche Alternative wird umgesetzt?</h3>
+  <label data-option-id="a-segment" data-option-label="A · Segment in der Kopfzeile, Status-Chip getrennt, Explorer zeigt nur an (Empfehlung)"><input type="radio" name="scope-schalter" value="a-segment"><span><b>A · Segment in der Kopfzeile</b><span class="d">Alle | Projekt ▾ nebeneinander, ein Klick in jede Richtung; Auto-Pickup als eigenes Chip; Rasterknopf im Explorer entfällt.</span></span></label>
+  <label data-option-id="b-explorer" data-option-label="B · Explorer als einziger Besitzer, Kopfzeile nur Anzeige"><input type="radio" name="scope-schalter" value="b-explorer"><span><b>B · Explorer als einziger Besitzer</b><span class="d">Projektliste mit „Alle Projekte" fest oben; Kopfzeile ohne Picker.</span></span></label>
+  <label data-option-id="c-minimal" data-option-label="C · Nur Tastenkürzel und Zuletzt-Umschalter"><input type="radio" name="scope-schalter" value="c-minimal"><span><b>C · Minimal</b><span class="d">Ctrl+Shift+A und Command-Palette, Elemente bleiben.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="scope-tabs" data-decision-kind="single" data-decision-label="Verhalten des Scopes beim Tab-Wechsel">
+  <h3>D2 · Darf ein Tab-Wechsel den Scope ändern?</h3>
+  <label data-option-id="sticky" data-option-label="A · Nein: der Scope hält, Tabs zeigen ihren Projektkontext im Tab und im Kopf der Ansicht (Empfehlung)"><input type="radio" name="scope-tabs" value="sticky"><span><b>A · Scope hält, Tabs zeigen Kontext</b><span class="d">Ein fremdes Projekt im Tab wird als Chip im Tab und im Ansichtskopf sichtbar; Zähler und Filter bleiben beim gewählten Scope.</span></span></label>
+  <label data-option-id="follow" data-option-label="B · Ja, wie heute: der Scope folgt dem aktiven Tab"><input type="radio" name="scope-tabs" value="follow"><span><b>B · Scope folgt dem Tab</b><span class="d">Wie heute; „Alle" hält nur, bis ein Projekt-Tab aktiv wird.</span></span></label>
+  <label data-option-id="ask" data-option-label="C · Beim ersten Widerspruch fragen und Antwort merken"><input type="radio" name="scope-tabs" value="ask"><span><b>C · Einmal fragen, Antwort merken</b><span class="d">Kleiner Dialog beim ersten Tab außerhalb des Scopes; Einstellung in den Darstellungsoptionen.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="pickup-chip" data-decision-kind="single" data-decision-label="Platz des Auto-Pickup-Schalters">
+  <h3>D3 · Wo sitzt der Auto-Pickup-Schalter?</h3>
+  <label data-option-id="chip-kopfzeile" data-option-label="A · Eigenes Status-Chip rechts neben dem Segment, mit Menü statt Toggle (Empfehlung)"><input type="radio" name="pickup-chip" value="chip-kopfzeile"><span><b>A · Status-Chip neben dem Segment, Menü statt Toggle</b><span class="d">Zeigt Modus und laufend/Parallelität; Klick öffnet Auto, Pausiert, Manuell; bei „Alle" die Fleet-Summe.</span></span></label>
+  <label data-option-id="im-pill" data-option-label="B · Im Projekt-Pill wie heute"><input type="radio" name="pickup-chip" value="im-pill"><span><b>B · Im Pill wie heute</b><span class="d">Vier Klickziele bleiben.</span></span></label>
+  <label data-option-id="explorer-zeile" data-option-label="C · An der Projektzeile im Explorer"><input type="radio" name="pickup-chip" value="explorer-zeile"><span><b>C · An der Projektzeile im Explorer</b><span class="d">Sichtbar nur bei offenem Panel.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<h2 id="s7"><span class="no">§7</span>Karten</h2>
+<table>
+  <thead><tr><th>Karte</th><th>Inhalt</th><th>Beweis</th></tr></thead>
+  <tbody>
+    <tr><td>K1 Scope-Segment und Status-Chip</td><td>Segment „Alle | Projekt ▾" in <code>studio-titlebar</code>, Status-Chip mit Menü, Rasterknopf im Explorer durch Scope-Anzeige ersetzt, Tastenkürzel und Command-Palette, responsive unter 900 px, Specs, data-testids</td><td>Screenshots Kopfzeile und Explorer in beiden Zuständen (Alle, Projekt), hell und dunkel, 1536 und 900 px; ein Klick zu Alle und zurück im E2E-Test</td></tr>
+    <tr><td>K2 Scope hält (D2)</td><td>Tab-Effekt in app.ts auf „Kontext anzeigen" umstellen, Projekt-Chip im Tab und im Ansichtskopf, Zähler und Filter am gewählten Scope</td><td>E2E: Alle wählen, Projekt-Tab öffnen, Scope bleibt Alle, Tab zeigt Chip</td></tr>
+  </tbody>
+</table>
+
+<!-- agent-studio:implementation-section:start -->
+<section id="implementation" data-document-section="implementation">
+  <h2>Implementation</h2>
+  <p>Delivery slices append their current implementation status here.</p>
+  <ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<!-- agent-studio:implementation-log:end -->
+  </ol>
+</section>
+<!-- agent-studio:implementation-section:end -->
+</main>
+<div id="tipbox" role="tooltip"></div>
+<script>
+(function(){
+  document.documentElement.classList.add('js');
+  var box=document.getElementById('tipbox'); if(!box) return;
+  function show(el){ box.textContent=el.getAttribute('data-tip')||''; box.style.display='block'; place(el); }
+  function place(el){ var r=el.getBoundingClientRect(); var w=box.offsetWidth, h=box.offsetHeight; var x=Math.min(Math.max(8,r.left), window.innerWidth-w-8); var y=r.bottom+8; if(y+h>window.innerHeight-8) y=r.top-h-8; box.style.left=x+'px'; box.style.top=y+'px'; }
+  function hide(){ box.style.display='none'; }
+  document.querySelectorAll('[data-tip]').forEach(function(el){
+    el.setAttribute('tabindex','0');
+    el.addEventListener('mouseenter',function(){show(el)}); el.addEventListener('mouseleave',hide);
+    el.addEventListener('focus',function(){show(el)}); el.addEventListener('blur',hide);
+    el.addEventListener('click',function(){ box.style.display==='block'?hide():show(el); });
+  });
+  window.addEventListener('scroll',hide,true);
+})();
+</script>
+</body>
+</html>
