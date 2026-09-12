@@ -531,6 +531,29 @@
           </td>
         </tr>
         <tr>
+          <td>2026-09-12</td>
+          <td><code>AGT-2781</code><br><span class="small">local run teardown left Python preview servers and an unregistered worktree</span></td>
+          <td>
+            WEB-19 completed and delivered, but two <code>python -m http.server</code> children retained cwd handles inside the
+            Windows task worktree. Git pruned the worktree registration while the directory remained, and every follow-up pickup
+            bounced from Ready to Progress and back after <code>fatal: ... is not a working tree</code> without a card-visible failure.
+          </td>
+          <td>
+            Process containment covered Windows job-object runs but not Linux natural-exit descendants, physical teardown had no
+            rename-aside fallback after Git lost its registration, the periodic reaper only inspected recorded CLI trees, and
+            preparation failures were not projected onto Ready cards or the task timeline. Project URL ports were not checked at
+            local run admission.
+          </td>
+          <td>
+            <span class="pill ok">fixed</span> local CLI launches now own a Windows job object or Linux process group and reap it
+            before run-finish subscribers can tear down the worktree. Physical cleanup retries and renames an undeletable directory
+            to <code>.stale-&lt;timestamp&gt;</code>; the periodic reaper also removes or renames aged directories that lost <code>.git</code>.
+            Each failed prepare writes <code>worktree-preparation-failed</code> with the Git message, path, and retry count to the card
+            source and timeline; the existing five-attempt bound parks it with <code>worktree-blocked</code>. Local run admission logs
+            configured project URL port occupancy with the owning PID.
+          </td>
+        </tr>
+        <tr>
           <td>2026-07-11</td>
           <td><code>AGT-2076</code><br><span class="small">worktree-orphan-resilienz</span></td>
           <td>

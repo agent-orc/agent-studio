@@ -1849,6 +1849,39 @@ describe('current card-status reconciliation', () => {
     expect(badge?.label).toBe('Watchdog timeout');
     expect(badge?.tone).toBe('high');
   });
+
+  it('shows a worktree preparation failure while the card backs off in Ready', () => {
+    const badge = buildOutcomeIssueBadge(makeJob({
+      state: '2-ready',
+      outcomeIssue: {
+        kind: 'worktree-preparation-failed',
+        label: 'worktree-preparation-failed',
+        severity: 'High',
+        summary: 'attempt=2/5 path=C:\\Temp\\ass-worktrees\\demo\\task gitMessage=fatal: not a working tree',
+        lastSeenAt: '2026-09-12T11:35:00Z',
+      },
+    }));
+
+    expect(badge?.label).toBe('worktree-preparation-failed');
+    expect(badge?.tone).toBe('high');
+    expect(badge?.tooltip).toContain('fatal: not a working tree');
+    expect(badge?.tooltip).toContain('C:\\Temp\\ass-worktrees');
+  });
+
+  it('keeps unrelated historical outcome issues quiet in Ready', () => {
+    const badge = buildOutcomeIssueBadge(makeJob({
+      state: '2-ready',
+      outcomeIssue: {
+        kind: 'integration-error',
+        label: 'Integration failed',
+        severity: 'High',
+        summary: 'Historical failure from the prior run.',
+        lastSeenAt: '2026-09-11T11:35:00Z',
+      },
+    }));
+
+    expect(badge).toBeNull();
+  });
 });
 
 describe('buildDecisionDamBadge', () => {

@@ -35,7 +35,113 @@ public sealed record IntegrationResult(
 }
 
 /// <summary>Result of the worktree teardown post-step.</summary>
-public sealed record TeardownResult(bool Success, string? Error);
+public sealed record TeardownResult(bool Success, string? Error, string? StalePath = null);
+
+internal sealed record WorktreeDirectoryCleanupResult(
+    bool CanonicalPathCleared,
+    string? StalePath,
+    string? Error);
+
+internal interface IWorktreeDirectoryCleanup
+{
+    WorktreeDirectoryCleanupResult Clear(string path);
+}
+
+/// <summary>
+/// Bounded physical cleanup after Git has released (or already lost) its
+/// worktree registration. A directory that remains undeletable is renamed out
+/// of the canonical slot so the next pickup never collides with it.
+/// </summary>
+internal sealed class WorktreeDirectoryCleanup : IWorktreeDirectoryCleanup
+{
+    private readonly Action<string> _delete;
+    private readonly Func<DateTime> _utcNow;
+
+    internal WorktreeDirectoryCleanup(Action<string>? delete = null, Func<DateTime>? utcNow = null)
+    {
+        _delete = delete ?? DeleteDirectoryWithoutFollowingReparsePoints;
+        _utcNow = utcNow ?? (() => DateTime.UtcNow);
+    }
+
+    public WorktreeDirectoryCleanupResult Clear(string path)
+    {
+        if (!Directory.Exists(path)) return new(true, null, null);
+
+        Exception? last = null;
+        foreach (var delay in new[] { 0, 50, 150 })
+        {
+            if (delay > 0) Thread.Sleep(delay);
+            try
+            {
+                _delete(path);
+                if (!Directory.Exists(path)) return new(true, null, null);
+            }
+            catch (Exception ex)
+            {
+                last = ex;
+            }
+        }
+
+        var stamp = _utcNow().ToString("yyyyMMddHHmmssfff", System.Globalization.CultureInfo.InvariantCulture);
+        for (var suffix = 0; suffix < 100; suffix++)
+        {
+            var stalePath = path + $".stale-{stamp}" + (suffix == 0 ? string.Empty : $"-{suffix + 1}");
+            if (Directory.Exists(stalePath)) continue;
+            try
+            {
+                Directory.Move(path, stalePath);
+                return new(true, stalePath, last?.Message);
+            }
+            catch (Exception ex)
+            {
+                last = ex;
+                break;
+            }
+        }
+
+        return new(!Directory.Exists(path), null, last?.Message ?? $"Could not remove or rename '{path}'.");
+    }
+
+    internal static void DeleteDirectoryWithoutFollowingReparsePoints(string path)
+    {
+        var attributes = File.GetAttributes(path);
+        if ((attributes & FileAttributes.ReparsePoint) != 0)
+        {
+            ClearReadOnly(path, attributes);
+            Directory.Delete(path);
+            return;
+        }
+
+        foreach (var entry in Directory.EnumerateFileSystemEntries(path))
+        {
+            var entryAttributes = File.GetAttributes(entry);
+            if ((entryAttributes & FileAttributes.Directory) == 0)
+            {
+                ClearReadOnly(entry, entryAttributes);
+                File.Delete(entry);
+                continue;
+            }
+
+            if ((entryAttributes & FileAttributes.ReparsePoint) != 0)
+            {
+                ClearReadOnly(entry, entryAttributes);
+                Directory.Delete(entry);
+                continue;
+            }
+
+            DeleteDirectoryWithoutFollowingReparsePoints(entry);
+        }
+
+        ClearReadOnly(path, attributes);
+        Directory.Delete(path);
+    }
+
+    private static void ClearReadOnly(string path, FileAttributes attributes)
+    {
+        if ((attributes & FileAttributes.ReadOnly) != 0)
+            File.SetAttributes(path, attributes & ~FileAttributes.ReadOnly);
+    }
+}
 
 /// <summary>
 /// ADR-0052 §3-§6: composes the low-level <see cref="GitService"/> worktree
@@ -61,11 +167,21 @@ public sealed class WorktreeTaskLifecycle
 {
     private readonly GitService _git;
     private readonly ILogger<WorktreeTaskLifecycle> _logger;
+    private readonly IWorktreeDirectoryCleanup _directoryCleanup;
 
     public WorktreeTaskLifecycle(GitService git, ILogger<WorktreeTaskLifecycle> logger)
+        : this(git, logger, null)
+    {
+    }
+
+    internal WorktreeTaskLifecycle(
+        GitService git,
+        ILogger<WorktreeTaskLifecycle> logger,
+        IWorktreeDirectoryCleanup? directoryCleanup)
     {
         _git = git;
         _logger = logger;
+        _directoryCleanup = directoryCleanup ?? new WorktreeDirectoryCleanup();
     }
 
     /// <summary>The ephemeral branch name for a task: <c>task/&lt;sanitized-id&gt;</c>.</summary>
@@ -92,7 +208,7 @@ public sealed class WorktreeTaskLifecycle
         if (!add.Success)
         {
             _logger.LogWarning("Worktree prepare failed for task {TaskId} on {Branch}: {Error}", taskId, branch, add.Error);
-            return new WorktreePreparation(false, null, branch, add.Error);
+            return new WorktreePreparation(false, path, branch, add.Error);
         }
         _logger.LogInformation("Prepared worktree for task {TaskId}: branch {Branch} off {From} at {Path}",
             taskId, branch, integrationBranch, add.Path);
@@ -147,7 +263,7 @@ public sealed class WorktreeTaskLifecycle
             // (leftover capture server) means reject cleanly here instead of
             // letting the add throw a confusing "already exists" (AGT-1785).
             if (!ClearStaleCanonicalWorktreePath(repoRoot, taskId, branch, path))
-                return new WorktreePreparation(false, null, branch, $"Orphan worktree dir busy at {path}; deferring task {taskId}.");
+                return new WorktreePreparation(false, path, branch, $"Orphan worktree dir busy at {path}; deferring task {taskId}.");
 
             // S11: a stale branch that is folded into the integration branch AND
             // strictly BEHIND its current tip (a leftover from a failed/escalated
@@ -179,7 +295,7 @@ public sealed class WorktreeTaskLifecycle
                 return new WorktreePreparation(true, attach.Path, branch, null, Reused: true);
             }
             _logger.LogWarning("Re-attach of existing branch {Branch} for task {TaskId} failed: {Error}", branch, taskId, attach.Error);
-            return new WorktreePreparation(false, null, branch, attach.Error);
+            return new WorktreePreparation(false, path, branch, attach.Error);
         }
 
         // 3) First run for this task -> fresh cut off the integration branch.
@@ -188,7 +304,7 @@ public sealed class WorktreeTaskLifecycle
         //    add` fail with "already exists"; clear it (and verify free) so the
         //    fresh cut succeeds.
         if (!ClearStaleCanonicalWorktreePath(repoRoot, taskId, branch, path))
-            return new WorktreePreparation(false, null, branch, $"Orphan worktree dir busy at {path}; deferring task {taskId}.");
+            return new WorktreePreparation(false, path, branch, $"Orphan worktree dir busy at {path}; deferring task {taskId}.");
         return PrepareWithRetry(repoRoot, taskId, integrationBranch, worktreeRoot, branch, path);
     }
 
@@ -363,23 +479,47 @@ public sealed class WorktreeTaskLifecycle
         string? error = null;
 
         var rm = _git.WorktreeRemove(repoRoot, worktreePath);
-        if (!rm.Success) error = rm.Error;
+        string? stalePath = null;
+        if (Directory.Exists(worktreePath))
+        {
+            var physical = _directoryCleanup.Clear(worktreePath);
+            stalePath = physical.StalePath;
+            if (!physical.CanonicalPathCleared)
+                error = JoinErrors(rm.Error, physical.Error);
+            else if (!string.IsNullOrWhiteSpace(stalePath))
+                _logger.LogWarning(
+                    "worktree-teardown-stale-renamed path={Path} stalePath={StalePath} gitError={GitError}",
+                    worktreePath,
+                    stalePath,
+                    rm.Error);
+        }
+        else if (!rm.Success)
+        {
+            // Git may report "not a working tree" after a prior partial
+            // teardown. The canonical filesystem slot is already clear, so it
+            // is safe to continue and prune the stale administration entry.
+            _logger.LogWarning(
+                "worktree-teardown-registration-already-gone path={Path} gitError={GitError}",
+                worktreePath,
+                rm.Error);
+        }
+        _git.WorktreePrune(repoRoot);
 
         if (deleteBranch && !string.IsNullOrWhiteSpace(taskBranch))
         {
             if (deleteRemoteBranch)
             {
                 var remoteDel = _git.DeleteRemoteBranch(repoRoot, taskBranch!);
-                if (!remoteDel.Success) error = error is null ? remoteDel.Error : $"{error}; {remoteDel.Error}";
+                if (!remoteDel.Success) error = JoinErrors(error, remoteDel.Error);
             }
 
             var del = _git.DeleteBranch(repoRoot, taskBranch!, force);
-            if (!del.Success) error = error is null ? del.Error : $"{error}; {del.Error}";
+            if (!del.Success) error = JoinErrors(error, del.Error);
         }
 
         if (error != null)
             _logger.LogWarning("Worktree teardown for {Path} reported: {Error}", worktreePath, error);
-        return new TeardownResult(error is null, error);
+        return new TeardownResult(error is null, error, stalePath);
     }
 
     /// <summary>
@@ -549,30 +689,37 @@ public sealed class WorktreeTaskLifecycle
         var remove = _git.WorktreeRemove(repoRoot, path);
         if (Directory.Exists(path))
         {
-            try
+            var cleanup = _directoryCleanup.Clear(path);
+            if (cleanup.CanonicalPathCleared)
             {
-                DeleteDirectoryWithoutFollowingReparsePoints(path);
-                if (!Directory.Exists(path))
-                {
-                    _logger.LogInformation(
-                        "Deleted stale worktree directory for task {TaskId}: branch {Branch} at {Path} after git worktree remove returned {RemoveSuccess} ({RemoveError})",
+                if (cleanup.StalePath is null)
+                    _logger.LogWarning(
+                        "worktree-stale-deleted task={TaskId} branch={Branch} path={Path} gitSuccess={RemoveSuccess} gitError={RemoveError}",
                         taskId,
                         branch,
                         path,
                         remove.Success,
                         remove.Error);
-                }
+                else
+                    _logger.LogWarning(
+                        "worktree-stale-renamed task={TaskId} branch={Branch} path={Path} stalePath={StalePath} gitSuccess={RemoveSuccess} gitError={RemoveError}",
+                        taskId,
+                        branch,
+                        path,
+                        cleanup.StalePath,
+                        remove.Success,
+                        remove.Error);
             }
-            catch (Exception ex)
+            else
             {
                 _logger.LogWarning(
-                    ex,
-                    "Failed to delete stale worktree directory for task {TaskId}: branch {Branch} at {Path} after git worktree remove returned {RemoveSuccess} ({RemoveError})",
+                    "worktree-stale-cleanup-failed task={TaskId} branch={Branch} path={Path} gitSuccess={RemoveSuccess} gitError={RemoveError} cleanupError={CleanupError}",
                     taskId,
                     branch,
                     path,
                     remove.Success,
-                    remove.Error);
+                    remove.Error,
+                    cleanup.Error);
             }
         }
 
@@ -589,45 +736,8 @@ public sealed class WorktreeTaskLifecycle
         return !Directory.Exists(path);
     }
 
-    private static void DeleteDirectoryWithoutFollowingReparsePoints(string path)
-    {
-        var attributes = File.GetAttributes(path);
-        if ((attributes & FileAttributes.ReparsePoint) != 0)
-        {
-            ClearReadOnly(path, attributes);
-            Directory.Delete(path);
-            return;
-        }
-
-        foreach (var entry in Directory.EnumerateFileSystemEntries(path))
-        {
-            var entryAttributes = File.GetAttributes(entry);
-            if ((entryAttributes & FileAttributes.Directory) == 0)
-            {
-                ClearReadOnly(entry, entryAttributes);
-                File.Delete(entry);
-                continue;
-            }
-
-            if ((entryAttributes & FileAttributes.ReparsePoint) != 0)
-            {
-                ClearReadOnly(entry, entryAttributes);
-                Directory.Delete(entry);
-                continue;
-            }
-
-            DeleteDirectoryWithoutFollowingReparsePoints(entry);
-        }
-
-        ClearReadOnly(path, attributes);
-        Directory.Delete(path);
-    }
-
-    private static void ClearReadOnly(string path, FileAttributes attributes)
-    {
-        if ((attributes & FileAttributes.ReadOnly) == 0)
-            return;
-
-        File.SetAttributes(path, attributes & ~FileAttributes.ReadOnly);
-    }
+    private static string? JoinErrors(string? first, string? second)
+        => string.IsNullOrWhiteSpace(first)
+            ? second
+            : string.IsNullOrWhiteSpace(second) ? first : $"{first}; {second}";
 }

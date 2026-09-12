@@ -109,6 +109,12 @@ public static class TimelineEventKinds
     /// </summary>
     public const string RunnerSlotAdmission = "runner_slot_admission";
     /// <summary>
+    /// A local coding pickup could not prepare its isolated worktree. Details
+    /// carry the stable failure code, exact Git message, canonical path, and
+    /// bounded retry count.
+    /// </summary>
+    public const string WorktreePreparationFailed = "worktree_preparation_failed";
+    /// <summary>
     /// ADR-0052 multi-system follow-up: the Task Server granted, rejected, or
     /// released the fenced integration lease that serializes direct merges into
     /// a project's integration branch across runner machines.

@@ -19,6 +19,55 @@ namespace AgentStudio.Tests;
 /// </summary>
 public sealed class TaskProcessReaperTests
 {
+    [SkippableFact]
+    [Trait("Category", "MachineBound")]
+    [Trait("Category", "ReviewFlaky")]
+    public async Task LinuxProcessGroupTeardown_EndsChildHoldingWorktreeCwd_ThenDirectoryRemoves()
+    {
+        Skip.IfNot(OperatingSystem.IsLinux(), "Linux process-group contract");
+        var worktree = Path.Combine(Path.GetTempPath(), "reaper-worktree-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(worktree);
+        var pidFile = Path.Combine(worktree, "server.pid");
+        var script = $"python3 -m http.server 0 >/dev/null 2>&1 & echo $! > '{pidFile}'; wait";
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "/bin/sh",
+            WorkingDirectory = worktree,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        startInfo.ArgumentList.Add("-c");
+        startInfo.ArgumentList.Add(script);
+        Assert.True(TaskProcessReaper.WrapStartInfoForProcessGroup(startInfo));
+        using var root = Process.Start(startInfo)!;
+        using var reaper = TaskProcessReaper.CreateForProcess(root, NullLogger.Instance);
+        Assert.NotNull(reaper);
+
+        Process? server = null;
+        try
+        {
+            var serverPid = await WaitForPidAsync(pidFile, TimeSpan.FromSeconds(10));
+            Assert.True(serverPid > 0, "fake child server PID was never written");
+            server = Process.GetProcessById(serverPid);
+            Assert.False(server.HasExited);
+
+            reaper!.Terminate();
+
+            Assert.True(await WaitForExitAsync(server, TimeSpan.FromSeconds(10)),
+                "child server holding the worktree cwd survived group teardown");
+            Assert.True(root.WaitForExit(10_000), "setsid root did not exit after group teardown");
+            Directory.Delete(worktree, recursive: true);
+            Assert.False(Directory.Exists(worktree));
+        }
+        finally
+        {
+            try { if (server is { HasExited: false }) server.Kill(entireProcessTree: true); } catch { }
+            server?.Dispose();
+            try { if (!root.HasExited) root.Kill(entireProcessTree: true); } catch { }
+            try { if (Directory.Exists(worktree)) Directory.Delete(worktree, recursive: true); } catch { }
+        }
+    }
+
     // Windows-only 02.08. (AGT-2472): the reaper is built on the Win32 Job Object
     // primitive. Linux teardown uses process groups and is covered separately.
     [SkippableFact]
@@ -30,7 +79,9 @@ public sealed class TaskProcessReaperTests
     {
         PlatformGate.WindowsOnly("the reaper is built on the Win32 Job Object primitive");
 
-        var pidFile = Path.Combine(Path.GetTempPath(), $"reaper-gc-{Guid.NewGuid():N}.pid");
+        var worktree = Path.Combine(Path.GetTempPath(), $"reaper-worktree-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(worktree);
+        var pidFile = Path.Combine(worktree, "server.pid");
 
         // The child idles briefly (so the test can assign the group BEFORE any
         // helper exists — mirroring the production spawn site), then launches a
@@ -50,6 +101,7 @@ public sealed class TaskProcessReaperTests
             {
                 FileName = "powershell.exe",
                 ArgumentList = { "-NoProfile", "-NonInteractive", "-Command", script },
+                WorkingDirectory = worktree,
                 UseShellExecute = false,
                 CreateNoWindow = true,
             }
@@ -74,13 +126,16 @@ public sealed class TaskProcessReaperTests
 
             var died = await WaitForExitAsync(grandchild, TimeSpan.FromSeconds(10));
             Assert.True(died, "detached grandchild survived Terminate() — group containment failed");
+            Assert.True(child.WaitForExit(10_000), "root process did not exit after job termination");
+            Directory.Delete(worktree, recursive: true);
+            Assert.False(Directory.Exists(worktree));
         }
         finally
         {
             reaper?.Dispose();
             try { if (grandchild is { HasExited: false }) grandchild.Kill(); } catch (Exception) { /* best-effort */ }
             try { if (!child.HasExited) child.Kill(entireProcessTree: true); } catch (Exception) { /* best-effort */ }
-            try { File.Delete(pidFile); } catch (Exception) { /* best-effort */ }
+            try { if (Directory.Exists(worktree)) Directory.Delete(worktree, recursive: true); } catch (Exception) { /* best-effort */ }
         }
     }
 

@@ -19,6 +19,7 @@ public sealed class OrphanReaperHostedService : BackgroundService
     private readonly CliRouter _router;
     private readonly IConfiguration _config;
     private readonly ILogger<OrphanReaperHostedService> _logger;
+    private readonly WorktreeOrphanDirectorySweeper _worktreeDirectories;
 
     public OrphanReaperHostedService(
         CliRouter router,
@@ -28,6 +29,7 @@ public sealed class OrphanReaperHostedService : BackgroundService
         _router = router;
         _config = config;
         _logger = logger;
+        _worktreeDirectories = new WorktreeOrphanDirectorySweeper(logger);
     }
 
     public void RunOnce()
@@ -38,7 +40,19 @@ public sealed class OrphanReaperHostedService : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Orphan-reaper sweep failed");
+            _logger.LogWarning(ex, "CLI orphan-reaper sweep failed");
+        }
+
+        try
+        {
+            _worktreeDirectories.Sweep(
+                Path.Combine(Path.GetTempPath(), "ass-worktrees"),
+                DateTime.UtcNow,
+                TimeSpan.FromMinutes(2));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Worktree orphan-directory sweep failed");
         }
     }
 
