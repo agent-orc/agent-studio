@@ -12,7 +12,7 @@ import { WorkspaceManagerService } from '../../shell';
 import { FeatureFlagsService } from '../../../services/feature-flags.service';
 import { TaskService } from '../../../services/task.service';
 import { withRouteSegment } from '../../../services/url-hash.util';
-import type { StudioTab, WikiTabTarget } from '../studio-shell.types';
+import type { StudioTab, StudioTabReusePolicy, WikiTabTarget } from '../studio-shell.types';
 import { StudioTabStateService } from './studio-tab-state.service';
 
 /**
@@ -71,8 +71,17 @@ export class ProjectHubUrlService {
     return this.projects().find(project => project.displayName === projectName)?.id ?? null;
   }
 
+  /** Use browser history so toolbar/keyboard traversal and the stable route remain one operation. */
+  navigateDocumentHistory(delta: -1 | 1): void {
+    const allowed = delta < 0
+      ? this.tabs.canNavigateDocumentBack()
+      : this.tabs.canNavigateDocumentForward();
+    if (!allowed) return;
+    history.go(delta);
+  }
+
   /** Open one exact repository document in the project's in-app Wiki reader. */
-  openWikiPage(projectName: string, relPath: string): boolean {
+  openWikiPage(projectName: string, relPath: string, reuse: StudioTabReusePolicy): boolean {
     const project = this.projects().find(candidate => candidate.displayName === projectName);
     const page = relPath.trim().replace(/^docs\//i, '');
     if (!project || !page) return false;
@@ -81,7 +90,7 @@ export class ProjectHubUrlService {
       projectName: project.displayName,
       section: 'wiki',
       wikiTarget: { kind: 'page', relPath: page },
-    });
+    }, reuse);
     return true;
   }
 
@@ -103,15 +112,19 @@ export class ProjectHubUrlService {
       this.writeHash(withRouteSegment(window.location.hash, canonicalRoute), 'replace');
     }
 
+    const openRouteTab = (tab: StudioTab): void => {
+      if (closeWhenMissing) this.tabs.restoreDocumentRoute(tab);
+      else this.tabs.open(tab, 'new');
+    };
     if (target.workbenchId) {
-      this.tabs.open({
+      openRouteTab({
         kind: 'workbench', projectName: target.project.displayName,
         projectId: target.project.id, workbenchId: target.workbenchId,
       });
     } else if (target.section === 'workbenches') {
       this.tabs.open({ kind: 'workbenches', projectName: target.project.displayName });
     } else {
-      this.tabs.open({
+      openRouteTab({
         kind: 'hub',
         projectName: target.project.displayName,
         section: target.section,

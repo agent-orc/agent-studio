@@ -26,13 +26,14 @@ import {
   wikiLinkedElementTitle,
 } from '../wiki-linked-element';
 import { WikiRelatedTasksComponent } from '../wiki-related-tasks/wiki-related-tasks.component';
+import { MenuComponent, type MenuItemClickEvent } from '../../../../../components/menu';
 
 type WikiAnchorState = 'pending' | 'available' | 'missing' | 'active';
 
 @Component({
   selector: 'app-wiki-linked-elements',
   standalone: true,
-  imports: [WikiRelatedTasksComponent],
+  imports: [WikiRelatedTasksComponent, MenuComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './wiki-linked-elements.component.html',
   styleUrl: './wiki-linked-elements.component.scss',
@@ -43,7 +44,10 @@ export class WikiLinkedElementsComponent implements OnDestroy {
   readonly links = input.required<readonly WikiLinkedElement[]>();
   readonly relatedTasks = input.required<RelatedTaskReference[]>();
   readonly hrefFor = input.required<(link: WikiLinkedElement) => string>();
-  readonly navigate = output<WikiLinkedElement>();
+  readonly navigate = output<{ link: WikiLinkedElement; reuse: 'replace-current' | 'new' }>();
+  readonly contextLink = signal<WikiLinkedElement | null>(null);
+  readonly contextPosition = signal({ x: 0, y: 0 });
+  readonly contextItems = [{ kind: 'row' as const, id: 'open-new-tab', label: 'Open in new tab' }];
 
   private readonly host = inject(ElementRef<HTMLElement>);
   private readonly availability = signal<ReadonlyMap<string, 'pending' | 'available' | 'missing'>>(new Map());
@@ -137,7 +141,7 @@ export class WikiLinkedElementsComponent implements OnDestroy {
     if (link.kind === 'external') return;
     event.preventDefault();
     if (link.kind !== 'anchor') {
-      this.navigate.emit(link);
+      this.navigate.emit({ link, reuse: event.ctrlKey || event.metaKey ? 'new' : 'replace-current' });
       return;
     }
 
@@ -160,6 +164,25 @@ export class WikiLinkedElementsComponent implements OnDestroy {
     this.commandedAnchorId = null;
     this.restoreAnchorId = null;
     this.setAnchorAvailability(id, 'missing');
+  }
+
+  openLinkedElementInNewTab(event: MouseEvent, link: WikiLinkedElement): void {
+    if (event.button !== 1 || link.kind === 'external' || link.kind === 'anchor') return;
+    event.preventDefault();
+    this.navigate.emit({ link, reuse: 'new' });
+  }
+
+  openContextMenu(event: MouseEvent, link: WikiLinkedElement): void {
+    if (link.kind === 'external' || link.kind === 'anchor') return;
+    event.preventDefault();
+    this.contextLink.set(link);
+    this.contextPosition.set({ x: event.clientX, y: event.clientY });
+  }
+
+  onContextItem(event: MenuItemClickEvent): void {
+    const link = this.contextLink();
+    if (event.id === 'open-new-tab' && link) this.navigate.emit({ link, reuse: 'new' });
+    this.contextLink.set(null);
   }
 
   private bindRenderedDocument(ids: readonly string[], frame: HTMLIFrameElement | null): void {

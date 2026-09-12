@@ -25,7 +25,7 @@ export class WorkbenchTabHostComponent {
   readonly projectId = input<string | null>(null);
   readonly workbenchId = input<string | null>(null);
   readonly openWorkbench = output<WorkbenchOverviewItem>();
-  readonly openWiki = output<string>();
+  readonly openWiki = output<{ relPath: string; reuse: 'replace-current' | 'new' }>();
   private readonly tabState = inject(StudioTabStateService);
 
   /**
@@ -38,7 +38,12 @@ export class WorkbenchTabHostComponent {
     const projectName = this.projectName();
     const workbenchId = this.workbenchId();
     if (!projectName || !workbenchId) return;
-    const sourceKey = studioTabKey({ kind: 'workbench', projectName, workbenchId });
+    const active = this.tabState.activeTab();
+    const sourceKey = active?.kind === 'workbench'
+      && active.projectName === projectName
+      && active.workbenchId === workbenchId
+      ? studioTabKey(active)
+      : studioTabKey({ kind: 'workbench', projectName, workbenchId });
     this.tabState.retarget(sourceKey, {
       kind: 'workbench',
       projectName,

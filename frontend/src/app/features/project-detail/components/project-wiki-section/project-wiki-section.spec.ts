@@ -400,9 +400,24 @@ describe('ProjectWikiSectionComponent', () => {
     el(fixture).querySelector<HTMLElement>(
       '[data-testid="project-wiki-file-concepts/overview.md"]',
     )?.click();
+    const file = el(fixture).querySelector<HTMLElement>(
+      '[data-testid="project-wiki-file-concepts/overview.md"]',
+    )!;
+    file.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+    file.dispatchEvent(new MouseEvent('auxclick', { bubbles: true, button: 1 }));
+    file.closest<HTMLElement>('[role="treeitem"]')?.dispatchEvent(new MouseEvent('contextmenu', {
+      bubbles: true, cancelable: true, clientX: 20, clientY: 20,
+    }));
+    fixture.detectChanges();
+    document.querySelector<HTMLButtonElement>('[data-testid="wiki-ctx-item-open-new-tab"]')?.click();
     fixture.detectChanges();
 
-    expect(targets).toEqual([{ kind: 'page', relPath: 'concepts/overview.md' }]);
+    expect(targets).toEqual([
+      { target: { kind: 'page', relPath: 'concepts/overview.md' }, reuse: 'replace-current' },
+      { target: { kind: 'page', relPath: 'concepts/overview.md' }, reuse: 'new' },
+      { target: { kind: 'page', relPath: 'concepts/overview.md' }, reuse: 'new' },
+      { target: { kind: 'page', relPath: 'concepts/overview.md' }, reuse: 'new' },
+    ]);
     expect(fixture.componentInstance.openedRel()).toBeNull();
     http.verify();
   });
@@ -1285,10 +1300,11 @@ describe('ProjectWikiSectionComponent', () => {
       expect(panel.querySelectorAll('.app-menu__icon')).toHaveLength(0);
     };
 
-    // File context menu: Link kopieren + Rename + View history + Delete, text-only.
+    // File context menu: explicit new tab + file actions, text-only.
     openCtx('concepts/overview.md');
     let panel = document.querySelector<HTMLElement>('[data-testid="wiki-ctx-panel"]');
     expect(panel, 'file context menu panel').toBeTruthy();
+    expect(document.querySelector('[data-testid="wiki-ctx-item-open-new-tab"]')).toBeTruthy();
     expect(document.querySelector('[data-testid="wiki-ctx-item-copy-link"]')!.textContent).toContain('Link kopieren');
     expect(document.querySelector('[data-testid="wiki-ctx-item-rename"]')).toBeTruthy();
     expect(document.querySelector('[data-testid="wiki-ctx-item-history"]')).toBeTruthy();

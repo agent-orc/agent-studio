@@ -99,9 +99,10 @@ export function buildIsolatedHtmlSrcdoc(
   // verifies the sending iframe and resolves the raw href against the current
   // repository path before it performs any navigation.
   const nav = wrapper.createElement('script');
-  nav.textContent = `document.addEventListener('click', function (e) {
+  nav.textContent = `function studioNavigate(e) {
     var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
     if (!a) return;
+    if (e.type === 'auxclick' && e.button !== 1) return;
     var href = a.getAttribute('href') || '';
     e.preventDefault();
     if (href.charAt(0) === '#') {
@@ -118,8 +119,10 @@ export function buildIsolatedHtmlSrcdoc(
       if (el) el.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
       return;
     }
-    parent.postMessage({ type: '${ISOLATED_HTML_LINK_MESSAGE}', href: href }, '*');
-  }, true);`;
+    parent.postMessage({ type: '${ISOLATED_HTML_LINK_MESSAGE}', href: href, button: e.button, ctrlKey: e.ctrlKey, metaKey: e.metaKey }, '*');
+  }
+  document.addEventListener('click', studioNavigate, true);
+  document.addEventListener('auxclick', studioNavigate, true);`;
   wrapper.body.append(nav);
 
   const anchorBridge = wrapper.createElement('script');

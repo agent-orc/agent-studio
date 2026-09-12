@@ -1219,13 +1219,14 @@ export class App implements OnInit, OnDestroy {
     // points at it, and keep the overlay in sync as the hash changes.
     // Also reconciles legacy top-level hash routes into their current
     // editor-tab destinations.
-    const applyHash = () => {
+    const applyHash = (event?: Event) => {
+      const fromHistory = event?.type === 'popstate' || event?.type === 'hashchange';
       this.workspaceOverlays.syncFromHash();
       if (this.featureFlags.vsCodeLayout() && this.workspaceOverlays.settingsOpen()) {
         this.openWorkspaceSettingsInStudio(this.workspaceOverlays.section());
       }
-      const studioHandled = this.syncStudioRouteFromHash();
-      if (!studioHandled) this.applyProjectShellHash();
+      const studioHandled = this.syncStudioRouteFromHash(fromHistory);
+      if (!studioHandled) this.applyProjectShellHash(fromHistory);
       this.syncEpicsTabFromHash();
     };
     applyHash();
@@ -2114,10 +2115,15 @@ export class App implements OnInit, OnDestroy {
     this.refresh();
   }
 
-  onOpenWorkbenchWiki(projectName: string, relPath: string): void {
-    if (!this.projectHubUrls.openWikiPage(projectName, relPath)) {
-      this.notifications.error(`Could not open ${relPath} in the project Wiki.`, 'Wiki navigation');
+  onOpenWorkbenchWiki(projectName: string, request: { relPath: string; reuse: 'replace-current' | 'new' }): void {
+    if (!this.projectHubUrls.openWikiPage(projectName, request.relPath, request.reuse)) {
+      this.notifications.error(`Could not open ${request.relPath} in the project Wiki.`, 'Wiki navigation');
     }
+  }
+
+  isDocumentTabActive(): boolean {
+    const tab = this.studioTabState.activeTab();
+    return tab?.kind === 'workbench' || (tab?.kind === 'hub' && tab.section === 'wiki');
   }
 
   onWorkbenchOverviewOpen(event: { projectName: string; workbench: { id: string; title: string; key?: string | null } }): void {
@@ -2160,7 +2166,7 @@ export class App implements OnInit, OnDestroy {
     this.projectOverlays.syncFeedFromHash(this.watchPaths());
   }
 
-  private syncStudioRouteFromHash(): boolean {
+  private syncStudioRouteFromHash(fromHistory = false): boolean {
     if (!this.featureFlags.vsCodeLayout()) return false;
     const route = parseStudioRoute(window.location.hash);
     if (!route) {
@@ -2176,7 +2182,7 @@ export class App implements OnInit, OnDestroy {
     this.studioRouteReady.set(false);
 
     if (route.kind === 'hub') {
-      if (this.projectHubUrls.applyHash(false)) {
+      if (this.projectHubUrls.applyHash(fromHistory)) {
         this.studioRouteReady.set(true);
       }
       return true;
@@ -2199,7 +2205,15 @@ export class App implements OnInit, OnDestroy {
         this.studioTabState.open({ kind: 'chat-history' });
         break;
       case 'workbench':
-        this.studioTabState.open({ kind: 'workbench', projectName: projectName!, workbenchId: route.workbenchId });
+        if (fromHistory) {
+          this.studioTabState.restoreDocumentRoute({
+            kind: 'workbench', projectName: projectName!, workbenchId: route.workbenchId,
+          });
+        } else {
+          this.studioTabState.open({
+            kind: 'workbench', projectName: projectName!, workbenchId: route.workbenchId,
+          }, 'new');
+        }
         break;
       case 'workbenches':
         this.studioTabState.open({ kind: 'workbenches', projectName });

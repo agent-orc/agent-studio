@@ -195,7 +195,8 @@
                 <button class="pwiki__label pwiki__label--group" type="button"
                         tabindex="-1"
                         [attr.data-testid]="'project-wiki-folder-label-' + nodeId(row.node)"
-                        (click)="selectFolder(row.node)">
+                        (click)="openTreeTarget($event, row.node)"
+                        (auxclick)="openTreeTarget($event, row.node)">
                   <app-studio-icon name="folder" [size]="13"></app-studio-icon>
                   <span class="pwiki__label-copy">
                     <span class="pwiki__label-text">{{ row.node.title }}</span>
@@ -206,7 +207,8 @@
                 <div class="pwiki__label pwiki__label--doc"
                      role="button"
                      tabindex="-1"
-                     (click)="openFile(row.node.relPath!, row.node.type)"
+                     (click)="openTreeTarget($event, row.node)"
+                     (auxclick)="openTreeTarget($event, row.node)"
                      [appTooltip]="row.node.relPath"
                      [attr.data-testid]="'project-wiki-file-' + row.node.relPath">
                   <span class="pwiki__file-type"
@@ -494,6 +496,8 @@
                 <cac-markdown class="pwiki__viewer-body pwiki__reader-body"
                               data-testid="project-wiki-viewer"
                               [source]="displayContent()"
+                              (click)="onRenderedWikiLink($event)"
+                              (auxclick)="onRenderedWikiLink($event)"
                               [resolveImageSrc]="imageResolver()" />
               }
             </article>

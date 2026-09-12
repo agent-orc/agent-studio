@@ -1,5 +1,11 @@
 import { Injectable, computed, signal } from '@angular/core';
-import type { BoardTab, StudioTab } from '../studio-shell.types';
+import type {
+  BoardTab,
+  DocumentTabHistory,
+  DocumentTabTarget,
+  StudioTab,
+  StudioTabReusePolicy,
+} from '../studio-shell.types';
 import { studioTabKey } from '../studio-shell.types';
 import {
   ALL_PROJECTS_BOARD_NAME,
@@ -12,6 +18,7 @@ const STORAGE_VERSION = 1;
 const ALL_PROJECTS = ALL_PROJECTS_BOARD_NAME;
 const ALL_BOARD_TAB: BoardTab = { kind: 'board', projectName: ALL_PROJECTS };
 const ALL_BOARD_KEY = studioTabKey(ALL_BOARD_TAB);
+const DOCUMENT_HISTORY_LIMIT = 50;
 
 interface PersistedState {
   v: number;
@@ -59,6 +66,12 @@ export class StudioTabStateService {
     if (!key) return null;
     return this._tabs().find(t => studioTabKey(t) === key) ?? null;
   });
+  readonly canNavigateDocumentBack = computed(() => this.documentHistoryOffset(-1) !== null);
+  readonly canNavigateDocumentForward = computed(() => this.documentHistoryOffset(1) !== null);
+  readonly activeDocumentHistoryLength = computed(() => {
+    const tab = this.activeTab();
+    return this.isDocumentTab(tab) ? (tab.documentHistory?.entries.length ?? 1) : 0;
+  });
 
   constructor() {
     const hadSnapshot = this.restore();
@@ -91,8 +104,13 @@ export class StudioTabStateService {
    * (AGT-2692) so the app-wide project selection follows the context the user
    * navigated from, not the task's own project.
    */
-  open(tab: StudioTab): void {
+  open(tab: StudioTab, reuse: StudioTabReusePolicy = 'new'): void {
     const normalized = this.stampTaskTabScope(this.normalizeTab(tab));
+    const active = this.activeTab();
+    if (reuse === 'replace-current' && this.isDocumentTab(active) && this.isDocumentTab(normalized)) {
+      this.replaceActiveDocument(active, normalized);
+      return;
+    }
     const emptyProjectEntry = this._tabs().length === 0
       && ((normalized.kind === 'board' && normalized.projectName !== ALL_PROJECTS)
         || normalized.kind === 'hub');
@@ -107,6 +125,40 @@ export class StudioTabStateService {
     this.activate(key);
     this.persist();
     if (emptyProjectEntry) this._emptyProjectEntryRevision.update(revision => revision + 1);
+  }
+
+  /** Walk the active Wiki/Dossier tab's bounded history without adding an entry. */
+  navigateDocumentHistory(delta: -1 | 1): boolean {
+    const active = this.activeTab();
+    if (!this.isDocumentTab(active)) return false;
+    const history = active.documentHistory ?? this.initialDocumentHistory(active);
+    const index = history.index + delta;
+    if (index < 0 || index >= history.entries.length) return false;
+    const nextHistory = { entries: history.entries, index };
+    const next = this.tabFromDocumentTarget(history.entries[index], active.documentId, nextHistory);
+    this.retarget(studioTabKey(active), next);
+    return true;
+  }
+
+  /** Reconcile a browser-history route with the nearest entry in the active document tab. */
+  restoreDocumentRoute(tab: StudioTab): void {
+    const active = this.activeTab();
+    const normalized = this.normalizeTab(tab);
+    if (!this.isDocumentTab(active) || !this.isDocumentTab(normalized)) {
+      this.open(tab, 'new');
+      return;
+    }
+    const history = active.documentHistory ?? this.initialDocumentHistory(active);
+    const target = this.documentTarget(normalized);
+    const adjacent = [history.index - 1, history.index + 1]
+      .find(index => index >= 0 && index < history.entries.length
+        && this.sameDocumentTarget(history.entries[index], target));
+    if (adjacent !== undefined) {
+      const nextHistory = { entries: history.entries, index: adjacent };
+      this.retarget(studioTabKey(active), this.tabFromDocumentTarget(target, active.documentId, nextHistory));
+      return;
+    }
+    this.replaceActiveDocument(active, normalized);
   }
 
   /** Focus an existing tab by key. No-op when the key is unknown. */
@@ -131,7 +183,8 @@ export class StudioTabStateService {
     }
     // Reusing a tab is one continuous navigation, so an unstamped replacement
     // keeps the scope the tab it replaces was opened in (AGT-2692).
-    const normalized = this.carryTaskTabScope(this.normalizeTab(tab), list[sourceIdx]);
+    let normalized = this.carryTaskTabScope(this.normalizeTab(tab), list[sourceIdx]);
+    normalized = this.carryDocumentState(normalized, list[sourceIdx]);
     const targetKey = studioTabKey(normalized);
     const existingIdx = list.findIndex((t, i) => i !== sourceIdx && studioTabKey(t) === targetKey);
     if (existingIdx >= 0) {
@@ -389,6 +442,8 @@ export class StudioTabStateService {
             ? { wikiTarget: this.normalizeWikiTarget(tab.wikiTarget) }
             : {}),
           ...(tab.pipelineStepId ? { pipelineStepId: tab.pipelineStepId } : {}),
+          ...(tab.documentHistory ? { documentHistory: this.normalizeDocumentHistory(tab.documentHistory) } : {}),
+          ...(tab.documentId ? { documentId: tab.documentId } : {}),
         };
       case 'workbenches':
         return { kind: 'workbenches', projectName: tab.projectName };
@@ -400,6 +455,8 @@ export class StudioTabStateService {
           workbenchId: tab.workbenchId,
           title: tab.title,
           key: tab.key,
+          ...(tab.documentHistory ? { documentHistory: this.normalizeDocumentHistory(tab.documentHistory) } : {}),
+          ...(tab.documentId ? { documentId: tab.documentId } : {}),
         };
       case 'diff':
         return { kind: 'diff', commitSha: tab.commitSha };
@@ -434,6 +491,94 @@ export class StudioTabStateService {
     if (tab.kind !== 'task' || tab.scope) return tab;
     if (previous?.kind !== 'task' || !previous.scope) return tab;
     return { ...tab, scope: previous.scope };
+  }
+
+  private replaceActiveDocument(active: Extract<StudioTab, { kind: 'hub' | 'workbench' }>, incoming: Extract<StudioTab, { kind: 'hub' | 'workbench' }>): void {
+    const history = active.documentHistory ?? this.initialDocumentHistory(active);
+    const target = this.documentTarget(incoming);
+    if (this.sameDocumentTarget(history.entries[history.index], target)) return;
+    const entries = [...history.entries.slice(0, history.index + 1), target]
+      .slice(-DOCUMENT_HISTORY_LIMIT);
+    const documentHistory: DocumentTabHistory = { entries, index: entries.length - 1 };
+    const next = this.tabFromDocumentTarget(target, active.documentId ?? this.newDocumentId(), documentHistory);
+    this.retarget(studioTabKey(active), next);
+  }
+
+  private carryDocumentState(tab: StudioTab, previous: StudioTab | undefined): StudioTab {
+    if (!this.isDocumentTab(tab) || !this.isDocumentTab(previous)) return tab;
+    return {
+      ...tab,
+      documentId: tab.documentId ?? previous.documentId,
+      documentHistory: tab.documentHistory ?? previous.documentHistory,
+    };
+  }
+
+  private initialDocumentHistory(tab: Extract<StudioTab, { kind: 'hub' | 'workbench' }>): DocumentTabHistory {
+    return { entries: [this.documentTarget(tab)], index: 0 };
+  }
+
+  private normalizeDocumentHistory(history: DocumentTabHistory): DocumentTabHistory {
+    const entries = Array.isArray(history.entries)
+      ? history.entries.filter(entry => entry?.kind === 'wiki' || entry?.kind === 'workbench').slice(-DOCUMENT_HISTORY_LIMIT)
+      : [];
+    if (!entries.length) return { entries: [], index: 0 };
+    return { entries, index: Math.max(0, Math.min(Number(history.index) || 0, entries.length - 1)) };
+  }
+
+  private documentTarget(tab: Extract<StudioTab, { kind: 'hub' | 'workbench' }>): DocumentTabTarget {
+    if (tab.kind === 'hub') {
+      return {
+        kind: 'wiki',
+        projectName: tab.projectName,
+        wikiTarget: tab.wikiTarget ?? { kind: 'overview' },
+      };
+    }
+    return {
+      kind: 'workbench', projectName: tab.projectName, workbenchId: tab.workbenchId,
+      ...(tab.projectId ? { projectId: tab.projectId } : {}),
+      ...(tab.title ? { title: tab.title } : {}),
+      ...(tab.key ? { key: tab.key } : {}),
+    };
+  }
+
+  private tabFromDocumentTarget(target: DocumentTabTarget, documentId: string | undefined, documentHistory: DocumentTabHistory): Extract<StudioTab, { kind: 'hub' | 'workbench' }> {
+    if (target.kind === 'wiki') {
+      return {
+        kind: 'hub', projectName: target.projectName, section: 'wiki',
+        wikiTarget: target.wikiTarget, documentId, documentHistory,
+      };
+    }
+    return {
+      kind: 'workbench', projectName: target.projectName, workbenchId: target.workbenchId,
+      ...(target.projectId ? { projectId: target.projectId } : {}),
+      ...(target.title ? { title: target.title } : {}),
+      ...(target.key ? { key: target.key } : {}),
+      documentId, documentHistory,
+    };
+  }
+
+  private sameDocumentTarget(left: DocumentTabTarget, right: DocumentTabTarget): boolean {
+    if (left.kind !== right.kind || left.projectName !== right.projectName) return false;
+    if (left.kind === 'workbench' && right.kind === 'workbench') return left.workbenchId === right.workbenchId;
+    if (left.kind !== 'wiki' || right.kind !== 'wiki') return false;
+    if (left.wikiTarget.kind !== right.wikiTarget.kind) return false;
+    if (left.wikiTarget.kind === 'overview' || right.wikiTarget.kind === 'overview') return true;
+    return left.wikiTarget.relPath === right.wikiTarget.relPath;
+  }
+
+  private isDocumentTab(tab: StudioTab | null | undefined): tab is Extract<StudioTab, { kind: 'hub' | 'workbench' }> {
+    return tab?.kind === 'workbench' || (tab?.kind === 'hub' && tab.section === 'wiki');
+  }
+
+  private documentHistoryOffset(delta: -1 | 1): DocumentTabTarget | null {
+    const tab = this.activeTab();
+    if (!this.isDocumentTab(tab)) return null;
+    const history = tab.documentHistory ?? this.initialDocumentHistory(tab);
+    return history.entries[history.index + delta] ?? null;
+  }
+
+  private newDocumentId(): string {
+    return globalThis.crypto?.randomUUID?.() ?? `doc-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   }
 
   /** Collapse duplicate keys, preserving first-seen order. */

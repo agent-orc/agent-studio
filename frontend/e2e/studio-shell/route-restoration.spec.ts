@@ -92,7 +92,14 @@ async function stubRouteData(page: Page): Promise<void> {
     if (url.pathname === '/api/auth/status') {
       return json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
     }
-    if (url.pathname === '/api/workspaces') return json([]);
+    if (url.pathname === '/api/workspaces') return json([{
+      id: 'WS-ROUTE', displayName: 'Route workspace', sortOrder: 0, isDefault: true,
+      projects: [{
+        id: 'PROJ-ROUTE', displayName: PROJECT, shortCode: 'ROU', workspaceId: 'WS-ROUTE',
+        storageLocation: WATCH_PATH, rootPath: WATCH_PATH, repositoryPath: WATCH_PATH,
+        sortOrder: 0, archived: false, urls: [],
+      }],
+    }]);
     if (url.pathname === '/api/projects') return json([]);
     if (url.pathname === '/api/cli/quota') return json({ snapshots: [], ttlSeconds: 600 });
     if (url.pathname.startsWith('/api/runner/token-summary-aggregate')) {
@@ -148,6 +155,7 @@ async function stubRouteData(page: Page): Promise<void> {
       return json([]);
     }
     if (url.pathname === '/api/v1/management/remote-hosts') return json([]);
+    if (url.pathname === '/api/v1/management/links') return json([]);
     if (/\/api\/bus\/[^/]+\/messages$/.test(url.pathname)) return json([]);
     if (url.pathname === '/api/watch-paths') {
       return json([{ name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH }]);
@@ -171,6 +179,10 @@ async function stubRouteData(page: Page): Promise<void> {
       });
     }
     if (url.pathname === '/api/runner/status') return json({ projects: {} });
+    if (url.pathname === '/api/pipeline/accepted-integration-alert') {
+      return json({ active: false, items: [], generatedAtUtc: '2026-07-24T10:00:00Z' });
+    }
+    if (url.pathname === '/api/runner/queue-starvation') return json({ active: false, items: [] });
     if (url.pathname === `/api/tasks/${TASK_REFERENCE}` || url.pathname === `/api/tasks/${TASK_ID}`) {
       return json(TASK_DETAIL);
     }
@@ -194,16 +206,30 @@ async function stubRouteData(page: Page): Promise<void> {
             relPath: 'concepts/routing.md',
             type: 'md',
             children: [],
+          }, {
+            name: 'history.md',
+            title: 'History',
+            relPath: 'concepts/history.md',
+            type: 'md',
+            children: [],
+          }, {
+            name: 'gestures.md',
+            title: 'Gestures',
+            relPath: 'concepts/gestures.md',
+            type: 'md',
+            children: [],
           }],
         }],
       });
     }
-    if (url.pathname.endsWith('/wiki/files/concepts/routing.md')) {
-      return json({ relPath: 'concepts/routing.md', content: '# Routing\n\nRestored Wiki page.' });
+    if (url.pathname.includes('/wiki/files/concepts/')) {
+      const relPath = decodeURIComponent(url.pathname.split('/wiki/files/')[1] ?? 'concepts/routing.md');
+      return json({ relPath, content: `# ${relPath}\n\nRestored Wiki page.` });
     }
-    if (url.pathname.endsWith('/wiki/history/concepts/routing.md')) {
+    if (url.pathname.includes('/wiki/history/concepts/')) {
+      const relPath = decodeURIComponent(url.pathname.split('/wiki/history/')[1] ?? 'concepts/routing.md');
       return json({
-        relPath: 'concepts/routing.md',
+        relPath,
         model: null,
         metadata: {
           model: null, updatedAt: null, reason: null, taskKey: null,
@@ -595,6 +621,38 @@ test.describe('Studio route restoration', () => {
 
     await page.reload({ waitUntil: 'commit' });
     await expect(page.getByTestId('project-shell-panel-settings')).toBeVisible();
+  });
+
+  test('Wiki links reuse the current tab, keep per-tab history, and middle-click opens a new tab', async ({ page }, testInfo) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({ v: 1, tabs: [], activeKey: null }));
+    });
+    await page.goto(`/#/projects/${PROJECT_SLUG}/wiki`, { waitUntil: 'commit' });
+    await expect(page.getByTestId('project-wiki-section')).toBeVisible();
+    const tabList = page.getByTestId('studio-tab-list');
+    await expect(tabList.getByRole('tab')).toHaveCount(1);
+    await tabList.screenshot({ path: evidencePath(testInfo, 'wiki-tab-strip-before-links.png') });
+    await page.getByTestId('project-wiki-chevron-concepts').click();
+
+    for (const relPath of ['concepts/routing.md', 'concepts/history.md', 'concepts/gestures.md']) {
+      await page.getByTestId(`project-wiki-file-${relPath}`).click();
+      await expect(page.getByTestId('project-wiki-viewer-path')).toContainText(relPath);
+      await expect(tabList.getByRole('tab')).toHaveCount(1);
+    }
+
+    await expect(page.getByTestId('studio-document-history')).toHaveAttribute('data-history-length', '4');
+    await expect(page.getByTestId('studio-document-back')).toBeEnabled();
+    await tabList.screenshot({ path: evidencePath(testInfo, 'wiki-tab-strip-after-three-links.png') });
+
+    await page.getByTestId('studio-document-back').click();
+    await expect(page.getByTestId('project-wiki-viewer-path')).toContainText('concepts/history.md');
+    await expect.poll(() => new URL(page.url()).hash)
+      .toContain('wiki?page=concepts%2Fhistory.md');
+
+    await page.getByTestId('project-wiki-file-concepts/routing.md').click({ button: 'middle' });
+    await expect(tabList.getByRole('tab')).toHaveCount(2);
+    await expect(page.getByTestId('project-wiki-viewer-path')).toContainText('concepts/routing.md');
+    await tabList.screenshot({ path: evidencePath(testInfo, 'wiki-tab-strip-after-middle-click.png') });
   });
 
   test('workspace and project Epics routes restore scope and survive reload', async ({ page }) => {

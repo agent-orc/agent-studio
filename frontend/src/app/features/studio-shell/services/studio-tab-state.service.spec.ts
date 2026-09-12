@@ -139,6 +139,72 @@ describe('StudioTabStateService', () => {
   });
 
   describe('Deck and Wiki tab identity', () => {
+    it('reuses one Wiki tab and walks its own page history', () => {
+      svc.closeAll();
+      svc.open({ kind: 'hub', projectName: 'Project A', section: 'wiki', wikiTarget: { kind: 'overview' } }, 'new');
+      svc.open({ kind: 'hub', projectName: 'Project A', section: 'wiki', wikiTarget: { kind: 'page', relPath: 'a.md' } }, 'replace-current');
+      svc.open({ kind: 'hub', projectName: 'Project B', section: 'wiki', wikiTarget: { kind: 'page', relPath: 'b.md' } }, 'replace-current');
+
+      expect(svc.tabs()).toHaveLength(1);
+      expect(svc.activeDocumentHistoryLength()).toBe(3);
+      expect(svc.canNavigateDocumentBack()).toBe(true);
+      expect(svc.navigateDocumentHistory(-1)).toBe(true);
+      expect(svc.activeTab()).toMatchObject({
+        kind: 'hub', projectName: 'Project A', wikiTarget: { kind: 'page', relPath: 'a.md' },
+        documentHistory: { index: 1 },
+      });
+      expect(svc.navigateDocumentHistory(-1)).toBe(true);
+      expect(svc.activeTab()).toMatchObject({ wikiTarget: { kind: 'overview' } });
+      expect(svc.navigateDocumentHistory(1)).toBe(true);
+      expect(svc.activeTab()).toMatchObject({ wikiTarget: { kind: 'page', relPath: 'a.md' } });
+    });
+
+    it('opens a second Wiki tab only for the explicit new policy', () => {
+      svc.closeAll();
+      svc.open({ kind: 'hub', projectName: 'Project A', section: 'wiki', wikiTarget: { kind: 'overview' } }, 'new');
+      svc.open({ kind: 'hub', projectName: 'Project A', section: 'wiki', wikiTarget: { kind: 'page', relPath: 'a.md' } }, 'replace-current');
+      svc.open({ kind: 'hub', projectName: 'Project A', section: 'wiki', wikiTarget: { kind: 'page', relPath: 'b.md' } }, 'new');
+
+      expect(svc.tabs()).toHaveLength(2);
+      expect(svc.tabs().filter(tab => tab.kind === 'hub' && tab.section === 'wiki')).toHaveLength(2);
+    });
+
+    it('keeps Dossiers in the same reusable document-family history', () => {
+      svc.closeAll();
+      svc.open({ kind: 'hub', projectName: 'Project A', section: 'wiki', wikiTarget: { kind: 'page', relPath: 'a.md' } }, 'new');
+      svc.open({ kind: 'workbench', projectName: 'Project A', workbenchId: 'decision-1', title: 'Decision' }, 'replace-current');
+
+      expect(svc.tabs()).toHaveLength(1);
+      expect(svc.activeTab()).toMatchObject({ kind: 'workbench', workbenchId: 'decision-1' });
+      expect(svc.navigateDocumentHistory(-1)).toBe(true);
+      expect(svc.activeTab()).toMatchObject({ kind: 'hub', wikiTarget: { kind: 'page', relPath: 'a.md' } });
+    });
+
+    it('persists only the current document target and a history bounded to 50 entries', () => {
+      svc.closeAll();
+      svc.open({ kind: 'hub', projectName: 'Project A', section: 'wiki', wikiTarget: { kind: 'overview' } }, 'new');
+      for (let index = 0; index < 60; index += 1) {
+        svc.open({
+          kind: 'hub', projectName: 'Project A', section: 'wiki',
+          wikiTarget: { kind: 'page', relPath: `page-${index}.md` },
+        }, 'replace-current');
+      }
+
+      expect(svc.activeDocumentHistoryLength()).toBe(50);
+      const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') as { tabs?: StudioTab[] };
+      expect(stored.tabs).toHaveLength(1);
+      expect(stored.tabs?.[0]).toMatchObject({
+        kind: 'hub', wikiTarget: { kind: 'page', relPath: 'page-59.md' },
+        documentHistory: { index: 49 },
+      });
+
+      TestBed.resetTestingModule();
+      TestBed.configureTestingModule({ providers: [StudioTabStateService] });
+      const restored = TestBed.inject(StudioTabStateService);
+      expect(restored.activeDocumentHistoryLength()).toBe(50);
+      expect(restored.activeTab()).toMatchObject({ wikiTarget: { kind: 'page', relPath: 'page-59.md' } });
+    });
+
     it('keeps an open Overview Hub and Explorer-opened Wiki as distinct tabs', () => {
       svc.open({ kind: 'hub', projectName: 'Project A', section: 'overview' });
       svc.open({ kind: 'hub', projectName: 'Project A', section: 'wiki' });

@@ -97,6 +97,33 @@ schema, transient-state boundary,
 route map, and visual ownership diagram are in
 [Studio Route Restoration](../../concepts/studio-route-restoration.md).
 
+### Editor tab reuse policy
+
+`StudioTabStateService.open` accepts an explicit reuse policy. `new` opens or
+focuses the requested editor target. `replace-current` retargets the active tab
+only when it belongs to the Wiki/Dossier document family; if the active tab is
+another kind, the target opens as a new tab. Task cards, diffs, boards, and
+other non-document destinations therefore keep their own established tab
+kinds even when a Wiki page links to them.
+
+| Caller | Target kind | Reuse policy |
+|---|---|---|
+| Global search | Task, Dossier, Wiki, Git, or diff | `new` |
+| Project Hub URL hydration | Wiki page or Dossier | `new` on cold entry; browser back/forward traverses the active document tab |
+| Wiki tree, folder view, linked elements, rendered Markdown, and rendered HTML | Wiki page or folder | `replace-current` |
+| Dossier viewer HTML link to a Wiki page | Wiki page | `replace-current` |
+| Middle click, Ctrl/Cmd+click, or `Open in new tab` | Wiki page, folder, or Dossier-family target | `new` |
+
+Each Wiki/Dossier tab owns a history stack containing its current target and up
+to 49 earlier or forward targets. Normal link navigation truncates that tab's
+forward entries and appends the destination. The tab toolbar and Alt+Left or
+Alt+Right walk the stack while focus is inside the Studio shell. Navigation
+also writes the stable view URL through browser history, so browser Back and
+Forward resolve the same per-tab entry. The persisted tab collection stores
+the bounded stack with the current target; transient viewer modes remain local
+component state. On hydration, an explicit stable route still wins over the
+persisted active target and reconciles the matching document history entry.
+
 The workspace Activity Feed is the embedded `#/feed` main view and is opened
 by the Activity icon. Its 500-event backend snapshot is rendered through a
 bounded, variable-height history window based on the Activity scroll fix, so

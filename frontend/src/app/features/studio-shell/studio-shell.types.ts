@@ -55,6 +55,27 @@ export type WikiTabTarget =
   | { kind: 'page'; relPath: string }
   | { kind: 'folder'; relPath: string };
 
+/** Caller-owned intent for opening an editor target. */
+export type StudioTabReusePolicy = 'replace-current' | 'new';
+
+/** One address in the Wiki/Dossier document-family navigation stack. */
+export type DocumentTabTarget =
+  | { kind: 'wiki'; projectName: string; wikiTarget: WikiTabTarget }
+  | {
+      kind: 'workbench';
+      projectName: string;
+      projectId?: string;
+      workbenchId: string;
+      title?: string;
+      key?: string;
+    };
+
+/** Persisted, bounded browser-like history owned by one document tab. */
+export interface DocumentTabHistory {
+  entries: DocumentTabTarget[];
+  index: number;
+}
+
 /**
  * Deck tab. Project rails share `hub:<projectName>` and adopt a newly requested
  * section in place. Wiki targets are first-class internal destinations, keyed
@@ -67,6 +88,10 @@ export interface HubTab {
   wikiTarget?: WikiTabTarget;
   /** Optional exact row target when a task post-step links into Project Pipeline. */
   pipelineStepId?: string;
+  /** Present only while this tab belongs to the Wiki/Dossier family. */
+  documentHistory?: DocumentTabHistory;
+  /** Stable identity of an explicitly reusable Wiki/Dossier editor tab. */
+  documentId?: string;
 }
 
 /** Shared overview, workspace-wide or filtered to one project. */
@@ -82,6 +107,13 @@ export interface WorkbenchTab {
   title?: string;
   /** Stable short reference shown by compact context surfaces when available. */
   key?: string;
+  documentHistory?: DocumentTabHistory;
+  documentId?: string;
+}
+
+export interface WikiTabNavigationRequest {
+  target: WikiTabTarget;
+  reuse: StudioTabReusePolicy;
 }
 
 /** Full-screen diff tab; key `diff:<commitSha>`. */
@@ -120,6 +152,7 @@ export function studioTabKey(tab: StudioTab): string {
     case 'epic':     return `epic:${tab.epicKey}`;
     case 'task':     return `task:${tab.taskKey}`;
     case 'hub': {
+      if (tab.documentId) return `document:${tab.documentId}`;
       if (tab.section !== 'wiki') return `hub:${tab.projectName}`;
       const target = tab.wikiTarget;
       if (!target || target.kind === 'overview') return `hub:${tab.projectName}:wiki`;
@@ -127,7 +160,9 @@ export function studioTabKey(tab: StudioTab): string {
       return `hub:${tab.projectName}:wiki:${target.kind}:${encodeURIComponent(path)}`;
     }
     case 'workbenches': return `workbenches:${tab.projectName ?? '__all__'}`;
-    case 'workbench': return `workbench:${tab.projectName}:${tab.workbenchId}`;
+    case 'workbench': return tab.documentId
+      ? `document:${tab.documentId}`
+      : `workbench:${tab.projectName}:${tab.workbenchId}`;
     case 'diff':     return `diff:${tab.commitSha}`;
     case 'activity': return `activity:${tab.taskKey}`;
     case 'url-preview': return `url-preview:${tab.projectName}:${tab.urlId}`;
