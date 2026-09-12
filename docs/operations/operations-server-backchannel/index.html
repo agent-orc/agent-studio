@@ -481,6 +481,10 @@
       </tbody>
     </table>
     <div class="callout" data-tone="warn">
+      <h3>Operator decision 2026-09-12: Docker is the only execution world, on every host</h3>
+      <p>Windows stops being an execution world. Coding runs, build-test gates, review aspects and orchestrator CLIs execute in containers on every deployment form, including the developer workstation, where Docker becomes mandatory. Two native pieces remain per operating system: an outer installer that establishes Docker and the product, and a host management process that owns images, the Compose stack, execution containers, updates and restart continuity. The workstation row above therefore reads as "Docker workstation": browser, Connector and the host management process are native; everything else runs in containers. Impact per project and the migration path are recorded in <a href="../docker-ausfuehrungswelt-migration/index.html">Docker als einzige Ausführungswelt: Auswirkungen und Migration</a>; the delivery-chain analysis in <a href="../lieferkette-robustheit/index.html">Lieferkette: Robustheit statt Rezepte</a> (AGT-W50) records the decision as D1.</p>
+    </div>
+    <div class="callout" data-tone="warn">
       <h3>Transitional Compose profile</h3>
       <p>AGT-2736 can ship the gap note's Option 3 now: the current distributed profile with Task Server, Engine, studio-bff, OrchestratorApi proxy, and web. That is a deployable baseline with a declared operations limitation, not the final one-box standard. The label changes only after the Operations Server and full browser-edge contract pass the same route and security suite.</p>
     </div>
@@ -571,7 +575,7 @@
 
     <div class="decision" data-decision-id="d2-standard-deployment" data-decision-kind="single" data-decision-label="D2 Standard deployment form">
       <h3>D2. Which deployment form should be the product standard?</h3>
-      <label data-option-id="workstation-standard" data-option-label="Workstation"><input type="radio" name="d2-standard-deployment" value="workstation-standard"><span><b>Workstation</b><span>All components local and loopback-only; simplest dev-seat integration, no default LAN product.</span></span></label>
+      <label data-option-id="workstation-standard" data-option-label="Workstation (Docker workstation since 2026-09-12: native browser, Connector and host manager; all execution in containers)"><input type="radio" name="d2-standard-deployment" value="workstation-standard"><span><b>Workstation</b><span>All components local and loopback-only; simplest dev-seat integration, no default LAN product.</span></span></label>
       <label data-option-id="one-box-standard" data-option-label="One-box Docker (recommended)"><input type="radio" name="d2-standard-deployment" value="one-box-standard"><span><b>One-box Docker</b><span>Published images and one Compose project, with only the HTTPS edge exposed. This is the recommendation after full parity.</span></span></label>
       <label data-option-id="distributed-standard" data-option-label="Distributed WireGuard"><input type="radio" name="d2-standard-deployment" value="distributed-standard"><span><b>Distributed WireGuard</b><span>Control-plane services and agents on separate hosts; strongest fleet topology but the highest baseline operations burden.</span></span></label>
       <div data-comment="Optional deployment note"><textarea placeholder="Optional deployment note"></textarea></div>

@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "docker-ausfuehrungswelt-migration",
+  "title": "Docker als einzige Ausführungswelt: Auswirkungen und Migration",
+  "summary": "Operator-Entscheidung 12.09.2026: Windows ist keine Ausführungswelt mehr, Docker ist der Ort für alle Ausführung (Coding-Läufe, Gates, Review-Aspekte, Orchestrator-CLIs), auch auf Windows mandatory, mit äußerem Installer und nativem Host-Manager. Das Dossier legt Geltungsbereich und Zielbild fest (Projekt-Images per Digest, Executor-Fähigkeiten standard/docker-capable/windows-host, Host-Manager als einzige Host-Brücke), beschreibt die Auswirkungen auf jede Studio-Komponente und auf alle 17 registrierten Projekte, plant die Migration in sieben Stufen M1–M7 mit Parallelbetrieb und Abschaltkriterium je Stufe (Linux-Runner zuerst, Workstation zuletzt, 10–12 Wochen), spezifiziert Installer und Host-Manager für Windows, benennt Risiken, stellt sieben Entscheidungen D1–D7 (D7: Pipeline- und Bauregeln im Repo des Projekts, Basis-Images vom Produkt, Projekt-Images lokal gebaut) und schneidet zwölf Karten MK1–MK12.",
+  "entrypoint": "index.html",
+  "status": "decision-pending",
+  "phase": "decision-ready",
+  "pattern": "architecture",
+  "updatedAt": "2026-09-12T12:05:00Z",
+  "sourceTaskKeys": [],
+  "relatedTaskKeys": [
+    "AGT-2780",
+    "AGT-2781",
+    "AGT-2782",
+    "AGT-2778",
+    "AGT-2733",
+    "AGT-2736",
+    "AGT-2738",
+    "AGT-2763",
+    "AGT-2729",
+    "AGT-2739"
+  ],
+  "implementationTasks": [
+    {
+      "title": "Docker execution world, stage M1: base images agent-cli and web-node with pinned CLIs, digest publication to ghcr.io/agent-orc, project profile fields image and capabilities (operator decisions D1-D7)",
+      "promptMarkdown": "Implement stage M1 of docs/operations/docker-ausfuehrungswelt-migration/index.html according to the recorded operator decisions (D1 to D6). Derive two base images from runner/Dockerfile: agent-cli (dotnet SDK 10, Node LTS, Codex CLI 0.154.x and Claude Code 2.1.269 pinned, Playwright browsers) and web-node (Node LTS, Playwright browsers, both CLIs), build them in CI and publish by digest to the registry chosen in D5. Add the project profile fields image (digest) and capabilities (standard, docker-capable, windows-host) with API and settings UI, and record the digest in every active project's profile. Quality Studio uses its own repository Dockerfile as the reference for the Dockerfile.agent convention (MK2 may be cut as a separate slice). Evidence: for every active project (AGT, CAR, CAC, TE, QS, WEB, QSW) the profile's build and test commands run green inside the project's image on agent-runner-01, with the command log per project; ADR for image pinning and capabilities; docs/operations setup pages updated; changelog. Nothing changes in the execution path yet: runs and gates keep running natively until stage M2."
+    }
+  ]
+}

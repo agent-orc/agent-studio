@@ -66,6 +66,15 @@
   .toc a { color: var(--ink-2); text-decoration: none; }
   .toc a:hover { color: var(--develop); }
   .muted { color: var(--ink-3); }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px 22px; font-size: 14px; color: var(--ink-2); margin: 10px 0 6px; }
+  .legend > span { display: inline-flex; gap: 8px; align-items: baseline; max-width: 34ch; }
+  .tag.none { color: var(--ink-3); border-color: transparent; background: var(--surface-3); }
+  .tablewrap { overflow-x: auto; }
+  table.matrix { min-width: 960px; }
+  table.matrix td { font-size: 13.5px; }
+  table.matrix td .d { display: block; color: var(--ink-2); font-size: 12.5px; line-height: 1.4; margin-top: 4px; }
+  table.matrix td b { font-size: 14px; }
+  table.matrix th abbr { text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; }
 </style>
 </head>
 <body>
@@ -262,17 +271,79 @@
 <p class="muted">Kein eigenes Muster, aber ein Verstärker für M3 und M5. Entscheidung liegt in W36.</p>
 
 <h2 id="s5"><span class="no">§5</span>Bewertung</h2>
-<table>
-  <thead><tr><th>Richtung</th><th>M1 Zustand</th><th>M2 Klasse</th><th>M3 Retry</th><th>M4 Welten</th><th>M5 Besitz</th><th>Aufwand</th><th>Risiko</th></tr></thead>
+<p>Die Matrix beantwortet je Richtung eine Frage: welches der fünf Muster aus §2 wird damit beseitigt, welches nur abgeschwächt, welches gar nicht berührt. Die Spaltenköpfe tragen die Kurzdefinition als Tooltip, die Legende darunter erklärt die drei Bewertungen, und jede Zelle nennt den Grund.</p>
+<div class="legend">
+  <span><span class="tag ok">löst</span> Das Muster kann nach der Umsetzung nicht mehr auftreten, weil seine Voraussetzung wegfällt.</span>
+  <span><span class="tag">hilft</span> Das Muster tritt seltener auf oder richtet weniger Schaden an, bleibt aber möglich.</span>
+  <span><span class="tag none">–</span> Kein Einfluss auf dieses Muster.</span>
+</div>
+<div class="tablewrap">
+<table class="matrix">
+  <thead><tr>
+    <th>Richtung</th>
+    <th><abbr title="M1 · Veränderlicher Zustand, der Läufe überlebt: Caches, eingefrorene Review-Pläne, Worktrees, Snapshots und Status-Caches ohne Besitzer, ohne Gültigkeitsnachweis und ohne Ablauf. Beispiel: der node_modules-Cache des Gates vom 11.08. (WEB-19).">M1 Zustand</abbr></th>
+    <th><abbr title="M2 · Fehler bekommen die falsche Klasse: die Entscheidung Produkt, Umgebung oder flaky fällt über Signaturlisten; unbekannte Umgebungsfehler gelten als Produktfehler, Concerns werden zu ProductFailure. Beispiel: AGT-2779 grün und trotzdem „Delivery gate failed".">M2 Klasse</abbr></th>
+    <th><abbr title="M3 · Wiederholung ohne Abbruch: Retry-Budgets zählen je Karte statt je Ursache, identische Fehler auf verschiedenen Karten werden nicht als eine Ursache erkannt. Beispiel: CAC-18 mit 411 identischen Versuchen.">M3 Retry</abbr></th>
+    <th><abbr title="M4 · Drei Ausführungswelten: Windows-Studio lokal, Linux-Runner und Gate-Worktree unterscheiden sich in Toolchain, Umgebungsvariablen, Prozessmodell und Beweisfähigkeit; derselbe Commit hat kein definiertes Ergebnis. Beispiel: AGT-2733 kann Docker im Runner-Sandbox nicht beweisen.">M4 Welten</abbr></th>
+    <th><abbr title="M5 · Niemand besitzt Prozesse und Lebenszyklen: Kindprozesse überleben Läufe, Restarts verwaisen Arbeit, Worktrees bleiben gesperrt, der Operator räumt von Hand. Beispiel: WEB-19-Pickup flappt an zwei Python-Servern.">M5 Besitz</abbr></th>
+    <th><abbr title="Grobe Größenordnung der Umsetzung in Karten-Arbeit: klein = Tage, mittel = ein bis zwei Wochen, groß = mehrere Wochen mit Betriebsumstellung.">Aufwand</abbr></th>
+    <th><abbr title="Was schiefgehen kann, wenn die Richtung umgesetzt wird, und was dagegen vorgesehen ist.">Risiko</abbr></th>
+  </tr></thead>
   <tbody>
-    <tr><td>R1 Hermetik</td><td><span class="tag ok">löst</span></td><td><span class="tag">hilft</span></td><td>–</td><td><span class="tag ok">löst</span></td><td><span class="tag">hilft</span></td><td>groß (Wochen)</td><td>Container-Betrieb, Windows-Beweise brauchen eigenen Executor</td></tr>
-    <tr><td>R2 Diagnose</td><td><span class="tag">hilft</span></td><td><span class="tag ok">löst</span></td><td><span class="tag">hilft</span></td><td>–</td><td>–</td><td>klein (Tage)</td><td>doppelte Gate-Laufzeit im Fehlerfall; Baseline-Cache muss stimmen</td></tr>
-    <tr><td>R3 Unterbrecher</td><td>–</td><td><span class="tag">hilft</span></td><td><span class="tag ok">löst</span></td><td>–</td><td>–</td><td>klein (Tage)</td><td>Fingerprint zu grob = falsche Zusammenlegung; Schwelle zu niedrig = Stillstand</td></tr>
-    <tr><td>R4 Besitz + Heilungen</td><td><span class="tag">hilft</span></td><td>–</td><td>–</td><td>–</td><td><span class="tag ok">löst</span></td><td>mittel</td><td>Wächter mit Händen braucht Autoritätsgrenzen (W15 §6)</td></tr>
-    <tr><td>R5 Durchsatz</td><td>–</td><td>–</td><td><span class="tag">hilft</span></td><td>–</td><td><span class="tag">hilft</span></td><td>mittel</td><td>W36 offen</td></tr>
+    <tr>
+      <td><b>R1 Hermetik</b><span class="d">eine Welt, unveränderliche Artefakte</span></td>
+      <td><span class="tag ok">löst</span><span class="d">Caches werden inhaltsadressiert, write-once und manifestgeprüft; ein Treffer ist ein Beweis, ein unvollständiger Eintrag kann nicht mehr benutzt werden.</span></td>
+      <td><span class="tag">hilft</span><span class="d">Weniger Umgebungsfehler entstehen überhaupt; die Klassifikation bleibt nötig für Toolchain- und Anbieterfehler.</span></td>
+      <td><span class="tag none">–</span><span class="d">Ob wiederholt wird, entscheidet nicht die Umgebung.</span></td>
+      <td><span class="tag ok">löst</span><span class="d">Läufe und Gates laufen im selben Image mit deklarierter Umgebung; derselbe Commit liefert dasselbe Ergebnis.</span></td>
+      <td><span class="tag">hilft</span><span class="d">Der Container ist eine natürliche Prozessgrenze: Ende des Containers = Ende aller Kindprozesse.</span></td>
+      <td><span class="tag warn">groß</span><span class="d">Wochen; Tranche C existiert als Plan.</span></td>
+      <td><span class="d">Container-Betrieb auf allen Hosts; Beweise mit Docker-Bedarf brauchen ein eigenes Executor-Profil (Sysbox oder Micro-VM); Windows entfällt als Ausführungswelt (Entscheidung 12.09., siehe Migrationsdossier).</span></td>
+    </tr>
+    <tr>
+      <td><b>R2 Diagnose</b><span class="d">Klassifikation als Kontrakt</span></td>
+      <td><span class="tag">hilft</span><span class="d">Ein Umgebungsbefund verwirft den beteiligten Zustand (Cache, Plan, Worktree) statt ihn zu speichern; der Zustand bleibt aber veränderlich.</span></td>
+      <td><span class="tag ok">löst</span><span class="d">Die Klasse kommt aus einem Experiment (Baseline, sauberer Lauf, Fingerprint), nicht aus einer Liste; unbekannte Fehler landen nicht mehr als Produktfehler.</span></td>
+      <td><span class="tag">hilft</span><span class="d">Nur bestätigte Produktfehler belasten Budgets; die Wiederholung selbst wird hier nicht begrenzt.</span></td>
+      <td><span class="tag none">–</span><span class="d">Die Diagnose erkennt Weltunterschiede, beseitigt sie nicht.</span></td>
+      <td><span class="tag none">–</span><span class="d">Kein Bezug zu Prozessbesitz.</span></td>
+      <td><span class="tag ok">klein</span><span class="d">Tage; Baseline-Cache, Evict und Fingerprints existieren.</span></td>
+      <td><span class="d">Im Fehlerfall doppelte Gate-Laufzeit; die Baseline muss verlässlich grün gehalten werden, sonst wird alles „Umgebung".</span></td>
+    </tr>
+    <tr>
+      <td><b>R3 Unterbrecher</b><span class="d">Ursachen-Fingerprints</span></td>
+      <td><span class="tag none">–</span><span class="d">Kein Bezug zu Zustand.</span></td>
+      <td><span class="tag">hilft</span><span class="d">Eine Fehlklassifikation trifft höchstens N Versuche, dann steht der Unterbrecher.</span></td>
+      <td><span class="tag ok">löst</span><span class="d">Identische Fingerprints werden fleetweit gezählt; ab der Schwelle entsteht eine Ursachen-Karte, Betroffene warten statt zu wiederholen.</span></td>
+      <td><span class="tag none">–</span><span class="d">Kein Bezug zu Welten.</span></td>
+      <td><span class="tag none">–</span><span class="d">Kein Bezug zu Besitz.</span></td>
+      <td><span class="tag ok">klein</span><span class="d">Tage; Intervention (AGT-2765) als Baustein.</span></td>
+      <td><span class="d">Fingerprint zu grob legt verschiedene Fehler zusammen; Schwelle zu niedrig hält die Fleet an. Beides ist ein Parameter, kein Umbau.</span></td>
+    </tr>
+    <tr>
+      <td><b>R4 Besitz + Heilungen</b><span class="d">Lebenszyklus, Rezepte als Code</span></td>
+      <td><span class="tag">hilft</span><span class="d">Worktrees und Caches bekommen Besitzer mit Ablauf; die Heilung „evakuieren" wird Produktverhalten.</span></td>
+      <td><span class="tag none">–</span><span class="d">Klassifiziert nicht.</span></td>
+      <td><span class="tag none">–</span><span class="d">Begrenzt keine Wiederholung.</span></td>
+      <td><span class="tag none">–</span><span class="d">Vereinheitlicht keine Welten.</span></td>
+      <td><span class="tag ok">löst</span><span class="d">Jeder Lauf besitzt Prozessbaum, Worktree und Lease; Restart bindet wieder an; bekannte Lagen heilt das System selbst.</span></td>
+      <td><span class="tag">mittel</span><span class="d">AGT-2780/2781 laufen; Heilungen im Wächter sind neu.</span></td>
+      <td><span class="d">Ein Wächter mit Händen braucht Autoritätsgrenzen (W15 §6, hier D3); falsch erkannte Lagen würden sonst automatisch „geheilt".</span></td>
+    </tr>
+    <tr>
+      <td><b>R5 Durchsatz</b><span class="d">Guard zuerst, Batch, Sharding</span></td>
+      <td><span class="tag none">–</span><span class="d">Kein Bezug.</span></td>
+      <td><span class="tag none">–</span><span class="d">Kein Bezug.</span></td>
+      <td><span class="tag">hilft</span><span class="d">Kürzere Runden machen jede Wiederholung billiger; Guard-Tests liefern Ergebnisse in Sekunden statt Stunden.</span></td>
+      <td><span class="tag none">–</span><span class="d">Kein Bezug.</span></td>
+      <td><span class="tag">hilft</span><span class="d">Weniger parallele Vollsuiten, weniger verklemmte Worker und abgelaufene Leases.</span></td>
+      <td><span class="tag">mittel</span><span class="d">Guard-first sofort; Batch/Sharding nach W36.</span></td>
+      <td><span class="d">Entscheidung liegt in W36; Sharding braucht mehr Executor-Kapazität.</span></td>
+    </tr>
   </tbody>
 </table>
-<p>Keine Richtung allein reicht. R2 und R3 stoppen die Verschwendung heute und sind klein. R1 stellt Reproduzierbarkeit her und macht R2 seltener nötig. R4 macht das Ganze selbsttragend. R5 senkt den Druck, unter dem die anderen Muster zuschlagen.</p>
+</div>
+<p><b>Lesart.</b> Jede Zeile hat genau ein „löst" bei dem Muster, für das sie gebaut ist, plus Nebenwirkungen. Keine Richtung allein deckt alle fünf. R2 und R3 stoppen die Verschwendung heute und sind klein. R1 stellt Reproduzierbarkeit her und macht R2 seltener nötig. R4 macht das Ganze selbsttragend. R5 senkt den Druck, unter dem die anderen Muster zuschlagen.</p>
 
 <h2 id="s6"><span class="no">§6</span>Empfehlung und Reihenfolge</h2>
 <div class="box accent">
@@ -296,6 +367,10 @@
 </table>
 
 <h2 id="s8"><span class="no">§8</span>Entscheidungen</h2>
+
+<div class="box accent">
+  <b>D1 ist vorentschieden (Operator, 12.09.2026, im Gespräch zu R1):</b> „Windows soll keine Ausführungswelt mehr bleiben. Docker wird der Ort für alles. Auch auf Windows wird Docker mandatory. Es gibt einen äußeren Installer drumherum und einen Prozess, der das Management macht." Das entspricht Option A und geht darüber hinaus: jede Ausführung (Coding-Lauf, Gate, Review-Aspekt, Orchestrator-CLI) läuft im Container, auf jedem Host. Die Auswirkungen je Projekt und der Migrationspfad stehen im Dossier <a href="../docker-ausfuehrungswelt-migration/index.html">Docker als einzige Ausführungswelt: Auswirkungen und Migration</a>. Die Auswahl unten bleibt als Beleg der Entscheidung im Dossier.
+</div>
 
 <div class="decision" data-decision-id="ausfuehrungswelt" data-decision-kind="single" data-decision-label="Zielbild der Ausführungswelt">
   <h3>D1 · Welches Zielbild gilt für die Ausführung?</h3>

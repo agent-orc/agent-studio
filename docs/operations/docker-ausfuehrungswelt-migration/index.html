@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Docker als einzige Ausführungswelt: Auswirkungen und Migration | Konzept-Dossier</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1: #fcfcfb; --surface-2: #f2f1ee; --surface-3: #e9e8e3;
+    --ink-1: #0b0b0b; --ink-2: #52514e; --ink-3: #8a8983; --line: #d8d6cf;
+    --develop: #2a78d6; --ok: #008300; --bad: #c93736; --warn: #9a6b00;
+    --accent-soft: #eaf1fb; --bad-soft: #fbecec; --ok-soft: #eaf4ea; --warn-soft: #f8f0dd;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --surface-1: #1a1a19; --surface-2: #232322; --surface-3: #2c2c2a;
+      --ink-1: #ffffff; --ink-2: #c3c2b7; --ink-3: #8a8983; --line: #3d3d3a;
+      --develop: #3987e5; --ok: #4eae4e; --bad: #e66767; --warn: #d9a63f;
+      --accent-soft: #1e2a3a; --bad-soft: #382222; --ok-soft: #1f2f1f; --warn-soft: #33301e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 0 0 80px; background: var(--surface-1); color: var(--ink-1); font: 16px/1.6 system-ui, "Segoe UI", sans-serif; }
+  main { max-width: 1080px; margin: 0 auto; padding: 0 28px; }
+  header.page { border-bottom: 1px solid var(--line); padding: 44px 0 26px; margin-bottom: 8px; }
+  .kicker { font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); margin: 0 0 10px; }
+  h1 { font-size: 34px; line-height: 1.2; margin: 0 0 12px; }
+  .lede { font-size: 18px; color: var(--ink-2); max-width: 62ch; margin: 0; }
+  .meta { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 18px; font-size: 13px; color: var(--ink-3); }
+  .meta b { color: var(--ink-2); font-weight: 600; }
+  h2 { font-size: 24px; margin: 56px 0 6px; scroll-margin-top: 20px; }
+  h2 .no { color: var(--ink-3); font-weight: 600; margin-right: 10px; }
+  h3 { font-size: 18px; margin: 34px 0 4px; }
+  p { max-width: 76ch; }
+  .box { border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); padding: 18px 22px; margin: 20px 0; }
+  .box.accent { background: var(--accent-soft); }
+  .box.warn { background: var(--warn-soft); }
+  .tablewrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; margin: 14px 0 22px; font-size: 14px; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--ink-2); font-weight: 600; background: var(--surface-2); white-space: nowrap; }
+  td .d { display: block; color: var(--ink-2); font-size: 12.5px; line-height: 1.4; margin-top: 3px; }
+  code { font: 13px ui-monospace, "Cascadia Mono", Consolas, monospace; background: var(--surface-3); padding: 1px 5px; border-radius: 4px; }
+  .tag { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--ink-2); margin-right: 4px; white-space: nowrap; }
+  .tag.bad { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
+  .tag.ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+  .tag.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+  .tag.dev { background: var(--accent-soft); color: var(--develop); border-color: transparent; }
+  figure { margin: 22px 0; }
+  figure svg { width: 100%; height: auto; display: block; }
+  figcaption { font-size: 13px; color: var(--ink-3); margin-top: 6px; }
+  .decision { border: 1px solid color-mix(in srgb, var(--develop) 35%, var(--line)); border-radius: 10px; padding: 18px 22px; margin: 22px 0; background: var(--accent-soft); }
+  .decision h3 { margin: 0 0 10px; font-size: 17px; }
+  .decision label { display: flex; gap: 12px; align-items: flex-start; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-1); margin: 8px 0; cursor: pointer; }
+  .decision label input { margin-top: 4px; }
+  .decision label b { display: block; }
+  .decision label span.d { display: block; color: var(--ink-2); font-size: 14px; }
+  .decision textarea { width: 100%; min-height: 64px; margin-top: 8px; font: 14px system-ui, sans-serif; border: 1px solid var(--line); border-radius: 6px; padding: 8px; background: var(--surface-1); color: var(--ink-1); }
+  ul, ol { max-width: 80ch; }
+  li { margin: 4px 0; }
+  .toc { columns: 2; gap: 28px; font-size: 14.5px; }
+  .toc a { color: var(--ink-2); text-decoration: none; }
+  .toc a:hover { color: var(--develop); }
+  .muted { color: var(--ink-3); }
+  th abbr { text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; }
+  .steps { counter-reset: st; list-style: none; padding: 0; max-width: none; }
+  .steps > li { counter-increment: st; border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px 14px 58px; margin: 12px 0; background: var(--surface-2); position: relative; }
+  .steps > li::before { content: "M" counter(st); position: absolute; left: 16px; top: 14px; font-weight: 700; color: var(--develop); }
+  .steps h4 { margin: 0 0 6px; font-size: 16px; }
+  .steps p { margin: 4px 0; font-size: 14.5px; }
+  .steps .kv { font-size: 13.5px; color: var(--ink-2); }
+  .steps .kv b { color: var(--ink-1); }
+</style>
+</head>
+<body>
+<main>
+<header class="page">
+  <p class="kicker">Konzept-Dossier · Agent Studio</p>
+  <h1>Docker als einzige Ausführungswelt: Auswirkungen und Migration</h1>
+  <p class="lede">Was die Entscheidung „Windows ist keine Ausführungswelt mehr, Docker ist der Ort für alles, auch auf Windows mandatory, mit äußerem Installer und Management-Prozess" für jedes registrierte Projekt und jede Studio-Komponente bedeutet, und wie die Migration in sieben Stufen läuft, ohne die Fleet anzuhalten.</p>
+  <div class="meta">
+    <span><b>Stand</b> 12.09.2026</span>
+    <span><b>Anlass</b> Operator-Entscheidung 12.09. zu AGT-W50 §4 R1; Auftrag: „deutlich erweiterter Plan: was das für unsere Projekte bedeutet und wie die Migration aussieht"</span>
+    <span><b>Baut auf</b> AGT-W49 Operations-Server (Deployment-Formen), AGT-W8 Installer-Story (Linux all-Docker, Windows), Tranche C Container-Anschluss, AGT-W50 Lieferkette, Phase B Task-Server in Docker</span>
+    <span><b>Datenbasis</b> Projektregistry 12.09. (17 Projekte), Build-Profile, Execution-Settings, runner/Dockerfile, docker-compose.yml, agent-runner-01</span>
+  </div>
+</header>
+
+<div class="box accent">
+  <b>Kernaussage.</b> Die Entscheidung ist kleiner als sie klingt und größer als Tranche C. Kleiner, weil der Linux-Runner heute schon mit Docker läuft, das Runner-Image existiert und Tranche C den Weg von <code>ProcessStartInfo</code> zu <code>docker run</code> beschrieben hat. Größer, weil drei Dinge dazukommen: das Windows-Studio verliert seinen lokalen Ausführungspfad vollständig, jedes Projekt bekommt ein gepinntes Image, und ein nativer Host-Manager übernimmt, was heute Start-Skripte, Scheduled Tasks und der Update-Service tun. Die Migration läuft in sieben Stufen mit zwei parallelen Welten pro Stufe und einem Abschaltkriterium je Stufe. Der Linux-Runner geht zuerst, die Windows-Workstation zuletzt.
+</div>
+
+<nav class="toc">
+  <a href="#s1">§1 Entscheidung und Geltungsbereich</a><br>
+  <a href="#s2">§2 Zielbild</a><br>
+  <a href="#s2a">§2a Besitz von Regeln und Images</a><br>
+  <a href="#s3">§3 Auswirkungen auf die Studio-Komponenten</a><br>
+  <a href="#s4">§4 Auswirkungen je Projekt</a><br>
+  <a href="#s5">§5 Migration in sieben Stufen</a><br>
+  <a href="#s6">§6 Windows: Installer und Host-Manager</a><br>
+  <a href="#s7">§7 Risiken und offene Fragen</a><br>
+  <a href="#s8">§8 Entscheidungen</a><br>
+  <a href="#s9">§9 Kartenschnitt</a><br>
+  <a href="#quellen">§ Quellen</a>
+</nav>
+
+<h2 id="s1"><span class="no">§1</span>Entscheidung und Geltungsbereich</h2>
+<p>Die Entscheidung des Operators vom 12.09.2026 im Wortlaut: „Windows soll keine Ausführungswelt mehr bleiben. Docker wird der Ort für alles. Das kommt in die neue Architektur, die gerade geplant wird. Auch auf Windows wird Docker mandatory. Es gibt einen äußeren Installer drumherum und einen Prozess, der das Management macht."</p>
+<p>„Ausführung" umfasst alles, was Code eines Projekts oder ein Agenten-CLI startet:</p>
+<table>
+  <thead><tr><th>Im Container (immer)</th><th>Nativ je Betriebssystem (bleibt)</th></tr></thead>
+  <tbody>
+    <tr><td>Coding-Läufe (Codex, Claude) mit Worktree</td><td>Browser mit der Studio-Oberfläche</td></tr>
+    <tr><td>Build-Test-Gates und Review-Baselines</td><td>Loopback-Connector als Browser-Kante (AGT-W49)</td></tr>
+    <tr><td>Review-Aspekte (Read-only-CLI-Aufrufe)</td><td>Host-Manager: Docker sicherstellen, Images, Compose-Stack, Ausführungs-Container, Updates, Restart-Kontinuität</td></tr>
+    <tr><td>Orchestrator-Sessions und Post-Steps, die ein CLI starten</td><td>Äußerer Installer: Voraussetzungen prüfen und herstellen, Host-Manager registrieren</td></tr>
+    <tr><td>Task Server, Engine, Operations-Server, Runner- und Review-Daemon (Compose-Stack, AGT-W49)</td><td>Ein Windows-Executor-Profil nur dort, wo ein Beweis Windows selbst betrifft (Host-Manager, Installer, Connector)</td></tr>
+  </tbody>
+</table>
+<p>Nicht Gegenstand: die Frage, wo Task Server und Operations-Server laufen (AGT-W49 D2) und ob der Task-Server-Host eine eigene VM wird (Phase B). Beides ist mit dieser Entscheidung verträglich; sie verändert nur, <i>womit</i> ausgeführt wird, nicht <i>wer</i> Autorität hat.</p>
+
+<h2 id="s2"><span class="no">§2</span>Zielbild</h2>
+<figure>
+<svg viewBox="0 0 1040 420" role="img" aria-label="Zielbild: Host-Manager, Compose-Stack, Ausführungs-Container, Registry">
+  <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--ink-3)"/></marker></defs>
+  <g font-family="system-ui, sans-serif" font-size="13" fill="var(--ink-1)">
+    <rect x="20" y="20" width="1000" height="380" rx="14" fill="none" stroke="var(--line)" stroke-dasharray="6 5"/>
+    <text x="36" y="44" fill="var(--ink-3)" font-size="12" letter-spacing="1.5">HOST (LINUX ODER WINDOWS MIT WSL2)</text>
+    <rect x="40" y="60" width="230" height="110" rx="10" fill="var(--surface-2)" stroke="var(--line)"/>
+    <text x="155" y="86" text-anchor="middle" font-weight="600">Nativ</text>
+    <text x="155" y="108" text-anchor="middle" fill="var(--ink-2)" font-size="12.5">Installer (einmalig)</text>
+    <text x="155" y="126" text-anchor="middle" fill="var(--ink-2)" font-size="12.5">Host-Manager (Dienst)</text>
+    <text x="155" y="144" text-anchor="middle" fill="var(--ink-2)" font-size="12.5">Browser, Connector</text>
+    <rect x="300" y="60" width="440" height="110" rx="10" fill="var(--accent-soft)" stroke="var(--develop)"/>
+    <text x="520" y="86" text-anchor="middle" font-weight="600">Compose-Stack (Steuerebene)</text>
+    <text x="520" y="108" text-anchor="middle" fill="var(--ink-2)" font-size="12.5">task-server · engine · operations-server · studio-bff/web</text>
+    <text x="520" y="126" text-anchor="middle" fill="var(--ink-2)" font-size="12.5">runner-coding · runner-review (Daemons)</text>
+    <text x="520" y="144" text-anchor="middle" fill="var(--ink-2)" font-size="12.5">Volumes: workspace, projects, caches (write-once)</text>
+    <rect x="770" y="60" width="230" height="110" rx="10" fill="var(--surface-2)" stroke="var(--line)"/>
+    <text x="885" y="86" text-anchor="middle" font-weight="600">Registry</text>
+    <text x="885" y="108" text-anchor="middle" fill="var(--ink-2)" font-size="12.5">ghcr.io/agent-orc</text>
+    <text x="885" y="126" text-anchor="middle" fill="var(--ink-2)" font-size="12.5">Stack-Images (Release)</text>
+    <text x="885" y="144" text-anchor="middle" fill="var(--ink-2)" font-size="12.5">Projekt-Images (per Digest)</text>
+    <line x1="270" y1="115" x2="298" y2="115" stroke="var(--ink-3)" stroke-width="1.5" marker-end="url(#ar)"/>
+    <line x1="770" y1="115" x2="742" y2="115" stroke="var(--ink-3)" stroke-width="1.5" marker-end="url(#ar)"/>
+    <text x="155" y="215" text-anchor="middle" fill="var(--ink-3)" font-size="12">startet, überwacht, aktualisiert</text>
+    <line x1="155" y1="170" x2="155" y2="240" stroke="var(--ink-3)" stroke-width="1.5" marker-end="url(#ar)"/>
+    <line x1="520" y1="170" x2="520" y2="240" stroke="var(--ink-3)" stroke-width="1.5" marker-end="url(#ar)"/>
+    <text x="620" y="215" text-anchor="middle" fill="var(--ink-3)" font-size="12">docker run je Lauf, Gate, Aspekt</text>
+    <rect x="40" y="250" width="300" height="120" rx="10" fill="var(--ok-soft)" stroke="var(--ok)"/>
+    <text x="190" y="276" text-anchor="middle" font-weight="600">Ausführungs-Container</text>
+    <text x="190" y="298" text-anchor="middle" fill="var(--ink-2)" font-size="12.5">Image des Projekts, Worktree als Volume</text>
+    <text x="190" y="316" text-anchor="middle" fill="var(--ink-2)" font-size="12.5">deklarierte Umgebung, --cpus/--memory</text>
+    <text x="190" y="334" text-anchor="middle" fill="var(--ink-2)" font-size="12.5">Ende des Containers = Ende aller Kinder</text>
+    <text x="190" y="352" text-anchor="middle" fill="var(--ink-2)" font-size="12.5">Profil: standard</text>
+    <rect x="370" y="250" width="300" height="120" rx="10" fill="var(--ok-soft)" stroke="var(--ok)"/>
+    <text x="520" y="276" text-anchor="middle" font-weight="600">Ausführungs-Container mit Docker</text>
+    <text x="520" y="298" text-anchor="middle" fill="var(--ink-2)" font-size="12.5">Sysbox-Runtime oder Micro-VM (KVM)</text>
+    <text x="520" y="316" text-anchor="middle" fill="var(--ink-2)" font-size="12.5">für Karten mit Docker-Beweis</text>
+    <text x="520" y="334" text-anchor="middle" fill="var(--ink-2)" font-size="12.5">nur auf Linux-Executoren</text>
+    <text x="520" y="352" text-anchor="middle" fill="var(--ink-2)" font-size="12.5">Profil: docker-capable</text>
+    <rect x="700" y="250" width="300" height="120" rx="10" fill="var(--warn-soft)" stroke="var(--warn)"/>
+    <text x="850" y="276" text-anchor="middle" font-weight="600">Windows-Executor (Ausnahme)</text>
+    <text x="850" y="298" text-anchor="middle" fill="var(--ink-2)" font-size="12.5">nur Host-Manager, Installer, Connector</text>
+    <text x="850" y="316" text-anchor="middle" fill="var(--ink-2)" font-size="12.5">deklarierte Fähigkeit „windows-host"</text>
+    <text x="850" y="334" text-anchor="middle" fill="var(--ink-2)" font-size="12.5">kein Coding-Lauf, kein Projekt-Gate</text>
+    <text x="850" y="352" text-anchor="middle" fill="var(--ink-2)" font-size="12.5">Profil: windows-host</text>
+  </g>
+</svg>
+<figcaption>Zielbild auf einem Host. Auf der Windows-Workstation liefert WSL2 den Linux-Kernel; Compose-Stack und Ausführungs-Container sind dort identisch mit dem Linux-Host. Verteilte Formen (AGT-W49) verteilen dieselben Kästen auf mehrere Hosts.</figcaption>
+</figure>
+<p>Drei Bausteine sind neu gegenüber heute:</p>
+<ol>
+  <li><b>Projekt-Images.</b> Je Projekt ein Image mit gepinnter Toolchain (SDK, Node, Browser, CLIs), per Digest im Projektprofil hinterlegt, gebaut aus einem <code>Dockerfile.agent</code> im Projekt-Repo oder aus einem Studio-Basis-Image plus Profil. Coding-Lauf, Gate und Review-Aspekt einer Karte benutzen denselben Digest; ein Image-Wechsel ist ein Ereignis in der Timeline.</li>
+  <li><b>Executor-Fähigkeiten als Planungsmerkmal.</b> Eine Karte deklariert, was ihr Beweis braucht (<code>standard</code>, <code>docker-capable</code>, <code>windows-host</code>, später <code>gpu</code>). Der Scheduler plant sie auf einen Executor mit dieser Fähigkeit. Was nirgends erfüllbar ist, wird bei der Anlage abgelehnt, nicht nach drei Stunden eskaliert.</li>
+  <li><b>Host-Manager.</b> Ein nativer Dienst je Betriebssystem, der die einzige Brücke zwischen Host und Containern ist: prüft Docker, pinnt und zieht Images, startet und überwacht den Compose-Stack, verwaltet Volumes und Caches, führt Updates mit Restart-Kontinuität (AGT-2780) aus, hält den Reverse-Link (LinkSupervisor, AGT-2763) und ersetzt Start-Skripte, Scheduled Tasks und den Update-Service.</li>
+</ol>
+
+<h2 id="s2a"><span class="no">§2a</span>Wem gehören Pipeline-Regeln und Images</h2>
+<p>Operator-Überlegung 12.09.: Jedes Projekt hat eigene Pipeline- und Bauregeln; die gehören vermutlich in das Docker-Paket. Der Schmerz ist die Zugänglichkeit: Wo liegen die Images, wem gehört die Definition, pflegt Agent Studio sein eigenes?</p>
+<p>Heute liegen die Bauregeln an zwei Orten, die auseinanderlaufen können: das Build-Profil in den Projekt-Einstellungen des Studios (<code>installCmd</code>, <code>buildCmds</code>, <code>testCmds</code>, MachineBound-Filter, 493 Pipeline-Schritte je Projekt) und implizite Konventionen im Repo (<code>ensure-deps.mjs</code>, <code>package.json</code>-Skripte, Test-Kategorien). Das Profil kennt den Commit nicht, der Commit kennt das Profil nicht. Ein Projekt, das seine Toolchain ändert, bricht das Gate, bis jemand die Einstellung nachzieht.</p>
+<h3>Drei Schichten, drei Besitzer</h3>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Schicht</th><th>Liegt wo</th><th>Gehört wem</th><th>Enthält</th><th>Wird gebaut von</th></tr></thead>
+  <tbody>
+    <tr><td><b>1 · Basis-Images</b><span class="d"><code>agent-cli</code>, <code>web-node</code>, später weitere Stacks</span></td><td>ghcr.io/agent-orc, Release-Artefakt des Studios</td><td>Agent Studio (Produkt)</td><td>Betriebssystem, SDKs, Node, Browser, die Agenten-CLIs in gepinnter Version, der Runner-Worker-Einstieg</td><td>Studio-CI bei jedem Release; Digest im Release-Manifest</td></tr>
+    <tr><td><b>2 · Projekt-Definition</b><span class="d"><code>.agent-studio/project.yml</code> plus optional <code>Dockerfile.agent</code></span></td><td>Im Repository des Projekts, versioniert mit dem Code</td><td>Das Projekt (sein Team)</td><td>Basis-Image, Zusatzschichten (Systempakete, Tools), Umgebungsvariablen, Bau-, Test-, Lint-Befehle, Test-Kategorien, benötigte Fähigkeiten, Cache-Pfade, Startregeln für Dev-Server</td><td>Host-Manager des Executors bei Bedarf, aus dem Commit heraus; Ergebnis per Digest von Dockerfile, Lockfiles und Basis-Digest gecacht</td></tr>
+    <tr><td><b>3 · Studio-Einstellungen</b><span class="d">Projekt-Einstellungen wie heute</span></td><td>Task Server</td><td>Der Operator</td><td>Nur noch, was nicht zum Code gehört: Executor-Zuordnung, Parallelität, Modelle, Pickup-Modus, Integrationsbranch, Overrides mit Begründung</td><td>–</td></tr>
+  </tbody>
+</table>
+</div>
+<p>Die Regel dazu: <b>Was den Bau des Commits betrifft, reist mit dem Commit.</b> Das Gate liest die Definition aus dem Subjekt-Commit, nicht aus einer Einstellung; ein Commit, der die Toolchain ändert, bringt seine Regeln mit. Das Studio-Profil wird von der Quelle zur Anzeige mit Override: die Oberfläche zeigt, was im Repo steht, und erlaubt eine Abweichung nur als sichtbaren, begründeten Override (der Weg, den Roberts Regel „Konvention statt Settings" vorgibt).</p>
+<h3>Antworten auf die drei Fragen</h3>
+<ul>
+  <li><b>Wo liegen die Images?</b> Basis-Images in der Registry des Produkts (D5). Projekt-Images werden <i>nicht</i> veröffentlicht, sondern vom Host-Manager des jeweiligen Executors aus der Projekt-Definition gebaut und lokal per Digest gecacht. Ein Dritter, der das Produkt installiert, braucht keine eigene Registry: Basis kommt vom Produkt, der Rest aus seinem Repo. Wer will, kann in <code>project.yml</code> ein fertiges Image angeben.</li>
+  <li><b>Wem gehört die Definition?</b> Dem Projekt, im Repo, reviewbar wie Code. Das Studio liefert Vorlagen je Stack (die heutigen Build-Profil-Erkenner werden zu Generatoren für <code>project.yml</code>) und einen Validator, der die Definition beim Import prüft und in der Oberfläche anzeigt. Ohne Definition gilt die Stack-Erkennung als Vorschlag, den das Studio als Karte ins Repo schreibt.</li>
+  <li><b>Pflegt Agent Studio sein eigenes?</b> Ja, auf beiden Schichten, und das ist gewollt: das agent-studio-Repo veröffentlicht die Basis-Images (Schicht 1, aus <code>runner/Dockerfile</code> abgeleitet) und trägt zugleich als Projekt PROJ-002 seine eigene <code>project.yml</code> und ein <code>Dockerfile.agent</code> (Schicht 2), das auf <code>agent-cli</code> aufsetzt. Agent Studio ist damit das erste Projekt, das die Konvention benutzt, und Quality Studio mit seinem vorhandenen Dockerfile das zweite.</li>
+</ul>
+<h3>Zugänglichkeit für Nutzer</h3>
+<p>Die Projekt-Einstellungen bekommen einen Bereich „Ausführung", der die drei Schichten zeigt: Basis-Image mit Version, Projekt-Definition aus dem Repo mit Pfad, letztem Build, Digest und Bau-Log, Fähigkeiten, und darunter die Studio-Overrides. Aktionen: „Definition anlegen" (schreibt die Vorlage als Karte ins Repo), „Neu bauen", „Override setzen" mit Pflichtbegründung. Ein Gate-Ergebnis nennt immer den Digest, mit dem es lief. Wer nichts konfiguriert, bekommt die Stack-Erkennung als Vorschlag, nie ein stilles Standardverhalten.</p>
+<div class="box">
+  <b>Konsequenz für den Kartenschnitt:</b> MK1 baut die Basis-Images, MK2 wird zur Karte „Projekt-Definition im Repo" (Schema, Validator, Generator aus Stack-Erkennung, Anzeige in den Einstellungen, Gate liest aus dem Subjekt-Commit), mit Agent Studio und Quality Studio als ersten beiden Definitionen. Entscheidung D7.
+</div>
+
+<h2 id="s3"><span class="no">§3</span>Auswirkungen auf die Studio-Komponenten</h2>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Komponente heute</th><th>Zielbild</th><th>Was entfällt</th><th>Bezug</th></tr></thead>
+  <tbody>
+    <tr><td>Lokale CLI-Ausführung im OrchestratorApi (<code>ProjectRunner</code>, <code>CliRouter</code>, <code>GenericCliExecutionService</code>, CAR-Bridge)</td><td>Jeder Lauf ist ein <code>docker run</code> gegen das Projekt-Image, gestartet vom Runner-Daemon (Tranche C C1-Kern), auch auf der Workstation</td><td><code>ReattachOnStartup</code>/<code>ReapOrphans</code>, Job-Objekte, Windows-PATH-Fixes, <code>%TEMP%\ass-worktrees</code></td><td>Tranche C, AGT-2780, AGT-2781</td></tr>
+    <tr><td><code>BuildTestGateRunner</code> mit Gate-Worktree in <code>%TEMP%</code> und <code>.dependency-cache</code></td><td>Gate im Container aus demselben Digest wie der Lauf (Tranche C E6); Caches als write-once-Volumes mit Manifest</td><td>Signaturlisten für Umgebungsfehler, Cache-Zurückschreiben, <code>ensure-deps</code>-Hooks in den Repos</td><td>AGT-2782, AGT-W50 K5/K6</td></tr>
+    <tr><td>Review-Daemon: Aspekte als Host-Prozesse, PrivateTmp-Drop-in, Review-Parallelität 4</td><td>Ein Container je Attempt mit Read-only-Worktree; Parallelität als Container-Quote</td><td>PrivateTmp-Interim, Socket-99-Klasse, verklemmte Worker</td><td>AGT-2750, AGT-2753</td></tr>
+    <tr><td>Runner-Daemon nativ auf agent-runner-01 (systemd, Sudo-Allowlist, CLI-Upgrade als root)</td><td>Runner-Daemon als Container mit Zugriff auf die Engine über den Host-Manager (kein Socket im Coding-Container); CLI-Versionen kommen mit dem Image</td><td>Host-CLI-Lifecycle als Betriebsproblem (AGT-2778 wird zur Image-Pflege), Sudo-Allowlist</td><td>AGT-2778, runner/Dockerfile</td></tr>
+    <tr><td>Start-Skripte (<code>start-stable.sh</code>, <code>api.sh</code>), Update-Service, Scheduled Tasks TunnelKeeper und QuotaGuard, <code>run-hidden.vbs</code></td><td>Host-Manager: ein Dienst, ein Zustand, eine Timeline</td><td>Alle vier, samt der Konsolenfenster-Klasse vom 09.09.</td><td>AGT-2763, AGT-2751, AGT-W8</td></tr>
+    <tr><td>Windows-Testsuite als Gate (die „roten Sechs", ReplaceFile, SQLite-Pool, bash-PATH)</td><td>Projekt-Gates laufen auf Linux; Windows-Tests nur für Host-Manager, Installer und Connector im Profil <code>windows-host</code></td><td>Windows-spezifische Testfixes in Ausführungspfaden (AGT-2774 bis 2776 bleiben als Übergang)</td><td>AGT-W50 M4</td></tr>
+    <tr><td>Stable-Checkout auf Windows (<code>agent-taskboard-stable</code>, develop→main-Promotion, Update-Service zieht Quellen und baut)</td><td>Release = Stack-Images per Tag; Update = Host-Manager zieht Digest und tauscht Container mit Kontinuität</td><td>Bauen auf der Workstation; „59 Merges nicht deployt" wird ein Klick statt ein Fenster</td><td>develop-main-promotion.md, AGT-2780</td></tr>
+    <tr><td>Workspace <code>C:\Projects\agent-taskboard-workspace</code> und Checkouts unter <code>C:\Projects</code></td><td>Named Volumes im WSL2-Dateisystem (Installer-Story §4); Zugriff aus Windows über <code>\\wsl$</code> und die Studio-Oberfläche, nicht über Pfade</td><td>Pfad-Konventionen in Registry (<code>repositoryPath</code>), Long-Path-Fälle, <code>/mnt/c</code>-Berechtigungsprobleme</td><td>AGT-2732 Workspace-Migration</td></tr>
+    <tr><td>Auth-Zustand der CLIs (<code>~/.codex</code>, Claude-Login) je Host</td><td>Auth-Volumes je Executor, vom Host-Manager verwaltet; Login-Flow der Oberfläche (AGT-2759) schreibt ins Volume</td><td>Manuelle Logins auf Hosts, Launcher-Stubs</td><td>AGT-2759, AGT-2707</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="s4"><span class="no">§4</span>Auswirkungen je Projekt</h2>
+<p>Stand der Registry am 12.09.: 17 Projekte, davon 6 mit Remote-Ausführung auf agent-runner-01, 11 lokal auf der Workstation (7 davon ohne Karten oder pausiert). Die Tabelle nennt je Projekt Stack, heutige Ausführung, das nötige Image, die Executor-Fähigkeit und die Besonderheiten der Migration.</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Projekt</th><th>Stack und Gate</th><th>Heute</th><th>Image</th><th><abbr title="Deklarierte Fähigkeit, die der Beweis der Karten braucht">Fähigkeit</abbr></th><th>Besonderheiten der Migration</th><th>Stufe</th></tr></thead>
+  <tbody>
+    <tr><td><b>PROJ-002 AGT</b><span class="d">Agent Studio</span></td><td>dotnet + node (Angular, Playwright); <code>dotnet build</code>, <code>dotnet test --filter Category!=MachineBound</code>, npm build/test</td><td>remote agent-runner-01, Parallelität 8, Reviews 4</td><td><code>agent-studio/agent-cli</code> aus <code>runner/Dockerfile</code> (SDK 10, Node, Codex, Claude) plus Playwright-Browser</td><td>standard; <span class="tag warn">docker-capable</span> für Docker-Karten (AGT-2733-Klasse), <span class="tag warn">windows-host</span> für Host-Manager/Installer/Connector</td><td>Größtes Projekt und zugleich das Produkt, das die Migration baut: Karten der Stufen M1–M6 laufen hier. Windows-Gate wird auf <code>windows-host</code>-Karten beschränkt; die roten Sechs verlieren ihre Gate-Rolle. Playwright-Evidenz (Screenshots) braucht Browser im Image (≈1 GB).</td><td>M1–M3</td></tr>
+    <tr><td><b>PROJ-011 CAR</b><span class="d">Coding Agent Runner</span></td><td>dotnet; <code>dotnet build</code>, <code>dotnet test</code></td><td>remote, Parallelität 1</td><td><code>agent-cli</code>-Basis</td><td>standard; <span class="tag warn">docker-capable</span> für Runner-Image-Tests</td><td>CAR ist selbst die Ausführungsschicht; die Karten, die <code>docker run</code> statt <code>ProcessStartInfo</code> bauen, laufen hier (Tranche C C1). Tests, die Docker starten, brauchen Sysbox.</td><td>M1–M2</td></tr>
+    <tr><td><b>PROJ-014 CAC</b><span class="d">Coding Agent Chat</span></td><td>dotnet + node; build/test beide</td><td>remote, Parallelität 2</td><td><code>agent-cli</code>-Basis</td><td>standard</td><td>CAC-18 (411 Versuche, <code>npm ci</code> exit 127) ist genau der Fehler, den ein Image mit Node beseitigt. Release über npm bleibt Host-Manager-frei (CI).</td><td>M2</td></tr>
+    <tr><td><b>PROJ-015 TE</b><span class="d">Token Economy</span></td><td>dotnet; build/test; Website statisch, Deploy per Push</td><td>remote, Parallelität 2</td><td><code>agent-cli</code>-Basis</td><td>standard</td><td>Unkritisch. Deploy-Workflow bleibt in GitHub Actions; der Container pusht nicht selbst (Host-Worker, Tranche C Klarstellung 2).</td><td>M2</td></tr>
+    <tr><td><b>PROJ-016 QS</b><span class="d">Quality Studio</span></td><td>dotnet + Angular; eigenes Dockerfile und Compose im Repo; Reviews codex-only, Start braucht AllowedRoots-Env</td><td>remote, Parallelität 2; 138 rote Gates aus 5 flaky Tests</td><td>Eigenes Image aus dem Repo-Dockerfile (bereits vorhanden) plus CLIs</td><td>standard</td><td>Erstes Projekt mit projekteigenem Image: Referenz für <code>Dockerfile.agent</code>-Konvention. Flaky-Quarantäne (AGT-W50 K3) vor der Migration, sonst bleibt das Gate rot. AllowedRoots wird deklarierte Umgebung im Profil.</td><td>M2</td></tr>
+    <tr><td><b>PROJ-012 WEB</b><span class="d">Agent Studio Website</span></td><td>Angular statisch; <code>npm run build</code>, <code>npm test</code>, <code>npm run lint</code>; Playwright-Screenshots; Deploy per Push auf main</td><td>lokal Workstation, Parallelität 3 (heute: Cache-Vergiftung, Kindserver)</td><td>Studio-Basis <code>web-node</code> (Node, Playwright, Codex, Claude)</td><td>standard</td><td>Erstes lokales Projekt, das auf den Linux-Executor wechselt (privates Repo: Deploy-Key ins Auth-Volume). Screenshot-Evidenz braucht Browser im Image; <code>ensure-deps.mjs</code> wird überflüssig. Mit dem Wechsel entfällt die einzige lokale Ausführung mit Verkehr.</td><td>M2</td></tr>
+    <tr><td><b>PROJ-024 QSW</b><span class="d">Quality Studio Website</span></td><td>statisch; kein Gate-Profil; Deploy per Push auf main</td><td>lokal, Parallelität 1, Integrationsbranch leer</td><td><code>web-node</code></td><td>standard</td><td>Wie WEB. Vorher Integrationsbranch auf <code>main</code> setzen (heute leer, Annahme nur über Human-Review).</td><td>M2</td></tr>
+    <tr><td><b>PROJ-013 MKT</b><span class="d">Agent Studio Marketing</span></td><td>node; build/lint; Cockpit-API-Mitstart (MKT-18)</td><td>lokal, pausiert</td><td><code>web-node</code></td><td>standard</td><td>Kein Verkehr; URL-Startregeln (<code>start:full</code>) werden Compose-Dienste des Projekts statt Host-Prozesse.</td><td>M4</td></tr>
+    <tr><td><b>PROJ-020 AOW</b><span class="d">Agent Orchestrator Website (Hub)</span></td><td>statisch (site/); Deploy per Push</td><td>lokal, pausiert, kein Repo-URL in Registry</td><td><code>web-node</code></td><td>standard</td><td>Registry-Eintrag vervollständigen (repositoryUrl fehlt), sonst Claim-Block wie PROJ-002 am 08.08.</td><td>M4</td></tr>
+    <tr><td><b>PROJ-021 AIP</b><span class="d">AI Patterns</span></td><td>node; build/test</td><td>lokal, pausiert, kein Repo-URL</td><td><code>web-node</code></td><td>standard</td><td>Wie AOW.</td><td>M4</td></tr>
+    <tr><td><b>PROJ-022 FAM</b><span class="d">Family</span></td><td>node (backend/frontend); build/test</td><td>lokal, 1 Karte offen</td><td><code>web-node</code></td><td>standard</td><td>Privat, kein Repo in der Registry; entweder registrieren oder als lokal-manuelles Projekt ohne Pipeline führen.</td><td>M4</td></tr>
+    <tr><td><b>PROJ-023 VL</b><span class="d">Voice Lint</span></td><td>ohne Profil; Repo ohne Commit (VL-W1)</td><td>lokal, keine Karten</td><td>–</td><td>–</td><td>Erst Repo und Profil, dann Image. Kein Migrationsaufwand.</td><td>M4</td></tr>
+    <tr><td><b>PROJ-001 RUN, 003 PT, 004 LD, 005 PRI, 006 NEW, Agent Task Processor, Agent Software Studio</b></td><td>ohne Repo oder ohne Profil</td><td>lokal, manuell oder pausiert</td><td>–</td><td>–</td><td>Archivieren oder in der Registry als „kein Ausführungsprojekt" markieren. Sie dürfen nach M6 keine lokale Ausführung mehr auslösen können.</td><td>M6</td></tr>
+  </tbody>
+</table>
+</div>
+<p>Zwei Querschnittsfolgen: Erstens braucht jedes Projekt mit privatem Repository (WEB, QSW, MKT) einen Deploy-Key oder ein Token im Auth-Volume des Executors, weil der Container nicht mehr die Windows-Credentials des Operators erbt. Zweitens werden die URL-Startregeln der Projekte (Dev-Server auf 4184, Cockpit-API) zu Compose-Diensten je Projekt, die der Host-Manager auf Anforderung der Oberfläche startet; der Fall „Lauf startet Python-Server auf dem Port des Projekts" (WEB-19) ist damit strukturell ausgeschlossen.</p>
+
+<h2 id="s5"><span class="no">§5</span>Migration in sieben Stufen</h2>
+<p>Grundregel: jede Stufe führt eine neue Fähigkeit ein, lässt die alte parallel laufen und hat ein messbares Abschaltkriterium. Kein „Big Bang", kein Cutover-Wochenende. Der Linux-Runner geht zuerst, weil dort Docker läuft und nichts Windows-Spezifisches im Weg steht. Die Workstation geht zuletzt, weil sie Installer und Host-Manager braucht.</p>
+<ol class="steps">
+  <li>
+    <h4>Projekt-Images und Registry</h4>
+    <p>Basis-Images <code>agent-cli</code> (dotnet+node+CLIs+Playwright) und <code>web-node</code> aus dem heutigen <code>runner/Dockerfile</code> ableiten, mit gepinnten CLI-Versionen (Codex 0.154, Claude 2.1.269) und Digest-Veröffentlichung nach ghcr.io/agent-orc. QS bekommt sein eigenes Image aus dem Repo-Dockerfile. Projektprofil bekommt das Feld <code>image</code> (Digest) und <code>capabilities</code>.</p>
+    <p class="kv"><b>Parallel:</b> nichts ändert sich in der Ausführung. <b>Abschaltkriterium:</b> jedes aktive Projekt hat ein Image, das <code>build</code> und <code>test</code> des Profils im Container grün durchläuft (Nachweis je Projekt). <b>Dauer:</b> 1 Woche. <b>Rollback:</b> keiner nötig.</p>
+  </li>
+  <li>
+    <h4>Gate und Review im Container auf dem Linux-Runner</h4>
+    <p>Review-Daemon startet Gate und Aspekte als Container aus dem Projekt-Digest (Tranche C E6), Worktree als Volume, Caches als write-once-Volumes mit Manifest. Beide Wege laufen parallel; der Container-Weg ist Schatten, sein Ergebnis wird protokolliert und mit dem nativen verglichen.</p>
+    <p class="kv"><b>Abschaltkriterium:</b> 50 Attempts mit identischem Verdict beider Wege, keine Umgebungsfehler-Klasse im Container-Weg; dann wird der Container-Weg autoritativ und der native Weg abgeschaltet. <b>Dauer:</b> 1–2 Wochen. <b>Rollback:</b> Schalter im Projektprofil zurück auf nativ.</p>
+  </li>
+  <li>
+    <h4>Coding-Läufe im Container auf dem Linux-Runner</h4>
+    <p>Runner-Daemon startet Coding-Läufe als <code>docker run</code> (Tranche C C1-Kern): Env als Datei, <code>--rm --init --user</code>, Label je Attempt, Quoten aus dem Profil, Waisen-Reaper über Labels, Push durch den Host-Worker. Auth-Volumes je Executor. Executor-Fähigkeit <code>docker-capable</code> per Sysbox für die Docker-Karten (AGT-2733-Klasse, CAR).</p>
+    <p class="kv"><b>Parallel:</b> Projekte wechseln einzeln (Schalter), Reihenfolge TE, CAC, CAR, QS, AGT. <b>Abschaltkriterium:</b> je Projekt 20 Läufe im Container ohne Umgebungsfehler-Klasse; AGT als letztes. <b>Dauer:</b> 2 Wochen. <b>Rollback:</b> Schalter je Projekt.</p>
+  </li>
+  <li>
+    <h4>Lokale Projekte auf den Linux-Executor</h4>
+    <p>WEB, QSW, MKT, AOW, AIP, FAM wechseln von <code>executionLocation=local</code> auf den Runner; Deploy-Keys ins Auth-Volume; URL-Startregeln werden Compose-Dienste. Registry-Lücken (repositoryUrl bei AOW/AIP/FAM) vorher schließen. Ab hier gibt es keine lokale Ausführung mit Verkehr mehr; die Workstation führt nur noch aus, was der Operator ausdrücklich lokal startet.</p>
+    <p class="kv"><b>Abschaltkriterium:</b> 14 Tage ohne lokalen Pickup (Backend-Log). <b>Dauer:</b> 1 Woche. <b>Rollback:</b> executionLocation zurück.</p>
+  </li>
+  <li>
+    <h4>Host-Manager auf Linux, Stack als Images</h4>
+    <p>Host-Manager als nativer Dienst auf agent-runner-01 und dem Task-Server-Host (Phase B): Docker-Prüfung, Image-Pins, Compose-Stack (task-server, engine, operations-server, runner-coding, runner-review), Updates mit Restart-Kontinuität (AGT-2780), LinkSupervisor (AGT-2763) darin. Release = Stack-Images per Tag. Die systemd-Units und Drop-ins von heute werden vom Host-Manager erzeugt, nicht mehr von Hand gepflegt.</p>
+    <p class="kv"><b>Abschaltkriterium:</b> ein Update-Drill (AGT-2739-Stil) mit laufenden Läufen ohne Verlust; Sudo-Allowlist und CLI-Upgrade als root entfallen. <b>Dauer:</b> 2 Wochen. <b>Rollback:</b> alte Units bleiben deaktiviert vorhanden bis M7.</p>
+  </li>
+  <li>
+    <h4>Windows-Workstation: Installer, Host-Manager, Docker mandatory</h4>
+    <p>Äußerer Installer (§6) prüft und stellt her: WSL2, Docker-Engine, Ressourcen, Verzeichnisse im WSL2-Dateisystem, Auth-Volumes, Host-Manager als Windows-Dienst. Studio-Stack läuft als Compose in WSL2, Oberfläche im Browser über den Connector. Der Stable-Checkout auf Windows, Update-Service, Scheduled Tasks und Start-Skripte werden abgelöst. Lokale Ausführung im OrchestratorApi wird durch Ausführung im Workstation-Container ersetzt (gleicher Code wie M3, gleiche Images).</p>
+    <p class="kv"><b>Abschaltkriterium:</b> die Workstation des Operators läuft 14 Tage nur über den Host-Manager; ein zweiter frischer Windows-Rechner wird per Installer in unter 30 Minuten produktiv (Testprotokoll AGT-W8 §8). <b>Dauer:</b> 3 Wochen. <b>Rollback:</b> Stable-Checkout bleibt bis M7 startbar.</p>
+  </li>
+  <li>
+    <h4>Rückbau und Beweis</h4>
+    <p>Native Ausführungspfade entfernen (ProjectRunner-CLI-Start, Reattach/Reap, Gate-Worktree, Dependency-Cache alt, Windows-Job-Objekte), Windows-Gate auf das Profil <code>windows-host</code> beschränken, Registry-Projekte ohne Ausführung markieren, Regressionsszenario (AGT-W50 K9) mit Restart, Cache-Gift, Modell-Entzug und Kindprozess als Promotion-Gate. Dokumentation: docs/system/domains runner und tasks, Setup-Doku, ADRs.</p>
+    <p class="kv"><b>Abschaltkriterium:</b> kein Code mehr, der auf dem Host ein Agenten-CLI startet (der Guard-Test <code>CliInvocationCentralizationGuardTests</code> wird darauf verschärft). <b>Dauer:</b> 1–2 Wochen.</p>
+  </li>
+</ol>
+<div class="box">
+  <b>Gesamtdauer</b> 10 bis 12 Wochen Karten-Arbeit bei laufender Fleet, mit den Wellen 1 und 3 aus AGT-W50 (Diagnose, Unterbrecher, Heilungen) parallel dazu. <b>Kritischer Pfad:</b> M1 → M2 → M3 → M5 → M6. M4 hängt nur an M3, M7 an allem.
+</div>
+
+<h2 id="s6"><span class="no">§6</span>Windows: Installer und Host-Manager</h2>
+<p>AGT-W8 beschreibt den geführten Windows-Fluss mit Docker Desktop und WSL2 als Annahme. Mit „Docker mandatory" wird daraus eine Anforderung an zwei native Bausteine. Was sie tun müssen:</p>
+<h3>Äußerer Installer (einmalig, signiert)</h3>
+<ul>
+  <li><b>Voraussetzungen prüfen und herstellen:</b> Windows 10 21H2 oder 11, Virtualisierung aktiv, WSL2 installiert (<code>wsl --install</code> mit Neustart-Weiterführung), Docker-Engine verfügbar. Zwei Engines sind zulässig: Docker Desktop mit WSL2-Backend (Lizenzpflicht in Unternehmen ab 250 Mitarbeitern oder 10 Mio. USD Umsatz) oder <code>docker-ce</code> direkt in einer WSL2-Distribution ohne Desktop (lizenzfrei, vom Installer eingerichtet). Entscheidung D1.</li>
+  <li><b>Ressourcen:</b> <code>.wslconfig</code> mit Speicher- und CPU-Deckel setzen (heutiger Betrieb: 4 parallele Suiten brauchen 16 GB), Plattenbedarf prüfen (Images ≈25 GB, Volumes ≈20 GB, Workspace).</li>
+  <li><b>Verzeichnisse und Volumes:</b> Workspace, Projekte und Caches als Named Volumes im WSL2-Dateisystem (nicht unter <code>C:\</code>, Installer-Story §4: Unix-Modi, Durchsatz). Migration bestehender Checkouts aus <code>C:\Projects</code> per einmaligem Import.</li>
+  <li><b>Geheimnisse:</b> Runner-Token, Deploy-Keys, CLI-Auth ins Auth-Volume; nichts unter <code>/mnt/c</code>.</li>
+  <li><b>Host-Manager registrieren</b> als Windows-Dienst (Code-Signing-Zertifikat, Phase B), Verknüpfung „Agent Studio öffnen" auf den Connector.</li>
+  <li><b>Deinstallation und Reparatur:</b> Stack stoppen, Volumes optional behalten, Dienst entfernen; „Reparieren" = Voraussetzungen erneut prüfen und Images neu ziehen.</li>
+</ul>
+<h3>Host-Manager (Dienst, dauerhaft)</h3>
+<ul>
+  <li><b>Docker-Zustand:</b> Engine läuft, WSL2-Distribution läuft, Socket erreichbar; bei Ausfall neu starten und die Oberfläche informieren (Lage „Docker down" mit Heilung, AGT-W50 R4).</li>
+  <li><b>Images:</b> Pins aus dem Release-Manifest, Pull per Digest, Integritätsprüfung, Aufräumen alter Digests nach Retention (Retention-Dossier).</li>
+  <li><b>Stack:</b> Compose-Projekt starten, überwachen, Health prüfen, Logs sammeln; Ausführungs-Container über den Runner-Daemon, nicht direkt.</li>
+  <li><b>Updates:</b> neues Manifest, Container tauschen mit Kontinuität (AGT-2780), Rollback auf das vorige Manifest; Timeline-Ereignis je Update.</li>
+  <li><b>Links:</b> Reverse-Link zum Task Server (LinkSupervisor) und Registrierung des Executors mit seinen Fähigkeiten.</li>
+  <li><b>Oberfläche:</b> Zustand in den Execution Hosts (AGT-2778 zeigt Versionen), Aktionen „Update", „Reparieren", „Neu starten" mit Empfangsbestätigung.</li>
+</ul>
+<p>Der Host-Manager ist derselbe Code auf Linux und Windows (.NET, Worker Service), nur der Adapter für Dienstregistrierung und Docker-Erkennung ist plattformspezifisch. Er ist die einzige Komponente, für die das Profil <code>windows-host</code> Gates braucht.</p>
+
+<h2 id="s7"><span class="no">§7</span>Risiken und offene Fragen</h2>
+<table>
+  <thead><tr><th>Risiko</th><th>Wirkung</th><th>Gegenmaßnahme</th></tr></thead>
+  <tbody>
+    <tr><td>Docker-Desktop-Lizenz bei Dritten</td><td>Installationshürde für Unternehmen</td><td>Installer bietet <code>docker-ce</code> in WSL2 als lizenzfreien Standard an (D1)</td></tr>
+    <tr><td>WSL2-Dateisystem und Windows-Werkzeuge</td><td>Operator kann Checkouts nicht mehr unter <code>C:\Projects</code> öffnen</td><td>Zugriff über <code>\\wsl$</code> und VS Code Remote WSL; Studio-Oberfläche als primärer Zugang; Import-Schritt im Installer</td></tr>
+    <tr><td>Image-Größe und Pull-Zeit</td><td>Erste Einrichtung dauert, Updates ziehen Gigabytes</td><td>Schichtung Basis/Projekt, Digest-Pins, lokaler Cache; Playwright nur in Images, die Screenshots brauchen</td></tr>
+    <tr><td>Docker-Beweise brauchen Docker im Container</td><td>AGT-2733-Klasse, CAR-Tests</td><td>Executor-Profil <code>docker-capable</code> mit Sysbox auf Linux; auf Windows nicht angeboten (Karten werden auf Linux geplant)</td></tr>
+    <tr><td>Windows-spezifische Produktbugs verschwinden aus dem Gate, nicht aus dem Produkt</td><td>Host-Manager, Installer, Connector können Windows-Fehler haben</td><td>Profil <code>windows-host</code> mit eigener kleiner Suite; die roten Sechs wandern dorthin, soweit sie den Host-Manager betreffen</td></tr>
+    <tr><td>Zwei Welten während der Migration</td><td>Doppelte Fehlerquellen für 10 Wochen</td><td>Schattenbetrieb mit Vergleich (M2), Schalter je Projekt (M3, M4), festes Abschaltkriterium je Stufe</td></tr>
+    <tr><td>CLI-Auth im Container</td><td>Codex/Claude-Login je Executor statt je Host</td><td>Auth-Volumes, Login-Flow aus der Oberfläche (AGT-2759) schreibt hinein; Quota-Fallback bleibt zentral</td></tr>
+    <tr><td>Host-Manager als neuer Single Point</td><td>Fällt er, startet nichts</td><td>Kleiner Dienst ohne Geschäftslogik, Watchdog des Betriebssystems, Regressionsszenario testet seinen Ausfall</td></tr>
+  </tbody>
+</table>
+<p>Offen und nicht in diesem Dossier entschieden: Ob Task Server und Operations-Server auf der Workstation im selben Compose-Projekt laufen wie die Executor-Daemons (AGT-W49 D2), und ob die Workstation des Operators weiter als Executor für <code>windows-host</code>-Karten dient oder ein eigener Windows-Rechner dafür bereitsteht.</p>
+
+<h2 id="s8"><span class="no">§8</span>Entscheidungen</h2>
+
+<div class="decision" data-decision-id="windows-engine" data-decision-kind="single" data-decision-label="Docker-Engine auf Windows">
+  <h3>D1 · Welche Docker-Engine stellt der Installer auf Windows her?</h3>
+  <label data-option-id="docker-ce-wsl2" data-option-label="A · docker-ce in WSL2 als Standard, Docker Desktop als erkannte Alternative (Empfehlung)"><input type="radio" name="windows-engine" value="docker-ce-wsl2"><span><b>A · docker-ce in WSL2 als Standard, Docker Desktop erkannt</b><span class="d">Lizenzfrei für Dritte, vollständig vom Installer steuerbar; ist Docker Desktop vorhanden, wird es benutzt.</span></span></label>
+  <label data-option-id="desktop-only" data-option-label="B · Nur Docker Desktop mit WSL2-Backend"><input type="radio" name="windows-engine" value="desktop-only"><span><b>B · Nur Docker Desktop</b><span class="d">Einfachster Installer, Lizenzhürde bei Unternehmen, Abhängigkeit von Desktop-Updates.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="reihenfolge" data-decision-kind="single" data-decision-label="Reihenfolge der Migration">
+  <h3>D2 · In welcher Reihenfolge?</h3>
+  <label data-option-id="linux-zuerst" data-option-label="A · Linux-Runner zuerst (M1–M5), Workstation zuletzt (M6) (Empfehlung)"><input type="radio" name="reihenfolge" value="linux-zuerst"><span><b>A · Linux-Runner zuerst, Workstation zuletzt</b><span class="d">Nutzt, was läuft; Installer und Host-Manager reifen an Linux, bevor Windows dazukommt.</span></span></label>
+  <label data-option-id="workstation-zuerst" data-option-label="B · Workstation zuerst"><input type="radio" name="reihenfolge" value="workstation-zuerst"><span><b>B · Workstation zuerst</b><span class="d">Beseitigt die lokalen Vorfälle früher, blockiert aber an Installer und Host-Manager, bevor irgendein Lauf im Container ist.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="pilotprojekte" data-decision-kind="multi" data-decision-label="Pilotprojekte für M2/M3">
+  <h3>D3 · Welche Projekte gehen als Piloten in M2 und M3?</h3>
+  <label data-option-id="te" data-option-label="Token Economy (klein, dotnet, unkritisch)"><input type="checkbox" name="pilotprojekte" value="te"><span><b>Token Economy</b><span class="d">Kleinster Stack, Deploy in CI, kein Sonderbedarf.</span></span></label>
+  <label data-option-id="qs" data-option-label="Quality Studio (eigenes Dockerfile, flaky Gates)"><input type="checkbox" name="pilotprojekte" value="qs"><span><b>Quality Studio</b><span class="d">Referenz für projekteigene Images; zeigt sofort, ob die Flaky-Quarantäne greift.</span></span></label>
+  <label data-option-id="web" data-option-label="Agent Studio Website (erstes lokales Projekt auf den Runner)"><input type="checkbox" name="pilotprojekte" value="web"><span><b>Agent Studio Website</b><span class="d">Beweist Screenshots, privates Repo und Deploy-Key im Container.</span></span></label>
+  <label data-option-id="agt" data-option-label="Agent Studio selbst"><input type="checkbox" name="pilotprojekte" value="agt"><span><b>Agent Studio</b><span class="d">Größter Nutzen, größtes Risiko; als Pilot nur mit Schattenbetrieb.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="windows-tests" data-decision-kind="single" data-decision-label="Zukunft der Windows-Tests">
+  <h3>D4 · Was passiert mit den Windows-spezifischen Tests?</h3>
+  <label data-option-id="profil" data-option-label="A · Profil windows-host: nur Host-Manager, Installer, Connector (Empfehlung)"><input type="radio" name="windows-tests" value="profil"><span><b>A · Profil windows-host</b><span class="d">Kleine Suite für die nativen Bausteine; Ausführungspfad-Tests entfallen mit dem Pfad.</span></span></label>
+  <label data-option-id="behalten" data-option-label="B · Windows-Gate für AGT komplett behalten"><input type="radio" name="windows-tests" value="behalten"><span><b>B · Windows-Gate komplett behalten</b><span class="d">Doppelte Gate-Zeit für Code, der auf Windows nicht mehr ausgeführt wird.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="registry" data-decision-kind="single" data-decision-label="Image-Registry">
+  <h3>D5 · Wo liegen die Images?</h3>
+  <label data-option-id="ghcr" data-option-label="A · ghcr.io/agent-orc, Projekt-Images aus CI (Empfehlung)"><input type="radio" name="registry" value="ghcr"><span><b>A · ghcr.io/agent-orc</b><span class="d">Org existiert, Actions vorhanden, Digest-Pins in Release-Manifesten.</span></span></label>
+  <label data-option-id="lokal" data-option-label="B · Lokal gebaut je Host"><input type="radio" name="registry" value="lokal"><span><b>B · Lokal gebaut</b><span class="d">Keine Registry, aber kein Digest-Nachweis und Build-Zeit auf jedem Host.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="definition-besitz" data-decision-kind="single" data-decision-label="Ort und Besitz der Projekt-Definition">
+  <h3>D7 · Wo liegen Pipeline- und Bauregeln eines Projekts?</h3>
+  <label data-option-id="im-repo" data-option-label="A · Im Repo des Projekts (project.yml + Dockerfile.agent), Studio zeigt und übersteuert nur mit Begründung (Empfehlung)"><input type="radio" name="definition-besitz" value="im-repo"><span><b>A · Im Repo des Projekts, Studio zeigt und übersteuert nur begründet</b><span class="d">Regeln reisen mit dem Commit; Gate liest aus dem Subjekt; Dritte brauchen keine Registry; Agent Studio pflegt Basis-Images und seine eigene Definition.</span></span></label>
+  <label data-option-id="studio-zentral" data-option-label="B · Zentral im Studio, Images je Stack aus einem Katalog"><input type="radio" name="definition-besitz" value="studio-zentral"><span><b>B · Zentral im Studio</b><span class="d">Wie heute, nur containerisiert; Drift zwischen Commit und Regel bleibt; Projekte ohne Repo-Zugriff einfacher.</span></span></label>
+  <label data-option-id="hybrid" data-option-label="C · Studio-Katalog als Standard, Repo-Definition optional"><input type="radio" name="definition-besitz" value="hybrid"><span><b>C · Katalog als Standard, Repo optional</b><span class="d">Zwei Quellen dauerhaft; die Frage „welche gilt" muss die Oberfläche jedes Mal beantworten.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="parallelbetrieb" data-decision-kind="confirm" data-decision-label="Grenze für den Parallelbetrieb">
+  <h3>D6 · Zwei Welten laufen je Stufe höchstens bis zum Abschaltkriterium, spätestens 4 Wochen; danach wird abgeschaltet, nicht verlängert.</h3>
+  <label data-option-id="bestaetigt" data-option-label="Bestätigt"><input type="checkbox" name="parallelbetrieb" value="bestaetigt"><span><b>Bestätigt</b><span class="d">Sonst bleiben drei Welten dauerhaft vier.</span></span></label>
+  <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
+</div>
+
+<h2 id="s9"><span class="no">§9</span>Kartenschnitt</h2>
+<p>Erweitert AGT-W50 K5 bis K7 und Tranche C. Workflow-groß, je Karte ein Beweis; Reihenfolge folgt §5.</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Stufe</th><th>Karte</th><th>Projekt</th><th>Inhalt</th><th>Beweis</th></tr></thead>
+  <tbody>
+    <tr><td>M1</td><td>MK1 Basis-Images und Digest-Pins</td><td>AGT, CAR</td><td><code>agent-cli</code> und <code>web-node</code> aus runner/Dockerfile, CLI-Pins, Playwright, CI-Build nach ghcr, Profilfelder <code>image</code>/<code>capabilities</code></td><td>Build+Test jedes aktiven Projekts im Container grün</td></tr>
+    <tr><td>M1</td><td>MK2 Projekt-Definition im Repo</td><td>AGT, QS</td><td>Schema <code>.agent-studio/project.yml</code> + <code>Dockerfile.agent</code>, Validator, Generator aus Stack-Erkennung, Anzeige „Ausführung" in den Einstellungen mit begründetem Override, Gate liest aus dem Subjekt-Commit; Agent Studio und Quality Studio als erste Definitionen (D7)</td><td>Beide Gates laufen aus der Repo-Definition; Override-Pfad nachgewiesen</td></tr>
+    <tr><td>M2</td><td>MK3 Gate und Aspekte im Container (Schatten)</td><td>AGT</td><td>Review-Daemon startet Gate/Aspekte als Container, write-once-Caches mit Manifest (löst AGT-2782 ab), Vergleichsprotokoll nativ/Container</td><td>50 Attempts identisch</td></tr>
+    <tr><td>M3</td><td>MK4 Coding-Lauf als docker run</td><td>CAR, AGT</td><td>Tranche C C1-Kern, Auth-Volumes, Quoten, Waisen-Reaper über Labels, Schalter je Projekt</td><td>20 Läufe je Pilotprojekt ohne Umgebungsfehler</td></tr>
+    <tr><td>M3</td><td>MK5 Executor-Fähigkeiten und Sysbox-Profil</td><td>AGT</td><td>Fähigkeiten an Karte und Executor, Scheduler-Abgleich, Ablehnung bei Anlage, Sysbox auf agent-runner-01</td><td>AGT-2733-Klasse läuft ohne Eskalation</td></tr>
+    <tr><td>M4</td><td>MK6 Lokale Projekte auf den Runner</td><td>AGT, WEB, QSW, MKT</td><td>Deploy-Keys im Auth-Volume, URL-Startregeln als Compose-Dienste, Registry-Lücken schließen</td><td>14 Tage ohne lokalen Pickup</td></tr>
+    <tr><td>M5</td><td>MK7 Host-Manager (Linux)</td><td>AGT</td><td>Worker Service: Docker-Zustand, Image-Pins, Compose-Stack, Updates mit Kontinuität, LinkSupervisor, Execution-Hosts-Ansicht</td><td>Update-Drill ohne Verlust</td></tr>
+    <tr><td>M5</td><td>MK8 Release als Stack-Images</td><td>AGT</td><td>Tag → Images → Manifest; develop→main-Promotion erzeugt Manifest; Update-Service abgelöst</td><td>Ein Release per Manifest auf agent-runner-01 eingespielt</td></tr>
+    <tr><td>M6</td><td>MK9 Windows-Installer</td><td>AGT</td><td>Voraussetzungen, WSL2, Engine (D1), Ressourcen, Volumes, Geheimnisse, Dienst, Reparatur, Deinstallation; signiert</td><td>Frischer Windows-Rechner in unter 30 Minuten produktiv, Protokoll AGT-W8 §8</td></tr>
+    <tr><td>M6</td><td>MK10 Host-Manager (Windows) und Workstation-Cutover</td><td>AGT</td><td>Windows-Adapter, Import der Checkouts, Ablösung von Stable-Checkout, Update-Service, Scheduled Tasks, Start-Skripten</td><td>14 Tage Betrieb der Operator-Workstation nur über den Host-Manager</td></tr>
+    <tr><td>M7</td><td>MK11 Rückbau nativer Ausführung</td><td>AGT</td><td>Entfernen der Host-CLI-Pfade, Gate-Worktree, alten Caches, Job-Objekte; Guard-Test verschärft; Docs und ADRs</td><td>Guard grün, kein Host-CLI-Start im Code</td></tr>
+    <tr><td>M7</td><td>MK12 Regressionsszenario als Promotion-Gate</td><td>AGT</td><td>AGT-W50 K9 auf dem Container-Substrat: Restart, Cache-Gift, Modell-Entzug, Kindprozess, Docker-down</td><td>Szenario grün vor jeder Promotion</td></tr>
+  </tbody>
+</table>
+</div>
+<p>Bereits laufend und hier eingeordnet: AGT-2780 (Restart-Kontinuität → MK7), AGT-2781 (Teardown → wird durch Container-Grenze abgelöst, bis dahin Übergang), AGT-2782 (Cache-Validierung → MK3), AGT-2778 (Host-CLI-Lifecycle → wird Image-Pflege in MK1), AGT-2733/2736/2738 (Docker-Deploy, Installer → MK8/MK9), AGT-2763 (LinkSupervisor → MK7).</p>
+
+<h2 id="quellen"><span class="no">§</span>Quellen</h2>
+<ul>
+  <li>Operator-Entscheidung 12.09.2026 (Gespräch zu AGT-W50 §4 R1), festgehalten in AGT-W50 §8 und AGT-W49 §05.</li>
+  <li>Projektregistry und Execution-Settings 12.09. (<code>GET /api/projects</code>, <code>/api/projects/settings</code>, <code>/api/projects/{name}/build-profile</code>).</li>
+  <li><code>runner/Dockerfile</code> (SDK 10, Codex, Claude), <code>docker-compose.yml</code> (Profile default, runner, distributed, dev), <code>deploy/</code> (agent-host, compose, systemd, windows).</li>
+  <li>docs/operations/container-tranche-plan.md (Tranche C: C1-Kern, E6 Gate im Container, Klarstellungen zu Credentials, cgroup-Flucht).</li>
+  <li>Dossiers AGT-W8 Installer-Story (§2 Komponenten-Matrix, §4 Windows), AGT-W49 Operations-Server (§05 Deployment-Formen), AGT-W50 Lieferkette (§2 Muster, §4 R1, §9 K5–K7), Phase B (Task-Server in Docker, AGT-2729 ff.).</li>
+  <li>agent-runner-01: Docker 29.1.3, Ubuntu 24.04, cgroup v2, /dev/kvm, 12 Threads, 62 GB RAM, 228 GB frei (12.09.).</li>
+</ul>
+
+<!-- agent-studio:implementation-section:start -->
+<section id="implementation" data-document-section="implementation">
+  <h2>Implementation</h2>
+  <p>Delivery slices append their current implementation status here.</p>
+  <ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<!-- agent-studio:implementation-log:end -->
+  </ol>
+</section>
+<!-- agent-studio:implementation-section:end -->
+</main>
+</body>
+</html>
