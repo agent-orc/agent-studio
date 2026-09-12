@@ -1309,7 +1309,14 @@ describe('TaskCardComponent (smoke)', () => {
       },
     }));
     const now = new Date();
-    TestBed.inject(ProviderAuthStatusService).ingest([{
+    const providerAuth = TestBed.inject(ProviderAuthStatusService);
+    providerAuth.links.set([{
+      runnerId: 'agent-runner-01', kind: 'ssh-reverse', state: 'up',
+      since: now.toISOString(), lastHeartbeatAt: now.toISOString(),
+      lastProbe: null, lastError: null, attempt: 0, nextRetryAt: null,
+      childPid: 123, notificationRaisedAt: null,
+    }]);
+    providerAuth.ingest([{
       runnerId: 'agent-runner-01', name: 'linux-host', hostId: 'host-01', instanceId: 'coding-01',
       runnerVersion: '1.0.0', protocolVersion: 2, status: 'active',
       registeredAt: now.toISOString(), lastSeenAt: now.toISOString(),
@@ -1323,7 +1330,8 @@ describe('TaskCardComponent (smoke)', () => {
         key: 'provider-auth:claude', category: 'provider-auth', advertisedStatus: 'unavailable',
         healthState: 'healthy', advertisedAt: now.toISOString(),
         freshUntil: new Date(now.getTime() + 120_000).toISOString(), isFresh: true,
-        consecutiveFailures: 0, detail: 'Not logged in', affectedClaims: [], recoveryHistory: [],
+        consecutiveFailures: 2, signal: 'signed-out', detail: 'Not logged in',
+        affectedClaims: [], recoveryHistory: [],
       }],
     }]);
     fixture.detectChanges();
@@ -1848,6 +1856,39 @@ describe('current card-status reconciliation', () => {
     }));
     expect(badge?.label).toBe('Watchdog timeout');
     expect(badge?.tone).toBe('high');
+  });
+
+  it('shows a worktree preparation failure while the card backs off in Ready', () => {
+    const badge = buildOutcomeIssueBadge(makeJob({
+      state: '2-ready',
+      outcomeIssue: {
+        kind: 'worktree-preparation-failed',
+        label: 'worktree-preparation-failed',
+        severity: 'High',
+        summary: 'attempt=2/5 path=C:\\Temp\\ass-worktrees\\demo\\task gitMessage=fatal: not a working tree',
+        lastSeenAt: '2026-09-12T11:35:00Z',
+      },
+    }));
+
+    expect(badge?.label).toBe('worktree-preparation-failed');
+    expect(badge?.tone).toBe('high');
+    expect(badge?.tooltip).toContain('fatal: not a working tree');
+    expect(badge?.tooltip).toContain('C:\\Temp\\ass-worktrees');
+  });
+
+  it('keeps unrelated historical outcome issues quiet in Ready', () => {
+    const badge = buildOutcomeIssueBadge(makeJob({
+      state: '2-ready',
+      outcomeIssue: {
+        kind: 'integration-error',
+        label: 'Integration failed',
+        severity: 'High',
+        summary: 'Historical failure from the prior run.',
+        lastSeenAt: '2026-09-11T11:35:00Z',
+      },
+    }));
+
+    expect(badge).toBeNull();
   });
 });
 

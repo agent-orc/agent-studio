@@ -112,6 +112,8 @@ public class ProjectRunner
     private readonly DossierMaintenanceService? _dossierMaintenance;
     private readonly VisualQaService? _visualQa;
     private readonly FailureInterventionService? _failureInterventions;
+    private readonly IReadOnlyList<ProjectUrlRecord> _projectUrls;
+    private readonly AgentStudio.Registry.IProjectUrlPortInspector? _projectUrlPortInspector;
     private readonly CliRouter _router;
     private readonly SummaryGenerationService _summaryService;
     private readonly RuntimePromptService _prompts;
@@ -464,7 +466,9 @@ public class ProjectRunner
         ProviderLimitRegistry? providerLimits = null,
         QuotaAdmissionService? quotaAdmission = null,
         AgentStudio.Pipeline.ModelMigrationCatalogRegistry? modelMigrationCatalog = null,
-        FailureInterventionService? failureInterventions = null)
+        FailureInterventionService? failureInterventions = null,
+        IReadOnlyList<ProjectUrlRecord>? projectUrls = null,
+        AgentStudio.Registry.IProjectUrlPortInspector? projectUrlPortInspector = null)
     {
         ProjectName = projectName;
         Entry = entry;
@@ -515,6 +519,8 @@ public class ProjectRunner
         _dossierMaintenance = dossierMaintenance;
         _visualQa = visualQa;
         _failureInterventions = failureInterventions;
+        _projectUrls = projectUrls ?? [];
+        _projectUrlPortInspector = projectUrlPortInspector;
         _postAbortReview = postAbortReview;
         _sessionInspector = sessionInspector;
 
@@ -2668,7 +2674,7 @@ public class ProjectRunner
             if (requiresWorktree && string.IsNullOrWhiteSpace(repositoryRoot))
             {
                 const string missingRepository = "No authoritative Git repository is configured for this coding run.";
-                RecordWorktreePreparationFailure(jobId, missingRepository);
+                RecordWorktreePreparationFailure(info, missingRepository, null);
                 ReleaseRun(jobId);
                 if (consumedIntent is not null) _mutations.RollbackStashedPendingIntent(info.FolderPath);
                 if (movedToProgressThisCall)
@@ -2698,6 +2704,7 @@ public class ProjectRunner
                         "[taskboard] worktree for {Job}: {Path} (cwd={Cwd}) on {Branch} from {RepositoryRoot} ({Mode})",
                         jobId, prep.WorktreePath, claimed.WorkingDirectory, prep.Branch, repositoryRoot,
                         prep.Reused ? "reused" : "fresh-cut");
+                    WarnWhenProjectUrlPortIsAlreadyOccupied(info);
                 }
                 else
                 {
@@ -2707,7 +2714,7 @@ public class ProjectRunner
                     // cross-contamination this fix exists to prevent. Release the
                     // slot and serialize; the next auto-pickup tick retries once a
                     // worktree can be prepared/reused.
-                    RecordWorktreePreparationFailure(jobId, prep.Error);
+                    RecordWorktreePreparationFailure(info, prep.Error, prep.WorktreePath);
                     ReleaseRun(jobId);
                     if (consumedIntent is not null) _mutations.RollbackStashedPendingIntent(info.FolderPath);
                     // The run never started: roll the just-applied 3-progress move
@@ -8666,8 +8673,9 @@ public class ProjectRunner
             WorktreeBlockedExecutionStatus,
             StringComparison.Ordinal);
 
-    private void RecordWorktreePreparationFailure(string jobId, string? error)
+    private void RecordWorktreePreparationFailure(TaskInfo info, string? error, string? worktreePath)
     {
+        var jobId = info.Id;
         var state = _pickupAttempts.GetOrAdd(jobId, _ => new PickupAttemptState());
         state.Count++;
         state.History.Enqueue(new PickupAttemptDiagnostic
@@ -8679,6 +8687,68 @@ public class ProjectRunner
             Error = error
         });
         while (state.History.Count > WorktreeBlockedFailureThreshold) state.History.Dequeue();
+
+        var path = string.IsNullOrWhiteSpace(worktreePath) ? "<unresolved>" : worktreePath;
+        var gitMessage = string.IsNullOrWhiteSpace(error) ? "Unknown worktree preparation error." : error.Trim();
+        var summary = $"code=worktree-preparation-failed attempt={state.Count}/{WorktreeBlockedFailureThreshold} path={path} gitMessage={gitMessage}";
+        _logger.LogWarning(
+            "[taskboard] worktree-preparation-failed job={JobId} project={Project} attempt={Attempt}/{Threshold} path={Path} gitMessage={GitMessage}",
+            jobId,
+            ProjectName,
+            state.Count,
+            WorktreeBlockedFailureThreshold,
+            path,
+            gitMessage);
+        _chatLog.Append(info, OrchestratorMessageKind.WorktreePreparationFailed, summary);
+        _timeline?.Append(
+            info.FolderPath,
+            TimelineEventKinds.WorktreePreparationFailed,
+            TimelineActors.System,
+            summary,
+            details: new Dictionary<string, string>
+            {
+                ["failureCode"] = "worktree-preparation-failed",
+                ["attempt"] = state.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["retryBudget"] = WorktreeBlockedFailureThreshold.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["path"] = path,
+                ["gitMessage"] = gitMessage,
+            });
+    }
+
+    internal void RecordWorktreePreparationFailureForTest(TaskInfo info, string? error, string? worktreePath)
+        => RecordWorktreePreparationFailure(info, error, worktreePath);
+
+    private void WarnWhenProjectUrlPortIsAlreadyOccupied(TaskInfo info)
+    {
+        if (_projectUrlPortInspector is null || _projectUrls.Count == 0) return;
+        var seen = new HashSet<int>();
+        foreach (var projectUrl in _projectUrls)
+        {
+            var port = ProjectUrlPort(projectUrl);
+            if (port is not > 0 || !seen.Add(port.Value)) continue;
+            var occupant = _projectUrlPortInspector.FindListener(port.Value);
+            if (occupant is null) continue;
+
+            _logger.LogWarning(
+                "run-port-collision-warning job={JobId} project={Project} urlId={UrlId} port={Port} occupantPid={Pid} occupantProcess={Process}; a run command that binds this project URL port will collide",
+                info.Id,
+                ProjectName,
+                projectUrl.Id,
+                port.Value,
+                occupant.ProcessId,
+                occupant.ProcessName);
+        }
+    }
+
+    internal void WarnWhenProjectUrlPortIsAlreadyOccupiedForTest(TaskInfo info)
+        => WarnWhenProjectUrlPortIsAlreadyOccupied(info);
+
+    private static int? ProjectUrlPort(ProjectUrlRecord projectUrl)
+    {
+        if (projectUrl.StartRule?.Port is > 0 and <= 65535) return projectUrl.StartRule.Port;
+        return Uri.TryCreate(projectUrl.Url, UriKind.Absolute, out var uri) && uri.Port is > 0 and <= 65535
+            ? uri.Port
+            : null;
     }
 
     /// <summary>Test seam: number of distinct tasks the auto-failure breaker has

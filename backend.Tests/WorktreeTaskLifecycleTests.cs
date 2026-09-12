@@ -551,11 +551,11 @@ public sealed class WorktreeTaskLifecycleTests : IDisposable
     // Windows, while Linux permits unlinking the open file.
     [Trait("Category", "MachineBound")]
     [Fact]
-    public void PrepareOrReuse_RejectsCleanly_WhenOrphanDirBusy()
+    public void PrepareOrReuse_RejectsCleanly_WhenOrphanDirCannotBeRenamed()
     {
         // S11: a holder (e.g. a leftover capture server) keeping the orphan dir
-        // busy must yield a precise reject, NOT a confusing 'already exists'
-        // collision and NOT a throw — so the runner defers to the next tick.
+        // busy can prevent both deletion and rename. That must yield a precise
+        // reject, not a confusing 'already exists' collision or an exception.
         // The "busy" semantics are Windows-specific: POSIX happily removes a
         // directory whose files are open, so the reject this test asserts can
         // never occur there (surfaced by remote executor worktrees on Linux).
@@ -573,8 +573,48 @@ public sealed class WorktreeTaskLifecycleTests : IDisposable
         var prep = life.PrepareOrReuse(repo, taskId, "develop", wtRoot);
 
         Assert.False(prep.Success);
+        Assert.Equal(canonical, prep.WorktreePath);
         Assert.NotNull(prep.Error);
         Assert.Contains("busy", prep.Error!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Teardown_WhenDeleteRetriesFail_RenamesAside_AndNextPrepareSucceeds()
+    {
+        var (repo, _) = SeedWithDevelop("stale-rename");
+        var wtRoot = WorktreeRoot();
+        const string taskId = "task-stale-rename";
+        var canonical = Path.Combine(wtRoot, taskId);
+        Directory.CreateDirectory(canonical);
+        File.WriteAllText(Path.Combine(canonical, "held.txt"), "simulated holder");
+        var stamp = new DateTime(2026, 9, 12, 12, 34, 56, DateTimeKind.Utc);
+        var cleanup = new WorktreeDirectoryCleanup(
+            _ => throw new IOException("simulated access denied"),
+            () => stamp);
+
+        var teardownLife = new WorktreeTaskLifecycle(
+            BuildGitService(repo),
+            NullLogger<WorktreeTaskLifecycle>.Instance,
+            cleanup);
+
+        var result = teardownLife.Teardown(
+            repo,
+            canonical,
+            taskBranch: null,
+            deleteBranch: false,
+            force: true);
+
+        Assert.True(result.Success, result.Error);
+        Assert.Equal(canonical + ".stale-20260912123456000", result.StalePath);
+        Assert.False(Directory.Exists(canonical));
+        Assert.True(Directory.Exists(result.StalePath));
+
+        var life = new WorktreeTaskLifecycle(
+            BuildGitService(repo),
+            NullLogger<WorktreeTaskLifecycle>.Instance);
+        var prep = life.PrepareOrReuse(repo, taskId, "develop", wtRoot);
+        Assert.True(prep.Success, prep.Error);
+        Assert.Equal(canonical, prep.WorktreePath);
     }
 
     [Fact]

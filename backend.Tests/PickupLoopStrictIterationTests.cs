@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 using Xunit;
@@ -364,6 +365,73 @@ public sealed class PickupLoopStrictIterationTests : IDisposable
         Assert.Contains("\"threshold\":5", row);
         Assert.Contains("\"executionStatus\":\"worktree-blocked\"", row);
         Assert.Contains(busyPath.Replace("\\", "\\\\"), row);
+    }
+
+    [Fact]
+    public void WorktreePreparationFailure_SurfacesCodeGitMessageAndPathOnCardAndTimeline()
+    {
+        const string slug = "prepare-visible";
+        var worktreePath = Path.Combine(Path.GetTempPath(), "ass-worktrees", "demo", slug);
+        const string gitMessage = "fatal: path is not a working tree";
+        WriteJob(TaskStates.Progress, slug);
+        var folder = Path.Combine(_watchPath, TaskStates.Progress, slug);
+        var info = new TaskInfo
+        {
+            Id = slug,
+            Title = "Visible preparation failure",
+            State = TaskStates.Progress,
+            FolderPath = folder,
+            WatchPath = _watchPath,
+            ProjectName = ProjectName,
+        };
+        var runner = BuildRunner();
+
+        runner.RecordWorktreePreparationFailureForTest(info, gitMessage, worktreePath);
+
+        var log = File.ReadAllText(TaskPaths.CliOutputLog(folder));
+        Assert.Contains("[worktree-preparation-failed]", log);
+        Assert.Contains(gitMessage, log);
+        Assert.Contains(worktreePath, log);
+
+        var timeline = File.ReadAllText(TaskPaths.TimelineLog(folder));
+        Assert.Contains("\"kind\":\"worktree_preparation_failed\"", timeline);
+        Assert.Contains("\"failureCode\":\"worktree-preparation-failed\"", timeline);
+        Assert.Contains(gitMessage, timeline);
+        Assert.Contains(worktreePath.Replace("\\", "\\\\"), timeline);
+
+        var scanned = BuildScanner().FindJob(slug, _watchPath);
+        Assert.NotNull(scanned?.OutcomeIssue);
+        Assert.Equal("worktree-preparation-failed", scanned!.OutcomeIssue!.Kind);
+        Assert.Equal("worktree-preparation-failed", scanned.OutcomeIssue.Label);
+        Assert.Contains(gitMessage, scanned.OutcomeIssue.TechnicalDetails);
+        Assert.Contains(worktreePath, scanned.OutcomeIssue.TechnicalDetails);
+    }
+
+    [Fact]
+    public void LocalRunAdmission_LogsConfiguredProjectUrlPortOccupantWithPid()
+    {
+        var logger = new RecordingLogger();
+        var runner = BuildRunner(
+            logger,
+            [new ProjectUrlRecord
+            {
+                Id = "url-1",
+                Label = "Dev server",
+                Url = "http://127.0.0.1:4184",
+                StartRule = new ProjectUrlStartRule { Command = "npm start", Port = 4184 },
+            }],
+            new FixedPortInspector(4184, 43210, "python"));
+        var info = new TaskInfo { Id = "web-19", ProjectName = ProjectName };
+
+        runner.WarnWhenProjectUrlPortIsAlreadyOccupiedForTest(info);
+
+        var warning = Assert.Single(
+            logger.Messages,
+            message => message.Contains("run-port-collision-warning", StringComparison.Ordinal));
+        Assert.Contains("port=4184", warning);
+        Assert.Contains("occupantPid=43210", warning);
+        Assert.Contains("occupantProcess=python", warning);
+        Assert.Contains("job=web-19", warning);
     }
 
     [Fact]
@@ -759,7 +827,30 @@ public sealed class PickupLoopStrictIterationTests : IDisposable
         File.SetLastWriteTimeUtc(path, stamp);
     }
 
-    private ProjectRunner BuildRunner()
+    private TaskScannerService BuildScanner()
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["WatchPaths:0:Name"] = ProjectName,
+                ["WatchPaths:0:Path"] = _watchPath,
+                ["WatchPaths:0:RootPath"] = _watchPath,
+                ["WatchPaths:0:RepositoryPath"] = _watchPath,
+                ["TaskRepository"] = _workspaceRoot
+            })
+            .Build();
+
+        var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
+        var indexCache = new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance, config);
+        scanner.SetIndexCache(indexCache);
+        return scanner;
+    }
+
+    private ProjectRunner BuildRunner(
+        ILogger? logger = null,
+        IReadOnlyList<ProjectUrlRecord>? projectUrls = null,
+        AgentStudio.Registry.IProjectUrlPortInspector? projectUrlPortInspector = null)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -817,10 +908,34 @@ public sealed class PickupLoopStrictIterationTests : IDisposable
 
         return new ProjectRunner(
             ProjectName, entry,
-            NullLogger<ProjectRunner>.Instance,
+            logger ?? NullLogger<ProjectRunner>.Instance,
             scanner, states, sessions, router,
             summary, prompts, transitions, chatLog, mutations,
             orchestratorLog, orchestratorRunner, orchestratorSessions,
-            settings, quotaService, quotaCaps, git, pickupFailures, infraBreaker, taskAccess, bus: null);
+            settings, quotaService, quotaCaps, git, pickupFailures, infraBreaker, taskAccess, bus: null,
+            timeline: new TimelineLog(NullLogger<TimelineLog>.Instance),
+            projectUrls: projectUrls,
+            projectUrlPortInspector: projectUrlPortInspector);
+    }
+
+    private sealed class FixedPortInspector(int expectedPort, int pid, string processName)
+        : AgentStudio.Registry.IProjectUrlPortInspector
+    {
+        public ProjectUrlPortOccupant? FindListener(int port)
+            => port == expectedPort ? new ProjectUrlPortOccupant(pid, processName) : null;
+    }
+
+    private sealed class RecordingLogger : ILogger
+    {
+        public List<string> Messages { get; } = [];
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+            => Messages.Add(formatter(state, exception));
     }
 }

@@ -1548,7 +1548,9 @@ const INTEGRATION_ISSUE_KINDS = new Set(['integration-error', 'integration-confl
 export function buildOutcomeIssueBadge(job: TaskInfo): OutcomeIssueBadge | null {
   const issue = job.outcomeIssue;
   if (!issue) return null;
-  if (!CURRENT_OUTCOME_ISSUE_LANES.has(job.state)) return null;
+  const isActivePrepareBackoff = job.state === TaskState.Ready
+    && issue.kind.toLowerCase() === 'worktree-preparation-failed';
+  if (!CURRENT_OUTCOME_ISSUE_LANES.has(job.state) && !isActivePrepareBackoff) return null;
   const runOutcome = (job.execution?.runOutcome ?? '').toLowerCase();
   if (SUCCESSFUL_RUN_OUTCOMES.has(runOutcome)) return null;
   if (job.integration?.status === 'integrated'
