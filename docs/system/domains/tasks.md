@@ -977,6 +977,35 @@ failure cards map the issue `kind` to a complete human sentence; they never use
 `summary` or `technicalDetails` as primary copy. Unknown kinds use a generic
 failure sentence while retaining the full diagnostic under the disclosure.
 
+## Local worktree-preparation failure contract
+
+A local coding pickup that cannot prepare its isolated worktree uses the stable
+failure code `worktree-preparation-failed`. The runner writes a bracketed
+`[worktree-preparation-failed]` protocol line containing the exact Git message,
+canonical worktree path, and attempt count. `TaskScannerService` projects that
+line as the card's High-severity `TaskInfo.outcomeIssue`, so a card returned to
+`2-ready` remains visibly failed while no execution is active. The card keeps the
+failure code as its label and exposes the complete source line as technical
+details.
+
+Every failed attempt also appends the closed `TimelineEventKinds` member
+`WorktreePreparationFailed`, serialized as `worktree_preparation_failed`, to
+`logs/timeline.jsonl`. Its `details` contain `failureCode`, `attempt`,
+`retryBudget`, `path`, and `gitMessage`. This event is additive history and is
+not removed when the card moves back to Ready.
+
+Preparation retries are bounded per task. Attempts below the five-attempt
+worktree budget move the card immediately from `3-progress` back to `2-ready`
+and apply the rapid-crash cooldown sequence of 15 seconds, 60 seconds, 240
+seconds, then 900 seconds. Other eligible work may run during that cooldown.
+At the fifth worktree-preparation failure, the state machine parks the task in
+`5e-escalated` with category `worktree-blocked`, preserving the failing path and
+Git message in the escalation reason. It also writes one open
+`worktree-blocked` checklist item to `orchestrator-follow-up.md` and records the
+bounded failure in `logs/pickup-failures.jsonl`. The card is no longer eligible
+for automatic pickup until an operator clears the named holder and deliberately
+requeues it.
+
 ## Verification
 
 - API and mutation changes need endpoint tests plus task-access or service tests

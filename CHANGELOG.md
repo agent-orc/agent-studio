@@ -15,3 +15,9 @@ release yet.
 ### Added
 
 - Initial open source community and release-hygiene baseline.
+- Local run teardown now owns and ends complete Windows and Linux process trees,
+  retries worktree removal, renames persistent stale directories aside, and
+  periodically sweeps orphan directories that lost their `.git` link. Worktree
+  preparation failures are visible on cards and timelines, retry with bounded
+  backoff, and park with a path-specific blocker after five attempts. Local run
+  admission also warns when a configured project URL port already has a listener.
