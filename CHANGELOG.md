@@ -38,3 +38,10 @@ release yet.
 
 - Public-demo execution-route inventory now includes
   `POST /api/v1/reviews/attempts/{attemptId}/reclaim` in the `Continue` path.
+- Frontend release coverage is green again for the `CliAdminPanelComponent`
+  smoke test, the `CliModelsPanelComponent` known-CLI grouping test, the
+  `ExecutionAssignmentCardComponent` delivery-failure test, the
+  `WorkspaceOverlaysComponent` smoke test, and the Dossier and Wiki
+  `GlobalSearchComponent` navigation tests. The additionally exposed
+  `WorkbenchTabHostComponent` catalogue-backfill test is isolated from
+  persisted tab state as well.
