@@ -21,10 +21,10 @@ namespace AgentStudio.Runner;
 /// </list>
 ///
 /// <para>
-/// The pipeline is deliberately stateless: it never moves the job lane,
-/// never edits <c>task.json</c> beyond the tags array, and never
-/// re-issues a follow-up. Lane transitions and follow-up writes stay
-/// the orchestrator's job, in line with the single-state-machine rule.
+/// The pipeline never owns task state: it does not move the job lane or
+/// re-issue a follow-up. It may resume terminal aspect evidence from the
+/// current fenced pipeline attempt after a backend restart. Lane transitions
+/// and attempt authority stay with the orchestrator and task state machine.
 /// </para>
 /// </summary>
 public sealed class AspectRunnerService
@@ -202,13 +202,31 @@ public sealed class AspectRunnerService
         }
         if (resolved.Count == 0) return AspectRunReport.From(Array.Empty<AspectVerdict>());
 
+        // A replacement backend resumes the same open pipeline attempt. Reuse
+        // only verdict artifacts fenced by a terminal step in that attempt;
+        // an artifact left by an older attempt is never sufficient on its own.
+        var checkpointed = new List<(int Index, AspectVerdict Verdict)>();
+        var pending = new List<(int Index, string AspectId, AspectDefinition Def)>();
+        foreach (var entry in resolved)
+        {
+            var verdict = TryReadRestartCheckpoint(inputs.JobFolderPath, entry.Def);
+            if (verdict is null) pending.Add(entry);
+            else checkpointed.Add((entry.Index, verdict));
+        }
+
+        if (pending.Count == 0)
+        {
+            return AspectRunReport.From(
+                checkpointed.OrderBy(item => item.Index).Select(item => item.Verdict).ToList());
+        }
+
         // Bounded parallel fan-out. Default cap = 4 (today's catalogue
         // ships exactly four aspects); a future catalogue with more
         // aspects gets a real ceiling instead of unbounded WhenAll.
-        var maxParallel = Math.Min(resolved.Count, 4);
+        var maxParallel = Math.Min(pending.Count, 4);
         using var gate = new SemaphoreSlim(maxParallel, maxParallel);
 
-        var tasks = resolved
+        var tasks = pending
             .Select(entry =>
             {
                 // Per-step model routing: the orchestrator hands us a
@@ -231,12 +249,61 @@ public sealed class AspectRunnerService
         // already index-aligned (Select preserved order), but a future
         // refactor to per-completion writing would still get deterministic
         // output via the explicit index sort.
-        var verdicts = perIndex
+        var verdicts = checkpointed
+            .Concat(perIndex)
             .OrderBy(r => r.Index)
             .Select(r => r.Verdict)
             .ToList();
 
         return AspectRunReport.From(verdicts);
+    }
+
+    private AspectVerdict? TryReadRestartCheckpoint(
+        string jobFolderPath,
+        AspectDefinition definition)
+    {
+        var step = _pipelineLog?.ReadRestartCheckpoint(
+            jobFolderPath,
+            $"aspect-{definition.Id}");
+        if (step is null) return null;
+
+        try
+        {
+            var path = Path.Combine(jobFolderPath, $"aspect-{definition.Id}.json");
+            if (!File.Exists(path)) return null;
+            var document = AspectVerdictParsing.TryParseJson(File.ReadAllText(path));
+            if (document is null
+                || !string.Equals(document.Aspect, definition.Id, StringComparison.OrdinalIgnoreCase))
+                return null;
+
+            var status = document.Status.Trim().ToLowerInvariant() switch
+            {
+                "pass" => AspectStatus.Pass,
+                "concern" or "concerns" => AspectStatus.Concerns,
+                "block" or "blocked" => AspectStatus.Block,
+                _ => (AspectStatus?)null,
+            };
+            if (status is null) return null;
+
+            return new AspectVerdict(
+                definition.Id,
+                status.Value,
+                document.Summary,
+                document.Details,
+                document.Tag)
+            {
+                IsInfraFailure = string.Equals(step.Verdict, "environmental", StringComparison.OrdinalIgnoreCase),
+            };
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(
+                ex,
+                "Aspect restart checkpoint could not be read for {AspectId} in {JobFolder}",
+                definition.Id,
+                jobFolderPath);
+            return null;
+        }
     }
 
     private async Task<(int Index, AspectVerdict Verdict)> RunOneAspectAsync(

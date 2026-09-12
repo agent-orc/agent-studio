@@ -25,6 +25,8 @@ internal sealed class ActiveRun
     /// <summary>Primary CLI whose exhausted quota caused this run to use a fallback.</summary>
     public string? FallbackFromCliType { get; set; }
     public string? QuotaFallbackReason { get; set; }
+    /// <summary>True when this process was adopted from the durable local worker ledger.</summary>
+    public bool RecoveredAfterRestart { get; init; }
     public RunIntent Intent { get; init; }
     public string? Followup { get; init; }
 

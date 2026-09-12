@@ -14,4 +14,7 @@ release yet.
 
 ### Added
 
+- Durable restart continuity for local and Remote runs, review aspects, and
+  pipeline post-steps, including operator-visible bridge and loss events plus a
+  Windows Studio release drill.
 - Initial open source community and release-hygiene baseline.

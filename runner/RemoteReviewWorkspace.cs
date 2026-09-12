@@ -188,15 +188,16 @@ public sealed class RemoteReviewWorkspace
     }
 
     public Task<ReviewExecutionEvidence> ExecutePlanAsync(CancellationToken ct)
-        => ExecutePlanAsync(ct, checkpoint: null);
+        => ExecutePlanAsync(ct, resume: null, checkpoint: null);
 
     internal async Task<ReviewExecutionEvidence> ExecutePlanAsync(
         CancellationToken ct,
+        ReviewExecutionCheckpoint? resume,
         Func<ReviewExecutionCheckpoint, CancellationToken, Task>? checkpoint)
     {
-        var commands = new List<ReviewCommandEvidenceDto>();
-        var verdicts = new List<ReviewVerdictDto>();
-        var artifacts = new List<ReviewArtifactEvidenceDto>();
+        var commands = resume?.Commands?.ToList() ?? [];
+        var verdicts = resume?.Verdicts?.ToList() ?? [];
+        var artifacts = resume?.Artifacts?.ToList() ?? [];
         DependencyCacheSession? candidateCache = null;
         string? reviewMaterial = null;
         try
@@ -212,6 +213,9 @@ public sealed class RemoteReviewWorkspace
 
             foreach (var command in _subject.Plan.Commands)
             {
+                if (CanResumeCommand(command, commands, verdicts))
+                    continue;
+
                 var headBefore = await GitValueAsync("rev-parse", "HEAD", ct);
                 var treeBefore = await GitValueAsync("rev-parse", "HEAD^{tree}", ct);
                 if (!string.Equals(headBefore, _subject.ExpectedResultSha, StringComparison.OrdinalIgnoreCase))
@@ -477,7 +481,10 @@ public sealed class RemoteReviewWorkspace
                             commands.Sum(item => Math.Max(
                                 0,
                                 (item.FinishedAt - item.StartedAt).TotalSeconds)),
-                            DateTime.UtcNow),
+                            DateTime.UtcNow,
+                            commands.ToArray(),
+                            artifacts.ToArray(),
+                            verdicts.ToArray()),
                         ct);
                 }
             }
@@ -498,6 +505,22 @@ public sealed class RemoteReviewWorkspace
             ? "ProductFailure"
             : "Pass";
         return new ReviewExecutionEvidence(outcome, proof, commands, artifacts, verdicts);
+    }
+
+    private static bool CanResumeCommand(
+        ReviewCommandDto command,
+        IReadOnlyList<ReviewCommandEvidenceDto> commands,
+        IReadOnlyList<ReviewVerdictDto> verdicts)
+    {
+        if (!commands.Any(item => string.Equals(item.StepId, command.StepId, StringComparison.Ordinal)))
+            return false;
+
+        // Deterministic commands carry their complete result in command
+        // evidence. Semantic commands additionally require the persisted
+        // verdict, otherwise skipping would manufacture a passing grade from
+        // an incomplete checkpoint.
+        return !ReviewCommandKinds.IsAgent(command.ExecutionKind)
+               || verdicts.Any(item => string.Equals(item.Aspect, command.Aspect, StringComparison.OrdinalIgnoreCase));
     }
 
     private async Task<CommandExecution> RunCommandAsync(
@@ -1843,7 +1866,10 @@ public sealed record ReviewExecutionEvidence(
 internal sealed record ReviewExecutionCheckpoint(
     IReadOnlyList<string> CompletedStepIds,
     double CompletedCommandSeconds,
-    DateTime UpdatedAtUtc);
+    DateTime UpdatedAtUtc,
+    IReadOnlyList<ReviewCommandEvidenceDto>? Commands = null,
+    IReadOnlyList<ReviewArtifactEvidenceDto>? Artifacts = null,
+    IReadOnlyList<ReviewVerdictDto>? Verdicts = null);
 
 internal sealed record CommandExecution(
     ProcessResult Process,

@@ -202,6 +202,44 @@ public class PipelineExecutionRestartTests : IDisposable
     }
 
     [Fact]
+    public void Backend_restart_resumes_post_step_chain_after_last_terminal_checkpoint()
+    {
+        _log.Begin(_jobFolder, PipelineCatalogue.Standard, "demo", "job-1");
+        var chain = new[]
+        {
+            PipelineCatalogue.RegressionRadarStepId,
+            PipelineCatalogue.WikiMaintenanceStepId,
+            PipelineCatalogue.WikiLearningsStepId,
+            PipelineCatalogue.AgentsWikiSyncStepId,
+        };
+        foreach (var stepId in chain.Take(2))
+        {
+            _log.RecordStep(_jobFolder, new PipelineStepExecution
+            {
+                StepId = stepId,
+                Kind = StepKind.Tool,
+                Status = PipelineStepStatus.Passed,
+                StartedAt = DateTime.UtcNow.AddSeconds(-1),
+                CompletedAt = DateTime.UtcNow,
+                Verdict = "ok",
+            });
+        }
+
+        // A fresh service instance represents the replacement WebApplication.
+        // The pipeline file is the attempt-fenced checkpoint; only unfinished
+        // steps enter the replacement executor.
+        var replacement = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var executed = chain
+            .Where(stepId => replacement.ReadRestartCheckpoint(_jobFolder, stepId) is null)
+            .ToArray();
+
+        Assert.Equal(chain.Skip(2), executed);
+        Assert.Equal(PipelineStepStatus.Passed,
+            replacement.ReadRestartCheckpoint(_jobFolder, chain[0])!.Status);
+        Assert.Equal(1, replacement.Read(_jobFolder)!.Attempt);
+    }
+
+    [Fact]
     public void EnsureAgentRunStart_CoreAlreadyTouchedButIncomplete_StartsNewAttempt()
     {
         _log.Begin(_jobFolder, PipelineCatalogue.Standard, project: "demo", jobId: "job-1");

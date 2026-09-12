@@ -98,6 +98,10 @@ public interface ICliExecutionService
     void ReleaseOutputResources(string jobKey);
 
     CliExecution? GetExecution(string jobKey);
+    /// <summary>Working directory captured for a live or retained execution.</summary>
+    string? GetWorkingDirectory(string jobKey) => null;
+    bool ConfirmRecoveredExecution(string jobKey) => true;
+    bool RejectRecoveredExecution(string jobKey) => false;
     SessionUsage? GetLastUsage(string jobKey);
 
     /// <summary>Captured CLI-native session id for a run (from its init/thread frame), or null. Default null keeps stubs compilable; real backends provide it.</summary>

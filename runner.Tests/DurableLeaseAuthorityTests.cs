@@ -211,6 +211,39 @@ public sealed class DurableLeaseAuthorityTests
             "lease authority re-adopted", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task Restart_gap_beyond_grace_expires_the_lease_once_and_stops_retries()
+    {
+        using var temp = new TempDirectory();
+        var now = new DateTime(2026, 9, 12, 11, 0, 0, DateTimeKind.Utc);
+        var options = Options(temp.Path);
+        var lease = Lease(now.AddMinutes(-16), now.AddMinutes(-1)) with
+        {
+            AttemptId = "run-expired",
+            AuthorityEpoch = 4,
+        };
+        var handler = new ExpiredRestartHandler(lease, now);
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") };
+        using var client = new TaskServerClient(
+            http,
+            options.RunnerId,
+            usesDurableTaskServer: true,
+            options: options,
+            runnerInstanceId: "replacement-daemon");
+        client.RestoreRunAuthority(lease.TaskKey, lease.AttemptId, "expired-instance", lease);
+        using var stop = new CancellationTokenSource();
+        var logs = new List<string>();
+        var heartbeat = new LeaseHeartbeat(client, options, lease, logs.Add);
+
+        await heartbeat.RunAsync(stop, CancellationToken.None);
+
+        Assert.True(heartbeat.LeaseLost);
+        Assert.True(stop.IsCancellationRequested);
+        Assert.Equal(1, handler.RenewCalls);
+        Assert.Equal(1, handler.RegistrationCalls);
+        Assert.Single(logs, line => line.StartsWith("lease lost;", StringComparison.Ordinal));
+    }
+
     private static RunnerOptions Options(string root) => new()
     {
         ServerUrl = "http://localhost",
@@ -322,6 +355,58 @@ public sealed class DurableLeaseAuthorityTests
                     renewed.AcquiredAt,
                     now.AddMinutes(15),
                     "active")));
+        }
+
+        private static HttpResponseMessage Json<T>(HttpStatusCode status, T value)
+            => new(status)
+            {
+                Content = new StringContent(
+                    JsonSerializer.Serialize(value),
+                    Encoding.UTF8,
+                    "application/json"),
+            };
+    }
+
+    private sealed class ExpiredRestartHandler(
+        RunLeaseInfoDto lease,
+        DateTime now) : HttpMessageHandler
+    {
+        public int RenewCalls { get; private set; }
+        public int RegistrationCalls { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            if (request.Method == HttpMethod.Put)
+            {
+                RegistrationCalls++;
+                return Task.FromResult(Json(HttpStatusCode.OK, new RunnerDto(
+                    lease.RunnerId,
+                    lease.RunnerName,
+                    lease.Hostname,
+                    "replacement-daemon",
+                    "1.0.0",
+                    TaskServerProtocol.Current,
+                    "active",
+                    now,
+                    now,
+                    AttemptAdoptions:
+                    [
+                        new RunnerAttemptAdoption(
+                            RunnerAttemptKinds.Coding,
+                            lease.AttemptId!,
+                            lease.TaskKey,
+                            "expired",
+                            null,
+                            "restart grace elapsed"),
+                    ])));
+            }
+
+            RenewCalls++;
+            return Task.FromResult(Json(HttpStatusCode.Conflict, new ApiError(
+                "lease-expired-process-unknown",
+                "Restart grace elapsed.")));
         }
 
         private static HttpResponseMessage Json<T>(HttpStatusCode status, T value)

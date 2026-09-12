@@ -182,6 +182,7 @@ export class TaskTimelinePaneComponent {
       case TIMELINE_KIND.qualityLoopReopened:            return 'warn';
       case TIMELINE_KIND.orchestratorEscalated:          return 'danger';
       case TIMELINE_KIND.readOnlyContainmentViolation:   return 'danger';
+      case TIMELINE_KIND.runLostAcrossRestart:           return 'danger';
       case TIMELINE_KIND.quotaFallbackActivated:         return 'warn';
       case TIMELINE_KIND.loadThrottleDecision:           return 'warn';
       case TIMELINE_KIND.integrationPendingWarning:      return 'warn';

@@ -3875,7 +3875,11 @@ public class ProjectRunner
         var slotActive = _activeRuns.HoldsExecutionSlot(jobId);
         DateTime? backoffUntil = _rapidCrashBackoffUntil.TryGetValue(jobId, out var until) ? until : null;
         var failures = _consecutiveFailNoProgress.TryGetValue(jobId, out var n) ? n : 0;
-        return new RunActivityFacts(slotActive, backoffUntil, failures);
+        return new RunActivityFacts(
+            slotActive,
+            backoffUntil,
+            failures,
+            _activeRuns.Get(jobId)?.RecoveredAfterRestart == true);
     }
 
     public QuotaFallbackStatus? GetQuotaFallback(string jobId)
@@ -3895,44 +3899,86 @@ public class ProjectRunner
     /// run-finish path), so it cannot race the spawn-time claim. Returns true
     /// only when this call booked a fresh slot.
     /// </summary>
-    internal bool RegisterRecoveredRun(string jobId, string? cliType)
+    internal bool RegisterRecoveredRun(
+        string jobId,
+        string? cliType,
+        bool confirmExecutionAuthority = false)
     {
         if (string.IsNullOrWhiteSpace(jobId)) return false;
         if (_activeRuns.Contains(jobId)) return false;
+
+        TaskInfo? info = null;
+        try { info = _scanner.FindJob(jobId, Entry.Path); }
+        catch (Exception ex) { _logger.LogDebug(ex, "RegisterRecoveredRun: FindJob threw for {JobId}", jobId); }
+
+        // The lane occupancy is the local run's durable authority fence. If an
+        // operator or a newer attempt superseded it while Studio was down, the
+        // old worker must not be adopted merely because its PID still exists.
+        if (info == null
+            || !string.Equals(info.State, TaskStates.Progress, StringComparison.Ordinal))
+        {
+            _logger.LogWarning(
+                "Rejected recovered {Cli} run for {JobId}: current lane {State} superseded its Progress authority",
+                cliType ?? "cli",
+                jobId,
+                info?.State ?? "missing");
+            _router.Get(cliType).RejectRecoveredExecution(GetJobKey(jobId));
+            return false;
+        }
 
         var recoveredRun = new ActiveRun
         {
             JobId = jobId,
             CliType = cliType,
             Intent = RunIntent.AutoPickup,
+            RecoveredAfterRestart = true,
         };
         var claimed = _activeRuns.TryClaim(recoveredRun);
-        if (!claimed) return false;
+        if (!claimed)
+        {
+            _router.Get(cliType).RejectRecoveredExecution(GetJobKey(jobId));
+            return false;
+        }
+        if (confirmExecutionAuthority
+            && !_router.Get(cliType).ConfirmRecoveredExecution(GetJobKey(jobId)))
+        {
+            ReleaseRun(jobId);
+            return false;
+        }
 
         var slotMax = ParallelSlotPolicy.ClampMax(_projectSettings.Get(ProjectName).MaxParallelism);
         _logger.LogInformation(
             "[taskboard] recovered live run re-booked into slot for {JobId} on {Project} (cli={Cli}); occupancy {Occupied}/{Max}",
             jobId, ProjectName, cliType ?? "unknown", _activeRuns.Count, slotMax);
 
-        TaskInfo? info = null;
-        try { info = _scanner.FindJob(jobId, Entry.Path); }
-        catch (Exception ex) { _logger.LogDebug(ex, "RegisterRecoveredRun: FindJob threw for {JobId}", jobId); }
-        if (info != null && !string.IsNullOrWhiteSpace(info.FolderPath))
+        if (!string.IsNullOrWhiteSpace(info.FolderPath))
         {
             recoveredRun.JobFolder = info.FolderPath;
+            recoveredRun.WorkingDirectory = _router.Get(cliType).GetWorkingDirectory(GetJobKey(jobId));
+            recoveredRun.WorktreePath = recoveredRun.WorkingDirectory;
+            recoveredRun.RepositoryRoot = string.IsNullOrWhiteSpace(Entry.RepositoryPath)
+                ? Entry.RootPath
+                : Entry.RepositoryPath;
+            recoveredRun.Branch = info.Provenance?.Branch;
             _timeline?.Append(
                 info.FolderPath,
-                TimelineEventKinds.RunnerSlotAdmission,
+                TimelineEventKinds.RunContinuedAfterRestart,
                 TimelineActors.System,
-                summary: $"Slot {_activeRuns.Count}/{slotMax} recovered after restart: re-booked live {cliType ?? "cli"} run",
+                summary: $"Continuing after restart: reattached live {cliType ?? "cli"} run in slot {_activeRuns.Count}/{slotMax}",
                 details: new()
                 {
                     ["recovered"] = "true",
+                    ["restartBridge"] = "local-durable-worker",
                     ["cli"] = cliType ?? string.Empty,
                     ["occupied"] = _activeRuns.Count.ToString(),
                     ["maxParallelism"] = slotMax.ToString(),
                 });
         }
+
+        // The original process completed this handshake before Studio went
+        // down. A recovered record must not wait on the replacement's launch
+        // path, which will never run for an adopted worker.
+        recoveredRun.CompleteStartHandshake();
 
         NotifyStatus();
         return true;
@@ -3973,7 +4019,7 @@ public class ProjectRunner
             {
                 if (!jobKey.StartsWith(prefix, StringComparison.Ordinal)) continue;
                 var jobId = jobKey.Substring(prefix.Length);
-                RegisterRecoveredRun(jobId, cli.CliType);
+                RegisterRecoveredRun(jobId, cli.CliType, confirmExecutionAuthority: true);
             }
         }
     }
@@ -5777,6 +5823,23 @@ public class ProjectRunner
                 cli.DiscardPersistedOutput(jobKey);
             }
 
+            var restartTerminal = RestartContinuityPolicy.Evaluate(liveOutputSnapshot);
+            var runLostAcrossRestart = restartTerminal.LostAcrossRestart;
+            if (activeInfo != null && runLostAcrossRestart)
+            {
+                _timeline?.Append(
+                    activeInfo.FolderPath,
+                    TimelineEventKinds.RunLostAcrossRestart,
+                    TimelineActors.System,
+                    summary: "Run lost across restart: the durable worker generation or terminal result could not be verified.",
+                    details: new()
+                    {
+                        ["failureClass"] = "run-lost-across-restart",
+                        ["issueKind"] = RunIssueKind.InfraCrash.ToString(),
+                        ["reissueBudgetCharged"] = "false",
+                    });
+            }
+
             // Bump lastProgressAt so CrashRecoveryService can attribute orphan
             // working-tree changes to the most-recently-active job per project
             // on next boot. Cheap (single field write); see ADR-0020.
@@ -5977,6 +6040,22 @@ public class ProjectRunner
                     RunOutcomePolicy.PriorCommitLines(activeInfo))
                 : null;
 
+            // A process that genuinely disappeared during a deployment is an
+            // operator-visible infrastructure terminal, not a continuation
+            // attempt. Do not let the ordinary no-progress, abort-review, or
+            // completion-retrigger paths spend any retry budget for it.
+            if (runLostAcrossRestart && activeInfo is not null)
+            {
+                action = new OutcomeAction(
+                    OutcomeActionKind.NotifyUserAndStop,
+                    "The durable worker was lost across the Studio restart. The task needs operator review; no reissue budget was charged.",
+                    IsHeuristicFallback: false)
+                {
+                    IssueKind = RunIssueKind.InfraCrash,
+                    MessageKind = OrchestratorMessageKind.GiveUp,
+                };
+            }
+
             FailureInterventionResult? runIntervention = null;
             if (action is { Kind: not OutcomeActionKind.NotifyUserAndAccept }
                 && activeInfo is not null
@@ -6059,6 +6138,7 @@ public class ProjectRunner
             var isRetryableEnvironmental = action != null
                 && PostProcessingOutcomeTaxonomy.IsRetryableEnvironmental(action.IssueKind);
             if (action != null && activeInfo != null
+                && restartTerminal.ChargeReissueBudget
                 && !movedToReview && !deliberateStop && commitsDuringRun == 0
                 && !isRetryableEnvironmental
                 && (RunQuarantineBreaker.CountsAsNoProgressFailure(action.IssueKind) || isRapidCrash))
@@ -6200,6 +6280,7 @@ public class ProjectRunner
                 };
                 if (action.Kind == OutcomeActionKind.NotifyUserAndStop
                     && activeInfo != null
+                    && restartTerminal.AllowAutomaticRetry
                     && ShouldRouteIssueToEscalated(action.IssueKind)
                     && !preserveSuccessfulRunContext
                     && runIntervention is null
@@ -6235,6 +6316,7 @@ public class ProjectRunner
                 // needs an operator, so both still fall through to escalation below.
                 if (action.Kind == OutcomeActionKind.NotifyUserAndStop
                     && activeInfo != null
+                    && restartTerminal.AllowAutomaticRetry
                     && runIntervention is null
                     && CompletionRetriggerDecider.ShouldRetrigger(action.IssueKind, RemainingCompletionRetriggerBudget(jobId, action.IssueKind)))
                 {

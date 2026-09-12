@@ -108,6 +108,8 @@ public static class TimelineEventKinds
     /// picked. At MaxParallelism == 1 this is the single sequential slot.
     /// </summary>
     public const string RunnerSlotAdmission = "runner_slot_admission";
+    public const string RunContinuedAfterRestart = "run_continued_after_restart";
+    public const string RunLostAcrossRestart = "run_lost_across_restart";
     /// <summary>
     /// ADR-0052 multi-system follow-up: the Task Server granted, rejected, or
     /// released the fenced integration lease that serializes direct merges into

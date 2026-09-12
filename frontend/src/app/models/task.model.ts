@@ -1606,6 +1606,8 @@ export interface CliExecution {
  * ASS-1751: the four ways a `3-progress` card can look "untouched", as
  * classified by the backend at read time:
  * - `active` — a run process is alive and occupies a parallelism slot.
+ * - `continuing-after-restart`: the replacement backend verified and adopted
+ *   the same durable local worker.
  * - `failed-backoff` — the last run failed and a rapid-crash backoff is still
  *   in effect; the task is waiting for re-pickup (carries `backoffUntil`).
  * - `failed-idle` — the last run failed (or a fail-without-progress streak is
@@ -1613,7 +1615,7 @@ export interface CliExecution {
  * - `no-active-run` — no live run, no backoff, no recorded failure; e.g. an
  *   orphan after a backend restart awaiting re-pickup.
  */
-export type TaskRunActivityKind = 'active' | 'failed-backoff' | 'failed-idle' | 'no-active-run';
+export type TaskRunActivityKind = 'active' | 'continuing-after-restart' | 'failed-backoff' | 'failed-idle' | 'no-active-run';
 
 /**
  * Read-time visibility projection for a `3-progress` task (ASS-1751). Purely
@@ -1623,7 +1625,7 @@ export type TaskRunActivityKind = 'active' | 'failed-backoff' | 'failed-idle' | 
  */
 export interface TaskRunActivity {
   kind: TaskRunActivityKind;
-  /** OS process id of the live run; set only when `kind === 'active'`. */
+  /** OS process id of the live run; set for active and restart-continuation runs. */
   processId?: number | null;
   /** UTC ISO instant the rapid-crash backoff expires; set only when `kind === 'failed-backoff'`. */
   backoffUntil?: string | null;

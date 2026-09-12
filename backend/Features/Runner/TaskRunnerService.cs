@@ -1179,7 +1179,8 @@ public class TaskRunnerService : BackgroundService
 
         var locallyRunning = job.State == AgentStudio.Shared.TaskStates.Progress
             && (string.Equals(execution?.Status, "running", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(activity?.Kind, AgentStudio.Shared.TaskRunActivityKinds.Active, StringComparison.OrdinalIgnoreCase));
+                || string.Equals(activity?.Kind, AgentStudio.Shared.TaskRunActivityKinds.Active, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(activity?.Kind, AgentStudio.Shared.TaskRunActivityKinds.ContinuingAfterRestart, StringComparison.OrdinalIgnoreCase));
         if (locallyRunning)
         {
             return baseProjection with
@@ -1194,7 +1195,12 @@ public class TaskRunnerService : BackgroundService
                 ProcessId = execution is { ProcessId: > 0 } ? execution.ProcessId : activity?.ProcessId,
                 ConnectionState = "connected",
                 LeaseState = "local-process",
-                TrustReason = "The local CLI execution registry reports a live process for this task.",
+                TrustReason = string.Equals(
+                    activity?.Kind,
+                    AgentStudio.Shared.TaskRunActivityKinds.ContinuingAfterRestart,
+                    StringComparison.OrdinalIgnoreCase)
+                    ? "The replacement backend verified and reattached the durable local worker by PID and start time."
+                    : "The local CLI execution registry reports a live process for this task.",
             };
         }
 
