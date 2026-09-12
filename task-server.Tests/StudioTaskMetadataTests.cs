@@ -322,7 +322,7 @@ public sealed class StudioTaskMetadataTests
 
     private static async Task<long> CountEpicTaskRowsAsync(TaskServerStore store, string taskId)
     {
-        await using var connection = new SqliteConnection($"Data Source={store.DatabasePath}");
+        await using var connection = new SqliteConnection($"Data Source={store.DatabasePath};Pooling=False");
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM epic_tasks WHERE task_id = $task;";

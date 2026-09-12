@@ -4,7 +4,6 @@ using AgentStudio.TaskServer;
 using AgentStudio.TaskServer.Contracts;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.TestHost;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -17,26 +16,10 @@ namespace TaskServer.Tests;
 /// and execution-runner settings, and the pipeline projections layered on
 /// the existing orchestration flow definition.
 ///
-/// There is no shared <c>StudioTestSupport.cs</c> fixture in this repo
-/// snapshot (the task brief names <c>StudioTestApiFactory</c> /
-/// <c>StudioTestClient.Create</c>, but no such file exists, and creating one
-/// here would collide with the other eight parallel groups also expected to
-/// use it). This file also cannot reuse <c>StudioEndpointsTests.cs</c>'s own
-/// <c>WebApplicationFactory&lt;Program&gt;</c> pattern: this slice's
-/// migration and endpoint map are - per the task's hard rules - wired into
-/// the shared <c>TaskServerStore.cs</c> migration sequence and
-/// <c>Program.cs</c> by the orchestrator later, and <c>WebApplicationFactory</c>
-/// replays Program.cs's top-level statements verbatim (its fixed set of
-/// <c>Map*</c> calls), with no supported hook to append an extra endpoint
-/// map to that exact composition root (an <c>IStartupFilter</c> was tried
-/// first and confirmed, empirically, not to reach a minimal-hosting
-/// <c>WebApplication</c>'s own endpoint data sources).
-///
-/// Instead, each test builds its own small real <see cref="WebApplication"/>
+/// Each test builds its own small real <see cref="WebApplication"/>
 /// wired directly to <see cref="TestServer"/>: the same <see cref="TaskServerStore"/>
 /// class, driven through its normal public <c>InitializeAsync</c> (which
-/// creates the base schema) plus this slice's own
-/// <c>ApplyStudioProjectMetaMigrationAsync</c>, with only
+/// creates the complete schema), with only
 /// <c>MapStudioProjectMetaEndpoints()</c> mapped - exercising the real
 /// route handlers, model binding, and error mapping over real HTTP.
 /// </summary>
@@ -350,17 +333,6 @@ public sealed class StudioProjectMetaTests
             var app = builder.Build();
             var store = app.Services.GetRequiredService<TaskServerStore>();
             await store.InitializeAsync();
-
-            await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder
-            {
-                DataSource = store.DatabasePath,
-                Mode = SqliteOpenMode.ReadWriteCreate,
-                ForeignKeys = true,
-            }.ToString()))
-            {
-                await connection.OpenAsync();
-                await store.ApplyStudioProjectMetaMigrationAsync(connection, default);
-            }
 
             app.UseRouting();
             app.MapStudioProjectMetaEndpoints();

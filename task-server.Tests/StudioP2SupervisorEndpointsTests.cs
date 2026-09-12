@@ -42,7 +42,7 @@ public sealed class StudioP2SupervisorEndpointsTests
         // result_finalizations is populated by the post-step finalization
         // pipeline (out of this group's scope); insert one genuine failed row
         // referencing the real run so the alert query has real data to find.
-        await using (var connection = new SqliteConnection($"Data Source={store.DatabasePath}"))
+        await using (var connection = new SqliteConnection($"Data Source={store.DatabasePath};Pooling=False"))
         {
             await connection.OpenAsync();
             var command = connection.CreateCommand();
@@ -249,7 +249,7 @@ public sealed class StudioP2SupervisorEndpointsTests
         // Simulate a runner that vanished without ever renewing or releasing
         // its lease: back-date expires_at directly, the way a stalled process
         // would leave it, without going through any Task Server write path.
-        await using (var connection = new SqliteConnection($"Data Source={store.DatabasePath}"))
+        await using (var connection = new SqliteConnection($"Data Source={store.DatabasePath};Pooling=False"))
         {
             await connection.OpenAsync();
             var command = connection.CreateCommand();
