@@ -51,6 +51,19 @@
     }
   </div>
 
+  @if (readyCandidateTasks().length > 0) {
+    <section class="rh__candidates" data-testid="execution-host-candidates">
+      <h3 class="rh__candidates-title">Ready routes with benchmark candidates</h3>
+      @for (task of readyCandidateTasks(); track task.id) {
+        @if (task.betterCandidates; as note) {
+          <app-better-candidate-lines
+            [note]="note"
+            [prefix]="(task.displayKey || task.key || task.id) + ' · ' + note.currentModel" />
+        }
+      }
+    </section>
+  }
+
   @for (host of linkFailures(); track host.id) {
     <app-notification kind="warning" layout="banner" [closable]="false"
                       [title]="host.name + ' link is down'" testid="remote-host-link-notification">

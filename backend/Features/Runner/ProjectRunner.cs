@@ -1046,16 +1046,30 @@ public class ProjectRunner
             proj?.ElapsedFraction ?? warning?.ElapsedFraction,
             warning?.Reason, plan.Reason);
 
-        // The healthy "launch primary" decision is the silent normal path; only
-        // the load-steering decisions reach the task surface.
-        if (plan.Outcome == QuotaAdmissionOutcome.LaunchPrimary && warning is null) return;
-
-        var key = $"{plan.Outcome}|{plan.CliType}|{plan.Model}|{plan.Reason}";
+        var key = $"{plan.Outcome}|{plan.CliType}|{plan.Model}|{plan.ThinkingLevel}|{plan.Reason}|{plan.BetterCandidates?.EvidenceSnapshot}";
         lock (_lastAdmissionDecisionByJob)
         {
             if (_lastAdmissionDecisionByJob.TryGetValue(info.Id, out var prev) && prev == key) return;
             _lastAdmissionDecisionByJob[info.Id] = key;
         }
+
+        // Persist normal and notable decisions alike. This gives the token
+        // report an explicit interval boundary when candidates disappear.
+        _orchestratorLog.Append(info.WatchPath, new OrchestratorLogEntry
+        {
+            Kind = OrchestratorLogKinds.Decision,
+            Topic = OrchestratorLogTopics.LoadDistribution,
+            JobId = info.Id,
+            Summary = plan.Reason,
+            Reasoning = QuotaAdmissionPlanner.DescribeLoadNumbers(plan),
+            BetterCandidates = plan.BetterCandidates,
+        });
+
+        // The healthy "launch primary" decision stays off the task-facing
+        // surfaces unless a benchmark candidate needs to be shown.
+        if (plan.Outcome == QuotaAdmissionOutcome.LaunchPrimary
+            && warning is null
+            && plan.BetterCandidates is null) return;
 
         _chatLog.Append(info, OrchestratorMessageKind.Decision, "[quota-admission] " + plan.Reason);
         _timeline?.Append(
@@ -1077,6 +1091,8 @@ public class ProjectRunner
                 ["assumedStart"] = (proj?.AssumedStartAt ?? warning?.AssumedStartAt)?.ToString("o") ?? string.Empty,
                 ["elapsedFraction"] = (proj?.ElapsedFraction ?? warning?.ElapsedFraction)?.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
                 ["projectionWarning"] = warning?.Reason ?? string.Empty,
+                ["betterCandidates"] = QuotaAdmissionRecorder.SerializeCandidates(plan.BetterCandidates),
+                ["matrixUrl"] = plan.BetterCandidates?.MatrixUrl ?? string.Empty,
             });
 
         // AGT-2055 req 3 ("+ Feed-Zeile") + req 7: every load-steering decision
@@ -1085,14 +1101,6 @@ public class ProjectRunner
         // numbers. That feed is the data source for the separate
         // load-distribution view, so the switch / throttle / wait is never a
         // silent decision the operator has to reconstruct from logs.
-        _orchestratorLog.Append(info.WatchPath, new OrchestratorLogEntry
-        {
-            Kind = OrchestratorLogKinds.Decision,
-            Topic = OrchestratorLogTopics.LoadDistribution,
-            JobId = info.Id,
-            Summary = plan.Reason,
-            Reasoning = QuotaAdmissionPlanner.DescribeLoadNumbers(plan),
-        });
     }
 
     /// <summary>

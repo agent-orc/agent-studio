@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using AgentStudio.Runner;
 using AgentStudio.Shared;
 using AgentStudio.Tasks;
@@ -54,12 +55,27 @@ public sealed class QuotaAdmissionRecorder
             "cli_quota_admission_decision source={Source} jobId={JobId} project={Project} outcome={Outcome} cli={Cli} model={Model} isFallback={IsFallback} reason={Reason}",
             source, info.Id, info.ProjectName, plan.Outcome, plan.CliType, plan.Model ?? "<default>", plan.IsFallback, plan.Reason);
 
-        if (plan.Outcome == QuotaAdmissionOutcome.LaunchPrimary && warning is null) return;
-
-        var key = $"{source}|{plan.Outcome}|{plan.CliType}|{plan.Model}|{plan.Reason}";
+        var key = $"{source}|{plan.Outcome}|{plan.CliType}|{plan.Model}|{plan.ThinkingLevel}|{plan.Reason}|{plan.BetterCandidates?.EvidenceSnapshot}";
         var jobKey = $"{info.WatchPath}|{info.Id}";
         if (_lastDecisionByJob.TryGetValue(jobKey, out var prev) && prev == key) return;
         _lastDecisionByJob[jobKey] = key;
+
+        // Keep every admission boundary in the durable decision log. The
+        // usage report uses the latest boundary for a job to determine whether
+        // a better candidate existed when each token-bearing call ran.
+        _orchestratorLog.Append(info.WatchPath, new OrchestratorLogEntry
+        {
+            Kind = OrchestratorLogKinds.Decision,
+            Topic = OrchestratorLogTopics.LoadDistribution,
+            JobId = info.Id,
+            Summary = plan.Reason,
+            Reasoning = QuotaAdmissionPlanner.DescribeLoadNumbers(plan),
+            BetterCandidates = plan.BetterCandidates,
+        });
+
+        if (plan.Outcome == QuotaAdmissionOutcome.LaunchPrimary
+            && warning is null
+            && plan.BetterCandidates is null) return;
 
         _chatLog.Append(info, OrchestratorMessageKind.Decision, "[quota-admission] " + plan.Reason);
         _timeline.Append(
@@ -75,16 +91,13 @@ public sealed class QuotaAdmissionRecorder
                 ["model"] = plan.Model ?? string.Empty,
                 ["isFallback"] = plan.IsFallback ? "true" : "false",
                 ["projectionWarning"] = warning?.Reason ?? string.Empty,
+                ["betterCandidates"] = SerializeCandidates(plan.BetterCandidates),
+                ["matrixUrl"] = plan.BetterCandidates?.MatrixUrl ?? string.Empty,
             });
-        _orchestratorLog.Append(info.WatchPath, new OrchestratorLogEntry
-        {
-            Kind = OrchestratorLogKinds.Decision,
-            Topic = OrchestratorLogTopics.LoadDistribution,
-            JobId = info.Id,
-            Summary = plan.Reason,
-            Reasoning = QuotaAdmissionPlanner.DescribeLoadNumbers(plan),
-        });
     }
+
+    internal static string SerializeCandidates(BetterCandidateNote? note)
+        => note is null ? string.Empty : JsonSerializer.Serialize(note);
 
     /// <summary>
     /// Record that a run/claim actually switched CLI families for quota
@@ -130,7 +143,8 @@ public sealed class QuotaAdmissionRecorder
             "cli_quota_admission_decision source={Source} project={Project} outcome={Outcome} cli={Cli} model={Model} isFallback={IsFallback} reason={Reason}",
             source, projectName, plan.Outcome, plan.CliType, plan.Model ?? "<default>", plan.IsFallback, plan.Reason);
         if (plan.Outcome == QuotaAdmissionOutcome.LaunchPrimary
-            && plan.ProjectionWarning is null)
+            && plan.ProjectionWarning is null
+            && plan.BetterCandidates is null)
             return;
         if (string.IsNullOrWhiteSpace(watchPath)) return;
 
@@ -142,6 +156,7 @@ public sealed class QuotaAdmissionRecorder
             Topic = OrchestratorLogTopics.LoadDistribution,
             Summary = plan.Reason,
             Reasoning = $"{source}; {QuotaAdmissionPlanner.DescribeLoadNumbers(plan)}",
+            BetterCandidates = plan.BetterCandidates,
         });
     }
 }

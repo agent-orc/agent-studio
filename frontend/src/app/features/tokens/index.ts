@@ -44,6 +44,7 @@ export type {
   TokenTimeline,
   TokenTimelineCell,
   TokenTimelineProject,
+  BetterCandidateUsageLine,
   WorkspaceExpensiveJob,
   WorkspaceExpensiveJobsResponse,
 } from './models/tokens.model';

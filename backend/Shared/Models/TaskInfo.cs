@@ -69,6 +69,11 @@ public record TaskInfo
     public bool ModelExplicit { get; init; } = true;
     /// <summary>Optional thinking / reasoning effort level for the selected CLI model.</summary>
     public string? ThinkingLevel { get; init; }
+    /// <summary>
+    /// Informational benchmark alternatives for this Ready card's current
+    /// route. Computed at read time and never persisted to task metadata.
+    /// </summary>
+    public BetterCandidateNote? BetterCandidates { get; init; }
     /// <summary>True when the card explicitly pins its reasoning level.</summary>
     public bool ThinkingLevelExplicit { get; init; } = true;
     /// <summary>Which CLI backend executes this job: <c>claude</c>, <c>codex</c>, or <c>gemini</c>. Defaults to <c>claude</c>.</summary>

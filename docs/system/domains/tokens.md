@@ -6,7 +6,7 @@
 > is the knowledge-collection point for this area. This document is the
 > system-of-record plan and migration record.
 
-> **Status (2026-08-12):** Project and task-card surfaces read a deduplicated
+> **Status (2026-09-13):** Project and task-card surfaces read a deduplicated
 > union of the historical token bus and durable `task.json.tokenSummary`
 > receipts. The bus remains the historical source, while task receipts are the
 > current source for remote runner calls. Project summary, heatmap, and pipeline
@@ -24,6 +24,9 @@
 > Remote completion now materializes that receipt from the fenced attempt's
 > provider usage frames in `logs/cli-output.log`; a bounded startup sweep repairs
 > recent remote cards that completed before this writer existed.
+> The workspace timeline also emits separate project and UTC-week usage lines
+> for token calls whose latest route-admission boundary carried a better Token
+> Economy benchmark candidate.
 
 ## Why this document exists
 
@@ -192,6 +195,11 @@ All four shims have landed in this order:
    last-activity trackers are unchanged because the bucketer is unchanged.
    Parity test:
    [`WorkspaceTokensTimelineBusParityTests`](../../../backend.Tests/WorkspaceTokensTimelineBusParityTests.cs).
+   `BetterCandidateUsageReportService` augments this response by joining the
+   merged bus and receipt calls to durable quota-admission decisions by task
+   and time. It counts only calls whose actual model matches the selected route
+   in the latest candidate note, then groups the result by project and UTC
+   week. The separate line is informational and never changes routing.
 4. **Landed, repaired 2026-08-09.** `ProjectTokenUsageService.BuildSummary` /
    `BuildHeatmap` / `BuildExpensiveJobs` / `BuildJobDetail` read paths.
    `BusBackedProjectTokenUsageReader` merges bus history with durable task

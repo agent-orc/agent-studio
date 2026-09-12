@@ -31,14 +31,21 @@ public static class WorkspaceEndpoints
         // range values snap to the defaults rather than failing - the
         // status-bar entry into this view should always render.
         group.MapGet("/tokens/timeline",
-            (int? windowHours, int? bucketMinutes, TaskScannerService scanner, ITokenAggregator tokens, WorkspaceTokensCacheStore cache) =>
+            (int? windowHours, int? bucketMinutes, TaskScannerService scanner, ITokenAggregator tokens, BetterCandidateUsageReportService candidateUsage, WorkspaceTokensCacheStore cache) =>
             {
                 var projects = scanner.GetWatchPaths()
                     .Select(e => (e.Name, e.Path))
                     .ToList();
                 var resolvedWindowHours = windowHours ?? WorkspaceTokensTimelineService.DefaultWindowHours;
                 var resolvedBucketMinutes = bucketMinutes ?? WorkspaceTokensTimelineService.DefaultBucketMinutes;
-                var result = tokens.WorkspaceTimeline(projects, resolvedWindowHours, resolvedBucketMinutes);
+                var timeline = tokens.WorkspaceTimeline(projects, resolvedWindowHours, resolvedBucketMinutes);
+                var result = timeline with
+                {
+                    BetterCandidateUsage = candidateUsage.Build(
+                        projects,
+                        DateTime.Parse(timeline.WindowStart, null, System.Globalization.DateTimeStyles.RoundtripKind),
+                        DateTime.Parse(timeline.WindowEnd, null, System.Globalization.DateTimeStyles.RoundtripKind)),
+                };
                 // Persist the snapshot so the next hover renders before the
                 // live aggregator has finished. Snapshot files are keyed by
                 // (windowHours, bucketMinutes) so the 24h and 7d views don't

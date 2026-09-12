@@ -1,6 +1,6 @@
 # Model Routing Policy
 
-Version: 2026-07-24
+Version: 2026-09-13
 
 Status: Canonical policy, initial hypothesis based on the 2026-07-23 historical benchmark
 
@@ -133,6 +133,36 @@ broken test host, or missing delivery path. Fix that substrate instead.
 
 After two semantic failures at the stronger tier, stop model escalation. Narrow
 the task, improve its evidence, or ask for a human decision.
+
+### Benchmark candidate notes
+
+Agent Studio consumes the Token Economy `ModelBenchmarkMatrix.FindCandidates`
+query from package version 0.3.4. The benchmark library recommends alternatives;
+Agent Studio keeps the selected route unchanged. A candidate can therefore
+inform an operator decision but cannot bypass the score ladder, correctness
+floors, explicit pins, or quota admission.
+
+For a Ready task, the task API evaluates the stored model and thinking level
+against the project's `BenchmarkCapabilityClass`. The default class is
+`CodingAgent`. The projected `betterCandidates` note contains the candidate
+model and thinking level, benchmark id and name, score and cost deltas, evidence
+age and stale flag, evidence snapshot, and the public matrix link. Task detail,
+Ready-card responses, the model picker, and Execution Hosts all render this same
+payload. Other clients must consume it instead of running their own matrix
+query.
+
+Quota admission evaluates the effective route again and writes the note into
+the admission decision event. This second boundary matters because a route can
+change between board projection and launch. The cache key is model, effort,
+benchmark type, and evidence snapshot, so repeated board refreshes reuse the
+same library result. Evidence age is calculated at projection time and does not
+invalidate the candidate query cache.
+
+The workspace token report attributes each token call to the latest durable
+admission boundary for its task. When that boundary carried a matching
+candidate note, the report emits a separate project and UTC-week line with
+calls, tokens, and theoretical cost. A later admission without candidates
+closes the interval.
 
 ## Model families and migrations
 

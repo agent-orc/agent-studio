@@ -71,17 +71,16 @@ import { CopyableTaskKeyComponent } from '../../../../components/copyable-task-k
 import { CodexSignInDialogService, ClaudeSignInDialogService, ProviderAuthStatusService, modelCliVersionWaitReason, providerAuthWaitReason } from '../../../remote-hosts';
 import { laneName } from '../../../../models/lane-presentation';
 import { FailureInterventionChipComponent } from '../failure-intervention-chip/failure-intervention-chip.component';
-// Shared 'now' signal that ticks every 30s so all relative timestamps update in lockstep
-// without re-reading Date.now() during change detection (which causes NG0100).
+import { BetterCandidateLinesComponent } from '../../../../components/better-candidate-lines/better-candidate-lines.component';
+// Shared clock keeps relative timestamps in lockstep without NG0100 changes.
 const nowTick = signal(Date.now());
 if (typeof window !== 'undefined') {
   setInterval(() => nowTick.set(Date.now()), 30_000);
 }
-
 @Component({
   selector: 'app-task-card, app-job-card',
   standalone: true,
-  imports: [TooltipDirective, TaskStatusPopoverDirective, MenuComponent, StudioIconComponent, TokenPopoverDirective, TaskTokenUsagePopoverComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, ExecutionLocationBadgeComponent, IntegrationStatusBadgeComponent, ReviewDecisionBadgesComponent, PostProcessingActivityComponent, TestEvidenceStatusComponent, TaskLiveStatusComponent, TaskCardQuotaWaitComponent, CopyableTaskKeyComponent, FailureInterventionChipComponent],
+  imports: [TooltipDirective, TaskStatusPopoverDirective, MenuComponent, StudioIconComponent, TokenPopoverDirective, TaskTokenUsagePopoverComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, ExecutionLocationBadgeComponent, IntegrationStatusBadgeComponent, ReviewDecisionBadgesComponent, PostProcessingActivityComponent, TestEvidenceStatusComponent, TaskLiveStatusComponent, TaskCardQuotaWaitComponent, CopyableTaskKeyComponent, FailureInterventionChipComponent, BetterCandidateLinesComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './task-card.component.html',
   styleUrl: './task-card.component.scss',

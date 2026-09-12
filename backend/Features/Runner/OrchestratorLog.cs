@@ -145,6 +145,13 @@ public record OrchestratorLogEntry
     public OrchestratorTokenUsage? TokenUsage { get; init; }
 
     /// <summary>
+    /// Informational TokenEconomy alternatives considered beside this
+    /// decision. Their presence never implies that Agent Studio switched the
+    /// selected route.
+    /// </summary>
+    public BetterCandidateNote? BetterCandidates { get; init; }
+
+    /// <summary>
     /// Future hook (Phase F): user override on this entry. Today always
     /// null; the data shape is forward-compatible.
     /// </summary>

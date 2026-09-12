@@ -170,8 +170,20 @@ export interface TokenTimeline {
   bucketCount: number;
   cells: TokenTimelineCell[];
   projects: TokenTimelineProject[];
+  betterCandidateUsage?: BetterCandidateUsageLine[];
   fetchedAt: string;
   disclaimer: string;
+}
+
+/** One project/week line for routes that had a better candidate at admission. */
+export interface BetterCandidateUsageLine {
+  project: string;
+  weekStart: string;
+  weekEnd: string;
+  calls: number;
+  tokens: number;
+  costUsd: number | null;
+  allModelsPriced: boolean;
 }
 
 export interface TokenTimelineCell {

@@ -76,7 +76,6 @@
            aria-label="Workspace token-usage timeline"
            [attr.viewBox]="'0 0 ' + svgW + ' ' + svgH"
            preserveAspectRatio="none">
-        <!-- Y-axis grid lines + labels -->
         @for (g of gridLines(); track g.pct) {
           <line class="wtt__grid"
                 [attr.x1]="padL"
@@ -88,7 +87,6 @@
                 [attr.y]="yFromPct(g.pct) + 3">{{ g.label }}</text>
         }
 
-        <!-- X-axis tick labels -->
         @for (tk of xTicks(); track tk.iso) {
           <text class="wtt__x-lbl"
                 [attr.x]="xFromPct(tk.pct)"
@@ -256,6 +254,8 @@
         </tfoot>
       }
     </table>
+
+    <app-better-candidate-usage-report [lines]="t.betterCandidateUsage ?? []" />
 
     <p class="wtt__disc">{{ t.disclaimer }}</p>
   }
