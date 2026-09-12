@@ -145,7 +145,9 @@ describe('WorkbenchOverviewComponent', () => {
       .toContain('2 history');
     expect(fixture.nativeElement.querySelector('[data-testid="workbench-overview-active-count"]')?.textContent)
       .toContain('2');
-    expect([...fixture.nativeElement.querySelectorAll('[data-testid="workbench-overview-active-list"] > article')]
+    expect([...fixture.nativeElement.querySelectorAll(
+      '[data-testid="workbench-overview-active-list"] > app-workbench-overview-card > article',
+    )]
       .map((row: Element) => row.getAttribute('data-testid')))
       .toEqual(['workbench-overview-item-Demo-active', 'workbench-overview-item-Demo-tracking']);
     expect(fixture.nativeElement.querySelector('[data-testid="workbench-overview-history-section-count"]')?.textContent)
@@ -175,14 +177,13 @@ describe('WorkbenchOverviewComponent', () => {
     const activeCard = fixture.nativeElement.querySelector(
       '[data-testid="workbench-overview-task-Demo-pending-AGT-1"]',
     );
-    expect(activeCard.querySelector('.task-ref__lane-dot')?.getAttribute('data-tone')).toBe('active');
     const activeCardLink = activeCard.querySelector('a') as HTMLAnchorElement;
+    expect(activeCardLink.getAttribute('data-lane-tone')).toBe('progress');
     expect(activeCardLink.getAttribute('href')).toBe('#task:AGT-1');
     activeCardLink.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
-    vi.advanceTimersByTime(300);
     expect(document.querySelector(
       '[data-testid="workbench-overview-task-Demo-pending-AGT-1-tooltip"]',
-    )?.textContent).toContain('In Progress');
+    )?.textContent).toContain('Lane: In Progress');
     activeCardLink.click();
     expect(openTaskKey).toHaveBeenCalledWith('Demo::active-card');
     expect(fixture.nativeElement.querySelector(
@@ -300,6 +301,63 @@ describe('WorkbenchOverviewComponent', () => {
       '[data-testid="workbench-overview-decision-toggle"]')?.getAttribute('aria-expanded')).toBe('true');
     expect(reloaded.nativeElement.querySelector('#workbench-overview-decision-list')?.textContent)
       .toContain('fresh');
+    http.verify();
+  });
+
+  it('clamps long excerpts per item and keeps every card action row below its summary', async () => {
+    await TestBed.configureTestingModule({
+      imports: [WorkbenchOverviewComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(WorkbenchOverviewComponent);
+    fixture.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    const long = item('long', 'decision-pending', 2);
+    long.workbench.key = 'AGT-W51';
+    long.workbench.summary = 'Long Dossier summary '.repeat(80);
+    const short = item('short', 'active');
+    short.workbench.key = 'AGT-W48';
+    const invalid = item('invalid', 'invalid');
+    invalid.workbench.valid = false;
+    invalid.workbench.error = 'Descriptor error';
+    const documented = item('documented', 'documented');
+    const archived = item('archived', 'archived');
+    http.expectOne('/api/workbenches').flush(overview([long, short, invalid, documented, archived]));
+    fixture.detectChanges();
+
+    const longRow = fixture.nativeElement.querySelector(
+      '[data-testid="workbench-overview-item-Demo-long"]',
+    ) as HTMLElement;
+    const meta = longRow.querySelector('.workbench-overview__meta') as HTMLElement;
+    expect(meta.firstElementChild?.tagName).toBe('APP-COPYABLE-TASK-KEY');
+    expect(meta.firstElementChild?.textContent).toContain('AGT-W51');
+    expect(longRow.children.item(0)?.classList.contains('workbench-overview__row-main')).toBe(true);
+    expect(longRow.children.item(1)?.classList.contains('workbench-overview__footer')).toBe(true);
+
+    const excerpt = longRow.querySelector('.workbench-overview__excerpt') as HTMLElement;
+    const toggle = fixture.nativeElement.querySelector(
+      '[data-testid="workbench-overview-excerpt-toggle-Demo-long"]',
+    ) as HTMLButtonElement;
+    expect(toggle.textContent).toContain('Show more');
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(excerpt.classList.contains('workbench-overview__excerpt--expanded')).toBe(false);
+    toggle.click();
+    fixture.detectChanges();
+    expect(toggle.textContent).toContain('Show less');
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(excerpt.classList.contains('workbench-overview__excerpt--expanded')).toBe(true);
+    expect(fixture.nativeElement.querySelector(
+      '[data-testid="workbench-overview-excerpt-toggle-Demo-short"]',
+    )).toBeNull();
+
+    for (const id of ['long', 'short', 'invalid', 'documented', 'archived']) {
+      expect(fixture.nativeElement.querySelector(
+        `[data-testid="workbench-overview-actions-Demo-${id}"]`,
+      )).not.toBeNull();
+    }
+    expect((fixture.nativeElement.querySelector(
+      '[data-testid="workbench-overview-actions-Demo-invalid"] button',
+    ) as HTMLButtonElement).disabled).toBe(true);
     http.verify();
   });
 

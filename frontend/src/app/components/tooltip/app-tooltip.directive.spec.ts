@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component } from '@angular/core';
+import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppTooltipDirective } from './app-tooltip.directive';
@@ -12,6 +12,7 @@ import { AppTooltipDirective } from './app-tooltip.directive';
 })
 class TestHostComponent {
   text = '<img src=x onerror=alert(1)> Safe text';
+  readonly delay = signal(300);
 }
 
 describe('AppTooltipDirective', () => {
@@ -52,5 +53,14 @@ describe('AppTooltipDirective', () => {
     target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     expect(document.querySelector('[role="tooltip"]')).toBeNull();
     expect(target.hasAttribute('aria-describedby')).toBe(false);
+  });
+
+  it('can open immediately for dense status affordances', () => {
+    fixture.componentInstance.delay.set(0);
+    fixture.detectChanges();
+
+    target.dispatchEvent(new MouseEvent('mouseenter'));
+
+    expect(document.querySelector('[role="tooltip"]')).not.toBeNull();
   });
 });
