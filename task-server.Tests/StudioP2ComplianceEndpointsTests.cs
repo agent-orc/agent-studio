@@ -5,7 +5,6 @@ using AgentStudio.TaskServer.Contracts;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Xunit;
@@ -14,12 +13,10 @@ namespace TaskServer.Tests;
 
 /// <summary>
 /// Covers the Studio P2 "security review, deployment, publish, and wiki
-/// grading" bundle end to end over HTTP. This bundle's <c>MapStudioP2ComplianceEndpoints</c>
-/// and <c>ApplyStudioP2ComplianceMigrationAsync</c> calls are wired into the
-/// real host by a separate integration step that has not landed yet, so
-/// these tests build a minimal standalone host (<see cref="ComplianceHarness"/>)
-/// that maps only this bundle's routes and applies only this bundle's
-/// migration, rather than going through <c>Program</c>.
+/// grading" bundle end to end over HTTP. The tests build a minimal standalone
+/// host (<see cref="ComplianceHarness"/>) that maps only this bundle's routes,
+/// while <see cref="TaskServerStore.InitializeAsync"/> applies the same complete
+/// schema used by <c>Program</c>.
 /// </summary>
 public sealed class StudioP2ComplianceEndpointsTests
 {
@@ -176,10 +173,8 @@ public sealed class StudioP2ComplianceEndpointsTests
     }
 
     /// <summary>
-    /// A minimal standalone host that applies only this bundle's migration
-    /// and maps only this bundle's routes, so these tests do not depend on
-    /// the not-yet-landed integration step wiring <c>Program.cs</c> and
-    /// <c>ApplyMigrationsAsync</c> up to this bundle.
+    /// A minimal standalone host that maps only this bundle's routes while
+    /// relying on the product store's canonical migration sequence.
     /// </summary>
     private sealed class ComplianceHarness : IAsyncDisposable
     {
@@ -212,13 +207,6 @@ public sealed class StudioP2ComplianceEndpointsTests
             var app = builder.Build();
             var store = app.Services.GetRequiredService<TaskServerStore>();
             await store.InitializeAsync();
-
-            await using (var connection = new SqliteConnection(
-                new SqliteConnectionStringBuilder { DataSource = store.DatabasePath }.ToString()))
-            {
-                await connection.OpenAsync();
-                await store.ApplyStudioP2ComplianceMigrationAsync(connection, default);
-            }
 
             app.UseRouting();
             app.MapStudioP2ComplianceEndpoints();

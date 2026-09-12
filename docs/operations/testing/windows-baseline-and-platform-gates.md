@@ -105,3 +105,14 @@ dotnet test agent-taskboard.sln -p:ArtifactsPath=/c/scratch/obj-tests
 ```
 
 Use `ArtifactsPath`, not `BaseIntermediateOutputPath`.
+
+## Temporary SQLite fixtures
+
+Let the product store initialize its canonical schema. Do not repeat an already
+integrated migration through a fixture-owned connection. When a test must open
+an additional `Microsoft.Data.Sqlite` connection to a database inside a
+temporary directory, set `Pooling=False` (or `Pooling = false` with
+`SqliteConnectionStringBuilder`). Disposing a pooled connection can retain its
+native file handle for the process lifetime. Linux permits the fixture directory
+to be unlinked in that state, but Windows reports a sharing violation and turns
+an otherwise passing test into a cleanup failure.
