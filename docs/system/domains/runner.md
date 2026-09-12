@@ -1,6 +1,6 @@
 # Runner Domain Map
 
-Version: 2026-09-11
+Version: 2026-09-12
 Status: System-of-record map for runner-side changes.
 
 Use this when a change touches task pickup, active execution, post-run outcome
@@ -96,6 +96,22 @@ state.
   own task worktree. A non-Git project is rejected for mutating runs instead of
   falling back to in-place execution; read-only planning and research remain
   eligible to run in place.
+- `backend/Features/Cli/Execution/Win/TaskProcessReaper.cs` and
+  `backend/Features/Runner/WorktreeTaskLifecycle.cs`: local run process-tree
+  ownership and worktree cleanup. Windows assigns the CLI tree to a kill-on-close
+  Job Object. Linux starts it in a dedicated `setsid` process group. Run finish
+  terminates that owned tree before Git and physical directory cleanup. Physical
+  removal is retried after 50 ms and 150 ms; if it still fails, the canonical
+  directory is renamed to `<name>.stale-<yyyyMMddHHmmssfff>` so a later pickup can
+  create a fresh canonical path. A numeric suffix resolves a same-millisecond
+  stale-name collision.
+- `backend/Features/Runner/OrphanReaperHostedService.cs` and
+  `WorktreeOrphanDirectorySweeper.cs`: the periodic orphan sweep covers both
+  recorded CLI trees and directories under the deterministic `ass-worktrees`
+  temporary root that are at least two minutes old and have lost their `.git`
+  link. Such a directory is reaped or renamed aside with the same cleanup policy.
+  The service emits one `worktree-orphan-directory` warning per affected path and
+  action instead of repeating the warning on every sweep.
 - `backend/Features/Git/GitBranchRetention.cs`: host-owned recurring repository
   maintenance. The startup-and-daily pass fetches with prune, removes missing
   worktree registrations, and deletes only `task/*` and `runner/*` refs whose
@@ -871,6 +887,17 @@ state.
   is refused + escalated. Read-only (planning / research) and epic-planning runs
   run in-place. See
   [ADR-0057](../architecture/decisions/adr-archive.md#adr-0057---always-worktree-garantie-every-coding-run-is-worktree-isolated-including-single-slot-resumereissue-with-a-main-checkout-guard-2026-06-22).
+- A local run owns every process it starts, including detached preview servers.
+  Normal completion and cancellation terminate the complete Windows Job Object
+  or Linux process group before worktree teardown. Git removal is followed by
+  bounded physical deletion retries; an undeletable directory is renamed aside
+  with the `.stale-<timestamp>` convention, and Git worktree metadata is pruned
+  after the canonical path is clear. The next preparation therefore never reuses
+  or collides with a stale physical path.
+- Local run admission checks each configured project URL port. If a listener is
+  already present, `run-port-collision-warning` records the task, project, URL
+  id, port, occupant PID, and process name. This is diagnostic visibility, not an
+  admission block: the run may continue, but a later bind collision is traceable.
 - Steer-timeout (Run-Liveness Slice B): an auto-mode run that asks a steer /
   `[[TASK_NEEDS_INPUT]]` question the orchestrator cannot answer leaves a durable
   `steer-pending.json` marker + a visible `steer-pending` phase, and a bounded

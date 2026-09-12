@@ -1309,7 +1309,14 @@ describe('TaskCardComponent (smoke)', () => {
       },
     }));
     const now = new Date();
-    TestBed.inject(ProviderAuthStatusService).ingest([{
+    const providerAuth = TestBed.inject(ProviderAuthStatusService);
+    providerAuth.links.set([{
+      runnerId: 'agent-runner-01', kind: 'ssh-reverse', state: 'up',
+      since: now.toISOString(), lastHeartbeatAt: now.toISOString(),
+      lastProbe: null, lastError: null, attempt: 0, nextRetryAt: null,
+      childPid: 123, notificationRaisedAt: null,
+    }]);
+    providerAuth.ingest([{
       runnerId: 'agent-runner-01', name: 'linux-host', hostId: 'host-01', instanceId: 'coding-01',
       runnerVersion: '1.0.0', protocolVersion: 2, status: 'active',
       registeredAt: now.toISOString(), lastSeenAt: now.toISOString(),
@@ -1323,7 +1330,8 @@ describe('TaskCardComponent (smoke)', () => {
         key: 'provider-auth:claude', category: 'provider-auth', advertisedStatus: 'unavailable',
         healthState: 'healthy', advertisedAt: now.toISOString(),
         freshUntil: new Date(now.getTime() + 120_000).toISOString(), isFresh: true,
-        consecutiveFailures: 0, detail: 'Not logged in', affectedClaims: [], recoveryHistory: [],
+        consecutiveFailures: 2, signal: 'signed-out', detail: 'Not logged in',
+        affectedClaims: [], recoveryHistory: [],
       }],
     }]);
     fixture.detectChanges();
