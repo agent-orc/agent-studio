@@ -1003,6 +1003,35 @@ public sealed class TaskServerClient : IDisposable
             ct);
     }
 
+    public async Task<Contract.HostCliUpdateDto?> GetCliUpdateAsync(CancellationToken ct)
+    {
+        if (!_useV1) return null;
+        var options = _options ?? throw new InvalidOperationException("Runner options are unavailable.");
+        var url = $"/api/v1/runners/{Uri.EscapeDataString(options.RunnerId)}/cli-update" +
+                  $"?instanceId={Uri.EscapeDataString(RunnerInstanceId)}";
+        using var response = await _http.GetAsync(url, ct);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        if (!response.IsSuccessStatusCode)
+        {
+            var text = await response.Content.ReadAsStringAsync(ct);
+            throw new TaskServerException((int)response.StatusCode, $"GET {url} failed: {Trim(text)}");
+        }
+        return await response.Content.ReadFromJsonAsync<Contract.HostCliUpdateDto>(Json, ct);
+    }
+
+    public async Task<Contract.HostCliUpdateDto?> RecordCliUpdateResultAsync(
+        string state,
+        string? detail,
+        CancellationToken ct)
+    {
+        if (!_useV1) return null;
+        var options = _options ?? throw new InvalidOperationException("Runner options are unavailable.");
+        return await PostJsonAsync<Contract.HostCliUpdateResultRequest, Contract.HostCliUpdateDto>(
+            $"/api/v1/runners/{Uri.EscapeDataString(options.RunnerId)}/cli-update/result",
+            new Contract.HostCliUpdateResultRequest(state, detail),
+            ct);
+    }
+
     public async Task ReportCapabilityFailureAsync(
         string capabilityKey,
         string classification,

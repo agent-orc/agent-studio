@@ -40,6 +40,8 @@ export type HostActionKind =
   | 'pause-link'
   | 'resume-link'
   | 'drain'
+  | 'update-clis'
+  | 'cancel-cli-update'
   | 'retire'
   | 'revive'
   | 'delete'
@@ -239,6 +241,30 @@ export interface TaskServerRunnerCapabilitySnapshot {
   roleMaxParallelism?: number | null;
   restartedAt?: string | null;
   reviewsLost?: number;
+  installedClis?: readonly InstalledCli[] | null;
+  cliUpdate?: HostCliUpdate | null;
+}
+
+export interface InstalledCli {
+  name: string;
+  version: string;
+  installPath: string;
+  checkedAt: string;
+  targetVersion?: string | null;
+  isBelowTarget: boolean;
+}
+
+export interface HostCliUpdate {
+  hostId: string;
+  state: 'draining' | 'ready' | 'upgrading' | 'probing' | 'succeeded' | 'failed' | 'cancelled';
+  codexTargetVersion: string;
+  claudeTargetVersion: string;
+  requestedAt: string;
+  updatedAt: string;
+  activeSlots: number;
+  canCancel: boolean;
+  detail?: string | null;
+  completedAt?: string | null;
 }
 
 export interface RunnerLinkProbe {
@@ -372,6 +398,9 @@ export interface RemoteHost {
   projectPolicy?: HostProjectPolicy | null;
   /** Which projects currently occupy this host's shared slot ceiling. */
   projectSlots?: readonly HostProjectSlots[];
+  /** Installed provider CLIs from the same capability probe used by both daemon roles. */
+  installedClis?: readonly InstalledCli[];
+  cliUpdate?: HostCliUpdate | null;
   /** Transient: an action currently in flight for this host. */
   busyAction?: HostActionKind | null;
 }

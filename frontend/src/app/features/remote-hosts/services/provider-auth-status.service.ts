@@ -20,6 +20,7 @@ export class ProviderAuthStatusService implements OnDestroy {
   private readonly http = inject(HttpClient, { optional: true });
   private readonly notifications = inject(NotificationService);
   private readonly snapshots = signal<readonly TaskServerRunnerCapabilitySnapshot[]>([]);
+  readonly capabilitySnapshots = this.snapshots.asReadonly();
   readonly links = signal<readonly RemoteRunnerLinkHealth[]>([]);
   private timer: ReturnType<typeof setInterval> | null = null;
   private previous = new Map<string, ProviderAuthBadge>();

@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
+using System.Diagnostics;
 using AgentStudio.TaskServer.Contracts;
 
 namespace AgentRunner;
@@ -236,11 +237,12 @@ internal static class RunnerCapabilityProbe
         {
             var auth = providerAuth.Current(binary);
             var binaryAvailable = ProviderAuthProbe.ExecutableExists(binary);
+            var installation = binaryAvailable ? InspectCli(binary) : null;
             capabilities.Add(Capability(
                 CapabilityProtocol.CliExecution(cliType),
                 "cli-execution",
-                binaryAvailable ? "available" : null,
-                binary,
+                installation?.Version,
+                installation?.Path ?? binary,
                 binaryAvailable ? ProviderAuthProbe.Ready : ProviderAuthProbe.Unavailable,
                 binaryAvailable
                     ? $"CLI binary '{binary}' is available for {cliType} cards."
@@ -319,6 +321,61 @@ internal static class RunnerCapabilityProbe
 
     private static string? ToolVersion(string executable)
         => OnPath(executable) ? "available" : null;
+
+    private static CliInstallation? InspectCli(string executable)
+    {
+        var path = ResolveExecutable(executable);
+        if (path is null) return null;
+        try
+        {
+            using var process = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = path,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true,
+                }
+            };
+            process.StartInfo.ArgumentList.Add("--version");
+            if (!process.Start()) return null;
+            var stdout = process.StandardOutput.ReadToEndAsync();
+            var stderr = process.StandardError.ReadToEndAsync();
+            if (!process.WaitForExit(5_000))
+            {
+                try { process.Kill(entireProcessTree: true); } catch { }
+                return null;
+            }
+            Task.WaitAll([stdout, stderr], 1_000);
+            var output = $"{stdout.Result} {stderr.Result}";
+            var match = Regex.Match(output, @"(?<!\d)(\d+\.\d+(?:\.\d+)?(?:-[0-9A-Za-z.-]+)?)(?!\d)");
+            return match.Success ? new CliInstallation(match.Groups[1].Value, path) : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? ResolveExecutable(string executable)
+    {
+        if (string.IsNullOrWhiteSpace(executable)) return null;
+        if (executable.Contains(Path.DirectorySeparatorChar)
+            || executable.Contains(Path.AltDirectorySeparatorChar))
+            return File.Exists(executable) ? Path.GetFullPath(executable) : null;
+        var path = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrWhiteSpace(path)) return null;
+        var names = OperatingSystem.IsWindows()
+            ? new[] { executable, executable + ".exe", executable + ".cmd" }
+            : [executable];
+        return path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
+            .SelectMany(directory => names.Select(name => Path.Combine(directory, name)))
+            .FirstOrDefault(File.Exists) is { } candidate ? Path.GetFullPath(candidate) : null;
+    }
+
+    private sealed record CliInstallation(string Version, string Path);
 
     private static long? DiskFreeBytes()
     {

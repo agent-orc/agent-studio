@@ -3,6 +3,7 @@ import type { TaskInfo } from '../../../models/task.model';
 import {
   providerAuthBadgesForSnapshot,
   providerAuthWaitReason,
+  modelCliVersionWaitReason,
 } from './provider-auth.model';
 import type { TaskServerRunnerCapabilitySnapshot } from './remote-host.model';
 
@@ -15,6 +16,20 @@ const UP_LINK = {
 };
 
 describe('provider auth projection', () => {
+  it('shows the model CLI minimum as the Ready-card wait reason', () => {
+    const task = {
+      state: '2-ready', cliType: 'codex', model: 'gpt-6-astra',
+      executionLocation: { configuredRunnerId: 'host-berlin' },
+    } as TaskInfo;
+    const host = snapshot('ready', 'healthy', true);
+    host.installedClis = [{
+      name: 'codex', version: '0.144.1', installPath: '/usr/local/bin/codex',
+      checkedAt: '2026-08-04T11:59:30Z', targetVersion: '0.154.0', isBelowTarget: true,
+    }];
+
+    expect(modelCliVersionWaitReason(task, [host])?.label)
+      .toBe('Needs codex-cli ≥ 0.153 (host has 0.144.1)');
+  });
   it('maps fresh probe truth to OK, unavailable, and unknown badges with detail', () => {
     const ok = providerAuthBadgesForSnapshot(snapshot('ready', 'healthy', true), NOW)[0];
     const unavailable = providerAuthBadgesForSnapshot(

@@ -15,9 +15,37 @@ On Ubuntu, install the base tools and the agent host dependencies:
 ```bash
 sudo apt-get update
 sudo apt-get install -y git curl build-essential
-npm i -g @anthropic-ai/claude-code @openai/codex
+sudo npm install --global --prefix /usr/local \
+  @anthropic-ai/claude-code@2.1.269 @openai/codex@0.154.0
 npx playwright install --with-deps chromium
 ```
+
+## CLI versions and updates
+
+Execution Hosts lists Codex CLI and Claude Code with their installed version,
+resolved executable path, and the age of the host check. Targets are owned by
+the Task Server release. A host below target shows **Update due**. A model whose
+minimum is newer than the host CLI stays visible but disabled with an explicit
+message, for example `needs codex-cli ≥ 0.153 (host has 0.144.1)`.
+
+Choose **Update CLIs** on the host. Claim admission closes immediately, active
+runs and reviews drain without interruption, and the row shows active slots and
+elapsed drain time. You can cancel before activation. At zero active slots the
+Coding daemon calls the fixed `agent-runner-deploy update-clis` allowlist entry.
+The helper can install only the pinned Codex and Claude packages, probes version,
+login status, and models in staging, switches atomically, and restores the old
+prefix if activation fails. Success and failure are host events. Drift produces
+one feed alarm after 24 hours.
+
+Root SSH with
+`/usr/local/sbin/agent-runner-deploy update-clis 0.154.0 2.1.269` is an emergency
+fallback only. Drain first, verify both role rows have zero active slots, and
+retain the `agent-runner-deploy` journal entry as incident evidence. Do not run
+an unpinned global npm update on a managed host. If the helper is unavailable
+during an incident, the 2026-09-12 fallback is a root SSH session followed by
+the exact pinned `npm install --global @openai/codex@0.154.0
+@anthropic-ai/claude-code@2.1.269`, explicit version checks, and both service
+restarts. That path has no staged rollback and must be recorded as an incident.
 
 Provision Claude authentication in the wizard, or afterward with **Sign in
 Claude** on the host's provider badge (see [Provider

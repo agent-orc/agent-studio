@@ -266,7 +266,8 @@ public sealed record ModelMetadata(
     long? ContextWindow,
     string[]? Aliases = null,
     string[]? ThinkingLevels = null,
-    string? DefaultThinkingLevel = null)
+    string? DefaultThinkingLevel = null,
+    string? MinimumCliVersion = null)
 {
     // Pricing is intentionally a live catalog pass-through. Studio owns no
     // rates; callers that need historical cost use TokenPricing.Estimate.
@@ -315,7 +316,7 @@ public static class ModelMetadataRegistry
         // that stays correct across CLI releases. Pricing is left null (no
         // invented rates), same posture as the GPT-4.1 / GPT-4o entries.
         new(ModelIds.Gpt6Astra, "GPT-6 Astra", "openai", IsDefault: false, Deprecated: false, Available: true,
-            ContextWindow: 272_000),
+            ContextWindow: 272_000, MinimumCliVersion: "0.153.0"),
         // gpt-5.6-terra / gpt-5.6-luna are the lower cost tiers of the gpt-5.6
         // family used by model-routing-policy.md. Onboarded as registry entries
         // (AGT-2707 round 2) purely so the picker disables them with a reason on
@@ -708,6 +709,30 @@ public static class ModelMetadataRegistry
             : $"Not offered by the installed {cliLabel} {cliVersion.Trim()}.";
 
     /// <summary>
+    /// Explains a missing model as an actionable version requirement whenever
+    /// the registry knows the first CLI release that offers it. Unknown,
+    /// malformed, and sufficiently new host versions retain the generic
+    /// not-offered wording because withdrawal and account visibility remain
+    /// distinct from version drift.
+    /// </summary>
+    public static string UnavailableOnInstalledCliNote(
+        string cliLabel,
+        string? cliVersion,
+        string? modelId)
+    {
+        var minimum = Find(modelId)?.MinimumCliVersion;
+        if (!string.IsNullOrWhiteSpace(minimum)
+            && SemanticCliVersion.TryCompare(cliVersion, minimum, out var comparison)
+            && comparison < 0)
+        {
+            return $"Needs {cliLabel} ≥ {SemanticCliVersion.Display(minimum)} " +
+                   $"(host has {cliVersion!.Trim()}).";
+        }
+
+        return UnavailableOnInstalledCliNote(cliLabel, cliVersion);
+    }
+
+    /// <summary>
     /// The ladder without the live-discovery layer: curated registry metadata,
     /// then the static capability table. Discovery itself uses this as its own
     /// fallback so a CLI that reports no ladder cannot be answered with the
@@ -785,4 +810,81 @@ public static class ModelMetadataRegistry
             _ => null
         };
     }
+}
+
+/// <summary>
+/// Small SemVer 2 comparator for CLI policy. Build metadata is ignored and a
+/// pre-release sorts below its matching release; numeric identifiers sort
+/// numerically and before non-numeric identifiers.
+/// </summary>
+public static class SemanticCliVersion
+{
+    private static readonly Regex Pattern = new(
+        @"^[vV]?(?<core>0|[1-9]\d*)(?:\.(?<minor>0|[1-9]\d*))?(?:\.(?<patch>0|[1-9]\d*))?(?:-(?<pre>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    public static bool IsAtLeast(string? installed, string? minimum)
+        => TryCompare(installed, minimum, out var comparison) && comparison >= 0;
+
+    public static bool TryCompare(string? left, string? right, out int comparison)
+    {
+        comparison = 0;
+        if (!TryParse(left, out var a) || !TryParse(right, out var b)) return false;
+        comparison = Compare(a, b);
+        return true;
+    }
+
+    public static string Display(string version)
+    {
+        if (!TryParse(version, out var parsed)) return version.Trim();
+        return parsed.Patch == 0 && parsed.PreRelease.Length == 0
+            ? $"{parsed.Major}.{parsed.Minor}"
+            : version.Trim().TrimStart('v', 'V');
+    }
+
+    private static bool TryParse(string? value, out Parsed parsed)
+    {
+        parsed = default;
+        if (string.IsNullOrWhiteSpace(value)) return false;
+        var match = Pattern.Match(value.Trim());
+        if (!match.Success
+            || !int.TryParse(match.Groups["core"].Value, out var major)
+            || !int.TryParse(match.Groups["minor"].Success ? match.Groups["minor"].Value : "0", out var minor)
+            || !int.TryParse(match.Groups["patch"].Success ? match.Groups["patch"].Value : "0", out var patch))
+            return false;
+        parsed = new Parsed(
+            major,
+            minor,
+            patch,
+            match.Groups["pre"].Success ? match.Groups["pre"].Value.Split('.') : []);
+        return true;
+    }
+
+    private static int Compare(Parsed a, Parsed b)
+    {
+        var core = a.Major.CompareTo(b.Major);
+        if (core != 0) return core;
+        core = a.Minor.CompareTo(b.Minor);
+        if (core != 0) return core;
+        core = a.Patch.CompareTo(b.Patch);
+        if (core != 0) return core;
+        if (a.PreRelease.Length == 0) return b.PreRelease.Length == 0 ? 0 : 1;
+        if (b.PreRelease.Length == 0) return -1;
+        for (var i = 0; i < Math.Max(a.PreRelease.Length, b.PreRelease.Length); i++)
+        {
+            if (i >= a.PreRelease.Length) return -1;
+            if (i >= b.PreRelease.Length) return 1;
+            var leftNumeric = int.TryParse(a.PreRelease[i], out var leftNumber);
+            var rightNumeric = int.TryParse(b.PreRelease[i], out var rightNumber);
+            var item = leftNumeric && rightNumeric
+                ? leftNumber.CompareTo(rightNumber)
+                : leftNumeric ? -1
+                : rightNumeric ? 1
+                : string.Compare(a.PreRelease[i], b.PreRelease[i], StringComparison.Ordinal);
+            if (item != 0) return item;
+        }
+        return 0;
+    }
+
+    private readonly record struct Parsed(int Major, int Minor, int Patch, string[] PreRelease);
 }
