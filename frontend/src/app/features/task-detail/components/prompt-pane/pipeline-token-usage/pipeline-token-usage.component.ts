@@ -145,6 +145,37 @@ export class PipelineTokenUsageComponent {
     return `incomplete (${missingRuns} run${missingRuns === 1 ? '' : 's'} without usage)`;
   }
 
+  runSharePercent(run: PipelineRunTokenUsage): number {
+    const total = this.taskTotal().totalTokens;
+    if (total <= 0 || !this.usageAvailableForRun(run)) return 0;
+    return Math.min(100, Math.max(0, (run.totalTokens / total) * 100));
+  }
+
+  runShareLabel(run: PipelineRunTokenUsage): string {
+    if (!this.usageAvailableForRun(run)) {
+      return `Run #${run.attempt}: usage not recorded`;
+    }
+    return `Run #${run.attempt}: ${this.runSharePercent(run).toFixed(1)}% of recorded task tokens`;
+  }
+
+  durationLabel(run: PipelineRunTokenUsage): string {
+    if (!run.completedAt) return '-';
+    const startedAt = Date.parse(run.startedAt);
+    const completedAt = Date.parse(run.completedAt);
+    if (!Number.isFinite(startedAt) || !Number.isFinite(completedAt) || completedAt < startedAt) {
+      return '-';
+    }
+
+    const seconds = Math.round((completedAt - startedAt) / 1000);
+    if (seconds < 60) return `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    if (minutes < 60) return remainingSeconds > 0 ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`;
+    const hours = Math.floor(minutes / 60);
+    const remainingMinutes = minutes % 60;
+    return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+  }
+
   isPartial(costUsd: number, unpricedRuns: number): boolean {
     return costUsd > 0 && unpricedRuns > 0;
   }

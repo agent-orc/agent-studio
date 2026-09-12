@@ -1,56 +1,45 @@
 :host {
   display: block;
-
-  // --- Central design tokens for this surface --------------------------------
-  // The expanded per-model breakdown rides on ONE shared grid template so the
-  // six numeric columns stay right-aligned and vertically aligned across every
-  // disclosed level (task total + per run). The model column flexes; the six
-  // numeric columns share one width.
-  --ptu-num-col: minmax(3.5rem, 1fr);
-  --ptu-cost-col: minmax(11rem, 1.6fr);
-  --ptu-grid: minmax(6rem, 1.4fr) var(--ptu-num-col) var(--ptu-num-col)
-    var(--ptu-num-col) var(--ptu-num-col) var(--ptu-num-col) var(--ptu-cost-col);
-  // The breakdown (and only the breakdown) refuses to shrink past this, so a
-  // narrow pane scrolls the seven columns as one block while the always-visible
-  // head lines above keep their at-a-glance Total/Cost pinned in view.
-  --ptu-breakdown-min: 42rem;
-  // Fixed width for the two at-a-glance numbers on every head line; sizing them
-  // alike keeps Total over Total and Cost over Cost down the whole stack.
-  --ptu-total-w: 5rem;
-  --ptu-cost-w: 12rem;
-  // Indent that lines a disclosed row's model name up under its parent label,
-  // past the disclosure triangle - the only indentation the hierarchy uses.
-  --ptu-indent: 1.1rem;
+  width: 100%;
+  min-width: 0;
 }
 
 .ptu {
   display: flex;
   flex-direction: column;
+  width: 100%;
+  min-width: 0;
 
-  // --- A "level" = one collapsible block (the task total, or one run) ---------
   &__level {
     display: flex;
     flex-direction: column;
+    min-width: 0;
   }
 
-  // --- Head line: always visible, the level's own total row -------------------
-  // Flex (not grid) so the label can flex while Total + Cost stay pinned right
-  // and never scroll off in a narrow pane - that is the whole point of the
-  // collapsed summary. Disclosure toggles are buttons; strip the chrome.
-  &__head {
+  &__row,
+  &__model-row {
+    display: grid;
+    grid-template-columns: var(--ov-pl-grid-cols);
+    align-items: center;
+    column-gap: var(--studio-spacing-1);
+    box-sizing: border-box;
+    width: calc(100% - var(--ov-pipeline-step-indent));
+    min-width: 0;
+    margin-left: var(--ov-pipeline-step-indent);
+    padding-block: var(--studio-row-pad-block);
+    padding-inline: var(--studio-spacing-2);
+    font-variant-numeric: tabular-nums;
+  }
+
+  &__row {
     appearance: none;
-    width: 100%;
     border: 0;
+    border-radius: 6px;
     background: transparent;
     color: inherit;
     font: inherit;
     text-align: left;
     cursor: pointer;
-
-    display: flex;
-    align-items: baseline;
-    gap: var(--studio-spacing-2);
-    padding-block: var(--studio-spacing-1);
 
     &:hover {
       background: var(--studio-bg-hover);
@@ -59,16 +48,49 @@
     &:focus-visible {
       outline: 2px solid var(--studio-accent);
       outline-offset: -2px;
-      border-radius: 4px;
     }
   }
 
-  &__head--sum {
-    padding-block: var(--studio-spacing-2);
+  &__row--sum {
+    margin-top: calc(var(--studio-spacing-1) * -0.5);
+    padding-block: var(--studio-spacing-1);
+    border-top: 1px dashed var(--studio-border);
+  }
+
+  &__level--run {
+    border-top: 1px solid color-mix(in srgb, var(--studio-border) 60%, transparent);
+  }
+
+  &__disclosure {
+    grid-column: 1;
+    justify-self: center;
+    color: var(--studio-fg-muted);
+    font-size: 9px;
+    line-height: 1;
+  }
+
+  &__marker-slot,
+  &__run-marker {
+    grid-column: 2;
+  }
+
+  &__run-marker {
+    width: 8px;
+    height: 8px;
+    justify-self: center;
+    border-radius: 999px;
+    background: var(--studio-fg-muted);
+    opacity: 0.7;
+
+    &[data-usage='missing'] {
+      border: 1px solid var(--studio-border-strong);
+      background: transparent;
+      opacity: 1;
+    }
   }
 
   &__head-label {
-    flex: 1 1 auto;
+    grid-column: 3;
     min-width: 0;
     display: flex;
     align-items: baseline;
@@ -76,184 +98,183 @@
     overflow: hidden;
   }
 
-  // The two at-a-glance numbers: fixed width, right-aligned, never flex away.
-  &__head-total {
-    flex: 0 0 auto;
-    width: var(--ptu-total-w);
+  &__sum-title,
+  &__run-name {
+    overflow: hidden;
+    color: var(--studio-fg-strong);
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  &__head-cost {
-    flex: 0 0 auto;
-    width: var(--ptu-cost-w);
-    display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-  }
-
-  &__disclosure {
-    display: inline-block;
-    width: var(--ptu-indent);
-    flex: 0 0 auto;
-    font-size: 9px;
-    line-height: 1;
-    color: var(--studio-fg-muted);
-    align-self: center;
-  }
-
-  // --- TASK TOTAL SUM (primary) ----------------------------------------------
   &__sum-title {
     font-size: 11px;
-    font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.06em;
-    color: var(--studio-fg-strong);
+  }
+
+  &__run-name {
+    font-size: 12px;
   }
 
   &__scope {
+    grid-column: 4;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--studio-fg-muted);
     font-size: 10px;
     font-weight: 600;
     letter-spacing: 0.02em;
-    color: var(--studio-fg-muted);
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  // --- "Tokens by run" section heading ---------------------------------------
+  &__share {
+    grid-column: 4;
+    position: relative;
+    height: 6px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: var(--studio-surface-muted);
+  }
+
+  &__share-fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    max-width: 100%;
+    border-radius: inherit;
+    background: color-mix(in srgb, var(--studio-accent) 72%, var(--studio-fg-muted));
+  }
+
+  &__timing {
+    grid-column: 5;
+    display: grid;
+    grid-template-columns: 38px 52px;
+    align-items: baseline;
+    justify-content: flex-end;
+    gap: var(--studio-spacing-1);
+    min-width: 0;
+  }
+
+  &__run-time,
+  &__run-duration {
+    overflow: hidden;
+    color: var(--studio-fg-muted);
+    font-size: 10.5px;
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__head-total,
+  &__model-total {
+    grid-column: 6;
+  }
+
+  &__head-cost,
+  &__model-cost {
+    grid-column: 7;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    color: var(--studio-fg-dim);
+  }
+
   &__title {
     display: flex;
     align-items: baseline;
     gap: var(--studio-spacing-2);
-    margin: 0;
-    padding-top: var(--studio-spacing-2);
-    padding-bottom: 1px;
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+    min-height: calc(var(--studio-row-min-h) + var(--studio-row-gap));
+    margin: var(--studio-spacing-2) 0 0;
+    padding: var(--studio-row-pad-block) var(--studio-spacing-2);
+    border-radius: 6px;
+    background: var(--studio-bg-hover);
     color: var(--studio-fg-strong);
-    border-top: 1px solid var(--studio-border);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
   }
 
   &__title-sub {
+    color: var(--studio-fg-muted);
     font-size: 10px;
     font-weight: 600;
     letter-spacing: 0.02em;
     text-transform: none;
-    color: var(--studio-fg-muted);
-  }
-
-  // --- Per-run level ----------------------------------------------------------
-  &__level--run {
-    border-top: 1px solid var(--studio-border);
-
-    // The live run is marked apart from history by its "Current" badge.
-    &[data-current='true'] {
-      .ptu__head {
-        padding-left: var(--studio-spacing-1);
-      }
-    }
-  }
-
-  &__run-name {
-    font-weight: 700;
-    color: var(--studio-fg-strong);
-    font-size: 12px;
-  }
-
-  &__run-time {
-    color: var(--studio-fg-muted);
-    font-size: 11px;
   }
 
   &__badge {
     display: inline-flex;
     align-items: center;
-    font-size: 9.5px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    padding: 1px 5px;
+    padding: 0 var(--studio-spacing-1);
     border-radius: 999px;
-    color: var(--studio-on-accent);
-    background: var(--studio-accent);
+    background: color-mix(in srgb, var(--studio-accent) 18%, transparent);
+    color: var(--studio-accent-strong);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
   }
 
-  // --- Expanded breakdown: the level's per-model summands ----------------------
-  // Its own horizontal-scroll container so the shared seven-column grid can
-  // scroll independently of the always-visible head line above it.
   &__breakdown {
-    overflow-x: auto;
+    min-width: 0;
   }
 
-  &__grid {
-    min-width: var(--ptu-breakdown-min);
-    display: grid;
-    grid-template-columns: var(--ptu-grid);
-    align-items: center;
-    column-gap: var(--studio-spacing-2);
-    padding-block: var(--studio-spacing-1);
-    white-space: nowrap;
-  }
-
-  // --- Column header (one per disclosed level) -------------------------------
-  &__grid--colhead {
-    .ptu__col-label,
-    .ptu__cell {
-      font-size: 10px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.03em;
-      color: var(--studio-fg-muted);
-    }
-
-    .ptu__col-label {
-      padding-left: var(--ptu-indent);
-    }
-  }
-
-  // --- Per-model breakdown row -----------------------------------------------
-  &__grid--model {
-    font-size: 11.5px;
+  &__model-row {
+    min-height: var(--studio-row-min-h);
+    color: var(--studio-fg-dim);
+    font-size: 11px;
 
     &:hover {
       background: var(--studio-bg-hover);
     }
   }
 
-  &__empty {
-    margin: 0;
-    padding: var(--studio-spacing-2) var(--ptu-indent);
-    color: var(--studio-fg-muted);
-    font-size: 11px;
-  }
-
   &__model {
+    grid-column: 3;
+    min-width: 0;
     display: flex;
     align-items: center;
     gap: var(--studio-spacing-1);
-    padding-left: var(--ptu-indent);
-    min-width: 0;
+    padding-left: var(--studio-spacing-2);
 
     code {
+      overflow: hidden;
+      color: var(--studio-fg);
       font-family: var(--font-mono);
       font-size: 11px;
-      color: var(--studio-fg);
-      overflow: hidden;
       text-overflow: ellipsis;
+      white-space: nowrap;
     }
   }
 
   &__steps {
     flex: 0 0 auto;
-    font-size: 9.5px;
-    font-weight: 600;
-    color: var(--studio-fg-muted);
-    padding: 0 4px;
+    padding: 0 var(--studio-spacing-1);
     border-radius: 4px;
     background: var(--studio-bg-hover);
+    color: var(--studio-fg-muted);
+    font-size: 9.5px;
+    font-weight: 600;
   }
 
-  // --- Numeric cells (shared by head numbers and breakdown cells) -------------
-  &__cell {
+  &__split {
+    grid-column: 4 / 6;
     min-width: 0;
+    overflow: hidden;
+    color: var(--studio-fg-muted);
+    font-size: 10px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__empty {
+    margin: 0 0 0 var(--ov-pipeline-step-indent);
+    padding: var(--studio-spacing-2);
+    color: var(--studio-fg-muted);
+    font-size: 11px;
   }
 
   &__num {
@@ -262,35 +283,70 @@
   }
 
   &__mono {
+    color: var(--studio-fg);
     font-family: var(--font-mono);
     font-size: 11px;
-    color: var(--studio-fg);
   }
 
-  // Total + cost carry the weight that signals a sum, the only emphasis the
-  // hierarchy leans on besides the divider and the indent.
   &__strong {
-    font-weight: 700;
     color: var(--studio-fg-strong);
+    font-weight: 700;
   }
 
-  &__cell--cost {
-    color: var(--studio-fg-dim);
-    display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-  }
-
-  &__na {
+  &__na,
+  &__incomplete {
     color: var(--studio-fg-muted);
   }
 
   &__incomplete {
-    color: var(--studio-fg-muted);
     font-family: var(--font-sans);
     font-size: 9px;
     font-weight: 600;
     line-height: 1.25;
     white-space: normal;
+  }
+}
+
+@container ov-pipeline (max-width: 620px) {
+  .ptu__row,
+  .ptu__model-row {
+    --ov-pl-grid-cols:
+      var(--ov-pipeline-status-col)
+      var(--ov-pipeline-kind-col)
+      var(--ov-pipeline-name-col)
+      var(--ov-pipeline-meta-col)
+      var(--ov-pipeline-time-col)
+      var(--ov-pipeline-tokens-col);
+  }
+
+  .ptu__head-cost,
+  .ptu__model-cost {
+    display: none;
+  }
+}
+
+@container ov-pipeline (max-width: 460px) {
+  .ptu__row,
+  .ptu__model-row {
+    --ov-pipeline-time-col: 52px;
+    --ov-pl-grid-cols:
+      var(--ov-pipeline-status-col)
+      var(--ov-pipeline-kind-col)
+      minmax(0, 3fr)
+      minmax(0, 2fr)
+      var(--ov-pipeline-time-col);
+  }
+
+  .ptu__head-total,
+  .ptu__model-total {
+    display: none;
+  }
+
+  .ptu__timing {
+    grid-template-columns: 52px;
+  }
+
+  .ptu__run-time {
+    display: none;
   }
 }
