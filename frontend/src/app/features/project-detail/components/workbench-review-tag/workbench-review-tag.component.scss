@@ -1,0 +1,24 @@
+:host { display: inline-flex; }
+.review-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.35rem;
+  padding: 0 var(--studio-spacing-2);
+  border: 1px solid var(--studio-border);
+  border-radius: 999px;
+  background: var(--studio-bg-hover);
+  color: var(--studio-fg-muted);
+  font-size: 0.66rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.review-tag[data-verdict='current'] { color: var(--studio-success); }
+.review-tag[data-verdict='partially-superseded'] { color: var(--studio-warn); }
+.review-tag[data-verdict='superseded'],
+.review-tag[data-verdict='historical'] { color: var(--studio-fg-dim); }
+.review-tag--due {
+  border-color: color-mix(in srgb, var(--studio-warn) 55%, var(--studio-border));
+  background: color-mix(in srgb, var(--studio-warn) 10%, var(--studio-bg-hover));
+  color: var(--studio-warn);
+}
+.review-tag:focus-visible { outline: 2px solid var(--studio-accent-3-strong); outline-offset: 2px; }

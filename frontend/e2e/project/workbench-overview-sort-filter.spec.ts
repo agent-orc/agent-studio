@@ -50,6 +50,14 @@ function dossier(
       error: null,
       sourceTaskKeys: [],
       openDecisionCount,
+      review: id === 'decision-one' ? {
+        verdict: 'partially-superseded',
+        supersededBy: ['DDA-W51'],
+        reviewedAt: '2026-09-09T10:00:00Z',
+        reviewedBy: 'AGT-2784',
+        note: 'The delivery boundary remains current.',
+      } : null,
+      reviewDue: id === 'archived',
     },
   };
 }
@@ -145,24 +153,36 @@ test('Dossier sort and live filter share URL and session state across both overv
   await page.addStyleTag({ content: '[data-testid="offline-banner"] { display: none !important; }' });
   await page.getByTestId('studio-ab-workbenches').click();
   await expect(page.getByTestId('workbench-overview')).toBeVisible();
-  await expect(page.locator('[data-testid^="workbench-overview-sort-"]')).toHaveCount(5);
+  await expect(page.locator('[data-testid^="workbench-overview-sort-"]')).toHaveCount(6);
 
   const pending = page.getByTestId('workbench-overview-decision-pending')
     .locator('[data-testid^="workbench-overview-item-"]');
   await expect(pending.nth(0)).toHaveAttribute('data-testid', `workbench-overview-item-${PROJECT}-decision-four`);
   await expect(pending.nth(1)).toHaveAttribute('data-testid', `workbench-overview-item-${PROJECT}-decision-one`);
 
-  for (const key of ['status', 'updatedAt', 'project', 'key', 'openDecisions']) {
+  for (const key of ['status', 'updatedAt', 'project', 'key', 'openDecisions', 'reviewAge']) {
     const button = page.getByTestId(`workbench-overview-sort-${key}`);
     await button.click();
     await expect(button).toHaveAttribute('aria-pressed', 'true');
   }
+
+  const reviewFilter = page.getByTestId('workbench-overview-review-filter');
+  await reviewFilter.selectOption('never-reviewed');
+  await expect(page.getByTestId(`workbench-overview-item-${PROJECT}-decision-one`)).toHaveCount(0);
+  await reviewFilter.selectOption('partially-superseded');
+  await expect(page.locator('[data-testid^="workbench-overview-item-"]')).toHaveCount(1);
+  await page.getByTestId('workbench-review-tag').hover();
+  await expect(page.getByTestId('workbench-review-tooltip')).toContainText('Review age: 3 days ago');
+  await expect(page.getByTestId('workbench-review-tooltip').getByRole('link', { name: 'DDA-W51' })).toBeVisible();
+  await reviewFilter.selectOption('all');
 
   const decisionSort = page.getByTestId('workbench-overview-sort-openDecisions');
   await decisionSort.click();
   await expect(decisionSort).toHaveAttribute('aria-label', /ascending/i);
   await decisionSort.click();
   await expect(decisionSort).toHaveAttribute('aria-label', /descending/i);
+  await decisionSort.click();
+  await expect(decisionSort).toHaveAttribute('aria-label', /ascending/i);
 
   await page.getByTestId('workbench-overview-filter').fill('Decision pending');
   await expect(page.locator('[data-testid^="workbench-overview-item-"]')).toHaveCount(2);

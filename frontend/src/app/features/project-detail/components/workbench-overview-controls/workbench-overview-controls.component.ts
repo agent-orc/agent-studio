@@ -3,6 +3,7 @@ import {
   WORKBENCH_SORT_OPTIONS,
   type WorkbenchSortDirection,
   type WorkbenchSortKey,
+  type WorkbenchReviewFilter,
 } from '../workbench-overview/workbench-overview-view-state.service';
 
 @Component({
@@ -17,13 +18,19 @@ export class WorkbenchOverviewControlsComponent {
   readonly sortKey = input.required<WorkbenchSortKey>();
   readonly direction = input.required<WorkbenchSortDirection>();
   readonly active = input.required<boolean>();
+  readonly reviewFilter = input.required<WorkbenchReviewFilter>();
   readonly queryChange = output<string>();
   readonly sortChange = output<Exclude<WorkbenchSortKey, 'default'>>();
   readonly resetView = output<void>();
+  readonly reviewFilterChange = output<WorkbenchReviewFilter>();
   readonly sortOptions = WORKBENCH_SORT_OPTIONS;
 
   onQueryInput(event: Event): void {
     this.queryChange.emit((event.target as HTMLInputElement).value);
+  }
+
+  onReviewFilter(event: Event): void {
+    this.reviewFilterChange.emit((event.target as HTMLSelectElement).value as WorkbenchReviewFilter);
   }
 
   sortAriaLabel(key: Exclude<WorkbenchSortKey, 'default'>, label: string): string {

@@ -15,3 +15,6 @@ release yet.
 ### Added
 
 - Initial open source community and release-hygiene baseline.
+- Dossier relevance-review metadata, managed review writes and history,
+  configurable review-due policy, and review tags, tooltips, filtering,
+  sorting, and viewer recording controls.

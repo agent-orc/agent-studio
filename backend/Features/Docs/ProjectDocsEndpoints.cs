@@ -167,6 +167,18 @@ public static class ProjectDocsEndpoints
                 return WorkbenchLifecycleHttpResult(result);
             });
 
+        app.MapPut("/api/projects/{projectName}/workbenches/{id}/review",
+            (string projectName, string id, RecordWorkbenchReviewRequest body,
+                WorkbenchReviewService reviews, ProjectDocsService docs) =>
+            {
+                var result = reviews.Record(projectName, id, body);
+                if (result.Success) docs.InvalidateWikiContent(projectName);
+                return result.Success ? Results.Ok(result)
+                    : result.ErrorCode == "not-found" ? Results.NotFound(result)
+                    : result.ErrorCode == "stale-revision" ? Results.Conflict(result)
+                    : Results.BadRequest(result);
+            });
+
         // The physical docs/ folder hierarchy (folders + .md/.html/.json files)
         // that backs the wiki navigation tree. No git is touched here, and a warm
         // cache serves it without opening a file (AGT-2013); the ETag lets a

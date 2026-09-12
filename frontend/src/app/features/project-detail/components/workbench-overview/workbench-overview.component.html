@@ -24,8 +24,10 @@
       [sortKey]="viewState.sortKey()"
       [direction]="viewState.direction()"
       [active]="viewState.hasActiveState()"
+      [reviewFilter]="viewState.reviewFilter()"
       (queryChange)="viewState.setQuery($event)"
       (sortChange)="viewState.selectSort($event)"
+      (reviewFilterChange)="viewState.setReviewFilter($event)"
       (resetView)="viewState.reset()" />
   </header>
   @if (loading() && !overview()) {
@@ -83,6 +85,7 @@
                         <i aria-hidden="true"></i>{{ project.shortCode || project.displayName }}
                       </span>
                       <span class="workbench-overview__status" data-status="decision-pending">{{ statusLabel(item) }}</span>
+                      <app-workbench-review-tag [review]="item.workbench.review" [reviewDue]="item.workbench.reviewDue ?? false" [projectName]="item.projectName" />
                       <time [attr.datetime]="item.workbench.updatedAtUtc">{{ updatedLabel(item.workbench.updatedAtUtc) }}</time>
                       <span class="workbench-overview__open-count">{{ openDecisionCount(item) }} open</span>
                       @if (referenceStatuses(item).length > 0) {
@@ -162,6 +165,7 @@
                         <i aria-hidden="true"></i>{{ project.shortCode || project.displayName }}
                       </span>
                       <span class="workbench-overview__status" [attr.data-status]="item.workbench.status">{{ statusLabel(item) }}</span>
+                      <app-workbench-review-tag [review]="item.workbench.review" [reviewDue]="item.workbench.reviewDue ?? false" [projectName]="item.projectName" />
                       @if (item.workbench.documentation?.eligible) {
                         <span class="workbench-overview__suggestion">Ready to document</span>
                       }
@@ -256,6 +260,7 @@
                           <span class="workbench-overview__project" [style.--workbench-project]="project.color"
                                 [attr.title]="project.displayName"><i aria-hidden="true"></i>{{ project.shortCode || project.displayName }}</span>
                           <span>{{ statusLabel(item) }}</span>
+                          <app-workbench-review-tag [review]="item.workbench.review" [reviewDue]="item.workbench.reviewDue ?? false" [projectName]="item.projectName" />
                           <time [attr.datetime]="item.workbench.updatedAtUtc">{{ updatedLabel(item.workbench.updatedAtUtc) }}</time>
                         </div>
                         <p class="workbench-overview__excerpt">{{ item.workbench.summary }}</p>
@@ -286,6 +291,7 @@
                           <span class="workbench-overview__project" [style.--workbench-project]="project.color"
                                 [attr.title]="project.displayName"><i aria-hidden="true"></i>{{ project.shortCode || project.displayName }}</span>
                           <span>{{ statusLabel(item) }}</span>
+                          <app-workbench-review-tag [review]="item.workbench.review" [reviewDue]="item.workbench.reviewDue ?? false" [projectName]="item.projectName" />
                           <time [attr.datetime]="item.workbench.updatedAtUtc">{{ updatedLabel(item.workbench.updatedAtUtc) }}</time>
                         </div>
                         <p class="workbench-overview__excerpt">{{ item.workbench.summary }}</p>

@@ -3,10 +3,10 @@ using Microsoft.AspNetCore.SignalR;
 namespace AgentStudio.Host;
 
 /// <summary>
-/// Projects repository and decision changes onto the existing TaskHub route.
+/// Projects repository, decision, and review changes onto the existing TaskHub route.
 /// Repository-authored Workbenches have no create/update API, so the docs
 /// watcher is the authoritative source for created and updated events; the
-/// decision notifier supplies the synchronous mutation-path event.
+/// mutation notifier supplies the synchronous write-path events.
 /// </summary>
 public sealed class WorkbenchHubBroadcaster
 {
@@ -39,6 +39,7 @@ public sealed class WorkbenchHubBroadcaster
         }
         watcher.OnWikiChanged += OnWikiChanged;
         notifier.DecisionRecorded += OnDecisionRecorded;
+        notifier.ReviewRecorded += OnReviewRecorded;
     }
 
     private void OnWikiChanged(string projectName, string changedPath)
@@ -75,6 +76,15 @@ public sealed class WorkbenchHubBroadcaster
         if (!string.Equals(evt.PreviousStatus, evt.CurrentStatus, StringComparison.Ordinal))
             Send(evt.ProjectName, "workbenchStatusChanged", "statusChanged", item, evt.PreviousStatus,
                 evt.WorkbenchId);
+    }
+
+    private void OnReviewRecorded(WorkbenchReviewRecordedEvent evt)
+    {
+        var current = ReadProject(evt.ProjectName);
+        current.TryGetValue(evt.WorkbenchId, out var item);
+        lock (_gate) _snapshots[evt.ProjectName] = current;
+        Send(evt.ProjectName, "workbenchReviewRecorded", "reviewRecorded", item, null,
+            evt.WorkbenchId);
     }
 
     private Dictionary<string, WorkbenchListItem> ReadProject(string projectName) =>

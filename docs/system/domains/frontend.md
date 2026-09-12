@@ -269,9 +269,11 @@ without a parallel surface.
   project-scoped `#/projects/<project>/workbenches` overview share one ordered
   projection: decision-pending items sort by open gate count, active items sort
   by latest movement, and discarded and completed history remain separate.
-  One live text field filters the visible key, title, project, and status
-  values. A compact shared sort row orders each lifecycle group by status, last
-  movement, project, key, or open decision count and toggles direction on a
+  One live text field filters the visible key, title, project, status, and
+  relevance verdict values. A review filter selects never-reviewed items,
+  reviews older than 30 days, or any individual verdict. A compact shared sort
+  row orders each lifecycle group by status, last movement, review age,
+  project, key, or open decision count and toggles direction on a
   repeated selection. The decision-first projection remains the reset default.
   Filter and sort state use one encoded route-local `dossier` query value and
   separate session entries for the global and each project scope; explicit URL
@@ -354,6 +356,18 @@ without a parallel surface.
   The archive decision and documented transition both follow the AGT-2375 rule:
   lifecycle truth lives in `workbench.json`, never in a Wiki classification
   sidecar. Chat pinning is intentionally not mounted.
+  An optional descriptor `review` block records the relevance verdict,
+  successor keys, server-assigned UTC review time, reviewer, and bounded note;
+  missing metadata means never reviewed. The catalogue and detail read models
+  expose this block plus a derived `reviewDue` flag. The shared tag appears next
+  to lifecycle status in the list and viewer header, opens its application
+  tooltip immediately, and keeps successor keys as navigable Dossier-list
+  filters. The viewer's `Record review` form writes through
+  `PUT /api/projects/{projectName}/workbenches/{id}/review`. That mutation
+  preserves lifecycle fields, replaces the current review, appends the review
+  to `reviewHistory`, and commits `workbench.json`. Review age becomes due at
+  the configurable `Workbenches:ReviewDueDays` threshold (90 by default), or
+  when all related cards entered Completed after the recorded review.
 - `frontend/src/app/features/project-detail/components/project-overview-dashboard/`:
   the operator-first Project Overview composition. It presents project outcomes,
   important runtime entry points, deployment readiness, and work requiring

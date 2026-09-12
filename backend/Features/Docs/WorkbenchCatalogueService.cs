@@ -38,6 +38,9 @@ public sealed class WorkbenchCatalogueService
         { "active", "decision-pending", "decided", "documented", "archived" };
     private static readonly HashSet<string> AllowedPhases = new(StringComparer.Ordinal)
         { "informational", "shaping", "testing", "decision-ready" };
+    private static readonly HashSet<string> AllowedReviewVerdicts = new(StringComparer.Ordinal)
+        { "current", "partially-superseded", "superseded", "historical" };
+    private readonly int _reviewDueDays;
 
     private sealed record LegacyWorkbench(
         string Id, string Title, string Summary, string RepoRelPath, string Phase,
@@ -61,7 +64,8 @@ public sealed class WorkbenchCatalogueService
         ProjectRegistry registry,
         GitService git,
         IAtomicJsonFileWriter? fileWriter = null,
-        ManagedRepositoryMutationService? repositoryMutations = null)
+        ManagedRepositoryMutationService? repositoryMutations = null,
+        IConfiguration? configuration = null)
     {
         _scanner = scanner;
         _registry = registry;
@@ -69,6 +73,7 @@ public sealed class WorkbenchCatalogueService
         _fileWriter = fileWriter ?? new AtomicJsonFileWriter();
         _repositoryMutations = repositoryMutations
             ?? new ManagedRepositoryMutationService(git);
+        _reviewDueDays = Math.Clamp(configuration?.GetValue<int?>("Workbenches:ReviewDueDays") ?? 90, 1, 3650);
     }
 
     public WorkbenchCatalogue? List(string projectName, bool includeHistory = false)
@@ -503,6 +508,7 @@ public sealed class WorkbenchCatalogueService
                 // Both schemas store the receipt; only v2 couples it to
                 // lifecycleState (null below = the reduced v1 projection).
                 var decision = ReadDecision(obj, lifecycleState);
+                var review = ReadReview(obj);
                 var status = schema >= 2
                     ? StatusFromDecision(lifecycleState!, decision)
                     : RequiredString(obj, "status");
@@ -539,6 +545,7 @@ public sealed class WorkbenchCatalogueService
                     Decision = decision,
                     DecisionStage = DecisionStage(decision),
                     OpenDecisionCount = OpenDecisionCount(full, status),
+                    Review = review,
                 });
             }
             catch (Exception ex) when (ex is JsonException or IOException or InvalidDataException)
@@ -845,6 +852,36 @@ public sealed class WorkbenchCatalogueService
             ? value.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!).ToArray()
             : [];
 
+    private static WorkbenchReviewProjection? ReadReview(JsonElement obj)
+    {
+        if (!obj.TryGetProperty("review", out var value))
+            return null;
+        if (value.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException("review must be an object.");
+        var verdict = RequiredString(value, "verdict");
+        if (!AllowedReviewVerdicts.Contains(verdict))
+            throw new InvalidDataException($"Unsupported review verdict '{verdict}'.");
+        var reviewedAt = RequiredString(value, "reviewedAt");
+        if (!IsUtcLifecycleTimestamp(reviewedAt, out _))
+            throw new InvalidDataException("review reviewedAt must be an ISO UTC timestamp ending in Z.");
+        var reviewedBy = RequiredString(value, "reviewedBy");
+        if (!WorkbenchReviewContracts.ValidReviewer(reviewedBy))
+            throw new InvalidDataException("review reviewedBy must be Operator or a task key.");
+        var note = RequiredString(value, "note");
+        var supersededBy = StringArrayStrict(value, "supersededBy");
+        var error = WorkbenchReviewContracts.Validate(verdict, supersededBy, note);
+        if (error != null) throw new InvalidDataException($"Review {error}");
+        return new WorkbenchReviewProjection(verdict, supersededBy, reviewedAt, reviewedBy, note);
+    }
+
+    private static string[] StringArrayStrict(JsonElement obj, string name)
+    {
+        if (!obj.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.Array
+            || value.EnumerateArray().Any(item => item.ValueKind != JsonValueKind.String))
+            throw new InvalidDataException($"{name} must be an array of strings.");
+        return value.EnumerateArray().Select(item => item.GetString()!).ToArray();
+    }
+
     /// <summary>
     /// Projects a stored decision receipt. <paramref name="lifecycleState"/> is
     /// null for schema v1 descriptors, which have no lifecycle field: the
@@ -1146,8 +1183,27 @@ public sealed class WorkbenchCatalogueService
             items[index] = item with
             {
                 Documentation = WorkbenchDocumentationPolicy.Evaluate(item.Status, references.Values),
+                ReviewDue = ReviewDue(item.Review, references, referenceIndex),
             };
         }
+    }
+
+    private bool ReviewDue(
+        WorkbenchReviewProjection? review,
+        IReadOnlyDictionary<string, WorkbenchDocumentationReference> references,
+        TaskReferenceIndex referenceIndex)
+    {
+        if (review == null) return false;
+        if (!DateTimeOffset.TryParse(review.ReviewedAt, out var reviewedAt)) return false;
+        var cards = references.Keys.Select(key =>
+        {
+            var task = referenceIndex.Resolve(key);
+            return new WorkbenchReviewRelatedCard(
+                task != null,
+                task?.State,
+                task?.EnteredLaneAt ?? default);
+        }).ToArray();
+        return WorkbenchReviewPolicy.IsDue(reviewedAt, DateTimeOffset.UtcNow, _reviewDueDays, cards);
     }
 
     private static bool IsUtcLifecycleTimestamp(string value, out DateTimeOffset parsed)
@@ -1180,7 +1236,15 @@ public record WorkbenchListItem(string Id, string Title, string Summary, string 
     /// </summary>
     public int OpenDecisionCount { get; init; }
     public WorkbenchDocumentationProjection? Documentation { get; init; }
+    public WorkbenchReviewProjection? Review { get; init; }
+    public bool ReviewDue { get; init; }
 }
+public sealed record WorkbenchReviewProjection(
+    string Verdict,
+    string[] SupersededBy,
+    string ReviewedAt,
+    string ReviewedBy,
+    string Note);
 public record WorkbenchTaskReferences(
     string ProjectName,
     string WorkbenchKey,

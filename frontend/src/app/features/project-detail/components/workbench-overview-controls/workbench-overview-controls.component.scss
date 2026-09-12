@@ -5,6 +5,7 @@
 
 .overview-controls {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
   min-width: 0;
   border-top: 1px solid var(--studio-border);
@@ -29,7 +30,8 @@
     flex: 1 1 17rem;
     max-width: 28rem;
 
-    input {
+    input,
+    select {
       width: 100%;
       min-height: 2rem;
       box-sizing: border-box;
@@ -44,9 +46,10 @@
       &::placeholder { color: var(--studio-fg-dim); }
       &:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 1px; }
     }
+    select { cursor: pointer; }
   }
 
-  &__sort { flex: 0 1 auto; }
+  &__sort { flex: 1 1 100%; }
 
   &__segments {
     display: flex;
@@ -54,6 +57,8 @@
     border: 1px solid var(--studio-border);
     border-radius: var(--studio-card-compact-radius);
     overflow-x: auto;
+    width: fit-content;
+    max-width: 100%;
 
     button {
       display: inline-flex;

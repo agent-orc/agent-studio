@@ -213,4 +213,47 @@ describe('WorkbenchViewerHeaderComponent', () => {
     fixture.destroy();
     http.verify();
   });
+
+  it('records a relevance review through the Dossier endpoint', async () => {
+    await TestBed.configureTestingModule({
+      imports: [WorkbenchViewerHeaderComponent],
+      providers: [
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        { provide: TaskService, useValue: { getReferenceStatuses: () => of([]) } },
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(WorkbenchViewerHeaderComponent);
+    fixture.componentRef.setInput('projectName', 'Agent Studio');
+    fixture.componentRef.setInput('document', DOCUMENT);
+    fixture.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/projects/Agent%20Studio/workbenches/AGT-W4/references').flush({
+      projectName: 'Agent Studio', workbenchKey: 'AGT-W4', workbenchId: 'viewer-header', legacyTaskKeys: [], items: [],
+    });
+
+    (fixture.nativeElement.querySelector('[data-testid="workbench-record-review"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    const form = fixture.nativeElement.querySelector('[data-testid="workbench-review-form"]') as HTMLFormElement;
+    const verdict = form.querySelector('[data-testid="workbench-review-verdict"]') as HTMLSelectElement;
+    verdict.value = 'superseded';
+    verdict.dispatchEvent(new Event('change'));
+    const keys = form.querySelector('[data-testid="workbench-review-superseded-by"]') as HTMLInputElement;
+    keys.value = 'AGT-W51';
+    keys.dispatchEvent(new Event('input'));
+    const note = form.querySelector('[data-testid="workbench-review-note"]') as HTMLTextAreaElement;
+    note.value = 'A newer Dossier owns this decision.';
+    note.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    (form.querySelector('[data-testid="workbench-review-save"]') as HTMLButtonElement).click();
+
+    const request = http.expectOne('/api/projects/Agent%20Studio/workbenches/viewer-header/review');
+    expect(request.request.method).toBe('PUT');
+    expect(request.request.body).toEqual({
+      verdict: 'superseded', supersededBy: ['AGT-W51'], reviewedBy: 'Operator', note: 'A newer Dossier owns this decision.',
+    });
+    request.flush({ success: true, workbenchId: 'viewer-header', review: request.request.body, revision: 'abc', error: null, errorCode: null });
+    fixture.destroy();
+    http.verify();
+  });
 });

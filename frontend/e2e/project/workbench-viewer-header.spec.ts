@@ -97,6 +97,16 @@ const DEFAULT_DOSSIER: DossierFixture = {
   </main></body></html>`,
 };
 
+function reviewMetadata() {
+  return {
+    verdict: 'partially-superseded',
+    supersededBy: ['VHE-W8'],
+    reviewedAt: '2026-09-09T10:00:00Z',
+    reviewedBy: 'AGT-2784',
+    note: 'The compact host remains current; the older action layout is superseded.',
+  };
+}
+
 function scrollingDossierFixture(
   metadata: Omit<DossierFixture, 'html'>,
   sectionCount: number,
@@ -339,6 +349,8 @@ async function installMocks(
             sourceTaskKeys: [],
             relatedTaskKeys: ['VHE-12', 'VHE-13'],
             openDecisionCount: 3,
+            review: reviewMetadata(),
+            reviewDue: false,
           },
         },
       ],
@@ -364,6 +376,8 @@ async function installMocks(
             error: null,
             sourceTaskKeys: [],
             relatedTaskKeys: ['VHE-12', 'VHE-13'],
+            review: reviewMetadata(),
+            reviewDue: false,
           },
         ],
       }),
@@ -394,6 +408,8 @@ async function installMocks(
           error: null,
           sourceTaskKeys: [],
           relatedTaskKeys: ['VHE-12', 'VHE-13'],
+          review: reviewMetadata(),
+          reviewDue: false,
         },
         html: dossier.html,
         branch: 'task/compact-viewer-header',
@@ -659,10 +675,17 @@ test('compact viewer head centers controls and exposes honest live status with o
   await expect(page.getByTestId('workbench-viewer-stale-as-of')).toContainText(
     'Updates paused · as of',
   );
+  await expect(page.getByTestId('workbench-review-tag')).toContainText('partially superseded');
+  await page.getByTestId('workbench-review-tag').hover();
+  await expect(page.getByTestId('workbench-review-tooltip')).toContainText('Reviewed by: AGT-2784');
+  await page.mouse.move(2, 2);
+  await page.getByTestId('workbench-record-review').click();
+  await expect(page.getByTestId('workbench-review-form')).toBeVisible();
+  await page.getByTestId('workbench-review-note').fill('The compact header remains current.');
   await page.getByTestId('workbench-viewer-task-VHE-11').hover();
   const laneTooltip = page.getByTestId('workbench-viewer-task-VHE-11-tooltip');
   await expect(laneTooltip).toContainText(primaryTask.title);
-  await expect(laneTooltip).toContainText('In progress · Viewer Header Evidence');
+  await expect(laneTooltip).toContainText('In Progress · Viewer Header Evidence');
   await expect(laneTooltip).toContainText('develop: merged · main: open');
   const laneTooltipBox = await laneTooltip.boundingBox();
   const initialViewport = page.viewportSize();
@@ -723,6 +746,7 @@ test('compact viewer head centers controls and exposes honest live status with o
   }
 
   await page.setViewportSize({ width: 1700, height: 1000 });
+  await page.getByRole('button', { name: 'Close review form' }).click();
   await page.getByTestId('workbench-viewer-details-trigger').click();
   const details = page.getByTestId('workbench-viewer-details-popover');
   await expect(details).toBeVisible();
