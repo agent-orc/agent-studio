@@ -153,6 +153,18 @@ public class CliInvocationCentralizationGuardTests
             + "car|legacy; a new RUNNER_CLI_TYPE knob was deliberately not added so this ratchet can "
             + "reach empty). AGT-2373 removes the trio."),
 
+        new("runner/RemoteRunnerDaemon.cs",
+            LegacyLayer
+            + "AGT-2778 invokes the host-owned agent-runner-deploy update-clis boundary through sudo; "
+            + "the allowlisted script installs only Task Server-pinned packages and never starts an "
+            + "agent run. AGT-2373 decides the permanent non-run process boundary."),
+
+        new("runner/RunnerCapabilityProbe.cs",
+            LegacyLayer
+            + "AGT-2778 directly runs --version while building the host capability snapshot; this is "
+            + "a bounded read-only installation probe, not an agent run. AGT-2373 decides the permanent "
+            + "non-run probe boundary."),
+
         new("runner/Program.cs",
             LegacyLayer
             + "Operator help text naming the RUNNER_CLI_* knobs. Goes away together with the knobs in AGT-2373."),

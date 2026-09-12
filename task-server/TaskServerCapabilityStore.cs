@@ -190,6 +190,7 @@ public sealed partial class TaskServerStore
                 }),
                 ct);
         }, ct);
+        await EvaluateHostCliPolicyAsync(request.RunnerId, actorId, ct);
         return (await ListRunnerCapabilitySnapshotsAsync(ct))
             .Single(item => string.Equals(item.RunnerId, request.RunnerId, StringComparison.Ordinal));
     }
@@ -491,7 +492,12 @@ public sealed partial class TaskServerStore
                 projectPolicy,
                 runner.RoleMaxParallelism,
                 RestartedAt: restartedAt,
-                ReviewsLost: reviewsLost));
+                ReviewsLost: reviewsLost,
+                InstalledClis: InstalledCliProjection.FromCapabilities(
+                    capabilities,
+                    _options.CodexCliTargetVersion,
+                    _options.ClaudeCliTargetVersion),
+                CliUpdate: await ReadHostCliUpdateAsync(connection, null, runner.HostId, ct)));
         }
         return result;
     }

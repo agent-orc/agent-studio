@@ -2420,7 +2420,8 @@ public sealed class V1ReviewExecutorRegistry
                         state?.Telemetry,
                         RoleMaxParallelism: registration.RoleMaxParallelism,
                         RestartedAt: restart?.RestartedAt,
-                        ReviewsLost: restart?.ReviewsLost ?? 0);
+                        ReviewsLost: restart?.ReviewsLost ?? 0,
+                        InstalledClis: Contract.InstalledCliProjection.FromCapabilities(capabilities));
                 })
                 .ToArray();
         }

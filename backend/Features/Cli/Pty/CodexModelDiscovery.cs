@@ -292,14 +292,23 @@ public sealed class CodexModelDiscovery
     /// current registry and the currently installed CLI.
     /// </summary>
     internal static CliModelCatalog WithKnownButUnavailableModels(CliModelCatalog cat, string? cliVersion)
-        => cat with
-        {
-            Models = ModelMetadataRegistry.AppendUnavailableRegistryEntries(
+    {
+        var models = ModelMetadataRegistry.AppendUnavailableRegistryEntries(
                 cat.Models,
                 vendor: "openai",
                 cliType: CliTypes.Codex,
-                availabilityNote: ModelMetadataRegistry.UnavailableOnInstalledCliNote(CliLabel, cliVersion))
+                availabilityNote: ModelMetadataRegistry.UnavailableOnInstalledCliNote(CliLabel, cliVersion));
+        return cat with
+        {
+            Models = models.Select(model => model.Available ? model : model with
+            {
+                AvailabilityNote = ModelMetadataRegistry.UnavailableOnInstalledCliNote(
+                    CliLabel,
+                    cliVersion,
+                    model.Id)
+            }).ToList()
         };
+    }
 
     /// <summary>
     /// Registry-backed static catalog used when the codex CLI cannot be queried

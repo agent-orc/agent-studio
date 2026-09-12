@@ -26,6 +26,13 @@ readonly review_unit="agent-runner-review.service"
 readonly -a review_env_files=(/etc/agent-runner/runner-review.env /etc/agent-runner/review.env)
 readonly default_review_state_dir="/var/lib/agent-runner-review/state"
 readonly agent_host_binary="$current_link/agent-host"
+readonly cli_root="/opt/agent-cli"
+readonly cli_releases_root="$cli_root/releases"
+readonly cli_current_link="$cli_root/current"
+readonly npm_binary="/usr/bin/npm"
+readonly codex_launcher="/usr/local/bin/codex"
+readonly claude_launcher="/usr/local/bin/claude"
+readonly provider_auth_file="/etc/agent-runner/provider-auth.env"
 force_restart=0
 review_guard_state_dir=""
 review_guard_main_pid=""
@@ -288,6 +295,113 @@ clear_review_drain_state() {
   rm -f -- \
     "$state_dir/review-drain-requested.json" \
     "$state_dir/review-drain-acknowledged.json"
+}
+
+validate_cli_version() {
+  [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] \
+    || die "CLI target version must be a full semantic version"
+}
+
+probe_staged_cli() {
+  local prefix="$1"
+  local binary="$2"
+  local line=""
+  local key=""
+  local value=""
+  local -a probe_environment=(
+    "HOME=$(getent passwd "$service_user" | cut -d: -f6)"
+    "PATH=$prefix/node_modules/.bin:$PATH"
+  )
+  shift 2
+  if [[ -f "$provider_auth_file" && ! -L "$provider_auth_file" ]]; then
+    while IFS= read -r line; do
+      key="${line%%=*}"
+      [[ "$key" == "CLAUDE_CODE_OAUTH_TOKEN" || "$key" == "ANTHROPIC_API_KEY" ]] || continue
+      value="$(strip_environment_quotes "${line#*=}")"
+      probe_environment+=("$key=$value")
+    done <"$provider_auth_file"
+  fi
+  timeout --signal=TERM --kill-after=2s "${smoke_timeout_seconds}s" \
+    runuser -u "$service_user" -- env -i \
+      "${probe_environment[@]}" \
+      "$prefix/node_modules/.bin/$binary" "$@" >/dev/null
+}
+
+# Install only the two product-owned agent CLI packages. npm writes into an
+# immutable staging prefix; version, login, and model probes all run before the
+# one symlink flip, so a failed install or probe leaves the previous release in
+# place. The semantic-version arguments are independently constrained here and
+# by the exact sudoers command shipped with each product release.
+update_clis() {
+  local codex_version="$1"
+  local claude_version="$2"
+  validate_cli_version "$codex_version"
+  validate_cli_version "$claude_version"
+  [[ -x "$npm_binary" ]] || die "npm is not executable: $npm_binary"
+
+  local release_id="codex-$codex_version--claude-$claude_version"
+  local release_root="$cli_releases_root/$release_id"
+  local staging_root="$cli_releases_root/.staging.$release_id.$$"
+  local previous_target=""
+  local previous_review_main_pid="0"
+  local previous_codex_link=""
+  local previous_claude_link=""
+  [[ ! -e "$release_root" ]] || die "CLI release already exists: $release_root"
+  install -d -o root -g root -m 0755 "$cli_root" "$cli_releases_root"
+  install -d -o root -g root -m 0755 "$staging_root"
+  trap '[[ -z "${staging_root:-}" ]] || rm -rf --one-file-system -- "$staging_root"' EXIT
+
+  "$npm_binary" install --prefix "$staging_root" --ignore-scripts=false --no-save -- \
+    "@openai/codex@$codex_version" \
+    "@anthropic-ai/claude-code@$claude_version"
+  chown -R root:root "$staging_root"
+  find "$staging_root" -type d -exec chmod a+rx {} +
+  [[ -x "$staging_root/node_modules/.bin/codex" ]] || die "staged codex launcher is missing"
+  [[ -x "$staging_root/node_modules/.bin/claude" ]] || die "staged claude launcher is missing"
+
+  probe_staged_cli "$staging_root" codex --version
+  probe_staged_cli "$staging_root" claude --version
+  probe_staged_cli "$staging_root" codex login status
+  probe_staged_cli "$staging_root" claude auth status
+  probe_staged_cli "$staging_root" codex debug models
+  probe_staged_cli "$staging_root" claude models
+  assert_review_restart_is_safe "$agent_host_binary"
+  previous_review_main_pid="$(unit_main_pid "$review_unit")" \
+    || die "could not query the review unit MainPID before CLI activation"
+
+  previous_target="$(readlink -f -- "$cli_current_link" 2>/dev/null || true)"
+  if [[ -z "$previous_target" ]]; then
+    [[ -L "$codex_launcher" && -L "$claude_launcher" ]] \
+      || die "first managed CLI activation requires the existing npm launchers to be symbolic links"
+    previous_codex_link="$(readlink -- "$codex_launcher")"
+    previous_claude_link="$(readlink -- "$claude_launcher")"
+  fi
+  mv -- "$staging_root" "$release_root"
+  trap - EXIT
+  ln -sfnT "$release_root" "$cli_current_link"
+  ln -sfnT "$cli_current_link/node_modules/.bin/codex" "$codex_launcher"
+  ln -sfnT "$cli_current_link/node_modules/.bin/claude" "$claude_launcher"
+
+  if ! systemctl restart agent-runner.service \
+      || ! restart_unit_and_wait_for_new_main_pid \
+          "$review_unit" "$previous_review_main_pid" >/dev/null; then
+    if [[ -n "$previous_target" && -d "$previous_target" ]]; then
+      ln -sfnT "$previous_target" "$cli_current_link"
+    else
+      rm -f -- "$cli_current_link"
+      ln -sfnT "$previous_codex_link" "$codex_launcher"
+      ln -sfnT "$previous_claude_link" "$claude_launcher"
+    fi
+    rm -rf --one-file-system -- "$release_root"
+    systemctl restart agent-runner.service || true
+    best_effort_replace_unit "$review_unit"
+    die "CLI activation failed; the previous CLI release was restored"
+  fi
+
+  logger -p authpriv.notice -t agent-runner-deploy \
+    "action=update-clis codex=$codex_version claude=$claude_version previous=${previous_target:-none} result=activated" || true
+  printf 'agent-runner-deploy: updated codex to %s and claude to %s\n' \
+    "$codex_version" "$claude_version"
 }
 
 # RefuseManualStop blocks systemctl stop/restart for Review. The sanctioned
@@ -802,6 +916,9 @@ main() {
     1:restart-review)
       restart_review_unit
       ;;
+    3:update-clis)
+      update_clis "$2" "$3"
+      ;;
     2:restart-review)
       [[ "$2" == "--force" ]] || die "unknown Review restart flag: $2"
       force_restart=1
@@ -816,7 +933,7 @@ main() {
       configure_role "$2" "$3" "$4"
       ;;
     *)
-      die "usage: agent-runner-deploy [--force] | drain | restart-review [--force] | config <coding|review> RUNNER_MAX_PARALLELISM <1-6> [--force]"
+      die "usage: agent-runner-deploy [--force] | drain | restart-review [--force] | update-clis <codex-version> <claude-version> | config <coding|review> RUNNER_MAX_PARALLELISM <1-6> [--force]"
       ;;
   esac
 }

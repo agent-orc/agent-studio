@@ -111,6 +111,7 @@ export class RemoteHostCardComponent {
   readonly setup = output<RemoteHost>();
   readonly expandedChange = output<boolean>();
   readonly expandedSections = signal<readonly DetailSection[]>([]);
+  readonly relativeHeartbeat = relativeHeartbeat;
 
   readonly liveLoading = computed(() => this.host().liveDataState === 'loading');
   readonly liveError = computed(() => this.host().liveDataState === 'error');
@@ -243,6 +244,19 @@ export class RemoteHostCardComponent {
   });
   readonly unavailableAuthCount = computed(() =>
     this.providerAuthBadges().filter(auth => auth.state === 'unavailable').length);
+  readonly cliDriftCount = computed(() => this.host().installedClis?.filter(cli => cli.isBelowTarget).length ?? 0);
+  readonly cliUpdateActive = computed(() => ['draining', 'ready', 'upgrading', 'probing']
+    .includes(this.host().cliUpdate?.state ?? ''));
+  readonly cliUpdateLabel = computed(() => {
+    const update = this.host().cliUpdate;
+    if (!update) return null;
+    const elapsed = Math.max(0, this.now() - Date.parse(update.requestedAt));
+    const elapsedLabel = elapsed < 60_000 ? `${Math.floor(elapsed / 1000)}s`
+      : elapsed < 3_600_000 ? `${Math.floor(elapsed / 60_000)}m` : `${Math.floor(elapsed / 3_600_000)}h`;
+    if (update.state === 'draining') return `Draining · ${update.activeSlots} active · ${elapsedLabel} elapsed`;
+    if (update.state === 'ready') return 'Drained · waiting for the host updater';
+    return `${update.state} · ${elapsedLabel} elapsed`;
+  });
   readonly totalActiveSlots = computed(() => this.roles()
     .reduce((total, role) => total + this.activeSlotsFor(role), 0));
   readonly identitySummary = computed(() => {
@@ -254,6 +268,7 @@ export class RemoteHostCardComponent {
   readonly capabilitySummary = computed(() => {
     const ok = this.healthyCapabilityCount();
     const unavailable = this.unavailableAuthCount();
+    if (this.cliDriftCount()) return `${ok} capabilities ok · ${this.cliDriftCount()} CLI update due`;
     if (unavailable) return `${ok} capabilities ok · ${unavailable} auth unavailable`;
     return `${ok} ${ok === 1 ? 'capability' : 'capabilities'} ok`;
   });

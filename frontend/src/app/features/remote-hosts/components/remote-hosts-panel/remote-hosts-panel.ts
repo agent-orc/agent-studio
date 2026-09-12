@@ -226,6 +226,8 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
       case 'pause-link': this.service.pauseLink(evt.id); break;
       case 'resume-link': this.service.resumeLink(evt.id); break;
       case 'drain': this.service.drain(evt.id); break;
+      case 'update-clis': this.service.updateClis(evt.id); break;
+      case 'cancel-cli-update': this.service.cancelCliUpdate(evt.id); break;
       case 'revive': this.service.revive(evt.id); break;
     }
   }

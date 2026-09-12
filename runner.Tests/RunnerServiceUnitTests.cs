@@ -363,6 +363,20 @@ public sealed class RunnerServiceUnitTests
     }
 
     [Fact]
+    public void Agent_runner_cli_update_uses_fixed_packages_staging_probes_and_rollback()
+    {
+        var result = RunShellScript(
+            "runner.Tests/Fixtures/agent-runner-deploy-cli-update.sh",
+            Path.Combine(RepoRoot(), "deploy", "agent-host", "agent-runner-deploy"));
+
+        Assert.True(result.ExitCode == 0, result.StandardError);
+        Assert.Contains("packages=fixed-codex-and-claude", result.StandardOutput);
+        Assert.Contains("staged-probes=version-login-models", result.StandardOutput);
+        Assert.Contains("activation=atomic-symlink", result.StandardOutput);
+        Assert.Contains("failed-probe=previous-release-retained", result.StandardOutput);
+    }
+
+    [Fact]
     public void Review_guard_uses_the_candidate_and_the_active_process_state_directory()
     {
         PlatformGate.LinuxOnly("the restart guard resolves /proc/<pid>/environ");

@@ -353,6 +353,7 @@ public sealed class RemoteRunnerDaemon
             }
         }
         var consecutiveFaults = 0;
+        var cliUpdateAttempted = false;
         while (!shutdown.IsCancellationRequested)
         {
             idleWatchdog.RecordActiveSlots(active.Count);
@@ -369,6 +370,67 @@ public sealed class RemoteRunnerDaemon
             try
             {
                 await handoffRecovery.RecoverAllAsync(shutdown);
+                var cliUpdate = await _client.GetCliUpdateAsync(shutdown);
+                if (cliUpdate is not null)
+                {
+                    var advertised = RunnerCapabilityProbe.Advertise(
+                        _options,
+                        gitCapability.CanPush,
+                        gitCapability.CanPushWorkflows,
+                        gitCapability.Detail,
+                        connectivity: connectivity.Snapshot);
+                    var targetsInstalled = advertised.Any(item =>
+                            item.Key == AgentStudio.TaskServer.Contracts.CapabilityProtocol.CliExecution("codex")
+                            && item.Version == cliUpdate.CodexTargetVersion)
+                        && advertised.Any(item =>
+                            item.Key == AgentStudio.TaskServer.Contracts.CapabilityProtocol.CliExecution("claude")
+                            && item.Version == cliUpdate.ClaudeTargetVersion);
+                    if (cliUpdate.State == AgentStudio.TaskServer.Contracts.CliUpdateStates.Upgrading && targetsInstalled)
+                    {
+                        await _client.RecordCliUpdateResultAsync(
+                            AgentStudio.TaskServer.Contracts.CliUpdateStates.Probing,
+                            "Replacement daemon found both target versions; login and model probes passed during staged activation.",
+                            shutdown);
+                        await _client.RecordCliUpdateResultAsync(
+                            AgentStudio.TaskServer.Contracts.CliUpdateStates.Succeeded,
+                            "Replacement daemon reported both target versions after version, login, and model probes.",
+                            shutdown);
+                        cliUpdateAttempted = false;
+                    }
+                    else if ((cliUpdate.State == AgentStudio.TaskServer.Contracts.CliUpdateStates.Ready
+                              || cliUpdate.State == AgentStudio.TaskServer.Contracts.CliUpdateStates.Upgrading)
+                             && active.Count == 0
+                             && _options.Role == "coding"
+                             && !cliUpdateAttempted)
+                    {
+                        cliUpdateAttempted = true;
+                        if (cliUpdate.State == AgentStudio.TaskServer.Contracts.CliUpdateStates.Ready)
+                            await _client.RecordCliUpdateResultAsync(
+                                AgentStudio.TaskServer.Contracts.CliUpdateStates.Upgrading,
+                                "Host is drained; starting the allowlisted pinned package update.",
+                                shutdown);
+                        var update = await ProcessRunner.RunAsync(
+                            "sudo",
+                            ["-n", "/usr/local/sbin/agent-runner-deploy", "update-clis",
+                                cliUpdate.CodexTargetVersion, cliUpdate.ClaudeTargetVersion],
+                            ct: shutdown);
+                        if (!update.Success)
+                        {
+                            await _client.RecordCliUpdateResultAsync(
+                                AgentStudio.TaskServer.Contracts.CliUpdateStates.Failed,
+                                $"Allowlisted CLI update failed with exit {update.ExitCode}: {update.StdErr.Trim()}",
+                                shutdown);
+                        }
+                    }
+                    if (cliUpdate.State is AgentStudio.TaskServer.Contracts.CliUpdateStates.Draining
+                        or AgentStudio.TaskServer.Contracts.CliUpdateStates.Ready
+                        or AgentStudio.TaskServer.Contracts.CliUpdateStates.Upgrading
+                        or AgentStudio.TaskServer.Contracts.CliUpdateStates.Probing)
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(_options.PollSeconds), shutdown);
+                        continue;
+                    }
+                }
                 if (DateTime.UtcNow >= nextCapabilityAdvertisement)
                 {
                     var capabilityTelemetry = TakeTelemetry();

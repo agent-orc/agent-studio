@@ -259,6 +259,20 @@ public static class TaskServerEndpoints
             CancellationToken ct)
             => await InvokeAsync(() => store.ReportRunnerOutboxAsync(
                 runnerId, request, Actor(context), ct)));
+        runners.MapGet("/{runnerId}/cli-update", async (
+            string runnerId,
+            string instanceId,
+            TaskServerStore store,
+            CancellationToken ct)
+            => await InvokeNullableAsync(() => store.GetRunnerCliUpdateAsync(runnerId, instanceId, ct)));
+        runners.MapPost("/{runnerId}/cli-update/result", async (
+            HttpContext context,
+            string runnerId,
+            HostCliUpdateResultRequest request,
+            TaskServerStore store,
+            CancellationToken ct)
+            => await InvokeAsync(() => store.RecordRunnerCliUpdateResultAsync(
+                runnerId, request, Actor(context), ct)));
         runners.MapPost("/{runnerId}/review-claims", async (
             HttpContext context, string runnerId, ReviewClaimRequest request, TaskServerStore store, CancellationToken ct) =>
         {
@@ -584,6 +598,31 @@ public static class TaskServerEndpoints
             TaskServerStore store,
             CancellationToken ct)
             => await InvokeAsync(() => store.RequestOperatorHostDrainAsync(
+                hostId, request, Actor(context), ct)));
+        management.MapPost("/remote-hosts/{hostId}/cli-update", async (
+            HttpContext context,
+            string hostId,
+            TaskServerStore store,
+            CancellationToken ct)
+            => await InvokeAsync(() => store.RequestHostCliUpdateAsync(hostId, Actor(context), ct)));
+        management.MapPost("/remote-hosts/{hostId}/cli-update/cancel", async (
+            HttpContext context,
+            string hostId,
+            TaskServerStore store,
+            CancellationToken ct)
+            => await InvokeAsync(() => store.CancelHostCliUpdateAsync(hostId, Actor(context), ct)));
+        management.MapGet("/remote-hosts/{hostId}/cli-update", async (
+            string hostId,
+            TaskServerStore store,
+            CancellationToken ct)
+            => await InvokeNullableAsync(() => store.GetHostCliUpdateAsync(hostId, ct)));
+        management.MapPost("/remote-hosts/{hostId}/cli-update/result", async (
+            HttpContext context,
+            string hostId,
+            HostCliUpdateResultRequest request,
+            TaskServerStore store,
+            CancellationToken ct)
+            => await InvokeAsync(() => store.RecordHostCliUpdateResultAsync(
                 hostId, request, Actor(context), ct)));
         management.MapPost("/remote-hosts/{hostId}/automatic-drain/clear", async (
             HttpContext context,
