@@ -45,6 +45,60 @@ public sealed class RunnerServiceUnitTests
     }
 
     [Fact]
+    public void Review_unit_refuses_direct_manual_stop_through_a_review_only_drop_in()
+    {
+        var guardPath = Path.Combine(
+            RepoRoot(),
+            "deploy",
+            "agent-host",
+            "systemd",
+            "20-agent-runner-review-restart-guard.conf");
+        var guard = File.ReadAllLines(guardPath)
+            .Select(line => line.Trim())
+            .ToArray();
+        var staticCodingUnit = File.ReadAllText(
+            Path.Combine(RepoRoot(), "deploy", "systemd", "agent-host.service"));
+        var migration = File.ReadAllText(
+            Path.Combine(RepoRoot(), "scripts", "harden-agent-runner-host.sh"));
+        var onboarding = File.ReadAllText(
+            Path.Combine(RepoRoot(), "scripts", "remote-runner-onboard.sh"));
+
+        Assert.Contains("[Unit]", guard);
+        Assert.Contains("RefuseManualStop=true", guard);
+        Assert.Contains("[Service]", guard);
+        Assert.Contains("Restart=on-failure", guard);
+        Assert.DoesNotContain("RefuseManualStop", staticCodingUnit, StringComparison.Ordinal);
+        Assert.Contains("restart_guard_source", migration, StringComparison.Ordinal);
+        Assert.Contains(
+            "/etc/systemd/system/agent-runner-review.service.d/20-agent-runner-review-restart-guard.conf",
+            migration,
+            StringComparison.Ordinal);
+        Assert.Contains("--property=RefuseManualStop --value", migration, StringComparison.Ordinal);
+        Assert.Contains("--property=Restart --value", migration, StringComparison.Ordinal);
+        Assert.Contains(
+            "/etc/systemd/system/${service_name}.service.d/20-agent-runner-review-restart-guard.conf",
+            onboarding,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "Review service %s did not adopt RefuseManualStop=true",
+            onboarding,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "Review service %s did not adopt Restart=on-failure",
+            onboarding,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "--restart-guard --hold-admission --role review",
+            onboarding,
+            StringComparison.Ordinal);
+        Assert.True(
+            onboarding.IndexOf("--restart-guard --hold-admission", StringComparison.Ordinal)
+            < onboarding.IndexOf(
+                "systemctl kill --kill-whom=main --signal=SIGTERM",
+                StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Agent_host_unit_uses_the_atomic_current_release_path()
     {
         var content = File.ReadAllText(Path.Combine(RepoRoot(), "deploy", "systemd", "agent-host.service"));
@@ -122,9 +176,33 @@ public sealed class RunnerServiceUnitTests
 
         Assert.Contains("releases_root=\"$tool_root/releases\"", content);
         Assert.Contains("dotnet tool install --tool-path \"$stage_root\"", content);
-        Assert.Contains("ln -sfnT \"$release_root\" \"$tool_root/current\"", content);
+        Assert.Contains("ln -sfnT \"$release_root\" \"$tool_root/candidate\"", content);
+        Assert.Contains("ln -sfnT \"$candidate_release\" \"$tool_root/current\"", content);
         Assert.Contains("ExecStart=$agent_host_root/current/$runner_command --poll", content);
         Assert.DoesNotContain("dotnet tool update --global", content);
+
+        var stopped = content.IndexOf("((daemon_stopped == 1))", StringComparison.Ordinal);
+        var reviewPromotion = content.IndexOf(
+            "ln -sfnT \"$candidate_release\" \"$tool_root/current\"",
+            stopped,
+            StringComparison.Ordinal);
+        var reviewStart = content.IndexOf(
+            "sudo systemctl start \"$service_name\"",
+            reviewPromotion,
+            StringComparison.Ordinal);
+        var codingPromotion = content.LastIndexOf(
+            "ln -sfnT \"$candidate_release\" \"$tool_root/current\"",
+            StringComparison.Ordinal);
+        var codingRestart = content.IndexOf(
+            "sudo systemctl restart \"$service_name\"",
+            codingPromotion,
+            StringComparison.Ordinal);
+
+        Assert.True(stopped >= 0);
+        Assert.True(reviewPromotion > stopped);
+        Assert.True(reviewStart > reviewPromotion);
+        Assert.True(codingPromotion > reviewStart);
+        Assert.True(codingRestart > codingPromotion);
     }
 
     [Fact]
@@ -180,6 +258,10 @@ public sealed class RunnerServiceUnitTests
         Assert.DoesNotContain("NOPASSWD: ALL", content);
         Assert.DoesNotContain("*", content);
         Assert.Contains("/usr/local/sbin/agent-runner-deploy \"\"", content);
+        Assert.Contains("/usr/local/sbin/agent-runner-deploy restart-review", content);
+        Assert.Contains("/usr/bin/systemctl restart agent-runner.service", content);
+        Assert.DoesNotContain("systemctl restart agent-runner-review.service", content);
+        Assert.DoesNotContain("agent-runner-deploy --force", content);
         Assert.Equal(
             12,
             CountOccurrences(
@@ -199,7 +281,18 @@ public sealed class RunnerServiceUnitTests
 
         Assert.Contains("source \"$config_policy\"", helper);
         Assert.Contains("mv -fT -- \"$candidate_file\" \"$config_env_file\"", helper);
-        Assert.Contains("systemctl restart \"$AGENT_RUNNER_CONFIG_UNIT\"", helper);
+        Assert.Contains("restart_unit_and_wait_for_new_main_pid", helper);
+        Assert.Contains("wait_for_unit_inactive", helper);
+        Assert.Contains("drained and stopped", helper);
+        Assert.DoesNotContain("drained and replaced", helper);
+        Assert.Contains(
+            "systemctl kill --kill-whom=main --signal=SIGTERM \"$unit\"",
+            helper);
+        Assert.Contains("systemctl start \"$unit\"", helper);
+        Assert.DoesNotContain("systemctl restart agent-runner-review.service", helper);
+        Assert.Contains("readonly agent_host_binary=\"$current_link/agent-host\"", helper);
+        Assert.Contains("1:restart-review)", helper);
+        Assert.Contains("2:restart-review)", helper);
         Assert.Contains("/proc/$main_pid/environ", helper);
         Assert.Contains("result=$result", helper);
         Assert.Contains("rollback_config", helper);
@@ -232,6 +325,8 @@ public sealed class RunnerServiceUnitTests
         Assert.Contains("main-unit-default-RUNNER_MAX_PARALLELISM=2", result.StandardOutput);
         Assert.Contains("role-EnvironmentFile-RUNNER_MAX_PARALLELISM=6", result.StandardOutput);
         Assert.Contains("effective-RUNNER_MAX_PARALLELISM=6", result.StandardOutput);
+        Assert.Contains("review-control=signal-main", result.StandardOutput);
+        Assert.Contains("inactive-review-control=start", result.StandardOutput);
     }
 
     [Fact]
@@ -243,12 +338,21 @@ public sealed class RunnerServiceUnitTests
             "\"$deps_closure_validator\" \"$staging_root/agent-host.deps.json\"",
             StringComparison.Ordinal);
         var smokeCheck = helper.IndexOf("./agent-host --version", StringComparison.Ordinal);
+        var reviewGuard = helper.LastIndexOf(
+            "assert_review_restart_is_safe",
+            StringComparison.Ordinal);
         var currentFlip = helper.IndexOf(
             "ln -sfnT \"$release_root\" \"$current_link\"",
             StringComparison.Ordinal);
 
         Assert.True(closureValidation >= 0);
         Assert.True(smokeCheck > closureValidation);
+        Assert.True(reviewGuard > smokeCheck);
+        Assert.True(reviewGuard < currentFlip);
+        Assert.Contains(
+            "assert_review_restart_is_safe \"$staging_root/agent-host\"",
+            helper,
+            StringComparison.Ordinal);
         Assert.True(currentFlip > smokeCheck);
         Assert.Contains("runuser -u \"$service_user\"", helper);
         Assert.Contains("timeout --signal=TERM", helper);
@@ -256,6 +360,23 @@ public sealed class RunnerServiceUnitTests
         Assert.Contains("systemctl show --property=NRestarts", helper);
         Assert.Contains("previous release:", helper);
         Assert.Contains("rollback command:", helper);
+    }
+
+    [Fact]
+    public void Review_guard_uses_the_candidate_and_the_active_process_state_directory()
+    {
+        PlatformGate.LinuxOnly("the restart guard resolves /proc/<pid>/environ");
+
+        var result = RunShellScript(
+            "runner.Tests/Fixtures/agent-runner-deploy-review-guard.sh",
+            Path.Combine(RepoRoot(), "deploy", "agent-host", "agent-runner-deploy"));
+
+        Assert.True(result.ExitCode == 0, result.StandardError);
+        Assert.Contains("candidate-used=true", result.StandardOutput);
+        Assert.Contains("legacy-current-used=false", result.StandardOutput);
+        Assert.Contains("candidate-guard-args=--restart-guard --hold-admission", result.StandardOutput);
+        Assert.Contains("live-state-dir=", result.StandardOutput);
+        Assert.Contains("inactive-loaded-state-dir=", result.StandardOutput);
     }
 
     [Fact]

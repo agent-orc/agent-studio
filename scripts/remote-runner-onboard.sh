@@ -230,7 +230,9 @@ else
   mv "$stage_root" "$release_root"
 fi
 stage_root=""
-ln -sfnT "$release_root" "$tool_root/current"
+# Candidate is not a service-consumed path. The systemd phase moves current
+# only after an active Review daemon acknowledges closed claim admission.
+ln -sfnT "$release_root" "$tool_root/candidate"
 
 command -v npm >/dev/null || { echo '[remote] Node.js/npm is missing. Install Node 22, then retry.' >&2; exit 33; }
 if ! npm install --global @openai/codex @anthropic-ai/claude-code; then
@@ -301,9 +303,17 @@ printf '[onboarding] phase=systemd Writing configuration and enabling the OS-own
 resource_governance_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/agent-host-resource-governance.sh"
 [[ -x "$resource_governance_script" ]] \
   || die "The agent-host resource governance helper is missing or not executable: $resource_governance_script"
+review_restart_guard="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/deploy/agent-host/systemd/20-agent-runner-review-restart-guard.conf"
 "${ssh_base[@]}" -T "$host" \
   'helper_tmp="$(mktemp)"; trap '"'"'rm -f "$helper_tmp"'"'"' EXIT; cat >"$helper_tmp"; chmod 0755 "$helper_tmp"; sudo install -d -m 0755 /usr/local/libexec; sudo install -m 0755 "$helper_tmp" /usr/local/libexec/agent-host-resource-governance' \
   <"$resource_governance_script"
+if [[ "$role" == "review" ]]; then
+  [[ -f "$review_restart_guard" ]] \
+    || die "The Review restart guard is missing: $review_restart_guard"
+  "${ssh_base[@]}" -T "$host" \
+    'guard_tmp="$(mktemp)"; trap '"'"'rm -f "$guard_tmp"'"'"' EXIT; cat >"$guard_tmp"; sudo install -d -m 0755 /usr/local/libexec; sudo install -m 0644 "$guard_tmp" /usr/local/libexec/agent-runner-review-restart-guard.conf' \
+    <"$review_restart_guard"
+fi
 "${ssh_base[@]}" -T "$host" bash -s -- \
   "$server_url" "$client_id" "$runner_id" "$runner_name" "$role" "$git_remote" "$git_push_remote" "$runner_command" "$auth_token_file" "$service_auth" "$provider_auth_file" <<'REMOTE_SYSTEMD'
 set -euo pipefail
@@ -318,16 +328,23 @@ runner_command="$8"
 auth_token_file="$9"
 service_auth="${10}"
 provider_auth_file="${11}"
+restart_guard_source="/usr/local/libexec/agent-runner-review-restart-guard.conf"
 export PATH="$HOME/.dotnet/tools:$HOME/.local/bin:$PATH"
 runner_user="$(id -un)"
 runner_group="$(id -gn)"
 runner_home="$HOME"
 tool_root="$runner_home/.local/share/agent-host-tools"
-runner_bin="$tool_root/current/$runner_command"
+candidate_release="$(readlink -f -- "$tool_root/candidate")"
+runner_bin="$candidate_release/$runner_command"
 agent_host_root="/opt/agent-host"
 legacy_root="/opt/agent-runner"
 [[ -x "$runner_bin" ]] || {
   printf '[remote] Immutable runner release is missing command %s: %s\n' "$runner_command" "$runner_bin" >&2
+  exit 42
+}
+[[ "$(dirname -- "$candidate_release")" == "$tool_root/releases" ]] || {
+  printf '[remote] Candidate runner release escaped the immutable release root: %s\n' \
+    "$candidate_release" >&2
   exit 42
 }
 
@@ -449,15 +466,110 @@ if [[ -f /etc/systemd/system/agent-runner.service && ! -L /etc/systemd/system/ag
   sudo systemctl stop agent-runner.service || true
 fi
 sudo install -m 0644 "$unit_tmp" "/etc/systemd/system/${service_name}.service"
+if [[ "$role" == "review" ]]; then
+  sudo install -d -m 0755 "/etc/systemd/system/${service_name}.service.d"
+  sudo install -m 0644 \
+    "$restart_guard_source" \
+    "/etc/systemd/system/${service_name}.service.d/20-agent-runner-review-restart-guard.conf"
+fi
 sudo systemctl daemon-reload
 sudo systemctl enable "$service_name"
-sudo systemctl restart "$service_name"
-sleep 2
+previous_main_pid="$(sudo systemctl show --property=MainPID --value "$service_name")"
+[[ "$previous_main_pid" =~ ^[0-9]+$ ]] || {
+  printf '[remote] Service %s returned an invalid MainPID before replacement.\n' "$service_name" >&2
+  exit 47
+}
+if [[ "$role" == "review" ]]; then
+  refuse_manual_stop="$(sudo systemctl show --property=RefuseManualStop --value "$service_name")"
+  [[ "$refuse_manual_stop" == "yes" ]] || {
+    printf '[remote] Review service %s did not adopt RefuseManualStop=true.\n' "$service_name" >&2
+    exit 48
+  }
+  restart_policy="$(sudo systemctl show --property=Restart --value "$service_name")"
+  [[ "$restart_policy" == "on-failure" ]] || {
+    printf '[remote] Review service %s did not adopt Restart=on-failure.\n' "$service_name" >&2
+    exit 49
+  }
+  if [[ "$previous_main_pid" =~ ^[1-9][0-9]*$ ]] \
+      && sudo systemctl is-active --quiet "$service_name"; then
+    live_state_dir="$(
+      sudo cat "/proc/$previous_main_pid/environ" \
+        | tr '\0' '\n' \
+        | awk -F= '$1 == "RUNNER_STATE_DIR" { print substr($0, index($0, "=") + 1) }'
+    )"
+    [[ -n "$live_state_dir" && "$live_state_dir" == /* && "$live_state_dir" != "/" ]] || {
+      printf '[remote] Could not resolve the active Review RUNNER_STATE_DIR; replacement refused.\n' >&2
+      exit 50
+    }
+    guard_status=0
+    env -i PATH="$PATH" \
+      "$runner_bin" --restart-guard --hold-admission --role review \
+      --state-dir "$live_state_dir" || guard_status="$?"
+    ((guard_status == 0)) || {
+      printf '[remote] Review replacement guard refused (exit %s). Drain first with agent-runner-deploy drain.\n' \
+        "$guard_status" >&2
+      exit 50
+    }
+    guarded_main_pid="$(sudo systemctl show --property=MainPID --value "$service_name")"
+    [[ "$guarded_main_pid" == "$previous_main_pid" ]] \
+        && sudo systemctl is-active --quiet "$service_name" || {
+      printf '[remote] Review MainPID changed before guarded replacement; admission remains closed.\n' >&2
+      exit 50
+    }
+    # RefuseManualStop rejects stop/restart. Signal only the main daemon and
+    # wait for its successful handoff exit before explicitly starting the next
+    # generation. Review's on-failure policy leaves a completed drain stopped.
+    sudo systemctl kill --kill-whom=main --signal=SIGTERM "$service_name"
+    daemon_stopped=0
+    for _ in $(seq 1 120); do
+      active_state="$(sudo systemctl show --property=ActiveState --value "$service_name")"
+      candidate_main_pid="$(sudo systemctl show --property=MainPID --value "$service_name")"
+      if [[ "$active_state" != "active" \
+          && "$active_state" != "activating" \
+          && "$candidate_main_pid" == "0" ]]; then
+        daemon_stopped=1
+        break
+      fi
+      sleep 1
+    done
+    ((daemon_stopped == 1)) || {
+      printf '[remote] Review service %s did not stop cleanly before replacement.\n' "$service_name" >&2
+      exit 50
+    }
+  fi
+  ln -sfnT "$candidate_release" "$tool_root/current"
+  # An explicit install/update resumes a previously drained role only after
+  # the old daemon is confirmed gone.
+  sudo rm -f -- \
+    "$service_root/state/review-drain-requested.json" \
+    "$service_root/state/review-drain-acknowledged.json"
+  if [[ -n "${live_state_dir:-}" && "$live_state_dir" != "$service_root/state" ]]; then
+    sudo rm -f -- \
+      "$live_state_dir/review-drain-requested.json" \
+      "$live_state_dir/review-drain-acknowledged.json"
+  fi
+  sudo systemctl start "$service_name"
+else
+  ln -sfnT "$candidate_release" "$tool_root/current"
+  sudo systemctl restart "$service_name"
+fi
+
+main_pid=""
+for _ in $(seq 1 120); do
+  if sudo systemctl is-active --quiet "$service_name"; then
+    candidate_main_pid="$(sudo systemctl show --property=MainPID --value "$service_name")"
+    if [[ "$candidate_main_pid" =~ ^[1-9][0-9]*$ \
+        && "$candidate_main_pid" != "$previous_main_pid" ]]; then
+      main_pid="$candidate_main_pid"
+      break
+    fi
+  fi
+  sleep 1
+done
 sudo systemctl is-enabled "$service_name"
 sudo systemctl is-active "$service_name"
-main_pid="$(sudo systemctl show --property=MainPID --value "$service_name")"
 [[ "$main_pid" =~ ^[1-9][0-9]*$ ]] || {
-  printf '[remote] Service %s did not expose a running MainPID.\n' "$service_name" >&2
+  printf '[remote] Service %s did not expose a replacement MainPID.\n' "$service_name" >&2
   exit 43
 }
 provider_variables="$(sudo cat "/proc/${main_pid}/environ" | tr '\0' '\n' \

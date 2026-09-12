@@ -22,9 +22,12 @@ public sealed partial class TaskServerStore
     // settings/state), plus the workbench (Dossier) orchestrator-context kind
     // and its opaque workbench_key column (AGT-2725); see
     // ApplyWorkbenchContextMigrationAsync for the existing-table rebuild.
+    // so a replacement daemon can re-fence a detached worker in place.
+    // 18 persists review daemon restart observations and their lost-review
+    // counts for the 24-hour execution-host projection.
     // The migration block is idempotent; the number guards downgrades from
     // binaries that do not know this state.
-    public const int CurrentSchemaVersion = 16;
+    public const int CurrentSchemaVersion = 18;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -40,6 +43,8 @@ public sealed partial class TaskServerStore
     private readonly TaskServerOptions _options;
     private readonly TimeProvider _clock;
     private readonly IResultFinalizationSummaryGenerator _resultSummaries;
+    private readonly ITaskServerEventPublisher? _operationalEvents;
+    private readonly ILogger<TaskServerStore>? _logger;
     private readonly SemaphoreSlim _writeGate = new(1, 1);
     private readonly DateTime _startedAt;
     private static readonly JsonSerializerOptions OutcomeJson = CreateOutcomeJson();
@@ -51,7 +56,12 @@ public sealed partial class TaskServerStore
         new Dictionary<string, int>(StringComparer.Ordinal);
 
     public TaskServerStore(IOptions<TaskServerOptions> options, TimeProvider clock)
-        : this(options, clock, new ApplicationResultFinalizationSummaryGenerator())
+        : this(
+            options,
+            clock,
+            new ApplicationResultFinalizationSummaryGenerator(),
+            operationalEvents: null,
+            logger: null)
     {
     }
 
@@ -59,10 +69,22 @@ public sealed partial class TaskServerStore
         IOptions<TaskServerOptions> options,
         TimeProvider clock,
         IResultFinalizationSummaryGenerator resultSummaries)
+        : this(options, clock, resultSummaries, operationalEvents: null, logger: null)
+    {
+    }
+
+    public TaskServerStore(
+        IOptions<TaskServerOptions> options,
+        TimeProvider clock,
+        IResultFinalizationSummaryGenerator resultSummaries,
+        ITaskServerEventPublisher? operationalEvents,
+        ILogger<TaskServerStore>? logger)
     {
         _options = options.Value;
         _clock = clock;
         _resultSummaries = resultSummaries;
+        _operationalEvents = operationalEvents;
+        _logger = logger;
         _startedAt = UtcNow;
     }
 
@@ -600,13 +622,15 @@ public sealed partial class TaskServerStore
         }
 
         var id = StableOrGeneratedId(runnerId, "rnr");
-        var now = Iso(UtcNow);
+        var registeredAt = UtcNow;
+        var now = Iso(registeredAt);
         var bootstrapMaxParallelism = Math.Clamp(request.BootstrapMaxParallelism, 1, 256);
         var managesCodingCapacity = capabilities.Contains(
             ReviewCapabilities.CodingExecutor,
             StringComparer.Ordinal);
         RuntimeCapacitySettingsDto? runtimeCapacity = null;
         IReadOnlyList<RunnerAttemptAdoption> attemptAdoptions = [];
+        List<TaskServerOperationalEvent> operationalEvents = [];
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
             var existingCapabilitiesJson = Convert.ToString(
@@ -617,10 +641,22 @@ public sealed partial class TaskServerStore
                     transaction,
                     ("$id", id)),
                 CultureInfo.InvariantCulture);
+            var previousInstanceId = Convert.ToString(
+                await ScalarAsync(
+                    connection,
+                    "SELECT instance_id FROM runners WHERE id = $id;",
+                    ct,
+                    transaction,
+                    ("$id", id)),
+                CultureInfo.InvariantCulture);
+            var existingIsReviewExecutor = false;
             if (!string.IsNullOrWhiteSpace(existingCapabilitiesJson))
             {
                 var existingCapabilities =
                     JsonSerializer.Deserialize<string[]>(existingCapabilitiesJson) ?? [];
+                existingIsReviewExecutor = existingCapabilities.Contains(
+                    ReviewCapabilities.ReviewExecutor,
+                    StringComparer.Ordinal);
                 var existingExecutorRole = ExecutorRole(existingCapabilities);
                 var requestedExecutorRole = ExecutorRole(capabilities);
                 var changesExecutorRole = existingExecutorRole is not null
@@ -706,6 +742,157 @@ public sealed partial class TaskServerStore
                 activeAttempts,
                 request.AttemptLeaseTtlSeconds,
                 ct);
+            var isReviewRestart = existingIsReviewExecutor
+                                  && capabilities.Contains(
+                                      ReviewCapabilities.ReviewExecutor,
+                                      StringComparer.Ordinal)
+                                  && !string.IsNullOrWhiteSpace(previousInstanceId)
+                                  && !string.Equals(
+                                      previousInstanceId,
+                                      request.InstanceId.Trim(),
+                                      StringComparison.Ordinal);
+            if (isReviewRestart)
+            {
+                var reviewAttempts = new List<ReviewRestartAttemptObservation>();
+                foreach (var adoption in attemptAdoptions.Where(item => string.Equals(
+                             item.Kind,
+                             RunnerAttemptKinds.Review,
+                             StringComparison.Ordinal)))
+                {
+                    var task = await ResolveReviewRestartTaskAsync(
+                        connection,
+                        transaction,
+                        adoption.TaskKey,
+                        ct);
+                    reviewAttempts.Add(new ReviewRestartAttemptObservation(
+                        adoption.AttemptId,
+                        task.TaskKey,
+                        adoption.Status,
+                        adoption.Message ?? "no server detail",
+                        task.ProjectId,
+                        task.TaskId));
+                }
+                var reportedReviewAttemptIds = activeAttempts
+                    .Where(item => string.Equals(
+                        item.Kind,
+                        RunnerAttemptKinds.Review,
+                        StringComparison.Ordinal))
+                    .Select(item => item.AttemptId)
+                    .ToHashSet(StringComparer.Ordinal);
+                reviewAttempts.AddRange(await ReadUnreportedReviewRestartAttemptsAsync(
+                    connection,
+                    transaction,
+                    id,
+                    request.HostId.Trim(),
+                    reportedReviewAttemptIds,
+                    ct));
+                var lostAttempts = reviewAttempts
+                    .Where(IsDefinitiveReviewRestartLoss)
+                    .ToArray();
+                await ExecuteAsync(connection, """
+                    INSERT INTO runner_review_restarts(
+                        runner_id, instance_id, restarted_at, reviews_lost)
+                    VALUES ($runner, $instance, $at, $lost)
+                    ON CONFLICT(runner_id) DO UPDATE SET
+                        instance_id = excluded.instance_id,
+                        restarted_at = excluded.restarted_at,
+                        reviews_lost = excluded.reviews_lost;
+                    """, ct, transaction,
+                    ("$runner", id),
+                    ("$instance", request.InstanceId.Trim()),
+                    ("$at", now),
+                    ("$lost", lostAttempts.Length));
+                var attemptSummary = reviewAttempts.Count == 0
+                    ? "none"
+                    : string.Join(
+                        ", ",
+                        reviewAttempts.Select(item =>
+                            $"{item.AttemptId}:{item.TaskKey}:{item.Status}"));
+                var restartDetail = new
+                {
+                    audience = "supervisor",
+                    runnerId = id,
+                    hostId = request.HostId.Trim(),
+                    previousInstanceId,
+                    instanceId = request.InstanceId.Trim(),
+                    restartedAt = registeredAt,
+                    reviewsLost = lostAttempts.Length,
+                    cause = "runner-instance-generation-changed",
+                    attempts = reviewAttempts.Select(item => new
+                    {
+                        attemptId = item.AttemptId,
+                        taskKey = item.TaskKey,
+                        status = item.Status,
+                        cause = item.Cause,
+                    }).ToArray(),
+                    message = $"Review daemon '{id}' restarted as instance "
+                              + $"'{request.InstanceId.Trim()}'. Attempts={attemptSummary}; "
+                              + "cause=runner instance generation changed.",
+                };
+                await AuditAsync(
+                    connection,
+                    transaction,
+                    actorId,
+                    "review-daemon.restarted",
+                    "runner",
+                    id,
+                    JsonSerializer.Serialize(restartDetail),
+                    ct);
+                await AppendStudioStreamEventAsync(
+                    connection,
+                    transaction,
+                    "review-daemon.restarted",
+                    projectId: null,
+                    taskId: null,
+                    payload: restartDetail,
+                    occurredAt: registeredAt,
+                    ct: ct);
+                operationalEvents.Add(new TaskServerOperationalEvent(
+                    "review-daemon.restarted",
+                    registeredAt,
+                    EffectiveActor(actorId),
+                    restartDetail));
+
+                foreach (var lost in lostAttempts)
+                {
+                    var lossDetail = new
+                    {
+                        audience = "supervisor",
+                        runnerId = id,
+                        hostId = request.HostId.Trim(),
+                        instanceId = request.InstanceId.Trim(),
+                        attemptId = lost.AttemptId,
+                        taskKey = lost.TaskKey,
+                        status = lost.Status,
+                        cause = lost.Cause,
+                        message = $"Review attempt {lost.AttemptId} for card {lost.TaskKey} was lost "
+                                  + $"during daemon restart. status={lost.Status}; cause={lost.Cause}.",
+                    };
+                    await AuditAsync(
+                        connection,
+                        transaction,
+                        actorId,
+                        "review-attempt.lost-on-restart",
+                        "review-attempt",
+                        lost.AttemptId,
+                        JsonSerializer.Serialize(lossDetail),
+                        ct);
+                    await AppendStudioStreamEventAsync(
+                        connection,
+                        transaction,
+                        "review-attempt.lost-on-restart",
+                        lost.ProjectId,
+                        lost.TaskId,
+                        lossDetail,
+                        registeredAt,
+                        ct);
+                    operationalEvents.Add(new TaskServerOperationalEvent(
+                        "review-attempt.lost-on-restart",
+                        registeredAt,
+                        EffectiveActor(actorId),
+                        lossDetail));
+                }
+            }
             if (activeAttempts.Count > 0)
             {
                 var activeSlots = attemptAdoptions.Count(item =>
@@ -754,6 +941,7 @@ public sealed partial class TaskServerStore
                         string.Equals(item.Status, "adopted", StringComparison.Ordinal)),
                 }), ct);
         }, ct);
+        await PublishOperationalEventsAsync(operationalEvents, ct);
         return new RunnerDto(id, request.Name.Trim(), request.HostId.Trim(), request.InstanceId.Trim(), request.RunnerVersion,
             request.ProtocolVersion, "active", Parse(now), Parse(now), runtimeCapacity, attemptAdoptions);
     }
@@ -847,7 +1035,8 @@ public sealed partial class TaskServerStore
         CancellationToken ct)
     {
         await using var command = Command(connection, """
-            SELECT task_id, status, executor_id, instance_id, host_id, lease_id, fence
+            SELECT task_id, status, executor_id, instance_id, host_id, lease_id, fence,
+                   expires_at
               FROM review_attempts
              WHERE id = $attempt;
             """, transaction, ("$attempt", reported.AttemptId));
@@ -861,8 +1050,11 @@ public sealed partial class TaskServerStore
         var leaseHost = reader.IsDBNull(4) ? null : reader.GetString(4);
         var leaseId = reader.IsDBNull(5) ? null : reader.GetString(5);
         var fence = reader.GetInt64(6);
+        var currentExpiresAt = reader.IsDBNull(7) ? (DateTime?)null : Parse(reader.GetString(7));
         await reader.DisposeAsync();
-        if (status is not ("leased" or "process-unknown") || leaseId is null)
+        if (status is not ("leased" or "process-unknown")
+            || leaseId is null
+            || currentExpiresAt is null)
             return Adoption(reported, "invalid-state", $"ReviewAttempt is {status}.");
         if (!string.Equals(taskKey, reported.TaskKey, StringComparison.Ordinal)
             || !string.Equals(executorId, runnerId, StringComparison.Ordinal)
@@ -874,14 +1066,17 @@ public sealed partial class TaskServerStore
         {
             return Adoption(reported, "stale-authority", "ReviewAttempt authority does not match the durable server record.");
         }
+        var adoptedExpiresAt = currentExpiresAt.Value > expiresAt
+            ? currentExpiresAt.Value
+            : expiresAt;
         await ExecuteAsync(connection, """
             UPDATE review_attempts
                SET status = 'leased', expires_at = $expires
              WHERE id = $attempt;
             """, ct, transaction,
-            ("$expires", Iso(expiresAt)),
+            ("$expires", Iso(adoptedExpiresAt)),
             ("$attempt", reported.AttemptId));
-        return Adoption(reported, "adopted", expiresAt: expiresAt);
+        return Adoption(reported, "adopted", expiresAt: adoptedExpiresAt);
     }
 
     private static RunnerAttemptAdoption Adoption(
@@ -890,6 +1085,111 @@ public sealed partial class TaskServerStore
         string? message = null,
         DateTime? expiresAt = null)
         => new(reported.Kind, reported.AttemptId, reported.TaskKey, status, expiresAt, message);
+
+    private static async Task<ReviewRestartTaskReference> ResolveReviewRestartTaskAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string reportedTaskKey,
+        CancellationToken ct)
+    {
+        await using var command = Command(connection, """
+            SELECT id, project_id, task_key
+              FROM tasks
+             WHERE id = $identity
+                OR task_key = $identity COLLATE NOCASE
+             ORDER BY CASE WHEN id = $identity THEN 0 ELSE 1 END
+             LIMIT 1;
+            """, transaction, ("$identity", reportedTaskKey));
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        return await reader.ReadAsync(ct)
+            ? new ReviewRestartTaskReference(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.GetString(2))
+            : new ReviewRestartTaskReference(null, null, reportedTaskKey);
+    }
+
+    private static async Task<IReadOnlyList<ReviewRestartAttemptObservation>>
+        ReadUnreportedReviewRestartAttemptsAsync(
+            SqliteConnection connection,
+            SqliteTransaction transaction,
+            string runnerId,
+            string hostId,
+            IReadOnlySet<string> reportedAttemptIds,
+            CancellationToken ct)
+    {
+        var missing = new List<ReviewRestartAttemptObservation>();
+        await using var command = Command(connection, """
+            SELECT review.id, task.task_key, task.project_id, task.id,
+                   review.instance_id
+              FROM review_attempts review
+              JOIN tasks task ON task.id = review.task_id
+             WHERE review.executor_id = $runner
+               AND review.host_id = $host
+               AND review.status IN ('leased', 'process-unknown')
+             ORDER BY review.created_at, review.id;
+            """, transaction,
+            ("$runner", runnerId),
+            ("$host", hostId));
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            var attemptId = reader.GetString(0);
+            if (reportedAttemptIds.Contains(attemptId))
+                continue;
+            var taskKey = reader.GetString(1);
+            var leaseInstanceId = reader.IsDBNull(4) ? "unknown" : reader.GetString(4);
+            missing.Add(new ReviewRestartAttemptObservation(
+                attemptId,
+                taskKey,
+                "worker-not-reported",
+                $"Persisted ReviewAttempt worker for lease instance '{leaseInstanceId}' "
+                + "was absent from replacement ActiveAttempts.",
+                reader.GetString(2),
+                reader.GetString(3)));
+        }
+        return missing;
+    }
+
+    private async Task PublishOperationalEventsAsync(
+        IReadOnlyList<TaskServerOperationalEvent> messages,
+        CancellationToken ct)
+    {
+        if (_operationalEvents is null) return;
+        foreach (var message in messages)
+        {
+            try
+            {
+                await _operationalEvents.PublishAsync(message, ct);
+            }
+            catch (Exception exception)
+            {
+                _logger?.LogWarning(
+                    exception,
+                    "task-server operational event publish failed kind={Kind}",
+                    message.Kind);
+            }
+        }
+    }
+
+    private static string EffectiveActor(string actorId)
+        => string.IsNullOrWhiteSpace(actorId) ? "anonymous-local" : actorId;
+
+    private static bool IsDefinitiveReviewRestartLoss(ReviewRestartAttemptObservation observation)
+        => string.Equals(observation.Status, "worker-not-reported", StringComparison.Ordinal);
+
+    private sealed record ReviewRestartTaskReference(
+        string? TaskId,
+        string? ProjectId,
+        string TaskKey);
+
+    private sealed record ReviewRestartAttemptObservation(
+        string AttemptId,
+        string TaskKey,
+        string Status,
+        string Cause,
+        string? ProjectId,
+        string? TaskId);
 
     public async Task<ClaimResponse> ClaimAsync(ClaimRequest request, string actorId, CancellationToken ct)
     {
@@ -2148,6 +2448,7 @@ public sealed partial class TaskServerStore
                      "audit", "principals", "principal_credentials", "fence_counters",
                      "leases", "runners", "review_subjects",
                      "review_attempts", "review_fence_counters", "review_deliveries",
+                     "runner_review_restarts",
                      "result_handoffs", "result_ref_gc",
                      "runner_inventories", "invariant_reports",
                      "runner_reconciliation_actions", "legacy_migration_entities",
@@ -2571,9 +2872,11 @@ public sealed partial class TaskServerStore
                 await ExecuteAsync(connection, """
                     INSERT INTO review_attempts(id, subject_id, task_id, attempt_number, status, executor_id,
                                                 instance_id, host_id, lease_id, fence, acquired_at, expires_at,
-                                                outcome, failure_classification, reported_at, created_at)
+                                                outcome, failure_classification, reported_at, resource_namespace,
+                                                port_base, created_at)
                     VALUES ($id, $subject, $task, $number, $status, $executor, $instance, $host, $lease,
-                            $fence, $acquired, $expires, $outcome, $failure, $reported, $created)
+                            $fence, $acquired, $expires, $outcome, $failure, $reported, $resourceNamespace,
+                            $portBase, $created)
                     ON CONFLICT(id) DO NOTHING;
                     INSERT INTO review_fence_counters(subject_id, last_fence) VALUES ($subject, $fence)
                     ON CONFLICT(subject_id) DO UPDATE SET last_fence = max(last_fence, excluded.last_fence);
@@ -2586,6 +2889,12 @@ public sealed partial class TaskServerStore
                     ("$expires", attempt.Lease is null ? null : Iso(attempt.Lease.ExpiresAt)),
                     ("$outcome", attempt.Outcome), ("$failure", attempt.FailureClassification),
                     ("$reported", attempt.TerminalAt is null ? null : Iso(attempt.TerminalAt.Value)),
+                    ("$resourceNamespace", attempt.Lease is null
+                        ? null
+                        : LegacyReviewResourceNamespace(attempt.AttemptId, attempt.LastFence)),
+                    ("$portBase", attempt.Lease is null
+                        ? null
+                        : LegacyReviewPortBase(attempt.AttemptId, attempt.LastFence)),
                     ("$created", Iso(attempt.CreatedAt)));
             }
 
@@ -4128,6 +4437,17 @@ public sealed partial class TaskServerStore
 
     internal static string DeterministicId(string prefix, string identity)
         => $"{prefix}_{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity))).ToLowerInvariant()[..24]}";
+
+    private static string LegacyReviewResourceNamespace(string attemptId, long fence)
+        => $"review-{new string(attemptId.Select(ch =>
+            char.IsLetterOrDigit(ch) || ch is '-' or '_' ? ch : '-').ToArray()).ToLowerInvariant()}-f{fence}";
+
+    private static int LegacyReviewPortBase(string attemptId, long fence)
+    {
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes($"{attemptId}:{fence}"));
+        var slot = BitConverter.ToUInt16(bytes, 0) % 4000;
+        return 24000 + slot * 8;
+    }
 
     private static string StableOrGeneratedId(string? value, string prefix)
     {

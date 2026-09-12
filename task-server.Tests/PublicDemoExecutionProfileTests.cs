@@ -104,7 +104,7 @@ public sealed class PublicDemoExecutionProfileTests
             {
                 [ExecutionAdmissionPath.Claim] = 4,
                 [ExecutionAdmissionPath.Start] = 5,
-                [ExecutionAdmissionPath.Continue] = 6,
+                [ExecutionAdmissionPath.Continue] = 7,
                 [ExecutionAdmissionPath.Review] = 2,
                 [ExecutionAdmissionPath.Chat] = 4,
                 [ExecutionAdmissionPath.PostStep] = 7,

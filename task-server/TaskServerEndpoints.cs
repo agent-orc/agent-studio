@@ -413,6 +413,30 @@ public static class TaskServerEndpoints
             HttpContext context, string attemptId, ReviewLeaseRenewRequest request, TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.RenewReviewLeaseAsync(attemptId, request, Actor(context), ct)))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
+        reviews.MapPost("/attempts/{attemptId}/reclaim", async (
+            HttpContext context,
+            string attemptId,
+            ReviewReClaimRequest request,
+            TaskServerStore store,
+            CancellationToken ct) =>
+        {
+            var principal = context.TaskServerPrincipal();
+            if (principal is
+                {
+                    Kind: TaskServerPrincipalKinds.Runner,
+                    RunnerId: { } runnerId,
+                }
+                && !string.Equals(runnerId, request.ExecutorId, StringComparison.Ordinal))
+            {
+                return Results.Json(
+                    new ApiError(
+                        "runner-identity-mismatch",
+                        "A Runner principal may re-claim only its bound Runner identity."),
+                    statusCode: StatusCodes.Status403Forbidden);
+            }
+            return await InvokeAsync(() => store.ReClaimReviewAsync(
+                attemptId, request, Actor(context), ct));
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
         reviews.MapPost("/attempts/{attemptId}/report", async (
             HttpContext context, string attemptId, ReviewReportRequest request, TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.ReportReviewAsync(attemptId, request, Actor(context), ct)))

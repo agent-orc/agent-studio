@@ -293,14 +293,27 @@ state.
   and role-configuration boundary. Release promotion retains its fixed
   no-argument ingress. Before the atomic link flip, it validates the selected
   `agent-host.deps.json` runtime-assembly closure and runs the staged binary as
-  the service user under a short timeout. It then restarts the fixed Coding and
-  Review units and detects an immediate crash loop from systemd restart counters;
-  failure output names the previous release and prints the operator rollback
-  command. Role configuration accepts only Coding or Review
+  the service user under a short timeout. It then signals only the Review
+  MainPID, waits for its clean exit, explicitly starts its replacement, restarts
+  the fixed Coding unit, and detects an immediate crash loop from systemd
+  restart counters. A Review-only `RefuseManualStop=true` and
+  `Restart=on-failure` drop-in rejects direct stop and restart while allowing a
+  successful drain to remain stopped. A drain waits for a request-id-matched
+  daemon admission acknowledgement and a readable empty slot census. A guarded
+  replacement first installs a request-ID admission barrier, reads the active
+  daemon's effective state directory from `/proc/<MainPID>/environ`, and keeps
+  that barrier through old-MainPID exit. Release promotion runs the validated
+  staged binary for this check. Startup and Task Server retry loops also honor
+  the host-local control request, so an idle drain does not depend on server
+  availability. The helper clears completed drain state and starts the unit
+  when it is inactive. Failure output names the
+  previous release and
+  prints the operator rollback command. Role configuration accepts only Coding
+  or Review
   `RUNNER_MAX_PARALLELISM` values from 1 through 6, updates an EnvironmentFile
   loaded by that unit, and relies on systemd's documented precedence where
-  `EnvironmentFile=` overrides `Environment=`. It restarts only the mapped
-  unit, waits for an active new MainPID, proves the value through that exact
+  `EnvironmentFile=` overrides `Environment=`. It replaces only the mapped
+  daemon, waits for an active new MainPID, proves the value through that exact
   process's `/proc/<MainPID>/environ`, and journals or rolls back the result. The
   release checks add no sudo command or argument shape.
 - `AttemptAuthorityService` + `RunLeaseService` + `AttemptAuthorityEndpoints`

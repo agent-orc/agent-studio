@@ -65,6 +65,7 @@ public sealed partial class TaskServerStore
                 cleanup_idempotency_key TEXT UNIQUE,
                 cleaned_at TEXT,
                 port_base INTEGER,
+                resource_namespace TEXT,
                 created_at TEXT NOT NULL,
                 UNIQUE(subject_id, attempt_number)
             );
@@ -73,7 +74,14 @@ public sealed partial class TaskServerStore
                 attempt_id TEXT NOT NULL REFERENCES review_attempts(id),
                 operation TEXT NOT NULL,
                 payload_sha256 TEXT NOT NULL,
+                response_json TEXT,
                 created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS runner_review_restarts(
+                runner_id TEXT PRIMARY KEY REFERENCES runners(id) ON DELETE CASCADE,
+                instance_id TEXT NOT NULL,
+                restarted_at TEXT NOT NULL,
+                reviews_lost INTEGER NOT NULL CHECK(reviews_lost >= 0)
             );
             CREATE INDEX IF NOT EXISTS ix_review_attempts_status_created
                 ON review_attempts(status, created_at);
@@ -81,6 +89,38 @@ public sealed partial class TaskServerStore
                 ON review_attempts(subject_id, attempt_number);
             """, ct);
         await AddColumnIfMissingAsync(connection, "review_attempts", "port_base", "INTEGER", ct);
+        await AddColumnIfMissingAsync(connection, "review_attempts", "resource_namespace", "TEXT", ct);
+        await AddColumnIfMissingAsync(connection, "review_deliveries", "response_json", "TEXT", ct);
+        await BackfillReviewResourceNamespacesAsync(connection, ct);
+    }
+
+    private static async Task BackfillReviewResourceNamespacesAsync(
+        SqliteConnection connection,
+        CancellationToken ct)
+    {
+        var missing = new List<(string AttemptId, long Fence)>();
+        await using (var command = Command(connection, """
+            SELECT id, fence
+              FROM review_attempts
+             WHERE lease_id IS NOT NULL
+               AND fence > 0
+               AND (resource_namespace IS NULL OR trim(resource_namespace) = '');
+            """))
+        await using (var reader = await command.ExecuteReaderAsync(ct))
+        {
+            while (await reader.ReadAsync(ct))
+                missing.Add((reader.GetString(0), reader.GetInt64(1)));
+        }
+
+        foreach (var attempt in missing)
+        {
+            await ExecuteAsync(
+                connection,
+                "UPDATE review_attempts SET resource_namespace = $namespace WHERE id = $attempt;",
+                ct,
+                ("$namespace", ResourceNamespace(attempt.AttemptId, attempt.Fence)),
+                ("$attempt", attempt.AttemptId));
+        }
     }
 
     public async Task<ReviewSubjectDto> CreateReviewSubjectAsync(
@@ -291,6 +331,7 @@ public sealed partial class TaskServerStore
                     ?? 23992,
                 CultureInfo.InvariantCulture);
             var portBase = portCursor >= 59992 ? 24000 : portCursor + 8;
+            var resourceNamespace = ResourceNamespace(attempt.AttemptId, fence);
             await SetMetaAsync(connection, transaction, "review_port_cursor",
                 portBase.ToString(CultureInfo.InvariantCulture), ct);
             await ExecuteAsync(connection, """
@@ -301,6 +342,7 @@ public sealed partial class TaskServerStore
                    SET status = 'leased', executor_id = $executor, instance_id = $instance,
                        host_id = $host, lease_id = $lease, fence = $fence,
                        acquired_at = $acquired, expires_at = $expires, port_base = $portBase,
+                       resource_namespace = $resourceNamespace,
                        required_capabilities_json = $requiredCapabilities,
                        canary_capabilities_json = $canaryCapabilities
                  WHERE id = $attempt;
@@ -309,7 +351,8 @@ public sealed partial class TaskServerStore
                 ("$subject", subject.SubjectId), ("$fence", fence), ("$executor", request.ExecutorId),
                 ("$instance", request.InstanceId), ("$host", executor.HostId), ("$lease", leaseId),
                 ("$acquired", Iso(acquired)), ("$expires", Iso(expires)),
-                ("$portBase", portBase), ("$attempt", attempt.AttemptId),
+                ("$portBase", portBase), ("$resourceNamespace", resourceNamespace),
+                ("$attempt", attempt.AttemptId),
                 ("$requiredCapabilities", JsonSerializer.Serialize(capabilityAdmission.Required)),
                 ("$canaryCapabilities", JsonSerializer.Serialize(capabilityAdmission.Canaries)));
             await ReserveCanariesAsync(
@@ -326,7 +369,6 @@ public sealed partial class TaskServerStore
                 HostId = executor.HostId,
                 Fence = fence,
             };
-            var resourceNamespace = ResourceNamespace(attempt.AttemptId, fence);
             var lease = new ReviewLeaseDto(
                 leaseId, attempt.AttemptId, subject.SubjectId, request.ExecutorId,
                 request.InstanceId, executor.HostId, fence, acquired, expires, "active",
@@ -488,13 +530,168 @@ public sealed partial class TaskServerStore
             }
             if (attempt.ExpiresAt <= UtcNow)
                 throw new TaskServerConflictException("review-lease-expired", "Review lease expired and its evidence is fenced off.");
-            var expires = UtcNow.AddSeconds(NormalizeTtl(request.RequestedTtlSeconds));
+            var requestedExpiry = UtcNow.AddSeconds(NormalizeTtl(request.RequestedTtlSeconds));
+            var expires = attempt.ExpiresAt is { } currentExpiry
+                          && currentExpiry > requestedExpiry
+                ? currentExpiry
+                : requestedExpiry;
             await ExecuteAsync(connection, "UPDATE review_attempts SET expires_at = $expires WHERE id = $attempt;",
                 ct, transaction, ("$expires", Iso(expires)), ("$attempt", attemptId));
             await RecordDeliveryAsync(connection, transaction, attemptId, "renew", request.IdempotencyKey, payloadHash, ct);
             result = ToReviewLease(attempt with { ExpiresAt = expires });
             await AuditAsync(connection, transaction, actorId, "review.lease-renewed", "review-attempt", attemptId,
                 JsonSerializer.Serialize(new { request.Fence, expires }), ct);
+        }, ct);
+        return result!;
+    }
+
+    /// <summary>
+    /// Re-fences one review attempt for a replacement instance of the executor
+    /// that owns its detached worker. This is a continuity operation, not a
+    /// queue claim: the previous lease identity must still match exactly, and a
+    /// live leased attempt can never be taken over.
+    /// </summary>
+    public async Task<ReviewClaimResponse> ReClaimReviewAsync(
+        string attemptId,
+        ReviewReClaimRequest request,
+        string actorId,
+        CancellationToken ct)
+    {
+        // Draining closes new queue claims, but must still allow an adopted
+        // worker to repair authority and finish its already-running review.
+        RequireWritable();
+        ValidateReviewReClaimRequest(attemptId, request);
+        ReviewClaimResponse? result = null;
+        await InWriteTransactionAsync(async (connection, transaction) =>
+        {
+            var payloadHash = HashJson(request);
+            var replay = await ReadReviewReClaimDeliveryAsync(
+                connection,
+                transaction,
+                attemptId,
+                request.IdempotencyKey,
+                payloadHash,
+                ct);
+            if (replay is not null)
+            {
+                result = replay;
+                return;
+            }
+
+            // A committed delivery belongs to the authenticated executor, not
+            // to whichever daemon generation is registered now. Exact replay
+            // is therefore resolved above before instance freshness. Any new
+            // mutation still has to prove that its instance is current here.
+            var executor = await ReadReviewExecutorAsync(
+                connection, transaction, request.ExecutorId, request.InstanceId, ct);
+
+            var attempt = await ReadReviewAuthorityAsync(connection, transaction, attemptId, ct);
+            if (!string.Equals(attempt.ExecutorId, request.ExecutorId, StringComparison.Ordinal)
+                || !string.Equals(attempt.HostId, executor.HostId, StringComparison.Ordinal)
+                || !string.Equals(attempt.LeaseId, request.PreviousLeaseId, StringComparison.Ordinal)
+                || attempt.Fence != request.PreviousFence)
+            {
+                throw new TaskServerConflictException(
+                    "stale-review-fence",
+                    "Review executor, host, previous lease, or previous fence does not match current authority.");
+            }
+            if (attempt.LeaseId is null
+                || attempt.AcquiredAt is null
+                || attempt.ExpiresAt is null
+                || string.IsNullOrWhiteSpace(attempt.ResourceNamespace)
+                || attempt.PortBase <= 0
+                || attempt.PortBase > ushort.MaxValue - 7)
+            {
+                throw new TaskServerConflictException(
+                    "review-isolation-authority-missing",
+                    "Review reclaim requires the handed-off lease and its persisted physical isolation authority.");
+            }
+
+            var now = UtcNow;
+            if (string.Equals(attempt.Status, "leased", StringComparison.Ordinal)
+                && attempt.ExpiresAt > now)
+            {
+                throw new TaskServerConflictException(
+                    "review-lease-active",
+                    "An unexpired live review lease cannot be re-claimed.");
+            }
+            if (!string.Equals(attempt.Status, "process-unknown", StringComparison.Ordinal)
+                && !string.Equals(attempt.Status, "leased", StringComparison.Ordinal))
+            {
+                throw new TaskServerConflictException(
+                    "review-reclaim-not-eligible",
+                    $"Review attempt status is '{attempt.Status}' and cannot be re-claimed.");
+            }
+
+            var subject = await ReadReviewSubjectAsync(
+                              connection, transaction, attempt.SubjectId, ct)
+                          ?? throw new KeyNotFoundException("Review subject was not found.");
+            await EnsureReviewSubjectCurrentAsync(connection, transaction, subject, ct);
+            var lastFence = Convert.ToInt64(await ScalarAsync(connection, """
+                SELECT last_fence FROM review_fence_counters WHERE subject_id = $subject;
+                """, ct, transaction, ("$subject", attempt.SubjectId)) ?? 0L, CultureInfo.InvariantCulture);
+            var fence = Math.Max(lastFence, attempt.Fence) + 1;
+            var leaseId = $"rls_{Guid.NewGuid():N}";
+            var expires = now.AddSeconds(request.RequestedTtlSeconds);
+            await ExecuteAsync(connection, """
+                INSERT INTO review_fence_counters(subject_id, last_fence)
+                VALUES ($subject, $fence)
+                ON CONFLICT(subject_id) DO UPDATE SET last_fence = excluded.last_fence;
+                UPDATE review_attempts
+                   SET status = 'leased', executor_id = $executor, instance_id = $instance,
+                       host_id = $host, lease_id = $lease, fence = $fence,
+                       acquired_at = $acquired, expires_at = $expires
+                 WHERE id = $attempt;
+                UPDATE runners SET last_seen_at = $acquired WHERE id = $executor;
+                """, ct, transaction,
+                ("$subject", attempt.SubjectId), ("$fence", fence),
+                ("$executor", request.ExecutorId), ("$instance", request.InstanceId),
+                ("$host", executor.HostId), ("$lease", leaseId),
+                ("$acquired", Iso(now)), ("$expires", Iso(expires)),
+                ("$attempt", attempt.AttemptId));
+
+            var reclaimed = attempt with
+            {
+                Status = "leased",
+                ExecutorId = request.ExecutorId,
+                InstanceId = request.InstanceId,
+                HostId = executor.HostId,
+                LeaseId = leaseId,
+                Fence = fence,
+                AcquiredAt = now,
+                ExpiresAt = expires,
+            };
+            result = new ReviewClaimResponse(
+                "claimed",
+                ToReviewAttempt(reclaimed),
+                Lease: ToReviewLease(reclaimed));
+            var responseJson = JsonSerializer.Serialize(result, ReviewJson);
+            await RecordDeliveryAsync(
+                connection,
+                transaction,
+                attemptId,
+                "reclaim",
+                request.IdempotencyKey,
+                payloadHash,
+                ct,
+                responseJson);
+            await AuditAsync(
+                connection,
+                transaction,
+                actorId,
+                "review.re-claimed",
+                "review-attempt",
+                attemptId,
+                JsonSerializer.Serialize(new
+                {
+                    request.ExecutorId,
+                    request.InstanceId,
+                    previousFence = request.PreviousFence,
+                    fence,
+                    reclaimed.ResourceNamespace,
+                    reclaimed.PortBase,
+                }),
+                ct);
         }, ct);
         return result!;
     }
@@ -736,12 +933,35 @@ public sealed partial class TaskServerStore
             throw new ArgumentException("A visual review plan must require the visual aspect.");
     }
 
+    private void ValidateReviewReClaimRequest(
+        string attemptId,
+        ReviewReClaimRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(attemptId)
+            || string.IsNullOrWhiteSpace(request.ExecutorId)
+            || string.IsNullOrWhiteSpace(request.InstanceId)
+            || string.IsNullOrWhiteSpace(request.PreviousLeaseId)
+            || string.IsNullOrWhiteSpace(request.IdempotencyKey))
+        {
+            throw new ArgumentException(
+                "Attempt, executor, instance, previous lease, and idempotency identities are required.");
+        }
+        if (request.PreviousFence <= 0)
+            throw new ArgumentException("Previous review fence must be positive.");
+        if (request.RequestedTtlSeconds < _options.MinimumLeaseSeconds
+            || request.RequestedTtlSeconds > _options.MaximumLeaseSeconds)
+        {
+            throw new ArgumentException(
+                $"Review lease TTL must be between {_options.MinimumLeaseSeconds} and {_options.MaximumLeaseSeconds} seconds.");
+        }
+    }
+
     private static (string Outcome, string? Classification) ClassifyReviewReport(
         ReviewSubjectDto subject,
         ReviewReportRequest request,
         ReviewAuthorityRow attempt)
     {
-        var resourceNamespace = ResourceNamespace(attempt.AttemptId, attempt.Fence);
+        var resourceNamespace = attempt.ResourceNamespace;
         if (!string.Equals(request.Workspace.ResourceNamespace, resourceNamespace, StringComparison.Ordinal)
             || !string.Equals(request.Environment.ExecutorId, attempt.ExecutorId, StringComparison.Ordinal)
             || !string.Equals(request.Environment.InstanceId, attempt.InstanceId, StringComparison.Ordinal)
@@ -1165,7 +1385,8 @@ public sealed partial class TaskServerStore
             SELECT id, subject_id, task_id, attempt_number, status, executor_id,
                    instance_id, host_id, lease_id, fence, acquired_at, expires_at,
                    report_id, report_sha256, report_idempotency_key, outcome,
-                   failure_classification, summary, reported_at, cleaned_at, port_base
+                   failure_classification, summary, reported_at, cleaned_at, port_base,
+                   resource_namespace, created_at
               FROM review_attempts WHERE id = $attempt;
             """, transaction, ("$attempt", attemptId));
         await using var reader = await command.ExecuteReaderAsync(ct);
@@ -1186,7 +1407,11 @@ public sealed partial class TaskServerStore
             reader.IsDBNull(17) ? null : reader.GetString(17),
             reader.IsDBNull(18) ? null : Parse(reader.GetString(18)),
             reader.IsDBNull(19) ? null : Parse(reader.GetString(19)),
-            reader.IsDBNull(20) ? 0 : reader.GetInt32(20));
+            reader.IsDBNull(20) ? 0 : reader.GetInt32(20),
+            reader.IsDBNull(21)
+                ? ResourceNamespace(reader.GetString(0), reader.GetInt64(9))
+                : reader.GetString(21),
+            Parse(reader.GetString(22)));
     }
 
     private static void ValidateReviewAuthority(
@@ -1212,8 +1437,24 @@ public sealed partial class TaskServerStore
         => new(
             row.LeaseId!, row.AttemptId, row.SubjectId, row.ExecutorId!, row.InstanceId!,
             row.HostId!, row.Fence, row.AcquiredAt!.Value, row.ExpiresAt!.Value,
-            row.Status == "leased" ? "active" : row.Status, ResourceNamespace(row.AttemptId, row.Fence),
+            row.Status == "leased" ? "active" : row.Status, row.ResourceNamespace,
             row.PortBase);
+
+    private static ReviewAttemptDto ToReviewAttempt(ReviewAuthorityRow row)
+        => new(
+            row.AttemptId,
+            row.SubjectId,
+            row.TaskId,
+            row.AttemptNumber,
+            row.Status,
+            row.ExecutorId,
+            row.HostId,
+            row.Fence,
+            row.CreatedAt,
+            row.ReportedAt,
+            row.CleanedAt,
+            row.Outcome,
+            row.FailureClassification);
 
     private static ReviewReportDto ToReviewReport(ReviewAuthorityRow row)
         => new(
@@ -1360,6 +1601,35 @@ public sealed partial class TaskServerStore
         return true;
     }
 
+    private static async Task<ReviewClaimResponse?> ReadReviewReClaimDeliveryAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string attemptId,
+        string idempotencyKey,
+        string payloadHash,
+        CancellationToken ct)
+    {
+        var deliveryKey = $"reclaim:{attemptId}:{idempotencyKey}";
+        await using var command = Command(connection, """
+            SELECT attempt_id, operation, payload_sha256, response_json
+              FROM review_deliveries WHERE delivery_key = $key;
+            """, transaction, ("$key", deliveryKey));
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct)) return null;
+        if (!string.Equals(reader.GetString(0), attemptId, StringComparison.Ordinal)
+            || !string.Equals(reader.GetString(1), "reclaim", StringComparison.Ordinal)
+            || !string.Equals(reader.GetString(2), payloadHash, StringComparison.Ordinal))
+        {
+            throw new TaskServerConflictException(
+                "idempotency-conflict",
+                "Review reclaim idempotency key is bound to a different payload.");
+        }
+        if (reader.IsDBNull(3))
+            throw new InvalidOperationException("Stored review reclaim delivery has no durable response.");
+        return JsonSerializer.Deserialize<ReviewClaimResponse>(reader.GetString(3), ReviewJson)
+               ?? throw new InvalidOperationException("Stored review reclaim response is invalid.");
+    }
+
     private async Task RecordDeliveryAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -1367,14 +1637,16 @@ public sealed partial class TaskServerStore
         string operation,
         string idempotencyKey,
         string payloadHash,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? responseJson = null)
         => await ExecuteAsync(connection, """
             INSERT INTO review_deliveries(
-                delivery_key, attempt_id, operation, payload_sha256, created_at)
-            VALUES ($key, $attempt, $operation, $hash, $now);
+                delivery_key, attempt_id, operation, payload_sha256, response_json, created_at)
+            VALUES ($key, $attempt, $operation, $hash, $response, $now);
             """, ct, transaction,
             ("$key", $"{operation}:{attemptId}:{idempotencyKey}"), ("$attempt", attemptId),
-            ("$operation", operation), ("$hash", payloadHash), ("$now", Iso(UtcNow)));
+            ("$operation", operation), ("$hash", payloadHash), ("$response", responseJson),
+            ("$now", Iso(UtcNow)));
 
     private static void ValidateReviewSubjectReplay(
         ReviewSubjectDto existing,
@@ -1491,5 +1763,7 @@ public sealed partial class TaskServerStore
         string? Summary,
         DateTime? ReportedAt,
         DateTime? CleanedAt,
-        int PortBase);
+        int PortBase,
+        string ResourceNamespace,
+        DateTime CreatedAt);
 }

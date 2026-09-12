@@ -65,9 +65,31 @@ using var sigterm = !OperatingSystem.IsWindows()
         Log(daemonMode
             ? "planned shutdown requested (SIGTERM); stopping claims and flushing durable slot state..."
             : "shutdown requested (SIGTERM); cancelling one-shot run...");
+        if (daemonMode && options.Role == "review")
+        {
+            var busy = ReviewDrainGuard.Inspect(options.StateDir);
+            if (busy.Busy > 0)
+                Log($"{busy.Busy} review slot(s) are busy at shutdown "
+                    + $"({string.Join(", ", busy.BusyAttemptIds)}). {ReviewDrainGuard.DrainHint}");
+        }
         shutdown.Cancel();
     })
     : null;
+
+// Restart guard and drain are host-local operator commands: each closes claim
+// admission through a request-id marker without touching the Task Server.
+// agent-runner-deploy holds the guard marker through old-MainPID exit.
+if (options.RestartGuardOnly || options.DrainOnly)
+{
+    if (options.Role != "review")
+    {
+        Log("--drain and --restart-guard apply to the Remote Review Executor only (--role review).");
+        return 2;
+    }
+    return options.RestartGuardOnly
+        ? await ReviewDrainCommand.RunRestartGuardAsync(options, Log, shutdown.Token)
+        : await ReviewDrainCommand.RunDrainAsync(options, Log, shutdown.Token);
+}
 
 using var client = new TaskServerClient(options);
 
@@ -142,12 +164,25 @@ static void PrintUsage()
           agent-host --task <TASK-KEY> [options]
           agent-host --poll [options]
           agent-host --health-check [--server <url>]
+          agent-host --drain --role review [--drain-timeout-seconds <n>]
+          agent-host --restart-guard --role review [--hold-admission] [--force]
 
         Most configuration comes from environment variables (see the runbook,
         docs/operations/setup/linux-runner-host.md). Command-line flags override:
 
           --health-check          Probe the Task Server and exit (0 reachable,
                                   4 not). Readiness check for the tunnel service.
+          --drain                 Stop claiming reviews, wait for the running
+                                  ones, then stop the daemon (0 drained,
+                                  3 refused/timed out). Start it later through
+                                  the guarded deploy helper.
+          --restart-guard         Report whether stopping now would discard
+                                  review gate work (0 safe, 3 refused).
+          --hold-admission        Keep an accepted restart guard closed until
+                                  the replacement helper stops the old daemon.
+          --force                 Let --restart-guard pass on busy slots.
+          --drain-timeout-seconds <n>
+                                  Drain wait bound     (RUNNER_DRAIN_TIMEOUT_SECONDS, default 3600)
           --version               Print release version and Git SHA, then exit.
           --server <url>          Task Server base URL       (RUNNER_SERVER_URL)
           --runner-id <id>        Stable runner identity     (RUNNER_ID)
