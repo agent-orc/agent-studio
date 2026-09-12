@@ -73,6 +73,7 @@ public static class ProjectSettingsEndpoints
                     executionLocation = ProjectExecutionPolicy.ResolveExecutionLocation(kv.Value),
                     executionRunner = kv.Value.ExecutionRunner,
                     remoteExecutionEnabled = kv.Value.RemoteExecutionEnabled,
+                    benchmarkCapabilityClass = kv.Value.BenchmarkCapabilityClass,
                     orchestratorModel = kv.Value.OrchestratorModel,
                     orchestratorThinkingLevel = kv.Value.OrchestratorThinkingLevel,
                     cliExecutionEngine = defaults.ResolveCliExecutionEngine(kv.Key).ExecutionEngine,

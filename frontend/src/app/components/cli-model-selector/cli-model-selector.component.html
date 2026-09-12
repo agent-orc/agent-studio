@@ -48,6 +48,11 @@
       </span>
     </header>
 
+    @if (betterCandidates().length > 0) {
+      <app-better-model-candidates
+        [candidates]="betterCandidates()" [testidPrefix]="pickerTestidPrefix()"
+        [attr.data-testid]="pickerTestidPrefix() + '-better-candidates'" />
+    }
     @if (cliOptions().length > 0) {
       <section class="model-picker__section">
         <div class="model-picker__section-label">CLI</div>

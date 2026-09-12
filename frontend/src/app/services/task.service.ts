@@ -2044,6 +2044,7 @@ export class TaskService {
           runnerMode: string | null;
           pickupMode: 'auto' | 'manual' | 'paused';
           executionLocation: string;
+          benchmarkCapabilityClass?: string;
           orchestratorModel: string | null;
           buildProfilePickupAllowed?: boolean;
           buildProfile?: { status?: string | null } | null;

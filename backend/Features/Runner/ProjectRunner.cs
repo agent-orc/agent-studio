@@ -1035,34 +1035,51 @@ public class ProjectRunner
     {
         var proj = plan.Projection;
         var warning = plan.ProjectionWarning;
+        var candidates = plan.BetterCandidates ?? [];
+        var candidateNote = string.Join("; ", candidates.Select(candidate => candidate.Note));
         var logLevel = warning is null ? LogLevel.Information : LogLevel.Warning;
         _logger.Log(
             logLevel,
-            "cli_quota_admission_decision jobId={JobId} project={Project} outcome={Outcome} cli={Cli} model={Model} isFallback={IsFallback} projectedPct={Projected} burnPctPerHour={Burn} hoursRemaining={Hours} resetAt={ResetAt} assumedStart={AssumedStart} elapsedFraction={ElapsedFraction} projectionWarning={ProjectionWarning} reason={Reason}",
+            "cli_quota_admission_decision jobId={JobId} project={Project} outcome={Outcome} cli={Cli} model={Model} isFallback={IsFallback} projectedPct={Projected} burnPctPerHour={Burn} hoursRemaining={Hours} resetAt={ResetAt} assumedStart={AssumedStart} elapsedFraction={ElapsedFraction} projectionWarning={ProjectionWarning} reason={Reason} betterCandidates={BetterCandidates}",
             info.Id, ProjectName, plan.Outcome, plan.CliType, plan.Model ?? "<default>", plan.IsFallback,
             proj?.ProjectedUsedPct ?? warning?.ProjectedUsedPct, proj?.BurnRatePctPerHour, proj?.HoursRemaining,
             proj?.ResetAt ?? warning?.ResetAt ?? plan.NextResetAt,
             proj?.AssumedStartAt ?? warning?.AssumedStartAt,
             proj?.ElapsedFraction ?? warning?.ElapsedFraction,
-            warning?.Reason, plan.Reason);
+            warning?.Reason, plan.Reason, candidateNote);
 
         // The healthy "launch primary" decision is the silent normal path; only
         // the load-steering decisions reach the task surface.
-        if (plan.Outcome == QuotaAdmissionOutcome.LaunchPrimary && warning is null) return;
+        if (plan.Outcome == QuotaAdmissionOutcome.LaunchPrimary && warning is null && candidates.Count == 0) return;
 
-        var key = $"{plan.Outcome}|{plan.CliType}|{plan.Model}|{plan.Reason}";
+        var key = $"{plan.Outcome}|{plan.CliType}|{plan.Model}|{plan.Reason}|{candidateNote}";
         lock (_lastAdmissionDecisionByJob)
         {
             if (_lastAdmissionDecisionByJob.TryGetValue(info.Id, out var prev) && prev == key) return;
             _lastAdmissionDecisionByJob[info.Id] = key;
         }
 
-        _chatLog.Append(info, OrchestratorMessageKind.Decision, "[quota-admission] " + plan.Reason);
+        AgentStudio.Pipeline.BetterCandidateDecisionStore.Append(
+            info.FolderPath,
+            new AgentStudio.Pipeline.BetterCandidateDecisionSnapshot
+            {
+                At = DateTime.UtcNow,
+                Model = plan.Model ?? string.Empty,
+                Effort = plan.ThinkingLevel,
+                Source = "local-coding-launch",
+                Candidates = candidates,
+            });
+
+        var decisionSummary = string.IsNullOrWhiteSpace(candidateNote)
+            ? plan.Reason
+            : $"{plan.Reason}. Better candidates: {candidateNote}";
+
+        _chatLog.Append(info, OrchestratorMessageKind.Decision, "[quota-admission] " + decisionSummary);
         _timeline?.Append(
             info.FolderPath,
             TimelineEventKinds.QuotaAdmissionDecision,
             TimelineActors.System,
-            summary: plan.Reason,
+            summary: decisionSummary,
             details: new()
             {
                 ["outcome"] = plan.Outcome.ToString(),
@@ -1077,6 +1094,8 @@ public class ProjectRunner
                 ["assumedStart"] = (proj?.AssumedStartAt ?? warning?.AssumedStartAt)?.ToString("o") ?? string.Empty,
                 ["elapsedFraction"] = (proj?.ElapsedFraction ?? warning?.ElapsedFraction)?.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
                 ["projectionWarning"] = warning?.Reason ?? string.Empty,
+                ["betterCandidates"] = System.Text.Json.JsonSerializer.Serialize(candidates),
+                ["matrixUrl"] = AgentStudio.Pipeline.BetterModelCandidateService.MatrixUrl,
             });
 
         // AGT-2055 req 3 ("+ Feed-Zeile") + req 7: every load-steering decision
@@ -1090,7 +1109,7 @@ public class ProjectRunner
             Kind = OrchestratorLogKinds.Decision,
             Topic = OrchestratorLogTopics.LoadDistribution,
             JobId = info.Id,
-            Summary = plan.Reason,
+            Summary = decisionSummary,
             Reasoning = QuotaAdmissionPlanner.DescribeLoadNumbers(plan),
         });
     }

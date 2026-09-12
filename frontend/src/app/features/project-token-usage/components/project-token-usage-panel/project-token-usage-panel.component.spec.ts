@@ -217,6 +217,55 @@ describe('ProjectTokenUsagePanelComponent (pipeline cost)', () => {
 });
 
 describe('ProjectTokenUsagePanelComponent (freshness)', () => {
+  it('renders the weekly better-candidate usage as a separate line', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ProjectTokenUsagePanelComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+      ],
+    }).compileComponents();
+
+    const fixture = TestBed.createComponent(ProjectTokenUsagePanelComponent);
+    fixture.componentRef.setInput('projectName', 'demo');
+    try { fixture.detectChanges(); } catch { /* pending HTTP, ignore */ }
+    fixture.componentInstance.summary.set({
+      project: 'demo',
+      hasData: true,
+      lifetimeTotalTokens: 42_000,
+      lifetimeJobTokens: 42_000,
+      lifetimeSupportingTokens: 0,
+      lifetimeOrchestratorTokens: 0,
+      lifetimeCalls: 2,
+      last24hTotalTokens: 42_000,
+      last24hJobTokens: 42_000,
+      last24hSupportingTokens: 0,
+      last24hOrchestratorTokens: 0,
+      last24hCalls: 2,
+      last7dTotalTokens: 42_000,
+      last7dJobTokens: 42_000,
+      last7dSupportingTokens: 0,
+      last7dOrchestratorTokens: 0,
+      last7dCalls: 2,
+      last7dBetterCandidateTokens: 31_500,
+      last7dBetterCandidateCostUsd: 1.2345,
+      last7dBetterCandidateCalls: 1,
+      allBetterCandidateModelsPriced: true,
+      firstActivity: '2026-09-12T09:00:00Z',
+      lastActivity: '2026-09-12T10:00:00Z',
+      fetchedAt: '2026-09-12T10:01:00Z',
+      disclaimer: '',
+    });
+    fixture.detectChanges();
+
+    const line = (fixture.nativeElement as HTMLElement)
+      .querySelector('[data-testid="token-usage-better-candidate-line"]');
+    expect(line?.textContent).toContain('31.5k tokens');
+    expect(line?.textContent).toContain('$1.23');
+  });
+
   it('shows the source timestamp and an honest partial-data warning', async () => {
     await TestBed.configureTestingModule({
       imports: [ProjectTokenUsagePanelComponent],

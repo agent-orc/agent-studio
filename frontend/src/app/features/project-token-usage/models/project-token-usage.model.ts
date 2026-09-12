@@ -35,6 +35,10 @@ export interface ProjectTokenUsageSummary {
   last7dSupportingTokens: number;
   last7dOrchestratorTokens: number;
   last7dCalls: number;
+  last7dBetterCandidateTokens?: number;
+  last7dBetterCandidateCostUsd?: number;
+  last7dBetterCandidateCalls?: number;
+  allBetterCandidateModelsPriced?: boolean;
   firstActivity: string | null;
   lastActivity: string | null;
   fetchedAt: string;

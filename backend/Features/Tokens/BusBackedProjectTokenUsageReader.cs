@@ -65,7 +65,12 @@ public sealed class BusBackedProjectTokenUsageReader
     {
         var snapshot = LoadSnapshot(projectName, watchPath);
         var jobsById = BuildJobsById(watchPath);
-        return ProjectTokenUsageService.BuildSummaryFromEntries(projectName, snapshot.Entries, jobsById, nowUtc) with
+        return ProjectTokenUsageService.BuildSummaryFromEntries(
+            projectName,
+            snapshot.Entries,
+            jobsById,
+            nowUtc,
+            ProjectTokenUsageService.LoadBetterCandidateDecisions(jobsById.Values)) with
         {
             Freshness = snapshot.Freshness,
         };

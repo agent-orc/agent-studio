@@ -3,6 +3,12 @@ namespace AgentStudio.Shared;
 public record ProjectSettings
 {
     /// <summary>
+    /// TokenEconomy benchmark capability used for informational candidate
+    /// comparison. Defaults to coding-agent evidence for software projects.
+    /// </summary>
+    public string BenchmarkCapabilityClass { get; init; } = "CodingAgent";
+
+    /// <summary>
     /// Per publish-target automation ladder. Keys are derived target ids
     /// (<c>package:npm</c>, <c>package:nuget</c>, <c>website</c>); values are
     /// <c>manual</c>, <c>suggest</c>, or <c>auto</c>. Missing entries resolve to

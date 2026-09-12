@@ -90,7 +90,9 @@ public class ProjectTokenUsageService
 
         var entries = _log.Read(watchPath);
         var jobsById = BuildJobsById(watchPath);
-        return BuildSummaryFromEntries(projectName, entries, jobsById, nowUtc);
+        return BuildSummaryFromEntries(
+            projectName, entries, jobsById, nowUtc,
+            LoadBetterCandidateDecisions(jobsById.Values));
     }
 
     /// <summary>
@@ -100,7 +102,8 @@ public class ProjectTokenUsageService
         string projectName,
         IReadOnlyList<OrchestratorLogEntry> entries,
         IReadOnlyDictionary<string, TaskInfo> jobsById,
-        DateTime? nowUtc = null)
+        DateTime? nowUtc = null,
+        IReadOnlyDictionary<string, IReadOnlyList<AgentStudio.Pipeline.BetterCandidateDecisionSnapshot>>? betterCandidateDecisions = null)
     {
         var now = (nowUtc ?? DateTime.UtcNow).ToUniversalTime();
         var since24h = now.AddHours(-24);
@@ -117,6 +120,10 @@ public class ProjectTokenUsageService
         int callsLifetime = 0;
         int callsLast24h = 0;
         int callsLast7d = 0;
+        long last7dBetterCandidateTokens = 0;
+        decimal last7dBetterCandidateCostUsd = 0m;
+        int last7dBetterCandidateCalls = 0;
+        var allBetterCandidateModelsPriced = true;
 
         foreach (var entry in entries)
         {
@@ -144,6 +151,22 @@ public class ProjectTokenUsageService
                 last7d.Add(category, total);
                 last7dTotal += total;
                 callsLast7d++;
+                if (HadBetterCandidateAt(entry, ts, betterCandidateDecisions))
+                {
+                    last7dBetterCandidateTokens += total;
+                    last7dBetterCandidateCalls++;
+                    var cost = TokenPricing.Estimate(
+                        u.Model,
+                        u.InputTokens,
+                        u.OutputTokens,
+                        u.CacheReadTokens,
+                        u.CacheCreationTokens,
+                        ts);
+                    if (cost.ModelKnown)
+                        last7dBetterCandidateCostUsd += cost.Total;
+                    else
+                        allBetterCandidateModelsPriced = false;
+                }
             }
         }
 
@@ -166,11 +189,44 @@ public class ProjectTokenUsageService
             Last7dSupportingTokens = last7d.Supporting,
             Last7dOrchestratorTokens = last7d.Orchestrator,
             Last7dCalls = callsLast7d,
+            Last7dBetterCandidateTokens = last7dBetterCandidateTokens,
+            Last7dBetterCandidateCostUsd = last7dBetterCandidateCostUsd,
+            Last7dBetterCandidateCalls = last7dBetterCandidateCalls,
+            AllBetterCandidateModelsPriced = last7dBetterCandidateCalls > 0 && allBetterCandidateModelsPriced,
             FirstActivity = firstAt?.ToString("o"),
             LastActivity = lastAt?.ToString("o"),
             FetchedAt = DateTime.UtcNow.ToString("o"),
             Disclaimer = TokenSummaryService.DefaultDisclaimer,
         };
+    }
+
+    internal static IReadOnlyDictionary<string, IReadOnlyList<AgentStudio.Pipeline.BetterCandidateDecisionSnapshot>>
+        LoadBetterCandidateDecisions(IEnumerable<TaskInfo> jobs)
+    {
+        var result = new Dictionary<string, IReadOnlyList<AgentStudio.Pipeline.BetterCandidateDecisionSnapshot>>(
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var job in jobs.DistinctBy(job => job.Id, StringComparer.OrdinalIgnoreCase))
+        {
+            var decisions = AgentStudio.Pipeline.BetterCandidateDecisionStore.Read(job.FolderPath);
+            if (decisions.Count == 0) continue;
+            result[job.Id] = decisions;
+            if (!string.IsNullOrWhiteSpace(job.TaskKey)) result[job.TaskKey] = decisions;
+            if (!string.IsNullOrWhiteSpace(job.Key)) result[job.Key] = decisions;
+        }
+        return result;
+    }
+
+    private static bool HadBetterCandidateAt(
+        OrchestratorLogEntry entry,
+        DateTime atUtc,
+        IReadOnlyDictionary<string, IReadOnlyList<AgentStudio.Pipeline.BetterCandidateDecisionSnapshot>>? decisionsByJob)
+    {
+        if (decisionsByJob is null || string.IsNullOrWhiteSpace(entry.JobId)) return false;
+        if (!decisionsByJob.TryGetValue(entry.JobId, out var decisions)) return false;
+        var decision = decisions.LastOrDefault(candidate => candidate.At.ToUniversalTime() <= atUtc);
+        if (decision is null || decision.Candidates.Count == 0) return false;
+        return string.IsNullOrWhiteSpace(entry.TokenUsage?.Model)
+               || string.Equals(decision.Model, entry.TokenUsage.Model, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -591,6 +647,11 @@ public sealed record ProjectTokenUsageSummary
     public long Last7dSupportingTokens { get; init; }
     public long Last7dOrchestratorTokens { get; init; }
     public int Last7dCalls { get; init; }
+    /// <summary>Weekly usage launched after a decision that recorded at least one better candidate.</summary>
+    public long Last7dBetterCandidateTokens { get; init; }
+    public decimal Last7dBetterCandidateCostUsd { get; init; }
+    public int Last7dBetterCandidateCalls { get; init; }
+    public bool AllBetterCandidateModelsPriced { get; init; }
     public string? FirstActivity { get; init; }
     public string? LastActivity { get; init; }
     public string FetchedAt { get; init; } = "";

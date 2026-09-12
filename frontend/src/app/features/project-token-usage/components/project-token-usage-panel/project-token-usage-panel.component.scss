@@ -87,6 +87,22 @@
 .tup__card-detail-label { color: var(--studio-fg-muted); }
 .tup__card-detail-value { font-weight: 600; color: var(--studio-fg); font-variant-numeric: tabular-nums; }
 
+.tup__better-route-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--studio-spacing-2);
+  align-items: baseline;
+  border: 1px solid var(--studio-border);
+  border-radius: 8px;
+  background: var(--studio-bg-subtle);
+  padding: var(--studio-spacing-2) var(--studio-spacing-3);
+  color: var(--studio-fg-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tup__better-route-line strong { color: var(--studio-fg); }
+
 .tup__section-title {
   margin: 0 0 8px;
   color: var(--studio-fg-muted);

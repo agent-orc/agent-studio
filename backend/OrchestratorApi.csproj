@@ -52,7 +52,7 @@
   <!-- TokenEconomy owns the shared historical model-price catalog and cost API.
        Keep the exact pin so pricing changes arrive as explicit dependency updates. -->
   <ItemGroup>
-    <PackageReference Include="TokenEconomy" Version="[0.3.3]" />
+    <PackageReference Include="TokenEconomy" Version="[0.3.4]" />
   </ItemGroup>
 
   <!-- Block 6: adopt the library's types by aliasing them to the names the app

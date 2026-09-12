@@ -317,6 +317,55 @@ test.describe('Execution Hosts settings section', () => {
     await page.screenshot({ path: join(SHOT_DIR, 'remote-hosts-section--mocked.png'), fullPage: false });
   });
 
+  test('shows the Ready route benchmark candidate without changing the route', async ({ page }) => {
+    await page.unroute('**/api/tasks/grouped');
+    await page.route('**/api/tasks/grouped', route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        preparation: [],
+        ready: [{
+          id: 'agt-2770-ready',
+          key: 'AGT-2770',
+          title: 'Benchmark candidate projection',
+          state: '2-ready',
+          projectName: 'Agent Studio',
+          model: 'gpt-6-astra',
+          thinkingLevel: 'high',
+          betterCandidates: [{
+            model: 'gpt-5.6-terra',
+            effort: 'medium',
+            benchmarkType: 'swe-bench-verified',
+            benchmarkName: 'SWE-bench Verified',
+            scoreDelta: 4.2,
+            costDeltaUsd: -0.184,
+            evidenceAgeDays: 1,
+            evidenceStale: false,
+            evidenceSnapshot: 'v1:2026-09-11:2',
+            matrixUrl: 'https://agent-orchestrator.dev/token-economy/model-benchmarks/',
+            note: 'gpt-5.6-terra / medium: SWE-bench Verified, score +4.2, cost -$0.184, evidence 1d old',
+          }],
+        }],
+        progress: [],
+        review: [],
+        completed: [],
+        archive: [],
+      }),
+    }));
+
+    // Change the document URL, not only the hash, so TaskService reloads the
+    // grouped payload after this test installs its candidate fixture.
+    await page.goto('/?agt2770-candidates=1#/workspace/settings/execution-hosts');
+    const section = page.getByTestId('execution-host-better-candidates');
+    await expect(section).toBeVisible();
+    await expect(section).toContainText('gpt-6-astra / high');
+    await expect(section).toContainText('gpt-5.6-terra / medium');
+
+    const evidenceDir = process.env.JOB_RESULTS_DIR ?? SHOT_DIR;
+    mkdirSync(evidenceDir, { recursive: true });
+    await section.screenshot({ path: join(evidenceDir, 'agt-2770-execution-host-candidates--mocked.png') });
+  });
+
   test('sorts table columns and restores sort plus row disclosure after reload', async ({ page }) => {
     await page.goto('/#/workspace/settings/execution-hosts');
     const names = page.getByTestId('remote-host-name');

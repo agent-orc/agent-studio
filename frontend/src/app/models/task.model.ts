@@ -122,6 +122,21 @@ export interface NeedsInputStatus {
   artifactPath: string;
 }
 
+/** Informational price-performance alternative returned by TokenEconomy. */
+export interface BetterModelCandidate {
+  model: string;
+  effort: string;
+  benchmarkType: string;
+  benchmarkName: string;
+  scoreDelta: number | null;
+  costDeltaUsd: number | null;
+  evidenceAgeDays: number;
+  evidenceStale: boolean;
+  evidenceSnapshot: string;
+  matrixUrl: string;
+  note: string;
+}
+
 /**
  * F34 — structured cross-references between tasks, keyed by F33 stable keys
  * (e.g. `ATP-19`). Mirrors backend `TaskReferences`. Four relation kinds:
@@ -342,7 +357,10 @@ export interface TaskInfo {
     thresholdMinutes: number;
     reason: string;
     scope?: 'quota' | 'provider' | string;
+    betterCandidates?: BetterModelCandidate[] | null;
   } | null;
+  /** Informational only. Agent Studio never switches to these routes automatically. */
+  betterCandidates?: BetterModelCandidate[];
   /**
    * Card kind. `epic` cards are containers for sub-tasks; `task` (the default
    * when omitted) is an ordinary card. See backend `TaskKinds`.

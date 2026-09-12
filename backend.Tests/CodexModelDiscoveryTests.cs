@@ -218,9 +218,9 @@ public class CodexModelDiscoveryTests : IDisposable
         Assert.Equal(272_000, astra.ContextWindow);
         Assert.False(astra.IsDefault);
         Assert.False(astra.Deprecated);
-        // No invented rates: pricing stays a live-catalog pass-through.
-        Assert.Null(astra.InputPricePerMillion);
-        Assert.Null(astra.OutputPricePerMillion);
+        // Pricing stays a live TokenEconomy catalog pass-through.
+        Assert.Equal(10.00m, astra.InputPricePerMillion);
+        Assert.Equal(50.00m, astra.OutputPricePerMillion);
         // The product default is unchanged by onboarding astra.
         Assert.Equal(ModelIds.Gpt55, ModelMetadataRegistry.DefaultForCli(CliTypes.Codex));
     }

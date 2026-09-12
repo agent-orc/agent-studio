@@ -18,6 +18,28 @@ It does not claim that a larger model repairs a vague task, a broken gate, or
 missing evidence. Explicit operator pins still win, but the UI or orchestrator
 should explain when a pin is below the policy floor.
 
+## Benchmark candidate advisory
+
+Agent Studio consumes `ModelBenchmarkMatrix.FindCandidates` from
+TokenEconomy 0.3.4 as an informational advisor. For each Ready card and each
+quota-admission decision, it compares the selected model and effort against
+the benchmark type for the project's `BenchmarkCapabilityClass`. Software
+projects default to `CodingAgent` when no class is stored.
+
+Each candidate note carries the candidate model and effort, benchmark type,
+score delta, estimated cost delta, evidence age, stale-evidence flag, evidence
+snapshot, and a link to the public matrix page. The task detail and grouped
+task payloads expose the same projection, including the Ready quota-wait
+object, so clients render evidence rather than recomputing it. The model picker
+and Execution Hosts page show the notes beside the current route.
+
+Candidate lookup is cached by selected model, effort, benchmark type, and
+evidence snapshot. A candidate never changes a route in this integration.
+Agent Studio still applies the score and hard-floor rules below, and an
+operator remains responsible for any route change. The weekly project token
+report separately totals tokens and priced cost for calls whose launch-time
+decision recorded at least one better candidate.
+
 ## Routing tiers
 
 | Route | Default use | Do not use for | Evidence and rationale |

@@ -93,6 +93,7 @@ public sealed record ModelQualificationDecision
     public int EstimatedSavingsPercent { get; init; }
     public string Reason { get; init; } = string.Empty;
     public string CatalogueSource { get; init; } = string.Empty;
+    public IReadOnlyList<BetterModelCandidate> BetterCandidates { get; init; } = [];
 }
 
 public sealed record ModelQualificationOutcome
@@ -120,17 +121,23 @@ public sealed class ModelQualificationService
     private readonly IModelRoutingModeProvider _routingMode;
     private readonly IJsonlAppender _jsonl;
     private readonly ILogger<ModelQualificationService> _logger;
+    private readonly BetterModelCandidateService? _betterCandidates;
+    private readonly AgentStudio.Projects.ProjectSettingsService? _projectSettings;
 
     public ModelQualificationService(
         ModelRoutingPolicyRegistry policy,
         IModelRoutingModeProvider routingMode,
         IJsonlAppender jsonl,
-        ILogger<ModelQualificationService> logger)
+        ILogger<ModelQualificationService> logger,
+        BetterModelCandidateService? betterCandidates = null,
+        AgentStudio.Projects.ProjectSettingsService? projectSettings = null)
     {
         _policy = policy;
         _routingMode = routingMode;
         _jsonl = jsonl;
         _logger = logger;
+        _betterCandidates = betterCandidates;
+        _projectSettings = projectSettings;
     }
 
     public ModelQualificationDecision Qualify(
@@ -177,6 +184,8 @@ public sealed class ModelQualificationService
                      (source == "task-override"
                          ? $"card override wins, selected {selectedModel} at {selectedThinking ?? "model default"}"
                          : $"selected policy recommendation; expected saving about {recommendation.EstimatedSavingsPercent}% vs top rung");
+        var capabilityClass = _projectSettings?.Get(task.ProjectName).BenchmarkCapabilityClass ?? "CodingAgent";
+        var candidates = _betterCandidates?.Find(selectedModel, selectedThinking, capabilityClass, nowUtc) ?? [];
 
         return new ModelQualificationDecision
         {
@@ -202,11 +211,20 @@ public sealed class ModelQualificationService
             EstimatedSavingsPercent = source == "task-override" ? 0 : recommendation.EstimatedSavingsPercent,
             Reason = reason,
             CatalogueSource = catalogue.Source ?? "unknown",
+            BetterCandidates = candidates,
         };
     }
 
     public async Task RecordDecisionAsync(string jobFolder, ModelQualificationDecision decision, CancellationToken ct)
     {
+        BetterCandidateDecisionStore.Append(jobFolder, new BetterCandidateDecisionSnapshot
+        {
+            At = decision.At,
+            Model = decision.SelectedModel,
+            Effort = decision.SelectedThinkingLevel,
+            Source = "model-qualification",
+            Candidates = decision.BetterCandidates,
+        });
         try
         {
             await _jsonl.AppendAsync(Path.Combine(jobFolder, LogFileName), decision, ct: ct);

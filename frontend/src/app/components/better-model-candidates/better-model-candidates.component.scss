@@ -1,0 +1,26 @@
+:host {
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-2);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--studio-accent) 8%, transparent);
+  padding: var(--studio-spacing-2);
+}
+
+.candidate-list__label {
+  color: var(--studio-fg-muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+a {
+  color: var(--studio-fg-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+  white-space: nowrap;
+  text-decoration-color: var(--studio-border-strong);
+  text-underline-offset: 2px;
+}

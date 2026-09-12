@@ -30,7 +30,8 @@ public sealed record QuotaAdmissionPlan(
     DateTime? NextResetAt,
     QuotaProjection? Projection,
     QuotaProjectionWarning? ProjectionWarning = null,
-    bool NearbyResetWait = false)
+    bool NearbyResetWait = false,
+    IReadOnlyList<AgentStudio.Pipeline.BetterModelCandidate>? BetterCandidates = null)
 {
     /// <summary>True when the runner should proceed to a launch (primary or fallback).</summary>
     public bool ShouldLaunch => Outcome is QuotaAdmissionOutcome.LaunchPrimary or QuotaAdmissionOutcome.LaunchFallback;

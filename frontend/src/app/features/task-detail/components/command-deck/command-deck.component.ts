@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import type { CliType, WatchPathEntry } from '../../../../models/task.model';
+import type { BetterModelCandidate, CliType, WatchPathEntry } from '../../../../models/task.model';
 import type { CliModelInfo } from '../../../../features/cli';
 import { CliModelSelectorComponent } from '../../../../components/cli-model-selector';
 
@@ -33,6 +33,7 @@ export class CommandDeckComponent {
   readonly modelDraft = input.required<string>();
   readonly thinkingLevelDraft = input<string | null>(null);
   readonly availableModels = input<CliModelInfo[]>([]);
+  readonly betterCandidates = input<readonly BetterModelCandidate[]>([]);
 
   readonly isRunning = input(false);
   readonly canStart = input(false);

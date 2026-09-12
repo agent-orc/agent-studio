@@ -76,6 +76,39 @@ describe('CliModelSelectorComponent', () => {
     expect(chip.textContent).toContain('opus 4.7');
   });
 
+  it('shows informational benchmark candidates without changing the selected route', async () => {
+    const note = 'gpt-5.6-terra / medium: SWE-bench Verified, score +4.2, cost -$0.184, evidence 1d old';
+    const { fixture, component } = await create({
+      cliType: 'claude',
+      model: 'claude-opus-4-7',
+      thinkingLevel: 'high',
+      betterCandidates: [{
+        model: 'gpt-5.6-terra',
+        effort: 'medium',
+        benchmarkType: 'swe-bench-verified',
+        benchmarkName: 'SWE-bench Verified',
+        scoreDelta: 4.2,
+        costDeltaUsd: -0.184,
+        evidenceAgeDays: 1,
+        evidenceStale: false,
+        evidenceSnapshot: 'v1:2026-09-11:2',
+        matrixUrl: 'https://agent-orchestrator.dev/token-economy/model-benchmarks/',
+        note,
+      }],
+    });
+
+    openPicker(fixture);
+    await fixture.whenStable();
+
+    const candidate = document.querySelector<HTMLAnchorElement>(
+      '[data-testid="cli-model-selector-picker-better-gpt-5.6-terra-medium"]',
+    );
+    expect(candidate?.textContent).toContain(note);
+    expect(candidate?.href).toContain('/token-economy/model-benchmarks/');
+    expect(component.draftModel()).toBe('claude-opus-4-7');
+    expect(component.draftThinkingLevel()).toBe('high');
+  });
+
   it('surfaces a codex gpt-5.6 catalog with its display label and ultra ladder (AGT-2025)', async () => {
     const codexModels: CliModelInfo[] = [
       { id: 'gpt-5.6-sol', label: 'GPT-5.6-Sol', multiplier: null, vendor: 'openai', isDefault: true, thinkingLevels: ['minimal', 'low', 'medium', 'high', 'xhigh', 'ultra'], defaultThinkingLevel: 'ultra' },

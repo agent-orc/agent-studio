@@ -82,6 +82,11 @@ public record TaskInfo
     /// </summary>
     public QuotaWaitStatus? QuotaWait { get; init; }
     /// <summary>
+    /// Informational TokenEconomy price-performance candidates for this card's
+    /// current route. Agent Studio does not apply them automatically.
+    /// </summary>
+    public IReadOnlyList<AgentStudio.Pipeline.BetterModelCandidate> BetterCandidates { get; init; } = [];
+    /// <summary>
     /// Card kind: <c>task</c> (default, a runnable unit of work) or <c>epic</c>
     /// (a container grouping sub-tasks under one overarching goal). An epic is
     /// not code-executed itself; only its sub-tasks run through the pipeline.

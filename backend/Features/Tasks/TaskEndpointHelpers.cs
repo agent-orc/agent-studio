@@ -319,6 +319,35 @@ internal static class TaskEndpointHelpers
                 : job);
 
     /// <summary>
+    /// Projects the cached TokenEconomy candidate note onto Ready cards and
+    /// their quota-wait reason. The route remains unchanged.
+    /// </summary>
+    internal static IEnumerable<TaskInfo> WithBetterCandidates(
+        this IEnumerable<TaskInfo> jobs,
+        AgentStudio.Pipeline.BetterModelCandidateService candidates,
+        AgentStudio.Projects.ProjectSettingsService settings)
+        => jobs.Select(job => WithBetterCandidates(job, candidates, settings));
+
+    internal static TaskInfo WithBetterCandidates(
+        TaskInfo job,
+        AgentStudio.Pipeline.BetterModelCandidateService candidates,
+        AgentStudio.Projects.ProjectSettingsService settings)
+    {
+        if (!string.Equals(job.State, TaskStates.Ready, StringComparison.OrdinalIgnoreCase)) return job;
+        var routeCandidates = candidates.Find(
+            job.Model,
+            job.ThinkingLevel,
+            settings.Get(job.ProjectName).BenchmarkCapabilityClass);
+        return job with
+        {
+            BetterCandidates = routeCandidates,
+            QuotaWait = job.QuotaWait is null
+                ? null
+                : job.QuotaWait with { BetterCandidates = routeCandidates },
+        };
+    }
+
+    /// <summary>
     /// AGT-2202: folds the batched per-task integration verdict onto each accepted
     /// card. List routes use the cache-only task-list Git projection, so this is
     /// an O(1) dictionary hit per job with no request-thread Git work. Jobs without

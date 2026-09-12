@@ -200,7 +200,8 @@ public sealed record QuotaWaitStatus(
     DateTime ResetAt,
     int ThresholdMinutes,
     string Reason,
-    string Scope = "quota");
+    string Scope = "quota",
+    IReadOnlyList<AgentStudio.Pipeline.BetterModelCandidate>? BetterCandidates = null);
 
 public record ProjectRunnerStatus
 {

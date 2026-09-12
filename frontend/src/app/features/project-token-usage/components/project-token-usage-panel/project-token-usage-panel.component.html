@@ -68,6 +68,20 @@
       }
     </div>
 
+    @if (summary(); as usageSummary) {
+      @if ((usageSummary.last7dBetterCandidateCalls ?? 0) > 0) {
+        <div class="tup__better-route-line" data-testid="token-usage-better-candidate-line">
+          <strong>Better candidate existed at launch, last 7 days</strong>
+          <span>{{ formatTokens(usageSummary.last7dBetterCandidateTokens ?? 0) }} tokens</span>
+          <span>
+            {{ usageSummary.allBetterCandidateModelsPriced
+              ? formatUsd(usageSummary.last7dBetterCandidateCostUsd ?? 0)
+              : 'Cost partially unavailable' }}
+          </span>
+        </div>
+      }
+    }
+
     <section class="tup__timeline" data-testid="token-usage-timeline" aria-label="Recent token spend">
       <h3 class="tup__section-title">Recent activity</h3>
       @if (timelineBuckets().length === 0) {

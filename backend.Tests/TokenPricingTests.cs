@@ -23,7 +23,7 @@ public class TokenPricingTests
             .InformationalVersion;
 
         Assert.Equal("TokenEconomy", assembly.GetName().Name);
-        Assert.StartsWith("0.3.3", informationalVersion, StringComparison.Ordinal);
+        Assert.StartsWith("0.3.4", informationalVersion, StringComparison.Ordinal);
     }
 
     [Fact]

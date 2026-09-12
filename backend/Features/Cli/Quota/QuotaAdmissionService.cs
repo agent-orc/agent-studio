@@ -28,6 +28,7 @@ public sealed class QuotaAdmissionService
     private readonly CliQuotaWaitPolicyService _waitPolicy;
     private readonly ProjectSettingsService _projectSettings;
     private readonly TimeProvider _timeProvider;
+    private readonly AgentStudio.Pipeline.BetterModelCandidateService? _betterCandidates;
 
     public QuotaAdmissionService(
         QuotaService quota,
@@ -35,7 +36,8 @@ public sealed class QuotaAdmissionService
         CliQuotaFallbackService fallback,
         CliQuotaWaitPolicyService waitPolicy,
         ProjectSettingsService projectSettings,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        AgentStudio.Pipeline.BetterModelCandidateService? betterCandidates = null)
     {
         _quota = quota;
         _caps = caps;
@@ -43,6 +45,7 @@ public sealed class QuotaAdmissionService
         _waitPolicy = waitPolicy;
         _projectSettings = projectSettings;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _betterCandidates = betterCandidates;
     }
 
     public QuotaAdmissionPlan Plan(QuotaAdmissionRequest request)
@@ -51,7 +54,7 @@ public sealed class QuotaAdmissionService
         var project = string.IsNullOrWhiteSpace(request.ProjectName)
             ? null
             : _projectSettings.Get(request.ProjectName);
-        return QuotaAdmissionPlanner.Plan(
+        var plan = QuotaAdmissionPlanner.Plan(
             request.CliType,
             request.Model,
             request.ThinkingLevel,
@@ -61,5 +64,11 @@ public sealed class QuotaAdmissionService
             _timeProvider.GetUtcNow().UtcDateTime,
             request.OccupiedSlots,
             _waitPolicy.Resolve(project));
+        var candidates = _betterCandidates?.Find(
+            plan.Model,
+            plan.ThinkingLevel,
+            project?.BenchmarkCapabilityClass ?? "CodingAgent",
+            _timeProvider.GetUtcNow().UtcDateTime) ?? [];
+        return plan with { BetterCandidates = candidates };
     }
 }

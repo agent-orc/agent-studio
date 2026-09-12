@@ -264,6 +264,10 @@ export class ProjectTokenUsagePanelComponent {
     return `${sign}${abs}`;
   }
 
+  formatUsd(n: number): string {
+    return `$${n.toFixed(n < 1 ? 4 : 2)}`;
+  }
+
   formatTs(iso: string): string {
     if (!iso) return '';
     // Trim seconds + timezone for a tighter row.

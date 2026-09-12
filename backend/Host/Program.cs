@@ -644,6 +644,7 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.ModelRoutingPolicyStateStore>
 builder.Services.AddSingleton<AgentStudio.Pipeline.IModelRoutingModeProvider>(sp =>
     sp.GetRequiredService<AgentStudio.Pipeline.ModelRoutingPolicyStateStore>());
 builder.Services.AddSingleton<AgentStudio.Pipeline.ModelQualificationService>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.BetterModelCandidateService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.IPipelineModelCatalogueProvider,
     AgentStudio.Pipeline.CliPipelineModelCatalogueProvider>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PipelineStepEconomyAdvisor>();

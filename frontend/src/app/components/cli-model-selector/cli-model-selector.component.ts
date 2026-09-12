@@ -13,7 +13,7 @@ import {
   untracked,
   viewChild,
 } from '@angular/core';
-import type { CliType } from '../../models/task.model';
+import type { BetterModelCandidate, CliType } from '../../models/task.model';
 import { CLI_TYPES } from '../../models/task.model';
 import { CliCatalogStore, orderModelCatalog, type CliModelInfo } from '../../features/cli';
 import {
@@ -25,6 +25,7 @@ import { ModalStackService } from '../../services/modal-stack.service';
 import { ConnectedOverlayDirective } from '../../directives/connected-overlay.directive';
 import { OverlayPortalDirective } from '../../directives/overlay-portal.directive';
 import { AppTooltipDirective } from '../tooltip/app-tooltip.directive';
+import { BetterModelCandidatesComponent } from '../better-model-candidates/better-model-candidates.component';
 import { modelAriaLabel, modelAvailabilityNote, moveRadioSelection, normalizeThinkingLevel,
   olderModelAriaLabel, olderModelNote } from './cli-model-selector.util';
 
@@ -52,7 +53,7 @@ interface CliOption {
   selector: 'app-cli-model-selector',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [AppTooltipDirective, ConnectedOverlayDirective, OverlayPortalDirective],
+  imports: [AppTooltipDirective, BetterModelCandidatesComponent, ConnectedOverlayDirective, OverlayPortalDirective],
   templateUrl: './cli-model-selector.component.html',
   styleUrl: './cli-model-selector.component.scss',
 })
@@ -76,18 +77,16 @@ export class CliModelSelectorComponent {
   readonly triggerTestid = input<string>('cli-model-selector-trigger');
   /** Prefix for every testid inside the popover; legacy call-sites pass e.g. "chat-model-picker". */
   readonly pickerTestidPrefix = input<string>('cli-model-selector-picker');
-
+  readonly betterCandidates = input<readonly BetterModelCandidate[]>([]);
   /** Atomic commit: emitted from Done or from an auto-commit on a model click. */
   readonly commit = output<{ cliType: CliType; model: string; thinkingLevel: string | null }>();
   readonly cliTypeChange = output<CliType>();
   readonly modelChange = output<string>();
   readonly thinkingLevelChange = output<string | null>();
-
   private readonly modalStack = inject(ModalStackService);
   private readonly catalogStore = inject(CliCatalogStore);
   private readonly destroyRef = inject(DestroyRef);
   private modalStackDispose: (() => void) | null = null;
-
   private readonly trigger = viewChild<ElementRef<HTMLButtonElement>>('trigger');
   readonly triggerEl = computed(() => this.trigger()?.nativeElement ?? null);
   readonly pickerOpen = signal(false);
@@ -96,18 +95,15 @@ export class CliModelSelectorComponent {
   readonly draftThinkingLevel = signal<string | null>(null);
   readonly draftModels = signal<readonly CliModelInfo[]>([]);
   private readonly draftModelPinned = signal(true);
-
   readonly cliOptions = computed<readonly CliOption[]>(() =>
     CLI_TYPES.map((t) => ({ id: t, label: fmtCliTypeLabel(t), icon: fmtCliTypeIcon(t) })),
   );
-
   /** Catalog answer for the library's latest `catalogRequested` CLI. */
   private readonly catalogModels = signal<readonly CliModelInfo[] | null>(null);
   readonly catalogLoading = signal<boolean>(false);
   readonly catalogError = signal<string | null>(null);
   /** Which CLI the in-flight/last catalog answer belongs to — drops stale responses. */
   private lastRequestedCli: CliType | null = null;
-
   readonly effectiveModels = computed<readonly CliModelInfo[]>(
     () => orderModelCatalog(this.catalogModels() ?? this.availableModels()),
   );

@@ -318,3 +318,23 @@
   .rh__actions { margin-left: 0; }
   .rh__summary { flex-wrap: wrap; }
 }
+.rh__candidates {
+  display: grid;
+  gap: var(--studio-spacing-2);
+  border: 1px solid var(--studio-border);
+  border-radius: 10px;
+  background: var(--studio-bg-subtle);
+  padding: var(--studio-spacing-3);
+
+  h3 { margin: 0; font-size: 12px; }
+
+  a {
+    display: flex;
+    gap: var(--studio-spacing-2);
+    color: var(--studio-fg-dim);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    text-decoration-color: var(--studio-border-strong);
+    text-underline-offset: 2px;
+  }
+}

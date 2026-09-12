@@ -51,6 +51,19 @@
     }
   </div>
 
+  @if (readyCandidateLines().length > 0) {
+    <section class="rh__candidates" data-testid="execution-host-better-candidates">
+      <h3>Ready route candidates</h3>
+      @for (line of readyCandidateLines(); track line.key) {
+        <a [href]="line.matrixUrl" target="_blank" rel="noopener noreferrer"
+           [attr.data-testid]="'execution-host-better-candidate-' + line.taskKey">
+          <strong>{{ line.taskKey }}</strong>
+          <span>{{ line.current }} → {{ line.note }}</span>
+        </a>
+      }
+    </section>
+  }
+
   @for (host of linkFailures(); track host.id) {
     <app-notification kind="warning" layout="banner" [closable]="false"
                       [title]="host.name + ' link is down'" testid="remote-host-link-notification">

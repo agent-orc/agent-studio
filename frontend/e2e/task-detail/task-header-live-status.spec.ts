@@ -1,6 +1,6 @@
 import { expect, Page, test } from '@playwright/test';
 import * as path from 'path';
-import { setTheme } from '../helpers/theme';
+import { dismissDevErrorDialog, setTheme } from '../helpers/theme';
 
 const PROJECT = 'fixture';
 const WATCH_PATH = 'C:/fixtures/task-header-live-status';
@@ -28,7 +28,7 @@ function pipelineStep() {
   };
 }
 
-function taskDetail() {
+function taskDetail(withCandidates = false) {
   return {
     info: {
       id: JOB_ID,
@@ -40,6 +40,20 @@ function taskDetail() {
       agent: 'codex',
       cliType: 'codex',
       model: 'gpt-5.4',
+      thinkingLevel: 'high',
+      betterCandidates: withCandidates ? [{
+        model: 'gpt-5.6-terra',
+        effort: 'medium',
+        benchmarkType: 'swe-bench-verified',
+        benchmarkName: 'SWE-bench Verified',
+        scoreDelta: 4.2,
+        costDeltaUsd: -0.184,
+        evidenceAgeDays: 1,
+        evidenceStale: false,
+        evidenceSnapshot: 'v1:2026-09-11:2',
+        matrixUrl: 'https://agent-orchestrator.dev/token-economy/model-benchmarks/',
+        note: 'gpt-5.6-terra / medium: SWE-bench Verified, score +4.2, cost -$0.184, evidence 1d old',
+      }] : [],
       createdAt: '2026-08-11T09:40:00Z',
       lastActivity: '2026-08-11T09:58:00Z',
       watchPath: WATCH_PATH,
@@ -74,7 +88,7 @@ function taskDetail() {
   };
 }
 
-async function installRoutes(page: Page): Promise<void> {
+async function installRoutes(page: Page, withCandidates = false): Promise<void> {
   const jobId = JOB_ID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const step = pipelineStep();
 
@@ -193,14 +207,51 @@ async function installRoutes(page: Page): Promise<void> {
       },
     }),
   }));
+  for (const endpoint of ['output', 'timeline', 'screenshots']) {
+    await page.route(new RegExp(`/api/tasks/${jobId}/${endpoint}(\\?|$)`), route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: '[]',
+    }));
+  }
+  await page.route(new RegExp(`/api/tasks/${jobId}/session-events(\\?|$)`), route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ events: [], sessionChain: [] }),
+  }));
+  for (const endpoint of ['agent-work', 'claude-session', 'runs']) {
+    await page.route(new RegExp(`/api/tasks/${jobId}/${endpoint}(\\?|$)`), route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: 'null',
+    }));
+  }
   await page.route(new RegExp(`/api/tasks/${jobId}(\\?|$)`), route => route.fulfill({
     status: 200,
     contentType: 'application/json',
-    body: JSON.stringify(taskDetail()),
+    body: JSON.stringify(taskDetail(withCandidates)),
   }));
 }
 
 test.describe('Task-header live status', () => {
+  test('model picker shows the launch-time benchmark candidate as information', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await installRoutes(page, true);
+    await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
+    await dismissDevErrorDialog(page);
+
+    const currentRoute = page.getByTestId('chat-compose-model');
+    await expect(currentRoute).toContainText('gpt-5.4');
+    await currentRoute.click();
+    const candidates = page.getByTestId('chat-model-picker-better-candidates');
+    await expect(candidates).toBeVisible();
+    await expect(candidates).toContainText('gpt-5.6-terra / medium');
+
+    if (RESULTS_DIR) {
+      await candidates.screenshot({ path: path.join(RESULTS_DIR, 'agt-2770-model-picker-candidates--mocked.png') });
+    }
+  });
+
   test('queued CURRENT and NEXT rows share the banner, tab, and pane grid', async ({ page }) => {
     await page.addInitScript(() => {
       localStorage.setItem(

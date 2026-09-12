@@ -1,0 +1,9 @@
+<div class="candidate-list__label">Better candidates</div>
+@for (candidate of candidates(); track candidate.model + ':' + candidate.effort + ':' + candidate.benchmarkType) {
+  <a [href]="candidate.matrixUrl"
+     target="_blank"
+     rel="noopener noreferrer"
+     [attr.data-testid]="testidPrefix() + '-better-' + candidate.model + '-' + candidate.effort">
+    {{ candidate.note }}
+  </a>
+}

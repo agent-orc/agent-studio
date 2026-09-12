@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using AgentStudio.Runner;
 using AgentStudio.Shared;
 using AgentStudio.Tasks;
@@ -48,25 +49,41 @@ public sealed class QuotaAdmissionRecorder
     public void EmitAdmissionDecision(TaskInfo info, QuotaAdmissionPlan plan, string source)
     {
         var warning = plan.ProjectionWarning;
+        var candidates = plan.BetterCandidates ?? [];
+        var candidateNote = CandidateNote(candidates);
         var logLevel = warning is null ? LogLevel.Information : LogLevel.Warning;
         _logger.Log(
             logLevel,
-            "cli_quota_admission_decision source={Source} jobId={JobId} project={Project} outcome={Outcome} cli={Cli} model={Model} isFallback={IsFallback} reason={Reason}",
-            source, info.Id, info.ProjectName, plan.Outcome, plan.CliType, plan.Model ?? "<default>", plan.IsFallback, plan.Reason);
+            "cli_quota_admission_decision source={Source} jobId={JobId} project={Project} outcome={Outcome} cli={Cli} model={Model} isFallback={IsFallback} reason={Reason} betterCandidates={BetterCandidates}",
+            source, info.Id, info.ProjectName, plan.Outcome, plan.CliType, plan.Model ?? "<default>", plan.IsFallback, plan.Reason, candidateNote);
 
-        if (plan.Outcome == QuotaAdmissionOutcome.LaunchPrimary && warning is null) return;
+        if (plan.Outcome == QuotaAdmissionOutcome.LaunchPrimary && warning is null && candidates.Count == 0) return;
 
-        var key = $"{source}|{plan.Outcome}|{plan.CliType}|{plan.Model}|{plan.Reason}";
+        var key = $"{source}|{plan.Outcome}|{plan.CliType}|{plan.Model}|{plan.Reason}|{candidateNote}";
         var jobKey = $"{info.WatchPath}|{info.Id}";
         if (_lastDecisionByJob.TryGetValue(jobKey, out var prev) && prev == key) return;
         _lastDecisionByJob[jobKey] = key;
 
-        _chatLog.Append(info, OrchestratorMessageKind.Decision, "[quota-admission] " + plan.Reason);
+        AgentStudio.Pipeline.BetterCandidateDecisionStore.Append(
+            info.FolderPath,
+            new AgentStudio.Pipeline.BetterCandidateDecisionSnapshot
+            {
+                At = DateTime.UtcNow,
+                Model = plan.Model ?? string.Empty,
+                Effort = plan.ThinkingLevel,
+                Source = source,
+                Candidates = candidates,
+            });
+
+        var summary = string.IsNullOrWhiteSpace(candidateNote)
+            ? plan.Reason
+            : $"{plan.Reason}. Better candidates: {candidateNote}";
+        _chatLog.Append(info, OrchestratorMessageKind.Decision, "[quota-admission] " + summary);
         _timeline.Append(
             info.FolderPath,
             TimelineEventKinds.QuotaAdmissionDecision,
             TimelineActors.System,
-            summary: plan.Reason,
+            summary: summary,
             details: new()
             {
                 ["source"] = source,
@@ -75,16 +92,21 @@ public sealed class QuotaAdmissionRecorder
                 ["model"] = plan.Model ?? string.Empty,
                 ["isFallback"] = plan.IsFallback ? "true" : "false",
                 ["projectionWarning"] = warning?.Reason ?? string.Empty,
+                ["betterCandidates"] = JsonSerializer.Serialize(candidates),
+                ["matrixUrl"] = AgentStudio.Pipeline.BetterModelCandidateService.MatrixUrl,
             });
         _orchestratorLog.Append(info.WatchPath, new OrchestratorLogEntry
         {
             Kind = OrchestratorLogKinds.Decision,
             Topic = OrchestratorLogTopics.LoadDistribution,
             JobId = info.Id,
-            Summary = plan.Reason,
+            Summary = summary,
             Reasoning = QuotaAdmissionPlanner.DescribeLoadNumbers(plan),
         });
     }
+
+    private static string CandidateNote(IReadOnlyList<AgentStudio.Pipeline.BetterModelCandidate> candidates)
+        => string.Join("; ", candidates.Select(candidate => candidate.Note));
 
     /// <summary>
     /// Record that a run/claim actually switched CLI families for quota

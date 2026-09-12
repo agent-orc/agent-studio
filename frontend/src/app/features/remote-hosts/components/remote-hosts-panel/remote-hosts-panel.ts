@@ -28,6 +28,14 @@ import {
 } from '../../models/physical-host-group';
 import { NotificationComponent } from '../../../../components/notification/notification.component';
 
+interface ReadyCandidateLine {
+  key: string;
+  taskKey: string;
+  current: string;
+  note: string;
+  matrixUrl: string;
+}
+
 /**
  * Execution Hosts settings page (AGT-1921).
  *
@@ -105,6 +113,16 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
     this.tableState.sort(this.hostGroups(), host => this.boardSlots(host)));
   readonly linkFailures = computed(() => this.hosts().filter(host =>
     !!host.runnerLink?.notificationRaisedAt && host.runnerLink.state !== 'up'));
+  /** Same cached candidate projection shown by the task model picker. */
+  readonly readyCandidateLines = computed<readonly ReadyCandidateLine[]>(() =>
+    this.tasks.grouped().ready.flatMap(task =>
+      (task.betterCandidates ?? []).map(candidate => ({
+        key: `${task.id}:${candidate.model}:${candidate.effort}:${candidate.benchmarkType}`,
+        taskKey: task.key || task.taskKey || task.id,
+        current: `${task.model ?? 'CLI default'} / ${task.thinkingLevel ?? 'model default'}`,
+        note: candidate.note,
+        matrixUrl: candidate.matrixUrl,
+      }))));
 
   /** Auto-review post-processing queue snapshot (AGT-2645). */
   readonly reviewQueueSnapshot = computed(() => this.reviewQueue.snapshot());
