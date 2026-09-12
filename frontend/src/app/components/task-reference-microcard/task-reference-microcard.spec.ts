@@ -89,10 +89,17 @@ describe('TaskReferenceMicrocardComponent', () => {
 
     const host = fixture.nativeElement.querySelector('[data-testid="linked-task-AGT-2050"]');
     const link = host.querySelector('a') as HTMLAnchorElement;
-    expect(host.querySelector('.task-ref__lane-dot')).toBeTruthy();
-    expect(fixture.componentInstance.tooltipLabel()).toContain('Living references');
+    expect(host.querySelector('.task-ref__lane-dot')?.getAttribute('data-lane-tone')).toBe('progress');
+    expect(fixture.componentInstance.tooltipLabel()).toContain('Key: AGT-2050');
+    expect(fixture.componentInstance.tooltipLabel()).toContain('Title: Living references');
+    expect(fixture.componentInstance.tooltipLabel()).toContain('Lane: In Progress');
+    expect(fixture.componentInstance.tooltipLabel()).toContain('State: 3-progress');
     expect(host.textContent).not.toContain('AGT-2050●');
+    link.dispatchEvent(new MouseEvent('mouseenter'));
+    expect(document.querySelector('[data-testid="linked-task-AGT-2050-tooltip"]')).not.toBeNull();
     link.click();
     expect(openTaskKey).toHaveBeenCalledWith('PROJ-001::task');
+    fixture.destroy();
+    document.querySelectorAll('.app-tooltip-overlay').forEach(element => element.remove());
   });
 });

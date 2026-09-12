@@ -15,3 +15,7 @@ release yet.
 ### Added
 
 - Initial open source community and release-hygiene baseline.
+
+### Changed
+
+- Dossier list cards now use a wider clamped summary, anchored footer actions, copyable keys, and self-explaining linked-card lane dots with complete immediate tooltips.

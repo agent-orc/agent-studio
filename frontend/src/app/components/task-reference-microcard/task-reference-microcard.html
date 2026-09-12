@@ -14,9 +14,11 @@
       [attr.aria-label]="'Open task ' + status().key + ': ' + status().title"
       [appTooltip]="tooltipLabel()"
       [appTooltipTestId]="testId() + '-tooltip'"
+      [appTooltipImmediate]="variant() === 'lane-dot'"
     >
       @if (variant() === 'lane-dot') {
-        <i class="task-ref__lane-dot" [attr.data-tone]="laneTone()" aria-hidden="true"></i>
+        <i class="task-ref__lane-dot" [attr.data-tone]="laneTone()"
+           [attr.data-lane-tone]="presentationLaneTone()" aria-hidden="true"></i>
       } @else {
         <i class="task-ref__project" aria-hidden="true"></i>
         <strong>{{ status().key }}</strong>
@@ -42,6 +44,7 @@
       [attr.aria-label]="'Unknown or deleted task ' + status().key"
       [appTooltip]="tooltipLabel()"
       [appTooltipTestId]="testId() + '-tooltip'"
+      [appTooltipImmediate]="variant() === 'lane-dot'"
     >
       @if (variant() === 'lane-dot') {
         <i class="task-ref__lane-dot" data-tone="ghost" aria-hidden="true"></i>

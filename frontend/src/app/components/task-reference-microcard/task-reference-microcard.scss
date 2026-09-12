@@ -1,3 +1,5 @@
+@use '../../../styles/lane-tone' as lane-tone;
+
 :host {
   display: inline;
 }
@@ -34,22 +36,11 @@
 }
 
 .task-ref__lane-dot {
+  @include lane-tone.vars;
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--studio-fg-dim);
-}
-.task-ref__lane-dot[data-tone='done'] {
-  background: var(--studio-success);
-}
-.task-ref__lane-dot[data-tone='active'] {
-  background: var(--severity-info);
-}
-.task-ref__lane-dot[data-tone='waiting'] {
-  background: var(--severity-pending);
-}
-.task-ref__lane-dot[data-tone='queued'] {
-  background: var(--studio-fg-dim);
+  background: var(--lane-tone-fg);
 }
 .task-ref__lane-dot[data-tone='ghost'] {
   border: 1px solid var(--studio-fg-dim);

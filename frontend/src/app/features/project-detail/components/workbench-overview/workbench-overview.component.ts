@@ -12,27 +12,19 @@ import {
 } from '@angular/core';
 import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
 import { CountBadgeComponent } from '../../../../components/count-badge/count-badge.component';
-import {
-  TaskReferenceMicrocardComponent,
-  type TaskReferenceStatus,
-} from '../../../../components/task-reference-microcard/task-reference-microcard';
-import { StudioIconComponent, type StudioIconName } from '../../../../components/studio-icon/studio-icon.component';
+import type { TaskReferenceStatus } from '../../../../components/task-reference-microcard/task-reference-microcard';
+import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
 import { ProjectDocsService } from '../../../../services/project-docs.service';
 import { JobsHubClient } from '../../../../services/jobs-hub-client.service';
-import { ProjectLookupService } from '../../../../services/project-lookup.service';
 import { TaskService } from '../../../../services/task.service';
 import {
   DossierSectionStateService,
   type DossierSectionId,
 } from '../../../../services/dossier-section-state.service';
 import { WorkbenchOverviewControlsComponent } from '../workbench-overview-controls/workbench-overview-controls.component';
-import { WorkbenchViewerComponent } from '../workbench-viewer/workbench-viewer.component';
+import { WorkbenchOverviewListItemComponent } from '../workbench-overview-list-item/workbench-overview-list-item.component';
 import { WorkbenchOverviewViewStateService } from './workbench-overview-view-state.service';
-import type {
-  ArticlePattern,
-  WorkbenchOverview,
-  WorkbenchOverviewItem,
-} from '../../../../models/project-docs.model';
+import type { WorkbenchOverview, WorkbenchOverviewItem } from '../../../../models/project-docs.model';
 @Component({
   selector: 'app-workbench-overview',
   standalone: true,
@@ -40,9 +32,8 @@ import type {
     LoadingSurfaceComponent,
     CountBadgeComponent,
     StudioIconComponent,
-    TaskReferenceMicrocardComponent,
     WorkbenchOverviewControlsComponent,
-    WorkbenchViewerComponent,
+    WorkbenchOverviewListItemComponent,
   ],
   providers: [WorkbenchOverviewViewStateService],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -56,7 +47,6 @@ export class WorkbenchOverviewComponent {
 
   private readonly docs = inject(ProjectDocsService);
   private readonly hub = inject(JobsHubClient);
-  private readonly projects = inject(ProjectLookupService);
   private readonly tasks = inject(TaskService);
   private readonly sectionState = inject(DossierSectionStateService);
   private readonly destroyRef = inject(DestroyRef);
@@ -144,19 +134,6 @@ export class WorkbenchOverviewComponent {
     if (expanded && content?.contains(document.activeElement)) header.focus();
     this.sectionState.setExpanded(this.sectionScope(), section, !expanded);
   }
-  openDecisionCount(item: WorkbenchOverviewItem): number {
-    return item.workbench.openDecisionCount
-      ?? (item.workbench.status === 'decision-pending' ? 1 : 0);
-  }
-  documentPattern(item: WorkbenchOverviewItem): ArticlePattern {
-    return item.workbench.pattern === 'ui' ? 'ui' : 'concept';
-  }
-  patternIcon(item: WorkbenchOverviewItem): StudioIconName {
-    return this.documentPattern(item) === 'ui' ? 'grid' : 'book';
-  }
-  projectDisplay(item: WorkbenchOverviewItem) {
-    return this.projects.getProjectDisplay(item.projectName);
-  }
   referenceStatuses(item: WorkbenchOverviewItem): readonly TaskReferenceStatus[] {
     return this.referenceStatusesByItem().get(this.itemKey(item)) ?? [];
   }
@@ -169,15 +146,6 @@ export class WorkbenchOverviewComponent {
     if (workbench.status === 'archived') return 'Discarded';
     if (workbench.status === 'documented') return 'Documented';
     return workbench.status;
-  }
-  updatedLabel(value: string): string {
-    return new Intl.DateTimeFormat(undefined, {
-      dateStyle: 'medium',
-      timeStyle: 'short',
-    }).format(new Date(value));
-  }
-  keyLabel(item: WorkbenchOverviewItem): string {
-    return item.workbench.key ?? item.workbench.id;
   }
   private filteredItemsWithStatus(status: string): WorkbenchOverviewItem[] {
     return this.filteredItems().filter(item => item.workbench.status === status);

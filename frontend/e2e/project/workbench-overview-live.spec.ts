@@ -6,114 +6,59 @@ import { setTheme } from '../helpers/theme';
 
 const VISUAL_OVERVIEW = {
   projectName: null,
-  count: 5,
-  currentCount: 3,
-  historyCount: 2,
+  count: 2,
+  currentCount: 2,
+  historyCount: 0,
   items: [
     {
       projectName: 'Agent Studio',
       workbench: {
-        id: 'admin-design-language',
-        key: 'AGT-W12',
-        title: 'Admin surface design language',
-        summary: 'Define a calm, consistent visual grammar for dense operator surfaces and their decision queues.',
+        id: 'docker-ausfuehrungswelt-migration',
+        key: 'AGT-W51',
+        title: 'Isolated execution: preparation scripts, isolation, and a healing orchestrator',
+        summary: 'The target architecture separates preparation, execution isolation, and orchestrator recovery into three layers. Product-owned stable checkouts remain current and provide leased worktrees for every run. Technology building blocks restore npm, NuGet, Node, SDK, and Playwright dependencies from content-addressed caches with explicit manifests and failure signatures. Each project composes those blocks through a repository-owned project definition and preparation script, while Agent Studio validates the definition and proposes repairs after preparation failures or manifest drift. Executor profiles choose process sandboxing by default, containers as an optional accelerator, and micro-VMs only for evidence that requires Docker-level isolation. The orchestrator diagnoses failures from evidence, enriches follow-up prompts, records operator questions on the card, and drives the pipeline toward a terminal outcome without hiding environment defects. The product experience includes onboarding, execution settings, test inventory, duration and cost evidence, pipeline stages, deployment stages, and project-level statistics. Migration is split into bounded delivery stages so preparation and cache correctness land before deeper isolation and automated healing.',
         status: 'decision-pending',
         phase: 'decision-ready',
-        updatedAtUtc: '2026-08-11T12:25:00Z',
-        entryPath: 'docs/operations/admin-design-guideline/index.html',
+        updatedAtUtc: '2026-09-12T13:40:00Z',
+        entryPath: 'docs/operations/docker-ausfuehrungswelt-migration/index.html',
         valid: true,
         error: null,
-        sourceTaskKeys: ['AGT-2606'],
-        relatedTaskKeys: ['AGT-2611'],
-        openDecisionCount: 1,
-        pattern: 'ui',
+        sourceTaskKeys: [],
+        relatedTaskKeys: ['AGT-2780', 'AGT-2781', 'AGT-2782', 'AGT-2778'],
+        openDecisionCount: 8,
+        pattern: 'concept',
         documentation: {
           eligible: false,
-          totalCount: 2,
+          totalCount: 4,
           terminalCount: 0,
-          openCount: 2,
+          openCount: 4,
           missingCount: 0,
           references: [
-            { key: 'AGT-2606', exists: true, terminal: false, lane: '3-progress' },
-            { key: 'AGT-2611', exists: true, terminal: false, lane: '2-ready' },
+            { key: 'AGT-2780', exists: true, terminal: false, lane: '3-progress' },
+            { key: 'AGT-2781', exists: true, terminal: false, lane: '2-ready' },
+            { key: 'AGT-2782', exists: true, terminal: false, lane: '4-auto-review' },
+            { key: 'AGT-2778', exists: false, terminal: false, lane: null },
           ],
         },
       },
     },
     {
-      projectName: 'Coding Agent Chat',
-      workbench: {
-        id: 'conversation-recovery',
-        key: 'CAC-W4',
-        title: 'Conversation recovery contract',
-        summary: 'Keep interrupted operator conversations resumable without duplicating settled work.',
-        status: 'active',
-        phase: 'testing',
-        updatedAtUtc: '2026-08-10T16:40:00Z',
-        entryPath: 'docs/operations/conversation-recovery/index.html',
-        valid: true,
-        error: null,
-        sourceTaskKeys: [],
-        relatedTaskKeys: ['CAC-418'],
-        openDecisionCount: 0,
-        pattern: 'concept',
-      },
-    },
-    {
       projectName: 'Agent Studio',
       workbench: {
-        id: 'runner-host-hardening',
-        key: 'AGT-W9',
-        title: 'Runner host hardening',
-        summary: 'The direction is accepted while the linked implementation cards move through delivery.',
+        id: 'task-detail-usage-panel',
+        key: 'AGT-W48',
+        title: 'Task detail: usage block at pipeline width',
+        summary: 'Align task totals, per-run tokens, cost, and agent activity with the pipeline metric columns while preserving the existing run details and cost breakdown controls.',
         status: 'decided',
-        phase: 'testing',
-        updatedAtUtc: '2026-08-10T09:15:00Z',
-        entryPath: 'docs/operations/runner-host-hardening/index.html',
+        phase: 'decision-ready',
+        updatedAtUtc: '2026-09-11T06:51:01Z',
+        entryPath: 'docs/operations/task-detail-usage-panel/index.html',
         valid: true,
         error: null,
         sourceTaskKeys: [],
-        relatedTaskKeys: ['AGT-2590'],
-        openDecisionCount: 0,
-        pattern: 'concept',
-      },
-    },
-    {
-      projectName: 'Agent Studio',
-      workbench: {
-        id: 'old-navigation-study',
-        key: 'AGT-W3',
-        title: 'Old navigation study',
-        summary: 'Superseded direction retained for traceability.',
-        status: 'archived',
-        phase: null,
-        updatedAtUtc: '2026-08-04T11:00:00Z',
-        entryPath: 'docs/archive/old-navigation-study/index.html',
-        valid: true,
-        error: null,
-        sourceTaskKeys: [],
-        relatedTaskKeys: [],
+        relatedTaskKeys: ['AGT-2769'],
         openDecisionCount: 0,
         pattern: 'ui',
-      },
-    },
-    {
-      projectName: 'Agent Studio',
-      workbench: {
-        id: 'task-reference-contract',
-        key: 'AGT-W2',
-        title: 'Task reference contract',
-        summary: 'Settled contract recorded in the product documentation.',
-        status: 'documented',
-        phase: null,
-        updatedAtUtc: '2026-08-02T08:30:00Z',
-        entryPath: 'docs/system/contracts/task-reference.html',
-        valid: true,
-        error: null,
-        sourceTaskKeys: [],
-        relatedTaskKeys: [],
-        openDecisionCount: 0,
-        pattern: 'concept',
       },
     },
   ],
@@ -121,23 +66,23 @@ const VISUAL_OVERVIEW = {
 
 const VISUAL_REFERENCE_STATUSES = [
   {
-    key: 'AGT-2606', exists: true, taskKey: 'Agent Studio::AGT-2606', title: 'Calm Dossier list',
+    key: 'AGT-2780', exists: true, taskKey: 'Agent Studio::AGT-2780', title: 'Stable execution checkouts',
     lane: '3-progress', projectId: 'PROJ-002', projectName: 'Agent Studio', projectColor: null,
     merge: null, reviewGrade: null,
   },
   {
-    key: 'AGT-2611', exists: true, taskKey: 'Agent Studio::AGT-2611', title: 'Dossier task references',
+    key: 'AGT-2781', exists: true, taskKey: 'Agent Studio::AGT-2781', title: 'Preparation manifest',
     lane: '2-ready', projectId: 'PROJ-002', projectName: 'Agent Studio', projectColor: null,
     merge: null, reviewGrade: null,
   },
   {
-    key: 'CAC-418', exists: true, taskKey: 'Coding Agent Chat::CAC-418', title: 'Conversation recovery',
-    lane: '5-human-review', projectId: 'PROJ-003', projectName: 'Coding Agent Chat', projectColor: null,
+    key: 'AGT-2782', exists: true, taskKey: 'Agent Studio::AGT-2782', title: 'Build and test gate cache',
+    lane: '4-auto-review', projectId: 'PROJ-002', projectName: 'Agent Studio', projectColor: null,
     merge: null, reviewGrade: null,
   },
   {
-    key: 'AGT-2590', exists: true, taskKey: 'Agent Studio::AGT-2590', title: 'Runner host hardening',
-    lane: '4-auto-review', projectId: 'PROJ-002', projectName: 'Agent Studio', projectColor: null,
+    key: 'AGT-2769', exists: true, taskKey: 'Agent Studio::AGT-2769', title: 'Pipeline-width usage block',
+    lane: '6-completed', projectId: 'PROJ-002', projectName: 'Agent Studio', projectColor: null,
     merge: null, reviewGrade: null,
   },
 ];
@@ -149,7 +94,7 @@ function evidencePath(testInfo: TestInfo, fileName: string): string {
   return path.join(directory, fileName);
 }
 
-test('captures the Dossier overview at wide and narrow widths in both themes', async ({ page }, testInfo) => {
+test('captures the Dossier overview at 1536 and 900 px in both themes', async ({ page }, testInfo) => {
   const phase = process.env['DOSSIER_EVIDENCE_PHASE']?.trim() || 'after';
   const projects = [
     {
@@ -227,11 +172,48 @@ test('captures the Dossier overview at wide and narrow widths in both themes', a
 
   await page.goto('/#/workbenches');
   await expect(page.getByTestId('workbench-overview')).toBeVisible();
-  await expect(page.getByTestId('workbench-overview-item-Agent Studio-admin-design-language'))
+  await expect(page.getByTestId('workbench-overview-item-Agent Studio-docker-ausfuehrungswelt-migration'))
     .toBeVisible();
+  const longToggle = page.getByTestId(
+    'workbench-overview-excerpt-toggle-Agent Studio-docker-ausfuehrungswelt-migration',
+  );
+  if (phase === 'after') {
+    await expect(page.getByTestId('workbench-overview-key-Agent Studio-docker-ausfuehrungswelt-migration'))
+      .toContainText('AGT-W51');
+    await expect(page.getByTestId('workbench-overview-key-Agent Studio-task-detail-usage-panel'))
+      .toContainText('AGT-W48');
+    await expect(page.getByTestId('workbench-overview-excerpt-toggle-Agent Studio-task-detail-usage-panel'))
+      .toHaveCount(0);
+    await expect(longToggle).toHaveText('Show more');
+    await expect(longToggle).toHaveAttribute('aria-expanded', 'false');
+    const progressDot = page.getByTestId(
+      'workbench-overview-task-Agent Studio-docker-ausfuehrungswelt-migration-AGT-2780',
+    );
+    await expect(progressDot.locator('[data-lane-tone="progress"]')).toHaveCount(1);
+    await progressDot.hover();
+    await expect(page.getByTestId(
+      'workbench-overview-task-Agent Studio-docker-ausfuehrungswelt-migration-AGT-2780-tooltip',
+    )).toContainText('Key: AGT-2780');
+    const unknownDot = page.getByTestId(
+      'workbench-overview-task-Agent Studio-docker-ausfuehrungswelt-migration-AGT-2778',
+    );
+    await unknownDot.hover();
+    await expect(page.getByTestId(
+      'workbench-overview-task-Agent Studio-docker-ausfuehrungswelt-migration-AGT-2778-tooltip',
+    )).toContainText('State: Unknown or deleted');
+    await page.mouse.move(0, 0);
+  }
 
-  for (const [widthName, width] of [['wide', 1440], ['narrow', 760]] as const) {
-    await page.setViewportSize({ width, height: 900 });
+  for (const [widthName, width] of [['1536', 1536], ['900', 900]] as const) {
+    await page.setViewportSize({ width, height: 1400 });
+    if (phase === 'after') {
+      const excerptBox = await page.locator(`#${await longToggle.getAttribute('aria-controls')}`).boundingBox();
+      const actionsBox = await page.getByTestId(
+        'workbench-overview-actions-Agent Studio-docker-ausfuehrungswelt-migration',
+      ).boundingBox();
+      expect(excerptBox?.width).toBeGreaterThan(width === 1536 ? 600 : 400);
+      expect(actionsBox!.y).toBeGreaterThan(excerptBox!.y + excerptBox!.height);
+    }
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);
       await page.screenshot({
@@ -239,6 +221,18 @@ test('captures the Dossier overview at wide and narrow widths in both themes', a
         fullPage: true,
       });
     }
+  }
+  if (phase === 'after') {
+    await page.setViewportSize({ width: 740, height: 1000 });
+    const rowBox = await page.getByTestId(
+      'workbench-overview-item-Agent Studio-docker-ausfuehrungswelt-migration',
+    ).boundingBox();
+    const excerptBox = await page.locator(`#${await longToggle.getAttribute('aria-controls')}`).boundingBox();
+    const actionsBox = await page.getByTestId(
+      'workbench-overview-actions-Agent Studio-docker-ausfuehrungswelt-migration',
+    ).boundingBox();
+    expect(rowBox!.x + rowBox!.width).toBeLessThanOrEqual(740);
+    expect(actionsBox!.y).toBeGreaterThan(excerptBox!.y + excerptBox!.height);
   }
 });
 

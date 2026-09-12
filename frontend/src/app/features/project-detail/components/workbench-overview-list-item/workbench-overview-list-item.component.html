@@ -1,0 +1,90 @@
+@let value = item();
+@let display = project();
+<article class="overview-item"
+         [class.overview-item--expanded]="inlineDecisionExpanded()"
+         [class.overview-item--invalid]="kind() === 'invalid'"
+         [class.overview-item--history]="kind() === 'history'"
+         [attr.data-testid]="'workbench-overview-item-' + value.projectName + '-' + value.workbench.id">
+  <div class="overview-item__main">
+    <div class="overview-item__title">
+      @if (kind() === 'decision' || kind() === 'current') {
+        <span class="overview-item__pattern" role="img"
+              [attr.aria-label]="documentPattern() + ' pattern'"
+              [attr.data-pattern]="documentPattern()"
+              [attr.data-testid]="'workbench-overview-pattern-' + value.projectName + '-' + value.workbench.id">
+          <app-studio-icon [name]="patternIcon()" [size]="14" />
+        </span>
+      }
+      <h3>{{ value.workbench.title }}</h3>
+    </div>
+    <div class="overview-item__meta">
+      <app-copyable-task-key
+        variant="reference"
+        [key]="keyLabel()"
+        [testId]="'workbench-overview-key-' + value.projectName + '-' + value.workbench.id"
+        ariaLabel="Copy Dossier key" />
+      <span class="overview-item__project"
+            [style.--workbench-project]="display.color"
+            [attr.title]="display.displayName"
+            [attr.aria-label]="'Project ' + display.displayName">
+        <i aria-hidden="true"></i>{{ display.shortCode || display.displayName }}
+      </span>
+      <span class="overview-item__status">{{ statusLabel() }}</span>
+      @if (kind() === 'current' && value.workbench.documentation?.eligible) {
+        <span class="overview-item__suggestion">Ready to document</span>
+      }
+      <time [attr.datetime]="value.workbench.updatedAtUtc">{{ updatedLabel() }}</time>
+      @if (kind() === 'decision') {
+        <span class="overview-item__open-count">{{ openDecisionCount() }} open</span>
+      }
+    </div>
+    @if (referenceStatuses().length > 0) {
+      <div class="overview-item__linked-cards"
+           [class.overview-item__linked-cards--loading]="referenceStatusesLoading()"
+           [attr.aria-busy]="referenceStatusesLoading()"
+           aria-label="Linked cards and their lane colours">
+        <span>Linked cards:</span>
+        <span class="overview-item__tasks">
+          @for (task of referenceStatuses(); track task.key) {
+            <app-task-reference-microcard
+              variant="lane-dot"
+              [status]="task"
+              [testId]="'workbench-overview-task-' + value.projectName + '-' + value.workbench.id + '-' + task.key" />
+          }
+        </span>
+      </div>
+    }
+    <p class="overview-item__excerpt"
+       [class.overview-item__excerpt--clamped]="shouldClampExcerpt() && !excerptExpanded()"
+       [id]="excerptId()">{{ excerptText() }}</p>
+    @if (shouldClampExcerpt()) {
+      <button type="button" class="overview-item__excerpt-toggle"
+              [attr.aria-controls]="excerptId()"
+              [attr.aria-expanded]="excerptExpanded()"
+              [attr.data-testid]="'workbench-overview-excerpt-toggle-' + value.projectName + '-' + value.workbench.id"
+              (click)="excerptExpanded.update(expanded => !expanded)">
+        {{ excerptExpanded() ? 'Show less' : 'Show more' }}
+      </button>
+    }
+    <div class="overview-item__actions"
+         [attr.data-testid]="'workbench-overview-actions-' + value.projectName + '-' + value.workbench.id">
+      <button type="button" class="overview-item__action-link"
+              [attr.data-testid]="'workbench-overview-full-' + value.projectName + '-' + value.workbench.id"
+              [disabled]="kind() === 'invalid'" (click)="open()">Open full view</button>
+      @if (kind() === 'decision') {
+        <button type="button" class="overview-item__action-primary"
+                [attr.aria-expanded]="inlineDecisionExpanded()"
+                [attr.data-testid]="'workbench-overview-open-' + value.projectName + '-' + value.workbench.id"
+                (click)="toggleInlineDecision.emit(value)">
+          {{ inlineDecisionExpanded() ? 'Close review' : 'Review here' }}
+        </button>
+      }
+    </div>
+  </div>
+  @if (kind() === 'decision' && inlineDecisionExpanded()) {
+    <div class="overview-item__inline-viewer"
+         [attr.data-testid]="'workbench-overview-inline-' + value.projectName + '-' + value.workbench.id">
+      <app-workbench-viewer [projectName]="value.projectName" [workbenchId]="value.workbench.id" />
+    </div>
+  }
+</article>

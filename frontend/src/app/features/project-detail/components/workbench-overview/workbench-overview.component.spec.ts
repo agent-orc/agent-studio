@@ -145,7 +145,9 @@ describe('WorkbenchOverviewComponent', () => {
       .toContain('2 history');
     expect(fixture.nativeElement.querySelector('[data-testid="workbench-overview-active-count"]')?.textContent)
       .toContain('2');
-    expect([...fixture.nativeElement.querySelectorAll('[data-testid="workbench-overview-active-list"] > article')]
+    expect([...fixture.nativeElement.querySelectorAll(
+      '[data-testid="workbench-overview-active-list"] > app-workbench-overview-list-item > article',
+    )]
       .map((row: Element) => row.getAttribute('data-testid')))
       .toEqual(['workbench-overview-item-Demo-active', 'workbench-overview-item-Demo-tracking']);
     expect(fixture.nativeElement.querySelector('[data-testid="workbench-overview-history-section-count"]')?.textContent)
@@ -179,10 +181,16 @@ describe('WorkbenchOverviewComponent', () => {
     const activeCardLink = activeCard.querySelector('a') as HTMLAnchorElement;
     expect(activeCardLink.getAttribute('href')).toBe('#task:AGT-1');
     activeCardLink.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
-    vi.advanceTimersByTime(300);
-    expect(document.querySelector(
+    const activeTooltip = document.querySelector(
       '[data-testid="workbench-overview-task-Demo-pending-AGT-1-tooltip"]',
-    )?.textContent).toContain('In Progress');
+    );
+    expect(activeTooltip?.textContent).toContain('Key: AGT-1');
+    expect(activeTooltip?.textContent).toContain('Title: AGT-1 implementation');
+    expect(activeTooltip?.textContent).toContain('Lane: In Progress');
+    expect(activeTooltip?.textContent).toContain('State: 3-progress');
+    expect(activeCard.querySelector('.task-ref__lane-dot')?.getAttribute('data-lane-tone')).toBe('progress');
+    expect(fixture.nativeElement.querySelector(
+      '[data-testid="workbench-overview-item-Demo-pending"]')?.textContent).toContain('Linked cards:');
     activeCardLink.click();
     expect(openTaskKey).toHaveBeenCalledWith('Demo::active-card');
     expect(fixture.nativeElement.querySelector(
@@ -226,6 +234,56 @@ describe('WorkbenchOverviewComponent', () => {
     fixture.detectChanges();
     expect(fixture.nativeElement.querySelector('[data-testid="workbench-viewer"]')).not.toBeNull();
     expect(fixture.nativeElement.querySelector('[data-testid="workbench-viewer-open-wiki"]')).toBeNull();
+    http.verify();
+  });
+
+  it('clamps long excerpts per item and anchors every variant action row below its excerpt', async () => {
+    await TestBed.configureTestingModule({
+      imports: [WorkbenchOverviewComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(WorkbenchOverviewComponent);
+    fixture.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    const pending = item('long-pending', 'decision-pending', 2);
+    pending.workbench.key = 'AGT-W51';
+    pending.workbench.summary = 'Long Dossier summary content. '.repeat(28);
+    const active = item('short-active', 'active');
+    active.workbench.key = 'AGT-W48';
+    const invalid = item('invalid', 'invalid');
+    invalid.workbench.valid = false;
+    invalid.workbench.error = 'Descriptor error';
+    const documented = item('documented', 'documented');
+    http.expectOne('/api/workbenches').flush(overview([pending, active, invalid, documented]));
+    fixture.detectChanges();
+
+    const toggle = fixture.nativeElement.querySelector(
+      '[data-testid="workbench-overview-excerpt-toggle-Demo-long-pending"]',
+    ) as HTMLButtonElement;
+    const excerpt = fixture.nativeElement.querySelector(`#${toggle.getAttribute('aria-controls')}`) as HTMLElement;
+    expect(toggle.textContent).toContain('Show more');
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(excerpt.classList).toContain('overview-item__excerpt--clamped');
+    expect(fixture.nativeElement.querySelector(
+      '[data-testid="workbench-overview-excerpt-toggle-Demo-short-active"]',
+    )).toBeNull();
+
+    toggle.click();
+    fixture.detectChanges();
+    expect(toggle.textContent).toContain('Show less');
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(excerpt.classList).not.toContain('overview-item__excerpt--clamped');
+
+    for (const id of ['long-pending', 'short-active', 'invalid', 'documented']) {
+      const row = fixture.nativeElement.querySelector(`[data-testid="workbench-overview-item-Demo-${id}"]`);
+      const actions = row.querySelector(`[data-testid="workbench-overview-actions-Demo-${id}"]`);
+      expect(actions).not.toBeNull();
+      expect(actions.parentElement).toBe(row.querySelector('.overview-item__main'));
+      expect(row.querySelector('.overview-item__excerpt').compareDocumentPosition(actions)
+        & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+    expect(fixture.nativeElement.querySelector(
+      '[data-testid="workbench-overview-key-Demo-long-pending"]')?.textContent).toContain('AGT-W51');
     http.verify();
   });
 

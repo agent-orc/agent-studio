@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject, input } from '@an
 import { TaskReferenceNavigationService } from '../../services/task-reference-navigation.service';
 import { projectIdentity } from '../../services/project-identity.util';
 import { AppTooltipDirective } from '../tooltip/app-tooltip.directive';
-import { laneName } from '../../models/lane-presentation';
+import { laneName, laneTone as presentationLaneTone } from '../../models/lane-presentation';
 import { TaskState } from '../../models/task.model';
 
 export interface TaskReferenceMergeStatus {
@@ -47,6 +47,7 @@ export class TaskReferenceMicrocardComponent {
   readonly laneIcon = computed(() => laneChrome(this.status().lane).icon);
   readonly laneLabel = computed(() => laneChrome(this.status().lane).label);
   readonly laneTone = computed(() => laneChrome(this.status().lane).tone);
+  readonly presentationLaneTone = computed(() => presentationLaneTone(this.status().lane));
   readonly mergeLabel = computed(() => {
     const merge = this.status().merge;
     if (!merge) return null;
@@ -60,8 +61,10 @@ export class TaskReferenceMicrocardComponent {
     return `${merge.integrationBranch}: ${integrationStatus} · ${merge.releaseBranch}: ${releaseStatus}`;
   });
   readonly tooltipLabel = computed(() => [
-    this.status().title || 'Unknown or deleted task',
-    `${this.laneLabel()} · ${this.status().projectName}`,
+    `Key: ${this.status().key}`,
+    `Title: ${this.status().title || 'Unknown or deleted task'}`,
+    `Lane: ${this.status().exists ? this.laneLabel() : 'Unknown'}`,
+    `State: ${this.status().exists ? (this.status().lane || 'Unknown') : 'Unknown or deleted'}`,
     this.mergePopoverLabel(),
     this.status().reviewGrade ? `Review grade ${this.status().reviewGrade}` : null,
   ].filter(Boolean).join('\n'));
