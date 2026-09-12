@@ -15,5 +15,6 @@
       "title": "Apply the approved Dossier relevance metadata",
       "promptMarkdown": "Implement the operator-approved verdict matrix in docs/operations/dossier-review-2026-09/index.html. For every reviewed Dossier, call PUT /api/projects/{projectName}/workbenches/{id}/review with verdict, supersededBy, reviewedBy=AGT-2785, and the row reasoning as note. Let the server assign reviewedAt and preserve its history and commit behavior. If the metadata endpoint is not integrated, add the same review block directly to each workbench.json using the contract documented in docs/operations/README.md. Do not change the verdict matrix or archive content without an explicit operator revision. Verify all 52 pre-existing descriptors, report the applied counts, and list every changed workbench.json path."
     }
-  ]
+  ],
+  "key": "AGT-W53"
 }
