@@ -7,6 +7,45 @@ namespace AgentRunner.Tests;
 [Collection(ProcessEnvironmentCollection.Name)]
 public sealed class RunnerCapabilityProbeTests
 {
+    [Fact]
+    public async Task Capability_snapshot_reports_cli_version_and_resolved_install_path()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        using var temp = new TempDirectory();
+        var codex = Path.Combine(temp.Path, "codex");
+        var claude = Path.Combine(temp.Path, "claude");
+        await File.WriteAllTextAsync(codex, "#!/bin/sh\necho 'codex-cli 0.154.0'\n");
+        await File.WriteAllTextAsync(claude, "#!/bin/sh\necho '2.1.269 (Claude Code)'\n");
+        File.SetUnixFileMode(codex, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        File.SetUnixFileMode(claude, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        var options = new RunnerOptions
+        {
+            ServerUrl = "http://task-server",
+            RunnerId = "runner-test",
+            RunnerName = "runner-test",
+            Hostname = "host-test",
+            BackendName = "test",
+            WorkDir = temp.Path,
+            GitRemote = "https://example.invalid/repo.git",
+            BaseBranch = "main",
+            CliBin = codex,
+            ClaudeCliBin = claude,
+            CodexCliBin = codex,
+            CliArgs = "",
+        };
+
+        var advertised = RunnerCapabilityProbe.Advertise(options, gitPushReady: true);
+
+        var codexCapability = Assert.Single(advertised,
+            item => item.Key == CapabilityProtocol.CliExecution("codex"));
+        Assert.Equal("0.154.0", codexCapability.Version);
+        Assert.Equal(codex, codexCapability.Identity);
+        var claudeCapability = Assert.Single(advertised,
+            item => item.Key == CapabilityProtocol.CliExecution("claude"));
+        Assert.Equal("2.1.269", claudeCapability.Version);
+        Assert.Equal(claude, claudeCapability.Identity);
+    }
+
     [Theory]
     [InlineData(1, "", "HTTP 401 Missing bearer authentication", true)]
     [InlineData(1, "", "login required", true)]

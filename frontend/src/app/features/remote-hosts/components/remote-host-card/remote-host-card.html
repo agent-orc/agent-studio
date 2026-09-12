@@ -155,6 +155,44 @@
               @for (cap of h.capabilities; track cap) { <li>{{ cap }}</li> }
             </ul>
           }
+          @if (h.installedClis?.length) {
+            <div class="cli-versions" data-testid="remote-host-cli-versions">
+              @for (cli of h.installedClis; track cli.name) {
+                <div class="cli-version" [attr.data-drift]="cli.isBelowTarget ? 'true' : null">
+                  <span><strong>{{ cli.name }}</strong>&nbsp;<code>{{ cli.version }}</code></span>
+                  @if (cli.isBelowTarget) {
+                    <span class="cli-version__drift" data-testid="remote-host-cli-drift">
+                      Update due · target {{ cli.targetVersion }}
+                    </span>
+                  }
+                  <span class="cli-version__path">{{ cli.installPath }}</span>
+                  <span class="cli-version__age" [attr.title]="cli.checkedAt">
+                    Checked {{ relativeHeartbeat(cli.checkedAt, now()) }}
+                  </span>
+                </div>
+              }
+            </div>
+            @if (cliUpdateLabel(); as updateLabel) {
+              <p class="cli-update" data-testid="remote-host-cli-update-status">{{ updateLabel }}. {{ h.cliUpdate?.detail }}</p>
+            }
+            <div class="detail__actions">
+              @if (!cliUpdateActive()) {
+                <button class="host__btn host__btn--primary" type="button"
+                        data-testid="remote-host-action-update-clis"
+                        [disabled]="!!h.busyAction || !h.capacityHostId"
+                        (click)="emit('update-clis')">
+                  {{ h.busyAction === 'update-clis' ? 'Starting…' : 'Update CLIs' }}
+                </button>
+              } @else if (h.cliUpdate?.canCancel) {
+                <button class="host__btn" type="button"
+                        data-testid="remote-host-action-cancel-cli-update"
+                        [disabled]="!!h.busyAction"
+                        (click)="emit('cancel-cli-update')">
+                  {{ h.busyAction === 'cancel-cli-update' ? 'Cancelling…' : 'Cancel update' }}
+                </button>
+              }
+            </div>
+          }
           @if (h.cliQuotas.length) {
             <ul class="chips" aria-label="Per-CLI quota" data-testid="remote-host-quotas">
               @for (q of h.cliQuotas; track q.cliType + '|' + q.windowLabel) {

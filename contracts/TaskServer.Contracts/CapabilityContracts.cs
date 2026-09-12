@@ -139,6 +139,42 @@ public sealed record CapabilityHealthDto(
     DateTime? LimitedUntil = null,
     DateTime? CredentialModifiedAt = null);
 
+/// <summary>One CLI installation observed by a runner capability probe.</summary>
+public sealed record InstalledCliDto(
+    string Name,
+    string Version,
+    string InstallPath,
+    DateTime CheckedAt,
+    string? TargetVersion = null,
+    bool IsBelowTarget = false);
+
+public static class CliUpdateStates
+{
+    public const string Draining = "draining";
+    public const string Ready = "ready";
+    public const string Upgrading = "upgrading";
+    public const string Probing = "probing";
+    public const string Succeeded = "succeeded";
+    public const string Failed = "failed";
+    public const string Cancelled = "cancelled";
+}
+
+public sealed record HostCliUpdateDto(
+    string HostId,
+    string State,
+    string CodexTargetVersion,
+    string ClaudeTargetVersion,
+    DateTime RequestedAt,
+    DateTime UpdatedAt,
+    int ActiveSlots,
+    bool CanCancel,
+    string? Detail = null,
+    DateTime? CompletedAt = null);
+
+public sealed record HostCliUpdateResultRequest(
+    string State,
+    string? Detail = null);
+
 public sealed record RemoteHostAdmissionDto(
     string HostId,
     string AdmissionState,
@@ -167,7 +203,90 @@ public sealed record RunnerCapabilitySnapshotDto(
     HostProjectPolicyDto? ProjectPolicy = null,
     int? RoleMaxParallelism = null,
     DateTime? RestartedAt = null,
-    int ReviewsLost = 0);
+    int ReviewsLost = 0,
+    IReadOnlyList<InstalledCliDto>? InstalledClis = null,
+    HostCliUpdateDto? CliUpdate = null);
+
+public static class InstalledCliProjection
+{
+    public static IReadOnlyList<InstalledCliDto> FromCapabilities(
+        IEnumerable<CapabilityHealthDto> capabilities,
+        string? codexTargetVersion = null,
+        string? claudeTargetVersion = null)
+        => capabilities
+            .Where(item => item.Key.StartsWith("cli-execution:", StringComparison.Ordinal)
+                           && !string.IsNullOrWhiteSpace(item.Version)
+                           && !string.IsNullOrWhiteSpace(item.Identity))
+            .Select(item =>
+            {
+                var name = item.Key["cli-execution:".Length..];
+                var target = string.Equals(name, "codex", StringComparison.OrdinalIgnoreCase)
+                    ? codexTargetVersion
+                    : string.Equals(name, "claude", StringComparison.OrdinalIgnoreCase)
+                        ? claudeTargetVersion
+                        : null;
+                return new InstalledCliDto(
+                    name,
+                    item.Version!,
+                    item.Identity!,
+                    item.AdvertisedAt,
+                    target,
+                    IsBelowTarget: InstalledCliVersionPolicy.IsBelow(item.Version, target));
+            })
+            .OrderBy(item => item.Name, StringComparer.Ordinal)
+            .ToArray();
+
+}
+
+/// <summary>SemVer comparison shared by snapshot drift and host policy.</summary>
+public static class InstalledCliVersionPolicy
+{
+    public static bool IsBelow(string? installed, string? target)
+    {
+        if (!TryParse(installed, out var left) || !TryParse(target, out var right)) return false;
+        return Compare(left, right) < 0;
+    }
+
+    private static bool TryParse(string? value, out Parsed parsed)
+        {
+            parsed = default;
+            if (string.IsNullOrWhiteSpace(value)) return false;
+            var withoutBuild = value.Trim().TrimStart('v', 'V').Split('+', 2)[0];
+            var parts = withoutBuild.Split('-', 2);
+            var core = parts[0].Split('.');
+            if (core.Length is < 1 or > 3
+                || !int.TryParse(core[0], out var major)
+                || !int.TryParse(core.ElementAtOrDefault(1) ?? "0", out var minor)
+                || !int.TryParse(core.ElementAtOrDefault(2) ?? "0", out var patch)) return false;
+            parsed = new Parsed(major, minor, patch, parts.Length == 2 ? parts[1].Split('.') : []);
+            return true;
+        }
+
+    private static int Compare(Parsed left, Parsed right)
+        {
+            var result = left.Major.CompareTo(right.Major);
+            if (result != 0) return result;
+            result = left.Minor.CompareTo(right.Minor);
+            if (result != 0) return result;
+            result = left.Patch.CompareTo(right.Patch);
+            if (result != 0) return result;
+            if (left.Pre.Length == 0) return right.Pre.Length == 0 ? 0 : 1;
+            if (right.Pre.Length == 0) return -1;
+            for (var index = 0; index < Math.Max(left.Pre.Length, right.Pre.Length); index++)
+            {
+                if (index >= left.Pre.Length) return -1;
+                if (index >= right.Pre.Length) return 1;
+                var ln = int.TryParse(left.Pre[index], out var li);
+                var rn = int.TryParse(right.Pre[index], out var ri);
+                result = ln && rn ? li.CompareTo(ri) : ln ? -1 : rn ? 1
+                    : string.Compare(left.Pre[index], right.Pre[index], StringComparison.Ordinal);
+                if (result != 0) return result;
+            }
+            return 0;
+        }
+
+    private readonly record struct Parsed(int Major, int Minor, int Patch, string[] Pre);
+}
 
 public sealed record OperatorHostDrainRequest(string Reason);
 

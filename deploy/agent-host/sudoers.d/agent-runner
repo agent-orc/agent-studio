@@ -12,7 +12,8 @@ Cmnd_Alias AGENT_RUNNER_SERVICE_CONTROL = \
 Cmnd_Alias AGENT_RUNNER_DEPLOY = \
     /usr/local/sbin/agent-runner-deploy "", \
     /usr/local/sbin/agent-runner-deploy drain, \
-    /usr/local/sbin/agent-runner-deploy restart-review
+    /usr/local/sbin/agent-runner-deploy restart-review, \
+    /usr/local/sbin/agent-runner-deploy update-clis 0.154.0 2.1.269
 
 # Defense in depth: sudoers enumerates every role and accepted value. The
 # root-owned helper independently enforces the same role, variable, and 1..6

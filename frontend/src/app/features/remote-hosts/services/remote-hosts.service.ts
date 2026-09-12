@@ -248,6 +248,8 @@ export class RemoteHostsService {
                   : current.roleMaxParallelism ?? null,
               restartedAt: snapshot.restartedAt ?? null,
               reviewsLost: snapshot.reviewsLost ?? 0,
+              installedClis: snapshot.installedClis ?? current.installedClis ?? [],
+              cliUpdate: snapshot.cliUpdate ?? current.cliUpdate ?? null,
               runtimeCapacityAppliedAt:
                 snapshot.runtimeCapacityAppliedAt !== undefined
                   ? snapshot.runtimeCapacityAppliedAt
@@ -437,6 +439,32 @@ export class RemoteHostsService {
   /** Ask a host to finish current work and stop taking more. */
   drain(id: string): void {
     this.postAction(id, 'drain', `/api/clients/${encodeURIComponent(this.clientId(id))}/drain`);
+  }
+
+  updateClis(id: string): void {
+    const host = this.hosts().find(item => item.id === id);
+    const hostId = host?.capacityHostId;
+    if (!host || !hostId || host.busyAction || !this.http) return;
+    this.patch(id, item => ({ ...item, busyAction: 'update-clis' }));
+    this.http.post<NonNullable<RemoteHost['cliUpdate']>>(
+      `/api/v1/management/remote-hosts/${encodeURIComponent(hostId)}/cli-update`, {},
+    ).subscribe({
+      next: update => this.patch(id, item => ({ ...item, cliUpdate: update, busyAction: null, status: 'draining' })),
+      error: error => this.actionFailed(id, error),
+    });
+  }
+
+  cancelCliUpdate(id: string): void {
+    const host = this.hosts().find(item => item.id === id);
+    const hostId = host?.capacityHostId;
+    if (!host || !hostId || host.busyAction || !this.http) return;
+    this.patch(id, item => ({ ...item, busyAction: 'cancel-cli-update' }));
+    this.http.post<NonNullable<RemoteHost['cliUpdate']>>(
+      `/api/v1/management/remote-hosts/${encodeURIComponent(hostId)}/cli-update/cancel`, {},
+    ).subscribe({
+      next: update => this.patch(id, item => ({ ...item, cliUpdate: update, busyAction: null, status: 'online' })),
+      error: error => this.actionFailed(id, error),
+    });
   }
 
   /** Drain immediately and retire only after the daemon reports zero active slots. */

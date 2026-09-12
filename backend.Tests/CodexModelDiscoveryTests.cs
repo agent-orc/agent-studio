@@ -106,7 +106,7 @@ public class CodexModelDiscoveryTests : IDisposable
         Assert.False(astra.Available);
         Assert.False(astra.Deprecated);
         Assert.False(astra.IsDefault);
-        Assert.Equal("Not offered by the installed codex-cli 0.151.0.", astra.AvailabilityNote);
+        Assert.Equal("Needs codex-cli ≥ 0.153 (host has 0.151.0).", astra.AvailabilityNote);
         // Live entries are untouched and still lead the list.
         Assert.Equal(ModelIds.Gpt56Sol, merged.Models[0].Id);
         Assert.All(merged.Models.Where(m => !m.Available), m => Assert.NotNull(m.AvailabilityNote));
@@ -192,7 +192,7 @@ public class CodexModelDiscoveryTests : IDisposable
 
         var astra = Assert.Single(merged.Models, m => m.Id == ModelIds.Gpt6Astra);
         Assert.False(astra.Available);
-        Assert.Equal("Not offered by the installed codex-cli 0.144.1.", astra.AvailabilityNote);
+        Assert.Equal("Needs codex-cli ≥ 0.153 (host has 0.144.1).", astra.AvailabilityNote);
     }
 
     [Fact]

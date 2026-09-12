@@ -15,6 +15,8 @@ RUN dotnet publish runner/AgentRunner.csproj -c Release -o /app /p:UseAppHost=fa
 FROM mcr.microsoft.com/dotnet/sdk:10.0
 ARG VERSION=0.0.0-dev
 ARG SHA=unknown
+ARG CODEX_CLI_VERSION=0.154.0
+ARG CLAUDE_CLI_VERSION=2.1.269
 LABEL org.opencontainers.image.title="agent-host" \
       org.opencontainers.image.version="$VERSION" \
       org.opencontainers.image.revision="$SHA" \
@@ -23,7 +25,9 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends git openssh-client curl ca-certificates \
  && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
  && apt-get install -y --no-install-recommends nodejs \
- && npm install --global @openai/codex @anthropic-ai/claude-code \
+ && npm install --global \
+      "@openai/codex@${CODEX_CLI_VERSION}" \
+      "@anthropic-ai/claude-code@${CLAUDE_CLI_VERSION}" \
  && rm -rf /var/lib/apt/lists/* \
  && git config --system safe.directory '*' \
  && groupadd --gid 10001 runner \

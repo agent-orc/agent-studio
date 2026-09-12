@@ -216,9 +216,58 @@ Ubuntu LTS. Install the runtime the runner and the agent CLIs need:
 ```bash
 sudo apt-get update && sudo apt-get install -y git curl build-essential
 # dotnet 10 SDK (or runtime) and node 22 via the usual channels, then:
-npm i -g @anthropic-ai/claude-code @openai/codex
+sudo npm install --global --prefix /usr/local \
+  @anthropic-ai/claude-code@2.1.269 @openai/codex@0.154.0
 npx playwright install --with-deps chromium
 ```
+
+### CLI version policy and managed updates
+
+The Task Server release owns pinned targets for Codex CLI and Claude Code. The
+defaults for this release are Codex CLI `0.154.0` and Claude Code `2.1.269`.
+Each Coding and Review daemon reports the installed version, resolved path, and
+check timestamp through the same capability probe. Execution Hosts shows the
+age of that observation. A yellow **Update due** chip means the installed
+version is below the server target. A model-specific message such as
+`needs codex-cli ≥ 0.153 (host has 0.144.1)` means the old CLI cannot offer that
+model, rather than a provider or account failure.
+
+Use **Update CLIs** on the physical host row. The Task Server closes claim
+admission for both Coding and Review, waits for every active slot to finish,
+and shows the elapsed drain time and remaining active slots. **Cancel update**
+reopens admission until package activation begins. The host then invokes the
+allowlisted `agent-runner-deploy update-clis` command with the two release-pinned
+versions. The helper installs into an immutable staging prefix and probes both
+CLIs for version, login status, and model visibility before switching the
+current symlink. A failed install or probe leaves the previous prefix active.
+The Task Server records request, terminal outcome, and a deduplicated drift
+alarm after 24 hours below target.
+
+Direct root SSH is an emergency fallback only. It was used during the
+2026-09-12 incident before the managed action existed. First drain the host in
+Execution Hosts and verify that Coding and Review both show zero active slots.
+Then, from a root-owned SSH session, run exactly the release-pinned helper:
+
+```bash
+sudo /usr/local/sbin/agent-runner-deploy update-clis 0.154.0 2.1.269
+sudo systemctl status agent-runner.service agent-runner-review.service --no-pager
+sudo journalctl -t agent-runner-deploy -n 20 --no-pager
+```
+
+Do not use an unpinned global npm install as routine maintenance. If the helper
+or its exact sudoers entry is missing, update the host release and hardening
+assets first. If that is impossible during an incident, the historical root-SSH
+fallback is the following pinned global install:
+
+```bash
+sudo npm install --global @openai/codex@0.154.0 @anthropic-ai/claude-code@2.1.269
+sudo -u agent-runner codex --version
+sudo -u agent-runner claude --version
+sudo systemctl restart agent-runner.service agent-runner-review.service
+```
+
+This last path has no staged rollback and must be recorded as an incident. It
+is not the normal upgrade procedure.
 
 ### Per-host provider authentication
 

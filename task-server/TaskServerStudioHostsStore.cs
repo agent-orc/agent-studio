@@ -54,6 +54,34 @@ public sealed partial class TaskServerStore
             );
             CREATE INDEX IF NOT EXISTS ix_studio_provider_auth_events_host
                 ON studio_provider_auth_events(host_id, created_at);
+            CREATE TABLE IF NOT EXISTS studio_host_cli_updates(
+                host_id TEXT PRIMARY KEY,
+                state TEXT NOT NULL,
+                codex_target_version TEXT NOT NULL,
+                claude_target_version TEXT NOT NULL,
+                requested_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                completed_at TEXT,
+                detail TEXT
+            );
+            CREATE TABLE IF NOT EXISTS studio_host_cli_drift(
+                host_id TEXT NOT NULL,
+                cli_name TEXT NOT NULL,
+                installed_version TEXT NOT NULL,
+                target_version TEXT NOT NULL,
+                first_detected_at TEXT NOT NULL,
+                alarmed_at TEXT,
+                PRIMARY KEY(host_id, cli_name)
+            );
+            CREATE TABLE IF NOT EXISTS studio_host_model_cli_alerts(
+                host_id TEXT NOT NULL,
+                model_id TEXT NOT NULL,
+                cli_name TEXT NOT NULL,
+                installed_version TEXT NOT NULL,
+                minimum_version TEXT NOT NULL,
+                alerted_at TEXT NOT NULL,
+                PRIMARY KEY(host_id, model_id)
+            );
             """, ct);
     }
 

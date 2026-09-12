@@ -19,6 +19,8 @@ git_push_remote=""
 package_id="CodingAgentRunner"
 runner_command="agent-host"
 minimum_version="0.5.0"
+codex_cli_version="0.154.0"
+claude_cli_version="2.1.269"
 provider_auth_file="/etc/agent-runner/provider-auth.env"
 skip_auth=0
 
@@ -191,11 +193,14 @@ fi
 REMOTE_PREFLIGHT
 
 printf '[onboarding] phase=install Installing/updating the agent host tool and agent CLIs.\n'
-if ! "${ssh_base[@]}" -T "$host" bash -s -- "$package_id" "$runner_command" "$minimum_version" <<'REMOTE_INSTALL'
+if ! "${ssh_base[@]}" -T "$host" bash -s -- \
+  "$package_id" "$runner_command" "$minimum_version" "$codex_cli_version" "$claude_cli_version" <<'REMOTE_INSTALL'
 set -euo pipefail
 package_id="$1"
 runner_command="$2"
 minimum_version="$3"
+codex_cli_version="$4"
+claude_cli_version="$5"
 export PATH="$HOME/.dotnet/tools:$HOME/.local/bin:$PATH"
 
 tool_root="$HOME/.local/share/agent-host-tools"
@@ -235,10 +240,9 @@ stage_root=""
 ln -sfnT "$release_root" "$tool_root/candidate"
 
 command -v npm >/dev/null || { echo '[remote] Node.js/npm is missing. Install Node 22, then retry.' >&2; exit 33; }
-if ! npm install --global @openai/codex @anthropic-ai/claude-code; then
-  echo '[remote] User-level npm global install failed; retrying through passwordless sudo.' >&2
-  sudo -n npm install --global @openai/codex @anthropic-ai/claude-code
-fi
+sudo -n npm install --global --prefix /usr/local \
+  "@openai/codex@$codex_cli_version" \
+  "@anthropic-ai/claude-code@$claude_cli_version"
 printf '[remote] runner-package=%s runner-version=%s\n' "$package_id" "$installed_version"
 codex --version
 claude --version
@@ -368,6 +372,9 @@ chmod 600 "$env_tmp"
   printf 'RUNNER_ID=%s\n' "$runner_id"
   printf 'RUNNER_NAME=%s\n' "$runner_name"
   printf 'RUNNER_ROLE=%s\n' "$role"
+  printf 'RUNNER_CLI_BIN=/usr/local/bin/claude\n'
+  printf 'RUNNER_CODEX_CLI_BIN=/usr/local/bin/codex\n'
+  printf 'RUNNER_CLAUDE_CLI_BIN=/usr/local/bin/claude\n'
   [[ "$service_auth" == 1 ]] && printf 'RUNNER_AUTH_TOKEN_FILE=%s\n' "$auth_token_file"
   printf 'RUNNER_GIT_REMOTE=%s\n' "$git_remote"
   [[ -z "$git_push_remote" ]] || printf 'RUNNER_GIT_PUSH_REMOTE=%s\n' "$git_push_remote"

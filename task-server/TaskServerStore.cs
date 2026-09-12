@@ -25,9 +25,11 @@ public sealed partial class TaskServerStore
     // so a replacement daemon can re-fence a detached worker in place.
     // 18 persists review daemon restart observations and their lost-review
     // counts for the 24-hour execution-host projection.
+    // 19 persists host CLI update state, target drift age, and deduplicated
+    // per-host model minimum alerts.
     // The migration block is idempotent; the number guards downgrades from
     // binaries that do not know this state.
-    public const int CurrentSchemaVersion = 18;
+    public const int CurrentSchemaVersion = 19;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
