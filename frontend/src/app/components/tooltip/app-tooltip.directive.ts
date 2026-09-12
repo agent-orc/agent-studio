@@ -31,7 +31,12 @@ export class AppTooltipDirective implements OnDestroy {
     this.cancelShow();
     this.cancelHide();
     if (!this.appTooltip()?.trim()) return;
-    this.showTimer = setTimeout(() => this.show(), Math.max(0, this.appTooltipDelay()));
+    const delay = Math.max(0, this.appTooltipDelay());
+    if (delay === 0) {
+      this.show();
+      return;
+    }
+    this.showTimer = setTimeout(() => this.show(), delay);
   }
 
   onFocusOut(event: FocusEvent): void {

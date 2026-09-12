@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject, input } from '@an
 import { TaskReferenceNavigationService } from '../../services/task-reference-navigation.service';
 import { projectIdentity } from '../../services/project-identity.util';
 import { AppTooltipDirective } from '../tooltip/app-tooltip.directive';
-import { laneName } from '../../models/lane-presentation';
+import { laneName, laneSentence, laneTone } from '../../models/lane-presentation';
 import { TaskState } from '../../models/task.model';
 
 export interface TaskReferenceMergeStatus {
@@ -46,7 +46,8 @@ export class TaskReferenceMicrocardComponent {
   );
   readonly laneIcon = computed(() => laneChrome(this.status().lane).icon);
   readonly laneLabel = computed(() => laneChrome(this.status().lane).label);
-  readonly laneTone = computed(() => laneChrome(this.status().lane).tone);
+  readonly laneStateTone = computed(() => laneChrome(this.status().lane).tone);
+  readonly laneColorTone = computed(() => laneTone(this.status().lane));
   readonly mergeLabel = computed(() => {
     const merge = this.status().merge;
     if (!merge) return null;
@@ -60,8 +61,11 @@ export class TaskReferenceMicrocardComponent {
     return `${merge.integrationBranch}: ${integrationStatus} · ${merge.releaseBranch}: ${releaseStatus}`;
   });
   readonly tooltipLabel = computed(() => [
-    this.status().title || 'Unknown or deleted task',
-    `${this.laneLabel()} · ${this.status().projectName}`,
+    `Key: ${this.status().key}`,
+    `Title: ${this.status().title || 'Unknown or deleted task'}`,
+    `Lane: ${this.status().exists ? this.laneLabel() : 'Unavailable'}`,
+    `State: ${this.status().exists ? laneSentence(this.status().lane) : 'Unknown or deleted task'}`,
+    `Project: ${this.status().projectName}`,
     this.mergePopoverLabel(),
     this.status().reviewGrade ? `Review grade ${this.status().reviewGrade}` : null,
   ].filter(Boolean).join('\n'));
@@ -78,9 +82,9 @@ export class TaskReferenceMicrocardComponent {
  * AGT-2715: the label is the lane's one name from the presentation catalogue —
  * this used to collapse three lanes into the word "Waiting", so a card in Human
  * review read "Waiting" here and "Review" on the board. The coarse *tone*
- * bucket stays local on purpose: the microcard is a dense inline control with
- * five shape/colour states (`done`/`active`/`waiting`/`queued`/`ghost`), not a
- * per-lane pigment surface.
+ * bucket stays local for the default variant's glyph: that dense inline
+ * control has five shape/colour states (`done`/`active`/`waiting`/`queued`/`ghost`).
+ * The lane-dot variant instead binds the canonical per-lane tone.
  */
 function laneChrome(lane: string | null): { icon: string; label: string; tone: string } {
   if (!lane) return { icon: '◇', label: 'Deleted or unknown task', tone: 'ghost' };

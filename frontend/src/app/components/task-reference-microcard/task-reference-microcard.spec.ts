@@ -73,6 +73,8 @@ describe('TaskReferenceMicrocardComponent', () => {
     fixture.detectChanges();
     expect(fixture.nativeElement.querySelector('a')).toBeNull();
     expect(fixture.nativeElement.querySelector('.task-ref--ghost')).toBeTruthy();
+    expect(fixture.componentInstance.tooltipLabel()).toContain('Key: AGT-2050');
+    expect(fixture.componentInstance.tooltipLabel()).toContain('State: Unknown or deleted task');
   });
 
   it('keeps task navigation and tooltip detail in the compact lane-dot variant', async () => {
@@ -90,7 +92,11 @@ describe('TaskReferenceMicrocardComponent', () => {
     const host = fixture.nativeElement.querySelector('[data-testid="linked-task-AGT-2050"]');
     const link = host.querySelector('a') as HTMLAnchorElement;
     expect(host.querySelector('.task-ref__lane-dot')).toBeTruthy();
+    expect(link.getAttribute('data-lane-tone')).toBe('progress');
+    expect(fixture.componentInstance.tooltipLabel()).toContain('Key: AGT-2050');
     expect(fixture.componentInstance.tooltipLabel()).toContain('Living references');
+    expect(fixture.componentInstance.tooltipLabel()).toContain('Lane: In Progress');
+    expect(fixture.componentInstance.tooltipLabel()).toContain('State: A run is executing the task');
     expect(host.textContent).not.toContain('AGT-2050●');
     link.click();
     expect(openTaskKey).toHaveBeenCalledWith('PROJ-001::task');

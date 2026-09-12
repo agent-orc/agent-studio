@@ -21,3 +21,9 @@ release yet.
 - Dossier relevance-review metadata, managed review writes and history,
   configurable review-due policy, and review tags, tooltips, filtering,
   sorting, and viewer recording controls.
+
+### Changed
+
+- Dossier list cards now use a wide clamped summary, anchored footer actions,
+  copyable keys, and labelled lane-colour references with immediate complete
+  tooltips.
