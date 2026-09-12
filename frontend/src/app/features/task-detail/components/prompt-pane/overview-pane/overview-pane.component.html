@@ -142,8 +142,10 @@
        view the feature spec asks for. The completion loop (verdict / attempt
        / re-open counters) is consolidated into this section's header as a
        strip rather than a separate block — it is the pipeline's outcome. -->
+  <div class="ov-consumption studio-measure studio-measure--tabular-compact"
+       data-testid="overview-consumption">
   @if (hasPipelineSection()) {
-    <section class="ov-section studio-measure studio-measure--tabular-compact" data-testid="overview-pipeline">
+    <section class="ov-section" data-testid="overview-pipeline">
       <div class="ov-section__heading-row">
         <h3 class="ov-section__title"
             [cacTooltip]="'Pre steps, core agent work, and post steps for this task. Per-step model and enable/disable are configured in project Settings.'">
@@ -650,74 +652,68 @@
        Aggregates session-events.jsonl + tool-calls.jsonl for a meaningful
        at-a-glance "what did the agent actually do" view. -->
   @if (hasAgentWork()) {
-    <section class="ov-section studio-measure studio-measure--tabular" data-testid="overview-agent-work">
-      <h3 class="ov-section__title"
+    <section class="ov-agent-work" data-testid="overview-agent-work">
+      <h3 class="ov-agent-work__title"
           [cacTooltip]="sessionDebugTooltip()">
         Agent Work
       </h3>
-      <div class="ov-grid">
-        @if (agentWork(); as aw) {
-          <div class="ov-row">
-            <span class="ov-label">Calls</span>
-            <span class="ov-value" data-testid="agent-work-calls">
-              <span class="studio-count-badge">{{ aw.calls }} calls</span>
-              @if (aw.recovered) {
-                <span class="studio-pill studio-pill--warn"
-                      [cacTooltip]="'At least one CLI invocation could not resume the prior session and reconstructed context from disk.'">
-                  recovered
-                </span>
-              }
+      @if (agentWork(); as aw) {
+        <div class="ov-agent-work__row">
+          <span class="ov-agent-work__marker" aria-hidden="true"></span>
+          <span class="ov-agent-work__kind" aria-hidden="true"></span>
+          <span class="ov-agent-work__label">Calls</span>
+          <span class="ov-agent-work__value" data-testid="agent-work-calls">
+            <span class="studio-count-badge">{{ aw.calls }} calls</span>
+            @if (aw.recovered) {
+              <span class="studio-pill studio-pill--warn"
+                    [cacTooltip]="'At least one CLI invocation could not resume the prior session and reconstructed context from disk.'">
+                recovered
+              </span>
+            }
+          </span>
+          <span class="ov-agent-work__timing">
+            <span class="ov-agent-work__started ov-value--mono"
+                  data-testid="agent-work-started"
+                  [cacTooltip]="aw.startedAt ? 'Started ' + formatAbsoluteTime(aw.startedAt) : 'Start time not recorded'">
+              {{ aw.startedAt ? formatRelativeTime(aw.startedAt) : '-' }}
+            </span>
+            <span class="ov-agent-work__last-touch ov-value--mono"
+                  data-testid="agent-work-last-touch"
+                  [cacTooltip]="aw.lastTouchAt ? 'Last touch ' + formatAbsoluteTime(aw.lastTouchAt) : 'Last touch not recorded'">
+              {{ aw.lastTouchAt ? formatRelativeTime(aw.lastTouchAt) : '-' }}
+            </span>
+          </span>
+          <span class="ov-agent-work__tokens ov-value--mono">-</span>
+          <span class="ov-agent-work__cost ov-value--mono">-</span>
+        </div>
+
+        @if (aw.toolCalls > 0) {
+          <div class="ov-agent-work__row ov-agent-work__row--tools">
+            <span class="ov-agent-work__label">Tools</span>
+            <span class="ov-agent-work__tools"
+                  [cacTooltip]="toolCountsTooltip()"
+                  data-testid="agent-work-tools">
+              <span class="ov-value--mono">{{ aw.toolCalls }}</span>
+              <span class="ov-tool-chips">
+                @for (tc of topToolCounts(); track tc.tool) {
+                  <span class="ov-tool-chip">
+                    <span class="ov-tool-chip__name">{{ tc.tool }}</span>
+                    <span class="ov-tool-chip__count">{{ tc.count }}</span>
+                  </span>
+                }
+              </span>
             </span>
           </div>
 
-          @if (aw.toolCalls > 0) {
-            <div class="ov-row ov-row--wide">
-              <span class="ov-label">Tools</span>
-              <span class="ov-value"
-                    [cacTooltip]="toolCountsTooltip()"
-                    data-testid="agent-work-tools">
-                <span class="ov-value--mono">{{ aw.toolCalls }}</span>
-                <span class="ov-tool-chips">
-                  @for (tc of topToolCounts(); track tc.tool) {
-                    <span class="ov-tool-chip">
-                      <span class="ov-tool-chip__name">{{ tc.tool }}</span>
-                      <span class="ov-tool-chip__count">{{ tc.count }}</span>
-                    </span>
-                  }
-                </span>
-              </span>
-            </div>
-          }
-
-          @if (aw.startedAt) {
-            <div class="ov-row">
-              <span class="ov-label">Started</span>
-              <span class="ov-value">
-                <span>{{ formatRelativeTime(aw.startedAt) }}</span>
-                <span class="ov-dim">({{ formatAbsoluteTime(aw.startedAt) }})</span>
-              </span>
-            </div>
-          }
-
-          @if (aw.lastTouchAt) {
-            <div class="ov-row">
-              <span class="ov-label">Last Touch</span>
-              <span class="ov-value">
-                <span>{{ formatRelativeTime(aw.lastTouchAt) }}</span>
-                <span class="ov-dim">({{ formatAbsoluteTime(aw.lastTouchAt) }})</span>
-              </span>
-            </div>
-          }
-
-          @if (aw.toolCalls > 0) {
-            <app-agent-work-detail
-              [jobId]="job().id"
-              [watchPath]="job().watchPath" />
-          }
+          <app-agent-work-detail
+            class="ov-agent-work__detail"
+            [jobId]="job().id"
+            [watchPath]="job().watchPath" />
         }
-      </div>
+      }
     </section>
   }
+  </div>
 
   <!-- Regression Radar block -->
   <section class="ov-section studio-measure studio-measure--tabular" data-testid="overview-regression-radar">
