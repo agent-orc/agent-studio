@@ -1,30 +1,32 @@
 {
   "schemaVersion": 1,
   "id": "docker-ausfuehrungswelt-migration",
-  "title": "Docker als einzige Ausführungswelt: Auswirkungen und Migration",
-  "summary": "Operator-Entscheidung 12.09.2026: Windows ist keine Ausführungswelt mehr, Docker ist der Ort für alle Ausführung (Coding-Läufe, Gates, Review-Aspekte, Orchestrator-CLIs), auch auf Windows mandatory, mit äußerem Installer und nativem Host-Manager. Das Dossier legt Geltungsbereich und Zielbild fest (Projekt-Images per Digest, Executor-Fähigkeiten standard/docker-capable/windows-host, Host-Manager als einzige Host-Brücke), beschreibt die Auswirkungen auf jede Studio-Komponente und auf alle 17 registrierten Projekte, plant die Migration in sieben Stufen M1–M7 mit Parallelbetrieb und Abschaltkriterium je Stufe (Linux-Runner zuerst, Workstation zuletzt, 10–12 Wochen), spezifiziert Installer und Host-Manager für Windows, benennt Risiken, stellt sieben Entscheidungen D1–D7 (D7: Pipeline- und Bauregeln im Repo des Projekts, Basis-Images vom Produkt, Projekt-Images lokal gebaut) und schneidet zwölf Karten MK1–MK12.",
+  "title": "Isolierte Ausführung: Vorbereitungsskripte, Isolation, heilender Orchestrator",
+  "summary": "Operator-Entscheidungen 12.09.2026 (Vormittag: Windows keine Ausführungswelt, Docker für alles; Nachmittag präzisiert: Onboarding darf nicht komplizierter werden, Worktree-Vorbereitung als Skript, das sich um alles kümmert, Docker-Image nur optionale Beschleunigung, Kernproblem sind Versionen, dazu ein Orchestrator, der Probleme gründlich bewertet, Folgeprompts ergänzt und die Pipeline heilt; für die Produktversion reichen Coding-Agents in isolierten Umgebungen, Kommunikation und Heilung laufen durch Agent Studio). Zielbild in drei Schichten: Vorbereitung im Repo (project.yml + prepare, Versionen aus Manifesten, inhaltsadressierter Cache), Isolation je Lauf nach Executor-Profil (Sandbox-Prozess Standard, Container optional, Micro-VM für Docker-Beweise), Orchestrator mit Diagnose, Heilung, Folgeprompt und Frage in der Karte. Produkterfahrung für Installierende, Auswirkungen je Studio-Komponente und je Projekt (17), Migration M1–M7 (9–12 Wochen), Risiken, Tests und CI/CD als Produktfeature (Inventar, Testlauf-Historie mit Laufzeiten und Läufen, Stabilisierung durch den Orchestrator, Pipeline-Engine mit Stufen aus project.yml, Deploy als Stufe; AGT: 7.296 Backend-Tests in 24 min), Entscheidungen D1–D8, Karten MK1–MK14. Vormittagsfassung „Docker als einzige Ausführungswelt\" in der Git-Historie.",
   "entrypoint": "index.html",
   "status": "decision-pending",
   "phase": "decision-ready",
   "pattern": "architecture",
-  "updatedAt": "2026-09-12T12:05:00Z",
+  "updatedAt": "2026-09-12T13:40:00Z",
   "sourceTaskKeys": [],
   "relatedTaskKeys": [
     "AGT-2780",
     "AGT-2781",
     "AGT-2782",
     "AGT-2778",
+    "AGT-2765",
+    "AGT-2773",
     "AGT-2733",
     "AGT-2736",
     "AGT-2738",
     "AGT-2763",
-    "AGT-2729",
-    "AGT-2739"
+    "AGT-2739",
+    "AGT-2740"
   ],
   "implementationTasks": [
     {
-      "title": "Docker execution world, stage M1: base images agent-cli and web-node with pinned CLIs, digest publication to ghcr.io/agent-orc, project profile fields image and capabilities (operator decisions D1-D7)",
-      "promptMarkdown": "Implement stage M1 of docs/operations/docker-ausfuehrungswelt-migration/index.html according to the recorded operator decisions (D1 to D6). Derive two base images from runner/Dockerfile: agent-cli (dotnet SDK 10, Node LTS, Codex CLI 0.154.x and Claude Code 2.1.269 pinned, Playwright browsers) and web-node (Node LTS, Playwright browsers, both CLIs), build them in CI and publish by digest to the registry chosen in D5. Add the project profile fields image (digest) and capabilities (standard, docker-capable, windows-host) with API and settings UI, and record the digest in every active project's profile. Quality Studio uses its own repository Dockerfile as the reference for the Dockerfile.agent convention (MK2 may be cut as a separate slice). Evidence: for every active project (AGT, CAR, CAC, TE, QS, WEB, QSW) the profile's build and test commands run green inside the project's image on agent-runner-01, with the command log per project; ADR for image pinning and capabilities; docs/operations setup pages updated; changelog. Nothing changes in the execution path yet: runs and gates keep running natively until stage M2."
+      "title": "Isolated execution, stage M1: preparation contract (project.yml + prepare), content-addressed cache per executor, manifest, validator, generator from stack detection, settings view with justified override (operator decisions D1-D7)",
+      "promptMarkdown": "Implement stage M1 of docs/operations/docker-ausfuehrungswelt-migration/index.html according to the recorded operator decisions (D1 to D7). Define the preparation contract: a schema for .agent-studio/project.yml (stack, tool versions referencing global.json/.nvmrc/.tool-versions, prepare/build/test/lint commands, cache paths, capabilities, environment, dev-server start rules, optional image) and a prepare script built from product-owned building blocks (tool version check and selection, npm ci and dotnet restore with a content-addressed cache keyed by lockfile hash plus tool version plus platform, write-once cache entries with manifest that are never written back after a failed run, manifest output with lockfile hashes and tool versions, probe build as self-check). Add the validator, the generator that turns the existing stack detection into a proposal card that writes project.yml and prepare into the project repository, and the settings area \"Execution\" that shows the repository definition, the last manifest and allows an override only with a mandatory justification. The build-test gate and the coding run use the same preparation step and read the definition from the subject commit; remove the gate-owned dependency cache path (supersedes the cache part of AGT-2782) and the ensure-deps hook pattern. Pilots: Agent Studio, Quality Studio, Token Economy get their first definitions as cards in their repositories. Evidence: gate and run of the three pilots pass through the preparation step with manifest, an onboarding probe on a fresh registration of quality-studio-website reaches the first green card without manual steps (duration and number of questions logged), ADR for the contract, docs/operations setup page \"Vorbereitung, Isolation, Orchestrator\", changelog. Isolation techniques (stage M2) and the orchestrator (stage M3) are separate cards."
     }
   ]
 }

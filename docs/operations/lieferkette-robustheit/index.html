@@ -74,7 +74,11 @@
   table.matrix td { font-size: 13.5px; }
   table.matrix td .d { display: block; color: var(--ink-2); font-size: 12.5px; line-height: 1.4; margin-top: 4px; }
   table.matrix td b { font-size: 14px; }
-  table.matrix th abbr { text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; }
+  /* Tooltips ohne Verzoegerung: data-tip statt title. Ohne Script: CSS-Blase; mit Script: feste Position, nie abgeschnitten. */
+  [data-tip] { text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; position: relative; }
+  html:not(.js) [data-tip]::after { content: attr(data-tip); position: absolute; left: 0; top: calc(100% + 6px); z-index: 20; width: max-content; max-width: 340px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-1); color: var(--ink-1); font-size: 12.5px; line-height: 1.4; font-weight: 400; white-space: normal; box-shadow: 0 6px 20px rgba(0,0,0,.14); opacity: 0; pointer-events: none; transition: opacity .06s; }
+  html:not(.js) [data-tip]:hover::after, html:not(.js) [data-tip]:focus-visible::after { opacity: 1; }
+  #tipbox { position: fixed; z-index: 1000; max-width: 360px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-1); color: var(--ink-1); font-size: 12.5px; line-height: 1.45; box-shadow: 0 8px 24px rgba(0,0,0,.16); pointer-events: none; display: none; }
 </style>
 </head>
 <body>
@@ -281,13 +285,13 @@
 <table class="matrix">
   <thead><tr>
     <th>Richtung</th>
-    <th><abbr title="M1 · Veränderlicher Zustand, der Läufe überlebt: Caches, eingefrorene Review-Pläne, Worktrees, Snapshots und Status-Caches ohne Besitzer, ohne Gültigkeitsnachweis und ohne Ablauf. Beispiel: der node_modules-Cache des Gates vom 11.08. (WEB-19).">M1 Zustand</abbr></th>
+    <th><span data-tip="M1 · Veränderlicher Zustand, der Läufe überlebt: Caches, eingefrorene Review-Pläne, Worktrees, Snapshots und Status-Caches ohne Besitzer, ohne Gültigkeitsnachweis und ohne Ablauf. Beispiel: der node_modules-Cache des Gates vom 11.08. (WEB-19).">M1 Zustand</span></th>
     <th><abbr title="M2 · Fehler bekommen die falsche Klasse: die Entscheidung Produkt, Umgebung oder flaky fällt über Signaturlisten; unbekannte Umgebungsfehler gelten als Produktfehler, Concerns werden zu ProductFailure. Beispiel: AGT-2779 grün und trotzdem „Delivery gate failed".">M2 Klasse</abbr></th>
-    <th><abbr title="M3 · Wiederholung ohne Abbruch: Retry-Budgets zählen je Karte statt je Ursache, identische Fehler auf verschiedenen Karten werden nicht als eine Ursache erkannt. Beispiel: CAC-18 mit 411 identischen Versuchen.">M3 Retry</abbr></th>
-    <th><abbr title="M4 · Drei Ausführungswelten: Windows-Studio lokal, Linux-Runner und Gate-Worktree unterscheiden sich in Toolchain, Umgebungsvariablen, Prozessmodell und Beweisfähigkeit; derselbe Commit hat kein definiertes Ergebnis. Beispiel: AGT-2733 kann Docker im Runner-Sandbox nicht beweisen.">M4 Welten</abbr></th>
-    <th><abbr title="M5 · Niemand besitzt Prozesse und Lebenszyklen: Kindprozesse überleben Läufe, Restarts verwaisen Arbeit, Worktrees bleiben gesperrt, der Operator räumt von Hand. Beispiel: WEB-19-Pickup flappt an zwei Python-Servern.">M5 Besitz</abbr></th>
-    <th><abbr title="Grobe Größenordnung der Umsetzung in Karten-Arbeit: klein = Tage, mittel = ein bis zwei Wochen, groß = mehrere Wochen mit Betriebsumstellung.">Aufwand</abbr></th>
-    <th><abbr title="Was schiefgehen kann, wenn die Richtung umgesetzt wird, und was dagegen vorgesehen ist.">Risiko</abbr></th>
+    <th><span data-tip="M3 · Wiederholung ohne Abbruch: Retry-Budgets zählen je Karte statt je Ursache, identische Fehler auf verschiedenen Karten werden nicht als eine Ursache erkannt. Beispiel: CAC-18 mit 411 identischen Versuchen.">M3 Retry</span></th>
+    <th><span data-tip="M4 · Drei Ausführungswelten: Windows-Studio lokal, Linux-Runner und Gate-Worktree unterscheiden sich in Toolchain, Umgebungsvariablen, Prozessmodell und Beweisfähigkeit; derselbe Commit hat kein definiertes Ergebnis. Beispiel: AGT-2733 kann Docker im Runner-Sandbox nicht beweisen.">M4 Welten</span></th>
+    <th><span data-tip="M5 · Niemand besitzt Prozesse und Lebenszyklen: Kindprozesse überleben Läufe, Restarts verwaisen Arbeit, Worktrees bleiben gesperrt, der Operator räumt von Hand. Beispiel: WEB-19-Pickup flappt an zwei Python-Servern.">M5 Besitz</span></th>
+    <th><span data-tip="Grobe Größenordnung der Umsetzung in Karten-Arbeit: klein = Tage, mittel = ein bis zwei Wochen, groß = mehrere Wochen mit Betriebsumstellung.">Aufwand</span></th>
+    <th><span data-tip="Was schiefgehen kann, wenn die Richtung umgesetzt wird, und was dagegen vorgesehen ist.">Risiko</span></th>
   </tr></thead>
   <tbody>
     <tr>
@@ -298,7 +302,7 @@
       <td><span class="tag ok">löst</span><span class="d">Läufe und Gates laufen im selben Image mit deklarierter Umgebung; derselbe Commit liefert dasselbe Ergebnis.</span></td>
       <td><span class="tag">hilft</span><span class="d">Der Container ist eine natürliche Prozessgrenze: Ende des Containers = Ende aller Kindprozesse.</span></td>
       <td><span class="tag warn">groß</span><span class="d">Wochen; Tranche C existiert als Plan.</span></td>
-      <td><span class="d">Container-Betrieb auf allen Hosts; Beweise mit Docker-Bedarf brauchen ein eigenes Executor-Profil (Sysbox oder Micro-VM); Windows entfällt als Ausführungswelt (Entscheidung 12.09., siehe Migrationsdossier).</span></td>
+      <td><span class="d">Container-Betrieb auf allen Hosts; Beweise mit Docker-Bedarf brauchen ein eigenes Executor-Profil (Sysbox oder Micro-VM); Windows entfällt als Ausführungswelt mit geerbter Umgebung (Entscheidung 12.09., präzisiert: Isolation statt Docker-Pflicht, siehe AGT-W51).</span></td>
     </tr>
     <tr>
       <td><b>R2 Diagnose</b><span class="d">Klassifikation als Kontrakt</span></td>
@@ -369,7 +373,7 @@
 <h2 id="s8"><span class="no">§8</span>Entscheidungen</h2>
 
 <div class="box accent">
-  <b>D1 ist vorentschieden (Operator, 12.09.2026, im Gespräch zu R1):</b> „Windows soll keine Ausführungswelt mehr bleiben. Docker wird der Ort für alles. Auch auf Windows wird Docker mandatory. Es gibt einen äußeren Installer drumherum und einen Prozess, der das Management macht." Das entspricht Option A und geht darüber hinaus: jede Ausführung (Coding-Lauf, Gate, Review-Aspekt, Orchestrator-CLI) läuft im Container, auf jedem Host. Die Auswirkungen je Projekt und der Migrationspfad stehen im Dossier <a href="../docker-ausfuehrungswelt-migration/index.html">Docker als einzige Ausführungswelt: Auswirkungen und Migration</a>. Die Auswahl unten bleibt als Beleg der Entscheidung im Dossier.
+  <b>D1 ist vorentschieden (Operator, 12.09.2026, in zwei Schritten):</b> Vormittags: „Windows soll keine Ausführungswelt mehr bleiben. Docker wird der Ort für alles." Nachmittags präzisiert: Das Onboarden von Projekten darf nicht komplizierter werden; die Vorbereitung eines Worktrees ist ein Skript im Projekt, das sich um Versionen, Abhängigkeiten und Caches kümmert; ein Docker-Image ist eine optionale Beschleunigung; Coding-Agents in isolierten Umgebungen reichen; ein Orchestrator diagnostiziert, heilt die Pipeline, ergänzt Folgeprompts und stabilisiert Tests; Test-Analyse und eine stabile CI im Werkzeug sind Produktfeatures. Das entspricht Option A in der Wirkung (keine geerbte Umgebung, eine definierte Vorbereitung, Isolation je Lauf), ohne Container-Pflicht. Auswirkungen je Projekt und Migrationspfad stehen im Dossier <a href="../docker-ausfuehrungswelt-migration/index.html">Isolierte Ausführung: Vorbereitungsskripte, Isolation, heilender Orchestrator</a> (AGT-W51). Die Auswahl unten bleibt als Beleg im Dossier.
 </div>
 
 <div class="decision" data-decision-id="ausfuehrungswelt" data-decision-kind="single" data-decision-label="Zielbild der Ausführungswelt">
@@ -449,5 +453,22 @@
 </section>
 <!-- agent-studio:implementation-section:end -->
 </main>
+<div id="tipbox" role="tooltip"></div>
+<script>
+(function(){
+  document.documentElement.classList.add('js');
+  var box=document.getElementById('tipbox'); if(!box) return;
+  function show(el){ box.textContent=el.getAttribute('data-tip')||''; box.style.display='block'; place(el); }
+  function place(el){ var r=el.getBoundingClientRect(); var w=box.offsetWidth, h=box.offsetHeight; var x=Math.min(Math.max(8,r.left), window.innerWidth-w-8); var y=r.bottom+8; if(y+h>window.innerHeight-8) y=r.top-h-8; box.style.left=x+'px'; box.style.top=y+'px'; }
+  function hide(){ box.style.display='none'; }
+  document.querySelectorAll('[data-tip]').forEach(function(el){
+    el.setAttribute('tabindex','0');
+    el.addEventListener('mouseenter',function(){show(el)}); el.addEventListener('mouseleave',hide);
+    el.addEventListener('focus',function(){show(el)}); el.addEventListener('blur',hide);
+    el.addEventListener('click',function(){ box.style.display==='block'?hide():show(el); });
+  });
+  window.addEventListener('scroll',hide,true);
+})();
+</script>
 </body>
 </html>
