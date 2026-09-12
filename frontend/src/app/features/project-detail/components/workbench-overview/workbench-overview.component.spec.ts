@@ -145,7 +145,7 @@ describe('WorkbenchOverviewComponent', () => {
       .toContain('2 history');
     expect(fixture.nativeElement.querySelector('[data-testid="workbench-overview-active-count"]')?.textContent)
       .toContain('2');
-    expect([...fixture.nativeElement.querySelectorAll('[data-testid="workbench-overview-active-list"] > article')]
+    expect([...fixture.nativeElement.querySelectorAll('[data-testid="workbench-overview-active-list"] > [data-testid^="workbench-overview-item-"]')]
       .map((row: Element) => row.getAttribute('data-testid')))
       .toEqual(['workbench-overview-item-Demo-active', 'workbench-overview-item-Demo-tracking']);
     expect(fixture.nativeElement.querySelector('[data-testid="workbench-overview-history-section-count"]')?.textContent)
@@ -226,6 +226,65 @@ describe('WorkbenchOverviewComponent', () => {
     fixture.detectChanges();
     expect(fixture.nativeElement.querySelector('[data-testid="workbench-viewer"]')).not.toBeNull();
     expect(fixture.nativeElement.querySelector('[data-testid="workbench-viewer-open-wiki"]')).toBeNull();
+    http.verify();
+  });
+
+  it('clamps long summaries per item and keeps every action row below its excerpt', async () => {
+    await TestBed.configureTestingModule({
+      imports: [WorkbenchOverviewComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(WorkbenchOverviewComponent);
+    fixture.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    const longSummary = 'A long operational summary with enough detail to require disclosure. '.repeat(18);
+    const pending = item('long-pending', 'decision-pending', 1);
+    pending.workbench.summary = longSummary;
+    const active = item('long-active', 'active');
+    active.workbench.summary = longSummary;
+    const invalid = item('long-invalid', 'invalid');
+    invalid.workbench.valid = false;
+    invalid.workbench.error = longSummary;
+    http.expectOne('/api/workbenches').flush(overview([
+      pending,
+      active,
+      invalid,
+      item('short-history', 'documented'),
+    ]));
+    fixture.detectChanges();
+
+    const pendingToggle = fixture.nativeElement.querySelector(
+      '[data-testid="workbench-overview-summary-toggle-Demo-long-pending"]',
+    ) as HTMLButtonElement;
+    const activeToggle = fixture.nativeElement.querySelector(
+      '[data-testid="workbench-overview-summary-toggle-Demo-long-active"]',
+    ) as HTMLButtonElement;
+    expect(pendingToggle.textContent).toContain('Show more');
+    expect(pendingToggle.getAttribute('aria-expanded')).toBe('false');
+    expect(activeToggle.getAttribute('aria-expanded')).toBe('false');
+    expect(fixture.nativeElement.querySelector(
+      '[data-testid="workbench-overview-summary-toggle-Demo-short-history"]',
+    )).toBeNull();
+
+    const actionRows = fixture.nativeElement.querySelectorAll('[data-testid^="workbench-overview-actions-"]');
+    expect(actionRows.length).toBe(4);
+    for (const actionRow of actionRows) {
+      expect(actionRow.parentElement?.classList.contains('workbench-overview__row-main')).toBe(true);
+      expect(actionRow.previousElementSibling?.classList.contains('workbench-overview__excerpt')).toBe(true);
+    }
+
+    pendingToggle.click();
+    fixture.detectChanges();
+    const pendingExcerpt = fixture.nativeElement.querySelector('#workbench-overview-summary-Demo-long-pending');
+    expect(pendingToggle.textContent).toContain('Show less');
+    expect(pendingToggle.getAttribute('aria-expanded')).toBe('true');
+    expect(pendingExcerpt.classList.contains('workbench-overview__excerpt--expanded')).toBe(true);
+    expect(activeToggle.getAttribute('aria-expanded')).toBe('false');
+
+    pendingToggle.click();
+    fixture.detectChanges();
+    expect(pendingToggle.textContent).toContain('Show more');
+    expect(pendingExcerpt.classList.contains('workbench-overview__excerpt--expanded')).toBe(false);
     http.verify();
   });
 

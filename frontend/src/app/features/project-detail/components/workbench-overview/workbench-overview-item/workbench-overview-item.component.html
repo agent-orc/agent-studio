@@ -1,0 +1,90 @@
+@let value = item();
+@let display = project();
+<div class="workbench-overview__row-main">
+    <div class="workbench-overview__title">
+      @if (variant() === 'decision' || variant() === 'current') {
+        <span class="workbench-overview__pattern" role="img"
+              [attr.aria-label]="documentPattern() + ' pattern'"
+              [attr.data-pattern]="documentPattern()"
+              [attr.data-testid]="'workbench-overview-pattern-' + value.projectName + '-' + value.workbench.id">
+          <app-studio-icon [name]="patternIcon()" [size]="14" />
+        </span>
+      }
+      <h3>{{ value.workbench.title }}</h3>
+    </div>
+    <div class="workbench-overview__meta">
+      @if (variant() === 'invalid') {
+        <span>{{ value.projectName }}</span><span>Needs attention</span>
+      } @else {
+        <span class="workbench-overview__project"
+              [style.--workbench-project]="display.color"
+              [attr.title]="display.displayName"
+              [attr.aria-label]="'Project ' + display.displayName">
+          <i aria-hidden="true"></i>{{ display.shortCode || display.displayName }}
+        </span>
+        <span [class.workbench-overview__status]="variant() !== 'history'"
+              [attr.data-status]="value.workbench.status">{{ statusLabel() }}</span>
+        @if (variant() === 'current' && value.workbench.documentation?.eligible) {
+          <span class="workbench-overview__suggestion">Ready to document</span>
+        }
+        <time [attr.datetime]="value.workbench.updatedAtUtc">{{ updatedLabel() }}</time>
+        @if (variant() === 'decision') {
+          <span class="workbench-overview__open-count">{{ openDecisionCount() }} open</span>
+        }
+        @if ((variant() === 'decision' || variant() === 'current') && referenceStatuses().length > 0) {
+          <span class="workbench-overview__tasks"
+                [class.workbench-overview__tasks--loading]="referenceStatusesLoading()"
+                [attr.aria-busy]="referenceStatusesLoading()"
+                aria-label="Linked task cards">
+            @for (task of referenceStatuses(); track task.key) {
+              <app-task-reference-microcard
+                variant="lane-dot"
+                [status]="task"
+                [testId]="'workbench-overview-task-' + value.projectName + '-' + value.workbench.id + '-' + task.key" />
+            }
+          </span>
+        }
+      }
+    </div>
+    <p #excerpt class="workbench-overview__excerpt"
+       [class.workbench-overview__excerpt--expanded]="excerptExpanded()"
+       [id]="excerptId()">{{ excerptText() }}</p>
+    @if (excerptNeedsToggle() || variant() !== 'invalid') {
+      <div class="workbench-overview__actions"
+           [class.workbench-overview__actions--with-toggle]="excerptNeedsToggle()"
+           [attr.data-testid]="'workbench-overview-actions-' + value.projectName + '-' + value.workbench.id">
+        @if (excerptNeedsToggle()) {
+          <button type="button" class="workbench-overview__summary-toggle"
+                  [attr.aria-controls]="excerptId()"
+                  [attr.aria-expanded]="excerptExpanded()"
+                  [attr.aria-label]="(excerptExpanded() ? 'Show less' : 'Show more') + ' summary for ' + value.workbench.title"
+                  [attr.data-testid]="'workbench-overview-summary-toggle-' + value.projectName + '-' + value.workbench.id"
+                  (click)="toggleExcerpt()">
+            {{ excerptExpanded() ? 'Show less' : 'Show more' }}
+          </button>
+        }
+        @if (variant() !== 'invalid') {
+          <div class="workbench-overview__action-buttons">
+            <button type="button" class="workbench-overview__action-link"
+                    [disabled]="!value.workbench.valid"
+                    [attr.data-testid]="'workbench-overview-full-' + value.projectName + '-' + value.workbench.id"
+                    (click)="openWorkbench.emit()">Open full view</button>
+            @if (variant() === 'decision') {
+              <button type="button" class="workbench-overview__action-primary"
+                      [attr.aria-expanded]="inlineDecisionExpanded()"
+                      [attr.data-testid]="'workbench-overview-open-' + value.projectName + '-' + value.workbench.id"
+                      (click)="toggleInlineDecision.emit()">
+                {{ inlineDecisionExpanded() ? 'Close review' : 'Review here' }}
+              </button>
+            }
+          </div>
+        }
+      </div>
+    }
+</div>
+@if (variant() === 'decision' && inlineDecisionExpanded()) {
+  <div class="workbench-overview__inline-viewer"
+       [attr.data-testid]="'workbench-overview-inline-' + value.projectName + '-' + value.workbench.id">
+    <app-workbench-viewer [projectName]="value.projectName" [workbenchId]="value.workbench.id" />
+  </div>
+}

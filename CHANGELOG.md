@@ -12,6 +12,10 @@ release yet.
 
 ## [Unreleased]
 
+### Changed
+
+- Dossier list summaries now use a wider reading measure with an eight-line disclosure, and card actions sit in a consistent footer row beneath the summary.
+
 ### Added
 
 - Initial open source community and release-hygiene baseline.

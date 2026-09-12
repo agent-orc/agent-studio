@@ -13,14 +13,14 @@ const VISUAL_OVERVIEW = {
     {
       projectName: 'Agent Studio',
       workbench: {
-        id: 'admin-design-language',
-        key: 'AGT-W12',
-        title: 'Admin surface design language',
-        summary: 'Define a calm, consistent visual grammar for dense operator surfaces and their decision queues.',
+        id: 'docker-ausfuehrungswelt-migration',
+        key: 'AGT-W51',
+        title: 'Isolierte Ausführung: Vorbereitungsskripte, Isolation, heilender Orchestrator',
+        summary: 'Operator-Entscheidungen 12.09.2026 (Vormittag: Windows keine Ausführungswelt, Docker für alles; Nachmittag präzisiert: Onboarding darf nicht komplizierter werden, Worktree-Vorbereitung als Skript, das sich um alles kümmert, Docker-Image nur optionale Beschleunigung, Kernproblem sind Versionen, dazu ein Orchestrator, der Probleme gründlich bewertet, Folgeprompts ergänzt und die Pipeline heilt; für die Produktversion reichen Coding-Agents in isolierten Umgebungen, Kommunikation und Heilung laufen durch Agent Studio). Zielbild in drei Schichten: Vorbereitung als Basis vom Produkt (stabile, laufend aktualisierte Checkouts, Worktrees mit Lease), Technologie-Bausteinen mit Caches (npm, NuGet, Node, SDK, Playwright) und projekteigenem Skript (project.yml + prepare), das der Orchestrator mit dem Nutzer entwickelt und auf eigene Initiative pflegt, Isolation je Lauf nach Executor-Profil (Sandbox-Prozess Standard, Container optional, Micro-VM für Docker-Beweise), Orchestrator mit Diagnose, Heilung, Folgeprompt und Frage in der Karte. Produkterfahrung für Installierende, Auswirkungen je Studio-Komponente und je Projekt (17), Migration M1–M7 (9–12 Wochen), Risiken, Tests und CI/CD als Produktfeature (Inventar, Testlauf-Historie mit Laufzeiten und Läufen, Stabilisierung durch den Orchestrator, Pipeline-Engine mit Stufen aus project.yml, Deploy als Stufe, Dauer und Kosten je Schritt im Lauf und als Statistikseite je Projekt (Dauer, CPU, IO, Tokens, Fehlerhäufigkeit je Schritt); AGT: 7.296 Backend-Tests in 24 min), Entscheidungen D1–D8, Karten MK1–MK14. Vormittagsfassung „Docker als einzige Ausführungswelt\" in der Git-Historie.',
         status: 'decision-pending',
         phase: 'decision-ready',
         updatedAtUtc: '2026-08-11T12:25:00Z',
-        entryPath: 'docs/operations/admin-design-guideline/index.html',
+        entryPath: 'docs/operations/docker-ausfuehrungswelt-migration/index.html',
         valid: true,
         error: null,
         sourceTaskKeys: ['AGT-2606'],
@@ -41,20 +41,20 @@ const VISUAL_OVERVIEW = {
       },
     },
     {
-      projectName: 'Coding Agent Chat',
+      projectName: 'Agent Studio',
       workbench: {
-        id: 'conversation-recovery',
-        key: 'CAC-W4',
-        title: 'Conversation recovery contract',
-        summary: 'Keep interrupted operator conversations resumable without duplicating settled work.',
-        status: 'active',
-        phase: 'testing',
-        updatedAtUtc: '2026-08-10T16:40:00Z',
-        entryPath: 'docs/operations/conversation-recovery/index.html',
+        id: 'task-detail-usage-panel',
+        key: 'AGT-W48',
+        title: 'Task-Detail: Verbrauchsblock in Pipeline-Breite',
+        summary: 'Operator-Befund 11.09.2026 am Task-Detail (Overview-Tab): Task-Summe, Tokens je Lauf und Agent-Arbeit stehen unter den Pipeline-Schritten in einem eigenen, schmalen Raster; die Zahlen sitzen auf anderen Spalten als die Schrittmetriken. Drei Alternativen mit Mockups: A dieselben Spalten (ein Raster, Anteilsbalken je Lauf), B Tabelle mit eigener Kopfzeile auf denselben Tracks, C Kennzahlen-Kacheln plus Läufe im Raster. Empfehlung A. Entscheidung per Auswahl im Dossier; die Umsetzungskarte entsteht aus der Auswahl.',
+        status: 'decided',
+        phase: 'decision-ready',
+        updatedAtUtc: '2026-09-11T06:51:01Z',
+        entryPath: 'docs/operations/task-detail-usage-panel/index.html',
         valid: true,
         error: null,
         sourceTaskKeys: [],
-        relatedTaskKeys: ['CAC-418'],
+        relatedTaskKeys: ['AGT-2769'],
         openDecisionCount: 0,
         pattern: 'concept',
       },
@@ -149,7 +149,7 @@ function evidencePath(testInfo: TestInfo, fileName: string): string {
   return path.join(directory, fileName);
 }
 
-test('captures the Dossier overview at wide and narrow widths in both themes', async ({ page }, testInfo) => {
+test('captures long and short Dossier summaries at 1536 and 900 px in both themes', async ({ page }, testInfo) => {
   const phase = process.env['DOSSIER_EVIDENCE_PHASE']?.trim() || 'after';
   const projects = [
     {
@@ -227,10 +227,33 @@ test('captures the Dossier overview at wide and narrow widths in both themes', a
 
   await page.goto('/#/workbenches');
   await expect(page.getByTestId('workbench-overview')).toBeVisible();
-  await expect(page.getByTestId('workbench-overview-item-Agent Studio-admin-design-language'))
+  await expect(page.getByTestId('workbench-overview-item-Agent Studio-docker-ausfuehrungswelt-migration'))
+    .toBeVisible();
+  await expect(page.getByTestId('workbench-overview-item-Agent Studio-task-detail-usage-panel'))
     .toBeVisible();
 
-  for (const [widthName, width] of [['wide', 1440], ['narrow', 760]] as const) {
+  const longToggle = page.getByTestId(
+    'workbench-overview-summary-toggle-Agent Studio-docker-ausfuehrungswelt-migration',
+  );
+  const longExcerpt = page.locator('#workbench-overview-summary-Agent-Studio-docker-ausfuehrungswelt-migration');
+  const longActions = page.getByTestId(
+    'workbench-overview-actions-Agent Studio-docker-ausfuehrungswelt-migration',
+  );
+  await expect(longToggle).toHaveText('Show more');
+  await expect(page.getByTestId(
+    'workbench-overview-summary-toggle-Agent Studio-task-detail-usage-panel',
+  )).toHaveCount(0);
+  expect(await longActions.evaluate((actions, excerptId) => {
+    const excerpt = document.getElementById(excerptId);
+    return excerpt !== null && actions.getBoundingClientRect().top >= excerpt.getBoundingClientRect().bottom;
+  }, 'workbench-overview-summary-Agent-Studio-docker-ausfuehrungswelt-migration')).toBe(true);
+  await longToggle.click();
+  await expect(longToggle).toHaveText('Show less');
+  await expect(longExcerpt).toHaveClass(/workbench-overview__excerpt--expanded/);
+  await longToggle.click();
+  await expect(longToggle).toHaveText('Show more');
+
+  for (const [widthName, width] of [['1536', 1536], ['900', 900]] as const) {
     await page.setViewportSize({ width, height: 900 });
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);
