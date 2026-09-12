@@ -10,6 +10,19 @@
       (input)="onQueryInput($event)" />
   </label>
 
+  <label class="overview-controls__filter">
+    <span>Review</span>
+    <select data-testid="workbench-overview-review-filter" [value]="reviewFilter()" (change)="onReviewFilter($event)">
+      <option value="all">All reviews</option>
+      <option value="never-reviewed">Never reviewed</option>
+      <option value="older-30">Older than 30 days</option>
+      <option value="current">Current</option>
+      <option value="partially-superseded">Partially superseded</option>
+      <option value="superseded">Superseded</option>
+      <option value="historical">Historical</option>
+    </select>
+  </label>
+
   <div class="overview-controls__sort" role="group" aria-label="Sort Dossiers">
     <span>Sort by</span>
     <div class="overview-controls__segments">

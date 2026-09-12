@@ -32,6 +32,8 @@ import {
   WorkbenchDocument,
   WorkbenchTaskReferences,
   WorkbenchOverview,
+  RecordWorkbenchReviewRequest,
+  WorkbenchReviewResult,
 } from '../models/project-docs.model';
 
 export interface WikiConditionalResponse<T> {
@@ -204,6 +206,13 @@ export class ProjectDocsService {
   getWorkbench(projectName: string, id: string) {
     return this.http.get<WorkbenchDocument>(
       `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/workbenches/${encodeURIComponent(id)}`,
+    );
+  }
+
+  recordWorkbenchReview(projectName: string, id: string, review: RecordWorkbenchReviewRequest) {
+    return this.http.put<WorkbenchReviewResult>(
+      `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/workbenches/${encodeURIComponent(id)}/review`,
+      review,
     );
   }
 

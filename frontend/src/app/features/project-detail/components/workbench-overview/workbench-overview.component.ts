@@ -27,6 +27,7 @@ import {
 } from '../../../../services/dossier-section-state.service';
 import { WorkbenchOverviewControlsComponent } from '../workbench-overview-controls/workbench-overview-controls.component';
 import { WorkbenchViewerComponent } from '../workbench-viewer/workbench-viewer.component';
+import { WorkbenchReviewTagComponent } from '../workbench-review-tag/workbench-review-tag.component';
 import { WorkbenchOverviewViewStateService } from './workbench-overview-view-state.service';
 import type {
   ArticlePattern,
@@ -43,6 +44,7 @@ import type {
     TaskReferenceMicrocardComponent,
     WorkbenchOverviewControlsComponent,
     WorkbenchViewerComponent,
+    WorkbenchReviewTagComponent,
   ],
   providers: [WorkbenchOverviewViewStateService],
   changeDetection: ChangeDetectionStrategy.OnPush,

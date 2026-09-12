@@ -22,9 +22,11 @@
           [liveConnected]="liveConnected()"
           [connectionChangedAtUtc]="connectionChangedAtUtc()"
           [lastUpdatedAtUtc]="lastUpdatedAtUtc()"
+          [readOnly]="readOnly()"
           (draftDiscarded)="discardDecisionDraft()"
           (decisionChanged)="refreshDecision()"
           (manualRefresh)="refreshManually()"
+          (reviewChanged)="refreshDecision()"
         />
       }
       @if (documentationReady()) {

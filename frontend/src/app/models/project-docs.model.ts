@@ -214,6 +214,15 @@ export interface WikiRevisionContent {
 export type WorkbenchStatus = 'active' | 'decision-pending' | 'decided' | 'documented' | 'archived' | 'invalid';
 export type WorkbenchDecisionStage = 'prepared' | 'pending' | 'failed' | 'succeeded' | 'archived';
 export type ArticlePattern = 'ui' | 'concept';
+export type WorkbenchReviewVerdict = 'current' | 'partially-superseded' | 'superseded' | 'historical';
+
+export interface WorkbenchReview {
+  verdict: WorkbenchReviewVerdict;
+  supersededBy: string[];
+  reviewedAt: string;
+  reviewedBy: string;
+  note: string;
+}
 
 export interface WorkbenchTaskDraft {
   title: string;
@@ -356,6 +365,26 @@ export interface WorkbenchListItem {
   /** Dossier-level gate count until inline decision points extend it. */
   openDecisionCount?: number;
   documentation?: WorkbenchDocumentationProjection | null;
+  /** Missing means this Dossier has never received a relevance review. */
+  review?: WorkbenchReview | null;
+  /** Server-derived from the configured age threshold and related-card completion. */
+  reviewDue?: boolean;
+}
+
+export interface RecordWorkbenchReviewRequest {
+  verdict: WorkbenchReviewVerdict;
+  supersededBy: string[];
+  reviewedBy: 'Operator' | string;
+  note: string;
+}
+
+export interface WorkbenchReviewResult {
+  success: boolean;
+  errorCode: string | null;
+  error: string | null;
+  workbenchId: string;
+  review: WorkbenchReview | null;
+  revision: string | null;
 }
 
 export interface WorkbenchDocumentationReference {
@@ -415,6 +444,7 @@ export type WorkbenchHubEventType =
   | 'created'
   | 'updated'
   | 'decisionRecorded'
+  | 'reviewRecorded'
   | 'statusChanged'
   | 'reconnected';
 

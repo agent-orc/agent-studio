@@ -826,6 +826,16 @@ as `acceptance-rail-run`.
   query `GET /api/projects/{projectName}/workbenches/{key}/references` returns
   every referencing card. Descriptor `relatedTaskKeys` remain a separately
   labelled legacy bridge and do not replace the derived keyed edges.
+- Dossier relevance is independent of lifecycle. An optional `review` block in
+  `workbench.json` records `current`, `partially-superseded`, `superseded`, or
+  `historical`, successor Dossier keys, the server-assigned review time,
+  `Operator` or task-key attribution, and one bounded note. Missing means never
+  reviewed. `PUT /api/projects/{projectName}/workbenches/{id}/review` uses the
+  registered-client mutation boundary, preserves all lifecycle and catalogue
+  identity fields, commits the descriptor, and appends an immutable
+  `reviewHistory` entry. The catalogue derives `reviewDue` at the configured
+  age threshold (90 days by default), or when all related cards reached
+  `6-completed` after the review.
 - A delivering card resolved through `references.workbenches` or a descriptor
   `sourceTaskKeys` back edge receives the Dossier maintenance prompt contract.
   It appends only its own dated implementation entry between the canonical log

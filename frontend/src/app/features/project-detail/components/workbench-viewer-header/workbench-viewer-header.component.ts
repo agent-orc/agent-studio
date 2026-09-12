@@ -20,6 +20,7 @@ import {
   WorkbenchDecisionPoint,
   WorkbenchDecisionResponse,
   WorkbenchDocument,
+  WorkbenchReviewVerdict,
 } from '../../../../models/project-docs.model';
 import { TaskState } from '../../../../models/task.model';
 import { formatRelativeTime, formatTime } from '../../../../services/format.util';
@@ -27,6 +28,7 @@ import { NowTickService } from '../../../../services/now-tick.service';
 import { ProjectDocsService } from '../../../../services/project-docs.service';
 import { TaskService } from '../../../../services/task.service';
 import { WorkbenchDecisionPanelComponent } from '../workbench-decision-panel/workbench-decision-panel';
+import { WorkbenchReviewTagComponent } from '../workbench-review-tag/workbench-review-tag.component';
 
 const MAX_INLINE_TASKS = 8;
 
@@ -39,6 +41,7 @@ const MAX_INLINE_TASKS = 8;
     StudioIconComponent,
     TaskReferenceMicrocardComponent,
     WorkbenchDecisionPanelComponent,
+    WorkbenchReviewTagComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './workbench-viewer-header.component.html',
@@ -55,6 +58,8 @@ export class WorkbenchViewerHeaderComponent {
   readonly decisionChanged = output<void>();
   readonly draftDiscarded = output<void>();
   readonly manualRefresh = output<void>();
+  readonly reviewChanged = output<void>();
+  readonly readOnly = input(false);
 
   private readonly docs = inject(ProjectDocsService);
   private readonly tasks = inject(TaskService);
@@ -63,6 +68,12 @@ export class WorkbenchViewerHeaderComponent {
   readonly referenceKeys = signal<string[]>([]);
   readonly taskStatuses = signal<TaskReferenceStatus[]>([]);
   readonly taskStatusesLoading = signal(false);
+  readonly reviewOpen = signal(false);
+  readonly reviewSaving = signal(false);
+  readonly reviewError = signal<string | null>(null);
+  readonly reviewVerdict = signal<WorkbenchReviewVerdict>('current');
+  readonly reviewSupersededBy = signal('');
+  readonly reviewNote = signal('');
 
   readonly inlineTaskStatuses = computed(() => this.taskStatuses().slice(0, MAX_INLINE_TASKS));
   readonly hiddenTaskCount = computed(() =>
@@ -169,6 +180,47 @@ export class WorkbenchViewerHeaderComponent {
 
   closeDetails(disclosure: HTMLDetailsElement): void {
     disclosure.open = false;
+  }
+
+  openReview(): void {
+    const review = this.document().workbench.review;
+    this.reviewVerdict.set(review?.verdict ?? 'current');
+    this.reviewSupersededBy.set(review?.supersededBy.join(', ') ?? '');
+    this.reviewNote.set(review?.note ?? '');
+    this.reviewError.set(null);
+    this.reviewOpen.set(true);
+  }
+
+  setReviewVerdict(event: Event): void {
+    this.reviewVerdict.set((event.target as HTMLSelectElement).value as WorkbenchReviewVerdict);
+  }
+  setReviewSupersededBy(event: Event): void {
+    this.reviewSupersededBy.set((event.target as HTMLInputElement).value);
+  }
+  setReviewNote(event: Event): void {
+    this.reviewNote.set((event.target as HTMLInputElement).value);
+  }
+  saveReview(): void {
+    if (this.readOnly() || this.reviewSaving()) return;
+    const supersededBy = [...new Set(this.reviewSupersededBy().split(/[\s,]+/).map(key => key.trim().toUpperCase()).filter(Boolean))];
+    this.reviewSaving.set(true);
+    this.reviewError.set(null);
+    this.docs.recordWorkbenchReview(this.projectName(), this.document().workbench.id, {
+      verdict: this.reviewVerdict(),
+      supersededBy,
+      reviewedBy: 'Operator',
+      note: this.reviewNote().trim(),
+    }).subscribe({
+      next: () => {
+        this.reviewSaving.set(false);
+        this.reviewOpen.set(false);
+        this.reviewChanged.emit();
+      },
+      error: error => {
+        this.reviewSaving.set(false);
+        this.reviewError.set(error?.error?.error || 'The review could not be recorded.');
+      },
+    });
   }
 }
 

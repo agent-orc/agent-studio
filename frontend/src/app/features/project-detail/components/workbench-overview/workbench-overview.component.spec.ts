@@ -138,7 +138,7 @@ describe('WorkbenchOverviewComponent', () => {
     fixture.detectChanges();
 
     expect(fixture.nativeElement.querySelector('h1')?.textContent).toContain('Dossiers');
-    expect(fixture.nativeElement.querySelectorAll('[data-testid^="workbench-overview-sort-"]').length).toBe(5);
+    expect(fixture.nativeElement.querySelectorAll('[data-testid^="workbench-overview-sort-"]').length).toBe(6);
     expect(fixture.nativeElement.querySelector('[data-testid="workbench-overview-current-count"]')?.textContent)
       .toContain('3 current');
     expect(fixture.nativeElement.querySelector('[data-testid="workbench-overview-history-count"]')?.textContent)

@@ -20,6 +20,40 @@
     <i aria-hidden="true"></i>
   </span>
 
+  <app-workbench-review-tag
+    [review]="document().workbench.review"
+    [reviewDue]="document().workbench.reviewDue ?? false"
+    [projectName]="projectName()"
+  />
+
+  <div class="viewer-head__review-action">
+    <button type="button" data-testid="workbench-record-review" [disabled]="readOnly()" (click)="openReview()">Record review</button>
+    @if (reviewOpen()) {
+      <form class="review-form" data-testid="workbench-review-form" (submit)="$event.preventDefault(); saveReview()">
+        <header><strong>Record relevance review</strong><button type="button" aria-label="Close review form" (click)="reviewOpen.set(false)">×</button></header>
+        <label>Verdict
+          <select data-testid="workbench-review-verdict" [value]="reviewVerdict()" (change)="setReviewVerdict($event)">
+            <option value="current">Current</option>
+            <option value="partially-superseded">Partially superseded</option>
+            <option value="superseded">Superseded</option>
+            <option value="historical">Historical</option>
+          </select>
+        </label>
+        <label>Superseded by keys
+          <input data-testid="workbench-review-superseded-by" placeholder="AGT-W51, AGT-W52" [value]="reviewSupersededBy()" (input)="setReviewSupersededBy($event)" />
+        </label>
+        <label>Note
+          <input data-testid="workbench-review-note" maxlength="500" required [value]="reviewNote()" (input)="setReviewNote($event)" />
+        </label>
+        @if (reviewError(); as error) { <p role="alert">{{ error }}</p> }
+        <footer>
+          <button type="button" (click)="reviewOpen.set(false)">Cancel</button>
+          <button type="submit" data-testid="workbench-review-save" [disabled]="reviewSaving() || !reviewNote().trim()">{{ reviewSaving() ? 'Saving…' : 'Save review' }}</button>
+        </footer>
+      </form>
+    }
+  </div>
+
   @if (implementationStatus(); as implementationLabel) {
     <span
       class="viewer-head__implementation-status"

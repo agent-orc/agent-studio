@@ -1,0 +1,13 @@
+<span
+  class="review-tag"
+  [class.review-tag--due]="reviewDue()"
+  [attr.data-verdict]="review()?.verdict ?? 'never-reviewed'"
+  [appTooltip]="tooltip()"
+  [appTooltipDelay]="0"
+  [appTooltipLinks]="links()"
+  appTooltipTestId="workbench-review-tooltip"
+  tabindex="0"
+  data-testid="workbench-review-tag"
+>
+  {{ reviewDue() ? 'Review due · ' + label() : label() }}
+</span>

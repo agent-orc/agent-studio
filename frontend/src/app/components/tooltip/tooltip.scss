@@ -19,6 +19,16 @@
   pointer-events: none;
   animation: app-tooltip-enter 80ms ease-out;
 }
+.app-tooltip-overlay--interactive {
+  display: grid;
+  gap: var(--studio-spacing-1);
+  pointer-events: auto;
+}
+.app-tooltip-overlay--interactive a {
+  color: var(--studio-accent-3-strong);
+  text-decoration: underline;
+  text-underline-offset: 0.16em;
+}
 
 @keyframes app-tooltip-enter {
   from { opacity: 0; transform: translateY(2px); }

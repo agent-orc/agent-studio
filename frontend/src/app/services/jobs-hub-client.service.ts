@@ -111,6 +111,7 @@ export class JobsHubClient {
     conn.on('workbenchCreated', workbenchEvent);
     conn.on('workbenchUpdated', workbenchEvent);
     conn.on('workbenchDecisionRecorded', workbenchEvent);
+    conn.on('workbenchReviewRecorded', workbenchEvent);
     conn.on('workbenchStatusChanged', workbenchEvent);
     conn.on('orchestratorContextChanged', () => {
       this.publishOrchestratorContextRefresh();

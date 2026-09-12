@@ -8,7 +8,7 @@ let nextTooltipId = 0;
   standalone: true,
   host: {
     '(mouseenter)': 'scheduleShow()',
-    '(mouseleave)': 'hide()',
+    '(mouseleave)': 'scheduleHide()',
     '(focusin)': 'scheduleShow()',
     '(focusout)': 'onFocusOut($event)',
     '(keydown.escape)': 'hide()',
@@ -17,17 +17,21 @@ let nextTooltipId = 0;
 export class AppTooltipDirective implements OnDestroy {
   readonly appTooltip = input<string | null>(null);
   readonly appTooltipTestId = input<string | null>(null);
+  readonly appTooltipDelay = input(300);
+  readonly appTooltipLinks = input<readonly { label: string; href: string }[]>([]);
 
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
   private readonly document = inject(DOCUMENT);
   private readonly tooltipId = `app-tooltip-${++nextTooltipId}`;
   private showTimer: ReturnType<typeof setTimeout> | null = null;
+  private hideTimer: ReturnType<typeof setTimeout> | null = null;
   private overlay: HTMLElement | null = null;
 
   scheduleShow(): void {
     this.cancelShow();
+    this.cancelHide();
     if (!this.appTooltip()?.trim()) return;
-    this.showTimer = setTimeout(() => this.show(), 300);
+    this.showTimer = setTimeout(() => this.show(), Math.max(0, this.appTooltipDelay()));
   }
 
   onFocusOut(event: FocusEvent): void {
@@ -37,6 +41,7 @@ export class AppTooltipDirective implements OnDestroy {
 
   hide(): void {
     this.cancelShow();
+    this.cancelHide();
     if (!this.overlay) return;
     this.document.defaultView?.removeEventListener('resize', this.position);
     this.document.removeEventListener('scroll', this.position, true);
@@ -60,7 +65,20 @@ export class AppTooltipDirective implements OnDestroy {
     overlay.setAttribute('role', 'tooltip');
     const testId = this.appTooltipTestId()?.trim();
     if (testId) overlay.dataset['testid'] = testId;
-    overlay.textContent = content;
+    const text = this.document.createElement('span');
+    text.textContent = content;
+    overlay.append(text);
+    for (const link of this.appTooltipLinks()) {
+      const anchor = this.document.createElement('a');
+      anchor.textContent = link.label;
+      anchor.href = link.href;
+      overlay.append(anchor);
+    }
+    if (this.appTooltipLinks().length > 0) {
+      overlay.classList.add('app-tooltip-overlay--interactive');
+      overlay.addEventListener('mouseenter', () => this.cancelHide());
+      overlay.addEventListener('mouseleave', () => this.hide());
+    }
     this.document.body.append(overlay);
     this.overlay = overlay;
     this.addDescription();
@@ -111,5 +129,20 @@ export class AppTooltipDirective implements OnDestroy {
     if (this.showTimer === null) return;
     clearTimeout(this.showTimer);
     this.showTimer = null;
+  }
+
+  scheduleHide(): void {
+    if (this.appTooltipLinks().length === 0) {
+      this.hide();
+      return;
+    }
+    this.cancelHide();
+    this.hideTimer = setTimeout(() => this.hide(), 120);
+  }
+
+  private cancelHide(): void {
+    if (this.hideTimer === null) return;
+    clearTimeout(this.hideTimer);
+    this.hideTimer = null;
   }
 }

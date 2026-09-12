@@ -62,6 +62,43 @@ public sealed class WorkbenchCatalogueTests : IDisposable
     }
 
     [Fact]
+    public void List_ValidatesAndProjectsOptionalRelevanceReview()
+    {
+        WriteWorkbench("reviewed", "Reviewed", "active", "2026-09-12T10:00:00Z");
+        var path = Path.Combine(_root, "docs", "workbenches", "reviewed", "workbench.json");
+        var descriptor = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+        descriptor["review"] = JsonNode.Parse("""
+          {"verdict":"partially-superseded","supersededBy":["AGT-W51"],"reviewedAt":"2026-09-12T14:00:00Z","reviewedBy":"AGT-2784","note":"The storage contract remains current."}
+          """);
+        File.WriteAllText(path, descriptor.ToJsonString());
+
+        var item = Assert.Single(Service().List("Project")!.Items);
+
+        Assert.True(item.Valid, item.Error);
+        Assert.Equal("partially-superseded", item.Review!.Verdict);
+        Assert.Equal("AGT-W51", Assert.Single(item.Review.SupersededBy));
+        Assert.Equal("AGT-2784", item.Review.ReviewedBy);
+        Assert.False(item.ReviewDue);
+    }
+
+    [Fact]
+    public void List_RejectsMalformedRelevanceReview()
+    {
+        WriteWorkbench("reviewed", "Reviewed", "active", "2026-09-12T10:00:00Z");
+        var path = Path.Combine(_root, "docs", "workbenches", "reviewed", "workbench.json");
+        var descriptor = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+        descriptor["review"] = JsonNode.Parse("""
+          {"verdict":"obsolete","supersededBy":[],"reviewedAt":"yesterday","reviewedBy":"unknown","note":""}
+          """);
+        File.WriteAllText(path, descriptor.ToJsonString());
+
+        var item = Assert.Single(Service().List("Project", includeHistory: true)!.Items);
+
+        Assert.False(item.Valid);
+        Assert.Contains("review verdict", item.Error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Overview_UsesOneProjectionForWorkspaceAndProjectScopes()
     {
         WriteWorkbench("current", "Current", "active", "2026-07-12T10:00:00Z");

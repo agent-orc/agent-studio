@@ -848,6 +848,7 @@ builder.Services.AddSingleton<WorkbenchCatalogueService>();
 builder.Services.AddSingleton<DossierMaintenanceService>();
 builder.Services.AddSingleton<WorkbenchChangeNotifier>();
 builder.Services.AddSingleton<WorkbenchDecisionService>();
+builder.Services.AddSingleton<WorkbenchReviewService>();
 builder.Services.AddSingleton<WorkbenchLifecycleService>();
 builder.Services.AddSingleton<AgentStudio.Proposals.ProjectProposalService>();
 builder.Services.AddSingleton<AgentStudio.Proposals.ProjectProposalDraftingService>();

@@ -103,4 +103,23 @@ describe('WorkbenchOverviewViewStateService', () => {
     expect(state.query()).toBe('project query');
     expect(location.hash).toContain('q%3Dproject%2Bquery');
   });
+
+  it('filters by review state and sorts never-reviewed items as the oldest', () => {
+    const state = TestBed.inject(WorkbenchOverviewViewStateService);
+    state.setScope(null);
+    const never = item('never', 'Demo', 'active', '2026-08-01T10:00:00Z');
+    const old = item('old', 'Demo', 'active', '2026-08-02T10:00:00Z');
+    old.workbench.review = { verdict: 'historical', supersededBy: [], reviewedAt: '2026-01-01T00:00:00Z', reviewedBy: 'Operator', note: 'Retained.' };
+    const current = item('current', 'Demo', 'active', '2026-08-03T10:00:00Z');
+    current.workbench.review = { verdict: 'current', supersededBy: [], reviewedAt: new Date().toISOString(), reviewedBy: 'Operator', note: 'Still applies.' };
+    const items = [current, old, never];
+
+    state.setReviewFilter('never-reviewed');
+    expect(state.filter(items, () => 'Active').map(entry => entry.workbench.id)).toEqual(['never']);
+    state.setReviewFilter('historical');
+    expect(state.filter(items, () => 'Active').map(entry => entry.workbench.id)).toEqual(['old']);
+    state.setReviewFilter('all');
+    state.selectSort('reviewAge');
+    expect(state.sort(items, () => 'Active').map(entry => entry.workbench.id)).toEqual(['never', 'old', 'current']);
+  });
 });

@@ -2,6 +2,42 @@
 
 Operator-facing setup, runtime, security, and git workflow docs.
 
+## Dossier relevance reviews
+
+Each canonical Dossier may carry an optional `review` block in its colocated
+`workbench.json` descriptor. Absence means the Dossier has never been reviewed.
+The validator accepts this exact shape:
+
+```json
+{
+  "review": {
+    "verdict": "current",
+    "supersededBy": ["AGT-W51"],
+    "reviewedAt": "2026-09-12T14:00:00Z",
+    "reviewedBy": "Operator",
+    "note": "The architecture and operating guidance still apply."
+  }
+}
+```
+
+`verdict` is one of `current`, `partially-superseded`, `superseded`, or
+`historical`. `reviewedBy` is `Operator` or a task key. Superseded verdicts
+require at least one unique Dossier key in `supersededBy`; `note` is a
+required sentence of at most 500 characters. `reviewedAt` is a UTC timestamp
+ending in `Z` and is assigned by the server.
+
+`PUT /api/projects/{projectName}/workbenches/{id}/review` is the only
+application write path. It uses the normal mutation identity boundary
+(`X-Client-Id`), atomically replaces `review`, appends the same entry to the
+descriptor's `reviewHistory`, and commits the descriptor through the managed
+project-repository mutation service. The Dossier orchestrator may use this
+endpoint with its task key in `reviewedBy`.
+
+Studio marks a review due when it is older than `Workbenches:ReviewDueDays`
+(default 90), or when every related card entered Completed after the review.
+The Dossier list also supports never-reviewed, older-than-30-days, and verdict
+filters, plus review-age sorting.
+
 ## Zweck & Abgrenzung
 
 Betriebswissen für Operatoren: wie das System aufgesetzt, betrieben, abgesichert
