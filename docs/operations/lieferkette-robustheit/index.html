@@ -384,15 +384,18 @@
   <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
 </div>
 
+<div class="box warn">
+  <b>Abgrenzung zu AGT-W51 (12.09. nachmittags).</b> Das Dossier <a href="../docker-ausfuehrungswelt-migration/index.html">Isolierte Ausführung: Vorbereitungsskripte, Isolation, heilender Orchestrator</a> führt die Richtungen R1 (Hermetik, jetzt: Vorbereitung und Isolation) und R4 (Besitz und Heilungen, jetzt: Orchestrator) aus und ergänzt Tests und CI/CD als Produktfeature. Dieses Dossier bleibt die Analyse (Befund, fünf Muster) und trägt Welle 1: Diagnosekontrakt R2, Unterbrecher R3, Flaky-Politik und Messgrößen. Damit keine Entscheidung doppelt fällt: <b>D1 ist vorentschieden (unten), D2 und D3 werden in AGT-W51 als D2 und D6 entschieden</b>; hier bleiben D4 (Flaky-Politik) und D5 (Messgrößen) sowie die Welle-1-Karte.
+</div>
 <div class="decision" data-decision-id="reihenfolge" data-decision-kind="single" data-decision-label="Reihenfolge der Wellen">
-  <h3>D2 · In welcher Reihenfolge?</h3>
+  <h3>D2 · In welcher Reihenfolge? <span class="tag warn">wird in AGT-W51 D2 entschieden</span></h3>
   <label data-option-id="diagnose-zuerst" data-option-label="A · Welle 1 (Diagnose + Unterbrecher) zuerst, dann Hermetik, dann Besitz (Empfehlung)"><input type="radio" name="reihenfolge" value="diagnose-zuerst"><span><b>A · Welle 1 zuerst, dann Hermetik, dann Besitz</b><span class="d">Stoppt die Verschwendung in Tagen, der Umbau folgt.</span></span></label>
   <label data-option-id="hermetik-zuerst" data-option-label="B · Hermetik zuerst"><input type="radio" name="reihenfolge" value="hermetik-zuerst"><span><b>B · Hermetik zuerst</b><span class="d">Wurzelbehandlung vor Symptombehandlung; bis dahin bleibt der Operator das Netz.</span></span></label>
   <div data-comment="Anmerkung (optional)"><textarea placeholder="Anmerkung (optional)"></textarea></div>
 </div>
 
 <div class="decision" data-decision-id="waechter-haende" data-decision-kind="multi" data-decision-label="Was der Wächter selbst ausführen darf">
-  <h3>D3 · Welche Heilungen darf das System ohne Rückfrage ausführen?</h3>
+  <h3>D3 · Welche Heilungen darf das System ohne Rückfrage ausführen? <span class="tag warn">wird in AGT-W51 D6 entschieden</span></h3>
   <label data-option-id="cache-evict" data-option-label="Caches und eingefrorene Pläne verwerfen, sauber wiederholen"><input type="checkbox" name="waechter-haende" value="cache-evict"><span><b>Caches und Pläne verwerfen, sauber wiederholen</b><span class="d">Reversibel, kostet nur Rechenzeit.</span></span></label>
   <label data-option-id="worktree-prozesse" data-option-label="Kindprozesse beenden, Worktrees räumen, Karten aus Escalated zurückholen"><input type="checkbox" name="waechter-haende" value="worktree-prozesse"><span><b>Prozesse beenden, Worktrees räumen, Karten zurückholen</b><span class="d">Greift in laufende Arbeit ein; nur für Prozesse, die das System selbst gestartet hat.</span></span></label>
   <label data-option-id="ursachen-karten" data-option-label="Ursachen-Karten anlegen und betroffene Karten warten lassen"><input type="checkbox" name="waechter-haende" value="ursachen-karten"><span><b>Ursachen-Karten anlegen, Betroffene warten lassen</b><span class="d">Erzeugt Arbeit im Board; sichtbar als Intervention (AGT-2765).</span></span></label>
