@@ -32,8 +32,9 @@ public enum BuildTestGateFailureKind
     /// <summary>
     /// A verify command's own toolchain/bundler crashed before it reached test
     /// discovery (e.g. vite's case-insensitive-filesystem probe throwing while
-    /// loading its config) rather than running to completion and reporting a
-    /// product result. Never a product failure; see CAC-18.
+    /// loading its config, or a relative worker missing from a package under
+    /// node_modules) rather than running to completion and reporting a product
+    /// result. Never a product failure; see CAC-18 and WEB-19.
     /// </summary>
     Environment,
 }
@@ -112,6 +113,16 @@ public sealed record BuildTestGateDependencyCacheEvidence(
     IReadOnlyList<string> Lockfiles,
     bool InstallRan);
 
+public sealed record BuildTestGateDependencyCacheDecision(
+    string RepositoryKey,
+    bool Restored,
+    long? AgeSeconds,
+    long SizeBytes,
+    bool Evicted,
+    string? EvictionReason,
+    bool ReranFromScratch,
+    bool SavedVerified);
+
 public sealed record BuildTestGateFinding(
     string Kind,
     string Scope,
@@ -147,6 +158,7 @@ public sealed record BuildTestGateResult(
     public string? FailureFingerprint { get; init; }
     public IReadOnlyList<BuildTestGateProcessEvidence> Processes { get; init; } = [];
     public IReadOnlyList<BuildTestGateDependencyCacheEvidence> DependencyCache { get; init; } = [];
+    public BuildTestGateDependencyCacheDecision? DependencyCacheDecision { get; init; }
     public BuildTestGateBudgetEvidence? ViolatedBudget { get; init; }
     public TestSelectionAudit? TestSelection { get; init; }
     public IReadOnlyList<BuildTestGateFinding> Findings { get; init; } = [];
@@ -199,6 +211,10 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         "\\b\\d+\\b", RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private static readonly Regex Whitespace = new(
         "\\s+", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex MissingRelativeModuleFromNodeModules = new(
+        "cannot find module\\s+['\"]\\.{1,2}[\\\\/][^'\"]+['\"][\\s\\S]{0,8192}" +
+        "require stack:[\\s\\S]{0,8192}node_modules[\\\\/]",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     private static readonly string[] CodeExtensions =
     [
@@ -270,6 +286,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         ExactWorkspaceLease? workspaceLease = null;
         GateDependencyCacheSession? dependencyCache = null;
         var dependencyCacheSaved = false;
+        var dependencyCacheReranFromScratch = false;
         BuildTestGateResult? completed = null;
         string? workspace = null;
         string? testedSha = null;
@@ -412,6 +429,21 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                             workspace!, preparation, commands, plan.Source, mode, timeout,
                             cacheRestoreMessages, ct)
                             .ConfigureAwait(false);
+                    if (dependencyCache is not null
+                        && dependencyCache.Restored
+                        && ShouldRetryFromScratch(completed))
+                    {
+                        dependencyCacheReranFromScratch = true;
+                        var evictionMessages = dependencyCache
+                            .Evict("cached-tree-verification-failure")
+                            .ToArray();
+                        var retry = await RunCommandsAsync(
+                                workspace!, preparation, commands, plan.Source, mode,
+                                Remaining(timeout, TimeSpan.FromMilliseconds(completed.DurationMs)),
+                                evictionMessages, ct)
+                            .ConfigureAwait(false);
+                        completed = CombineFromScratchRetry(completed, retry);
+                    }
                     var completedAudit = CompleteAudit(staged.Audit, commands, completed.Processes);
                     completed = completed with
                     {
@@ -423,7 +455,8 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
 
             if (workspaceLease is not null)
             {
-                completed = SaveDependencyCache(completed!, dependencyCache);
+                completed = SaveDependencyCache(
+                    completed!, dependencyCache, dependencyCacheReranFromScratch);
                 dependencyCacheSaved = true;
                 var cleanupError = await workspaceLease.RemoveAsync(
                     infrastructureTimeout, CancellationToken.None).ConfigureAwait(false);
@@ -473,15 +506,16 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 if (!dependencyCacheSaved)
                 {
                     if (completed is not null)
-                        completed = SaveDependencyCache(completed, dependencyCache);
+                        completed = SaveDependencyCache(
+                            completed, dependencyCache, dependencyCacheReranFromScratch);
                     else
-                        dependencyCache?.Save();
+                        dependencyCache?.Evict("gate-run-interrupted");
                 }
                 await workspaceLease.RemoveBestEffortAsync(infrastructureTimeout).ConfigureAwait(false);
             }
             var completedAt = completed?.GateCompletedAtUtc ?? DateTimeOffset.UtcNow;
             _logger.LogInformation(
-                "build_test_gate_completed gate_run_id={GateRunId} gate_id={GateId} completed_at_utc={CompletedAtUtc:o} repository={Repository} expected_sha={ExpectedSha} tested_sha={TestedSha} attempt_chain_id={AttemptChainId} executor={Executor} workspace={Workspace} verdict={Verdict} exit={ExitCode} signal={Signal} failure_kind={FailureKind} failure_fingerprint={FailureFingerprint} violated_budget={ViolatedBudget} budget_limit_ms={BudgetLimitMs} budget_consumed_ms={BudgetConsumedMs} collision={CollisionDetected} queue_wait_ms={QueueWaitMs} self_healed={SelfHealed}",
+                "build_test_gate_completed gate_run_id={GateRunId} gate_id={GateId} completed_at_utc={CompletedAtUtc:o} repository={Repository} expected_sha={ExpectedSha} tested_sha={TestedSha} attempt_chain_id={AttemptChainId} executor={Executor} workspace={Workspace} verdict={Verdict} exit={ExitCode} signal={Signal} failure_kind={FailureKind} failure_fingerprint={FailureFingerprint} violated_budget={ViolatedBudget} budget_limit_ms={BudgetLimitMs} budget_consumed_ms={BudgetConsumedMs} collision={CollisionDetected} queue_wait_ms={QueueWaitMs} self_healed={SelfHealed} dependency_cache={DependencyCacheDecision}",
                 gateRunId, request.GateId, completedAt, repositoryPath,
                 request.ExpectedSha ?? "missing", completed?.TestedSha ?? testedSha ?? "missing",
                 request.AttemptChainId ?? "missing", request.Executor,
@@ -493,7 +527,8 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 completed?.ViolatedBudget?.LimitMs ?? 0,
                 completed?.ViolatedBudget?.ConsumedMs ?? 0,
                 machineLease?.CollisionDetected ?? false, machineLease?.QueueWaitMs ?? 0,
-                completed?.SelfHealed ?? selfHealed);
+                completed?.SelfHealed ?? selfHealed,
+                DependencyCacheDecisionSummary(completed?.DependencyCacheDecision));
             machineLease?.Dispose();
             machineLease = null;
             if (acquiredAtUtc.HasValue && HasHealthContext(request))
@@ -1577,13 +1612,17 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
     /// <summary>
     /// Narrow, high-confidence signatures of a bundler/toolchain crash that
     /// happened before any test could run, e.g. vite's case-insensitive-FS probe
-    /// throwing while loading its config in a corrupted or torn node_modules
-    /// tree (CAC-18). Kept deliberately specific: a broad heuristic here would
+    /// throwing while loading its config or Angular requiring a missing relative
+    /// worker from a corrupted or torn node_modules tree (CAC-18, WEB-19). Kept
+    /// deliberately specific: a broad heuristic here would
     /// repeat the AGT-2110 mistake of misclassifying genuine product failures.
     /// </summary>
     private static bool IsGenuineToolchainStartupCrash(string evidence)
         => evidence.Contains("testCaseInsensitiveFS", StringComparison.OrdinalIgnoreCase)
-           || evidence.Contains("vite/dist/node/chunks/config.js", StringComparison.OrdinalIgnoreCase);
+           || evidence.Contains("vite/dist/node/chunks/config.js", StringComparison.OrdinalIgnoreCase)
+           || MissingRelativeModuleFromNodeModules.IsMatch(evidence)
+           || (evidence.Contains("javascript-transformer-worker", StringComparison.OrdinalIgnoreCase)
+               && evidence.Contains("node_modules/@angular/build", StringComparison.OrdinalIgnoreCase));
 
     internal static BuildTestGateFailureKind ClassifyFailure(string? text)
     {
@@ -1654,21 +1693,96 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
 
     private static BuildTestGateResult SaveDependencyCache(
         BuildTestGateResult result,
-        GateDependencyCacheSession? session)
+        GateDependencyCacheSession? session,
+        bool reranFromScratch)
     {
         if (session is null) return result;
-        // A toolchain/bundler crash before test discovery means node_modules may
-        // be poisoned (CAC-18: an empty vite/dist/client, a missing
-        // .package-lock.json). Saving it back would serve the same broken tree
-        // to every future gate run that hits the lock hit; evict it instead so
-        // the next attempt reinstalls from scratch.
-        var messages = result.FailureKind == BuildTestGateFailureKind.Environment
-            ? session.Evict("gate-environment-failure")
-            : session.Save();
+        // Only a fully green gate can create the positive integrity marker.
+        // Any failure, including an ordinary Code failure, removes the tree
+        // instead of making the next run trust dependencies from a red build.
+        var messages = result.Verdict == BuildTestGateVerdict.Ok
+            ? session.Save()
+            : session.Evict(result.FailureKind == BuildTestGateFailureKind.Environment
+                ? "gate-environment-failure"
+                : "gate-build-failure");
         var output = result.Output;
         foreach (var message in messages)
             output = AppendOutput(output, $"# {message}");
-        return result with { Output = output };
+        var decision = session.Decision(reranFromScratch);
+        var cacheSummary = DependencyCacheDecisionSummary(decision);
+        return result with
+        {
+            Output = output,
+            Reason = result.Reason + "; dependency cache: " + cacheSummary,
+            DependencyCacheDecision = decision,
+        };
+    }
+
+    private static bool ShouldRetryFromScratch(BuildTestGateResult result)
+    {
+        var failedVerification = result.Processes.LastOrDefault(process =>
+            string.Equals(process.Phase, "verification", StringComparison.OrdinalIgnoreCase)
+            && (process.ExitCode != 0
+                || process.TimedOut
+                || process.Cancelled
+                || process.LaunchError is not null));
+        return failedVerification is not null
+               && !failedVerification.TimedOut
+               && !failedVerification.Cancelled
+               && failedVerification.LaunchError is null;
+    }
+
+    private static BuildTestGateResult CombineFromScratchRetry(
+        BuildTestGateResult cachedTreeResult,
+        BuildTestGateResult cleanTreeResult)
+    {
+        var reason = cleanTreeResult.Verdict == BuildTestGateVerdict.Ok
+            ? cleanTreeResult.Reason + " after dependency cache eviction and one from-scratch rerun"
+            : cleanTreeResult.Reason +
+              "; cached-tree failure was evicted and the one from-scratch rerun also failed";
+        var combined = cleanTreeResult with
+        {
+            DurationMs = cachedTreeResult.DurationMs + cleanTreeResult.DurationMs,
+            Output = BoundOutput(
+                cachedTreeResult.Output,
+                "# dependency-cache evicted, rerun from scratch",
+                cleanTreeResult.Output),
+            Reason = reason,
+            RanBackendBuild = cachedTreeResult.RanBackendBuild || cleanTreeResult.RanBackendBuild,
+            RanFrontendBuild = cachedTreeResult.RanFrontendBuild || cleanTreeResult.RanFrontendBuild,
+            Processes = cachedTreeResult.Processes.Concat(cleanTreeResult.Processes).ToArray(),
+            Findings = cachedTreeResult.Findings.Concat(cleanTreeResult.Findings).ToArray(),
+            DependencyCache = cachedTreeResult.DependencyCache.Concat(cleanTreeResult.DependencyCache).ToArray(),
+            FailureFingerprint = null,
+        };
+        return cleanTreeResult.FailureKind == BuildTestGateFailureKind.None
+            ? combined
+            : WithFailure(combined, cleanTreeResult.FailureKind);
+    }
+
+    private static string BoundOutput(params string[] blocks)
+    {
+        var output = new RingOutput(MaxOutputLines);
+        foreach (var block in blocks)
+        {
+            using var reader = new StringReader(block ?? string.Empty);
+            while (reader.ReadLine() is { } line) output.AppendLine(line);
+        }
+        return output.Text;
+    }
+
+    internal static string DependencyCacheDecisionSummary(
+        BuildTestGateDependencyCacheDecision? decision)
+    {
+        if (decision is null) return "not-used";
+        return $"repository={decision.RepositoryKey} " +
+               $"restored={(decision.Restored ? "yes" : "no")} " +
+               $"ageSeconds={decision.AgeSeconds?.ToString() ?? "n/a"} " +
+               $"sizeBytes={decision.SizeBytes} " +
+               $"evicted={(decision.Evicted ? "yes" : "no")} " +
+               $"evictionReason={decision.EvictionReason ?? "n/a"} " +
+               $"rerunFromScratch={(decision.ReranFromScratch ? "yes" : "no")} " +
+               $"savedVerified={(decision.SavedVerified ? "yes" : "no")}";
     }
 
     private static string AppendOutput(string current, string? addition)

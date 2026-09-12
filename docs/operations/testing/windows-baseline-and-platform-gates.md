@@ -106,6 +106,28 @@ dotnet test agent-taskboard.sln -p:ArtifactsPath=/c/scratch/obj-tests
 
 Use `ArtifactsPath`, not `BaseIntermediateOutputPath`.
 
+## Exact-subject gate dependency cache
+
+Repository prebuild hooks may keep their cheap check for one known package in
+`node_modules`. The exact-subject gate owns the stronger consistency boundary:
+it restores a dependency scope only when `.gate-cache-valid` proves a prior
+gate completed successfully and the cached `.nm-state` matches the current
+lockfile hash. A missing or mismatched marker evicts the entry before restore,
+so the preparation plan runs `npm ci` against an empty scope.
+
+If a build still fails after a verified scope was restored, the gate removes
+that scope and reruns preparation and verification once from scratch. A failure
+from the restored tree alone never becomes a code verdict and is never saved
+back. Relative missing-module errors whose require stack is inside
+`node_modules`, including Angular's missing
+`javascript-transformer-worker`, are environment failures. They consume the
+bounded environment retry path, not the task anti-churn budget.
+
+The card's build/test gate line and the numbered gate log show the repository
+cache key, restored age and byte size, whether the entry was evicted, and
+whether the clean retry ran. Operators should compare those fields before
+manually deleting a cache entry.
+
 ## Temporary SQLite fixtures
 
 Let the product store initialize its canonical schema. Do not repeat an already

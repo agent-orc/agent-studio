@@ -142,6 +142,78 @@ public class ReviewDecisionOrchestratorCompletionGateTests : IDisposable
     }
 
     [Fact]
+    public async Task CodeFailureAfterFromScratchRetry_ConsumesBudgetAndPersistsCacheDecision()
+    {
+        const string slug = "build-red-after-clean-retry";
+        SeedReviewJobWithDone(slug,
+            status: "## Summary\nDone.\n\nResult: Success\n\n## Open Items\nNone\n");
+        var cacheDecision = new BuildTestGateDependencyCacheDecision(
+            "41ec315875d8dee864f057bf", true, 2_764_800, 83_912_704,
+            true, "cached-tree-verification-failure", true, false);
+        var result = new BuildTestGateResult(
+            BuildTestGateVerdict.Fail, 1, 123,
+            "cached tree failed; cache evicted; clean tree failed",
+            "npm run build exit 1; dependency cache: " +
+            BuildTestGateRunner.DependencyCacheDecisionSummary(cacheDecision),
+            false, true)
+        {
+            FailureKind = BuildTestGateFailureKind.Code,
+            FailureFingerprint = "code:after-clean-retry",
+            DependencyCacheDecision = cacheDecision,
+        };
+        var orchestrator = BuildOrchestrator(
+            new CountingAspect().Cli, maxReissues: 1,
+            new FakeBuildTestGateRunner(result));
+
+        await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+
+        var folder = Path.Combine(_watchPath, TaskStates.Ready, slug);
+        Assert.True(Directory.Exists(folder));
+        var decision = Assert.Single(
+            ReviewDecisionLog.ReadAll(_workspace, Project),
+            item => item.JobId == slug);
+        Assert.Equal(ReviewDecisionKind.Reissue, decision.Kind);
+        Assert.Equal("code:after-clean-retry", decision.FailureFingerprint);
+        Assert.Contains("rerunFromScratch=yes", decision.Reason);
+        var pipelineJson = File.ReadAllText(Path.Combine(folder, PipelineExecutionLog.FileName));
+        Assert.Contains("repository=41ec315875d8dee864f057bf", pipelineJson);
+        Assert.Contains("evicted=yes", pipelineJson);
+    }
+
+    [Fact]
+    public async Task AntiChurnEscalationNamesFingerprintAndLastGateCacheDecision()
+    {
+        const string slug = "build-red-at-ceiling";
+        SeedReviewJobWithDone(slug,
+            status: "## Summary\nDone.\n\nResult: Success\n\n## Open Items\nNone\n");
+        var cacheDecision = new BuildTestGateDependencyCacheDecision(
+            "41ec315875d8dee864f057bf", true, 2_764_800, 83_912_704,
+            true, "cached-tree-verification-failure", true, false);
+        var result = new BuildTestGateResult(
+            BuildTestGateVerdict.Fail, 1, 123, "clean retry failed",
+            "npm run build exit 1", false, true)
+        {
+            FailureKind = BuildTestGateFailureKind.Code,
+            FailureFingerprint = "code:stable-fingerprint",
+            DependencyCacheDecision = cacheDecision,
+        };
+        var orchestrator = BuildOrchestrator(
+            new CountingAspect().Cli, maxReissues: 0,
+            new FakeBuildTestGateRunner(result));
+
+        await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.Escalated, slug)));
+        var decision = Assert.Single(
+            ReviewDecisionLog.ReadAll(_workspace, Project),
+            item => item.JobId == slug);
+        Assert.Contains("fingerprint=code:stable-fingerprint", decision.Reason);
+        Assert.Contains("last gate cache decision:", decision.Reason);
+        Assert.Contains("repository=41ec315875d8dee864f057bf", decision.Reason);
+        Assert.Contains("rerunFromScratch=yes", decision.Reason);
+    }
+
+    [Fact]
     public async Task HistoricalReasonTextFromAnotherAttemptCannotFormDoubleFailure()
     {
         const string slug = "build-new-attempt";

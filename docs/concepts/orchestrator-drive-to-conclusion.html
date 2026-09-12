@@ -2326,6 +2326,31 @@
             the original capped-log shape and terminal <span class="lane">5-human-review</span>.
           </td>
         </tr>
+        <tr id="case-agt-2782-web-19-torn-dependency-cache">
+          <td>2026-09-12</td>
+          <td><code>WEB-19 / AGT-2782</code><br><span class="small">torn dependency cache escalated a delivered website card</span></td>
+          <td>
+            Three <code>npm run build</code> gate rounds failed before Angular compilation with a missing
+            <code>javascript-transformer-worker</code>. The same commits built successfully after <code>npm ci</code> in
+            the delivery and operator scratch worktrees, but the gate classified each cached-tree failure as Code and
+            parked WEB-19 at the task-level anti-churn ceiling. The delivery had already reached origin/main.
+          </td>
+          <td>
+            Restore moved a month-old, partial <code>node_modules</code> tree into the exact-subject workspace without
+            validating its lock marker or a positive completed-gate marker. The repository prebuild hook found one
+            Angular package and skipped installation. The missing-worker signature was absent from Environment
+            classification, and the red run saved the same torn tree back into the cache.
+          </td>
+          <td>
+            <span class="pill ok">fixed in dev</span> verified restore checks <code>.gate-cache-valid</code> and the
+            current lock hash before moving a scope. A verify failure on a restored tree evicts it and receives one
+            in-budget preparation and verification retry from scratch; only that result can count as Code. Red runs
+            never save dependency content. Missing relative modules required from <code>node_modules</code> are
+            Environment failures and do not consume anti-churn budget. Gate lines and escalation reasons retain the
+            cache key, age, size, eviction, clean retry, and failure fingerprint. The observed incident reached
+            <span class="lane">5e-escalated</span>; the corrected replay reaches a green gate after cache eviction.
+          </td>
+        </tr>
       </tbody>
     </table>
 

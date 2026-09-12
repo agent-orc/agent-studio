@@ -113,12 +113,22 @@ public static class DependencyPreparationState
 /// </summary>
 public sealed class DependencyCacheSession
 {
+    public const string IntegrityMarkerFileName = ".gate-cache-valid";
+
     private readonly string _workspace;
     private readonly string _cacheRoot;
     private readonly IReadOnlyList<ReviewDependencyScopeDto> _scopes;
     private readonly IReadOnlyList<string> _preserveGlobs;
     private readonly Action<string>? _log;
     private readonly Func<string, string> _stagingRootFactory;
+
+    public string CacheKey => Path.GetFileName(_cacheRoot);
+    public bool Restored { get; private set; }
+    public bool Evicted { get; private set; }
+    public string? EvictionReason { get; private set; }
+    public bool SavedVerified { get; private set; }
+    public long RestoredSizeBytes { get; private set; }
+    public TimeSpan? RestoredAge { get; private set; }
 
     private DependencyCacheSession(
         string workspace,
@@ -180,6 +190,64 @@ public sealed class DependencyCacheSession
     public IReadOnlyList<string> Restore() => Transfer(restore: true);
 
     /// <summary>
+    /// Restores only a cache entry committed by <see cref="SaveVerified"/> and
+    /// whose per-scope install marker still matches the lockfiles in the new
+    /// workspace. Invalid entries are removed before any dependency directory
+    /// can enter the workspace.
+    /// </summary>
+    public IReadOnlyList<string> RestoreVerified()
+    {
+        var messages = new List<string>();
+        var contentRoot = Path.Combine(_cacheRoot, "content");
+        if (!Directory.Exists(contentRoot))
+            return Transfer(restore: true);
+
+        var integrityMarker = Path.Combine(contentRoot, IntegrityMarkerFileName);
+        RestoredSizeBytes = DirectorySize(contentRoot);
+        var ageSource = File.Exists(integrityMarker) ? integrityMarker : contentRoot;
+        RestoredAge = DateTime.UtcNow - File.GetLastWriteTimeUtc(ageSource);
+        if (!File.Exists(integrityMarker))
+            return RefuseAndDiscard("integrity-marker-missing", ".", messages);
+
+        foreach (var scope in _scopes)
+        {
+            if (scope.Lockfiles.Count == 0) continue;
+            var installRoot = ResolveWithin(_workspace, scope.WorkingSubdir);
+            var present = scope.Lockfiles
+                .Where(name => File.Exists(Path.Combine(installRoot, name)))
+                .OrderBy(name => name, StringComparer.Ordinal)
+                .ToArray();
+            if (present.Length == 0)
+                return RefuseAndDiscard("no-lockfile", DisplayScope(scope.WorkingSubdir), messages);
+
+            var expected = DependencyPreparationState.ComputeLockHash(installRoot, present);
+            var cachedMarker = ResolveWithin(
+                contentRoot,
+                Combine(scope.WorkingSubdir, DependencyPreparationState.MarkerFileName));
+            if (!File.Exists(cachedMarker))
+                return RefuseAndDiscard("marker-missing", DisplayScope(scope.WorkingSubdir), messages);
+
+            string actual;
+            try
+            {
+                actual = File.ReadAllText(cachedMarker).Trim();
+            }
+            catch
+            {
+                return RefuseAndDiscard("marker-unreadable", DisplayScope(scope.WorkingSubdir), messages);
+            }
+            if (!string.Equals(expected, actual, StringComparison.Ordinal))
+                return RefuseAndDiscard("lock-changed", DisplayScope(scope.WorkingSubdir), messages);
+        }
+
+        var restored = Transfer(restore: true);
+        Restored = restored.Any(message =>
+            message.Contains(" state=moved", StringComparison.Ordinal)
+            && !message.Contains(DependencyPreparationState.MarkerFileName, StringComparison.Ordinal));
+        return restored;
+    }
+
+    /// <summary>
     /// Stages the workspace's cacheable content into a temporary sibling of the
     /// live cache entry, then <see cref="Directory.Move"/>s (renames) that
     /// sibling onto the entry in one step. A failure while staging discards the
@@ -187,7 +255,16 @@ public sealed class DependencyCacheSession
     /// a half-moved tree as the entry an unrelated lock-hash hit would later
     /// trust.
     /// </summary>
-    public IReadOnlyList<string> Save()
+    public IReadOnlyList<string> Save() => SaveCore(verified: false);
+
+    /// <summary>
+    /// Commits an entry with a positive marker after the caller has observed a
+    /// green install and verification run. Gate restore never trusts entries
+    /// produced by any other path.
+    /// </summary>
+    public IReadOnlyList<string> SaveVerified() => SaveCore(verified: true);
+
+    private IReadOnlyList<string> SaveCore(bool verified)
     {
         var stopwatch = Stopwatch.StartNew();
         var messages = new List<string>();
@@ -219,6 +296,24 @@ public sealed class DependencyCacheSession
                 messages);
             movedAny |= outcome == MoveOutcome.Moved;
             failed |= outcome == MoveOutcome.Failed;
+        }
+
+        if (verified && movedAny && !failed)
+        {
+            try
+            {
+                Directory.CreateDirectory(stagingRoot);
+                File.WriteAllText(
+                    Path.Combine(stagingRoot, IntegrityMarkerFileName),
+                    $"version=1\nverifiedAtUtc={DateTimeOffset.UtcNow:O}\n");
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                failed = true;
+                messages.Add(
+                    $"dependency-cache save item={IntegrityMarkerFileName} state=failed " +
+                    $"reason={exception.GetType().Name}");
+            }
         }
 
         stopwatch.Stop();
@@ -257,6 +352,7 @@ public sealed class DependencyCacheSession
             $"state=committed durationMs={stopwatch.ElapsedMilliseconds}";
         messages.Add(committed);
         _log?.Invoke(committed);
+        SavedVerified = verified;
         return messages;
     }
 
@@ -267,6 +363,8 @@ public sealed class DependencyCacheSession
     /// </summary>
     public IReadOnlyList<string> Discard(string reason)
     {
+        Evicted = true;
+        EvictionReason = reason;
         var contentRoot = Path.Combine(_cacheRoot, "content");
         if (!Directory.Exists(contentRoot))
         {
@@ -291,6 +389,95 @@ public sealed class DependencyCacheSession
             _log?.Invoke(message);
             return [message];
         }
+    }
+
+    /// <summary>
+    /// Removes cacheable content that was already moved into the disposable
+    /// workspace, then removes any still-live cache entry. This is the clean
+    /// boundary used before a same-run retry.
+    /// </summary>
+    public IReadOnlyList<string> DiscardIncludingWorkspace(string reason)
+    {
+        var messages = new List<string>();
+        foreach (var relative in CacheDirectories(_workspace))
+        {
+            var path = ResolveWithin(_workspace, relative);
+            try
+            {
+                Directory.Delete(path, recursive: true);
+                messages.Add($"dependency-cache evicted item={relative} state=workspace-removed reason={reason}");
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                messages.Add(
+                    $"dependency-cache evict item={relative} state=failed " +
+                    $"reason={exception.GetType().Name}");
+            }
+        }
+        foreach (var scope in _scopes)
+        {
+            var marker = ResolveWithin(
+                _workspace,
+                Combine(scope.WorkingSubdir, DependencyPreparationState.MarkerFileName));
+            try
+            {
+                if (File.Exists(marker)) File.Delete(marker);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                messages.Add(
+                    $"dependency-cache evict item={DisplayScope(scope.WorkingSubdir)}/{DependencyPreparationState.MarkerFileName} " +
+                    $"state=failed reason={exception.GetType().Name}");
+            }
+        }
+        messages.AddRange(Discard(reason));
+        return messages;
+    }
+
+    private IReadOnlyList<string> RefuseAndDiscard(
+        string reason,
+        string scope,
+        ICollection<string> messages)
+    {
+        var refused =
+            $"dependency-cache restore refused repository={CacheKey} scope={scope} reason={reason}";
+        messages.Add(refused);
+        _log?.Invoke(refused);
+        foreach (var message in Discard("restore-integrity-" + reason)) messages.Add(message);
+        return messages.ToArray();
+    }
+
+    private static string DisplayScope(string workingSubdir)
+        => string.IsNullOrWhiteSpace(workingSubdir) ? "." : workingSubdir;
+
+    private static long DirectorySize(string root)
+    {
+        long total = 0;
+        var pending = new Stack<string>();
+        pending.Push(root);
+        while (pending.Count > 0)
+        {
+            var current = pending.Pop();
+            try
+            {
+                foreach (var file in Directory.EnumerateFiles(current))
+                {
+                    try { total += new FileInfo(file).Length; }
+                    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+                }
+                foreach (var directory in Directory.EnumerateDirectories(current))
+                {
+                    try
+                    {
+                        if (!File.GetAttributes(directory).HasFlag(FileAttributes.ReparsePoint))
+                            pending.Push(directory);
+                    }
+                    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+                }
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+        }
+        return total;
     }
 
     private static void DeleteBestEffort(string path)

@@ -63,6 +63,64 @@ public sealed class DependencyCacheSessionTests : IDisposable
     }
 
     [Fact]
+    public void RestoreVerified_MarkerHashMismatch_IsRefusedAndEvictedBeforeMove()
+    {
+        var cacheParent = Path.Combine(_root, "cache-parent");
+        var source = Path.Combine(_root, "source");
+        Directory.CreateDirectory(Path.Combine(source, "node_modules"));
+        File.WriteAllText(Path.Combine(source, "node_modules", "marker.txt"), "old dependency tree");
+        File.WriteAllText(Path.Combine(source, "package-lock.json"), "old-lock");
+        var scope = new ReviewDependencyScopeDto("", ["package-lock.json"]);
+        var oldHash = DependencyPreparationState.ComputeLockHash(source, scope.Lockfiles);
+        DependencyPreparationState.Stamp(source, oldHash);
+        var saving = DependencyCacheSession.Create(cacheParent, "repo-identity", source, [scope]);
+        Assert.Contains(saving.SaveVerified(), message => message.Contains("state=committed"));
+
+        var destination = Path.Combine(_root, "destination");
+        Directory.CreateDirectory(destination);
+        File.WriteAllText(Path.Combine(destination, "package-lock.json"), "new-lock");
+        var restoring = DependencyCacheSession.Create(
+            cacheParent, "repo-identity", destination, [scope]);
+
+        var messages = restoring.RestoreVerified();
+
+        Assert.Contains(messages, message =>
+            message.Contains("restore refused") && message.Contains("reason=lock-changed"));
+        Assert.Contains(messages, message => message.Contains("dependency-cache evicted"));
+        Assert.False(restoring.Restored);
+        Assert.True(restoring.Evicted);
+        Assert.False(Directory.Exists(Path.Combine(destination, "node_modules")));
+        Assert.False(Directory.Exists(Path.Combine(
+            DependencyCacheSession.CachePath(cacheParent, "repo-identity"), "content")));
+    }
+
+    [Fact]
+    public void RestoreVerified_EntryWithoutPositiveGateMarker_IsEvicted()
+    {
+        var workspace = Path.Combine(_root, "workspace-with-lock");
+        Directory.CreateDirectory(workspace);
+        File.WriteAllText(Path.Combine(workspace, "package-lock.json"), "same-lock");
+        var cacheParent = Path.Combine(_root, "cache-parent");
+        var content = Path.Combine(
+            DependencyCacheSession.CachePath(cacheParent, "repo-identity"), "content");
+        Directory.CreateDirectory(Path.Combine(content, "node_modules"));
+        var scope = new ReviewDependencyScopeDto("", ["package-lock.json"]);
+        File.WriteAllText(
+            Path.Combine(content, DependencyPreparationState.MarkerFileName),
+            DependencyPreparationState.ComputeLockHash(workspace, scope.Lockfiles));
+        var session = DependencyCacheSession.Create(
+            cacheParent, "repo-identity", workspace, [scope]);
+
+        var messages = session.RestoreVerified();
+
+        Assert.Contains(messages, message => message.Contains("reason=integrity-marker-missing"));
+        Assert.True(session.Evicted);
+        Assert.False(session.Restored);
+        Assert.False(Directory.Exists(Path.Combine(workspace, "node_modules")));
+        Assert.False(Directory.Exists(content));
+    }
+
+    [Fact]
     public void Save_MovesWorkspaceContentIntoTheCacheEntry()
     {
         var workspace = Path.Combine(_root, "workspace");

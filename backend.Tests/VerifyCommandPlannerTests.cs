@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using System.Diagnostics;
+using AgentStudio.TaskServer.Contracts;
 
 using Xunit;
 using Xunit.Abstractions;
@@ -816,6 +817,115 @@ public sealed class BuildTestGateRunnerBehaviorTests : IDisposable
     }
 
     [Fact]
+    public async Task ExactSubjectNodeFixture_TornVerifiedCacheIsEvictedAndRerunFromScratch()
+    {
+        WriteFixtureFile("package.json", """
+            {
+              "name": "web-19-replay",
+              "version": "1.0.0",
+              "scripts": { "build": "node -e \"const fs=require('fs'); const torn='./node_modules/@angular/build/src/tools/esbuild/javascript-transformer.js'; require(fs.existsSync(torn)?torn:'fixture-dep/transformer')\"" },
+              "dependencies": { "fixture-dep": "file:fixture-dep" }
+            }
+            """);
+        WriteFixtureFile("fixture-dep/package.json", """
+            { "name": "fixture-dep", "version": "1.0.0", "main": "index.js" }
+            """);
+        WriteFixtureFile("fixture-dep/index.js", "module.exports = 'installed';");
+        WriteFixtureFile("fixture-dep/transformer.js", "module.exports = require('./worker');");
+        WriteFixtureFile("fixture-dep/worker.js", "module.exports = 'worker';");
+        WriteFixtureFile("package-lock.json", NodeFixtureLock("1.0.0"));
+        var sha = InitializeGitRepository();
+
+        var seeded = await RunExactNodeGate(sha);
+        Assert.Equal(BuildTestGateVerdict.Ok, seeded.Verdict);
+        var cacheContent = Path.Combine(
+            GateDependencyCacheSession.CachePath(BuildTestGateRunner.ReviewWorkspaceRoot, _root),
+            "content");
+        var cachedNodeModules = Path.Combine(cacheContent, "node_modules");
+        Directory.Delete(cachedNodeModules, recursive: true);
+        var angularEsbuild = Path.Combine(
+            cachedNodeModules, "@angular", "build", "src", "tools", "esbuild");
+        Directory.CreateDirectory(angularEsbuild);
+        File.WriteAllText(
+            Path.Combine(angularEsbuild, "javascript-transformer.js"),
+            "module.exports = require('./javascript-transformer-worker');");
+
+        var replay = await RunExactNodeGate(sha);
+
+        Assert.Equal(BuildTestGateVerdict.Ok, replay.Verdict);
+        Assert.Equal(BuildTestGateFailureKind.None, replay.FailureKind);
+        Assert.NotNull(replay.DependencyCacheDecision);
+        Assert.True(replay.DependencyCacheDecision!.Restored);
+        Assert.True(replay.DependencyCacheDecision.Evicted);
+        Assert.True(replay.DependencyCacheDecision.ReranFromScratch);
+        Assert.True(replay.DependencyCacheDecision.SavedVerified);
+        Assert.Equal(3, replay.Processes.Count);
+        Assert.Equal(BuildTestGateFailureKind.Environment,
+            BuildTestGateRunner.ClassifyFailure(replay.Processes[0]));
+        Assert.Equal("preparation", replay.Processes[1].Phase);
+        Assert.Equal("npm ci", replay.Processes[1].Command);
+        Assert.Equal(0, replay.Processes[2].ExitCode);
+        Assert.Contains("dependency-cache evicted, rerun from scratch", replay.Output);
+        Assert.Contains("restored=yes", replay.Reason);
+        Assert.Contains("evicted=yes", replay.Reason);
+        _output.WriteLine("WEB-19 replay gate log:");
+        _output.WriteLine(replay.Output);
+        _output.WriteLine("Card gate line: " + replay.Reason);
+    }
+
+    [Fact]
+    public async Task ExactSubjectNodeFixture_CodeFailureAfterCleanRetryRemainsCodeAndIsNotSaved()
+    {
+        WriteFixtureFile("package.json", """
+            {
+              "name": "code-failure-replay",
+              "version": "1.0.0",
+              "scripts": { "build": "node -e \"require('fixture-dep'); process.exit(7)\"" },
+              "dependencies": { "fixture-dep": "file:fixture-dep" }
+            }
+            """);
+        WriteFixtureFile("fixture-dep/package.json", """
+            { "name": "fixture-dep", "version": "1.0.0", "main": "index.js" }
+            """);
+        WriteFixtureFile("fixture-dep/index.js", "module.exports = 'installed';");
+        WriteFixtureFile("package-lock.json", NodeFixtureLock("1.0.0"));
+        var sha = InitializeGitRepository();
+
+        // Seed a structurally valid cache independently of the deliberately red
+        // build, then prove the cached failure receives exactly one clean retry.
+        var cacheWorkspace = Path.Combine(_root, "seed-cache");
+        Directory.CreateDirectory(Path.Combine(cacheWorkspace, "node_modules", "fixture-dep"));
+        File.Copy(Path.Combine(_root, "fixture-dep", "index.js"),
+            Path.Combine(cacheWorkspace, "node_modules", "fixture-dep", "index.js"));
+        File.Copy(Path.Combine(_root, "package-lock.json"),
+            Path.Combine(cacheWorkspace, "package-lock.json"));
+        var scope = new ReviewDependencyScopeDto("", ["package-lock.json"]);
+        DependencyPreparationState.Stamp(
+            cacheWorkspace,
+            DependencyPreparationState.ComputeLockHash(cacheWorkspace, scope.Lockfiles));
+        var cacheParent = Path.Combine(
+            BuildTestGateRunner.ReviewWorkspaceRoot,
+            BuildTestGateRunner.DependencyCacheDirectoryName);
+        var seedSession = DependencyCacheSession.Create(
+            cacheParent, _root, cacheWorkspace, [scope]);
+        Assert.Contains(seedSession.SaveVerified(), message => message.Contains("state=committed"));
+
+        var result = await RunExactNodeGate(sha);
+
+        Assert.Equal(BuildTestGateVerdict.Fail, result.Verdict);
+        Assert.Equal(BuildTestGateFailureKind.Code, result.FailureKind);
+        Assert.True(result.DependencyCacheDecision!.ReranFromScratch);
+        Assert.True(result.DependencyCacheDecision.Evicted);
+        Assert.False(result.DependencyCacheDecision.SavedVerified);
+        Assert.Equal(3, result.Processes.Count);
+        Assert.Equal(2, result.Processes.Count(process => process.Phase == "verification"));
+        Assert.Contains("from-scratch rerun also failed", result.Reason);
+        Assert.False(Directory.Exists(Path.Combine(
+            GateDependencyCacheSession.CachePath(BuildTestGateRunner.ReviewWorkspaceRoot, _root),
+            "content")));
+    }
+
+    [Fact]
     public async Task RunTimeoutNamesViolatedBudgetAndConsumption()
     {
         var result = await _runner.RunAsync(
@@ -1368,6 +1478,19 @@ public sealed class BuildTestGateClassificationTests
         var evidence = Evidence(exitCode: 1, stderr:
             "    at testCaseInsensitiveFS (/repo/node_modules/vite/dist/node/chunks/config.js:1911:42)\n"
             + "    at async loadConfigFromFile (/repo/node_modules/vite/dist/node/chunks/config.js:2001:27)");
+
+        var kind = BuildTestGateRunner.ClassifyFailure(evidence);
+
+        Assert.Equal(BuildTestGateFailureKind.Environment, kind);
+    }
+
+    [Fact]
+    public void CompletedAngularBuild_MissingRelativeWorkerFromNodeModules_IsEnvironment()
+    {
+        var evidence = Evidence(exitCode: 1, stderr:
+            "X [ERROR] Cannot find module './javascript-transformer-worker'\n" +
+            "Require stack:\n" +
+            "- C:\\gate\\node_modules\\@angular\\build\\src\\tools\\esbuild\\javascript-transformer.js");
 
         var kind = BuildTestGateRunner.ClassifyFailure(evidence);
 

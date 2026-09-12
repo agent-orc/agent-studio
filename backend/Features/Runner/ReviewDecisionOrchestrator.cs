@@ -3939,6 +3939,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             {
                 WriteIndented = true,
             });
+            var dependencyCacheDecision = JsonSerializer.Serialize(
+                result.DependencyCacheDecision,
+                new JsonSerializerOptions { WriteIndented = true });
             var body = $"verdict={result.Verdict} exit={result.ExitCode?.ToString() ?? "n/a"} signal={result.TerminationSignal ?? "n/a"} durationMs={result.DurationMs}\n" +
                        $"gateId={result.GateId} failureKind={result.FailureKind} failureFingerprint={result.FailureFingerprint ?? "n/a"}\n" +
                        $"gateRunId={result.GateRunId ?? "n/a"} startedAtUtc={result.GateStartedAtUtc?.ToString("O") ?? "n/a"} completedAtUtc={result.GateCompletedAtUtc?.ToString("O") ?? "n/a"}\n" +
@@ -3948,6 +3951,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                        $"reason={result.Reason}\n" +
                        $"backend={result.RanBackendBuild} frontend={result.RanFrontendBuild}\n" +
                        $"changedFiles={(changedFiles == null ? "unknown" : string.Join(", ", changedFiles.Take(50)))}\n" +
+                       "--- dependency-cache-decision.json ---\n" +
+                       dependencyCacheDecision + "\n" +
                        "--- test-selection.json ---\n" +
                        selectionEvidence + "\n" +
                        "--- process-evidence.json ---\n" +
@@ -5546,12 +5551,16 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         var taskReissueCeilingReached = CountPriorReissues(workspace, entry.Name, current.Id)
             >= ConfiguredMaxReissues();
         var failureIdentity = BuildTestGateFailureIdentity(result);
+        var lastGateCacheDecision = BuildTestGateRunner.DependencyCacheDecisionSummary(
+            result.DependencyCacheDecision);
 
         if (priorBuildGateReissues >= 1 || taskReissueCeilingReached)
         {
             var reason = priorBuildGateReissues >= 1
-                ? $"build-test gate failed twice for the same product retry identity ({failureIdentity}; {result.Reason}); escalating per post-step loop guard."
-                : $"build-test gate failed and the task-level anti-churn ceiling was reached ({failureIdentity}; {result.Reason}).";
+                ? $"build-test gate failed twice for the same product retry identity ({failureIdentity}; {result.Reason}); " +
+                  $"last gate cache decision: {lastGateCacheDecision}; escalating per post-step loop guard."
+                : $"build-test gate failed and the task-level anti-churn ceiling was reached ({failureIdentity}; {result.Reason}); " +
+                  $"last gate cache decision: {lastGateCacheDecision}.";
             if (councilReaction?.Disposition == AgentStudio.Review.CouncilReactionDisposition.Reissue)
             {
                 councilReaction = AgentStudio.Review.CouncilReviewPolicy.EscalateBecause(
