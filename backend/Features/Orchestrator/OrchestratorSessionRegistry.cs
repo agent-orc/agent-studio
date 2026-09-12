@@ -23,7 +23,8 @@ public sealed record OrchestratorSessionRecord(
     long CumulativeCacheCreationTokens,
     int Calls,
     DateTime? LastUsedAt,
-    string? LastError);
+    string? LastError,
+    string? WorkbenchKey = null);
 
 public sealed record OrchestratorSessionHistoryEntry(
     DateTime Ts,
@@ -101,11 +102,20 @@ public sealed class OrchestratorSessionRegistry
             }
 
             return records
-                .OrderBy(r => r.Kind == OrchestratorContextKey.GlobalKind ? 0 : r.Kind == OrchestratorContextKey.ProjectKind ? 1 : 2)
+                .OrderBy(r => KindOrder(r.Kind))
                 .ThenBy(r => r.ContextKey, StringComparer.Ordinal)
                 .ToList();
         }
     }
+
+    /// <summary>Canonical rail ordering: global, then project, then workbench (Dossier), then task.</summary>
+    private static int KindOrder(string kind) => kind switch
+    {
+        OrchestratorContextKey.GlobalKind => 0,
+        OrchestratorContextKey.ProjectKind => 1,
+        OrchestratorContextKey.WorkbenchKind => 2,
+        _ => 3,
+    };
 
     public OrchestratorSessionRecord GetOrCreate(string rawContextKey)
     {
@@ -228,6 +238,7 @@ public sealed class OrchestratorSessionRegistry
             ProjectId: key.ProjectId,
             TaskKey: key.TaskKey,
             CreatedAt: now,
+            WorkbenchKey: key.WorkbenchKey,
             UpdatedAt: now,
             SessionId: null,
             Model: null,

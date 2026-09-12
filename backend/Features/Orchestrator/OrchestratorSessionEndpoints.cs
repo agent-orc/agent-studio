@@ -93,6 +93,9 @@ public static class OrchestratorSessionEndpoints
         group.MapPost("/project:{projectId}/turns", (string projectId, OrchestratorTurnRequest request, OrchestratorSessionRegistry registry, OrchestratorTurnService turns) =>
             PostTurn($"project:{projectId}", request, registry, turns))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Chat);
+        group.MapPost("/workbench:{projectId}/{workbenchKey}/turns", (string projectId, string workbenchKey, OrchestratorTurnRequest request, OrchestratorSessionRegistry registry, OrchestratorTurnService turns) =>
+            PostTurn($"workbench:{projectId}/{workbenchKey}", request, registry, turns))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Chat);
         group.MapPost("/task:{projectId}/{taskKey}/turns", (string projectId, string taskKey, OrchestratorTurnRequest request, OrchestratorSessionRegistry registry, OrchestratorTurnService turns) =>
             PostTurn($"task:{projectId}/{taskKey}", request, registry, turns))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Chat);
@@ -101,6 +104,8 @@ public static class OrchestratorSessionEndpoints
             Park("global", registry, turns));
         group.MapPost("/project:{projectId}/park", (string projectId, OrchestratorSessionRegistry registry, OrchestratorTurnService turns) =>
             Park($"project:{projectId}", registry, turns));
+        group.MapPost("/workbench:{projectId}/{workbenchKey}/park", (string projectId, string workbenchKey, OrchestratorSessionRegistry registry, OrchestratorTurnService turns) =>
+            Park($"workbench:{projectId}/{workbenchKey}", registry, turns));
         group.MapPost("/task:{projectId}/{taskKey}/park", (string projectId, string taskKey, OrchestratorSessionRegistry registry, OrchestratorTurnService turns) =>
             Park($"task:{projectId}/{taskKey}", registry, turns));
     }

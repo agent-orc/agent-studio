@@ -6,9 +6,9 @@
   "entrypoint": "index.html",
   "status": "decided",
   "phase": "testing",
-  "updatedAt": "2026-08-17T00:00:00Z",
-  "editedBy": "Operator bookkeeping via AGT-2621",
-  "statusReason": "Curation 2026-08-17: stays decided. The previous reason named AGT-2575 and AGT-2577 as open, which is no longer true: both are in lane 7-archive and the AGT-2577 orchestrator-chat-history surface exists in the frontend tree. Two things still block History. First, the source card AGT-2514 is in lane 5-human-review, so a source card of this Dossier is not terminal. Second, section 09 Implementation and Delivery record is empty, and this Dossier's own append-only rule says a card appears there only after its delivery contains a dated implementation entry; none of AGT-2572 through AGT-2577 has one.",
+  "updatedAt": "2026-09-08T00:00:00Z",
+  "editedBy": "Operator bookkeeping via AGT-2725",
+  "statusReason": "Curation 2026-08-17: stays decided. The previous reason named AGT-2575 and AGT-2577 as open, which is no longer true: both are in lane 7-archive and the AGT-2577 orchestrator-chat-history surface exists in the frontend tree. Two things still block History. First, the source card AGT-2514 is in lane 5-human-review, so a source card of this Dossier is not terminal. Second, section 09 Implementation and Delivery record is empty, and this Dossier's own append-only rule says a card appears there only after its delivery contains a dated implementation entry; none of AGT-2572 through AGT-2577 has one. Operator override 2026-09-06 (AGT-2725): a Dossier now owns its own orchestrator transcript (`workbench:<PROJ>/<DOSSIER-KEY>`), deviating from this Dossier's original 'context inputs, not new transcript owners' scoping for Wiki, Workbench, board, file, and diff surfaces. See the section 04 callout for the recorded deviation; this remains a narrowing of scope (Dossiers only) and does not reopen the History blockers above.",
   "sourceTaskKeys": [
     "AGT-2514",
     "AGT-2572",

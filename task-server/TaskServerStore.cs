@@ -19,8 +19,11 @@ public sealed partial class TaskServerStore
     // 16 adds the fenced studio-operation dispatch ledger and the P2
     // "operations and insight" projection tables (bus, token usage, drift,
     // security, deployment, supervisor, crash recovery, and related studio
-    // settings/state). The migration block is idempotent; the number guards
-    // downgrades from binaries that do not know this state.
+    // settings/state), plus the workbench (Dossier) orchestrator-context kind
+    // and its opaque workbench_key column (AGT-2725); see
+    // ApplyWorkbenchContextMigrationAsync for the existing-table rebuild.
+    // The migration block is idempotent; the number guards downgrades from
+    // binaries that do not know this state.
     public const int CurrentSchemaVersion = 16;
 
     /// <summary>
@@ -2723,14 +2726,19 @@ public sealed partial class TaskServerStore
             );
             CREATE TABLE IF NOT EXISTS orchestrator_contexts(
                 context_key TEXT PRIMARY KEY,
-                kind TEXT NOT NULL CHECK(kind IN ('project', 'task')),
+                kind TEXT NOT NULL CHECK(kind IN ('project', 'task', 'workbench')),
                 project_id TEXT NOT NULL REFERENCES projects(id),
                 task_id TEXT REFERENCES tasks(id),
+                workbench_key TEXT,
                 summary TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 hidden_at TEXT,
-                CHECK((kind = 'project' AND task_id IS NULL) OR (kind = 'task' AND task_id IS NOT NULL))
+                CHECK(
+                    (kind = 'project' AND task_id IS NULL AND workbench_key IS NULL) OR
+                    (kind = 'task' AND task_id IS NOT NULL AND workbench_key IS NULL) OR
+                    (kind = 'workbench' AND task_id IS NULL AND workbench_key IS NOT NULL)
+                )
             );
             CREATE TABLE IF NOT EXISTS orchestrator_context_turns(
                 sequence INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3291,6 +3299,7 @@ public sealed partial class TaskServerStore
             CREATE INDEX IF NOT EXISTS ix_studio_sessions_user ON studio_sessions(user_id, revoked_at);
             CREATE INDEX IF NOT EXISTS ix_studio_stream_events_project ON studio_stream_events(project_id, cursor);
             """, ct);
+        await ApplyWorkbenchContextMigrationAsync(connection, ct);
         await SetMetaAsync(connection, null, "schema_version", CurrentSchemaVersion.ToString(CultureInfo.InvariantCulture), ct);
     }
 

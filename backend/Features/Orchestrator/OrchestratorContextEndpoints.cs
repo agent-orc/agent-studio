@@ -23,6 +23,11 @@ public static class OrchestratorContextEndpoints
             string taskKey,
             OrchestratorContextDigestService digests,
             CancellationToken ct) => Build($"task:{projectId}/{taskKey}", false, digests, ct));
+        group.MapGet("/workbench:{projectId}/{workbenchKey}", (
+            string projectId,
+            string workbenchKey,
+            OrchestratorWorkbenchPromptContextComposer composer) =>
+            BuildWorkbench(projectId, workbenchKey, composer));
 
         group.MapPost("/global/refresh", (
             OrchestratorContextDigestService digests,
@@ -36,6 +41,37 @@ public static class OrchestratorContextEndpoints
             string taskKey,
             OrchestratorContextDigestService digests,
             CancellationToken ct) => Build($"task:{projectId}/{taskKey}", true, digests, ct));
+        // A Dossier digest has no quota/board state to re-probe, so refresh
+        // rebuilds from the same live descriptor read as the plain GET.
+        group.MapPost("/workbench:{projectId}/{workbenchKey}/refresh", (
+            string projectId,
+            string workbenchKey,
+            OrchestratorWorkbenchPromptContextComposer composer) =>
+            BuildWorkbench(projectId, workbenchKey, composer));
+    }
+
+    /// <summary>
+    /// A Dossier (workbench) context has no board/task digest (AGT-2725): the
+    /// "Context" inspector for it is just the same descriptor + entrypoint
+    /// excerpt bundle a Dossier-scoped chat turn implicitly carries.
+    /// </summary>
+    private static IResult BuildWorkbench(
+        string projectId,
+        string workbenchKey,
+        OrchestratorWorkbenchPromptContextComposer composer)
+    {
+        var composed = composer.Compose(projectId, workbenchKey);
+        if (composed is null)
+            return Results.NotFound(new { error = $"Unknown Dossier '{workbenchKey}' in project '{projectId}'." });
+
+        var capturedAt = DateTime.UtcNow;
+        var response = new OrchestratorContextDigestResponse(
+            $"workbench:{projectId}/{workbenchKey}",
+            capturedAt,
+            composed.PromptBlock,
+            [new OrchestratorDigestSourceStatus(
+                "dossier", "ok", capturedAt, string.Join(", ", composed.IncludedBlocks))]);
+        return Results.Ok(response);
     }
 
     private static async Task<IResult> Build(
