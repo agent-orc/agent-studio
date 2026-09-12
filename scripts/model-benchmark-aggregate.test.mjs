@@ -98,11 +98,14 @@ test('CLI output is byte-identical on repeated runs and markdown carries require
       { key: 'D', model: 'gpt-5.4-mini', thinkingLevel: 'medium', taskType: 'feature', state: '6-completed' },
     ]));
     const args = [scriptPath, '--snapshot', snapshot, '--source-label', 'fixture', '--output-dir', output];
-    const executionOptions = { env: { ...process.env, TASK_REPOSITORY: '/unused/when-snapshot-is-explicit' } };
-    await execFileAsync(process.execPath, args, executionOptions);
+    const executionOptions = {
+      env: { ...process.env, TASK_REPOSITORY: '/unused/when-snapshot-is-explicit' },
+      windowsHide: true,
+    };
+    await execFileAsync(process.execPath, args, { ...executionOptions, windowsHide: true });
     const firstJson = await readFile(path.join(output, 'model-benchmark.json'), 'utf8');
     const firstMarkdown = await readFile(path.join(output, 'model-benchmark.md'), 'utf8');
-    await execFileAsync(process.execPath, args, executionOptions);
+    await execFileAsync(process.execPath, args, { ...executionOptions, windowsHide: true });
     assert.equal(await readFile(path.join(output, 'model-benchmark.json'), 'utf8'), firstJson);
     assert.equal(await readFile(path.join(output, 'model-benchmark.md'), 'utf8'), firstMarkdown);
     assert.match(firstMarkdown, /\| gpt-5\.6-sol \| xhigh \|/);

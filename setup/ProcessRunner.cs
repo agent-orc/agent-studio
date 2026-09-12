@@ -28,6 +28,7 @@ internal sealed class ProcessRunner(bool dryRun)
             RedirectStandardError = true,
             RedirectStandardInput = input is not null,
             UseShellExecute = false,
+            CreateNoWindow = true,
         };
         foreach (var argument in args)
             start.ArgumentList.Add(argument);

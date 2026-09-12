@@ -724,6 +724,7 @@ public sealed class AspectRunnerService
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
+            CreateNoWindow = true,
         };
         psi.ArgumentList.Add("-p");
         psi.ArgumentList.Add("--output-format");
@@ -741,18 +742,23 @@ public sealed class AspectRunnerService
         }
         catch (Exception __ex) { SilentCatch.Note(__ex, "AspectRunnerService: CLI may have closed stdin already"); /* CLI may have closed stdin already */ }
 
+        var stderrTask = p.StandardError.ReadToEndAsync(ct);
         var stdoutTask = p.StandardOutput.ReadToEndAsync(ct);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(timeout);
         try
         {
             await p.WaitForExitAsync(cts.Token);
+            _ = await stderrTask;
             return await stdoutTask;
         }
         catch (OperationCanceledException)
         {
             AgentStudio.Diagnostics.CliKillAudit.Trace(p, "AspectRunnerService:512 (entireProcessTree)");
             try { p.Kill(true); } catch (Exception __ex) { SilentCatch.Note(__ex, "AspectRunnerService:513"); }
+            try { await p.WaitForExitAsync(CancellationToken.None); } catch (Exception __ex) { SilentCatch.Note(__ex, "AspectRunnerService: wait after kill"); }
+            try { _ = await stderrTask; } catch (Exception __ex) { SilentCatch.Note(__ex, "AspectRunnerService: drain stderr after kill"); }
+            try { _ = await stdoutTask; } catch (Exception __ex) { SilentCatch.Note(__ex, "AspectRunnerService: drain stdout after kill"); }
             return string.Empty;
         }
     }

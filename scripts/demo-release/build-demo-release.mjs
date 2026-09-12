@@ -74,7 +74,7 @@ function parseArgs(argv) {
 }
 
 function run(command, args, options = {}) {
-  const result = spawnSync(command, args, { encoding: 'utf8', ...options });
+  const result = spawnSync(command, args, { encoding: 'utf8', ...options, windowsHide: true });
   if (result.status !== 0) {
     const detail = [result.stdout, result.stderr].filter(Boolean).join('\n').trim();
     throw new Error(`${command} failed with exit ${result.status}.${detail ? `\n${detail}` : ''}`);
@@ -137,7 +137,11 @@ function archive(stageParent, stageName, outputPath) {
   const gzipPath = `${outputPath}.partial`;
   const epoch = process.env.SOURCE_DATE_EPOCH ?? '0';
   run('tar', ['--sort=name', `--mtime=@${epoch}`, '--owner=0', '--group=0', '--numeric-owner', '-C', stageParent, '-cf', tarPath, stageName]);
-  const gzip = spawnSync('gzip', ['-n', '-c', tarPath], { encoding: null, maxBuffer: 1024 * 1024 * 1024 });
+  const gzip = spawnSync('gzip', ['-n', '-c', tarPath], {
+    encoding: null,
+    maxBuffer: 1024 * 1024 * 1024,
+    windowsHide: true,
+  });
   if (gzip.status !== 0) throw new Error(`gzip failed with exit ${gzip.status}: ${gzip.stderr?.toString('utf8') ?? ''}`);
   writeFileSync(gzipPath, gzip.stdout);
   rmSync(tarPath, { force: true });

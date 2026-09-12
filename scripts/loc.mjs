@@ -54,14 +54,14 @@ const repoRoot = resolve(import.meta.dirname, '..');
 process.chdir(repoRoot);
 
 if (wantJson) {
-  const out = execFileSync(sccPath, ['--format', 'json', '--not-match', NOT_MATCH, '.'], { encoding: 'utf8' });
+  const out = execFileSync(sccPath, ['--format', 'json', '--not-match', NOT_MATCH, '.'], { encoding: 'utf8', windowsHide: true });
   process.stdout.write(out);
   process.exit(0);
 }
 
 if (wantLang) {
   console.log('# Languages — repo-wide\n');
-  spawnSync(sccPath, ['--no-cocomo', '--not-match', NOT_MATCH, '.'], { stdio: 'inherit' });
+  spawnSync(sccPath, ['--no-cocomo', '--not-match', NOT_MATCH, '.'], { stdio: 'inherit', windowsHide: true });
 }
 
 if (wantDirs) {
@@ -87,7 +87,7 @@ if (wantDirs) {
     const out = execFileSync(
       sccPath,
       ['--no-cocomo', '--no-complexity', '--format', 'wide', '--not-match', NOT_MATCH, dir],
-      { encoding: 'utf8' }
+      { encoding: 'utf8', windowsHide: true }
     );
     const totalLine = out.split('\n').find(l => l.startsWith('Total'));
     if (!totalLine) continue;
@@ -109,7 +109,7 @@ if (wantDirs) {
 
 function locateScc() {
   // 1. PATH
-  const which = spawnSync(process.platform === 'win32' ? 'where.exe' : 'which', ['scc'], { encoding: 'utf8' });
+  const which = spawnSync(process.platform === 'win32' ? 'where.exe' : 'which', ['scc'], { encoding: 'utf8', windowsHide: true });
   if (which.status === 0) {
     const p = which.stdout.split(/\r?\n/).find(l => l.trim());
     if (p && exists(p.trim())) return p.trim();
