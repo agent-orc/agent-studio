@@ -7,8 +7,14 @@
   color: var(--studio-fg);
 }
 
+.decision-panel--inline {
+  border: 1px solid var(--studio-border-strong);
+  border-radius: var(--studio-radius-md);
+  background: color-mix(in srgb, var(--studio-bg-elevated) 96%, transparent);
+  box-shadow: var(--studio-card-shadow);
+}
+
 .decision-panel__header,
-.decision-panel__bar,
 .decision-panel__receipt,
 .decision-panel__archive-confirm,
 .decision-panel__draft {
@@ -90,12 +96,6 @@
   white-space: nowrap;
 }
 
-.decision-panel__bar {
-  justify-content: space-between;
-  color: var(--studio-fg);
-  font-size: 0.72rem;
-}
-
 .decision-panel__draft {
   justify-content: space-between;
   background: color-mix(in srgb, var(--studio-accent-3) 9%, transparent);
@@ -158,15 +158,8 @@
   outline-offset: 2px;
 }
 
-.decision-panel__confirmation {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: var(--studio-spacing-3);
-  padding: var(--studio-spacing-3) var(--studio-spacing-4);
-}
-
-.decision-panel__confirmation label,
-.decision-panel__archive label {
+.decision-panel__archive label,
+.decision-panel__archive {
   display: grid;
   min-width: 0;
   gap: var(--studio-spacing-1);
@@ -174,8 +167,6 @@
   font-size: 0.68rem;
 }
 
-.decision-panel__confirmation input,
-.decision-panel__confirmation textarea,
 .decision-panel__archive textarea {
   width: 100%;
   box-sizing: border-box;
@@ -188,25 +179,7 @@
   resize: vertical;
 }
 
-.decision-panel__chosen {
-  display: grid;
-  min-width: 0;
-  gap: var(--studio-spacing-1);
-  margin: 0;
-  color: var(--studio-fg);
-  font-size: 0.68rem;
-}
-
-.decision-panel__chosen strong {
-  overflow: hidden;
-  color: var(--studio-fg-strong);
-  font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .decision-panel__archive {
-  display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: var(--studio-spacing-3);
   align-items: end;
@@ -260,11 +233,9 @@
 
 @media (max-width: 700px) {
   .decision-panel__header,
-  .decision-panel__bar,
   .decision-panel__receipt,
   .decision-panel__archive-confirm { align-items: flex-start; flex-wrap: wrap; padding-inline: var(--studio-spacing-3); }
   .decision-panel__owner { flex: 1 1 auto; }
-  .decision-panel__confirmation,
   .decision-panel__archive { grid-template-columns: 1fr; padding-inline: var(--studio-spacing-3); }
 }
 

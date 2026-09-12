@@ -25,6 +25,9 @@ import { WorkbenchViewerHeaderComponent } from '../workbench-viewer-header/workb
 import {
   ISOLATED_HTML_LINK_MESSAGE,
   WORKBENCH_DECISION_CHANGE_MESSAGE,
+  WORKBENCH_DECISION_ANCHOR_MESSAGE,
+  WORKBENCH_DECISION_FOCUS_ACTION_MESSAGE,
+  WORKBENCH_DECISION_HOST_HEIGHT_MESSAGE,
   WORKBENCH_DECISION_HYDRATE_MESSAGE,
   WORKBENCH_DECISION_READY_MESSAGE,
   buildIsolatedHtmlSrcdoc,
@@ -37,6 +40,7 @@ import {
 } from '../../../../services/workbench-decision-markup.util';
 import { WorkbenchDecisionDraftStore } from '../../state/workbench-decision-draft.store';
 import { PublicDemoModeService } from '../../../../services/public-demo-mode.service';
+import { WorkbenchDecisionPanelComponent } from '../workbench-decision-panel/workbench-decision-panel';
 
 /**
  * Trusted host chrome around repository-authored HTML. The artifact receives an
@@ -49,7 +53,12 @@ import { PublicDemoModeService } from '../../../../services/public-demo-mode.ser
 @Component({
   selector: 'app-workbench-viewer',
   standalone: true,
-  imports: [PendingButtonDirective, StudioIconComponent, WorkbenchViewerHeaderComponent],
+  imports: [
+    PendingButtonDirective,
+    StudioIconComponent,
+    WorkbenchViewerHeaderComponent,
+    WorkbenchDecisionPanelComponent,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './workbench-viewer.component.html',
   styleUrl: './workbench-viewer.component.scss',
@@ -72,6 +81,7 @@ export class WorkbenchViewerComponent {
   private readonly decisionDrafts = inject(WorkbenchDecisionDraftStore);
   private readonly publicDemo = inject(PublicDemoModeService);
   private readonly frame = viewChild<ElementRef<HTMLIFrameElement>>('workbenchFrame');
+  private readonly inlineActionHost = viewChild<ElementRef<HTMLElement>>('inlineActionHost');
   private requestGeneration = 0;
 
   readonly document = signal<WorkbenchDocument | null>(null);
@@ -81,6 +91,12 @@ export class WorkbenchViewerComponent {
   readonly decisionResponses = signal<WorkbenchDecisionResponse[]>([]);
   readonly documenting = signal(false);
   readonly documentationError = signal<string | null>(null);
+  readonly decisionAnchor = signal<{
+    top: number;
+    left: number;
+    width: number;
+    visible: boolean;
+  } | null>(null);
   /** Timestamp of the last successful Dossier read, used by the offline as-of line. */
   readonly lastUpdatedAtUtc = signal<string | null>(null);
   readonly liveConnected = this.hub.connected;
@@ -116,6 +132,18 @@ export class WorkbenchViewerComponent {
       this.maximized.set(false);
       this.loadDocument(project, id);
     });
+    effect((onCleanup) => {
+      const host = this.inlineActionHost()?.nativeElement;
+      if (!host || typeof ResizeObserver === 'undefined') return;
+      const publishHeight = () => this.frame()?.nativeElement.contentWindow?.postMessage({
+        type: WORKBENCH_DECISION_HOST_HEIGHT_MESSAGE,
+        height: host.getBoundingClientRect().height + 8,
+      }, '*');
+      const observer = new ResizeObserver(publishHeight);
+      observer.observe(host);
+      publishHeight();
+      onCleanup(() => observer.disconnect());
+    });
     effect(() => {
       const event = this.hub.workbenchEvent();
       if (!event) return;
@@ -135,9 +163,28 @@ export class WorkbenchViewerComponent {
       type?: unknown;
       href?: unknown;
       responses?: unknown;
+      rect?: unknown;
+      visible?: unknown;
     } | null;
     if (message?.type === WORKBENCH_DECISION_READY_MESSAGE) {
       this.hydrateFrame();
+      return;
+    }
+    if (message?.type === WORKBENCH_DECISION_FOCUS_ACTION_MESSAGE) {
+      this.inlineActionHost()?.nativeElement
+        .querySelector<HTMLElement>('[data-testid="workbench-decision-start"]')
+        ?.focus();
+      return;
+    }
+    if (message?.type === WORKBENCH_DECISION_ANCHOR_MESSAGE) {
+      const rect = message.rect as Partial<DOMRect> | null;
+      if (!rect || !finite(rect.top) || !finite(rect.left) || !finite(rect.width)) return;
+      this.decisionAnchor.set({
+        top: rect.top!,
+        left: rect.left!,
+        width: Math.max(240, rect.width!),
+        visible: message.visible === true,
+      });
       return;
     }
     if (message?.type === WORKBENCH_DECISION_CHANGE_MESSAGE) {
@@ -242,6 +289,7 @@ export class WorkbenchViewerComponent {
     this.documentationError.set(null);
     if (clear) {
       this.document.set(null);
+      this.decisionAnchor.set(null);
       this.lastUpdatedAtUtc.set(null);
     }
     this.docs.getWorkbench(project, id).subscribe({
@@ -253,12 +301,15 @@ export class WorkbenchViewerComponent {
         const discovered = discoverWorkbenchDecisionMarkup(document.html);
         if (document.workbench.decision?.state === 'succeeded')
           this.decisionDrafts.discard(project, id);
+        if (reworkRevisionLanded(document)) this.decisionDrafts.discard(project, id);
         const saved = this.decisionDrafts.draft(project, id)?.responses;
         const restored = saved
           ? normalizeWorkbenchDecisionResponses(saved, discovered.points)
           : null;
         this.decisionResponses.set(
-          document.workbench.decision?.responses ?? restored ?? discovered.responses,
+          reworkRevisionLanded(document)
+            ? discovered.responses
+            : document.workbench.decision?.responses ?? restored ?? discovered.responses,
         );
         this.loading.set(false);
       },
@@ -269,6 +320,18 @@ export class WorkbenchViewerComponent {
       },
     });
   }
+}
+
+function finite(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function reworkRevisionLanded(document: WorkbenchDocument): boolean {
+  const decision = document.workbench.decision;
+  return decision?.outcome === 'rework'
+    && Boolean(decision.sourceEntryFingerprint)
+    && Boolean(document.entryFingerprint)
+    && decision.sourceEntryFingerprint !== document.entryFingerprint;
 }
 
 /** `entryPath` is repo-root relative (`docs/...`); the asset resolver wants it docs-root relative. */

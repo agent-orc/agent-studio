@@ -36,7 +36,9 @@ public sealed record OrchestratorSessionHistoryEntry(
     string? Model,
     string? SessionId,
     string? Error,
-    int? QueuePosition);
+    int? QueuePosition,
+    string? CliType = null,
+    string? ThinkingLevel = null);
 
 public sealed class OrchestratorSessionRegistry
 {

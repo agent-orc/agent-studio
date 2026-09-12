@@ -114,10 +114,19 @@ project sessions. Do not move them back into the operator Overview.
   `features/board/state/create-job-form.service.ts`.
 - **Dossier decisions** are authored as readable `data-decision-id` markup in
   the sandboxed document, while state and mutation authority stay in trusted
-  host chrome. Prepare validates against the file-scoped fingerprint; confirm
-  is the single durable `workbench.json` write after the client creates the card
-  through the existing task API. The receipt and `relatedTaskKeys` retain the
-  created key. Canonical Dossiers do not use the generic Wiki archive action.
+  host chrome. The viewer bridge reserves an action slot immediately after the
+  decision markup and anchors the shared `WorkbenchDecisionPanelComponent`
+  there; the header renders the same component over the same stores. **Start
+  task** accepts only complete decision answers, opens the shared CLI, model,
+  and thinking picker plus task prompt preview, then prepares and confirms a
+  Ready card through the existing APIs. The durable receipt and
+  `relatedTaskKeys` retain the created key. **Request rework** accepts a partial
+  answer when it includes a comment, records a pending receipt and revision
+  request, and sends one configured turn to the permanent
+  `workbench:<PROJ>/<DOSSIER-KEY>` orchestrator session. A changed Dossier entry
+  fingerprint clears the pending presentation and restores responses from the
+  new decision markup. Canonical Dossiers do not use the generic Wiki archive
+  action.
 - The Studio Project Hub URL hash is `#/projects/<project-id>` or
   `#/projects/<project-id>/<rail-key>`. The immutable registry id is canonical;
   the former display-name slug remains an input-only legacy alias. The complete

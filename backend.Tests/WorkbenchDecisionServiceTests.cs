@@ -102,6 +102,9 @@ public sealed class WorkbenchDecisionServiceTests : IDisposable
                 },
             ],
             SpawnedTaskKeys = ["AGT-2527"],
+            CliType = "codex",
+            Model = "gpt-5.6-sol",
+            ThinkingLevel = "high",
             Confirmed = true,
         });
 
@@ -120,6 +123,10 @@ public sealed class WorkbenchDecisionServiceTests : IDisposable
         Assert.Equal("route", descriptor.GetProperty("decision").GetProperty("responses")[0]
             .GetProperty("decisionId").GetString());
         Assert.Equal("AGT-2527", descriptor.GetProperty("relatedTaskKeys")[0].GetString());
+        Assert.Equal("created-card", descriptor.GetProperty("decision").GetProperty("action").GetString());
+        Assert.Equal("codex", descriptor.GetProperty("decision").GetProperty("cliType").GetString());
+        Assert.Equal("gpt-5.6-sol", descriptor.GetProperty("decision").GetProperty("model").GetString());
+        Assert.Equal("high", descriptor.GetProperty("decision").GetProperty("thinkingLevel").GetString());
 
         // The descriptor still validates, so the catalogue projects the decision.
         var item = catalogue.List("Project", includeHistory: true)!.Items.Single();
@@ -131,6 +138,95 @@ public sealed class WorkbenchDecisionServiceTests : IDisposable
         Assert.True(recorded.HasValue);
         Assert.Equal(new WorkbenchDecisionRecordedEvent(
             "Project", "routing-policy", "active", "decided"), recorded.Value);
+    }
+
+    [Fact]
+    public void Confirm_ReworkKeepsDecisionOpenAndAppendsRevisionRequestedTimelineEntry()
+    {
+        WriteSchemaTwo("routing-policy");
+        var (catalogue, decisions) = Services();
+        var fingerprint = catalogue.Read("Project", "routing-policy")!.Fingerprint;
+
+        var result = decisions.Confirm("Project", "routing-policy", new ConfirmWorkbenchDecisionRequest
+        {
+            OperationId = "workbench-ui-rework-1",
+            Outcome = "rework",
+            Actor = "Robert",
+            ExpectedFingerprint = fingerprint,
+            Responses =
+            [
+                new WorkbenchDecisionResponse
+                {
+                    DecisionId = "route",
+                    Kind = "single",
+                    SelectedOptionIds = [],
+                    Comment = "Move the total higher.",
+                },
+            ],
+            CliType = "codex",
+            Model = "gpt-5.6-sol",
+            ThinkingLevel = "high",
+            Confirmed = true,
+        });
+
+        Assert.True(result.Success, result.Error);
+        Assert.Equal("pending", result.DecisionStage);
+        using var written = JsonDocument.Parse(File.ReadAllText(Descriptor("routing-policy")));
+        var descriptor = written.RootElement;
+        Assert.Equal("review-requested", descriptor.GetProperty("lifecycleState").GetString());
+        Assert.Equal("Revision requested", descriptor.GetProperty("lifecycleHistory")
+            .EnumerateArray().Last().GetProperty("note").GetString());
+        var receipt = descriptor.GetProperty("decision");
+        Assert.Equal("rework-requested", receipt.GetProperty("action").GetString());
+        Assert.Equal("pending", receipt.GetProperty("state").GetString());
+        Assert.Equal("codex", receipt.GetProperty("cliType").GetString());
+        Assert.Equal("gpt-5.6-sol", receipt.GetProperty("model").GetString());
+        Assert.Equal("high", receipt.GetProperty("thinkingLevel").GetString());
+        Assert.Equal(JsonValueKind.Null, receipt.GetProperty("decidedAt").ValueKind);
+        Assert.False(descriptor.TryGetProperty("relatedTaskKeys", out _));
+
+        var item = Assert.Single(catalogue.List("Project", includeHistory: true)!.Items);
+        Assert.True(item.Valid, item.Error);
+        Assert.Equal("decision-pending", item.Status);
+        Assert.Equal("rework", item.Decision!.Outcome);
+        Assert.Equal("Move the total higher.", Assert.Single(item.Decision.Responses).Comment);
+    }
+
+    [Fact]
+    public void Confirm_ReworkAppendsRevisionTimelineForSchemaOneDossiers()
+    {
+        WriteSchemaOne("legacy-experiment");
+        var (catalogue, decisions) = Services();
+
+        var result = decisions.Confirm("Project", "legacy-experiment", new ConfirmWorkbenchDecisionRequest
+        {
+            OperationId = "workbench-ui-rework-legacy",
+            Outcome = "rework",
+            Actor = "Robert",
+            ExpectedFingerprint = catalogue.Read("Project", "legacy-experiment")!.Fingerprint,
+            Responses =
+            [
+                new WorkbenchDecisionResponse
+                {
+                    DecisionId = "route",
+                    Kind = "single",
+                    SelectedOptionIds = [],
+                    Comment = "Revise the legacy Dossier.",
+                },
+            ],
+            CliType = "codex",
+            Model = "gpt-5.6-sol",
+            ThinkingLevel = "high",
+            Confirmed = true,
+        });
+
+        Assert.True(result.Success, result.Error);
+        using var written = JsonDocument.Parse(File.ReadAllText(Descriptor("legacy-experiment")));
+        var descriptor = written.RootElement;
+        Assert.Equal("decision-pending", descriptor.GetProperty("status").GetString());
+        var timeline = Assert.Single(descriptor.GetProperty("lifecycleHistory").EnumerateArray());
+        Assert.Equal("Revision requested", timeline.GetProperty("note").GetString());
+        Assert.Equal("Robert", timeline.GetProperty("editedBy").GetString());
     }
 
     [Fact]

@@ -11,13 +11,16 @@ export interface WorkbenchDecisionDraftCard {
 }
 
 export interface WorkbenchDecisionDraft {
-  mode: 'feature-spawn' | null;
+  mode: 'feature-spawn' | 'rework' | null;
   actor: string;
   title: string;
   goal: string;
   operationId: string | null;
   responses: WorkbenchDecisionResponse[];
   createdCard: WorkbenchDecisionDraftCard | null;
+  cliType?: string;
+  model?: string;
+  thinkingLevel?: string | null;
   updatedAt: string;
 }
 
@@ -57,12 +60,43 @@ export class WorkbenchDecisionDraftStore {
     return draft;
   }
 
+  beginRework(
+    projectName: string,
+    workbenchId: string,
+    defaults: Pick<WorkbenchDecisionDraft, 'actor' | 'operationId' | 'cliType' | 'model' | 'thinkingLevel'>,
+    responses: readonly WorkbenchDecisionResponse[],
+  ): WorkbenchDecisionDraft {
+    const current = this.draft(projectName, workbenchId);
+    return this.patch(projectName, workbenchId, {
+      mode: 'rework',
+      actor: current?.mode === 'rework' ? current.actor : defaults.actor,
+      operationId: current?.operationId ?? defaults.operationId,
+      responses: responses.map(copyResponse),
+      cliType: current?.mode === 'rework' ? current.cliType : defaults.cliType,
+      model: current?.mode === 'rework' ? current.model : defaults.model,
+      thinkingLevel: current?.mode === 'rework' ? current.thinkingLevel : defaults.thinkingLevel,
+    });
+  }
+
   updateFeature(
     projectName: string,
     workbenchId: string,
     patch: Partial<Pick<WorkbenchDecisionDraft, 'actor' | 'title' | 'goal' | 'operationId'>>,
   ): void {
     this.patch(projectName, workbenchId, patch);
+  }
+
+  updateAction(
+    projectName: string,
+    workbenchId: string,
+    patch: Partial<Pick<WorkbenchDecisionDraft,
+      'actor' | 'title' | 'goal' | 'operationId' | 'cliType' | 'model' | 'thinkingLevel'>>,
+  ): void {
+    this.patch(projectName, workbenchId, patch);
+  }
+
+  closeAction(projectName: string, workbenchId: string): void {
+    this.patch(projectName, workbenchId, { mode: null, operationId: null });
   }
 
   rememberCreatedCard(
@@ -110,6 +144,9 @@ function emptyDraft(): WorkbenchDecisionDraft {
     operationId: null,
     responses: [],
     createdCard: null,
+    cliType: readDefaultCli(),
+    model: readDefaultModel(readDefaultCli()),
+    thinkingLevel: readDefaultThinkingLevel(readDefaultCli()),
     updatedAt: new Date().toISOString(),
   };
 }
@@ -149,7 +186,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isDraft(value: unknown): value is WorkbenchDecisionDraft {
   if (!isRecord(value)) return false;
-  return (value['mode'] === null || value['mode'] === 'feature-spawn')
+  return (value['mode'] === null || value['mode'] === 'feature-spawn' || value['mode'] === 'rework')
     && typeof value['actor'] === 'string'
     && typeof value['title'] === 'string'
     && typeof value['goal'] === 'string'
@@ -157,4 +194,19 @@ function isDraft(value: unknown): value is WorkbenchDecisionDraft {
     && Array.isArray(value['responses'])
     && (value['createdCard'] === null || isRecord(value['createdCard']))
     && typeof value['updatedAt'] === 'string';
+}
+
+function readDefaultCli(): string {
+  try { return globalThis.localStorage?.getItem('defaultCliType') || 'claude'; }
+  catch { return 'claude'; }
+}
+
+function readDefaultModel(cliType: string): string {
+  try { return globalThis.localStorage?.getItem(`defaultModel:${cliType}`) || ''; }
+  catch { return ''; }
+}
+
+function readDefaultThinkingLevel(cliType: string): string | null {
+  try { return globalThis.localStorage?.getItem(`defaultThinkingLevel:${cliType}`) || null; }
+  catch { return null; }
 }

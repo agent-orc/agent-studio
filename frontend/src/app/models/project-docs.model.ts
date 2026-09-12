@@ -223,7 +223,7 @@ export interface WorkbenchTaskDraft {
   chosenOption: string | null;
   relatedTaskKeys: string[];
   targetProject: string | null;
-  initialLane: '1-preparation';
+  initialLane: '1-preparation' | '2-ready';
   mode: 'coding';
   taskType: 'feature';
 }
@@ -255,7 +255,8 @@ export interface WorkbenchDecisionResponse {
 
 /** The durable decision receipt stored inside `workbench.json` (schema v2). */
 export interface WorkbenchDecisionProjection {
-  outcome: 'feature-spawn' | 'archive';
+  outcome: 'feature-spawn' | 'rework' | 'archive';
+  action?: 'created-card' | 'rework-requested' | 'archived' | null;
   state: 'pending' | 'failed' | 'succeeded';
   operationId: string;
   sourceRevision: string | null;
@@ -270,6 +271,10 @@ export interface WorkbenchDecisionProjection {
   spawnedTaskKeys: string[];
   responses: WorkbenchDecisionResponse[];
   taskDraft: WorkbenchTaskDraft | null;
+  cliType?: string | null;
+  model?: string | null;
+  thinkingLevel?: string | null;
+  sourceEntryFingerprint?: string | null;
 }
 
 export interface WorkbenchDecisionResult {
@@ -278,7 +283,7 @@ export interface WorkbenchDecisionResult {
   error: string | null;
   workbenchId: string;
   operationId: string;
-  outcome: 'feature-spawn' | 'archive' | null;
+  outcome: 'feature-spawn' | 'rework' | 'archive' | null;
   decisionStage: WorkbenchDecisionStage | null;
   revision: string | null;
   fingerprint: string | null;
@@ -295,7 +300,7 @@ export interface WorkbenchDecisionResult {
 
 export interface PrepareWorkbenchDecisionRequest {
   operationId: string;
-  outcome: 'feature-spawn' | 'archive';
+  outcome: 'feature-spawn' | 'rework' | 'archive';
   expectedRevision: string | null;
   expectedFingerprint: string | null;
   actor: string;
@@ -310,7 +315,7 @@ export interface PrepareWorkbenchDecisionRequest {
  */
 export interface ConfirmWorkbenchDecisionRequest {
   operationId: string;
-  outcome: 'feature-spawn' | 'archive';
+  outcome: 'feature-spawn' | 'rework' | 'archive';
   expectedRevision: string | null;
   expectedFingerprint: string | null;
   actor: string;
@@ -319,6 +324,9 @@ export interface ConfirmWorkbenchDecisionRequest {
   responses: WorkbenchDecisionResponse[];
   /** Keys of cards the client already created for this decision, if any. */
   spawnedTaskKeys?: string[];
+  cliType?: string | null;
+  model?: string | null;
+  thinkingLevel?: string | null;
   confirmed: true;
 }
 
@@ -426,6 +434,7 @@ export interface WorkbenchDocument {
   revision: string | null;
   workingTreeModified: boolean;
   fingerprint: string | null;
+  entryFingerprint?: string | null;
 }
 
 export interface WorkbenchTaskReferences {

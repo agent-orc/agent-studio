@@ -88,6 +88,66 @@ public class OrchestratorRunner
         => InvokeAsync(prompt, model, workingDirectory, resumeSessionId: null, inlineImages: null, ct);
 
     /// <summary>
+    /// Runs an explicitly selected non-Claude CLI for a context-session turn.
+    /// Claude keeps using the resumable path above; other CLIs share the
+    /// one-shot registry and retain their model and thinking-level receipt.
+    /// </summary>
+    public virtual async Task<OrchestratorDecisionResult> DecideWithCliAsync(
+        string cliType,
+        string prompt,
+        string? model,
+        string? thinkingLevel,
+        string workingDirectory,
+        CancellationToken ct = default)
+    {
+        var cli = cliType.Trim().ToLowerInvariant();
+        if (cli == CliTypes.Claude)
+            return await DecideAsync(prompt, model, workingDirectory, ct).ConfigureAwait(false);
+        if (!CliTypes.IsValid(cli))
+            throw new InvalidOperationException($"Unsupported orchestrator CLI '{cliType}'.");
+        var oneShot = _oneShotRegistry?.Get(cli)
+            ?? throw new InvalidOperationException($"{cli} one-shot execution is not registered.");
+        var configuredModel = string.IsNullOrWhiteSpace(model)
+            ? ModelMetadataRegistry.DefaultForCli(cli) ?? ""
+            : model.Trim();
+        var result = await oneShot.RunAsync(new CliOneShotRequest(
+            CliType: cli,
+            Model: configuredModel,
+            Prompt: prompt)
+        {
+            ThinkingLevel = thinkingLevel,
+            WorkingDirectory = workingDirectory,
+            Timeout = DefaultTimeout,
+            Source = "orchestrator-session",
+            Project = ProjectNameFromWorkingDirectory(workingDirectory),
+            RecordUsage = false,
+        }, ct).ConfigureAwait(false);
+        var error = result.Ok
+            ? null
+            : !string.IsNullOrWhiteSpace(result.Stderr)
+                ? result.Stderr.Trim()
+                : result.Error ?? result.Stdout.Trim();
+        return new OrchestratorDecisionResult(
+            result.Ok,
+            result.ParsedText,
+            result.EffectiveModel ?? configuredModel,
+            result.Usage,
+            CapturedSessionId: null,
+            error)
+        {
+            Latency = result.Latency,
+            ParsedUsage = result.RichUsage,
+            CliType = result.EffectiveCliType ?? cli,
+            ConfiguredModel = configuredModel,
+            QuotaFallback = result.QuotaAdmission?.IsFallback == true,
+            QuotaFallbackReason = result.QuotaAdmission?.IsFallback == true
+                ? result.QuotaAdmission.Reason
+                : null,
+            QuotaAdmission = result.QuotaAdmission,
+        };
+    }
+
+    /// <summary>
     /// Variant of <see cref="DecideAsync"/> that attaches inline image
     /// content blocks to the user message. The orchestrator chat path
     /// uses this when the user pastes a screenshot into the composer: the

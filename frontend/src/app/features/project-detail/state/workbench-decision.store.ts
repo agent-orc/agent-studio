@@ -1,6 +1,6 @@
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Injectable, inject, signal } from '@angular/core';
-import { Observable, catchError, finalize, tap, throwError } from 'rxjs';
+import { Observable, catchError, finalize, map, switchMap, tap, throwError } from 'rxjs';
 import {
   ConfirmWorkbenchDecisionRequest,
   PrepareWorkbenchDecisionRequest,
@@ -42,6 +42,37 @@ export class WorkbenchDecisionStore {
     request: ConfirmWorkbenchDecisionRequest,
   ): Observable<WorkbenchDecisionResult> {
     return this.mutate(projectName, workbenchId, 'confirm', request);
+  }
+
+  requestRework(
+    projectName: string,
+    workbenchId: string,
+    workbenchKey: string,
+    prepareRequest: PrepareWorkbenchDecisionRequest,
+    prompt: string,
+    agent: { cliType: string; model: string; thinkingLevel: string | null },
+  ): Observable<WorkbenchDecisionResult> {
+    return this.prepare(projectName, workbenchId, prepareRequest).pipe(
+      switchMap(prepared => this.confirm(projectName, workbenchId, {
+        ...prepareRequest,
+        expectedRevision: prepared.revision,
+        expectedFingerprint: prepared.fingerprint,
+        spawnedTaskKeys: [],
+        cliType: agent.cliType,
+        model: agent.model,
+        thinkingLevel: agent.thinkingLevel,
+        confirmed: true,
+      })),
+      switchMap(confirmed => this.http.post<unknown>(
+        `/api/orchestrator/sessions/workbench:${encodeURIComponent(projectName)}/${encodeURIComponent(workbenchKey)}/turns`,
+        {
+          prompt,
+          cliType: agent.cliType,
+          model: agent.model,
+          thinkingLevel: agent.thinkingLevel,
+        },
+      ).pipe(map(() => confirmed))),
+    );
   }
 
   clear(projectName: string, workbenchId: string): void {

@@ -7,7 +7,9 @@ import { of } from 'rxjs';
 import type { WorkbenchDocument } from '../../../../models/project-docs.model';
 import {
   ISOLATED_HTML_LINK_MESSAGE,
+  WORKBENCH_DECISION_ANCHOR_MESSAGE,
   WORKBENCH_DECISION_CHANGE_MESSAGE,
+  WORKBENCH_DECISION_FOCUS_ACTION_MESSAGE,
 } from '../../../../services/sandboxed-html.util';
 import { JobsHubClient } from '../../../../services/jobs-hub-client.service';
 import { TaskService } from '../../../../services/task.service';
@@ -142,7 +144,13 @@ describe('WorkbenchViewerComponent', () => {
     fixture.detectChanges();
 
     const http = TestBed.inject(HttpTestingController);
-    http.expectOne('/api/projects/Demo/workbenches/boundary').flush(DOCUMENT);
+    http.expectOne('/api/projects/Demo/workbenches/boundary').flush({
+      ...DOCUMENT,
+      workbench: { ...DOCUMENT.workbench, phase: 'decision-ready' },
+      revision: 'a'.repeat(40),
+      workingTreeModified: false,
+      fingerprint: 'b'.repeat(64),
+    });
     fixture.detectChanges();
     expect(fixture.componentInstance.lastUpdatedAtUtc()).not.toBeNull();
     await fixture.whenStable();
@@ -178,10 +186,10 @@ describe('WorkbenchViewerComponent', () => {
     expect(frame.srcdoc).toBe(srcdoc);
     expect(srcdoc).toContain(ISOLATED_HTML_LINK_MESSAGE);
     expect(srcdoc).toContain(WORKBENCH_DECISION_CHANGE_MESSAGE);
+    expect(srcdoc).toContain(WORKBENCH_DECISION_ANCHOR_MESSAGE);
+    expect(srcdoc).toContain(WORKBENCH_DECISION_FOCUS_ACTION_MESSAGE);
     expect(fixture.componentInstance.decisionMarkup().points[0].id).toBe('route');
-    expect(
-      document.querySelector('[data-testid="workbench-viewer-working-tree"]')?.textContent,
-    ).toContain('uncommitted');
+    expect(document.querySelector('[data-testid="workbench-viewer-working-tree"]')).toBeNull();
     expect(document.querySelector('[data-testid="workbench-decision-panel"]')).not.toBeNull();
     expect(
       fixture.nativeElement.querySelector('[data-testid="workbench-viewer-open-decisions"]')
@@ -210,6 +218,32 @@ describe('WorkbenchViewerComponent', () => {
         comment: 'Ship it.',
       },
     ]);
+
+    fixture.componentInstance.onFrameMessage({
+      source: frame.contentWindow,
+      data: {
+        type: WORKBENCH_DECISION_ANCHOR_MESSAGE,
+        rect: { top: 320, left: 48, width: 640, height: 72 },
+        visible: true,
+      },
+    } as MessageEvent);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+    const inlineAction = fixture.nativeElement.querySelector(
+      '[data-testid="workbench-inline-decision-action"]') as HTMLElement;
+    expect(inlineAction).not.toBeNull();
+    expect(inlineAction.style.top).toBe('320px');
+    expect(inlineAction.querySelector('[data-testid="workbench-decision-start"]')).not.toBeNull();
+
+    const inlineStart = inlineAction.querySelector(
+      '[data-testid="workbench-decision-start"]') as HTMLButtonElement;
+    const focus = vi.spyOn(inlineStart, 'focus');
+    fixture.componentInstance.onFrameMessage({
+      source: frame.contentWindow,
+      data: { type: WORKBENCH_DECISION_FOCUS_ACTION_MESSAGE },
+    } as MessageEvent);
+    expect(focus).toHaveBeenCalledOnce();
     expect(
       fixture.nativeElement.querySelector('[data-testid="workbench-viewer-open-decisions"]')
         ?.textContent,

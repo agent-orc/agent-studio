@@ -101,6 +101,19 @@
   background: var(--studio-bg-elevated);
 }
 
+.workbench-viewer__decision-action {
+  position: absolute;
+  z-index: 3;
+  box-sizing: border-box;
+  padding-top: var(--studio-spacing-2);
+  transition: opacity 120ms ease;
+}
+
+.workbench-viewer__decision-action--hidden {
+  pointer-events: none;
+  opacity: 0;
+}
+
 .workbench-viewer__state { padding: var(--studio-spacing-5); color: var(--studio-fg-muted); }
 .workbench-viewer__state--error { color: var(--studio-error); }
 

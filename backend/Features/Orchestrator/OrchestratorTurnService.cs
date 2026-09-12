@@ -2,7 +2,12 @@ using AgentStudio.Runner;
 
 namespace AgentStudio.Orchestrator;
 
-public sealed record OrchestratorTurnRequest(string Prompt, string? Model = null, string? WorkingDirectory = null);
+public sealed record OrchestratorTurnRequest(
+    string Prompt,
+    string? Model = null,
+    string? WorkingDirectory = null,
+    string? CliType = null,
+    string? ThinkingLevel = null);
 
 public sealed record OrchestratorTurnResponse(
     string ContextKey,
@@ -28,6 +33,8 @@ internal sealed class OrchestratorTurnWorkItem
     public required string TurnId { get; init; }
     public required string Prompt { get; init; }
     public string? Model { get; init; }
+    public string? CliType { get; init; }
+    public string? ThinkingLevel { get; init; }
     public string? WorkingDirectory { get; init; }
 }
 
@@ -76,6 +83,8 @@ public sealed class OrchestratorTurnService
             throw new ArgumentException("Invalid orchestrator context key.", nameof(rawContextKey));
         if (string.IsNullOrWhiteSpace(request.Prompt))
             throw new ArgumentException("Prompt is required.", nameof(request));
+        if (!string.IsNullOrWhiteSpace(request.CliType) && !CliTypes.IsValid(request.CliType))
+            throw new ArgumentException("CLI type is invalid.", nameof(request));
 
         var item = new OrchestratorTurnWorkItem
         {
@@ -83,6 +92,8 @@ public sealed class OrchestratorTurnService
             TurnId = Guid.NewGuid().ToString("N"),
             Prompt = request.Prompt,
             Model = request.Model,
+            CliType = request.CliType,
+            ThinkingLevel = request.ThinkingLevel,
             WorkingDirectory = request.WorkingDirectory
         };
 
@@ -179,10 +190,13 @@ public sealed class OrchestratorTurnService
             var before = _registry.GetOrCreate(item.ContextKey);
             var workingDirectory = ResolveWorkingDirectory(item);
             var model = string.IsNullOrWhiteSpace(item.Model) ? before.Model : item.Model;
+            var cliType = string.IsNullOrWhiteSpace(item.CliType)
+                ? CliTypes.Claude
+                : item.CliType.Trim().ToLowerInvariant();
             var prompt = await BuildPromptAsync(item, ct).ConfigureAwait(false);
             OrchestratorDecisionResult result;
 
-            if (!string.IsNullOrWhiteSpace(before.SessionId))
+            if (cliType == CliTypes.Claude && !string.IsNullOrWhiteSpace(before.SessionId))
             {
                 var rejected = false;
                 result = await _runner.ResumeWithFallbackAsync(
@@ -202,6 +216,16 @@ public sealed class OrchestratorTurnService
                         LastError = "resume rejected"
                     });
                 }
+            }
+            else if (cliType != CliTypes.Claude)
+            {
+                result = await _runner.DecideWithCliAsync(
+                    cliType,
+                    prompt,
+                    model,
+                    item.ThinkingLevel,
+                    workingDirectory,
+                    ct).ConfigureAwait(false);
             }
             else
             {
@@ -243,7 +267,10 @@ public sealed class OrchestratorTurnService
         _registry.Update(item.ContextKey, r => r with
         {
             UpdatedAt = now,
-            SessionId = string.IsNullOrWhiteSpace(result.CapturedSessionId) ? r.SessionId : result.CapturedSessionId,
+            SessionId = !string.IsNullOrWhiteSpace(item.CliType)
+                        && !string.Equals(item.CliType, "claude", StringComparison.OrdinalIgnoreCase)
+                ? null
+                : string.IsNullOrWhiteSpace(result.CapturedSessionId) ? r.SessionId : result.CapturedSessionId,
             Model = string.IsNullOrWhiteSpace(result.Model) ? r.Model : result.Model,
             CumulativeInputTokens = r.CumulativeInputTokens + (result.TokenUsage?.InputTokens ?? 0),
             CumulativeOutputTokens = r.CumulativeOutputTokens + (result.TokenUsage?.OutputTokens ?? 0),
@@ -290,6 +317,15 @@ public sealed class OrchestratorTurnService
     {
         if (!string.IsNullOrWhiteSpace(item.WorkingDirectory) && Directory.Exists(item.WorkingDirectory))
             return item.WorkingDirectory!;
+        if (OrchestratorContextKey.TryParse(item.ContextKey, out var context)
+            && context.Kind == OrchestratorContextKey.WorkbenchKind)
+        {
+            var dossierRoot = _workbenchPromptContext?
+                .Compose(context.ProjectId!, context.WorkbenchKey)
+                ?.RepositoryRoot;
+            if (!string.IsNullOrWhiteSpace(dossierRoot) && Directory.Exists(dossierRoot))
+                return dossierRoot;
+        }
         var root = _registry.TaskRepositoryRoot;
         return string.IsNullOrWhiteSpace(root) ? Path.GetTempPath() : root!;
     }
@@ -367,7 +403,9 @@ public sealed class OrchestratorTurnService
             model,
             sessionId,
             error,
-            queuePosition);
+            queuePosition,
+            item.CliType,
+            item.ThinkingLevel);
 
     private static string Preview(string? value)
     {
