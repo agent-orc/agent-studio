@@ -568,21 +568,32 @@ steer the pipeline in this policy version.
   per-process default. A timeout reason, structured completion event, and durable
   gate receipt identify the violated budget with its limit, consumption, and
   phase. The receipt also includes dependency-cache hit/miss evidence.
-- A local exact-subject dependency-cache entry is valid only with an
-  install-complete marker (`.nm-state`, stamped only after a successful `npm
-  ci`/`dotnet restore`) whose hash matches the scope's current lockfiles; a
-  present-but-unstamped or hash-mismatched `node_modules` is always a miss
-  (`DependencyPreparationState.Evaluate`, `contracts/TaskServer.Contracts/DependencyPreparation.cs`).
+- A local exact-subject dependency-cache entry is valid only with both a
+  gate-complete marker (`.gate-cache-valid`, written only after a green
+  verification run) and an install-complete marker (`.nm-state`, stamped only
+  after a successful `npm ci`/`dotnet restore`) whose hash matches the scope's
+  current lockfiles. Restore validates both markers before moving any dependency
+  directory into the disposable workspace. A missing marker or lock mismatch
+  refuses and evicts the entry (`DependencyCacheSession.RestoreVerified`,
+  `contracts/TaskServer.Contracts/DependencyPreparation.cs`).
   `GateDependencyCacheSession.Save()` (`DependencyCacheSession.Save`) is
   transactional: it stages the workspace's cacheable content into a temporary
   sibling of the cache entry and `Directory.Move`s (renames) that sibling onto
   the entry only once every item staged; a failure partway discards the
   sibling and leaves the previous entry untouched, so a save can never persist
   a half-moved tree as a lock-hash hit a later gate would trust (CAC-18).
+- When verification fails after a dependency cache restore, the same gate run
+  evicts the restored scope and reruns preparation plus verification once from
+  scratch within the original gate-run budget. Only the clean-tree result can
+  become a `Code` failure. A red result is never saved to the dependency cache;
+  a green result may commit a new verified entry. The durable gate reason and
+  log report repository cache key, restored age and size, eviction reason,
+  clean-rerun decision, and verified-save decision.
 - The build/test gate classifies a verify command's own toolchain/bundler
   crashing before it reaches test discovery (`BuildTestGateFailureKind.Environment`
-  - today, vite's case-insensitive-filesystem probe throwing while loading its
-  config on a poisoned `node_modules` tree) separately from every other
+  - vite's case-insensitive-filesystem probe throwing while loading its config,
+  or a relative `Cannot find module` require stack rooted in `node_modules`)
+  separately from every other
   completed-process result. This is a narrow, signature-based exemption from
   the AGT-2110 rule that a completed process's own printed diagnostics are
   always `Code`: only an unambiguous toolchain-startup signature qualifies, so

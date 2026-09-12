@@ -54,11 +54,26 @@ internal sealed class GateDependencyCacheSession
             log: message => logger.LogWarning("{DependencyCacheMessage}", message)));
     }
 
-    public IReadOnlyList<string> Restore() => _session.Restore();
+    public IReadOnlyList<string> Restore() => _session.RestoreVerified();
 
-    public IReadOnlyList<string> Save() => _session.Save();
+    public IReadOnlyList<string> Save() => _session.SaveVerified();
 
-    public IReadOnlyList<string> Evict(string reason) => _session.Discard(reason);
+    public IReadOnlyList<string> Evict(string reason) => _session.DiscardIncludingWorkspace(reason);
+
+    public bool Restored => _session.Restored;
+
+    public BuildTestGateDependencyCacheDecision Decision(bool reranFromScratch)
+        => new(
+            _session.CacheKey,
+            _session.Restored,
+            _session.RestoredAge is null
+                ? null
+                : Math.Max(0, (long)_session.RestoredAge.Value.TotalSeconds),
+            _session.RestoredSizeBytes,
+            _session.Evicted,
+            _session.EvictionReason,
+            reranFromScratch,
+            _session.SavedVerified);
 
     internal static string CachePath(string reviewWorkspaceRoot, string repositoryPath)
         => DependencyCacheSession.CachePath(

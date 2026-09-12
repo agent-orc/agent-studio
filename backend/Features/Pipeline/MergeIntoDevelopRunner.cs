@@ -1584,6 +1584,9 @@ public sealed class MergeIntoDevelopRunner
         var dependencyCache = System.Text.Json.JsonSerializer.Serialize(
             result.DependencyCache,
             new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        var dependencyCacheDecision = System.Text.Json.JsonSerializer.Serialize(
+            result.DependencyCacheDecision,
+            new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
         var budget = result.ViolatedBudget is null
             ? "budget=none"
             : $"budget={result.ViolatedBudget.Name} limitMs={result.ViolatedBudget.LimitMs} " +
@@ -1593,6 +1596,8 @@ public sealed class MergeIntoDevelopRunner
             $"expectedSha={result.ExpectedSha ?? "n/a"} testedSha={result.TestedSha ?? "n/a"}\n" +
             $"reason={result.Reason}\n" +
             budget + "\n" +
+            "--- dependency-cache-decision.json ---\n" +
+            dependencyCacheDecision + "\n" +
             "--- dependency-cache.json ---\n" +
             dependencyCache + "\n" +
             "--- test-selection.json ---\n" +
