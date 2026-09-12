@@ -12,28 +12,20 @@ import {
 } from '@angular/core';
 import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
 import { CountBadgeComponent } from '../../../../components/count-badge/count-badge.component';
-import {
-  TaskReferenceMicrocardComponent,
-  type TaskReferenceStatus,
-} from '../../../../components/task-reference-microcard/task-reference-microcard';
-import { StudioIconComponent, type StudioIconName } from '../../../../components/studio-icon/studio-icon.component';
+import type { TaskReferenceStatus } from '../../../../components/task-reference-microcard/task-reference-microcard';
+import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
 import { ProjectDocsService } from '../../../../services/project-docs.service';
 import { JobsHubClient } from '../../../../services/jobs-hub-client.service';
-import { ProjectLookupService } from '../../../../services/project-lookup.service';
 import { TaskService } from '../../../../services/task.service';
 import {
   DossierSectionStateService,
   type DossierSectionId,
 } from '../../../../services/dossier-section-state.service';
+import { WorkbenchOverviewCardComponent } from '../workbench-overview-card/workbench-overview-card.component';
 import { WorkbenchOverviewControlsComponent } from '../workbench-overview-controls/workbench-overview-controls.component';
 import { WorkbenchViewerComponent } from '../workbench-viewer/workbench-viewer.component';
-import { WorkbenchReviewTagComponent } from '../workbench-review-tag/workbench-review-tag.component';
 import { WorkbenchOverviewViewStateService } from './workbench-overview-view-state.service';
-import type {
-  ArticlePattern,
-  WorkbenchOverview,
-  WorkbenchOverviewItem,
-} from '../../../../models/project-docs.model';
+import type { WorkbenchOverview, WorkbenchOverviewItem } from '../../../../models/project-docs.model';
 @Component({
   selector: 'app-workbench-overview',
   standalone: true,
@@ -41,10 +33,9 @@ import type {
     LoadingSurfaceComponent,
     CountBadgeComponent,
     StudioIconComponent,
-    TaskReferenceMicrocardComponent,
+    WorkbenchOverviewCardComponent,
     WorkbenchOverviewControlsComponent,
     WorkbenchViewerComponent,
-    WorkbenchReviewTagComponent,
   ],
   providers: [WorkbenchOverviewViewStateService],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -58,7 +49,6 @@ export class WorkbenchOverviewComponent {
 
   private readonly docs = inject(ProjectDocsService);
   private readonly hub = inject(JobsHubClient);
-  private readonly projects = inject(ProjectLookupService);
   private readonly tasks = inject(TaskService);
   private readonly sectionState = inject(DossierSectionStateService);
   private readonly destroyRef = inject(DestroyRef);
@@ -70,6 +60,7 @@ export class WorkbenchOverviewComponent {
   readonly loading = signal(false);
   readonly error = signal(false);
   readonly expandedDecisionKey = signal<string | null>(null);
+  readonly expandedExcerptKeys = signal<ReadonlySet<string>>(new Set());
   readonly referenceStatusesByItem = signal<ReadonlyMap<string, readonly TaskReferenceStatus[]>>(new Map());
   readonly referenceStatusesLoading = signal(false);
 
@@ -96,6 +87,7 @@ export class WorkbenchOverviewComponent {
       untracked(() => {
         this.viewState.setScope(projectName);
         this.expandedDecisionKey.set(null);
+        this.expandedExcerptKeys.set(new Set());
         this.load(projectName, true);
       });
     });
@@ -137,6 +129,22 @@ export class WorkbenchOverviewComponent {
   inlineDecisionExpanded(item: WorkbenchOverviewItem): boolean {
     return this.expandedDecisionKey() === this.itemKey(item);
   }
+  excerptExpanded(item: WorkbenchOverviewItem): boolean {
+    return this.expandedExcerptKeys().has(this.itemKey(item));
+  }
+  excerptCanExpand(item: WorkbenchOverviewItem): boolean {
+    const summary = item.workbench.error || item.workbench.summary;
+    return summary.split(/\r?\n/).length > 6 || summary.length > 520;
+  }
+  toggleExcerpt(item: WorkbenchOverviewItem): void {
+    const key = this.itemKey(item);
+    this.expandedExcerptKeys.update(current => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
   sectionExpanded(section: DossierSectionId): boolean {
     return this.sectionState.expanded(this.sectionScope(), section);
   }
@@ -145,19 +153,6 @@ export class WorkbenchOverviewComponent {
     const content = document.getElementById(contentId);
     if (expanded && content?.contains(document.activeElement)) header.focus();
     this.sectionState.setExpanded(this.sectionScope(), section, !expanded);
-  }
-  openDecisionCount(item: WorkbenchOverviewItem): number {
-    return item.workbench.openDecisionCount
-      ?? (item.workbench.status === 'decision-pending' ? 1 : 0);
-  }
-  documentPattern(item: WorkbenchOverviewItem): ArticlePattern {
-    return item.workbench.pattern === 'ui' ? 'ui' : 'concept';
-  }
-  patternIcon(item: WorkbenchOverviewItem): StudioIconName {
-    return this.documentPattern(item) === 'ui' ? 'grid' : 'book';
-  }
-  projectDisplay(item: WorkbenchOverviewItem) {
-    return this.projects.getProjectDisplay(item.projectName);
   }
   referenceStatuses(item: WorkbenchOverviewItem): readonly TaskReferenceStatus[] {
     return this.referenceStatusesByItem().get(this.itemKey(item)) ?? [];
@@ -171,15 +166,6 @@ export class WorkbenchOverviewComponent {
     if (workbench.status === 'archived') return 'Discarded';
     if (workbench.status === 'documented') return 'Documented';
     return workbench.status;
-  }
-  updatedLabel(value: string): string {
-    return new Intl.DateTimeFormat(undefined, {
-      dateStyle: 'medium',
-      timeStyle: 'short',
-    }).format(new Date(value));
-  }
-  keyLabel(item: WorkbenchOverviewItem): string {
-    return item.workbench.key ?? item.workbench.id;
   }
   private filteredItemsWithStatus(status: string): WorkbenchOverviewItem[] {
     return this.filteredItems().filter(item => item.workbench.status === status);

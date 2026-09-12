@@ -1,0 +1,71 @@
+<div class="workbench-overview__row-main">
+    <div class="workbench-overview__title">
+      @if (mode() === 'decision' || mode() === 'current') {
+        <span class="workbench-overview__pattern" role="img"
+              [attr.aria-label]="documentPattern() + ' pattern'"
+              [attr.data-pattern]="documentPattern()"
+              [attr.data-testid]="'workbench-overview-pattern-' + item().projectName + '-' + item().workbench.id">
+          <app-studio-icon [name]="patternIcon()" [size]="14" />
+        </span>
+      }
+      <h3>{{ item().workbench.title }}</h3>
+    </div>
+    <div class="workbench-overview__meta">
+      <app-copyable-task-key [key]="keyLabel()" [label]="keyLabel()" variant="reference"
+                             [testId]="keyTestId()" ariaLabel="Copy Dossier key" />
+      <span class="workbench-overview__project" [style.--workbench-project]="project().color"
+            [attr.title]="project().displayName" [attr.aria-label]="'Project ' + project().displayName">
+        <i aria-hidden="true"></i>{{ project().shortCode || project().displayName }}
+      </span>
+      <span class="workbench-overview__status" [attr.data-status]="item().workbench.status">{{ statusLabel() }}</span>
+      @if (mode() !== 'invalid') {
+        <app-workbench-review-tag [review]="item().workbench.review"
+                                  [reviewDue]="item().workbench.reviewDue ?? false"
+                                  [projectName]="item().projectName" />
+        @if (mode() === 'current' && item().workbench.documentation?.eligible) {
+          <span class="workbench-overview__suggestion">Ready to document</span>
+        }
+        <time [attr.datetime]="item().workbench.updatedAtUtc">{{ updatedLabel() }}</time>
+        @if (mode() === 'decision') {
+          <span class="workbench-overview__open-count">{{ openDecisionCount() }} open</span>
+        }
+      }
+    </div>
+    @if ((mode() === 'decision' || mode() === 'current') && references().length > 0) {
+      <div class="workbench-overview__references" [class.workbench-overview__references--loading]="referencesLoading()"
+           [attr.aria-busy]="referencesLoading()" aria-label="Linked task cards">
+        <span>Linked cards:</span>
+        <span class="workbench-overview__tasks">
+          @for (task of references(); track task.key) {
+            <app-task-reference-microcard variant="lane-dot" [status]="task"
+              [testId]="'workbench-overview-task-' + item().projectName + '-' + item().workbench.id + '-' + task.key" />
+          }
+        </span>
+      </div>
+    }
+    <p class="workbench-overview__excerpt" [class.workbench-overview__excerpt--expanded]="excerptExpanded()"
+       [attr.id]="excerptId()">{{ item().workbench.error || item().workbench.summary }}</p>
+  </div>
+<div class="workbench-overview__footer">
+    @if (excerptCanExpand()) {
+      <button type="button" class="workbench-overview__excerpt-toggle"
+              [attr.aria-expanded]="excerptExpanded()" [attr.aria-controls]="excerptId()"
+              [attr.data-testid]="excerptToggleTestId()" (click)="excerptToggleRequested.emit()">
+        {{ excerptExpanded() ? 'Show less' : 'Show more' }}
+      </button>
+    }
+    <div class="workbench-overview__actions" [attr.data-testid]="actionsTestId()">
+      <button type="button" class="workbench-overview__action-link"
+              [attr.data-testid]="mode() === 'decision' ? 'workbench-overview-full-' + item().projectName + '-' + item().workbench.id : null"
+              [disabled]="mode() === 'invalid'" (click)="openRequested.emit()">Open full view</button>
+      @if (mode() === 'decision') {
+        <button type="button" class="workbench-overview__action-primary"
+                [attr.aria-expanded]="reviewExpanded()"
+                [attr.data-testid]="'workbench-overview-open-' + item().projectName + '-' + item().workbench.id"
+                (click)="reviewToggleRequested.emit()">
+          {{ reviewExpanded() ? 'Close review' : 'Review here' }}
+        </button>
+      }
+    </div>
+  </div>
+<ng-content />
