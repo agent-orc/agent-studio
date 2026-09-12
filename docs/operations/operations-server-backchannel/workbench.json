@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "id": "operations-server-backchannel",
+  "title": "Operations Server backchannel beside the Task Server",
+  "summary": "Decision dossier for a central, browser-independent Operations Server that exposes host and developer-seat operations to multiple frontend backends while the Task Server remains the durable authority for tasks, runs, reviews, orchestration state, and workspaces. It reconciles the loopback Connector boundary with one-box Docker and distributed deployments, compares four architecture alternatives, recommends a new service plus outbound Operations Agents, and records the staged effect on AGT-2736 and dependent work.",
+  "entrypoint": "index.html",
+  "status": "decision-pending",
+  "phase": "decision-ready",
+  "updatedAt": "2026-09-12T00:00:00Z",
+  "sourceTaskKeys": [
+    "AGT-2777"
+  ],
+  "relatedTaskKeys": [
+    "AGT-2736",
+    "AGT-2754",
+    "AGT-2731",
+    "AGT-2755",
+    "AGT-2756",
+    "AGT-2757",
+    "AGT-2758",
+    "AGT-2764",
+    "AGT-W43"
+  ],
+  "implementationTasks": [
+    {
+      "title": "Unblock the one-box Compose baseline without changing the Connector boundary",
+      "promptMarkdown": "Re-scope AGT-2736 to Option 3 in docs/operations/setup/docker-compose-connector-gap.md. Ship and verify the existing distributed profile composition as the transitional one-box baseline: Task Server, Orchestrator Engine, studio-bff, OrchestratorApi in proxy mode, web, and the existing Runner profile where selected. State the route and LAN limitations explicitly. Do not make the loopback Connector LAN-reachable and do not claim full Operations Server capability. Preserve principal separation, secret-file handling, health checks, bounded logs, and the existing profile smoke tests."
+    },
+    {
+      "title": "Specify the Task Server to Operations Server contract",
+      "promptMarkdown": "Turn the approved decisions in docs/operations/operations-server-backchannel/index.html into the canonical architecture and protocol contract. Define stable operation, attempt, capability, principal, permit, event, artifact, cancellation, idempotency, protocol-version, and fencing envelopes. Keep tasks, runs, reviews, workspace identity, orchestration sessions, policy, and lane authority in the Task Server. Give the Operations Server no task mutation or permit-minting authority. Update the three-component target architecture through an ADR because the Operations Server becomes a fourth independently deployable runtime component. Include failure, retry, audit-correlation, and compatibility rules."
+    },
+    {
+      "title": "Build the Operations Server core and outbound Operations Agent channel",
+      "promptMarkdown": "Create the independently deployable Operations Server and the outbound Operations Agent protocol described by the dossier. The server exposes no UI and accepts no browser cookies or browser sessions. Authenticate scoped service principals over HTTPS, enforce route scopes and operation permits, persist bounded operation state and evidence, and fail closed on stale fences or unavailable Task Server authority. Operations Agents advertise explicit host capabilities and execute only admitted file, Git, CLI-probe, launcher, dossier, and host-control operations in declared roots. Add negative authorization, replay, cancellation, timeout, reconnect, and compromised-agent tests."
+    },
+    {
+      "title": "Migrate connector and BFF operations onto the Operations Server boundary",
+      "promptMarkdown": "Retain the AGT-2754 Connector as the loopback browser edge and local Operations Agent, not as the central server. Preserve its exact Host and Origin checks, session-bound CSRF, header stripping, route allowlist, denial paths, protocol negotiation, credential injection, atomic upstream generation, and public-demo separation. Add Task Server and Operations Server upstreams with independent scoped credentials. Extend studio-bff into the browser edge for one-box and LAN deployments: it owns browser login/session, Origin allowlists, CSRF, and same-origin routing, while neither bearer reaches browser storage. Migrate the current dev-seat and host-operation route classifications without creating task authority in either edge."
+    },
+    {
+      "title": "Deliver and rehearse workstation, one-box, and distributed deployment profiles",
+      "promptMarkdown": "Package the same Task Server, Operations Server, Orchestrator Engine, browser edge, and Operations Agent components in three wiring profiles: workstation, one-box Docker, and distributed WireGuard. Make one-box Docker the standard product deployment after full route and security parity. Keep browser-facing listeners only at the selected edge; use service principals on internal hops and outbound authenticated agent channels. Rehearse upgrade, drain, backup, credential rotation, Operations Server outage, Task Server outage, LAN-origin denial, public-demo denial, detached Studio, and rollback. Then update AGT-2738 installer work and AGT-2737 cutover evidence to use the selected profiles."
+    }
+  ]
+}

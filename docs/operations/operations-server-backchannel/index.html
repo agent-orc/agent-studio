@@ -1,0 +1,627 @@
+<!doctype html>
+<html lang="en" data-document-pattern="concept">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Operations Server backchannel beside the Task Server</title>
+  <style data-article-template="v2">
+    :root {
+      color-scheme: light;
+      --article-paper: #fcfcfb;
+      --article-surface: #f2f1ee;
+      --article-surface-strong: #e9e8e3;
+      --article-ink: #151515;
+      --article-muted: #5f5e59;
+      --article-faint: #7c7a74;
+      --article-line: #d8d6cf;
+      --article-link: #1f67b2;
+      --article-link-soft: #eaf1fb;
+      --article-good: #18753a;
+      --article-good-soft: #eaf4ea;
+      --article-warn: #8b6100;
+      --article-warn-soft: #f8f0dd;
+      --article-bad: #b72f2f;
+      --article-bad-soft: #fbecec;
+      --article-serif: Georgia, "Times New Roman", serif;
+      --article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --article-paper: #1a1a19;
+        --article-surface: #232322;
+        --article-surface-strong: #2c2c2a;
+        --article-ink: #f7f7f4;
+        --article-muted: #c3c2b7;
+        --article-faint: #9d9c94;
+        --article-line: #3d3d3a;
+        --article-link: #78aef0;
+        --article-link-soft: #1e2a3a;
+        --article-good: #67b867;
+        --article-good-soft: #1f2f1f;
+        --article-warn: #d9a63f;
+        --article-warn-soft: #33301e;
+        --article-bad: #e66767;
+        --article-bad-soft: #382222;
+      }
+    }
+    * { box-sizing: border-box; }
+    html { background: var(--article-paper); }
+    body {
+      margin: 0;
+      background: var(--article-paper);
+      color: var(--article-ink);
+      font: 17px/1.75 var(--article-serif);
+      text-rendering: optimizeLegibility;
+    }
+    main { width: min(70ch, calc(100% - 48px)); margin: 0 auto; padding: 0 0 80px; }
+    header.page { margin-bottom: 12px; padding: 48px 0 28px; border-bottom: 1px solid var(--article-line); }
+    h1, h2, h3, h4, .kicker, .meta, .number, nav, table, figcaption, .box,
+    .callout, .decision, .evidence-list, .legend, .status-line { font-family: var(--article-sans); }
+    h1 { margin: 0 0 14px; font-size: clamp(2.2rem, 6vw, 3.4rem); line-height: 1.08; letter-spacing: -0.025em; }
+    h2 { margin: 56px 0 10px; font-size: 1.55rem; line-height: 1.25; scroll-margin-top: 20px; }
+    h3 { margin: 34px 0 8px; font-size: 1.08rem; line-height: 1.35; }
+    h4 { margin: 0 0 8px; font-size: 0.94rem; }
+    p { margin: 0 0 18px; }
+    p:last-child { margin-bottom: 0; }
+    .kicker, .number { margin: 0 0 12px; color: var(--article-faint); font-size: 0.75rem; font-weight: 700; letter-spacing: 0.12em; line-height: 1; text-transform: uppercase; }
+    .lede { margin: 0; color: var(--article-muted); font-size: 1.18rem; line-height: 1.6; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; color: var(--article-faint); font-size: 0.78rem; }
+    .meta b { color: var(--article-muted); font-weight: 650; }
+    a { color: var(--article-link); text-underline-offset: 0.16em; }
+    a:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--article-link); outline-offset: 3px; }
+    code { padding: 0.08em 0.34em; border-radius: 4px; background: var(--article-surface-strong); font: 0.84em/1.5 var(--article-mono); overflow-wrap: anywhere; }
+    ul, ol { margin: 0 0 18px; padding-left: 24px; }
+    li + li { margin-top: 6px; }
+    table { width: 100%; margin: 24px 0; border-collapse: collapse; font-size: 0.84rem; line-height: 1.5; }
+    th, td { padding: 10px 12px; border-bottom: 1px solid var(--article-line); text-align: left; vertical-align: top; }
+    th { color: var(--article-faint); font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .box, .callout { margin: 24px 0; padding: 18px 22px; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-surface); font: 0.92rem/1.65 var(--article-sans); }
+    .callout[data-tone="accent"] { border-color: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); background: var(--article-link-soft); }
+    .callout[data-tone="good"] { border-color: color-mix(in srgb, var(--article-good) 30%, var(--article-line)); background: var(--article-good-soft); }
+    .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
+    .callout[data-tone="bad"] { border-color: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); background: var(--article-bad-soft); }
+    .status-line { margin: 10px 0 0; padding: 8px 12px; border: 1px solid var(--article-line); border-radius: 8px; background: var(--article-paper); font-size: 0.78rem; }
+    .status-line b { color: var(--article-link); }
+    nav.box ul { columns: 2; margin-bottom: 0; }
+    nav.box li { break-inside: avoid; }
+    .breakout { width: min(1120px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
+    figure { margin: 30px 0; }
+    figure > svg { display: block; width: 100%; height: auto; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-paper); }
+    figcaption { margin-top: 10px; color: var(--article-muted); font-size: 0.8rem; line-height: 1.5; }
+    .svg-node { fill: var(--article-surface); stroke: var(--article-line); stroke-width: 1.4; }
+    .svg-authority { fill: var(--article-link-soft); stroke: var(--article-link); stroke-width: 1.5; }
+    .svg-execution { fill: var(--article-good-soft); stroke: var(--article-good); stroke-width: 1.5; }
+    .svg-warning { fill: var(--article-warn-soft); stroke: var(--article-warn); stroke-width: 1.5; }
+    .svg-label { fill: var(--article-ink); font: 650 14px var(--article-sans); }
+    .svg-sub { fill: var(--article-muted); font: 12px var(--article-sans); }
+    .svg-tiny { fill: var(--article-faint); font: 11px var(--article-mono); }
+    .svg-flow { fill: none; stroke: var(--article-faint); stroke-width: 1.6; marker-end: url(#arrow-current); }
+    .svg-flow-target { fill: none; stroke: var(--article-link); stroke-width: 1.8; marker-end: url(#arrow-target); }
+    .svg-flow-execution { fill: none; stroke: var(--article-good); stroke-width: 1.8; marker-end: url(#arrow-execution); }
+    .svg-dashed { stroke-dasharray: 7 6; }
+    .legend { display: flex; flex-wrap: wrap; gap: 10px 20px; margin-top: 10px; color: var(--article-muted); font-size: 0.76rem; }
+    .legend i { display: inline-block; width: 24px; height: 3px; margin-right: 7px; border-radius: 2px; vertical-align: middle; background: var(--legend-color); }
+    .evidence-list { display: grid; gap: 10px; margin: 24px 0; }
+    .evidence { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px 14px; align-items: start; padding: 14px; border: 1px solid var(--article-line); border-radius: 9px; background: var(--article-surface); color: var(--article-ink); text-decoration: none; }
+    .evidence:hover { border-color: var(--article-link); background: var(--article-link-soft); }
+    .evidence-class { display: inline-flex; align-items: center; min-height: 22px; padding: 2px 8px; border-radius: 999px; background: var(--article-surface-strong); color: var(--article-muted); font-size: 0.68rem; font-weight: 750; letter-spacing: 0.04em; text-transform: uppercase; white-space: nowrap; }
+    .evidence-class[data-evidence-class="observed"] { background: var(--article-good-soft); color: var(--article-good); }
+    .evidence-class[data-evidence-class="inferred"] { background: var(--article-warn-soft); color: var(--article-warn); }
+    .evidence-class[data-evidence-class="proposed"] { background: var(--article-link-soft); color: var(--article-link); }
+    .evidence b { display: block; margin-bottom: 2px; font-size: 0.88rem; }
+    .evidence small { display: block; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; }
+    .decision { margin: 26px 0; padding: 20px; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-surface); }
+    .decision h3 { margin: 0 0 14px; }
+    .decision > label { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: start; margin: 10px 0; padding: 12px; border: 1px solid var(--article-line); border-radius: 8px; background: var(--article-paper); cursor: pointer; }
+    .decision > label:has(input:checked) { border-color: var(--article-link); background: var(--article-link-soft); }
+    .decision input { margin-top: 5px; }
+    .decision label span span { display: block; margin-top: 2px; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; }
+    .decision [data-comment] { margin-top: 14px; color: var(--article-muted); font-size: 0.76rem; }
+    textarea { width: 100%; min-height: 78px; margin-top: 6px; padding: 10px 12px; resize: vertical; border: 1px solid var(--article-line); border-radius: 8px; background: var(--article-paper); color: var(--article-ink); font: 0.86rem/1.5 var(--article-sans); }
+    .dim { color: var(--article-muted); }
+    @media (max-width: 760px) {
+      main { width: min(100% - 28px, 70ch); padding-bottom: 52px; }
+      header.page { padding-top: 32px; }
+      .breakout { width: calc(100vw - 20px); }
+      nav.box ul { columns: 1; }
+      .evidence { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header class="page">
+    <p class="kicker">Concept dossier · Agent Studio</p>
+    <h1>Operations Server backchannel beside the Task Server</h1>
+    <p class="lede">A decision boundary for operations used by several frontend products and host fleets. The Task Server remains the durable task authority; the proposed Operations Server brokers executable capabilities without becoming another task store or a browser session host.</p>
+    <div class="meta">
+      <span><b>Status</b> Decision pending</span>
+      <span><b>Phase</b> Decision ready</span>
+      <span><b>Updated</b> 12 September 2026</span>
+      <span><b>Source</b> AGT-2777</span>
+    </div>
+  </header>
+
+  <nav class="box" aria-label="Contents">
+    <h4>Contents</h4>
+    <ul>
+      <li><a href="#statements">Key statements</a></li>
+      <li><a href="#current">01 Current system</a></li>
+      <li><a href="#boundary">02 Ownership boundary</a></li>
+      <li><a href="#target">03 Target system</a></li>
+      <li><a href="#lan">04 LAN and security</a></li>
+      <li><a href="#deployment">05 Deployment forms</a></li>
+      <li><a href="#alternatives">06 Alternatives</a></li>
+      <li><a href="#recommendation">07 Recommendation</a></li>
+      <li><a href="#programme">08 Programme</a></li>
+      <li><a href="#decisions">09 Open decisions</a></li>
+      <li><a href="#sources">Sources</a></li>
+    </ul>
+  </nav>
+
+  <section id="statements" class="callout" data-tone="accent">
+    <h4>Key statements</h4>
+    <p class="status-line"><b>Observed:</b> no current process is both safely reachable from other containers or the LAN and able to serve the full Studio route surface.</p>
+    <ul>
+      <li><b>The route migration changed the size of the problem, not its shape.</b> AGT-2755 to AGT-2758 delivered all 268 Task Server-classified target handlers. The remaining architectural mismatch concerns executable operations, browser security, and deployment boundaries.</li>
+      <li><b>Task truth and executable operations need different authority.</b> Tasks, runs, reviews, workspace identity, orchestration state, leases, and lane transitions stay in the Task Server. File, Git, CLI, launcher, dossier, and host-control work belongs behind a separate operations boundary and executes on a declared host.</li>
+      <li><b>The Connector remains valid.</b> Its exact loopback Host and Origin checks, CSRF session, allowlisted routes, denial paths, credential injection, and atomic upstream selection remain the correct local-browser edge. It should not be relaxed into a general LAN service.</li>
+      <li><b>The recommended target adds one runtime role.</b> A new Operations Server is a browser-independent service. Frontend backends and Operations Agents authenticate as scoped principals. Browsers never receive its bearer credentials and never send cookies directly to it.</li>
+      <li><b>Deployment changes wiring only.</b> Workstation, one-box Docker, and distributed WireGuard profiles use the same logical components and contracts.</li>
+    </ul>
+  </section>
+
+  <section id="current" data-concept-section="evidence" data-document-section="evidence">
+    <h2><span class="number">01</span> Current system</h2>
+    <p>The repository contains several valid process shapes at once. They are profile-dependent and should not be read as one production chain. The local monolith is still the broad compatibility backend. The distributed preview adds independent Task Server and Engine services. The Connector is the approved local edge for the remote Task Server topology. The current <code>studio-bff</code> is network-addressable inside Compose but only fronts <code>/api/v1</code> and <code>/hubs</code>.</p>
+
+    <figure class="breakout">
+      <svg viewBox="0 0 1120 760" role="img" aria-labelledby="current-title current-desc">
+        <title id="current-title">Current profile-dependent processes and communication paths</title>
+        <desc id="current-desc">Local Studio and Compose web clients reach either the local OrchestratorApi, the loopback Connector, or studio-bff. The Connector and OrchestratorApi proxy forward Task Server routes. The Task Server communicates with the Orchestrator Engine and Runner daemons. TunnelKeeper and LinkSupervisor maintain the legacy reverse link to the remote runner host.</desc>
+        <defs>
+          <marker id="arrow-current" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="var(--article-faint)"/></marker>
+        </defs>
+
+        <text class="svg-tiny" x="34" y="34">FRONTEND SURFACES</text>
+        <rect class="svg-node" x="34" y="52" width="300" height="78" rx="9"/>
+        <text class="svg-label" x="54" y="79">Local Studio application</text>
+        <text class="svg-sub" x="54" y="101">browser at [::1]:4011</text>
+        <text class="svg-tiny" x="54" y="119">default or remote-Task-Server profile</text>
+        <rect class="svg-node" x="410" y="52" width="300" height="78" rx="9"/>
+        <text class="svg-label" x="430" y="79">Compose web</text>
+        <text class="svg-sub" x="430" y="101">container edge, published UI port</text>
+        <text class="svg-tiny" x="430" y="119">default or distributed preview</text>
+        <rect class="svg-node" x="786" y="52" width="300" height="78" rx="9"/>
+        <text class="svg-label" x="806" y="79">Later frontend products</text>
+        <text class="svg-sub" x="806" y="101">Dossier App, fleet controls</text>
+        <text class="svg-tiny" x="806" y="119">no complete shared backchannel today</text>
+
+        <text class="svg-tiny" x="34" y="180">STUDIO BACKENDS AND EDGES</text>
+        <rect class="svg-warning" x="34" y="200" width="240" height="112" rx="9"/>
+        <text class="svg-label" x="54" y="228">Local OrchestratorApi</text>
+        <text class="svg-sub" x="54" y="251">broad legacy /api and /hubs</text>
+        <text class="svg-sub" x="54" y="270">local task authority and operations</text>
+        <text class="svg-tiny" x="54" y="295">compatibility monolith</text>
+        <rect class="svg-authority" x="306" y="200" width="240" height="112" rx="9"/>
+        <text class="svg-label" x="326" y="228">Connector profile</text>
+        <text class="svg-sub" x="326" y="251">[::1]:5031 only</text>
+        <text class="svg-sub" x="326" y="270">98 dev-seat routes + proxy</text>
+        <text class="svg-tiny" x="326" y="295">exact Origin, CSRF, allowlist</text>
+        <rect class="svg-node" x="578" y="200" width="240" height="112" rx="9"/>
+        <text class="svg-label" x="598" y="228">studio-bff</text>
+        <text class="svg-sub" x="598" y="251">Compose-network service</text>
+        <text class="svg-sub" x="598" y="270">/api/v1 and /hubs only</text>
+        <text class="svg-tiny" x="598" y="295">not Connector parity</text>
+        <rect class="svg-node" x="850" y="200" width="236" height="112" rx="9"/>
+        <text class="svg-label" x="870" y="228">OrchestratorApi proxy</text>
+        <text class="svg-sub" x="870" y="251">transparent /api/v1 forwarding</text>
+        <text class="svg-sub" x="870" y="270">no local v1 owner when selected</text>
+        <text class="svg-tiny" x="870" y="295">distributed compatibility hop</text>
+
+        <path class="svg-flow" d="M184 130 V166 H154 V200"/>
+        <path class="svg-flow" d="M184 130 V166 H426 V200"/>
+        <path class="svg-flow" d="M560 130 V166 H698 V200"/>
+        <path class="svg-flow" d="M560 130 V166 H968 V200"/>
+        <path class="svg-flow svg-dashed" d="M936 130 V170 H818"/>
+
+        <text class="svg-tiny" x="34" y="374">CONTROL PLANE</text>
+        <rect class="svg-authority" x="186" y="392" width="340" height="122" rx="9"/>
+        <text class="svg-label" x="208" y="420">Task Server v1</text>
+        <text class="svg-sub" x="208" y="444">tasks, runs, reviews, authority, workspace</text>
+        <text class="svg-sub" x="208" y="466">268 classified target operations delivered</text>
+        <text class="svg-tiny" x="208" y="493">AGT-2755 to AGT-2758</text>
+        <rect class="svg-authority" x="594" y="392" width="340" height="122" rx="9"/>
+        <text class="svg-label" x="616" y="420">Orchestrator Engine</text>
+        <text class="svg-sub" x="616" y="444">evaluates persisted facts</text>
+        <text class="svg-sub" x="616" y="466">requests bounded authoritative actions</text>
+        <text class="svg-tiny" x="616" y="493">independent service in distributed profile</text>
+
+        <path class="svg-flow" d="M426 312 V350 H356 V392"/>
+        <path class="svg-flow" d="M698 312 V350 H490 V392"/>
+        <path class="svg-flow" d="M968 312 V350 H526"/>
+        <path class="svg-flow" d="M526 442 H594"/>
+        <path class="svg-flow" d="M594 474 H526"/>
+
+        <text class="svg-tiny" x="34" y="574">EXECUTION AND LINK OPERATIONS</text>
+        <rect class="svg-execution" x="34" y="592" width="300" height="116" rx="9"/>
+        <text class="svg-label" x="54" y="620">Runner daemon</text>
+        <text class="svg-sub" x="54" y="644">coding claims, worktrees, CLI tools</text>
+        <text class="svg-tiny" x="54" y="671">outbound poll to selected authority</text>
+        <text class="svg-tiny" x="54" y="690">agent-runner service</text>
+        <rect class="svg-execution" x="410" y="592" width="300" height="116" rx="9"/>
+        <text class="svg-label" x="430" y="620">Review daemon</text>
+        <text class="svg-sub" x="430" y="644">remote review claims and evidence</text>
+        <text class="svg-tiny" x="430" y="671">separate role, same Task Server channel</text>
+        <text class="svg-tiny" x="430" y="690">agent-runner-review service</text>
+        <rect class="svg-warning" x="786" y="592" width="300" height="116" rx="9"/>
+        <text class="svg-label" x="806" y="620">TunnelKeeper / LinkSupervisor</text>
+        <text class="svg-sub" x="806" y="644">legacy SSH reverse-link lifecycle</text>
+        <text class="svg-tiny" x="806" y="671">scheduled task or supervised child</text>
+        <text class="svg-tiny" x="806" y="690">temporary until direct WireGuard path</text>
+
+        <path class="svg-flow" d="M288 514 V552 H184 V592"/>
+        <path class="svg-flow" d="M424 514 V552 H560 V592"/>
+        <path class="svg-flow svg-dashed" d="M786 650 H744 V550 H492"/>
+      </svg>
+      <figcaption><b>Figure 1. Current processes.</b> Solid paths are application calls. Dashed paths are profile alternatives or the legacy reverse-link support path. The diagram deliberately shows coexisting deployable shapes rather than claiming that every box runs in one installation.</figcaption>
+    </figure>
+
+    <h3>Route location</h3>
+    <table class="breakout">
+      <thead><tr><th>Process</th><th>Routes or role today</th><th>Boundary</th></tr></thead>
+      <tbody>
+        <tr><td><b>Local OrchestratorApi</b></td><td>Broad legacy <code>/api</code>, local <code>/hubs/jobs</code>, local files, Git, CLI and launchers, plus compatibility task and orchestration authority.</td><td>Loopback in the local product; broad composition remains a migration source, not the distributed target.</td></tr>
+        <tr><td><b>Connector profile</b></td><td>Local dev-seat handlers and transparent forwarding for Task Server-classified routes and the jobs hub. The canonical inventory now contains 98 dev-seat routes: the original 95 plus three split repository or checkout routes added during P1 to P3.</td><td>Hard-coded <code>[::1]:5031</code> and <code>http://[::1]:4011</code>; connector session, exact Host and Origin, CSRF, route allowlist, stripped browser credentials.</td></tr>
+        <tr><td><b>studio-bff</b></td><td>Pass-through for <code>/api/v1</code> and <code>/hubs</code>.</td><td>Reachable inside Compose, but does not host the full local operations surface.</td></tr>
+        <tr><td><b>OrchestratorApi proxy</b></td><td>When a standalone base URL is configured, forwards <code>/api/v1</code> and stops mapping local v1 owners.</td><td>Compatibility hop; not a new authority.</td></tr>
+        <tr><td><b>Task Server v1</b></td><td>All 268 Task Server-classified targets are implemented after P0 to P3, including task detail, hosts, operations projections, insight, administration, and the replayable Studio stream.</td><td>Sole durable task and run authority; it does not spawn checkout or CLI processes.</td></tr>
+        <tr><td><b>Orchestrator Engine</b></td><td>No frontend route ownership. Reads normalized Task Server facts and requests bounded actions.</td><td>Distinct scoped service principal; no task files or direct host process ownership.</td></tr>
+        <tr><td><b>Runner and Review daemons</b></td><td>Outbound claim, lease, event, artifact, and completion protocols for coding and review execution.</td><td>Host execution, distinct Runner principal, fenced by Task Server authority.</td></tr>
+        <tr><td><b>TunnelKeeper / LinkSupervisor</b></td><td>Maintains and reports the interim SSH reverse path from the local control plane to remote runners.</td><td>Transport supervision only. It is retired from the normal path when clients reach the remote services directly over WireGuard.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Evidence</h3>
+    <div class="evidence-list">
+      <a class="evidence" href="../../studio-route-ownership/routes.json"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Canonical route inventory</b><small>The current file reports 366 frontend operations: 268 Task Server and 98 dev-seat operations. It retains the P0 to P3 migration estimate and target mappings.</small></span></a>
+      <a class="evidence" href="../../studio-route-ownership/index.html"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Connector decision and delivery log</b><small>AGT-2731 decided the loopback Connector profile. The appended AGT-2755 to AGT-2758 entries establish complete P0 to P3 Task Server handler delivery.</small></span></a>
+      <a class="evidence" href="../remote-task-server-local-studio.md"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Phase B topology and gates</b><small>The Task Server, Engine, Studio principal, Runner principal, WireGuard path, sole-writer migration, fallback, and cutover proofs are specified here.</small></span></a>
+      <a class="evidence" href="../runner-link/index.html"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Runner link lifecycle</b><small>AGT-W43 records the TunnelKeeper failure classes, LinkSupervisor decision, and the direct WireGuard path as the link's planned retirement.</small></span></a>
+      <span class="evidence"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>AGT-2736 gap note</b><small>The salvage-ref file <code>docs/operations/setup/docker-compose-connector-gap.md</code> proves that no current service combines LAN or Compose reachability with full Connector route coverage and records three immediate options.</small></span></span>
+      <span class="evidence"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b>New service boundary</b><small>Route parity in the Task Server removes the old forwarding backlog. It does not make Windows files, Git, local CLI discovery, launchers, or host operations safe to execute in the Task Server.</small></span></span>
+      <span class="evidence"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b>Operations Server</b><small>A separate command and capability service with outbound Operations Agents is the proposed answer to the remaining multi-frontend and multi-host gap.</small></span></span>
+    </div>
+    <p class="dim">No screenshot is included because this dossier makes no finding about a visible product surface. Its claims concern route inventory, process composition, security contracts, and deployment topology. Human sight review is not claimed.</p>
+  </section>
+
+  <section id="boundary">
+    <h2><span class="number">02</span> Ownership boundary</h2>
+    <p>The split is not based on whether a route sounds operational. It is based on authority and side effects. Durable product truth stays with the Task Server. A command that touches a host, checkout, toolchain, process, local secret, or OS integration belongs to the Operations Server and executes through a declared Operations Agent.</p>
+    <table class="breakout">
+      <thead><tr><th>Concern</th><th>Task Server</th><th>Operations Server</th><th>Execution location</th></tr></thead>
+      <tbody>
+        <tr><td><b>Cards and projects</b></td><td>Workspace and project identity, cards, lanes, references, task files, attachments, history, authorization, audit.</td><td>No task mutation and no second project catalogue.</td><td>Task Server store.</td></tr>
+        <tr><td><b>Runs and reviews</b></td><td>RunAttempt, ReviewSubject, permits, leases, fences, retries, verdict policy, acceptance and lane effects.</td><td>May broker an admitted build, lint, model, capture, or inspection operation; returns typed evidence only.</td><td>Runner or Operations Agent with an immutable subject.</td></tr>
+        <tr><td><b>Orchestration</b></td><td>Sessions, context digests, durable decisions, budgets, policy, event cursor, Engine commands.</td><td>Executes an explicitly admitted model or tool operation when host capability is required; cannot decide the task transition.</td><td>Engine for decisions; agent for executable work.</td></tr>
+        <tr><td><b>Dev seat</b></td><td>Stores only durable references or results that belong to a task.</td><td>Files below declared roots, repository reads and writes, Git hygiene, CLI discovery and quota probes, launcher and URL actions, local previews.</td><td>Workstation Operations Agent, initially the Connector's local handler set.</td></tr>
+        <tr><td><b>Host control</b></td><td>Runner identity, admission, task-run capacity policy, leases, task-linked health facts.</td><td>Service drain or restart request, connectivity probes, agent upgrade preparation, host diagnostics, operational command status.</td><td>Agent-only host under a host-scoped principal.</td></tr>
+        <tr><td><b>Dossiers</b></td><td>Task relationship, decision receipt, implementation card creation, durable evidence references.</td><td>Render, capture, validate links, inspect a repository checkout, and run bounded document tooling.</td><td>Workstation or quality-host Operations Agent.</td></tr>
+        <tr><td><b>Audit</b></td><td>Authoritative audit for task and policy mutations; records requested operation id and accepted result digest.</td><td>Operational attempt log with actor, agent principal, permit, timestamps, output bounds, result digest, and correlation id.</td><td>Both stores, joined by immutable ids.</td></tr>
+      </tbody>
+    </table>
+    <div class="callout" data-tone="warn">
+      <h3>Orchestration sessions stay in the Task Server</h3>
+      <p>A session is durable product state and can lead to task decisions. Moving it to the Operations Server would create a second orchestration truth. The executable model call may be dispatched through the Operations Server, but context, budget, actor, accepted response, and resulting transition remain Task Server records.</p>
+    </div>
+    <p>Two services are justified by failure containment. A stopped Operations Server prevents new executable operations but does not make cards, history, or accepted results unreadable. A compromised Operations Agent cannot mint a run permit or move a lane. The Task Server can be backed up and restored without carrying host toolchains and workstation secrets; the Operations Server can scale and roll with the fleet without becoming the system of record.</p>
+  </section>
+
+  <section id="target">
+    <h2><span class="number">03</span> Target system</h2>
+    <p>The Operations Server is a central API and coordination service, not a remote desktop backend. It publishes a versioned operation catalogue, accepts authorized commands, selects an eligible Operations Agent, tracks a bounded attempt, and returns typed events and artifacts. It has no Angular application, no recovery UI, no browser cookie authentication, and no implicit access to a project filesystem.</p>
+
+    <figure class="breakout">
+      <svg viewBox="0 0 1120 760" role="img" aria-labelledby="target-title target-desc">
+        <title id="target-title">Target topology with Task Server and Operations Server</title>
+        <desc id="target-desc">Several frontend products use their own browser edge or local Connector. Those edges call the Task Server for durable task state and the Operations Server for executable operations. The Task Server controls the Orchestrator Engine and issues task-linked operation permits. The Operations Server sends commands over outbound authenticated channels to workstation, runner-host, and quality-host Operations Agents.</desc>
+        <defs>
+          <marker id="arrow-target" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="var(--article-link)"/></marker>
+          <marker id="arrow-execution" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="var(--article-good)"/></marker>
+        </defs>
+
+        <text class="svg-tiny" x="34" y="34">REPLACEABLE FRONTENDS</text>
+        <rect class="svg-node" x="34" y="52" width="240" height="86" rx="9"/>
+        <text class="svg-label" x="54" y="80">Local Studio</text>
+        <text class="svg-sub" x="54" y="104">workstation browser and native edge</text>
+        <text class="svg-tiny" x="54" y="124">Connector remains loopback-only</text>
+        <rect class="svg-node" x="306" y="52" width="240" height="86" rx="9"/>
+        <text class="svg-label" x="326" y="80">Dossier App</text>
+        <text class="svg-sub" x="326" y="104">decisions, rendering, capture</text>
+        <text class="svg-tiny" x="326" y="124">its own backend principal</text>
+        <rect class="svg-node" x="578" y="52" width="240" height="86" rx="9"/>
+        <text class="svg-label" x="598" y="80">Fleet controls</text>
+        <text class="svg-sub" x="598" y="104">agent-only host operations</text>
+        <text class="svg-tiny" x="598" y="124">operator UI through the same APIs</text>
+        <rect class="svg-node" x="850" y="52" width="236" height="86" rx="9"/>
+        <text class="svg-label" x="870" y="80">Later clients</text>
+        <text class="svg-sub" x="870" y="104">Coding Agent Runner, Quality Studio</text>
+        <text class="svg-tiny" x="870" y="124">separately scoped principals</text>
+
+        <rect class="svg-node" x="146" y="194" width="352" height="100" rx="9"/>
+        <text class="svg-label" x="168" y="223">Browser edge or local Connector</text>
+        <text class="svg-sub" x="168" y="247">Origin allowlist, session, CSRF, token exchange</text>
+        <text class="svg-tiny" x="168" y="272">bearers remain server-side</text>
+        <rect class="svg-node" x="622" y="194" width="352" height="100" rx="9"/>
+        <text class="svg-label" x="644" y="223">Non-browser service client</text>
+        <text class="svg-sub" x="644" y="247">service principal, explicit scopes, no cookies</text>
+        <text class="svg-tiny" x="644" y="272">Dossier or automation backend</text>
+
+        <path class="svg-flow-target" d="M154 138 V168 H270 V194"/>
+        <path class="svg-flow-target" d="M426 138 V168 H362 V194"/>
+        <path class="svg-flow-target" d="M698 138 V168 H750 V194"/>
+        <path class="svg-flow-target" d="M968 138 V168 H846 V194"/>
+
+        <text class="svg-tiny" x="34" y="350">CENTRAL SERVICES</text>
+        <rect class="svg-authority" x="98" y="370" width="390" height="142" rx="9"/>
+        <text class="svg-label" x="120" y="400">Task Server</text>
+        <text class="svg-sub" x="120" y="425">cards, runs, reviews, workspace, authority</text>
+        <text class="svg-sub" x="120" y="447">sessions, policy, permits, accepted evidence</text>
+        <text class="svg-tiny" x="120" y="475">durable system of record</text>
+        <text class="svg-tiny" x="120" y="494">no checkout or CLI processes</text>
+        <rect class="svg-execution" x="632" y="370" width="390" height="142" rx="9"/>
+        <text class="svg-label" x="654" y="400">Operations Server</text>
+        <text class="svg-sub" x="654" y="425">operation catalogue, dispatch, bounded attempts</text>
+        <text class="svg-sub" x="654" y="447">host capabilities, events, artifacts, cancellation</text>
+        <text class="svg-tiny" x="654" y="475">no UI, browser session, or task authority</text>
+        <text class="svg-tiny" x="654" y="494">service principals only</text>
+        <path class="svg-flow-target" d="M322 294 V330 H293 V370"/>
+        <path class="svg-flow-target" d="M322 294 V330 H740 V370"/>
+        <path class="svg-flow-target" d="M798 294 V330 H380 V370"/>
+        <path class="svg-flow-target" d="M798 294 V330 H827 V370"/>
+        <path class="svg-flow-target" d="M488 416 H632"/>
+        <text class="svg-tiny" x="510" y="408">permit / identity</text>
+        <path class="svg-flow-execution" d="M632 468 H488"/>
+        <text class="svg-tiny" x="510" y="490">typed result digest</text>
+
+        <rect class="svg-authority" x="34" y="594" width="280" height="106" rx="9"/>
+        <text class="svg-label" x="54" y="624">Orchestrator Engine</text>
+        <text class="svg-sub" x="54" y="648">policy and decision evaluation</text>
+        <text class="svg-tiny" x="54" y="675">Task Server client</text>
+        <rect class="svg-execution" x="352" y="594" width="220" height="106" rx="9"/>
+        <text class="svg-label" x="372" y="624">Workstation Agent</text>
+        <text class="svg-sub" x="372" y="648">files, Git, CLI, launchers</text>
+        <text class="svg-tiny" x="372" y="675">outbound channel</text>
+        <rect class="svg-execution" x="610" y="594" width="220" height="106" rx="9"/>
+        <text class="svg-label" x="630" y="624">Runner-host Agent</text>
+        <text class="svg-sub" x="630" y="648">fleet and host operations</text>
+        <text class="svg-tiny" x="630" y="675">outbound channel</text>
+        <rect class="svg-execution" x="868" y="594" width="218" height="106" rx="9"/>
+        <text class="svg-label" x="888" y="624">Quality-host Agent</text>
+        <text class="svg-sub" x="888" y="648">review, render, capture</text>
+        <text class="svg-tiny" x="888" y="675">outbound channel</text>
+
+        <path class="svg-flow-target" d="M230 512 V554 H174 V594"/>
+        <path class="svg-flow-execution" d="M742 512 V554 H462 V594"/>
+        <path class="svg-flow-execution" d="M827 512 V554 H720 V594"/>
+        <path class="svg-flow-execution" d="M912 512 V554 H977 V594"/>
+      </svg>
+      <figcaption><b>Figure 2. Recommended target.</b> Blue marks durable control-plane authority. Green marks executable operations and their agents. Every frontend is replaceable; each uses an edge or backend appropriate to its session model. The Operations Server never receives a browser cookie and cannot mint task authority.</figcaption>
+    </figure>
+
+    <h3>Minimum Operations Server contract</h3>
+    <table>
+      <thead><tr><th>Resource</th><th>Required fields and behavior</th></tr></thead>
+      <tbody>
+        <tr><td><code>OperationDefinition</code></td><td>Stable operation id and version, required scopes, capability predicates, input and output schema digests, side-effect class, timeout and output limits.</td></tr>
+        <tr><td><code>OperationCommand</code></td><td>Idempotency key, requesting principal, delegated actor, optional Task Server permit, target selector, immutable input digest, deadline, cancellation policy, correlation ids.</td></tr>
+        <tr><td><code>OperationAttempt</code></td><td>Attempt id, selected agent principal and boot id, fence, lease, state, ordered event cursor, bounded logs, artifacts, terminal classification and result digest.</td></tr>
+        <tr><td><code>AgentCapability</code></td><td>Agent identity, host class, explicit roots, installed tools, supported operation versions, resource capacity, health timestamp and protocol range. Paths are capability data, never public identity.</td></tr>
+        <tr><td><code>OperationPermit</code></td><td>For task-linked work: signed or introspectable Task Server authority naming task, run or review subject, operation ids, actor, deadline, fence and permitted result audience.</td></tr>
+        <tr><td><code>OperationResult</code></td><td>Typed outcome, tested or changed subject digest, exit classification, artifact hashes, cleanup proof, usage and timestamps. The Task Server decides whether to accept it.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="lan">
+    <h2><span class="number">04</span> LAN and security</h2>
+    <p>The LAN problem disappears when browser security and service authentication stop being the same boundary. A browser talks only to its selected frontend edge. The edge validates Origin, Host, session and CSRF, then calls the two central services with audience-bound, server-side credentials. The Operations Server accepts principals and permits, not browser cookies.</p>
+    <table class="breakout">
+      <thead><tr><th>Hop</th><th>Authentication</th><th>CSRF and Origin</th><th>Stored secret</th></tr></thead>
+      <tbody>
+        <tr><td><b>Browser to local Connector</b></td><td>Opaque connector session; human Task Server identity remains upstream.</td><td>Exact <code>http://[::1]:4011</code>, exact Host, session-bound CSRF, WebSocket Origin check.</td><td>Task and Operations service credentials in Windows Credential Manager or read-only secret files; never browser-visible.</td></tr>
+        <tr><td><b>Browser to one-box or LAN edge</b></td><td>Secure HttpOnly human session terminated by the edge or Task Server identity flow.</td><td>Configured HTTPS Origin allowlist, CSRF on every unsafe request and upgrade negotiation, no wildcard credentials.</td><td>Edge service credentials and exchanged short-lived delegation tokens in server memory or secret storage.</td></tr>
+        <tr><td><b>Frontend backend to Operations Server</b></td><td>Audience-bound service principal or short-lived delegated principal with explicit operation scopes.</td><td>Not a browser hop. No CORS contract and no cookie authentication.</td><td>Protected backend store; independently rotatable per frontend product.</td></tr>
+        <tr><td><b>Task Server to Operations Server</b></td><td>Dedicated Task Server service principal; task-linked commands carry an OperationPermit.</td><td>Not applicable.</td><td>Protected service secret or workload identity.</td></tr>
+        <tr><td><b>Operations Agent to Operations Server</b></td><td>One enrolled, revocable agent principal per host; outbound TLS or WireGuard plus TLS.</td><td>Not applicable.</td><td>Host secret store; never returned to a frontend or task log.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Connector inheritance</h3>
+    <table>
+      <thead><tr><th>Connector decision</th><th>Target treatment</th></tr></thead>
+      <tbody>
+        <tr><td>Explicit route ownership</td><td><b>Keep.</b> Extend the inventory with an owning service, operation definition, allowed edge, and required principal scope. No broad local or remote fallback.</td></tr>
+        <tr><td>Exact denial paths</td><td><b>Keep.</b> Unknown routes, unclassified operations, browser Authorization headers, foreign cookies, stale protocol versions, untrusted forwarded headers, and mismatched origins fail before dispatch.</td></tr>
+        <tr><td>Session-bound CSRF</td><td><b>Keep at browser edges.</b> The Operations Server itself has no browser session and therefore no CSRF cookie contract.</td></tr>
+        <tr><td>Credential injection</td><td><b>Keep and split.</b> The edge holds independent Task Server and Operations Server audiences. A Runner or operations credential never authorizes a Studio route.</td></tr>
+        <tr><td>Atomic upstream generation</td><td><b>Keep per service.</b> Task Server and Operations Server may switch or fail independently. A partially sent mutation is never retried against another authority.</td></tr>
+        <tr><td>Public-demo profile</td><td><b>Keep separate.</b> A public demo edge receives no Operations Server credential and exposes no executable operation. Read-only sample projections are not a mode of the production Operations Server.</td></tr>
+        <tr><td>Fixed loopback authority and Origin</td><td><b>Keep for the Connector.</b> LAN and Compose use a different browser edge profile with explicit HTTPS origins; they do not loosen the decided local Connector profile.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Required denials</h3>
+    <ul>
+      <li>A direct browser request or cookie presented to the Operations Server returns unauthenticated; the service does not opt into credentialed CORS.</li>
+      <li>A valid Studio edge principal without the requested operation scope returns forbidden.</li>
+      <li>A valid Operations Agent credential cannot read arbitrary task data, move a card, issue a lease, or call another agent's control route.</li>
+      <li>A task-linked command without a current permit, or with a stale task fence, is rejected before agent selection.</li>
+      <li>An operation outside the agent's declared roots or capability version is rejected before execution.</li>
+      <li>The public-demo profile has no credential capable of submitting an executable operation.</li>
+    </ul>
+    <p>The existing Phase B gates remain prerequisites for network exposure: scoped principals, protocol negotiation, route classification, negative authorization tests, exact listener and firewall evidence, frozen migration inventory, backup and restore proof, sole-writer proof, detached-Studio rehearsal, and fallback. An Operations Server adds equivalent agent-enrollment, permit, Origin-edge, and denial-path gates; it does not waive the Task Server gates.</p>
+  </section>
+
+  <section id="deployment">
+    <h2><span class="number">05</span> Deployment forms</h2>
+    <p>The component set remains stable. Profiles decide which processes share a machine, which browser edge is active, and whether service hops use container networking or private TLS. Only one browser edge and one Task Server authority are active for a given installation.</p>
+    <table class="breakout">
+      <thead><tr><th>Form</th><th>Placement and wiring</th><th>Listener policy</th><th>Use</th></tr></thead>
+      <tbody>
+        <tr><td><b>Workstation</b><br><code>workstation</code></td><td>Web, local Connector, Task Server, Operations Server, Engine, and workstation Operations Agent on one developer machine. The Connector can initially host the local agent adapter in-process.</td><td>Browser and Connector remain loopback. Central services may use loopback or a private process boundary. No LAN listener.</td><td>Local development, a single operator, and Windows-integrated Git, CLI and launcher operations.</td></tr>
+        <tr><td><b>One-box Docker</b><br><code>one-box</code></td><td>Web edge, studio-bff, Task Server, Operations Server, Engine, and a container-capable Operations Agent in one Compose project. Host-native operations use a separately enrolled host agent instead of a Docker socket.</td><td>Only the HTTPS edge is published to the LAN. Task and Operations services remain private to the Compose network. LAN exposure is explicit and uses an Origin allowlist.</td><td><b>Recommended standard product deployment</b> after full route and security parity. It gives AGT-2736 and AGT-2738 one reproducible artifact family.</td></tr>
+        <tr><td><b>Distributed</b><br><code>distributed</code></td><td>Task Server, Operations Server and Engine may share <code>task-server-01</code> as separate containers initially; Runner and quality agents stay on separate hosts. Local Studio uses its loopback Connector. Other frontends use their own edge.</td><td>Private TLS on WireGuard. Agents connect outbound. Public interface exposes neither server. A compromised Runner remains outside the control-plane host boundary.</td><td>Phase B, agent-only hosts, independent frontend products, and later fleet growth.</td></tr>
+      </tbody>
+    </table>
+    <div class="callout" data-tone="warn">
+      <h3>Transitional Compose profile</h3>
+      <p>AGT-2736 can ship the gap note's Option 3 now: the current distributed profile with Task Server, Engine, studio-bff, OrchestratorApi proxy, and web. That is a deployable baseline with a declared operations limitation, not the final one-box standard. The label changes only after the Operations Server and full browser-edge contract pass the same route and security suite.</p>
+    </div>
+  </section>
+
+  <section id="alternatives" data-concept-section="alternatives" data-document-section="alternatives">
+    <h2><span class="number">06</span> Alternatives</h2>
+    <p>The four alternatives are compared against requirements created by the current gap. Effort is relative and includes migration and security evidence, not only a new process skeleton.</p>
+    <table class="breakout">
+      <thead><tr><th>Requirement</th><th>A Configurable Connector</th><th>B studio-bff parity</th><th>C Task Server absorbs operations</th><th>D New Operations Server</th></tr></thead>
+      <tbody>
+        <tr><td><b>R1</b> Several frontend products</td><td>Partial. One generalized edge can serve browsers, but remains coupled to Studio and dev-seat dependencies.</td><td>Partial. Good shared browser edge, weak fit for non-browser fleet control.</td><td>Yes, through one API, but couples every client to task authority.</td><td><b>Yes.</b> Browser edges and service clients use scoped principals.</td></tr>
+        <tr><td><b>R2</b> Task Server remains sole task authority</td><td>Yes if forwarding remains strict.</td><td>Yes if it stays an edge.</td><td>Technically yes, but executable host work enters the authority process.</td><td><b>Yes.</b> Separate stores and permits make the boundary explicit.</td></tr>
+        <tr><td><b>R3</b> LAN without loopback assumptions</td><td>Possible, but reopens AGT-2731 and mixes two threat models in one profile.</td><td>Possible with new Origin, session and CSRF work.</td><td>Possible, but makes the Task Server browser-facing or requires a BFF anyway.</td><td><b>Yes.</b> LAN terminates at an edge; service hops use principals.</td></tr>
+        <tr><td><b>R4</b> Reuse dev-seat operations</td><td><b>High reuse.</b> Existing handlers remain in one process.</td><td>Low. Imports or duplicates 98 native handlers.</td><td>Low and unsafe for workstation-specific dependencies.</td><td><b>High through migration.</b> Existing handlers become a local Operations Agent adapter.</td></tr>
+        <tr><td><b>R5</b> Workstation, one-box and distributed</td><td>Weak distributed lifecycle; one Connector must understand every placement.</td><td>Good for one-box, incomplete for agent-only hosts.</td><td>Simple topology, poor isolation and scaling.</td><td><b>Strong.</b> Same services, different wiring and agent placement.</td></tr>
+        <tr><td><b>R6</b> No browser bearer or operations cookie</td><td>Possible, but connector session and central service roles become conflated.</td><td>Possible at the BFF.</td><td>Possible with a BFF, not by Task Server absorption alone.</td><td><b>Explicit.</b> Operations Server is service-principal only.</td></tr>
+        <tr><td><b>R7</b> Bounded migration from current work</td><td>Small first change, larger long-term coupling.</td><td>Large duplicate route and native dependency move.</td><td>Small after P0 to P3 for projections, large and risky for execution.</td><td>Medium to high, but current Connector and Task Server investments remain usable.</td></tr>
+        <tr><td><b>Effort</b></td><td>Medium initially; security and platform coupling grow.</td><td>High.</td><td>Medium initially; highest control-plane risk.</td><td>High, staged behind a small AGT-2736 unblock.</td></tr>
+        <tr><td><b>Security consequence</b></td><td>One binary carries loopback and LAN profiles; misconfiguration can expose native operations.</td><td>Larger browser-edge attack surface and duplicated secret-bearing dependencies.</td><td>A host-operation exploit lands in the durable authority process.</td><td>Additional service and credential boundary, but smallest blast radius when scopes and permits are correct.</td></tr>
+        <tr><td><b>Migration path</b></td><td>Relax constants, add profiles, then keep expanding Connector.</td><td>Port local handlers into BFF or add a second helper.</td><td>Continue P0 to P3 route movement into execution behavior.</td><td>Option 3 now; define protocol; extract operations; adapt Connector and BFF; rehearse profiles.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Effect on current cards</h3>
+    <table class="breakout">
+      <thead><tr><th>Card</th><th>A</th><th>B</th><th>C</th><th>D recommended</th></tr></thead>
+      <tbody>
+        <tr><td><b>AGT-2736</b><br>Docker deployable</td><td>Reopen and expand now.</td><td>Reopen with large BFF scope.</td><td>Continue route programme in Task Server.</td><td>Use gap Option 3 now; finish the standard one-box profile after Operations Server parity.</td></tr>
+        <tr><td><b>AGT-2737</b><br>remote cutover</td><td>Connector becomes a network service, changing its approved gate.</td><td>Cutover waits for BFF parity.</td><td>Cutover centralizes more risk in Task Server.</td><td>Do not block the local-Connector Phase B rehearsal; record later host-operation extraction as a compatible migration.</td></tr>
+        <tr><td><b>AGT-2738</b><br>installer</td><td>Installer needs two Connector security profiles.</td><td>Installer gains BFF plus native helper dependencies.</td><td>Installer is simple but deploys the broadest authority process.</td><td>Installer exposes workstation, one-box and distributed profiles after contracts stabilize; transitional Compose may ship earlier with a limitation.</td></tr>
+        <tr><td><b>AGT-2764</b><br>link migration</td><td>LinkSupervisor stays Connector-adjacent.</td><td>Ownership becomes split between BFF and native helper.</td><td>Link supervision remains in Task Server.</td><td>Complete only the bounded interim soak if still needed; model later connectivity and host actions as Operations Server resources.</td></tr>
+        <tr><td><b>AGT-2770</b><br>model candidates</td><td>CLI probes and policy remain mixed in Connector.</td><td>BFF imports CLI discovery.</td><td>Task Server performs or reaches host probes.</td><td>Keep durable model policy and recommendation facts in Task Server; source live CLI discovery and quota probes from Operations Agents through typed projections.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="recommendation" data-concept-section="recommendation" data-document-section="recommendation">
+    <h2><span class="number">07</span> Recommendation</h2>
+    <div class="callout" data-tone="good">
+      <h3>Alternative D with a staged start</h3>
+      <p>Create a distinct Operations Server and an outbound Operations Agent protocol. Keep the Task Server as the durable authority and keep orchestration sessions there. Retain the Connector as the loopback Studio edge and first workstation-agent adapter. Use studio-bff as the browser edge for one-box and LAN deployments, not as the home of native operations.</p>
+    </div>
+    <p>This recommendation deliberately changes the current three-component target architecture. The existing document says shared contracts are not a fourth runtime product. A separately deployable Operations Server would be a fourth runtime component, so approval requires an ADR and a coordinated update to the target architecture. It must not be introduced through an incidental Connector configuration change.</p>
+    <p>The recommendation preserves the P0 to P3 investment. Durable task, host, operations and insight projections stay in the Task Server. Only executable commands and host capability state move behind the new boundary. Existing legacy paths can remain compatibility aliases at the edge while ownership changes behind them.</p>
+
+    <h3>Failure contract</h3>
+    <table>
+      <thead><tr><th>Failure</th><th>Required behavior</th></tr></thead>
+      <tbody>
+        <tr><td>Frontend closes</td><td>Task Server, Engine, Operations Server and agents continue. Another authorized client sees the same durable state.</td></tr>
+        <tr><td>Operations Server unavailable</td><td>No new executable operation is admitted. Existing agents stop at their lease boundary, preserve bounded evidence, and replay idempotently. Task and review history stays readable.</td></tr>
+        <tr><td>Task Server unavailable</td><td>Operations Server accepts no new task-linked work and cannot mint substitute authority. Standalone host maintenance requires an explicitly separate break-glass scope and audit path.</td></tr>
+        <tr><td>Operations Agent unavailable</td><td>The attempt becomes unreachable or timed out. Reassignment requires fence advancement and positive no-overlap evidence when the operation can mutate state.</td></tr>
+        <tr><td>Edge unavailable</td><td>Browser access stops; backend services and agent work continue. No bearer has been stored in the browser.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="programme">
+    <h2><span class="number">08</span> Programme</h2>
+    <p>The first step is intentionally small and does not prejudge the final service implementation. Later steps are independently reviewable and correspond to the implementation tasks in <code>workbench.json</code>.</p>
+    <table class="breakout">
+      <thead><tr><th>Order</th><th>Step</th><th>Cards</th><th>Exit condition</th></tr></thead>
+      <tbody>
+        <tr><td><b>0</b></td><td>Re-scope the one-box work to the gap note's Option 3. Publish the current distributed profile as a transitional baseline with its route and LAN limitation stated.</td><td>AGT-2736</td><td>Compose boots from published images, smoke tests pass, and no claim of Connector or Operations Server parity is made.</td></tr>
+        <tr><td><b>1</b></td><td>Approve the four runtime roles and the Task Server to Operations Server protocol. Record the deliberate change to the three-component target.</td><td>New architecture card from this dossier</td><td>ADR, ownership matrix, permits, versioning, failure and audit-correlation contracts are canonical.</td></tr>
+        <tr><td><b>2</b></td><td>Build Operations Server core and outbound Operations Agent enrollment, capability, dispatch, attempt, event and artifact contracts.</td><td>New service card</td><td>Service-principal and permit denials, fencing, replay, cancellation and compromised-agent tests pass.</td></tr>
+        <tr><td><b>3</b></td><td>Adapt the Connector's local handlers into the workstation Operations Agent and add separate Task and Operations upstreams. Extend studio-bff only as the LAN browser edge.</td><td>Follow-up to AGT-2754; retain AGT-2755 to AGT-2758 handlers and projections</td><td>Route inventory names one owner and edge per route; no unclassified fallback; browser secrets remain server-side.</td></tr>
+        <tr><td><b>4</b></td><td>Deliver and rehearse workstation, one-box and distributed profiles with identical contracts and profile-specific listeners.</td><td>AGT-2736 follow-up, AGT-2737</td><td>Detached Studio, LAN Origin denial, service outages, agent fencing, upgrade, backup, restore, cutover and rollback are evidenced.</td></tr>
+        <tr><td><b>5</b></td><td>Expose the stable profiles through the cross-platform installer and align dependent operational surfaces.</td><td>AGT-2738, AGT-2764, AGT-2770</td><td>Installer selects one declared profile; link and model-probe surfaces consume typed Operations Server facts without moving policy authority.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="decisions" data-concept-section="open-decisions" data-document-section="open-decisions">
+    <h2><span class="number">09</span> Open decisions</h2>
+    <p>Each question is a single choice. The recommendation is identified in the option label, but no human decision or sight review is recorded by this dossier.</p>
+
+    <div class="decision" data-decision-id="d1-architecture" data-decision-kind="single" data-decision-label="D1 Architecture alternative">
+      <h3>D1. Which architecture should own executable operations?</h3>
+      <label data-option-id="a-configurable-connector" data-option-label="A Configurable Connector"><input type="radio" name="d1-architecture" value="a-configurable-connector"><span><b>A. Make the Connector configurable</b><span>One process serves loopback and LAN profiles with validated authority and Origin allowlists.</span></span></label>
+      <label data-option-id="b-studio-bff-parity" data-option-label="B studio-bff parity"><input type="radio" name="d1-architecture" value="b-studio-bff-parity"><span><b>B. Expand studio-bff to parity</b><span>Move or duplicate every dev-seat handler and browser security contract into the Compose-network BFF.</span></span></label>
+      <label data-option-id="c-task-server-operations" data-option-label="C Task Server absorbs operations"><input type="radio" name="d1-architecture" value="c-task-server-operations"><span><b>C. Continue moving operations into the Task Server</b><span>Keep one central service, including executable host and dev-seat operations.</span></span></label>
+      <label data-option-id="d-new-operations-server" data-option-label="D New Operations Server (recommended)"><input type="radio" name="d1-architecture" value="d-new-operations-server"><span><b>D. Create a new Operations Server</b><span>Use a browser-independent service and outbound Operations Agents beside the Task Server. This is the recommendation.</span></span></label>
+      <div data-comment="Optional architecture note"><textarea placeholder="Optional architecture note"></textarea></div>
+    </div>
+
+    <div class="decision" data-decision-id="d2-standard-deployment" data-decision-kind="single" data-decision-label="D2 Standard deployment form">
+      <h3>D2. Which deployment form should be the product standard?</h3>
+      <label data-option-id="workstation-standard" data-option-label="Workstation"><input type="radio" name="d2-standard-deployment" value="workstation-standard"><span><b>Workstation</b><span>All components local and loopback-only; simplest dev-seat integration, no default LAN product.</span></span></label>
+      <label data-option-id="one-box-standard" data-option-label="One-box Docker (recommended)"><input type="radio" name="d2-standard-deployment" value="one-box-standard"><span><b>One-box Docker</b><span>Published images and one Compose project, with only the HTTPS edge exposed. This is the recommendation after full parity.</span></span></label>
+      <label data-option-id="distributed-standard" data-option-label="Distributed WireGuard"><input type="radio" name="d2-standard-deployment" value="distributed-standard"><span><b>Distributed WireGuard</b><span>Control-plane services and agents on separate hosts; strongest fleet topology but the highest baseline operations burden.</span></span></label>
+      <div data-comment="Optional deployment note"><textarea placeholder="Optional deployment note"></textarea></div>
+    </div>
+
+    <div class="decision" data-decision-id="d3-agt-2736" data-decision-kind="single" data-decision-label="D3 Treatment of AGT-2736">
+      <h3>D3. What should happen to AGT-2736 now?</h3>
+      <label data-option-id="option-3-now" data-option-label="Gap Option 3 now (recommended)"><input type="radio" name="d3-agt-2736" value="option-3-now"><span><b>Use gap Option 3 now</b><span>Ship the current distributed profile as a limited transitional baseline and schedule full Operations Server parity later. This is the recommendation.</span></span></label>
+      <label data-option-id="wait-for-full-target" data-option-label="Wait for full target"><input type="radio" name="d3-agt-2736" value="wait-for-full-target"><span><b>Keep AGT-2736 parked</b><span>Do not ship the one-box baseline until the chosen full architecture has complete route and security parity.</span></span></label>
+      <label data-option-id="expand-agt-2736" data-option-label="Expand AGT-2736 now"><input type="radio" name="d3-agt-2736" value="expand-agt-2736"><span><b>Expand AGT-2736 now</b><span>Implement the selected full architecture within the existing Docker card before any baseline delivery.</span></span></label>
+      <div data-comment="Optional AGT-2736 note"><textarea placeholder="Optional AGT-2736 note"></textarea></div>
+    </div>
+
+    <div class="decision" data-decision-id="d4-orchestrator-sessions" data-decision-kind="single" data-decision-label="D4 Orchestrator session ownership">
+      <h3>D4. Where should orchestrator sessions remain?</h3>
+      <label data-option-id="task-server-sessions" data-option-label="Task Server (recommended)"><input type="radio" name="d4-orchestrator-sessions" value="task-server-sessions"><span><b>Task Server</b><span>Keep durable context, budgets, decisions and accepted model responses with task authority; dispatch only executable calls. This is the recommendation.</span></span></label>
+      <label data-option-id="operations-server-sessions" data-option-label="Operations Server"><input type="radio" name="d4-orchestrator-sessions" value="operations-server-sessions"><span><b>Operations Server</b><span>Move session state and model execution together, accepting a second durable orchestration store.</span></span></label>
+      <label data-option-id="split-session-record" data-option-label="Split session record"><input type="radio" name="d4-orchestrator-sessions" value="split-session-record"><span><b>Split session record</b><span>Store authoritative context in the Task Server and a second resumable conversation record in the Operations Server.</span></span></label>
+      <div data-comment="Optional session-ownership note"><textarea placeholder="Optional session-ownership note"></textarea></div>
+    </div>
+  </section>
+
+  <section id="sources">
+    <h2><span class="number">Sources</span> Evidence map</h2>
+    <ul>
+      <li><a href="../../app/templates/article-document-v2.html"><code>docs/app/templates/article-document-v2.html</code></a>: canonical Article v2 layout, theme tokens, tables, evidence and full-bleed figure blocks.</li>
+      <li><a href="../../studio-route-ownership/index.html"><code>docs/studio-route-ownership/index.html</code></a> and <a href="../../studio-route-ownership/routes.json"><code>routes.json</code></a>: AGT-2731 Connector decision, security contract, route ownership, current counts, and AGT-2755 to AGT-2758 delivery log.</li>
+      <li><a href="../remote-task-server-local-studio.md"><code>docs/operations/remote-task-server-local-studio.md</code></a>: remote Task Server topology, principals, WireGuard, Phase B gates, sole-writer and fallback contracts.</li>
+      <li><a href="../runner-link/index.html"><code>docs/operations/runner-link/</code></a>: AGT-W43, TunnelKeeper and LinkSupervisor state, link failure classes, and direct-path target.</li>
+      <li><a href="../../concepts/distributed-agent-studio-target-architecture.md"><code>docs/concepts/distributed-agent-studio-target-architecture.md</code></a>: current three-component target and durable authority split. The recommendation in this dossier would amend it through an ADR.</li>
+      <li><code>docker-compose.yml</code>: current default, runner, distributed and dev profiles; OrchestratorApi, web, Task Server, Engine, studio-bff and Runner service wiring.</li>
+      <li><code>backend/Features/Connector/ConnectorOptions.cs</code>: exact Connector authority and Studio Origin enforcement.</li>
+      <li><code>backend/Features/Connector/ConnectorHost.cs</code> and <code>backend/Host/TaskServerPlaneProxy.cs</code>: Connector profile and transparent Task Server v1 proxy behavior.</li>
+      <li><code>runner/RemoteRunnerDaemon.cs</code> and <code>runner/RemoteReviewDaemon.cs</code>: coding and review daemon roles.</li>
+      <li><code>backend/Features/Management/RunnerLinks/LinkSupervisor.cs</code> and <code>deploy/windows/agent-runner-tunnel/</code>: current supervised and scheduled reverse-link implementations.</li>
+      <li>Salvage ref <code>agent-studio/salvage/agent-runner-01/AGT-2736/run_4e53d6d60d8f4d77b15444cf21ccf7fb/fence-1/7d559bfff4cd509569dafd70e1af3c02fd232216</code>, file <code>docs/operations/setup/docker-compose-connector-gap.md</code>: the AGT-2736 blocker and immediate Options 1 to 3.</li>
+      <li>Cards AGT-2736, AGT-2737, AGT-2738, AGT-2754, AGT-2755, AGT-2756, AGT-2757, AGT-2758, AGT-2764, AGT-2770, AGT-2777, and workbench AGT-W43.</li>
+    </ul>
+  </section>
+
+  <!-- agent-studio:implementation-section:start -->
+  <section id="implementation" data-document-section="implementation">
+    <h2><span class="number">Implementation</span> Delivery log</h2>
+    <p>Implementation slices append their current delivery state here after a human decision. Decision content above remains unchanged.</p>
+    <ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<!-- agent-studio:implementation-log:end -->
+    </ol>
+  </section>
+  <!-- agent-studio:implementation-section:end -->
+</main>
+</body>
+</html>
