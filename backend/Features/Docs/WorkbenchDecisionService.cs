@@ -33,6 +33,9 @@ public sealed record ConfirmWorkbenchDecisionRequest
     public List<WorkbenchDecisionResponse> Responses { get; init; } = [];
     /// <summary>Cards the caller already created for this decision, if any.</summary>
     public string[]? SpawnedTaskKeys { get; init; }
+    public string? CliType { get; init; }
+    public string? Model { get; init; }
+    public string? ThinkingLevel { get; init; }
     public bool Confirmed { get; init; }
 }
 
@@ -140,6 +143,15 @@ public sealed class WorkbenchDecisionService
         if (!body.Confirmed)
             return Failure(id, body.OperationId, "validation",
                 "The decision must be explicitly confirmed.");
+        if (body.Outcome is "feature-spawn" or "rework")
+        {
+            if (body.CliType != null && !CliTypes.IsValid(body.CliType))
+                return Failure(id, body.OperationId, "validation", "cliType is invalid.");
+            if (body.Model is { Length: > 200 })
+                return Failure(id, body.OperationId, "validation", "model must be at most 200 characters.");
+            if (body.ThinkingLevel is { Length: > 80 })
+                return Failure(id, body.OperationId, "validation", "thinkingLevel must be at most 80 characters.");
+        }
 
         var gateKey = ConfirmGateKey(projectName, id);
         var writeGate = ConfirmGates.GetOrAdd(gateKey, _ => new SemaphoreSlim(1, 1));
@@ -189,11 +201,14 @@ public sealed class WorkbenchDecisionService
                 "The Dossier has no readable revision or fingerprint provenance.");
 
         var archive = body.Outcome == "archive";
+        var rework = body.Outcome == "rework";
         var now = DateTime.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'");
         var actor = body.Actor.Trim();
-        var note = archive
-            ? $"Archived: {body.ArchiveReason!.Trim()}"
-            : $"Decided to build a feature: {gate.Draft!.Title.Trim()}";
+        var note = rework
+            ? "Revision requested"
+            : archive
+                ? $"Archived: {body.ArchiveReason!.Trim()}"
+                : $"Decided to build a feature: {gate.Draft!.Title.Trim()}";
         var spawned = (body.SpawnedTaskKeys ?? [])
             .Where(key => !string.IsNullOrWhiteSpace(key))
             .Select(key => key.Trim())
@@ -203,20 +218,25 @@ public sealed class WorkbenchDecisionService
         var receipt = new JsonObject
         {
             ["outcome"] = body.Outcome,
-            ["state"] = "succeeded",
+            ["action"] = rework ? "rework-requested" : archive ? "archived" : "created-card",
+            ["state"] = rework ? "pending" : "succeeded",
             ["operationId"] = body.OperationId,
             ["sourceRevision"] = snapshot.Revision,
             ["sourceFingerprint"] = snapshot.Fingerprint,
+            ["sourceEntryFingerprint"] = WorkbenchCatalogueService.ComputeEntryFingerprint(snapshot.EntryPath),
             ["preparedAt"] = now,
             ["preparedBy"] = actor,
             ["confirmedAt"] = now,
             ["confirmedBy"] = actor,
-            ["decidedAt"] = now,
+            ["decidedAt"] = rework ? null : now,
             ["spawnedTaskKeys"] = new JsonArray(spawned.Select(key => (JsonNode)key!).ToArray()),
             ["responses"] = JsonSerializer.SerializeToNode(body.Responses, DraftJson),
+            ["cliType"] = body.CliType?.Trim(),
+            ["model"] = body.Model?.Trim(),
+            ["thinkingLevel"] = body.ThinkingLevel?.Trim(),
         };
         if (archive) receipt["reason"] = body.ArchiveReason!.Trim();
-        else receipt["taskDraft"] = JsonSerializer.SerializeToNode(gate.Draft, DraftJson);
+        else if (!rework) receipt["taskDraft"] = JsonSerializer.SerializeToNode(gate.Draft, DraftJson);
         descriptor["decision"] = receipt;
         if (spawned.Length > 0)
         {
@@ -240,7 +260,9 @@ public sealed class WorkbenchDecisionService
             // Archive settles into "done" (projected as "archived"), a feature
             // decision into "decided" - the two settled states the catalogue
             // accepts for a succeeded receipt.
-            var lifecycleState = archive ? "done" : "decided";
+            var lifecycleState = rework
+                ? snapshot.Item.LifecycleState ?? "review-requested"
+                : archive ? "done" : "decided";
             descriptor["lifecycleState"] = lifecycleState;
             descriptor["editedBy"] = actor;
             descriptor["editedAt"] = now;
@@ -262,9 +284,24 @@ public sealed class WorkbenchDecisionService
             // schema v1 still carries most Dossiers. Its visibility hangs on
             // the flat status field; the receipt above rides along so a later
             // migration to v2 keeps the provenance.
-            descriptor["status"] = archive ? "archived" : "decided";
+            descriptor["status"] = rework ? "decision-pending" : archive ? "archived" : "decided";
             descriptor["updatedAt"] = now;
             descriptor["editedBy"] = actor;
+            if (rework)
+            {
+                if (descriptor["lifecycleHistory"] is not JsonArray history)
+                {
+                    history = [];
+                    descriptor["lifecycleHistory"] = history;
+                }
+                history.Add(new JsonObject
+                {
+                    ["state"] = "review-requested",
+                    ["editedBy"] = actor,
+                    ["editedAt"] = now,
+                    ["note"] = note,
+                });
+            }
         }
 
         // Last check before the write, inside the gate: re-read the descriptor
@@ -288,7 +325,7 @@ public sealed class WorkbenchDecisionService
             projectName,
             snapshot.Root,
             $"workbench-decision-{id}",
-            $"chore(workbench): {(archive ? "archive" : "record decision for")} {id}",
+            $"chore(workbench): {(rework ? "request revision for" : archive ? "archive" : "record decision for")} {id}",
             [snapshot.DescriptorRelPath],
             () => _fileWriter.Write(snapshot.DescriptorPath, descriptor.ToJsonString(
                 new JsonSerializerOptions { WriteIndented = true })));
@@ -299,7 +336,7 @@ public sealed class WorkbenchDecisionService
         }
 
         var revision = mutation.CommitSha ?? snapshot.Revision;
-        var currentStatus = archive ? "archived" : "decided";
+        var currentStatus = rework ? "decision-pending" : archive ? "archived" : "decided";
         _notifier?.PublishDecisionRecorded(projectName, id, snapshot.Item.Status, currentStatus);
 
         return new WorkbenchDecisionResult
@@ -308,7 +345,7 @@ public sealed class WorkbenchDecisionService
             WorkbenchId = id,
             OperationId = body.OperationId,
             Outcome = body.Outcome,
-            DecisionStage = archive ? "archived" : "succeeded",
+            DecisionStage = rework ? "pending" : archive ? "archived" : "succeeded",
             Revision = revision,
             Fingerprint = WorkbenchCatalogueService.ComputeWorkbenchFingerprint(
                 snapshot.DescriptorPath, snapshot.EntryPath),
@@ -339,11 +376,13 @@ public sealed class WorkbenchDecisionService
     {
         if (!WorkbenchDecisionContracts.SafeOperationId(operationId))
             return new(Failure(id, operationId, "validation", "operationId is malformed."));
-        if (outcome is not ("feature-spawn" or "archive"))
+        if (outcome is not ("feature-spawn" or "archive" or "rework"))
             return new(Failure(id, operationId, "validation", $"Unsupported outcome '{outcome}'."));
         if (string.IsNullOrWhiteSpace(actor) || actor.Trim().Length > 120)
             return new(Failure(id, operationId, "validation", "actor is required."));
-        var responsesError = WorkbenchDecisionContracts.ValidateResponses(responses);
+        var responsesError = WorkbenchDecisionContracts.ValidateResponses(
+            responses,
+            allowPartial: outcome == "rework");
         if (responsesError != null)
             return new(Failure(id, operationId, "validation", responsesError));
 
@@ -365,7 +404,7 @@ public sealed class WorkbenchDecisionService
                 return new(Failure(id, operationId, "validation",
                     "An archive decision cannot carry spawned task keys."));
         }
-        else
+        else if (outcome == "feature-spawn")
         {
             if (!string.IsNullOrWhiteSpace(archiveReason))
                 return new(Failure(id, operationId, "validation",
@@ -374,6 +413,19 @@ public sealed class WorkbenchDecisionService
             if (draftError != null)
                 return new(Failure(id, operationId, "validation", $"Feature decision {draftError}"));
             draft = task;
+        }
+        else
+        {
+            if (!string.IsNullOrWhiteSpace(archiveReason) || task != null)
+                return new(Failure(id, operationId, "validation",
+                    "A rework request cannot carry an archive reason or task draft."));
+            if (!responses.Any(response => !string.IsNullOrWhiteSpace(response.Comment)))
+                return new(Failure(id, operationId, "validation",
+                    "A rework request needs a comment."));
+            if (spawnedTaskKeys != null
+                && spawnedTaskKeys.Any(key => !string.IsNullOrWhiteSpace(key)))
+                return new(Failure(id, operationId, "validation",
+                    "A rework request cannot carry spawned task keys."));
         }
 
         var snapshot = _catalogue.ResolveCanonicalForMutation(projectName, id);

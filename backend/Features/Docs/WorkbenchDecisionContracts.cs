@@ -25,7 +25,7 @@ public static class WorkbenchDecisionContracts
     /// or reviewing lane.
     /// </summary>
     private static readonly string[] AllowedInitialLanes =
-        [TaskStates.Backlog, TaskStates.Preparation];
+        [TaskStates.Backlog, TaskStates.Preparation, TaskStates.Ready];
 
     private static readonly string[] AllowedDecisionKinds = ["single", "multi", "confirm"];
 
@@ -51,7 +51,9 @@ public static class WorkbenchDecisionContracts
             : "The Dossier revision changed since the decision was taken.";
     }
 
-    public static string? ValidateResponses(IReadOnlyList<WorkbenchDecisionResponse>? responses)
+    public static string? ValidateResponses(
+        IReadOnlyList<WorkbenchDecisionResponse>? responses,
+        bool allowPartial = false)
     {
         if (responses == null || responses.Count > 100)
             return "responses must contain at most 100 decision points.";
@@ -62,12 +64,15 @@ public static class WorkbenchDecisionContracts
                 return "responses contain a malformed or duplicate decisionId.";
             if (!AllowedDecisionKinds.Contains(response.Kind, StringComparer.Ordinal))
                 return $"response kind '{response.Kind}' is invalid.";
-            if (response.SelectedOptionIds.Count is 0 or > 100
+            if ((!allowPartial && response.SelectedOptionIds.Count == 0)
+                || response.SelectedOptionIds.Count > 100
                 || response.SelectedOptionIds.Any(optionId => !SafeMarkupId(optionId))
                 || response.SelectedOptionIds.Distinct(StringComparer.Ordinal).Count()
                     != response.SelectedOptionIds.Count)
                 return $"response '{response.DecisionId}' needs unique, safe selected option ids.";
-            if (response.Kind is "single" or "confirm" && response.SelectedOptionIds.Count != 1)
+            if (response.Kind is "single" or "confirm"
+                && response.SelectedOptionIds.Count != 1
+                && !(allowPartial && response.SelectedOptionIds.Count == 0))
                 return $"response '{response.DecisionId}' requires exactly one selected option.";
             if (response.Comment is { Length: > 20_000 })
                 return $"response '{response.DecisionId}' comment is too long.";

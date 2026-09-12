@@ -1,6 +1,8 @@
 <section class="decision-panel"
+         [class.decision-panel--inline]="inline()"
          data-testid="workbench-decision-panel"
          [attr.data-stage]="stage()">
+  @if (!inline()) {
   <header class="decision-panel__header">
     <strong class="decision-panel__title">{{ document().workbench.title }}</strong>
     <span class="decision-panel__separator" aria-hidden="true">·</span>
@@ -27,8 +29,9 @@
       }
     </span>
   </header>
+  }
 
-  @if (hasBrowserDraft()) {
+  @if (hasBrowserDraft() && !inline()) {
     <div class="decision-panel__draft" role="status" data-testid="workbench-decision-draft-notice">
       <span><i aria-hidden="true"></i>Draft saved for this browser session.</span>
       <button type="button"
@@ -54,10 +57,24 @@
   } @else if (persistedDecision(); as decision) {
     <div class="decision-panel__receipt" data-testid="workbench-decision-receipt">
       <span>
-        <strong>{{ outcomeLabel(decision) }}</strong>
+        <strong>
+          @if (decision.outcome === 'rework') {
+            Rework requested on {{ decision.confirmedAt | date:'medium' }} with {{ decision.model || 'the selected model' }}
+          } @else {
+            {{ outcomeLabel(decision) }}
+          }
+        </strong>
         · {{ decision.responses.length }} decision point{{ decision.responses.length === 1 ? '' : 's' }}
         · {{ decision.confirmedBy || decision.preparedBy }}
         · {{ (decision.decidedAt || decision.confirmedAt || decision.preparedAt) | date:'medium' }}
+      </span>
+      @if (decision.cliType || decision.model || decision.thinkingLevel) {
+        <span class="decision-panel__receipt-note" data-testid="workbench-decision-agent-receipt">
+          {{ decision.cliType || 'CLI default' }} · {{ decision.model || 'model default' }}@if (decision.thinkingLevel) { · {{ decision.thinkingLevel }}}
+        </span>
+      }
+      <span class="decision-panel__receipt-note" data-testid="workbench-decision-response-receipt">
+        {{ selectedSummary() }}
       </span>
       @if (decision.reason) {
         <span class="decision-panel__receipt-note">{{ decision.reason }}</span>
@@ -79,45 +96,11 @@
         </div>
       }
     </div>
-  } @else if (draftMode() === 'feature-spawn') {
-    <form class="decision-panel__confirmation"
-          data-testid="workbench-decision-feature-confirmation"
-          (submit)="$event.preventDefault(); createFeatureCard()">
-      <label>
-        <span>Title</span>
-        <input type="text"
-               data-testid="workbench-decision-title"
-               maxlength="240"
-               [value]="title()"
-               [disabled]="pending()"
-               (input)="updateTitle($event)" />
-      </label>
-      <label class="decision-panel__goal">
-        <span>Goal</span>
-        <textarea rows="2"
-                  data-testid="workbench-decision-goal"
-                  maxlength="20000"
-                  [value]="goal()"
-                  [disabled]="pending()"
-                  (input)="updateGoal($event)"></textarea>
-      </label>
-      <p class="decision-panel__chosen" data-testid="workbench-decision-chosen-options">
-        <span>Chosen options</span>
-        <strong>{{ selectedSummary() || 'No inline decision points' }}</strong>
-      </p>
-      <div class="decision-panel__actions">
-        <button type="submit"
-                data-testid="workbench-decision-confirm"
-                [disabled]="!canCreateFeature()"
-                [appPendingButton]="pending()"
-                pendingLabel="Creating…">Create feature card</button>
-      </div>
-    </form>
-  } @else if (stage() === 'prepared' && draftMode() === 'archive') {
+  } @else if (stage() === 'prepared' && archiveOpen()) {
     <div class="decision-panel__archive-confirm">
       <span>Archive with reason: <strong>{{ archiveReason() }}</strong></span>
       <div class="decision-panel__actions">
-        <button type="button" [disabled]="pending()" (click)="cancelDraft()">Cancel</button>
+        <button type="button" [disabled]="pending()" (click)="cancelArchive()">Cancel</button>
         <button type="button"
                 data-testid="workbench-decision-confirm"
                 [appPendingButton]="requestState().pending === 'confirm'"
@@ -125,7 +108,7 @@
                 (click)="confirmArchive()">Confirm archive</button>
       </div>
     </div>
-  } @else if (draftMode() === 'archive') {
+  } @else if (archiveOpen()) {
     <form class="decision-panel__archive"
           (submit)="$event.preventDefault(); prepareArchive()">
       <label>
@@ -137,7 +120,7 @@
                   (input)="updateArchiveReason($event)"></textarea>
       </label>
       <div class="decision-panel__actions">
-        <button type="button" [disabled]="pending()" (click)="cancelDraft()">Cancel</button>
+        <button type="button" [disabled]="pending()" (click)="cancelArchive()">Cancel</button>
         <button type="submit"
                 data-testid="workbench-decision-prepare-archive"
                 [appPendingButton]="requestState().pending === 'prepare'"
@@ -145,31 +128,22 @@
       </div>
     </form>
   } @else {
-    <div class="decision-panel__bar">
-      <span data-testid="workbench-decision-answer-count">
-        {{ decisionPoints().length }} inline decision point{{ decisionPoints().length === 1 ? '' : 's' }}
-        · {{ answersComplete() ? 'ready' : 'answer every point in the document' }}
-      </span>
-      <div class="decision-panel__actions">
-        <button type="button"
-                data-testid="workbench-decision-archive"
-                [disabled]="pending() || mutationBlocked()"
-                (click)="beginArchive()">Archive</button>
-        <button type="button"
-                data-testid="workbench-decision-prepare"
-                [disabled]="!canPrepareFeature()"
-                (click)="prepareFeatureCard()">Prepare feature card</button>
-      </div>
-    </div>
+    <app-workbench-decision-actions
+      [projectName]="projectName()"
+      [document]="document()"
+      [decisionPoints]="decisionPoints()"
+      [responses]="responses()"
+      [actor]="actor()"
+      [inline]="inline()"
+      [settled]="settled()"
+      (archiveRequested)="beginArchive()"
+      (decisionChanged)="decisionChanged.emit()" />
   }
 
   @if (validationError(); as error) {
     <p class="decision-panel__error" role="alert">{{ error }}</p>
   }
-  @if (actionError(); as error) {
-    <p class="decision-panel__error" role="alert">{{ error }}</p>
-  }
-  @if (requestState().error; as error) {
+  @if (archiveOpen() && requestState().error; as error) {
     <p class="decision-panel__error" role="alert">{{ error }}</p>
   }
 </section>

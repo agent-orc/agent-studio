@@ -34,6 +34,7 @@ const RESPONSES: WorkbenchDecisionResponse[] = [{
 const DOCUMENT: WorkbenchDocument = {
   workbench: {
     id: 'routing-policy',
+    key: 'AGT-W48',
     title: 'Routing policy',
     summary: 'Choose the durable routing direction.',
     status: 'active',
@@ -74,6 +75,10 @@ describe('WorkbenchDecisionPanelComponent', () => {
 
   beforeEach(async () => {
     sessionStorage.clear();
+    localStorage.clear();
+    localStorage.setItem('defaultCliType', 'codex');
+    localStorage.setItem('defaultModel:codex', 'gpt-5.6-sol');
+    localStorage.setItem('defaultThinkingLevel:codex', 'high');
     createJob.mockClear();
     getDetailByProject.mockClear();
     getReferenceStatuses.mockClear();
@@ -107,7 +112,7 @@ describe('WorkbenchDecisionPanelComponent', () => {
   afterEach(() => http.verify());
 
   it('prefills a compact feature proposal from inline responses and records the created card', () => {
-    click('workbench-decision-prepare');
+    click('workbench-decision-start');
 
     const confirmation = fixture.nativeElement.querySelector(
       '[data-testid="workbench-decision-feature-confirmation"]');
@@ -131,7 +136,7 @@ describe('WorkbenchDecisionPanelComponent', () => {
         title: 'Implement Routing policy',
         chosenOption: 'Choose the route: Direct path. Note: Keep the boundary explicit.',
         relatedTaskKeys: ['AGT-2300'],
-        initialLane: '1-preparation',
+        initialLane: '2-ready',
       }),
     }));
     const operationId = prepare.request.body.operationId;
@@ -153,7 +158,10 @@ describe('WorkbenchDecisionPanelComponent', () => {
     expect(createJob).toHaveBeenCalledWith(expect.objectContaining({
       title: 'Implement Routing policy',
       watchPath: '/tasks/agent-studio',
-      targetState: '1-preparation',
+      targetState: '2-ready',
+      cliType: 'codex',
+      model: 'gpt-5.6-sol',
+      thinkingLevel: 'high',
       taskType: 'feature',
     }));
     expect(getDetailByProject).toHaveBeenCalledWith('implement-routing-policy', 'Agent Studio');
@@ -167,6 +175,9 @@ describe('WorkbenchDecisionPanelComponent', () => {
       expectedFingerprint: 'b'.repeat(64),
       responses: RESPONSES,
       spawnedTaskKeys: ['AGT-2400'],
+      cliType: 'codex',
+      model: 'gpt-5.6-sol',
+      thinkingLevel: 'high',
       confirmed: true,
     }));
     confirm.flush({
@@ -221,7 +232,7 @@ describe('WorkbenchDecisionPanelComponent', () => {
   });
 
   it('restores feature fields for the browser session and discards them explicitly', () => {
-    click('workbench-decision-prepare');
+    click('workbench-decision-start');
     setValue('workbench-decision-title', 'Build the selected direct route');
     setValue('workbench-decision-goal', 'Keep the direct route across navigation.');
 
@@ -246,6 +257,62 @@ describe('WorkbenchDecisionPanelComponent', () => {
       .toBeNull();
     expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-title"]'))
       .toBeNull();
+  });
+
+  it('offers the shared picker in the inline action bar and requests rework from a partial answer', () => {
+    fixture.componentRef.setInput('inline', true);
+    fixture.componentRef.setInput('responses', [{
+      ...RESPONSES[0], selectedOptionIds: [], comment: 'Move the total higher.',
+    }]);
+    fixture.detectChanges();
+
+    const start = fixture.nativeElement.querySelector(
+      '[data-testid="workbench-decision-start"]') as HTMLButtonElement;
+    const rework = fixture.nativeElement.querySelector(
+      '[data-testid="workbench-decision-rework"]') as HTMLButtonElement;
+    expect(start.disabled).toBe(true);
+    expect(rework.disabled).toBe(false);
+    rework.click();
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="workbench-decision-agent"]'))
+      .not.toBeNull();
+
+    const form = fixture.nativeElement.querySelector(
+      '[data-testid="workbench-decision-rework-confirmation"]') as HTMLFormElement;
+    form.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector(
+      '[data-testid="workbench-decision-rework-confirmation"]')).toBeNull();
+    expect(fixture.componentInstance.responses()[0].comment).toBe('Move the total higher.');
+
+    click('workbench-decision-rework');
+    click('workbench-decision-confirm-rework');
+    const prepareRework = http.expectOne(
+      '/api/projects/Agent%20Studio/workbenches/routing-policy/decisions/prepare');
+    prepareRework.flush({
+        success: true, errorCode: null, error: null, workbenchId: 'routing-policy',
+        operationId: prepareRework.request.body.operationId, outcome: 'rework',
+        decisionStage: 'prepared', revision: 'c'.repeat(40), fingerprint: 'b'.repeat(64),
+        spawnedTaskKeys: [], responses: fixture.componentInstance.responses(), idempotent: false,
+      });
+    const confirm = http.expectOne(
+      '/api/projects/Agent%20Studio/workbenches/routing-policy/decisions/confirm');
+    expect(confirm.request.body).toEqual(expect.objectContaining({
+      outcome: 'rework', cliType: 'codex', model: 'gpt-5.6-sol', thinkingLevel: 'high',
+    }));
+    confirm.flush({
+      success: true, errorCode: null, error: null, workbenchId: 'routing-policy',
+      operationId: confirm.request.body.operationId, outcome: 'rework', decisionStage: 'pending',
+      revision: 'd'.repeat(40), fingerprint: 'e'.repeat(64), spawnedTaskKeys: [],
+      responses: fixture.componentInstance.responses(), idempotent: false,
+    });
+    const steer = http.expectOne(
+      '/api/orchestrator/sessions/workbench:Agent%20Studio/AGT-W48/turns');
+    expect(steer.request.body).toEqual(expect.objectContaining({
+      cliType: 'codex', model: 'gpt-5.6-sol', thinkingLevel: 'high',
+    }));
+    expect(steer.request.body.prompt).toContain('Move the total higher.');
+    steer.flush({ status: 'queued' });
   });
 
   function click(testId: string): void {

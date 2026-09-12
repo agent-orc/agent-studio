@@ -74,6 +74,29 @@
         referrerpolicy="no-referrer"
         (load)="onFrameLoaded()"
       ></iframe>
+      @if (decisionAnchor(); as anchor) {
+        <div
+          #inlineActionHost
+          class="workbench-viewer__decision-action"
+          [class.workbench-viewer__decision-action--hidden]="!anchor.visible"
+          [style.top.px]="anchor.top"
+          [style.left.px]="anchor.left"
+          [style.width.px]="anchor.width"
+          data-testid="workbench-inline-decision-action"
+        >
+          @defer (on immediate) {
+            <app-workbench-decision-panel
+              [inline]="true"
+              [projectName]="projectName()"
+              [document]="doc"
+              [decisionPoints]="decisionMarkup().points"
+              [responses]="decisionResponses()"
+              (draftDiscarded)="discardDecisionDraft()"
+              (decisionChanged)="refreshDecision()"
+            />
+          }
+        </div>
+      }
     </div>
   }
 </section>

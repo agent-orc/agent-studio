@@ -22,6 +22,9 @@ export const ISOLATED_HTML_TRACK_ANCHORS_MESSAGE = 'agent-studio:isolated-html-t
 export const WORKBENCH_DECISION_READY_MESSAGE = 'agent-studio:workbench-decision-ready';
 export const WORKBENCH_DECISION_CHANGE_MESSAGE = 'agent-studio:workbench-decision-change';
 export const WORKBENCH_DECISION_HYDRATE_MESSAGE = 'agent-studio:workbench-decision-hydrate';
+export const WORKBENCH_DECISION_ANCHOR_MESSAGE = 'agent-studio:workbench-decision-anchor';
+export const WORKBENCH_DECISION_HOST_HEIGHT_MESSAGE = 'agent-studio:workbench-decision-host-height';
+export const WORKBENCH_DECISION_FOCUS_ACTION_MESSAGE = 'agent-studio:workbench-decision-focus-action';
 
 export type IsolatedHtmlNavigation =
   | { kind: 'wiki'; relPath: string }
@@ -283,6 +286,48 @@ function workbenchDecisionBridgeScript(): string {
       points.push({ id: id, kind: kind, root: point, options: options, comment: comment });
     });
 
+    var hostSlot = null;
+    var anchorPoint = points.length ? points[points.length - 1] : null;
+    var anchorPending = false;
+    if (anchorPoint) {
+      hostSlot = document.createElement('div');
+      hostSlot.setAttribute('data-studio-decision-host-slot', '');
+      hostSlot.setAttribute('aria-hidden', 'true');
+      hostSlot.style.cssText = 'display:block!important;height:72px!important;min-height:72px!important;pointer-events:none!important;';
+      anchorPoint.root.insertAdjacentElement('afterend', hostSlot);
+    }
+
+    function publishAnchor() {
+      anchorPending = false;
+      if (!hostSlot || !anchorPoint) return;
+      var rect = hostSlot.getBoundingClientRect();
+      parent.postMessage({
+        type: '${WORKBENCH_DECISION_ANCHOR_MESSAGE}',
+        decisionId: anchorPoint.id,
+        rect: { top: rect.top, left: rect.left, width: rect.width, height: rect.height },
+        visible: rect.bottom > 0 && rect.top < window.innerHeight && rect.right > 0 && rect.left < window.innerWidth
+      }, '*');
+    }
+    function scheduleAnchor() {
+      if (anchorPending) return;
+      anchorPending = true;
+      requestAnimationFrame(publishAnchor);
+    }
+    window.addEventListener('scroll', scheduleAnchor, { passive: true });
+    window.addEventListener('resize', scheduleAnchor, { passive: true });
+    if (anchorPoint && typeof ResizeObserver === 'function')
+      new ResizeObserver(scheduleAnchor).observe(anchorPoint.root);
+
+    document.addEventListener('keydown', function (event) {
+      if (!anchorPoint || event.key !== 'Tab' || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return;
+      var controls = anchorPoint.options.map(function (option) { return option.input; });
+      if (anchorPoint.comment) controls.push(anchorPoint.comment);
+      if (controls.length && event.target === controls[controls.length - 1]) {
+        event.preventDefault();
+        parent.postMessage({ type: '${WORKBENCH_DECISION_FOCUS_ACTION_MESSAGE}' }, '*');
+      }
+    }, true);
+
     function read() {
       return points.map(function (point) {
         return {
@@ -305,6 +350,15 @@ function workbenchDecisionBridgeScript(): string {
     }, true);
     window.addEventListener('message', function (event) {
       var message = event.data;
+      if (message && message.type === '${WORKBENCH_DECISION_HOST_HEIGHT_MESSAGE}' && hostSlot) {
+        var height = Number(message.height);
+        if (isFinite(height) && height >= 48 && height <= 800) {
+          hostSlot.style.setProperty('height', Math.ceil(height) + 'px', 'important');
+          hostSlot.style.setProperty('min-height', Math.ceil(height) + 'px', 'important');
+          scheduleAnchor();
+        }
+        return;
+      }
       if (!message || message.type !== '${WORKBENCH_DECISION_HYDRATE_MESSAGE}' || !Array.isArray(message.responses)) return;
       message.responses.forEach(function (response) {
         var point = points.find(function (candidate) { return candidate.id === response.decisionId; });
@@ -319,6 +373,7 @@ function workbenchDecisionBridgeScript(): string {
         }
       });
     });
+    scheduleAnchor();
     publish('${WORKBENCH_DECISION_READY_MESSAGE}');
   })();`;
 }

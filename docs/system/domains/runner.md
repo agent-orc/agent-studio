@@ -178,6 +178,12 @@ state.
 
   Records persist under
   `<TaskRepository>/.metadata/orchestrator-sessions/<encoded>/`.
+  Session turns may carry an explicit CLI, model, and thinking level. Claude
+  turns retain resumable session behavior; other configured CLIs use the
+  one-shot runner in the Dossier repository working directory. Inline Dossier
+  rework uses this contract so the permanent `workbench` session can revise
+  `index.html` and `workbench.json` through the normal orchestrator delivery
+  path.
 - `backend/Features/Orchestrator/OrchestratorContextDigestService.cs` and
   `OrchestratorContextEndpoints.cs`: ORCH-1 read context shared by side-sheet
   chat turns and session turns. The bounded digest folds board transitions,

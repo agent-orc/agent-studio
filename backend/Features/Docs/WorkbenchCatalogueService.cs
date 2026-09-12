@@ -271,13 +271,15 @@ public sealed class WorkbenchCatalogueService
         var fingerprint = descriptorPath == null
             ? null
             : ComputeWorkbenchFingerprint(descriptorPath, full);
+        var entryFingerprint = ComputeEntryFingerprint(full);
         return new WorkbenchDocument(
             item,
             html,
             source.Info.Writable ? status?.Branch : source.Info.Branch,
             revision,
             workingTreeModified,
-            fingerprint);
+            fingerprint,
+            entryFingerprint);
     }
 
     /// <summary>
@@ -864,7 +866,7 @@ public sealed class WorkbenchCatalogueService
             throw new InvalidDataException("decision must be an object or null.");
 
         var outcome = RequiredString(value, "outcome");
-        if (outcome is not ("feature-spawn" or "archive"))
+        if (outcome is not ("feature-spawn" or "archive" or "rework"))
             throw new InvalidDataException($"Unsupported decision outcome '{outcome}'.");
         var state = RequiredString(value, "state");
         if (state is not ("pending" or "failed" or "succeeded"))
@@ -878,6 +880,7 @@ public sealed class WorkbenchCatalogueService
             throw new InvalidDataException("decision preparedAt must be an ISO UTC timestamp ending in Z.");
         var sourceRevision = OptionalString(value, "sourceRevision");
         var sourceFingerprint = OptionalString(value, "sourceFingerprint");
+        var sourceEntryFingerprint = OptionalString(value, "sourceEntryFingerprint");
         if (string.IsNullOrWhiteSpace(sourceRevision) && string.IsNullOrWhiteSpace(sourceFingerprint))
             throw new InvalidDataException("decision needs sourceRevision or sourceFingerprint.");
         if (sourceRevision != null
@@ -886,6 +889,14 @@ public sealed class WorkbenchCatalogueService
         if (sourceFingerprint != null
             && (sourceFingerprint.Length != 64 || !sourceFingerprint.All(Uri.IsHexDigit)))
             throw new InvalidDataException("decision sourceFingerprint is malformed.");
+        if (sourceEntryFingerprint != null
+            && (sourceEntryFingerprint.Length != 64 || !sourceEntryFingerprint.All(Uri.IsHexDigit)))
+            throw new InvalidDataException("decision sourceEntryFingerprint is malformed.");
+        var action = OptionalString(value, "action")
+            ?? (outcome == "feature-spawn" ? "created-card" : outcome == "rework" ? "rework-requested" : "archived");
+        var cliType = OptionalString(value, "cliType");
+        var model = OptionalString(value, "model");
+        var thinkingLevel = OptionalString(value, "thinkingLevel");
         var confirmedAt = OptionalString(value, "confirmedAt");
         var confirmedBy = OptionalString(value, "confirmedBy");
         if ((confirmedAt == null) != (confirmedBy == null)
@@ -911,7 +922,9 @@ public sealed class WorkbenchCatalogueService
             {
                 throw new InvalidDataException("decision responses are malformed.", ex);
             }
-            var responseError = WorkbenchDecisionContracts.ValidateResponses(responses);
+            var responseError = WorkbenchDecisionContracts.ValidateResponses(
+                responses,
+                allowPartial: outcome == "rework");
             if (responseError != null)
                 throw new InvalidDataException($"Decision {responseError}");
         }
@@ -943,6 +956,15 @@ public sealed class WorkbenchCatalogueService
             if (draftError != null)
                 throw new InvalidDataException($"Feature decision {draftError}");
         }
+        if (outcome == "rework")
+        {
+            if (value.TryGetProperty("taskDraft", out _))
+                throw new InvalidDataException("Rework requests cannot carry a task draft.");
+            if (!responses.Any(response => !string.IsNullOrWhiteSpace(response.Comment)))
+                throw new InvalidDataException("Rework requests need a comment.");
+            if (state != "pending")
+                throw new InvalidDataException("Rework requests stay pending until a new revision lands.");
+        }
         if (state == "failed" && (confirmedAt == null || string.IsNullOrWhiteSpace(failure)))
             throw new InvalidDataException("Failed decision needs confirmation provenance and failure.");
         if (state == "succeeded")
@@ -973,7 +995,8 @@ public sealed class WorkbenchCatalogueService
         return new WorkbenchDecisionProjection(
             outcome, state, operationId, sourceRevision, sourceFingerprint,
             preparedAt, preparedBy, confirmedAt, confirmedBy, decidedAt,
-            reason, failure, spawned, responses, parsedTaskDraft);
+            reason, failure, spawned, responses, parsedTaskDraft,
+            action, cliType, model, thinkingLevel, sourceEntryFingerprint);
     }
 
     private static string[] DescriptorTaskKeys(JsonElement descriptor) =>
@@ -1006,6 +1029,19 @@ public sealed class WorkbenchCatalogueService
 
     internal static string ComputeDescriptorFingerprint(string text) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
+
+    internal static string? ComputeEntryFingerprint(string entryPath)
+    {
+        try
+        {
+            return Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(entryPath))).ToLowerInvariant();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            SilentCatch.Note(ex, "Dossier entrypoint fingerprint could not be read.");
+            return null;
+        }
+    }
 
     internal static string? ComputeWorkbenchFingerprint(string descriptorPath, string entryPath)
     {
@@ -1159,7 +1195,7 @@ public sealed record WorkbenchOverview(
     int HistoryCount,
     List<WorkbenchOverviewItem> Items);
 public record WorkbenchDocument(WorkbenchListItem Workbench, string Html, string? Branch, string? Revision,
-    bool WorkingTreeModified, string? Fingerprint);
+    bool WorkingTreeModified, string? Fingerprint, string? EntryFingerprint);
 
 public sealed record WorkbenchDecisionProjection(
     string Outcome,
@@ -1176,7 +1212,12 @@ public sealed record WorkbenchDecisionProjection(
     string? Failure,
     string[] SpawnedTaskKeys,
     List<WorkbenchDecisionResponse> Responses,
-    WorkbenchTaskDraft? TaskDraft);
+    WorkbenchTaskDraft? TaskDraft,
+    string? Action,
+    string? CliType,
+    string? Model,
+    string? ThinkingLevel,
+    string? SourceEntryFingerprint);
 
 internal sealed record WorkbenchMutationSnapshot(
     string Root,

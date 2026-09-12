@@ -64,8 +64,9 @@ public sealed class OrchestratorWorkbenchPromptContextComposer
             sb.AppendLine();
         }
 
+        var repositoryRoot = _workbenches.ResolveCanonicalForMutation(projectName, item.Id)?.Root;
         return new OrchestratorWorkbenchPromptContext(
-            item.Key ?? workbenchKey, sb.ToString().TrimEnd(), included);
+            item.Key ?? workbenchKey, sb.ToString().TrimEnd(), included, repositoryRoot);
     }
 
     private static string RenderMetadata(WorkbenchListItem item)
@@ -104,4 +105,5 @@ public sealed class OrchestratorWorkbenchPromptContextComposer
 public sealed record OrchestratorWorkbenchPromptContext(
     string WorkbenchKey,
     string PromptBlock,
-    IReadOnlyList<string> IncludedBlocks);
+    IReadOnlyList<string> IncludedBlocks,
+    string? RepositoryRoot);
