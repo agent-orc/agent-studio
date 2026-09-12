@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using System.Runtime.Versioning;
 using Microsoft.Extensions.Logging;
 
 namespace AgentStudio.Cli;
@@ -12,7 +11,8 @@ namespace AgentStudio.Cli;
 /// <c>ng serve</c>) — and reaps the whole group at run-end.
 ///
 /// <para>
-/// Implemented on top of a Win32 <i>Job Object</i> (the OS primitive whose
+/// Implemented on top of a Win32 <i>Job Object</i> or a Linux session/process
+/// group. The Windows OS primitive whose
 /// API names — <c>CreateJobObject</c> / <c>AssignProcessToJobObject</c> —
 /// the P/Invoke layer below keeps verbatim). The wrapper is named after the
 /// task-run it scopes, NOT the OS primitive, so it does not collide with the
@@ -38,22 +38,55 @@ namespace AgentStudio.Cli;
 /// reached, disposing the handle still kills any stragglers.
 /// </para>
 /// <para>
-/// <b>Best-effort, Windows-only, zero-regression.</b>
-/// <see cref="CreateForProcess"/> returns <c>null</c> on non-Windows or if the
-/// OS refuses the assignment (already exited / access denied / nested-job
-/// limit), and the caller keeps its existing tree-kill behaviour. The group
-/// only ever contains the run's own process subtree, so terminating it can
-/// never touch the backend or another run.
+/// <b>Best-effort and zero-regression.</b> On Linux the caller first invokes
+/// <see cref="WrapStartInfoForProcessGroup"/>, which launches the CLI through
+/// <c>setsid --wait</c>. This establishes the group before any CLI child can
+/// start, avoiding the race inherent in a parent-side <c>setpgid</c> call.
+/// <see cref="CreateForProcess"/> returns <c>null</c> on unsupported platforms
+/// or if the OS refuses ownership, and the caller keeps its existing tree-kill
+/// behaviour. The group only ever contains the run's own process subtree, so
+/// terminating it can never touch the backend or another run.
 /// </para>
 /// </summary>
-[SupportedOSPlatform("windows")]
 internal sealed class TaskProcessReaper : IDisposable
 {
     private readonly object _gate = new();
     private IntPtr _handle;
+    private readonly int? _unixProcessGroupId;
+    private readonly Process? _rootProcess;
     private bool _terminated;
 
-    private TaskProcessReaper(IntPtr handle) => _handle = handle;
+    private TaskProcessReaper(IntPtr handle, int? unixProcessGroupId = null, Process? rootProcess = null)
+    {
+        _handle = handle;
+        _unixProcessGroupId = unixProcessGroupId;
+        _rootProcess = rootProcess;
+    }
+
+    /// <summary>
+    /// On Linux, replace the executable with <c>setsid --wait</c> while
+    /// preserving the original argument vector. Returns true when wrapping was
+    /// applied. Other platforms and hosts without util-linux remain on the
+    /// managed tree-kill fallback.
+    /// </summary>
+    internal static bool WrapStartInfoForProcessGroup(ProcessStartInfo startInfo)
+    {
+        if (!OperatingSystem.IsLinux()) return false;
+        var setsid = File.Exists("/usr/bin/setsid")
+            ? "/usr/bin/setsid"
+            : File.Exists("/bin/setsid") ? "/bin/setsid" : null;
+        if (setsid is null || string.IsNullOrWhiteSpace(startInfo.FileName)) return false;
+        if (!string.IsNullOrWhiteSpace(startInfo.Arguments)) return false;
+
+        var executable = startInfo.FileName;
+        var arguments = startInfo.ArgumentList.ToArray();
+        startInfo.FileName = setsid;
+        startInfo.ArgumentList.Clear();
+        startInfo.ArgumentList.Add("--wait");
+        startInfo.ArgumentList.Add(executable);
+        foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
+        return true;
+    }
 
     /// <summary>
     /// Create a kill-on-close process group and assign <paramref name="process"/>
@@ -63,6 +96,34 @@ internal sealed class TaskProcessReaper : IDisposable
     /// </summary>
     public static TaskProcessReaper? CreateForProcess(Process process, ILogger? logger = null)
     {
+        if (OperatingSystem.IsLinux())
+        {
+            try
+            {
+                var processGroupId = -1;
+                for (var attempt = 0; attempt < 25; attempt++)
+                {
+                    processGroupId = getpgid(process.Id);
+                    if (processGroupId == process.Id || process.HasExited) break;
+                    Thread.Sleep(10);
+                }
+                if (processGroupId <= 0 || processGroupId != process.Id)
+                {
+                    logger?.LogDebug(
+                        "TaskProcessReaper: Linux child PID {Pid} is in process group {ProcessGroupId}, not an owned group; falling back to tree-kill",
+                        process.Id,
+                        processGroupId);
+                    return null;
+                }
+                return new TaskProcessReaper(IntPtr.Zero, processGroupId, process);
+            }
+            catch (Exception ex)
+            {
+                logger?.LogDebug(ex, "TaskProcessReaper: Linux process-group discovery failed; falling back to tree-kill");
+                return null;
+            }
+        }
+
         if (!OperatingSystem.IsWindows()) return null;
 
         IntPtr job = IntPtr.Zero;
@@ -130,7 +191,25 @@ internal sealed class TaskProcessReaper : IDisposable
     {
         lock (_gate)
         {
-            if (_terminated || _handle == IntPtr.Zero) return;
+            if (_terminated) return;
+            if (_unixProcessGroupId is { } processGroupId)
+            {
+                try
+                {
+                    if (kill(-processGroupId, SigTerm) != 0 && Marshal.GetLastWin32Error() != Esrch)
+                        throw new InvalidOperationException($"kill(SIGTERM) failed with errno {Marshal.GetLastWin32Error()}.");
+                    Thread.Sleep(100);
+                    if (kill(-processGroupId, 0) == 0) kill(-processGroupId, SigKill);
+                    try { _rootProcess?.WaitForExit(2_000); }
+                    catch (Exception __ex) { SilentCatch.Note(__ex, "TaskProcessReaper.Terminate: Linux root wait best-effort"); }
+                    WaitForUnixProcessGroupExit(processGroupId, TimeSpan.FromSeconds(2));
+                }
+                catch (Exception __ex) { SilentCatch.Note(__ex, "TaskProcessReaper.Terminate: Linux group best-effort"); }
+                finally { _terminated = true; }
+                return;
+            }
+
+            if (_handle == IntPtr.Zero) return;
             try { TerminateJobObject(_handle, 1); }
             catch (Exception __ex) { SilentCatch.Note(__ex, "TaskProcessReaper.Terminate: best-effort"); }
             finally { _terminated = true; }
@@ -143,6 +222,11 @@ internal sealed class TaskProcessReaper : IDisposable
     /// </summary>
     public void Dispose()
     {
+        if (_unixProcessGroupId.HasValue)
+        {
+            Terminate();
+            return;
+        }
         lock (_gate)
         {
             if (_handle == IntPtr.Zero) return;
@@ -156,6 +240,19 @@ internal sealed class TaskProcessReaper : IDisposable
 
     private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
     private const int JobObjectExtendedLimitInformation = 9;
+    private const int SigTerm = 15;
+    private const int SigKill = 9;
+    private const int Esrch = 3;
+
+    private static void WaitForUnixProcessGroupExit(int processGroupId, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (kill(-processGroupId, 0) != 0 && Marshal.GetLastWin32Error() == Esrch) return;
+            Thread.Sleep(25);
+        }
+    }
 
     [StructLayout(LayoutKind.Sequential)]
     private struct JOBOBJECT_BASIC_LIMIT_INFORMATION
@@ -211,4 +308,10 @@ internal sealed class TaskProcessReaper : IDisposable
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CloseHandle(IntPtr hObject);
+
+    [DllImport("libc", SetLastError = true)]
+    private static extern int getpgid(int pid);
+
+    [DllImport("libc", SetLastError = true)]
+    private static extern int kill(int pid, int signal);
 }

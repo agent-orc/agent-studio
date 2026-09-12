@@ -556,6 +556,12 @@ public partial class GenericCliExecutionService : ICliExecutionService
 
         AgentGitCommandGuard.Apply(psi);
 
+        // Linux has no kill-on-close Job Object. Launch through setsid so the
+        // CLI and every helper it starts share a run-owned process group from
+        // the first instruction. Natural CLI completion can otherwise leave a
+        // detached preview server alive with its cwd inside the worktree.
+        TaskProcessReaper.WrapStartInfoForProcessGroup(psi);
+
         ChildHandle child;
         try
         {
@@ -614,11 +620,9 @@ public partial class GenericCliExecutionService : ICliExecutionService
         // holding the worktree open — which wedges the post-run
         // `git worktree remove` and orphans the worktree (AGT-1791). Assigned
         // here, immediately after spawn, so the CLI's later children inherit
-        // group membership. Best-effort + Windows-only; null leaves the
-        // existing tree-kill path in force.
-        var processReaper = OperatingSystem.IsWindows()
-            ? TaskProcessReaper.CreateForProcess(process, _logger)
-            : null;
+        // group membership. Best-effort; null leaves the existing tree-kill
+        // path in force.
+        var processReaper = TaskProcessReaper.CreateForProcess(process, _logger);
 
         var execution = new CliExecution
         {
@@ -789,7 +793,10 @@ public partial class GenericCliExecutionService : ICliExecutionService
                 }
                 else
                 {
-                    KillProcessTree(info.Process, jobKey);
+                    if (info.ProcessReaper is not null)
+                        info.ProcessReaper.Terminate();
+                    else
+                        KillProcessTree(info.Process, jobKey);
                 }
                 _logger.LogInformation("Killed {Cli} process for job {JobId} (reason={Reason})", CliType, jobKey, reason);
             }
@@ -1462,11 +1469,8 @@ public partial class GenericCliExecutionService : ICliExecutionService
             // are still members of this run's job object. Leaving them alive
             // holds the worktree open, so `git worktree remove` fails "Device
             // or resource busy" and orphans the worktree (AGT-1791).
-            if (OperatingSystem.IsWindows())
-            {
-                try { info.ProcessReaper?.Terminate(); }
-                catch (Exception __ex) { SilentCatch.Note(__ex, "CliExecutionServiceBase: process-reaper terminate best-effort"); }
-            }
+            try { info.ProcessReaper?.Terminate(); }
+            catch (Exception __ex) { SilentCatch.Note(__ex, "CliExecutionServiceBase: process-reaper terminate best-effort"); }
 
             try { OnFinished?.Invoke(jobKey, finalExecution); }
             catch (Exception ex) { _logger.LogWarning(ex, "OnFinished subscriber threw for {JobId}", jobKey); }
@@ -1515,11 +1519,8 @@ public partial class GenericCliExecutionService : ICliExecutionService
             try { info.CleanContext?.Dispose(); }
             catch (Exception __ex) { SilentCatch.Note(__ex, "CliExecutionServiceBase: clean-context dispose"); }
 
-            if (OperatingSystem.IsWindows())
-            {
-                try { info.ProcessReaper?.Dispose(); }
-                catch (Exception __ex) { SilentCatch.Note(__ex, "CliExecutionServiceBase: process-reaper dispose"); }
-            }
+            try { info.ProcessReaper?.Dispose(); }
+            catch (Exception __ex) { SilentCatch.Note(__ex, "CliExecutionServiceBase: process-reaper dispose"); }
         });
     }
 
@@ -2039,7 +2040,7 @@ public partial class GenericCliExecutionService : ICliExecutionService
         /// Terminated at run-finish so those detached holders die BEFORE the
         /// worktree cleanup, otherwise they wedge <c>git worktree remove</c>
         /// "Device or resource busy" and orphan the worktree (AGT-1791). Null
-        /// on non-Windows or when the OS refused the assignment (best-effort;
+        /// on unsupported hosts or when the OS refused the assignment (best-effort;
         /// the tree-kill fallback still applies).
         /// </summary>
         internal TaskProcessReaper? ProcessReaper { get; init; }

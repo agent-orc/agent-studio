@@ -135,17 +135,15 @@ public partial class GenericCliExecutionService
                 AddClaudeRulesArgument(startInfo, rulesPath);
                 if (usesStudioThinkingCompatibility)
                     AddClaudeThinkingArgument(startInfo, invocationThinkingLevel);
+                TaskProcessReaper.WrapStartInfoForProcessGroup(startInfo);
             },
             baseOptions.Spawner,
             process =>
             {
-                if (OperatingSystem.IsWindows())
+                try { processReaper = TaskProcessReaper.CreateForProcess(process, _logger); }
+                catch (Exception ex)
                 {
-                    try { processReaper = TaskProcessReaper.CreateForProcess(process, _logger); }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Could not attach the Windows task process reaper to CAR PID {Pid}", process.Id);
-                    }
+                    _logger.LogWarning(ex, "Could not attach the task process reaper to CAR PID {Pid}", process.Id);
                 }
                 CarAfterSpawnForTest?.Invoke(process);
             });
@@ -342,13 +340,10 @@ public partial class GenericCliExecutionService
         try { driver.Stop(jobKey, RunStopReason.Cancelled); }
         catch (Exception ex) { _logger.LogDebug(ex, "CAR cleanup stop failed for {JobId}", jobKey); }
 
-        if (OperatingSystem.IsWindows())
-        {
-            try { processReaper?.Terminate(); }
-            catch (Exception ex) { _logger.LogDebug(ex, "CAR cleanup process reaper failed for {JobId}", jobKey); }
-            try { processReaper?.Dispose(); }
-            catch (Exception ex) { _logger.LogDebug(ex, "CAR cleanup process-reaper dispose failed for {JobId}", jobKey); }
-        }
+        try { processReaper?.Terminate(); }
+        catch (Exception ex) { _logger.LogDebug(ex, "CAR cleanup process reaper failed for {JobId}", jobKey); }
+        try { processReaper?.Dispose(); }
+        catch (Exception ex) { _logger.LogDebug(ex, "CAR cleanup process-reaper dispose failed for {JobId}", jobKey); }
 
         if (spawnedProcess != null)
         {
@@ -546,11 +541,8 @@ public partial class GenericCliExecutionService
                 RunId = jobKey,
             });
 
-            if (OperatingSystem.IsWindows())
-            {
-                try { info.ProcessReaper?.Terminate(); }
-                catch (Exception __ex) { SilentCatch.Note(__ex, "BackendCarExecution: process-reaper terminate"); }
-            }
+            try { info.ProcessReaper?.Terminate(); }
+            catch (Exception __ex) { SilentCatch.Note(__ex, "BackendCarExecution: process-reaper terminate"); }
 
             try { OnFinished?.Invoke(jobKey, finalExecution); }
             catch (Exception ex) { _logger.LogWarning(ex, "OnFinished subscriber threw for CAR job {JobId}", jobKey); }
