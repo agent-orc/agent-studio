@@ -21,10 +21,24 @@ interface KnownSourceItem {
   isWiki?: boolean;
 }
 
-interface KnownSourceResponse {
-  tasks: KnownSourceItem[];
+/** Repository-bound domains only (dev-seat `GET /api/search/repository`). */
+interface RepositorySearchResponse {
   commits: KnownSourceItem[];
   files: KnownSourceItem[];
+}
+
+/** One Task-Server-owned task match (`GET /api/search`, AGT-2758). */
+interface StudioSearchTaskItem {
+  taskId: string;
+  taskKey: string;
+  title: string;
+  projectId: string;
+  state: string;
+}
+
+interface StudioSearchResponse {
+  query: string;
+  tasks: StudioSearchTaskItem[];
 }
 
 export interface OrchestratorContextSourceSearchResult {
@@ -45,30 +59,33 @@ export class OrchestratorContextSourceService {
   private readonly docs = inject(ProjectDocsService);
 
   search(project: string, query: string) {
-    const params = new HttpParams()
-      .set('q', query)
-      .set('domains', 'tasks,commits,files')
-      .set('limit', 12);
+    const taskParams = new HttpParams().set('q', query).set('project', project).set('limit', 12);
+    const repositoryParams = new HttpParams().set('q', query).set('domains', 'commits,files').set('limit', 12);
     return forkJoin({
-      known: this.http.get<KnownSourceResponse>('/api/search', { params })
-        .pipe(catchError(() => of<KnownSourceResponse>({ tasks: [], commits: [], files: [] }))),
+      // Task matches are Task-Server-owned; commit/file matches stay on the
+      // dev-seat repository search (AGT-2758 splits the legacy mixed
+      // `GET /api/search` contract - see docs/studio-route-ownership).
+      known: this.http.get<StudioSearchResponse>('/api/search', { params: taskParams })
+        .pipe(catchError(() => of<StudioSearchResponse>({ query, tasks: [] }))),
+      repository: this.http.get<RepositorySearchResponse>('/api/search/repository', { params: repositoryParams })
+        .pipe(catchError(() => of<RepositorySearchResponse>({ commits: [], files: [] }))),
       wiki: this.docs.searchWiki(project, query, { limit: 12 })
         .pipe(catchError(() => of<WikiSearchResponse | null>(null))),
       workbenches: this.docs.getWorkbenches(project)
         .pipe(catchError(() => of<WorkbenchCatalogue | null>(null))),
-    }).pipe(map(({ known, wiki, workbenches }) => {
+    }).pipe(map(({ known, repository, wiki, workbenches }) => {
       const sameProject = (item: KnownSourceItem) => item.projectName === project;
-      const tasks = known.tasks.filter(sameProject).map(item => this.option(
-        'tasks', item.title, `${item.taskKey ?? item.subtitle} · ${item.lane ?? 'Task'}`,
-        { kind: 'task', reference: item.taskKey ?? item.subtitle, projectId: project }, 900,
+      const tasks = known.tasks.map(item => this.option(
+        'tasks', item.title, `${item.taskKey} · ${item.state ?? 'Task'}`,
+        { kind: 'task', reference: item.taskKey, projectId: project }, 900,
         item.taskKey));
-      const files = known.files.filter(sameProject).map(item => this.option(
+      const files = repository.files.filter(sameProject).map(item => this.option(
         item.isWiki ? 'wiki' : 'files', item.title, item.path ?? item.subtitle,
         item.isWiki
           ? { kind: 'page', reference: `page:${project}/${(item.path ?? '').replace(/^docs\//i, '')}`, projectId: project }
           : { kind: 'repository-file', reference: item.path ?? item.subtitle, projectId: project },
         item.isWiki ? 1_200 : 700));
-      const commits = known.commits.filter(sameProject).map(item => this.option(
+      const commits = repository.commits.filter(sameProject).map(item => this.option(
         'commits', item.title, item.sha?.slice(0, 8) ?? item.subtitle,
         { kind: 'commit', reference: `commit:${project}/${item.sha ?? item.subtitle}`, projectId: project }, 1_400));
       const wikiPages = (wiki?.results ?? []).map(item => this.option(

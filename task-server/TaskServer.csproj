@@ -39,6 +39,15 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Vendored copy of the same static, versioned policy document backend/Policies
+         ships, for the Studio P3 GET /api/v1/studio/cli/model-routing/policy route.
+         Static JSON data only - no code or project reference, so this stays inside
+         the ArchitectureBoundaryTests project-reference allowlist. -->
+    <EmbeddedResource Include="..\backend\Policies\model-routing-policy.v1.json"
+                      Link="Policies\model-routing-policy.v1.json" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Content Update="appsettings*.json" CopyToPublishDirectory="Never" />
   </ItemGroup>
 

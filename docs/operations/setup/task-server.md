@@ -994,6 +994,48 @@ version 16 adds the studio-operation dispatch ledger and every P2 table.
 | `POST .../security/audit`, `GET .../security/{baseline,reviews[/{fileName}]}` | Security-audit dispatch and durable reviews | `tasks:read` / `tasks:write` |
 | `POST .../deployment/compile`, `GET .../deployment/summary`, `PUT .../publish/automation`, `POST .../publish/{package,website}`, `POST .../wiki/grading/{run,abort}` | Deployment/publish dispatch and durable summaries | `tasks:read` / `tasks:write` |
 
+## Studio administration-and-tail bundle (P3)
+
+AGT-2758 implements the 24-route P3 "administration and long tail" bundle
+from the [Studio route ownership](../../studio-route-ownership/index.html)
+dossier: every route it left unresolved is a GET that reads a table a P0-P2
+bundle already migrated (or a small vendored static document), so it needed
+no new schema migration and no `CurrentSchemaVersion` bump - see
+`StudioP3AdministrationEndpoints.cs` and
+`TaskServerStudioP3AdministrationStore.cs` for the single feature-area file
+pair that owns all 24 handlers, and `StudioP3AdministrationContracts.cs` in
+`contracts/TaskServer.Contracts/` for their wire contracts. Every route
+requires `tasks:read` only, matching the P0 convention that read routes with
+no side effect never need `tasks:write`.
+
+| Route group | Purpose | Scope |
+|---|---|---|
+| `GET /api/v1/studio/admin/config/orchestrator`, `GET .../admin/prompts[/{name},/coverage]` | Orchestrator config and prompt-override reads, reusing the P2 `studio_admin_config`/`studio_admin_prompts` tables | `tasks:read` |
+| `GET /api/v1/studio/auto-review/status` | Durable active-auto-review-lane projection off `tasks` (the legacy in-memory rolling accept/reissue/escalate tick counter has no durable analogue) | `tasks:read` |
+| `GET /api/v1/studio/cli/model-routing/{policy,recommendation}`, `GET .../cli/quota/{caps,model-routes,wait-policy}` | Static, versioned model-routing policy (vendored alongside `backend/Policies/model-routing-policy.v1.json`) plus the durable P2 `studio_cli_settings` singleton; the recommendation route is policy-only, since Task Server cannot spawn the live CLI probe the legacy route also makes | `tasks:read` |
+| `GET /api/v1/studio/projects/{project}/{cli-context-modes,cli-modes,lane-sort-strategies}`, `GET .../quota-wait-policy` | Per-project resolved value off the P2 `studio_project_settings` row, paired with a small vendored "available" enum list (Task Server cannot reference the `CodingAgentRunner` package `ArchitectureBoundaryTests` forbids) | `tasks:read` |
+| `GET /api/v1/studio/projects/{project}/proposals`, `GET .../proposals/evidence/{path*}` | Durable proposal list (wires the previously-unwired P2 `ListStudioProposalsAsync`) and evidence-pointer metadata; no byte-content store exists for evidence images yet, so the evidence route reports the owning proposal's payload rather than image bytes | `tasks:read` |
+| `GET /api/v1/studio/projects/{project}/publish/{targetId}/{panel,run}` | Publish-target status folded from the P2 `studio_publish_settings` row plus the shared `studio_operations` ledger | `tasks:read` |
+| `GET /api/v1/studio/projects/{project}/review-decisions-pending` | Tasks in the durable human-review lane whose latest run completion carried a needs-input message - the AGT-2773 escalation channel's durable successor to the legacy live CLI-log scan | `tasks:read` |
+| `GET /api/v1/studio/projects/{project}/wiki/grading/status` | Wiki-grading run status folded from `studio_operations` (no per-page in-flight counters, unlike the legacy in-memory run handle) | `tasks:read` |
+| `GET /api/v1/studio/projects/pipeline-catalogue` | The static per-pipeline-type step catalogue only - no live repository-stack detection and no per-project override layering, both out of Task Server's checkout-free authority | `tasks:read` |
+| `GET /api/v1/studio/projects/settings` | Every project's `studio_project_settings` row, keyed by project id | `tasks:read` |
+| `GET /api/v1/studio/search` | Task-domain-only global search off the durable `tasks` table, optionally scoped by a `project` query parameter | `tasks:read` |
+| `GET /api/v1/studio/watch-paths` | The P2 `studio_watch_paths` table, previously write-only | `tasks:read` |
+
+**Global search split.** The legacy `GET /api/search` mixed a Task-Server-
+ownable domain (`tasks`) with three domains that all read a project's live
+checked-out docs or git history (`dossiers`, `wiki`, `commits`, `files`).
+Task results now come from the route above; the connector forwards the same
+`/api/search` path there per its classification. The repository-bound
+domains moved to a new, distinctly-named dev-seat route,
+`GET /api/search/repository` (`backend/Features/Search/GlobalSearchEndpoints.cs`),
+which never resolves `tasks` regardless of what a caller requests. Angular's
+`OrchestratorContextSourceService` (the one production caller of the
+non-streaming search contract) calls both routes and merges the results;
+`GlobalSearchService`'s existing SSE `/api/search/stream` path is unrelated
+to this split and unchanged - it is not part of the 366-route inventory.
+
 ## Backup and restore rehearsal
 
 `POST /api/v1/management/backups` creates a consistent SQLite backup, runs an

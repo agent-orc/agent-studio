@@ -17,12 +17,12 @@
     ]
   },
   "counts": {
-    "frontendOperations": 365,
-    "frontendApiOperations": 364,
+    "frontendOperations": 366,
+    "frontendApiOperations": 365,
     "frontendHubOperations": 1,
     "byClassification": {
       "task-server": 268,
-      "dev-seat": 97,
+      "dev-seat": 98,
       "retired": 0
     },
     "orchestratorApiMapGroups": 28,
@@ -7721,7 +7721,7 @@
         "docs/concepts/distributed-agent-studio-target-architecture.md:110-115"
       ],
       "classificationReason": "The route exposes durable task, orchestration, identity, event, policy, artifact, or management state assigned to the Task Server by the target architecture.",
-      "ownershipCaveat": "Task results remain authoritative on the Task Server. Commit and repository-file search must become a separately named dev-seat query or a server index fed by Runner evidence.",
+      "ownershipCaveat": "Resolved: task matches stay on this Task Server route (GET /api/v1/studio/search), reading the durable tasks table instead of a live workspace scan. Commit and repository-file matches were split onto the new dev-seat route fe-366 (GET /api/search/repository); dossier and wiki matches, which also read a project's checked-out docs tree, stay on that same dev-seat route rather than becoming Task Server authority.",
       "d4bPriority": "P3",
       "estimate": {
         "size": "M",
@@ -12069,6 +12069,41 @@
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23"
       ],
       "classificationReason": "Split from fe-283 per the recommendation's 'scope=code' mixed-contract requirement: this route reads live repository checkout history on the dev seat and must not become Task Server authority.",
+      "ownershipCaveat": null,
+      "d4bPriority": null,
+      "estimate": null
+    },
+    {
+      "id": "fe-366",
+      "method": "GET",
+      "path": "/api/search/repository",
+      "queryVariants": [
+        {
+          "kind": "none",
+          "query": ""
+        },
+        {
+          "kind": "optional-subset",
+          "keys": [
+            "domains",
+            "limit",
+            "q"
+          ]
+        }
+      ],
+      "classification": "dev-seat",
+      "owningComponent": "Windows connector dev-seat module",
+      "frontendOwner": "Orchestrator",
+      "v1Status": "not-applicable",
+      "targetRoute": "/api/search/repository",
+      "frontendEvidence": [
+        "frontend/src/app/features/orchestrator/services/orchestrator-context-source.service.ts:70"
+      ],
+      "decisionEvidence": [
+        "docs/studio-route-ownership/index.html#recommendation",
+        "docs/concepts/distributed-agent-studio-target-architecture.md:17-23"
+      ],
+      "classificationReason": "Split from fe-239 per the recommendation's global-search mixed-contract requirement: dossier, wiki, commit, and file matches all read a project's live checked-out docs or git history on the dev seat and must not become Task Server authority.",
       "ownershipCaveat": null,
       "d4bPriority": null,
       "estimate": null
