@@ -64,64 +64,18 @@
             @if (sectionExpanded('needs-decision')) {
             <div id="workbench-overview-decision-list" class="workbench-overview__list">
               @for (item of decisionPending(); track item.projectName + ':' + item.workbench.id) {
-                @let project = projectDisplay(item);
-                <article class="workbench-overview__row" [class.workbench-overview__row--expanded]="inlineDecisionExpanded(item)"
-                         [attr.data-testid]="'workbench-overview-item-' + item.projectName + '-' + item.workbench.id">
-                  <div class="workbench-overview__row-main">
-                    <div class="workbench-overview__title">
-                      <span class="workbench-overview__pattern" role="img"
-                            [attr.aria-label]="documentPattern(item) + ' pattern'"
-                            [attr.data-pattern]="documentPattern(item)"
-                            [attr.data-testid]="'workbench-overview-pattern-' + item.projectName + '-' + item.workbench.id">
-                        <app-studio-icon [name]="patternIcon(item)" [size]="14" />
-                      </span>
-                      <h3>{{ item.workbench.title }}</h3>
-                    </div>
-                    <div class="workbench-overview__meta">
-                      <span class="workbench-overview__project"
-                            [style.--workbench-project]="project.color"
-                            [attr.title]="project.displayName"
-                            [attr.aria-label]="'Project ' + project.displayName">
-                        <i aria-hidden="true"></i>{{ project.shortCode || project.displayName }}
-                      </span>
-                      <span class="workbench-overview__status" data-status="decision-pending">{{ statusLabel(item) }}</span>
-                      <app-workbench-review-tag [review]="item.workbench.review" [reviewDue]="item.workbench.reviewDue ?? false" [projectName]="item.projectName" />
-                      <time [attr.datetime]="item.workbench.updatedAtUtc">{{ updatedLabel(item.workbench.updatedAtUtc) }}</time>
-                      <span class="workbench-overview__open-count">{{ openDecisionCount(item) }} open</span>
-                      @if (referenceStatuses(item).length > 0) {
-                        <span class="workbench-overview__tasks"
-                              [class.workbench-overview__tasks--loading]="referenceStatusesLoading()"
-                              [attr.aria-busy]="referenceStatusesLoading()"
-                              aria-label="Linked task cards">
-                          @for (task of referenceStatuses(item); track task.key) {
-                            <app-task-reference-microcard
-                              variant="lane-dot"
-                              [status]="task"
-                              [testId]="'workbench-overview-task-' + item.projectName + '-' + item.workbench.id + '-' + task.key" />
-                          }
-                        </span>
-                      }
-                    </div>
-                    <p class="workbench-overview__excerpt">{{ item.workbench.summary }}</p>
-                  </div>
-                  <div class="workbench-overview__actions">
-                    <button type="button" class="workbench-overview__action-link"
-                            [attr.data-testid]="'workbench-overview-full-' + item.projectName + '-' + item.workbench.id"
-                            (click)="open(item)">Open full view</button>
-                    <button type="button" class="workbench-overview__action-primary"
-                            [attr.aria-expanded]="inlineDecisionExpanded(item)"
-                            [attr.data-testid]="'workbench-overview-open-' + item.projectName + '-' + item.workbench.id"
-                            (click)="toggleInlineDecision(item)">
-                      {{ inlineDecisionExpanded(item) ? 'Close review' : 'Review here' }}
-                    </button>
-                  </div>
+                <app-workbench-overview-card mode="decision" [item]="item"
+                  [references]="referenceStatuses(item)" [referencesLoading]="referenceStatusesLoading()"
+                  [excerptExpanded]="excerptExpanded(item)" [excerptCanExpand]="excerptCanExpand(item)"
+                  [reviewExpanded]="inlineDecisionExpanded(item)" (openRequested)="open(item)"
+                  (excerptToggleRequested)="toggleExcerpt(item)" (reviewToggleRequested)="toggleInlineDecision(item)">
                   @if (inlineDecisionExpanded(item)) {
                     <div class="workbench-overview__inline-viewer"
                          [attr.data-testid]="'workbench-overview-inline-' + item.projectName + '-' + item.workbench.id">
                       <app-workbench-viewer [projectName]="item.projectName" [workbenchId]="item.workbench.id" />
                     </div>
                   }
-                </article>
+                </app-workbench-overview-card>
               }
             </div>
             }
@@ -144,53 +98,10 @@
             @if (sectionExpanded('current')) {
             <div id="workbench-overview-active-list" class="workbench-overview__list" data-testid="workbench-overview-active-list">
               @for (item of current(); track item.projectName + ':' + item.workbench.id) {
-                @let project = projectDisplay(item);
-                <article class="workbench-overview__row"
-                         [attr.data-testid]="'workbench-overview-item-' + item.projectName + '-' + item.workbench.id">
-                  <div class="workbench-overview__row-main">
-                    <div class="workbench-overview__title">
-                      <span class="workbench-overview__pattern" role="img"
-                            [attr.aria-label]="documentPattern(item) + ' pattern'"
-                            [attr.data-pattern]="documentPattern(item)"
-                            [attr.data-testid]="'workbench-overview-pattern-' + item.projectName + '-' + item.workbench.id">
-                        <app-studio-icon [name]="patternIcon(item)" [size]="14" />
-                      </span>
-                      <h3>{{ item.workbench.title }}</h3>
-                    </div>
-                    <div class="workbench-overview__meta">
-                      <span class="workbench-overview__project"
-                            [style.--workbench-project]="project.color"
-                            [attr.title]="project.displayName"
-                            [attr.aria-label]="'Project ' + project.displayName">
-                        <i aria-hidden="true"></i>{{ project.shortCode || project.displayName }}
-                      </span>
-                      <span class="workbench-overview__status" [attr.data-status]="item.workbench.status">{{ statusLabel(item) }}</span>
-                      <app-workbench-review-tag [review]="item.workbench.review" [reviewDue]="item.workbench.reviewDue ?? false" [projectName]="item.projectName" />
-                      @if (item.workbench.documentation?.eligible) {
-                        <span class="workbench-overview__suggestion">Ready to document</span>
-                      }
-                      <time [attr.datetime]="item.workbench.updatedAtUtc">{{ updatedLabel(item.workbench.updatedAtUtc) }}</time>
-                      @if (referenceStatuses(item).length > 0) {
-                        <span class="workbench-overview__tasks"
-                              [class.workbench-overview__tasks--loading]="referenceStatusesLoading()"
-                              [attr.aria-busy]="referenceStatusesLoading()"
-                              aria-label="Linked task cards">
-                          @for (task of referenceStatuses(item); track task.key) {
-                            <app-task-reference-microcard
-                              variant="lane-dot"
-                              [status]="task"
-                              [testId]="'workbench-overview-task-' + item.projectName + '-' + item.workbench.id + '-' + task.key" />
-                          }
-                        </span>
-                      }
-                    </div>
-                    <p class="workbench-overview__excerpt">{{ item.workbench.summary }}</p>
-                  </div>
-                  <div class="workbench-overview__actions">
-                    <button type="button" class="workbench-overview__action-link"
-                            [disabled]="!item.workbench.valid" (click)="open(item)">Open full view</button>
-                  </div>
-                </article>
+                <app-workbench-overview-card mode="current" [item]="item"
+                  [references]="referenceStatuses(item)" [referencesLoading]="referenceStatusesLoading()"
+                  [excerptExpanded]="excerptExpanded(item)" [excerptCanExpand]="excerptCanExpand(item)"
+                  (openRequested)="open(item)" (excerptToggleRequested)="toggleExcerpt(item)" />
               }
             </div>
             }
@@ -213,13 +124,9 @@
             @if (sectionExpanded('needs-attention')) {
             <div id="workbench-overview-invalid-list" class="workbench-overview__list">
               @for (item of invalid(); track item.projectName + ':' + item.workbench.id) {
-                <article class="workbench-overview__row workbench-overview__row--invalid">
-                  <div class="workbench-overview__row-main">
-                    <div class="workbench-overview__title"><h3>{{ item.workbench.title }}</h3></div>
-                    <div class="workbench-overview__meta"><span>{{ item.projectName }}</span><span>Needs attention</span></div>
-                    <p class="workbench-overview__excerpt">{{ item.workbench.error || item.workbench.summary }}</p>
-                  </div>
-                </article>
+                <app-workbench-overview-card mode="invalid" [item]="item"
+                  [excerptExpanded]="excerptExpanded(item)" [excerptCanExpand]="excerptCanExpand(item)"
+                  (excerptToggleRequested)="toggleExcerpt(item)" />
               }
             </div>
             }
@@ -252,21 +159,9 @@
               @if (sectionExpanded('documented')) {
                 <div id="workbench-overview-completed-list" class="workbench-overview__history-list" data-testid="workbench-overview-completed-list">
                   @for (item of documented(); track item.projectName + ':' + item.workbench.id) {
-                    @let project = projectDisplay(item);
-                    <article class="workbench-overview__row workbench-overview__row--history">
-                      <div class="workbench-overview__row-main">
-                        <div class="workbench-overview__title"><h3>{{ item.workbench.title }}</h3></div>
-                        <div class="workbench-overview__meta">
-                          <span class="workbench-overview__project" [style.--workbench-project]="project.color"
-                                [attr.title]="project.displayName"><i aria-hidden="true"></i>{{ project.shortCode || project.displayName }}</span>
-                          <span>{{ statusLabel(item) }}</span>
-                          <app-workbench-review-tag [review]="item.workbench.review" [reviewDue]="item.workbench.reviewDue ?? false" [projectName]="item.projectName" />
-                          <time [attr.datetime]="item.workbench.updatedAtUtc">{{ updatedLabel(item.workbench.updatedAtUtc) }}</time>
-                        </div>
-                        <p class="workbench-overview__excerpt">{{ item.workbench.summary }}</p>
-                      </div>
-                      <div class="workbench-overview__actions"><button type="button" class="workbench-overview__action-link" (click)="open(item)">Open full view</button></div>
-                    </article>
+                    <app-workbench-overview-card mode="history" [item]="item"
+                      [excerptExpanded]="excerptExpanded(item)" [excerptCanExpand]="excerptCanExpand(item)"
+                      (openRequested)="open(item)" (excerptToggleRequested)="toggleExcerpt(item)" />
                   } @empty { <p class="workbench-overview__history-empty">No documented items.</p> }
                 </div>
               }
@@ -283,21 +178,9 @@
               @if (sectionExpanded('discarded')) {
                 <div id="workbench-overview-discarded-list" class="workbench-overview__history-list" data-testid="workbench-overview-discarded-list">
                   @for (item of discarded(); track item.projectName + ':' + item.workbench.id) {
-                    @let project = projectDisplay(item);
-                    <article class="workbench-overview__row workbench-overview__row--history">
-                      <div class="workbench-overview__row-main">
-                        <div class="workbench-overview__title"><h3>{{ item.workbench.title }}</h3></div>
-                        <div class="workbench-overview__meta">
-                          <span class="workbench-overview__project" [style.--workbench-project]="project.color"
-                                [attr.title]="project.displayName"><i aria-hidden="true"></i>{{ project.shortCode || project.displayName }}</span>
-                          <span>{{ statusLabel(item) }}</span>
-                          <app-workbench-review-tag [review]="item.workbench.review" [reviewDue]="item.workbench.reviewDue ?? false" [projectName]="item.projectName" />
-                          <time [attr.datetime]="item.workbench.updatedAtUtc">{{ updatedLabel(item.workbench.updatedAtUtc) }}</time>
-                        </div>
-                        <p class="workbench-overview__excerpt">{{ item.workbench.summary }}</p>
-                      </div>
-                      <div class="workbench-overview__actions"><button type="button" class="workbench-overview__action-link" (click)="open(item)">Open full view</button></div>
-                    </article>
+                    <app-workbench-overview-card mode="history" [item]="item"
+                      [excerptExpanded]="excerptExpanded(item)" [excerptCanExpand]="excerptCanExpand(item)"
+                      (openRequested)="open(item)" (excerptToggleRequested)="toggleExcerpt(item)" />
                   } @empty { <p class="workbench-overview__history-empty">No discarded items.</p> }
                 </div>
               }
