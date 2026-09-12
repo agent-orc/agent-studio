@@ -2362,12 +2362,15 @@ describe('OverviewPaneComponent (smoke)', () => {
     const status = host.querySelector('[data-testid="overview-status"]');
     const agent = host.querySelector('[data-testid="overview-agent"]');
     const pipeline = host.querySelector('[data-testid="overview-pipeline"]');
+    const consumption = host.querySelector('[data-testid="overview-consumption"]');
 
     expect(title?.classList.contains('studio-measure')).toBe(true);
     expect(title?.classList.contains('studio-measure--prose')).toBe(true);
     expect(status?.classList.contains('studio-measure--tabular')).toBe(true);
     expect(agent?.closest('[data-testid="overview-status"]')).toBe(status);
     expect(agent?.classList.contains('studio-measure--tabular')).toBe(false);
-    expect(pipeline?.classList.contains('studio-measure--tabular-compact')).toBe(true);
+    expect(pipeline?.closest('[data-testid="overview-consumption"]')).toBe(consumption);
+    expect(pipeline?.classList.contains('studio-measure--tabular-compact')).toBe(false);
+    expect(consumption?.classList.contains('studio-measure--tabular-compact')).toBe(true);
   });
 });

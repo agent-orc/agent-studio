@@ -476,17 +476,9 @@ async function savePipelineShot(page: Page, name: string) {
 }
 
 async function savePipelineAndUsageShot(page: Page, name: string) {
-  const pipeline = await page.getByTestId('overview-pipeline').boundingBox();
-  const usage = await page.getByTestId('pipeline-token-usage').boundingBox();
-  if (!pipeline || !usage) throw new Error('Pipeline evidence bounds are unavailable');
-  const padding = 8;
-  const x = Math.max(0, Math.min(pipeline.x, usage.x) - padding);
-  const y = Math.max(0, Math.min(pipeline.y, usage.y) - padding);
-  const right = Math.max(pipeline.x + pipeline.width, usage.x + usage.width) + padding;
-  const bottom = Math.max(pipeline.y + pipeline.height, usage.y + usage.height) + padding;
   const target = RESULTS_DIR ? join(RESULTS_DIR, name) : join('test-results', name);
   if (RESULTS_DIR) await mkdir(RESULTS_DIR, { recursive: true });
-  await page.screenshot({ path: target, clip: { x, y, width: right - x, height: bottom - y } });
+  await page.getByTestId('overview-consumption').screenshot({ path: target });
 }
 
 async function expandPipelineSections(page: Page) {
@@ -589,6 +581,15 @@ test('six visible runs show their priced partial total and keep pipeline rows al
     route.fulfill(json(pipelineWithSixRunsAndPartialUsage())));
   await page.route(new RegExp(`/api/tasks/${id}/runs(\\?|$)`), route =>
     route.fulfill(json(sixRunTimeline())));
+  await page.route(new RegExp(`/api/tasks/${id}/agent-work-summary(\\?|$)`), route => route.fulfill(json({
+    calls: 4,
+    recovered: true,
+    toolCalls: 0,
+    toolCounts: [],
+    startedAt: '2026-08-11T08:00:00Z',
+    lastTouchAt: '2026-08-11T14:20:00Z',
+    currentSessionId: 'pipeline-grid-fixture',
+  })));
 
   await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
   await expect(page.getByTestId('overview-pipeline')).toBeVisible({ timeout: 10_000 });
@@ -601,6 +602,7 @@ test('six visible runs show their priced partial total and keep pipeline rows al
   await expect(totalCost).toContainText('incomplete (1 run without usage)');
   await expect(totalCost).not.toContainText('$0.00');
   await expect(page.getByTestId('pipeline-token-usage-run')).toHaveCount(6);
+  await expect(page.getByTestId('overview-agent-work')).toBeVisible();
 
   const core = page.locator('[data-step-id="core-agent-run"]');
   await expect(core.getByTestId('overview-pipeline-step-name')).toHaveText('Agent execution');
@@ -621,7 +623,7 @@ test('six visible runs show their priced partial total and keep pipeline rows al
   await expect(verdict).toContainText('Final verdict');
   expect(await verdict.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
   expect(await verdict.locator('.ov-pl-step__final-decision-route').evaluate(element =>
-    element.scrollWidth <= element.clientWidth)).toBe(true);
+    getComputedStyle(element).textOverflow)).toBe('ellipsis');
 
   const tool = page.locator('[data-step-id="post-wiki-maintenance"]');
   const iconCenters = await Promise.all([decision, tool].map(async row => {
@@ -642,6 +644,44 @@ test('six visible runs show their priced partial total and keep pipeline rows al
     expect(Math.abs(edges[1] - timingEdges[0][1])).toBeLessThan(1);
   }
 
+  const alignedRightEdges = await Promise.all([
+    core.getByTestId('overview-pipeline-step-tokens'),
+    page.getByTestId('overview-pipeline-total-tokens'),
+    totalTokens,
+    page.getByTestId('pipeline-token-usage-run-total').first(),
+  ].map(async locator => {
+    const box = await locator.boundingBox();
+    if (!box) throw new Error('A token cell is not visible');
+    return box.x + box.width;
+  }));
+  for (const edge of alignedRightEdges.slice(1)) {
+    expect(Math.abs(edge - alignedRightEdges[0])).toBeLessThan(1);
+  }
+
+  const agentTimingEdges = await Promise.all([
+    page.getByTestId('agent-work-started'),
+    page.getByTestId('agent-work-last-touch'),
+  ].map(async locator => {
+    const box = await locator.boundingBox();
+    if (!box) throw new Error('An Agent Work timing cell is not visible');
+    return box.x + box.width;
+  }));
+  expect(Math.abs(agentTimingEdges[0] - timingEdges[0][0])).toBeLessThan(1);
+  expect(Math.abs(agentTimingEdges[1] - timingEdges[0][1])).toBeLessThan(1);
+
+  const consumption = await page.getByTestId('overview-consumption').boundingBox();
+  const pipelineGrid = await page.getByTestId('overview-pipeline-steps').boundingBox();
+  const usageGrid = await page.getByTestId('pipeline-token-usage').boundingBox();
+  if (!consumption || !pipelineGrid || !usageGrid) throw new Error('Consumption grid bounds are unavailable');
+  expect(Math.abs(pipelineGrid.x + pipelineGrid.width - usageGrid.x - usageGrid.width)).toBeLessThan(1);
+  expect(Math.abs(consumption.x + consumption.width - usageGrid.x - usageGrid.width)).toBeLessThan(1);
+
+  const recordedShare = page.getByTestId('pipeline-token-usage-run-share').first();
+  const shareTrack = await recordedShare.boundingBox();
+  const shareFill = await recordedShare.getByTestId('pipeline-token-usage-run-share-fill').boundingBox();
+  if (!shareTrack || !shareFill) throw new Error('Run-share bar bounds are unavailable');
+  expect(shareFill.width / shareTrack.width).toBeCloseTo(0.2, 2);
+
   await page.getByTestId('pipeline-token-usage-total-toggle').click();
   await expect(page.getByTestId('pipeline-token-usage-total-model')).toContainText('gpt-5.6-sol');
   for (const theme of ['light', 'dark'] as const) {
@@ -649,6 +689,18 @@ test('six visible runs show their priced partial total and keep pipeline rows al
     await expect(page.locator('html')).toHaveAttribute('data-studio-theme', theme);
     await savePipelineAndUsageShot(page, `pipeline-after-${theme}.png`);
   }
+
+  await page.getByTestId('overview-consumption').evaluate(element => {
+    element.setAttribute('style', 'width: 600px');
+  });
+  await expect(page.getByTestId('overview-pipeline-step-cost').first()).toBeHidden();
+  await expect(page.getByTestId('pipeline-token-usage-run-cost').first()).toBeHidden();
+
+  await page.getByTestId('overview-consumption').evaluate(element => {
+    element.setAttribute('style', 'width: 440px');
+  });
+  await expect(page.getByTestId('overview-pipeline-step-tokens').first()).toBeHidden();
+  await expect(page.getByTestId('pipeline-token-usage-run-total').first()).toBeHidden();
 });
 
 test('token usage: each pipeline step surfaces its own usage, without the aggregate model block', async ({ page, devBackend }) => {

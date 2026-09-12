@@ -115,6 +115,18 @@ describe('PipelineTokenUsageComponent', () => {
     expect(first.querySelector('[data-testid="pipeline-token-usage-run-current"]')).not.toBeNull();
   });
 
+  it('maps each run onto the recorded task-token share and run duration', () => {
+    const fixture = setup(SUMMARY);
+    const shares = all(root(fixture), 'pipeline-token-usage-run-share');
+
+    expect(shares[0].getAttribute('aria-label')).toBe(
+      'Run #2: 52.2% of recorded task tokens',
+    );
+    expect(Number.parseFloat((shares[0].firstElementChild as HTMLElement).style.width))
+      .toBeCloseTo(52.19, 2);
+    expect(fixture.componentInstance.durationLabel(SUMMARY.runs[1])).toBe('5m');
+  });
+
   it('expanding a run reveals only that run\'s per-model rows', () => {
     const fixture = setup(SUMMARY);
     fixture.componentInstance.toggleRun(2);

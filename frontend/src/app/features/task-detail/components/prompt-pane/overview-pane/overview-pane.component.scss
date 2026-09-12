@@ -57,6 +57,16 @@
   margin: 0;
 }
 
+.ov-consumption {
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-row-gap);
+  width: 100%;
+  min-width: 0;
+  container-type: inline-size;
+  container-name: ov-pipeline;
+}
+
 .ov-section {
   display: flex;
   flex-direction: column;
@@ -514,12 +524,6 @@
   gap: 1px;
   width: 100%;
   max-width: 100%;
-  // Drive the metric-column responsiveness off the pipeline's own width, not
-  // the viewport: this block lives inside a split task-detail pane whose width
-  // is independent of the window. Descendant header/step rows query this via
-  // the `@container ov-pipeline` rules at the bottom of the grid block.
-  container-type: inline-size;
-  container-name: ov-pipeline;
 
   &--historical {
     --severity-pass: var(--studio-fg-muted); --severity-warn: var(--studio-fg-muted);
@@ -707,7 +711,7 @@
     display: grid;
     align-items: baseline;
     justify-content: flex-end;
-    gap: 5px;
+    gap: var(--studio-spacing-1);
     grid-template-columns: 38px 52px;
     grid-column: 5;
   }
@@ -1032,7 +1036,7 @@
     grid-template-columns: 38px 52px;
     align-items: baseline;
     justify-content: flex-end;
-    gap: 5px;
+    gap: var(--studio-spacing-1);
     cursor: help;
   }
 
@@ -1126,7 +1130,9 @@
 // stay right-pinned. Step name, status, and duration are never dropped.
 @container ov-pipeline (max-width: 620px) {
   .ov-pl-header,
-  .ov-pl-step {
+  .ov-pl-step,
+  .ov-pl-total,
+  .ov-agent-work__row {
     --ov-pl-grid-cols:
       var(--ov-pipeline-status-col)
       var(--ov-pipeline-kind-col)
@@ -1138,7 +1144,9 @@
 
   .ov-pl-header__cost,
   .ov-pl-step__cost,
-  .ov-pl-step__cost.ov-pl-step__cost-button {
+  .ov-pl-step__cost.ov-pl-step__cost-button,
+  .ov-pl-total__cost,
+  .ov-agent-work__cost {
     display: none;
   }
 
@@ -1160,7 +1168,9 @@
   }
 
   .ov-pl-header,
-  .ov-pl-step {
+  .ov-pl-step,
+  .ov-pl-total,
+  .ov-agent-work__row {
     --ov-pipeline-time-col: 52px;
     --ov-pl-grid-cols:
       var(--ov-pipeline-status-col)
@@ -1171,19 +1181,23 @@
   }
 
   .ov-pl-header__tokens,
-  .ov-pl-step__tokens {
+  .ov-pl-step__tokens,
+  .ov-pl-total__tokens,
+  .ov-agent-work__tokens {
     display: none;
   }
 
   .ov-pl-header__timing,
-  .ov-pl-step__timing {
+  .ov-pl-step__timing,
+  .ov-agent-work__timing {
     grid-template-columns: 52px;
   }
 
   .ov-pl-header__time,
   .ov-pl-step__started,
   .ov-pl-step__model,
-  .ov-pl-step__parallel-note {
+  .ov-pl-step__parallel-note,
+  .ov-agent-work__started {
     display: none;
   }
 }
@@ -1314,20 +1328,23 @@
 }
 
 .ov-pl-total {
-  display: flex;
+  display: grid;
+  grid-template-columns: var(--ov-pl-grid-cols);
   align-items: center;
-  gap: 6px;
-  width: 100%;
+  column-gap: var(--studio-spacing-1);
+  width: calc(100% - var(--ov-pipeline-step-indent));
   min-width: 0;
-  max-width: 100%;
   box-sizing: border-box;
-  margin-top: 2px;
-  padding-top: 3px;
+  margin-top: calc(var(--studio-spacing-1) * -0.5);
+  margin-left: var(--ov-pipeline-step-indent);
+  padding-block: var(--studio-spacing-1);
+  padding-inline: var(--studio-spacing-2);
   border-top: 1px dashed var(--studio-border);
   font-size: 12px;
 
   &__label {
-    flex: 1 1 auto;
+    grid-column: 3 / 5;
+    min-width: 0;
     font-size: 11px;
     font-weight: 700;
     text-transform: uppercase;
@@ -1336,16 +1353,130 @@
   }
 
   &__tokens {
-    flex: 0 0 auto;
-    width: 56px;
+    grid-column: 6;
     text-align: right;
   }
 
   &__cost {
-    flex: 0 1 11rem;
+    grid-column: 7;
     min-width: 0;
-    max-width: 11rem;
     text-align: right;
+  }
+}
+
+.ov-agent-work {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+
+  &__title {
+    min-height: calc(var(--studio-row-min-h) + var(--studio-row-gap));
+    margin: var(--studio-spacing-2) 0 0;
+    padding: var(--studio-row-pad-block) var(--studio-spacing-2);
+    border-radius: 6px;
+    background: var(--studio-bg-hover);
+    color: var(--studio-fg-strong);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  &__row {
+    display: grid;
+    grid-template-columns: var(--ov-pl-grid-cols);
+    align-items: center;
+    column-gap: var(--studio-spacing-1);
+    box-sizing: border-box;
+    width: calc(100% - var(--ov-pipeline-step-indent));
+    min-width: 0;
+    min-height: var(--studio-row-min-h);
+    margin-left: var(--ov-pipeline-step-indent);
+    padding-block: var(--studio-row-pad-block);
+    padding-inline: var(--studio-spacing-2);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  &__marker {
+    grid-column: 1;
+    width: 8px;
+    height: 8px;
+    justify-self: center;
+    border-radius: 999px;
+    background: var(--studio-fg-muted);
+    opacity: 0.7;
+  }
+
+  &__kind { grid-column: 2; }
+
+  &__label {
+    grid-column: 3;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--studio-fg-strong);
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__value {
+    grid-column: 4;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: var(--studio-spacing-1);
+    overflow: hidden;
+  }
+
+  &__timing {
+    grid-column: 5;
+    display: grid;
+    grid-template-columns: 38px 52px;
+    align-items: baseline;
+    justify-content: flex-end;
+    gap: var(--studio-spacing-1);
+    min-width: 0;
+  }
+
+  &__started,
+  &__last-touch {
+    overflow: hidden;
+    color: var(--studio-fg-muted);
+    font-size: 10.5px;
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__tokens {
+    grid-column: 6;
+    color: var(--studio-fg-muted);
+    text-align: right;
+  }
+
+  &__cost {
+    grid-column: 7;
+    color: var(--studio-fg-muted);
+    text-align: right;
+  }
+
+  &__row--tools &__label { grid-column: 3; }
+
+  &__tools {
+    grid-column: 4 / -1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: var(--studio-spacing-1);
+  }
+
+  &__detail {
+    width: calc(100% - var(--ov-pipeline-step-indent));
+    min-width: 0;
+    margin-left: var(--ov-pipeline-step-indent);
+    padding-inline: var(--studio-spacing-2);
   }
 }
 
