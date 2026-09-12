@@ -25,8 +25,8 @@ public sealed class ConnectorProfileTests
         var inventory = ConnectorRouteInventory.Load();
 
         Assert.Equal(ConnectorRouteInventory.ExpectedInventorySha256, inventory.SourceChecksum);
-        Assert.Equal(365, inventory.Operations.Count);
-        Assert.Equal(97, inventory.DevSeatOperations.Count);
+        Assert.Equal(366, inventory.Operations.Count);
+        Assert.Equal(98, inventory.DevSeatOperations.Count);
         Assert.Equal(268, inventory.TaskServerOperations.Count);
         Assert.Equal(1, inventory.TaskServerOperations.Count(operation => operation.Method == "WS"));
     }
@@ -54,8 +54,8 @@ public sealed class ConnectorProfileTests
 
         Assert.All(endpoints, endpoint => Assert.NotEmpty(
             endpoint.Metadata.GetOrderedMetadata<ConnectorClassifiedEndpointMetadata>()));
-        Assert.Equal(365, metadata.Length);
-        Assert.Equal(97, endpoints
+        Assert.Equal(366, metadata.Length);
+        Assert.Equal(98, endpoints
             .SelectMany(endpoint => endpoint.Metadata.GetOrderedMetadata<ConnectorClassifiedEndpointMetadata>())
             .Where(item => item.Classification == ConnectorRouteInventory.DevSeatClassification)
             .Select(item => new ConnectorRouteKey(item.Method, ConnectorRouteKey.NormalizePath(item.Path)))

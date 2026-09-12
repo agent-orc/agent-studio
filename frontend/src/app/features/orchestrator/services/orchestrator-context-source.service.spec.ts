@@ -12,11 +12,11 @@ describe('OrchestratorContextSourceService', () => {
     const http = TestBed.inject(HttpTestingController);
     const resultPromise = firstValueFrom(service.search('Demo', 'context'));
 
-    http.expectOne(request => request.url === '/api/search' && request.params.get('domains') === 'tasks,commits,files').flush({
-      tasks: [
-        { domain: 'tasks', projectName: 'Demo', title: 'Context task', subtitle: 'Ready', taskKey: 'DEMO-4', lane: '2-ready' },
-        { domain: 'tasks', projectName: 'Other', title: 'Cross-project task', subtitle: 'Ready', taskKey: 'OTHER-1' },
-      ],
+    http.expectOne(request => request.url === '/api/search' && request.params.get('project') === 'Demo').flush({
+      query: 'context',
+      tasks: [{ taskId: 'tsk_1', taskKey: 'DEMO-4', title: 'Context task', projectId: 'Demo', state: '2-ready' }],
+    });
+    http.expectOne(request => request.url === '/api/search/repository' && request.params.get('domains') === 'commits,files').flush({
       files: [{ domain: 'files', projectName: 'Demo', title: 'context.ts', subtitle: 'src/context.ts', path: 'src/context.ts' }],
       commits: [{ domain: 'commits', projectName: 'Demo', title: 'feat: add context', subtitle: '01234567', sha: '0123456789abcdef' }],
     });

@@ -233,6 +233,10 @@ app.MapStudioWorkspaceEndpoints();
 // (docs/studio-route-ownership/index.html).
 app.MapStudioOperationsEndpoints();
 app.MapStudioP2Endpoints();
+// Studio route-ownership P3 "administration and long tail" bundle
+// (docs/studio-route-ownership/index.html). No new migration - every route
+// reads a table a P0-P2 bundle already owns.
+app.MapStudioP3AdministrationEndpoints();
 app.MapHub<TaskServerEventsHub>("/hubs/events")
     .RequireTaskServerScope(TaskServerScopes.EventsSubscribe);
 app.MapHub<TaskServerStudioHub>("/hubs/v1/studio")
