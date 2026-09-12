@@ -156,6 +156,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | CLI frame compatibility and capture corpus | [cli/frame-compatibility-matrix.md](../system/cli/frame-compatibility-matrix.md) |
 | Getting started (new install, step by step) | [operations/setup/getting-started.md](../operations/setup/getting-started.md) |
 | Contributor source-build setup | [operations/setup/contributor-setup.md](../operations/setup/contributor-setup.md) |
+| Preparation, isolation, and orchestrator setup | [operations/setup/preparation-isolation-orchestrator.md](../operations/setup/preparation-isolation-orchestrator.md) |
 | GitHub repository metadata recommendations | [repo-metadata.md](../repo-metadata.md) |
 | Setup | [operations/setup/README.md](../operations/setup/README.md) |
 | Retention and archive dossier (policy defaults, archive stages, Task Server management contract, full backup sets) | [operations/retention-und-archiv/index.html](../operations/retention-und-archiv/index.html) |

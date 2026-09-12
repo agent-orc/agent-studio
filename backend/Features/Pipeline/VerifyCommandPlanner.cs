@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Pipeline;
 
@@ -69,6 +70,9 @@ public sealed record VerifyCommand(
 /// <summary>The derived verify plan plus where it came from (for logs / the verdict).</summary>
 public sealed record VerifyPlan(IReadOnlyList<VerifyCommand> Commands, string Source)
 {
+    /// <summary>Commands came from the repository definition at the subject commit.</summary>
+    public const string SourceProjectDefinition = "project.yml";
+
     /// <summary>An explicit build profile supplied the build/test commands (the override).</summary>
     public const string SourceBuildProfile = "build-profile";
 
@@ -128,6 +132,28 @@ public static class VerifyCommandPlanner
     /// </summary>
     public static VerifyPlan Plan(string repositoryPath, BuildProfile? profile)
     {
+        var repositoryDefinition = ProjectDefinitionReader.ReadWorkspace(repositoryPath);
+        if (repositoryDefinition.IsValid && repositoryDefinition.Definition is { } definition)
+        {
+            var commands = new List<VerifyCommand>();
+            commands.AddRange(definition.Commands.Build.Select(command =>
+                new VerifyCommand(VerifyEcosystem.Custom, VerifyCommandKind.Build, "", command)
+                {
+                    Shell = VerifyCommandShell.Bash,
+                }));
+            commands.AddRange(definition.Commands.Test.Select(command =>
+                new VerifyCommand(VerifyEcosystem.Custom, VerifyCommandKind.Test, "", command)
+                {
+                    Shell = VerifyCommandShell.Bash,
+                }));
+            commands.AddRange(definition.Commands.Lint.Select(command =>
+                new VerifyCommand(VerifyEcosystem.Custom, VerifyCommandKind.Lint, "", command)
+                {
+                    Shell = VerifyCommandShell.Bash,
+                }));
+            return new VerifyPlan(commands, VerifyPlan.SourceProjectDefinition);
+        }
+
         var fromProfile = FromProfile(profile);
         if (fromProfile.Count > 0)
             return new VerifyPlan(fromProfile, VerifyPlan.SourceBuildProfile);

@@ -27,6 +27,9 @@ public sealed class GitWorkspaceTests : IDisposable
         await workspace.PrepareAsync(CancellationToken.None);
 
         Assert.Equal("refs/heads/main", workspace.IntegrationBranchRef);
+        Assert.True(File.Exists(workspace.WorktreeLeasePath));
+        Assert.Equal("main", (await GitAsync(workspace.SharedRepoPath, "branch", "--show-current")).StdOut);
+        Assert.Equal(string.Empty, (await GitAsync(workspace.SharedRepoPath, "status", "--porcelain")).StdOut);
         Assert.Equal(_origin,
             (await GitAsync(workspace.SharedRepoPath, "remote", "get-url", "origin")).StdOut);
         Assert.Equal(_origin,
@@ -36,6 +39,9 @@ public sealed class GitWorkspaceTests : IDisposable
         Assert.Contains(logs, line => line ==
             $"git-remote-configured projectId=PROJ-016 source=project-registry " +
             $"fetchUrl={_origin} pushUrl={_origin}");
+
+        await workspace.TeardownAsync("Done", CancellationToken.None);
+        Assert.False(File.Exists(workspace.WorktreeLeasePath));
     }
 
     [Fact]

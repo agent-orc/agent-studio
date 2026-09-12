@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-taskboard.local/schemas/project-execution.schema.json",
+  "title": "Repository project execution definition",
+  "description": "Repository-owned preparation, verification, cache-path, capability, environment, development-server, and optional image composition read from .agent-studio/project.yml at the subject commit.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "stack", "toolVersions", "commands", "testSuites", "cachePaths", "capabilities", "environment"],
+  "properties": {
+    "schemaVersion": { "description": "Contract version.", "const": 1 },
+    "stack": { "description": "Technology building blocks used by the project.", "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+    "toolVersions": { "description": "Tool names mapped to repository-relative version manifests such as .nvmrc or global.json.", "type": "object", "additionalProperties": { "$ref": "#/$defs/relativePath" } },
+    "commands": {
+      "description": "Preparation and verification commands shared by coding runs and build-test gates.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["prepare", "build", "test", "lint"],
+      "properties": {
+        "prepare": { "$ref": "#/$defs/relativePath" },
+        "build": { "$ref": "#/$defs/commands" },
+        "test": { "$ref": "#/$defs/commands" },
+        "lint": { "$ref": "#/$defs/commands" }
+      }
+    },
+    "testSuites": {
+      "description": "Named test inventory with operator-facing category and expected duration.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "category", "expectedDurationSeconds", "command"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "category": { "type": "string", "minLength": 1 },
+          "expectedDurationSeconds": { "type": "integer", "minimum": 1 },
+          "command": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "cachePaths": { "description": "Repository-relative generated paths that preparation may populate.", "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/relativePath" } },
+    "capabilities": { "description": "Executor capabilities required by the project.", "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+    "environment": { "description": "Non-secret preparation environment values. Executor profiles supply secrets.", "type": "object", "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" }, "additionalProperties": { "type": "string" } },
+    "devServer": {
+      "description": "Optional bounded development-server lifecycle owned by the run.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command", "startupTimeoutSeconds", "stopWithRun"],
+      "properties": {
+        "command": { "type": "string", "minLength": 1 },
+        "workingDirectory": { "$ref": "#/$defs/relativePath" },
+        "healthUrl": { "type": "string", "format": "uri" },
+        "startupTimeoutSeconds": { "type": "integer", "minimum": 1 },
+        "stopWithRun": { "const": true }
+      }
+    },
+    "image": { "description": "Optional repository-relative container image definition used only by a container executor profile.", "$ref": "#/$defs/relativePath" }
+  },
+  "$defs": {
+    "relativePath": { "type": "string", "minLength": 1, "pattern": "^(?![~/\\\\])(?!.*(?:^|/|\\\\)\\.\\.(?:/|\\\\|$)).+$" },
+    "commands": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+  }
+}

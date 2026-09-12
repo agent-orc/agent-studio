@@ -590,6 +590,9 @@ public sealed class RemoteTaskRunner
     {
         var taskKey = slot.TaskKey;
         var lease = slot.Lease;
+        var resultsDir = ResultsDir(taskKey);
+        if (Directory.Exists(resultsDir)) Directory.Delete(resultsDir, recursive: true);
+        Directory.CreateDirectory(resultsDir);
         Func<CancellationToken, Task<string>> prepare = epicPlanning
             ? workspace.PrepareReadOnlyAsync
             : workspace.PrepareAsync;
@@ -620,6 +623,26 @@ public sealed class RemoteTaskRunner
             throw new RemoteClaimPreparationException(DescribePreparationFailure(ex), ex);
         }
         shipper.Add("system", $"[runner] working tree ready on branch '{branch}'");
+        var projectPreparation = epicPlanning
+            ? ProjectPreparationResult.NotConfigured()
+            : await ProjectPreparationExecutor.RunAsync(
+                workspace.RepoPath,
+                workspace.PreparationCachePath,
+                Path.Combine(resultsDir, ProjectPreparationPaths.ManifestFileName),
+                workspace.BaseSha,
+                message => shipper.Add("system", "[runner] " + message),
+                TimeSpan.FromMinutes(20),
+                shutdown).ConfigureAwait(false);
+        if (projectPreparation.Configured && !projectPreparation.Succeeded)
+        {
+            throw new RemoteClaimPreparationException(
+                $"Repository preparation failed ({projectPreparation.FailureSignature ?? "unknown"}): " +
+                (projectPreparation.FailureReason ?? "prepare command failed"),
+                new InvalidOperationException(projectPreparation.FailureReason ?? "prepare command failed"));
+        }
+        shipper.Add("system", projectPreparation.Configured
+            ? $"[runner] project preparation ready; manifest={ProjectPreparationPaths.ManifestFileName}; cacheHit={projectPreparation.CacheHit}"
+            : "[runner] repository has no .agent-studio/project.yml; compatibility preparation remains active");
         if (outbox is not null && !epicPlanning)
         {
             outbox.Enqueue(
@@ -679,10 +702,6 @@ public sealed class RemoteTaskRunner
                 ? "[runner] results-dir context + remote-completion-protocol appended to task prompt"
                 : "[runner] server-composed mode framing + results-dir context + remote-completion-protocol appended to task prompt");
         }
-
-        var resultsDir = ResultsDir(taskKey);
-        if (Directory.Exists(resultsDir)) Directory.Delete(resultsDir, recursive: true);
-        Directory.CreateDirectory(resultsDir);
 
         // T0b proof line: which CLI, model and reasoning level this run actually
         // starts with, and whether that came from the card's spec or from the

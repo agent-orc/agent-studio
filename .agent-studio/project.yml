@@ -1,0 +1,40 @@
+schemaVersion: 1
+stack: [dotnet, node, playwright]
+toolVersions:
+  node: .nvmrc
+  dotnetSdk: global.json
+commands:
+  prepare: .agent-studio/prepare
+  build:
+    - dotnet build agent-taskboard.sln --no-restore
+    - npm --prefix frontend run build
+  test:
+    - dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound
+    - npm --prefix frontend test -- --run
+  lint:
+    - npm --prefix frontend run lint
+testSuites:
+  - id: backend-routine
+    category: routine
+    expectedDurationSeconds: 1440
+    command: dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound
+  - id: frontend-unit
+    category: routine
+    expectedDurationSeconds: 180
+    command: npm --prefix frontend test -- --run
+  - id: frontend-e2e
+    category: machine-bound
+    expectedDurationSeconds: 900
+    command: npm --prefix frontend run e2e
+cachePaths:
+  - frontend/node_modules
+capabilities: [git, child-process, loopback-network]
+environment:
+  DOTNET_NOLOGO: "1"
+  NUGET_XMLDOC_MODE: skip
+devServer:
+  command: npm --prefix frontend start
+  workingDirectory: .
+  healthUrl: http://127.0.0.1:4010
+  startupTimeoutSeconds: 120
+  stopWithRun: true

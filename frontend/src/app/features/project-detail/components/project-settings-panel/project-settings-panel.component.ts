@@ -33,6 +33,7 @@ import {
   type BuildProfileGateSummary,
 } from '../project-build-profile-notice/project-build-profile-notice.component';
 import { RetentionRulesTableComponent } from '../../../retention/components/retention-rules-table/retention-rules-table.component';
+import { ProjectExecutionDefinitionComponent } from '../project-execution-definition/project-execution-definition';
 
 const STORAGE_DEFAULT_CLI = 'defaultCliType';
 const STORAGE_DEFAULT_MODEL_PREFIX = 'defaultModel:';
@@ -99,6 +100,7 @@ interface WorkspaceListItemLite {
     ProjectUrlsPanelComponent,
     ProjectBuildProfileNoticeComponent,
     RetentionRulesTableComponent,
+    ProjectExecutionDefinitionComponent,
   ],
   templateUrl: './project-settings-panel.component.html',
   styleUrl: './project-settings-panel.component.scss',

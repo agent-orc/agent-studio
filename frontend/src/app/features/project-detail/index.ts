@@ -18,6 +18,7 @@ export { ProjectOverviewDashboardComponent } from './components/project-overview
 export { ProjectDeploymentPanelComponent } from './components/project-deployment-panel/project-deployment-panel.component';
 export { ProjectShellComponent } from './components/project-shell/project-shell.component';
 export { ProjectSettingsPanelComponent } from './components/project-settings-panel/project-settings-panel.component';
+export { ProjectExecutionDefinitionComponent } from './components/project-execution-definition/project-execution-definition';
 export { AnalysisReportDrilldownComponent } from './components/analysis-report-drilldown/analysis-report-drilldown';
 export { AutonomySliderComponent } from './components/autonomy-slider/autonomy-slider';
 

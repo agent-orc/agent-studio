@@ -535,22 +535,15 @@ steer the pipeline in this policy version.
   rows, candidate inventory, chosen ids/commands, selector/model, and reasons.
   `FullSuiteRan` is execution evidence, not a planning claim: it becomes true
   only after every selected full-suite test command was attempted.
-- Disposable local and remote gate workspaces prepare dependencies before any
-  derived verification command runs. An explicit build profile `installCmd` is
-  authoritative. Otherwise a selected root .NET entry point gets `dotnet
-  restore`, and every selected Node package directory gets `npm ci`. Local npm
-  commands set `NPM_CONFIG_CACHE` to the machine's shared Agent Studio npm cache;
-  remote npm commands use the executor user's equivalent cache. Exact-subject
-  local gates also keep one dependency cache per source repository under
-  `agentstudio-review-gates/.dependency-cache`: `node_modules`, `.angular`, and
-  `.nm-state` move into the new disposable worktree before verification and move
-  back before Git cleanup. The shared `DependencyPreparationState` compares the
-  build profile lockfiles, or conventionally discovered npm lockfile, with
-  `.nm-state`; an unchanged hash skips the install, while a missing or changed
-  dependency state runs the install and stamps the new hash. Explicit profile
-  commands, including `installCmd`, use the same `bash -lc` contract as
-  build-profile validation on every host. Convention-derived commands retain
-  the host shell.
+- Repositories with `.agent-studio/project.yml` run their exact-subject
+  `.agent-studio/prepare` before verification. Coding runs and build-test gates
+  share this boundary and its `preparation-manifest.json` contract. npm, NuGet,
+  and Playwright use executor-owned, content-addressed cache entries that are
+  staged privately and published only after green preparation. The gate no
+  longer moves or writes back a gate-owned dependency tree. Repositories that
+  have not adopted the contract retain the derived Build Profile preparation
+  path temporarily: an explicit `installCmd` is authoritative, otherwise the
+  selected .NET and Node scopes receive `dotnet restore` and `npm ci`.
 - Immutable Remote Review plans carry that same preparation command, lockfile
   scopes, and preserve globs to the Review Executor. Preparation runs before
   verification in both the candidate and any materialized baseline workspace.
@@ -561,34 +554,16 @@ steer the pipeline in this policy version.
   complete stdout and stderr artifacts are retained in the Remote Review grade.
   A missing preparation directory is also copied into the grade Detail line so
   the path is visible without opening stderr.
-- Dependency preparation and verification consume one shared `gate-run` budget.
+- Compatibility dependency preparation and verification consume one shared `gate-run` budget.
   Machine-gate queue wait, exact workspace materialization, and exact workspace
   cleanup have separate named budgets. Local Git operations receive the remaining
   budget from the owning workspace phase and never fall back to the Git helper's
   per-process default. A timeout reason, structured completion event, and durable
   gate receipt identify the violated budget with its limit, consumption, and
-  phase. The receipt also includes dependency-cache hit/miss evidence.
-- A local exact-subject dependency-cache entry is valid only with both a
-  gate-complete marker (`.gate-cache-valid`, written only after a green
-  verification run) and an install-complete marker (`.nm-state`, stamped only
-  after a successful `npm ci`/`dotnet restore`) whose hash matches the scope's
-  current lockfiles. Restore validates both markers before moving any dependency
-  directory into the disposable workspace. A missing marker or lock mismatch
-  refuses and evicts the entry (`DependencyCacheSession.RestoreVerified`,
-  `contracts/TaskServer.Contracts/DependencyPreparation.cs`).
-  `GateDependencyCacheSession.Save()` (`DependencyCacheSession.Save`) is
-  transactional: it stages the workspace's cacheable content into a temporary
-  sibling of the cache entry and `Directory.Move`s (renames) that sibling onto
-  the entry only once every item staged; a failure partway discards the
-  sibling and leaves the previous entry untouched, so a save can never persist
-  a half-moved tree as a lock-hash hit a later gate would trust (CAC-18).
-- When verification fails after a dependency cache restore, the same gate run
-  evicts the restored scope and reruns preparation plus verification once from
-  scratch within the original gate-run budget. Only the clean-tree result can
-  become a `Code` failure. A red result is never saved to the dependency cache;
-  a green result may commit a new verified entry. The durable gate reason and
-  log report repository cache key, restored age and size, eviction reason,
-  clean-rerun decision, and verified-save decision.
+  phase. For adopted repositories, the receipt embeds the preparation manifest
+  with subject SHA, definition digest, observed tools, lockfile hashes, cache
+  states, duration, and a stable failure signature. Existing dependency-cache
+  fields remain readable for historical receipts but new gates leave them empty.
 - The build/test gate classifies a verify command's own toolchain/bundler
   crashing before it reaches test discovery (`BuildTestGateFailureKind.Environment`
   - vite's case-insensitive-filesystem probe throwing while loading its config,
@@ -599,10 +574,9 @@ steer the pipeline in this policy version.
   always `Code`: only an unambiguous toolchain-startup signature qualifies, so
   a genuine product failure that happens to mention the same tool stays
   `Code`. `BuildTestGateResult.IsInfrastructureFailure` is true for it.
-  `SaveDependencyCache` evicts (never saves) the dependency cache for a
-  gate run classified this way, so the next attempt reinstalls from scratch
-  instead of re-serving the poisoned tree, and logs `dependency-cache evicted
-  reason=gate-environment-failure`.
+  A failed repository preparation discards its private cache staging area and
+  cannot publish an immutable entry. Recovery and cache eviction policy belong
+  to the orchestrator healing stage rather than to the gate.
 - A pre-develop/pre-main gate classified `Environment` still rolls the
   integration branch back to its exact pre-merge tip like any other red gate,
   but `MergeIntoDevelopRunner` reports it as the distinct

@@ -162,6 +162,8 @@ public sealed record BuildTestGateResult(
     public BuildTestGateBudgetEvidence? ViolatedBudget { get; init; }
     public TestSelectionAudit? TestSelection { get; init; }
     public IReadOnlyList<BuildTestGateFinding> Findings { get; init; } = [];
+    public ProjectPreparationManifest? PreparationManifest { get; init; }
+    public IReadOnlyList<ProjectDefinitionIssue> ProjectDefinitionIssues { get; init; } = [];
     public bool IsInfrastructureFailure => FailureKind is not BuildTestGateFailureKind.None
         and not BuildTestGateFailureKind.Code;
 }
@@ -202,6 +204,8 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         Path.GetTempPath(), "agentstudio-review-gates");
     internal static readonly string NpmCachePath = Path.Combine(
         Path.GetTempPath(), "agentstudio-dependency-cache", "npm");
+    internal static readonly string PreparationCacheRoot = Path.Combine(
+        Path.GetTempPath(), "agentstudio-preparation-cache");
 
     private static readonly Regex SafeSha = new(
         "^[0-9a-fA-F]{40,64}$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
@@ -284,9 +288,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
 
         MachineGateLease? machineLease = null;
         ExactWorkspaceLease? workspaceLease = null;
-        GateDependencyCacheSession? dependencyCache = null;
-        var dependencyCacheSaved = false;
-        var dependencyCacheReranFromScratch = false;
+        ProjectPreparationResult? projectPreparation = null;
         BuildTestGateResult? completed = null;
         string? workspace = null;
         string? testedSha = null;
@@ -378,6 +380,38 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
 
             if (completed is null)
             {
+                var preparationManifestPath = PreparationManifestPath(repositoryPath);
+                projectPreparation = await ProjectPreparationExecutor.RunAsync(
+                    workspace!,
+                    PreparationCacheRoot,
+                    preparationManifestPath,
+                    testedSha,
+                    message => _logger.LogInformation("{ProjectPreparationMessage}", message),
+                    timeout,
+                    ct).ConfigureAwait(false);
+                if (projectPreparation.Configured && !projectPreparation.Succeeded)
+                {
+                    var gateFailure = projectPreparation.FailureKind is PreparationFailureKind.Command
+                        or PreparationFailureKind.Definition
+                        ? BuildTestGateFailureKind.Code
+                        : BuildTestGateFailureKind.Environment;
+                    completed = WithFailure(new BuildTestGateResult(
+                        BuildTestGateVerdict.Fail,
+                        projectPreparation.ExitCode,
+                        projectPreparation.Manifest?.DurationMs ?? 0,
+                        projectPreparation.Output,
+                        projectPreparation.FailureReason ?? "project preparation failed",
+                        false,
+                        false)
+                    {
+                        PreparationManifest = projectPreparation.Manifest,
+                        ProjectDefinitionIssues = projectPreparation.DefinitionIssues,
+                    }, gateFailure);
+                }
+            }
+
+            if (completed is null)
+            {
                 var plan = VerifyCommandPlanner.Plan(workspace!, profile);
                 if (plan.IsEmpty)
                 {
@@ -406,19 +440,9 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                         }
                     }
                     var commands = staged.Commands.Where(c => ShouldRunForChange(c, changedFiles)).ToList();
-                    var preparation = GatePreparationPlanner.Plan(workspace!, profile, commands);
-                    IReadOnlyList<string> cacheRestoreMessages = [];
-                    if (workspaceLease is not null)
-                    {
-                        dependencyCache = GateDependencyCacheSession.Create(
-                            ReviewWorkspaceRoot,
-                            repositoryPath,
-                            workspace!,
-                            preparation,
-                            commands,
-                            _logger);
-                        cacheRestoreMessages = dependencyCache.Restore();
-                    }
+                    IReadOnlyList<GatePreparationCommand> preparation = projectPreparation?.Configured == true
+                        ? []
+                        : GatePreparationPlanner.Plan(workspace!, profile, commands);
                     completed = commands.Count == 0
                         ? Skipped($"no verify commands apply to the changed files ({plan.Source}); level={staged.Audit.Level}")
                             with
@@ -427,37 +451,21 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                         }
                         : await RunCommandsAsync(
                             workspace!, preparation, commands, plan.Source, mode, timeout,
-                            cacheRestoreMessages, ct)
+                            [], ct)
                             .ConfigureAwait(false);
-                    if (dependencyCache is not null
-                        && dependencyCache.Restored
-                        && ShouldRetryFromScratch(completed))
-                    {
-                        dependencyCacheReranFromScratch = true;
-                        var evictionMessages = dependencyCache
-                            .Evict("cached-tree-verification-failure")
-                            .ToArray();
-                        var retry = await RunCommandsAsync(
-                                workspace!, preparation, commands, plan.Source, mode,
-                                Remaining(timeout, TimeSpan.FromMilliseconds(completed.DurationMs)),
-                                evictionMessages, ct)
-                            .ConfigureAwait(false);
-                        completed = CombineFromScratchRetry(completed, retry);
-                    }
                     var completedAudit = CompleteAudit(staged.Audit, commands, completed.Processes);
                     completed = completed with
                     {
                         TestSelection = completedAudit,
                         Reason = CoverageReason(completed.Reason, completedAudit),
+                        PreparationManifest = projectPreparation?.Manifest,
+                        ProjectDefinitionIssues = projectPreparation?.DefinitionIssues ?? [],
                     };
                 }
             }
 
             if (workspaceLease is not null)
             {
-                completed = SaveDependencyCache(
-                    completed!, dependencyCache, dependencyCacheReranFromScratch);
-                dependencyCacheSaved = true;
                 var cleanupError = await workspaceLease.RemoveAsync(
                     infrastructureTimeout, CancellationToken.None).ConfigureAwait(false);
                 workspaceLease = null;
@@ -496,6 +504,10 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 AttemptChainId = request.AttemptChainId,
                 Executor = request.Executor,
                 Workspace = workspace,
+                PreparationManifest = completed.PreparationManifest ?? projectPreparation?.Manifest,
+                ProjectDefinitionIssues = completed.ProjectDefinitionIssues.Count > 0
+                    ? completed.ProjectDefinitionIssues
+                    : projectPreparation?.DefinitionIssues ?? [],
             };
             return completed;
         }
@@ -503,14 +515,6 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         {
             if (workspaceLease is not null)
             {
-                if (!dependencyCacheSaved)
-                {
-                    if (completed is not null)
-                        completed = SaveDependencyCache(
-                            completed, dependencyCache, dependencyCacheReranFromScratch);
-                    else
-                        dependencyCache?.Evict("gate-run-interrupted");
-                }
                 await workspaceLease.RemoveBestEffortAsync(infrastructureTimeout).ConfigureAwait(false);
             }
             var completedAt = completed?.GateCompletedAtUtc ?? DateTimeOffset.UtcNow;
@@ -542,6 +546,14 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                     completed?.FailureFingerprint));
             }
         }
+    }
+
+    internal static string PreparationManifestPath(string repositoryPath)
+    {
+        var key = Convert.ToHexString(SHA256.HashData(
+            Encoding.UTF8.GetBytes(Path.GetFullPath(repositoryPath).ToUpperInvariant())))
+            .ToLowerInvariant()[..24];
+        return Path.Combine(PreparationCacheRoot, "manifests", key, "latest.json");
     }
 
     private static bool HasHealthContext(BuildTestGateRequest request)

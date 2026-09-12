@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+
+dotnet restore agent-taskboard.sln
+npm --prefix frontend ci --prefer-offline
+
+if ! find "${PLAYWRIGHT_BROWSERS_PATH:?}" -maxdepth 1 -type d \( -name 'chromium-*' -o -name 'chromium_headless_shell-*' \) | grep -q .; then
+  (cd frontend && npx playwright install chromium)
+fi

@@ -46,8 +46,6 @@ Numbering is monotonic. Never reuse a number; never silently delete history.
 
 **Status.** Accepted.
 
----
-
 ## ADR-0002 - Deterministic orchestration over prompt trust (2026-05-02)
 
 **Decision.** The orchestrator parses CLI output for typed signals (`[[TASK_DONE]]`, `[[TASK_BLOCKED:<reason>]]`, `[[TASK_NEEDS_INPUT:<reason>]]`, `[[TASK_NOOP]]`), applies a deterministic post-run policy, and speaks for itself in the activity log when it makes a decision. Prompt wording remains useful, but is not the load-bearing layer.
@@ -1742,5 +1740,21 @@ Task Server authority store. Review and pipeline checkpoints:
 [`RemoteReviewWorkspace`](../../../../runner/RemoteReviewWorkspace.cs),
 [`AspectRunnerService`](../../../../backend/Features/Runner/AspectRunnerService.cs),
 and [`PipelineExecutionLog`](../../../../backend/Features/Pipeline/PipelineExecutionLog.cs).
+
+**Status.** Accepted.
+
+---
+
+## ADR-0073 - Repository preparation precedes executor isolation (2026-09-12)
+
+**Decision.** Agent Studio reads `.agent-studio/project.yml` and `.agent-studio/prepare` from every run's exact subject commit. The definition composes product-owned Node, npm, .NET SDK, NuGet, and Playwright building blocks. Both a coding run and its build-test gate execute the same preparation boundary and persist the same manifest shape. Executor caches are content-addressed from dependency and tool manifests, staged per run, published only after success, and immutable after publication.
+
+The standalone Linux Runner owns one clean checkout per project and executor. It updates the integration branch by fetch and fast-forward only, then creates a leased worktree at the subject commit. The stable checkout is a baseline and cache-warming location, never a coding workspace. Project onboarding and preparation failures create ordinary reviewed proposal cards for repository definition changes. A central override is exceptional, requires a justification, and does not replace subject-commit truth at execution time.
+
+**Context.** Host-specific dependency repair and gate-owned `node_modules` movement made version drift look like code failure and made onboarding depend on machine state. Requiring a container image for every project would hide part of that drift but would also make the first project run harder. The September 12 operator decisions instead put preparation in the product base layer, keep images as optional acceleration, and let the orchestrator co-author project composition with the user.
+
+**Consequences.** A successful run leaves version, duration, cache, and subject evidence. Failed runs cannot poison shared cache entries. An unchanged second run can prove cache reuse. Existing Build Profile discovery remains only for repositories that have not adopted the contract. M2 owns sandbox, container, micro-VM, mandatory Windows Docker execution, and the restricted `windows-host` profile. M3 owns diagnosis and healing actions. Migration starts on the Linux Runner and fixes forward without a prolonged parallel execution model. CI/CD remains a product-owned pipeline direction, including integration runs, deploy stages, and project statistics.
+
+**Implementation pointers.** Shared contract and executor: [`ProjectPreparation.cs`](../../../../contracts/TaskServer.Contracts/ProjectPreparation.cs). Gate: [`BuildTestGateRunner.cs`](../../../../backend/Features/Pipeline/BuildTestGateRunner.cs). Runner checkout and lease: [`GitWorkspace.cs`](../../../../runner/GitWorkspace.cs). Operator setup: [`preparation-isolation-orchestrator.md`](../../../operations/setup/preparation-isolation-orchestrator.md).
 
 **Status.** Accepted.

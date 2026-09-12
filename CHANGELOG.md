@@ -14,6 +14,10 @@ release yet.
 
 ### Added
 
+- Stage M1 repository execution definitions, shared preparation manifests,
+  content-addressed npm, NuGet, and Playwright caches, Linux Runner stable
+  checkouts with leased subject worktrees, proposal cards, and the project
+  Settings > Execution surface.
 - Durable restart continuity for local and Remote runs, review aspects, and
   pipeline post-steps, including operator-visible bridge and loss events plus a
   Windows Studio release drill.
