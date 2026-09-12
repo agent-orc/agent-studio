@@ -42,5 +42,6 @@
       "title": "Deliver and rehearse workstation, one-box, and distributed deployment profiles",
       "promptMarkdown": "Package the same Task Server, Operations Server, Orchestrator Engine, browser edge, and Operations Agent components in three wiring profiles: workstation, one-box Docker, and distributed WireGuard. Make one-box Docker the standard product deployment after full route and security parity. Keep browser-facing listeners only at the selected edge; use service principals on internal hops and outbound authenticated agent channels. Rehearse upgrade, drain, backup, credential rotation, Operations Server outage, Task Server outage, LAN-origin denial, public-demo denial, detached Studio, and rollback. Then update AGT-2738 installer work and AGT-2737 cutover evidence to use the selected profiles."
     }
-  ]
+  ],
+  "key": "AGT-W49"
 }
