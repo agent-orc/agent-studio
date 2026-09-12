@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en" data-document-pattern="concept">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Relevance review of all Agent Studio Dossiers | Decision dossier</title>
+  <style data-article-template="v2">
+    :root {
+      color-scheme: light;
+      --article-paper: #fcfcfb;
+      --article-surface: #f2f1ee;
+      --article-surface-strong: #e9e8e3;
+      --article-ink: #151515;
+      --article-muted: #5f5e59;
+      --article-faint: #7c7a74;
+      --article-line: #d8d6cf;
+      --article-link: #1f67b2;
+      --article-link-soft: #eaf1fb;
+      --article-good: #18753a;
+      --article-good-soft: #eaf4ea;
+      --article-warn: #8b6100;
+      --article-warn-soft: #f8f0dd;
+      --article-bad: #b72f2f;
+      --article-bad-soft: #fbecec;
+      --article-serif: Georgia, "Times New Roman", serif;
+      --article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --article-paper: #1a1a19;
+        --article-surface: #232322;
+        --article-surface-strong: #2c2c2a;
+        --article-ink: #f7f7f4;
+        --article-muted: #c3c2b7;
+        --article-faint: #9d9c94;
+        --article-line: #3d3d3a;
+        --article-link: #78aef0;
+        --article-link-soft: #1e2a3a;
+        --article-good: #67b867;
+        --article-good-soft: #1f2f1f;
+        --article-warn: #d9a63f;
+        --article-warn-soft: #33301e;
+        --article-bad: #e66767;
+        --article-bad-soft: #382222;
+      }
+    }
+    * { box-sizing: border-box; }
+    html { background: var(--article-paper); }
+    body { margin: 0; background: var(--article-paper); color: var(--article-ink); font: 17px/1.75 var(--article-serif); text-rendering: optimizeLegibility; }
+    main { width: min(70ch, calc(100% - 48px)); margin: 0 auto; padding: 0 0 80px; }
+    header.page { margin-bottom: 12px; padding: 48px 0 28px; border-bottom: 1px solid var(--article-line); }
+    h1, h2, h3, .kicker, .meta, table, figcaption, .callout, .metric, .tag { font-family: var(--article-sans); }
+    h1 { margin: 0 0 14px; font-size: clamp(2.2rem, 6vw, 3.4rem); line-height: 1.08; letter-spacing: -0.025em; }
+    h2 { margin: 56px 0 10px; font-size: 1.55rem; line-height: 1.25; }
+    h3 { margin: 34px 0 8px; font-size: 1.08rem; line-height: 1.35; }
+    p { margin: 0 0 18px; }
+    .kicker, .number { margin: 0 0 12px; color: var(--article-faint); font: 700 0.75rem/1 var(--article-sans); letter-spacing: 0.12em; text-transform: uppercase; }
+    .lede { margin: 0; color: var(--article-muted); font-size: 1.18rem; line-height: 1.6; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; color: var(--article-faint); font-size: 0.78rem; }
+    .meta b { color: var(--article-muted); font-weight: 650; }
+    a { color: var(--article-link); text-underline-offset: 0.16em; }
+    code { padding: 0.08em 0.34em; border-radius: 4px; background: var(--article-surface-strong); font: 0.84em/1.5 var(--article-mono); overflow-wrap: anywhere; }
+    ul, ol { margin: 0 0 18px; padding-left: 24px; }
+    li + li { margin-top: 6px; }
+    .callout { margin: 24px 0; padding: 18px 22px; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-surface); font-size: 0.92rem; line-height: 1.65; }
+    .callout[data-tone="accent"] { border-color: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); background: var(--article-link-soft); }
+    .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
+    .breakout { width: min(1320px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
+    .metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1px; overflow: hidden; margin: 28px 0; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-line); }
+    .metric { padding: 16px; background: var(--article-surface); }
+    .metric b { display: block; font-size: 1.7rem; line-height: 1.15; }
+    .metric span { color: var(--article-muted); font-size: 0.74rem; }
+    figure { margin: 30px 0; }
+    figure > svg { display: block; width: 100%; height: auto; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-paper); }
+    figcaption { margin-top: 10px; color: var(--article-muted); font-size: 0.8rem; line-height: 1.5; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.78rem; line-height: 1.42; }
+    th, td { padding: 9px 10px; border-bottom: 1px solid var(--article-line); text-align: left; vertical-align: top; }
+    th { position: sticky; top: 0; z-index: 1; background: var(--article-surface-strong); color: var(--article-faint); font-size: 0.68rem; letter-spacing: 0.05em; text-transform: uppercase; }
+    tbody + tbody tr:first-child th { padding-top: 22px; }
+    .topic { position: static; color: var(--article-ink); font-size: 0.8rem; letter-spacing: 0.06em; }
+    .key { white-space: nowrap; font-family: var(--article-mono); font-weight: 700; }
+    .date, .status, .action { white-space: nowrap; }
+    .tag { display: inline-block; padding: 2px 7px; border-radius: 999px; background: var(--article-surface-strong); font-size: 0.68rem; font-weight: 700; white-space: nowrap; }
+    .tag.current { color: var(--article-good); background: var(--article-good-soft); }
+    .tag.partial { color: var(--article-warn); background: var(--article-warn-soft); }
+    .tag.superseded { color: var(--article-bad); background: var(--article-bad-soft); }
+    .muted { color: var(--article-muted); }
+    .table-note { margin: 10px 0 28px; color: var(--article-faint); font: 0.75rem/1.55 var(--article-sans); }
+    @media (max-width: 900px) {
+      .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .table-wrap { overflow-x: auto; }
+      table { min-width: 1100px; }
+    }
+    @media print { .breakout { width: 100%; margin-left: 0; transform: none; } th { position: static; } }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; } }
+  </style>
+</head>
+<body>
+<main>
+  <header class="page">
+    <p class="kicker">Decision dossier · Agent Studio · AGT-2785</p>
+    <h1>Relevance review of all Agent Studio Dossiers</h1>
+    <p class="lede">A full-content review of the 52 Dossiers that existed before this review, tracing their decisions, implementation references, folder history, later replacements, contradictions, and still-open choices.</p>
+    <div class="meta"><span><b>Date</b> 12 September 2026</span><span><b>Status</b> Decision pending</span><span><b>Scope</b> 52 pre-existing Dossiers</span><span><b>Source</b> AGT-2785</span></div>
+  </header>
+
+  <section data-concept-section="alternatives">
+    <h2><span class="number">01</span> Alternatives</h2>
+    <h3>Apply every verdict immediately</h3>
+    <p>This would make the catalogue current in one pass, but it would modify 52 existing descriptors before the required human sight review and would violate this concept run's one-directory repository boundary.</p>
+    <h3>Approve a complete matrix, then apply it through the metadata API</h3>
+    <p>This preserves one reviewable decision surface. After approval, one bounded implementation card applies the exact matrix through the endpoint and uses direct descriptor writes only if that endpoint is not integrated.</p>
+    <h3>Archive only the obvious replacements</h3>
+    <p>This is low risk but leaves partial replacement chains, unresolved contradictions, and current policies without explicit review provenance.</p>
+  </section>
+
+  <section data-concept-section="recommendation">
+    <h2><span class="number">02</span> Recommendation</h2>
+    <div class="callout" data-tone="accent">
+      <h3>Approve the full matrix, then apply it as one metadata-only slice</h3>
+      <p>Use the 52-row matrix below as the decision record. Keep durable policies and live proposals, preserve dated incidents as historical evidence, and mark replacement chains explicitly. The follow-up must use <code>PUT /api/projects/{projectName}/workbenches/{id}/review</code>; only an unavailable endpoint justifies the documented direct-JSON fallback.</p>
+    </div>
+    <p>Lifecycle status and relevance verdict remain separate. For example, W1 is lifecycle <code>documented</code> but its design rules are current, while W51 is lifecycle <code>decision-pending</code> and its afternoon revision is the current proposal.</p>
+  </section>
+
+  <section data-concept-section="evidence">
+    <h2><span class="number">03</span> Evidence</h2>
+    <div class="metrics" aria-label="Corpus and proposed verdict counts">
+      <div class="metric"><b>52</b><span>pre-existing Dossiers read</span></div>
+      <div class="metric"><b>23</b><span>current</span></div>
+      <div class="metric"><b>12</b><span>partially superseded</span></div>
+      <div class="metric"><b>6</b><span>superseded</span></div>
+      <div class="metric"><b>11</b><span>historical</span></div>
+    </div>
+
+    <figure class="breakout">
+      <svg viewBox="0 0 1120 250" role="img" aria-labelledby="flow-title flow-desc">
+        <title id="flow-title">Evidence path from source Dossiers to approved metadata</title>
+        <desc id="flow-desc">Fifty-two source documents and their descriptors, card references, and Git history feed a verdict matrix. Human approval then permits API application.</desc>
+        <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="var(--article-faint)"/></marker></defs>
+        <g fill="var(--article-surface)" stroke="var(--article-line)" stroke-width="2">
+          <rect x="35" y="52" width="240" height="145" rx="12"/><rect x="440" y="52" width="240" height="145" rx="12"/><rect x="845" y="52" width="240" height="145" rx="12"/>
+        </g>
+        <g fill="var(--article-ink)" font-family="system-ui, sans-serif" text-anchor="middle">
+          <text x="155" y="88" font-size="17" font-weight="700">Source record</text><text x="155" y="120" font-size="14">52 full HTML documents</text><text x="155" y="145" font-size="14">52 descriptors</text><text x="155" y="170" font-size="14">card links and folder history</text>
+          <text x="560" y="88" font-size="17" font-weight="700">Review matrix</text><text x="560" y="120" font-size="14">verdict and replacement keys</text><text x="560" y="145" font-size="14">reason and action</text><text x="560" y="170" font-size="14">contradictions called out</text>
+          <text x="965" y="88" font-size="17" font-weight="700">Application</text><text x="965" y="120" font-size="14">human sight review</text><text x="965" y="145" font-size="14">metadata endpoint</text><text x="965" y="170" font-size="14">server timestamp and history</text>
+        </g>
+        <g stroke="var(--article-faint)" stroke-width="2" marker-end="url(#arrow)"><line x1="285" y1="125" x2="420" y2="125"/><line x1="690" y1="125" x2="825" y2="125"/></g>
+      </svg>
+      <figcaption><b>Evidence flow.</b> Repository documents and history establish the proposal; operator approval is still required before metadata is applied. Diagram produced from the repository review on 12 September 2026.</figcaption>
+    </figure>
+
+    <h3>Scope reconciliation</h3>
+    <p>The repository contained 52 Dossiers before this one: 44 under <code>docs/operations</code>, seven under <code>docs/quality</code>, and one at <code>docs/studio-route-ownership</code>. Their lifecycle split was 33 current-list descriptors and 19 History descriptors. Adding this decision-pending review Dossier yields the stated 34 current and 19 History. The matrix therefore reviews all 52 pre-existing Agent Studio Dossiers rather than silently excluding the eight outside <code>docs/operations</code>.</p>
+
+    <h3>Method</h3>
+    <p>Every <code>index.html</code> was read in full, including alternatives, decisions, implementation logs, evidence, appendices, and later amendments. Each descriptor supplied lifecycle, source cards, related cards, and implementation tasks. Folder-scoped <code>git log --all</code> supplied creation and revision history. Current domain maps and explicit cross-links were used to test whether open choices had moved elsewhere. A missing reference is not treated as evidence of implementation.</p>
+    <p>No screenshot is included because this Dossier makes no claim about a current visible product surface. Its claims concern repository documents, descriptor metadata, and Git history.</p>
+
+    <h3>Contradictions</h3>
+    <div class="callout" data-tone="warn">
+      <ul>
+        <li><b>Execution environment:</b> W6, W8, W14, and W22 make containers or all-Docker the default; W51's afternoon revision makes reproducible preparation scripts the source of truth and treats Docker as optional isolation.</li>
+        <li><b>Git ownership:</b> W14 and W22 allow agent-owned pushes; W37, W49, W51, and the current platform contract place integration and remote durability in platform-owned orchestration.</li>
+        <li><b>Topology:</b> W10, W14, W22, and W25 describe the older three-part topology; W49 introduces the Operations Server as a separate fourth responsibility and supersedes those topology notes.</li>
+        <li><b>Runner link:</b> W43 assigns the interim link supervisor to the Task Server process; W49 assigns executable operational actions to the Operations Server and keeps W43 only as a bounded migration state.</li>
+        <li><b>Gate economics:</b> W2 recommends measure-first staging and rejects batching as a default; W36 later recommends one final full-suite batch after cheap checks and model review, based on a different measured saturation regime.</li>
+        <li><b>Candidate construction:</b> W36 starts from mapped replay into a closed batch candidate; W37 recommends merge-first candidate construction with deterministic fallback. This choice remains unresolved and must be decided once.</li>
+        <li><b>Retention:</b> W11 proposes a log-specific cap and runner backup; W46 explicitly replaces it with class-based retention, cold archive, full backup, restore, and integrity contracts.</li>
+        <li><b>Same-day revision:</b> W51's afternoon text explicitly replaces its own morning Docker-mandatory proposal. Only the afternoon revision is current; the morning version remains Git history.</li>
+      </ul>
+    </div>
+
+    <h3>Verdict matrix</h3>
+    <div class="table-wrap breakout">
+      <table>
+        <thead><tr><th>Key</th><th>Title</th><th>Date</th><th>Lifecycle</th><th>Verdict</th><th>Superseded by</th><th>Reasoning</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr><th class="topic" colspan="8">Execution and runner</th></tr>
+          <tr><td class="key">AGT-W3</td><td>Board status model: current map and target rules</td><td class="date">2026-08-18</td><td class="status">active</td><td><span class="tag partial">partially superseded</span></td><td>AGT-W37</td><td>Its state inventory remains useful, but W37 resolves later rebase, integration, and bounce behavior while several of W3's fourteen choices still lack one current decision record.</td><td class="action">re-decide</td></tr>
+          <tr><td class="key">AGT-W6</td><td>Execution model: container default</td><td class="date">2026-08-11</td><td class="status">documented</td><td><span class="tag superseded">superseded by</span></td><td>AGT-W51</td><td>The July container-default decision and its six open choices conflict with W51's later script-first, isolation-profile model.</td><td class="action">archive</td></tr>
+          <tr><td class="key">AGT-W7</td><td>Distributed execution</td><td class="date">2026-08-17</td><td class="status">active</td><td><span class="tag partial">partially superseded</span></td><td>AGT-W49, AGT-W51</td><td>Its fencing, lease, Result SHA, and failure evidence remain authoritative, while W49 and W51 replace its topology and execution-environment assumptions.</td><td class="action">merge into</td></tr>
+          <tr><td class="key">AGT-W8</td><td>Installer story: guided steps, Linux all-Docker, and Windows</td><td class="date">2026-08-18</td><td class="status">active</td><td><span class="tag superseded">superseded by</span></td><td>AGT-W49, AGT-W51</td><td>Its three planned cards assume all-Docker on both platforms; W49 defines new deployment profiles and W51 makes Docker optional.</td><td class="action">archive</td></tr>
+          <tr><td class="key">AGT-W10</td><td>Snapshot, 3 August 2026</td><td class="date">2026-08-11</td><td class="status">documented</td><td><span class="tag">historical</span></td><td></td><td>The Dossier explicitly identifies itself as a dated position report whose implementation state and topology age into history.</td><td class="action">archive</td></tr>
+          <tr><td class="key">AGT-W12</td><td>Model routing as a Token Economy decision</td><td class="date">2026-08-11</td><td class="status">documented</td><td><span class="tag">historical</span></td><td></td><td>The page marks its routing table as outdated; the current model-routing domain policy now owns the contract.</td><td class="action">archive</td></tr>
+          <tr><td class="key">AGT-W14</td><td>North star: Agent Studio target and delivery</td><td class="date">2026-08-17</td><td class="status">active</td><td><span class="tag superseded">superseded by</span></td><td>AGT-W49, AGT-W51</td><td>Its three-component, container-isolated, agent-self-push target conflicts with the Operations Server split and platform-owned script-first execution.</td><td class="action">archive</td></tr>
+          <tr><td class="key">AGT-W15</td><td>Global Orchestrator Watcher</td><td class="date">2026-09-07</td><td class="status">decision-pending</td><td><span class="tag current">current</span></td><td></td><td>Delivered detector and visual-guardian cards support the observe-first design, while its safe-rescue fence choices remain genuinely open.</td><td class="action">re-decide</td></tr>
+          <tr><td class="key">AGT-W18</td><td>Remote Gate target architecture</td><td class="date">2026-08-18</td><td class="status">active</td><td><span class="tag current">current</span></td><td></td><td>The claimable gate-step, exact-SHA, lease, and fail-closed design remains compatible with W36 and current runner ownership; the target migration is not fully closed.</td><td class="action">re-decide</td></tr>
+          <tr><td class="key">AGT-W22</td><td>Implementation plan toward the target</td><td class="date">2026-08-11</td><td class="status">documented</td><td><span class="tag superseded">superseded by</span></td><td>AGT-W49, AGT-W51</td><td>The plan sequences container-default execution and agent-owned Git behavior that the September topology and isolation proposal replace.</td><td class="action">archive</td></tr>
+          <tr><td class="key">AGT-W23</td><td>Unverified deliveries</td><td class="date">2026-08-18</td><td class="status">decision-pending</td><td><span class="tag partial">partially superseded</span></td><td>AGT-W37, AGT-W42</td><td>Its incident reconstruction and AGT-2543/2544/2545 hardening evidence remain valuable, while later recovery policy rejects automatic newest-fence adoption and consolidates the failure class.</td><td class="action">merge into</td></tr>
+          <tr><td class="key">AGT-W25</td><td>Target components, protocols, interface, build, and deploy</td><td class="date">2026-08-11</td><td class="status">documented</td><td><span class="tag superseded">superseded by</span></td><td>AGT-W49</td><td>Its protocol evidence is retained elsewhere, but its component boundary is the older topology explicitly replaced by the Operations Server proposal.</td><td class="action">archive</td></tr>
+          <tr><td class="key">AGT-W37</td><td>Rebase, merge, and bounce steering</td><td class="date">2026-08-17</td><td class="status">decision-pending</td><td><span class="tag current">current</span></td><td></td><td>It is the latest focused decision record for merge-first integration, clean rebase recovery, bounded steering, and main-line protection.</td><td class="action">re-decide</td></tr>
+          <tr><td class="key">AGT-W38</td><td>Organization-wide telemetry layer</td><td class="date">2026-08-17</td><td class="status">decision-pending</td><td><span class="tag current">current</span></td><td></td><td>The hybrid local JSONL plus pushed semantic-observation model still matches the watcher and operations-hub direction, and its pilot decision remains open.</td><td class="action">re-decide</td></tr>
+          <tr><td class="key">AGT-W39</td><td>Live improvement log</td><td class="date">2026-09-07</td><td class="status">decided</td><td><span class="tag">historical</span></td><td></td><td>The dated supervision log ends on 28 August and its recurring classes are synthesized by W42 and the September robustness Dossiers.</td><td class="action">archive</td></tr>
+          <tr><td class="key">AGT-W42</td><td>Operational resilience</td><td class="date">2026-08-27</td><td class="status">decided</td><td><span class="tag partial">partially superseded</span></td><td>AGT-W50, AGT-W51</td><td>Its eleven failure-class synthesis remains valuable, but W50 deepens delivery diagnosis and W51 owns isolation and orchestrator healing.</td><td class="action">merge into</td></tr>
+          <tr><td class="key">AGT-W43</td><td>Runner link as part of the application</td><td class="date">2026-09-09</td><td class="status">active</td><td><span class="tag partial">partially superseded</span></td><td>AGT-W49</td><td>AGT-2763 delivered the silent Task Server LinkSupervisor and AGT-2764 prepared migration, but W49 moves executable operations to the Operations Server boundary.</td><td class="action">merge into</td></tr>
+          <tr><td class="key">AGT-W44</td><td>Token and retry tax, 11 to 12 August 2026</td><td class="date">2026-08-17</td><td class="status">decision-pending</td><td><span class="tag partial">partially superseded</span></td><td>AGT-W37, AGT-W50</td><td>Its measurements remain dated evidence, while W37 chooses the recovery mechanism and W50 provides the newer retry-diagnosis and breaker design.</td><td class="action">merge into</td></tr>
+          <tr><td class="key">AGT-W49</td><td>Operations Server backchannel beside the Task Server</td><td class="date">2026-09-12</td><td class="status">decision-pending</td><td><span class="tag current">current</span></td><td></td><td>This is the newest topology proposal and explicitly reallocates operational execution without weakening Task Server truth ownership.</td><td class="action">re-decide</td></tr>
+          <tr><td class="key">AGT-W50</td><td>Delivery chain: robustness instead of recipes</td><td class="date">2026-09-12</td><td class="status">decision-pending</td><td><span class="tag partial">partially superseded</span></td><td>AGT-W51</td><td>W51 takes over W50 recommendations R1 and R4 plus decisions D2 and D3; W50 still owns diagnosis, fingerprint breaking, flaky quarantine, and remaining metrics choices.</td><td class="action">keep</td></tr>
+          <tr><td class="key">AGT-W51</td><td>Isolated execution: preparation scripts, isolation, and a healing orchestrator</td><td class="date">2026-09-12</td><td class="status">decision-pending</td><td><span class="tag current">current</span></td><td></td><td>The afternoon revision is the latest execution proposal and explicitly supersedes its morning Docker-mandatory version.</td><td class="action">re-decide</td></tr>
+        </tbody>
+        <tbody>
+          <tr><th class="topic" colspan="8">Review and gates</th></tr>
+          <tr><td class="key">AGT-W2</td><td>Async validation and the test staging lane</td><td class="date">2026-08-11</td><td class="status">documented</td><td><span class="tag partial">partially superseded</span></td><td>AGT-W36</td><td>Its SHA cache and deterministic test-scope principles remain sound, but W36 replaces its measure-first stance with a final batch gate after newer saturation evidence.</td><td class="action">merge into</td></tr>
+          <tr><td class="key">AGT-W27</td><td>Narrative task view</td><td class="date">2026-08-18</td><td class="status">active</td><td><span class="tag current">current</span></td><td></td><td>The fixed renderer, evidence receipts, Technical/Narrative split, and controlled evaluation boundary remain a coherent current proposal.</td><td class="action">re-decide</td></tr>
+          <tr><td class="key">AGT-W28</td><td>Pipeline time economy</td><td class="date">2026-08-11</td><td class="status">documented</td><td><span class="tag">historical</span></td><td></td><td>Its 847-task measurement is a dated baseline whose ratios informed later W36 and W44 decisions but should not be treated as current telemetry.</td><td class="action">archive</td></tr>
+          <tr><td class="key">AGT-W29</td><td>Reissue prompt sharpness and convergence</td><td class="date">2026-08-11</td><td class="status">documented</td><td><span class="tag">historical</span></td><td></td><td>The bounded experiment found no reliable convergence advantage and explicitly declined a default change, so it is retained as negative-result history.</td><td class="action">archive</td></tr>
+          <tr><td class="key">AGT-W30</td><td>Remote run infrastructure test report</td><td class="date">2026-08-11</td><td class="status">documented</td><td><span class="tag">historical</span></td><td></td><td>This is a fixed run report, including a failed gate-transport recovery case, not a forward contract.</td><td class="action">archive</td></tr>
+          <tr><td class="key">AGT-W31</td><td>Token Economy: reliable signals from Task Server data</td><td class="date">2026-08-11</td><td class="status">documented</td><td><span class="tag current">current</span></td><td></td><td>Its separation of hard, model-judged, derived, and confounded evidence remains the valid interpretation contract for production task data.</td><td class="action">keep</td></tr>
+          <tr><td class="key">AGT-W35</td><td>Task Timeline redesign</td><td class="date">2026-08-18</td><td class="status">decision-pending</td><td><span class="tag current">current</span></td><td></td><td>The source inventory and bounded redesign choices remain open, with no later Dossier replacing the timeline information architecture.</td><td class="action">re-decide</td></tr>
+          <tr><td class="key">AGT-W36</td><td>Batch Gate: one full suite for a delivery wave</td><td class="date">2026-08-11</td><td class="status">decision-pending</td><td><span class="tag current">current</span></td><td></td><td>Its closed manifest, exact candidate, bounded red-batch isolation, and review-first operator amendment remain the latest gate-economy proposal.</td><td class="action">re-decide</td></tr>
+          <tr><td class="key">AGT-W40</td><td>Operator decision briefing</td><td class="date">2026-08-25</td><td class="status">decision-pending</td><td><span class="tag">historical</span></td><td></td><td>The briefing was a dated index of eight pending decisions; several have since been delivered, revised, or replaced and W49 to W52 did not yet exist.</td><td class="action">archive</td></tr>
+          <tr><td class="key">AGT-W45</td><td>Escalation view information architecture</td><td class="date">2026-08-18</td><td class="status">decision-pending</td><td><span class="tag current">current</span></td><td></td><td>Its single-owner blocker design remains open, and the 8 September ReviewProjection update changes only the data source, not the proposed layout.</td><td class="action">re-decide</td></tr>
+        </tbody>
+        <tbody>
+          <tr><th class="topic" colspan="8">Dossiers and UI</th></tr>
+          <tr><td class="key">AGT-W1</td><td>Admin Surface Design Guideline</td><td class="date">2026-09-07</td><td class="status">documented</td><td><span class="tag current">current</span></td><td></td><td>Its flat-surface grammar is still mandatory and its append-only applied-surface, lane, keyboard, Dossier-list, and retry addenda are current.</td><td class="action">keep</td></tr>
+          <tr><td class="key">AGT-W4</td><td>Concept pipeline: cards that deliver Dossier documents</td><td class="date">2026-08-11</td><td class="status">documented</td><td><span class="tag partial">partially superseded</span></td><td>AGT-W24</td><td>The successful concept outcome and human sight-review rule remain, while W24 supplies the later lifecycle, key, list, and maintenance model.</td><td class="action">merge into</td></tr>
+          <tr><td class="key">AGT-W5</td><td>Deck icon exploration</td><td class="date">2026-08-11</td><td class="status">documented</td><td><span class="tag">historical</span></td><td></td><td>Option A was selected and delivered by AGT-2619; the Dossier now serves only as design-decision provenance.</td><td class="action">archive</td></tr>
+          <tr><td class="key">AGT-W9</td><td>Context-aware Orchestrator Chats</td><td class="date">2026-09-08</td><td class="status">decided</td><td><span class="tag current">current</span></td><td></td><td>The Task Server-owned context, transcript, receipt, side-sheet, and Chat History decisions remain current and are tracked across AGT-2572 to AGT-2577.</td><td class="action">keep</td></tr>
+          <tr><td class="key">AGT-W13</td><td>Model badge contrast in the light theme</td><td class="date">2026-08-11</td><td class="status">documented</td><td><span class="tag">historical</span></td><td></td><td>The operator selected set A and AGT-2527 delivered it; current theme tokens now carry the lasting rule.</td><td class="action">archive</td></tr>
+          <tr><td class="key">AGT-W16</td><td>Project feed: high-level timeline from decisions and events</td><td class="date">2026-08-18</td><td class="status">active</td><td><span class="tag partial">partially superseded</span></td><td>AGT-W15, AGT-W38</td><td>The feed goal remains useful, but watcher observations and the organization-wide telemetry contract now own event semantics and transport.</td><td class="action">merge into</td></tr>
+          <tr><td class="key">AGT-W17</td><td>Protocol condensation</td><td class="date">2026-08-18</td><td class="status">active</td><td><span class="tag current">current</span></td><td></td><td>The supervisor-line, tool-call-cluster, and edit-line condensation rules still govern a live readability problem and have no later replacement.</td><td class="action">keep</td></tr>
+          <tr><td class="key">AGT-W20</td><td>status.md finalization for concept and planning cards</td><td class="date">2026-08-17</td><td class="status">decided</td><td><span class="tag current">current</span></td><td></td><td>AGT-2585 implemented V1 finalization parity and the application-owned Result contract remains current.</td><td class="action">keep</td></tr>
+          <tr><td class="key">AGT-W21</td><td>Task header and chat chips: layout hardening</td><td class="date">2026-08-18</td><td class="status">decision-pending</td><td><span class="tag current">current</span></td><td></td><td>The layout findings and responsive alternatives remain pending, with no later Dossier selecting a replacement.</td><td class="action">re-decide</td></tr>
+          <tr><td class="key">AGT-W24</td><td>Dossiers: name, patterns, and becoming an app</td><td class="date">2026-08-11</td><td class="status">documented</td><td><span class="tag partial">partially superseded</span></td><td>AGT-W33</td><td>Its app-layer, keys, lifecycle, and article-template plan remains foundational, but W33 replaces the earlier naming round and fixes Dossier as the product noun.</td><td class="action">keep</td></tr>
+          <tr><td class="key">AGT-W26</td><td>Architecture and quality layer</td><td class="date">not recorded</td><td class="status">missing</td><td><span class="tag">historical</span></td><td></td><td>The page declares itself a contract sample rather than live data, and its descriptor lacks a lifecycle status and updated date.</td><td class="action">archive</td></tr>
+          <tr><td class="key">AGT-W32</td><td>Visual StyleGuide: page action bar</td><td class="date">2026-08-17</td><td class="status">documented</td><td><span class="tag">historical</span></td><td></td><td>This compact visual contract was delivered into later shared UI and design guidance; it remains useful as provenance, not as the primary rule source.</td><td class="action">archive</td></tr>
+          <tr><td class="key">AGT-W33</td><td>Naming the living decision-to-documentation artifact</td><td class="date">2026-08-17</td><td class="status">documented</td><td><span class="tag current">current</span></td><td></td><td>The accepted Dossier noun, lower-case “living dossier” explanation, and workbench-internal compatibility boundary remain the latest naming decision.</td><td class="action">keep</td></tr>
+          <tr><td class="key">AGT-W48</td><td>Task detail usage block at pipeline width</td><td class="date">2026-09-11</td><td class="status">decided</td><td><span class="tag current">current</span></td><td></td><td>The selected alternative is the current task-detail layout direction and its implementation card is already represented in the descriptor.</td><td class="action">keep</td></tr>
+          <tr><td class="key">AGT-W52</td><td>Project scope: one switch, one click to all projects</td><td class="date">2026-09-12</td><td class="status">decision-pending</td><td><span class="tag current">current</span></td><td></td><td>This is the newest scope-control proposal; its one-owner model and three operator choices have not been replaced or decided elsewhere.</td><td class="action">re-decide</td></tr>
+        </tbody>
+        <tbody>
+          <tr><th class="topic" colspan="8">Websites</th></tr>
+          <tr><td class="key">AGT-W19</td><td>Reproducible product screenshots from pinned demo data</td><td class="date">2026-08-17</td><td class="status">documented</td><td><span class="tag current">current</span></td><td></td><td>The pinned-data, deterministic-capture, provenance, and publication boundary remains the active screenshot evidence contract used by later Dossiers.</td><td class="action">keep</td></tr>
+          <tr><td class="key">AGT-W34</td><td>Public demo instance with no execution authority</td><td class="date">2026-09-07</td><td class="status">decided</td><td><span class="tag current">current</span></td><td></td><td>S1 through S5 are delivered, while the Dossier correctly keeps launch blocked on the still-open dedicated-VM rehearsal S6.</td><td class="action">keep</td></tr>
+        </tbody>
+        <tbody>
+          <tr><th class="topic" colspan="8">Security</th></tr>
+          <tr><td class="key">AGT-W41</td><td>Organization security audit, August 2026</td><td class="date">2026-08-25</td><td class="status">decision-pending</td><td><span class="tag current">current</span></td><td></td><td>The audit separates verified fixes from unresolved findings across five surfaces, and no later Dossier closes the remaining triage decisions.</td><td class="action">re-decide</td></tr>
+          <tr><td class="key">AGT-W47</td><td>Studio route ownership and local connector</td><td class="date">2026-09-07</td><td class="status">decision-pending</td><td><span class="tag partial">partially superseded</span></td><td>AGT-W49</td><td>Its Task Server route migration cards are substantially delivered, but W49 revises the destination for operations and administration routes to the Operations Server.</td><td class="action">merge into</td></tr>
+        </tbody>
+        <tbody>
+          <tr><th class="topic" colspan="8">Retention</th></tr>
+          <tr><td class="key">AGT-W11</td><td>Task log retention, caps, and cleanup</td><td class="date">2026-09-06</td><td class="status">archived</td><td><span class="tag superseded">superseded by</span></td><td>AGT-W46</td><td>W46 explicitly replaces this log-specific policy while retaining its implemented 10 MiB source cap as one part of a broader class-based system.</td><td class="action">merge into</td></tr>
+          <tr><td class="key">AGT-W46</td><td>Retention and archive</td><td class="date">2026-09-06</td><td class="status">active</td><td><span class="tag current">current</span></td><td></td><td>Its class model, cold archive, backup thinning, S3-compatible target, restore, integrity checks, and implemented admin surface are the current policy.</td><td class="action">keep</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="table-note">Dates are descriptor <code>updatedAt</code> dates. W26 has no recorded date or lifecycle status. “Merge into” means preserve durable evidence in the named successor before retiring the older active guidance.</p>
+
+    <h3>Metadata counts</h3>
+    <table>
+      <thead><tr><th>State</th><th>Current</th><th>Partially superseded</th><th>Superseded</th><th>Historical</th><th>Unreviewed</th></tr></thead>
+      <tbody>
+        <tr><td>Before this concept</td><td>0</td><td>0</td><td>0</td><td>0</td><td>52</td></tr>
+        <tr><td>Proposed after approval</td><td>23</td><td>12</td><td>6</td><td>11</td><td>0</td></tr>
+        <tr><td>Applied in this concept run</td><td>0</td><td>0</td><td>0</td><td>0</td><td>52</td></tr>
+      </tbody>
+    </table>
+    <p>The applied row remains unchanged because concept mode permits repository changes only inside this new Dossier directory. The review endpoint was therefore not called and existing descriptors were not edited before human approval.</p>
+
+    <h3>Changed descriptors</h3>
+    <ul>
+      <li><code>docs/operations/dossier-review-2026-09/workbench.json</code>: created for this review Dossier.</li>
+      <li>Existing reviewed <code>workbench.json</code> files changed: none.</li>
+    </ul>
+  </section>
+
+  <section data-concept-section="open-decisions">
+    <h2><span class="number">04</span> Open decisions</h2>
+    <ol>
+      <li>Approve or revise the 52 proposed verdicts and their replacement keys.</li>
+      <li>Approve the recommended actions, especially whether partially superseded incident Dossiers should remain readable in place or be merged before archiving.</li>
+      <li>After approval, authorize the metadata-only implementation slice. The endpoint remains the default; direct descriptor edits are only the compatibility fallback.</li>
+    </ol>
+    <p>The human sight review is not claimed complete by this document.</p>
+  </section>
+
+  <!-- agent-studio:implementation-section:start -->
+  <section id="implementation" data-document-section="implementation">
+    <h2><span class="number">05</span> Implementation</h2>
+    <p>The descriptor contains one bounded follow-up: apply the approved matrix through the review metadata endpoint, verify all 52 descriptors, and report the actual counts and changed paths.</p>
+    <ol class="implementation-log">
+      <!-- agent-studio:implementation-log:start -->
+      <!-- agent-studio:implementation-log:end -->
+    </ol>
+  </section>
+  <!-- agent-studio:implementation-section:end -->
+</main>
+</body>
+</html>
