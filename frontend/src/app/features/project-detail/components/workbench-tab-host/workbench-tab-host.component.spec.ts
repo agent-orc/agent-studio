@@ -1,6 +1,6 @@
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import type { WorkbenchDocument } from '../../../../models/project-docs.model';
 import { StudioTabStateService } from '../../../studio-shell/services/studio-tab-state.service';
 import { WorkbenchTabHostComponent } from './workbench-tab-host.component';
@@ -36,6 +36,8 @@ const DOCUMENT: WorkbenchDocument = {
  * backfilled once the viewer resolves the document.
  */
 describe('WorkbenchTabHostComponent', () => {
+  beforeEach(() => localStorage.removeItem('atp.studio.tabs.v1'));
+
   it('backfills the active tab with the resolved catalogue key and title', async () => {
     await TestBed.configureTestingModule({
       imports: [WorkbenchTabHostComponent],
