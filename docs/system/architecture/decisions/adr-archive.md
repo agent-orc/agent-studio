@@ -46,6 +46,8 @@ Numbering is monotonic. Never reuse a number; never silently delete history.
 
 **Status.** Accepted.
 
+---
+
 ## ADR-0002 - Deterministic orchestration over prompt trust (2026-05-02)
 
 **Decision.** The orchestrator parses CLI output for typed signals (`[[TASK_DONE]]`, `[[TASK_BLOCKED:<reason>]]`, `[[TASK_NEEDS_INPUT:<reason>]]`, `[[TASK_NOOP]]`), applies a deterministic post-run policy, and speaks for itself in the activity log when it makes a decision. Prompt wording remains useful, but is not the load-bearing layer.

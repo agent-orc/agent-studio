@@ -145,14 +145,15 @@ public sealed class ProjectPreparationTests : IDisposable
         var results = Environment.GetEnvironmentVariable("JOB_RESULTS_DIR")
                       ?? Path.Combine(_root, "pilot-results");
         var cache = Path.Combine(Path.GetTempPath(), "agent-studio-m1-pilot-cache");
+        var subjectSha = await RunGitAsync(repository, "rev-parse", "HEAD");
 
         var first = await ProjectPreparationExecutor.RunAsync(
             repository, cache, Path.Combine(results, "agent-studio-preparation-first.json"),
-            "working-tree", null, TimeSpan.FromMinutes(20), CancellationToken.None);
+            subjectSha, null, TimeSpan.FromMinutes(20), CancellationToken.None);
         Assert.True(first.Succeeded, first.Output);
         var second = await ProjectPreparationExecutor.RunAsync(
             repository, cache, Path.Combine(results, "agent-studio-preparation-second.json"),
-            "working-tree", null, TimeSpan.FromMinutes(20), CancellationToken.None);
+            subjectSha, null, TimeSpan.FromMinutes(20), CancellationToken.None);
 
         Assert.True(second.Succeeded, second.Output);
         Assert.True(second.CacheHit, "The unchanged Agent Studio pilot must hit every technology cache.");
@@ -191,5 +192,27 @@ public sealed class ProjectPreparationTests : IDisposable
             directory = directory.Parent;
         }
         throw new DirectoryNotFoundException("Agent Studio repository root was not found.");
+    }
+
+    private static async Task<string> RunGitAsync(string workingDirectory, params string[] arguments)
+    {
+        var start = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "git",
+            WorkingDirectory = workingDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        foreach (var argument in arguments) start.ArgumentList.Add(argument);
+        using var process = System.Diagnostics.Process.Start(start)
+            ?? throw new InvalidOperationException("Git did not start.");
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        var output = (await stdout).Trim();
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException(await stderr);
+        return output;
     }
 }
