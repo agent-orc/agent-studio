@@ -1,6 +1,6 @@
 # Pipeline Domain Map
 
-Version: 2026-09-08
+Version: 2026-09-11
 Status: System-of-record map for task-processing pipeline changes.
 
 Use this when a change touches pre/core/post steps, pipeline catalog entries,
@@ -316,6 +316,19 @@ steer the pipeline in this policy version.
   checkpoints, and terminal evidence. A replacement daemon adopts only a
   positively proven process generation and submits the same attempt through the
   deterministic `review-report:<attempt>:<fence>` key.
+- [Review Plane contract](../contracts/review-plane.md) is the durable
+  hand-off for `POST .../reviews/attempts/{attemptId}/report` (AGT-2762): the
+  attempt authority settles synchronously and durably, then
+  `RemoteReviewEvidenceProjectionQueue` /
+  `RemoteReviewEvidenceProjectionWorker` project the task-folder evidence
+  (grade markdown, aspect files, timeline entries) afterwards on a background
+  queue so a slow host cannot hold the report request open past the runner's
+  ack timeout. A report replaying an already-settled idempotency key answers
+  `Duplicate` without touching Git or the task folder.
+  `ClaimNextReview` requeues a stale leased attempt at the queue head into a
+  terminal `LeaseExpired` outcome with an immediate successor attempt instead
+  of surfacing `LeaseExpired` to the polling executor, which used to trigger
+  an unnecessary full re-registration loop (AGT-2760).
 - `runner/ReviewWorkspaceRetention.cs`: review workspace retention. The
   executor removes an attempt workspace immediately only after the Task Server
   accepts its terminal report. The daemon also sweeps inactive attempt

@@ -341,6 +341,26 @@ public sealed record ReviewReportRequest(
     IReadOnlyList<ReviewVerdictDto> Verdicts,
     long AuthorityEpoch = 0);
 
+/// <summary>
+/// State of the task-folder evidence write (grade markdown, aspect files,
+/// timeline entries) behind a settled report. The settlement itself is
+/// synchronous and durable; evidence projection runs afterwards on a
+/// background queue (AGT-2762) so a slow host cannot hold the report request
+/// open.
+/// </summary>
+public static class ReviewEvidenceProjectionStatus
+{
+    /// <summary>Evidence projection was handed to the background queue.</summary>
+    public const string Queued = "queued";
+
+    /// <summary>
+    /// This report replayed an idempotency key that was already settled;
+    /// evidence projection from the original delivery is unaffected and was
+    /// not re-run.
+    /// </summary>
+    public const string Duplicate = "duplicate";
+}
+
 public sealed record ReviewReportDto(
     string ReportId,
     string AttemptId,
@@ -351,7 +371,8 @@ public sealed record ReviewReportDto(
     string ReportSha256,
     DateTime ReceivedAt,
     bool RetryScheduled,
-    string TaskState);
+    string TaskState,
+    string EvidenceProjection = ReviewEvidenceProjectionStatus.Queued);
 
 public sealed record ReviewCleanupRequest(
     string ExecutorId,

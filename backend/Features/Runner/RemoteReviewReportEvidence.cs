@@ -10,6 +10,15 @@ namespace AgentStudio.Runner;
 /// </summary>
 internal static class RemoteReviewReportEvidence
 {
+    /// <summary>
+    /// Deterministic grade-file name for an attempt, computable without the I/O
+    /// in <see cref="WriteAsync"/>. The report endpoint uses this to reference
+    /// the file (e.g. as a timeline PayloadRef) before the background evidence
+    /// queue has actually written it (AGT-2762).
+    /// </summary>
+    public static string EvidenceFileName(string attemptId)
+        => $"remote-review-grade-{SafeFilePart(attemptId)}.md";
+
     public static async Task<string> WriteAsync(
         string jobFolder,
         string attemptId,
@@ -19,7 +28,7 @@ internal static class RemoteReviewReportEvidence
         DateTime receivedAt,
         CancellationToken ct)
     {
-        var fileName = $"remote-review-grade-{SafeFilePart(attemptId)}.md";
+        var fileName = EvidenceFileName(attemptId);
         var path = Path.Combine(jobFolder, fileName);
         var artifactFiles = await PersistArtifactsAsync(
             jobFolder,

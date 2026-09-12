@@ -851,15 +851,29 @@ public sealed class TaskServerClient : IDisposable
                ?? throw new TaskServerException(500, "Empty review attempt response.");
     }
 
+    /// <summary>
+    /// The report endpoint settles the attempt authority synchronously and
+    /// defers evidence projection to a background queue (AGT-2762), so a
+    /// short timeout is enough to cover the acknowledged path even under host
+    /// load. A shorter-than-global timeout here (rather than raising
+    /// <see cref="_http"/>'s <see cref="HttpClient.Timeout"/>) keeps every
+    /// other request on the configured <c>ServerRequestTimeoutSeconds</c>.
+    /// </summary>
+    internal static readonly TimeSpan ReviewReportAckTimeout = TimeSpan.FromSeconds(10);
+
     public async Task<Contract.ReviewReportDto> ReportReviewAsync(
         string attemptId,
         Contract.ReviewReportRequest request,
         CancellationToken ct)
-        => await PostJsonAsync<Contract.ReviewReportRequest, Contract.ReviewReportDto>(
-               $"/api/v1/reviews/attempts/{Uri.EscapeDataString(attemptId)}/report",
-               request,
-               ct)
-           ?? throw new TaskServerException(500, "Empty review report response.");
+    {
+        using var timeoutCts = new CancellationTokenSource(ReviewReportAckTimeout);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
+        return await PostJsonAsync<Contract.ReviewReportRequest, Contract.ReviewReportDto>(
+                   $"/api/v1/reviews/attempts/{Uri.EscapeDataString(attemptId)}/report",
+                   request,
+                   linked.Token)
+               ?? throw new TaskServerException(500, "Empty review report response.");
+    }
 
     public async Task<Contract.ReviewCleanupResponse> CleanupReviewAsync(
         string attemptId,
