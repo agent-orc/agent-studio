@@ -74,25 +74,30 @@ public sealed class BranchRetentionPolicyTests
 
     [Theory]
     [InlineData("feature/old")]
-    [InlineData("agent-studio/results/run/fence/sha")]
+    [InlineData("release/1.0")]
     [InlineData("main")]
     public void Evaluate_NeverDeletesBranchesOutsideManagedNamespaces(string branch)
     {
+        var ns = BranchRetentionPolicy.ClassifyBranch(branch);
         Assert.Equal(BranchRetentionDecision.UnsupportedNamespace,
             BranchRetentionPolicy.Evaluate(
-                EligibleFacts() with { Branch = branch },
+                EligibleFacts() with { Branch = branch, Namespace = ns },
                 Now,
                 TimeSpan.FromDays(30)));
     }
 
     private static BranchRetentionFacts EligibleFacts() => new(
-        "task/old",
-        Now.AddDays(-31),
+        Branch: "task/old",
+        Namespace: BranchNamespace.Task,
+        TipCommittedAtUtc: Now.AddDays(-31),
         CheckedOut: false,
         DevelopAvailable: true,
         MainAvailable: true,
         MergedIntoDevelop: true,
-        MergedIntoMain: true);
+        MergedIntoMain: true,
+        TaskKeyForRef: "old",
+        IsIntegrated: true,
+        IsReferenced: false);
 }
 
 [Trait("Category", "MachineBound")]
