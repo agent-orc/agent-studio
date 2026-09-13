@@ -38,7 +38,11 @@ function build(release, output, inputs, review) {
     '--source-terms-file', inputs.sourceTerms,
   ];
   if (review) args.push('--human-review', review);
-  return JSON.parse(execFileSync(process.execPath, args, { encoding: 'utf8', env: { ...process.env, SOURCE_DATE_EPOCH: '1' } }));
+  return JSON.parse(execFileSync(process.execPath, args, {
+    encoding: 'utf8',
+    env: { ...process.env, SOURCE_DATE_EPOCH: '1' },
+    windowsHide: true,
+  }));
 }
 
 test('builds a scrubbed two-pass candidate and invalidates approval on any changed byte', () => {
@@ -58,8 +62,8 @@ test('builds a scrubbed two-pass candidate and invalidates approval on any chang
     assert.equal(report.privateSourceTerms.shipped, false);
 
     const candidateExtract = join(root, 'candidate-extract');
-    execFileSync(process.execPath, [VERIFY, '--bundle', candidate.bundle, '--extract-to', candidateExtract], { stdio: 'pipe' });
-    const rejected = spawnSync(process.execPath, [VERIFY, '--directory', candidateExtract, '--require-approved'], { encoding: 'utf8' });
+    execFileSync(process.execPath, [VERIFY, '--bundle', candidate.bundle, '--extract-to', candidateExtract], { stdio: 'pipe', windowsHide: true });
+    const rejected = spawnSync(process.execPath, [VERIFY, '--directory', candidateExtract, '--require-approved'], { encoding: 'utf8', windowsHide: true });
     assert.notEqual(rejected.status, 0);
     assert.match(rejected.stderr, /human scrub approval is missing/i);
 
@@ -76,15 +80,15 @@ test('builds a scrubbed two-pass candidate and invalidates approval on any chang
     const approved = build('2026.08.2', approvedOutput, inputs, review);
     assert.equal(approved.releaseState, 'approved');
     const approvedExtract = join(root, 'approved-extract');
-    execFileSync(process.execPath, [VERIFY, '--bundle', approved.bundle, '--extract-to', approvedExtract, '--require-approved'], { stdio: 'pipe' });
+    execFileSync(process.execPath, [VERIFY, '--bundle', approved.bundle, '--extract-to', approvedExtract, '--require-approved'], { stdio: 'pipe', windowsHide: true });
 
     const readme = join(approvedExtract, 'runtime', 'datastore', 'README.md');
     writeFileSync(readme, `${readFileSync(readme, 'utf8')}tampered\n`);
-    const tampered = spawnSync(process.execPath, [VERIFY, '--directory', approvedExtract, '--require-approved'], { encoding: 'utf8' });
+    const tampered = spawnSync(process.execPath, [VERIFY, '--directory', approvedExtract, '--require-approved'], { encoding: 'utf8', windowsHide: true });
     assert.notEqual(tampered.status, 0);
     assert.match(tampered.stderr, /immutable manifest/i);
   } finally {
-    spawnSync('chmod', ['-R', 'u+w', root]);
+    spawnSync('chmod', ['-R', 'u+w', root], { windowsHide: true });
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -102,7 +106,7 @@ test('compatibility gate rejects a seed schema outside the deployment range', ()
       '--replay-trace', inputs.replay,
       '--deployment-policy', inputs.policy,
       '--source-terms-file', inputs.sourceTerms,
-    ], { encoding: 'utf8' });
+    ], { encoding: 'utf8', windowsHide: true });
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /outside deployment compatibility/i);
   } finally {
@@ -125,7 +129,7 @@ test('private source-name matches fail closed without persisting the matched val
       '--replay-trace', inputs.replay,
       '--deployment-policy', inputs.policy,
       '--source-terms-file', inputs.sourceTerms,
-    ], { encoding: 'utf8' });
+    ], { encoding: 'utf8', windowsHide: true });
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /scrub gate failed/i);
     const reportText = readFileSync(join(output, 'demo-seed-scrub-report.json'), 'utf8');
@@ -172,22 +176,22 @@ test('reset replaces the whole release, retains the healthy predecessor, and reh
     const hookLog = join(root, 'hooks.log');
     const environment = { ...process.env, HOOK_LOG: hookLog };
     const resetArgs = (release) => [RESET, '--bundle', release.bundle, '--bundle-digest', `sha256:${release.bundleDigest}`, '--runtime-root', runtime, '--start-hook', join(hooks, 'start'), '--probe-hook', join(hooks, 'probe'), '--switch-hook', join(hooks, 'switch'), '--stop-hook', join(hooks, 'stop')];
-    execFileSync('bash', resetArgs(first), { env: environment, stdio: 'pipe' });
+    execFileSync('bash', resetArgs(first), { env: environment, stdio: 'pipe', windowsHide: true });
     const firstRoot = readlinkSync(join(runtime, 'current'));
     assert.equal(JSON.parse(readFileSync(join(firstRoot, 'release', 'demo-release-manifest.json'))).demoRelease, '2026.08.11');
     const driftedReadme = join(firstRoot, 'runtime', 'datastore', 'README.md');
     writeFileSync(driftedReadme, `${readFileSync(driftedReadme, 'utf8')}runtime drift\n`);
     const wrongDigestArgs = resetArgs(second);
     wrongDigestArgs[wrongDigestArgs.indexOf('--bundle-digest') + 1] = `sha256:${'b'.repeat(64)}`;
-    const wrongDigest = spawnSync('bash', wrongDigestArgs, { env: environment, encoding: 'utf8' });
+    const wrongDigest = spawnSync('bash', wrongDigestArgs, { env: environment, encoding: 'utf8', windowsHide: true });
     assert.notEqual(wrongDigest.status, 0);
     assert.equal(readlinkSync(join(runtime, 'current')), firstRoot);
-    execFileSync('bash', resetArgs(second), { env: environment, stdio: 'pipe' });
+    execFileSync('bash', resetArgs(second), { env: environment, stdio: 'pipe', windowsHide: true });
     const secondRoot = readlinkSync(join(runtime, 'current'));
     assert.equal(JSON.parse(readFileSync(join(secondRoot, 'release', 'demo-release-manifest.json'))).demoRelease, '2026.08.12');
     assert.equal(readlinkSync(join(runtime, 'previous')), firstRoot);
 
-    execFileSync('bash', [ROLLBACK, '--runtime-root', runtime, '--start-hook', join(hooks, 'start'), '--probe-hook', join(hooks, 'probe'), '--switch-hook', join(hooks, 'switch'), '--stop-hook', join(hooks, 'stop')], { env: environment, stdio: 'pipe' });
+    execFileSync('bash', [ROLLBACK, '--runtime-root', runtime, '--start-hook', join(hooks, 'start'), '--probe-hook', join(hooks, 'probe'), '--switch-hook', join(hooks, 'switch'), '--stop-hook', join(hooks, 'stop')], { env: environment, stdio: 'pipe', windowsHide: true });
     const rollbackRoot = readlinkSync(join(runtime, 'current'));
     assert.notEqual(rollbackRoot, firstRoot);
     assert.equal(JSON.parse(readFileSync(join(rollbackRoot, 'release', 'demo-release-manifest.json'))).demoRelease, '2026.08.11');
@@ -197,13 +201,13 @@ test('reset replaces the whole release, retains the healthy predecessor, and reh
 
     const failProbe = join(root, 'fail-probe');
     writeFileSync(failProbe, 'fail\n');
-    const failed = spawnSync('bash', resetArgs(second), { env: { ...environment, FAIL_PROBE_FILE: failProbe }, encoding: 'utf8' });
+    const failed = spawnSync('bash', resetArgs(second), { env: { ...environment, FAIL_PROBE_FILE: failProbe }, encoding: 'utf8', windowsHide: true });
     assert.notEqual(failed.status, 0);
     assert.equal(readlinkSync(join(runtime, 'current')), rollbackRoot);
     assert.equal(readdirSync(join(runtime, 'releases')).filter((name) => name.startsWith('.candidate.') || name.startsWith('.rollback.')).length, 0);
     assert.match(readFileSync(hookLog, 'utf8'), /switch/);
   } finally {
-    spawnSync('chmod', ['-R', 'u+w', root]);
+    spawnSync('chmod', ['-R', 'u+w', root], { windowsHide: true });
     rmSync(root, { recursive: true, force: true });
   }
 });

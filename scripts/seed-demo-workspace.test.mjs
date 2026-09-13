@@ -78,7 +78,7 @@ function assertReceipt(descriptor) {
 }
 
 function seedInto(root) {
-  execFileSync(process.execPath, [SEED, '--root', root], { stdio: 'pipe' });
+  execFileSync(process.execPath, [SEED, '--root', root], { stdio: 'pipe', windowsHide: true });
   return root;
 }
 

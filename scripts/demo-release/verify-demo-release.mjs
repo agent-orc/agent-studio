@@ -40,7 +40,11 @@ function parseArgs(argv) {
 }
 
 function run(command, commandArgs) {
-  const result = spawnSync(command, commandArgs, { encoding: 'utf8', maxBuffer: 128 * 1024 * 1024 });
+  const result = spawnSync(command, commandArgs, {
+    encoding: 'utf8',
+    maxBuffer: 128 * 1024 * 1024,
+    windowsHide: true,
+  });
   if (result.status !== 0) throw new Error(`${command} failed with exit ${result.status}: ${(result.stderr || result.stdout).trim()}`);
   return result.stdout;
 }

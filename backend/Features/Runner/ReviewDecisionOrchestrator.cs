@@ -7208,6 +7208,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
+            CreateNoWindow = true,
         };
         psi.ArgumentList.Add("-p");
         psi.ArgumentList.Add("--output-format");
@@ -7225,18 +7226,23 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         }
         catch (Exception __ex) { SilentCatch.Note(__ex, "ReviewDecisionOrchestrator: stdin may already be closed by CLI"); /* stdin may already be closed by CLI */ }
 
+        var stderrTask = p.StandardError.ReadToEndAsync(ct);
         var stdoutTask = p.StandardOutput.ReadToEndAsync(ct);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(timeout);
         try
         {
             await p.WaitForExitAsync(cts.Token);
+            _ = await stderrTask;
             return await stdoutTask;
         }
         catch (OperationCanceledException)
         {
             AgentStudio.Diagnostics.CliKillAudit.Trace(p, "ReviewDecisionOrchestrator:4661 (entireProcessTree)");
             try { p.Kill(true); } catch (Exception __ex) { SilentCatch.Note(__ex, "ReviewDecisionOrchestrator:4650"); }
+            try { await p.WaitForExitAsync(CancellationToken.None); } catch (Exception __ex) { SilentCatch.Note(__ex, "ReviewDecisionOrchestrator: wait after kill"); }
+            try { _ = await stderrTask; } catch (Exception __ex) { SilentCatch.Note(__ex, "ReviewDecisionOrchestrator: drain stderr after kill"); }
+            try { _ = await stdoutTask; } catch (Exception __ex) { SilentCatch.Note(__ex, "ReviewDecisionOrchestrator: drain stdout after kill"); }
             return string.Empty;
         }
     }

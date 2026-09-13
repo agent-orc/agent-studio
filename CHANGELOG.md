@@ -36,6 +36,9 @@ release yet.
 
 ### Fixed
 
+- Process launches across backend, retention, setup, and repository Node
+  scripts now suppress Windows console windows, drain redirected CLI stderr,
+  and carry repository-wide regression guards for future spawn sites.
 - Public-demo execution-route inventory now includes
   `POST /api/v1/reviews/attempts/{attemptId}/reclaim` in the `Continue` path.
 - Frontend release coverage is green again for the `CliAdminPanelComponent`
