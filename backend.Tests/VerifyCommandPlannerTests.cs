@@ -58,6 +58,33 @@ public sealed class VerifyCommandPlannerTests : IDisposable
     // ---- Fixture: .NET only ------------------------------------------------
 
     [Fact]
+    public void Repository_project_definition_precedes_central_profile_and_discovery()
+    {
+        Write(".agent-studio/prepare", "#!/bin/sh\n");
+        Write(".agent-studio/project.yml", """
+            schemaVersion: 1
+            stack: [custom]
+            toolVersions:
+            commands:
+              prepare: .agent-studio/prepare
+              build: [./verify build]
+              test: [./verify test]
+              lint: [./verify lint]
+            testSuites:
+            cachePaths:
+            capabilities: [linux]
+            environment:
+            """);
+        Write("package.json", "{\"scripts\":{\"test\":\"wrong fallback\"}}");
+
+        var plan = VerifyCommandPlanner.Plan(_root, profile: null);
+
+        Assert.Equal(VerifyPlan.SourceProjectDefinition, plan.Source);
+        Assert.Equal(new[] { "./verify build", "./verify test", "./verify lint" },
+            plan.Commands.Select(command => command.Command));
+    }
+
+    [Fact]
     public void DotNetOnly_Sln_DerivesBareBuildAndTest()
     {
         Write("MyApp.sln", "Microsoft Visual Studio Solution File");
@@ -450,27 +477,25 @@ public sealed class VerifyCommandPlannerTests : IDisposable
     // ---- Real case: this repo (agent-studio) ------------------------------
 
     [SkippableFact]
-    public void RealCase_ThisRepo_DerivesDotNetPlusFrontendNpm()
+    public void RealCase_ThisRepo_UsesRepositoryDefinition()
     {
         // The TE-2 finding was a real mixed repo escalating on a hardcoded path.
         // The Studio checkout is itself the mixed real case: a root
         // agent-taskboard.sln plus frontend/package.json. Deriving against the
-        // actual tree (not a fixture) proves the bare, layout-driven commands.
+        // actual tree (not a fixture) proves the repository-owned command path.
         var repoRoot = FindRepoRoot();
         Skip.If(repoRoot is null, "agent-taskboard.sln not found above the test assembly");
 
         var plan = VerifyCommandPlanner.Plan(repoRoot!, profile: null);
 
-        Assert.Equal(VerifyPlan.SourceAutoDiscovery, plan.Source);
+        Assert.Equal(VerifyPlan.SourceProjectDefinition, plan.Source);
         Assert.Contains(plan.Commands, c =>
-            c.Ecosystem == VerifyEcosystem.DotNet && c.Kind == VerifyCommandKind.Build && c.Command == "dotnet build");
+            c.Kind == VerifyCommandKind.Build && c.Command == "dotnet build agent-taskboard.sln --no-restore");
         Assert.Contains(plan.Commands, c =>
-            c.Ecosystem == VerifyEcosystem.DotNet && c.Kind == VerifyCommandKind.Test && c.Command == "dotnet test");
+            c.Kind == VerifyCommandKind.Test && c.Command.Contains("OrchestratorApi.Tests.csproj", StringComparison.Ordinal));
         // frontend/package.json declares build/test/lint scripts.
         Assert.Contains(plan.Commands, c =>
-            c.Ecosystem == VerifyEcosystem.Node && c.WorkingSubdir == "frontend" && c.Command == "npm run build");
-        // No command references the old hardcoded backend/OrchestratorApi.csproj path.
-        Assert.DoesNotContain(plan.Commands, c => c.Command.Contains("OrchestratorApi.csproj"));
+            c.Kind == VerifyCommandKind.Build && c.Command == "npm --prefix frontend run build");
     }
 
     private static string? FindRepoRoot()

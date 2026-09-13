@@ -15,7 +15,10 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 import { PendingButtonDirective } from '../async-feedback';
 import { NotificationService } from '../../services/notification.service';
 import { TaskService } from '../../services/task.service';
-import { ModelMigrationCatalogStore, type ModelMigrationEntry } from '../../features/cli';
+import {
+  ModelMigrationCatalogStore,
+  type ModelMigrationEntry,
+} from '../../features/cli/model-migrations';
 import { OverlayPortalRef, OverlayPortalService, type ConnectedOverlayPositionRef } from '../../services/overlay-portal.service';
 
 /**

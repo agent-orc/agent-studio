@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, OnInit, computed, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnInit, computed, forwardRef, inject, signal } from '@angular/core';
 import { CLI_TYPES, type CliType } from '../../../../models/task.model';
 import type { CliModelInfo } from '../../models/cli.model';
 import { CliCatalogStore } from '../../services/cli-catalog.store';
@@ -33,7 +33,9 @@ interface CliModelGroup {
 @Component({
   selector: 'app-cli-models-panel',
   standalone: true,
-  imports: [ModelMigrationBadgeComponent],
+  // The badge reads the migration store through the CLI barrel. Defer it so
+  // file-order-dependent barrel evaluation cannot leave Angular an undefined dependency.
+  imports: [forwardRef(() => ModelMigrationBadgeComponent)],
   templateUrl: './cli-models-panel.html',
   styleUrl: './cli-models-panel.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

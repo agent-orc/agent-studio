@@ -197,6 +197,7 @@ public sealed class SoftReasoningHostedService : BackgroundService
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
+            CreateNoWindow = true,
         };
         psi.ArgumentList.Add("-p");
         psi.ArgumentList.Add("--output-format");
@@ -214,18 +215,23 @@ public sealed class SoftReasoningHostedService : BackgroundService
         }
         catch (Exception __ex) { SilentCatch.Note(__ex, "SoftReasoningHostedService: stdin may already be closed"); /* stdin may already be closed */ }
 
+        var stderrTask = p.StandardError.ReadToEndAsync(ct);
         var stdoutTask = p.StandardOutput.ReadToEndAsync(ct);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(timeout);
         try
         {
             await p.WaitForExitAsync(cts.Token);
+            _ = await stderrTask;
             return await stdoutTask;
         }
         catch (OperationCanceledException)
         {
             AgentStudio.Diagnostics.CliKillAudit.Trace(p, "SoftReasoningHostedService:226 (entireProcessTree)");
             try { p.Kill(true); } catch (Exception __ex) { SilentCatch.Note(__ex, "SoftReasoningHostedService:229"); }
+            try { await p.WaitForExitAsync(CancellationToken.None); } catch (Exception __ex) { SilentCatch.Note(__ex, "SoftReasoningHostedService: wait after kill"); }
+            try { _ = await stderrTask; } catch (Exception __ex) { SilentCatch.Note(__ex, "SoftReasoningHostedService: drain stderr after kill"); }
+            try { _ = await stdoutTask; } catch (Exception __ex) { SilentCatch.Note(__ex, "SoftReasoningHostedService: drain stdout after kill"); }
             return string.Empty;
         }
     }

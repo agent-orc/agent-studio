@@ -57,5 +57,5 @@ function artifact(prefix, name, lockedVersion, lockedIntegrity) {
   return value;
 }
 function required(name) { const value = args[name]; if (!value) fail(`Missing --${name}=...`); return value; }
-function git(...argv) { return execFileSync('git', argv, { cwd: root, encoding: 'utf8' }).trim(); }
+function git(...argv) { return execFileSync('git', argv, { cwd: root, encoding: 'utf8', windowsHide: true }).trim(); }
 function fail(message) { process.stderr.write(`release-manifest: ${message}\n`); process.exit(2); }

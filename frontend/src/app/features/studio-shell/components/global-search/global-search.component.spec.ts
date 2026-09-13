@@ -215,7 +215,7 @@ describe('GlobalSearchComponent', () => {
     expect(open).toHaveBeenCalledWith({
       kind: 'workbench', projectName: 'P', workbenchId: 'orchestrator-waechter',
       title: 'Global Orchestrator Watcher', key: 'AGT-W15',
-    });
+    }, 'new');
   });
 
   it('puts an exact Dossier key group before task title matches', () => {
@@ -247,7 +247,7 @@ describe('GlobalSearchComponent', () => {
     expect(open).toHaveBeenCalledWith({
       kind: 'hub', projectName: 'P', section: 'wiki',
       wikiTarget: { kind: 'page', relPath: 'concepts/routing.md' },
-    });
+    }, 'new');
   });
 
   it('merges indexed task matches the board snapshot does not carry', async () => {

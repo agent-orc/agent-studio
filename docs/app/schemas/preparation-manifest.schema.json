@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-taskboard.local/schemas/preparation-manifest.schema.json",
+  "title": "Project preparation manifest",
+  "description": "Evidence emitted by the shared project preparation boundary for one exact subject commit.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "definitionSha256", "startedAtUtc", "completedAtUtc", "durationMs", "succeeded", "command", "toolVersions", "lockfileHashes", "caches", "failureKind"],
+  "properties": {
+    "schemaVersion": { "description": "Manifest contract version.", "const": 1 },
+    "subjectSha": { "description": "Exact Git subject SHA, when available.", "type": ["string", "null"] },
+    "definitionSha256": { "description": "SHA-256 of the repository project.yml bytes.", "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "startedAtUtc": { "description": "Preparation start time.", "type": "string", "format": "date-time" },
+    "completedAtUtc": { "description": "Preparation completion time.", "type": "string", "format": "date-time" },
+    "durationMs": { "description": "Wall-clock preparation duration in milliseconds.", "type": "integer", "minimum": 0 },
+    "succeeded": { "description": "Whether preparation completed successfully.", "type": "boolean" },
+    "command": { "description": "Repository-relative prepare script.", "type": "string", "minLength": 1 },
+    "toolVersions": { "description": "Observed executor tool versions.", "type": "object", "additionalProperties": { "type": "string" } },
+    "lockfileHashes": { "description": "SHA-256 values of dependency lockfiles participating in cache keys.", "type": "object", "additionalProperties": { "type": "string", "pattern": "^[a-f0-9]{64}$" } },
+    "caches": {
+      "description": "Content-addressed product cache decisions for this preparation.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["block", "key", "state", "entryPath", "inputs"],
+        "properties": {
+          "block": { "enum": ["npm", "nuget", "playwright"] },
+          "key": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "state": { "enum": ["hit", "published", "discarded"] },
+          "entryPath": { "description": "Executor-local immutable cache entry path.", "type": "string", "minLength": 1 },
+          "inputs": { "description": "Repository-relative cache-key inputs.", "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "failureKind": { "description": "Stable preparation failure class.", "enum": ["None", "Definition", "ScriptMissing", "ToolMissing", "VersionMismatch", "Cache", "Network", "Command", "Timeout", "Cancelled"] },
+    "failureSignature": { "description": "Stable failure fingerprint when preparation failed.", "type": ["string", "null"] },
+    "failureReason": { "description": "Bounded operator-facing reason when preparation failed.", "type": ["string", "null"] }
+  }
+}

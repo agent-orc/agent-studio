@@ -176,8 +176,11 @@ public static class RegistryEndpoints
         app.MapPost("/api/projects", (RegistryCreateProjectRequest body, ProjectRegistry projects, WorkspaceRegistry workspaces,
             WorkspaceManagementService workspaceManagement, TaskScannerService scanner, TaskWatcherService watcher,
             AgentStudio.Runner.TaskRunnerService runners, AgentStudio.Projects.ProjectSettingsService projectSettings,
-            ClientIdentityStore clients, WikiContentCache wikiContentCache, ILoggerFactory loggerFactory) =>
+            ClientIdentityStore clients, WikiContentCache wikiContentCache,
+            AgentStudio.ExecutionPreparation.ProjectDefinitionProposalService definitionProposals,
+            ILoggerFactory loggerFactory) =>
         {
+            var onboardingStarted = System.Diagnostics.Stopwatch.GetTimestamp();
             if (body == null)
                 return Results.BadRequest(new { error = "body required" });
             if (string.IsNullOrWhiteSpace(body.WorkspaceId))
@@ -306,10 +309,14 @@ public static class RegistryEndpoints
             watcher.EnsureWatching(liveEntry);
             wikiContentCache.Preload(liveEntry.Name);
             runners.EnsureRunner(liveEntry);
+            var proposalTaskId = definitionProposals.CreateCard(created.DisplayName);
+            var onboardingDurationMs = (long)System.Diagnostics.Stopwatch
+                .GetElapsedTime(onboardingStarted).TotalMilliseconds;
             loggerFactory.CreateLogger("ProjectCreate").LogInformation(
-                "project-onboarded id={Id} workspaceId={WorkspaceId} storage={Storage} repository={Repository} runner={Runner}",
+                "project-onboarded id={Id} workspaceId={WorkspaceId} storage={Storage} repository={Repository} runner={Runner} preparationProposal={PreparationProposal} durationMs={DurationMs} questions={Questions} manualSteps={ManualSteps}",
                 created.Id, created.WorkspaceId, created.StorageLocation,
-                created.RepositoryPath ?? repositoryUrl ?? "(none)", executionRunner ?? "local");
+                created.RepositoryPath ?? repositoryUrl ?? "(none)", executionRunner ?? "local",
+                proposalTaskId ?? "unavailable", onboardingDurationMs, 0, 0);
             return Results.Created($"/api/projects/{created.Id}", ProjectSummary.From(created));
         });
 
