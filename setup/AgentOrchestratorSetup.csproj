@@ -8,7 +8,6 @@
     <AssemblyName>agent-orchestrator-setup</AssemblyName>
     <RootNamespace>AgentStudio.Setup</RootNamespace>
     <InvariantGlobalization>true</InvariantGlobalization>
-    <Version>0.1.0</Version>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <InformationalVersion Condition="'$(SourceRevisionId)' != ''">$(Version)+sha.$(SourceRevisionId)</InformationalVersion>
     <InformationalVersion Condition="'$(SourceRevisionId)' == ''">$(Version)+sha.unknown</InformationalVersion>
