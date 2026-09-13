@@ -4,7 +4,10 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using AgentStudio.ExecutionPreparation;
 using AgentStudio.Pipeline;
+using AgentStudio.TaskServer.Contracts;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace AgentStudio.Runner;
 
@@ -1519,6 +1522,9 @@ public class ProjectRunner
     private string WorktreeRoot()
         => Path.Combine(Path.GetTempPath(), "ass-worktrees", System.Text.RegularExpressions.Regex.Replace(ProjectName, "[^A-Za-z0-9_.-]", "-"));
 
+    private static string SafeProjectSegment(string value)
+        => System.Text.RegularExpressions.Regex.Replace(value, "[^A-Za-z0-9_.-]", "-");
+
     private sealed record WorktreeCommitRange(string HeadShaBefore, string HeadShaAfter);
 
     /// <summary>
@@ -2733,6 +2739,56 @@ public class ProjectRunner
             NotifyStatus();
 
             Directory.CreateDirectory(TaskPaths.LogsDir(info.FolderPath));
+
+            // Repository preparation is the single dependency and version
+            // boundary shared with the build/test gate. It reads project.yml
+            // from this task's subject worktree, never from central settings.
+            if (requiresWorktree && _activeRuns.Get(jobId) is { } preparationRun)
+            {
+                var manifestPath = Path.Combine(
+                    TaskPaths.ResultsDir(info.FolderPath),
+                    ProjectPreparationPaths.ManifestFileName);
+                var preparation = await ProjectPreparationExecutor.RunAsync(
+                    preparationRun.WorkingDirectory!,
+                    Path.Combine(BuildTestGateRunner.PreparationCacheRoot, "local", SafeProjectSegment(ProjectName)),
+                    manifestPath,
+                    _git.ReadHeadShaAt(preparationRun.WorktreePath!),
+                    message => _logger.LogInformation("{ProjectPreparationMessage}", message),
+                    TimeSpan.FromMinutes(20),
+                    ct);
+                if (preparation.Configured && !preparation.Succeeded)
+                {
+                    var reason = $"Repository preparation failed ({preparation.FailureSignature ?? "unknown"}): " +
+                                 (preparation.FailureReason ?? "prepare command failed");
+                    RecordWorktreePreparationFailure(info, reason, preparationRun.WorktreePath);
+                    new ProjectDefinitionProposalService(
+                            _scanner,
+                            _mutations,
+                            NullLogger<ProjectDefinitionProposalService>.Instance)
+                        .CreateCard(ProjectName, reason);
+                    ReleaseRun(jobId);
+                    if (consumedIntent is not null) _mutations.RollbackStashedPendingIntent(info.FolderPath);
+                    if (movedToProgressThisCall) RevertFailedStartFromProgress(jobId, info, intent);
+                    NotifyStatus();
+                    return RunOutcome.Reject(new RunRejection(
+                        RunRejectReason.ProjectBusy,
+                        reason,
+                        jobId,
+                        info.Title));
+                }
+                _timeline?.Append(
+                    info.FolderPath,
+                    "project_preparation",
+                    TimelineActors.System,
+                    summary: preparation.Configured
+                        ? $"Repository preparation passed; cache hit: {preparation.CacheHit}."
+                        : "Repository preparation is not configured yet.",
+                    details: new()
+                    {
+                        ["manifest"] = preparation.Configured ? ProjectPreparationPaths.ManifestFileName : string.Empty,
+                        ["cacheHit"] = preparation.CacheHit ? "true" : "false",
+                    });
+            }
 
             // AGT-2055 req 3/7: document the pre-launch admission decision for the
             // run we are now committing to spawn - a pre-emptive model switch

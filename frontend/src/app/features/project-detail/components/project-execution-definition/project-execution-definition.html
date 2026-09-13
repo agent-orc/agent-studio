@@ -1,0 +1,107 @@
+<section class="execution" aria-labelledby="execution-title" data-testid="project-execution-definition">
+  <header class="execution__head">
+    <div>
+      <h3 id="execution-title">Execution</h3>
+      <p>Repository-owned preparation, version manifests, and executor caches for the exact subject commit.</p>
+    </div>
+    <button type="button"
+            class="execution__button execution__button--quiet"
+            data-testid="execution-create-proposal"
+            [appPendingButton]="proposing()"
+            pendingLabel="Creating proposal"
+            (click)="createProposal()">Create proposal card</button>
+  </header>
+
+  @if (loading()) {
+    <p class="execution__muted">Loading execution definition…</p>
+  } @else if (data(); as execution) {
+    <div class="execution__summary">
+      <span class="execution__status" [attr.data-valid]="execution.valid">
+        {{ execution.valid ? 'Valid repository definition' : 'Definition needs attention' }}
+      </span>
+      @if (execution.definitionSha256) {
+        <code data-testid="execution-definition-sha">{{ execution.definitionSha256.slice(0, 12) }}</code>
+      }
+      <span>Source: subject commit</span>
+    </div>
+
+    @if (execution.repositoryDefinition) {
+      <details class="execution__details">
+        <summary>Repository definition</summary>
+        <pre data-testid="execution-repository-definition"><code>{{ execution.repositoryDefinition }}</code></pre>
+      </details>
+    } @else {
+      <p class="execution__muted">No <code>.agent-studio/project.yml</code> is present in the checkout.</p>
+    }
+
+    @if (execution.issues.length > 0) {
+      <ul class="execution__issues" data-testid="execution-definition-issues">
+        @for (issue of execution.issues; track issue.path + ':' + issue.code) {
+          <li><code>{{ issue.path }}</code> {{ issue.message }}</li>
+        }
+      </ul>
+    }
+
+    @if (execution.lastManifest; as manifest) {
+      <section class="execution__manifest" aria-label="Last preparation manifest">
+        <div class="execution__manifest-head">
+          <strong>Last manifest</strong>
+          <span class="execution__metric">{{ manifest.durationMs }} ms</span>
+          <span>{{ manifest.succeeded ? 'Passed' : 'Failed' }}</span>
+        </div>
+        <ul>
+          @for (cache of manifest.caches; track cacheIdentity(cache)) {
+            <li>
+              <span>{{ cache.block }}</span>
+              <span class="execution__cache-state">{{ cache.state }}</span>
+              <code>{{ cache.key.slice(0, 12) }}</code>
+            </li>
+          }
+        </ul>
+      </section>
+    } @else {
+      <p class="execution__muted">No preparation manifest has been recorded yet.</p>
+    }
+
+    <details class="execution__details" [open]="!!execution.override">
+      <summary>Justified operator override</summary>
+      <p class="execution__muted">
+        This records an exceptional operator choice. The repository definition remains the run-time source of truth.
+      </p>
+      <label>
+        <span>Definition</span>
+        <textarea data-testid="execution-override-definition"
+                  rows="12"
+                  [value]="overrideDefinition()"
+                  (input)="overrideDefinition.set($any($event.target).value)"></textarea>
+      </label>
+      <label>
+        <span>Justification (required)</span>
+        <textarea data-testid="execution-override-justification"
+                  rows="3"
+                  [value]="justification()"
+                  (input)="justification.set($any($event.target).value)"></textarea>
+      </label>
+      <div class="execution__actions">
+        <button type="button"
+                class="execution__button"
+                data-testid="execution-save-override"
+                [disabled]="!overrideDefinition().trim() || !justification().trim()"
+                [appPendingButton]="saving()"
+                pendingLabel="Saving override"
+                (click)="saveOverride()">Save override</button>
+        @if (execution.override) {
+          <button type="button"
+                  class="execution__button execution__button--quiet"
+                  data-testid="execution-clear-override"
+                  [appPendingButton]="saving()"
+                  pendingLabel="Clearing override"
+                  (click)="clearOverride()">Clear override</button>
+        }
+      </div>
+    </details>
+  }
+
+  @if (message()) { <p class="execution__message" role="status">{{ message() }}</p> }
+  @if (error()) { <p class="execution__error" role="alert">{{ error() }}</p> }
+</section>

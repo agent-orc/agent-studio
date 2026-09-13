@@ -1,4 +1,5 @@
 using AgentStudio.TaskServer.Contracts;
+using System.Text.Json;
 
 namespace AgentRunner;
 
@@ -72,6 +73,8 @@ public sealed class GitWorkspace
     public string ProjectCachePath => CachePathForProject(_options.WorkDir, _projectId);
     public string SharedRepoPath => Path.Combine(ProjectCachePath, "repo");
     public string RepoPath => Path.Combine(ProjectCachePath, "worktrees", _safeTaskKey);
+    public string PreparationCachePath => Path.Combine(ProjectCachePath, "caches", "preparation");
+    public string WorktreeLeasePath => Path.Combine(ProjectCachePath, "worktrees", ".leases", _safeTaskKey + ".json");
     public string? RepositoryUrl => _gitRemote;
     /// <summary>Canonical branch that retains this task's salvage generation.</summary>
     public string WorkBranch => _workBranch;
@@ -137,7 +140,12 @@ public sealed class GitWorkspace
             // salvage may have created the canonical runner ref, which must be
             // the authoritative continuation base instead of the requested
             // project branch.
-            var requested = string.IsNullOrWhiteSpace(_options.Branch) ? _baseBranch : _options.Branch!;
+            // A registered project's integration branch is registry-owned. A
+            // process-wide one-shot branch override must never move that
+            // project's stable checkout away from its baseline.
+            var requested = _isProjectClone || string.IsNullOrWhiteSpace(_options.Branch)
+                ? _baseBranch
+                : _options.Branch!;
             var requestedBase = await BranchExistsOnOrigin(requested, ct)
                 ? requested
                 : await OriginDefaultBranch(ct) ?? _baseBranch;
@@ -158,12 +166,14 @@ public sealed class GitWorkspace
             await TryGit(["branch", "-D", _workBranch], SharedRepoPath, ct);
             var authoritativeBase = await FetchRemoteBranchHeadAsync(branch, ct)
                 ?? throw new InvalidOperationException($"Authoritative pickup branch 'origin/{branch}' disappeared during preparation.");
+            await UpdateStableCheckoutAsync(requestedBase, ct);
             _log($"worktree-authoritative-base branch=refs/heads/{branch} sha={authoritativeBase} path={RepoPath}");
             _log($"git worktree add {RepoPath} on {_workBranch} from refs/heads/{branch} at {ShortSha(authoritativeBase)}");
             await Git(["worktree", "add", "-B", _workBranch, RepoPath, authoritativeBase], SharedRepoPath, ct);
 
             _startedFromSalvage = string.Equals(branch, _workBranch, StringComparison.Ordinal);
             _startedHead = (await Git(["rev-parse", "HEAD"], RepoPath, ct)).StdOut.Trim();
+            WriteWorktreeLease(_startedHead);
             _log($"task worktree ready on '{_workBranch}' at {ShortSha(_startedHead)}");
             return branch;
         }
@@ -329,8 +339,11 @@ public sealed class GitWorkspace
             var branch = await BranchExistsOnOrigin(requested, ct)
                 ? requested
                 : await OriginDefaultBranch(ct) ?? _baseBranch;
+            await UpdateStableCheckoutAsync(branch, ct);
             _log($"git worktree add --detach {RepoPath} from origin/{branch} for read-only Epic planning");
             await Git(["worktree", "add", "--detach", RepoPath, $"origin/{branch}"], SharedRepoPath, ct);
+            var head = (await Git(["rev-parse", "HEAD"], RepoPath, ct)).StdOut.Trim();
+            WriteWorktreeLease(head);
             return branch;
         }
         finally
@@ -381,6 +394,7 @@ public sealed class GitWorkspace
             await WorktreeProcessReaper.ReapAsync(RepoPath, _log, ct);
             await Git(["worktree", "remove", "--force", RepoPath], SharedRepoPath, ct);
             await TryGit(["worktree", "prune"], SharedRepoPath, ct);
+            DeleteWorktreeLease();
             return mutated;
         }
         finally
@@ -808,7 +822,65 @@ public sealed class GitWorkspace
         await Git(["worktree", "remove", "--force", RepoPath], SharedRepoPath, ct);
         await TryGit(["worktree", "prune"], SharedRepoPath, ct);
         await TryGit(["branch", "-D", _workBranch], SharedRepoPath, ct);
+        DeleteWorktreeLease();
         _log($"worktree-teardown-completed path={RepoPath} secured={securedWork} branch={(securedWork ? _workBranch : "none")}");
+    }
+
+    /// <summary>
+    /// Keeps the shared project checkout on the integration branch and advances
+    /// it only by fast-forward. Local changes or divergence fail closed. Task
+    /// worktrees are always cut from fetched immutable commits and never run in
+    /// this stable checkout.
+    /// </summary>
+    private async Task UpdateStableCheckoutAsync(string branch, CancellationToken ct)
+    {
+        var status = await Git(["status", "--porcelain=v1", "--untracked-files=all"], SharedRepoPath, ct);
+        if (!string.IsNullOrWhiteSpace(status.StdOut))
+            throw new InvalidOperationException(
+                $"Stable checkout '{SharedRepoPath}' has local changes and cannot be updated.");
+        var local = await ProcessRunner.RunAsync(
+            "git", ["show-ref", "--verify", "--quiet", $"refs/heads/{branch}"], SharedRepoPath, ct: ct);
+        if (local.Success)
+            await Git(["checkout", branch], SharedRepoPath, ct);
+        else
+            await Git(["checkout", "-b", branch, $"origin/{branch}"], SharedRepoPath, ct);
+        await Git(["merge", "--ff-only", $"origin/{branch}"], SharedRepoPath, ct);
+        var head = (await Git(["rev-parse", "HEAD"], SharedRepoPath, ct)).StdOut.Trim();
+        _log($"stable-checkout-ready project={_projectId ?? "legacy"} branch={branch} sha={head} path={SharedRepoPath}");
+    }
+
+    private void WriteWorktreeLease(string subjectSha)
+    {
+        var directory = Path.GetDirectoryName(WorktreeLeasePath)!;
+        Directory.CreateDirectory(directory);
+        var temporary = WorktreeLeasePath + ".tmp-" + Guid.NewGuid().ToString("N");
+        File.WriteAllText(temporary, JsonSerializer.Serialize(new
+        {
+            schemaVersion = 1,
+            projectId = _projectId,
+            taskKey = _safeTaskKey,
+            runAttemptId = _sourceRunAttemptId,
+            fencingToken = _fencingToken,
+            subjectSha,
+            worktreePath = RepoPath,
+            acquiredAtUtc = DateTimeOffset.UtcNow,
+            owner = _options.RunnerId,
+        }, new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }));
+        File.Move(temporary, WorktreeLeasePath, overwrite: true);
+        _log($"worktree-lease-acquired task={_safeTaskKey} path={RepoPath} lease={WorktreeLeasePath}");
+    }
+
+    private void DeleteWorktreeLease()
+    {
+        try
+        {
+            if (File.Exists(WorktreeLeasePath)) File.Delete(WorktreeLeasePath);
+            _log($"worktree-lease-released task={_safeTaskKey} lease={WorktreeLeasePath}");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _log($"worktree-lease-release-failed task={_safeTaskKey} lease={WorktreeLeasePath} error={OneLine(ex.Message)}");
+        }
     }
 
     private async Task<SalvageReconciliationResult> ReconcileSalvageAsync(

@@ -258,6 +258,14 @@ public record ProjectSettings
     public BuildProfile? BuildProfile { get; init; }
 
     /// <summary>
+    /// Explicit operator exception to the repository-owned execution
+    /// definition. The reason is mandatory and visible beside the override.
+    /// Executors continue to read the subject commit; the orchestrator uses
+    /// this exception as input to a repository change proposal.
+    /// </summary>
+    public ProjectExecutionDefinitionOverride? ExecutionDefinitionOverride { get; init; }
+
+    /// <summary>
     /// Staged test policy. Unlike the pipeline step's global warn/fail switch,
     /// this selects the amount of test coverage per lane. The default for
     /// post-processing is <c>work-package</c>; a pre-main caller always overrides
@@ -344,6 +352,11 @@ public record ProjectSettings
     /// </summary>
     public int? BuildTestGateTimeoutSeconds { get; init; }
 }
+
+public sealed record ProjectExecutionDefinitionOverride(
+    string Definition,
+    string Justification,
+    DateTime UpdatedAtUtc);
 
 /// <summary>
 /// Per-project spawn target + policy for the <c>post-task-spawner</c> pipeline

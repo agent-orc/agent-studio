@@ -5,6 +5,11 @@ namespace AgentStudio.Projects;
 using AgentStudio.Pipeline;
 using AgentStudio.Registry;
 using AgentStudio.Security;
+using AgentStudio.ExecutionPreparation;
+using ProjectDefinitionIssue = AgentStudio.TaskServer.Contracts.ProjectDefinitionIssue;
+using ProjectDefinitionReader = AgentStudio.TaskServer.Contracts.ProjectDefinitionReader;
+using ProjectPreparationManifest = AgentStudio.TaskServer.Contracts.ProjectPreparationManifest;
+using ProjectPreparationPaths = AgentStudio.TaskServer.Contracts.ProjectPreparationPaths;
 
 /// <summary>
 /// Body for <c>PUT /api/projects/{name}/intake</c>. Enables or disables the
@@ -49,6 +54,102 @@ public static class ProjectSettingsEndpoints
 {
     public static void MapProjectSettingsEndpoints(this WebApplication app)
     {
+        app.MapGet("/api/projects/{projectName}/execution", (
+            string projectName,
+            ProjectSettingsService settings,
+            TaskScannerService scanner) =>
+        {
+            var project = scanner.GetWatchPaths().FirstOrDefault(entry =>
+                string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase));
+            if (project is null) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            var repositoryPath = string.IsNullOrWhiteSpace(project.RepositoryPath)
+                ? project.RootPath
+                : project.RepositoryPath;
+            if (string.IsNullOrWhiteSpace(repositoryPath) || !Directory.Exists(repositoryPath))
+                return Results.Ok(new
+                {
+                    repositoryDefinition = (string?)null,
+                    definitionSha256 = (string?)null,
+                    valid = false,
+                    issues = new[] { new ProjectDefinitionIssue(ProjectPreparationPaths.Definition, "repository-unavailable", "Project repository path is unavailable.") },
+                    lastManifest = (ProjectPreparationManifest?)null,
+                    @override = settings.Get(projectName).ExecutionDefinitionOverride,
+                    source = "subject-commit",
+                });
+            var read = ProjectDefinitionReader.ReadWorkspace(repositoryPath);
+            var definitionPath = Path.Combine(repositoryPath, ProjectPreparationPaths.Definition.Replace('/', Path.DirectorySeparatorChar));
+            var manifestPath = BuildTestGateRunner.PreparationManifestPath(repositoryPath);
+            ProjectPreparationManifest? manifest = null;
+            try
+            {
+                if (File.Exists(manifestPath))
+                {
+                    var manifestJson = new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web);
+                    manifestJson.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+                    manifest = System.Text.Json.JsonSerializer.Deserialize<ProjectPreparationManifest>(
+                        File.ReadAllText(manifestPath), manifestJson);
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+            {
+                SilentCatch.Note(ex, "ProjectSettingsEndpoints: last preparation manifest");
+            }
+            return Results.Ok(new
+            {
+                repositoryDefinition = File.Exists(definitionPath) ? File.ReadAllText(definitionPath) : null,
+                definitionSha256 = read.DefinitionSha256,
+                valid = read.IsValid,
+                issues = read.Issues,
+                lastManifest = manifest,
+                @override = settings.Get(projectName).ExecutionDefinitionOverride,
+                source = "subject-commit",
+            });
+        });
+
+        app.MapPut("/api/projects/{projectName}/execution/override", (
+            string projectName,
+            SetExecutionDefinitionOverrideRequest request,
+            ProjectSettingsService settings,
+            TaskScannerService scanner) =>
+        {
+            if (!scanner.GetWatchPaths().Any(entry =>
+                    string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            try
+            {
+                return Results.Ok(settings.SetExecutionDefinitionOverride(
+                    projectName,
+                    request.Definition,
+                    request.Justification));
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        });
+
+        app.MapDelete("/api/projects/{projectName}/execution/override", (
+            string projectName,
+            ProjectSettingsService settings,
+            TaskScannerService scanner) =>
+        {
+            if (!scanner.GetWatchPaths().Any(entry =>
+                    string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            settings.ClearExecutionDefinitionOverride(projectName);
+            return Results.Ok(new { cleared = true });
+        });
+
+        app.MapPost("/api/projects/{projectName}/execution/proposal", (
+            string projectName,
+            ProjectDefinitionProposalService proposals) =>
+        {
+            var taskId = proposals.CreateCard(projectName, force: true);
+            return taskId is null
+                ? Results.Conflict(new { error = "A repository checkout is required to generate the proposal." })
+                : Results.Ok(new { taskId });
+        });
+
         // Per-project preferences (auto-commit on/off today). Read-all returns a
         // flat map keyed by project name so the header can render every toggle
         // in one shot without N round-trips.
