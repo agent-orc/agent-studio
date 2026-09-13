@@ -10,7 +10,7 @@ commands:
     - npm --prefix frontend run build
   test:
     - dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound
-    - npm --prefix frontend test -- --run
+    - npm --prefix frontend run test:ci
   lint:
     - npm --prefix frontend run lint
 testSuites:
@@ -21,7 +21,7 @@ testSuites:
   - id: frontend-unit
     category: routine
     expectedDurationSeconds: 180
-    command: npm --prefix frontend test -- --run
+    command: npm --prefix frontend run test:ci
   - id: frontend-e2e
     category: machine-bound
     expectedDurationSeconds: 900
