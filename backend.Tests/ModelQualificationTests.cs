@@ -25,7 +25,7 @@ public sealed class ModelQualificationTests
 
         var result = service.Qualify(task, "Add a bounded settings panel.", Catalogue, []);
 
-        Assert.Equal("2026-07-24", result.PolicyVersion);
+        Assert.Equal("2026-09-13", result.PolicyVersion);
         Assert.Equal("terra-medium", result.PolicyTier);
         Assert.Equal("gpt-5.6-terra", result.RecommendedModel);
         Assert.Equal("medium", result.RecommendedThinkingLevel);
@@ -44,8 +44,8 @@ public sealed class ModelQualificationTests
 
         Assert.True(result.EconomyMode);
         Assert.True(result.EconomyDowngraded);
-        Assert.Equal("luna-medium", result.PolicyTier);
-        Assert.Equal("gpt-5.6-luna", result.SelectedModel);
+        Assert.Equal("sonnet-low", result.PolicyTier);
+        Assert.Equal("gpt-5.6-sol", result.SelectedModel);
         Assert.Equal("policy-economy", result.SelectionSource);
     }
 

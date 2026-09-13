@@ -127,6 +127,16 @@ public static class AdminConfigEndpoints
             var report = states.DedupeSlugFolders();
             return Results.Ok(report);
         });
+
+        // Backfill AGT-2808: cards stamped with a model but no thinking
+        // level (pre-policy-fix creations). Report-only by default;
+        // apply=true persists the resolved level (thinkingLevelExplicit
+        // stays false - policy-derived, not an operator pin).
+        maintenance.MapPost("/backfill-thinking-levels", (bool apply, TaskMutationService mutations) =>
+        {
+            var entries = mutations.BackfillThinkingLevels(apply);
+            return Results.Ok(new { apply, count = entries.Count, entries });
+        });
     }
 }
 

@@ -56,6 +56,11 @@
   letter-spacing: 0;
 }
 
+.model-level__thinking--missing {
+  opacity: 0.6;
+  font-style: italic;
+}
+
 .model-level__thinking--override {
   background: color-mix(in srgb, var(--model-level-color) 30%, var(--studio-bg-elevated));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--model-level-color) 48%, transparent);
