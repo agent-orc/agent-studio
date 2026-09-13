@@ -529,3 +529,19 @@ and [`VerifyCommandPlannerTests`](../../../backend.Tests/VerifyCommandPlannerTes
 They cover existing reader/validator and planning behavior, not the proposed v2
 selectors or start adapters. Documentation validation checks the draft schema,
 examples and links; it does not certify runtime compatibility.
+
+## Pending v2 extension requests
+
+Recorded on 2026-09-13 from decisions taken the same day. Each is a request for
+the contract review in step 1, not an accepted key. None may be written into an
+active v1 definition; until a v2 reader ships, every consumer applies a product
+default or a workspace project setting instead.
+
+| Request | Source | Proposed shape | Interim behaviour |
+| --- | --- | --- | --- |
+| Release identity rule | AGT-2792 (Stable release contract follows the project's rule; operator decision 2026-09-13: every project owns its own rules, Agent Studio uses lock files) | `release.identity[]` with `package`, `ecosystem` (nuget, npm), `source` (lock file path, or exact pin plus registry hash); `release.restore[]` commands | Product default: lock-file identity (`backend/packages.lock.json` with `dotnet restore --locked-mode`, `frontend/package-lock.json` with `npm ci`); the manifest records `identitySource` |
+| Areas for the tag system | AGT-2803 (Dossier AGT-W55, D3: ten product areas refined per project) | `project.areas[]` with `id`, `label`, `glossary` reference; may reference `project.components[].id` | Project additions in the workspace project settings; product defaults from the areas registry |
+| Auto-tagging opt-out | AGT-2804 (Dossier AGT-W55, D4) | `tagging.autoTag: false` | Workspace project setting |
+
+Quality facet tags reuse the domain IDs listed under "Quality targets and
+selectors"; the tag system introduces no second list of quality domains.
