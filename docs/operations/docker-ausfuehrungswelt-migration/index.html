@@ -115,6 +115,7 @@
   <a href="#s10">§10 Risiken</a><br>
   <a href="#s11">§11 Entscheidungen</a><br>
   <a href="#s12">§12 Kartenschnitt</a><br>
+  <a href="#project-definition-v2">Project definition v2 proposal</a><br>
   <a href="#quellen">§ Quellen</a>
 </nav>
 
@@ -192,21 +193,48 @@
   </tbody>
 </table>
 </div>
-<pre># .agent-studio/project.yml (Vorschlag der Stack-Erkennung, Agent Studio)
-stack: dotnet+node
-tools:
-  dotnet: global.json          # 10.0.301
-  node: .nvmrc                 # 22
-prepare: .agent-studio/prepare # npm ci (frontend), dotnet restore, playwright install
-build:  [dotnet build, "npm --prefix frontend run build"]
-tests:
-  - { id: guard,    cmd: "dotnet test backend.Tests --filter Category=Guard",         expect: 30s }
-  - { id: backend,  cmd: "dotnet test --filter Category!=MachineBound",              expect: 24m, shardable: true }
-  - { id: frontend, cmd: "npm --prefix frontend test",                               expect: 6m }
-  - { id: e2e,      cmd: "npm --prefix frontend run e2e",                            expect: 20m, needs: [playwright] }
-cache:  [frontend/node_modules, ~/.nuget/packages, ~/.cache/ms-playwright]
-capabilities: [standard]       # docker-capable, windows-host
-image: null                    # optional: ghcr.io/agent-orc/agent-studio-dev@sha256:…
+<p><strong>Implemented v1 contract:</strong> the example below follows the active repository definition and the <a href="../../app/schemas/project-execution.schema.json">version 1 schema</a>. The earlier discovery sketch was not valid v1 YAML. See the <a href="../setup/preparation-isolation-orchestrator.md">preparation runbook</a> for delivered behavior. The declared <code>devServer</code> has no start consumer today; registry start rules remain separate.</p>
+<pre># Current v1 shape, .agent-studio/project.yml
+schemaVersion: 1
+stack: [dotnet, node, playwright]
+toolVersions:
+  node: .nvmrc
+  dotnetSdk: global.json
+commands:
+  prepare: .agent-studio/prepare
+  build:
+    - dotnet build agent-taskboard.sln --no-restore
+    - npm --prefix frontend run build
+  test:
+    - dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound
+    - npm --prefix frontend test -- --run
+  lint:
+    - npm --prefix frontend run lint
+testSuites:
+  - id: backend-routine
+    category: routine
+    expectedDurationSeconds: 1440
+    command: dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound
+  - id: frontend-unit
+    category: routine
+    expectedDurationSeconds: 180
+    command: npm --prefix frontend test -- --run
+  - id: frontend-e2e
+    category: machine-bound
+    expectedDurationSeconds: 900
+    command: npm --prefix frontend run e2e
+cachePaths:
+  - frontend/node_modules
+capabilities: [git, child-process, loopback-network]
+environment:
+  DOTNET_NOLOGO: "1"
+  NUGET_XMLDOC_MODE: skip
+devServer:
+  command: npm --prefix frontend start
+  workingDirectory: .
+  healthUrl: http://127.0.0.1:4010
+  startupTimeoutSeconds: 120
+  stopWithRun: true
 </pre>
 <p>Der Worktree entsteht dann in genau einem Schritt: <code>git worktree add</code>, <code>prepare</code>, Manifest lesen. Gate und Review benutzen denselben Schritt. Kein <code>ensure-deps</code>-Hook im Build, kein Gate-eigener Cache, kein Unterschied zwischen „im Lauf gebaut" und „im Gate gebaut".</p>
 
@@ -484,6 +512,10 @@ image: null                    # optional: ghcr.io/agent-orc/agent-studio-dev@sh
 </table>
 </div>
 <p>Bereits laufend und hier eingeordnet: AGT-2780 (Restart-Kontinuität → MK10), AGT-2781 (Teardown → MK4), AGT-2782 (Cache-Validierung → MK1), AGT-2778 (Host-CLI-Lifecycle → Executor-Profil in MK4/MK10), AGT-2765 (Intervention → MK8), AGT-2773 (Frage in der Karte → MK8), AGT-2733/2736/2738 (Docker-Deploy, Installer → MK5/MK11/MK12), AGT-2763 (LinkSupervisor → MK10), AGT-W36 Batch Gate (→ MK6 Sharding und Baseline).</p>
+
+<h2 id="project-definition-v2">Project definition v2 proposal</h2>
+<p><strong>Inactive draft, 2026-09-13:</strong> the <a href="project-definition-v2-plan.md">shared project definition v2 plan</a> extends this dossier with local project/component properties, explicit quality applicability, source references for build and start, and an Agent Studio / Quality Studio / Voice Studio compatibility matrix. Its <a href="project-execution.v2.draft.schema.json">draft schema</a> and YAML examples are review artifacts, not runtime support.</p>
+<p>Active v1 definitions and executor capabilities keep their current meaning. Missing product properties remain unknown, component properties do not inherit, and existing quality activation remains authoritative. The plan specifies schema/reader parity, lifecycle, provenance and rollout acceptance gates before any repository adopts v2. It does not change the recorded isolation decisions or the implementation history below.</p>
 
 <h2 id="quellen"><span class="no">§</span>Quellen</h2>
 <ul>

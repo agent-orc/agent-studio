@@ -1,0 +1,441 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-studio:project-execution:v2:draft:2026-09-13",
+  "title": "INACTIVE DRAFT: repository project execution definition v2",
+  "description": "Review-only proposal, not consumed by any runtime. Retains v1 execution fields and proposes local project properties, component source references and quality applicability. Do not use in active .agent-studio/project.yml until supported-version rollout is complete.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "stack",
+    "toolVersions",
+    "commands",
+    "testSuites",
+    "cachePaths",
+    "capabilities",
+    "environment",
+    "project"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "description": "Proposed major contract version. Current runtime supports only version 1.",
+      "const": 2
+    },
+    "stack": {
+      "description": "Technology building blocks used by the project.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "toolVersions": {
+      "description": "Tool names mapped to repository-relative version manifests such as .nvmrc or global.json.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/relativePath"
+      }
+    },
+    "commands": {
+      "description": "Preparation and verification commands shared by coding runs and build-test gates.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "prepare",
+        "build",
+        "test",
+        "lint"
+      ],
+      "properties": {
+        "prepare": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "build": {
+          "$ref": "#/$defs/commands"
+        },
+        "test": {
+          "$ref": "#/$defs/commands"
+        },
+        "lint": {
+          "$ref": "#/$defs/commands"
+        }
+      }
+    },
+    "testSuites": {
+      "description": "Named test inventory with operator-facing category and expected duration.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "category",
+          "expectedDurationSeconds",
+          "command"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedDurationSeconds": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "command": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "cachePaths": {
+      "description": "Repository-relative generated paths that preparation may populate.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/relativePath"
+      }
+    },
+    "capabilities": {
+      "description": "Executor capabilities required by the project.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "environment": {
+      "description": "Non-secret preparation environment values. Executor profiles supply secrets.",
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+      },
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "devServer": {
+      "description": "Optional bounded development-server lifecycle owned by the run.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "startupTimeoutSeconds",
+        "stopWithRun"
+      ],
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workingDirectory": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "healthUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "startupTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "stopWithRun": {
+          "const": true
+        }
+      }
+    },
+    "image": {
+      "description": "Optional repository-relative container image definition used only by a container executor profile.",
+      "$ref": "#/$defs/relativePath"
+    },
+    "project": {
+      "description": "Repository-owned identity and local descriptive component inventory. Does not replace registry/review identities.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "components"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/localId"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "properties": {
+          "$ref": "#/$defs/productProperties"
+        },
+        "components": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/component"
+          }
+        }
+      }
+    },
+    "quality": {
+      "description": "Proposed applicability filters only. Existing AGT activation and QS rule enablement stay authoritative.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "applicability"
+      ],
+      "properties": {
+        "applicability": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/applicability"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?![~/\\\\])(?!.*(?:^|/|\\\\)\\.\\.(?:/|\\\\|$)).+$"
+    },
+    "commands": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "localId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+    },
+    "repositoryPath": {
+      "description": "Normalized repository-relative literal path. Runtime must additionally resolve links and verify containment/existence at the subject commit.",
+      "type": "string",
+      "pattern": "^(?:\\.|(?![~/])(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*[\\\\:\\u0000-\\u001f*?\\[\\]])[^/]+(?:/[^/]+)*)$"
+    },
+    "productProperties": {
+      "description": "Local authored product declarations, not capabilities or evidence. Missing means unknown. No inheritance.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "public-facing": {
+          "type": "boolean"
+        },
+        "html-ui": {
+          "type": "boolean"
+        },
+        "seo-relevant": {
+          "type": "boolean"
+        },
+        "payment-api": {
+          "type": "boolean"
+        },
+        "personal-data": {
+          "type": "boolean"
+        },
+        "authenticated": {
+          "type": "boolean"
+        },
+        "persistent-data": {
+          "type": "boolean"
+        },
+        "realtime": {
+          "type": "boolean"
+        },
+        "localized": {
+          "type": "boolean"
+        },
+        "deployable": {
+          "type": "boolean"
+        }
+      }
+    },
+    "sourceReference": {
+      "description": "Navigation/provenance only, never authorization to execute. Resolve from repository root, not component path.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/repositoryPath",
+          "not": {
+            "const": "."
+          }
+        },
+        "pointer": {
+          "description": "Optional JSON Pointer into a parsed JSON/YAML source document; omit for scripts.",
+          "type": "string",
+          "pattern": "^(?:/(?:[^~]|~[01])*)*$"
+        }
+      }
+    },
+    "sourceReferences": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/sourceReference"
+      }
+    },
+    "executionRefs": {
+      "description": "Existing build/test/lint/start sources for display. Does not add commands or implement service lifecycle.",
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "build": {
+          "$ref": "#/$defs/sourceReferences"
+        },
+        "test": {
+          "$ref": "#/$defs/sourceReferences"
+        },
+        "lint": {
+          "$ref": "#/$defs/sourceReferences"
+        },
+        "start": {
+          "$ref": "#/$defs/sourceReferences"
+        }
+      }
+    },
+    "component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "path"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/localId"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "$ref": "#/$defs/repositoryPath"
+        },
+        "properties": {
+          "$ref": "#/$defs/productProperties"
+        },
+        "executionRefs": {
+          "$ref": "#/$defs/executionRefs"
+        }
+      }
+    },
+    "propertyIds": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": [
+          "public-facing",
+          "html-ui",
+          "seo-relevant",
+          "payment-api",
+          "personal-data",
+          "authenticated",
+          "persistent-data",
+          "realtime",
+          "localized",
+          "deployable"
+        ]
+      }
+    },
+    "selector": {
+      "description": "Non-empty groups use three-valued logic and combine with AND. Missing or empty groups are neutral; an empty selector is unconstrained within its explicit componentScope. Missing properties remain unknown, including in noneOf.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allOf": {
+          "$ref": "#/$defs/propertyIds"
+        },
+        "anyOf": {
+          "$ref": "#/$defs/propertyIds"
+        },
+        "noneOf": {
+          "$ref": "#/$defs/propertyIds"
+        }
+      }
+    },
+    "catalogueIds": {
+      "description": "Canonical IDs must also resolve against the authoritative pinned Quality Studio catalogue. Unknown IDs are errors.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "applicability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "componentScope",
+        "selector"
+      ],
+      "anyOf": [
+        {
+          "required": [
+            "ruleIds"
+          ],
+          "properties": {
+            "ruleIds": {
+              "$ref": "#/$defs/catalogueIds"
+            }
+          }
+        },
+        {
+          "required": [
+            "domains"
+          ],
+          "properties": {
+            "domains": {
+              "$ref": "#/$defs/catalogueIds"
+            }
+          }
+        }
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/localId"
+        },
+        "componentScope": {
+          "description": "Explicit local component IDs. No implicit repository-wide fallback.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/localId"
+          }
+        },
+        "ruleIds": {
+          "$ref": "#/$defs/catalogueIds",
+          "description": "Explicit canonical rule targets supplement domain checks without activating disabled rules. Deduplicate by canonical rule, subject and producer."
+        },
+        "domains": {
+          "$ref": "#/$defs/catalogueIds",
+          "description": "Domain IDs resolve to canonical checks, preserving method/status, subject scope, evidence requirements and ruleIds/metricIds. Planned checks and missing producers remain not-assessed/unavailable, never an empty successful review."
+        },
+        "selector": {
+          "$ref": "#/$defs/selector"
+        }
+      }
+    }
+  }
+}
