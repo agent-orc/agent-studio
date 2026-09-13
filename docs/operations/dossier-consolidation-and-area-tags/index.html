@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dossier consolidation and area tags | Concept Dossier</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1: #fcfcfb; --surface-2: #f2f1ee; --surface-3: #e9e8e3;
+    --ink-1: #0b0b0b; --ink-2: #52514e; --ink-3: #8a8983; --line: #d8d6cf;
+    --develop: #2a78d6; --ok: #008300; --bad: #c93736; --warn: #9a6b00;
+    --accent-soft: #eaf1fb; --bad-soft: #fbecec; --ok-soft: #eaf4ea; --warn-soft: #f8f0dd;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --surface-1: #1a1a19; --surface-2: #232322; --surface-3: #2c2c2a;
+      --ink-1: #ffffff; --ink-2: #c3c2b7; --ink-3: #8a8983; --line: #3d3d3a;
+      --develop: #3987e5; --ok: #4eae4e; --bad: #e66767; --warn: #d9a63f;
+      --accent-soft: #1e2a3a; --bad-soft: #382222; --ok-soft: #1f2f1f; --warn-soft: #33301e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 0 0 80px; background: var(--surface-1); color: var(--ink-1); font: 16px/1.6 system-ui, "Segoe UI", sans-serif; }
+  main { max-width: 1080px; margin: 0 auto; padding: 0 28px; }
+  header.page { border-bottom: 1px solid var(--line); padding: 44px 0 26px; margin-bottom: 8px; }
+  .kicker { font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); margin: 0 0 10px; }
+  h1 { font-size: 34px; line-height: 1.2; margin: 0 0 12px; }
+  .lede { font-size: 18px; color: var(--ink-2); max-width: 62ch; margin: 0; }
+  .meta { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 18px; font-size: 13px; color: var(--ink-3); }
+  .meta b { color: var(--ink-2); font-weight: 600; }
+  h2 { font-size: 24px; margin: 56px 0 6px; scroll-margin-top: 20px; }
+  h2 .no { color: var(--ink-3); font-weight: 600; margin-right: 10px; }
+  h3 { font-size: 18px; margin: 34px 0 4px; }
+  p { max-width: 76ch; }
+  .box { border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); padding: 18px 22px; margin: 20px 0; }
+  .box.accent { background: var(--accent-soft); }
+  .box.warn { background: var(--warn-soft); }
+  .tablewrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; margin: 14px 0 22px; font-size: 14px; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--ink-2); font-weight: 600; background: var(--surface-2); white-space: nowrap; }
+  td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td .d { display: block; color: var(--ink-2); font-size: 12.5px; line-height: 1.4; margin-top: 3px; }
+  code { font: 13px ui-monospace, "Cascadia Mono", Consolas, monospace; background: var(--surface-3); padding: 1px 5px; border-radius: 4px; }
+  .tag { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--ink-2); margin-right: 4px; white-space: nowrap; }
+  .tag.bad { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
+  .tag.ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+  .tag.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+  figure { margin: 22px 0; }
+  figure svg { width: 100%; height: auto; display: block; }
+  figcaption { font-size: 13px; color: var(--ink-3); margin-top: 6px; }
+  .decision { border: 1px solid color-mix(in srgb, var(--develop) 35%, var(--line)); border-radius: 10px; padding: 18px 22px; margin: 22px 0; background: var(--accent-soft); }
+  .decision h3 { margin: 0 0 10px; font-size: 17px; }
+  .decision label { display: flex; gap: 12px; align-items: flex-start; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-1); margin: 8px 0; cursor: pointer; }
+  .decision label input { margin-top: 4px; }
+  .decision label b { display: block; }
+  .decision label span.d { display: block; color: var(--ink-2); font-size: 14px; }
+  .decision textarea { width: 100%; min-height: 64px; margin-top: 8px; font: 14px system-ui, sans-serif; border: 1px solid var(--line); border-radius: 6px; padding: 8px; background: var(--surface-1); color: var(--ink-1); }
+  ul, ol { max-width: 80ch; }
+  li { margin: 4px 0; }
+  .toc { columns: 2; gap: 28px; font-size: 14.5px; }
+  .toc a { color: var(--ink-2); text-decoration: none; }
+  .toc a:hover { color: var(--develop); }
+  .muted { color: var(--ink-3); }
+  .steps { counter-reset: st; list-style: none; padding: 0; max-width: none; }
+  .steps > li { counter-increment: st; border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px 14px 58px; margin: 12px 0; background: var(--surface-2); position: relative; }
+  .steps > li::before { content: "M" counter(st); position: absolute; left: 16px; top: 14px; font-weight: 700; color: var(--develop); }
+  .steps h4 { margin: 0 0 6px; font-size: 16px; }
+  .steps p { margin: 4px 0; font-size: 14.5px; }
+  .steps .kv { font-size: 13.5px; color: var(--ink-2); }
+  .steps .kv b { color: var(--ink-1); }
+  pre { background: var(--surface-3); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; font: 12.5px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace; overflow-x: auto; max-width: 100%; }
+  /* Tooltips ohne Verzögerung: data-tip statt title. Ohne Script: CSS-Blase; mit Script: feste Position, nie abgeschnitten. */
+  [data-tip] { text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; position: relative; }
+  html:not(.js) [data-tip]::after { content: attr(data-tip); position: absolute; left: 0; top: calc(100% + 6px); z-index: 20; width: max-content; max-width: 340px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-1); color: var(--ink-1); font-size: 12.5px; line-height: 1.4; font-weight: 400; white-space: normal; box-shadow: 0 6px 20px rgba(0,0,0,.14); opacity: 0; pointer-events: none; transition: opacity .06s; }
+  html:not(.js) [data-tip]:hover::after, html:not(.js) [data-tip]:focus-visible::after { opacity: 1; }
+  #tipbox { position: fixed; z-index: 1000; max-width: 360px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-1); color: var(--ink-1); font-size: 12.5px; line-height: 1.45; box-shadow: 0 8px 24px rgba(0,0,0,.16); pointer-events: none; display: none; }
+  /* SVG figure classes from the haertung-verteilte-ausfuehrung template */
+  figure svg { width: 100%; height: auto; display: block; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-1); }
+  .s-node   { fill: var(--surface-2); stroke: var(--line); rx: 8; }
+  .s-node2  { fill: var(--surface-3); stroke: var(--line); }
+  .s-label  { fill: var(--ink-1); font: 600 13px system-ui, sans-serif; }
+  .s-sub    { fill: var(--ink-2); font: 12px system-ui, sans-serif; }
+  .s-tiny   { fill: var(--ink-3); font: 11px system-ui, sans-serif; }
+  .s-flow   { stroke: var(--ink-3); stroke-width: 1.6; fill: none; }
+  .s-commit { stroke-width: 2.5; fill: var(--surface-1); }
+  .s-lane   { stroke: var(--line); stroke-dasharray: 4 5; stroke-width: 1; }
+  .badge-bad  { fill: var(--bad-soft); stroke: var(--bad); }
+  .badge-ok   { fill: var(--ok-soft); stroke: var(--ok); }
+  .badge-warn { fill: var(--warn-soft); stroke: var(--warn); }
+  .t-bad  { fill: var(--bad);  font: 600 12px system-ui, sans-serif; }
+  .t-ok   { fill: var(--ok);   font: 600 12px system-ui, sans-serif; }
+  .t-warn { fill: var(--warn); font: 600 12px system-ui, sans-serif; }
+</style>
+</head>
+<body>
+<main>
+<header class="page">
+  <p class="kicker">Concept Dossier · Agent Studio · 2026-09-13</p>
+  <h1>Dossier consolidation and area tags</h1>
+  <p class="lede">The relevance review AGT-W53 classified all 52 Dossiers. The operator approved the matrix with three rules: merge what is partially superseded into fewer, current Dossiers; archive what is implemented, leaving documentation behind where the knowledge would otherwise be lost; and turn the review's categories into a tag system with its own vocabulary per area, applied automatically to every Dossier and every card in every project. This Dossier is the plan for both.</p>
+  <div class="meta">
+    <span><b>Status</b> 2026-09-13, decision-pending</span>
+    <span><b>Trigger</b> Operator decision on AGT-W53 (13.09.), verdicts recorded on all 52 descriptors the same morning</span>
+    <span><b>Builds on</b> AGT-W53 relevance review, AGT-W24/W33 Dossier system, AGT-W54 decision cards, workspace tag registry</span>
+    <span><b>Concept card</b> see workbench.json</span>
+  </div>
+</header>
+
+<nav class="toc" aria-label="Contents">
+  <a href="#s1">§1 Situation</a>
+  <a href="#s2">§2 Target set</a>
+  <a href="#s3">§3 Consolidation map</a>
+  <a href="#s4">§4 Archiving with artefacts</a>
+  <a href="#s5">§5 Areas and tags</a>
+  <a href="#s6">§6 Alternatives</a>
+  <a href="#s7">§7 Recommendation</a>
+  <a href="#s8">§8 Evidence</a>
+  <a href="#s9">§9 Decisions</a>
+  <a href="#s10">§10 Implementation</a>
+</nav>
+
+<section id="s1">
+<h2><span class="no">§1</span>Situation</h2>
+<p>Agent Studio carries 54 Dossiers; 37 are on the current list. AGT-W53 read every one and found 23 current, 12 partially superseded, 6 superseded and 11 historical, grouped into six categories: execution and runner, review and gates, Dossiers and UI, websites, security, retention. The review proposed to record these verdicts as metadata. The operator went further on 2026-09-13: the current list should shrink to Dossiers that each represent one theme completely at today's state, superseded material should be merged into them rather than left in place, implemented Dossiers should be archived once their durable knowledge has a home in the documentation, and the categories should become a general tagging system.</p>
+<p>The verdicts are applied: every descriptor now carries a <code>review</code> block with verdict and replacement keys, reviewer "Operator". What follows is the consolidation and the tag system.</p>
+</section>
+
+<section id="s2">
+<h2><span class="no">§2</span>Target set</h2>
+<p>Sixteen Dossiers instead of thirty-seven on the current list. Four are new consolidated Dossiers, one is a rewrite of the existing entry point, eleven stay as they are.</p>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Theme</th><th>Target Dossier</th><th>Kind</th><th>Absorbs</th></tr></thead>
+<tbody>
+<tr><td>Target architecture</td><td>AGT-W14 North star, rewritten to the September topology</td><td>rewrite, stays the single entry point</td><td>W8 installer story, W22 implementation plan, W25 components and protocols, W6 container default (as history sections); links W49 and W51 as the live decisions</td></tr>
+<tr><td>Delivery chain and recovery</td><td>new: Delivery chain: integration, recovery, robustness</td><td>new</td><td>W37 rebase and steering, W50 robustness, W42 failure classes, W23 unverified deliveries, W44 retry tax, W3 board status model</td></tr>
+<tr><td>Observation</td><td>new: Observation: watcher, telemetry, project feed</td><td>new</td><td>W15 watcher, W38 telemetry layer, W16 project feed</td></tr>
+<tr><td>Gates and validation</td><td>new: Gates: batch gate and remote gate</td><td>new</td><td>W36 batch gate, W18 remote gate target, W2 async validation; W28, W29, W30 as evidence appendix</td></tr>
+<tr><td>Task and board UI</td><td>new: Task and board UI decisions</td><td>new</td><td>W27 narrative view, W35 timeline, W45 escalation view, W21 header and chips, W52 project scope, W48 usage block, W17 protocol condensation, W20 status.md</td></tr>
+<tr><td>Dossier system</td><td>this Dossier, extended after decision</td><td>this</td><td>W4 concept pipeline, W24 Dossier concept, W33 naming, W53 review; W54 decision cards stays separate while pending</td></tr>
+<tr><td>Kept as is</td><td>W1 admin guideline, W9 orchestrator chats, W19 screenshots, W31 token-economy signals, W34 demo instance, W41 security audit, W46 retention, W49 operations server, W51 isolated execution, W54 decision cards</td><td>keep</td><td>W47 route ownership and W43 runner link merge into W49; W7 distributed execution is archived, its durable material already lives in <code>docs/concepts/platform-architecture/fencing-leases-and-authority.md</code></td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<section id="s3">
+<h2><span class="no">§3</span>Consolidation map</h2>
+<p>Every consolidated Dossier follows the same recipe. Read the sources in full. Keep three things: the decisions already taken with their dates, the open choices with their current options, and the evidence that still holds. Drop dated snapshots, superseded topology, and duplicated argument. Write in the house style with one figure per theme and the four concept sections. Then record each source as superseded by the new key through the review endpoint, so the History list keeps the sources readable and the current list shows one Dossier per theme.</p>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Source</th><th>Verdict</th><th>Goes to</th><th>What survives</th></tr></thead>
+<tbody>
+<tr><td>W3 board status model</td><td>partially superseded</td><td>Delivery chain</td><td>state inventory and the choices W37 did not settle</td></tr>
+<tr><td>W7 distributed execution</td><td>partially superseded</td><td>archive</td><td>fencing, leases, Result SHA already documented as architecture; incident evidence stays in History</td></tr>
+<tr><td>W16 project feed</td><td>partially superseded</td><td>Observation</td><td>feed goal and the timeline of decisions and events</td></tr>
+<tr><td>W23 unverified deliveries</td><td>partially superseded</td><td>Delivery chain</td><td>incident reconstruction, AGT-2543/2544/2545 hardening evidence</td></tr>
+<tr><td>W2 async validation</td><td>partially superseded</td><td>Gates</td><td>SHA cache and deterministic test-scope principles</td></tr>
+<tr><td>W4 concept pipeline</td><td>partially superseded</td><td>Dossier system</td><td>concept outcome and human sight-review rule</td></tr>
+<tr><td>W24 Dossier concept</td><td>partially superseded</td><td>Dossier system</td><td>app layer, keys, lifecycle, article template plan</td></tr>
+<tr><td>W42 operational resilience</td><td>partially superseded</td><td>Delivery chain</td><td>eleven failure classes</td></tr>
+<tr><td>W43 runner link</td><td>partially superseded</td><td>W49</td><td>LinkSupervisor delivery (AGT-2763) and migration (AGT-2764) as evidence</td></tr>
+<tr><td>W44 retry tax</td><td>partially superseded</td><td>Delivery chain</td><td>measurements as dated evidence</td></tr>
+<tr><td>W47 route ownership</td><td>partially superseded</td><td>W49</td><td>delivered route migration cards; destination now Operations Server</td></tr>
+<tr><td>W50 delivery chain robustness</td><td>partially superseded</td><td>Delivery chain</td><td>diagnosis, fingerprint breaking, flaky quarantine, the recommendations W51 did not take</td></tr>
+<tr><td>W6, W8, W14 (old), W22, W25</td><td>superseded</td><td>Target architecture</td><td>history sections with the decision that replaced each</td></tr>
+<tr><td>W11 log retention</td><td>superseded</td><td>W46</td><td>10 MiB source cap as one class of the retention model (already there)</td></tr>
+<tr><td>W15, W38 · W36, W18 · W37 · W27, W35, W45, W21, W52, W48, W17, W20</td><td>current</td><td>their theme Dossier</td><td>everything; the source becomes History with supersededBy = new key</td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<section id="s4">
+<h2><span class="no">§4</span>Archiving with artefacts</h2>
+<p>Eleven historical Dossiers leave the current list. Archiving is allowed only when the durable knowledge has a documentation home; the review named where that home is, and the table records what still has to be written.</p>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Dossier</th><th>Durable knowledge</th><th>Documentation artefact</th></tr></thead>
+<tbody>
+<tr><td>W5 deck icon exploration</td><td>option A chosen, delivered by AGT-2619</td><td>none needed; provenance stays in History</td></tr>
+<tr><td>W10 snapshot 3 August</td><td>dated position report</td><td>none</td></tr>
+<tr><td>W12 model routing policy</td><td>routing table outdated</td><td>verify the model-routing domain policy page names the current contract; write it if missing</td></tr>
+<tr><td>W13 badge contrast</td><td>set A delivered by AGT-2527</td><td>theme tokens carry the rule; add one sentence to the admin design guideline</td></tr>
+<tr><td>W26 architecture quality layer</td><td>contract sample</td><td>move the sample into <code>docs/quality</code> as an article, then archive</td></tr>
+<tr><td>W28 pipeline time economy</td><td>847-task baseline</td><td>keep the numbers as an evidence appendix in the Gates Dossier</td></tr>
+<tr><td>W29 reissue convergence</td><td>negative result</td><td>one paragraph in the Gates Dossier evidence</td></tr>
+<tr><td>W30 remote run report</td><td>fixed run report</td><td>none</td></tr>
+<tr><td>W32 page action bar</td><td>visual contract delivered</td><td>verify the shared UI guidance carries it</td></tr>
+<tr><td>W39 live improvement log</td><td>recurring failure classes</td><td>synthesised in the Delivery chain Dossier</td></tr>
+<tr><td>W40 decision briefing</td><td>dated index of eight decisions</td><td>none; replaced by the decision cards inbox (W54)</td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<section id="s5">
+<h2><span class="no">§5</span>Areas and tags</h2>
+<p>The review's categories are the first draft of something the product lacks: a vocabulary that organises documents and cards beyond the folder tree and the board lanes. Today the workspace has a tag registry with fourteen tags (architecture, performance, quality, ui-ux, security, docs, observability and a few experiments), cards can carry tags, and Dossiers carry a <code>pattern</code>. None of the 862 Agent Studio cards carries a tag. The registry exists; nothing fills it.</p>
+<figure>
+<svg viewBox="0 0 1040 330" role="img" aria-label="Areas own a vocabulary; auto-tagging assigns area tags to cards and Dossiers at creation; maintenance keeps areas and glossary current">
+  <defs>
+    <marker id="arrow2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="s-flow"/></marker>
+  </defs>
+  <rect class="s-node" x="20" y="40" width="300" height="150" rx="10"/>
+  <text class="s-label" x="40" y="70">Areas</text>
+  <text class="s-sub" x="40" y="92">one per application domain</text>
+  <rect class="s-node2" x="40" y="106" width="260" height="26" rx="6"/>
+  <text class="s-tiny" x="50" y="124">execution · gates · delivery · observation · UI · docs</text>
+  <rect class="s-node2" x="40" y="140" width="260" height="26" rx="6"/>
+  <text class="s-tiny" x="50" y="158">glossary: the area's own terms (ubiquitous language)</text>
+
+  <rect class="s-node" x="370" y="40" width="300" height="150" rx="10"/>
+  <text class="s-label" x="390" y="70">Auto-tagging step</text>
+  <text class="s-sub" x="390" y="92">default in every project pipeline</text>
+  <rect class="s-node2" x="390" y="106" width="260" height="26" rx="6"/>
+  <text class="s-tiny" x="400" y="124">on card creation and Dossier creation</text>
+  <rect class="s-node2" x="390" y="140" width="260" height="26" rx="6"/>
+  <text class="s-tiny" x="400" y="158">cheap model, bounded prompt, registry as closed list</text>
+
+  <rect class="s-node" x="720" y="40" width="300" height="150" rx="10"/>
+  <text class="s-label" x="740" y="70">Maintenance</text>
+  <text class="s-sub" x="740" y="92">tags and areas stay alive</text>
+  <rect class="s-node2" x="740" y="106" width="260" height="26" rx="6"/>
+  <text class="s-tiny" x="750" y="124">suggest new tags, merge synonyms, retire unused</text>
+  <rect class="s-node2" x="740" y="140" width="260" height="26" rx="6"/>
+  <text class="s-tiny" x="750" y="158">glossary updates from Dossiers and ADRs</text>
+
+  <line class="s-flow" x1="320" y1="115" x2="368" y2="115" marker-end="url(#arrow2)"/>
+  <line class="s-flow" x1="670" y1="115" x2="718" y2="115" marker-end="url(#arrow2)"/>
+  <path class="s-flow" d="M870 190 C 870 270, 170 270, 170 192" fill="none" marker-end="url(#arrow2)"/>
+  <text class="s-tiny" x="380" y="282">maintenance feeds areas and glossary back; filters and views on board, list and wiki read the same tags</text>
+</svg>
+<figcaption>Fig. 1: Areas, the auto-tagging step and maintenance form one loop. Board, Dossier list and wiki read the same tags.</figcaption>
+</figure>
+<p><strong>Areas.</strong> An area is a bounded part of the application with its own terms. The starting set for Agent Studio comes from the review, refined by the domain maps in <code>docs/concepts</code>: execution and runner, delivery chain, gates and review, observation, task and board UI, Dossiers and documentation, websites, security, retention, token economy. Each area owns a glossary page: the terms an agent must use for that area, with one definition each. The glossary is the ubiquitous language; tags are its handles.</p>
+<p><strong>Tags.</strong> Two kinds. Area tags name the area a document or card belongs to; a card may carry more than one. Facet tags name a cross-cutting aspect: decision, incident, evidence, guideline, migration. Both live in one registry per project with a product default that every project inherits; a project may add its own areas in its project definition.</p>
+<p><strong>Auto-tagging.</strong> A pipeline step that runs on card creation and on Dossier creation in every project by default: it reads title and body, the registry as a closed list, and the area glossaries as context, and returns area tags plus facet tags with a confidence. Below the confidence threshold it proposes instead of assigns. A backfill job tags the existing cards and Dossiers once. This is classification over a short text with a closed list; a cheap model class is the right tool, with an explicit route in model routing so it never falls to the coding class.</p>
+<p><strong>Maintenance.</strong> A periodic step reviews tag usage: unused tags are proposed for retirement, frequently co-occurring free terms are proposed as new tags, near-duplicates are proposed for merging, and Dossier decisions and ADRs feed new terms into the area glossary. Proposals go to the operator as decision cards (W54); nothing changes silently.</p>
+</section>
+
+<section id="s6" data-concept-section="alternatives">
+<h2><span class="no">§6</span>Alternatives</h2>
+<div class="tablewrap">
+<table>
+<thead><tr><th></th><th>A · Areas with glossaries, auto-tagging by default</th><th>B · Manual tags from the existing registry</th><th>C · Folder structure only</th></tr></thead>
+<tbody>
+<tr><th>Vocabulary</th><td>Area glossary per domain, tags as handles</td><td>Flat tag list, no definitions</td><td>Folder names</td></tr>
+<tr><th>Coverage</th><td>Every new card and Dossier, backfill for the existing ones</td><td>Whatever people remember to set; today zero of 862 cards</td><td>Documents only, cards not at all</td></tr>
+<tr><th>Cross-project</th><td>Product default, project additions in the project definition</td><td>Per workspace, no defaults</td><td>Per repo</td></tr>
+<tr><th>Cost</th><td>One cheap classification call per creation, a backfill of ~900 items, maintenance step</td><td>None</td><td>None</td></tr>
+<tr><th>Fits the operator's target</th><td>Yes: automatic, general, beyond folders, same for cards and documents</td><td>No: stays empty</td><td>No</td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<section id="s7" data-concept-section="recommendation">
+<h2><span class="no">§7</span>Recommendation</h2>
+<p><strong>A.</strong> Consolidate to the sixteen-Dossier target set through concept cards, one per new theme Dossier, each of which also records its sources as superseded and writes the archive artefacts of its theme. Build the tag system on the existing registry and card tags: add areas with glossaries, Dossier tags in the descriptor, the auto-tagging step as a pipeline default with a cheap-model route, and maintenance proposals as decision cards.</p>
+<div class="box accent">
+<p><b>Order.</b> Consolidation first, because the consolidated Dossiers are the best input for the area glossaries. The tag backend can start in parallel; the auto-tagging step and the backfill run once the glossaries exist, so the first automatic tags are already correct.</p>
+</div>
+</section>
+
+<section id="s8" data-concept-section="evidence">
+<h2><span class="no">§8</span>Evidence</h2>
+<ul>
+<li><p>AGT-W53 matrix: 52 Dossiers, 23 current, 12 partially superseded, 6 superseded, 11 historical; verdicts recorded on 2026-09-13 through <code>PUT /api/projects/{p}/workbenches/{id}/review</code>.</p></li>
+<li><p>Tag registry (<code>GET /api/tags</code>): 14 entries, seven of them area-like (architecture, performance, quality, ui-ux, security, docs, observability), the rest experiments and review-quality labels. Cards with tags in Agent Studio: 0 of 862.</p></li>
+<li><p>Dossier descriptors carry <code>pattern</code> (concept, ui, architecture) on 6 of 54; the field is a facet, not an area.</p></li>
+<li><p>Model routing today has two classes (primary and fallback per CLI); no classification route exists. A tagging call is a few hundred tokens of input and a few dozen of output.</p></li>
+</ul>
+</section>
+
+<section id="s9" data-concept-section="open-decisions">
+<h2><span class="no">§9</span>Decisions</h2>
+
+<div class="decision" data-decision-id="target-set" data-decision-kind="single" data-decision-label="Target set of Dossiers">
+  <h3>D1 · Consolidate to the sixteen-Dossier target set from §2?</h3>
+  <label data-option-id="sixteen" data-option-label="A · Yes, sixteen as proposed (recommendation)"><input type="radio" name="target-set" value="sixteen"><span><b>A · Yes, sixteen as proposed</b><span class="d">Four new theme Dossiers, North star rewritten, eleven kept.</span></span></label>
+  <label data-option-id="fewer" data-option-label="B · Fewer: also fold W49 and W51 into the rewritten North star"><input type="radio" name="target-set" value="fewer"><span><b>B · Fewer: fold W49 and W51 into the North star</b><span class="d">One architecture Dossier, but two fresh decision records get rewritten a day after they were decided.</span></span></label>
+  <label data-option-id="more" data-option-label="C · More: keep W37 and W36 separate from their theme Dossiers"><input type="radio" name="target-set" value="more"><span><b>C · More: keep W37 and W36 separate</b><span class="d">Eighteen Dossiers; the two newest gate and merge decisions stay standalone.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="archive-rule" data-decision-kind="single" data-decision-label="Archiving rule">
+  <h3>D2 · When may an implemented Dossier be archived?</h3>
+  <label data-option-id="artefact-when-missing" data-option-label="A · When its durable knowledge has a documentation home; the consolidation card writes the artefact if it is missing (recommendation)"><input type="radio" name="archive-rule" value="artefact-when-missing"><span><b>A · When the knowledge has a documentation home; write the artefact if missing</b><span class="d">The §4 table names the artefact per Dossier; the card verifies before archiving.</span></span></label>
+  <label data-option-id="always-artefact" data-option-label="B · Always write a dedicated docs page per archived Dossier"><input type="radio" name="archive-rule" value="always-artefact"><span><b>B · Always a dedicated page</b><span class="d">Complete, but produces pages for negative results and dated reports that History already keeps readable.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="area-taxonomy" data-decision-kind="single" data-decision-label="Area taxonomy">
+  <h3>D3 · Which areas form the product default?</h3>
+  <label data-option-id="ten-areas" data-option-label="A · The ten areas from §5, refined per project (recommendation)"><input type="radio" name="area-taxonomy" value="ten-areas"><span><b>A · The ten areas from §5, refined per project</b><span class="d">Execution and runner, delivery chain, gates and review, observation, task and board UI, Dossiers and documentation, websites, security, retention, token economy.</span></span></label>
+  <label data-option-id="six-categories" data-option-label="B · Exactly the six review categories"><input type="radio" name="area-taxonomy" value="six-categories"><span><b>B · Exactly the six review categories</b><span class="d">Smaller, but execution and delivery share one area and token economy has none.</span></span></label>
+  <label data-option-id="derive" data-option-label="C · Derive areas from the domain maps in docs/concepts first"><input type="radio" name="area-taxonomy" value="derive"><span><b>C · Derive from the domain maps first</b><span class="d">Most rigorous; delays the first tags by one analysis card.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="autotag-scope" data-decision-kind="multi" data-decision-label="Auto-tagging scope">
+  <h3>D4 · Where does auto-tagging run?</h3>
+  <label data-option-id="cards" data-option-label="On card creation in every project (recommendation)"><input type="checkbox" name="autotag-scope" value="cards"><span><b>On card creation in every project</b><span class="d">Pipeline default; projects opt out in their definition.</span></span></label>
+  <label data-option-id="dossiers" data-option-label="On Dossier creation and on the wiki articles (recommendation)"><input type="checkbox" name="autotag-scope" value="dossiers"><span><b>On Dossier creation and wiki articles</b><span class="d">Descriptor and article front matter get tags.</span></span></label>
+  <label data-option-id="backfill" data-option-label="Backfill of existing cards and Dossiers (recommendation)"><input type="checkbox" name="autotag-scope" value="backfill"><span><b>Backfill of existing cards and Dossiers</b><span class="d">One batch run, about 900 items, reviewable report.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="tag-model" data-decision-kind="single" data-decision-label="Model class for tagging">
+  <h3>D5 · Which model class tags?</h3>
+  <label data-option-id="cheap-route" data-option-label="A · A new classification route in model routing: cheapest available model, low thinking (recommendation)"><input type="radio" name="tag-model" value="cheap-route"><span><b>A · New classification route, cheapest model, low thinking</b><span class="d">Claude Haiku 4.5 or gpt-5.6-sol at low thinking; closed list makes the task easy; cost stays below one cent per item.</span></span></label>
+  <label data-option-id="project-default" data-option-label="B · The project's default model"><input type="radio" name="tag-model" value="project-default"><span><b>B · The project's default model</b><span class="d">No new route; ten to twenty times the cost per item.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="maintenance" data-decision-kind="single" data-decision-label="Tag maintenance">
+  <h3>D6 · How are tags and areas maintained?</h3>
+  <label data-option-id="proposals" data-option-label="A · Periodic proposals as decision cards: retire, merge, add, glossary updates (recommendation)"><input type="radio" name="maintenance" value="proposals"><span><b>A · Periodic proposals as decision cards</b><span class="d">Nothing changes silently; uses W54 once it exists, prose cards until then.</span></span></label>
+  <label data-option-id="auto-apply" data-option-label="B · Automatic changes with a report"><input type="radio" name="maintenance" value="auto-apply"><span><b>B · Automatic changes with a report</b><span class="d">Faster, but a renamed tag breaks filters people saved.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+</section>
+
+<section id="s10">
+<h2><span class="no">§10</span>Implementation</h2>
+<p>Nine cards, created by concept promotion after §9. Five consolidation cards run in concept mode and deliver a Dossier each; four tag-system cards run in coding mode.</p>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Card</th><th>Delivers</th><th>Depends on</th></tr></thead>
+<tbody>
+<tr><td>Target architecture</td><td>North star rewritten; W6, W8, W22, W25 recorded as superseded</td><td>D1</td></tr>
+<tr><td>Delivery chain</td><td>New Dossier; W3, W23, W37, W42, W44, W50 recorded as superseded; W39 artefact</td><td>D1, D2</td></tr>
+<tr><td>Observation</td><td>New Dossier; W15, W16, W38 superseded</td><td>D1</td></tr>
+<tr><td>Gates</td><td>New Dossier; W2, W18, W36 superseded; W28, W29 evidence appendix</td><td>D1, D2</td></tr>
+<tr><td>Task and board UI</td><td>New Dossier; W17, W20, W21, W27, W35, W45, W48, W52 superseded</td><td>D1</td></tr>
+<tr><td>Tag system backend</td><td>Areas registry with glossaries, Dossier tags in the descriptor, product defaults and project additions, API</td><td>D3</td></tr>
+<tr><td>Auto-tagging step</td><td>Pipeline step for cards and Dossiers, classification route in model routing, backfill job with report</td><td>D4, D5, backend</td></tr>
+<tr><td>Tag UI</td><td>Chips and filters on board, list, Dossier list and wiki; area glossary pages</td><td>backend</td></tr>
+<tr><td>Tag maintenance</td><td>Periodic proposal step; decision cards for retire, merge, add and glossary updates</td><td>D6, backend, W54</td></tr>
+</tbody>
+</table>
+</div>
+<p class="muted">Sources: docs/operations/dossier-review-2026-09 (AGT-W53); workbench.json descriptors of all 54 Dossiers; backend/Features/Docs/WorkbenchReviewService.cs and WorkbenchCatalogueService.cs; backend/Shared/Models/TaskRequests.cs (TagRegistryEntry, SetJobTagsRequest); GET /api/tags and the Agent Studio task workspace on 2026-09-13.</p>
+</section>
+</main>
+</body>
+</html>
