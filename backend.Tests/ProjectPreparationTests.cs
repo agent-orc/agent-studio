@@ -33,6 +33,178 @@ public sealed class ProjectPreparationTests : IDisposable
     }
 
     [Fact]
+    public void V1_compatibility_existing_definitions_remain_valid()
+    {
+        var v1Minimal = Definition(".agent-studio/prepare");
+        var parsed = ProjectDefinitionReader.Parse(v1Minimal);
+
+        Assert.True(parsed.IsValid, string.Join(Environment.NewLine, parsed.Issues.Select(issue => issue.Message)));
+        Assert.Equal(1, parsed.Definition!.SchemaVersion);
+        Assert.Null(parsed.Definition.Project);
+        Assert.Null(parsed.Definition.Quality);
+    }
+
+    [Fact]
+    public void V1_definition_rejects_v2_keys()
+    {
+        var v1WithV2Keys = Definition(".agent-studio/prepare") + """
+
+            project:
+              id: test-project
+              components:
+                - id: component1
+                  path: .
+            """;
+        var parsed = ProjectDefinitionReader.Parse(v1WithV2Keys);
+
+        Assert.False(parsed.IsValid);
+        Assert.Contains(parsed.Issues, issue => issue.Code == "v1-does-not-support-project");
+    }
+
+    [Fact]
+    public void V2_schema_requires_project_section()
+    {
+        var v2WithoutProject = """
+            schemaVersion: 2
+            stack: [node]
+            toolVersions:
+            commands:
+              prepare: .agent-studio/prepare
+              build:
+              test:
+              lint:
+            testSuites:
+            cachePaths: [node_modules]
+            capabilities: [linux]
+            environment:
+              CI: "true"
+            """;
+        var parsed = ProjectDefinitionReader.Parse(v2WithoutProject);
+
+        Assert.False(parsed.IsValid);
+        Assert.Contains(parsed.Issues, issue => issue.Code == "v2-project-required");
+    }
+
+    [Fact]
+    public void V2_schema_with_project_section_is_valid()
+    {
+        var v2Valid = """
+            schemaVersion: 2
+            stack: [node]
+            toolVersions:
+            commands:
+              prepare: .agent-studio/prepare
+              build:
+              test:
+              lint:
+            testSuites:
+            cachePaths: [node_modules]
+            capabilities: [linux]
+            environment:
+              CI: "true"
+            project:
+              id: test-project
+              components:
+                - id: frontend
+                  path: frontend
+            """;
+        var parsed = ProjectDefinitionReader.Parse(v2Valid);
+
+        Assert.True(parsed.IsValid, string.Join(Environment.NewLine, parsed.Issues.Select(issue => issue.Message)));
+        Assert.Equal(2, parsed.Definition!.SchemaVersion);
+        Assert.NotNull(parsed.Definition.Project);
+        Assert.Equal("test-project", parsed.Definition.Project!.Id);
+    }
+
+    [Fact]
+    public void V2_product_properties_preserve_unknown_state()
+    {
+        var v2WithProperties = """
+            schemaVersion: 2
+            stack: [node]
+            toolVersions:
+            commands:
+              prepare: .agent-studio/prepare
+              build:
+              test:
+              lint:
+            testSuites:
+            cachePaths: [node_modules]
+            capabilities: [linux]
+            environment:
+              CI: "true"
+            project:
+              id: test-project
+              properties:
+                public-facing: true
+              components:
+                - id: api
+                  path: api
+                - id: frontend
+                  path: frontend
+            """;
+        var parsed = ProjectDefinitionReader.Parse(v2WithProperties);
+
+        Assert.True(parsed.IsValid, string.Join(Environment.NewLine, parsed.Issues.Select(issue => issue.Message)));
+        Assert.Equal(2, parsed.Definition!.SchemaVersion);
+        Assert.NotNull(parsed.Definition.Project);
+        Assert.True(parsed.Definition.Project!.Properties?.PublicFacing);
+        Assert.Null(parsed.Definition.Project.Properties?.HtmlUi);
+        var apiComponent = parsed.Definition.Project.Components.First(c => c.Id == "api");
+        Assert.Equal("api", apiComponent.Id);
+        Assert.Equal("api", apiComponent.Path);
+    }
+
+    [Fact]
+    public void V2_unsupported_schema_version_is_rejected()
+    {
+        var v3Definition = Definition(".agent-studio/prepare")
+            .Replace("schemaVersion: 1", "schemaVersion: 3", StringComparison.Ordinal);
+        var parsed = ProjectDefinitionReader.Parse(v3Definition);
+
+        Assert.False(parsed.IsValid);
+        Assert.Contains(parsed.Issues, issue => issue.Code == "unsupported-version");
+    }
+
+    [Fact]
+    public void V2_quality_applicability_is_parsed_when_present()
+    {
+        var v2WithQuality = """
+            schemaVersion: 2
+            stack: [node]
+            toolVersions:
+            commands:
+              prepare: .agent-studio/prepare
+              build:
+              test:
+              lint:
+            testSuites:
+            cachePaths: [node_modules]
+            capabilities: [linux]
+            environment:
+              CI: "true"
+            project:
+              id: test-project
+              components:
+                - id: frontend
+                  path: frontend
+            quality:
+              applicability:
+                - id: frontend-seo
+                  componentScope: [frontend]
+                  selector:
+                    allOf: [public-facing, html-ui]
+                  domains: [seo]
+            """;
+        var parsed = ProjectDefinitionReader.Parse(v2WithQuality);
+
+        Assert.True(parsed.IsValid, string.Join(Environment.NewLine, parsed.Issues.Select(issue => issue.Message)));
+        Assert.NotNull(parsed.Definition!.Quality);
+        Assert.Single(parsed.Definition.Quality!.Applicability);
+        Assert.Equal("frontend-seo", parsed.Definition.Quality.Applicability[0].Id);
+    }
+
+    [Fact]
     public void Repository_definition_validates_both_release_identity_rule_kinds()
     {
         var lockRule = ProjectDefinitionReader.Parse(Definition(".agent-studio/prepare") + """

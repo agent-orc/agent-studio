@@ -530,18 +530,79 @@ They cover existing reader/validator and planning behavior, not the proposed v2
 selectors or start adapters. Documentation validation checks the draft schema,
 examples and links; it does not certify runtime compatibility.
 
-## Pending v2 extension requests
+## Contract review outcome
+
+**Status: accepted as proposed with one placement change. 2026-09-13.**
+
+This section records decisions for the draft contract above and the three
+pending extension requests. Decisions apply to step 1; implementation details for
+steps 2-6 are delegable to their respective task contexts. Contract review is
+complete; the reader-first delivery step may proceed.
+
+### Proposed v2 core sections
+
+| Proposed section | Status | Rationale |
+| --- | --- | --- |
+| `schemaVersion: 2` | **Accepted** | Enables supported-version negotiation and v1/v2 coexistence; future versions use the same negotiation path. |
+| `project.id`, `project.name`, `project.properties` | **Accepted** | Stable repository-owned identity; boolean product properties remain local with no inheritance; unknown is preserved. |
+| `project.components[].id`, `.path`, `.properties`, `.executionRefs` | **Accepted** | Navigation and provenance references to build/test/start sources; no authorization or execution; no implicit scope inheritance. |
+| `quality.applicability[]` with selectors, scopes and rule/domain references | **Accepted** | Read-only scope adapter; existing Quality Studio activation and AGT analysis gates remain authoritative; unknown selectors produce not-assessed outcomes, never passing checks. |
+| `devServer` (v1 to v2 unchanged) | **Accepted** | Continues to be parsed but not executed; future lifecycle adapter is separate, explicit and load-bearing. |
+| `image` (v1 to v2 unchanged) | **Accepted** | Optional container definition, unchanged semantics. |
+
+### Pending v2 extension requests
 
 Recorded on 2026-09-13 from decisions taken the same day. Each is a request for
-the contract review in step 1, not an accepted key. None may be written into an
-active v1 definition; until a v2 reader ships, every consumer applies a product
-default or a workspace project setting instead.
+the contract review in step 1. Items marked "moved to interim" are now workspace
+settings; items marked "stay with v1" remain optional v1 fields. None may be
+newly written into an active v1 definition; until a v2 reader ships, every
+consumer applies a product default or a workspace project setting instead.
 
-| Request | Source | Proposed shape | Interim behaviour |
-| --- | --- | --- | --- |
-| Release identity rule | AGT-2792, delivered 2026-09-13 (develop cca4f30cb) | Delivered as an optional `release` section of the **v1** reader and schema (`release.identity[]` with `package`, `ecosystem`, `source`; `release.restore[]`), with tests. This deviates from the rule above that v1 stays closed; the v2 contract review must either adopt the section as v2 or confirm the v1 exception (AGT-2807) | Active in Agent Studio's v1 definition; consumers without the section fall back to the lock-file default |
-| Areas for the tag system | AGT-2803 (Dossier AGT-W55, D3: ten product areas refined per project) | `project.areas[]` with `id`, `label`, `glossary` reference; may reference `project.components[].id` | Project additions in the workspace project settings; product defaults from the areas registry |
-| Auto-tagging opt-out | AGT-2804 (Dossier AGT-W55, D4) | `tagging.autoTag: false` | Workspace project setting |
+| Request | Source | Operator decision | Placement | Notes |
+| --- | --- | --- | --- | --- |
+| Release identity rule | AGT-2792 (Stable release contract follows the project's rule; every project owns its own rules, Agent Studio uses lock files) | Release identity at v1 level is acceptable; Agent Studio project.yml documents lock-file identity as its choice | **Stay with v1** (already delivered) | `release.identity[]` with `package`, `ecosystem` (nuget, npm), `source` (lock file path, or exact pin plus registry hash); `release.restore[]` commands. Manifest records `identitySource`. |
+| Areas for the tag system | AGT-2803 (Dossier AGT-W55, D3: ten product areas refined per project) | Project areas index is owned by the tag system; project-level configuration is a workspace setting, not YAML metadata | **Moved to interim workspace project settings** | `project.areas[]` is not added to v2 YAML. Product defaults come from the areas registry; project additions are configured in workspace settings. |
+| Auto-tagging opt-out | AGT-2804 (Dossier AGT-W55, D4) | Auto-tag control is a workspace project setting, not metadata | **Moved to interim workspace project settings** | `tagging.autoTag` is not added to v2 YAML. Workspace project setting takes precedence. |
+
+### Unknown-state semantics
+
+Product properties use three-valued logic: explicit `true`, explicit `false`, or
+**missing/unknown**. A missing property in YAML is not equivalent to `false`; it
+remains unknown. Selector evaluation preserves unknown throughout:
+
+- `allOf: [public-facing]` matches only if `public-facing: true`; unknown is not a match.
+- `anyOf: [public-facing]` matches if `public-facing: true`; otherwise unknown or no match.
+- `noneOf: [public-facing]` excludes only if `public-facing: true`; unknown is not excluded.
+
+An empty or missing selector group is neutral (does not constrain). An unknown
+property combined with another condition evaluates the AND result per three-valued
+logic: if one side is false, the AND is false; both true makes it true; otherwise
+unknown. This preserves unknown across all DTOs and API round trips.
+
+### Activation vs. applicability
+
+- **Activation** (existing, owned by AGT and Quality Studio) determines whether a
+  rule runs at all. Existing `.quality/agent-studio.json` activates AGT rules;
+  Quality Studio owns its own rule enablement and overrides.
+- **Applicability** (proposed v2) is a read-only filter that constrains a check's
+  scope and method within a component, subject to activation. A rule that is
+  disabled stays disabled regardless of a true applicability selector. A rule with
+  a true selector but unknown element in its required evidence remains
+  not-assessed, never a pass.
+
+### Shared fixtures across Agent Studio, Quality Studio and Voice Studio
+
+All three repositories will share:
+- Canonical product property IDs (ten properties listed in "Descriptive properties").
+- Canonical domain/rule IDs resolved against the pinned Quality Studio catalogue.
+- Three-valued logic for selectors, consistent unknown handling, and no coercion of
+  absent properties to false.
+- Test fixtures for v1 compatibility, schema/reader parity, selector evaluation,
+  and unknown semantics, applicable to schema validators, runtime readers and
+  future adapters.
+
+The first v2 reader will be implemented in AGT (step 2); future Quality Studio and
+Voice Studio readers will follow the same negotiation and shared fixture pattern.
 
 Quality facet tags reuse the domain IDs listed under "Quality targets and
 selectors"; the tag system introduces no second list of quality domains.

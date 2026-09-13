@@ -47,6 +47,54 @@ public sealed record ProjectReleaseDefinition(
     IReadOnlyList<ProjectReleaseIdentityRule> Identity,
     IReadOnlyList<string> Restore);
 
+public sealed record ProductProperties(
+    bool? PublicFacing,
+    bool? HtmlUi,
+    bool? SeoRelevant,
+    bool? PaymentApi,
+    bool? PersonalData,
+    bool? Authenticated,
+    bool? PersistentData,
+    bool? Realtime,
+    bool? Localized,
+    bool? Deployable);
+
+public sealed record ExecutionReference(string Path, string? Pointer);
+
+public sealed record ExecutionReferences(
+    IReadOnlyList<ExecutionReference>? Build,
+    IReadOnlyList<ExecutionReference>? Test,
+    IReadOnlyList<ExecutionReference>? Lint,
+    IReadOnlyList<ExecutionReference>? Start);
+
+public sealed record ProjectComponent(
+    string Id,
+    string Path,
+    string? Name,
+    ProductProperties? Properties,
+    ExecutionReferences? ExecutionRefs);
+
+public sealed record PropertySelector(
+    IReadOnlyList<string>? AllOf,
+    IReadOnlyList<string>? AnyOf,
+    IReadOnlyList<string>? NoneOf);
+
+public sealed record QualityApplicability(
+    string Id,
+    IReadOnlyList<string> ComponentScope,
+    PropertySelector? Selector,
+    IReadOnlyList<string>? RuleIds,
+    IReadOnlyList<string>? Domains);
+
+public sealed record ProjectDefinition(
+    string Id,
+    string? Name,
+    ProductProperties? Properties,
+    IReadOnlyList<ProjectComponent> Components);
+
+public sealed record QualityDefinition(
+    IReadOnlyList<QualityApplicability> Applicability);
+
 public sealed record ProjectExecutionDefinition(
     int SchemaVersion,
     IReadOnlyList<string> Stack,
@@ -58,7 +106,9 @@ public sealed record ProjectExecutionDefinition(
     IReadOnlyDictionary<string, string> Environment,
     ProjectDevServerRule? DevServer,
     string? Image,
-    ProjectReleaseDefinition? Release);
+    ProjectReleaseDefinition? Release,
+    ProjectDefinition? Project,
+    QualityDefinition? Quality);
 
 public sealed record ProjectDefinitionIssue(string Path, string Code, string Message);
 
@@ -111,6 +161,7 @@ public static partial class ProjectDefinitionReader
         {
             "schemaVersion", "stack", "toolVersions", "commands", "testSuites",
             "cachePaths", "capabilities", "environment", "devServer", "image", "release",
+            "project", "quality",
         };
         foreach (var line in lines.Where(line => line.Indent == 0))
         {
@@ -139,11 +190,13 @@ public static partial class ProjectDefinitionReader
         var image = Scalar(lines, "image");
         var devServer = DevServer(lines, issues);
         var release = Release(lines, issues);
+        var project = Project(lines, issues);
+        var quality = Quality(lines, issues);
 
         if (!int.TryParse(schemaVersion, out var version)) version = 0;
         var definition = new ProjectExecutionDefinition(
             version, stack, tools, commands, suites, caches, capabilities,
-            environment, devServer, NullIfBlank(image), release);
+            environment, devServer, NullIfBlank(image), release, project, quality);
         issues.AddRange(ProjectDefinitionValidator.Validate(definition, workspace));
         var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(yaml)))
             .ToLowerInvariant();
@@ -359,6 +412,181 @@ public static partial class ProjectDefinitionReader
             NullIfBlank(version), NullIfBlank(integrity));
     }
 
+    private static ProjectDefinition? Project(
+        IReadOnlyList<YamlLine> lines,
+        List<ProjectDefinitionIssue> issues)
+    {
+        var declared = lines.Any(line =>
+            line.Indent == 0 && KeyValue(line.Text).Key == "project");
+        if (!declared) return null;
+        var section = Section(lines, "project");
+        if (section.Count == 0) return null;
+
+        var id = NestedScalar(lines, "project", "id");
+        var name = NestedScalar(lines, "project", "name");
+        var properties = ProjectProperties(lines, "project", issues);
+        var components = ProjectComponents(lines, issues);
+
+        if (string.IsNullOrWhiteSpace(id))
+            issues.Add(new("project.id", "project-id-required", "Project id is required and must be a valid identifier."));
+
+        return new(id ?? string.Empty, NullIfBlank(name), properties, components);
+    }
+
+    private static ProductProperties? ProjectProperties(
+        IReadOnlyList<YamlLine> lines,
+        string section,
+        List<ProjectDefinitionIssue> issues)
+    {
+        var parent = Section(lines, section);
+        var propStart = parent.FirstOrDefault(line =>
+            line.Indent == 2 && KeyValue(line.Text).Key == "properties");
+        if (propStart is null) return null;
+
+        var allProperties = new Dictionary<string, bool>(StringComparer.Ordinal);
+        var index = lines.IndexOf(propStart);
+        foreach (var line in lines.Skip(index + 1).TakeWhile(line => line.Indent > 2))
+        {
+            if (line.Indent == 4 && !line.Text.StartsWith("- ", StringComparison.Ordinal))
+            {
+                var (key, value) = KeyValue(line.Text);
+                if (!string.IsNullOrWhiteSpace(key) && bool.TryParse(value, out var boolValue))
+                    allProperties[key] = boolValue;
+            }
+        }
+
+        return new(
+            Get("public-facing"),
+            Get("html-ui"),
+            Get("seo-relevant"),
+            Get("payment-api"),
+            Get("personal-data"),
+            Get("authenticated"),
+            Get("persistent-data"),
+            Get("realtime"),
+            Get("localized"),
+            Get("deployable"));
+
+        bool? Get(string key) => allProperties.TryGetValue(key, out var val) ? val : null;
+    }
+
+    private static IReadOnlyList<ProjectComponent> ProjectComponents(
+        IReadOnlyList<YamlLine> lines,
+        List<ProjectDefinitionIssue> issues)
+    {
+        var project = Section(lines, "project");
+        var componentStart = project.FirstOrDefault(line =>
+            line.Indent == 2 && KeyValue(line.Text).Key == "components");
+        if (componentStart is null) return [];
+
+        var components = new List<ProjectComponent>();
+        var startIndex = lines.IndexOf(componentStart);
+        int? currentComponentStart = null;
+
+        for (var i = startIndex + 1; i < lines.Count && lines[i].Indent > 2; i++)
+        {
+            var line = lines[i];
+            if (line.Indent == 4 && line.Text.StartsWith("- ", StringComparison.Ordinal))
+            {
+                if (currentComponentStart.HasValue)
+                    components.Add(ParseComponent(lines, currentComponentStart.Value, i, issues));
+                currentComponentStart = i;
+            }
+        }
+        if (currentComponentStart.HasValue)
+            components.Add(ParseComponent(lines, currentComponentStart.Value,
+                lines.TakeWhile((_, idx) => idx == 0).Count(), issues));
+
+        return components;
+    }
+
+    private static ProjectComponent ParseComponent(
+        IReadOnlyList<YamlLine> lines,
+        int startIndex,
+        int endIndex,
+        List<ProjectDefinitionIssue> issues)
+    {
+        var startLine = lines[startIndex];
+        var (key, value) = KeyValue(startLine.Text[2..]);
+
+        var id = key == "id" ? Value(value) : string.Empty;
+        var path = string.Empty;
+        var name = (string?)null;
+        ProductProperties? properties = null;
+
+        var nextIndex = startIndex + 1;
+        while (nextIndex < endIndex && nextIndex < lines.Count && lines[nextIndex].Indent > 4)
+        {
+            var line = lines[nextIndex];
+            if (line.Indent == 6)
+            {
+                var (k, v) = KeyValue(line.Text);
+                if (k == "path") path = Value(v);
+                else if (k == "name") name = NullIfBlank(Value(v));
+            }
+            nextIndex++;
+        }
+
+        return new(id, path, name, properties, null);
+    }
+
+    private static QualityDefinition? Quality(
+        IReadOnlyList<YamlLine> lines,
+        List<ProjectDefinitionIssue> issues)
+    {
+        var declared = lines.Any(line =>
+            line.Indent == 0 && KeyValue(line.Text).Key == "quality");
+        if (!declared) return null;
+        var section = Section(lines, "quality");
+        if (section.Count == 0) return null;
+
+        var applicabilities = QualityApplicabilities(lines, issues);
+        return new(applicabilities);
+    }
+
+    private static IReadOnlyList<QualityApplicability> QualityApplicabilities(
+        IReadOnlyList<YamlLine> lines,
+        List<ProjectDefinitionIssue> issues)
+    {
+        var quality = Section(lines, "quality");
+        var applicStart = quality.FirstOrDefault(line =>
+            line.Indent == 2 && KeyValue(line.Text).Key == "applicability");
+        if (applicStart is null) return [];
+
+        var applicabilities = new List<QualityApplicability>();
+        var startIndex = lines.IndexOf(applicStart);
+        Dictionary<string, object>? current = null;
+
+        foreach (var line in lines.Skip(startIndex + 1).TakeWhile(line => line.Indent > 2))
+        {
+            if (line.Indent == 4 && line.Text.StartsWith("- ", StringComparison.Ordinal))
+            {
+                if (current is not null) applicabilities.Add(ToApplicability(current, applicabilities.Count, issues));
+                current = new(StringComparer.Ordinal);
+                var (key, value) = KeyValue(line.Text[2..]);
+                if (!string.IsNullOrWhiteSpace(key)) current[key] = Value(value);
+            }
+            else if (line.Indent == 6 && current is not null)
+            {
+                var (key, value) = KeyValue(line.Text);
+                if (!string.IsNullOrWhiteSpace(key)) current[key] = Value(value);
+            }
+        }
+        if (current is not null) applicabilities.Add(ToApplicability(current, applicabilities.Count, issues));
+
+        return applicabilities;
+    }
+
+    private static QualityApplicability ToApplicability(
+        IReadOnlyDictionary<string, object> fields,
+        int index,
+        List<ProjectDefinitionIssue> issues)
+    {
+        fields.TryGetValue("id", out var idObj);
+        var id = idObj?.ToString() ?? string.Empty;
+        return new(id, [], null, null, null);
+    }
+
     private static IReadOnlyList<YamlLine> Section(IReadOnlyList<YamlLine> lines, string name)
     {
         var start = lines.IndexOf(lines.FirstOrDefault(line =>
@@ -416,8 +644,17 @@ public static partial class ProjectDefinitionValidator
         string? workspace = null)
     {
         var issues = new List<ProjectDefinitionIssue>();
-        if (definition.SchemaVersion != 1)
-            issues.Add(new("schemaVersion", "unsupported-version", "schemaVersion must be 1."));
+        if (definition.SchemaVersion is not (1 or 2))
+            issues.Add(new("schemaVersion", "unsupported-version", $"schemaVersion must be 1 or 2, found {definition.SchemaVersion}."));
+
+        if (definition.SchemaVersion == 1 && definition.Project is not null)
+            issues.Add(new("project", "v1-does-not-support-project", "schemaVersion 1 does not support the project section. Use schemaVersion 2."));
+
+        if (definition.SchemaVersion == 1 && definition.Quality is not null)
+            issues.Add(new("quality", "v1-does-not-support-quality", "schemaVersion 1 does not support the quality section. Use schemaVersion 2."));
+
+        if (definition.SchemaVersion == 2 && definition.Project is null)
+            issues.Add(new("project", "v2-project-required", "schemaVersion 2 requires a project section."));
         if (definition.Stack.Count == 0 || definition.Stack.Any(string.IsNullOrWhiteSpace))
             issues.Add(new("stack", "stack-required", "At least one stack is required."));
         if (!SafeRelativePath(definition.Commands.Prepare))
