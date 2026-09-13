@@ -539,7 +539,7 @@ default or a workspace project setting instead.
 
 | Request | Source | Proposed shape | Interim behaviour |
 | --- | --- | --- | --- |
-| Release identity rule | AGT-2792 (Stable release contract follows the project's rule; operator decision 2026-09-13: every project owns its own rules, Agent Studio uses lock files) | `release.identity[]` with `package`, `ecosystem` (nuget, npm), `source` (lock file path, or exact pin plus registry hash); `release.restore[]` commands | Product default: lock-file identity (`backend/packages.lock.json` with `dotnet restore --locked-mode`, `frontend/package-lock.json` with `npm ci`); the manifest records `identitySource` |
+| Release identity rule | AGT-2792, delivered 2026-09-13 (develop cca4f30cb) | Delivered as an optional `release` section of the **v1** reader and schema (`release.identity[]` with `package`, `ecosystem`, `source`; `release.restore[]`), with tests. This deviates from the rule above that v1 stays closed; the v2 contract review must either adopt the section as v2 or confirm the v1 exception (AGT-2807) | Active in Agent Studio's v1 definition; consumers without the section fall back to the lock-file default |
 | Areas for the tag system | AGT-2803 (Dossier AGT-W55, D3: ten product areas refined per project) | `project.areas[]` with `id`, `label`, `glossary` reference; may reference `project.components[].id` | Project additions in the workspace project settings; product defaults from the areas registry |
 | Auto-tagging opt-out | AGT-2804 (Dossier AGT-W55, D4) | `tagging.autoTag: false` | Workspace project setting |
 

@@ -12,6 +12,9 @@ release yet.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-13
+
+First tagged Stable release. It moves the Windows Stable from the untagged legacy checkout (cf1997665) to the immutable tag v0.2.0 through the release contract: build manifest, candidate and approved tag, locked dependency restore, runtime identity verification.
 ### Added
 
 - Project-owned Stable release identity and restore rules, with lock-file and
