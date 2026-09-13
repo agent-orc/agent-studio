@@ -261,8 +261,24 @@ public sealed class GitBranchRetentionService
     public const int DefaultRetentionDays = 7;
 
     private const string OriginPrefix = "origin/";
-    private static readonly string[] LocalPatterns = ["refs/heads/task", "refs/heads/runner"];
-    private static readonly string[] RemotePatterns = ["refs/remotes/origin/task", "refs/remotes/origin/runner"];
+    private static readonly string[] LocalPatterns =
+    [
+        "refs/heads/task",
+        "refs/heads/runner",
+        "refs/heads/delivery",
+        "refs/heads/agent-studio/results",
+        "refs/heads/agent-studio/salvage",
+        "refs/heads/agent-studio/quarantine"
+    ];
+    private static readonly string[] RemotePatterns =
+    [
+        "refs/remotes/origin/task",
+        "refs/remotes/origin/runner",
+        "refs/remotes/origin/delivery",
+        "refs/remotes/origin/agent-studio/results",
+        "refs/remotes/origin/agent-studio/salvage",
+        "refs/remotes/origin/agent-studio/quarantine"
+    ];
 
     private readonly GitService _git;
     private readonly AgentStudio.Registry.ProjectRegistry _projects;
@@ -285,6 +301,9 @@ public sealed class GitBranchRetentionService
     }
 
     public BranchRetentionRunReport RunOnce(CancellationToken cancellationToken = default)
+        => RunOnce(dryRun: false, cancellationToken);
+
+    public BranchRetentionRunReport RunOnce(bool dryRun, CancellationToken cancellationToken = default)
     {
         var startedAt = _time.GetUtcNow();
         var retentionDays = ResolveRetentionDays();
@@ -311,6 +330,7 @@ public sealed class GitBranchRetentionService
                     normalizedRoot,
                     startedAt,
                     retentionDays,
+                    dryRun,
                     cancellationToken);
                 reports.Add(projectReport);
                 _logger.LogInformation(
@@ -346,16 +366,26 @@ public sealed class GitBranchRetentionService
         DateTimeOffset now,
         int retentionDays,
         CancellationToken cancellationToken = default)
+        => RunRepository(project, repositoryPath, now, retentionDays, dryRun: false, cancellationToken);
+
+    public BranchRetentionProjectReport RunRepository(
+        string project,
+        string repositoryPath,
+        DateTimeOffset now,
+        int retentionDays,
+        bool dryRun,
+        CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(repositoryPath) || !Directory.Exists(repositoryPath))
             return Failed(project, repositoryPath, "Repository path does not exist.");
 
         var staleBefore = _git.ListWorktrees(repositoryPath)
             .Count(worktree => !worktree.IsPrimary && !Directory.Exists(worktree.Path));
-        _git.WorktreePrune(repositoryPath);
-        var staleAfter = _git.ListWorktrees(repositoryPath)
+        if (!dryRun)
+            _git.WorktreePrune(repositoryPath);
+        var staleAfter = dryRun ? staleBefore : _git.ListWorktrees(repositoryPath)
             .Count(worktree => !worktree.IsPrimary && !Directory.Exists(worktree.Path));
-        var pruned = Math.Max(0, staleBefore - staleAfter);
+        var pruned = dryRun ? 0 : Math.Max(0, staleBefore - staleAfter);
 
         var fetch = _git.Fetch(repositoryPath, cancellationToken: cancellationToken);
         if (!string.IsNullOrWhiteSpace(fetch.Error))
@@ -397,7 +427,7 @@ public sealed class GitBranchRetentionService
             }
 
             actions.Add(DeleteAfterRecheck(
-                repositoryPath, candidate, now, minimumAge, cancellationToken));
+                repositoryPath, candidate, now, minimumAge, dryRun, cancellationToken));
         }
 
         return new BranchRetentionProjectReport(
@@ -415,6 +445,7 @@ public sealed class GitBranchRetentionService
         RetentionCandidate candidate,
         DateTimeOffset now,
         TimeSpan minimumAge,
+        bool dryRun,
         CancellationToken cancellationToken)
     {
         var current = _git.ListRefs(root, candidate.Reference.FullName)
@@ -437,6 +468,18 @@ public sealed class GitBranchRetentionService
         var decision = BranchRetentionPolicy.Evaluate(facts, now, minimumAge);
         if (decision != BranchRetentionDecision.Delete)
             return ToKeptAction(candidate with { Reference = current }, decision);
+
+        if (dryRun)
+        {
+            return new BranchRetentionAction(
+                candidate.Remote ? "remote" : "local",
+                candidate.Branch,
+                current.Sha,
+                current.CommittedAtUtc,
+                BranchRetentionDecision.Delete,
+                false,
+                "[DRY RUN] Would be deleted after age and develop/main ancestry recheck.");
+        }
 
         var result = candidate.Remote
             ? _git.DeleteRemoteBranchAtTip(
