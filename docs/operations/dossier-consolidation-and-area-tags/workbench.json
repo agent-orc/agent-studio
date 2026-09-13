@@ -4,15 +4,16 @@
   "title": "Dossier consolidation and area tags",
   "summary": "Plan for the operator\u0027s decision on AGT-W53 (2026-09-13): the current Dossier list shrinks from 37 to 16 (four new theme Dossiers for delivery chain, observation, gates and task UI; the North star rewritten to the September topology; eleven kept), partially superseded Dossiers are merged into their theme Dossier and recorded as superseded, implemented ones are archived only when their durable knowledge has a documentation home (artefact table per Dossier). Second part: the review\u0027s categories become a general tag system with areas that own a glossary (ubiquitous language), area and facet tags on cards and Dossiers, an auto-tagging pipeline step that runs by default in every project on card and Dossier creation with a cheap classification model route, a backfill for the 862 untagged cards and 54 Dossiers, and maintenance proposals as decision cards. Six operator decisions D1-D6, nine implementation cards.",
   "entrypoint": "index.html",
-  "status": "decision-pending",
+  "status": "decided",
   "phase": "decision-ready",
-  "updatedAt": "2026-09-13T10:30:00Z",
+  "updatedAt": "2026-09-13T07:53:06Z",
   "sourceTaskKeys": [
     "AGT-2796"
   ],
   "relatedTaskKeys": [
     "AGT-2785",
-    "AGT-2795"
+    "AGT-2795",
+    "AGT-2797"
   ],
   "implementationTasks": [
     {
@@ -52,5 +53,93 @@
       "promptMarkdown": "# Tag maintenance\n\nContext: AGT-W55 \u00A75 with the operator\u0027s answer to D6; depends on the tag system backend; uses decision cards (AGT-W54) once they exist, prose cards until then.\n\nDeliver: a periodic step per project that reviews tag usage and proposes changes: retire unused tags, merge near-duplicates, add tags for frequently co-occurring free terms, add glossary terms from new Dossier decisions and ADRs; each proposal is a decision card with options and consequences; applying a decision updates registry and glossary and rewrites affected tags with an audit entry; nothing changes silently; report per run; tests."
     }
   ],
-  "key": "AGT-W55"
+  "key": "AGT-W55",
+  "decision": {
+    "outcome": "feature-spawn",
+    "state": "succeeded",
+    "operationId": "workbench-ui-73d2d53b-27bc-40ad-a0b2-e54c7bf7bd59",
+    "sourceRevision": "48dbc06e3720390c1216097fc56af8233f3fd4ca",
+    "sourceFingerprint": "f7575c55091e2b371f32a010581a37909016422c8d1ed7327c9499ae9e039bfd",
+    "preparedAt": "2026-09-13T07:53:06Z",
+    "preparedBy": "Operator",
+    "confirmedAt": "2026-09-13T07:53:06Z",
+    "confirmedBy": "Operator",
+    "decidedAt": "2026-09-13T07:53:06Z",
+    "spawnedTaskKeys": [
+      "AGT-2797"
+    ],
+    "responses": [
+      {
+        "decisionId": "target-set",
+        "kind": "single",
+        "selectedOptionIds": [
+          "sixteen"
+        ],
+        "comment": null
+      },
+      {
+        "decisionId": "archive-rule",
+        "kind": "single",
+        "selectedOptionIds": [
+          "artefact-when-missing"
+        ],
+        "comment": "Wenn es superseeded ist, dann ist kein Artefakt n\u00F6tig"
+      },
+      {
+        "decisionId": "area-taxonomy",
+        "kind": "single",
+        "selectedOptionIds": [
+          "ten-areas"
+        ],
+        "comment": null
+      },
+      {
+        "decisionId": "autotag-scope",
+        "kind": "multi",
+        "selectedOptionIds": [
+          "cards",
+          "dossiers"
+        ],
+        "comment": "Alle taggen die NICHT archiviert sind."
+      },
+      {
+        "decisionId": "tag-model",
+        "kind": "single",
+        "selectedOptionIds": [
+          "cheap-route"
+        ],
+        "comment": null
+      },
+      {
+        "decisionId": "maintenance",
+        "kind": "single",
+        "selectedOptionIds": [
+          "proposals"
+        ],
+        "comment": null
+      }
+    ],
+    "taskDraft": {
+      "title": "Implement Dossier consolidation and area tags",
+      "goal": "Plan for the operator\u0027s decision on AGT-W53 (2026-09-13): the current Dossier list shrinks from 37 to 16 (four new theme Dossiers for delivery chain, observation, gates and task UI; the North star rewritten to the September topology; eleven kept), partially superseded Dossiers are merged into their theme Dossier and recorded as superseded, implemented ones are archived only when their durable knowledge has a documentation home (artefact table per Dossier). Second part: the review\u0027s categories become a general tag system with areas that own a glossary (ubiquitous language), area and facet tags on cards and Dossiers, an auto-tagging pipeline step that runs by default in every project on card and Dossier creation with a cheap classification model route, a backfill for the 862 untagged cards and 54 Dossiers, and maintenance proposals as decision cards. Six operator decisions D1-D6, nine implementation cards.\n\nRecorded decisions:\nTarget set of Dossiers: A \u00B7 Yes, sixteen as proposed (recommendation)\nArchiving rule: A \u00B7 When its durable knowledge has a documentation home; the consolidation card writes the artefact if it is missing (recommendation). Note: Wenn es superseeded ist, dann ist kein Artefakt n\u00F6tig\nArea taxonomy: A \u00B7 The ten areas from \u00A75, refined per project (recommendation)\nAuto-tagging scope: On card creation in every project (recommendation), On Dossier creation and on the wiki articles (recommendation). Note: Alle taggen die NICHT archiviert sind.\nModel class for tagging: A \u00B7 A new classification route in model routing: cheapest available model, low thinking (recommendation)\nTag maintenance: A \u00B7 Periodic proposals as decision cards: retire, merge, add, glossary updates (recommendation)",
+      "acceptanceCriteria": [
+        "Implement every recorded Dossier selection and preserve its stated constraints.",
+        "Verify the resulting behavior with the checks required by the affected surface."
+      ],
+      "evidenceLinks": [
+        "docs/operations/dossier-consolidation-and-area-tags/index.html"
+      ],
+      "chosenOption": "Target set of Dossiers: A \u00B7 Yes, sixteen as proposed (recommendation)\nArchiving rule: A \u00B7 When its durable knowledge has a documentation home; the consolidation card writes the artefact if it is missing (recommendation). Note: Wenn es superseeded ist, dann ist kein Artefakt n\u00F6tig\nArea taxonomy: A \u00B7 The ten areas from \u00A75, refined per project (recommendation)\nAuto-tagging scope: On card creation in every project (recommendation), On Dossier creation and on the wiki articles (recommendation). Note: Alle taggen die NICHT archiviert sind.\nModel class for tagging: A \u00B7 A new classification route in model routing: cheapest available model, low thinking (recommendation)\nTag maintenance: A \u00B7 Periodic proposals as decision cards: retire, merge, add, glossary updates (recommendation)",
+      "relatedTaskKeys": [
+        "AGT-2796",
+        "AGT-2785",
+        "AGT-2795"
+      ],
+      "targetProject": "Agent Studio",
+      "initialLane": "1-preparation",
+      "mode": "coding",
+      "taskType": "feature"
+    }
+  },
+  "editedBy": "Operator"
 }
