@@ -33,6 +33,20 @@ public sealed record ProjectDevServerRule(
     int StartupTimeoutSeconds,
     bool StopWithRun);
 
+public sealed record ProjectReleaseIdentityRule(
+    string Package,
+    string Ecosystem,
+    string? Source,
+    string? Version,
+    string? Integrity)
+{
+    public bool UsesLockFile => !string.IsNullOrWhiteSpace(Source);
+}
+
+public sealed record ProjectReleaseDefinition(
+    IReadOnlyList<ProjectReleaseIdentityRule> Identity,
+    IReadOnlyList<string> Restore);
+
 public sealed record ProjectExecutionDefinition(
     int SchemaVersion,
     IReadOnlyList<string> Stack,
@@ -43,7 +57,8 @@ public sealed record ProjectExecutionDefinition(
     IReadOnlyList<string> Capabilities,
     IReadOnlyDictionary<string, string> Environment,
     ProjectDevServerRule? DevServer,
-    string? Image);
+    string? Image,
+    ProjectReleaseDefinition? Release);
 
 public sealed record ProjectDefinitionIssue(string Path, string Code, string Message);
 
@@ -95,7 +110,7 @@ public static partial class ProjectDefinitionReader
         var knownTopLevel = new HashSet<string>(StringComparer.Ordinal)
         {
             "schemaVersion", "stack", "toolVersions", "commands", "testSuites",
-            "cachePaths", "capabilities", "environment", "devServer", "image",
+            "cachePaths", "capabilities", "environment", "devServer", "image", "release",
         };
         foreach (var line in lines.Where(line => line.Indent == 0))
         {
@@ -123,11 +138,12 @@ public static partial class ProjectDefinitionReader
         var environment = StringMap(lines, "environment");
         var image = Scalar(lines, "image");
         var devServer = DevServer(lines, issues);
+        var release = Release(lines, issues);
 
         if (!int.TryParse(schemaVersion, out var version)) version = 0;
         var definition = new ProjectExecutionDefinition(
             version, stack, tools, commands, suites, caches, capabilities,
-            environment, devServer, NullIfBlank(image));
+            environment, devServer, NullIfBlank(image), release);
         issues.AddRange(ProjectDefinitionValidator.Validate(definition, workspace));
         var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(yaml)))
             .ToLowerInvariant();
@@ -282,6 +298,67 @@ public static partial class ProjectDefinitionReader
         return new(command ?? string.Empty, NullIfBlank(workingDirectory), NullIfBlank(healthUrl), timeout, stop);
     }
 
+    private static ProjectReleaseDefinition? Release(
+        IReadOnlyList<YamlLine> lines,
+        List<ProjectDefinitionIssue> issues)
+    {
+        var declared = lines.Any(line =>
+            line.Indent == 0 && KeyValue(line.Text).Key == "release");
+        if (!declared) return null;
+        var section = Section(lines, "release");
+
+        var fields = section
+            .Where(line => line.Indent == 2 && !line.Text.StartsWith("- ", StringComparison.Ordinal))
+            .Select(line => KeyValue(line.Text).Key)
+            .ToArray();
+        if (fields.Any(key => key is not ("identity" or "restore")))
+            issues.Add(new("release", "unknown-field", "Release contains an unsupported field."));
+
+        var identities = new List<ProjectReleaseIdentityRule>();
+        Dictionary<string, string>? current = null;
+        var identityStart = section.FirstOrDefault(line =>
+            line.Indent == 2 && KeyValue(line.Text).Key == "identity");
+        if (identityStart is not null)
+        {
+            var start = lines.IndexOf(identityStart);
+            foreach (var line in lines.Skip(start + 1).TakeWhile(line => line.Indent > 2))
+            {
+                if (line.Indent == 4 && line.Text.StartsWith("- ", StringComparison.Ordinal))
+                {
+                    if (current is not null) identities.Add(ToReleaseIdentity(current, identities.Count, issues));
+                    current = new(StringComparer.Ordinal);
+                    var pair = KeyValue(line.Text[2..]);
+                    if (!string.IsNullOrWhiteSpace(pair.Key)) current[pair.Key] = Value(pair.Value);
+                }
+                else if (line.Indent == 6 && current is not null)
+                {
+                    var pair = KeyValue(line.Text);
+                    current[pair.Key] = Value(pair.Value);
+                }
+            }
+            if (current is not null) identities.Add(ToReleaseIdentity(current, identities.Count, issues));
+        }
+
+        var restore = NestedStringList(lines, "release", "restore");
+        return new(identities, restore);
+    }
+
+    private static ProjectReleaseIdentityRule ToReleaseIdentity(
+        IReadOnlyDictionary<string, string> fields,
+        int index,
+        List<ProjectDefinitionIssue> issues)
+    {
+        if (fields.Keys.Any(key => key is not ("package" or "ecosystem" or "source" or "version" or "integrity")))
+            issues.Add(new($"release.identity[{index}]", "unknown-field", "Release identity contains an unsupported field."));
+        fields.TryGetValue("package", out var package);
+        fields.TryGetValue("ecosystem", out var ecosystem);
+        fields.TryGetValue("source", out var source);
+        fields.TryGetValue("version", out var version);
+        fields.TryGetValue("integrity", out var integrity);
+        return new(package ?? string.Empty, ecosystem ?? string.Empty, NullIfBlank(source),
+            NullIfBlank(version), NullIfBlank(integrity));
+    }
+
     private static IReadOnlyList<YamlLine> Section(IReadOnlyList<YamlLine> lines, string name)
     {
         var start = lines.IndexOf(lines.FirstOrDefault(line =>
@@ -394,8 +471,51 @@ public static partial class ProjectDefinitionValidator
         }
         if (definition.Image is { } image && !SafeRelativePath(image))
             issues.Add(new("image", "image-path-invalid", "An optional image must be a repository-relative path without traversal."));
+        if (definition.Release is { } release)
+        {
+            if (release.Identity.Count == 0)
+                issues.Add(new("release.identity", "release-identity-required", "At least one release identity rule is required."));
+            if (release.Restore.Count == 0 || release.Restore.Any(string.IsNullOrWhiteSpace))
+                issues.Add(new("release.restore", "release-restore-required", "At least one release restore command is required."));
+
+            var packages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            for (var index = 0; index < release.Identity.Count; index++)
+            {
+                var identity = release.Identity[index];
+                var path = $"release.identity[{index}]";
+                if (string.IsNullOrWhiteSpace(identity.Package) || !packages.Add(identity.Package))
+                    issues.Add(new($"{path}.package", "release-package-invalid", "Release package names are required and unique."));
+                if (identity.Ecosystem is not ("nuget" or "npm"))
+                    issues.Add(new($"{path}.ecosystem", "release-ecosystem-invalid", "Release ecosystem must be nuget or npm."));
+
+                var hasSource = !string.IsNullOrWhiteSpace(identity.Source);
+                var hasInlineIdentity = !string.IsNullOrWhiteSpace(identity.Version)
+                                        || !string.IsNullOrWhiteSpace(identity.Integrity);
+                if (hasSource == hasInlineIdentity)
+                    issues.Add(new(path, "release-rule-kind-invalid", "Use either a lock-file source or both an exact version and registry integrity."));
+                if (hasSource)
+                {
+                    if (!SafeRelativePath(identity.Source) || identity.Source!.Contains('\\'))
+                        issues.Add(new($"{path}.source", "release-source-invalid", "Release identity sources must use repository-relative paths with forward slashes and no traversal."));
+                    else if (workspace is not null && !File.Exists(Path.Combine(
+                                 workspace, identity.Source!.Replace('/', Path.DirectorySeparatorChar))))
+                        issues.Add(new($"{path}.source", "release-source-missing", "The release identity source does not exist in the subject checkout."));
+                }
+                else
+                {
+                    if (!ExactPackageVersion().IsMatch(identity.Version ?? string.Empty))
+                        issues.Add(new($"{path}.version", "release-version-invalid", "An exact semantic package version is required."));
+                    if (!IsPackageIntegrity(identity.Integrity))
+                        issues.Add(new($"{path}.integrity", "release-integrity-invalid", "Registry integrity must use sha256- or sha512-prefixed content."));
+                }
+            }
+        }
         return issues;
     }
+
+    private static bool IsPackageIntegrity(string? value) =>
+        !string.IsNullOrWhiteSpace(value)
+        && Regex.IsMatch(value, "^sha(?:256|512)-[A-Za-z0-9+/=_-]+$", RegexOptions.CultureInvariant);
 
     private static bool SafeRelativePath(string? value)
     {
@@ -410,6 +530,9 @@ public static partial class ProjectDefinitionValidator
 
     [GeneratedRegex("^[A-Za-z][A-Za-z0-9_.-]*$", RegexOptions.CultureInvariant)]
     private static partial Regex ToolName();
+
+    [GeneratedRegex("^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$", RegexOptions.CultureInvariant)]
+    private static partial Regex ExactPackageVersion();
 
     [GeneratedRegex("(?:TOKEN|PASSWORD|SECRET|PRIVATE_KEY|API_KEY)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex SecretName();

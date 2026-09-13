@@ -3,7 +3,7 @@
 Stable deploys releases, not folders or moving branches. A deployable Agent
 Studio build is identified by an immutable `v<semver>` tag and a
 `build-manifest.json` conforming to
-[`build-manifest.schema.json`](../schemas/build-manifest.schema.json). Folder
+[`build-manifest.schema.json`](../app/schemas/build-manifest.schema.json). Folder
 timestamps are never part of freshness, ordering, comparison, or rollback.
 
 ## Release identity
@@ -15,6 +15,36 @@ build is rejected when any tag is missing, a tag does not equal `v<version>`,
 the checkout is dirty, an integrity value is absent, or CAC still resolves from
 a local `file:.../dist` dependency.
 
+Every project owns its dependency identity and restore rules in the `release`
+section of `.agent-studio/project.yml`. Stable release tooling reads that file
+from the tagged candidate commit. It refuses a project with no release rule.
+Two identity rule kinds are supported:
+
+- Lock file: `package`, `ecosystem`, and repository-relative `source`. For
+  NuGet, the source entry supplies `resolved` and `contentHash`. For npm, the
+  source entry supplies `version`, `resolved`, and `integrity`; the sibling
+  `package.json` must exact-pin the same registry version.
+- Exact pin plus registry hash: `package`, `ecosystem`, `version`, and
+  `integrity`. `integrity` starts with `sha256-` or `sha512-`. This rule is for
+  a project that has no lock file but can commit the exact registry identity to
+  its project definition.
+
+Agent Studio uses lock-file identity and declares this release section:
+
+```yaml
+release:
+  identity:
+    - package: CodingAgentRunner
+      ecosystem: nuget
+      source: backend/packages.lock.json
+    - package: coding-agent-chat
+      ecosystem: npm
+      source: frontend/package-lock.json
+  restore:
+    - dotnet restore backend/OrchestratorApi.csproj --locked-mode
+    - npm --prefix frontend ci
+```
+
 Generate the manifest only after all three upstream identities are known:
 
 ```sh
@@ -25,10 +55,10 @@ node scripts/release/generate-build-manifest.mjs \
 ```
 
 The generator uses create-new semantics and refuses to overwrite an existing
-manifest. It derives CAR and CAC versions and integrity from
-`backend/packages.lock.json` and `frontend/package-lock.json`, then refuses any
-supplied metadata that differs. Stable restores with `dotnet restore
---locked-mode` and `npm ci`, so deployment never rewrites a lockfile. The
+manifest. It derives CAR and CAC versions and integrity through the candidate
+commit's project rules, then refuses supplied metadata that differs. Stable
+runs the ordered `release.restore` commands from that same definition, so the
+project, not the updater, owns its lock and restore paths. The
 backend copies the manifest beside the published assembly and exposes the
 same identity from `GET /api/system/about` and `GET /api/system/version`.
 `GET /healthz` remains body-compatible and adds tag and commit response headers.
@@ -53,13 +83,14 @@ The outer updater downloads the candidate release asset to the configured
 candidate-manifest cache using create/replace-by-tag semantics. The Update
 Service never manufactures it from a branch checkout. It fetches the manifest's
 exact tag without overwriting an existing tag, verifies the dereferenced tag,
-then reads CAR and CAC pins directly from that commit's lockfiles. Manifest
-versions and integrity must match those pins, and CAC must be an exact registry
-artifact rather than `file:.../dist`. Only then may Stable check out the commit
-detached and install the candidate manifest. It does not use branch distance to
-decide whether a release is available. That avoids moving branch identity, a
-stale manifest that merely agrees with itself, and a self-referential manifest
-commit.
+then reads `.agent-studio/project.yml` and every declared identity source from
+that commit. Manifest versions and integrity must match those rules, and an npm
+lock rule must resolve an exact registry artifact rather than `file:.../dist`.
+Only then may Stable check out the commit detached, run its declared restore
+commands, and install the candidate manifest. It does not use branch distance
+to decide whether a release is available. That avoids moving branch identity,
+a stale manifest that merely agrees with itself, and a self-referential
+manifest commit.
 
 Before mutation, copy the installed manifest and create a self-contained Git
 bundle for the installed commit in the run folder. Together they are the exact
@@ -72,7 +103,7 @@ history.
 Frontend installation has one additional cache boundary. Agent Studio's
 postinstall bridges patch `node_modules/coding-agent-chat` in place, while the
 Angular/Vite optimizer cache key does not reflect those changed bytes. Every
-Stable update that runs `npm install` must therefore remove
+Stable update that runs `npm install` or `npm ci` must therefore remove
 `frontend/.angular/cache` after the install and before frontend startup. After
 startup, load the frontend once through `playwright-core` with a `pageerror`
 listener registered before navigation. A page error is a failed deployment,
@@ -90,11 +121,87 @@ not a releasable candidate. Record its current commit as the initial rollback
 anchor, then deploy the first tagged Agent Studio release through the normal
 preflight.
 
-CAC `0.3.2` is the immutable replay release consumed by Agent Studio. It is
-exact-pinned from the npm registry with package commit
-`e1183176aa55964986181b894180983793c4f055` and integrity
-`sha512-O4pH+zJdIaTNP7FcNwqSMQcX+y05C9tEkBh9AkiguvxHVTPMFWqf/fR7GpTHNgh7wgclrxD3BnkoWad3Gn7aAw==`.
-Do not copy a local CAC `dist` into a release or relax that pin to a range.
+### First tagged release from a legacy Windows Stable
+
+The release owner chooses and approves `<version>` and `<promoted-main-sha>`.
+Run these commands from a clean checkout whose `HEAD` is the promoted `main`
+commit. Do not use the `release/<timestamp>` promotion marker as the Stable
+release tag.
+
+```powershell
+$Version = '<version>'
+$MainSha = '<promoted-main-sha>'
+git fetch origin main --tags
+git checkout --detach $MainSha
+dotnet restore backend/OrchestratorApi.csproj --locked-mode
+npm --prefix frontend ci
+if ((git status --porcelain).Length -ne 0) { throw 'Release checkout is dirty' }
+git tag -a "v$Version" $MainSha -m "Agent Studio v$Version"
+
+node scripts/release/generate-build-manifest.mjs `
+  --tag="v$Version" --version="$Version" `
+  --car-version='<car-version>' --car-tag='v<car-version>' --car-commit='<car-commit>' --car-integrity='sha512-<car-hash>' `
+  --cac-version='<cac-version>' --cac-tag='v<cac-version>' --cac-commit='<cac-commit>' --cac-integrity='sha512-<cac-hash>'
+
+git push origin "refs/tags/v$Version"
+```
+
+The locked restore is the freshness guard for Agent Studio's NuGet graph. If
+`backend/packages.lock.json` is missing or stale, stop and update the dependency
+and lock together on `develop`; do not regenerate the lock on the promoted
+commit.
+
+If the host's normal candidate-asset downloader is not being used, place and
+approve the candidate before triggering the Update Service. Ensure no update
+trigger is already in flight:
+
+```powershell
+$Metadata = 'C:\Projects\agent-taskboard-workspace\.metadata'
+New-Item -ItemType Directory -Force $Metadata | Out-Null
+Copy-Item -Force .\build-manifest.json "$Metadata\stable-candidate-manifest.json"
+Set-Content -NoNewline "$Metadata\stable-approved-tag" "v$Version"
+```
+
+Start or leave the Update Service running, inspect the non-mutating preflight,
+then trigger the update. Include `X-Update-Token` when the service is configured
+with `ATP_UPDATE_TOKEN`.
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:5039/update/preflight
+Invoke-RestMethod -Method Post -ContentType 'application/json' `
+  -Body '{"reason":"manual","force":false}' `
+  http://127.0.0.1:5039/update/trigger
+Invoke-RestMethod http://127.0.0.1:5039/update/status
+```
+
+Wait for `phase=done`, then verify the complete runtime identity, not only
+health. The response tag and commit must equal `v<version>` and
+`<promoted-main-sha>`, `dirty` must be false, and the CAR and CAC version,
+commit, tag, and integrity fields must equal `build-manifest.json`.
+
+```powershell
+$About = Invoke-RestMethod http://127.0.0.1:5031/api/system/about
+$Manifest = Get-Content .\build-manifest.json -Raw | ConvertFrom-Json
+$RuntimeArtifacts = @($About.codingAgentRunner, $About.codingAgentChat) | ConvertTo-Json -Depth 5 -Compress
+$ManifestArtifacts = @($Manifest.codingAgentRunner, $Manifest.codingAgentChat) | ConvertTo-Json -Depth 5 -Compress
+if ($About.tag -ne $Manifest.tag -or
+    $About.commit -ne $Manifest.commit -or
+    $About.integrity -ne $Manifest.integrity -or
+    $RuntimeArtifacts -ne $ManifestArtifacts -or
+    $About.dirty) {
+  throw 'Stable runtime identity does not match the approved candidate'
+}
+$About
+```
+
+The first run preserves the legacy checkout commit and installed identity in
+its run folder before mutation. Keep that update run folder as the initial
+rollback evidence.
+
+CAC is exact-pinned from the npm registry by Agent Studio's package manifest
+and lock. Do not copy a local CAC `dist` into a release or relax that pin to a
+range. Read its release version and integrity from the tagged commit rather
+than copying a historical value from this runbook.
 
 A task worktree does not update Stable directly. After the integration commit
 is accepted, the release owner creates the immutable Agent Studio tag,

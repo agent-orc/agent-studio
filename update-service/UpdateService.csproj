@@ -8,4 +8,8 @@
     <AssemblyName>UpdateService</AssemblyName>
   </PropertyGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\contracts\TaskServer.Contracts\TaskServer.Contracts.csproj" />
+  </ItemGroup>
+
 </Project>

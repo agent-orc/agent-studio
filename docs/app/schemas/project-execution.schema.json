@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent-taskboard.local/schemas/project-execution.schema.json",
   "title": "Repository project execution definition",
-  "description": "Repository-owned preparation, verification, cache-path, capability, environment, development-server, and optional image composition read from .agent-studio/project.yml at the subject commit.",
+  "description": "Repository-owned preparation, verification, release identity, cache-path, capability, environment, development-server, and optional image composition read from .agent-studio/project.yml at the subject commit.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "stack", "toolVersions", "commands", "testSuites", "cachePaths", "capabilities", "environment"],
@@ -53,10 +53,46 @@
         "stopWithRun": { "const": true }
       }
     },
-    "image": { "description": "Optional repository-relative container image definition used only by a container executor profile.", "$ref": "#/$defs/relativePath" }
+    "image": { "description": "Optional repository-relative container image definition used only by a container executor profile.", "$ref": "#/$defs/relativePath" },
+    "release": {
+      "description": "Optional Stable release contract. Stable release tooling refuses a project when this section is absent.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identity", "restore"],
+      "properties": {
+        "identity": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/releaseIdentity" }
+        },
+        "restore": {
+          "description": "Ordered, fail-fast restore commands executed from the tagged checkout.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
   },
   "$defs": {
     "relativePath": { "type": "string", "minLength": 1, "pattern": "^(?![~/\\\\])(?!.*(?:^|/|\\\\)\\.\\.(?:/|\\\\|$)).+$" },
-    "commands": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+    "commands": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "releaseIdentity": {
+      "description": "One package identity, sourced either from a committed lock file or from an exact version plus registry integrity.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["package", "ecosystem"],
+      "properties": {
+        "package": { "type": "string", "minLength": 1 },
+        "ecosystem": { "enum": ["nuget", "npm"] },
+        "source": { "type": "string", "minLength": 1, "pattern": "^(?![~/\\\\])(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$" },
+        "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$" },
+        "integrity": { "type": "string", "pattern": "^sha(?:256|512)-[A-Za-z0-9+/=_-]+$" }
+      },
+      "oneOf": [
+        { "required": ["source"], "not": { "anyOf": [{ "required": ["version"] }, { "required": ["integrity"] }] } },
+        { "required": ["version", "integrity"], "not": { "required": ["source"] } }
+      ]
+    }
   }
 }

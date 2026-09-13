@@ -1,4 +1,5 @@
 extern alias UpdSvc;
+using AgentStudio.TaskServer.Contracts;
 using UpdSvc::AgentTaskboard.UpdateService;
 using Xunit;
 
@@ -170,11 +171,13 @@ public sealed class StableReleaseContractTests
     {
         var manifest = Manifest("1.3.0", "bbb");
 
-        var errors = StableReleaseContract.ValidateCandidateDependencyLocks(
+        var errors = StableReleaseContract.ValidateCandidateDependencies(
             manifest,
-            """{"version":1,"dependencies":{"net10.0":{"CodingAgentRunner":{"resolved":"0.5.0","contentHash":"package"}}}}""",
-            """{"dependencies":{"coding-agent-chat":"0.1.0"}}""",
-            """{"packages":{"node_modules/coding-agent-chat":{"version":"0.1.0","resolved":"https://registry.example/coding-agent-chat-0.1.0.tgz","integrity":"sha512-package"}}}""");
+            LockFileDefinition(),
+            LockFileSources(
+                """{"version":1,"dependencies":{"net10.0":{"CodingAgentRunner":{"resolved":"0.5.0","contentHash":"package"}}}}""",
+                """{"dependencies":{"coding-agent-chat":"0.1.0"}}""",
+                """{"packages":{"node_modules/coding-agent-chat":{"version":"0.1.0","resolved":"https://registry.example/coding-agent-chat-0.1.0.tgz","integrity":"sha512-package"}}}"""));
 
         Assert.Empty(errors);
     }
@@ -184,11 +187,13 @@ public sealed class StableReleaseContractTests
     {
         var manifest = Manifest("1.3.0", "bbb");
 
-        var errors = StableReleaseContract.ValidateCandidateDependencyLocks(
+        var errors = StableReleaseContract.ValidateCandidateDependencies(
             manifest,
-            """{"version":1,"dependencies":{"net10.0":{"CodingAgentRunner":{"resolved":"0.5.0","contentHash":"package"}}}}""",
-            """{"dependencies":{"coding-agent-chat":"file:C:/Projects/coding-agent-chat/dist/coding-agent-chat"}}""",
-            """{"packages":{"node_modules/coding-agent-chat":{"version":"0.1.0","resolved":"file:../../../coding-agent-chat/dist/coding-agent-chat"}}}""");
+            LockFileDefinition(),
+            LockFileSources(
+                """{"version":1,"dependencies":{"net10.0":{"CodingAgentRunner":{"resolved":"0.5.0","contentHash":"package"}}}}""",
+                """{"dependencies":{"coding-agent-chat":"file:C:/Projects/coding-agent-chat/dist/coding-agent-chat"}}""",
+                """{"packages":{"node_modules/coding-agent-chat":{"version":"0.1.0","resolved":"file:../../../coding-agent-chat/dist/coding-agent-chat"}}}"""));
 
         Assert.Contains(errors, e => e.Contains("local file: dist artifact"));
         Assert.Contains(errors, e => e.Contains("not an immutable registry artifact"));
@@ -200,18 +205,122 @@ public sealed class StableReleaseContractTests
     {
         var manifest = Manifest("1.3.0", "bbb");
 
-        var errors = StableReleaseContract.ValidateCandidateDependencyLocks(
+        var errors = StableReleaseContract.ValidateCandidateDependencies(
             manifest,
-            """{"version":1,"dependencies":{"net10.0":{"CodingAgentRunner":{"resolved":"0.4.0","contentHash":"other"}}}}""",
-            """{"dependencies":{"coding-agent-chat":"0.2.0"}}""",
-            """{"packages":{"node_modules/coding-agent-chat":{"version":"0.2.0","resolved":"https://registry.example/coding-agent-chat-0.2.0.tgz","integrity":"sha512-other"}}}""");
+            LockFileDefinition(),
+            LockFileSources(
+                """{"version":1,"dependencies":{"net10.0":{"CodingAgentRunner":{"resolved":"0.4.0","contentHash":"other"}}}}""",
+                """{"dependencies":{"coding-agent-chat":"0.2.0"}}""",
+                """{"packages":{"node_modules/coding-agent-chat":{"version":"0.2.0","resolved":"https://registry.example/coding-agent-chat-0.2.0.tgz","integrity":"sha512-other"}}}"""));
 
         Assert.Contains(errors, e => e.Contains("CodingAgentRunner version mismatch"));
         Assert.Contains(errors, e => e.Contains("CodingAgentRunner integrity mismatch"));
-        Assert.Contains(errors, e => e.Contains("Coding Agent Chat package.json version mismatch"));
-        Assert.Contains(errors, e => e.Contains("Coding Agent Chat locked version mismatch"));
-        Assert.Contains(errors, e => e.Contains("Coding Agent Chat integrity mismatch"));
+        Assert.Contains(errors, e => e.Contains("coding-agent-chat package.json version mismatch"));
+        Assert.Contains(errors, e => e.Contains("coding-agent-chat locked version mismatch"));
+        Assert.Contains(errors, e => e.Contains("coding-agent-chat integrity mismatch"));
     }
+
+    [Fact]
+    public void CandidateDependencies_AcceptExactPinAndRegistryHashRules()
+    {
+        var manifest = Manifest("1.3.0", "bbb");
+        var definition = Definition("""
+              identity:
+                - package: CodingAgentRunner
+                  ecosystem: nuget
+                  version: 0.5.0
+                  integrity: sha512-package
+                - package: coding-agent-chat
+                  ecosystem: npm
+                  version: 0.1.0
+                  integrity: sha512-package
+            """);
+
+        var errors = StableReleaseContract.ValidateCandidateDependencies(
+            manifest, definition, new Dictionary<string, string>());
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
+    public void CandidateDependencies_RefuseExactPinAndRegistryHashMismatch()
+    {
+        var manifest = Manifest("1.3.0", "bbb");
+        var definition = Definition("""
+              identity:
+                - package: CodingAgentRunner
+                  ecosystem: nuget
+                  version: 0.6.0
+                  integrity: sha512-othercar
+                - package: coding-agent-chat
+                  ecosystem: npm
+                  version: 0.2.0
+                  integrity: sha512-othercac
+            """);
+
+        var errors = StableReleaseContract.ValidateCandidateDependencies(
+            manifest, definition, new Dictionary<string, string>());
+
+        Assert.Contains(errors, error => error.Contains("CodingAgentRunner version mismatch"));
+        Assert.Contains(errors, error => error.Contains("CodingAgentRunner integrity mismatch"));
+        Assert.Contains(errors, error => error.Contains("coding-agent-chat version mismatch"));
+        Assert.Contains(errors, error => error.Contains("coding-agent-chat integrity mismatch"));
+    }
+
+    [Fact]
+    public void CandidateDependencies_RefuseProjectWithoutReleaseRule()
+    {
+        var manifest = Manifest("1.3.0", "bbb");
+        var definition = ProjectDefinitionReader.Parse(BaseDefinition + "\n").Definition!;
+
+        var errors = StableReleaseContract.ValidateCandidateDependencies(
+            manifest, definition, new Dictionary<string, string>());
+
+        Assert.Contains(errors, error => error.Contains("does not declare a release contract"));
+    }
+
+    private static ProjectExecutionDefinition LockFileDefinition() => Definition("""
+          identity:
+            - package: CodingAgentRunner
+              ecosystem: nuget
+              source: backend/packages.lock.json
+            - package: coding-agent-chat
+              ecosystem: npm
+              source: frontend/package-lock.json
+        """);
+
+    private static ProjectExecutionDefinition Definition(string releaseBody)
+    {
+        var read = ProjectDefinitionReader.Parse($"{BaseDefinition}\nrelease:\n{releaseBody}\n  restore:\n    - restore dependencies\n");
+        Assert.True(read.IsValid, string.Join(Environment.NewLine, read.Issues.Select(issue => issue.Message)));
+        return read.Definition!;
+    }
+
+    private static IReadOnlyDictionary<string, string> LockFileSources(
+        string nugetLock,
+        string npmPackage,
+        string npmLock) => new Dictionary<string, string>
+        {
+            ["backend/packages.lock.json"] = nugetLock,
+            ["frontend/package.json"] = npmPackage,
+            ["frontend/package-lock.json"] = npmLock,
+        };
+
+    private const string BaseDefinition = """
+        schemaVersion: 1
+        stack: [dotnet, node]
+        toolVersions:
+        commands:
+          prepare: .agent-studio/prepare
+          build:
+          test:
+          lint:
+        testSuites:
+        cachePaths: [frontend/node_modules]
+        capabilities: [linux]
+        environment:
+          CI: "true"
+        """;
 
     private static ReleaseManifest Manifest(string version, string commit) => new(
         1, "Agent Studio", $"v{version}", version, commit, false,
