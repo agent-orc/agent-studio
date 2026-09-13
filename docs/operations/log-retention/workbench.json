@@ -10,5 +10,25 @@
   "editedBy": "Orchestrator (Claude), 06.09.2026",
   "statusReason": "Abgeloest durch docs/operations/retention-und-archiv (Datenklassen, Regelmodell, kaltes Archiv, Task-Server-Schnittstelle, Karten R1-R4). Umgesetzt geblieben ist nur die 10-MiB-Deckelung von cli-output.log an der Quelle; Archiv-Sweep, Runner-Backup und Push-Health waren nie gebaut.",
   "sourceTaskKeys": [],
-  "key": "AGT-W11"
+  "key": "AGT-W11",
+  "review": {
+    "verdict": "superseded",
+    "supersededBy": [
+      "AGT-W46"
+    ],
+    "reviewedAt": "2026-09-13T10:20:00Z",
+    "reviewedBy": "Operator",
+    "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+  },
+  "reviewHistory": [
+    {
+      "verdict": "superseded",
+      "supersededBy": [
+        "AGT-W46"
+      ],
+      "reviewedAt": "2026-09-13T10:20:00Z",
+      "reviewedBy": "Operator",
+      "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    }
+  ]
 }

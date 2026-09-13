@@ -43,5 +43,21 @@
       "promptMarkdown": "Package the same Task Server, Operations Server, Orchestrator Engine, browser edge, and Operations Agent components in three wiring profiles: workstation, one-box Docker, and distributed WireGuard. Make one-box Docker the standard product deployment after full route and security parity. Keep browser-facing listeners only at the selected edge; use service principals on internal hops and outbound authenticated agent channels. Rehearse upgrade, drain, backup, credential rotation, Operations Server outage, Task Server outage, LAN-origin denial, public-demo denial, detached Studio, and rollback. Then update AGT-2738 installer work and AGT-2737 cutover evidence to use the selected profiles."
     }
   ],
-  "key": "AGT-W49"
+  "key": "AGT-W49",
+  "review": {
+    "verdict": "current",
+    "supersededBy": [],
+    "reviewedAt": "2026-09-13T10:20:00Z",
+    "reviewedBy": "Operator",
+    "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+  },
+  "reviewHistory": [
+    {
+      "verdict": "current",
+      "supersededBy": [],
+      "reviewedAt": "2026-09-13T10:20:00Z",
+      "reviewedBy": "Operator",
+      "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    }
+  ]
 }

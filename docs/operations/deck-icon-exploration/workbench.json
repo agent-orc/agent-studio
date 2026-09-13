@@ -21,5 +21,21 @@
       "promptMarkdown": "Implement the Round 2 Deck icon selected in docs/operations/deck-icon-exploration/index.html. Do not use any rejected Round 1 path. Add the selected 24 by 24 path to the canonical Studio icon component, change the Explorer Deck row from `layout` to the new icon in one place, preserve the existing `studio-explorer-project-hub-*` and `studio-explorer-project-deck-*` test IDs, and add focused regression coverage. Do not change the active-section icon used by Deck tabs."
     }
   ],
-  "key": "AGT-W5"
+  "key": "AGT-W5",
+  "review": {
+    "verdict": "historical",
+    "supersededBy": [],
+    "reviewedAt": "2026-09-13T10:20:00Z",
+    "reviewedBy": "Operator",
+    "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+  },
+  "reviewHistory": [
+    {
+      "verdict": "historical",
+      "supersededBy": [],
+      "reviewedAt": "2026-09-13T10:20:00Z",
+      "reviewedBy": "Operator",
+      "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    }
+  ]
 }

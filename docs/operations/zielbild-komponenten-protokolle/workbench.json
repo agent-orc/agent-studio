@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "zielbild-komponenten-protokolle",
   "title": "Zielbild: Komponenten, Protokolle, Schnitt, Build, Deploy",
-  "summary": "Aus dem Nacht-Incident 27.07. destilliertes Architektur-Zielbild. Kern-Befund: 3 von 5 Blockern waren Protokoll-Drift Runner\u003C-\u003EBackend (POST/PUT-Capabilities, Log-Ingest-Canonical-Felder, fehlender ResultEnvelope -\u003E alle Reviews eskalieren), und develop ist eine kaputte Integrations-Branch (orphaned Dossier-Typen aus einem frueheren wip-Salvage, baut nicht). Beschreibt Komponenten (Task-Server, agent-host, CAR, Studio, workspace-/projekt-repos) \u002B ihre Vertraege (v1-Plane, Log-Ingest, Attempt-Authority, Artifact-Push, Delivery). Beantwortet Roberts 4 Steuerungsfragen: Schnitt (Feature=Task ja, Architektur/Binary=koordinierte Change nein), Build (Build-Gate vor Integration fehlt), Deploy (Runner\u002BBackend synchron\u002Bprotokoll-kompatibel, gepaarte Releases). 5 offene Entscheidungen E1-E5: Runner-Update-Weg, develop reparieren vs. resetten, Build-Gate scharf, Schnitt-Politik, gepaarte Releases.",
+  "summary": "Aus dem Nacht-Incident 27.07. destilliertes Architektur-Zielbild. Kern-Befund: 3 von 5 Blockern waren Protokoll-Drift Runner<->Backend (POST/PUT-Capabilities, Log-Ingest-Canonical-Felder, fehlender ResultEnvelope -> alle Reviews eskalieren), und develop ist eine kaputte Integrations-Branch (orphaned Dossier-Typen aus einem frueheren wip-Salvage, baut nicht). Beschreibt Komponenten (Task-Server, agent-host, CAR, Studio, workspace-/projekt-repos) + ihre Vertraege (v1-Plane, Log-Ingest, Attempt-Authority, Artifact-Push, Delivery). Beantwortet Roberts 4 Steuerungsfragen: Schnitt (Feature=Task ja, Architektur/Binary=koordinierte Change nein), Build (Build-Gate vor Integration fehlt), Deploy (Runner+Backend synchron+protokoll-kompatibel, gepaarte Releases). 5 offene Entscheidungen E1-E5: Runner-Update-Weg, develop reparieren vs. resetten, Build-Gate scharf, Schnitt-Politik, gepaarte Releases.",
   "entrypoint": "index.html",
   "status": "documented",
   "phase": "decision-ready",
@@ -10,5 +10,25 @@
   "editedBy": "Operator bookkeeping via AGT-2621",
   "statusReason": "The component and protocol target is implemented and retained as architecture history.",
   "sourceTaskKeys": [],
-  "key": "AGT-W25"
+  "key": "AGT-W25",
+  "review": {
+    "verdict": "superseded",
+    "supersededBy": [
+      "AGT-W49"
+    ],
+    "reviewedAt": "2026-09-13T10:20:00Z",
+    "reviewedBy": "Operator",
+    "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+  },
+  "reviewHistory": [
+    {
+      "verdict": "superseded",
+      "supersededBy": [
+        "AGT-W49"
+      ],
+      "reviewedAt": "2026-09-13T10:20:00Z",
+      "reviewedBy": "Operator",
+      "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    }
+  ]
 }

@@ -1,12 +1,28 @@
 {
   "schemaVersion": 1,
   "id": "org-security-audit-2026-08",
-  "title": "Org Security Audit \u2014 August 2026",
+  "title": "Org Security Audit — August 2026",
   "summary": "Consolidated, adversarially verified security audit across five surfaces of the organization: the public-demo Studio backend, Quality Studio, the public websites, the runner host, and the chat/token-economy libraries. Eight candidate exploit findings entered adversarial refutation; seven survived as confirmed (one high, five medium, one low) and one was reclassified as verified-mitigated with no live exploit path. A prioritized remediation table plus appendices record what was checked and dismissed, including twenty-two low and informational observations from the single-surface deep audits. Decision-pending: the operator triages; no cards were created.",
   "entrypoint": "index.html",
   "status": "decision-pending",
   "phase": "decision-ready",
   "updatedAt": "2026-08-25T00:00:00Z",
   "sourceTaskKeys": [],
-  "key": "AGT-W41"
+  "key": "AGT-W41",
+  "review": {
+    "verdict": "current",
+    "supersededBy": [],
+    "reviewedAt": "2026-09-13T10:20:00Z",
+    "reviewedBy": "Operator",
+    "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+  },
+  "reviewHistory": [
+    {
+      "verdict": "current",
+      "supersededBy": [],
+      "reviewedAt": "2026-09-13T10:20:00Z",
+      "reviewedBy": "Operator",
+      "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    }
+  ]
 }

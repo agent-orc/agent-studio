@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "umsetzungsplan-zielbild",
   "title": "Umsetzungsplan Richtung Zielbild",
-  "summary": "Detaillierter kartenbasierter Plan vom Stand 27.07. zum Zielbild, in vier Phasen: P0 Pipeline heilen (Runner-v1/CAR, Build-Gate, Reste-Batch 2302\u002B2375\u002BModelRouting), P1 Container-Default (Basis-Images E3, Installer=Container-Default, Self-Push\u002BTokens, Isolation/Worktree/Nachbarrepos), P2 Verteilte Plattform (Epics 2129/2130/2132, CAR-Kette 2370-2373, Control-Plane 2230/2277), P3 SSH-Tunnel abl\u00F6sen \u002B Token-Refresh-Konzept. Enthaelt Roberts Leitplanken (Container-Default sofort ab Installer, Isolation gilt dem Agent nicht den Sourcen, Self-Push mit Git\u002BCLI-Tokens, gepflegte Basis-Images), die Spawn-Pfad-Konvergenz auf CAR (von den Entscheidungen verstaerkt), und Verifikation im selben Container mit Dockerfile-im-Repo \u002B Image-als-Sidecar \u002B agent-gepflegter Umgebung (E6). Buendelung nach Ueberlappung: Architektur=koordinierte Batches, Features=Tasks. Offene Punkte: Token-Refresh ohne Tunnel.",
+  "summary": "Detaillierter kartenbasierter Plan vom Stand 27.07. zum Zielbild, in vier Phasen: P0 Pipeline heilen (Runner-v1/CAR, Build-Gate, Reste-Batch 2302+2375+ModelRouting), P1 Container-Default (Basis-Images E3, Installer=Container-Default, Self-Push+Tokens, Isolation/Worktree/Nachbarrepos), P2 Verteilte Plattform (Epics 2129/2130/2132, CAR-Kette 2370-2373, Control-Plane 2230/2277), P3 SSH-Tunnel ablösen + Token-Refresh-Konzept. Enthaelt Roberts Leitplanken (Container-Default sofort ab Installer, Isolation gilt dem Agent nicht den Sourcen, Self-Push mit Git+CLI-Tokens, gepflegte Basis-Images), die Spawn-Pfad-Konvergenz auf CAR (von den Entscheidungen verstaerkt), und Verifikation im selben Container mit Dockerfile-im-Repo + Image-als-Sidecar + agent-gepflegter Umgebung (E6). Buendelung nach Ueberlappung: Architektur=koordinierte Batches, Features=Tasks. Offene Punkte: Token-Refresh ohne Tunnel.",
   "entrypoint": "index.html",
   "status": "documented",
   "phase": "decision-ready",
@@ -17,5 +17,27 @@
     "AGT-2334",
     "AGT-2230"
   ],
-  "key": "AGT-W22"
+  "key": "AGT-W22",
+  "review": {
+    "verdict": "superseded",
+    "supersededBy": [
+      "AGT-W49",
+      "AGT-W51"
+    ],
+    "reviewedAt": "2026-09-13T10:20:00Z",
+    "reviewedBy": "Operator",
+    "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+  },
+  "reviewHistory": [
+    {
+      "verdict": "superseded",
+      "supersededBy": [
+        "AGT-W49",
+        "AGT-W51"
+      ],
+      "reviewedAt": "2026-09-13T10:20:00Z",
+      "reviewedBy": "Operator",
+      "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    }
+  ]
 }
