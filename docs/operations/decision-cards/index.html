@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Decision cards | Concept Dossier</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1: #fcfcfb; --surface-2: #f2f1ee; --surface-3: #e9e8e3;
+    --ink-1: #0b0b0b; --ink-2: #52514e; --ink-3: #8a8983; --line: #d8d6cf;
+    --develop: #2a78d6; --ok: #008300; --bad: #c93736; --warn: #9a6b00;
+    --accent-soft: #eaf1fb; --bad-soft: #fbecec; --ok-soft: #eaf4ea; --warn-soft: #f8f0dd;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --surface-1: #1a1a19; --surface-2: #232322; --surface-3: #2c2c2a;
+      --ink-1: #ffffff; --ink-2: #c3c2b7; --ink-3: #8a8983; --line: #3d3d3a;
+      --develop: #3987e5; --ok: #4eae4e; --bad: #e66767; --warn: #d9a63f;
+      --accent-soft: #1e2a3a; --bad-soft: #382222; --ok-soft: #1f2f1f; --warn-soft: #33301e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 0 0 80px; background: var(--surface-1); color: var(--ink-1); font: 16px/1.6 system-ui, "Segoe UI", sans-serif; }
+  main { max-width: 1080px; margin: 0 auto; padding: 0 28px; }
+  header.page { border-bottom: 1px solid var(--line); padding: 44px 0 26px; margin-bottom: 8px; }
+  .kicker { font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); margin: 0 0 10px; }
+  h1 { font-size: 34px; line-height: 1.2; margin: 0 0 12px; }
+  .lede { font-size: 18px; color: var(--ink-2); max-width: 62ch; margin: 0; }
+  .meta { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 18px; font-size: 13px; color: var(--ink-3); }
+  .meta b { color: var(--ink-2); font-weight: 600; }
+  h2 { font-size: 24px; margin: 56px 0 6px; scroll-margin-top: 20px; }
+  h2 .no { color: var(--ink-3); font-weight: 600; margin-right: 10px; }
+  h3 { font-size: 18px; margin: 34px 0 4px; }
+  p { max-width: 76ch; }
+  .box { border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); padding: 18px 22px; margin: 20px 0; }
+  .box.accent { background: var(--accent-soft); }
+  .box.warn { background: var(--warn-soft); }
+  .tablewrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; margin: 14px 0 22px; font-size: 14px; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--ink-2); font-weight: 600; background: var(--surface-2); white-space: nowrap; }
+  td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td .d { display: block; color: var(--ink-2); font-size: 12.5px; line-height: 1.4; margin-top: 3px; }
+  code { font: 13px ui-monospace, "Cascadia Mono", Consolas, monospace; background: var(--surface-3); padding: 1px 5px; border-radius: 4px; }
+  .tag { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--ink-2); margin-right: 4px; white-space: nowrap; }
+  .tag.bad { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
+  .tag.ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+  .tag.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+  figure { margin: 22px 0; }
+  figure svg { width: 100%; height: auto; display: block; }
+  figcaption { font-size: 13px; color: var(--ink-3); margin-top: 6px; }
+  .decision { border: 1px solid color-mix(in srgb, var(--develop) 35%, var(--line)); border-radius: 10px; padding: 18px 22px; margin: 22px 0; background: var(--accent-soft); }
+  .decision h3 { margin: 0 0 10px; font-size: 17px; }
+  .decision label { display: flex; gap: 12px; align-items: flex-start; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-1); margin: 8px 0; cursor: pointer; }
+  .decision label input { margin-top: 4px; }
+  .decision label b { display: block; }
+  .decision label span.d { display: block; color: var(--ink-2); font-size: 14px; }
+  .decision textarea { width: 100%; min-height: 64px; margin-top: 8px; font: 14px system-ui, sans-serif; border: 1px solid var(--line); border-radius: 6px; padding: 8px; background: var(--surface-1); color: var(--ink-1); }
+  ul, ol { max-width: 80ch; }
+  li { margin: 4px 0; }
+  .toc { columns: 2; gap: 28px; font-size: 14.5px; }
+  .toc a { color: var(--ink-2); text-decoration: none; }
+  .toc a:hover { color: var(--develop); }
+  .muted { color: var(--ink-3); }
+  .steps { counter-reset: st; list-style: none; padding: 0; max-width: none; }
+  .steps > li { counter-increment: st; border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px 14px 58px; margin: 12px 0; background: var(--surface-2); position: relative; }
+  .steps > li::before { content: "M" counter(st); position: absolute; left: 16px; top: 14px; font-weight: 700; color: var(--develop); }
+  .steps h4 { margin: 0 0 6px; font-size: 16px; }
+  .steps p { margin: 4px 0; font-size: 14.5px; }
+  .steps .kv { font-size: 13.5px; color: var(--ink-2); }
+  .steps .kv b { color: var(--ink-1); }
+  pre { background: var(--surface-3); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; font: 12.5px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace; overflow-x: auto; max-width: 100%; }
+  /* Tooltips ohne Verzögerung: data-tip statt title. Ohne Script: CSS-Blase; mit Script: feste Position, nie abgeschnitten. */
+  [data-tip] { text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; position: relative; }
+  html:not(.js) [data-tip]::after { content: attr(data-tip); position: absolute; left: 0; top: calc(100% + 6px); z-index: 20; width: max-content; max-width: 340px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-1); color: var(--ink-1); font-size: 12.5px; line-height: 1.4; font-weight: 400; white-space: normal; box-shadow: 0 6px 20px rgba(0,0,0,.14); opacity: 0; pointer-events: none; transition: opacity .06s; }
+  html:not(.js) [data-tip]:hover::after, html:not(.js) [data-tip]:focus-visible::after { opacity: 1; }
+  #tipbox { position: fixed; z-index: 1000; max-width: 360px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-1); color: var(--ink-1); font-size: 12.5px; line-height: 1.45; box-shadow: 0 8px 24px rgba(0,0,0,.16); pointer-events: none; display: none; }
+  /* SVG figure classes from the haertung-verteilte-ausfuehrung template */
+  figure svg { width: 100%; height: auto; display: block; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-1); }
+  .s-node   { fill: var(--surface-2); stroke: var(--line); rx: 8; }
+  .s-node2  { fill: var(--surface-3); stroke: var(--line); }
+  .s-label  { fill: var(--ink-1); font: 600 13px system-ui, sans-serif; }
+  .s-sub    { fill: var(--ink-2); font: 12px system-ui, sans-serif; }
+  .s-tiny   { fill: var(--ink-3); font: 11px system-ui, sans-serif; }
+  .s-flow   { stroke: var(--ink-3); stroke-width: 1.6; fill: none; }
+  .s-commit { stroke-width: 2.5; fill: var(--surface-1); }
+  .s-lane   { stroke: var(--line); stroke-dasharray: 4 5; stroke-width: 1; }
+  .badge-bad  { fill: var(--bad-soft); stroke: var(--bad); }
+  .badge-ok   { fill: var(--ok-soft); stroke: var(--ok); }
+  .badge-warn { fill: var(--warn-soft); stroke: var(--warn); }
+  .t-bad  { fill: var(--bad);  font: 600 12px system-ui, sans-serif; }
+  .t-ok   { fill: var(--ok);   font: 600 12px system-ui, sans-serif; }
+  .t-warn { fill: var(--warn); font: 600 12px system-ui, sans-serif; }
+</style>
+</head>
+<body>
+<main>
+<header class="page">
+  <p class="kicker">Concept Dossier · Agent Studio · 2026-09-13</p>
+  <h1>Decision cards</h1>
+  <p class="lede">A decision request today is an ordinary task card with "decision needed" somewhere in its prose. The decider cannot see that a decision is wanted, has nothing to click, and the dependent work sits idle. This Dossier describes decisions as first-class objects on the board: typed, visible, decidable in one action, and connected to the work they unblock.</p>
+  <div class="meta">
+    <span><b>Status</b> 2026-09-13, decision-pending</span>
+    <span><b>Trigger</b> Operator feedback on AGT-2792: decision task without interface, calls to action or a visible type</span>
+    <span><b>Builds on</b> Dossier decisions (AGT-2520 inline decisions), decision briefing, concept promotion</span>
+    <span><b>Concept card</b> AGT-2795</span>
+  </div>
+</header>
+
+<nav class="toc" aria-label="Contents">
+  <a href="#s1">§1 Situation</a>
+  <a href="#s2">§2 What exists</a>
+  <a href="#s3">§3 Target picture</a>
+  <a href="#s4">§4 Alternatives</a>
+  <a href="#s5">§5 Recommendation</a>
+  <a href="#s6">§6 Evidence</a>
+  <a href="#s7">§7 Workflow</a>
+  <a href="#s8">§8 Decisions</a>
+  <a href="#s9">§9 Implementation</a>
+</nav>
+
+<section id="s1">
+<h2><span class="no">§1</span>Situation</h2>
+<p>On 2026-09-13 the first develop → main promotion under the new gate succeeded and the Stable update was refused by the release preflight. The follow-up card AGT-2792 is a decision request: two options, an operator must choose, nothing can start before the choice. On the board it is a coding task in lane 1-preparation. The operator's reaction, verbatim: the card is a decision task, but there is no way to decide; the interface and the calls to action are missing; the type is invisible; the workflow is unclear; before the decision nothing moves.</p>
+<p>The shape recurs whenever an agent reaches a fork it must not take alone: a dependency strategy, a version number, a breaking contract change, deleting thousands of branches. Five open cards carry such requests in prose today (§6). Each of them waits for a human who has no signal that they are waited for.</p>
+</section>
+
+<section id="s2">
+<h2><span class="no">§2</span>What exists</h2>
+<p>Agent Studio already knows decisions, but only above the card level.</p>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Mechanism</th><th>Where</th><th>What it does</th><th>Gap for cards</th></tr></thead>
+<tbody>
+<tr><td>Dossier decisions</td><td><code>WorkbenchDecisionService</code>, <code>workbench-decision-panel</code>, statuses active / decision-pending / decided / rework / archived</td><td>Prepare and confirm a decision on a Dossier, record it, show it in the wiki inbox</td><td>Bound to a Dossier document, not to a card</td></tr>
+<tr><td>Inline decisions (AGT-2520)</td><td><code>data-decision-id</code> blocks in a Dossier page</td><td>Radio and checkbox options with a comment, persisted by the decision service</td><td>Same: lives in documents only</td></tr>
+<tr><td>Operator decision briefing</td><td>Dossier <code>decision-briefing</code></td><td>Map of all decision-pending Dossiers ordered by cost of delay</td><td>Does not see cards</td></tr>
+<tr><td>Proposal decisions</td><td><code>POST /api/projects/{p}/proposals/{id}/decision</code>, watcher proposals</td><td>Accept or reject a proposal</td><td>Binary, no options, no record beyond the proposal</td></tr>
+<tr><td>Review decisions pending</td><td><code>GET /api/projects/{p}/review-decisions-pending</code>, runner <code>pending-decisions</code></td><td>Lists review outcomes waiting for a human</td><td>Review only</td></tr>
+<tr><td>Card model</td><td><code>TaskKinds</code> = task, epic · <code>TaskModes</code> = coding, planning, research, concept</td><td>Typed cards for work</td><td>No decision kind, no options, no decider, no blocking semantics</td></tr>
+</tbody>
+</table>
+</div>
+<p>Concept promotion (<code>promote-concept</code>) turns a decided Dossier into implementation cards. That is the one existing bridge from a decision to work, and it only starts from a Dossier.</p>
+</section>
+
+<section id="s3">
+<h2><span class="no">§3</span>Target picture</h2>
+<p>A decision is an object with its own lifecycle. It is requested by an agent or a service, it waits for a named decider, it is decided with one action and a rationale, and its result is applied to the work it blocks. Every step leaves a record.</p>
+<figure>
+<svg viewBox="0 0 1040 300" role="img" aria-label="Lifecycle of a decision card: requested, pending, decided, applied, with reopen back to pending">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="s-flow"/></marker>
+  </defs>
+  <rect class="s-node" x="20" y="60" width="220" height="110" rx="10"/>
+  <text class="s-label" x="40" y="90">Requested</text>
+  <text class="s-sub" x="40" y="112">by agent, runner or service</text>
+  <rect class="s-node2" x="40" y="126" width="180" height="26" rx="6"/>
+  <text class="s-tiny" x="50" y="144">question · options · decider</text>
+
+  <rect class="s-node" x="290" y="60" width="220" height="110" rx="10"/>
+  <text class="s-label" x="310" y="90">Pending</text>
+  <text class="s-sub" x="310" y="112">badge, inbox, due date</text>
+  <rect class="s-node2" x="310" y="126" width="180" height="26" rx="6"/>
+  <text class="s-tiny" x="320" y="144">dependants show "blocked by"</text>
+
+  <rect class="s-node" x="560" y="60" width="220" height="110" rx="10"/>
+  <text class="s-label" x="580" y="90">Decided</text>
+  <text class="s-sub" x="580" y="112">one option, rationale, who, when</text>
+  <rect class="s-node2" x="580" y="126" width="180" height="26" rx="6"/>
+  <text class="s-tiny" x="590" y="144">record in the project wiki</text>
+
+  <rect class="s-node" x="830" y="60" width="190" height="110" rx="10"/>
+  <text class="s-label" x="850" y="90">Applied</text>
+  <text class="s-sub" x="850" y="112">work unblocked</text>
+  <rect class="s-node2" x="850" y="126" width="150" height="26" rx="6"/>
+  <text class="s-tiny" x="860" y="144">prompt block or new cards</text>
+
+  <line class="s-flow" x1="240" y1="115" x2="288" y2="115" marker-end="url(#arrow)"/>
+  <line class="s-flow" x1="510" y1="115" x2="558" y2="115" marker-end="url(#arrow)"/>
+  <line class="s-flow" x1="780" y1="115" x2="828" y2="115" marker-end="url(#arrow)"/>
+  <path class="s-flow" d="M670 170 C 670 240, 400 240, 400 172" fill="none" marker-end="url(#arrow)"/>
+  <text class="s-tiny" x="470" y="250">reopen with a note re-blocks dependants</text>
+</svg>
+<figcaption>Fig. 1: Lifecycle of a decision card. The record written at "decided" is the same format the Dossier decision uses today.</figcaption>
+</figure>
+<p>Three properties make this work in practice. The options are fields, not markdown, so the board can render them and the decider can click them. The decider is named, so the inbox can address a person or a role instead of hoping someone reads the lane. The dependants are linked, so "blocked" is a computed state rather than a convention in the prompt.</p>
+</section>
+
+<section id="s4" data-concept-section="alternatives">
+<h2><span class="no">§4</span>Alternatives</h2>
+<div class="tablewrap">
+<table>
+<thead><tr><th></th><th>A · Decision kind on cards</th><th>B · Every decision is a Dossier</th><th>C · Decision lane for ordinary cards</th></tr></thead>
+<tbody>
+<tr><th>Representation</th><td>New card kind <code>decision</code> with structured options, decider, due date, dependants</td><td>A small Dossier per decision with inline decisions; cards reference it</td><td>A lane or state (for example <code>0-decision</code>) plus a prompt convention</td></tr>
+<tr><th>Visibility</th><td>Badge on the card, count in the project header, inbox entry</td><td>Visible in the Dossier list and the decision briefing, not on the board</td><td>Visible by lane only</td></tr>
+<tr><th>Call to action</th><td>Options with a "choose" action in the card detail</td><td>Existing inline decision UI</td><td>None; the decider edits the prompt and moves the card</td></tr>
+<tr><th>Blocking</th><td>Computed from <code>dependsOn</code>; claim refused while pending</td><td>Must be modelled by hand on every dependent card</td><td>Lane placement only; dependants are not protected</td></tr>
+<tr><th>Record</th><td>Decision record in the wiki, same format as the Dossier decision</td><td>Dossier decision record</td><td>Card history only</td></tr>
+<tr><th>Reuse</th><td>Reuses the decision service and record format</td><td>Reuses everything, adds document overhead per decision</td><td>Reuses nothing new</td></tr>
+<tr><th>Cost</th><td>Backend model and API, frontend badge and detail, migration script</td><td>Authoring cost per decision; agents must write a document for a two-option question</td><td>Minimal</td></tr>
+<tr><th>Fits</th><td>Single questions with two to four options that block concrete work</td><td>Multi-question concepts that need argument and evidence (stays as is)</td><td>Interim only</td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<section id="s5" data-concept-section="recommendation">
+<h2><span class="no">§5</span>Recommendation</h2>
+<p><strong>A, with the Dossier decision service as the shared backbone.</strong> A single fork with a handful of options belongs on the board where the blocked work lives, not in a document. The card carries the options; the decision service records the choice in the format that already exists; the wiki keeps the ADR-style record; concept promotion and the new "apply" step share one mechanism for turning a decision into cards. Multi-question concepts remain Dossiers (B) and can spawn decision cards for the single forks they surface.</p>
+<div class="box accent">
+<p><b>What the decider experiences.</b> A card with a "Decision" badge and their name on it appears in the inbox and on the board. Opening it shows the question, the options with consequences, and the recommendation. One click on an option plus an optional sentence records the decision. The dependent cards lose their "blocked by" marker and enter 2-ready, or new cards appear from the chosen option. Reopening is one action with a note.</p>
+</div>
+<p>C is not recommended as a product answer, but its cheapest element, a visible lane placement, is worth keeping until A ships: decision cards stay in 1-preparation and never enter a runner lane.</p>
+</section>
+
+<section id="s6" data-concept-section="evidence">
+<h2><span class="no">§6</span>Evidence</h2>
+<p>Open cards on 2026-09-13 whose prompt asks a human to decide, found by text search over the workspace (not by any field, because none exists):</p>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Card</th><th>Lane</th><th>Decision in prose</th></tr></thead>
+<tbody>
+<tr><td>AGT-2792</td><td>1-preparation</td><td>Lock file back vs. identity without lock file for the Stable release contract; blocks the first tagged release</td></tr>
+<tr><td>AGT-2736, AGT-2737</td><td>5e-escalated</td><td>Escalated with an operator question inside the prompt</td></tr>
+<tr><td>AGT-2738</td><td>2-ready</td><td>Carries a decision request but sits in a runner lane, so a runner may claim it without the decision</td></tr>
+<tr><td>AGT-2795</td><td>1-preparation</td><td>The implementation card for this Dossier; claimed by a runner within seconds of creation because nothing marked it as a concept</td></tr>
+</tbody>
+</table>
+</div>
+<p>The last row is the failure mode in miniature: a card meant for a decision entered a runner lane, was claimed in seconds, and had to be pulled back by hand. Existing decision surfaces (§2) route around cards entirely: the decision briefing Dossier lists eight decision-pending Dossiers and none of these cards.</p>
+</section>
+
+<section id="s7">
+<h2><span class="no">§7</span>Workflow</h2>
+<ol class="steps">
+<li><h4>Request</h4><p>An agent, the runner (outcome Blocked with a fork), failure intervention, or a Dossier creates a decision card: question, two to four options (id, label, consequences, effort, risk), optional recommendation with reason, decider, due date, dependants. API: <code>POST /api/tasks</code> with <code>kind: decision</code> and an options payload.</p></li>
+<li><h4>Pending</h4><p>Board and list show the badge and the decider; the project header counts open decisions; the inbox lists them beside Dossier decisions. Dependants show "blocked by AGT-nnnn" and cannot be claimed. A reminder fires when the due date passes.</p></li>
+<li><h4>Decide</h4><p>The decider opens the card, chooses an option, adds a rationale. <code>POST /api/tasks/{id}/decision</code> records option, rationale, X-Client-Id and timestamp, moves the card to decided, and writes the record to the project wiki.</p></li>
+<li><h4>Apply</h4><p>If an implementation card is linked, its prompt receives a decision block (question, chosen option, rationale, link) and it moves to 2-ready. If none exists, cards are created from the chosen option's requirements, the same way concept promotion creates them.</p></li>
+<li><h4>Reopen</h4><p><code>POST /api/tasks/{id}/decision/reopen</code> with a note re-blocks dependants and returns the card to pending; the record keeps both entries.</p></li>
+</ol>
+</section>
+
+<section id="s8" data-concept-section="open-decisions">
+<h2><span class="no">§8</span>Decisions</h2>
+<p>Five questions for the operator. The recommendation is marked in each.</p>
+
+<div class="decision" data-decision-id="representation" data-decision-kind="single" data-decision-label="Representation of a decision">
+  <h3>D1 · How is a decision represented?</h3>
+  <label data-option-id="card-kind" data-option-label="A · Card kind decision with structured options (recommendation)"><input type="radio" name="representation" value="card-kind"><span><b>A · Card kind <code>decision</code> with structured options</b><span class="d">Visible on the board, decidable in the card, blocking computed from dependsOn; reuses the Dossier decision service for the record.</span></span></label>
+  <label data-option-id="dossier-per-decision" data-option-label="B · Every decision is a small Dossier"><input type="radio" name="representation" value="dossier-per-decision"><span><b>B · Every decision is a small Dossier</b><span class="d">Reuses the existing UI fully, but every two-option question becomes a document and stays invisible on the board.</span></span></label>
+  <label data-option-id="lane-only" data-option-label="C · Decision lane for ordinary cards"><input type="radio" name="representation" value="lane-only"><span><b>C · Decision lane for ordinary cards</b><span class="d">Cheapest; no options, no call to action, dependants unprotected. Interim at best.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="decider" data-decision-kind="single" data-decision-label="Who may decide">
+  <h3>D2 · Who may decide?</h3>
+  <label data-option-id="operator-only" data-option-label="A · The operator only"><input type="radio" name="decider" value="operator-only"><span><b>A · The operator only</b><span class="d">Simplest rule; every decision lands with one person.</span></span></label>
+  <label data-option-id="named-decider" data-option-label="B · A named client identity or role per card, operator by default (recommendation)"><input type="radio" name="decider" value="named-decider"><span><b>B · A named client identity or role per card, operator by default</b><span class="d">Lets the requester address a reviewer or a team, keeps the operator as fallback; the record names who decided.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="apply-mode" data-decision-kind="single" data-decision-label="What happens after the decision">
+  <h3>D3 · What happens after the decision?</h3>
+  <label data-option-id="rewrite-prompt" data-option-label="A · Append the decision block to the linked implementation card and move it to 2-ready"><input type="radio" name="apply-mode" value="rewrite-prompt"><span><b>A · Append the decision to the linked implementation card, move it to 2-ready</b><span class="d">Works when the implementation card already exists (AGT-2792 shape).</span></span></label>
+  <label data-option-id="spawn-cards" data-option-label="B · Create cards from the chosen option's requirements"><input type="radio" name="apply-mode" value="spawn-cards"><span><b>B · Create cards from the chosen option's requirements</b><span class="d">Works when the decision precedes the work; same mechanism as concept promotion.</span></span></label>
+  <label data-option-id="both" data-option-label="C · Both, chosen by whether an implementation card is linked (recommendation)"><input type="radio" name="apply-mode" value="both"><span><b>C · Both, depending on whether an implementation card is linked</b><span class="d">One "apply" step with two outcomes; the record links whatever it produced.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="migration" data-decision-kind="single" data-decision-label="Migration of existing prose decisions">
+  <h3>D4 · Migrate the five existing prose decision cards?</h3>
+  <label data-option-id="migrate-now" data-option-label="A · Yes, with a one-off script as part of the first delivery, AGT-2792 first (recommendation)"><input type="radio" name="migration" value="migrate-now"><span><b>A · Yes, one-off script in the first delivery, AGT-2792 first</b><span class="d">The acceptance example of the implementation card; proves the migration path.</span></span></label>
+  <label data-option-id="manual" data-option-label="B · No, recreate them by hand when needed"><input type="radio" name="migration" value="manual"><span><b>B · No, recreate them by hand when needed</b><span class="d">Less code, but the five cards stay invisible until someone touches them.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="reminders" data-decision-kind="single" data-decision-label="Reminders and escalation">
+  <h3>D5 · Reminders when a decision waits?</h3>
+  <label data-option-id="reminder" data-option-label="A · Reminder in inbox and activity feed after the due date, default three days (recommendation)"><input type="radio" name="reminders" value="reminder"><span><b>A · Reminder in inbox and activity feed after the due date, default three days</b><span class="d">The blocked work has a cost of delay; the reminder names it.</span></span></label>
+  <label data-option-id="none" data-option-label="B · No reminders"><input type="radio" name="reminders" value="none"><span><b>B · No reminders</b><span class="d">Badge and inbox only.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+</section>
+
+<section id="s9">
+<h2><span class="no">§9</span>Implementation</h2>
+<p>Four cards, created by concept promotion once §8 is decided. They are listed in <code>workbench.json</code> as implementation tasks; AGT-2795 is the concept card and holds the full requirement text until then.</p>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Card</th><th>Scope</th><th>Depends on</th></tr></thead>
+<tbody>
+<tr><td>Backend: decision kind, options, decide and reopen API, blocking, wiki record</td><td><code>TaskKinds.Decision</code>, options model, <code>POST /api/tasks/{id}/decision</code> and <code>/reopen</code>, claim guard for blocked dependants, record via the decision service, tests</td><td></td></tr>
+<tr><td>Frontend: badge, detail call to action, blocked-by, inbox</td><td>Board and list badge with decider, header count, card detail with options and rationale, blocked-by marker, inbox entries next to Dossier decisions, tests</td><td>Backend</td></tr>
+<tr><td>Apply step and creation paths</td><td>Apply on decide (prompt block or new cards), decision cards offered by runner Blocked outcome, failure intervention and Dossier promotion; reminder after due date</td><td>Backend</td></tr>
+<tr><td>Migration and docs</td><td>One-off migration of the five prose cards, docs page "Decision cards", paragraph in the task-integration workflow</td><td>Backend, Frontend</td></tr>
+</tbody>
+</table>
+</div>
+<p class="muted">Sources: AGT-2792 and the operator feedback of 2026-09-13; <code>backend/Shared/Models/TaskKinds.cs</code>, <code>TaskModes.cs</code>, <code>backend/Features/Docs/WorkbenchDecisionService.cs</code>, <code>ProjectDocsEndpoints.cs</code>, <code>ProjectProposalEndpoints.cs</code>, <code>ReviewDecisionsEndpoints.cs</code>; Dossiers <code>decision-briefing</code> and <code>docker-ausfuehrungswelt-migration</code> (inline decision convention, AGT-2520).</p>
+</section>
+</main>
+</body>
+</html>
