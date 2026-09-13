@@ -36,6 +36,32 @@ ng build
 
 This will compile your project and store the build artifacts in the `dist/` directory. By default, the production build optimizes your application for performance and speed.
 
+### Initial bundle budget
+
+The production `initial` bundle has a 3 MB warning budget and a 5,121 kB error
+budget in `angular.json`. Release candidates should stay at or below 5,000 kB
+so normal growth does not immediately block promotion.
+
+Measure the optimized bundle from this directory and open the emitted esbuild
+metadata with a bundle analyzer:
+
+```bash
+npx ng build frontend --configuration production --stats-json
+npx --yes esbuild-visualizer --metadata dist/frontend/stats.json --filename bundle-analysis.html
+```
+
+Route-specific components and heavy libraries must use `@defer`,
+`loadComponent`, `loadChildren`, or `import()` so they are absent from the
+initial graph. A budget increase requires a dated entry in this section that
+names the feature or dependency that grew and explains why it must load before
+the first board render.
+
+- 2026-09-13: kept the 5,121 kB error budget unchanged. Since `cf1997665`, the
+  initial bundle grew from 4,986.47 kB to 5,250.74 kB, led by retention,
+  execution-host, task-detail, project-detail, studio-shell, and watcher
+  additions. Splitting task-detail runtime state from its lazy component entry
+  moved 905.91 kB out of the initial graph, reducing it to 4,344.83 kB.
+
 ## Running unit tests
 
 To execute unit tests with the [Vitest](https://vitest.dev/) test runner, use the following command:

@@ -40,6 +40,8 @@ import {
   TaskDetailComponent,
   DetailLoadErrorComponent,
   TaskDetailLoadSectionsComponent,
+} from './features/task-detail/lazy';
+import {
   TaskSelectionService,
   TriageController,
   LanePagerService,
@@ -49,7 +51,7 @@ import {
   mergeAcceptViewFor,
   type MergeAcceptView,
   type TriageButton,
-} from './features/task-detail';
+} from './features/task-detail/runtime';
 import {
   buildComposerLocationContext,
   OrchestratorChatHistoryComponent,

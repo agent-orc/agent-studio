@@ -4,7 +4,7 @@ import { TaskState, type TaskInfo } from '../../../../models/task.model';
 import { NotificationService } from '../../../../services/notification.service';
 import { TaskService } from '../../../../services/task.service';
 import { stateLabel } from '../../../../services/format.util';
-import { TaskSelectionService } from '../../../task-detail';
+import { TaskSelectionService } from '../../../task-detail/runtime';
 
 @Component({
   selector: 'app-failure-intervention-chip',

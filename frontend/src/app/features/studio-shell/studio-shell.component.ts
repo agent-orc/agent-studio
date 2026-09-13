@@ -28,7 +28,7 @@ import { ListRowComponent } from '../../components/list-row/list-row.component';
 import { ClientService } from '../../services/client.service';
 import { FeatureFlagsService } from '../../services/feature-flags.service';
 import { projectIdentity } from '../../services/project-identity.util';
-import { TaskSelectionService } from '../task-detail';
+import { TaskSelectionService } from '../task-detail/runtime';
 import { ProjectDetailComponent } from '../project-detail';
 import {
   PROJECT_RAIL_ITEMS,
