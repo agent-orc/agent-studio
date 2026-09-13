@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentTaskboard.UpdateService;
 
@@ -110,98 +111,165 @@ public static class StableReleaseContract
 
     /// <summary>
     /// Proves that the dependency identities declared by a candidate manifest
-    /// are the identities pinned by that candidate commit. Callers must supply
-    /// the three files read from <c>manifest.Commit</c>, never from the mutable
-    /// working tree.
+    /// are the identities selected by that candidate commit's project release
+    /// definition. Callers must supply source files read from
+    /// <c>manifest.Commit</c>, never from the mutable working tree.
     /// </summary>
-    public static IReadOnlyList<string> ValidateCandidateDependencyLocks(
+    public static IReadOnlyList<string> ValidateCandidateDependencies(
         ReleaseManifest manifest,
-        string nugetLockJson,
-        string npmPackageJson,
-        string npmLockJson)
+        ProjectExecutionDefinition definition,
+        IReadOnlyDictionary<string, string> sourceFiles)
     {
         var errors = new List<string>();
+        if (definition.Release is null)
+        {
+            errors.Add("candidate .agent-studio/project.yml does not declare a release contract");
+            return errors;
+        }
+
+        ValidateIdentity(manifest.CodingAgentRunner, "CodingAgentRunner", definition.Release, sourceFiles, errors);
+        ValidateIdentity(manifest.CodingAgentChat, "coding-agent-chat", definition.Release, sourceFiles, errors);
+        return errors;
+    }
+
+    private static void ValidateIdentity(
+        ReleaseArtifact artifact,
+        string package,
+        ProjectReleaseDefinition release,
+        IReadOnlyDictionary<string, string> sourceFiles,
+        List<string> errors)
+    {
+        var rule = release.Identity.FirstOrDefault(candidate =>
+            string.Equals(candidate.Package, package, StringComparison.OrdinalIgnoreCase));
+        if (rule is null)
+        {
+            errors.Add($"candidate release identity rule for {package} is missing from .agent-studio/project.yml");
+            return;
+        }
+
+        if (!rule.UsesLockFile)
+        {
+            CompareRuleValue(artifact.Version, rule.Version, $"candidate {package} version", errors);
+            CompareRuleValue(artifact.Integrity, rule.Integrity, $"candidate {package} integrity", errors);
+            return;
+        }
+
+        if (!sourceFiles.TryGetValue(rule.Source!, out var source))
+        {
+            errors.Add($"candidate release identity source {rule.Source} could not be read from the tagged commit");
+            return;
+        }
+
+        if (string.Equals(rule.Ecosystem, "nuget", StringComparison.Ordinal))
+            ValidateNugetIdentity(artifact, rule, source, errors);
+        else if (string.Equals(rule.Ecosystem, "npm", StringComparison.Ordinal))
+            ValidateNpmIdentity(artifact, rule, source, sourceFiles, errors);
+        else
+            errors.Add($"candidate release identity {package} has unsupported ecosystem {rule.Ecosystem}");
+    }
+
+    private static void ValidateNugetIdentity(
+        ReleaseArtifact artifact,
+        ProjectReleaseIdentityRule rule,
+        string source,
+        List<string> errors)
+    {
         try
         {
-            using var nuget = JsonDocument.Parse(nugetLockJson);
-            JsonElement? lockedRunner = null;
+            using var nuget = JsonDocument.Parse(source);
+            JsonElement? lockedPackage = null;
             if (nuget.RootElement.TryGetProperty("dependencies", out var frameworks))
             {
                 foreach (var framework in frameworks.EnumerateObject())
                 {
-                    if (framework.Value.TryGetProperty("CodingAgentRunner", out var runner))
+                    if (framework.Value.TryGetProperty(rule.Package, out var candidate))
                     {
-                        lockedRunner = runner;
+                        lockedPackage = candidate;
                         break;
                     }
                 }
             }
 
-            if (lockedRunner is null)
+            if (lockedPackage is null)
             {
-                errors.Add("candidate CodingAgentRunner is missing from backend/packages.lock.json");
+                errors.Add($"candidate {rule.Package} is missing from {rule.Source}");
             }
             else
             {
-                var runner = lockedRunner.Value;
-                CompareLockedValue(manifest.CodingAgentRunner.Version,
-                    ReadString(runner, "resolved"), "candidate CodingAgentRunner version", errors);
-                var contentHash = ReadString(runner, "contentHash");
-                CompareLockedValue(manifest.CodingAgentRunner.Integrity,
+                var value = lockedPackage.Value;
+                CompareRuleValue(artifact.Version, ReadString(value, "resolved"),
+                    $"candidate {rule.Package} version", errors);
+                var contentHash = ReadString(value, "contentHash");
+                CompareRuleValue(artifact.Integrity,
                     string.IsNullOrWhiteSpace(contentHash) ? null : $"sha512-{contentHash}",
-                    "candidate CodingAgentRunner integrity", errors);
+                    $"candidate {rule.Package} integrity", errors);
             }
         }
         catch (JsonException ex)
         {
-            errors.Add($"candidate backend/packages.lock.json is invalid: {ex.Message}");
+            errors.Add($"candidate {rule.Source} is invalid: {ex.Message}");
+        }
+    }
+
+    private static void ValidateNpmIdentity(
+        ReleaseArtifact artifact,
+        ProjectReleaseIdentityRule rule,
+        string source,
+        IReadOnlyDictionary<string, string> sourceFiles,
+        List<string> errors)
+    {
+        var packageJsonPath = SiblingPath(rule.Source!, "package.json");
+        if (!sourceFiles.TryGetValue(packageJsonPath, out var packageJson))
+            errors.Add($"candidate {packageJsonPath} could not be read from the tagged commit");
+        else
+        {
+            try
+            {
+                using var package = JsonDocument.Parse(packageJson);
+                var spec = package.RootElement.TryGetProperty("dependencies", out var dependencies)
+                    ? ReadString(dependencies, rule.Package)
+                    : null;
+                if (string.IsNullOrWhiteSpace(spec))
+                    errors.Add($"candidate {rule.Package} is missing from {packageJsonPath}");
+                else if (spec.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
+                    errors.Add($"candidate {rule.Package} still resolves from a local file: dist artifact");
+                else
+                    CompareRuleValue(artifact.Version, spec, $"candidate {rule.Package} package.json version", errors);
+            }
+            catch (JsonException ex)
+            {
+                errors.Add($"candidate {packageJsonPath} is invalid: {ex.Message}");
+            }
         }
 
-        string? packageSpec = null;
         try
         {
-            using var package = JsonDocument.Parse(npmPackageJson);
-            if (package.RootElement.TryGetProperty("dependencies", out var dependencies))
-                packageSpec = ReadString(dependencies, "coding-agent-chat");
-            if (string.IsNullOrWhiteSpace(packageSpec))
-                errors.Add("candidate Coding Agent Chat is missing from frontend/package.json");
-            else if (packageSpec.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
-                errors.Add("candidate Coding Agent Chat still resolves from a local file: dist artifact");
-            else
-                CompareLockedValue(manifest.CodingAgentChat.Version, packageSpec,
-                    "candidate Coding Agent Chat package.json version", errors);
-        }
-        catch (JsonException ex)
-        {
-            errors.Add($"candidate frontend/package.json is invalid: {ex.Message}");
-        }
-
-        try
-        {
-            using var packageLock = JsonDocument.Parse(npmLockJson);
+            using var packageLock = JsonDocument.Parse(source);
             if (!packageLock.RootElement.TryGetProperty("packages", out var packages)
-                || !packages.TryGetProperty("node_modules/coding-agent-chat", out var lockedChat))
+                || !packages.TryGetProperty($"node_modules/{rule.Package}", out var lockedPackage))
             {
-                errors.Add("candidate Coding Agent Chat is missing from frontend/package-lock.json");
+                errors.Add($"candidate {rule.Package} is missing from {rule.Source}");
+                return;
             }
-            else
-            {
-                var resolved = ReadString(lockedChat, "resolved");
-                if (string.IsNullOrWhiteSpace(resolved)
-                    || resolved.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
-                    errors.Add("candidate Coding Agent Chat lock entry is not an immutable registry artifact");
-                CompareLockedValue(manifest.CodingAgentChat.Version,
-                    ReadString(lockedChat, "version"), "candidate Coding Agent Chat locked version", errors);
-                CompareLockedValue(manifest.CodingAgentChat.Integrity,
-                    ReadString(lockedChat, "integrity"), "candidate Coding Agent Chat integrity", errors);
-            }
+            var resolved = ReadString(lockedPackage, "resolved");
+            if (string.IsNullOrWhiteSpace(resolved)
+                || resolved.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
+                errors.Add($"candidate {rule.Package} lock entry is not an immutable registry artifact");
+            CompareRuleValue(artifact.Version, ReadString(lockedPackage, "version"),
+                $"candidate {rule.Package} locked version", errors);
+            CompareRuleValue(artifact.Integrity, ReadString(lockedPackage, "integrity"),
+                $"candidate {rule.Package} integrity", errors);
         }
         catch (JsonException ex)
         {
-            errors.Add($"candidate frontend/package-lock.json is invalid: {ex.Message}");
+            errors.Add($"candidate {rule.Source} is invalid: {ex.Message}");
         }
+    }
 
-        return errors;
+    private static string SiblingPath(string path, string fileName)
+    {
+        var slash = path.LastIndexOf('/');
+        return slash < 0 ? fileName : $"{path[..slash]}/{fileName}";
     }
 
     private static string? ReadString(JsonElement value, string property) =>
@@ -209,12 +277,12 @@ public static class StableReleaseContract
             ? field.GetString()
             : null;
 
-    private static void CompareLockedValue(string declared, string? locked, string label, List<string> errors)
+    private static void CompareRuleValue(string declared, string? expected, string label, List<string> errors)
     {
-        if (string.IsNullOrWhiteSpace(locked))
-            errors.Add($"{label} is missing from its lockfile");
-        else if (!string.Equals(declared, locked, StringComparison.Ordinal))
-            errors.Add($"{label} mismatch (manifest={declared}, lock={locked})");
+        if (string.IsNullOrWhiteSpace(expected))
+            errors.Add($"{label} is missing from its release identity source");
+        else if (!string.Equals(declared, expected, StringComparison.Ordinal))
+            errors.Add($"{label} mismatch (manifest={declared}, rule={expected})");
     }
 
     private static void Validate(ReleaseManifest? manifest, string name, List<string> errors, bool allowLegacy)

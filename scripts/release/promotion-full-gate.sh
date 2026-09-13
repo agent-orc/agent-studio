@@ -58,8 +58,10 @@ printf '[promotion-full-gate] dotnet=%s\n' "$(dotnet --version)"
 printf '[promotion-full-gate] node=%s\n' "$(node --version)"
 printf '[promotion-full-gate] npm=%s\n' "$(npm --version)"
 
-run_at "$repo" '.NET restore' \
-  dotnet restore agent-taskboard.sln
+run_at "$repo" 'Locked dependency identity guard' \
+  bash scripts/release/locked-restore.test.sh
+run_at "$repo" '.NET solution restore' \
+  dotnet restore agent-taskboard.sln --locked-mode
 run_at "$repo/frontend" 'Frontend dependency install' \
   npm ci
 run_at "$repo/frontend" 'Production dependency audit' \

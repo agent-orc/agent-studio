@@ -8,6 +8,15 @@ This page explains how a finished task's work reaches the effective integration 
 
 The run agent does NO git. You do not branch, stage, commit, push, or merge. The platform owns all git operations as pipeline steps (ADR-0052). Just edit files in your working directory; the runner captures, commits, and integrates your changes for you. If your run leaves the shared main checkout dirty in an unexpected way during a parallel run, that is reported as a containment violation, not committed.
 
+Agent Studio dependency changes have one additional repository rule. When a
+change affects `backend/OrchestratorApi.csproj`, update and commit
+`backend/packages.lock.json` in the same delivery, then prove `dotnet restore
+backend/OrchestratorApi.csproj --locked-mode`. Keep the lock generated against
+the normal NuGet sources. A package copied through a local scratch feed can
+leave the same version with a different content hash in the local cache and
+later fail with `NU1403`; clear the contaminated cache entry and regenerate
+from the registry instead of accepting the scratch-feed hash.
+
 ## Worktree + branch model
 
 - Branch naming: every isolated task runs on `task/<id>` (`WorktreeTaskLifecycle.BranchFor`).

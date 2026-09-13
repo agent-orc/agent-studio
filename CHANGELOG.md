@@ -14,6 +14,9 @@ release yet.
 
 ### Added
 
+- Project-owned Stable release identity and restore rules, with lock-file and
+  exact-pin-plus-registry-integrity validation, fixture coverage, and a legacy
+  Stable first-release runbook.
 - Stage M1 repository execution definitions, shared preparation manifests,
   content-addressed npm, NuGet, and Playwright caches, Linux Runner stable
   checkouts with leased subject worktrees, proposal cards, and the project
@@ -40,6 +43,9 @@ release yet.
 
 ### Fixed
 
+- Stable release manifest generation and candidate preflight no longer assume
+  a product-wide `backend/packages.lock.json`; Agent Studio now declares and
+  commits its NuGet lock, and promotion rejects missing or stale lock state.
 - Develop-to-main promotion now supplies a configurable annotated-tag identity
   independently of host Git configuration and records post-gate tag or atomic
   push failures in the durable promotion record.

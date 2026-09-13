@@ -749,6 +749,8 @@ The block-modal stays mounted while `phase ∈ {preparing, pausing-runners, pull
 
 **Revision (2026-07-12).** Assembly timestamps and moving branch heads are no longer release identity. Stable consumes an immutable tagged `build-manifest.json` containing Agent Studio plus exact CAR and CAC provenance and integrity. The release gate compares running, installed, candidate, and latest-approved identities and classifies same-version, upgrade, downgrade, or divergence, including offline comparison from cached immutable metadata. Dirty, untagged, tag/version-mismatched, package-mismatched, and same-version/different-artifact candidates are refused. Restart verification must compare the complete runtime identity with the intended manifest, while rollback retains the prior manifest and artifact. Pre-contract installations surface explicitly as dirty `untagged` legacy builds. The operational contract is [`docs/operations/stable-release-contract.md`](../../operations/stable-release-contract.md).
 
+**Revision (2026-09-13).** Dependency identity and restore paths are project-owned. The generator and Update Service read the `release.identity` and `release.restore` rules from `.agent-studio/project.yml` at the tagged candidate commit instead of assuming product-wide lock-file paths. A rule uses either a committed lock file or an exact version plus registry integrity. A missing rule is a hard preflight failure. Agent Studio selects lock-file identity for CAR and CAC, restores its backend with NuGet locked mode, and removes the Angular optimizer cache after the npm restore.
+
 **Status.** Accepted.
 
 ---
