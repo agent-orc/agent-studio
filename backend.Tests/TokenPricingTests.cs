@@ -1,5 +1,4 @@
-
-
+using System.Xml.Linq;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -21,9 +20,20 @@ public class TokenPricingTests
             .Cast<System.Reflection.AssemblyInformationalVersionAttribute>()
             .Single()
             .InformationalVersion;
+        var projectPath = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory,
+            "../../../../backend/OrchestratorApi.csproj"));
+        var configuredVersion = XDocument.Load(projectPath)
+            .Descendants("PackageReference")
+            .Single(reference => string.Equals(
+                (string?)reference.Attribute("Include"),
+                "TokenEconomy",
+                StringComparison.Ordinal))
+            .Attribute("Version")?.Value.Trim('[', ']')
+            ?? throw new InvalidOperationException("TokenEconomy package version is not configured.");
 
         Assert.Equal("TokenEconomy", assembly.GetName().Name);
-        Assert.StartsWith("0.3.3", informationalVersion, StringComparison.Ordinal);
+        Assert.StartsWith(configuredVersion, informationalVersion, StringComparison.Ordinal);
     }
 
     [Fact]
