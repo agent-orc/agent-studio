@@ -12,6 +12,20 @@ release yet.
 
 ## [Unreleased]
 
+### Added
+
+- Economy-mode model routing floor: `sonnet-low` (`claude-sonnet-5`/`gpt-5.6-sol`
+  at `low`) is now the lowest tier economy mode may select for feature and bug
+  cards, closing a gap where an unrecognized vendor catalogue's positional
+  fallback could silently route a Claude CLI card to `claude-haiku-4-5` with no
+  thinking level (AGT-2793, AGT-2807). `ModelRoutingPolicyRegistry.Recommend()`
+  now always returns an explicit thinking level.
+- `POST /api/admin/maintenance/backfill-thinking-levels` reports (default) or
+  applies (`apply=true`) a policy-derived `thinkingLevel` for existing cards
+  that carry a `model` with no level.
+- The model-level badge now renders a visible placeholder when a model has no
+  thinking level, instead of omitting the level silently.
+
 ## [0.2.0] - 2026-09-13
 
 First tagged Stable release. It moves the Windows Stable from the untagged legacy checkout (cf1997665) to the immutable tag v0.2.0 through the release contract: build manifest, candidate and approved tag, locked dependency restore, runtime identity verification.

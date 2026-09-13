@@ -125,6 +125,31 @@ thinking level marks the card explicit in one action. Explicit pins remain
 untouched by qualification, while the policy recommendation stays visible for
 comparison.
 
+### Create-card contract
+
+`TaskCrudEndpoints`' create handler never persists a card with a model but no
+thinking level: when the caller omits `thinkingLevel`, the handler calls
+`ModelRoutingPolicyRegistry.Recommend()` and stamps both `model` and
+`thinkingLevel` from the same recommendation, with `thinkingLevelExplicit`
+mirroring `modelExplicit` (`false` for a policy-derived pick, `true` only when
+the caller pinned a level). The model-level badge (`model-level-indicator`)
+always renders a level code for any non-human, non-unknown model family, so a
+model without a level shows as missing (`?`, dimmed) instead of silently
+rendering only the model code.
+
+### Backfill contract
+
+`POST /api/admin/maintenance/backfill-thinking-levels?apply={bool}` (see
+`AdminConfigEndpoints`, backed by
+`TaskMutationService.BackfillThinkingLevels`) finds cards, including archived
+ones, that carry a `model` but no `thinkingLevel` (the pre-AGT-2808 creation
+gap; AGT-2793 and AGT-2807 are the reference cases). With `apply=false`
+(default query use) it only reports the affected jobs and the level the
+policy would resolve for each. With `apply=true` it writes that resolved
+level to disk with `thinkingLevelExplicit=false`, since the value is
+policy-derived, not an operator pin, and invalidates the job scan cache. Run
+the report first and confirm the entry list before applying.
+
 ### Hard floors
 
 Apply these after scoring:
