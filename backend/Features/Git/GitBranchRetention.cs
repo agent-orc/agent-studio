@@ -129,23 +129,22 @@ public static class BranchRetentionPolicy
         if (facts.TipCommittedAtUtc is null)
             return BranchRetentionDecision.MissingCommitTime;
 
-        if (!facts.IsTaskTerminal && !facts.MergedIntoMain)
-            return BranchRetentionDecision.SalvageRefTaskNotTerminal;
-
         var age = now - facts.TipCommittedAtUtc.Value;
-        if (age < TimeSpan.FromDays(SalvageRefRetentionDays))
-            return BranchRetentionDecision.SalvageRefTooYoung;
+        var ageDays = (int)age.TotalDays;
 
         if (!facts.MainAvailable)
             return BranchRetentionDecision.MainUnavailable;
 
-        if (!facts.MergedIntoMain)
-        {
-            var ageDays = (int)age.TotalDays;
-            return ageDays >= SalvageRefRetentionDays ? BranchRetentionDecision.Delete : BranchRetentionDecision.SalvageRefTooYoung;
-        }
+        if (facts.MergedIntoMain)
+            return BranchRetentionDecision.Delete;
 
-        return BranchRetentionDecision.Delete;
+        if (ageDays >= SalvageRefRetentionDays)
+            return BranchRetentionDecision.Delete;
+
+        if (!facts.IsTaskTerminal)
+            return BranchRetentionDecision.SalvageRefTaskNotTerminal;
+
+        return BranchRetentionDecision.SalvageRefTooYoung;
     }
 
     private static BranchRetentionDecision EvaluateQuarantineRef(
