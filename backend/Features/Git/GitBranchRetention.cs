@@ -225,7 +225,9 @@ public sealed record BranchRetentionAction(
     bool Deleted,
     string Reason,
     BranchNamespace? Namespace = null,
-    string? TaskKey = null);
+    string? TaskKey = null,
+    bool Reachable = false,
+    string? ProofBranch = null);
 
 public sealed record BranchRetentionProjectReport(
     string Project,
@@ -234,7 +236,8 @@ public sealed record BranchRetentionProjectReport(
     string? MainRef,
     int StaleWorktreesPruned,
     IReadOnlyList<BranchRetentionAction> Actions,
-    string? Error)
+    string? Error,
+    DateTimeOffset RecordedAtUtc = default)
 {
     public int DeletedCount => Actions.Count(action => action.Deleted);
     public int KeptCount => Actions.Count - DeletedCount;
@@ -437,7 +440,8 @@ public sealed class GitBranchRetentionService
             main?.ShortName,
             pruned,
             actions,
-            null);
+            null,
+            now);
     }
 
     private BranchRetentionAction DeleteAfterRecheck(
@@ -580,7 +584,107 @@ public sealed class GitBranchRetentionService
         string project,
         string? repositoryPath,
         string error)
-        => new(project, repositoryPath, null, null, 0, [], error);
+        => new(project, repositoryPath, null, null, 0, [], error, DateTimeOffset.UtcNow);
+
+    /// <summary>
+    /// Reclaim refs for a specific task after integration. Runs on task's configured
+    /// integration branch and main, evaluating task/runner/delivery refs for the task key.
+    /// Does not block integration if reclamation fails; failures are logged.
+    /// </summary>
+    public BranchRetentionProjectReport ReclaimForTask(
+        string project,
+        string repositoryPath,
+        string taskKey,
+        string integrationBranch = "develop",
+        bool isArchive = false,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var startedAt = _time.GetUtcNow();
+            if (string.IsNullOrWhiteSpace(repositoryPath) || !Directory.Exists(repositoryPath))
+                return Failed(project, repositoryPath, "Repository path does not exist.");
+
+            var fetch = _git.Fetch(repositoryPath, cancellationToken: cancellationToken);
+            if (!string.IsNullOrWhiteSpace(fetch.Error))
+            {
+                return new BranchRetentionProjectReport(
+                    project, repositoryPath, null, null, 0, [],
+                    $"Origin refresh failed; reclamation skipped: {fetch.Error}",
+                    startedAt);
+            }
+
+            var integration = ResolveProtectedRef(repositoryPath, integrationBranch);
+            var main = ResolveProtectedRef(repositoryPath, "main");
+            var worktrees = _git.ListWorktrees(repositoryPath);
+            var checkedOut = worktrees
+                .Where(worktree => Directory.Exists(worktree.Path) && !string.IsNullOrWhiteSpace(worktree.Branch))
+                .Select(worktree => worktree.Branch!)
+                .ToHashSet(StringComparer.Ordinal);
+
+            var taskPatterns = new[] { $"refs/remotes/origin/task/{taskKey}", $"refs/remotes/origin/runner/*/{taskKey}*", $"refs/remotes/origin/delivery/{taskKey}" };
+            var candidates = taskPatterns
+                .SelectMany(pattern => _git.ListRefs(repositoryPath, pattern))
+                .Select(reference => ToCandidate(reference, remote: true))
+                .OrderBy(candidate => candidate.Branch, StringComparer.Ordinal)
+                .ToList();
+
+            var actions = new List<BranchRetentionAction>();
+            var minimumAge = TimeSpan.FromDays(1);
+            foreach (var candidate in candidates)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var facts = FactsForReclaim(
+                    repositoryPath, candidate, checkedOut, integration, main, taskKey, isArchive);
+                var decision = BranchRetentionPolicy.Evaluate(facts, startedAt, minimumAge);
+                if (decision != BranchRetentionDecision.Delete)
+                {
+                    actions.Add(ToKeptAction(candidate, decision));
+                    continue;
+                }
+
+                actions.Add(DeleteAfterRecheck(
+                    repositoryPath, candidate, startedAt, minimumAge, dryRun: false, cancellationToken));
+            }
+
+            return new BranchRetentionProjectReport(
+                project,
+                repositoryPath,
+                integration?.ShortName,
+                main?.ShortName,
+                0,
+                actions,
+                null,
+                startedAt);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Branch reclaim failed for task {Project}/{TaskKey}", project, taskKey);
+            return Failed(project, repositoryPath, ex.Message);
+        }
+    }
+
+    private BranchRetentionFacts FactsForReclaim(
+        string root,
+        RetentionCandidate candidate,
+        IReadOnlySet<string> checkedOut,
+        GitRefLine? integration,
+        GitRefLine? main,
+        string taskKey,
+        bool isArchive)
+        => new(
+            candidate.Branch,
+            BranchRetentionPolicy.ClassifyNamespace(candidate.Branch),
+            candidate.Reference.CommittedAtUtc,
+            checkedOut.Contains(candidate.Branch),
+            integration is not null,
+            main is not null,
+            integration is not null && _git.IsAncestor(root, candidate.Reference.Sha, integration.Sha),
+            main is not null && _git.IsAncestor(root, candidate.Reference.Sha, main.Sha),
+            false,
+            integration?.ShortName,
+            true,
+            isArchive);
 
     private sealed record RetentionCandidate(GitRefLine Reference, string Branch, bool Remote);
 }
