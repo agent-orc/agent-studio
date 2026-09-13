@@ -40,6 +40,9 @@ release yet.
 
 ### Fixed
 
+- Develop-to-main promotion now supplies a configurable annotated-tag identity
+  independently of host Git configuration and records post-gate tag or atomic
+  push failures in the durable promotion record.
 - Production builds no longer load the task-detail component graph with the
   initial task board bundle, restoring release-budget headroom without raising
   the configured limit.

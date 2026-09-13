@@ -24,6 +24,10 @@ Options:
   --remote <name>                   Git remote (default: origin).
   -h, --help                        Show this help.
 
+Environment:
+  PROMOTION_TAGGER_NAME             Annotated tagger name (default: Agent Studio Promotion).
+  PROMOTION_TAGGER_EMAIL            Annotated tagger email (default: promotion@agent-studio.invalid).
+
 The execute path has no gate bypass. A non-fast-forward candidate, a red or
 incomplete gate, a tag collision, or a non-atomic push leaves main unchanged.
 EOF
@@ -35,6 +39,8 @@ required_ancestor=
 tag_name=
 evidence_dir=
 prefer_develop_conflicts=0
+PROMOTION_TAGGER_NAME=${PROMOTION_TAGGER_NAME:-Agent Studio Promotion}
+PROMOTION_TAGGER_EMAIL=${PROMOTION_TAGGER_EMAIL:-promotion@agent-studio.invalid}
 
 while (($#)); do
   case "$1" in
@@ -161,9 +167,10 @@ write_record() {
   local gate_status=${3:-not-run}
   local conflicts=${4:-}
   local pushed=${5:-false}
+  local error=${6:-}
   local gate_blob
   gate_blob=$(git -C "$repo" hash-object "$gate_script")
-  printf '{"schemaVersion":1,"status":"%s","mode":"%s","remote":"%s","developSha":"%s","previousMainSha":"%s","candidateSha":"%s","releaseTag":"%s","requiredAncestor":"%s","conflictPolicy":"%s","conflicts":"%s","gate":"%s","gateScriptBlob":"%s","atomicPush":%s,"createdAtUtc":"%s"}\n' \
+  printf '{"schemaVersion":1,"status":"%s","mode":"%s","remote":"%s","developSha":"%s","previousMainSha":"%s","candidateSha":"%s","releaseTag":"%s","requiredAncestor":"%s","conflictPolicy":"%s","conflicts":"%s","gate":"%s","gateScriptBlob":"%s","atomicPush":%s,"error":"%s","createdAtUtc":"%s"}\n' \
     "$(json_escape "$status")" \
     "$(json_escape "$mode")" \
     "$(json_escape "$remote")" \
@@ -177,6 +184,7 @@ write_record() {
     "$(json_escape "$gate_status")" \
     "$(json_escape "$gate_blob")" \
     "$pushed" \
+    "$(json_escape "$error")" \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     > "$evidence_dir/promotion-record.json"
 }
@@ -311,8 +319,24 @@ Candidate: $candidate_sha
 Full gate: passed
 Gate script blob: $(git -C "$repo" hash-object "$gate_script")
 Candidate policy: exact develop SHA"
-git -C "$candidate_checkout" -c tag.gpgSign=false tag -a "$tag_name" \
-  -m "$tag_message" "$candidate_sha"
+set +e
+git -C "$candidate_checkout" \
+  -c user.name="$PROMOTION_TAGGER_NAME" \
+  -c user.email="$PROMOTION_TAGGER_EMAIL" \
+  -c tag.gpgSign=false \
+  tag -a "$tag_name" -m "$tag_message" "$candidate_sha" \
+  > "$evidence_dir/tag.log" 2>&1
+tag_rc=$?
+set -e
+if ((tag_rc != 0)); then
+  tag_error="annotated tag creation failed with exit code $tag_rc"
+  if [[ -s "$evidence_dir/tag.log" ]]; then
+    tag_error+=": $(< "$evidence_dir/tag.log")"
+  fi
+  log "$tag_error; main remains unchanged"
+  write_record blocked-tag "$candidate_sha" passed "$conflict_text" false "$tag_error"
+  exit 6
+fi
 
 set +e
 git -C "$candidate_checkout" push --atomic "$remote" \
@@ -321,8 +345,12 @@ git -C "$candidate_checkout" push --atomic "$remote" \
 push_rc=$?
 set -e
 if ((push_rc != 0)); then
-  log "atomic main/tag push failed with exit code $push_rc; remote main and tag remain unchanged"
-  write_record blocked-push "$candidate_sha" passed "$conflict_text" false
+  push_error="atomic main/tag push failed with exit code $push_rc"
+  if [[ -s "$evidence_dir/push.log" ]]; then
+    push_error+=": $(< "$evidence_dir/push.log")"
+  fi
+  log "$push_error; remote main and tag remain unchanged"
+  write_record blocked-push "$candidate_sha" passed "$conflict_text" false "$push_error"
   exit 6
 fi
 

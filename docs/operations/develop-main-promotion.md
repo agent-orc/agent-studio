@@ -34,8 +34,10 @@ new tip and still promotes the gated candidate. The newer commit waits for the
 next train. A concurrent `main` update is safe only when the current `main`
 remains an ancestor of the candidate. The command never force-pushes, and the
 atomic non-force push closes the race after the final fetch. A red or incomplete
-gate has no override. The temporary tag is removed with the temporary worktree
-after a blocked run, while the durable evidence directory remains.
+gate has no override. A blocked run removes the temporary worktree while the
+durable evidence directory remains. If tag creation succeeded before an atomic
+push failure, its local ref may remain in the operator checkout and should be
+removed before retrying the same marker.
 
 ## Operator checklist
 
@@ -67,6 +69,22 @@ after a blocked run, while the durable evidence directory remains.
      --required-ancestor 0f5372fce \
      --tag "release/$(date -u +%Y%m%d-%H%M%SZ)"
    ```
+
+   The command supplies a tagger identity for the annotated marker and does not
+   depend on the host's Git identity. Override the defaults when an operator or
+   automation-specific identity is required:
+
+   ```sh
+   PROMOTION_TAGGER_NAME="Release Automation" \
+   PROMOTION_TAGGER_EMAIL="release-automation@example.invalid" \
+     ./scripts/release/promote-develop-to-main.sh \
+       --execute \
+       --tag "release/$(date -u +%Y%m%d-%H%M%SZ)"
+   ```
+
+   `PROMOTION_TAGGER_NAME` defaults to `Agent Studio Promotion`, and
+   `PROMOTION_TAGGER_EMAIL` defaults to
+   `promotion@agent-studio.invalid`.
 
 6. Verify `promotion-record.json` says `status=promoted`, `gate=passed`, and
    `atomicPush=true`. Verify the remote `main` and peeled tag resolve to the
@@ -111,7 +129,10 @@ By default the command writes evidence beneath Git's local
 `--evidence-dir` to use an operator-owned durable location. The record includes
 the start `develop`, previous `main`, exact candidate, required ancestor,
 gate-script blob, gate result, tag, and atomic-push result. Logs include the full
-gate output and remote push response.
+gate output, tag creation output, and remote push response. A tag or push
+failure after a passed gate writes `status=blocked-tag` or
+`status=blocked-push`, retains `gate=passed`, and records the command error so
+the evidence directory remains complete.
 
 ## Deploy cron handoff
 
@@ -137,7 +158,14 @@ condition and a later cron tick retries. The watcher never changes task state.
   if needed, fetch the new tips, and start a new run. A `develop` advance alone
   does not invalidate a gated candidate.
 - Atomic push failure: remote `main` and the release marker remain unchanged.
-  Fix credentials or branch policy, then rerun from fresh refs.
+  The record reports `status=blocked-push`, `gate=passed`, and the push error.
+  Fix credentials or branch policy, remove the unpushed local marker if it is
+  still present, then rerun from fresh refs.
+- Annotated tag failure: remote `main` and the release marker remain unchanged.
+  The record reports `status=blocked-tag`, `gate=passed`, and the tag error.
+  Correct the configured tagger identity or local repository problem, then
+  rerun from fresh refs without repeating diagnosis from an incomplete evidence
+  directory.
 - Deploy failure: the promotion remains a valid release fact. Diagnose the
   external updater and use its rollback procedure; do not rewrite `main` or
   move the release marker.
