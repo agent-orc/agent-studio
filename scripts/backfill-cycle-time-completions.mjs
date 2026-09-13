@@ -301,7 +301,7 @@ function gitEvidence(repoRoot, prefix, verbose, write) {
     '-C', repoRoot, 'log', '--reverse', '--date=iso-strict',
     '--format=@%H|%cI', '--name-status', '-M', '--',
     `:(glob)${prefix}/**/task.json`, `:(glob)${prefix}/**/job.json`,
-  ], { encoding: 'utf8', maxBuffer: 1024 * 1024 * 512 });
+  ], { encoding: 'utf8', maxBuffer: 1024 * 1024 * 512, windowsHide: true });
   if (result.status !== 0)
     throw new Error(`git log failed: ${result.stderr || result.status}`);
   const commits = parseNameStatusLog(result.stdout);

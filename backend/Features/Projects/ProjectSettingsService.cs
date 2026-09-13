@@ -406,6 +406,52 @@ public class ProjectSettingsService
         return true;
     }
 
+    public ProjectExecutionDefinitionOverride SetExecutionDefinitionOverride(
+        string projectName,
+        string definition,
+        string justification)
+    {
+        if (string.IsNullOrWhiteSpace(definition))
+            throw new ArgumentException("Execution definition is required.", nameof(definition));
+        if (string.IsNullOrWhiteSpace(justification))
+            throw new ArgumentException("A justification is required for an execution override.", nameof(justification));
+        var parsed = AgentStudio.TaskServer.Contracts.ProjectDefinitionReader.Parse(definition);
+        if (!parsed.IsValid)
+            throw new ArgumentException(
+                "Execution definition is invalid: " + string.Join("; ", parsed.Issues.Select(issue => issue.Message)),
+                nameof(definition));
+        var value = new ProjectExecutionDefinitionOverride(
+            definition.Trim() + Environment.NewLine,
+            justification.Trim(),
+            DateTime.UtcNow);
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var settings) ? settings : new ProjectSettings();
+            _cache[key] = current with { ExecutionDefinitionOverride = value };
+            Persist();
+        }
+        _logger.LogWarning(
+            "project-execution-override-set project={Project} justification={Justification}",
+            projectName,
+            value.Justification);
+        return value;
+    }
+
+    public void ClearExecutionDefinitionOverride(string projectName)
+    {
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var settings) ? settings : new ProjectSettings();
+            _cache[key] = current with { ExecutionDefinitionOverride = null };
+            Persist();
+        }
+        _logger.LogInformation("project-execution-override-cleared project={Project}", projectName);
+    }
+
     /// <summary>
     /// Charges one successfully admitted coding run against a pending profile's
     /// grace window. Returns the remaining allowance after the charge.

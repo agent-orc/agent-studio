@@ -147,6 +147,7 @@
         "src/app/features/project-detail/components/analysis-report-drilldown/analysis-report-drilldown.scss",
         "src/app/features/project-detail/components/autonomy-slider/autonomy-slider.scss",
         "src/app/features/project-detail/components/project-analysis-reports-section/project-analysis-reports-section.scss",
+        "src/app/features/project-detail/components/project-execution-definition/project-execution-definition.scss",
         "src/app/features/project-detail/components/project-architecture-section/project-architecture-section.scss",
         "src/app/features/project-detail/components/project-detail/project-detail.scss",
         "src/app/features/project-detail/components/project-drift-overview-section/project-drift-overview-section.scss",

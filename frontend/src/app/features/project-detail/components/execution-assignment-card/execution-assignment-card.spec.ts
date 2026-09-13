@@ -146,6 +146,7 @@ describe('ExecutionAssignmentCardComponent', () => {
     const clients = http.match('/api/clients');
     clients.forEach(request => request.flush([]));
     http.expectOne('/api/v1/management/remote-hosts').flush([]);
+    http.expectOne('/api/v1/management/links').flush([]);
     TestBed.inject(RemoteHostsService).hosts.set([{
       id: 'agent-runner-01', name: 'Runner 01', role: 'remote', address: null,
       clientId: 'agent-runner-01', status: 'online', os: 'Linux', lastHeartbeatAt: null,

@@ -14,6 +14,10 @@ release yet.
 
 ### Added
 
+- Stage M1 repository execution definitions, shared preparation manifests,
+  content-addressed npm, NuGet, and Playwright caches, Linux Runner stable
+  checkouts with leased subject worktrees, proposal cards, and the project
+  Settings > Execution surface.
 - Durable restart continuity for local and Remote runs, review aspects, and
   pipeline post-steps, including operator-visible bridge and loss events plus a
   Windows Studio release drill.
@@ -36,5 +40,15 @@ release yet.
 
 ### Fixed
 
+- Process launches across backend, retention, setup, and repository Node
+  scripts now suppress Windows console windows, drain redirected CLI stderr,
+  and carry repository-wide regression guards for future spawn sites.
 - Public-demo execution-route inventory now includes
   `POST /api/v1/reviews/attempts/{attemptId}/reclaim` in the `Continue` path.
+- Frontend release coverage is green again for the `CliAdminPanelComponent`
+  smoke test, the `CliModelsPanelComponent` known-CLI grouping test, the
+  `ExecutionAssignmentCardComponent` delivery-failure test, the
+  `WorkspaceOverlaysComponent` smoke test, and the Dossier and Wiki
+  `GlobalSearchComponent` navigation tests. The additionally exposed
+  `WorkbenchTabHostComponent` catalogue-backfill test is isolated from
+  persisted tab state as well.
