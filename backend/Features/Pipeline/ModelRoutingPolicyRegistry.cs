@@ -4,6 +4,12 @@ using System.Text.RegularExpressions;
 
 namespace AgentStudio.Pipeline;
 
+public sealed record ModelRoutingVendorOverride
+{
+    public string Model { get; init; } = "";
+    public string ThinkingLevel { get; init; } = "medium";
+}
+
 public sealed record ModelRoutingTier
 {
     public string Id { get; init; } = "";
@@ -11,12 +17,15 @@ public sealed record ModelRoutingTier
     public string Model { get; init; } = "";
     public string ThinkingLevel { get; init; } = "medium";
     public int EstimatedSavingsPercent { get; init; }
+    public Dictionary<string, ModelRoutingVendorOverride> VendorOverrides { get; init; } =
+        new(StringComparer.OrdinalIgnoreCase);
 }
 
 public sealed record ModelRoutingTaskTypeDefault
 {
     public string Tier { get; init; } = "";
     public string? HardFloorTier { get; init; }
+    public string? EconomyFloorTier { get; init; }
     public int Score { get; init; }
 }
 
@@ -102,6 +111,9 @@ public sealed class ModelRoutingPolicyRegistry
         var correctnessFloor = string.IsNullOrWhiteSpace(typeDefault.HardFloorTier)
             ? null
             : Tier(typeDefault.HardFloorTier);
+        var economyFloor = string.IsNullOrWhiteSpace(typeDefault.EconomyFloorTier)
+            ? null
+            : Tier(typeDefault.EconomyFloorTier);
         var text = $"{title}\n{prompt}";
 
         if (CriticalFloorSignal.IsMatch(text))
@@ -133,7 +145,7 @@ public sealed class ModelRoutingPolicyRegistry
                 .Where(tier => tier.Rank <= candidateRank)
                 .OrderByDescending(tier => tier.Rank)
                 .First();
-            var floorRank = correctnessFloor?.Rank ?? 0;
+            var floorRank = Math.Max(correctnessFloor?.Rank ?? 0, economyFloor?.Rank ?? 0);
             if (candidate.Rank >= floorRank && candidate.Rank < requested.Rank)
             {
                 selectedTier = candidate;
@@ -183,10 +195,20 @@ public sealed class ModelRoutingPolicyRegistry
         if (available.Count == 0)
             throw new InvalidOperationException("The CLI reported no available models.");
 
+        var vendor = available.Select(model => model.Vendor).FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
+        var overrideRoute = vendor != null && tier.VendorOverrides.TryGetValue(vendor, out var vendorOverride)
+            ? vendorOverride
+            : null;
+        var targetModelId = overrideRoute?.Model ?? tier.Model;
+        var targetThinkingLevel = overrideRoute?.ThinkingLevel ?? tier.ThinkingLevel;
+
         var selected = available.FirstOrDefault(model =>
-            string.Equals(model.Id, tier.Model, StringComparison.OrdinalIgnoreCase));
-        if (selected == null)
+            string.Equals(model.Id, targetModelId, StringComparison.OrdinalIgnoreCase));
+        if (selected == null && overrideRoute == null)
         {
+            // Unknown/future CLI vendor with no exact model or vendor
+            // override: fall back to a positional pick from the ranked
+            // catalogue as a last resort.
             var index = tier.Rank switch
             {
                 >= 2 => 0,
@@ -195,12 +217,14 @@ public sealed class ModelRoutingPolicyRegistry
             };
             selected = available[index];
         }
+        selected ??= available[0];
 
         var levels = selected.ThinkingLevels ?? [];
         var thinking = levels.FirstOrDefault(level =>
-            string.Equals(level, tier.ThinkingLevel, StringComparison.OrdinalIgnoreCase))
+            string.Equals(level, targetThinkingLevel, StringComparison.OrdinalIgnoreCase))
             ?? selected.DefaultThinkingLevel
-            ?? levels.FirstOrDefault();
+            ?? levels.FirstOrDefault()
+            ?? targetThinkingLevel;
         return (selected.Id, thinking);
     }
 
@@ -236,6 +260,17 @@ public sealed class ModelRoutingPolicyRegistry
             if (!string.IsNullOrWhiteSpace(route.HardFloorTier)
                 && !policy.Tiers.Any(tier => string.Equals(tier.Id, route.HardFloorTier, StringComparison.OrdinalIgnoreCase)))
                 throw new InvalidOperationException($"Routing policy task type '{taskType}' references unknown floor '{route.HardFloorTier}'.");
+            if (!string.IsNullOrWhiteSpace(route.EconomyFloorTier)
+                && !policy.Tiers.Any(tier => string.Equals(tier.Id, route.EconomyFloorTier, StringComparison.OrdinalIgnoreCase)))
+                throw new InvalidOperationException($"Routing policy task type '{taskType}' references unknown economy floor '{route.EconomyFloorTier}'.");
+        }
+        foreach (var tier in policy.Tiers)
+        {
+            foreach (var (vendor, route) in tier.VendorOverrides)
+            {
+                if (string.IsNullOrWhiteSpace(route.Model))
+                    throw new InvalidOperationException($"Routing policy tier '{tier.Id}' has an empty vendor override model for '{vendor}'.");
+            }
         }
     }
 }

@@ -23,6 +23,7 @@ should explain when a pin is below the policy floor.
 | Route | Default use | Do not use for | Evidence and rationale |
 |---|---|---|---|
 | `gpt-5.6-luna` / `medium` | Trivial, mechanical, locally specified changes with a small expected diff and an obvious verification path. Examples: remove one control, rename a local label, update a narrow fixture. | Unclear bugs, cross-subsystem behavior, public contracts, migrations, security, concurrency, or distributed state. | No Luna cohort existed in the 2026-07-23 benchmark. This is therefore a cost-saving hypothesis, not a validated quality claim. The empirical uncertainty adds points and keeps borderline work on Terra. |
+| `gpt-5.6-sol` / `low` (or `claude-sonnet-5` / `low`) | Added 2026-09-13 (AGT-2808). The economy floor for feature (and any coding/concept/planning/research) work: the weakest route economy mode may ever select for that class. Not a normal-mode default; only reached by an economy-mode downgrade. | Anything below the floor - economy mode must never fall through to a Haiku-class model for feature/bug work. Haiku-class models are only used by the separate pipeline-support/classification path (`ModelFamilyResolver`, not this registry). | No dedicated historical cohort; introduced to close the Haiku-fallback gap found in AGT-2793/AGT-2807 (economy mode landing Claude-CLI feature cards on `claude-haiku-4-5` via the old positional catalogue fallback). |
 | `gpt-5.6-terra` / `medium` | Standard features, content, and reversible UI or service changes inside one subsystem. This is the default sweet spot when requirements and test seams are clear. | P0 work, fencing, distributed authority, data-loss paths, or changes that require broad architectural reconstruction. | The historical report contained eight Terra/medium records, but none had a known grade and none formed a trustworthy terminal cohort. Keep Terra as the working default, but promote on substantive reissue until controlled data validates it. |
 | `gpt-5.6-sol` / `medium` | Demanding implementation, investigation, or analysis with several interacting concepts, a broad context search, or two to three subsystems. | Correctness-critical control-plane work that meets a hard floor. | Sol/medium had seven standard chore/feature runs with zero reissues. Five had known grades and all five were A or B. This is the strongest favorable historical signal, although the sample is still small and observational. |
 | `gpt-5.6-sol` / `xhigh` | Correctness-critical work: P0, fencing, leases, distributed authority, security boundaries, destructive migrations, data-loss prevention, or subtle concurrent state machines. | Routine work merely because quota is available. More thinking is not a substitute for tighter scope or deterministic tests. | The xhigh cohort was heavily selected for difficult and incident-driven work: 78 runs, 32 reissued, with only 22 known grades. Its high reissue rate is a warning about cohort and pipeline churn, not proof that xhigh causes poor outcomes. This tier is selected by the correctness floor while controlled benchmarks remain open. |
@@ -70,7 +71,8 @@ For core task execution, map the total to the ladder:
 | Score | Route |
 |---:|---|
 | `0-20` | Luna / medium |
-| `21-50` | Terra / medium |
+| `21-24` | Sol / low (`sonnet-low`, economy floor only - see below) |
+| `25-50` | Terra / medium |
 | `51-69` | Sol / medium |
 | `70-100` | Sol / xhigh |
 
@@ -89,11 +91,11 @@ redefine them.
 When a new task has no explicit model pin (`modelExplicit=false`), model
 qualification starts from this convention:
 
-| Task type | Intake score | Normal tier | Economy mode | Correctness floor |
-|---|---:|---|---|---|
-| Chore | 15 | Luna / medium | Luna / medium | None |
-| Feature | 25 | Terra / medium | Luna / medium | None |
-| Bug | 49 | Terra / medium | Terra / medium | Terra / medium |
+| Task type | Intake score | Normal tier | Economy mode | Correctness floor | Economy floor |
+|---|---:|---|---|---|---|
+| Chore | 15 | Luna / medium | Luna / medium | None | None |
+| Feature | 25 | Terra / medium | Sol / low (`sonnet-low`) | None | `sonnet-low` |
+| Bug | 49 | Terra / medium | Terra / medium | Terra / medium | None (the correctness floor already exceeds `sonnet-low`) |
 
 This is an intake fallback, not permission to ignore better task evidence.
 Security boundaries, distributed authority, credible data-loss paths, and
@@ -102,11 +104,51 @@ persistent-state migrations, and changes spanning three or more runtime
 subsystems promote to at least Sol/medium. These promotions become correctness
 floors and economy mode cannot lower them.
 
+Added 2026-09-13 (AGT-2808): economy mode's one-step downgrade can never drop
+feature (or any coding/concept/planning/research) work below `sonnet-low`
+(Sonnet 5, or `gpt-5.6-sol`, at `low`). Before this floor existed, the
+registry's per-vendor model id fallback for an unrecognized catalogue (e.g. a
+Claude CLI, since this registry's tiers are keyed to `gpt-5.6-*` ids) picked a
+model by position in the catalogue's ranked list; on a Claude catalogue this
+silently resolved to `claude-haiku-4-5`, the cheapest entry, with no
+guaranteed thinking level (AGT-2793, AGT-2807). Every tier now carries an
+explicit per-vendor route (`vendorOverrides` in the JSON) so a known vendor
+never falls through to the positional guess, and `Recommend()` is guaranteed
+to never return a null thinking level. Haiku-class models remain in use only
+on the separate pipeline-support/classification path
+(`ModelFamilyResolver`/`PipelineStepModelDefaults`), which never calls this
+registry.
+
 The create-task UI shows the recommendation, policy version, task type, tier,
 and whether economy mode caused a safe one-step downgrade. Choosing a model or
 thinking level marks the card explicit in one action. Explicit pins remain
 untouched by qualification, while the policy recommendation stays visible for
 comparison.
+
+### Create-card contract
+
+`TaskCrudEndpoints`' create handler never persists a card with a model but no
+thinking level: when the caller omits `thinkingLevel`, the handler calls
+`ModelRoutingPolicyRegistry.Recommend()` and stamps both `model` and
+`thinkingLevel` from the same recommendation, with `thinkingLevelExplicit`
+mirroring `modelExplicit` (`false` for a policy-derived pick, `true` only when
+the caller pinned a level). The model-level badge (`model-level-indicator`)
+always renders a level code for any non-human, non-unknown model family, so a
+model without a level shows as missing (`?`, dimmed) instead of silently
+rendering only the model code.
+
+### Backfill contract
+
+`POST /api/admin/maintenance/backfill-thinking-levels?apply={bool}` (see
+`AdminConfigEndpoints`, backed by
+`TaskMutationService.BackfillThinkingLevels`) finds cards, including archived
+ones, that carry a `model` but no `thinkingLevel` (the pre-AGT-2808 creation
+gap; AGT-2793 and AGT-2807 are the reference cases). With `apply=false`
+(default query use) it only reports the affected jobs and the level the
+policy would resolve for each. With `apply=true` it writes that resolved
+level to disk with `thinkingLevelExplicit=false`, since the value is
+policy-derived, not an operator pin, and invalidates the job scan cache. Run
+the report first and confirm the entry list before applying.
 
 ### Hard floors
 

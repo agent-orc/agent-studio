@@ -1981,6 +1981,45 @@ public class TaskMutationService
     }
 
     /// <summary>
+    /// Cards where <c>model</c> is stamped but <c>thinkingLevel</c> was
+    /// never derived (pre-AGT-2808 creations). Report mode (<paramref
+    /// name="apply"/> false) never writes; apply mode persists the
+    /// resolved level with <c>thinkingLevelExplicit=false</c> since it's
+    /// policy-derived, not an operator pin. Scans archive too so archived
+    /// cards aren't missed.
+    /// </summary>
+    public List<BackfillThinkingLevelEntry> BackfillThinkingLevels(bool apply)
+    {
+        var results = new List<BackfillThinkingLevelEntry>();
+        var touched = 0;
+        foreach (var job in _scanner.ScanAllJobsWithArchive())
+        {
+            if (string.IsNullOrWhiteSpace(job.Model) || !string.IsNullOrWhiteSpace(job.ThinkingLevel))
+                continue;
+
+            var resolved = ModelMetadataRegistry.DefaultThinkingLevelForCli(job.CliType, job.Model);
+            if (string.IsNullOrWhiteSpace(resolved)) continue;
+
+            results.Add(new BackfillThinkingLevelEntry
+            {
+                JobId = job.Id,
+                Project = job.ProjectName,
+                Model = job.Model,
+                ResolvedThinkingLevel = resolved,
+            });
+
+            if (apply)
+            {
+                TaskJsonFile.UpdateField(job.FolderPath, "thinkingLevel", resolved, _logger);
+                TaskJsonFile.UpdateField(job.FolderPath, "thinkingLevelExplicit", false, _logger);
+                touched++;
+            }
+        }
+        if (touched > 0) _scanner.InvalidateCache();
+        return results;
+    }
+
+    /// <summary>
     /// Mint a <c>SHC-NNN</c> task key for the project that owns
     /// <paramref name="watchPath"/>. Returns null when the project
     /// registry has no record for this path (non-fatal; the job will
@@ -2181,3 +2220,11 @@ public sealed record CommitMetadataBackfillResult(
     int RepairedTasks,
     int RepairedCommits,
     int UnresolvedTasks);
+
+public sealed record BackfillThinkingLevelEntry
+{
+    public string JobId { get; init; } = "";
+    public string Project { get; init; } = "";
+    public string Model { get; init; } = "";
+    public string ResolvedThinkingLevel { get; init; } = "";
+}

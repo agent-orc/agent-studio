@@ -11,12 +11,13 @@
       [attr.data-model-source]="source()"
       [attr.aria-label]="accessibleLabel()">
   <span class="model-level__model" aria-hidden="true">{{ presentation().modelCode }}</span>
-  @if (presentation().levelCode; as levelCode) {
+  @if (presentation().family !== 'unknown' && presentation().family !== 'human') {
     <span class="model-level__thinking"
           [class.model-level__thinking--override]="thinkingLevelOverride()"
+          [class.model-level__thinking--missing]="!presentation().levelCode"
           [attr.data-testid]="levelTestId()"
           [attr.data-thinking-level]="thinkingLevel()"
           [attr.data-thinking-level-override]="thinkingLevelOverride()"
-          aria-hidden="true">{{ levelCode }}</span>
+          aria-hidden="true">{{ presentation().levelCode ?? '?' }}</span>
   }
 </span>
