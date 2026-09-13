@@ -40,6 +40,9 @@ release yet.
 
 ### Fixed
 
+- Production builds no longer load the task-detail component graph with the
+  initial task board bundle, restoring release-budget headroom without raising
+  the configured limit.
 - Process launches across backend, retention, setup, and repository Node
   scripts now suppress Windows console windows, drain redirected CLI stderr,
   and carry repository-wide regression guards for future spawn sites.

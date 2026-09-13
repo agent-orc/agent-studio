@@ -53,13 +53,44 @@ const GROUPED_PAYLOAD = {
   archive: [],
 };
 
+const EPIC_DETAIL = {
+  info: EPIC,
+  promptMarkdown: '# Inline epic rollup',
+  statusMarkdown: null,
+  contextUsage: null,
+  log: [],
+  promptHistory: [],
+  titleHistory: [],
+  reviewEvidence: [],
+  summaryState: null,
+};
+
 async function installRoutes(page: Page) {
   await page.route('**/api/**', (route) => {
     const url = route.request().url();
     const json = (body: unknown) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
 
+    if (url.includes('/api/auth/status')) {
+      return json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
+    }
+    if (url.includes('/api/tasks/archive')) {
+      return json({ items: [], total: 0, offset: 0, limit: 50 });
+    }
+    if (url.includes('/api/epics/completed/count')) return json({ count: 0 });
     if (url.includes('/api/tasks/grouped')) return json(GROUPED_PAYLOAD);
+    if (url.includes(`/api/tasks/${EPIC.id}`)) return json(EPIC_DETAIL);
+    if (url.includes(`/api/epics/${EPIC.id}`)) {
+      return json({
+        ...EPIC,
+        subTaskTotal: 2,
+        completed: 0,
+        inProgress: 0,
+        open: 2,
+        byState: { '2-ready': 1, '5-human-review': 1 },
+        subTasks: [SUB_READY, SUB_REVIEW],
+      });
+    }
     if (/\/api\/tasks(\?|$)/.test(url)) {
       return json([EPIC, SUB_READY, SUB_REVIEW]);
     }
@@ -98,15 +129,28 @@ test.describe('Board: epic group inline sub-tasks regression', () => {
     await expect(group.getByText('Review sub-task')).toBeVisible();
     await expect(group.getByTestId('epic-group-subtask-verdict')).toHaveText('escalate');
 
-    const expandedShot = testInfo.outputPath('epic-group-expanded-inline.png');
+    const expandedShot = testInfo.outputPath('epic-group-expanded-inline--mocked.png');
     await group.screenshot({ path: expandedShot });
     await testInfo.attach('epic-group-expanded-inline', { path: expandedShot, contentType: 'image/png' });
 
     await group.getByTestId(`epic-group-collapse-${EPIC.id}`).click();
     await expect(group.getByTestId(`epic-group-subtasks-${EPIC.id}`)).toHaveCount(0);
 
-    const collapsedShot = testInfo.outputPath('epic-group-collapsed.png');
+    const collapsedShot = testInfo.outputPath('epic-group-collapsed--mocked.png');
     await group.screenshot({ path: collapsedShot });
     await testInfo.attach('epic-group-collapsed', { path: collapsedShot, contentType: 'image/png' });
+  });
+
+  test('opens an epic detail after the lazy task-detail chunk loads', async ({ page }) => {
+    await installRoutes(page);
+    await page.goto('/?includeFixtures=true');
+
+    await page.getByTestId('studio-board-epic-toggle').click();
+    const group = page.getByTestId(`epic-group-${EPIC.id}`);
+    await expect(group).toBeVisible({ timeout: 10_000 });
+    await group.locator('app-job-card').click();
+
+    await expect(page.getByTestId('studio-epic')).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId('studio-epic-detail')).toBeVisible({ timeout: 15_000 });
   });
 });

@@ -337,6 +337,7 @@
               }
             }
             @case ('task') {
+              @defer (when studioTabState.activeTab()?.kind === 'task') {
               @if (detailPreview(); as preview) {
                 <main class="workspace__main workspace__main--studio" data-testid="studio-task">
                   <app-task-detail-load-sections [info]="preview"
@@ -377,8 +378,12 @@
                   <p>The task tab requires a selected job. Open one from the Explorer panel or from the board.</p>
                 </div>
               }
+              } @placeholder {
+                <app-loading-surface kind="task-detail" label="Loading task details…" />
+              }
             }
             @case ('epic') {
+              @defer (when studioTabState.activeTab()?.kind === 'epic') {
               @if (studioTabState.activeTab(); as tab) {
                 @if (tab.kind === 'epic' && selectedJob(); as detail) {
                   <main class="workspace__main workspace__main--studio" data-testid="studio-epic">
@@ -427,6 +432,9 @@
                     }
                   </main>
                 }
+              }
+              } @placeholder {
+                <app-loading-surface kind="task-detail" label="Loading epic details…" />
               }
             }
             @case ('hub') {
@@ -754,6 +762,7 @@
             }
 
             <main class="workspace__main">
+              @defer (when selectedJob() !== null) {
               <app-job-detail #jobDetail
                               [detail]="detail"
                               [watchPaths]="watchPaths()"
@@ -772,6 +781,9 @@
                               (triageStartRequested)="onTriageStart(detail.info, $event)"
                               (nextInLaneRequested)="onTriageNext(detail.info)"
                               (prevInLaneRequested)="onTriagePrev(detail.info)" />
+              } @placeholder {
+                <app-loading-surface kind="task-detail" label="Loading task details…" />
+              }
 <!--
                 Triage outcomes now flow through NotificationService (toast in
                 <app-notification-stack>) so the panel-anchored pill no longer

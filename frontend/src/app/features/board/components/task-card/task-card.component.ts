@@ -64,7 +64,7 @@ import { copyTextToClipboard } from '../../../../services/clipboard.util';
 import { deriveStalledTaskState, isTaskRunActive } from '../../../../services/run-activity.util';
 import { BoardFiltersService } from '../../state/board-filters.service';
 import { EpicExpansionStore } from '../../state/epic-expansion.service';
-import { TaskSelectionService } from '../../../task-detail';
+import { TaskSelectionService } from '../../../task-detail/runtime';
 import { PostProcessingActivityComponent } from '../post-processing-activity/post-processing-activity.component';
 import { TestEvidenceStatusComponent } from '../../../test-evidence';
 import { CopyableTaskKeyComponent } from '../../../../components/copyable-task-key/copyable-task-key.component';
