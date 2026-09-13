@@ -73,28 +73,22 @@
       </button>
     }
     @if (compact()) {
-      <span class="task-card__compact-disk"
-            [attr.aria-label]="job().projectName"
-            aria-hidden="true">{{ identity().initial }}</span>
+      <span class="task-card__compact-disk" [attr.aria-label]="job().projectName" aria-hidden="true">{{ identity().initial }}</span>
       <span class="task-card__compact-cli" aria-hidden="true">{{ agentIcon() }}</span>
     }
     @if (isEpic()) {
-      <span class="task-card__epic-badge"
-            data-testid="task-card-epic-badge"
+      <span class="task-card__epic-badge" data-testid="task-card-epic-badge"
             [cacTooltip]="'Epic — a container for sub-tasks. Open it to see sub-task progress.'">EPIC</span>
     } @else if (subTaskEpicId(); as epicId) {
-      <span class="task-card__subtask-chip"
-            data-testid="task-card-subtask-chip"
+      <span class="task-card__subtask-chip" data-testid="task-card-subtask-chip"
             [cacTooltip]="'Sub-task of epic: ' + epicId">↳ epic</span>
     }
     <span class="task-card__title-text" data-truncatable>{{ job().title || job().id }}</span>
     @if (compact()) {
-      <span class="task-card__compact-time" [cacTooltip]="'Last activity: ' + relativeActivity()">
-        {{ relativeActivity() }}
-      </span>
+      <span class="task-card__compact-time" [cacTooltip]="'Last activity: ' + relativeActivity()">{{ relativeActivity() }}</span>
     }
   </h3>
-  <app-task-live-status [task]="job()" [dense]="compact()" />
+  <app-task-live-status [task]="job()" [dense]="compact()" /> @if (job().betterCandidates; as note) { <app-better-candidate-lines class="task-card__better-candidates" [note]="note" prefix="" /> }
   @if (job().state === '2-ready' && job().needsInput; as needsInput) {
     <section class="task-card__needs-input" data-testid="ready-needs-input" aria-label="Queued agent question">
       <strong>Waiting to steer</strong>

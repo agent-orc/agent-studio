@@ -567,6 +567,7 @@ builder.Services.AddSingleton<AgentStudio.Tokens.BusBackedTokenSummaryReader>();
 builder.Services.AddSingleton<AgentStudio.Tokens.BusBackedWorkspaceTimelineReader>();
 builder.Services.AddSingleton<AgentStudio.Tokens.ProjectTokenReceiptReader>();
 builder.Services.AddSingleton<AgentStudio.Tokens.BusBackedProjectTokenUsageReader>();
+builder.Services.AddSingleton<AgentStudio.Tokens.BetterCandidateUsageReportService>();
 builder.Services.AddSingleton<AgentStudio.Tokens.ITokenAggregator, AgentStudio.Tokens.TokenAggregationService>();
 // Central step-call dispatch: the concrete Claude runner is wrapped by the
 // PromptLoggingCliOneShot decorator so every one-shot step prompt (aspects,
@@ -637,6 +638,7 @@ builder.Services.AddSingleton<AgentStudio.Tasks.TaskLiveStatusProjection>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.IModelEconomyAdvisor,
     AgentStudio.Pipeline.CatalogueModelEconomyAdvisor>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ModelRoutingPolicyRegistry>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.BetterCandidateService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.IModelMigrationCatalogSource,
     AgentStudio.Pipeline.EmbeddedModelMigrationCatalogSource>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ModelMigrationCatalogRegistry>();

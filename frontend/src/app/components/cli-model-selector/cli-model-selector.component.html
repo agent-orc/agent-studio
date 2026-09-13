@@ -46,6 +46,7 @@
         [attr.data-testid]="pickerTestidPrefix() + '-current'">
         {{ draftHeaderText() }}
       </span>
+      @if (betterCandidates(); as note) { <app-better-candidate-lines [note]="note" prefix="Candidate" /> }
     </header>
 
     @if (cliOptions().length > 0) {

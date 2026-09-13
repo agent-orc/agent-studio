@@ -1,0 +1,19 @@
+@if (lines().length > 0) {
+  <section class="candidate-report" data-testid="better-candidate-usage-report">
+    <h3>Usage on routes with better benchmark candidates</h3>
+    @for (line of lines(); track line.project + '|' + line.weekStart) {
+      <div class="candidate-report__line"
+           [attr.data-testid]="'better-candidate-usage-' + line.project + '-' + line.weekStart">
+        <strong>{{ line.project }}</strong>
+        <span>{{ formatWeek(line.weekStart, line.weekEnd) }}</span>
+        <span class="candidate-report__number">{{ formatTokens(line.tokens) }} tokens</span>
+        <span class="candidate-report__number">
+          @if (line.costUsd !== null) {
+            {{ formatUsd(line.costUsd) }}
+            @if (!line.allModelsPriced) { <small>(partial)</small> }
+          } @else { cost n/a }
+        </span>
+      </div>
+    }
+  </section>
+}

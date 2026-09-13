@@ -93,6 +93,13 @@ public record ProjectSettings
     public string? OrchestratorThinkingLevel { get; init; }
 
     /// <summary>
+    /// TokenEconomy benchmark capability used for informational route
+    /// comparisons. Defaults to <c>CodingAgent</c>; accepted values mirror
+    /// <c>BenchmarkCapabilityClass</c> from the pinned package.
+    /// </summary>
+    public string? BenchmarkCapabilityClass { get; init; }
+
+    /// <summary>
     /// Per-project override for the local CLI execution engine. One of
     /// <see cref="CliExecutionEngines.Car"/> or
     /// <see cref="CliExecutionEngines.Legacy"/>. Null inherits the owning

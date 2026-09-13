@@ -94,6 +94,39 @@ describe('CliModelSelectorComponent', () => {
     expect(sol!.thinkingLevels).toContain('ultra');
   });
 
+  it('shows benchmark candidates beside the current selection without changing the draft route', async () => {
+    const codexModels: CliModelInfo[] = [{
+      id: 'gpt-5.6-sol', label: 'GPT-5.6-Sol', multiplier: null, vendor: 'openai', isDefault: true,
+      thinkingLevels: ['medium', 'high', 'max'], defaultThinkingLevel: 'medium',
+    }];
+    const store = createStoreMock();
+    store.modelsFor.mockReturnValue(codexModels);
+    store.ensure.mockReturnValue(of(codexModels));
+    const { fixture, component } = await create({
+      cliType: 'codex',
+      model: 'gpt-5.6-sol',
+      thinkingLevel: 'max',
+      betterCandidates: {
+        currentModel: 'gpt-5.6-sol', currentThinkingLevel: 'max', capabilityClass: 'CodingAgent',
+        evidenceSnapshot: 'snapshot', evaluatedAtUtc: '2026-09-13T08:00:00Z',
+        matrixUrl: 'https://agent-orchestrator.dev/token-economy/model-benchmarks/',
+        candidates: [{
+          model: 'gpt-6-astra', thinkingLevel: null, benchmarkType: 'deepswe-v1.1',
+          benchmarkName: 'DeepSWE v1.1', scoreDelta: 1.1, costDeltaUsd: -4.96,
+          evidenceAgeDays: 10, evidenceStale: false,
+        }],
+      },
+    }, store);
+
+    openPicker(fixture);
+    await fixture.whenStable();
+
+    const note = document.querySelector('[data-testid="better-candidate-gpt-6-astra"]');
+    expect(note?.textContent).toContain('gpt-6-astra/default');
+    expect(note?.textContent).toContain('deepswe-v1.1');
+    expect(component.draftModel()).toBe('gpt-5.6-sol');
+  });
+
   it('renders an onboarded gpt-6 model disabled with its note when the CLI lacks it (AGT-2707)', async () => {
     const note = 'Not offered by the installed codex-cli 0.151.0.';
     const codexModels: CliModelInfo[] = [

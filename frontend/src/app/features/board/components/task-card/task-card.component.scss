@@ -1550,3 +1550,6 @@
     .task-card.task-card--compact.task-card--running {
       background: var(--studio-bg-running);
     }
+.task-card__better-candidates {
+  margin-block: var(--studio-spacing-1);
+}

@@ -98,9 +98,10 @@ public sealed class QuotaAdmissionEventEmissionTests : IDisposable
         Assert.Contains("to reset", line.Reasoning);
     }
 
-    // ── the healthy normal launch stays silent on the task surface + feed ──
+    // The healthy normal launch stays silent on the task surface but remains
+    // an admission boundary in the durable feed for usage attribution.
     [Fact]
-    public void LaunchPrimaryDecision_IsSilentOnTimelineAndFeed()
+    public void LaunchPrimaryDecision_IsSilentOnTimelineAndPersistsBoundary()
     {
         var (runner, timeline) = BuildRunner();
         var info = MakeJob("primary-job");
@@ -111,7 +112,32 @@ public sealed class QuotaAdmissionEventEmissionTests : IDisposable
         Emit(runner, info, plan);
 
         Assert.Empty(timeline.ReadAll(info.FolderPath));
-        Assert.DoesNotContain(ReadFeed(), f => f.JobId == info.Id);
+        var boundary = Assert.Single(ReadFeed(), f => f.JobId == info.Id);
+        Assert.Null(boundary.BetterCandidates);
+    }
+
+    [Fact]
+    public void BetterCandidateDecision_ProjectsNoteToTimelineAndFeedWithoutSwitchingRoute()
+    {
+        var (runner, timeline) = BuildRunner();
+        var info = MakeJob("candidate-job");
+        var note = CandidateNote();
+        var plan = new QuotaAdmissionPlan(
+            QuotaAdmissionOutcome.LaunchPrimary, "codex", "gpt-5.6-sol", "max",
+            IsFallback: false, Reason: "launch: quota ok", NextResetAt: null, Projection: null)
+        {
+            BetterCandidates = note,
+        };
+
+        Emit(runner, info, plan);
+
+        Assert.Equal("gpt-5.6-sol", plan.Model);
+        Assert.False(plan.IsFallback);
+        var evt = Assert.Single(timeline.ReadAll(info.FolderPath));
+        Assert.Contains("gpt-6-astra", evt.Details!["betterCandidates"]);
+        Assert.Equal(note.MatrixUrl, evt.Details["matrixUrl"]);
+        var feed = Assert.Single(ReadFeed(), entry => entry.JobId == info.Id);
+        Assert.Equal("gpt-6-astra", Assert.Single(feed.BetterCandidates!.Candidates).Model);
     }
 
     [Fact]
@@ -169,6 +195,28 @@ public sealed class QuotaAdmissionEventEmissionTests : IDisposable
             CliType = "claude",
         };
     }
+
+    private static BetterCandidateNote CandidateNote() => new()
+    {
+        CurrentModel = "gpt-5.6-sol",
+        CurrentThinkingLevel = "max",
+        CapabilityClass = "CodingAgent",
+        EvidenceSnapshot = "1:deepswe-v1.1:1:2026-09-02:2",
+        EvaluatedAtUtc = new DateTime(2026, 9, 12, 23, 0, 0, DateTimeKind.Utc),
+        MatrixUrl = BetterCandidateService.MatrixUrl,
+        Candidates =
+        [
+            new BetterCandidate
+            {
+                Model = "gpt-6-astra",
+                BenchmarkType = "deepswe-v1.1",
+                BenchmarkName = "DeepSWE v1.1",
+                ScoreDelta = 1.1m,
+                CostDeltaUsd = -4.96m,
+                EvidenceAgeDays = 10,
+            },
+        ],
+    };
 
     private (ProjectRunner Runner, TimelineLog Timeline) BuildRunner()
     {

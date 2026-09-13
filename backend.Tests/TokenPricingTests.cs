@@ -23,7 +23,7 @@ public class TokenPricingTests
             .InformationalVersion;
 
         Assert.Equal("TokenEconomy", assembly.GetName().Name);
-        Assert.StartsWith("0.3.3", informationalVersion, StringComparison.Ordinal);
+        Assert.StartsWith(ConfiguredTokenEconomyVersion(), informationalVersion, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -239,5 +239,30 @@ public class TokenPricingTests
     {
         Assert.Null(TokenPricing.CanonicalModelId(null));
         Assert.Null(TokenPricing.CanonicalModelId("   "));
+    }
+
+    private static string ConfiguredTokenEconomyVersion()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            var projectPath = Path.Combine(directory.FullName, "backend", "OrchestratorApi.csproj");
+            if (File.Exists(projectPath))
+            {
+                var project = System.Xml.Linq.XDocument.Load(projectPath);
+                var packageReference = project
+                    .Descendants("PackageReference")
+                    .Single(element => string.Equals(
+                        (string?)element.Attribute("Include"),
+                        "TokenEconomy",
+                        StringComparison.Ordinal));
+                return ((string?)packageReference.Attribute("Version"))!
+                    .Trim('[', ']');
+            }
+
+            directory = directory.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Agent Studio repository root was not found.");
     }
 }

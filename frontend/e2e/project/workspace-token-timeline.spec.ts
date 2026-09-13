@@ -150,6 +150,15 @@ function buildFakeTimeline(windowHours: number, bucketMinutes: number) {
     bucketCount,
     cells,
     projects: Object.values(totals).sort((a, b) => b.total - a.total),
+    betterCandidateUsage: [{
+      project: 'bravo',
+      weekStart: '2026-09-07',
+      weekEnd: '2026-09-14',
+      calls: 4,
+      tokens: 128_400,
+      costUsd: 2.18,
+      allModelsPriced: true,
+    }],
     fetchedAt: new Date().toISOString(),
     disclaimer: 'Theoretical API cost based on Anthropic\'s published rates. Your CLI subscription is billed separately.',
   };
@@ -177,6 +186,7 @@ async function stubBackgroundApis(page: Page) {
   const empty = (body: unknown) => async (route: import('@playwright/test').Route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
 
+  await page.route('**/api/auth/status', empty({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }));
   await page.route('**/api/tasks', empty([]));
   await page.route('**/api/tasks/grouped', empty({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
   await page.route('**/api/watch-paths', empty([]));
@@ -273,13 +283,19 @@ test.describe('Workspace token timeline', () => {
     await expect(page.getByTestId('wtt-table-total')).toBeVisible();
     await expect(page.getByTestId('wtt-table-total')).toContainText('Total');
 
+    const candidateReport = page.getByTestId('better-candidate-usage-report');
+    await expect(candidateReport).toBeVisible();
+    await expect(candidateReport).toContainText('bravo');
+    await expect(candidateReport).toContainText('128K tokens');
+    await expect(candidateReport).toContainText('$2.18');
+
     // Capture the visible state for the task report.
     await page.screenshot({
-      path: `${SCREENSHOT_DIR}/workspace-token-timeline-24h.png`,
+      path: `${SCREENSHOT_DIR}/workspace-token-timeline-24h--mocked.png`,
       fullPage: false,
     });
     await view.screenshot({
-      path: `${SCREENSHOT_DIR}/workspace-token-timeline-24h-closeup.png`,
+      path: `${SCREENSHOT_DIR}/workspace-token-timeline-24h-closeup--mocked.png`,
     });
   });
 
@@ -294,7 +310,7 @@ test.describe('Workspace token timeline', () => {
       await expect(page.getByTestId('wtt-chart')).toBeVisible();
       await dismissDevErrorDialog(page);
 
-      const samples: Array<{ what: string; selector: string }> = [
+      const samples: { what: string; selector: string }[] = [
         { what: 'title', selector: '.wtt__title' },
         { what: 'subtitle', selector: '.wtt__sub' },
         { what: 'active window button', selector: '.wtt__win-btn--active' },

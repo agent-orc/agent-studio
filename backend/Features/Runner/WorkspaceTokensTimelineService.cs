@@ -319,7 +319,14 @@ public sealed record TokenTimeline(
     IReadOnlyList<TokenTimelineCell> Cells,
     IReadOnlyList<TokenTimelineProject> Projects,
     string FetchedAt,
-    string Disclaimer);
+    string Disclaimer)
+{
+    /// <summary>
+    /// Separate project/week lines for calls that ran after an admission
+    /// decision with a better benchmark candidate for the selected route.
+    /// </summary>
+    public IReadOnlyList<BetterCandidateUsageLine> BetterCandidateUsage { get; init; } = [];
+}
 
 /// <summary>
 /// One (project, bucket) cell. <see cref="AllModelsPriced"/> is false

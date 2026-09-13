@@ -27,6 +27,7 @@ import {
   type PhysicalHostGroup,
 } from '../../models/physical-host-group';
 import { NotificationComponent } from '../../../../components/notification/notification.component';
+import { BetterCandidateLinesComponent } from '../../../../components/better-candidate-lines/better-candidate-lines.component';
 
 /**
  * Execution Hosts settings page (AGT-1921).
@@ -49,6 +50,7 @@ import { NotificationComponent } from '../../../../components/notification/notif
     RunnerSetupDialogComponent,
     NotificationComponent,
     PurgeRetiredHostsDialogComponent,
+    BetterCandidateLinesComponent,
   ],
   templateUrl: './remote-hosts-panel.html',
   styleUrl: './remote-hosts-panel.scss',
@@ -99,6 +101,8 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
     .filter(group => group.machine.status === 'online').length);
   readonly boardRunningTruth = computed(() =>
     deriveBoardRunningTruth(this.tasks.grouped().progress));
+  readonly readyCandidateTasks = computed(() => this.tasks.grouped().ready
+    .filter(task => (task.betterCandidates?.candidates.length ?? 0) > 0));
   readonly sortKey = this.tableState.sortKey;
   readonly sortDirection = this.tableState.direction;
   readonly sortedHostGroups = computed(() =>

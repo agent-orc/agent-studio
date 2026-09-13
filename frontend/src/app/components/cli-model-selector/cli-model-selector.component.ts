@@ -13,7 +13,7 @@ import {
   untracked,
   viewChild,
 } from '@angular/core';
-import type { CliType } from '../../models/task.model';
+import type { BetterCandidateNote, CliType } from '../../models/task.model';
 import { CLI_TYPES } from '../../models/task.model';
 import { CliCatalogStore, orderModelCatalog, type CliModelInfo } from '../../features/cli';
 import {
@@ -27,6 +27,7 @@ import { OverlayPortalDirective } from '../../directives/overlay-portal.directiv
 import { AppTooltipDirective } from '../tooltip/app-tooltip.directive';
 import { modelAriaLabel, modelAvailabilityNote, moveRadioSelection, normalizeThinkingLevel,
   olderModelAriaLabel, olderModelNote } from './cli-model-selector.util';
+import { BetterCandidateLinesComponent } from '../better-candidate-lines/better-candidate-lines.component';
 
 interface CliOption {
   id: CliType;
@@ -52,7 +53,7 @@ interface CliOption {
   selector: 'app-cli-model-selector',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [AppTooltipDirective, ConnectedOverlayDirective, OverlayPortalDirective],
+  imports: [AppTooltipDirective, ConnectedOverlayDirective, OverlayPortalDirective, BetterCandidateLinesComponent],
   templateUrl: './cli-model-selector.component.html',
   styleUrl: './cli-model-selector.component.scss',
 })
@@ -60,11 +61,9 @@ export class CliModelSelectorComponent {
   readonly cliType = input<CliType | null>(null);
   readonly model = input<string | null>(null);
   readonly thinkingLevel = input<string | null>(null);
-  /** Optional snapshot fallback used only before the catalog store has hydrated. */
+  readonly betterCandidates = input<BetterCandidateNote | null>(null);
   readonly availableModels = input<readonly CliModelInfo[]>([]);
-  /** True while the surface should suppress the click (e.g. a run is in flight). */
   readonly disabled = input<boolean>(false);
-  /** Optional explicit reason shown in the tooltip when `disabled` is true. */
   readonly disabledReason = input<string | null>(null);
   /** Optional eyebrow shown above the current value in the popover header. */
   readonly eyebrow = input<string>('Configure agent');

@@ -293,6 +293,29 @@ export interface ConceptDossierSummary {
   contractSatisfied: boolean;
 }
 
+/** Informational Token Economy alternative for the task's selected route. */
+export interface BetterCandidate {
+  model: string;
+  thinkingLevel?: string | null;
+  benchmarkType: string;
+  benchmarkName: string;
+  scoreDelta: number | null;
+  costDeltaUsd: number | null;
+  evidenceAgeDays: number;
+  evidenceStale: boolean;
+}
+
+/** Cached benchmark query projected onto a Ready task and decision event. */
+export interface BetterCandidateNote {
+  currentModel: string;
+  currentThinkingLevel?: string | null;
+  capabilityClass: string;
+  evidenceSnapshot: string;
+  evaluatedAtUtc: string;
+  matrixUrl: string;
+  candidates: BetterCandidate[];
+}
+
 export interface TaskInfo {
   id: string;
   taskKey: string;
@@ -328,6 +351,8 @@ export interface TaskInfo {
   thinkingLevel?: string | null;
   /** False when the policy supplies the reasoning level together with the model tier. */
   thinkingLevelExplicit?: boolean;
+  /** Informational alternatives from the benchmark matrix. Never changes the route. */
+  betterCandidates?: BetterCandidateNote | null;
   cliType: CliType | null;
   quotaFallback?: {
     cliType: string;

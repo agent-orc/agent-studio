@@ -1,0 +1,22 @@
+<div class="better-candidates" data-testid="better-candidates" role="note">
+  @for (candidate of note().candidates; track candidateKey(candidate)) {
+    <a class="better-candidates__line"
+       [href]="note().matrixUrl"
+       target="_blank"
+       rel="noopener noreferrer"
+       [attr.aria-label]="description(candidate)"
+       [title]="description(candidate)"
+       [attr.data-testid]="'better-candidate-' + candidate.model"
+       (click)="$event.stopPropagation()">
+      @if (prefix()) { <span class="better-candidates__label">{{ prefix() }}:</span> }
+      <strong>{{ route(candidate) }}</strong>
+      <span [title]="candidate.benchmarkName">{{ candidate.benchmarkType }}</span>
+      <span class="better-candidates__metric">{{ score(candidate.scoreDelta) }}</span>
+      <span class="better-candidates__metric">{{ cost(candidate.costDeltaUsd) }}</span>
+      <span class="better-candidates__metric"
+            [class.better-candidates__metric--stale]="candidate.evidenceStale">
+        age {{ candidate.evidenceAgeDays }}d
+      </span>
+    </a>
+  }
+</div>

@@ -32,6 +32,13 @@ public sealed record QuotaAdmissionPlan(
     QuotaProjectionWarning? ProjectionWarning = null,
     bool NearbyResetWait = false)
 {
+    /// <summary>
+    /// Informational benchmark alternatives for the effective route. This is
+    /// attached by <see cref="QuotaAdmissionService"/> after the pure quota
+    /// decision and never changes <see cref="Outcome"/>.
+    /// </summary>
+    public BetterCandidateNote? BetterCandidates { get; init; }
+
     /// <summary>True when the runner should proceed to a launch (primary or fallback).</summary>
     public bool ShouldLaunch => Outcome is QuotaAdmissionOutcome.LaunchPrimary or QuotaAdmissionOutcome.LaunchFallback;
 

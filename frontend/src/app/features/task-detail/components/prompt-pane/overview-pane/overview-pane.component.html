@@ -99,7 +99,7 @@
             [cliType]="effectiveCliType()"
             [model]="effectiveModel()"
             [thinkingLevel]="effectiveThinkingLevel()"
-            [availableModels]="availableModels()"
+            [availableModels]="availableModels()" [betterCandidates]="job().betterCandidates ?? null"
             [disabled]="isRunning() || agentConfigReadOnly()"
             [disabledReason]="agentConfigReadOnly() ? 'Agent configuration is read-only after delivery. Re-open the task to change it.' : null"
             triggerTestid="chat-compose-model" pickerTestidPrefix="chat-model-picker"

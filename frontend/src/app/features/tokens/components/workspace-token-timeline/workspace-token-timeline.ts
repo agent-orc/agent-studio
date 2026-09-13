@@ -12,6 +12,7 @@ import { setVisibleInterval, clearVisibleInterval, VisibleIntervalHandle } from 
 import type { TokenTimeline, TokenTimelineCell } from '../../../../features/tokens';
 import { TokensApiService } from '../../../../features/tokens';
 import { formatCompactTokens, formatCompactUsd } from '../../token-number-format.util';
+import { BetterCandidateUsageReportComponent } from '../better-candidate-usage-report/better-candidate-usage-report.component';
 
 const STORAGE_DISABLED_KEY = 'workspaceTokens.disabledProjects';
 const STORAGE_WINDOW_KEY = 'workspaceTokens.windowHours';
@@ -55,6 +56,7 @@ interface BucketSegment {
 @Component({
   selector: 'app-workspace-token-timeline',
   standalone: true,
+  imports: [BetterCandidateUsageReportComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './workspace-token-timeline.html',
   styleUrl: './workspace-token-timeline.scss'
