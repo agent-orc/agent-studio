@@ -134,6 +134,20 @@ run_expect_rc() {
   fi
 }
 
+# A dry run against a local bare remote records the exact candidate without
+# running the gate or changing either remote ref.
+preview_operator=$(make_fixture preview pass)
+preview_remote="$test_root/preview/remote.git"
+preview_evidence="$test_root/preview/evidence"
+preview_main=$(git --git-dir="$preview_remote" rev-parse refs/heads/main)
+"$preview_operator/scripts/release/promote-develop-to-main.sh" \
+  --dry-run --tag release/test-preview --evidence-dir "$preview_evidence" >/dev/null
+test "$(git --git-dir="$preview_remote" rev-parse refs/heads/main)" = "$preview_main"
+! git --git-dir="$preview_remote" show-ref --verify --quiet refs/tags/release/test-preview
+grep -q '"status":"preview"' "$preview_evidence/promotion-record.json"
+grep -q '"gate":"not-run"' "$preview_evidence/promotion-record.json"
+printf '%s\n' 'local bare remote dry-run passed'
+
 # A normal execute run promotes the exact develop tip, produces one annotated
 # marker, records full-gate evidence, and performs an atomic remote update.
 green_operator=$(make_fixture green pass)
@@ -153,6 +167,86 @@ grep -q '"status":"promoted"' "$green_evidence/promotion-record.json"
 grep -q '"atomicPush":true' "$green_evidence/promotion-record.json"
 grep -Fxq 'PROMOTION_FULL_GATE=passed' "$green_evidence/full-gate.log"
 grep -q 'historical-whitespace.txt' "$green_evidence/candidate-whitespace-review.txt"
+printf '%s\n' 'local bare remote execute passed'
+
+# Annotated tags use the promotion identity even when HOME is empty and neither
+# repository nor process environment provides a Git identity.
+identity_operator=$(make_fixture no-identity pass)
+identity_remote="$test_root/no-identity/remote.git"
+identity_evidence="$test_root/no-identity/evidence"
+identity_home="$test_root/no-identity/empty-home"
+identity_xdg="$test_root/no-identity/empty-xdg"
+mkdir -p "$identity_home" "$identity_xdg"
+git -C "$identity_operator" config --unset-all user.name
+git -C "$identity_operator" config --unset-all user.email
+test -z "$(HOME="$identity_home" XDG_CONFIG_HOME="$identity_xdg" \
+  GIT_CONFIG_NOSYSTEM=1 git -C "$identity_operator" config --get user.name || true)"
+test -z "$(HOME="$identity_home" XDG_CONFIG_HOME="$identity_xdg" \
+  GIT_CONFIG_NOSYSTEM=1 git -C "$identity_operator" config --get user.email || true)"
+env -u GIT_AUTHOR_NAME -u GIT_AUTHOR_EMAIL \
+  -u GIT_COMMITTER_NAME -u GIT_COMMITTER_EMAIL -u EMAIL \
+  HOME="$identity_home" XDG_CONFIG_HOME="$identity_xdg" \
+  GIT_CONFIG_NOSYSTEM=1 \
+  "$identity_operator/scripts/release/promote-develop-to-main.sh" \
+    --execute --tag release/test-no-identity \
+    --evidence-dir "$identity_evidence" >/dev/null
+identity_candidate=$(git --git-dir="$identity_remote" rev-parse refs/heads/develop)
+test "$(git --git-dir="$identity_remote" rev-parse refs/heads/main)" = "$identity_candidate"
+test "$(git --git-dir="$identity_remote" cat-file -t refs/tags/release/test-no-identity)" = tag
+test "$(git --git-dir="$identity_remote" for-each-ref \
+  --format='%(taggername)|%(taggeremail)' refs/tags/release/test-no-identity)" \
+  = 'Agent Studio Promotion|<promotion@agent-studio.invalid>'
+grep -q '"status":"promoted"' "$identity_evidence/promotion-record.json"
+printf '%s\n' 'empty-HOME annotated tag execute passed'
+
+# A tag creation failure after a passing gate leaves the remote unchanged and
+# writes the failure, gate result, and Git error to the durable record.
+tag_failure_operator=$(make_fixture tag-failure pass)
+tag_failure_remote="$test_root/tag-failure/remote.git"
+tag_failure_evidence="$test_root/tag-failure/evidence"
+tag_failure_main=$(git --git-dir="$tag_failure_remote" rev-parse refs/heads/main)
+run_expect_rc 6 env PROMOTION_TAGGER_NAME='<' \
+  "$tag_failure_operator/scripts/release/promote-develop-to-main.sh" \
+    --execute --tag release/test-tag-failure \
+    --evidence-dir "$tag_failure_evidence" >/dev/null 2>&1
+test "$(git --git-dir="$tag_failure_remote" rev-parse refs/heads/main)" = "$tag_failure_main"
+! git --git-dir="$tag_failure_remote" show-ref --verify --quiet \
+  refs/tags/release/test-tag-failure
+grep -Fxq 'PROMOTION_FULL_GATE=passed' "$tag_failure_evidence/full-gate.log"
+grep -q '"status":"blocked-tag"' "$tag_failure_evidence/promotion-record.json"
+grep -q '"gate":"passed"' "$tag_failure_evidence/promotion-record.json"
+grep -q '"atomicPush":false' "$tag_failure_evidence/promotion-record.json"
+grep -q '"error":"annotated tag creation failed with exit code 128:' \
+  "$tag_failure_evidence/promotion-record.json"
+grep -q 'name consists only of disallowed characters' "$tag_failure_evidence/tag.log"
+printf '%s\n' 'simulated tag failure record passed'
+
+# An atomic push rejection is likewise a complete post-gate record with the
+# remote hook's error and without either remote ref changing.
+push_failure_operator=$(make_fixture push-failure pass)
+push_failure_remote="$test_root/push-failure/remote.git"
+push_failure_evidence="$test_root/push-failure/evidence"
+push_failure_main=$(git --git-dir="$push_failure_remote" rev-parse refs/heads/main)
+cat > "$push_failure_remote/hooks/pre-receive" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' 'fixture push rejected' >&2
+exit 1
+EOF
+chmod +x "$push_failure_remote/hooks/pre-receive"
+run_expect_rc 6 "$push_failure_operator/scripts/release/promote-develop-to-main.sh" \
+  --execute --tag release/test-push-failure \
+  --evidence-dir "$push_failure_evidence" >/dev/null 2>&1
+test "$(git --git-dir="$push_failure_remote" rev-parse refs/heads/main)" = "$push_failure_main"
+! git --git-dir="$push_failure_remote" show-ref --verify --quiet \
+  refs/tags/release/test-push-failure
+grep -Fxq 'PROMOTION_FULL_GATE=passed' "$push_failure_evidence/full-gate.log"
+grep -q '"status":"blocked-push"' "$push_failure_evidence/promotion-record.json"
+grep -q '"gate":"passed"' "$push_failure_evidence/promotion-record.json"
+grep -q '"atomicPush":false' "$push_failure_evidence/promotion-record.json"
+grep -q '"error":"atomic main/tag push failed with exit code' \
+  "$push_failure_evidence/promotion-record.json"
+grep -q 'fixture push rejected' "$push_failure_evidence/push.log"
+printf '%s\n' 'simulated atomic push failure record passed'
 
 # A red or nominally green but incomplete gate cannot advance either ref.
 for gate_mode in fail incomplete; do
@@ -220,5 +314,27 @@ test "$(git --git-dir="$diverged_remote" rev-parse refs/heads/main)" = "$diverge
 ! git --git-dir="$diverged_remote" show-ref --verify --quiet refs/tags/release/test-diverged
 grep -q '"status":"blocked-non-fast-forward"' "$diverged_evidence/promotion-record.json"
 test ! -e "$diverged_evidence/full-gate.log"
+
+if [[ -n ${PROMOTION_TEST_ARTIFACT_DIR:-} ]]; then
+  mkdir -p "$PROMOTION_TEST_ARTIFACT_DIR"
+  cp "$preview_evidence/promotion.log" \
+    "$PROMOTION_TEST_ARTIFACT_DIR/local-bare-dry-run.log"
+  cp "$preview_evidence/promotion-record.json" \
+    "$PROMOTION_TEST_ARTIFACT_DIR/local-bare-dry-run-record.json"
+  cp "$green_evidence/promotion.log" \
+    "$PROMOTION_TEST_ARTIFACT_DIR/local-bare-execute.log"
+  cp "$green_evidence/promotion-record.json" \
+    "$PROMOTION_TEST_ARTIFACT_DIR/local-bare-execute-record.json"
+  cp "$identity_evidence/promotion-record.json" \
+    "$PROMOTION_TEST_ARTIFACT_DIR/empty-home-execute-record.json"
+  cp "$tag_failure_evidence/promotion-record.json" \
+    "$PROMOTION_TEST_ARTIFACT_DIR/simulated-tag-failure-record.json"
+  cp "$tag_failure_evidence/tag.log" \
+    "$PROMOTION_TEST_ARTIFACT_DIR/simulated-tag-failure.log"
+  cp "$push_failure_evidence/promotion-record.json" \
+    "$PROMOTION_TEST_ARTIFACT_DIR/simulated-push-failure-record.json"
+  cp "$push_failure_evidence/push.log" \
+    "$PROMOTION_TEST_ARTIFACT_DIR/simulated-push-failure.log"
+fi
 
 printf '%s\n' 'develop -> main promotion tests passed'
