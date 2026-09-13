@@ -113,6 +113,61 @@ Offline mode is an explicit updater input (`ReleaseMetadataOffline`), not an
 inference from cache presence or age. It is accepted only when both cached
 manifests and the cached latest-approved tag still pass the same comparison.
 
+## Update Service ordering, mutation boundary, and health wait
+
+Three incidents from the first tagged release (v0.2.0, 2026-09-13) changed the
+Update Service's phase ordering. This section documents the current contract
+so a future change does not reintroduce them.
+
+**Stop before restore.** The stack (backend, frontend dev server, and any
+process the checkout owns) is stopped before the locked dependency restore
+(`dotnet restore --locked-mode`, `npm ci`) runs, not after. Before the restore
+runs, the orchestrator also confirms nothing still holds files open under
+`frontend/node_modules`; if it does, the run fails immediately and names the
+holding process (PID and command line where determinable) instead of letting
+`npm ci` fail with an opaque `EPERM` unlinking `esbuild.exe`.
+
+**Mutation boundary.** The checkout is moved to the candidate commit
+(`git checkout --detach --force`) before restore and restart, but
+`build-manifest.json` is only written into the live Stable checkout after
+restart has cleared health, runtime-identity verification, and the frontend
+port check. The intended manifest is kept in the run folder
+(`intended-build-manifest.json`) until that point. Any failure before the
+manifest is committed automatically reverts the checkout to the pre-run
+commit; the manifest file is never touched, so the next preflight is
+unaffected and no manual manifest deletion is needed.
+
+*Recovery if this still happens.* If a run somehow leaves the checkout ahead
+of the installed manifest anyway (for example, a crash of the Update Service
+process itself between the checkout move and the revert), running the next
+update is normally sufficient: the orchestrator re-evaluates the preflight
+and, if it needs to install a different candidate, checks out the new target
+regardless of where HEAD currently sits. If the preflight instead reports
+"running identity diverges from the installed manifest", the response now
+also names the run (`runId`, finish time, status) whose `IntendedTag` matches
+what is currently installed, from deployment history — check that run's
+folder under `RunsDirectory` first before touching anything by hand. Only
+delete `build-manifest.json` manually as a last resort, and only after
+confirming from the run folder that no run actually committed a manifest for
+the currently-running identity.
+
+**Cold-compile health wait.** A cold compile (many changed commits since the
+last Stable build) can take roughly three minutes before `dotnet` starts
+listening on port 5031. The restart health wait budget
+(`RestartHealthWaitSeconds`, default 600s / 10 minutes) is sized for that,
+so a slow-but-alive compile is not reported as "backend exited before it
+started listening". The wait only stops early on success; a genuinely dead
+launch still fails once the full budget elapses. The observed startup
+duration is recorded in the run's `summary.md` and in deployment history
+(`backendStartupSeconds`, `frontendStartupSeconds`) so operators can tell a
+slow-but-fine run from a stuck one after the fact.
+
+**Frontend restart.** After backend health and identity verification pass,
+the orchestrator waits for the frontend dev server's port
+(`FrontendUrl`, default `http://127.0.0.1:4011`) to accept connections before
+the run is allowed to reach `phase=done`. A run that leaves the backend up
+and the frontend down (or vice versa) is reported failed, not done.
+
 ## Migration
 
 An installation without a manifest reports `tag=untagged`, `dirty=true`,

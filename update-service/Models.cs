@@ -79,7 +79,12 @@ public sealed record UpdateHistoryEntry(
     string? ReleaseDirection = null,
     string? ManifestIntegrity = null,
     ReleaseManifest? IntendedRelease = null,
-    ReleaseManifest? ObservedRelease = null
+    ReleaseManifest? ObservedRelease = null,
+    // ADR-0031 incident follow-up: the cold-compile health wait and the
+    // frontend restart step both record how long they actually took, so
+    // operators can tell a slow-but-fine run from a stuck one after the fact.
+    int? BackendStartupSeconds = null,
+    int? FrontendStartupSeconds = null
 );
 
 public sealed record TriggerRequest(string? Reason, bool Force);

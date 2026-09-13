@@ -42,6 +42,25 @@ public sealed class UpdateServiceOptions
     public int HealthWaitSeconds { get; set; } = 180;
 
     /// <summary>
+    /// Ceiling for the phase-5 restart health wait, used instead of
+    /// <see cref="HealthWaitSeconds"/> when waiting for the freshly-restarted
+    /// backend to start listening. A cold compile (many changed commits since
+    /// the last Stable build) can take roughly 3 minutes before dotnet starts
+    /// listening on port 5031; 10 minutes gives headroom without letting a
+    /// genuinely dead process hang the run forever.
+    /// </summary>
+    public int RestartHealthWaitSeconds { get; set; } = 600;
+
+    /// <summary>
+    /// Loopback origin the frontend dev server listens on after restart.
+    /// Fix for the "frontend left down after a Stable update" incident: the
+    /// orchestrator waits for this port to accept connections before the run
+    /// is allowed to reach phase=done.
+    /// </summary>
+    public string FrontendUrl { get; set; } = "http://127.0.0.1:4011";
+    public int FrontendWaitSeconds { get; set; } = 120;
+
+    /// <summary>
     /// Controls whether behind-origin notifications may apply an update on
     /// their own. "manual" still allows explicit manual triggers; "scheduled"
     /// allows scheduled/API triggers to run the apply pipeline.

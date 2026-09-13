@@ -273,51 +273,77 @@ public sealed class UpdateOrchestrator
                     $"git pull failed (rc={pullRc})", null, folder, preSnapshot);
                 return;
             }
-            if (intendedRelease is not null)
-            {
-                try
-                {
-                    File.Copy(_options.CandidateManifestFile,
-                        Path.Combine(_options.StableCheckoutDir, _options.BuildManifestFile), overwrite: true);
-                }
-                catch (Exception ex)
-                {
-                    FinishFailed(runId, startedAt, headBefore, _git.HeadShort(), trigger,
-                        $"could not install candidate build manifest: {ex.Message}", null, folder, preSnapshot);
-                    return;
-                }
-            }
+            // Do NOT install the candidate build-manifest.json here. It is
+            // kept only in the run folder (intended-build-manifest.json,
+            // written above) until restart clears health + runtime-identity
+            // verification. Installing it early made a failure between here
+            // and restart look, to the next preflight, like the new
+            // candidate was already running when the live backend was still
+            // the old process (the "false divergence refusal" incident).
             var headAfterPull = _git.HeadShort();
             _store.SetHead(headAfterPull);
 
-            // PHASE 4 — building
+            // PHASE 4 — building. Stop the whole stack (backend, frontend dev
+            // server, any process it owns under the checkout) BEFORE the
+            // locked restore/npm ci runs. Running `npm ci` while the frontend
+            // dev server (and its esbuild children) still holds files open
+            // under frontend/node_modules fails with EPERM on Windows.
+            SetPhase("building", "stopping stack before locked dependency restore", runId, startedAt);
+            var (stopRc, stopOut) = await StopStackAsync(ct);
+            folder.WriteOutput("stop-output.txt", stopOut);
+            if (stopRc != 0)
+            {
+                await RollbackCheckoutToAsync(headBefore, ct);
+                FinishFailed(runId, startedAt, headBefore, headAfterPull, trigger,
+                    $"stopping the stack before dependency restore failed (rc={stopRc})", null, folder, preSnapshot);
+                return;
+            }
+
+            var (locked, holder) = await CheckNodeModulesUnlockedAsync(ct);
+            if (locked)
+            {
+                await RollbackCheckoutToAsync(headBefore, ct);
+                FinishFailed(runId, startedAt, headBefore, headAfterPull, trigger,
+                    $"frontend/node_modules is still held open by {holder}; refusing to run npm ci", null, folder, preSnapshot);
+                return;
+            }
+
             SetPhase("building", "locked dependency restore", runId, startedAt);
             var (buildRc, buildOut, buildRan) = await RestoreDependenciesAsync(releaseDefinition, ct);
             if (buildRan) folder.WriteOutput("dependency-restore-output.txt", buildOut);
             if (buildRc != 0)
             {
+                await RollbackCheckoutToAsync(headBefore, ct);
                 FinishFailed(runId, startedAt, headBefore, headAfterPull, trigger,
                     $"dependency restore failed (rc={buildRc})", null, folder, preSnapshot);
                 return;
             }
 
             // PHASE 5 — restarting
-            SetPhase("restarting", "stop + start stable backend", runId, startedAt);
-            var (restartRc, restartOut) = await RunRestartAsync(ct);
-            folder.WriteOutput("start-stable-output.txt", restartOut);
-            if (restartRc != 0)
+            SetPhase("restarting", "starting stable backend", runId, startedAt);
+            var restartStartedAt = DateTime.UtcNow;
+            var (startRc, startOut) = await StartStackAsync(ct);
+            folder.WriteOutput("start-stable-output.txt", startOut);
+            if (startRc != 0)
             {
+                await RollbackCheckoutToAsync(headBefore, ct);
                 FinishFailed(runId, startedAt, headBefore, headAfterPull, trigger,
-                    $"restart failed (rc={restartRc})", null, folder, preSnapshot);
+                    $"restart failed (rc={startRc})", null, folder, preSnapshot);
                 return;
             }
 
             // Wait until backend is reachable before starting the strict matrix.
-            var healthy = await _backend.WaitForHealthyAsync(TimeSpan.FromSeconds(_options.HealthWaitSeconds), ct);
+            // A cold compile (many changed commits) can take ~3 minutes before
+            // dotnet starts listening; the budget below (default 10 minutes)
+            // gives that headroom instead of failing fast on a process that
+            // is still alive and compiling.
+            var healthWaitBudget = TimeSpan.FromSeconds(Math.Max(_options.HealthWaitSeconds, _options.RestartHealthWaitSeconds));
+            var healthy = await _backend.WaitForHealthyAsync(healthWaitBudget, ct);
+            var backendStartupSeconds = (int)(DateTime.UtcNow - restartStartedAt).TotalSeconds;
             if (!healthy)
             {
                 var failure = new VerificationFailure("healthz-stable",
-                    $"timeout after {_options.HealthWaitSeconds}s",
+                    $"timeout after {healthWaitBudget.TotalSeconds:F0}s",
                     "/healthz=200");
                 FinishFailed(runId, startedAt, headBefore, headAfterPull, trigger,
                     "backend did not come back healthy", new[] { failure }, folder, preSnapshot,
@@ -325,6 +351,8 @@ public sealed class UpdateOrchestrator
 
                 if (_options.AutoRollback)
                     await RunRollbackAsync(runId, manual: false, ct);
+                else
+                    await RollbackCheckoutToAsync(headBefore, ct);
                 return;
             }
 
@@ -338,6 +366,46 @@ public sealed class UpdateOrchestrator
                         "runtime identity does not equal intended build manifest", new[] { failure }, folder, preSnapshot,
                         intendedRelease, observedRelease, releaseComparison?.Direction.ToString());
                     if (_options.AutoRollback) await RunRollbackAsync(runId, manual: false, ct);
+                    else await RollbackCheckoutToAsync(headBefore, ct);
+                    return;
+                }
+            }
+
+            // Backend is confirmed healthy at the intended identity. Restart
+            // the frontend dev server and wait for its port before declaring
+            // the stack up: a run must not leave backend up / frontend down.
+            var (frontendUp, frontendStartupSeconds) = await WaitForFrontendAsync(ct);
+            if (!frontendUp)
+            {
+                var failure = new VerificationFailure("frontend-listening",
+                    $"timeout after {_options.FrontendWaitSeconds}s", $"{_options.FrontendUrl} reachable");
+                FinishFailed(runId, startedAt, headBefore, headAfterPull, trigger,
+                    "frontend dev server did not come up after restart", new[] { failure }, folder, preSnapshot,
+                    intendedRelease, observedRelease, releaseComparison?.Direction.ToString());
+                if (_options.AutoRollback) await RunRollbackAsync(runId, manual: false, ct);
+                else await RollbackCheckoutToAsync(headBefore, ct);
+                return;
+            }
+
+            // Mutation boundary: only now, after restart has cleared health,
+            // runtime-identity, and the frontend port check, do we commit the
+            // intended manifest into the live checkout. If this write itself
+            // fails the backend is already confirmed running the candidate,
+            // so we do not roll the checkout back (that would desync the
+            // running process from HEAD); the run is reported failed and the
+            // next preflight's divergence explanation will point at this run.
+            if (intendedRelease is not null)
+            {
+                try
+                {
+                    File.Copy(_options.CandidateManifestFile,
+                        Path.Combine(_options.StableCheckoutDir, _options.BuildManifestFile), overwrite: true);
+                }
+                catch (Exception ex)
+                {
+                    FinishFailed(runId, startedAt, headBefore, headAfterPull, trigger,
+                        $"backend verified at candidate identity but could not commit the build manifest: {ex.Message}",
+                        null, folder, preSnapshot, intendedRelease, observedRelease, releaseComparison?.Direction.ToString());
                     return;
                 }
             }
@@ -374,11 +442,12 @@ public sealed class UpdateOrchestrator
             var postModes = await _backend.ReadProjectModesAsync(ct) ?? new Dictionary<string, string>();
             var postSnapshot = await CaptureSnapshotAsync("post", runId, headAfter, postModes, ct);
             folder.WriteSnapshot(postSnapshot);
-            folder.WriteSummary(BuildSummaryMarkdown(runId, trigger, startedAt, headBefore, headAfter, preSnapshot, postSnapshot, verification, null));
+            folder.WriteSummary(BuildSummaryMarkdown(runId, trigger, startedAt, headBefore, headAfter, preSnapshot, postSnapshot, verification, null,
+                backendStartupSeconds, frontendStartupSeconds));
 
             FinishHistory(runId, startedAt, headBefore, headAfter, "ok", null, trigger, null, null, folder.Root,
                 intendedRelease?.Tag, observedRelease?.Tag, releaseComparison?.Direction.ToString(), intendedRelease?.Integrity,
-                intendedRelease, observedRelease);
+                intendedRelease, observedRelease, backendStartupSeconds, frontendStartupSeconds);
             FinishDone(runId, startedAt, headBefore, headAfter,
                 $"updated {headBefore} -> {headAfter}", null);
         }
@@ -921,7 +990,8 @@ public sealed class UpdateOrchestrator
     private void FinishHistory(string runId, DateTime startedAt, string headBefore, string headAfter, string status,
         string? error, string trigger, IReadOnlyList<VerificationFailure>? failures, string? rollbackStatus, string? runFolder,
         string? intendedTag = null, string? observedTag = null, string? releaseDirection = null, string? manifestIntegrity = null,
-        ReleaseManifest? intendedRelease = null, ReleaseManifest? observedRelease = null)
+        ReleaseManifest? intendedRelease = null, ReleaseManifest? observedRelease = null,
+        int? backendStartupSeconds = null, int? frontendStartupSeconds = null)
     {
         var finishedAt = DateTime.UtcNow;
         var entry = new UpdateHistoryEntry(
@@ -942,15 +1012,129 @@ public sealed class UpdateOrchestrator
             ReleaseDirection: releaseDirection,
             ManifestIntegrity: manifestIntegrity,
             IntendedRelease: intendedRelease,
-            ObservedRelease: observedRelease);
+            ObservedRelease: observedRelease,
+            BackendStartupSeconds: backendStartupSeconds,
+            FrontendStartupSeconds: frontendStartupSeconds);
         _store.AppendHistory(entry);
+    }
+
+    // ─── restart-time side effects ──────────────────────────────────────────
+
+    private Task<(int Rc, string Output)> StopStackAsync(CancellationToken ct)
+        => RunBashAsync(_options.StopScript, "", _options.DevspaceDir, ct);
+
+    private Task<(int Rc, string Output)> StartStackAsync(CancellationToken ct)
+        => RunBashAsync("-c", $"DETACH=1 ./{_options.StartScript}", _options.DevspaceDir, ct);
+
+    /// <summary>
+    /// Reverts the checkout to <paramref name="sha"/> when it is not already
+    /// there. Used for failures between the candidate checkout (phase 3) and
+    /// the manifest commit (end of phase 5): the checkout move is allowed to
+    /// happen speculatively to build/restart from the candidate, but any
+    /// failure before the mutation boundary must leave the checkout, and the
+    /// installed manifest (never touched at this point), exactly as they
+    /// were before the run.
+    /// </summary>
+    private async Task RollbackCheckoutToAsync(string sha, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(sha)) return;
+        var current = _git.HeadShort();
+        if (string.Equals(current, sha, StringComparison.OrdinalIgnoreCase)) return;
+        await RunProcessAsync("git", new[] { "checkout", "--detach", "--force", sha }, _options.StableCheckoutDir, ct);
+        _store.SetHead(_git.HeadShort());
+    }
+
+    /// <summary>
+    /// Confirms nothing still holds files open under frontend/node_modules
+    /// before the locked npm ci runs. A leftover frontend dev server (and
+    /// its esbuild children) holding files open there causes npm ci to fail
+    /// with EPERM trying to unlink them; renaming the directory and back is
+    /// a cheap way to surface the same sharing violation before npm ci does,
+    /// so the run can fail fast and name the holder instead.
+    /// </summary>
+    private async Task<(bool Locked, string? Holder)> CheckNodeModulesUnlockedAsync(CancellationToken ct)
+    {
+        var nodeModules = Path.Combine(_options.StableCheckoutDir, "frontend", "node_modules");
+        if (!Directory.Exists(nodeModules)) return (false, null);
+
+        var probe = nodeModules + ".lock-probe";
+        try
+        {
+            if (Directory.Exists(probe)) Directory.Delete(probe, recursive: true);
+            Directory.Move(nodeModules, probe);
+            Directory.Move(probe, nodeModules);
+            return (false, null);
+        }
+        catch (IOException)
+        {
+            return (true, await FindNodeModulesHolderAsync(ct) ?? "an unknown process (rename of frontend/node_modules failed with a sharing violation)");
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return (true, await FindNodeModulesHolderAsync(ct) ?? "an unknown process (rename of frontend/node_modules failed with access denied)");
+        }
+    }
+
+    /// <summary>
+    /// Best-effort scan for a still-running process launched from inside the
+    /// Stable checkout (the frontend dev server or one of its esbuild/vite
+    /// children). Not a complete "who has this handle open" answer — .NET has
+    /// no cross-platform API for that — but it is enough to report a PID and
+    /// command line to the operator instead of a bare failure.
+    /// </summary>
+    private Task<string?> FindNodeModulesHolderAsync(CancellationToken ct)
+    {
+        var checkoutRoot = Path.GetFullPath(_options.StableCheckoutDir);
+        foreach (var proc in Process.GetProcesses())
+        {
+            try
+            {
+                var path = proc.MainModule?.FileName;
+                if (string.IsNullOrEmpty(path)) continue;
+                if (Path.GetFullPath(path).StartsWith(checkoutRoot, StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult<string?>($"pid={proc.Id} command={path}");
+            }
+            catch { /* processes we cannot inspect (cross-user, already exited) are not candidates */ }
+            finally { proc.Dispose(); }
+        }
+        return Task.FromResult<string?>(null);
+    }
+
+    /// <summary>
+    /// Polls the frontend dev server's loopback port after backend restart.
+    /// A run must not report success with the backend up and the frontend
+    /// still down (or vice versa).
+    /// </summary>
+    private async Task<(bool Up, int Seconds)> WaitForFrontendAsync(CancellationToken ct)
+    {
+        var started = DateTime.UtcNow;
+        if (!Uri.TryCreate(_options.FrontendUrl, UriKind.Absolute, out var uri))
+            return (true, 0);
+
+        var deadline = started + TimeSpan.FromSeconds(_options.FrontendWaitSeconds);
+        while (DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                using var tcp = new System.Net.Sockets.TcpClient();
+                var connect = tcp.ConnectAsync(uri.Host, uri.Port);
+                var winner = await Task.WhenAny(connect, Task.Delay(2000, ct));
+                if (winner == connect && tcp.Connected)
+                    return (true, (int)(DateTime.UtcNow - started).TotalSeconds);
+            }
+            catch { /* not up yet */ }
+            try { await Task.Delay(2000, ct); }
+            catch (OperationCanceledException) { break; }
+        }
+        return (false, (int)(DateTime.UtcNow - started).TotalSeconds);
     }
 
     // ─── summary writer ─────────────────────────────────────────────────────
 
     private static string BuildSummaryMarkdown(string runId, string trigger, DateTime startedAt,
         string headBefore, string headAfter, UpdateRunSnapshot? pre, UpdateRunSnapshot? post,
-        VerificationOutcome? verification, string? failureMessage)
+        VerificationOutcome? verification, string? failureMessage,
+        int? backendStartupSeconds = null, int? frontendStartupSeconds = null)
     {
         var sb = new StringBuilder();
         sb.AppendLine($"# Update run {runId}");
@@ -961,6 +1145,8 @@ public sealed class UpdateOrchestrator
         sb.AppendLine($"- HEAD after: `{headAfter}`");
         sb.AppendLine($"- Status: **{(failureMessage == null ? "ok" : "failed")}**");
         if (failureMessage != null) sb.AppendLine($"- Error: {failureMessage}");
+        if (backendStartupSeconds is not null) sb.AppendLine($"- Backend startup: {backendStartupSeconds}s");
+        if (frontendStartupSeconds is not null) sb.AppendLine($"- Frontend startup: {frontendStartupSeconds}s");
         sb.AppendLine();
 
         if (verification != null && verification.Checks.Count > 0)
