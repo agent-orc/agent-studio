@@ -68,7 +68,7 @@ import { TaskSelectionService } from '../../../task-detail';
 import { PostProcessingActivityComponent } from '../post-processing-activity/post-processing-activity.component';
 import { TestEvidenceStatusComponent } from '../../../test-evidence';
 import { CopyableTaskKeyComponent } from '../../../../components/copyable-task-key/copyable-task-key.component';
-import { CodexSignInDialogService, ClaudeSignInDialogService, ProviderAuthStatusService, modelCliVersionWaitReason, providerAuthWaitReason } from '../../../remote-hosts';
+import { CodexSignInDialogService, ClaudeSignInDialogService, ProviderAuthStatusService, modelCliVersionWaitReason, providerAuthWaitReason } from '../../../remote-hosts/core-api';
 import { laneName } from '../../../../models/lane-presentation';
 import { FailureInterventionChipComponent } from '../failure-intervention-chip/failure-intervention-chip.component';
 // Shared 'now' signal that ticks every 30s so all relative timestamps update in lockstep

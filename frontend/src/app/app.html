@@ -1,8 +1,7 @@
 @if (auth.studioAllowed()) {
     <app-offline-banner />
     <app-public-demo-banner />
-    <app-codex-sign-in-dialog />
-    <app-claude-sign-in-dialog />
+    <app-sign-in-dialogs-host />
     @if (featureFlags.vsCodeLayout()) {
       <!--
         Agent Software Studio redesign — VS-Code-inspired shell.
@@ -496,11 +495,13 @@
                 (openWiki)="onOpenWorkbenchWiki(tab.projectName, $event)" />
             } } }
             @case ('workspace-settings') {
-              <app-workspace-overlays [inline]="true"
-                                      [watchPaths]="watchPaths()"
-                                      (openTask)="onOpenTaskFromReel($event)"
-                                      (openProjectSettings)="onOpenProjectSettingsFromUsage($event)"
-                                      (openJobDetail)="onOpenTaskFromSession($event)" />
+              @defer (when workspaceOverlaysOpen()) {
+                <app-workspace-overlays [inline]="true"
+                                        [watchPaths]="watchPaths()"
+                                        (openTask)="onOpenTaskFromReel($event)"
+                                        (openProjectSettings)="onOpenProjectSettingsFromUsage($event)"
+                                        (openJobDetail)="onOpenTaskFromSession($event)" />
+              }
             }
             @default { <!-- Welcome screen owned by the shell when no tab is active. --> }
           }
@@ -868,11 +869,12 @@
         (uxuiActionQueued)="onUxuiActionQueued($event)"
         (openTask)="onOpenTaskFromReel($event)" />
 
-
-      <app-workspace-overlays [watchPaths]="watchPaths()"
-                              (openTask)="onOpenTaskFromReel($event)"
-                              (openProjectSettings)="onOpenProjectSettingsFromUsage($event)"
-                              (openJobDetail)="onOpenTaskFromSession($event)" />
+      @defer (when workspaceOverlaysOpen()) {
+        <app-workspace-overlays [watchPaths]="watchPaths()"
+                                (openTask)="onOpenTaskFromReel($event)"
+                                (openProjectSettings)="onOpenProjectSettingsFromUsage($event)"
+                                (openJobDetail)="onOpenTaskFromSession($event)" />
+      }
 
 
       @if (showCreate()) {

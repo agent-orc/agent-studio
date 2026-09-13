@@ -41,7 +41,7 @@ import { BoardFiltersService, flattenGrouped } from '../board';
 import { ConfirmDialogService } from '../../services/confirm-dialog.service';
 import { NotificationService } from '../../services/notification.service';
 import { copyTextToClipboard } from '../../services/clipboard.util';
-import { WorkspaceManagerService, ProjectDragDropService, WorkspaceOverlaysService, UiPreferencesService } from '../shell';
+import { WorkspaceManagerService, ProjectDragDropService, WorkspaceOverlaysService, UiPreferencesService } from '../shell/shell-api';
 import { ProjectLookupService } from '../../services/project-lookup.service';
 import { ThemeService } from './services/theme.service';
 import { StudioActivityBarComponent, StudioActivityBarItem, StudioActivityPanelKey } from './components/studio-activity-bar/studio-activity-bar.component';
@@ -65,7 +65,7 @@ import { buildProjectSidebarRows, type ProjectSidebarRow } from './studio-shell.
 import { StudioTab, studioTabKey } from './studio-shell.types';
 import { ALL_PROJECTS_BOARD_NAME, taskTabProjectScope } from './services/task-tab-scope';
 import { GlobalSearchComponent } from './components/global-search/global-search.component';
-import { OrchestratorFeedStore } from '../orchestrator';
+import { OrchestratorFeedStore } from '../orchestrator/shell-api';
 
 /** Canonicalise project storage paths so titlebar workspace lookup survives
  * slash style, trailing separator, and case differences. */

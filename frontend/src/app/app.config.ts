@@ -10,7 +10,7 @@ import { sessionSecurityInterceptor } from './services/session-security.intercep
 import { TaskReferenceNavigationService } from './services/task-reference-navigation.service';
 import { MediaLightboxService } from './services/media-lightbox.service';
 import { TaskReferenceMicrocardHydratorService } from './services/task-reference-microcard-hydrator.service';
-import { ProviderAuthStatusService } from './features/remote-hosts';
+import { ProviderAuthStatusService } from './features/remote-hosts/core-api';
 
 export const appConfig: ApplicationConfig = {
   providers: [

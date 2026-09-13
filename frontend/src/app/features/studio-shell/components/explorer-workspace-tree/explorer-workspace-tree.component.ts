@@ -26,7 +26,7 @@ import { SectionHeaderComponent } from '../../../../components/section-header/se
 import { TreeRowComponent } from '../../../../components/tree-row/tree-row.component';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { MenuComponent, type MenuItem, type MenuItemClickEvent } from '../../../../components/menu';
-import { ProjectDragDropService } from '../../../shell';
+import { ProjectDragDropService } from '../../../shell/shell-api';
 import { ExplorerSectionsService } from '../../services/explorer-sections.service';
 import { ExplorerProjectActionsService } from '../../services/explorer-project-actions.service';
 import { boardLaneCountsLabel, laneCountsFor } from '../../studio-shell.project-rows';

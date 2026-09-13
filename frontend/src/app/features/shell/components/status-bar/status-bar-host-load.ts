@@ -1,5 +1,5 @@
-import type { HostTelemetryPoint, RemoteHost } from '../../../remote-hosts';
-import { hostExecutorRole } from '../../../remote-hosts';
+import type { HostTelemetryPoint, RemoteHost } from '../../../remote-hosts/core-api';
+import { hostExecutorRole } from '../../../remote-hosts/core-api';
 
 export type StatusBarLoadTone = 'unknown' | 'calm' | 'working' | 'hot' | 'mismatch';
 export type StatusBarLoadCorrelation = 'unknown' | 'consistent' | 'load-without-runs' | 'runs-without-load';

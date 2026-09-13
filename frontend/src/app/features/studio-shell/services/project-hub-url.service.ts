@@ -7,8 +7,8 @@ import {
   projectHubRoute,
   type ProjectHubRouteProject,
   withProjectHubRoute,
-} from '../../project-detail';
-import { WorkspaceManagerService } from '../../shell';
+} from '../../project-detail/routing-api';
+import { WorkspaceManagerService } from '../../shell/shell-api';
 import { FeatureFlagsService } from '../../../services/feature-flags.service';
 import { TaskService } from '../../../services/task.service';
 import { withRouteSegment } from '../../../services/url-hash.util';

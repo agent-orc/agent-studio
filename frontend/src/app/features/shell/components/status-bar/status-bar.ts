@@ -24,7 +24,7 @@ import {
   deriveBoardRunningTruth,
   RemoteHostsService,
   ReviewQueueService,
-} from '../../../remote-hosts';
+} from '../../../remote-hosts/core-api';
 
 import { StatusbarItemComponent } from '../statusbar-item/statusbar-item.component';
 import { CliModelSelectorComponent } from '../../../../components/cli-model-selector';

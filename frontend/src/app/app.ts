@@ -56,7 +56,7 @@ import {
   OrchestratorFeedComponent,
   OrchestratorFeedStore,
   OrchestratorSideSheetComponent,
-} from './features/orchestrator';
+} from './features/orchestrator/shell-api';
 import {
   DEFAULT_PROJECT_RAIL_KEY,
   ProjectOverlaysComponent,
@@ -64,7 +64,7 @@ import {
   ProjectRailKey,
   ProjectUrlPreviewTabComponent,
   WorkbenchTabHostComponent,
-} from './features/project-detail';
+} from './features/project-detail/shell-api';
 import {
   AutoReviewIndicatorComponent,
   StatusBarComponent,
@@ -72,10 +72,9 @@ import {
   WorkspaceBannerComponent,
   WorkspaceCreateDialogComponent, OnboardProjectDialogComponent, CrashRecoveryPromptComponent,
   WorkspaceManagerService,
-  WorkspaceOverlaysComponent,
   WorkspaceOverlaysService,
   type WorkspaceSettingsSection,
-} from './features/shell';
+} from './features/shell/shell-api';
 import { E2ECleanupDialogComponent, TagManagerDialogComponent } from './features/dev-tools';
 import {
   UpdateBlockModalComponent,
@@ -141,10 +140,11 @@ import type { TaskScreenshot } from './features/screenshots';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { MenuComponent, MenuItem, MenuItemClickEvent } from './components/menu';
 import { CostBreakdownDialogComponent, type TaskTokenSummary } from './features/tokens'; // verbose-debug overlay context types
+import { WorkspaceOverlaysComponent } from './features/shell/workspace-overlays.lazy';
 import { LoadingSurfaceComponent, PendingButtonDirective } from './components/async-feedback';
 import { AuthGateComponent, AuthService } from './components/auth-gate/auth-gate';
 import { ExecutionLocationBadgeComponent } from './components/execution-location-badge/execution-location-badge.component';
-import { CodexSignInDialogComponent, ClaudeSignInDialogComponent } from './features/remote-hosts';
+import { SignInDialogsHostComponent } from './features/remote-hosts/sign-in-dialogs-host';
 interface VerboseDebugContext {
   lines: CliOutputLine[];
   runTimeline: RunTimeline | null;
@@ -207,8 +207,7 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
     StudioIconComponent,
     AuthGateComponent,
     ExecutionLocationBadgeComponent,
-    CodexSignInDialogComponent,
-    ClaudeSignInDialogComponent,
+    SignInDialogsHostComponent,
   ],
   // Cycle 7b: OnPush. The shell mounts kanban + detail panel + many
   // sheets; default (Default) change detection re-checked the whole
@@ -377,6 +376,7 @@ export class App implements OnInit, OnDestroy {
    * `<app-workspace-overlays />` container owns the actual rendering.
    */
   private readonly workspaceOverlays = inject(WorkspaceOverlaysService);
+  readonly workspaceOverlaysOpen = this.workspaceOverlays.anyOpen;
   /**
    * Owns the create-workspace modal visibility. Public so the template
    * can bind <code>workspaceManager.createOpen()</code> for the

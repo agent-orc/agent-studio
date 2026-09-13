@@ -36,6 +36,9 @@ release yet.
 
 ### Fixed
 
+- Production builds keep remote-host administration and workspace settings UI
+  out of the task board's initial bundle, restoring release-budget headroom
+  without raising the configured limit.
 - Public-demo execution-route inventory now includes
   `POST /api/v1/reviews/attempts/{attemptId}/reclaim` in the `Continue` path.
 - Frontend release coverage is green again for the `CliAdminPanelComponent`

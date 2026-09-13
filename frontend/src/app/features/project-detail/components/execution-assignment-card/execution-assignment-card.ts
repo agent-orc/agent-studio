@@ -8,7 +8,7 @@ import {
   signal,
 } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { RemoteHostsService, type RemoteHost } from '../../../remote-hosts';
+import { RemoteHostsService, type RemoteHost } from '../../../remote-hosts/core-api';
 
 type ProbeState = 'pending' | 'running' | 'passed' | 'failed';
 type ProbeKey = 'code' | 'branch' | 'toolchain' | 'noop';

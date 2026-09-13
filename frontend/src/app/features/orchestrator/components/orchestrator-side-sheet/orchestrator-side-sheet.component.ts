@@ -17,14 +17,12 @@ import { setVisibleInterval, clearVisibleInterval, VisibleIntervalHandle } from 
 import type { WatchPathEntry } from '../../../../models/task.model';
 import type {
   ChatExecutionContext,
-  ComposerLocationContext,
   OrchestratorChatTurn,
   OrchestratorContextSession,
-  OrchestratorContextSourceOption,
-} from '../../../../features/orchestrator';
-import {
-  buildChatNavigationContext,
-} from '../../../../features/orchestrator';
+} from '../../models/orchestrator.model';
+import type { OrchestratorContextSourceOption } from '../../models/orchestrator-context-source.model';
+import type { ComposerLocationContext } from '../../composer-location-context';
+import { buildChatNavigationContext } from '../../chat-navigation-context';
 import { ChatComponent } from 'coding-agent-chat/composer';
 import { ConversationViewComponent } from 'coding-agent-chat/conversation';
 import {
