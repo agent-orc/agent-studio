@@ -32,6 +32,17 @@ capabilities: [git, child-process, loopback-network]
 environment:
   DOTNET_NOLOGO: "1"
   NUGET_XMLDOC_MODE: skip
+release:
+  identity:
+    - package: CodingAgentRunner
+      ecosystem: nuget
+      source: backend/packages.lock.json
+    - package: coding-agent-chat
+      ecosystem: npm
+      source: frontend/package-lock.json
+  restore:
+    - dotnet restore backend/OrchestratorApi.csproj --locked-mode
+    - npm --prefix frontend ci
 devServer:
   command: npm --prefix frontend start
   workingDirectory: .

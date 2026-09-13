@@ -55,6 +55,7 @@ unter `app/` und werden nur zusammen mit Code geändert.
 | Area | Contents |
 |---|---|
 | [setup/](setup/README.md) | Project onboarding, CLI onboarding, first task, troubleshooting, and worktree stack. |
+| [Project definition v2 proposal](docker-ausfuehrungswelt-migration/project-definition-v2-plan.md) and [draft schema](docker-ausfuehrungswelt-migration/project-execution.v2.draft.schema.json) | Inactive extension of [AGT-W51](docker-ausfuehrungswelt-migration/index.html): shared AGT/QS/Voice properties, quality applicability, source references and rollout gates. Active v1 remains unchanged. |
 | [security/](security/overview.md) | Security overview, requirements, state, and reviews. |
 | [runtime/](runtime/) | Product runtime observability and log-capture contracts. |
 | [git/](git/) | Commit, push, and attribution doctrine. |

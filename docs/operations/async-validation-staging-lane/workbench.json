@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "async-validation-staging-lane",
-  "title": "Async Validation \u0026 the Test Staging Lane",
+  "title": "Async Validation & the Test Staging Lane",
   "summary": "A design proposal: stop running the full test suite per card and per retry. Batch validation on a test-integration branch fed by a staging lane, scope tests deterministically, and cache gate results per SHA. Rests on the pipeline-time-economy evidence.",
   "entrypoint": "index.html",
   "status": "documented",
@@ -14,5 +14,25 @@
     "AGT-2155",
     "AGT-2293"
   ],
-  "key": "AGT-W2"
+  "key": "AGT-W2",
+  "review": {
+    "verdict": "partially-superseded",
+    "supersededBy": [
+      "AGT-W36"
+    ],
+    "reviewedAt": "2026-09-13T10:20:00Z",
+    "reviewedBy": "Operator",
+    "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+  },
+  "reviewHistory": [
+    {
+      "verdict": "partially-superseded",
+      "supersededBy": [
+        "AGT-W36"
+      ],
+      "reviewedAt": "2026-09-13T10:20:00Z",
+      "reviewedBy": "Operator",
+      "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    }
+  ]
 }

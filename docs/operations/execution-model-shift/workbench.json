@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "id": "execution-model-shift",
-  "title": "Ausf\u00FChrungsmodell: Container-Default",
-  "summary": "Richtungswechsel vom host-direkten Betrieb (danger-full-access) zu container-isolierter lokaler Ausf\u00FChrung als Default; lokal/Misch als bewusstes Opt-out in der Host-Verwaltung. Ist-Stand aus Code, Doku und Marketing, Layer-Landkarte, \u00C4nderungen je Projekt (Studio, CAR, Docs/Wiki, Marketing, Orchestrator-Website, Installer), getakteter Plan, Abgleich mit dem Dossier \u0027Verteilte Ausf\u00FChrung\u0027 (Fencing, Ergebnisvertrag, hermetische Verifikation, Kriterienprobe nach dessen \u00A75.4) und sechs ausgearbeitete Entscheidungen E1-E6 inklusive Spawn-Pfad-Konvergenz und Gate-Isolation. Dient als Steuerungs-Ausgangspunkt f\u00FCr das Takten und Pr\u00FCfen der Arbeiten.",
+  "title": "Ausführungsmodell: Container-Default",
+  "summary": "Richtungswechsel vom host-direkten Betrieb (danger-full-access) zu container-isolierter lokaler Ausführung als Default; lokal/Misch als bewusstes Opt-out in der Host-Verwaltung. Ist-Stand aus Code, Doku und Marketing, Layer-Landkarte, Änderungen je Projekt (Studio, CAR, Docs/Wiki, Marketing, Orchestrator-Website, Installer), getakteter Plan, Abgleich mit dem Dossier 'Verteilte Ausführung' (Fencing, Ergebnisvertrag, hermetische Verifikation, Kriterienprobe nach dessen §5.4) und sechs ausgearbeitete Entscheidungen E1-E6 inklusive Spawn-Pfad-Konvergenz und Gate-Isolation. Dient als Steuerungs-Ausgangspunkt für das Takten und Prüfen der Arbeiten.",
   "entrypoint": "index.html",
   "status": "documented",
   "phase": "decision-ready",
@@ -16,5 +16,25 @@
     "AGT-2353",
     "MKT-14"
   ],
-  "key": "AGT-W6"
+  "key": "AGT-W6",
+  "review": {
+    "verdict": "superseded",
+    "supersededBy": [
+      "AGT-W51"
+    ],
+    "reviewedAt": "2026-09-13T10:20:00Z",
+    "reviewedBy": "Operator",
+    "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+  },
+  "reviewHistory": [
+    {
+      "verdict": "superseded",
+      "supersededBy": [
+        "AGT-W51"
+      ],
+      "reviewedAt": "2026-09-13T10:20:00Z",
+      "reviewedBy": "Operator",
+      "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    }
+  ]
 }

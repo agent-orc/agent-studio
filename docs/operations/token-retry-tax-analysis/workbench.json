@@ -19,5 +19,27 @@
     "AGT-2651",
     "TE-22"
   ],
-  "key": "AGT-W44"
+  "key": "AGT-W44",
+  "review": {
+    "verdict": "partially-superseded",
+    "supersededBy": [
+      "AGT-W37",
+      "AGT-W50"
+    ],
+    "reviewedAt": "2026-09-13T10:20:00Z",
+    "reviewedBy": "Operator",
+    "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+  },
+  "reviewHistory": [
+    {
+      "verdict": "partially-superseded",
+      "supersededBy": [
+        "AGT-W37",
+        "AGT-W50"
+      ],
+      "reviewedAt": "2026-09-13T10:20:00Z",
+      "reviewedBy": "Operator",
+      "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    }
+  ]
 }

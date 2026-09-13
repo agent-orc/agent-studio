@@ -33,6 +33,61 @@ public sealed class ProjectPreparationTests : IDisposable
     }
 
     [Fact]
+    public void Repository_definition_validates_both_release_identity_rule_kinds()
+    {
+        var lockRule = ProjectDefinitionReader.Parse(Definition(".agent-studio/prepare") + """
+
+            release:
+              identity:
+                - package: CodingAgentRunner
+                  ecosystem: nuget
+                  source: backend/packages.lock.json
+              restore:
+                - dotnet restore backend/OrchestratorApi.csproj --locked-mode
+            """);
+        Assert.True(lockRule.IsValid, string.Join(Environment.NewLine, lockRule.Issues.Select(issue => issue.Message)));
+
+        var exactRule = ProjectDefinitionReader.Parse(Definition(".agent-studio/prepare") + """
+
+            release:
+              identity:
+                - package: CodingAgentRunner
+                  ecosystem: nuget
+                  version: 0.7.0
+                  integrity: sha512-packagehash
+              restore:
+                - restore exact registry package
+            """);
+        Assert.True(exactRule.IsValid, string.Join(Environment.NewLine, exactRule.Issues.Select(issue => issue.Message)));
+
+        var ambiguous = ProjectDefinitionReader.Parse(Definition(".agent-studio/prepare") + """
+
+            release:
+              identity:
+                - package: CodingAgentRunner
+                  ecosystem: nuget
+                  source: backend/packages.lock.json
+                  version: 0.7.0
+                  integrity: sha512-packagehash
+              restore:
+                - dotnet restore
+            """);
+        Assert.Contains(ambiguous.Issues, issue => issue.Code == "release-rule-kind-invalid");
+    }
+
+    [Fact]
+    public void Agent_studio_project_definition_resolves_its_release_identity_sources()
+    {
+        var read = ProjectDefinitionReader.ReadWorkspace(FindRepositoryRoot());
+
+        Assert.True(read.IsValid, string.Join(Environment.NewLine, read.Issues.Select(issue => issue.Message)));
+        Assert.NotNull(read.Definition?.Release);
+        Assert.Contains(read.Definition!.Release!.Identity,
+            identity => identity.Package == "CodingAgentRunner"
+                        && identity.Source == "backend/packages.lock.json");
+    }
+
+    [Fact]
     public async Task Successful_prepare_publishes_immutable_cache_and_second_run_hits_it()
     {
         Write("package-lock.json", "{\"lockfileVersion\":3}");

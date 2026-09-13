@@ -10,5 +10,21 @@
   "sourceTaskKeys": [
     "AGT-2282"
   ],
-  "key": "AGT-W32"
+  "key": "AGT-W32",
+  "review": {
+    "verdict": "historical",
+    "supersededBy": [],
+    "reviewedAt": "2026-09-13T10:20:00Z",
+    "reviewedBy": "Operator",
+    "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+  },
+  "reviewHistory": [
+    {
+      "verdict": "historical",
+      "supersededBy": [],
+      "reviewedAt": "2026-09-13T10:20:00Z",
+      "reviewedBy": "Operator",
+      "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    }
+  ]
 }

@@ -33,5 +33,25 @@
     }
   ],
   "key": "AGT-W47",
-  "statusReason": "Entscheidung 07.09. durch den Orchestrator unter Roberts Autonomie-Freigabe: Connector-Profil des OrchestratorApi, 95-Routen-Dev-Seat-Allowlist, nativer Windows-Connector bei Docker-Task-Server, Reihenfolge P0-P3, 88 Tage Baseline (71-115). Promotion zu fuenf Implementierungskarten."
+  "statusReason": "Entscheidung 07.09. durch den Orchestrator unter Roberts Autonomie-Freigabe: Connector-Profil des OrchestratorApi, 95-Routen-Dev-Seat-Allowlist, nativer Windows-Connector bei Docker-Task-Server, Reihenfolge P0-P3, 88 Tage Baseline (71-115). Promotion zu fuenf Implementierungskarten.",
+  "review": {
+    "verdict": "partially-superseded",
+    "supersededBy": [
+      "AGT-W49"
+    ],
+    "reviewedAt": "2026-09-13T10:20:00Z",
+    "reviewedBy": "Operator",
+    "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+  },
+  "reviewHistory": [
+    {
+      "verdict": "partially-superseded",
+      "supersededBy": [
+        "AGT-W49"
+      ],
+      "reviewedAt": "2026-09-13T10:20:00Z",
+      "reviewedBy": "Operator",
+      "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    }
+  ]
 }

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentTaskboard.UpdateService;
 
@@ -8,7 +9,7 @@ namespace AgentTaskboard.UpdateService;
 ///   1. preparing               — write run folder + pre-snapshot
 ///   2. pausing-runners         — PUT mode=manual on every project
 ///   3. pulling                 — git fetch + pull --ff-only
-///   4. building                — npm install when package-lock changed
+///   4. building                - run the tagged project's release restore commands
 ///   5. restarting              — stop-stable.sh + start-stable.sh (DETACH=1)
 ///   6. verifying-after-restart — six-check matrix (ADR-0031)
 ///   7. resuming                — restore each project's pre mode
@@ -166,6 +167,7 @@ public sealed class UpdateOrchestrator
             ReleaseManifest? intendedRelease = null;
             ReleaseManifest? observedRelease = null;
             ReleaseComparison? releaseComparison = null;
+            ProjectReleaseDefinition? releaseDefinition = null;
             if (_options.RequireReleaseManifest)
             {
                 var release = await _releasePreflight.EvaluateAsync(allowDowngrade: false, ct);
@@ -209,8 +211,9 @@ public sealed class UpdateOrchestrator
                     return;
                 }
 
-                var (candidateRc, candidateOutput, candidateErrors) =
+                var (candidateRc, candidateOutput, candidateErrors, candidateDefinition) =
                     await FetchAndValidateCandidateAsync(intendedRelease!, ct);
+                releaseDefinition = candidateDefinition;
                 folder.WriteOutput("candidate-artifact-preflight.txt", candidateOutput);
                 if (candidateRc != 0 || candidateErrors.Count > 0)
                 {
@@ -289,12 +292,12 @@ public sealed class UpdateOrchestrator
 
             // PHASE 4 — building
             SetPhase("building", "locked dependency restore", runId, startedAt);
-            var (buildRc, buildOut, buildRan) = await MaybeRunNpmInstallAsync(headBefore, headAfterPull, ct);
-            if (buildRan) folder.WriteOutput("npm-install-output.txt", buildOut);
+            var (buildRc, buildOut, buildRan) = await RestoreDependenciesAsync(releaseDefinition, ct);
+            if (buildRan) folder.WriteOutput("dependency-restore-output.txt", buildOut);
             if (buildRc != 0)
             {
                 FinishFailed(runId, startedAt, headBefore, headAfterPull, trigger,
-                    $"npm install failed (rc={buildRc})", null, folder, preSnapshot);
+                    $"dependency restore failed (rc={buildRc})", null, folder, preSnapshot);
                 return;
             }
 
@@ -743,7 +746,7 @@ public sealed class UpdateOrchestrator
         }
     }
 
-    private async Task<(int Rc, string Output, IReadOnlyList<string> Errors)> FetchAndValidateCandidateAsync(
+    private async Task<(int Rc, string Output, IReadOnlyList<string> Errors, ProjectReleaseDefinition? Definition)> FetchAndValidateCandidateAsync(
         ReleaseManifest release, CancellationToken ct)
     {
         var tagRef = $"refs/tags/{release.Tag}";
@@ -753,41 +756,69 @@ public sealed class UpdateOrchestrator
         var fetch = await RunProcessAsync("git", new[] { "fetch", "--no-tags", "origin", refSpec },
             _options.StableCheckoutDir, ct);
         output.AppendLine(fetch.Output);
-        if (fetch.Rc != 0) return (fetch.Rc, output.ToString(), Array.Empty<string>());
+        if (fetch.Rc != 0) return (fetch.Rc, output.ToString(), Array.Empty<string>(), null);
 
         var resolved = await RunProcessAsync("git", new[] { "rev-parse", dereferenced },
             _options.StableCheckoutDir, ct);
         output.AppendLine(resolved.Output);
-        if (resolved.Rc != 0) return (resolved.Rc, output.ToString(), Array.Empty<string>());
+        if (resolved.Rc != 0) return (resolved.Rc, output.ToString(), Array.Empty<string>(), null);
         if (!string.Equals(resolved.Output.Trim(), release.Commit, StringComparison.OrdinalIgnoreCase))
             return (0, output.ToString(), new[]
             {
                 $"candidate tag {release.Tag} resolves to {resolved.Output.Trim()}, manifest declares {release.Commit}"
-            });
+            }, null);
 
-        var files = new[]
+        var definitionPath = ProjectPreparationPaths.Definition;
+        var definitionShow = await RunProcessAsync("git", new[] { "show", $"{release.Commit}:{definitionPath}" },
+            _options.StableCheckoutDir, ct);
+        if (definitionShow.Rc != 0)
         {
-            "backend/packages.lock.json",
-            "frontend/package.json",
-            "frontend/package-lock.json"
-        };
-        var contents = new string[files.Length];
-        for (var i = 0; i < files.Length; i++)
+            output.AppendLine(definitionShow.Output);
+            return (definitionShow.Rc, output.ToString(),
+                new[] { $"candidate {definitionPath} could not be read from {release.Tag}" }, null);
+        }
+        var read = ProjectDefinitionReader.Parse(definitionShow.Output);
+        if (!read.IsValid || read.Definition is null)
         {
-            var show = await RunProcessAsync("git", new[] { "show", $"{release.Commit}:{files[i]}" },
+            var issues = read.Issues.Select(issue =>
+                $"candidate {definitionPath} {issue.Path}: {issue.Message}").ToArray();
+            return (0, output.ToString(), issues, null);
+        }
+        if (read.Definition.Release is null)
+            return (0, output.ToString(),
+                new[] { $"candidate {definitionPath} does not declare a release contract" }, null);
+
+        var files = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var identity in read.Definition.Release.Identity.Where(identity => identity.UsesLockFile))
+        {
+            files.Add(identity.Source!);
+            if (string.Equals(identity.Ecosystem, "npm", StringComparison.Ordinal))
+                files.Add(SiblingPath(identity.Source!, "package.json"));
+        }
+        var contents = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var file in files)
+        {
+            var show = await RunProcessAsync("git", new[] { "show", $"{release.Commit}:{file}" },
                 _options.StableCheckoutDir, ct);
             if (show.Rc != 0)
             {
                 output.AppendLine(show.Output);
-                return (show.Rc, output.ToString(), new[] { $"candidate {files[i]} could not be read from {release.Tag}" });
+                return (show.Rc, output.ToString(),
+                    new[] { $"candidate {file} could not be read from {release.Tag}" }, null);
             }
-            contents[i] = show.Output;
+            contents[file] = show.Output;
         }
 
-        var errors = StableReleaseContract.ValidateCandidateDependencyLocks(
-            release, contents[0], contents[1], contents[2]);
+        var errors = StableReleaseContract.ValidateCandidateDependencies(
+            release, read.Definition, contents);
         foreach (var error in errors) output.AppendLine(error);
-        return (0, output.ToString(), errors);
+        return (0, output.ToString(), errors, read.Definition.Release);
+    }
+
+    private static string SiblingPath(string path, string fileName)
+    {
+        var slash = path.LastIndexOf('/');
+        return slash < 0 ? fileName : $"{path[..slash]}/{fileName}";
     }
 
     private static ReleaseManifest? ReadReleaseManifest(string path)
@@ -797,17 +828,32 @@ public sealed class UpdateOrchestrator
         catch { return null; }
     }
 
-    private async Task<(int Rc, string Output, bool Ran)> MaybeRunNpmInstallAsync(string before, string after, CancellationToken ct)
+    private async Task<(int Rc, string Output, bool Ran)> RestoreDependenciesAsync(
+        ProjectReleaseDefinition? releaseDefinition,
+        CancellationToken ct)
     {
-        // Restore both package graphs from lockfiles. npm ci also removes a
-        // drifted node_modules tree; neither command is allowed to rewrite its
-        // lock as part of a Stable deployment.
-        _ = before;
-        _ = after;
-        var (rc, output) = await RunBashAsync("-c",
-            "dotnet restore backend/OrchestratorApi.csproj --locked-mode && cd frontend && npm ci",
-            _options.StableCheckoutDir, ct);
-        return (rc, output, true);
+        // The fallback exists only for explicitly configured legacy branch
+        // updates. Immutable release updates always carry a validated project
+        // definition from the candidate commit.
+        var commands = releaseDefinition?.Restore
+            ?? ["dotnet restore backend/OrchestratorApi.csproj --locked-mode", "npm --prefix frontend ci"];
+        var script = "set -e\n" + string.Join('\n', commands);
+        var (rc, output) = await RunBashAsync("-c", script, _options.StableCheckoutDir, ct);
+        if (rc != 0) return (rc, output, true);
+
+        if (commands.Any(command => command.Contains("npm", StringComparison.Ordinal)
+                                    && command.Contains("frontend", StringComparison.Ordinal)))
+        {
+            var angularCache = Path.GetFullPath(Path.Combine(
+                _options.StableCheckoutDir, "frontend", ".angular", "cache"));
+            var expectedCache = Path.Combine(Path.GetFullPath(_options.StableCheckoutDir),
+                "frontend", ".angular", "cache");
+            if (!string.Equals(angularCache, expectedCache, StringComparison.OrdinalIgnoreCase))
+                return (-1, output + "\nrefusing to remove unexpected Angular cache path", true);
+            if (Directory.Exists(angularCache)) Directory.Delete(angularCache, recursive: true);
+            output += "\nremoved frontend/.angular/cache after npm restore";
+        }
+        return (0, output, true);
     }
 
     private async Task<(int Rc, string Output)> RunRestartAsync(CancellationToken ct)
