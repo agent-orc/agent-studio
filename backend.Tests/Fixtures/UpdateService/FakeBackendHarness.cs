@@ -27,6 +27,14 @@ public sealed class FakeBackendHarness : IAsyncDisposable
     public string BaseUrl => $"http://127.0.0.1:{Port}";
 
     public bool HealthzReturns503 { get; set; }
+    /// <summary>
+    /// When &gt; 0, /healthz returns 503 until this many seconds have passed
+    /// since <see cref="StartAsync"/>, then 200. Simulates a slow-but-alive
+    /// cold compile so the integration suite can prove the extended restart
+    /// health-wait budget treats it as success rather than a false failure.
+    /// </summary>
+    public double HealthzDelaySeconds { get; set; }
+    private DateTime _startedAtUtc;
     public bool ProbeReturns503 { get; set; }
     /// <summary>
     /// When &gt; 0, the first N calls to <c>/api/_internal/probe</c> return
@@ -51,6 +59,7 @@ public sealed class FakeBackendHarness : IAsyncDisposable
 
     public async Task StartAsync()
     {
+        _startedAtUtc = DateTime.UtcNow;
         var builder = WebApplication.CreateBuilder();
         builder.Logging.ClearProviders();
         builder.Logging.SetMinimumLevel(LogLevel.None);
@@ -64,6 +73,8 @@ public sealed class FakeBackendHarness : IAsyncDisposable
         {
             if (HealthzReturns503)
                 return Results.Json("err", statusCode: 503);
+            if (HealthzDelaySeconds > 0 && (DateTime.UtcNow - _startedAtUtc).TotalSeconds < HealthzDelaySeconds)
+                return Results.Json("still compiling", statusCode: 503);
             return Results.Text("\"ok\"", "application/json");
         });
         app.MapGet("/api/system/version", () => Results.Json(new

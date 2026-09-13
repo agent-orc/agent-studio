@@ -109,6 +109,12 @@ public sealed class FakeStableCheckout : IDisposable
     public bool StopRan() => File.Exists(StopMarkerPath);
     public bool StartRan() => File.Exists(StartMarkerPath);
 
+    /// <summary>Current HEAD of the working stable checkout.</summary>
+    public string ReadStableHead() => RunCapture(GitPath, StableDir, "rev-parse", "HEAD");
+
+    /// <summary>HEAD of the bare remote's main branch, i.e. the run's fetch target.</summary>
+    public string ReadRemoteMainHead() => RunCapture(GitPath, RemoteDir, "rev-parse", "refs/heads/main");
+
     public void AdvanceOriginMain(string message = "test: remote update")
     {
         var cloneDir = Path.Combine(Root, "remote-work-" + Guid.NewGuid().ToString("N").Substring(0, 8));
@@ -130,6 +136,11 @@ public sealed class FakeStableCheckout : IDisposable
 
     private static void Run(string exe, string workingDir, params string[] args)
     {
+        RunCapture(exe, workingDir, args);
+    }
+
+    private static string RunCapture(string exe, string workingDir, params string[] args)
+    {
         var psi = new ProcessStartInfo(exe)
         {
             WorkingDirectory = workingDir,
@@ -146,6 +157,7 @@ public sealed class FakeStableCheckout : IDisposable
         if (p.ExitCode != 0)
             throw new InvalidOperationException(
                 $"{Path.GetFileName(exe)} {string.Join(' ', args)} exited {p.ExitCode}\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}");
+        return stdout.Trim();
     }
 
     public void Dispose()

@@ -38,6 +38,17 @@ namespace AgentStudio.Tests;
 ///     passing rows.
 ///   - DoneLinger: after a happy-path run, lastRunFinishedAt stays
 ///     populated past the (shortened) linger window.
+///   - FailureBeforeRestart_LeavesCheckoutAndManifestUnchanged: a dependency
+///     restore failure in phase 4 (before phase 5 restart) leaves the
+///     checkout HEAD and build-manifest.json exactly as they were before
+///     the run (the "mutation boundary" invariant).
+///   - SlowBackendStart_WithinRestartHealthWaitBudget_IsTreatedAsSuccess: a
+///     /healthz that stays 503 for several seconds after restart (simulated
+///     cold compile) does not fail the run given the extended restart
+///     health-wait budget.
+///   - History_GetsExactlyOneRecordPerRun_WithBeforeAndAfterIdentity: each
+///     triggered run appends exactly one history record, carrying both the
+///     identity it departed from and the identity it verified healthy at.
 ///
 /// Gated to the Windows host: this suite drives the Windows-native same-disk
 /// deploy machinery (stop/start scripts + npm install; ADR-0021/0031). The
@@ -534,6 +545,152 @@ public class UpdateServiceIntegrationTests
         Assert.True(age2 > TimeSpan.FromSeconds(2),
             $"after ~3 s, lastRunFinishedAt age should exceed the 2 s linger window, got {age2.TotalSeconds:F1} s");
         Assert.Equal(lastRunFinishedAt, s2.GetProperty("lastRunFinishedAt").GetDateTime());
+    }
+
+    [SkippableFact]
+    public async Task FailureBeforeRestart_LeavesCheckoutAndManifestUnchanged()
+    {
+        Skip.If(!OperatingSystem.IsWindows(),
+            "Update Service integration suite exercises the Windows-native same-disk deploy machinery " +
+            "(stop/start scripts + npm install); the Linux deploy story is deferred (remote-ready kickoff D6, " +
+            "ADR-0021/0031). Gated to the Windows host until that lands.");
+        using var checkout = FakeStableCheckout.TryCreate();
+        Skip.If(checkout == null, "git and/or bash are not available on PATH; this integration test needs both.");
+
+        await using var backend = new FakeBackendHarness();
+        await backend.StartAsync();
+
+        // No backend/OrchestratorApi.csproj exists in the fake checkout, so
+        // phase 4 (building)'s locked dependency restore fails deterministically,
+        // before phase 5 (restarting) ever runs.
+        checkout!.AdvanceOriginMain();
+        var headBefore = checkout.ReadStableHead();
+        var manifestPath = Path.Combine(checkout.StableDir, "build-manifest.json");
+        Assert.False(File.Exists(manifestPath), "test setup: build-manifest.json should not pre-exist");
+
+        using var factory = new UpdateServiceTestFactory(checkout, backend, autoRollback: false);
+        var client = factory.CreateClient();
+
+        await TriggerAsync(client);
+        var status = await WaitForPhaseAsync(client, new[] { "done", "failed" }, TriggerTimeoutMs);
+        Assert.Equal("failed", status.GetProperty("phase").GetString());
+        Assert.Contains("dependency restore failed", status.GetProperty("message").GetString());
+
+        // The checkout was fast-forwarded to the candidate commit to run the
+        // restore against it, then rolled back on failure: HEAD must be
+        // byte-for-byte back at the pre-run commit, not left mid-flight.
+        Assert.Equal(headBefore, checkout.ReadStableHead());
+
+        // Legacy (non-release-manifest) mode never installs a build manifest
+        // before restart clears health + identity verification (see
+        // UpdateOrchestrator's "mutation boundary" comment above the
+        // File.Copy of CandidateManifestFile). A failure here must leave it
+        // exactly as it started: absent. The release-manifest variant of this
+        // same boundary (installing the candidate build-manifest.json only
+        // after restart succeeds) requires RequireReleaseManifest=true with a
+        // signed candidate/approved-tag fixture this harness does not build;
+        // that codepath shares the identical FinishFailed-before-restart
+        // return paths exercised by this test.
+        Assert.False(File.Exists(manifestPath), "build-manifest.json must not be written on a pre-restart failure");
+
+        // Stop ran (phase 4 stops the stack before the locked restore), but
+        // start never ran because the failure happened before phase 5.
+        Assert.True(checkout.StopRan(), "stop-stable.sh marker missing - phase 4 stop did not run");
+        Assert.False(checkout.StartRan(), "start-stable.sh should not run when failure occurs before phase 5");
+    }
+
+    [SkippableFact]
+    public async Task SlowBackendStart_WithinRestartHealthWaitBudget_IsTreatedAsSuccess()
+    {
+        Skip.If(!OperatingSystem.IsWindows(),
+            "Update Service integration suite exercises the Windows-native same-disk deploy machinery " +
+            "(stop/start scripts + npm install); the Linux deploy story is deferred (remote-ready kickoff D6, " +
+            "ADR-0021/0031). Gated to the Windows host until that lands.");
+        using var checkout = FakeStableCheckout.TryCreate();
+        Skip.If(checkout == null, "git and/or bash are not available on PATH; this integration test needs both.");
+
+        // /healthz stays 503 for several seconds after restart, simulating a
+        // cold compile that is merely slow rather than actually broken. The
+        // orchestrator's restart health wait is floored at
+        // UpdateServiceOptions.RestartHealthWaitSeconds (600s default), well
+        // above this delay, so the run must still reach phase=done.
+        await using var backend = new FakeBackendHarness { HealthzDelaySeconds = 6 };
+        await backend.StartAsync();
+
+        checkout!.AdvanceOriginMain();
+        using var factory = new UpdateServiceTestFactory(checkout, backend, autoRollback: false);
+        var client = factory.CreateClient();
+
+        await TriggerAsync(client);
+        var status = await WaitForPhaseAsync(client, new[] { "done", "failed" }, TriggerTimeoutMs);
+        var phase = status.GetProperty("phase").GetString();
+        var msg = status.TryGetProperty("message", out var m) ? m.GetString() : null;
+        Assert.True(phase == "done", $"slow-but-alive backend expected phase=done, got {phase}; message={msg}");
+
+        // The recorded backend startup time reflects the injected delay
+        // rather than the run failing fast on it.
+        var history = ReadHistory(checkout.HistoryFile);
+        var entry = Assert.Single(history, h => h.Status == "ok");
+        Assert.NotNull(entry.BackendStartupSeconds);
+        Assert.True(entry.BackendStartupSeconds >= 5,
+            $"expected backend startup to reflect the ~6s injected delay, got {entry.BackendStartupSeconds}s");
+    }
+
+    [SkippableFact]
+    public async Task History_GetsExactlyOneRecordPerRun_WithBeforeAndAfterIdentity()
+    {
+        Skip.If(!OperatingSystem.IsWindows(),
+            "Update Service integration suite exercises the Windows-native same-disk deploy machinery " +
+            "(stop/start scripts + npm install); the Linux deploy story is deferred (remote-ready kickoff D6, " +
+            "ADR-0021/0031). Gated to the Windows host until that lands.");
+        using var checkout = FakeStableCheckout.TryCreate();
+        Skip.If(checkout == null, "git and/or bash are not available on PATH; this integration test needs both.");
+
+        await using var backend = new FakeBackendHarness();
+        await backend.StartAsync();
+
+        // Run 1.
+        checkout!.AdvanceOriginMain();
+        var head0 = checkout.ReadStableHead();
+        var target1 = checkout.ReadRemoteMainHead();
+        using var factory = new UpdateServiceTestFactory(checkout, backend, autoRollback: false);
+        var client = factory.CreateClient();
+        await TriggerAsync(client);
+        var status1 = await WaitForPhaseAsync(client, new[] { "done", "failed" }, TriggerTimeoutMs);
+        Assert.Equal("done", status1.GetProperty("phase").GetString());
+
+        var historyAfterRun1 = ReadHistory(checkout.HistoryFile);
+        var run1 = Assert.Single(historyAfterRun1);
+        // One record, carrying both the identity this run departed from
+        // (intended predecessor, HeadBefore) and the identity it actually
+        // landed on and verified healthy (observed/actual, HeadAfter).
+        Assert.Equal(head0, run1.HeadBefore);
+        Assert.Equal(target1, run1.HeadAfter);
+        Assert.NotEqual(run1.HeadBefore, run1.HeadAfter);
+        // Legacy (non-release-manifest) mode does not carry the
+        // ReleaseManifest-typed IntendedTag/ObservedTag pair — that
+        // identity-equality contract (StableReleaseContract.IdentityEquals)
+        // is unit-tested directly in StableReleaseContractTests.cs, and is
+        // populated on this same record type only when
+        // RequireReleaseManifest=true.
+        Assert.Null(run1.IntendedTag);
+        Assert.Null(run1.ObservedTag);
+
+        // Run 2: a second trigger must append exactly one more record, not
+        // zero (dropped) and not more than one (duplicated by a retry path).
+        checkout.AdvanceOriginMain();
+        var head1 = checkout.ReadStableHead();
+        var target2 = checkout.ReadRemoteMainHead();
+        await TriggerAsync(client);
+        var status2 = await WaitForPhaseAsync(client, new[] { "done", "failed" }, TriggerTimeoutMs);
+        Assert.Equal("done", status2.GetProperty("phase").GetString());
+
+        var historyAfterRun2 = ReadHistory(checkout.HistoryFile);
+        Assert.Equal(2, historyAfterRun2.Length);
+        var run2 = historyAfterRun2[^1];
+        Assert.NotEqual(run1.RunId, run2.RunId);
+        Assert.Equal(head1, run2.HeadBefore);
+        Assert.Equal(target2, run2.HeadAfter);
     }
 
     private static async Task<string> WaitForRunFolderAsync(string runsRoot)

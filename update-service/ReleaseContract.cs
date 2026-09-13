@@ -42,7 +42,12 @@ public sealed record ReleaseComparison(
     ReleaseManifest? Installed,
     ReleaseManifest? Candidate,
     string? LatestApprovedTag,
-    bool Offline);
+    bool Offline,
+    // Populated by ReleasePreflightService (not by the pure Compare below,
+    // which has no access to run history) when Errors contains the
+    // running/installed divergence message, so the refusal names the run
+    // that caused it instead of leaving the operator to guess.
+    string? DivergenceExplanation = null);
 
 /// <summary>
 /// Pure Stable release gate. It never uses filesystem timestamps and can run

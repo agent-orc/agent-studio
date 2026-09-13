@@ -44,7 +44,10 @@ task_server_deploy_script=${ATP_TASK_SERVER_DEPLOY_SCRIPT:-$devspace_dir/deploy-
 frontend_url=${ATP_STABLE_FRONTEND_URL:-http://127.0.0.1:4011}
 backend_url=${ATP_STABLE_BACKEND_URL:-http://127.0.0.1:5031}
 task_server_url=${ATP_TASK_SERVER_URL:-http://127.0.0.1:5071}
-probe_timeout_ms=${ATP_BOOT_PROBE_TIMEOUT_MS:-180000}
+# Cold compile / cold npm install after many changed commits can take several
+# minutes; 10 minutes gives that headroom instead of failing fast on a boot
+# that is merely slow rather than actually broken.
+probe_timeout_ms=${ATP_BOOT_PROBE_TIMEOUT_MS:-600000}
 probe_settle_ms=${ATP_BOOT_PROBE_SETTLE_MS:-2000}
 
 log() {
@@ -142,6 +145,36 @@ else
 fi
 
 if [ "$install_frontend" -eq 1 ]; then
+  # A leftover frontend dev server (or one of its esbuild/vite children) can
+  # still hold files open under frontend/node_modules right after stop_script
+  # returns, and npm install then fails with EPERM trying to unlink them.
+  # Renaming the directory and back is a cheap way to surface that sharing
+  # violation before npm does, and to name the still-running holder instead
+  # of failing with a bare npm error.
+  node_modules_dir="$stable_checkout/frontend/node_modules"
+  if [ -d "$node_modules_dir" ]; then
+    holder=""
+    if command -v lsof >/dev/null 2>&1; then
+      # lsof exits non-zero when it finds no open files under the path; that
+      # is the common (unlocked) case, not a script error.
+      holder=$(lsof +D "$node_modules_dir" 2>/dev/null | awk 'NR==2{print "pid="$2" command="$1}') || true
+    fi
+    if [ -z "$holder" ]; then
+      # lsof is unavailable, or found nothing: fall back to a rename probe.
+      # On Windows a directory containing an open file handle cannot be
+      # renamed, which is exactly the esbuild.exe-still-running case this
+      # check exists for; on POSIX this is a best-effort secondary signal.
+      probe_dir="${node_modules_dir}.lock-probe"
+      rm -rf -- "$probe_dir"
+      if ! mv "$node_modules_dir" "$probe_dir" 2>/dev/null || ! mv "$probe_dir" "$node_modules_dir" 2>/dev/null; then
+        holder="an unknown process (rename of frontend/node_modules failed)"
+      fi
+    fi
+    if [ -n "$holder" ]; then
+      fail "frontend/node_modules is still held open by ${holder}; refusing to run npm install"
+    fi
+  fi
+
   log "Installing frontend dependencies"
   npm --prefix "$stable_checkout/frontend" install
 

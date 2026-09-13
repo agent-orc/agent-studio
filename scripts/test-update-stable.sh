@@ -193,4 +193,48 @@ printf '%s' "$noop_output" | grep -q 'recovering and verifying the full supervis
 printf '%s' "$noop_output" | grep -q 'Boot completed without page errors'
 test "$(git -C "$stable_checkout" symbolic-ref --short HEAD)" = main
 
+# A process still holding a file open under frontend/node_modules (the
+# leftover frontend dev server / esbuild child from the real incident) must
+# fail the run before npm install runs, and must name the holder instead of
+# surfacing a bare npm EPERM error.
+printf '%s\n' '// another patch revision' > "$source_checkout/frontend/scripts/patch-coding-agent-chat-technical-blocks.mjs"
+git -C "$source_checkout" commit --quiet -am 'another compatibility patch revision'
+git -C "$source_checkout" push --quiet origin main
+
+holder_file="$stable_checkout/frontend/node_modules/playwright-core/index.cjs"
+( exec 9<"$holder_file"; sleep 30 ) &
+holder_pid=$!
+# Give the background holder a moment to actually open the fd before the
+# updater runs its lock check.
+sleep 0.2
+
+set +e
+locked_output=$(run_update)
+locked_rc=$?
+set -e
+kill "$holder_pid" 2>/dev/null || true
+wait "$holder_pid" 2>/dev/null || true
+
+test "$locked_rc" -ne 0
+printf '%s' "$locked_output" | grep -q 'frontend/node_modules is still held open by'
+if printf '%s' "$locked_output" | grep -qi 'npm ERR'; then
+  printf '%s\n' 'lock check did not fail before npm install ran' >&2
+  exit 1
+fi
+
+# This script exercises scripts/update-stable.sh only: git fast-forward,
+# frontend dependency reinstall, and the browser boot probe. It has no
+# manifest install step, no release-preflight identity check, and no update
+# history file; those belong to the separate update-service (.NET) pipeline
+# invoked by ADR-0031 (update-service/UpdateOrchestrator.cs). The invariants
+# that a failure before restart leaves the checkout and build-manifest.json
+# untouched, that a slow-but-alive backend start within the extended restart
+# health-wait budget is treated as success, and that update history gets
+# exactly one record per run carrying both the pre-run and verified-healthy
+# identity, are covered by backend.Tests/UpdateServiceIntegrationTests.cs
+# (FailureBeforeRestart_LeavesCheckoutAndManifestUnchanged,
+# SlowBackendStart_WithinRestartHealthWaitBudget_IsTreatedAsSuccess,
+# History_GetsExactlyOneRecordPerRun_WithBeforeAndAfterIdentity). That suite
+# is gated to Windows and skips on Linux/CI without git+bash.
+
 printf '%s\n' 'update-stable tests passed'
