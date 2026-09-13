@@ -13,31 +13,78 @@ public enum BranchRetentionDecision
     NotMergedIntoMain,
     ChangedBeforeDelete,
     DeleteFailed,
+    ResultRefNotInMain,
+    ResultRefPending,
+    SalvageRefTaskNotTerminal,
+    SalvageRefTooYoung,
+    QuarantineRefTooYoung,
+    QuarantineRefReferenced,
+}
+
+public enum BranchNamespace
+{
+    Unknown,
+    Task,
+    Runner,
+    Delivery,
+    ResultsRef,
+    SalvageRef,
+    QuarantineRef,
+    Protected,
 }
 
 public sealed record BranchRetentionFacts(
     string Branch,
+    BranchNamespace Namespace,
     DateTimeOffset? TipCommittedAtUtc,
     bool CheckedOut,
     bool DevelopAvailable,
     bool MainAvailable,
     bool MergedIntoDevelop,
-    bool MergedIntoMain);
+    bool MergedIntoMain,
+    bool MergedIntoIntegrationBranch = false,
+    string? IntegrationBranch = null,
+    bool IsTaskIntegrated = false,
+    bool IsTaskTerminal = false);
 
 /// <summary>
-/// Pure retention decision for managed task-delivery refs. A branch is eligible
-/// only when its tip is old enough and is contained in both protected lines.
-/// Missing facts always retain the branch.
+/// Pure retention decision for managed task-delivery and build-proof refs across all namespaces.
+/// Classifies refs by namespace and applies namespace-specific retention rules. Missing facts always retain.
 /// </summary>
 public static class BranchRetentionPolicy
 {
+    private const int ResultsRefRetentionDays = 0;
+    private const int SalvageRefRetentionDays = 14;
+    private const int QuarantineRefRetentionDays = 30;
+
     public static BranchRetentionDecision Evaluate(
         BranchRetentionFacts facts,
         DateTimeOffset now,
         TimeSpan minimumAge)
     {
-        if (!IsManagedBranch(facts.Branch))
-            return BranchRetentionDecision.UnsupportedNamespace;
+        var ns = ClassifyNamespace(facts.Branch);
+
+        return ns switch
+        {
+            BranchNamespace.Task or BranchNamespace.Runner or BranchNamespace.Delivery
+                => EvaluateTaskDeliveryBranch(facts, now, minimumAge),
+            BranchNamespace.ResultsRef
+                => EvaluateResultsRef(facts, now),
+            BranchNamespace.SalvageRef
+                => EvaluateSalvageRef(facts, now),
+            BranchNamespace.QuarantineRef
+                => EvaluateQuarantineRef(facts, now),
+            BranchNamespace.Protected or BranchNamespace.Unknown
+                => BranchRetentionDecision.UnsupportedNamespace,
+            _ => BranchRetentionDecision.UnsupportedNamespace
+        };
+    }
+
+    private static BranchRetentionDecision EvaluateTaskDeliveryBranch(
+        BranchRetentionFacts facts,
+        DateTimeOffset now,
+        TimeSpan minimumAge)
+    {
         if (facts.CheckedOut)
             return BranchRetentionDecision.CheckedOut;
         if (facts.TipCommittedAtUtc is null)
@@ -55,9 +102,119 @@ public static class BranchRetentionPolicy
         return BranchRetentionDecision.Delete;
     }
 
+    private static BranchRetentionDecision EvaluateResultsRef(
+        BranchRetentionFacts facts,
+        DateTimeOffset now)
+    {
+        if (facts.CheckedOut)
+            return BranchRetentionDecision.CheckedOut;
+        if (facts.TipCommittedAtUtc is null)
+            return BranchRetentionDecision.MissingCommitTime;
+
+        if (!facts.MainAvailable)
+            return BranchRetentionDecision.MainUnavailable;
+
+        if (!facts.MergedIntoMain)
+            return BranchRetentionDecision.ResultRefNotInMain;
+
+        return BranchRetentionDecision.Delete;
+    }
+
+    private static BranchRetentionDecision EvaluateSalvageRef(
+        BranchRetentionFacts facts,
+        DateTimeOffset now)
+    {
+        if (facts.CheckedOut)
+            return BranchRetentionDecision.CheckedOut;
+        if (facts.TipCommittedAtUtc is null)
+            return BranchRetentionDecision.MissingCommitTime;
+
+        if (!facts.IsTaskTerminal && !facts.MergedIntoMain)
+            return BranchRetentionDecision.SalvageRefTaskNotTerminal;
+
+        var age = now - facts.TipCommittedAtUtc.Value;
+        if (age < TimeSpan.FromDays(SalvageRefRetentionDays))
+            return BranchRetentionDecision.SalvageRefTooYoung;
+
+        if (!facts.MainAvailable)
+            return BranchRetentionDecision.MainUnavailable;
+
+        if (!facts.MergedIntoMain)
+        {
+            var ageDays = (int)age.TotalDays;
+            return ageDays >= SalvageRefRetentionDays ? BranchRetentionDecision.Delete : BranchRetentionDecision.SalvageRefTooYoung;
+        }
+
+        return BranchRetentionDecision.Delete;
+    }
+
+    private static BranchRetentionDecision EvaluateQuarantineRef(
+        BranchRetentionFacts facts,
+        DateTimeOffset now)
+    {
+        if (facts.CheckedOut)
+            return BranchRetentionDecision.CheckedOut;
+        if (facts.TipCommittedAtUtc is null)
+            return BranchRetentionDecision.MissingCommitTime;
+
+        var age = now - facts.TipCommittedAtUtc.Value;
+        if (age < TimeSpan.FromDays(QuarantineRefRetentionDays))
+            return BranchRetentionDecision.QuarantineRefTooYoung;
+
+        return BranchRetentionDecision.Delete;
+    }
+
+    public static BranchNamespace ClassifyNamespace(string branch)
+    {
+        if (branch.StartsWith("task/", StringComparison.Ordinal))
+            return BranchNamespace.Task;
+        if (branch.StartsWith("runner/", StringComparison.Ordinal))
+            return BranchNamespace.Runner;
+        if (branch.StartsWith("delivery/", StringComparison.Ordinal))
+            return BranchNamespace.Delivery;
+        if (branch.StartsWith("agent-studio/results/", StringComparison.Ordinal))
+            return BranchNamespace.ResultsRef;
+        if (branch.StartsWith("agent-studio/salvage/", StringComparison.Ordinal))
+            return BranchNamespace.SalvageRef;
+        if (branch.StartsWith("agent-studio/quarantine/", StringComparison.Ordinal))
+            return BranchNamespace.QuarantineRef;
+        if (IsProtectedRef(branch))
+            return BranchNamespace.Protected;
+        return BranchNamespace.Unknown;
+    }
+
+    private static bool IsProtectedRef(string branch)
+        => branch == "main" || branch == "develop" || branch.StartsWith("release/", StringComparison.Ordinal)
+           || branch.StartsWith("v", StringComparison.Ordinal);
+
     public static bool IsManagedBranch(string branch)
-        => branch.StartsWith("task/", StringComparison.Ordinal)
-           || branch.StartsWith("runner/", StringComparison.Ordinal);
+    {
+        var ns = ClassifyNamespace(branch);
+        return ns is BranchNamespace.Task or BranchNamespace.Runner or BranchNamespace.Delivery
+            or BranchNamespace.ResultsRef or BranchNamespace.SalvageRef or BranchNamespace.QuarantineRef;
+    }
+
+    public static string ReasonFor(BranchRetentionDecision decision) => decision switch
+    {
+        BranchRetentionDecision.Delete => "Eligible for deletion; deletion policy met.",
+        BranchRetentionDecision.UnsupportedNamespace => "Branch is outside managed namespaces.",
+        BranchRetentionDecision.CheckedOut => "Branch is checked out in a live worktree.",
+        BranchRetentionDecision.MissingCommitTime => "Tip commit time is unavailable.",
+        BranchRetentionDecision.TooYoung => "Tip commit is within the retention window.",
+        BranchRetentionDecision.DevelopUnavailable => "Protected develop ref is unavailable.",
+        BranchRetentionDecision.MainUnavailable => "Protected main ref is unavailable.",
+        BranchRetentionDecision.NotMergedIntoDevelop => "Tip is not contained in integration branch.",
+        BranchRetentionDecision.NotMergedIntoMain => "Tip is not contained in main.",
+        BranchRetentionDecision.ChangedBeforeDelete => "Branch changed before deletion attempt.",
+        BranchRetentionDecision.DeleteFailed => "Deletion failed; branch kept.",
+        BranchRetentionDecision.ResultRefNotInMain => "Result ref tip is not contained in main.",
+        BranchRetentionDecision.ResultRefPending => "Result ref is pending integration.",
+        BranchRetentionDecision.SalvageRefTaskNotTerminal => "Task is not terminal; ref retained for recovery.",
+        BranchRetentionDecision.SalvageRefTooYoung => "Salvage ref is within 14-day retention window.",
+        BranchRetentionDecision.QuarantineRefTooYoung => "Quarantine ref is within 30-day retention window.",
+        BranchRetentionDecision.QuarantineRefReferenced => "Quarantine ref is referenced by an open escalation or human-review card.",
+        _ => "Unknown retention decision.",
+    };
 }
 
 public sealed record BranchRetentionAction(
@@ -67,7 +224,9 @@ public sealed record BranchRetentionAction(
     DateTimeOffset? TipCommittedAtUtc,
     BranchRetentionDecision Decision,
     bool Deleted,
-    string Reason);
+    string Reason,
+    BranchNamespace? Namespace = null,
+    string? TaskKey = null);
 
 public sealed record BranchRetentionProjectReport(
     string Project,
@@ -304,6 +463,7 @@ public sealed class GitBranchRetentionService
         GitRefLine? main)
         => new(
             candidate.Branch,
+            BranchRetentionPolicy.ClassifyNamespace(candidate.Branch),
             candidate.Reference.CommittedAtUtc,
             checkedOut.Contains(candidate.Branch),
             develop is not null,

@@ -74,7 +74,7 @@ public sealed class BranchRetentionPolicyTests
 
     [Theory]
     [InlineData("feature/old")]
-    [InlineData("agent-studio/results/run/fence/sha")]
+    [InlineData("release/1.0")]
     [InlineData("main")]
     public void Evaluate_NeverDeletesBranchesOutsideManagedNamespaces(string branch)
     {
@@ -87,6 +87,7 @@ public sealed class BranchRetentionPolicyTests
 
     private static BranchRetentionFacts EligibleFacts() => new(
         "task/old",
+        BranchNamespace.Task,
         Now.AddDays(-31),
         CheckedOut: false,
         DevelopAvailable: true,
