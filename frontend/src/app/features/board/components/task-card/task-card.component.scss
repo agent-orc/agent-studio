@@ -408,6 +408,52 @@
       user-select: none;
       white-space: nowrap;
     }
+    // AGT-2795: decision-card title badge. An open decision is an acute
+    // "needs you" state, so it uses the attention accent as a full-surface
+    // tint (no left accent bar, R1); a decided card is history and renders
+    // quietly with the muted tone (R4).
+    .task-card__decision-badge {
+      display: inline-block;
+      min-height: var(--studio-card-pill-height);
+      padding: 0 var(--studio-card-pill-padding-x);
+      border-radius: 3px;
+      font-size: var(--studio-card-meta-size);
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      vertical-align: middle;
+      margin-right: 4px;
+      user-select: none;
+      white-space: nowrap;
+      color: var(--studio-on-accent);
+      background: var(--studio-accent-warn, var(--studio-accent));
+      border: 1px solid var(--studio-accent-warn, var(--studio-accent));
+
+      &[data-status='decided'] {
+        color: var(--studio-fg-muted);
+        background: color-mix(in srgb, var(--studio-fg-muted) 14%, transparent);
+        border-color: color-mix(in srgb, var(--studio-fg-muted) 32%, transparent);
+      }
+    }
+    .task-card__decider-pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: var(--studio-card-pill-height);
+      padding: 0 var(--studio-card-pill-padding-x);
+      border-radius: 7px;
+      font-size: var(--studio-card-meta-size);
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      color: var(--studio-fg-muted);
+      background: color-mix(in srgb, var(--studio-accent-warn, var(--studio-accent)) 12%, transparent);
+      border: 1px solid color-mix(in srgb, var(--studio-accent-warn, var(--studio-accent)) 28%, transparent);
+      white-space: nowrap;
+
+      &[data-status='decided'] {
+        background: color-mix(in srgb, var(--studio-fg-muted) 10%, transparent);
+        border-color: color-mix(in srgb, var(--studio-fg-muted) 24%, transparent);
+      }
+    }
     .task-card__epic-subtasks {
       margin: var(--studio-spacing-2) 0 var(--studio-spacing-1);
       padding: var(--studio-spacing-1);

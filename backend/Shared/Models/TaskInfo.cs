@@ -516,6 +516,17 @@ public record TaskInfo
     /// that structured reference carrier lands.
     /// </summary>
     public ConceptDossierSummary? ConceptDossier { get; init; }
+
+    /// <summary>
+    /// AGT-2795: structured content of a <see cref="TaskKinds.Decision"/> card -
+    /// the question, options, recommendation, decider, due date, blocked cards,
+    /// and the recorded choice/rationale once decided. Persisted as the
+    /// <c>"decision"</c> object in <c>task.json</c>; null on every other kind.
+    /// A decision card never enters a runner lane: it sits in preparation with
+    /// the decision badge until the decider chooses an option, then becomes a
+    /// durable record that unblocks its dependants.
+    /// </summary>
+    public DecisionContent? Decision { get; init; }
 }
 
 /// <summary>Compact current-step projection used by board and task detail.</summary>

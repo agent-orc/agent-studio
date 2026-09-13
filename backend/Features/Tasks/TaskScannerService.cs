@@ -729,6 +729,7 @@ public class TaskScannerService : ITaskScanner
                 RelatedWikiPages = ReadRelatedWikiPages(raw, entry),
                 Provenance = ReadProvenance(raw),
                 ExternalCompletion = ReadExternalCompletion(raw),
+                Decision = ReadDecision(raw),
                 RemoteDispatchRejection = ReadRemoteDispatchRejection(raw)
             };
             if (isArchive)
@@ -1285,6 +1286,25 @@ public class TaskScannerService : ITaskScanner
         try
         {
             return JsonSerializer.Deserialize<ExternalCompletionInfo>(ext.GetRawText(), TaskJsonFile.ReadOpts);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// AGT-2795: reads the structured <c>decision</c> object off a decision card.
+    /// Returns null when absent or malformed so a corrupt block renders the card
+    /// inert rather than fatal.
+    /// </summary>
+    private static DecisionContent? ReadDecision(JsonElement raw)
+    {
+        if (!raw.TryGetProperty("decision", out var dec) || dec.ValueKind != JsonValueKind.Object)
+            return null;
+        try
+        {
+            return JsonSerializer.Deserialize<DecisionContent>(dec.GetRawText(), TaskJsonFile.ReadOpts);
         }
         catch
         {

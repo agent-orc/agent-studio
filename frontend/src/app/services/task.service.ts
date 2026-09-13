@@ -40,6 +40,7 @@ import type {
   PublishAutomationMode,
   PublishWorkflowRun,
   ReviewProjectionView,
+  DecisionActionResponse,
 } from '../models/task.model';
 import { TaskState } from '../models/task.model';
 import type { ClaudeSessionResponse } from '../features/claude';
@@ -1039,6 +1040,28 @@ export class TaskService {
     return this.http.put<import('../models/task.model').SetTaskReferencesResponse>(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/references`,
       references,
+      this.withWatchPath(watchPath),
+    );
+  }
+
+  /**
+   * AGT-2795: record the decider's choice on a decision card. The chosen option
+   * must be one of the card's options and a one-line rationale is required. On
+   * success the card becomes a durable record and its dependants are unblocked.
+   */
+  decideCard(jobId: string, optionId: string, rationale: string, watchPath?: string) {
+    return this.http.post<DecisionActionResponse>(
+      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/decision`,
+      { optionId, rationale },
+      this.withWatchPath(watchPath),
+    );
+  }
+
+  /** AGT-2795: reopen a settled decision with an optional note; re-blocks dependants. */
+  reopenDecision(jobId: string, note: string | undefined, watchPath?: string) {
+    return this.http.post<DecisionActionResponse>(
+      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/decision/reopen`,
+      { note: note ?? '' },
       this.withWatchPath(watchPath),
     );
   }

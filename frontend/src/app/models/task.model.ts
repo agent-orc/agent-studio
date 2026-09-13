@@ -102,8 +102,47 @@ import type { OrchestratorLogEntry, OrchestratorSession } from '../features/orch
 
 // (GitProjectSummary, GitHygieneStatus, TaskHygieneContext now in features/git/models/git.model.ts; re-exported above)
 
-/** Card kind: `epic` is a container for sub-tasks; `task` is an ordinary card. */
-export type TaskKind = 'task' | 'epic';
+/**
+ * Card kind: `epic` is a container for sub-tasks; `task` is an ordinary card;
+ * `decision` (AGT-2795) is a first-class decision request the decider resolves
+ * by choosing an option, never a runnable unit of work.
+ */
+export type TaskKind = 'task' | 'epic' | 'decision';
+
+/** Lifecycle of a decision card. Mirrors backend `DecisionStatuses`. */
+export type DecisionStatus = 'requested' | 'decided' | 'reopened';
+
+/** One choosable option on a decision card. Mirrors backend `DecisionOption`. */
+export interface DecisionOption {
+  id: string;
+  label: string;
+  consequences?: string | null;
+  effort?: string | null;
+  risks?: string | null;
+  requirements?: string | null;
+}
+
+/**
+ * Structured content of a `decision` card. Mirrors backend `DecisionContent`:
+ * the question, options, recommendation, decider, due date, blocked cards, and
+ * the recorded choice once decided.
+ */
+export interface DecisionContent {
+  question: string;
+  options: DecisionOption[];
+  recommendedOptionId?: string | null;
+  recommendationReason?: string | null;
+  decider: string;
+  dueDate?: string | null;
+  blockedCards?: string[];
+  status: DecisionStatus;
+  chosenOptionId?: string | null;
+  rationale?: string | null;
+  decidedBy?: string | null;
+  decidedAt?: string | null;
+  reopenNote?: string | null;
+  recordPath?: string | null;
+}
 
 /**
  * Task execution mode. Mirrors backend `TaskModes`. `coding` is the default
@@ -157,6 +196,14 @@ export interface TaskReferences {
   raisedFollowUps?: string[];
   /** Stable project-scoped document reference keys. */
   workbenches?: string[];
+}
+
+/** Response of the decide / reopen decision-card endpoints (AGT-2795). */
+export interface DecisionActionResponse {
+  decision: DecisionContent;
+  targetState: string;
+  unblocked: string[];
+  created: string[];
 }
 
 export interface RelatedWikiPage {
@@ -384,6 +431,12 @@ export interface TaskInfo {
    * Older payloads may omit it, so callers treat absent as `coding`.
    */
   mode?: TaskMode;
+  /**
+   * AGT-2795: structured decision content on a `decision` card (question,
+   * options, recommendation, decider, recorded choice). Absent on every other
+   * kind. Mirrors backend `TaskInfo.Decision`.
+   */
+  decision?: DecisionContent | null;
   /** Explicit declaration that this card expects no delivery branch. */
   noBranchExpected?: boolean;
   /** Whether the agent may use the web during this task. Mirrors backend `AllowWebAccess`. */

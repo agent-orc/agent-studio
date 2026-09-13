@@ -24,6 +24,7 @@ import {
   buildLoopTooltip,
   buildMergeSignal,
   buildModeBadge,
+  buildDecisionBadge,
   buildOutcomeIssueBadge,
   buildOwnerChip,
   buildPendingTooltip,
@@ -140,6 +141,8 @@ export class TaskCardComponent implements OnInit, OnDestroy {
    * glance. See {@link buildModeBadge}.
    */
   readonly modeBadge = computed(() => buildModeBadge(this.job().mode));
+  /** AGT-2795: decision-card badge + decider, or null for non-decision cards. */
+  readonly decisionBadge = computed(() => buildDecisionBadge(this.job()));
 
   readonly tagChips = computed(() => buildTagChips(this.job().tags, this.tagRegistry.byId(), this.job().state));
 

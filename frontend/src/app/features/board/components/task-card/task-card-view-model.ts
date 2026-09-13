@@ -86,6 +86,33 @@ export function buildModeBadge(mode: TaskInfo['mode']): ModeBadge | null {
   };
 }
 
+export interface DecisionBadge {
+  status: 'requested' | 'decided' | 'reopened';
+  /** Short badge word: "Decision" while open, "Decided" once settled. */
+  label: string;
+  /** Who must decide (a client id or the "operator" role). */
+  decider: string;
+  tooltip: string;
+}
+
+/**
+ * Decision badge for the card (AGT-2795). Rendered for every `decision` card so
+ * the card type reads at a glance; the decider rides alongside so the operator
+ * sees who owns the fork. Returns null for non-decision cards.
+ */
+export function buildDecisionBadge(job: TaskInfo): DecisionBadge | null {
+  if (job.kind !== 'decision' || !job.decision) return null;
+  const status = job.decision.status ?? 'requested';
+  const decider = job.decision.decider || 'operator';
+  const label = status === 'decided' ? 'Decided' : 'Decision';
+  const tooltip = status === 'decided'
+    ? `Decision recorded by ${job.decision.decidedBy || decider}`
+    : status === 'reopened'
+      ? `Decision reopened; awaiting ${decider}`
+      : `Decision needed by ${decider}`;
+  return { status, label, decider, tooltip };
+}
+
 export function buildCommitTooltip(commit: TaskInfo['commit']): StructuredTooltip | string {
   if (!commit) return '';
   const subject = (commit.message || '').split('\n')[0];

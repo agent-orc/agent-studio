@@ -812,6 +812,23 @@ public class TaskMutationService
     }
 
     /// <summary>
+    /// AGT-2795: replace-all write of the structured <c>decision</c> object on a
+    /// decision card. The caller (the decision-card service) owns validation and
+    /// the transition side effects; this writer is deliberately thin so it can
+    /// persist the requested, decided, and reopened shapes alike.
+    /// </summary>
+    public bool SetDecisionContent(string jobId, DecisionContent decision, string? watchPath = null)
+    {
+        var info = _scanner.FindJob(jobId, watchPath);
+        if (info == null) return false;
+        TaskJsonFile.UpdateField(info.FolderPath, "decision", decision, _logger);
+        _logger.LogInformation(
+            "decision-content-set job={JobId} status={Status} chosen={Chosen}",
+            jobId, decision.Status, decision.ChosenOptionId ?? "");
+        return Updated();
+    }
+
+    /// <summary>
     /// Replace-all write of the per-job tag id array. Tag ids are normalized
     /// via <see cref="NormalizeTagId"/> (lowercase, <c>[a-z0-9-]</c>, max 32
     /// chars), de-duplicated case-insensitively, and the order of the
@@ -1381,8 +1398,28 @@ public class TaskMutationService
         // operator and automation callers may intentionally create a card in a
         // review lane; silently clamping those requests to Backlog loses the
         // caller's routing decision and lets later guards misclassify the card.
+        var isDecision = TaskKinds.IsDecision(req.Kind);
+        // AGT-2795: a decision card is a decision request, not runnable work. Its
+        // structured content is validated up front so a malformed request is
+        // rejected before a card folder is created, and a default create lands it
+        // in preparation with the decision badge rather than backlog.
+        DecisionContent? decisionContent = null;
+        if (isDecision)
+        {
+            decisionContent = (req.Decision ?? new DecisionContent()) with
+            {
+                Status = DecisionStatuses.Requested,
+                ChosenOptionId = null,
+                Rationale = null,
+                DecidedBy = null,
+                DecidedAt = null,
+                RecordPath = null,
+            };
+            if (DecisionCardPolicy.ValidateContent(decisionContent).Count > 0) return null;
+        }
+
         var targetState = string.IsNullOrWhiteSpace(req.TargetState)
-            ? TaskStates.Backlog
+            ? isDecision ? TaskStates.Preparation : TaskStates.Backlog
             : TaskStates.All.Contains(req.TargetState, StringComparer.Ordinal)
                 ? req.TargetState
                 : null;
@@ -1506,8 +1543,11 @@ public class TaskMutationService
         // (research on, else off) - see planning-research-task-kinds note.
         var effectiveMode = TaskModes.Normalize(req.Mode);
         jobJson["mode"] = effectiveMode;
-        if (req.NoBranchExpected || AcceptanceIntegrationPolicy.IsNoBranchTaskType(req.TaskType))
+        if (req.NoBranchExpected || isDecision || AcceptanceIntegrationPolicy.IsNoBranchTaskType(req.TaskType))
             jobJson["noBranchExpected"] = true;
+        // AGT-2795: persist the validated decision content on a decision card.
+        if (isDecision && decisionContent != null)
+            jobJson["decision"] = decisionContent;
         jobJson["allowWebAccess"] = req.AllowWebAccess ?? (effectiveMode == TaskModes.Research);
         if (req.Fixture)
             jobJson["fixture"] = true;
@@ -1554,6 +1594,24 @@ public class TaskMutationService
                 ["creationSource"] = string.IsNullOrWhiteSpace(req.CreationSource) ? "human" : req.CreationSource.Trim(),
                 ["createdBy"] = string.IsNullOrWhiteSpace(req.CreatedBy) ? ownerClientId : req.CreatedBy.Trim(),
             });
+
+        // AGT-2795: a decision card opens its ledger with decision_requested so
+        // its history shows the fork the moment it is raised.
+        if (isDecision && decisionContent != null)
+            _timeline?.Append(
+                jobDir,
+                TimelineEventKinds.DecisionRequested,
+                string.Equals(req.CreationSource, TimelineActors.Orchestrator, StringComparison.OrdinalIgnoreCase)
+                    ? TimelineActors.Orchestrator
+                    : TimelineActors.Human(ownerClientId),
+                summary: string.IsNullOrWhiteSpace(decisionContent.Question)
+                    ? "Decision requested"
+                    : $"Decision requested: {decisionContent.Question}",
+                details: new()
+                {
+                    ["decider"] = decisionContent.Decider,
+                    ["options"] = decisionContent.Options.Count.ToString(),
+                });
 
         _scanner.InvalidateCache();
         // Push a typed jobCreated to connected clients so other tabs render

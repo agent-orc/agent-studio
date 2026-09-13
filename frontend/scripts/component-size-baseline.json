@@ -25,8 +25,8 @@
       "total": 710
     },
     "src/app/features/board/components/task-card/task-card.component.ts": {
-      "typeScript": 574,
-      "template": 482,
+      "typeScript": 577,
+      "template": 490,
       "styles": 1726,
       "total": 2782
     },

@@ -373,6 +373,25 @@ public static class TimelineEventKinds
     public const string FollowUpConsumed = "follow_up_consumed";
 
     /// <summary>
+    /// AGT-2795: a decision card was created as a first-class decision request.
+    /// <see cref="TimelineEvent.Summary"/> names the question;
+    /// <see cref="TimelineEvent.Details"/> carry the decider and option count.
+    /// </summary>
+    public const string DecisionRequested = "decision_requested";
+    /// <summary>
+    /// AGT-2795: a decider chose an option on a decision card.
+    /// <see cref="TimelineEvent.Actor"/> is the decider,
+    /// <see cref="TimelineEvent.Summary"/> names the chosen option, and
+    /// <see cref="TimelineEvent.PayloadRef"/> points at the ADR-style record.
+    /// </summary>
+    public const string DecisionDecided = "decision_decided";
+    /// <summary>
+    /// AGT-2795: a decider reopened a settled decision, re-blocking its
+    /// dependants. <see cref="TimelineEvent.Summary"/> carries the note.
+    /// </summary>
+    public const string DecisionReopened = "decision_reopened";
+
+    /// <summary>
     /// A Global Orchestrator Watcher case (orchestrator-waechter dossier §10)
     /// recurred against a card that already has an open Watcher proposal, so
     /// W2 appended a comment here instead of drafting a second card. Details

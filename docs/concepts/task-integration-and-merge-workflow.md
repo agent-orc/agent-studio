@@ -234,8 +234,22 @@ It is separate from the Project Hub Git tree, which is strictly read-only.
   holding) and gate on the same per-project setting as push-on-merge; until then,
   removing merged refs is always an explicit operator action.
 
+## Decision cards do not integrate
+
+A `kind: decision` card (AGT-2795) is a decision request, not runnable work. It
+is branch-less (`noBranchExpected`), never auto-picked, and never merged: the
+one rule for agents above does not apply because there is no worktree and no
+delivery branch. Deciding it records the chosen option and moves the card to
+`6-completed` as a durable record without any integration transaction. Its only
+effect on the delivery flow is downstream: the implementation cards that
+`dependsOn` the decision are held by the waits-on gate until it is decided, then
+get the decision block appended to their prompt and are promoted to `2-ready`
+(or one card is seeded from the chosen option). See
+[decision cards](./decision-cards.md).
+
 ## See also
 
+- `docs/concepts/decision-cards.md` - the first-class decision card kind, its options/choose CTA, and dependant unblocking.
 - `docs/concepts/parallel-task-execution.md` - parallel execution model, integration strategies, merge-queue.
 - `docs/concepts/release-semantics.md` - the decided integration and release model (supersedes the retired `git-branching-integration-zielbild.md` draft). The target three-tier branching model (`task/<id>` -> `develop-local` -> `develop`) described in that draft was not carried forward; the `develop-local` tier remains a target, not yet implemented.
 - ADR-0052 in `docs/system/architecture/decisions/adr-archive.md` - the parallel-execution decision and the "run agent does no git" contract.

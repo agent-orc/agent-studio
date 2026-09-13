@@ -964,6 +964,34 @@ public static class TaskCrudEndpoints
             return success ? Results.Ok(new { released = req?.Released == true }) : Results.NotFound();
         });
 
+        // AGT-2795: record the decider's choice on a decision card. The chosen
+        // option must be one of the card's options and a one-line rationale is
+        // required. On success the card becomes a durable ADR-style record, the
+        // implementation cards depending on it are unblocked (or one is seeded
+        // from the chosen option), and the card moves to 6-completed. The
+        // X-Client-Id of the caller is the record's author (the decider).
+        group.MapPost("/{jobId}/decision", async (HttpContext ctx, string jobId, string? project, string? watchPath,
+            DecideCardRequest req, DecisionCardService decisions, AgentStudio.Registry.ProjectRegistry projects,
+            CancellationToken ct) =>
+        {
+            watchPath = ResolveWatchPath(projects, project, watchPath);
+            var decidedBy = DecisionActor(ctx);
+            var outcome = await decisions.DecideAsync(jobId, watchPath, req ?? new DecideCardRequest(), decidedBy, ct);
+            return DecisionResult(outcome);
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
+
+        // AGT-2795: reopen a settled decision with an optional note. Clears the
+        // recorded choice and returns the card to preparation, which re-blocks
+        // its dependants through the waits-on gate.
+        group.MapPost("/{jobId}/decision/reopen", async (HttpContext ctx, string jobId, string? project, string? watchPath,
+            ReopenDecisionRequest? req, DecisionCardService decisions, AgentStudio.Registry.ProjectRegistry projects,
+            CancellationToken ct) =>
+        {
+            watchPath = ResolveWatchPath(projects, project, watchPath);
+            var outcome = await decisions.ReopenAsync(jobId, watchPath, req, DecisionActor(ctx), ct);
+            return DecisionResult(outcome);
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
+
         // Replace-all: the request's Tags array becomes the new full set on
         // the job. Empty list clears tags. Unknown ids are accepted (the
         // registry may evolve out from under a job); ghost rendering is the
@@ -1055,6 +1083,38 @@ public static class TaskCrudEndpoints
             ?? context.Request.Headers["X-Client-Id"].FirstOrDefault();
         return TimelineActors.Human(clientId ?? string.Empty);
     }
+
+    /// <summary>
+    /// AGT-2795: the decider identity for a decision-card write. Unlike
+    /// <see cref="OperatorActor"/> this returns the raw client id (not a
+    /// <c>human:</c>-prefixed timeline actor), because it is stored as the
+    /// decision record's author and the timeline layer re-wraps it.
+    /// </summary>
+    private static string DecisionActor(HttpContext context) =>
+        context.Items["ClientId"] as string
+        ?? context.Request.Headers["X-Client-Id"].FirstOrDefault()
+        ?? DecisionDeciders.Operator;
+
+    /// <summary>Maps a <see cref="DecisionCardOutcome"/> to an HTTP result.</summary>
+    private static IResult DecisionResult(DecisionCardOutcome outcome) => outcome.Status switch
+    {
+        DecisionCardStatus.Success => Results.Ok(new
+        {
+            decision = outcome.Decision,
+            targetState = outcome.TargetState,
+            unblocked = outcome.UnblockedKeys ?? [],
+            created = outcome.CreatedKeys ?? [],
+        }),
+        DecisionCardStatus.NotFound => Results.NotFound(),
+        DecisionCardStatus.NotDecision => Results.BadRequest(new { error = "This card is not a decision card." }),
+        DecisionCardStatus.Conflict => Results.Conflict(new { error = outcome.Message ?? "The decision is not in a valid state for this action." }),
+        DecisionCardStatus.InvalidRequest => Results.BadRequest(new
+        {
+            error = "Invalid decision",
+            errors = (outcome.Errors ?? []).Select(e => new { code = e.Code.ToString(), message = e.Message }),
+        }),
+        _ => Results.StatusCode(500),
+    };
 
     internal static string? AppendDeliveryAcceptanceCriteria(
         string? prompt,

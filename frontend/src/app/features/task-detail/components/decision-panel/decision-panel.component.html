@@ -1,0 +1,105 @@
+@if (show()) {
+  @if (decision(); as d) {
+    <section class="decision" data-testid="decision-panel" [attr.data-status]="d.status">
+      <header class="decision__head">
+        <span class="decision__badge" [attr.data-status]="d.status">
+          {{ d.status === 'decided' ? 'Decided' : 'Decision needed' }}
+        </span>
+        <span class="decision__decider" data-testid="decision-decider">Decider: {{ d.decider }}</span>
+        @if (d.dueDate) {
+          <span class="decision__due">Due {{ d.dueDate }}</span>
+        }
+      </header>
+
+      <h3 class="decision__question" data-testid="decision-question">{{ d.question }}</h3>
+
+      <ol class="decision__options">
+        @for (option of options(); track option.id) {
+          <li class="decision__option"
+              data-testid="decision-option"
+              [attr.data-option]="option.id"
+              [class.decision__option--recommended]="option.id === recommendedId()"
+              [class.decision__option--chosen]="option.id === chosenId()">
+            <div class="decision__option-head">
+              <span class="decision__option-label">{{ option.id }} — {{ option.label }}</span>
+              @if (option.id === recommendedId()) {
+                <span class="decision__tag decision__tag--rec" data-testid="decision-recommended">Recommended</span>
+              }
+              @if (option.id === chosenId()) {
+                <span class="decision__tag decision__tag--chosen" data-testid="decision-chosen">Chosen</span>
+              }
+            </div>
+            <dl class="decision__facets">
+              @if (option.consequences) {
+                <div><dt>Consequences</dt><dd>{{ option.consequences }}</dd></div>
+              }
+              @if (option.effort) {
+                <div><dt>Effort</dt><dd>{{ option.effort }}</dd></div>
+              }
+              @if (option.risks) {
+                <div><dt>Risks</dt><dd>{{ option.risks }}</dd></div>
+              }
+            </dl>
+            @if (open()) {
+              <button type="button" class="decision__choose"
+                      data-testid="decision-choose"
+                      [class.decision__choose--selected]="option.id === selectedOptionId()"
+                      [attr.aria-pressed]="option.id === selectedOptionId()"
+                      (click)="select(option.id)">
+                {{ option.id === selectedOptionId() ? 'Selected' : 'Choose' }}
+              </button>
+            }
+          </li>
+        }
+      </ol>
+
+      @if (d.recommendationReason) {
+        <p class="decision__rec-reason" data-testid="decision-recommendation-reason">
+          <strong>Recommendation:</strong> {{ d.recommendationReason }}
+        </p>
+      }
+
+      @if (open()) {
+        <div class="decision__decide">
+          <label class="decision__rationale-label" for="decision-rationale">Rationale</label>
+          <textarea id="decision-rationale" class="decision__rationale"
+                    data-testid="decision-rationale"
+                    rows="2" maxlength="2000"
+                    placeholder="One line on why this option"
+                    [ngModel]="rationale()" (ngModelChange)="rationale.set($event)"></textarea>
+          <button type="button" class="decision__submit"
+                  data-testid="decision-submit"
+                  [disabled]="!canDecide()"
+                  (click)="decide()">
+            {{ busy() ? 'Recording…' : 'Record decision' }}
+          </button>
+        </div>
+      } @else {
+        <div class="decision__settled" data-testid="decision-settled">
+          <p class="decision__rationale-text"><strong>Rationale:</strong> {{ d.rationale }}</p>
+          <p class="decision__meta">
+            Decided by {{ d.decidedBy || d.decider }}@if (d.decidedAt) { on {{ d.decidedAt }}}.
+          </p>
+          @if (d.recordPath) {
+            <p class="decision__record">Record: {{ d.recordPath }}</p>
+          }
+          @if (reopening()) {
+            <div class="decision__reopen">
+              <textarea class="decision__rationale" data-testid="decision-reopen-note"
+                        rows="2" maxlength="2000" placeholder="Why reopen?"
+                        [ngModel]="reopenNote()" (ngModelChange)="reopenNote.set($event)"></textarea>
+              <div class="decision__reopen-actions">
+                <button type="button" class="decision__submit" data-testid="decision-reopen-confirm"
+                        [disabled]="busy()" (click)="confirmReopen()">Confirm reopen</button>
+                <button type="button" class="decision__ghost" (click)="cancelReopen()">Cancel</button>
+              </div>
+            </div>
+          } @else {
+            <button type="button" class="decision__ghost" data-testid="decision-reopen"
+                    (click)="beginReopen()">Reopen decision</button>
+          }
+        </div>
+      }
+    </section>
+  }
+}
