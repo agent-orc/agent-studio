@@ -503,9 +503,35 @@ public sealed class RemoteReviewWorkspace
         var outcome = ReviewGradingPolicy.Grade(verdicts.Select(verdict => verdict.Status))
             == ReviewGrade.ProductFailure
             ? "ProductFailure"
-            : "Pass";
+            // AGT-2819: no verdict refuses the change, but at least one gate was
+            // already red on the merge base. That is a defect of the integration
+            // branch and reported as such, not a silent pass and not this
+            // card's product failure.
+            : IntegrationBranchDefectSteps(commands).Count > 0
+                ? "IntegrationBranchDefect"
+                : "Pass";
         return new ReviewExecutionEvidence(outcome, proof, commands, artifacts, verdicts);
     }
+
+    /// <summary>
+    /// Candidate verification steps whose failure the merge base already had
+    /// (AGT-2819). Derived from the recorded evidence so a resumed attempt
+    /// reaches the same terminal as an uninterrupted one.
+    /// </summary>
+    private IReadOnlyList<string> IntegrationBranchDefectSteps(
+        IReadOnlyList<ReviewCommandEvidenceDto> commands)
+        => commands
+            .Where(command => string.Equals(command.Phase, "verification", StringComparison.Ordinal)
+                              && string.Equals(command.WorkspaceRole, "candidate", StringComparison.Ordinal)
+                              && ReviewFailureAttributionPolicy.Attribute(
+                                     _subject.Plan.Commands.FirstOrDefault(planned => string.Equals(
+                                         planned.StepId,
+                                         command.StepId,
+                                         StringComparison.Ordinal)),
+                                     command)
+                                 == ReviewFailureOwner.IntegrationBranch)
+            .Select(command => command.StepId)
+            .ToArray();
 
     private static bool CanResumeCommand(
         ReviewCommandDto command,
@@ -804,7 +830,8 @@ public sealed class RemoteReviewWorkspace
             agentUsage?.InputTokens ?? 0,
             agentUsage?.OutputTokens ?? 0,
             agentUsage?.CacheReadTokens ?? 0,
-            agentUsage?.CacheCreationTokens ?? 0);
+            agentUsage?.CacheCreationTokens ?? 0,
+            comparison?.BaselineExitCode);
     }
 
     private async Task<ReviewArtifactEvidenceDto> WriteArtifactAsync(
@@ -955,7 +982,8 @@ public sealed class RemoteReviewWorkspace
                 baselineSha,
                 cached.Failures,
                 SubjectFailures(command, subjectResult),
-                cacheHit: true);
+                cacheHit: true,
+                cached.ExitCode);
         }
 
         var lockPath = cachePath + ".lock";
@@ -968,7 +996,8 @@ public sealed class RemoteReviewWorkspace
                 baselineSha,
                 cached.Failures,
                 SubjectFailures(command, subjectResult),
-                cacheHit: true);
+                cacheHit: true,
+                cached.ExitCode);
         }
 
         var baselinePath = Path.Combine(AttemptRoot, $"baseline-{commandHash[..12]}");
@@ -1063,7 +1092,7 @@ public sealed class RemoteReviewWorkspace
             if (baselineCache is not null)
                 foreach (var message in baselineCache.Save()) _log(message);
         }
-        var failures = ParsedTestFailures(execution.Process);
+        var failures = BaselineFailures(command, execution.Process);
         var entry = new BaselineCacheEntry(
             TestFailureParserVersion,
             baselineSha,
@@ -1072,12 +1101,16 @@ public sealed class RemoteReviewWorkspace
             failures,
             DateTime.UtcNow);
         await WriteBaselineCacheAsync(cachePath, entry, ct);
-        _log($"review baseline cache fill repository={_subject.RepositoryId} baseline={baselineSha} step={command.StepId} failures={failures.Count}");
+        _log(
+            $"review baseline cache fill repository={_subject.RepositoryId} baseline={baselineSha} " +
+            $"step={command.StepId} mode={command.BaselineMode} exit={execution.Process.ExitCode} " +
+            $"failures={failures.Count}");
         return BaselineComparison.Create(
             baselineSha,
             failures,
             SubjectFailures(command, subjectResult),
-            cacheHit: false);
+            cacheHit: false,
+            execution.Process.ExitCode);
     }
 
     private void SaveCaches(params DependencyCacheSession?[] sessions)
@@ -1601,31 +1634,67 @@ public sealed class RemoteReviewWorkspace
         var quarantined = comparison.FlakyQuarantinedFailures.Count == 0
             ? "0 flaky quarantined failures"
             : $"{comparison.FlakyQuarantinedFailures.Count} flaky quarantined failures: {string.Join(", ", comparison.FlakyQuarantinedFailures)}";
-        var classification = comparison.NewFailures.Count > 0
-            ? "NewTestFailures"
-            : comparison.FlakyQuarantinedFailures.Count > 0
-                ? ReviewFlakyTestIndex.VerdictClassification
-                : "BaselineCompared";
+        var owner = ReviewFailureAttributionPolicy.Attribute(
+            commandFailed: true,
+            command.BaselineMode,
+            comparison.BaselineSha,
+            comparison.BaselineExitCode,
+            comparison.NewFailures);
+        var classification = owner switch
+        {
+            ReviewFailureOwner.IntegrationBranch => IntegrationBranchDefectClassification,
+            _ when comparison.NewFailures.Count > 0 => "NewTestFailures",
+            _ when comparison.FlakyQuarantinedFailures.Count > 0 => ReviewFlakyTestIndex.VerdictClassification,
+            _ => "BaselineCompared",
+        };
+        var baselineState = comparison.BaselineExitCode == 0
+            ? "green on the merge base"
+            : $"already exiting {comparison.BaselineExitCode} on the merge base";
         return new ReviewVerdictDto(
             command.Aspect,
-            comparison.NewFailures.Count == 0 ? "pass" : "block",
+            owner == ReviewFailureOwner.Delivery ? "block" : "pass",
             classification,
-            $"{newFailures}; {preExisting}; {quarantined}. Baseline {comparison.BaselineSha} ({(comparison.CacheHit ? "cache hit" : "cache fill")}).",
+            $"{newFailures}; {preExisting}; {quarantined}. Step {command.StepId} is {baselineState}. " +
+            $"Baseline {comparison.BaselineSha} ({(comparison.CacheHit ? "cache hit" : "cache fill")}).",
             $"command:{command.StepId}; baseline:{comparison.BaselineSha}",
-            comparison.NewFailures.Count == 0
-                ? "none"
-                : string.Join(", ", comparison.NewFailures));
+            owner == ReviewFailureOwner.Delivery
+                ? comparison.NewFailures.Count > 0
+                    ? string.Join(", ", comparison.NewFailures)
+                    : $"successful execution of {command.StepId}"
+                : "none");
     }
+
+    /// <summary>
+    /// Verdict classification and review outcome token for a gate that was
+    /// already red on the integration branch (AGT-2819).
+    /// </summary>
+    internal const string IntegrationBranchDefectClassification = "IntegrationBranchDefect";
 
     private static IReadOnlyList<string> SubjectFailures(
         ReviewCommandDto command,
         ProcessResult result)
     {
+        // Exit-status comparison has no failure names to diff. Synthesising the
+        // <unparsed failure> marker for a lint command made a gate that was
+        // already red on the integration branch look like a brand-new product
+        // failure on every card that passed through it (AGT-2819).
+        if (ReviewBaselineModes.IsExitStatus(command.BaselineMode)) return [];
         var failures = ParsedTestFailures(result);
         if (!result.Success && failures.Count == 0)
             return [$"<unparsed failure in {command.StepId}>"];
         return failures;
     }
+
+    /// <summary>
+    /// Failure names recorded for the merge-base run. Empty under exit-status
+    /// comparison, where the exit code alone carries the baseline's state.
+    /// </summary>
+    private static IReadOnlyList<string> BaselineFailures(
+        ReviewCommandDto command,
+        ProcessResult result)
+        => ReviewBaselineModes.IsExitStatus(command.BaselineMode)
+            ? []
+            : ParsedTestFailures(result);
 
     internal static IReadOnlyList<string> ParsedTestFailures(ProcessResult result)
     {
@@ -1721,6 +1790,9 @@ public sealed class RemoteReviewWorkspace
         var text = new StringBuilder(command.FileName);
         foreach (var argument in command.Arguments)
             text.Append('\0').Append(argument);
+        // The comparison mode decides what the cached baseline entry means
+        // (failure names versus exit status only), so it belongs in the key.
+        text.Append('\0').Append(command.BaselineMode);
         return HashText(text.ToString());
     }
 
@@ -1899,13 +1971,15 @@ internal sealed record BaselineComparison(
     IReadOnlyList<string> NewFailures,
     IReadOnlyList<string> PreExistingFailures,
     IReadOnlyList<string> FlakyQuarantinedFailures,
-    bool CacheHit)
+    bool CacheHit,
+    int BaselineExitCode)
 {
     public static BaselineComparison Create(
         string baselineSha,
         IReadOnlyList<string> baselineFailures,
         IReadOnlyList<string> subjectFailures,
-        bool cacheHit)
+        bool cacheHit,
+        int baselineExitCode)
     {
         var baseline = baselineFailures.ToHashSet(StringComparer.Ordinal);
         return new BaselineComparison(
@@ -1918,14 +1992,15 @@ internal sealed record BaselineComparison(
                 .Order(StringComparer.Ordinal)
                 .ToArray(),
             [],
-            cacheHit);
+            cacheHit,
+            baselineExitCode);
     }
 
     public BaselineComparison Reclassify(
         IReadOnlyList<string> subjectFailures,
         ReviewFlakyTestIndex reviewFlakyTests)
     {
-        var retried = Create(BaselineSha, BaselineFailures, subjectFailures, CacheHit);
+        var retried = Create(BaselineSha, BaselineFailures, subjectFailures, CacheHit, BaselineExitCode);
         var retriedFailures = subjectFailures.ToHashSet(StringComparer.Ordinal);
         return retried with
         {

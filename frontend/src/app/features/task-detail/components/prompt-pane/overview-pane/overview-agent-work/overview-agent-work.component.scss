@@ -1,0 +1,160 @@
+// Agent Work block, moved out of the Overview pane in AGT-2819. The two shared
+// value classes are carried along because emulated encapsulation scopes the
+// pane's own copies to the pane.
+:host {
+  display: block;
+  width: 100%;
+  min-width: 0;
+}
+
+.ov-value {
+  &--mono {
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+}
+
+.ov-tool-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-left: 4px;
+}
+
+.ov-tool-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  padding: 1px 6px 1px 7px;
+  border-radius: 999px;
+  background: var(--studio-bg-hover);
+  color: var(--studio-fg);
+  border: 1px solid var(--studio-border);
+
+  &__name {
+    font-weight: 500;
+  }
+
+  &__count {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--studio-fg-dim);
+  }
+}
+
+.ov-agent-work {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+
+  &__title {
+    min-height: calc(var(--studio-row-min-h) + var(--studio-row-gap));
+    margin: var(--studio-spacing-2) 0 0;
+    padding: var(--studio-row-pad-block) var(--studio-spacing-2);
+    border-radius: 6px;
+    background: var(--studio-bg-hover);
+    color: var(--studio-fg-strong);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  &__row {
+    display: grid;
+    grid-template-columns: var(--ov-pl-grid-cols);
+    align-items: center;
+    column-gap: var(--studio-spacing-1);
+    box-sizing: border-box;
+    width: calc(100% - var(--ov-pipeline-step-indent));
+    min-width: 0;
+    min-height: var(--studio-row-min-h);
+    margin-left: var(--ov-pipeline-step-indent);
+    padding-block: var(--studio-row-pad-block);
+    padding-inline: var(--studio-spacing-2);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  &__marker {
+    grid-column: 1;
+    width: 8px;
+    height: 8px;
+    justify-self: center;
+    border-radius: 999px;
+    background: var(--studio-fg-muted);
+    opacity: 0.7;
+  }
+
+  &__kind { grid-column: 2; }
+
+  &__label {
+    grid-column: 3;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--studio-fg-strong);
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__value {
+    grid-column: 4;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: var(--studio-spacing-1);
+    overflow: hidden;
+  }
+
+  &__timing {
+    grid-column: 5;
+    display: grid;
+    grid-template-columns: 38px 52px;
+    align-items: baseline;
+    justify-content: flex-end;
+    gap: var(--studio-spacing-1);
+    min-width: 0;
+  }
+
+  &__started,
+  &__last-touch {
+    overflow: hidden;
+    color: var(--studio-fg-muted);
+    font-size: 10.5px;
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__tokens {
+    grid-column: 6;
+    color: var(--studio-fg-muted);
+    text-align: right;
+  }
+
+  &__cost {
+    grid-column: 7;
+    color: var(--studio-fg-muted);
+    text-align: right;
+  }
+
+  &__row--tools &__label { grid-column: 3; }
+
+  &__tools {
+    grid-column: 4 / -1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: var(--studio-spacing-1);
+  }
+
+  &__detail {
+    width: calc(100% - var(--ov-pipeline-step-indent));
+    min-width: 0;
+    margin-left: var(--ov-pipeline-step-indent);
+    padding-inline: var(--studio-spacing-2);
+  }
+}

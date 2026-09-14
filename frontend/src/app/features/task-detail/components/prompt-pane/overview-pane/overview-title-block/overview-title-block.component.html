@@ -1,0 +1,74 @@
+<section class="ov-section ov-title-block studio-measure studio-measure--prose" data-testid="overview-title-block">
+  @if (editingTitle()) {
+    <input #titleInput class="ov-title-input" data-testid="overview-title-input" type="text"
+           [value]="titleDraft()" maxlength="200" placeholder="Task title"
+           (input)="onTitleDraftInput($any($event.target).value)"
+           (keydown.enter)="saveTitle(); $event.stopPropagation()"
+           (keydown.escape)="cancelTitleEdit(); $event.stopPropagation()"
+           (blur)="saveTitle()" />
+  } @else {
+    <h1 class="ov-title" data-testid="overview-title" tabindex="0"
+        [cacTooltip]="'Click to rename'"
+        (click)="startTitleEdit()" (keydown.enter)="startTitleEdit()">
+      <span class="ov-title__text">{{ displayedTitle() }}</span>
+      <button type="button" class="ov-title__edit-affordance"
+              data-testid="overview-title-edit-affordance"
+              aria-label="Rename task"
+              (click)="$event.stopPropagation(); startTitleEdit()">edit</button>
+    </h1>
+  }
+  <div class="ov-subline" data-testid="overview-title-subline">
+    @if (job().key; as taskKey) {
+      <app-copyable-task-key variant="detail" [key]="taskKey" testId="overview-title-key" />
+      <span class="ov-subline__sep" aria-hidden="true">·</span>
+    }
+    <span class="ov-lane-pill ov-subline__lane" data-testid="overview-title-lane"
+          [attr.data-lane-tone]="laneTone(job().state)" [attr.data-state]="job().state">
+      <span class="ov-lane-pill__dot" aria-hidden="true">●</span>
+      {{ laneLabel(job().state) }}
+    </span>
+    @if (phaseLabel(job().phase, job().phaseEnteredAt, job().steerPendingSince); as pl) {
+      <span class="ov-phase-chip ov-subline__phase" data-testid="overview-title-phase">{{ pl }}</span>
+    }
+    <span class="ov-subline__sep" aria-hidden="true">·</span>
+    <span class="ov-subline__project" data-testid="overview-title-project"
+          [style.--project-color]="identity().color"
+          [style.--project-border]="identity().border">
+      <span class="ov-subline__project-disk" aria-hidden="true">{{ identity().initial }}</span>
+      <span class="ov-subline__project-name">{{ job().projectName }}</span>
+    </span>
+    @if (job().creationSource === 'orchestrator') {
+      <span class="ov-subline__sep" aria-hidden="true">·</span>
+      <span class="ov-phase-chip" data-testid="overview-created-by-orchestrator">Created by Orchestrator</span>
+    }
+    <app-execution-location-badge [execution]="job().executionLocation" /> @if (promptMarkdown()) {
+      <span class="ov-subline__sep" aria-hidden="true">·</span>
+      <app-task-prompt-popover
+        [markdown]="promptMarkdown()"
+        [jobId]="job().id"
+        [watchPath]="job().watchPath" />
+    }
+  </div>
+
+  @if (canPromote() && !job().planningSpawn) {
+    <div class="ov-promote" data-testid="overview-promote">
+      <button type="button" class="ov-promote__btn"
+              data-testid="overview-promote-btn"
+              [disabled]="promoting()"
+              [cacTooltip]="'Open the create-task modal pre-filled from this planning report — title, prompt body, and copied images. The new coding task lands in In Preparation.'"
+              (click)="promote()">
+        <span class="ov-promote__icon" aria-hidden="true">→</span>
+        {{ promoting() ? 'Preparing…' : 'Promote to coding task' }}
+      </button>
+    </div>
+  }
+
+  <app-planning-spawn-panel
+    [job]="job()"
+    [promoteAvailable]="canPromote()"
+    [promotePending]="promoting()"
+    (promoteRequested)="promote()"
+    (changed)="referencesChanged.emit()" />
+  <app-concept-dossier-notice [job]="job()" (changed)="referencesChanged.emit()" />
+</section>
+

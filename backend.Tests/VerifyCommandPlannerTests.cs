@@ -399,6 +399,32 @@ public sealed class VerifyCommandPlannerTests : IDisposable
         Assert.All(verify.Commands, command => Assert.Equal(VerifyCommandShell.Bash, command.Shell));
     }
 
+    /// <summary>
+    /// AGT-2819: the lint gate was attributed to every card because it was never
+    /// compared against the merge base. Every deterministic gate is now
+    /// baseline-compared, and a lint or build gate is compared on exit status
+    /// because it has no failure names to diff.
+    /// </summary>
+    [Fact]
+    public void RemoteReviewFallbackPlan_ComparesEveryDeterministicGateAgainstTheMergeBase()
+    {
+        Write("QualityStudio.slnx", "<Solution />");
+        Write(
+            "frontend/package.json",
+            """{ "scripts": { "build": "ng build", "test": "ng test", "lint": "ng lint" } }""");
+
+        var plan = V1ReviewPlaneEndpoints.FallbackPlan(_root, profile: null, "refs/heads/develop");
+
+        Assert.All(plan.Commands, command => Assert.True(command.CompareToBaseline));
+        var lint = Assert.Single(plan.Commands.Where(command => command.Aspect == "lint"));
+        Assert.Equal(ReviewBaselineModes.ExitStatus, lint.BaselineMode);
+        Assert.Contains("npm run lint", string.Join(' ', lint.Arguments), StringComparison.Ordinal);
+        Assert.All(
+            plan.Commands.Where(command => command.Aspect == "build-tests"
+                && string.Join(' ', command.Arguments).Contains("test", StringComparison.Ordinal)),
+            command => Assert.Equal(ReviewBaselineModes.TestFailures, command.BaselineMode));
+    }
+
     [Fact]
     public void RemoteReviewFallbackPlan_CarriesMixedBuildProfilePreparationLockfilesAndPreserveGlobs()
     {

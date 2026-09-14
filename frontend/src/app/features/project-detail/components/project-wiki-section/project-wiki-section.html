@@ -827,130 +827,15 @@
   }
 
   @if (driftModalOpen()) {
-    <section class="pwiki__drift-modal"
-             appOverlayPortal="modal"
-             data-testid="project-wiki-drift-modal"
-             (click)="closeDriftModal($event)"
-             tabindex="0"
-             (keydown.escape)="closeDriftModal()">
-      <article class="pwiki__drift-card"
-               (click)="stopModal($event)"
-               (keydown)="stopModal($event)"
-               tabindex="0">
-        <header class="pwiki__drift-head">
-          <div>
-            <span class="pwiki__doc-kind">Drift analysis</span>
-            <h3>{{ openedRel() ? openedTitle() : 'Root folder' }}</h3>
-            <p>
-              Prepare a page-focused architecture drift prompt, store an evidence report,
-              or create and start a visible CLI task.
-            </p>
-          </div>
-          <button class="pwiki__viewer-close"
-                  type="button"
-                  data-testid="project-wiki-drift-close"
-                  (click)="closeDriftModal()">
-            <app-studio-icon name="close" [size]="12"></app-studio-icon>
-            <span>Close</span>
-          </button>
-        </header>
-
-        <div class="pwiki__drift-grid">
-          <section class="pwiki__drift-config" aria-label="Drift run configuration">
-            <label>
-              <span>CLI</span>
-              <select [ngModel]="driftCli()"
-                      (ngModelChange)="onDriftCliChange($event)"
-                      data-testid="project-wiki-drift-cli">
-                @for (cli of cliTypes; track cli) {
-                  <option [value]="cli">{{ cli }}</option>
-                }
-              </select>
-            </label>
-
-            <label>
-              <span>Model</span>
-              <select [ngModel]="driftModel()"
-                      (ngModelChange)="onDriftModelChange($event)"
-                      data-testid="project-wiki-drift-model">
-                <option value="">CLI default</option>
-                @for (model of modelOptions(); track model.id) {
-                  <option [value]="model.id">{{ model.label || model.id }}</option>
-                }
-              </select>
-            </label>
-
-            <dl class="pwiki__drift-facts">
-              <div>
-                <dt>Target</dt>
-                <dd><code>{{ openedRel() ?? 'root' }}</code></dd>
-              </div>
-              <div>
-                <dt>Model selection</dt>
-                <dd>{{ driftCli() }} / {{ selectedModelLabel() }}</dd>
-              </div>
-              @if (latestDriftReport(); as report) {
-                <div>
-                  <dt>Last report</dt>
-                  <dd>{{ formatTimestamp(report.createdAt) }}</dd>
-                </div>
-                <div>
-                  <dt>Result</dt>
-                  <dd>{{ report.scoreBand }} · {{ report.summary }}</dd>
-                </div>
-              } @else {
-                <div>
-                  <dt>Last report</dt>
-                  <dd>No report loaded yet</dd>
-                </div>
-              }
-            </dl>
-
-            @if (driftMessage(); as msg) {
-              <p class="pwiki__drift-msg" data-testid="project-wiki-drift-message">{{ msg }}</p>
-            }
-            @if (driftError(); as err) {
-              <p class="pwiki__drift-error" data-testid="project-wiki-drift-error">{{ err }}</p>
-            }
-          </section>
-
-          <section class="pwiki__drift-result" aria-label="Drift prompt or result">
-            <div class="pwiki__drift-result-head">
-              <span>{{ driftReportDetail() ? 'Report markdown' : 'CLI prompt' }}</span>
-              @if (driftPromptLoading()) {
-                <span>Loading prompt...</span>
-              }
-            </div>
-            <pre data-testid="project-wiki-drift-result">{{ driftModalText() }}</pre>
-          </section>
-        </div>
-
-        <footer class="pwiki__drift-actions">
-          <button class="pwiki__new-group" type="button"
-                  data-testid="project-wiki-drift-copy"
-                  (click)="copyDriftResult()">
-            {{ driftCopyLabel() }}
-          </button>
-          <span class="pwiki__spacer"></span>
-          <button class="pwiki__new-group" type="button"
-                  data-testid="project-wiki-drift-prepare"
-                  [disabled]="driftBusy()"
-                  cacTooltip="Create an evidence-only Software / Architecture Drift report without running a CLI"
-                  (click)="prepareDriftEvidenceReport()">
-            <app-studio-icon name="file" [size]="12"></app-studio-icon>
-            <span>Prepare report</span>
-          </button>
-          <button class="pwiki__new-group pwiki__new-group--accent" type="button"
-                  data-testid="project-wiki-drift-start-cli"
-                  [disabled]="driftBusy()"
-                  cacTooltip="Create a normal task and immediately start it with the selected CLI and model"
-                  (click)="startDriftCliTask()">
-            <app-studio-icon name="play" [size]="12"></app-studio-icon>
-            <span>Start CLI task</span>
-          </button>
-        </footer>
-      </article>
-    </section>
+    <app-wiki-drift-modal
+      [projectName]="projectName()"
+      [docRel]="openedRel()"
+      [docTitle]="openedTitle()"
+      [docFolder]="openedFolder()"
+      [docKindLabel]="openedKindLabel()"
+      [docLinks]="docLinks()"
+      (latestReportChange)="latestDriftReport.set($event)"
+      (closeRequest)="closeDriftModal()" />
   }
 
   <app-menu

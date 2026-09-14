@@ -14,26 +14,20 @@ import {
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
-import { DriftReport, DriftReportDetailResponse } from '../../../../models/drift.model';
 import { ProjectDocsService } from '../../../../services/project-docs.service';
-import { DriftService } from '../../../../services/drift.service';
 import { TaskService } from '../../../../services/task.service';
 import { CliCatalogStore } from '../../../cli';
 import { NotificationService } from '../../../../services/notification.service';
 import { PublicDemoModeService } from '../../../../services/public-demo-mode.service';
 import { copyTextToClipboard } from '../../../../services/clipboard.util';
-import { OverlayPortalDirective } from '../../../../directives/overlay-portal.directive';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
-import { CLI_TYPES, CliType, TaskState } from '../../../../models/task.model';
 import {
   WikiFileSaveResult,
   WikiFileHistory,
-  WikiGradingRunStatus,
   WikiNodeType,
   WikiPulse,
   RelatedTaskReference,
-  WikiSearchResponse,
   WikiSearchResult,
   WikiTree,
   WikiTreeNode,
@@ -79,7 +73,18 @@ import {
   parseWikiRouteHash,
   toProjectSlug,
 } from './wiki-deep-link';
+import type { DriftReport } from '../../../../models/drift.model';
 import { WikiMetricTone, documentMetricChips, driftChip } from './wiki-metric-chips';
+import { WikiDriftModalComponent } from './wiki-drift-modal/wiki-drift-modal.component';
+import { WikiSearchService } from './wiki-search.service';
+import { WikiGradingService } from './wiki-grading.service';
+import {
+  wikiBasename,
+  wikiDescribeError,
+  wikiFormatTimestamp,
+  wikiJoinRel,
+  wikiParentDir,
+} from './wiki-path.util';
 import { WikiClassMeta, classificationBadges, classificationMeta } from './wiki-classification';
 import { withRouteSegment } from '../../../../services/url-hash.util';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
@@ -126,8 +131,6 @@ interface WikiResizeState {
   startWidth: number;
 }
 
-const WIKI_SEARCH_DEBOUNCE_MS = 300;
-const WIKI_SEARCH_MIN_LENGTH = 2;
 
 /**
  * Project-level knowledge view backed by the physical docs/ folder hierarchy:
@@ -154,7 +157,6 @@ const WIKI_SEARCH_MIN_LENGTH = 2;
     MarkdownViewComponent,
     MarkdownRichEditorComponent,
     MenuComponent,
-    OverlayPortalDirective,
     StudioIconComponent,
     TooltipDirective,
     AppTooltipDirective,
@@ -167,8 +169,14 @@ const WIKI_SEARCH_MIN_LENGTH = 2;
     WikiPageActionsComponent,
     WikiSearchResultsComponent,
     WikiSourceBadgeComponent,
+    WikiDriftModalComponent,
   ],
-  providers: [WikiLiveRefreshService, WikiMetaPanelStateService],
+  providers: [
+    WikiLiveRefreshService,
+    WikiMetaPanelStateService,
+    WikiSearchService,
+    WikiGradingService,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-wiki-section.html',
   styleUrl: './project-wiki-section.scss',
@@ -185,7 +193,6 @@ export class ProjectWikiSectionComponent implements OnDestroy {
 
   private readonly docs = inject(ProjectDocsService);
   private readonly stars = inject(WikiStarsService);
-  private readonly drift = inject(DriftService);
   private readonly tasks = inject(TaskService);
   private readonly catalog = inject(CliCatalogStore);
   private readonly host = inject(ElementRef<HTMLElement>);
@@ -195,8 +202,9 @@ export class ProjectWikiSectionComponent implements OnDestroy {
   private readonly taskNavigation = inject(TaskReferenceNavigationService);
   private readonly metaPanelState = inject(WikiMetaPanelStateService);
   private readonly wikiLiveRefresh = inject(WikiLiveRefreshService);
+  private readonly search = inject(WikiSearchService);
+  private readonly grading = inject(WikiGradingService);
 
-  readonly cliTypes = CLI_TYPES;
 
   readonly tree = signal<WikiTree | null>(null);
   readonly pulse = signal<WikiPulse | null>(null);
@@ -204,12 +212,13 @@ export class ProjectWikiSectionComponent implements OnDestroy {
 
   // ---- Wiki grading maintenance run (AGT-2051) ----
   // Model chosen at the trigger, defaulting from the workspace maintenance model.
-  readonly gradeCli = signal<CliType>('claude');
-  readonly gradeModel = signal<string | null>(null);
-  readonly gradeLevel = signal<string | null>(null);
-  readonly gradingStatus = signal<WikiGradingRunStatus | null>(null);
-  readonly gradeModelOptions = computed(() => this.catalog.modelsFor(this.gradeCli()));
-  private gradingPollTimer: ReturnType<typeof setTimeout> | null = null;
+  // AGT-2819: WikiGradingService owns the trigger configuration, the status, and
+  // the poll; the section forwards its state and refreshes Pulse when a run ends.
+  readonly gradeCli = this.grading.cli;
+  readonly gradeModel = this.grading.model;
+  readonly gradeLevel = this.grading.level;
+  readonly gradingStatus = this.grading.status;
+  readonly gradeModelOptions = this.grading.modelOptions;
   readonly loading = signal(false);
   readonly busy = signal(false);
   // Bumped after every tree re-read so a *mounted* folder-overview re-fetches
@@ -268,18 +277,17 @@ export class ProjectWikiSectionComponent implements OnDestroy {
   readonly selectedFolderRel = signal<string | null>(null);
 
   // Wiki search (lexical, debounced; optional semantic expansion on demand).
-  readonly searchQuery = signal('');
-  readonly searchResponse = signal<WikiSearchResponse | null>(null);
-  readonly searchLoading = signal(false);
-  readonly searchError = signal<string | null>(null);
-  readonly semanticLoading = signal(false);
-  readonly semanticRequested = signal(false);
+  // AGT-2819: the debounce, the stale-response guard, and the semantic
+  // expansion live in WikiSearchService. The section forwards its state so the
+  // template and the result list read one source.
+  readonly searchQuery = this.search.query;
+  readonly searchResponse = this.search.response;
+  readonly searchLoading = this.search.loading;
+  readonly searchError = this.search.error;
+  readonly semanticLoading = this.search.semanticLoading;
+  readonly semanticRequested = this.search.semanticRequested;
   /** The content pane switches to the result list from 2 characters on. */
-  readonly searchActive = computed(() =>
-    this.searchQuery().trim().length >= WIKI_SEARCH_MIN_LENGTH);
-  private searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-  /** Monotonic guard so a stale (slower) response never overwrites a newer one. */
-  private searchSeq = 0;
+  readonly searchActive = this.search.active;
 
   // Old-revision preview: when a sha is set, the doc pane shows that revision's
   // content instead of the working-tree content, with a "back to current" banner.
@@ -298,20 +306,12 @@ export class ProjectWikiSectionComponent implements OnDestroy {
   readonly dropTargetId = signal<string | null>(null);
 
   readonly driftModalOpen = signal(false);
-  readonly driftBusy = signal(false);
-  readonly driftError = signal<string | null>(null);
-  readonly driftMessage = signal<string | null>(null);
-  readonly driftPrompt = signal('');
-  readonly driftPromptLoading = signal(false);
-  readonly driftReportDetail = signal<DriftReportDetailResponse | null>(null);
-  readonly driftReports = signal<DriftReport[]>([]);
-  readonly driftProjectKey = signal<string | null>(null);
-  readonly driftWatchPath = signal<string | null>(null);
-  readonly driftCli = signal<CliType>('claude');
-  readonly driftModel = signal('');
-  readonly copyState = signal<'idle' | 'copied' | 'failed'>('idle');
-
-  private copyResetTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * Newest drift report for the open page, published by the drift dialog. The
+   * "Drift metadata" meta panel renders it; like before AGT-2819 it stays empty
+   * until the dialog has loaded reports once.
+   */
+  readonly latestDriftReport = signal<DriftReport | null>(null);
   private readonly htmlFrames = viewChildren<ElementRef<HTMLIFrameElement>>('wikiHtmlFrame');
   protected readonly wikiDocumentFrame = computed(() => this.htmlFrames()[0]?.nativeElement ?? null);
   private pendingOpenRestore: { rel: string; tab: WikiViewerTab } | null = null;
@@ -355,6 +355,7 @@ export class ProjectWikiSectionComponent implements OnDestroy {
         // Seed the grading trigger (maintenance-model default + current run
         // status) once per project. Kept out of refresh() so post-mutation
         // re-reads do not re-fire it.
+        this.grading.onFinished(() => this.refresh());
         this.loadGradingContext();
       }
     });
@@ -699,41 +700,21 @@ export class ProjectWikiSectionComponent implements OnDestroy {
     this.syncDeepLinkUrl('replace');
   }
 
-  // ---- wiki search (debounced lexical, semantic expansion on demand) ----
+  // ---- wiki search (WikiSearchService owns the debounce and sequencing) ----
 
   onSearchQueryChange(value: string): void {
-    this.searchQuery.set(value);
-    if (this.searchDebounceTimer) clearTimeout(this.searchDebounceTimer);
-    this.searchDebounceTimer = null;
-    this.searchSeq++; // invalidate any in-flight response for the old query
-    this.semanticRequested.set(false);
-    this.searchError.set(null);
-    const query = value.trim();
-    if (query.length < WIKI_SEARCH_MIN_LENGTH) {
-      this.searchResponse.set(null);
-      this.searchLoading.set(false);
-      this.semanticLoading.set(false);
-      return;
-    }
-    this.searchLoading.set(true);
-    this.searchDebounceTimer = setTimeout(() => {
-      this.searchDebounceTimer = null;
-      this.runWikiSearch(query, false);
-    }, WIKI_SEARCH_DEBOUNCE_MS);
+    this.search.onQueryChange(this.projectName(), value);
   }
 
-  /** "Semantisch erweitern": re-run the current query with semantic=true. */
+  /** "Expand semantically": re-run the current query with semantic=true. */
   expandSearchSemantically(): void {
-    const query = this.searchQuery().trim();
-    if (query.length < WIKI_SEARCH_MIN_LENGTH || this.semanticLoading()) return;
-    this.semanticRequested.set(true);
-    this.runWikiSearch(query, true);
+    this.search.expandSemantically(this.projectName());
   }
 
   /** Enter in the search box: open the top hit. */
   openTopSearchResult(): void {
-    const top = this.searchResponse()?.results?.[0];
-    if (top && this.searchActive()) this.openSearchResult(top);
+    const top = this.search.topResult();
+    if (top) this.openSearchResult(top);
   }
 
   openSearchResult(result: WikiSearchResult): void {
@@ -746,36 +727,7 @@ export class ProjectWikiSectionComponent implements OnDestroy {
   }
 
   private resetSearchState(): void {
-    if (this.searchDebounceTimer) clearTimeout(this.searchDebounceTimer);
-    this.searchDebounceTimer = null;
-    this.searchSeq++;
-    this.searchQuery.set('');
-    this.searchResponse.set(null);
-    this.searchLoading.set(false);
-    this.searchError.set(null);
-    this.semanticLoading.set(false);
-    this.semanticRequested.set(false);
-  }
-
-  private runWikiSearch(query: string, semantic: boolean): void {
-    const seq = ++this.searchSeq;
-    if (semantic) this.semanticLoading.set(true);
-    else this.searchLoading.set(true);
-    this.searchError.set(null);
-    this.docs.searchWiki(this.projectName(), query, { semantic }).subscribe({
-      next: response => {
-        if (seq !== this.searchSeq) return;
-        this.searchResponse.set(response);
-        this.searchLoading.set(false);
-        this.semanticLoading.set(false);
-      },
-      error: () => {
-        if (seq !== this.searchSeq) return;
-        this.searchLoading.set(false);
-        this.semanticLoading.set(false);
-        this.searchError.set('Suche fehlgeschlagen.');
-      },
-    });
+    this.search.reset();
   }
 
   /** Open a critical page (from the grade panel) straight to its report tab. */
@@ -790,120 +742,31 @@ export class ProjectWikiSectionComponent implements OnDestroy {
     return 'md';
   }
 
-  // ---- wiki grading trigger (AGT-2051) ----
-
-  private gradingSeededFor: string | null = null;
+  // ---- wiki grading trigger (WikiGradingService owns the run) ----
 
   onGradeModelChange(model: string): void {
-    this.gradeModel.set(model || null);
+    this.grading.setModel(model);
   }
 
   onGradeLevelChange(level: string | null): void {
-    this.gradeLevel.set(level);
+    this.grading.setLevel(level);
   }
 
   startWikiGrading(): void {
-    const p = this.projectName();
-    if (!p) return;
-    this.docs.startWikiGrading(p, {
-      cliType: this.gradeCli(),
-      model: this.gradeModel() ?? undefined,
-      thinkingLevel: this.gradeLevel(),
-    }).subscribe({
-      next: status => { this.gradingStatus.set(status); this.scheduleGradingPoll(); },
-      error: err => {
-        // A 409 (a run already in flight) returns the live status in the body.
-        const status = err?.error?.status as WikiGradingRunStatus | undefined;
-        if (status) { this.gradingStatus.set(status); this.scheduleGradingPoll(); }
-      },
-    });
+    this.grading.start(this.projectName());
   }
 
   abortWikiGrading(): void {
-    const p = this.projectName();
-    if (!p) return;
-    this.docs.abortWikiGrading(p).subscribe({
-      next: resp => this.gradingStatus.set(resp.status),
-      error: () => void 0,
-    });
+    this.grading.abort(this.projectName());
   }
 
-  /**
-   * Loads the maintenance-model default (once per project) to pre-fill the
-   * trigger's model picker, then fetches the current run status so a run started
-   * in another tab is reflected and resumed-polled here.
-   */
   private loadGradingContext(): void {
-    const p = this.projectName();
-    if (!p) return;
-    if (this.gradingSeededFor !== p) {
-      this.gradingSeededFor = p;
-      this.gradingStatus.set(null);
-      this.docs.getMaintenanceModel().subscribe({
-        next: cfg => {
-          const cli = CLI_TYPES.includes(cfg.cliType as CliType) ? (cfg.cliType as CliType) : 'claude';
-          this.gradeCli.set(cli);
-          this.gradeModel.set(cfg.model || null);
-          this.gradeLevel.set(cfg.thinkingLevel ?? null);
-        },
-        error: () => void 0,
-      });
-    }
-    this.docs.getWikiGradingStatus(p).subscribe({
-      next: resp => {
-        this.gradingStatus.set(resp.status);
-        if (resp.status?.state === 'running') this.scheduleGradingPoll();
-      },
-      error: () => void 0,
-    });
-  }
-
-  /** Polls the run status while a run is in flight; refreshes Pulse when it ends. */
-  private scheduleGradingPoll(): void {
-    if (this.gradingPollTimer) return;
-    this.gradingPollTimer = setTimeout(() => {
-      this.gradingPollTimer = null;
-      const p = this.projectName();
-      if (!p) return;
-      this.docs.getWikiGradingStatus(p).subscribe({
-        next: resp => {
-          this.gradingStatus.set(resp.status);
-          if (resp.status?.state === 'running') this.scheduleGradingPoll();
-          else this.refresh(); // run finished: refresh Pulse so new grades / critical pages show
-        },
-        error: () => void 0,
-      });
-    }, 1200);
+    this.grading.loadContext(this.projectName());
   }
 
   readonly rootFolderLabel = computed(() => {
     const base = this.tree()?.baseDir?.trim();
     return base || 'root folder';
-  });
-
-  readonly modelOptions = computed(() => this.catalog.modelsFor(this.driftCli()));
-
-  readonly selectedModelLabel = computed(() => {
-    const id = this.driftModel();
-    if (!id) return 'CLI default';
-    return this.modelOptions().find(m => m.id === id)?.label ?? id;
-  });
-
-  readonly latestDriftReport = computed<DriftReport | null>(() =>
-    this.driftReportDetail()?.report ?? this.driftReports()[0] ?? null);
-
-  readonly driftModalText = computed(() => {
-    const markdown = this.driftReportDetail()?.markdown;
-    if (markdown?.trim()) return markdown;
-    return this.buildDocumentDriftPrompt();
-  });
-
-  readonly driftCopyLabel = computed(() => {
-    switch (this.copyState()) {
-      case 'copied': return 'Copied';
-      case 'failed': return 'Copy failed';
-      default: return 'Copy result';
-    }
   });
 
   // ---- loading ----
@@ -1257,114 +1120,12 @@ export class ProjectWikiSectionComponent implements OnDestroy {
     this.persistState();
   }
 
-  onDriftCliChange(value: string): void {
-    const next = CLI_TYPES.includes(value as CliType) ? value as CliType : 'claude';
-    this.driftCli.set(next);
-    this.driftModel.set('');
-    this.catalog.ensure(next).subscribe({ error: () => void 0 });
-  }
-
-  onDriftModelChange(value: string): void {
-    this.driftModel.set(value);
-  }
-
   openDriftModal(): void {
     this.driftModalOpen.set(true);
-    this.driftError.set(null);
-    this.driftMessage.set(null);
-    this.copyState.set('idle');
-    this.catalog.ensure(this.driftCli()).subscribe({ error: () => void 0 });
-    this.resolveDriftProjectContext(() => {
-      this.loadDriftReports();
-      this.loadDriftPrompt();
-    });
   }
 
-  closeDriftModal(ev?: Event): void {
-    if (ev && ev.target && (ev.target as HTMLElement).closest('.pwiki__drift-card')) return;
+  closeDriftModal(): void {
     this.driftModalOpen.set(false);
-  }
-
-  stopModal(ev: Event): void {
-    ev.stopPropagation();
-  }
-
-  prepareDriftEvidenceReport(): void {
-    const project = this.driftProjectKey() ?? this.projectName();
-    if (!project) return;
-    this.driftBusy.set(true);
-    this.driftError.set(null);
-    this.driftMessage.set(null);
-    this.drift.runSoftwareArchitectureDrift(project).subscribe({
-      next: detail => {
-        this.driftReportDetail.set(detail);
-        this.driftReports.set([detail.report, ...this.driftReports().filter(r => r.reportId !== detail.report.reportId)]);
-        this.driftBusy.set(false);
-        this.driftMessage.set(`Evidence report ${detail.report.reportId} recorded.`);
-      },
-      error: err => {
-        this.driftBusy.set(false);
-        this.driftError.set(this.describeError(err, 'Could not prepare the drift evidence report.'));
-      },
-    });
-  }
-
-  startDriftCliTask(): void {
-    const project = this.projectName();
-    const watchPath = this.driftWatchPath();
-    if (!project || !watchPath) {
-      this.resolveDriftProjectContext(() => this.startDriftCliTask());
-      return;
-    }
-
-    const cli = this.driftCli();
-    const model = this.driftModel().trim();
-    const docSlug = this.toSlug(this.openedRel() ?? 'wiki-index').slice(0, 36);
-    const id = `wiki-drift-${docSlug}-${Date.now().toString(36)}`.slice(0, 96);
-    this.driftBusy.set(true);
-    this.driftError.set(null);
-    this.driftMessage.set(null);
-
-    this.tasks.createJob({
-      id,
-      title: `Knowledge drift: ${this.openedTitle()}`,
-      agent: cli,
-      cliType: cli,
-      model: model || undefined,
-      watchPath,
-      targetState: TaskState.Ready,
-      taskType: 'chore',
-      promptMarkdown: this.buildDocumentDriftPrompt(),
-    }).subscribe({
-      next: created => {
-        const jobId = created?.id ?? id;
-        this.tasks.startJob(jobId, watchPath, model || undefined, cli).subscribe({
-          next: () => {
-            this.driftBusy.set(false);
-            this.driftMessage.set(`Started ${jobId} with ${cli}${model ? ` / ${model}` : ''}.`);
-          },
-          error: err => {
-            this.driftBusy.set(false);
-            this.driftError.set(this.describeError(err, `Created ${jobId}, but could not start the CLI run.`));
-          },
-        });
-      },
-      error: err => {
-        this.driftBusy.set(false);
-        this.driftError.set(this.describeError(err, 'Could not create the drift CLI task.'));
-      },
-    });
-  }
-
-  copyDriftResult(): void {
-    void copyTextToClipboard(this.driftModalText()).then(ok => {
-      this.copyState.set(ok ? 'copied' : 'failed');
-      if (this.copyResetTimer) clearTimeout(this.copyResetTimer);
-      this.copyResetTimer = setTimeout(() => {
-        this.copyState.set('idle');
-        this.copyResetTimer = null;
-      }, 1800);
-    });
   }
 
   // ---- old-revision preview ----
@@ -1615,7 +1376,7 @@ export class ProjectWikiSectionComponent implements OnDestroy {
       // search-results pane is showing. When the reconcile did not already
       // clear the search by steering, re-run the active query so a deleted page
       // does not linger as a dead, clickable hit.
-      if (this.searchActive()) this.runWikiSearch(this.searchQuery().trim(), this.semanticRequested());
+      if (this.searchActive()) this.search.rerun(this.projectName());
     });
   }
 
@@ -2066,108 +1827,13 @@ export class ProjectWikiSectionComponent implements OnDestroy {
     return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
   }
 
-  private resolveDriftProjectContext(after: () => void): void {
-    const project = this.projectName();
-    this.tasks.getWatchPaths().subscribe({
-      next: entries => {
-        const match = entries.find(e => e.name === project)
-          ?? entries.find(e => e.path === project);
-        this.driftWatchPath.set(match?.path ?? project);
-        this.driftProjectKey.set(match?.path ? this.basename(match.path.replace(/\\/g, '/')) : project);
-        after();
-      },
-      error: () => {
-        this.driftWatchPath.set(project);
-        this.driftProjectKey.set(project);
-        after();
-      },
-    });
-  }
-
-  private loadDriftReports(): void {
-    const project = this.driftProjectKey() ?? this.projectName();
-    if (!project) return;
-    this.drift.listReports(project, { limit: 12 }).subscribe({
-      next: resp => this.driftReports.set(resp?.reports ?? []),
-      error: () => this.driftReports.set([]),
-    });
-  }
-
-  private loadDriftPrompt(): void {
-    const project = this.driftProjectKey() ?? this.projectName();
-    if (!project) return;
-    this.driftPromptLoading.set(true);
-    this.drift.getSoftwareArchitectureDriftPrompt(project).subscribe({
-      next: resp => {
-        this.driftPrompt.set(resp.prompt ?? '');
-        this.driftPromptLoading.set(false);
-      },
-      error: err => {
-        this.driftPrompt.set('');
-        this.driftPromptLoading.set(false);
-        this.driftError.set(this.describeError(err, 'Could not load the architecture drift prompt.'));
-      },
-    });
-  }
-
-  private buildDocumentDriftPrompt(): string {
-    const rel = this.openedRel() ?? '(root folder)';
-    const title = this.openedRel() ? this.openedTitle() : 'Root folder';
-    const report = this.latestDriftReport();
-    const basePrompt = this.driftPrompt().trim();
-    const linked = this.docLinks().map(link => `- ${this.linkKindLabel(link.kind)}: ${link.label} (${link.target})`).join('\n');
-    const model = this.driftModel().trim() || 'CLI default';
-
-    return `# Knowledge page drift analysis: ${title}
-
-Project: ${this.projectName()}
-Page: ${rel}
-Category: ${this.openedRel() ? this.openedFolder() : 'root folder'}
-Page type: ${this.openedRel() ? this.openedKindLabel() : 'Root folder'}
-Selected CLI: ${this.driftCli()}
-Selected model: ${model}
-Latest known drift report: ${report ? `${report.reportId} (${this.formatTimestamp(report.createdAt)})` : 'none loaded'}
-
-## Objective
-
-Evaluate whether the selected knowledge page still matches the current project architecture, source tree, task evidence, and concept notes.
-
-## Linked elements visible in the Knowledge UI
-
-${linked || '- No explicit Markdown or HTML links detected in the selected page.'}
-
-## Required output
-
-1. Produce a concise human-readable drift report.
-2. Classify the result as Healthy, Watch, Warn, Critical, or Unknown.
-3. List evidence refs using repository-relative paths.
-4. Identify whether the page needs edits, a follow-up task, or no action.
-5. Create or update a conceptual page-metadata note for this page. Suggested sidecar path:
-   \`docs/.drift/${this.toSlug(rel)}.md\`
-6. If the result should become a project drift report, post the structured response back through:
-   \`POST /api/drift/{project}/actions/software-architecture-drift\`
-
-## Base architecture-drift prompt
-
-${basePrompt || '(Prompt not loaded yet. Use the project architecture model, docs, source tree, schemas, tests, recent tasks, and recent drift reports as evidence.)'}
-`;
-  }
-
   // ---- path + node helpers ----
 
-  private parentDir(rel: string): string {
-    const i = rel.lastIndexOf('/');
-    return i >= 0 ? rel.slice(0, i) : '';
-  }
-
-  private basename(rel: string): string {
-    const i = rel.lastIndexOf('/');
-    return i >= 0 ? rel.slice(i + 1) : rel;
-  }
-
-  private joinRel(dir: string, name: string): string {
-    return dir ? `${dir}/${name}` : name;
-  }
+  // AGT-2819: shared with the extracted Knowledge children through
+  // wiki-path.util.ts instead of a private copy per component.
+  private readonly parentDir = wikiParentDir;
+  private readonly basename = wikiBasename;
+  private readonly joinRel = wikiJoinRel;
 
   private findNode(nodes: readonly WikiTreeNode[], id: string): WikiTreeNode | null {
     for (const n of nodes) {
@@ -2220,15 +1886,7 @@ ${basePrompt || '(Prompt not loaded yet. Use the project architecture model, doc
     }
   }
 
-  private toSlug(value: string): string {
-    return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'document';
-  }
-
-  private describeError(err: unknown, fallback: string): string {
-    if (!err) return fallback;
-    const e = err as { error?: { error?: string }; message?: string };
-    return e.error?.error ?? e.message ?? fallback;
-  }
+  private readonly describeError = wikiDescribeError;
 
   // Seams so unit tests can drive the create/rename/delete flows without the
   // browser dialogs that back the menu UX.
@@ -2292,9 +1950,5 @@ ${basePrompt || '(Prompt not loaded yet. Use the project architecture model, doc
   }
 
   /** Locale date-time for the doc-header last-modified line; blank on bad input. */
-  formatTimestamp(iso: string | null | undefined): string {
-    if (!iso) return '';
-    const d = new Date(iso);
-    return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
-  }
+  readonly formatTimestamp = wikiFormatTimestamp;
 }
