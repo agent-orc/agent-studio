@@ -1,3 +1,5 @@
+@use '../../../../../../styles/mixins' as m;
+
 :host { display: block; }
 
 // Compact verdict banner ("Last run completed successfully" / "Unclear"
@@ -42,9 +44,24 @@
     color: var(--studio-fg-strong, var(--studio-fg-strong));
   }
 
-  // The reason. Collapsed it is a single clamped line; expanded it wraps in
-  // full. The `--toggle` variant is a real button (keyboard-operable) that
-  // flips `.protocol-verdict--expanded` on the row.
+  // The status line. Collapsed it is a single clamped line; expanded it wraps
+  // in full and the raw signals appear below. `__line` is the ADM-17
+  // disclosure control: label + reason are one keyboard-operable button with
+  // the shared leading marker, so the whole sentence is the hit area.
+  &__line {
+    @include m.disclosure-control;
+
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
+    gap: var(--studio-spacing-1);
+    // Pull the control's own inset back so the marker sits on the row rhythm
+    // rather than pushing the sentence away from the emoji.
+    margin: calc(-1 * var(--studio-spacing-1)) 0;
+    padding: var(--studio-spacing-1);
+    color: var(--studio-fg-dim, var(--lane-backlog));
+  }
+
   &__detail {
     flex: 1 1 auto;
     min-width: 0;
@@ -59,10 +76,6 @@
     color: var(--studio-fg-dim, var(--lane-backlog));
   }
 
-  &__detail--toggle {
-    cursor: pointer;
-  }
-
   &__detail-text {
     min-width: 0;
     overflow: hidden;
@@ -70,16 +83,12 @@
     white-space: nowrap;
   }
 
-  &__detail-caret {
-    flex: 0 0 auto;
-    font-size: 9px;
-    line-height: 1;
-    opacity: 0.7;
-  }
-
   // Expanded: the row grows to a block and the reason wraps in full instead of
   // clipping to one line. Emoji/label stay top-aligned with the wrapped text.
   &--expanded {
+    align-items: flex-start;
+  }
+  &--expanded &__line {
     align-items: flex-start;
   }
   &--expanded &__detail-text {
@@ -155,31 +164,19 @@
   }
 }
 
+// The expanded body of the status line. It has no head of its own: the status
+// line above is the only control, so this block is pure content (ADM-17).
 .protocol-verdict-signals {
   margin: calc(-1 * var(--studio-spacing-1)) var(--studio-spacing-3) var(--studio-spacing-2);
-  padding: var(--studio-spacing-1) var(--studio-spacing-3);
+  padding: var(--studio-spacing-2) var(--studio-spacing-3);
   border: 1px solid var(--studio-border);
   border-radius: 4px;
   background: var(--studio-bg-elevated);
 
-  &__toggle {
-    display: flex;
-    justify-content: space-between;
-    width: 100%;
-    padding: 0;
-    border: 0;
-    background: transparent;
-    color: var(--studio-fg-dim);
-    font: inherit;
-    font-size: 11.5px;
-    font-weight: 600;
-    cursor: pointer;
-  }
-
   &__list {
     display: grid;
     gap: var(--studio-spacing-1);
-    margin: var(--studio-spacing-2) 0 0;
+    margin: 0;
     padding: 0;
     list-style: none;
   }

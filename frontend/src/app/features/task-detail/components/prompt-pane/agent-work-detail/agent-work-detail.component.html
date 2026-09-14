@@ -3,13 +3,14 @@
   class="awd-toggle"
   data-testid="agent-work-detail-toggle"
   [attr.aria-expanded]="open()"
+  [attr.aria-controls]="open() ? 'agent-work-detail-body' : null"
   (click)="toggleOpen()">
-  <span class="awd-toggle__chevron" [class.awd-toggle__chevron--open]="open()">></span>
+  <app-disclosure-marker [open]="open()" [size]="10" />
   <span>{{ open() ? 'Hide tool detail' : 'Show tool detail' }}</span>
 </button>
 
 @if (open()) {
-  <div class="awd-body" data-testid="agent-work-detail-body">
+  <div class="awd-body" id="agent-work-detail-body" data-testid="agent-work-detail-body">
     @if (loading()) {
       <p class="awd-note" data-testid="agent-work-detail-loading">Loading...</p>
     } @else if (failed()) {
@@ -27,8 +28,7 @@
               class="awd-group__head"
               [attr.aria-expanded]="isExpanded(group.tool)"
               (click)="toggleGroup(group.tool)">
-              <span class="awd-group__chevron"
-                    [class.awd-group__chevron--open]="isExpanded(group.tool)">></span>
+              <app-disclosure-marker [open]="isExpanded(group.tool)" [size]="10" />
               <span class="awd-group__name">{{ group.tool }}</span>
               <span class="awd-group__count">{{ group.count }}</span>
             </button>

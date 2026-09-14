@@ -1,0 +1,233 @@
+{
+  "$comment": [
+    "Classification of every Angular template that owns an in-place disclosure (guideline rule ADM-17,",
+    "docs/operations/admin-design-guideline/index.html#disclosure-affordance). Checked by",
+    "scripts/check-disclosure-markers.mjs via `npm run lint:structure`.",
+    "enforced: every aria-expanded element in the file renders <app-disclosure-marker>.",
+    "documented: a recorded divergence. kind is one of popup-trigger (overlay menu/popover/dialog, a",
+    "different grammar), tree-chevron (navigation tree, chapter 08 owns the chevron), or staged-adoption",
+    "(covered by the rule, not yet migrated). A template in neither list fails the check."
+  ],
+  "enforced": [
+    "src/app/components/section-header/section-header.component.html",
+    "src/app/features/project-detail/components/workbench-overview/workbench-overview.component.html",
+    "src/app/features/task-detail/components/prompt-pane/agent-work-detail/agent-work-detail.component.html",
+    "src/app/features/task-detail/components/prompt-pane/pipeline-token-usage/pipeline-token-usage.component.html",
+    "src/app/features/task-detail/components/protocol-pane/previous-results-control/previous-results-control.component.html",
+    "src/app/features/task-detail/components/protocol-pane/protocol-verdict-banner/protocol-verdict-banner.component.html"
+  ],
+  "documented": {
+    "src/app/app.html": {
+      "kind": "popup-trigger",
+      "reason": "Studio tab overflow: aria-haspopup=\"menu\" trigger that opens an overlay menu, not an in-place body. Menu grammar, see chapter 02."
+    },
+    "src/app/components/cli-model-selector/cli-model-selector.component.html": {
+      "kind": "popup-trigger",
+      "reason": "Model picker trigger. The list opens as an overlay popover anchored to the control; the value chip is the affordance."
+    },
+    "src/app/components/concept-help/concept-help.component.html": {
+      "kind": "popup-trigger",
+      "reason": "Help popover trigger. The content floats over the surface instead of expanding the row."
+    },
+    "src/app/components/info-button/info-button.component.html": {
+      "kind": "popup-trigger",
+      "reason": "Info popover trigger. The question-mark glyph is the affordance; the body is an overlay."
+    },
+    "src/app/components/markdown-rich-editor/markdown-rich-editor.html": {
+      "kind": "popup-trigger",
+      "reason": "Editor view-options menu trigger (overlay menu, icon affordance)."
+    },
+    "src/app/components/model-migration-badge/model-migration-badge.component.html": {
+      "kind": "popup-trigger",
+      "reason": "aria-haspopup badge that opens a migration popover over the surface."
+    },
+    "src/app/components/pane-tabs/pane-tabs.component.html": {
+      "kind": "popup-trigger",
+      "reason": "Tab-strip overflow menu (aria-haspopup=\"menu\"), overlay list of hidden tabs."
+    },
+    "src/app/components/tree-row/tree-row.component.html": {
+      "kind": "tree-chevron",
+      "reason": "Canonical navigation tree row. Its chevron is owned by the Navigation citizenship contract (chapter 08); one marker there would fight the nav rhythm and the active-item bar."
+    },
+    "src/app/features/board/components/decision-backlog-hint/decision-backlog-hint.component.html": {
+      "kind": "staged-adoption",
+      "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
+    },
+    "src/app/features/board/components/epic-group-board/epic-group-board.component.html": {
+      "kind": "staged-adoption",
+      "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
+    },
+    "src/app/features/board/components/epic-overview-screen/epic-overview-screen.component.html": {
+      "kind": "staged-adoption",
+      "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
+    },
+    "src/app/features/board/components/filters-dropdown/filters-dropdown.component.html": {
+      "kind": "popup-trigger",
+      "reason": "Board filter dropdown trigger; the panel is an anchored overlay."
+    },
+    "src/app/features/board/components/task-card/task-card.component.html": {
+      "kind": "staged-adoption",
+      "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
+    },
+    "src/app/features/cli/components/cli-models-panel/cli-models-panel.html": {
+      "kind": "staged-adoption",
+      "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
+    },
+    "src/app/features/orchestrator/components/global-orchestrator-card/global-orchestrator-card.html": {
+      "kind": "staged-adoption",
+      "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
+    },
+    "src/app/features/orchestrator/components/orchestrator-context-receipt/orchestrator-context-receipt.component.html": {
+      "kind": "staged-adoption",
+      "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
+    },
+    "src/app/features/orchestrator/components/orchestrator-panel-header/orchestrator-panel-header.component.html": {
+      "kind": "popup-trigger",
+      "reason": "Panel-header chats trigger; opens the orchestrator context menu as an overlay."
+    },
+    "src/app/features/project-cycle-time/components/project-cycle-time-panel/project-cycle-time-panel.component.html": {
+      "kind": "staged-adoption",
+      "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
+    },
+    "src/app/features/project-detail/components/project-git-cleanup/project-git-cleanup.component.html": {
+      "kind": "staged-adoption",
+      "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
+    },
+    "src/app/features/project-detail/components/project-steering-docs-section/project-steering-docs-section.html": {
+      "kind": "tree-chevron",
+      "reason": "role=\"treeitem\" rows following the navigation tree chevron contract (chapter 08)."
+    },
+    "src/app/features/project-detail/components/project-url-preview-tab/project-url-preview-tab.component.html": {
+      "kind": "popup-trigger",
+      "reason": "Embed-actions menu trigger (aria-haspopup=\"menu\")."
+    },
+    "src/app/features/project-detail/components/project-wiki-section/project-wiki-section.html": {
+      "kind": "tree-chevron",
+      "reason": "Mixed file: the wiki rows are role=\"treeitem\" under the chapter 08 chevron contract; the two meta toggles are staged adoption."
+    },
+    "src/app/features/project-detail/components/project-wiki-section/wiki-meta-section/wiki-meta-section.component.html": {
+      "kind": "staged-adoption",
+      "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
+    },
+    "src/app/features/project-detail/components/project-wiki-section/wiki-pulse/wiki-pulse.component.html": {
+      "kind": "staged-adoption",
+      "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
+    },
+    "src/app/features/project-detail/components/project-wiki-section/wiki-search-results/wiki-search-results.component.html": {
+      "kind": "staged-adoption",
+      "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
+    },
+    "src/app/features/project-detail/components/workbench-overview-card/workbench-overview-card.component.html": {
+      "kind": "staged-adoption",
+      "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
+    },
+    "src/app/features/regression-radar/components/regression-radar/regression-radar.component.html": {
+      "kind": "staged-adoption",
+      "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
+    },
+    "src/app/features/remote-hosts/components/remote-host-card/remote-host-card.html": {
+      "kind": "staged-adoption",
+      "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
+    },
+    "src/app/features/remote-hosts/components/remote-host-detail-summary/remote-host-detail-summary.html": {
+      "kind": "staged-adoption",
+      "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
+    },
+    "src/app/features/retention/components/retention-run-history/retention-run-history.component.html": {
+      "kind": "staged-adoption",
+      "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
+    },
+    "src/app/features/shell/components/workspace-management/workspace-management.component.html": {
+      "kind": "popup-trigger",
+      "reason": "Move-to-workspace menu trigger (aria-haspopup=\"menu\")."
+    },
+    "src/app/features/studio-shell/components/diff-tab-view/diff-tab-view.component.html": {
+      "kind": "staged-adoption",
+      "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
+    },
+    "src/app/features/task-detail/components/activity-log-view/activity-log-view.html": {
+      "kind": "popup-trigger",
+      "reason": "Mixed file: the toolbar trigger is an overlay menu (aria-haspopup). The in-place tool-burst toggle beside it is staged adoption and joins the enforced list when the conversation view is next touched."
+    },
+    "src/app/features/task-detail/components/detail-header/detail-header.component.html": {
+      "kind": "popup-trigger",
+      "reason": "Triage overflow menu trigger (aria-haspopup=\"menu\")."
+    },
+    "src/app/features/task-detail/components/escalation-summary/escalation-summary.component.html": {
+      "kind": "staged-adoption",
+      "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
+    },
+    "src/app/features/task-detail/components/git-pane/git-file-tree/git-file-tree.component.html": {
+      "kind": "tree-chevron",
+      "reason": "role=\"treeitem\" file tree following the navigation tree chevron contract (chapter 08)."
+    },
+    "src/app/features/task-detail/components/git-pane/git-pane/git-pane.component.html": {
+      "kind": "staged-adoption",
+      "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
+    },
+    "src/app/features/task-detail/components/git-pane/task-commit-rounds/task-commit-rounds.component.html": {
+      "kind": "staged-adoption",
+      "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
+    },
+    "src/app/features/task-detail/components/prompt-pane/files-pane/files-pane.component.html": {
+      "kind": "staged-adoption",
+      "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
+    },
+    "src/app/features/task-detail/components/prompt-pane/overview-pane/overview-pane.component.html": {
+      "kind": "staged-adoption",
+      "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
+    },
+    "src/app/features/task-detail/components/prompt-pane/pipeline-run-history/pipeline-run-history.component.html": {
+      "kind": "popup-trigger",
+      "reason": "Agent-runs trigger; the run list opens as an anchored overlay next to the pipeline row."
+    },
+    "src/app/features/task-detail/components/prompt-pane/pipeline-step-details/pipeline-step-details.component.html": {
+      "kind": "popup-trigger",
+      "reason": "Step-details trigger (aria-haspopup); the details render in an anchored overlay."
+    },
+    "src/app/features/task-detail/components/prompt-pane/pipeline-step-result/pipeline-step-result.component.html": {
+      "kind": "popup-trigger",
+      "reason": "Step-result trigger (aria-haspopup=\"dialog\"); the result opens in a dialog."
+    },
+    "src/app/features/task-detail/components/prompt-pane/post-step-controls/post-step-controls.component.html": {
+      "kind": "popup-trigger",
+      "reason": "Post-step attempts trigger; the attempt history opens as an anchored overlay."
+    },
+    "src/app/features/task-detail/components/prompt-pane/task-prompt-popover/task-prompt-popover.component.html": {
+      "kind": "popup-trigger",
+      "reason": "Prompt popover trigger; the prompt floats over the pane."
+    },
+    "src/app/features/task-detail/components/protocol-pane/artifact-gallery/artifact-gallery.component.html": {
+      "kind": "staged-adoption",
+      "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
+    },
+    "src/app/features/task-detail/components/protocol-pane/code-review-panel/code-review-panel.component.html": {
+      "kind": "staged-adoption",
+      "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
+    },
+    "src/app/features/task-detail/components/protocol-pane/protocol-pane/protocol-pane.component.html": {
+      "kind": "popup-trigger",
+      "reason": "Activity toolbar menu trigger (aria-haspopup=\"menu\")."
+    },
+    "src/app/features/task-detail/components/protocol-pane/run-git-viewer/run-git-viewer.component.html": {
+      "kind": "tree-chevron",
+      "reason": "role=\"treeitem\" run-diff tree following the navigation tree chevron contract (chapter 08)."
+    },
+    "src/app/features/task-detail/components/protocol-pane/run-timeline/run-timeline.component.html": {
+      "kind": "staged-adoption",
+      "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
+    },
+    "src/app/features/task-detail/components/protocol-pane/task-inspector-tab/task-inspector-tab.component.html": {
+      "kind": "staged-adoption",
+      "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
+    },
+    "src/app/features/task-detail/components/references-section/references-section.component.html": {
+      "kind": "staged-adoption",
+      "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
+    },
+    "src/app/features/tokens/components/cli-usage-modal/cli-usage-modal.html": {
+      "kind": "staged-adoption",
+      "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
+    }
+  }
+}

@@ -35,7 +35,7 @@
     "lint:scss:fix": "stylelint \"src/**/*.scss\" --fix",
     "lint:components": "node scripts/check-component-size.mjs",
     "lint:process-spawns": "node --test ../scripts/process-spawn-guard.test.mjs",
-    "lint:structure": "node scripts/check-component-folders.mjs && node scripts/check-lane-strings.mjs",
+    "lint:structure": "node scripts/check-component-folders.mjs && node scripts/check-lane-strings.mjs && node scripts/check-disclosure-markers.mjs && node --test scripts/check-disclosure-markers.test.mjs",
     "audit:components": "node scripts/audit-components.mjs --md",
     "audit:orphan-css": "node scripts/find-orphan-css-classes.mjs"
   },

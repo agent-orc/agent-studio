@@ -26,7 +26,7 @@ export interface ProtocolVerdict {
   kind: ProtocolVerdictKind;
   /** Canonical four-state status shared by banner, Result, and Pipeline. */
   status: AuthoritativeRunOutcomeStatus;
-  /** Raw evidence exposed only inside the "Why this status?" disclosure. */
+  /** Raw evidence exposed only when the status line is expanded. */
   signals: RunOutcomeSignal[];
   emoji: string;
   label: string;
