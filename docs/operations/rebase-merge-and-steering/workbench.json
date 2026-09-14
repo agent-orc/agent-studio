@@ -4,9 +4,9 @@
   "title": "Rebase, merge, and bounce steering",
   "summary": "Decision-ready attribution analysis of the current stage-specific Git hybrid: fresh recovery rounds rebase and record a new fenced subject, canonical integration preserves reviewed delivery SHAs with merge-first recovery, and promotion publishes only the gated candidate SHA. Defines deterministic backend bounce steering as the default rail, strong guardian analysis for repeated or complex conflicts, Batch Gate interplay, bounded rounds, and migration slices. [Curation 2026-08-17: stays decision-pending on the steering questions; no operator decision is recorded yet. The already-implemented invariants, the rebase-versus-merge stage matrix and the integration record contract are now written up as architecture documentation in docs/concepts/platform-architecture/rebase-merge-and-integration-invariants.md.]",
   "entrypoint": "index.html",
-  "status": "decision-pending",
+  "status": "documented",
   "phase": "decision-ready",
-  "updatedAt": "2026-08-17T00:00:00Z",
+  "updatedAt": "2026-09-14T18:43:49Z",
   "sourceTaskKeys": [
     "AGT-2662"
   ],
@@ -21,11 +21,13 @@
   ],
   "key": "AGT-W37",
   "review": {
-    "verdict": "current",
-    "supersededBy": [],
-    "reviewedAt": "2026-09-13T10:20:00Z",
+    "verdict": "superseded",
+    "supersededBy": [
+      "AGT-W57"
+    ],
+    "reviewedAt": "2026-09-14T18:43:49Z",
     "reviewedBy": "Operator",
-    "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    "note": "Consolidated into AGT-W57 Delivery chain: integration, recovery, robustness (AGT-2799), per AGT-W55 section 3 and operator decisions D1 and D2 of 2026-09-13. No separate archive artefact: the durable knowledge lives in the theme Dossier."
   },
   "reviewHistory": [
     {
@@ -34,6 +36,15 @@
       "reviewedAt": "2026-09-13T10:20:00Z",
       "reviewedBy": "Operator",
       "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    },
+    {
+      "verdict": "superseded",
+      "supersededBy": [
+        "AGT-W57"
+      ],
+      "reviewedAt": "2026-09-14T18:43:49Z",
+      "reviewedBy": "Operator",
+      "note": "Consolidated into AGT-W57 Delivery chain: integration, recovery, robustness (AGT-2799), per AGT-W55 section 3 and operator decisions D1 and D2 of 2026-09-13. No separate archive artefact: the durable knowledge lives in the theme Dossier."
     }
   ]
 }

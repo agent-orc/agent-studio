@@ -4,9 +4,9 @@
   "title": "Unverifizierte Lieferungen",
   "summary": "Postmortem 09.08.: Zwei Remote-Lieferungen (AGT-2531 Gate-Fix, AGT-2541 Git-Prozess-Fix) existierten nur auf Salvage-Fence-Branches; AGT-2531 wurde per Worker-Outcome NoTaskBranch trotzdem still 6-completed (integration=null). Folgen: falsch-rote CAC/QS/TE-Gates (7 Karten Error-Loop), rote Baseline (Eskalationen AGT-2536/2537), blockierter Promotion-Zug; Backstop-Telemetrie verdeckte den Zustand (261x 'integrated'). SOFORTMASSNAHMEN 09.08. ABGESCHLOSSEN: card-scoped Salvage-Merges 6ea7f7978 + 720129404 auf develop, verifiziert mit Baseline-Gegenlauf (7 vorbestehende Windows-Fixture-Failures, keine Regression), Requeues mit Fence-Referenz. HAERTUNG GETAKTET: AGT-2543 (Abnahme-Invariante: NoTaskBranch/Error/Conflict nie still completed), AGT-2544 (Envelope-Pflicht: delivery-failed + Auto-Requeue mit Fence-Referenz), AGT-2545 (ehrliche Backstop-Zaehler + 30-min-Alarm). OFFEN (Operator): Fence-Chip am Board ja/nein, Auto-Reintegration vom Fence ja/nein (§6). Leitinvariante: 'Completed' ist eine beweispflichtige Aussage. [Curation 2026-08-18 (AGT-2671): DONE CHECK - open decisions and open follow-up work remain per the dossier's own sections 6-7, stays decision-pending. Completion-invariant and delivery-verification-chain content noted as a candidate for docs/concepts/distributed-agent-studio-target-architecture.md section 6 (Disconnect and restart contract currently covers connectivity loss, not the salvage-fence-push/still-completed failure mode this postmortem documents); not transferred this pass, recommend a dedicated follow-up.]",
   "entrypoint": "index.html",
-  "status": "decision-pending",
+  "status": "documented",
   "phase": "decision-ready",
-  "updatedAt": "2026-08-18T12:00:00Z",
+  "updatedAt": "2026-09-14T18:43:49Z",
   "sourceTaskKeys": [
     "AGT-2531",
     "AGT-2541"
@@ -24,14 +24,13 @@
   ],
   "key": "AGT-W23",
   "review": {
-    "verdict": "partially-superseded",
+    "verdict": "superseded",
     "supersededBy": [
-      "AGT-W37",
-      "AGT-W42"
+      "AGT-W57"
     ],
-    "reviewedAt": "2026-09-13T10:20:00Z",
+    "reviewedAt": "2026-09-14T18:43:49Z",
     "reviewedBy": "Operator",
-    "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    "note": "Consolidated into AGT-W57 Delivery chain: integration, recovery, robustness (AGT-2799), per AGT-W55 section 3 and operator decisions D1 and D2 of 2026-09-13. No separate archive artefact: the durable knowledge lives in the theme Dossier."
   },
   "reviewHistory": [
     {
@@ -43,6 +42,15 @@
       "reviewedAt": "2026-09-13T10:20:00Z",
       "reviewedBy": "Operator",
       "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    },
+    {
+      "verdict": "superseded",
+      "supersededBy": [
+        "AGT-W57"
+      ],
+      "reviewedAt": "2026-09-14T18:43:49Z",
+      "reviewedBy": "Operator",
+      "note": "Consolidated into AGT-W57 Delivery chain: integration, recovery, robustness (AGT-2799), per AGT-W55 section 3 and operator decisions D1 and D2 of 2026-09-13. No separate archive artefact: the durable knowledge lives in the theme Dossier."
     }
   ]
 }
