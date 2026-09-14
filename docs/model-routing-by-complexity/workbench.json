@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "model-routing-by-complexity",
   "title": "Model routing by assessed complexity",
-  "summary": "Operator ask 2026-09-14: the regular-expression approach to complexity is nonsense; the workflow should be work order → analysis → implementation plan → implementation, with analysis and plan as pipeline steps that declare complexity, and Token Economy as the measuring authority owning the estimation prompts, the calibration study, and the versioned (complexity class → model, thinking level) pair table, fed by a reported-versus-achieved record from every closed card. Current picture verified against v0.3.0: three regexes over title+prompt in ModelRoutingPolicyRegistry, no analysis or plan pipeline step, claude-fable-5-1 unreachable, claude-opus-5 reachable only through the critical-floor keyword list, and no record joining a routed (model, level) pair to its outcome. Research reviewed: routing/cascade literature treats difficulty as a prediction checked against outcome, LLM-as-judge literature requires measured calibration rather than assumed reliability, and code-task difficulty prediction requires fitting and checking a rubric against this product's own history before trusting it. Three alternatives compared (report-only, two new pipeline steps with Token Economy owning the pair table, single external Token Economy call); Option B recommended. Five open decisions: analysis/plan scope, requalification authority, pair-table ownership, evidence bar before the table changes, and the disagreement protocol.",
+  "summary": "Operator ask 2026-09-14: the regular-expression approach to complexity is nonsense; the workflow should be work order \u2192 analysis \u2192 implementation plan \u2192 implementation, with analysis and plan as pipeline steps that declare complexity, and Token Economy as the measuring authority owning the estimation prompts, the calibration study, and the versioned (complexity class \u2192 model, thinking level) pair table, fed by a reported-versus-achieved record from every closed card. Current picture verified against v0.3.0: three regexes over title\u002Bprompt in ModelRoutingPolicyRegistry, no analysis or plan pipeline step, claude-fable-5-1 unreachable, claude-opus-5 reachable only through the critical-floor keyword list, and no record joining a routed (model, level) pair to its outcome. Research reviewed: routing/cascade literature treats difficulty as a prediction checked against outcome, LLM-as-judge literature requires measured calibration rather than assumed reliability, and code-task difficulty prediction requires fitting and checking a rubric against this product\u0027s own history before trusting it. Three alternatives compared (report-only, two new pipeline steps with Token Economy owning the pair table, single external Token Economy call); Option B recommended. Five open decisions: analysis/plan scope, requalification authority, pair-table ownership, evidence bar before the table changes, and the disagreement protocol.",
   "entrypoint": "index.html",
   "status": "decision-pending",
   "phase": "decision-ready",
@@ -16,5 +16,6 @@
     "AGT-2808",
     "AGT-2293"
   ],
-  "implementationTasks": []
+  "implementationTasks": [],
+  "key": "AGT-W56"
 }
