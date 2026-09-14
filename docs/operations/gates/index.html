@@ -1,0 +1,842 @@
+<!doctype html>
+<html lang="en" data-document-pattern="concept">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gates: batch gate and remote gate | Dossier</title>
+<style data-article-template="v2">
+:root {
+  color-scheme: light;
+  --article-paper: #fcfcfb;
+  --article-surface: #f2f1ee;
+  --article-surface-strong: #e9e8e3;
+  --article-ink: #151515;
+  --article-muted: #5f5e59;
+  --article-faint: #7c7a74;
+  --article-line: #d8d6cf;
+  --article-link: #1f67b2;
+  --article-link-soft: #eaf1fb;
+  --article-good: #18753a;
+  --article-good-soft: #eaf4ea;
+  --article-warn: #8b6100;
+  --article-warn-soft: #f8f0dd;
+  --article-bad: #b72f2f;
+  --article-bad-soft: #fbecec;
+  --article-serif: Georgia, "Times New Roman", serif;
+  --article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --article-paper: #1a1a19;
+    --article-surface: #232322;
+    --article-surface-strong: #2c2c2a;
+    --article-ink: #f7f7f4;
+    --article-muted: #c3c2b7;
+    --article-faint: #9d9c94;
+    --article-line: #3d3d3a;
+    --article-link: #78aef0;
+    --article-link-soft: #1e2a3a;
+    --article-good: #67b867;
+    --article-good-soft: #1f2f1f;
+    --article-warn: #d9a63f;
+    --article-warn-soft: #33301e;
+    --article-bad: #e66767;
+    --article-bad-soft: #382222;
+  }
+}
+* { box-sizing: border-box; }
+html { background: var(--article-paper); }
+body { margin: 0; background: var(--article-paper); color: var(--article-ink); font: 17px/1.75 var(--article-serif); text-rendering: optimizeLegibility; }
+main, .article { width: min(70ch, calc(100% - 48px)); margin: 0 auto; padding: 0 0 80px; }
+header.page { margin-bottom: 12px; padding: 48px 0 28px; border-bottom: 1px solid var(--article-line); }
+h1, h2, h3, h4, .kicker, .meta, .number, nav, table, figcaption, .box, .callout, .evidence-figure, .variant-grid, .evidence-list { font-family: var(--article-sans); }
+h1 { margin: 0 0 14px; font-size: clamp(2.2rem, 6vw, 3.4rem); line-height: 1.08; letter-spacing: -0.025em; }
+h2 { margin: 56px 0 10px; font-size: 1.55rem; line-height: 1.25; }
+h3 { margin: 34px 0 8px; font-size: 1.08rem; line-height: 1.35; }
+h4 { margin: 0 0 8px; font-size: 0.94rem; }
+p { margin: 0 0 18px; }
+p:last-child { margin-bottom: 0; }
+.kicker, .number { margin: 0 0 12px; color: var(--article-faint); font-size: 0.75rem; font-weight: 700; letter-spacing: 0.12em; line-height: 1; text-transform: uppercase; }
+.lede { margin: 0; color: var(--article-muted); font-size: 1.18rem; line-height: 1.6; }
+.meta { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; color: var(--article-faint); font-size: 0.78rem; }
+.meta b { color: var(--article-muted); font-weight: 650; }
+a { color: var(--article-link); text-underline-offset: 0.16em; }
+a:focus-visible { outline: 2px solid var(--article-link); outline-offset: 3px; border-radius: 2px; }
+code { padding: 0.08em 0.34em; border-radius: 4px; background: var(--article-surface-strong); font: 0.84em/1.5 var(--article-mono); overflow-wrap: anywhere; }
+pre { overflow-x: auto; margin: 24px 0; padding: 16px 18px; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-surface); }
+pre code { padding: 0; background: transparent; }
+ul, ol { margin: 0 0 18px; padding-left: 24px; }
+li + li { margin-top: 6px; }
+table { width: 100%; margin: 24px 0; border-collapse: collapse; font-size: 0.88rem; line-height: 1.5; }
+th, td { padding: 10px 12px; border-bottom: 1px solid var(--article-line); text-align: left; vertical-align: top; }
+th { color: var(--article-faint); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; }
+.box, .callout { margin: 24px 0; padding: 18px 22px; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-surface); font-size: 0.92rem; line-height: 1.65; }
+.box.accent, .callout[data-tone="accent"] { border-color: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); background: var(--article-link-soft); }
+.box.good, .callout[data-tone="good"] { border-color: color-mix(in srgb, var(--article-good) 30%, var(--article-line)); background: var(--article-good-soft); }
+.box.warn, .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
+.box.bad, .callout[data-tone="bad"] { border-color: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); background: var(--article-bad-soft); }
+figure { margin: 30px 0; }
+figure > img, figure > svg { display: block; width: 100%; height: auto; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-paper); }
+figcaption { margin-top: 10px; color: var(--article-muted); font-size: 0.8rem; line-height: 1.5; }
+.breakout, .media-breakout { width: min(1120px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
+.evidence-list { display: grid; gap: 10px; margin: 24px 0; }
+.evidence { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px 14px; align-items: start; padding: 14px; border: 1px solid var(--article-line); border-radius: 9px; background: var(--article-surface); color: var(--article-ink); text-decoration: none; }
+.evidence:hover { border-color: var(--article-link); background: var(--article-link-soft); }
+.evidence-class { display: inline-flex; align-items: center; min-height: 22px; padding: 2px 8px; border-radius: 999px; background: var(--article-surface-strong); color: var(--article-muted); font-size: 0.68rem; font-weight: 750; letter-spacing: 0.04em; text-transform: uppercase; white-space: nowrap; }
+.evidence-class[data-evidence-class="observed"] { background: var(--article-good-soft); color: var(--article-good); }
+.evidence-class[data-evidence-class="inferred"] { background: var(--article-warn-soft); color: var(--article-warn); }
+.evidence-class[data-evidence-class="proposed"] { background: var(--article-link-soft); color: var(--article-link); }
+.evidence b { display: block; margin-bottom: 2px; font-size: 0.88rem; }
+.evidence small { display: block; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; }
+.dim { color: var(--article-muted); }
+.decision { border: 1px solid color-mix(in srgb, var(--article-link) 35%, var(--article-line)); border-radius: 10px; padding: 18px 22px; margin: 22px 0; background: var(--article-link-soft); font-family: var(--article-sans); }
+.decision h3 { margin: 0 0 10px; font-size: 1.02rem; }
+.decision label { display: flex; gap: 12px; align-items: flex-start; padding: 9px 10px; border: 1px solid var(--article-line); border-radius: 8px; background: var(--article-paper); margin: 8px 0; cursor: pointer; }
+.decision label input { margin-top: 4px; }
+.decision label b { display: block; }
+.decision label span.d { display: block; color: var(--article-muted); font-size: 0.86rem; }
+.decision textarea { width: 100%; min-height: 60px; margin-top: 8px; font: 0.86rem var(--article-sans); border: 1px solid var(--article-line); border-radius: 6px; padding: 8px; background: var(--article-paper); color: var(--article-ink); }
+.tag-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 18px; }
+.tag { display: inline-flex; align-items: center; padding: 3px 9px; border-radius: 999px; background: var(--article-surface-strong); color: var(--article-muted); font: 750 0.7rem/1.3 var(--article-sans); letter-spacing: 0.03em; text-transform: uppercase; }
+svg.diagram { width: 100%; height: auto; }
+svg.diagram text { font: 600 12.5px var(--article-sans); fill: var(--article-ink); }
+svg.diagram .lbl { font: 700 10px var(--article-sans); fill: var(--article-faint); letter-spacing: 0.04em; text-transform: uppercase; }
+svg.diagram .step { fill: var(--article-surface); stroke: var(--article-line); }
+svg.diagram .step-new { fill: var(--article-link-soft); stroke: var(--article-link); }
+svg.diagram .arrow { stroke: var(--article-faint); stroke-width: 1.4; fill: none; marker-end: url(#arrow-head); }
+svg.diagram .sub { font: 400 10.5px var(--article-sans); fill: var(--article-muted); }
+@media (max-width: 760px) {
+  main, .article { width: min(100% - 28px, 70ch); padding-bottom: 52px; }
+  header.page { padding-top: 32px; }
+  .breakout, .media-breakout { width: calc(100vw - 20px); }
+  .evidence { grid-template-columns: 1fr; }
+  table { display: block; overflow-x: auto; }
+}
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; } }
+</style>
+<style data-document-style="gates">
+:root { --gate-exec: #157d76; --gate-exec-soft: #e4f2f0; --gate-note: #a24b2a; }
+@media (prefers-color-scheme: dark) {
+  :root { --gate-exec: #56b7ae; --gate-exec-soft: #17302e; --gate-note: #e0906c; }
+}
+svg.diagram .step-exec { fill: var(--gate-exec-soft); stroke: var(--gate-exec); }
+svg.diagram .num { font: 700 10px var(--article-sans); fill: var(--gate-note); letter-spacing: 0.04em; }
+.source-map th:first-child, .source-map td:first-child { white-space: nowrap; }
+.appendix { border-top: 1px solid var(--article-line); margin-top: 46px; padding-top: 10px; }
+</style>
+</head>
+<body>
+<main class="article">
+  <header class="page">
+    <p class="kicker">Concept Dossier &middot; Gates</p>
+    <h1>Gates: batch gate and remote gate</h1>
+    <p class="lede">One Dossier for deterministic validation: when the full suite runs, what exact
+    subject it runs on, who owns the attempt, and where a gate is allowed to fail. It merges the batch
+    gate concept, the remote gate target architecture, and the async-validation principles that survived
+    measurement, and keeps every choice that still needs an operator decision.</p>
+    <div class="meta">
+      <span><b>Status</b> decision-pending</span>
+      <span><b>Phase</b> decision-ready</span>
+      <span><b>As of</b> <time datetime="2026-09-14">14 September 2026</time></span>
+      <span><b>Consolidates</b> AGT-W36, AGT-W18, AGT-W2</span>
+      <span><b>Evidence appendix</b> AGT-W28, AGT-W29</span>
+      <span><b>Card</b> AGT-2801 &middot; program AGT-2797</span>
+    </div>
+  </header>
+
+  <nav aria-label="Contents">
+    <ul>
+      <li><a href="#sect1">&sect;1 Scope and consolidation</a></li>
+      <li><a href="#sect2">&sect;2 What a gate is, and the two planes it runs in</a></li>
+      <li><a href="#sect3">&sect;3 Batch gate: one suite for a closed delivery wave</a></li>
+      <li><a href="#sect4">&sect;4 Remote gate: a claimable, fenced gate step</a></li>
+      <li><a href="#sect5">&sect;5 Validation economy: what survives from async validation</a></li>
+      <li><a href="#sect6">&sect;6 Alternatives</a></li>
+      <li><a href="#sect7">&sect;7 Recommendation</a></li>
+      <li><a href="#sect8">&sect;8 Evidence</a></li>
+      <li><a href="#sect9">&sect;9 Open decisions</a></li>
+      <li><a href="#sect10">&sect;10 Evidence appendix: two closed measurements</a></li>
+      <li><a href="#sect11">&sect;11 Consolidation record and sources</a></li>
+    </ul>
+  </nav>
+
+  <h2 id="sect1"><span class="number">&sect;1</span> Scope and consolidation</h2>
+  <p>Three Dossiers described the same subject from different sides. The batch gate concept (AGT-W36,
+  11 August 2026) asked <i>how many deliveries one suite run should cover</i>. The remote gate target
+  architecture (AGT-W18, 26 July 2026) asked <i>who owns a gate execution and on which exact tree it
+  runs</i>. Async validation and the test staging lane (AGT-W2, 25 July 2026) asked <i>how much
+  validation is redundant in the first place</i>. None of the three can be decided without the other
+  two: batching changes the subject a remote gate claims, and the redundancy measurement is what
+  justifies batching at all.</p>
+  <p>This Dossier is the single current record for that theme. It keeps the decisions already taken with
+  their dates, the open choices with their current options, and the evidence that still holds. It drops
+  dated topology snapshots, duplicated argument, and the per-source recommendation lists that the merged
+  &sect;9 now carries in one place. The two closed measurements the theme rests on, the 847-task pipeline
+  time economy baseline (AGT-W28) and the reissue-convergence negative result (AGT-W29), are kept as an
+  evidence appendix in &sect;10 rather than as separate current Dossiers.</p>
+  <div class="box">
+    <b>Boundary.</b> This is a concept Dossier. It recommends a target and records what an operator has
+    to choose; it changes no runtime behavior and contains no pipeline implementation. Human acceptance
+    of a delivered card remains outside the gate contract in every option below.
+  </div>
+
+  <h2 id="sect2"><span class="number">&sect;2</span> What a gate is, and the two planes it runs in</h2>
+  <p>A gate is deterministic verification of an exact tree: build, test, lint, and the checks that have a
+  machine-checkable verdict. It is not the model review of a diff, and it is not human acceptance. The
+  product keeps three planes apart, and most of the confusion this Dossier resolves comes from letting
+  them blur.</p>
+  <table>
+    <thead><tr><th>Plane</th><th>Subject</th><th>Verdict</th></tr></thead>
+    <tbody>
+      <tr><td><b>Per-card review plane</b></td><td>The settled result envelope: immutable result ref, result SHA, run attempt, delivery epoch, fencing token.</td><td>Model review of requirements, diff, code quality, tests authored, durable deliverables. Cheap deterministic metadata and merge preflight.</td></tr>
+      <tr><td><b>Gate plane</b></td><td>A clean checkout of one exact SHA: either the card's own delivery, or a combined candidate assembled from several deliveries.</td><td>One authoritative full-suite verdict bound to that SHA and a gate-profile digest.</td></tr>
+      <tr><td><b>Acceptance</b></td><td>The integrated card.</td><td>Human. Unchanged by everything below.</td></tr>
+    </tbody>
+  </table>
+  <p>Two invariants hold across every option in this Dossier, because both were established by incident
+  rather than by preference:</p>
+  <ul>
+    <li><b>Exact subject.</b> A gate verdict names the SHA it tested. A lane, a review narrative, a
+    temporary branch, or a historical bookkeeping record never means gate-passed or integrated by itself.
+    Git ancestry is stronger than bookkeeping; a record cannot manufacture integration.</li>
+    <li><b>Fail closed.</b> Product failure, queue timeout, execution timeout, lost lease, missing
+    snapshot, tool failure, and cleanup failure are distinct classifications. An infrastructure failure
+    is never relabelled as a product failure, and the absence of a trustworthy result is never
+    relabelled as a pass.</li>
+  </ul>
+
+  <h2 id="sect3"><span class="number">&sect;3</span> Batch gate: one suite for a closed delivery wave</h2>
+  <p>A batch gate is a per-project, per-repository, per-gate-profile transaction. At close time it
+  snapshots every delivery eligible for the same full-suite profile, assembles them mechanically on one
+  fenced temporary branch, runs the complete suite once on that exact combined candidate, and publishes
+  only a green tip. New arrivals wait for the next batch. <i>All pending deliveries</i> therefore means
+  all eligible deliveries in that closed snapshot, never an unbounded queue that can change while the
+  suite runs.</p>
+
+  <figure class="media-breakout">
+    <svg class="diagram" viewBox="0 0 910 300" role="img" aria-labelledby="fig1-title fig1-desc">
+      <title id="fig1-title">Closed-candidate lifecycle of a batch gate</title>
+      <desc id="fig1-desc">Eligible deliveries enter a closed manifest, which is replayed into a fenced candidate branch. One full suite runs on that candidate. A green run leads to fenced publication; a red run leads to bounded halving, which reconstructs survivors and runs the suite again.</desc>
+      <defs>
+        <marker id="f1-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="currentColor"></path>
+        </marker>
+      </defs>
+      <g class="arrow" style="color: var(--article-faint)">
+        <path d="M180 145 L194 145" marker-end="url(#f1-arrow)"></path>
+        <path d="M360 145 L374 145" marker-end="url(#f1-arrow)"></path>
+        <path d="M540 145 L554 145" marker-end="url(#f1-arrow)"></path>
+        <path d="M720 138 C 730 138, 730 76, 734 70" marker-end="url(#f1-arrow)"></path>
+        <path d="M720 152 C 730 152, 730 218, 734 224" marker-end="url(#f1-arrow)"></path>
+        <path d="M817 254 L817 282 L457 282 L457 178" marker-end="url(#f1-arrow)"></path>
+      </g>
+      <g>
+        <rect class="step" x="16" y="116" width="162" height="58" rx="9"></rect>
+        <text x="28" y="139">Eligible deliveries</text>
+        <text class="sub" x="28" y="155">settled envelope,</text>
+        <text class="sub" x="28" y="167">model review passed</text>
+
+        <rect class="step-new" x="196" y="116" width="162" height="58" rx="9"></rect>
+        <text x="208" y="139">Closed manifest</text>
+        <text class="sub" x="208" y="155">members, base SHA,</text>
+        <text class="sub" x="208" y="167">membership digest</text>
+
+        <rect class="step-exec" x="376" y="116" width="162" height="58" rx="9"></rect>
+        <text x="388" y="139">Fenced candidate</text>
+        <text class="sub" x="388" y="155">mechanical replay,</text>
+        <text class="sub" x="388" y="167">conflicts ejected</text>
+
+        <rect class="step-exec" x="556" y="116" width="162" height="58" rx="9"></rect>
+        <text x="568" y="139">One full suite</text>
+        <text class="sub" x="568" y="155">clean checkout of</text>
+        <text class="sub" x="568" y="167">the candidate SHA</text>
+
+        <rect class="step-new" x="736" y="40" width="162" height="58" rx="9"></rect>
+        <text x="748" y="63">Fenced publish</text>
+        <text class="sub" x="748" y="79">pre-tip check, shared</text>
+        <text class="sub" x="748" y="91">ref-mutation lease</text>
+
+        <rect class="step-exec" x="736" y="196" width="162" height="58" rx="9"></rect>
+        <text x="748" y="219">Bounded halving</text>
+        <text class="sub" x="748" y="235">ceil(log2 n) runs,</text>
+        <text class="sub" x="748" y="247">then cohort fallback</text>
+      </g>
+      <text class="num" x="742" y="30">GREEN</text>
+      <text class="num" x="742" y="188">RED</text>
+      <text class="lbl" x="466" y="276">reconstruct survivors</text>
+      <text class="lbl" x="16" y="30">CONTROL PLANE BLUE &middot; EXECUTION TEAL</text>
+    </svg>
+    <figcaption>Fig. 1: closed-candidate lifecycle. The manifest is durable before any Git work starts.
+    Mechanical construction can eject a conflicting member without stopping the batch. The only path to
+    <code>develop</code> is the green path, after a final membership and authority check.</figcaption>
+  </figure>
+
+  <h3>Closed manifest and eligibility</h3>
+  <p>A delivery enters the manifest only when all of these hold: its result envelope is settled and names
+  an immutable result ref, result SHA, run attempt, delivery epoch and fencing token; per-card model
+  review has passed that exact subject, with the build and test aspect recorded as
+  <code>deferred-to-batch</code> rather than misreported as not applicable; the card is still the current
+  generation, with no newer attempt, reissue or operator supersede; project, repository, integration
+  branch, gate profile and platform version match the other members; and the delivery is not already
+  owned by another batch or an active per-task gate. The manifest records every eligible key and every
+  exclusion with a typed reason. The coordinator may not silently select an easy subset.</p>
+  <p>Members are ordered by review-subject completion time, then durable enqueue sequence, then task key
+  as a stable tie-breaker. Order, base SHA, member subjects and gate profile form a membership digest
+  that every later state write and every candidate ref carries.</p>
+
+  <h3>Mechanical replay, not central conflict resolution</h3>
+  <p>Each member is replayed in a disposable detached worktree onto the current batch tip using the
+  existing conflict-free mechanical rebase rules, and every replacement SHA maps back to its original
+  delivery SHA. A successful replay advances only the temporary batch ref; it does not make the card
+  integrated. A member that conflicts aborts its own replay without changing the batch tip, receives the
+  typed conflict and file list, and is ejected to the existing rebase-and-retry steer path. The
+  coordinator never guesses which content should win. If more than a quarter of a batch, or three
+  members in succession, conflict during construction, the candidate closes with the members already
+  admitted and the unattempted tail moves intact to the next batch.</p>
+
+  <h3>Green path and per-member evidence</h3>
+  <p>A batch run record is persisted before execution: batch id, membership digest, base SHA, candidate
+  SHA, gate profile and digest, host, lease fence, command list, start time and evidence location. The
+  complete suite then runs once on a clean checkout of the candidate SHA, and the pass receipt names the
+  same candidate SHA and profile digest. Before publication the coordinator revalidates every member
+  generation, acquires the project publication lease, and verifies that the <code>develop</code> tip
+  still equals the recorded pre-tip. Publication is a fast-forward when the tested candidate descends
+  directly from that pre-tip; a merge topology is allowed only when the merge commit itself was prebuilt
+  and tested as the candidate. A new, untested merge commit is never created after the suite. If
+  <code>develop</code> moved, the run is marked <code>stale-base</code>, reconstructed on the new base
+  and run again. That is the cost of preserving the exact-SHA claim.</p>
+  <p>Each member then needs two linked facts rather than one batch-wide narrative. The gate-passed record
+  carries task key, run attempt, delivery epoch, original result SHA, the replacement SHA set, batch id,
+  membership digest, base SHA, tested candidate SHA, gate profile digest, batch-run id, verdict and
+  evidence path; missing or mismatched identity is
+  <code>batch-gate-evidence-missing</code> and the card cannot be marked gate-passed. The integration
+  record carries the integration branch, the exact remote tip, the member's integrated SHA set and
+  evidence pointing at the same batch run and candidate; a push or ancestry verification failure is
+  <code>integration-unverified</code> and the card stays out of Completed. This is the honest-completion
+  invariant established by AGT-2543: no card reaches Completed, and no surface says gate-passed, unless
+  its current attempt points to a successful batch run, the exact tested candidate, and its complete SHA
+  mapping.</p>
+  <div class="box warn">
+    <b>The existing endpoint is not a gate authority.</b> <code>POST /api/tasks/{id}/integration-records</code>
+    appends an idempotent historical classification once a card is in Human Review or later. Its five-class
+    schema rejects in-flight lanes, never moves a card and never changes Git. A native append-only
+    per-member batch-gate record is therefore required before lane release; the existing endpoint keeps
+    only its integration bookkeeping role. This is open decision <a href="#d3">D3</a>.
+  </div>
+
+  <h3>Red path and honest isolation bounds</h3>
+  <p>A red candidate is first classified, because the three classes have nothing in common. An
+  <b>infrastructure red</b> (host loss, timeout without a test verdict, registry outage, disk pressure,
+  lease loss) attributes no member, is retried once on a healthy gate host, and pauses the batch for
+  operator visibility on a second occurrence. A <b>deterministic suite red</b> (a reproduced failing test
+  or build on the same candidate) starts ordered halving from the same base and profile. A <b>flaky
+  red</b> uses the repository's existing bounded quarantine policy, preserves both runs, and is never
+  converted into green by majority vote.</p>
+  <p>Halving splits the ordered member set, reconstructs the first half on the original base, and runs
+  the same complete gate. A red half continues; a green half continues with the complement only under
+  the single-cause assumption, and the green subset is preserved as evidence. At one member, that
+  delivery is ejected to a per-task gate. Survivors are then rebuilt in original order and run once.</p>
+  <div class="box warn">
+    <b>The log2(n) limit must not be overstated.</b> For one reproducible, monotone offender, one failing
+    half per level isolates it in at most ceil(log2 n) diagnostic suite runs after the initial red, plus
+    one final survivor run. That is not a universal bound.
+  </div>
+  <table>
+    <thead><tr><th>Failure shape</th><th>Honest bound</th><th>Fallback</th></tr></thead>
+    <tbody>
+      <tr><td>One independent offender</td><td>ceil(log2 n) diagnostic runs</td><td>Eject one, then run survivors once.</td></tr>
+      <tr><td>k independent offenders</td><td>Up to O(k log n); each new red survivor set starts a new bounded cycle.</td><td>Stop at the configured total budget; per-task gates take the unresolved cohort.</td></tr>
+      <tr><td>Cross-member interaction</td><td>No valid logarithmic guarantee. A half can be green while the union is red.</td><td>Preserve the smallest known failing cohort; isolated gates or an operator-owned interaction card.</td></tr>
+      <tr><td>Non-deterministic failure</td><td>No offender conclusion.</td><td>Flaky or infrastructure policy. Never steer a member from an unproven association.</td></tr>
+    </tbody>
+  </table>
+  <p>An unresolved cohort is a visible fallback, not a batch success.</p>
+
+  <h3>Authority, fencing, and the promotion train</h3>
+  <p>Two levels of fencing apply. The batch coordinator holds a durable lease keyed by project,
+  repository, integration branch and gate profile; lease loss cancels the suite and forbids publication,
+  and a successor resumes only from a durable manifest whose digest and fence still match. Member attempt
+  fences prevent stale attribution. Above both sits the project ref-mutation lease, shared with direct
+  integration, auto-main advancement and the candidate-SHA promotion train (AGT-2594), and acquired only
+  for final revalidation and publication so that a long suite does not block read-only preparation. The
+  train promotes only its recorded candidate SHA and never discovers a temporary batch ref; the two
+  publish phases cannot overlap.</p>
+  <p>A member superseded mid-batch is handled by the moment it happens: before suite start, eject the
+  stale generation and reconstruct; while the suite runs, let it stop safely and mark its verdict
+  unusable, because a green result for the old manifest cannot publish; after green but before publish,
+  the mandatory final membership check fails closed; after a verified publish, the transaction is
+  complete and the old generation's integration history is preserved, but its gate result is never
+  transferred to a newer attempt.</p>
+  <p>The integrate-before-review contract (AGT-2528, AGT-2603) is preserved with a changed green
+  predicate and publication unit: settled delivery, then per-card model review, then batch pending, then
+  batch gate and verified mirror, then Human Review. A temporary replay is not the integration event;
+  only verified membership in <code>develop</code> releases a member to Human Review.</p>
+
+  <h3>The review-first amendment</h3>
+  <div class="box accent">
+    <b>Operator note, 2026-08-18.</b> The full suite should not run per round at all. Model review and
+    cheap deterministic checks run first on every delivery; the full suite runs only as the final gate,
+    once a card appears done with no further round expected, and there it runs once per batch rather
+    than once per card. This composes with the batch gate rather than replacing it: roughly half of
+    today's suite runs are spent on rounds that die at review or on conflicts and would be eliminated
+    outright. It is carried forward as open decision <a href="#d1">D1</a>.
+  </div>
+
+  <h2 id="sect4"><span class="number">&sect;4</span> Remote gate: a claimable, fenced gate step</h2>
+  <p>Batching decides <i>what</i> a suite run covers. This section decides <i>who owns the run</i>. The
+  path in production today is a direct SSH subprocess: the Studio backend chooses a SHA, derives an SSH
+  alias from the configured execution runner, and waits for the exit code of a remote command that scans
+  <code>$HOME/runner-work/*/repo</code> for a matching repository. It is fast, and it is out of band. The
+  central control plane has no claim, lease, fence or durable gate attempt to show; the activity store is
+  process-local and lost on restart; and once the remote command loop starts, an SSH exit can be recorded
+  as the gate verdict instead of selecting a fallback. That is the transport boundary leaking into
+  verdict classification.</p>
+
+  <h3>What the replacement must make true</h3>
+  <table>
+    <thead><tr><th>Requirement</th><th>Statement</th></tr></thead>
+    <tbody>
+      <tr><td><b>R1 identity</b></td><td>Repository identity, expected result SHA, durable ref or source bundle, plan digest and pipeline-definition version are fixed before dispatch.</td></tr>
+      <tr><td><b>R2 authority</b></td><td>Every execution has a lease, fence, idempotency key and explicit attempt number. A late report cannot overwrite a newer attempt.</td></tr>
+      <tr><td><b>R3 materialization</b></td><td>The claim names the repository and durable source. The executor fetches that source, verifies the SHA, then creates a disposable workspace. No directory guessing by glob.</td></tr>
+      <tr><td><b>R4 outcomes</b></td><td>Test failures are product outcomes. Missing source, tool failure, timeout, lost lease and cleanup failure are typed infrastructure outcomes.</td></tr>
+      <tr><td><b>R5 visibility</b></td><td>Queue, claim, host, materialization, command, cleanup, retry and terminal facts are Task Server data, not backend inference.</td></tr>
+      <tr><td><b>R6 bounded scope</b></td><td>The protocol accepts catalogued deterministic gate and post-step plans with bounded commands, evidence, time and resources. It does not accept arbitrary fan-out.</td></tr>
+    </tbody>
+  </table>
+
+  <figure class="media-breakout">
+    <svg class="diagram" viewBox="0 0 910 300" role="img" aria-labelledby="fig2-title fig2-desc">
+      <title id="fig2-title">Recommended remote gate topology</title>
+      <desc id="fig2-desc">The Orchestrator Engine creates a gate subject and dispatches the stage through the Task API. The Task Server holds the durable gate subject, attempt, lease and report. An Agent Host claims the attempt, materializes the exact SHA and reports back. Agent Studio reads central status. There is no SSH control edge.</desc>
+      <defs>
+        <marker id="f2-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="currentColor"></path>
+        </marker>
+      </defs>
+      <g class="arrow" style="color: var(--article-faint)">
+        <path d="M262 80 C 300 80, 310 122, 336 130" marker-end="url(#f2-arrow)"></path>
+        <path d="M648 80 C 610 80, 600 122, 574 130" marker-end="url(#f2-arrow)"></path>
+        <path d="M574 172 C 612 182, 616 228, 646 232" marker-end="url(#f2-arrow)"></path>
+      </g>
+      <g>
+        <rect class="step-new" x="30" y="42" width="232" height="72" rx="9"></rect>
+        <text x="44" y="68">Orchestrator Engine</text>
+        <text class="sub" x="44" y="86">creates the gate subject, dispatches</text>
+        <text class="sub" x="44" y="100">the stage, consumes the outcome</text>
+
+        <rect class="step-new" x="336" y="106" width="238" height="90" rx="9"></rect>
+        <text x="350" y="132">Task Server</text>
+        <text class="sub" x="350" y="150">GateSubject, GateAttempt, GateLease,</text>
+        <text class="sub" x="350" y="164">events, report</text>
+        <text class="sub" x="350" y="182">single durable truth</text>
+
+        <rect class="step-exec" x="648" y="42" width="232" height="72" rx="9"></rect>
+        <text x="662" y="68">Agent Host</text>
+        <text class="sub" x="662" y="86">capability claim, exact-SHA workspace,</text>
+        <text class="sub" x="662" y="100">frozen plan, cleanup</text>
+
+        <rect class="step" x="648" y="222" width="232" height="60" rx="9"></rect>
+        <text x="662" y="248">Agent Studio</text>
+        <text class="sub" x="662" y="266">reads central status and evidence</text>
+      </g>
+      <text class="lbl" x="288" y="112">Task API</text>
+      <text class="lbl" x="622" y="112" text-anchor="end">claim, renew, report</text>
+      <text class="lbl" x="628" y="212" text-anchor="end">read model</text>
+      <text class="num" x="30" y="284">NO SSH CONTROL EDGE, NO NEW SUPERVISING ACTOR</text>
+    </svg>
+    <figcaption>Fig. 2: recommended topology. Blue is authority and control plane, teal is execution.
+    The Task Server persists facts and never checks out a repository or launches a build; the Agent Host
+    executes and never decides pipeline outcomes.</figcaption>
+  </figure>
+
+  <h3>The proposed contract</h3>
+  <table>
+    <thead><tr><th>Object</th><th>Required facts</th><th>Invariant</th></tr></thead>
+    <tbody>
+      <tr><td><b>GateSubject</b></td><td>Subject id, task or source run, repository id and URL, expected SHA, result ref or source-bundle id and digest, plan and policy hash, pipeline definition version, test-selection audit digest.</td><td>Immutable after creation; idempotent creation from source run, gate id and plan hash.</td></tr>
+      <tr><td><b>GateAttempt</b></td><td>Attempt number, state, executor and host, failure classification, outcome, created, claimed, reported and cleaned timestamps.</td><td>At most one live fenced attempt per subject and gate policy.</td></tr>
+      <tr><td><b>GateLease</b></td><td>Lease id, attempt id, executor, instance and host, fence, authority epoch, acquired and expiry, resource namespace.</td><td>Renew, report and cleanup must match executor, instance, lease, fence and epoch.</td></tr>
+      <tr><td><b>GatePlan</b></td><td>Catalogue gate id, typed commands, working subdirectory, per-command and overall deadlines, required capabilities, output limits, cleanup policy.</td><td>Versioned and bounded. The executor cannot add work.</td></tr>
+      <tr><td><b>GateReport</b></td><td>Outcome, typed classification, tested SHA and tree, dirty state before and after, command evidence, environment and toolchain identity, output and artifact digests, cleanup status.</td><td>Tested SHA must equal expected SHA. Stale or duplicate-conflicting reports are rejected.</td></tr>
+    </tbody>
+  </table>
+  <p>The central state machine is <code>queued</code>, <code>claimed</code>, <code>materializing</code>,
+  <code>running</code>, <code>reporting</code>, <code>cleaning</code>, and then one of
+  <code>passed</code>, <code>product-failed</code>, <code>infra-retry</code>, <code>infra-failed</code>,
+  <code>timed-out</code>, <code>cancelled</code>. Studio derives queue age, active host, attempt count,
+  phase, deadline, outcome and evidence availability from those durable facts. The current gate count per
+  host becomes the sum of visible claimed, running and cleaning attempts rather than a hard-coded
+  process-local capacity snapshot.</p>
+  <p>Materialization runs in a fixed order: the Engine resolves the authoritative result SHA and creates
+  the immutable subject through the Task API; the Task Server admits a claim only from a host with fresh
+  matching capabilities and a free gate slot; the host fetches the declared result ref, or the declared
+  source bundle whose digest the subject pins, and never scans unrelated host repositories; the host
+  verifies repository identity and object type, creates a fence-specific disposable workspace, checks
+  that <code>HEAD</code> equals the expected SHA, and records tree and dirty proof; the host executes the
+  frozen plan under per-command and overall deadlines, records bounded evidence, cleans up, and submits a
+  fenced report; the Task Server validates the report and the Engine applies pipeline policy to the
+  terminal outcome.</p>
+
+  <h3>Fail-closed timeout and fallback policy</h3>
+  <table>
+    <thead><tr><th>Condition</th><th>Response</th></tr></thead>
+    <tbody>
+      <tr><td>No executor before the dispatch deadline</td><td>Stay centrally queued, then classify <code>NoEligibleGateExecutor</code>. Never launch on the Task Server checkout.</td></tr>
+      <tr><td>Heartbeat or host lost</td><td>Expire the attempt, raise the fence, retry the same immutable subject on an eligible host after positive no-overlap and containment evidence.</td></tr>
+      <tr><td>Build or test deadline</td><td>Kill the process tree inside the attempt namespace. Timeout is infrastructure unless the command contract explicitly defines a product timeout.</td></tr>
+      <tr><td>Tests fail normally</td><td>Report <code>ProductFailure</code>. Do not try another host merely to seek a green result; reissue policy handles the finding.</td></tr>
+      <tr><td>Preferred host unavailable</td><td>Retry another capable host. A workstation is eligible only when it runs a registered Agent Host gate executor under the same contract.</td></tr>
+      <tr><td>Retry budget spent</td><td>Terminalize as <code>GateInfra</code> with all attempts visible. Never relabel it as a task-quality failure.</td></tr>
+    </tbody>
+  </table>
+  <div class="box">
+    <b>What local fallback means in the target.</b> Another registered Agent Host eligible to claim the
+    same immutable gate attempt. It never means silently returning to an in-process build on the Task
+    Server or the Studio backend. Keeping that in-process path alive as a silent target fallback would
+    preserve exactly the two-execution-model coupling this design removes.
+  </div>
+
+  <h3>Open migration</h3>
+  <p>The migration is ordered replacement first, teardown second, and the middle step is the only new
+  implementation card this section proposes: a gate contract, a host executor, and the central view,
+  with the build and test gate migrated and parity proven. AGT-2262, the teardown of the SSH bridge,
+  already exists and stays parked behind it.</p>
+  <p>Acceptance for the implementation card: the Task Server persists subject, attempt, lease, events,
+  report, cleanup and typed retry state across restarts; the Agent Host claims only with fresh gate,
+  repository and toolchain capabilities and materializes the declared exact SHA without directory
+  scanning; the Engine owns no durable attempt state; product failure, queue timeout, execution timeout,
+  lost lease, missing snapshot, tool failure and cleanup failure have distinct tested classifications;
+  stale-fence reports and cleanup messages are rejected, and an infrastructure retry preserves the
+  immutable subject while raising the fence; Studio reads queue, active host and phase, retry history,
+  tested SHA and terminal evidence from Task Server facts; the migrated gate meets or improves the
+  current remote throughput envelope and never runs in the Task Server checkout; and a bounded canary
+  proves remote pass, product failure, host loss, Task Server restart, Engine restart, no eligible host,
+  and cleanup failure before the bridge is disabled.</p>
+  <p>Only then does teardown remove <code>RemoteSshHost</code>, <code>ResolveRemoteGateSshHost</code>,
+  the SSH bridge region in <code>BuildTestGateRunner</code> with its process-local semaphore and scripts,
+  <code>RemoteGateActivityStore</code>, the backend alias-based gate-count projection, and the obsolete
+  SSH configuration documentation in the same change. Whether the in-process compatibility path is
+  removed or explicitly retained is a separate choice, and it must not survive by accident. The teardown
+  threshold is open decision <a href="#d9">D9</a>.</p>
+  <div class="box warn">
+    <b>Status of this section.</b> Code inspection on 26 July 2026 confirmed that the replacement does not
+    exist, and a re-verification against <code>develop</code> on 24 August 2026 found the only
+    <code>Gate*</code> types in the backend still belonged to the unrelated build-test gate. The design
+    has never been approved in a sight review and has zero implementation. Nothing in &sect;4 describes
+    shipped behavior.
+  </div>
+
+  <h2 id="sect5"><span class="number">&sect;5</span> Validation economy: what survives from async validation</h2>
+  <p>The staging-lane proposal of 25 July 2026 started from a plausible intuition, that tests are slow
+  and run for every card, so validation should move off the critical path. Measurement reshaped it. The
+  test gate carried 16.6% of compute and exactly zero tokens, against token spend on the order of 2000
+  times the test CPU cost, so this is a throughput problem and never a money argument. Three principles
+  from that Dossier survive unchanged and constrain everything above.</p>
+  <table>
+    <thead><tr><th>Principle</th><th>Status</th><th>Why it holds</th></tr></thead>
+    <tbody>
+      <tr><td><b>No model-based test selection</b></td><td>Explicitly rejected</td><td>It spends the expensive resource, tokens, to save the cheapest one, CPU. Recorded as rejected on 25 July 2026 and not reopened here.</td></tr>
+      <tr><td><b>Per-SHA gate cache</b></td><td>Recommended, unbuilt</td><td>Bind the gate result to the tested tree SHA; an identical SHA skips the run. The gate ran about 3.65 times per task and 84% of its total time was retries, much of it on barely-changed trees. Largest lever for the smallest effort, and it pays off under every option in &sect;3 and &sect;4.</td></tr>
+      <tr><td><b>Deterministic test scoping</b></td><td>Recommended, unbuilt</td><td>Changed files map to affected test projects through a maintained folder-to-project table, new test files always run, and a change set spanning modules falls back to the full suite. Pure diff plus lookup, zero tokens. The same shape as the existing skip-if-fresh hash rule for review units.</td></tr>
+      <tr><td><b>Staging lane and test-integration branch</b></td><td>Measure first</td><td>Net benefit hinges on the batch green rate. A red five-card batch can cost up to five further individual runs, which is slower than per-card testing would have been. &sect;3 answers the same question with a closed manifest and bounded halving, so this is now the same decision, taken once (<a href="#d10">D10</a>).</td></tr>
+    </tbody>
+  </table>
+  <p>Two open quantities from that Dossier are still unmeasured and still gate the same choices: the
+  batch green rate, meaning how often N individually review-green cards are test-green together, and the
+  same-SHA re-test rate, meaning how often exactly the same tree is revalidated on a reissue, which is
+  the ceiling on the cache's benefit and is expected to be high. Two upkeep questions remain attached to
+  scoping: who keeps the folder-to-test-project map current, because a stale map yields falsely green
+  gates, and whether the machine-wide gate lock stays machine-wide or becomes per integration branch.</p>
+
+  <h2 id="sect6" data-concept-section="alternatives" data-document-section="alternatives"><span class="number">&sect;6</span> Alternatives</h2>
+  <p>Two independent axes. The first asks how many deliveries one suite run covers; the second asks who
+  owns a gate execution. A choice on one axis does not determine the other, so both option sets are kept
+  side by side.</p>
+
+  <h3>Axis 1: what one suite run covers</h3>
+  <table>
+    <thead><tr><th>Option</th><th>What it solves</th><th>Cost and failure surface</th><th>Position</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><b>A &middot; Batch gate</b><br><span class="dim">One exact combined candidate</span></td>
+        <td>Removes concurrent full suites at wave scale and amortizes one gate across several reviewed deliveries.</td>
+        <td>Requires manifest authority, exact-SHA evidence, deterministic replay, red isolation and stale-base handling.</td>
+        <td>Recommended primary</td>
+      </tr>
+      <tr>
+        <td><b>B &middot; Risk-scaled per-task gates</b><br><span class="dim">Skip the suite for documentation-only or UI-only classes</span></td>
+        <td>Fastest small change; reduces some suite count and avoids batch diagnosis for exempt classes.</td>
+        <td>Classification becomes correctness-sensitive, mixed code and documentation changes are easy to misclassify, and the remaining code cards still create concurrent suites.</td>
+        <td>Tactical complement only, for audited no-code classes</td>
+      </tr>
+      <tr>
+        <td><b>C &middot; Plane separation</b><br><span class="dim">A second host dedicated to gates</span></td>
+        <td>Removes competition between coding and suites and preserves simple per-card attribution.</td>
+        <td>Adds host cost, provisioning, cache and toolchain drift, telemetry and capacity governance; it can still run several expensive suites concurrently.</td>
+        <td>Composes with A as the measured scale-out step</td>
+      </tr>
+      <tr>
+        <td><b>D &middot; Review-first ordering</b><br><span class="dim">The suite runs only as the final gate</span></td>
+        <td>Eliminates the suite runs spent on rounds that die at model review or on a conflict, before any batching effect is counted.</td>
+        <td>Needs a trustworthy signal for &ldquo;no further round expected&rdquo;, and defers the first deterministic feedback to later in the card's life.</td>
+        <td>Composes with A; the operator amendment of 18 August 2026</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Axis 2: who owns a gate execution</h3>
+  <table>
+    <thead><tr><th>Criterion</th><th>A &middot; Claimable gate step</th><th>B &middot; Review Plane</th><th>C &middot; Capability-only dispatch</th></tr></thead>
+    <tbody>
+      <tr><td>Exact-SHA materialization</td><td>Explicit subject contract; reuses the review materializer</td><td>Already implemented for the review subject</td><td>Must be added to a dispatch envelope</td></tr>
+      <tr><td>Durable queue and attempt state</td><td>First-class GateAttempt</td><td>Durable review attempt, gate nested inside it</td><td>Capability does not model work</td></tr>
+      <tr><td>Lease, fence, stale-write rejection</td><td>Purpose-built, same proven semantics</td><td>Already present</td><td>Missing unless the option becomes A</td></tr>
+      <tr><td>Gate-level evidence and status</td><td>Native and independently queryable</td><td>Requires per-command projection or contract growth</td><td>No attempt record at all</td></tr>
+      <tr><td>Works before and after review</td><td>Pipeline-stage neutral</td><td>Coupled to the review lifecycle</td><td>Dispatch-specific</td></tr>
+      <tr><td>Reuse of existing code</td><td>Reuses workspace, evidence, capability and lease patterns</td><td>Highest initial reuse</td><td>Reuses capability admission only</td></tr>
+      <tr><td>Resource governance</td><td>Dedicated gate pool and capability-based slots</td><td>Competes with the review pool unless subdivided</td><td>Advertises supply but not ownership</td></tr>
+      <tr><td>Ownership clarity</td><td>Task Server truth, Engine dispatch, Host execution</td><td>Central truth, but gate and review ownership blur</td><td>Dispatch authority stays underspecified</td></tr>
+      <tr><td>Protocol cost</td><td>New bounded subject, attempt and report API</td><td>Smallest delta while every gate is review-shaped</td><td>Small initially, larger once the safety gaps are closed</td></tr>
+    </tbody>
+  </table>
+  <p>Option A carries the larger explicit protocol slice, but it is the only one whose cost buys a stable
+  ownership boundary instead of lifecycle coupling or hidden missing machinery. Option C is a useful
+  admission and placement mechanism <i>inside</i> A; as a complete architecture it leaves gate ownership
+  ambiguous and, once made restart-safe, converges back on A.</p>
+
+  <h2 id="sect7" data-concept-section="recommendation" data-document-section="recommendation"><span class="number">&sect;7</span> Recommendation</h2>
+  <div class="callout" data-tone="accent">
+    <h3>Recommended default</h3>
+    <p>Run the full suite once per closed batch, as the final gate after model review, on an exact
+    combined candidate, executed by a claimable and fenced gate step that the Task Server owns. In
+    option terms: axis 1 is A composed with D, keeping C as the measured scale-out and B only for
+    audited no-code classes; axis 2 is A, with capability as an admission predicate rather than an
+    execution model.</p>
+  </div>
+  <p>The two axes reinforce each other. Batching without a durable attempt record would mean assembling
+  a combined candidate and then losing its execution identity to a process-local SSH call, which is
+  exactly the evidence gap AGT-2543 closed for single deliveries. A claimable gate step without batching
+  would give every wave the same concurrency problem with better bookkeeping. Together they produce one
+  fenced attempt against one exact candidate SHA, with per-member evidence that survives a restart.</p>
+  <p><b>Order.</b> The per-SHA gate cache first, because it removes redundant re-validation under every
+  other option and needs no new architecture. Deterministic scoping second, for the same reason. The
+  claimable gate step third, because it is the prerequisite for honest batch evidence. The batch gate
+  pilot last, starting with documentation-only deliveries, because its go or no-go depends on a batch
+  green rate that is still unmeasured.</p>
+  <p><b>Non-negotiable in every variant.</b> Per-card model review stays. The full suite is never weakened
+  or selected by a model. Publication is never a new untested merge commit and never a force push. One
+  shared fenced ref-mutation lease governs batch publication, direct integration, auto-main advancement
+  and the promotion train. Infrastructure failure is never reinterpreted as product failure. Human
+  acceptance is unchanged.</p>
+  <div class="box">
+    <b>What a pilot must prove before any default changes.</b> Full-suite runs per eligible delivered
+    member at or below 0.40 with a mean batch size of at least 3; at least 50% fewer host-overload
+    minutes in comparable waves; queue drain improved by at least 50% at comparable arrivals; median gate
+    latency no worse than 15 minutes and p95 no worse than 30 minutes; batch green rate at least 80% with
+    construction ejections at or below 10%; and zero stale-attempt passes, missing SHA mappings, untested
+    publish SHAs or false Completed cards. The last line is a correctness floor, not a target: any
+    violation stops the pilot. Cost is reported but is not a success metric, because &sect;10 already
+    established that gates are not where the money is.
+  </div>
+  <p><b>Rollback.</b> Batching is disabled per project by stopping manifest formation. An unmirrored batch
+  is marked abandoned-by-rollback, its manifest, logs and candidate ref retained for a bounded evidence
+  period, and each current member returns to the per-task gate with the same immutable delivery subject.
+  Coding is not reissued merely because batching was disabled. A candidate already verified and mirrored
+  is normal history: it is never reset or rewritten, and a later regression is addressed by a normal
+  revert delivery. Missing per-member bookkeeping is retried from the durable batch record even after
+  routing is disabled, so rollback cannot create incomplete completion evidence.</p>
+
+  <h2 id="sect8" data-concept-section="evidence" data-document-section="evidence"><span class="number">&sect;8</span> Evidence</h2>
+  <p>Facts, interpretations and proposals are kept distinguishable. The two closed measurements this
+  theme rests on are summarized in the appendix at &sect;10.</p>
+  <div class="evidence-list">
+    <a class="evidence" href="../../quality/pipeline-time-economy/index.html"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Pipeline time economy, 847 tasks (AGT-W28, 25 July 2026)</b><small>Test gate 16.6% of compute and zero tokens; coding 66.8% of compute and about 98% of tokens; the gate ran about 3.65 times per task with 84% of its time in retries. See &sect;10.</small></span></a>
+    <a class="evidence" href="#sect10-w28"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b>Test CPU is around 0.05% of token spend</b><small>A 2000-fold ratio derived under a stated blended price assumption. Robust in direction and magnitude, not as a bill. This is why gate work is justified as throughput and never as cost.</small></span></a>
+    <a class="evidence" href="#sect10-w29"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Reissue convergence, 404 mapped tasks (AGT-W29, 26 July 2026)</b><small>A negative result: no reliable convergence advantage for sharper reissue prompts. Both confidence intervals cross zero. The production default was kept. See &sect;10.</small></span></a>
+    <a class="evidence" href="#sect3"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Host saturation, operator window of 11 August 2026 night</b><small>12 cores, observed load 22.7 against a 1.5-per-core admission threshold, four concurrent full suites plus active coding, about four review completions in two hours, 41 cards waiting. A real production symptom recorded by operator observation, not a controlled benchmark.</small></span></a>
+    <a class="evidence" href="#sect4"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>The remote gate replacement does not exist</b><small>Code inspection on 26 July 2026, re-verified against develop on 24 August 2026: the only Gate types in the backend belong to the unrelated build-test gate. The SSH bridge, its process-local activity store and the alias-based gate-count projection are still the production path.</small></span></a>
+    <a class="evidence" href="#sect3"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>The integration-record endpoint is not a gate authority</b><small>Added 11 August 2026. Five-class historical schema, appendable only from Human Review onward, rejects in-flight lanes, never moves a card and never mutates Git.</small></span></a>
+    <a class="evidence" href="#d1"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b>About half of today's suite runs are spent on rounds that never ship</b><small>Operator reading of 18 August 2026 behind the review-first amendment. Stated as an estimate; the measurement that would confirm it is the same one D10 needs.</small></span></a>
+    <a class="evidence" href="#d10"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b>Batch green rate and same-SHA re-test rate, not yet measured</b><small>Both are derivable from existing pipeline data without building anything. They decide D5, D6 and D10. No number in this Dossier should be read as if they had already been measured.</small></span></a>
+  </div>
+
+  <h2 id="sect9" data-concept-section="open-decisions" data-document-section="open-decisions"><span class="number">&sect;9</span> Open decisions</h2>
+  <p>Ten choices carried forward from the three merged Dossiers. None has been decided; none of the three
+  sources ever reached an operator sight review. Recommended options are marked. Decisions D1 to D6
+  govern the batch gate, D7 to D9 the remote gate, D10 the validation economy.</p>
+
+  <h3>Batch gate</h3>
+  <div class="decision" id="d1" data-decision-id="gate-ordering" data-decision-kind="single" data-decision-label="When does the full suite run?">
+    <h3>D1 &middot; When does the full suite run?</h3>
+    <label data-option-id="review-first-final" data-option-label="A &middot; Review-first, final gate only (recommended)"><input type="radio" name="gate-ordering" value="review-first-final" checked><span><b>A &middot; Model review and cheap deterministic checks every round; the full suite only as the final gate, once per batch (recommended)</b><span class="d">The operator amendment of 18 August 2026. Removes the suite runs spent on rounds that die at review or on a conflict before any batching effect is counted. Requires a trustworthy &ldquo;no further round expected&rdquo; signal.</span></span></label>
+    <label data-option-id="per-round" data-option-label="B &middot; Full suite every round"><input type="radio" name="gate-ordering" value="per-round"><span><b>B &middot; Keep the full suite on every round, batched</b><span class="d">Earliest deterministic feedback, and no new signal to get right; keeps paying for suite runs on rounds that were never going to ship.</span></span></label>
+    <label data-option-id="per-round-scoped" data-option-label="C &middot; Scoped suite per round, full suite at the end"><input type="radio" name="gate-ordering" value="per-round-scoped"><span><b>C &middot; Deterministically scoped suite every round, full suite once at the end</b><span class="d">Middle path; its value depends entirely on the folder-to-test-project map staying current, which is the upkeep risk named in &sect;5.</span></span></label>
+    <div data-comment="Note for implementation (optional)"><textarea placeholder="Note for implementation (optional)"></textarea></div>
+  </div>
+
+  <div class="decision" id="d2" data-decision-id="batch-strategy" data-decision-kind="single" data-decision-label="Primary throughput strategy">
+    <h3>D2 &middot; Primary throughput strategy</h3>
+    <label data-option-id="batch-primary" data-option-label="A &middot; Batch gate as primary, gate host as scale-out (recommended)"><input type="radio" name="batch-strategy" value="batch-primary" checked><span><b>A &middot; Batch gate is the primary control; a separate gate host is the measured scale-out; risk-scaled exemptions only for audited no-code classes (recommended)</b><span class="d">Addresses the observed concurrency directly while keeping one complete suite. A and C compose cleanly: one dedicated host runs one batch gate at a time.</span></span></label>
+    <label data-option-id="risk-only" data-option-label="B &middot; Risk classification only"><input type="radio" name="batch-strategy" value="risk-only"><span><b>B &middot; Risk-scaled per-task gates only</b><span class="d">Smallest change, but classification becomes correctness-sensitive for mixed changes, and code cards still create concurrent suites. Not sufficient as the only guard for code-bearing changes.</span></span></label>
+    <label data-option-id="host-only" data-option-label="C &middot; Provision a gate host instead"><input type="radio" name="batch-strategy" value="host-only"><span><b>C &middot; Provision a separate gate host instead of batching</b><span class="d">Preserves simple per-card attribution and needs no manifest authority, at the cost of a host plus provisioning, toolchain drift and capacity governance; several expensive suites can still run at once.</span></span></label>
+    <div data-comment="Note for implementation (optional)"><textarea placeholder="Note for implementation (optional)"></textarea></div>
+  </div>
+
+  <div class="decision" id="d3" data-decision-id="evidence-contract" data-decision-kind="single" data-decision-label="Batch gate evidence contract">
+    <h3>D3 &middot; Batch gate evidence contract</h3>
+    <label data-option-id="native-record" data-option-label="A &middot; Native per-member batch-gate record (recommended)"><input type="radio" name="evidence-contract" value="native-record" checked><span><b>A &middot; Add a native append-only per-member batch-gate record; the integration-record endpoint keeps only its bookkeeping role (recommended)</b><span class="d">The existing endpoint cannot honestly express gate authority: it rejects in-flight lanes and appends only historical classifications. Without a native record there is no way to mark a member gate-passed truthfully.</span></span></label>
+    <label data-option-id="reuse-endpoint" data-option-label="B &middot; Reuse the existing endpoint"><input type="radio" name="evidence-contract" value="reuse-endpoint"><span><b>B &middot; Stretch the existing integration-record endpoint to carry gate authority</b><span class="d">No new contract, but it would make a bookkeeping row look like a gate verdict. That is the failure AGT-2543 was opened to close; declining A means not piloting at all.</span></span></label>
+    <div data-comment="Note for implementation (optional)"><textarea placeholder="Note for implementation (optional)"></textarea></div>
+  </div>
+
+  <div class="decision" id="d4" data-decision-id="publication-authority" data-decision-kind="single" data-decision-label="Publication authority">
+    <h3>D4 &middot; Publication authority</h3>
+    <label data-option-id="shared-lease" data-option-label="A &middot; One shared fenced ref-mutation lease (recommended)"><input type="radio" name="publication-authority" value="shared-lease" checked><span><b>A &middot; One shared fenced ref-mutation lease for batch publication, direct integration, auto-main advancement and the promotion train (recommended)</b><span class="d">The publish phases of the batch gate and the candidate-SHA train cannot overlap. Acquire the lease only for final revalidation and publication so a long suite does not block read-only preparation.</span></span></label>
+    <label data-option-id="no-batch-mutation" data-option-label="B &middot; The batch publisher never mutates canonical refs"><input type="radio" name="publication-authority" value="no-batch-mutation"><span><b>B &middot; The batch publisher may not mutate canonical refs at all; an existing publisher performs the fast-forward</b><span class="d">Keeps ref authority in one place, at the cost of a hand-off between the component holding the tested candidate and the one allowed to publish it, with a new window for the pre-tip to move.</span></span></label>
+    <div data-comment="Note for implementation (optional)"><textarea placeholder="Note for implementation (optional)"></textarea></div>
+  </div>
+
+  <div class="decision" id="d5" data-decision-id="red-path-budget" data-decision-kind="single" data-decision-label="Red-path diagnostic budget">
+    <h3>D5 &middot; Red-path diagnostic budget</h3>
+    <label data-option-id="log2-with-fallback" data-option-label="A &middot; ceil(log2 n) per cycle with cohort fallback (recommended)"><input type="radio" name="red-path-budget" value="log2-with-fallback" checked><span><b>A &middot; Cap each isolation cycle at ceil(log2 n) diagnostic runs, with an explicit unresolved-cohort fallback (recommended)</b><span class="d">Bounded behavior without pretending multi-offender or interaction-only failures are logarithmic. An unresolved cohort goes to per-task gates and stays visible; it is never reported as a batch success.</span></span></label>
+    <label data-option-id="smaller-batches" data-option-label="B &middot; Smaller maximum batch instead"><input type="radio" name="red-path-budget" value="smaller-batches"><span><b>B &middot; Cap the maximum batch size low enough that isolation is cheap, or keep per-task gates</b><span class="d">Simpler to reason about and needs no halving machinery, at the cost of most of the amortization that motivates batching.</span></span></label>
+    <div data-comment="Note for implementation (optional)"><textarea placeholder="Note for implementation (optional)"></textarea></div>
+  </div>
+
+  <div class="decision" id="d6" data-decision-id="pilot-thresholds" data-decision-kind="single" data-decision-label="Pilot thresholds">
+    <h3>D6 &middot; Pilot thresholds</h3>
+    <label data-option-id="proposed-thresholds" data-option-label="A &middot; Size 4, max 8, 15-minute age, pressure close at 2, documentation-only first (recommended)"><input type="radio" name="pilot-thresholds" value="proposed-thresholds" checked><span><b>A &middot; Close at 4 eligible members, hard maximum 8; close when the oldest member has waited 15 minutes; close at 2 when the review queue is at least 12 or the load gate throttles; documentation-only deliveries first (recommended)</b><span class="d">Deliberately small and configurable. Any trigger closes the manifest, and a closed manifest never absorbs new members. A lone member uses the per-task gate after the deadline.</span></span></label>
+    <label data-option-id="other-thresholds" data-option-label="B &middot; Record different values before implementation"><input type="radio" name="pilot-thresholds" value="other-thresholds"><span><b>B &middot; Record alternative values now</b><span class="d">Valid, and the point of recording them before the pilot is that success cannot be redefined after the results are in. Use the comment field.</span></span></label>
+    <div data-comment="Alternative thresholds (optional)"><textarea placeholder="Alternative thresholds (optional)"></textarea></div>
+  </div>
+
+  <h3>Remote gate</h3>
+  <div class="decision" id="d7" data-decision-id="gate-ownership-shape" data-decision-kind="single" data-decision-label="Primary shape of remote gate execution">
+    <h3>D7 &middot; Primary shape of remote gate execution</h3>
+    <label data-option-id="claimable-step" data-option-label="A &middot; Claimable GateAttempt in the Task Server protocol (recommended)"><input type="radio" name="gate-ownership-shape" value="claimable-step" checked><span><b>A &middot; A dedicated claimable gate step, with capability as an admission predicate and review workspace primitives reused but not the review lifecycle (recommended)</b><span class="d">Task Server owns durable gate truth, Engine owns dispatch, Agent Host executes. Share workspace materialization, containment namespace, command evidence and cleanup; keep the review attempt as the semantic review lifecycle. Start the catalogue with the post-build-test gate only.</span></span></label>
+    <label data-option-id="review-plane" data-option-label="B &middot; Gates as aspects inside the Review Plane"><input type="radio" name="gate-ownership-shape" value="review-plane"><span><b>B &middot; Represent gates as commands or aspects inside the existing review subject and attempt</b><span class="d">Highest initial reuse and the smallest protocol delta while every gate is review-shaped; couples deterministic gate lifecycle to review identity, review capacity and review outcome semantics, and obscures individual gate state.</span></span></label>
+    <label data-option-id="capability-only" data-option-label="C &middot; Capability-only dispatch"><input type="radio" name="gate-ownership-shape" value="capability-only"><span><b>C &middot; Advertise gate and toolchain capabilities and let a central component call the host directly</b><span class="d">Small initially, but capability says what a host may do, not what work it owns now. Without a claim object this recreates the SSH bridge over a different transport, and once made restart-safe it converges on A.</span></span></label>
+    <div data-comment="Note for implementation (optional)"><textarea placeholder="Note for implementation (optional)"></textarea></div>
+  </div>
+
+  <div class="decision" id="d8" data-decision-id="gate-fallback" data-decision-kind="single" data-decision-label="Fallback and failure floor">
+    <h3>D8 &middot; Fallback and failure floor</h3>
+    <label data-option-id="eligible-host-failclosed" data-option-label="A &middot; Another eligible Agent Host, then fail closed as GateInfra (recommended)"><input type="radio" name="gate-fallback" value="eligible-host-failclosed" checked><span><b>A &middot; Fall back only to another eligible Agent Host, optionally a registered workstation; terminalize as GateInfra when the retry budget is spent (recommended)</b><span class="d">Keeps one execution model. No trustworthy result is an infrastructure terminal with every attempt visible, never a fabricated product failure and never a pass.</span></span></label>
+    <label data-option-id="in-process-fallback" data-option-label="B &middot; Keep the in-process backend fallback"><input type="radio" name="gate-fallback" value="in-process-fallback"><span><b>B &middot; Retain the in-process build on the Task Server or Studio backend as a fallback</b><span class="d">Highest availability of a green result, at the price of keeping two execution models and the exact coupling this design removes. If retained it must be an explicit, visible decision, not a silent default.</span></span></label>
+    <div data-comment="Note for implementation (optional)"><textarea placeholder="Note for implementation (optional)"></textarea></div>
+  </div>
+
+  <div class="decision" id="d9" data-decision-id="teardown-threshold" data-decision-kind="single" data-decision-label="SSH bridge teardown threshold">
+    <h3>D9 &middot; SSH bridge teardown threshold (AGT-2262)</h3>
+    <label data-option-id="cutover-plus-canary" data-option-label="A &middot; Default-on cutover plus a green restart and failure canary (recommended)"><input type="radio" name="teardown-threshold" value="cutover-plus-canary" checked><span><b>A &middot; Tear down only after the new path is the default and the canary and restart matrix is green, with throughput parity shown (recommended)</b><span class="d">The canary must cover remote pass, product failure, host loss, Task Server restart, Engine restart, no eligible host and cleanup failure. AGT-2262 stays parked until then.</span></span></label>
+    <label data-option-id="immediate" data-option-label="B &middot; Tear down as soon as the new path works once"><input type="radio" name="teardown-threshold" value="immediate"><span><b>B &middot; Remove the bridge as soon as the replacement passes a first run</b><span class="d">Removes the two-path burden earliest; trades a known fast bridge for an unproven path and risks reopening the 15 to 27 minute bottleneck it was built to close.</span></span></label>
+    <div data-comment="Note for implementation (optional)"><textarea placeholder="Note for implementation (optional)"></textarea></div>
+  </div>
+
+  <h3>Validation economy</h3>
+  <div class="decision" id="d10" data-decision-id="staging-lane" data-decision-kind="single" data-decision-label="Staging lane and test-integration branch">
+    <h3>D10 &middot; Staging lane and test-integration branch</h3>
+    <label data-option-id="measure-first" data-option-label="A &middot; Measure the batch green rate first (recommended)"><input type="radio" name="staging-lane" value="measure-first" checked><span><b>A &middot; Estimate the batch green rate and the same-SHA re-test rate from existing pipeline data before committing to a staging lane (recommended)</b><span class="d">Both quantities are derivable today without building anything, and both decide whether D2's pilot and a test-integration branch pay off at all. A frequently red batch loses to per-card testing.</span></span></label>
+    <label data-option-id="build-now" data-option-label="B &middot; Build the staging lane with the pilot"><input type="radio" name="staging-lane" value="build-now"><span><b>B &middot; Build the staging lane and test-integration branch as part of the batch gate pilot</b><span class="d">One delivery instead of two, and the pilot would produce the green-rate number as a side effect; spends the build before the number that justifies it exists.</span></span></label>
+    <label data-option-id="cache-only" data-option-label="C &middot; Per-SHA cache and scoping only"><input type="radio" name="staging-lane" value="cache-only"><span><b>C &middot; Build only the per-SHA gate cache and deterministic scoping; drop the lane permanently</b><span class="d">Takes the largest lever for the smallest effort and closes the question. Gives up the concurrency relief that the 11 August host evidence asked for.</span></span></label>
+    <div data-comment="Note for implementation (optional)"><textarea placeholder="Note for implementation (optional)"></textarea></div>
+  </div>
+
+  <div class="box">
+    <b>Decision-ready default.</b> Approving D1 to D10 as recommended produces four implementation slices:
+    the per-SHA gate cache, deterministic test scoping, the claimable gate step with its migration and
+    canary, and the batch gate pilot. They are listed in <code>workbench.json</code> as separate
+    <code>implementationTasks</code> entries rather than one open-ended card. No card is created until an
+    operator confirms through the normal task mutation path.
+  </div>
+
+  <section class="appendix">
+  <h2 id="sect10"><span class="number">&sect;10</span> Evidence appendix: two closed measurements</h2>
+  <p>Both measurements are complete, dated and no longer current Dossiers. Their numbers are kept here
+  because the gate argument above depends on them and would otherwise rest on assertion.</p>
+
+  <h3 id="sect10-w28">Pipeline time economy: the 847-task baseline (AGT-W28, 25 July 2026)</h3>
+  <p>Aggregating the per-step ledger in <code>pipeline-execution.json</code> across 847 tasks that carried
+  pipeline data, out of 1,314 task folders scanned, and 2,396 attempts, gives the baseline this theme
+  argues against. Of 798 hours of wall time, roughly 38% was waiting with no compute, 41% was redo and 21%
+  was first-attempt work. Of 29,808 minutes of compute, the coding step took 66.8% and carried about 98%
+  of all tokens (1.89 billion), while the deterministic test gate took 16.6% and carried a true zero
+  tokens. The gate ran 1,954 times across the 535 tasks that had one, about 3.65 runs per task, and 84%
+  of its total time was retries. Most retries were the intended quality loop rather than dumb repeats:
+  978 adapted reissue prompts across 437 tasks, and 78% of 6,320 post-processing outcomes classified as
+  findings-added; the clearly technical cause, 560 failed post-processing events, was almost all test-gate
+  timeouts. Priced at a stated blended token rate the corpus was on the order of 8,400 US dollars in
+  tokens against roughly 4 dollars of test CPU, a ratio near 2000 to 1. Two caveats travel with every
+  figure: the on-disk attempt archive keeps at most ten previous attempts, so all retry figures are a
+  conservative floor, and a missing field is a coverage gap rather than a zero, the single true zero
+  being the gate's token count. The absolute numbers drift with further runs and with model pricing; the
+  ratios do not. The consequence for this Dossier is exact: gate work buys throughput and almost no
+  budget, so batching, remote ownership and caching must be justified by concurrency and evidence
+  quality, never as a cost saving.</p>
+
+  <h3 id="sect10-w29">Reissue convergence: a negative result (AGT-W29, 26 July 2026)</h3>
+  <p>The adjacent question was whether the reducible retry volume could be cut at the source by writing
+  sharper reissue prompts. An observational snapshot classified first reissue prompts by a deterministic
+  text rule and compared their later explicit pipeline attempts against a right-censor-aware acceptance
+  endpoint: 404 mapped tasks, 202 in each group, recovered from 438 first reissue histories. Concrete
+  finding-first prompts reached 49.85% acceptance by attempt five against 47.75% for generic prompts, a
+  difference of 2.1 percentage points with a 95% bootstrap interval from minus 12.6 to plus 18.1, and a
+  restricted mean of 3.594 unresolved attempts against 3.752, a difference of minus 0.159 with an interval
+  from minus 0.530 to plus 0.194. Both intervals cross zero, and the groups are visibly unbalanced by
+  model route and task type, which are confounders rather than adjustments. The recorded decision was to
+  keep the production default unchanged and to test concrete findings-first structure only in a
+  controlled arm, without adding generic length, guessed references or repeated raw logs. The result
+  matters here as a boundary: the retry volume that &sect;10 measured cannot be assumed away by better
+  prompting, so the gate-side levers in &sect;3 to &sect;5 remain the ones with evidence behind them.</p>
+  </section>
+
+  <h2 id="sect11"><span class="number">&sect;11</span> Consolidation record and sources</h2>
+  <p>This Dossier replaces three current entries. Each source is recorded in its descriptor as superseded
+  by this key and stays readable in History; the two evidence Dossiers keep their historical verdict.</p>
+  <table class="source-map">
+    <thead><tr><th>Source</th><th>Verdict</th><th>What survives here</th></tr></thead>
+    <tbody>
+      <tr><td><b>AGT-W36</b><br><span class="dim">batch-gate-concept</span></td><td>superseded</td><td>&sect;3 in full: closed manifest and eligibility, mechanical replay and the conflict cascade guard, exact-candidate green path, per-member evidence and the AGT-2543 invariant, red classification and bounded halving with its honest-bounds table, two-level fencing and the shared ref-mutation lease, supersede handling, the review-first amendment of 18 August 2026. Its pilot metrics and rollback rules move to &sect;7; its five decisions become D2 to D6.</td></tr>
+      <tr><td><b>AGT-W18</b><br><span class="dim">remote-gate-zielbild</span></td><td>superseded</td><td>&sect;4 in full: the out-of-band SSH bridge diagnosis, requirements R1 to R6, the subject, attempt, lease, plan and report contract, the central state machine, the materialization sequence, the fail-closed timeout and fallback policy, the migration chain and the AGT-2262 teardown entry condition. Its option table becomes axis 2 in &sect;6; its six decisions become D7 to D9.</td></tr>
+      <tr><td><b>AGT-W2</b><br><span class="dim">async-validation-staging-lane</span></td><td>superseded</td><td>&sect;5: the rejection of model-based test selection, the per-SHA gate cache, deterministic diff-to-project scoping, the measure-first position on the staging lane and the two unmeasured quantities plus the two upkeep questions. Its closing decision becomes D10.</td></tr>
+      <tr><td><b>AGT-W28</b><br><span class="dim">pipeline-time-economy</span></td><td>historical</td><td>&sect;10, first paragraph. The 847-task baseline is the documentation home for this measurement; no separate artefact is required.</td></tr>
+      <tr><td><b>AGT-W29</b><br><span class="dim">reissue-prompt-convergence</span></td><td>historical</td><td>&sect;10, second paragraph. The negative result is preserved with its intervals and its confounders.</td></tr>
+      <tr><td><b>AGT-W30</b><br><span class="dim">remote-run-testsuite-report</span></td><td>historical</td><td>Nothing. The 29 July 2026 remote-run acceptance report is a fixed, dated run report; the AGT-W53 matrix recorded that it needs no artefact, and it stays readable in History.</td></tr>
+    </tbody>
+  </table>
+  <p>What was deliberately dropped: the 25 July versus 11 August reconciliation narrative, which is now
+  one sentence in &sect;5 and one evidence row in &sect;8; the current-topology diagram of the SSH bridge,
+  which described a state that is documented in prose and is scheduled for removal; the per-source
+  contents lists and approval paragraphs, which said the same thing three times; and the full failure
+  semantics matrix of AGT-W36, whose eleven rows are represented by the classification rules in &sect;3
+  and the fail-closed table in &sect;4 without repeating every recovery cell.</p>
+
+  <h3>Sources</h3>
+  <ul>
+    <li><code>docs/operations/batch-gate-concept/index.html</code> (AGT-W36, AGT-2648), including the operator note of 18 August 2026.</li>
+    <li><code>docs/operations/remote-gate-zielbild/index.html</code> (AGT-W18, AGT-2369) and <code>docs/concepts/platform-architecture/remote-gate.md</code>.</li>
+    <li><code>docs/operations/async-validation-staging-lane/index.html</code> (AGT-W2).</li>
+    <li><code>docs/quality/pipeline-time-economy/index.html</code> (AGT-W28) and <code>docs/quality/reissue-prompt-convergence/index.html</code> (AGT-W29).</li>
+    <li><code>docs/operations/dossier-review-2026-09/index.html</code> (AGT-W53 relevance matrix) and <code>docs/operations/dossier-consolidation-and-area-tags/index.html</code> (AGT-W55, &sect;3, &sect;4, decisions D1 and D2 of 13 September 2026).</li>
+    <li>Contract references carried from the sources: task integration and the worktree and merge workflow; develop-to-main promotion and the exact candidate-SHA train (AGT-2594); immediate remote integration and its state-machine simplification (AGT-2528, AGT-2603); the honest-completion invariant (AGT-2543); <code>BuildTestGateRunner.cs</code>, <code>ReviewDecisionOrchestrator.cs</code>, <code>RemoteGateActivityStore.cs</code>.</li>
+    <li>Operator observation, night of 11 August 2026: 12 cores, load 22.7, admission threshold 1.5 per core, four concurrent review suites plus coding, about four reviews per two hours, 41 cards queued.</li>
+  </ul>
+
+  <!-- agent-studio:implementation-section:start -->
+  <section id="implementation" data-document-section="implementation">
+    <h2><span class="number">&sect;12</span> Implementation</h2>
+    <p>Delivery slices append their current implementation status here. Decision content above remains
+    unchanged. The four slices in <code>workbench.json</code> are drafted from the recommended defaults in
+    &sect;7 and become cards only once the operator records selections in &sect;9.</p>
+    <ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<!-- agent-studio:implementation-log:end -->
+    </ol>
+  </section>
+  <!-- agent-studio:implementation-section:end -->
+</main>
+</body>
+</html>

@@ -22,11 +22,13 @@
   ],
   "key": "AGT-W18",
   "review": {
-    "verdict": "current",
-    "supersededBy": [],
-    "reviewedAt": "2026-09-13T10:20:00Z",
-    "reviewedBy": "Operator",
-    "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    "verdict": "superseded",
+    "supersededBy": [
+      "AGT-W57"
+    ],
+    "reviewedAt": "2026-09-14T00:00:00Z",
+    "reviewedBy": "AGT-2801",
+    "note": "Consolidated into the Gates theme Dossier docs/operations/gates (AGT-W57) on 2026-09-14 per AGT-W55 D1 and D2; content preserved there, this Dossier stays readable as History."
   },
   "reviewHistory": [
     {
@@ -35,6 +37,15 @@
       "reviewedAt": "2026-09-13T10:20:00Z",
       "reviewedBy": "Operator",
       "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    },
+    {
+      "verdict": "superseded",
+      "supersededBy": [
+        "AGT-W57"
+      ],
+      "reviewedAt": "2026-09-14T00:00:00Z",
+      "reviewedBy": "AGT-2801",
+      "note": "Consolidated into the Gates theme Dossier docs/operations/gates (AGT-W57) on 2026-09-14 per AGT-W55 D1 and D2; content preserved there, this Dossier stays readable as History."
     }
   ]
 }
