@@ -1,0 +1,524 @@
+<!doctype html>
+<html lang="en" data-document-pattern="concept">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Model routing by assessed complexity | Dossier</title>
+<style data-article-template="v2">
+:root {
+  color-scheme: light;
+  --article-paper: #fcfcfb;
+  --article-surface: #f2f1ee;
+  --article-surface-strong: #e9e8e3;
+  --article-ink: #151515;
+  --article-muted: #5f5e59;
+  --article-faint: #7c7a74;
+  --article-line: #d8d6cf;
+  --article-link: #1f67b2;
+  --article-link-soft: #eaf1fb;
+  --article-good: #18753a;
+  --article-good-soft: #eaf4ea;
+  --article-warn: #8b6100;
+  --article-warn-soft: #f8f0dd;
+  --article-bad: #b72f2f;
+  --article-bad-soft: #fbecec;
+  --article-serif: Georgia, "Times New Roman", serif;
+  --article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --article-paper: #1a1a19;
+    --article-surface: #232322;
+    --article-surface-strong: #2c2c2a;
+    --article-ink: #f7f7f4;
+    --article-muted: #c3c2b7;
+    --article-faint: #9d9c94;
+    --article-line: #3d3d3a;
+    --article-link: #78aef0;
+    --article-link-soft: #1e2a3a;
+    --article-good: #67b867;
+    --article-good-soft: #1f2f1f;
+    --article-warn: #d9a63f;
+    --article-warn-soft: #33301e;
+    --article-bad: #e66767;
+    --article-bad-soft: #382222;
+  }
+}
+* { box-sizing: border-box; }
+html { background: var(--article-paper); }
+body { margin: 0; background: var(--article-paper); color: var(--article-ink); font: 17px/1.75 var(--article-serif); text-rendering: optimizeLegibility; }
+main, .article { width: min(70ch, calc(100% - 48px)); margin: 0 auto; padding: 0 0 80px; }
+header.page { margin-bottom: 12px; padding: 48px 0 28px; border-bottom: 1px solid var(--article-line); }
+h1, h2, h3, h4, .kicker, .meta, .number, nav, table, figcaption, .box, .callout, .evidence-figure, .variant-grid, .evidence-list { font-family: var(--article-sans); }
+h1 { margin: 0 0 14px; font-size: clamp(2.2rem, 6vw, 3.4rem); line-height: 1.08; letter-spacing: -0.025em; }
+h2 { margin: 56px 0 10px; font-size: 1.55rem; line-height: 1.25; }
+h3 { margin: 34px 0 8px; font-size: 1.08rem; line-height: 1.35; }
+h4 { margin: 0 0 8px; font-size: 0.94rem; }
+p { margin: 0 0 18px; }
+p:last-child { margin-bottom: 0; }
+.kicker, .number { margin: 0 0 12px; color: var(--article-faint); font-size: 0.75rem; font-weight: 700; letter-spacing: 0.12em; line-height: 1; text-transform: uppercase; }
+.lede { margin: 0; color: var(--article-muted); font-size: 1.18rem; line-height: 1.6; }
+.meta { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; color: var(--article-faint); font-size: 0.78rem; }
+.meta b { color: var(--article-muted); font-weight: 650; }
+a { color: var(--article-link); text-underline-offset: 0.16em; }
+a:focus-visible { outline: 2px solid var(--article-link); outline-offset: 3px; border-radius: 2px; }
+code { padding: 0.08em 0.34em; border-radius: 4px; background: var(--article-surface-strong); font: 0.84em/1.5 var(--article-mono); overflow-wrap: anywhere; }
+pre { overflow-x: auto; margin: 24px 0; padding: 16px 18px; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-surface); }
+pre code { padding: 0; background: transparent; }
+ul, ol { margin: 0 0 18px; padding-left: 24px; }
+li + li { margin-top: 6px; }
+table { width: 100%; margin: 24px 0; border-collapse: collapse; font-size: 0.88rem; line-height: 1.5; }
+th, td { padding: 10px 12px; border-bottom: 1px solid var(--article-line); text-align: left; vertical-align: top; }
+th { color: var(--article-faint); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; }
+.box, .callout { margin: 24px 0; padding: 18px 22px; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-surface); font-size: 0.92rem; line-height: 1.65; }
+.box.accent, .callout[data-tone="accent"] { border-color: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); background: var(--article-link-soft); }
+.box.good, .callout[data-tone="good"] { border-color: color-mix(in srgb, var(--article-good) 30%, var(--article-line)); background: var(--article-good-soft); }
+.box.warn, .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
+.box.bad, .callout[data-tone="bad"] { border-color: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); background: var(--article-bad-soft); }
+figure { margin: 30px 0; }
+figure > img, figure > svg { display: block; width: 100%; height: auto; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-paper); }
+figcaption { margin-top: 10px; color: var(--article-muted); font-size: 0.8rem; line-height: 1.5; }
+.breakout, .media-breakout { width: min(1120px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
+.evidence-list { display: grid; gap: 10px; margin: 24px 0; }
+.evidence { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px 14px; align-items: start; padding: 14px; border: 1px solid var(--article-line); border-radius: 9px; background: var(--article-surface); color: var(--article-ink); text-decoration: none; }
+.evidence:hover { border-color: var(--article-link); background: var(--article-link-soft); }
+.evidence-class { display: inline-flex; align-items: center; min-height: 22px; padding: 2px 8px; border-radius: 999px; background: var(--article-surface-strong); color: var(--article-muted); font-size: 0.68rem; font-weight: 750; letter-spacing: 0.04em; text-transform: uppercase; white-space: nowrap; }
+.evidence-class[data-evidence-class="observed"] { background: var(--article-good-soft); color: var(--article-good); }
+.evidence-class[data-evidence-class="inferred"] { background: var(--article-warn-soft); color: var(--article-warn); }
+.evidence-class[data-evidence-class="proposed"] { background: var(--article-link-soft); color: var(--article-link); }
+.evidence b { display: block; margin-bottom: 2px; font-size: 0.88rem; }
+.evidence small { display: block; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; }
+.dim { color: var(--article-muted); }
+.decision { border: 1px solid color-mix(in srgb, var(--article-link) 35%, var(--article-line)); border-radius: 10px; padding: 18px 22px; margin: 22px 0; background: var(--article-link-soft); font-family: var(--article-sans); }
+.decision h3 { margin: 0 0 10px; font-size: 1.02rem; }
+.decision label { display: flex; gap: 12px; align-items: flex-start; padding: 9px 10px; border: 1px solid var(--article-line); border-radius: 8px; background: var(--article-paper); margin: 8px 0; cursor: pointer; }
+.decision label input { margin-top: 4px; }
+.decision label b { display: block; }
+.decision label span.d { display: block; color: var(--article-muted); font-size: 0.86rem; }
+.decision textarea { width: 100%; min-height: 60px; margin-top: 8px; font: 0.86rem var(--article-sans); border: 1px solid var(--article-line); border-radius: 6px; padding: 8px; background: var(--article-paper); color: var(--article-ink); }
+.tag-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 18px; }
+.tag { display: inline-flex; align-items: center; padding: 3px 9px; border-radius: 999px; background: var(--article-surface-strong); color: var(--article-muted); font: 750 0.7rem/1.3 var(--article-sans); letter-spacing: 0.03em; text-transform: uppercase; }
+svg.diagram { width: 100%; height: auto; }
+svg.diagram text { font: 600 12.5px var(--article-sans); fill: var(--article-ink); }
+svg.diagram .lbl { font: 700 10px var(--article-sans); fill: var(--article-faint); letter-spacing: 0.04em; text-transform: uppercase; }
+svg.diagram .step { fill: var(--article-surface); stroke: var(--article-line); }
+svg.diagram .step-new { fill: var(--article-link-soft); stroke: var(--article-link); }
+svg.diagram .arrow { stroke: var(--article-faint); stroke-width: 1.4; fill: none; marker-end: url(#arrow-head); }
+svg.diagram .sub { font: 400 10.5px var(--article-sans); fill: var(--article-muted); }
+@media (max-width: 760px) {
+  main, .article { width: min(100% - 28px, 70ch); padding-bottom: 52px; }
+  header.page { padding-top: 32px; }
+  .breakout, .media-breakout { width: calc(100vw - 20px); }
+  .evidence { grid-template-columns: 1fr; }
+  table { display: block; overflow-x: auto; }
+}
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; } }
+</style>
+</head>
+<body>
+<main class="article">
+  <header class="page">
+    <p class="kicker">Concept dossier &middot; AGT-2815</p>
+    <h1>Model routing by assessed complexity</h1>
+    <p class="lede">Analysis and an implementation plan become pipeline steps that declare a complexity
+    assessment instead of three regular expressions guessing it from raw text. Token Economy owns the
+    estimation prompts, the study behind them, and the versioned table of (model, thinking level) pairs
+    per complexity class. Agent Studio consumes that table, requalifies between steps, and reports what
+    was routed against what actually happened.</p>
+    <div class="meta">
+      <span><b>Pattern</b> concept</span>
+      <span><b>Status</b> decision-pending</span>
+      <span><b>Source card</b> AGT-2815</span>
+      <span><b>Date</b> 2026-09-14</span>
+    </div>
+  </header>
+
+  <h2><span class="number">&sect;1</span> What the operator asked for</h2>
+  <p>Verbatim, 2026-09-14: &ldquo;The approach with regular expressions is nonsense.&rdquo; The intended
+  workflow is <b>work order &rarr; analysis &rarr; implementation plan &rarr; implementation</b>.
+  Complexity already shows in the analysis and becomes clearer in the plan; analysis and the plan should
+  be pipeline steps, compared against the current picture. The topic must also live in Token Economy,
+  &ldquo;and we need the feedback&rdquo;: what complexity was reported, and was it reached. Earlier the
+  same day: the reasoning level must be displayed and must play a bigger role in Token Economy as a
+  decisive factor for benchmarks and price/performance, and the strong model should be chosen for visual
+  work.</p>
+  <p>This Dossier answers four questions the operator posed directly: how do we recognise complexity, is
+  there research on it, how do we define it, and can an LLM say something is complex reliably enough to
+  route on. It replaces the separate reasoning-level topic so the workflow stays one theme rather than
+  two: the reasoning level (AGT-2811, the token panel display) and the economy floor plus explicit level
+  (AGT-2808, merged 2026-09-13) are read first and referenced, not re-solved here.</p>
+
+  <h2><span class="number">&sect;2</span> Current picture, verified against the running build (v0.3.0)</h2>
+  <p>Verified 2026-09-14 by reading <code>ModelRoutingPolicyRegistry.cs</code>,
+  <code>backend/Policies/model-routing-policy.v1.json</code>, and <code>PipelineCatalogue.cs</code>
+  directly, not summarised from memory.</p>
+
+  <h3>Complexity is judged by three regular expressions over title plus prompt</h3>
+  <table>
+    <thead><tr><th>Signal</th><th>Pattern (abridged)</th><th>Effect</th></tr></thead>
+    <tbody>
+      <tr><td><code>CriticalFloorSignal</code></td><td><code>P0|fencing|lease ownership|lease authority|stale-write|distributed authority|distributed concurrency|security|data-loss|destructive migration|concurrent state machine</code></td><td>Forces <code>sol-xhigh</code> and sets it as the correctness floor; score forced to at least 70.</td></tr>
+      <tr><td><code>SolFloorSignal</code></td><td><code>public protocol|persistent-state migration|schema migration</code>, or three or more distinct words from <code>frontend|backend|runner|orchestrator|cli|database|storage</code></td><td>Promotes one step to at least <code>sol-medium</code>; score forced to at least 51.</td></tr>
+      <tr><td>Task-type default</td><td>&mdash;</td><td><code>chore</code> &rarr; <code>luna-medium</code> (score 15); <code>feature</code> &rarr; <code>terra-medium</code> (score 25), economy floor <code>sonnet-low</code>; <code>bug</code> &rarr; <code>terra-medium</code> (score 49), hard floor <code>terra-medium</code>.</td></tr>
+    </tbody>
+  </table>
+  <p>On the installed Claude catalogue, every tier resolves through a vendor override
+  (<code>backend/Policies/model-routing-policy.v1.json</code>): <code>feature</code> routes to
+  <code>claude-sonnet-5</code> at <code>low</code>, <code>bug</code> to <code>claude-sonnet-5</code> at
+  <code>medium</code>, <code>chore</code> to <code>claude-haiku-4-5</code> at <code>medium</code>.
+  <code>claude-opus-5</code> exists only in the <code>sol-xhigh</code> vendor override, so it is reached
+  only through the keyword list. <code>claude-fable-5-1</code> is a known model in the CLI catalogue but
+  has no entry in any tier's <code>vendorOverrides</code>, so <code>Recommend()</code> can never select
+  it. The <code>sol-medium</code> and <code>sol-xhigh</code> tiers carry the same Claude pair
+  (<code>claude-sonnet-5</code> and <code>claude-opus-5</code> respectively) as their Codex counterparts,
+  so the second escalation rule (three or more subsystem words) changes nothing for a Claude-routed card
+  once <code>sol-medium</code> is already selected by the type default.</p>
+
+  <h3>The pipeline has no analysis step and no plan step</h3>
+  <p>Pre-steps in <code>PipelineCatalogue.cs</code>: <code>pre-prompt-enrichment</code>,
+  <code>pre-model-qualification</code>, <code>pre-orchestrator-prep</code>, <code>pre-loop-guard</code>,
+  <code>pre-reissue-open-items</code>, <code>pre-ui-pipeline-routing</code>, plus gates. The work itself
+  is one step, <code>core-agent-run</code>. Everything else is a post-step: review, drift,
+  <code>post-analysis-*</code> (the unrelated Quality Studio rule passes &mdash; Angular rules, C# rules,
+  model review, visual quality, security, redundancy, consistency), gates, merge. Pipeline types are
+  <code>task</code>, <code>bug</code>, <code>feature</code>, <code>planning</code>
+  (<code>PipelineTypes.cs</code>); task types for routing are <code>chore</code>, <code>feature</code>,
+  <code>bug</code> (<code>TaskTypes.cs</code>). <code>pre-model-qualification</code> runs before any
+  agent turn exists, so the raw card text is the only signal it has &mdash; which is exactly why the
+  regular expressions exist. There is no step between work order and implementation that could report a
+  measured, checkable complexity.</p>
+
+  <h3>Nothing measures whether a route was right</h3>
+  <p><code>TaskTokenCall</code> (<code>backend/Shared/Models/TaskTelemetry.cs</code>) records
+  <code>Model</code>, <code>DisplayModel</code>, token counts, and cost per call &mdash; it has no
+  thinking-level field. The effective thinking level is recorded separately, per run, on
+  <code>SessionEvent.ThinkingLevel</code> (<code>logs/session-events.jsonl</code>), but no reader joins a
+  session's thinking level back onto its token calls or onto the card's outcome. No record anywhere
+  connects a routed (model, level) pair to what happened to the card: delivered, reissued, escalated,
+  reviewed down. Token Economy owns the price catalogue and the benchmark matrix
+  (<code>ModelBenchmarkMatrix.FindCandidates</code>, consumed read-only for &ldquo;better candidate&rdquo;
+  suggestions), but nothing feeds the routing tier table from real outcomes; the tier scores themselves
+  (15, 25, 49, 51, 70) are hand-set numbers in <code>model-routing-policy.md</code>, honestly labelled
+  there as a hypothesis pending controlled comparison.</p>
+
+  <h2><span class="number">&sect;3</span> Defining complexity: research this Dossier had to do, not assume</h2>
+  <p>The operator asked directly whether there is research on recognising complexity for model choice,
+  and whether an LLM can say something is complex. Three literatures bear on this, and none of them
+  gives a ready answer for this product &mdash; each narrows the design instead of deciding it.</p>
+
+  <h3>Routing and cascades: difficulty is predicted, not observed</h3>
+  <p>Model routing and cascade research treats task difficulty as something a cheap classifier or a
+  win-probability model estimates before dispatch, then sends hard-predicted items to a stronger model
+  and the rest to a cheaper one. Recent survey work frames this as a spectrum from static
+  binary-difficulty routers to learned win-prediction models that estimate the probability a strong model
+  beats a weak one on a given query, and to decision-theoretic cascade analyses that ask when escalation
+  is worth its cost at all. The common thread is that difficulty is always a <i>prediction</i> evaluated
+  against an observed outcome (did the cheap model actually fail), never a ground truth read off the task
+  text. That maps directly onto this product's gap: the three regular expressions are a difficulty
+  predictor with no evaluation against outcomes at all.</p>
+
+  <h3>LLM-as-judge: reliable only when calibration is checked, not assumed</h3>
+  <p>The judge-reliability literature is consistent on one point: LLM self-assessment and LLM-as-judge
+  verdicts are measurably overconfident by default, and calibration &mdash; the gap between stated
+  confidence and empirical correctness &mdash; has to be measured with standard tools (Expected
+  Calibration Error, Brier score) rather than assumed from a well-written prompt. Calibrated confidence
+  is what lets a pipeline auto-accept high-confidence assessments and route low-confidence ones to a
+  stronger tier or a human; uncalibrated confidence cannot be trusted for that split. This is a direct
+  answer to &ldquo;can an LLM say that something is complex&rdquo;: yes, an LLM can emit a complexity
+  judgement, but the judgement is only as trustworthy as its measured calibration against this product's
+  own outcomes, and that measurement does not exist yet (&sect;2).</p>
+
+  <h3>Code-task difficulty prediction: features exist, task-specific calibration is required</h3>
+  <p>Difficulty-prediction work specific to agentic coding benchmarks extends item-response-theory
+  methods with dense features drawn from the task itself &mdash; problem statement, repository state,
+  test patch, solution patch &mdash; to predict per-task success probability for a given model and
+  scaffold, decomposing ability into a model component and a scaffold component. That is evidence that
+  static, pre-execution features can predict coding-task outcome with more signal than keyword matching,
+  but the predictor is fit and evaluated per benchmark; it is not evidence that a general-purpose
+  complexity rubric transfers to this product's own card population without being fit and checked against
+  it.</p>
+
+  <div class="box accent" id="sect3-validation">
+    <b>Honest reading.</b> No literature answers &ldquo;can an LLM classify this product's cards into
+    complexity classes reliably enough to route on&rdquo;. The literature instead specifies the check:
+    build a labelled set from this product's own history, have the model emit a calibrated judgement, and
+    measure agreement against the observed outcome before trusting the judgement for routing. &sect;7
+    turns that into a concrete design using this product's own AGT-2243 historical benchmark
+    (152 task records, 19 cohorts) as the starting labelled set.
+  </div>
+
+  <h3>Working definition of complexity for this product</h3>
+  <p>One definition an agent can apply and a human can check, combining the dimensions the card named:</p>
+  <table>
+    <thead><tr><th>Dimension</th><th>0</th><th>1</th><th>2</th><th>3</th></tr></thead>
+    <tbody>
+      <tr><td><b>Subsystems touched</b></td><td>One, locally</td><td>Two tightly related</td><td>Three</td><td>Four or more, or repository-wide</td></tr>
+      <tr><td><b>Unknowns to resolve</b></td><td>None; exact behavior known</td><td>One adjacent contract to read</td><td>Several layers to reconcile</td><td>Root cause or requirements must be derived</td></tr>
+      <tr><td><b>Coupling and blast radius</b></td><td>Reversible, locally contained</td><td>Reversible, one public surface</td><td>Persistent state or a public contract</td><td>Distributed authority, security boundary, credible data loss</td></tr>
+      <tr><td><b>Evidence required</b></td><td>A local test proves it</td><td>One integration check</td><td>Cross-layer or historical evidence</td><td>Cross-repository or distributed invariants</td></tr>
+      <tr><td><b>Expected rework risk</b></td><td>No comparable precedent needed</td><td>A comparable precedent exists and applies cleanly</td><td>Comparable precedent is mixed or thin</td><td>No comparable precedent, or precedent shows repeated reissue</td></tr>
+    </tbody>
+  </table>
+  <p>The five dimensions sum to a 0&ndash;15 complexity score, reported alongside the per-dimension
+  breakdown and a stated confidence (not folded into the score). This mirrors the existing weighted
+  ladder in <code>model-routing-policy.md</code> in shape &mdash; scored criteria mapped through
+  thresholds to a route &mdash; but every dimension is now something the analysis step can point at
+  concrete evidence for, not a keyword match. The hard floors already in the policy (P0, fencing, lease
+  authority, security, distributed concurrency, data loss) remain floors: a declared floor condition
+  overrides the summed score exactly as it does today, because a rare catastrophic-risk signal must not
+  be diluted by averaging it against four unrelated dimensions.</p>
+
+  <h2><span class="number">&sect;4</span> Target workflow: four pipeline steps, complexity declared and checked</h2>
+  <figure class="media-breakout">
+    <svg class="diagram" viewBox="0 0 1120 430" role="img" aria-labelledby="diagram-title diagram-desc">
+      <title id="diagram-title">Current versus target pipeline for model qualification</title>
+      <desc id="diagram-desc">Current: pre-model-qualification runs before any agent turn using regular
+      expressions over the card text, then one core-agent-run step. Target: a work-order step, an analysis
+      step that declares a complexity assessment, a plan step that refines it and may requalify the model,
+      then implementation, with a reported-versus-achieved record feeding back into Token Economy's pair
+      table.</desc>
+      <defs>
+        <marker id="arrow-head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="currentColor" style="fill:var(--article-faint)"></path>
+        </marker>
+      </defs>
+
+      <text x="10" y="24" class="lbl">Current</text>
+      <rect x="10" y="34" width="230" height="58" rx="8" class="step"></rect>
+      <text x="125" y="58" text-anchor="middle">pre-model-qualification</text>
+      <text x="125" y="76" text-anchor="middle" class="sub">3 regexes over title+prompt</text>
+      <path class="arrow" d="M240,63 L300,63"></path>
+      <rect x="300" y="34" width="230" height="58" rx="8" class="step"></rect>
+      <text x="415" y="58" text-anchor="middle">core-agent-run</text>
+      <text x="415" y="76" text-anchor="middle" class="sub">the only work step</text>
+      <path class="arrow" d="M530,63 L600,63"></path>
+      <rect x="600" y="34" width="510" height="58" rx="8" class="step"></rect>
+      <text x="855" y="58" text-anchor="middle">post steps: review, drift, gates, merge</text>
+      <text x="855" y="76" text-anchor="middle" class="sub">no outcome ever rejoins the routing decision</text>
+
+      <text x="10" y="150" class="lbl">Target</text>
+      <rect x="10" y="160" width="180" height="64" rx="8" class="step"></rect>
+      <text x="100" y="186" text-anchor="middle">Work order</text>
+      <text x="100" y="204" text-anchor="middle" class="sub">card as authored</text>
+      <path class="arrow" d="M190,192 L240,192"></path>
+
+      <rect x="240" y="160" width="210" height="64" rx="8" class="step-new"></rect>
+      <text x="345" y="182" text-anchor="middle">Analysis</text>
+      <text x="345" y="200" text-anchor="middle" class="sub">declares complexity</text>
+      <text x="345" y="215" text-anchor="middle" class="sub">assessment + confidence</text>
+      <path class="arrow" d="M450,192 L500,192"></path>
+
+      <rect x="500" y="160" width="210" height="64" rx="8" class="step-new"></rect>
+      <text x="605" y="182" text-anchor="middle">Implementation plan</text>
+      <text x="605" y="200" text-anchor="middle" class="sub">refines assessment,</text>
+      <text x="605" y="215" text-anchor="middle" class="sub">may requalify model</text>
+      <path class="arrow" d="M710,192 L760,192"></path>
+
+      <rect x="760" y="160" width="180" height="64" rx="8" class="step"></rect>
+      <text x="850" y="186" text-anchor="middle">Implementation</text>
+      <text x="850" y="204" text-anchor="middle" class="sub">core-agent-run</text>
+      <path class="arrow" d="M940,192 L990,192"></path>
+
+      <rect x="990" y="160" width="120" height="64" rx="8" class="step"></rect>
+      <text x="1050" y="186" text-anchor="middle" style="font-size:11.5px">Card closes</text>
+      <text x="1050" y="204" text-anchor="middle" class="sub">reported vs.</text>
+      <text x="1050" y="217" text-anchor="middle" class="sub">achieved</text>
+
+      <path class="arrow" d="M345,224 L345,310 L1050,310 L1050,224" style="fill:none"></path>
+      <rect x="230" y="330" width="660" height="70" rx="8" class="step"></rect>
+      <text x="560" y="356" text-anchor="middle">Token Economy: estimation prompts, studies, versioned (complexity class &rarr; model, level) table</text>
+      <text x="560" y="376" text-anchor="middle" class="sub">Agent Studio consumes the table as policy and reports outcomes back</text>
+    </svg>
+    <figcaption>
+      <span class="figure-claim"><b>Diagram.</b> Today one pre-step scores raw text and one step does the
+      work; the target inserts declared, checkable analysis and plan steps between the work order and the
+      implementation, and closes the loop from the finished card back to Token Economy's pair table.</span>
+    </figcaption>
+  </figure>
+
+  <h3>Analysis (new pre/early step)</h3>
+  <p>Runs after <code>pre-prompt-enrichment</code>, before implementation. Reads the enriched card and
+  produces <code>analysis-report.json</code>: the five-dimension breakdown from &sect;3, a stated
+  confidence, floor conditions triggered (if any), and the evidence excerpts that justify each dimension
+  score (file paths, prior related cards, named unknowns) &mdash; not a bare number. Model qualification
+  for the analysis step itself stays cheap (Luna/Mini-class), matching the existing bounded-decision role
+  already used for aspect verdicts and route decisions in <code>PipelineStepModelDefaults</code>, because
+  the analysis step's own job is bounded and structured, not open-ended implementation.</p>
+
+  <h3>Implementation plan (new step)</h3>
+  <p>Consumes the analysis report, produces the concrete plan, and may revise the complexity assessment
+  with information the analysis step did not have (a plan can discover, for example, that a change
+  touches a fifth subsystem). Model qualification runs again here against the (possibly revised)
+  assessment, using Token Economy's pair table (&sect;5) rather than the regular expressions. This is the
+  point where &ldquo;a cheap model may do the analysis, a strong pair the implementation&rdquo; becomes
+  concrete: the plan step is the last cheap gate before the expensive implementation route is committed.</p>
+
+  <h3>Implementation (existing <code>core-agent-run</code>)</h3>
+  <p>Unchanged mechanically. It now starts already qualified against a declared, evidenced complexity
+  class instead of a keyword match, and its model/level choice is visible next to the analysis and plan
+  assessments in the card's pipeline history.</p>
+
+  <h3>Reported versus achieved (closes the loop)</h3>
+  <p>On card close, write <code>complexity-outcome.json</code>: the complexity class and confidence
+  reported at analysis, the class and route actually used at implementation (after any plan-stage
+  requalification), and the observed outcome &mdash; rounds, reissues, review verdicts, tokens,
+  wall-clock, and a derived flag for whether the pair looked too weak (reissued for a semantic reason),
+  too strong (delivered first-pass with large cost margin versus the class median), or right-sized. This
+  is the exact feedback the operator asked for: &ldquo;what complexity was reported, and was it
+  reached.&rdquo; Token Economy ingests this record to recalibrate the pair table (&sect;5); Agent Studio
+  never edits the table from a single card.</p>
+
+  <h2 data-concept-section="alternatives"><span class="number">&sect;5</span> Alternatives</h2>
+  <p>Three credible shapes for closing the regex gap, compared on how much they fix and what they cost.</p>
+
+  <h3>Option A &mdash; Report only, keep the regular expressions</h3>
+  <p>Add the outcome record from &sect;4 without adding analysis or plan steps; keep
+  <code>ModelRoutingPolicyRegistry</code> exactly as it is. Cheapest to ship. Does not touch the
+  operator's core complaint (&ldquo;the approach with regular expressions is nonsense&rdquo;) and does not
+  produce a declared, evidenced assessment &mdash; it only tells us, eventually, that the regexes keep
+  being wrong, without giving analysis or plan a place to exist.</p>
+
+  <h3>Option B &mdash; Analysis and plan as pipeline steps, Token Economy owns the pair table (recommended)</h3>
+  <p>The workflow in &sect;4. Complexity is declared with evidence at analysis, refined at plan, checked
+  against outcome at close. Token Economy is the measuring authority for the
+  (complexity class &rarr; model, level) table and the calibration study behind it; Agent Studio is the
+  measuring authority for pipeline execution and the reported-vs-achieved record. Cost: two new pipeline
+  steps to design, run, and keep fast; a new seam between Agent Studio and the Token Economy package for
+  the pair table (mirroring the existing <code>IModelEconomyAdvisor</code> / <code>ITokenPriceProvider</code>
+  replaceable-seam pattern already used for benchmark candidates and pricing).</p>
+
+  <h3>Option C &mdash; Single external Token Economy call, no new pipeline steps</h3>
+  <p>Replace the regex step with one call into a Token Economy complexity-estimation endpoint at intake,
+  keeping the rest of the pipeline as-is. Fewer moving parts than Option B, but it does not give the
+  operator's explicit ask &mdash; analysis and plan as pipeline steps with complexity showing in the
+  analysis and becoming clearer in the plan &mdash; and it re-creates a single-point, single-signal
+  estimate at exactly the moment (intake, before any agent turn) where the least information is
+  available, the same structural problem the regexes have today.</p>
+
+  <table>
+    <thead><tr><th>Criterion</th><th>A &middot; report only</th><th>B &middot; two new steps (recommended)</th><th>C &middot; single TE call</th></tr></thead>
+    <tbody>
+      <tr><td>Matches the requested work-order &rarr; analysis &rarr; plan &rarr; implementation shape</td><td class="dim">No</td><td>Yes</td><td class="dim">No</td></tr>
+      <tr><td>Complexity is declared with evidence, not a keyword match</td><td class="dim">No</td><td>Yes</td><td>Partial (one call, no evidence trail)</td></tr>
+      <tr><td>Can requalify the model between steps</td><td class="dim">No</td><td>Yes</td><td class="dim">No</td></tr>
+      <tr><td>Produces the reported-vs-achieved feedback the operator asked for</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
+      <tr><td>New pipeline surface to build and keep fast</td><td>None</td><td>Two steps</td><td>None</td></tr>
+    </tbody>
+  </table>
+
+  <h2 data-concept-section="recommendation"><span class="number">&sect;6</span> Recommendation</h2>
+  <div class="callout" data-tone="accent">
+    <h3>Recommended default: Option B</h3>
+    <p>Add analysis and implementation-plan as pipeline steps that declare and refine the complexity
+    assessment from &sect;3, requalify the model against Token Economy's versioned pair table at the plan
+    step, and write a reported-vs-achieved record at close. Token Economy owns the estimation prompts,
+    the calibration study, and the pair table; Agent Studio owns step execution, the requalification call,
+    and the feedback record. This is the only option that satisfies the operator's explicit workflow
+    request and gives the calibration check from &sect;3 something to measure.</p>
+  </div>
+  <p>Within Option B, do not run analysis and plan unconditionally for every <code>chore</code>-class card
+  from day one: start with <code>feature</code> and <code>bug</code> pipeline types plus any card that
+  trips a floor condition today, and treat <code>chore</code> as the deliberately narrow scope decision in
+  &sect;8. This keeps the two new steps from taxing the cheapest, most mechanical work while the
+  calibration evidence is still being built. Ship the reported-vs-achieved record from the first slice
+  regardless of scope, since it is required to validate every later decision in this Dossier.</p>
+
+  <h2 data-concept-section="evidence"><span class="number">&sect;7</span> Evidence</h2>
+  <p>Sources are classified so a reader can separate hard evidence (code read directly), model-judged or
+  interpreted evidence, and proposed, not-yet-run design, matching the evidence-class house rule from the
+  Token Economy evidence-class Dossier (AGT-W31): keep observed facts, model-judged signals, and
+  confounded comparisons visibly separate.</p>
+  <div class="evidence-list">
+    <a class="evidence" href="../../backend/Features/Pipeline/ModelRoutingPolicyRegistry.cs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>ModelRoutingPolicyRegistry.cs</b><small>Read 2026-09-14. <code>CriticalFloorSignal</code>, <code>SolFloorSignal</code>, and the task-type default path exactly as described in &sect;2.</small></span></a>
+    <a class="evidence" href="../../backend/Policies/model-routing-policy.v1.json"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>model-routing-policy.v1.json</b><small>Read 2026-09-14. Confirms the five tiers, their vendor overrides, and that <code>claude-fable-5-1</code> has no entry in any tier.</small></span></a>
+    <a class="evidence" href="../../docs/system/domains/model-routing-policy.md"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Model Routing Policy domain page</b><small>Canonical policy: weighted score ladder, hard floors, benchmark basis (AGT-2243, 152 records, 19 cohorts), and the explicit statement that Luna and Terra remain provisional hypotheses.</small></span></a>
+    <a class="evidence" href="../../backend/Features/Pipeline/PipelineCatalogue.cs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>PipelineCatalogue.cs</b><small>Confirms the pre/core/post step ids and that <code>core-agent-run</code> is the only work step; the <code>post-analysis-*</code> ids belong to the unrelated Quality Studio rule passes.</small></span></a>
+    <a class="evidence" href="../../backend/Shared/Models/TaskTelemetry.cs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>TaskTelemetry.cs</b><small><code>TaskTokenCall</code> has no thinking-level field; <code>SessionEvent.ThinkingLevel</code> exists but is not joined to token calls or outcomes anywhere in the reviewed code.</small></span></a>
+    <a class="evidence" href="https://arxiv.org/html/2603.04445v2"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Dynamic Model Routing and Cascading for Efficient LLM Inference: A Survey (2026)</b><small>Frames difficulty prediction as an estimate evaluated against outcome, from binary difficulty routers to win-prediction models and decision-theoretic cascades.</small></span></a>
+    <a class="evidence" href="https://arxiv.org/pdf/2508.06225"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Overconfidence in LLM-as-a-Judge: Diagnosis and Confidence-Driven Solution (2025)</b><small>LLM judges are measurably overconfident by default; reliable use requires measured calibration (ECE, Brier score), not an assumed-good prompt.</small></span></a>
+    <a class="evidence" href="https://arxiv.org/html/2604.00594v2"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Agent Psychometrics: Task-Level Performance Prediction in Agentic Coding Benchmarks (2026)</b><small>Static pre-execution task features (problem statement, repo state, test/solution patches) predict per-task success probability for a model+scaffold pair; predictor is fit and checked per benchmark, not assumed to transfer.</small></span></a>
+    <a class="evidence" href="../../docs/quality/token-economy-task-data/index.html"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b>Token Economy evidence-class Dossier (AGT-W31)</b><small>Establishes the hard/model-judged/confounded evidence-class split this Dossier reuses for the complexity-estimation validation design in &sect;3 and &sect;8.</small></span></a>
+    <a class="evidence" href="#sect3-validation"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b>Own labelled-set validation, not yet run</b><small>Score the AGT-2243 historical benchmark's 152 task records by the &sect;3 rubric after the fact, compare against their known grade and reissue outcomes, and report agreement (or its absence) per complexity class before any table entry is treated as validated. This validation has not been executed; it is the concrete next step, not a claim already proven.</small></span></a>
+  </div>
+
+  <h2 id="sect8" data-concept-section="open-decisions"><span class="number">&sect;8</span> Open decisions</h2>
+  <p>Five choices need an operator decision before implementation cards are drafted. Recommended options
+  are marked.</p>
+
+  <div class="decision" data-decision-id="analysis-plan-scope" data-decision-kind="single" data-decision-label="When do the analysis and plan steps run?">
+    <h3>When do the analysis and plan steps run?</h3>
+    <label data-option-id="always" data-option-label="A &middot; Every card"><input type="radio" name="analysis-plan-scope" value="always"><span><b>A &middot; Every card, including chores</b><span class="d">Most uniform signal for the calibration study, but taxes the cheapest, most mechanical work with two extra steps before it has any evidence to justify them.</span></span></label>
+    <label data-option-id="by-type" data-option-label="B &middot; By pipeline type (recommended)"><input type="radio" name="analysis-plan-scope" value="by-type" checked><span><b>B &middot; Feature and bug pipeline types, plus any floor condition (recommended)</b><span class="d">Matches &sect;6. Chores stay on the cheap path until the calibration evidence from a feature/bug cohort justifies extending coverage.</span></span></label>
+    <label data-option-id="uncertain-first-pass" data-option-label="C &middot; Only when a first cheap pass is uncertain"><input type="radio" name="analysis-plan-scope" value="uncertain-first-pass"><span><b>C &middot; Cheap first pass decides whether analysis/plan are needed</b><span class="d">Cheapest on average, but adds a third classification step whose own reliability would need the same calibration check as the assessment it is gating &mdash; deferred until B has evidence.</span></span></label>
+    <div data-comment="Note for implementation (optional)"><textarea placeholder="Note for implementation (optional)"></textarea></div>
+  </div>
+
+  <div class="decision" data-decision-id="requalify-authority" data-decision-kind="single" data-decision-label="Who may requalify the model between steps?">
+    <h3>Who may requalify the model between steps?</h3>
+    <label data-option-id="plan-step-auto" data-option-label="A &middot; The plan step, automatically (recommended)"><input type="radio" name="requalify-authority" value="plan-step-auto" checked><span><b>A &middot; The plan step requalifies automatically against the Token Economy table (recommended)</b><span class="d">Matches &sect;4: the plan step is the last cheap gate before the expensive route commits. An explicit operator pin still wins, exactly as it does today.</span></span></label>
+    <label data-option-id="orchestrator-only" data-option-label="B &middot; Orchestrator review required"><input type="radio" name="requalify-authority" value="orchestrator-only"><span><b>B &middot; Plan step proposes, orchestrator confirms before implementation starts</b><span class="d">Adds a review boundary at the cost of one more decision point in the pipeline; worth it only if early requalification proves noisy.</span></span></label>
+    <label data-option-id="human-only" data-option-label="C &middot; Human pin only"><input type="radio" name="requalify-authority" value="human-only"><span><b>C &middot; Never automatic; a human must approve any change from the analysis-stage route</b><span class="d">Safest, slowest; defeats the point of a plan-stage correction for the common case where the plan step legitimately learns more than the analysis step knew.</span></span></label>
+    <div data-comment="Note for implementation (optional)"><textarea placeholder="Note for implementation (optional)"></textarea></div>
+  </div>
+
+  <div class="decision" data-decision-id="table-ownership" data-decision-kind="single" data-decision-label="Where does the (complexity class, model, level) pair table live?">
+    <h3>Where does the pair table live?</h3>
+    <label data-option-id="te-package-seam" data-option-label="A &middot; Token Economy package, consumed through a seam (recommended)"><input type="radio" name="table-ownership" value="te-package-seam" checked><span><b>A &middot; Token Economy package artifact, Agent Studio consumes it through a seam (recommended)</b><span class="d">Mirrors the existing replaceable-seam pattern already used for <code>IModelEconomyAdvisor</code> and the TokenEconomy pricing adapter (<code>ITokenPriceProvider</code>): a data seam plus a built-in implementation, so ownership moves to Token Economy without a call-site rewrite.</span></span></label>
+    <label data-option-id="agent-studio-policy" data-option-label="B &middot; Agent Studio policy file, Token Economy advises"><input type="radio" name="table-ownership" value="agent-studio-policy"><span><b>B &middot; Stay a versioned Agent Studio policy file (like today's tier JSON), Token Economy only recommends changes</b><span class="d">Smaller change, but keeps the operator's stated goal &mdash; Token Economy as the measuring authority &mdash; as an external recommendation Agent Studio can ignore, rather than the system of record.</span></span></label>
+    <div data-comment="Note for implementation (optional)"><textarea placeholder="Note for implementation (optional)"></textarea></div>
+  </div>
+
+  <div class="decision" data-decision-id="evidence-bar" data-decision-kind="single" data-decision-label="How much measured evidence is required before the pair table changes?">
+    <h3>How much measured evidence is required before the pair table changes?</h3>
+    <label data-option-id="reuse-policy-bar" data-option-label="A &middot; Reuse the existing empirical-confidence bar (recommended)"><input type="radio" name="evidence-bar" value="reuse-policy-bar" checked><span><b>A &middot; Reuse the bar already in model-routing-policy.md (recommended)</b><span class="d">At least 20 runs, useful grade coverage, at least 70% A/B among known grades, under 10% reissue, per complexity class before a table entry counts as validated rather than provisional. One consistent bar across both documents.</span></span></label>
+    <label data-option-id="lighter-bar-new-classes" data-option-label="B &middot; Lighter bar for newly introduced classes"><input type="radio" name="evidence-bar" value="lighter-bar-new-classes"><span><b>B &middot; 5 favorable runs is enough to leave a class provisional-but-live</b><span class="d">Faster to populate the table for classes with no historical cohort at all, at the cost of reusing the exact caution the policy page already gives Terra and Luna today.</span></span></label>
+    <div data-comment="Note for implementation (optional)"><textarea placeholder="Note for implementation (optional)"></textarea></div>
+  </div>
+
+  <div class="decision" data-decision-id="disagreement-protocol" data-decision-kind="single" data-decision-label="What happens when the estimate and the outcome disagree repeatedly?">
+    <h3>What happens when the estimate and the outcome disagree repeatedly?</h3>
+    <label data-option-id="escalate-class-review" data-option-label="A &middot; Escalate the class definition for review (recommended)"><input type="radio" name="disagreement-protocol" value="escalate-class-review" checked><span><b>A &middot; Repeated disagreement opens a named review of that complexity class's rubric or pair (recommended)</b><span class="d">Treats repeated disagreement as a signal about the class definition or the routed pair, not about one card; matches the reissue-promotion pattern already in the policy (two semantic failures at the stronger tier stop automatic escalation and ask for a human decision).</span></span></label>
+    <label data-option-id="decision-surface-item" data-option-label="B &middot; Surface it as an operator decision-queue item every time"><input type="radio" name="disagreement-protocol" value="decision-surface-item"><span><b>B &middot; Every disagreement becomes an operator decision-surface item</b><span class="d">Highest visibility, but risks the same alert fatigue the reissue rule already avoids by capping automatic escalation at two attempts.</span></span></label>
+    <label data-option-id="silent-metric" data-option-label="C &middot; Track silently, review only at the quarterly calibration pass"><input type="radio" name="disagreement-protocol" value="silent-metric"><span><b>C &middot; No action until the existing quarterly calibration pass</b><span class="d">Cheapest, but lets a bad pair or a bad rubric keep being used between quarters with no earlier signal reaching anyone.</span></span></label>
+    <div data-comment="Note for implementation (optional)"><textarea placeholder="Note for implementation (optional)"></textarea></div>
+  </div>
+
+  <h2><span class="number">&sect;9</span> Boundaries</h2>
+  <p>This card produces the Dossier and its decisions, not an implementation. Already carded separately
+  and referenced rather than solved here: the reasoning level in the token panel (AGT-2811), and the
+  delivered economy floor and explicit thinking level (AGT-2808, merged 2026-09-13). Once the operator
+  records selections above, implementation cards are drafted from those selections and the workflow in
+  &sect;4, scoped per the independently reviewable slices convention (analysis step, plan step and
+  requalification, Token Economy seam and pair table, reported-vs-achieved record) rather than one
+  open-ended card.</p>
+
+  <h2><span class="number">&sect;10</span> Sources</h2>
+  <ul>
+    <li><code>backend/Features/Pipeline/ModelRoutingPolicyRegistry.cs</code>, <code>backend/Policies/model-routing-policy.v1.json</code>, <code>docs/system/domains/model-routing-policy.md</code>.</li>
+    <li><code>backend/Features/Pipeline/PipelineCatalogue.cs</code>, <code>backend/Features/Pipeline/ModelQualificationService.cs</code>, <code>backend/Shared/Models/PipelineTypes.cs</code>, <code>backend/Shared/Models/TaskInfo.cs</code> (<code>TaskTypes</code>).</li>
+    <li><code>backend/Shared/Models/TaskTelemetry.cs</code> (<code>TaskTokenCall</code>, <code>SessionEvent</code>), <code>docs/system/domains/tokens.md</code>.</li>
+    <li><code>docs/quality/token-economy-task-data/index.html</code> (AGT-W31, evidence-class house rule).</li>
+    <li>Dynamic Model Routing and Cascading for Efficient LLM Inference: A Survey &mdash; <a href="https://arxiv.org/html/2603.04445v2">arxiv.org/html/2603.04445v2</a>.</li>
+    <li>Is Escalation Worth It? A Decision-Theoretic Characterization of LLM Cascades &mdash; <a href="https://arxiv.org/pdf/2605.06350">arxiv.org/pdf/2605.06350</a>.</li>
+    <li>Overconfidence in LLM-as-a-Judge: Diagnosis and Confidence-Driven Solution &mdash; <a href="https://arxiv.org/pdf/2508.06225">arxiv.org/pdf/2508.06225</a>.</li>
+    <li>Calibrating LLM Judges: Linear Probes for Fast and Reliable Uncertainty Estimation &mdash; <a href="https://arxiv.org/pdf/2512.22245">arxiv.org/pdf/2512.22245</a>.</li>
+    <li>Agent Psychometrics: Task-Level Performance Prediction in Agentic Coding Benchmarks &mdash; <a href="https://arxiv.org/html/2604.00594v2">arxiv.org/html/2604.00594v2</a>.</li>
+    <li>Operator statements, 2026-09-14 (task card AGT-2815, verbatim positions quoted in &sect;1).</li>
+  </ul>
+
+  <!-- agent-studio:implementation-section:start -->
+  <section id="implementation" data-document-section="implementation">
+    <h2><span class="number">&sect;11</span> Implementation</h2>
+    <p>Delivery slices append their current implementation status here. Decision content above remains
+    unchanged. Implementation cards are drafted once the operator records selections in &sect;8.</p>
+    <ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<!-- agent-studio:implementation-log:end -->
+    </ol>
+  </section>
+  <!-- agent-studio:implementation-section:end -->
+</main>
+</body>
+</html>
