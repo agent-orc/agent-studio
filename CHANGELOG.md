@@ -12,6 +12,16 @@ release yet.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-14
+
+Model routing now names a Claude model and a reasoning level per tier instead
+of falling back to a positional pick, floors economy mode at Sonnet with low
+reasoning, and migrates retired model ids forward. The Update Service stops the
+stack before the locked restore, installs a candidate manifest only after a
+verified restart, and waits for a cold backend compile. The repository
+definition carries an optional release section, Docker Compose brings up the
+product without preset credentials, and the task detail shows one header row
+for a result with the regression radar below the runs.
 ### Added
 
 - Economy-mode model routing floor: `sonnet-low` (`claude-sonnet-5`/`gpt-5.6-sol`
