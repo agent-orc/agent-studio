@@ -5,6 +5,11 @@ import type { TaskInfo } from '../../../../models/task.model';
 import { StudioTabStateService } from '../../services/studio-tab-state.service';
 import { GlobalSearchComponent } from './global-search.component';
 import { GlobalSearchFrame, GlobalSearchItem, GlobalSearchService } from './global-search.service';
+import {
+  DOSSIER_FIXTURE_KEY,
+  dossierChipsIn,
+  provideDossierCatalogueStub,
+} from '../../../../../testing/dossier-references';
 
 /** Every frame the stub emits is separated by this much fake time. */
 const FRAME_MS = 10;
@@ -57,6 +62,7 @@ describe('GlobalSearchComponent', () => {
         provideHttpClient(),
         provideHttpClientTesting(),
         { provide: GlobalSearchService, useValue: api },
+        provideDossierCatalogueStub(),
       ],
     }).compileComponents();
     fixture = TestBed.createComponent(GlobalSearchComponent);
@@ -66,6 +72,34 @@ describe('GlobalSearchComponent', () => {
   afterEach(() => {
     component.cancel();
     vi.useRealTimers();
+  });
+
+  // AGT-2812: a Dossier result is recognisable in the palette through the same
+  // chip and the same resolver prose uses, not a raw key badge.
+  it('renders a Dossier result as the shared Dossier chip', async () => {
+    vi.useFakeTimers();
+    api.frames = [{
+      event: 'dossiers',
+      data: {
+        items: [{
+          domain: 'dossiers', projectName: 'Demo', projectColor: '#fff',
+          title: 'Decision cards', subtitle: 'decision-pending',
+          dossierKey: DOSSIER_FIXTURE_KEY, workbenchId: 'decision-cards',
+        }],
+        durationMs: 3, error: null,
+      },
+    }];
+    component.open.set(true);
+    component.onQuery('decision');
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS + FRAME_MS);
+    fixture.detectChanges();
+
+    const chips = dossierChipsIn(fixture.nativeElement as HTMLElement);
+    expect(chips).toHaveLength(1);
+    expect(chips[0].textContent).toContain(DOSSIER_FIXTURE_KEY);
+    expect(chips[0].textContent).toContain('Decision pending');
+    // Presentation only: the row itself is the button that opens the Dossier.
+    expect(chips[0].querySelector('a')).toBeNull();
   });
 
   it('opens with Ctrl+K and closes with Escape', () => {

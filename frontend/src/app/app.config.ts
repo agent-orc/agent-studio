@@ -10,6 +10,7 @@ import { sessionSecurityInterceptor } from './services/session-security.intercep
 import { TaskReferenceNavigationService } from './services/task-reference-navigation.service';
 import { MediaLightboxService } from './services/media-lightbox.service';
 import { TaskReferenceMicrocardHydratorService } from './services/task-reference-microcard-hydrator.service';
+import { DossierReferenceHydratorService } from './services/dossier-reference-hydrator.service';
 import { ProviderAuthStatusService } from './features/remote-hosts';
 
 export const appConfig: ApplicationConfig = {
@@ -32,6 +33,11 @@ export const appConfig: ApplicationConfig = {
       provide: ENVIRONMENT_INITIALIZER,
       multi: true,
       useValue: () => inject(TaskReferenceMicrocardHydratorService).start(),
+    },
+    {
+      provide: ENVIRONMENT_INITIALIZER,
+      multi: true,
+      useValue: () => inject(DossierReferenceHydratorService).start(),
     },
     {
       provide: ENVIRONMENT_INITIALIZER,

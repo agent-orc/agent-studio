@@ -3,6 +3,9 @@ import { FormsModule } from '@angular/forms';
 import type { TaskInfo } from '../../../../models/task.model';
 import { BoardFiltersService } from '../../../board';
 import { StudioTabStateService } from '../../services/studio-tab-state.service';
+import { DossierReferenceChipComponent } from '../../../../components/dossier-reference-chip/dossier-reference-chip';
+import { DossierCatalogueService } from '../../../../services/dossier-catalogue.service';
+import { resolveDossierReference, type DossierReference } from '../../../../services/dossier-reference.util';
 import { GlobalSearchItem, GlobalSearchService, SEARCH_DOMAINS, SearchDomain } from './global-search.service';
 
 /** Debounce before a keystroke turns into a request. */
@@ -30,13 +33,14 @@ const DOMAIN_LABELS: Readonly<Record<SearchDomain, string>> = {
 @Component({
   selector: 'app-global-search',
   standalone: true,
-  imports: [FormsModule],
+  imports: [FormsModule, DossierReferenceChipComponent],
   templateUrl: './global-search.component.html',
   styleUrl: './global-search.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class GlobalSearchComponent {
   private readonly api = inject(GlobalSearchService);
+  private readonly dossiers = inject(DossierCatalogueService);
   private readonly tabs = inject(StudioTabStateService);
   private readonly boardFilters = inject(BoardFiltersService);
   readonly tasks = input<readonly TaskInfo[]>([]);
@@ -54,7 +58,11 @@ export class GlobalSearchComponent {
   readonly activeIndex = signal(0);
   readonly inputRef = viewChild<ElementRef<HTMLInputElement>>('searchInput');
   private readonly focusWhenOpened = effect(() => {
-    if (this.open()) queueMicrotask(() => this.inputRef()?.nativeElement.focus());
+    if (!this.open()) return;
+    // The catalogue is shared with every other reference surface, so opening
+    // the palette costs at most one read for the whole session.
+    this.dossiers.ensureLoaded().subscribe();
+    queueMicrotask(() => this.inputRef()?.nativeElement.focus());
   });
   private timer: ReturnType<typeof setTimeout> | null = null;
   private ticker: ReturnType<typeof setInterval> | null = null;
@@ -110,6 +118,15 @@ export class GlobalSearchComponent {
       Number(hasExactKey(right.items, keyQuery)) - Number(hasExactKey(left.items, keyQuery)));
   });
   readonly flatResults = computed(() => this.groups().flatMap(group => group.items));
+
+  /**
+   * A result that names a Dossier renders the same chip as prose does, through
+   * the same resolver. Rows that resolve to nothing keep their plain badge.
+   */
+  dossierReference(item: GlobalSearchItem): DossierReference | null {
+    const token = item.dossierKey || item.path || '';
+    return token ? resolveDossierReference(token, this.dossiers.index(), item.projectName) : null;
+  }
 
   show(): void {
     this.open.set(true);

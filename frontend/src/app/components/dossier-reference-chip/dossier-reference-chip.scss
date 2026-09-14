@@ -1,0 +1,96 @@
+:host {
+  display: inline;
+}
+
+/* Presentation-only chip: no trailing action, so no trailing space. */
+.dossier-ref:not(:has(.dossier-ref__source)) {
+  padding-right: 0;
+}
+
+/* One pill, two actions: the Dossier view and, quieter, its source file. */
+.dossier-ref {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding-right: var(--studio-spacing-1);
+  border: 1px solid var(--studio-card-muted-border);
+  border-radius: 999px;
+  background: var(--studio-card-muted-bg);
+  vertical-align: baseline;
+  font-size: 0.78rem;
+  line-height: 1;
+}
+
+.dossier-ref__link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--studio-spacing-1);
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
+  border-radius: 999px;
+  color: var(--studio-fg);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.dossier-ref:has(a.dossier-ref__link:hover) {
+  border-color: var(--studio-border);
+  background: var(--studio-bg-elevated);
+}
+a.dossier-ref__link:focus-visible,
+.dossier-ref__source:focus-visible {
+  outline: 2px solid var(--studio-accent);
+  outline-offset: 2px;
+}
+
+.dossier-ref__icon {
+  display: inline-flex;
+  color: var(--studio-fg-muted);
+}
+
+.dossier-ref__title {
+  overflow: hidden;
+  max-width: 22rem;
+  color: var(--studio-fg-muted);
+  text-overflow: ellipsis;
+}
+
+.dossier-ref__status {
+  padding: 0 var(--studio-spacing-1);
+  border-radius: 999px;
+  color: var(--studio-fg-muted);
+  background: var(--studio-card-muted-bg);
+  font-size: 0.72rem;
+}
+.dossier-ref__status[data-status='decision-pending'] {
+  color: var(--severity-pending);
+  background: color-mix(in srgb, var(--severity-pending) 16%, transparent);
+}
+.dossier-ref__status[data-status='decided'] {
+  color: var(--severity-info);
+  background: color-mix(in srgb, var(--severity-info) 16%, transparent);
+}
+.dossier-ref__status[data-status='documented'] {
+  color: var(--studio-success);
+  background: color-mix(in srgb, var(--studio-success) 16%, transparent);
+}
+.dossier-ref__status[data-status='invalid'] {
+  color: var(--studio-error);
+  background: color-mix(in srgb, var(--studio-error) 16%, transparent);
+}
+.dossier-ref__status[data-status='archived'] {
+  opacity: 0.75;
+}
+
+.dossier-ref__source {
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  color: var(--studio-fg-dim);
+  background: transparent;
+  cursor: pointer;
+}
+.dossier-ref__source:hover {
+  color: var(--studio-fg);
+}
