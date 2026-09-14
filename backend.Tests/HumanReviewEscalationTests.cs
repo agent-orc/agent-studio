@@ -180,8 +180,12 @@ public sealed class HumanReviewEscalationTests : IDisposable
         Assert.Contains(lines, line => line.StartsWith("- Newest attempt: ", StringComparison.Ordinal));
         Assert.Contains("ReviewInfra/ShaMismatch", stub);
         Assert.Contains("- Operator options for the newest cause ReviewInfra/ShaMismatch:", stub);
-        // The logs pointer stays the last line, so the detail cannot bury it.
-        Assert.StartsWith("- See `logs/`", lines.Last(line => line.Length > 0));
+        // The logs pointer stays the last line of the header block, so the detail
+        // cannot bury it. AGT-2816 appends the mandatory `## Open Items` section
+        // after that block; the pointer must still close the block itself.
+        var headerBlock = lines.TakeWhile(line => !line.StartsWith("## ", StringComparison.Ordinal)).ToList();
+        Assert.StartsWith("- See `logs/`", headerBlock.Last(line => line.Length > 0));
+        Assert.Contains(ParkedOpenItems.Heading, lines);
     }
 
     [Fact]

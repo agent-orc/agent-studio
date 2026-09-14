@@ -55,6 +55,10 @@
       (openEpic)="openEpicRequested.emit($event)" />
   }
 
+  <!-- AGT-2816: the park is the authoritative statement about why the card is
+       not moving, so it renders ABOVE the derived escalation headline. -->
+  <app-parked-blocker [info]="detail().info" />
+
   @if (isEscalated() || detail().info.needsInput) {
     <app-escalation-summary
       [detail]="detail()"

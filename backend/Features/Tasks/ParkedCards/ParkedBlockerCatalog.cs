@@ -78,9 +78,52 @@ public static class ParkedBlockerCatalog
     };
 
     /// <summary>
+    /// Park types that exist because a PERSON has to choose, not because
+    /// something failed. They are the parks the decision-card work (Dossier
+    /// AGT-W54) owns: each one is a question with options, and where decision
+    /// cards exist such a park creates or links one. The board separates them
+    /// from failure escalations so an operator sees at a glance which cards wait
+    /// for a person rather than for a fix.
+    /// </summary>
+    private static readonly HashSet<string> DecisionParks = new(StringComparer.OrdinalIgnoreCase)
+    {
+        OperatorDecision,
+        HumanReviewEscalationCategories.AgentNeedsInput,
+        HumanReviewEscalationCategories.NeedsHumanInput,
+        HumanReviewEscalationCategories.HumanDecisionNeeded,
+        HumanReviewEscalationCategories.SteerUnanswered,
+    };
+
+    /// <summary>True when this park waits for a person's choice.</summary>
+    public static bool RequiresDecisionCard(string? blockerType)
+        => !string.IsNullOrWhiteSpace(blockerType) && DecisionParks.Contains(blockerType.Trim());
+
+    /// <summary>
+    /// True when NOTHING has ever evaluated this blocker, so the board must say
+    /// "never checked" instead of presenting a verdict it does not have.
+    ///
+    /// <para>Deliberately not an age threshold.
+    /// <see cref="ParkedBlockerEvaluation.At"/> is when the CURRENT verdict was
+    /// first observed, not when the sweep last ran: an unchanged verdict is never
+    /// re-persisted, because re-writing the marker would bump the job folder's
+    /// mtime and reset the card's activity age
+    /// (<see cref="ParkedCardRecallPolicy.NeedsPersist"/>). An age rule over that
+    /// instant would lie in both directions - old on a card the sweep re-checks
+    /// every tick, fresh on a card the sweep has not visited since. The absence
+    /// of a verdict is the only honest "nobody has checked" signal.</para>
+    /// </summary>
+    public static bool IsEvaluationStale(DateTime? lastEvaluatedAt) => lastEvaluatedAt is null;
+
+    /// <summary>
     /// Builds the marker for a card that just entered <paramref name="lane"/>.
     /// Returns null when the lane is not a parked lane - the caller then clears
     /// any stale marker instead.
+    ///
+    /// <para>The decision half is seeded from the reason alone: at lane-change
+    /// time the run's NeedsInput message may not be written yet, so the slug is
+    /// recorded as the question ID and
+    /// <see cref="NeedsInputArtifact.ReferenceFromParkedBlocker"/> fills in the
+    /// question, options, and documents once the artifact exists.</para>
     /// </summary>
     public static ParkedBlockerRecord? Build(string? lane, string? reason, DateTime parkedAt)
     {
@@ -93,6 +136,7 @@ public static class ParkedBlockerCatalog
             Lane = lane!,
             ParkedAt = parkedAt,
             Reason = (reason ?? string.Empty).Trim(),
+            Decision = ParkedDecisionReader.Read(reason, message: null),
         };
     }
 }

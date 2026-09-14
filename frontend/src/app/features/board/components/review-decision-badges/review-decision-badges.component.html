@@ -1,3 +1,13 @@
+@if (parkedBadge(); as park) {
+  <span class="review-decision-badge"
+        [class]="'review-decision-badge--' + park.tone"
+        [cacTooltip]="park.tooltip"
+        [attr.data-tone]="park.tone"
+        data-testid="task-card-parked">
+    <span class="review-decision-badge__glyph" aria-hidden="true">{{ park.glyph }}</span>
+    {{ park.label }}
+  </span>
+}
 @if (decisionDamBadge(); as dam) {
   <span class="review-decision-badge"
         [class]="'review-decision-badge--' + dam.tone"

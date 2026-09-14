@@ -135,6 +135,14 @@ public sealed record ParkedBlockerRecord
     [JsonPropertyName("needsInputFile")]
     public string? NeedsInputFile { get; init; }
 
+    /// <summary>
+    /// The question a person has to answer, the options the run had already
+    /// weighed, and the documents it named. AGT-2816: <see cref="Reason"/> alone
+    /// was a slug, and a slug is an identifier rather than a question.
+    /// </summary>
+    [JsonPropertyName("decision")]
+    public ParkedDecisionRequest? Decision { get; init; }
+
     /// <summary>The latest probe verdict, or null when no sweep has run yet.</summary>
     [JsonPropertyName("lastEvaluation")]
     public ParkedBlockerEvaluation? LastEvaluation { get; init; }

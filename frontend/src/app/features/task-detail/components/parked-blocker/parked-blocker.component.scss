@@ -1,0 +1,200 @@
+@use '../../../../../styles/mixins' as m;
+
+:host { display: block; }
+
+// R1: status is encoded by an all-round background tint and a badge, never by a
+// left accent bar. R5: every colour is read from a token or mixed from one, so
+// both themes track automatically.
+.park {
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-3);
+  padding: var(--studio-spacing-3) var(--studio-spacing-4);
+  border-block: 1px solid color-mix(in srgb, var(--severity-warn) 48%, var(--studio-border));
+  border-inline: 0;
+  background: color-mix(in srgb, var(--severity-warn) 8%, var(--studio-bg-elevated));
+
+  // A park that waits for a person's choice reads as a question, not a fault.
+  &[data-decision='true'] {
+    border-block-color: color-mix(in srgb, var(--studio-accent) 48%, var(--studio-border));
+    background: color-mix(in srgb, var(--studio-accent) 8%, var(--studio-bg-elevated));
+  }
+
+  &__head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--studio-spacing-2);
+  }
+
+  // The shared chip owns the pill geometry; this only picks the accent.
+  &__badge {
+    @include m.chip(var(--studio-accent), 0.22, 0.45);
+  }
+
+  &__since {
+    color: var(--studio-fg-muted);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  &__recall {
+    @include m.chip(var(--studio-fg-muted), 0.10, 0.35);
+    margin-inline-start: auto;
+    text-transform: none;
+
+    &[data-tone='ok'] {
+      border-color: color-mix(in srgb, var(--severity-pass) 45%, transparent);
+      background: color-mix(in srgb, var(--severity-pass) 10%, transparent);
+      color: var(--severity-pass);
+    }
+
+    &[data-tone='warn'] {
+      border-color: color-mix(in srgb, var(--severity-warn) 45%, transparent);
+      background: color-mix(in srgb, var(--severity-warn) 10%, transparent);
+      color: var(--severity-warn);
+    }
+  }
+
+  &__question {
+    margin: 0;
+    color: var(--studio-fg-strong);
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.4;
+
+    &--missing {
+      color: var(--studio-fg-muted);
+      font-weight: 400;
+    }
+  }
+
+  &__question-id {
+    display: flex;
+    align-items: baseline;
+    gap: var(--studio-spacing-1);
+    margin: 0;
+    color: var(--studio-fg-muted);
+    font-size: 11px;
+  }
+
+  &__options {
+    display: flex;
+    flex-direction: column;
+    gap: var(--studio-spacing-1);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  &__option {
+    display: flex;
+    align-items: baseline;
+    gap: var(--studio-spacing-2);
+    padding: var(--studio-spacing-1) var(--studio-spacing-2);
+    border: 1px solid color-mix(in srgb, var(--studio-border) 80%, transparent);
+    border-radius: 6px;
+    background: var(--studio-bg);
+  }
+
+  &__option-id {
+    flex: 0 0 auto;
+    color: var(--studio-fg-muted);
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+
+  &__option-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--studio-spacing-1);
+    min-width: 0;
+    font-size: 13px;
+  }
+
+  &__option-consequences {
+    color: var(--studio-fg-muted);
+    font-size: 12px;
+  }
+
+  &__option-recommended {
+    flex: 0 0 auto;
+    margin-inline-start: auto;
+    color: var(--severity-pass);
+    font-size: 11px;
+    text-transform: uppercase;
+  }
+
+  &__facts {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: var(--studio-spacing-1) var(--studio-spacing-3);
+    margin: 0;
+    font-size: 12px;
+  }
+
+  &__fact {
+    display: contents;
+
+    dt {
+      color: var(--studio-fg-muted);
+      white-space: nowrap;
+    }
+
+    dd {
+      margin: 0;
+      color: var(--studio-fg);
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+  }
+
+  &__links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--studio-spacing-2);
+    margin: 0;
+    padding: 0;
+    font-size: 12px;
+    list-style: none;
+  }
+
+  &__link {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--studio-accent);
+    cursor: pointer;
+    font: inherit;
+    text-decoration: underline;
+
+    &:focus-visible {
+      outline: 2px solid var(--studio-accent);
+      outline-offset: 2px;
+    }
+  }
+
+  &__open {
+    display: flex;
+    flex-direction: column;
+    gap: var(--studio-spacing-1);
+    font-size: 12px;
+
+    strong {
+      color: var(--studio-fg-muted);
+      font-size: 11px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    ul {
+      display: flex;
+      flex-direction: column;
+      gap: var(--studio-spacing-1);
+      margin: 0;
+      padding-inline-start: var(--studio-spacing-4);
+      color: var(--studio-fg);
+    }
+  }
+}

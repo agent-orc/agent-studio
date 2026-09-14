@@ -1,0 +1,98 @@
+@if (view(); as v) {
+  <section
+    class="park"
+    data-testid="parked-blocker"
+    [attr.data-blocker-type]="v.blockerType"
+    [attr.data-decision]="v.isDecision ? 'true' : null"
+    [attr.aria-label]="v.blockerLabel">
+    <header class="park__head">
+      <span class="park__badge" data-testid="parked-blocker-type">{{ v.blockerLabel }}</span>
+      <span class="park__since" data-testid="parked-blocker-since">
+        Parked {{ v.parkedFor }} ago · {{ parkedAtLabel() }}
+      </span>
+      <span
+        class="park__recall"
+        [attr.data-tone]="v.recall.tone"
+        data-testid="parked-blocker-recall"
+        [cacTooltip]="v.recall.detail">{{ v.recall.label }}</span>
+    </header>
+
+    @if (v.question) {
+      <p class="park__question" data-testid="parked-blocker-question">{{ v.question }}</p>
+    } @else {
+      <p class="park__question park__question--missing" data-testid="parked-blocker-question-missing">
+        The parking run stated no question, only the identifier below. Open the linked document or the
+        run log to find out what it was waiting for.
+      </p>
+    }
+    @if (v.questionId) {
+      <p class="park__question-id" data-testid="parked-blocker-question-id">
+        <span>Question ID</span> <code>{{ v.questionId }}</code>
+      </p>
+    }
+
+    @if (v.options.length > 0) {
+      <ul class="park__options" data-testid="parked-blocker-options">
+        @for (option of v.options; track option.id) {
+          <li class="park__option" [attr.data-option-id]="option.id">
+            <span class="park__option-id">{{ option.id }}</span>
+            <span class="park__option-body">
+              <strong>{{ option.label }}</strong>
+              @if (option.consequences) {
+                <span class="park__option-consequences">{{ option.consequences }}</span>
+              }
+            </span>
+            @if (option.recommended) {
+              <span class="park__option-recommended" data-testid="parked-blocker-option-recommended">recommended</span>
+            }
+          </li>
+        }
+      </ul>
+    }
+
+    <dl class="park__facts">
+      <div class="park__fact">
+        <dt>Clears when</dt>
+        <dd data-testid="parked-blocker-condition">{{ v.condition }}</dd>
+      </div>
+      <div class="park__fact">
+        <dt>Recall verdict</dt>
+        <dd data-testid="parked-blocker-evaluation">{{ evaluationLine() }}</dd>
+      </div>
+      <div class="park__fact">
+        <dt>Park reason</dt>
+        <dd data-testid="parked-blocker-reason">{{ reasonLine() }}</dd>
+      </div>
+    </dl>
+
+    @if (v.documents.length > 0 || v.needsInputFile || v.decisionCardKey) {
+      <ul class="park__links" data-testid="parked-blocker-links">
+        @for (document of v.documents; track document) {
+          <li>
+            <button
+              type="button"
+              class="park__link"
+              data-testid="parked-blocker-document"
+              [attr.data-rel-path]="document"
+              (click)="openDocument(document)">{{ document }}</button>
+          </li>
+        }
+        @if (v.needsInputFile) {
+          <li><code data-testid="parked-blocker-artifact">{{ v.needsInputFile }}</code></li>
+        }
+        @if (v.decisionCardKey) {
+          <li><code data-testid="parked-blocker-decision-card">{{ v.decisionCardKey }}</code></li>
+        }
+      </ul>
+    }
+
+    <div class="park__open" data-testid="parked-blocker-open-items">
+      <strong>Open while parked</strong>
+      <ul>
+        @for (item of v.openItems; track item) {
+          <li>{{ item }}</li>
+        }
+      </ul>
+    </div>
+  </section>
+}

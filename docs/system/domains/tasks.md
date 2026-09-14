@@ -530,6 +530,32 @@ that has sat unlooked-at for days is visible as such. Cards parked before the
 marker existed are backfilled from `enteredLaneAt` by the sweep. Full rationale
 and the AGT-2220 incident: [parked-card recall](../../concepts/parked-card-recall.md).
 
+### The park is a question, and it is rendered (AGT-2816)
+
+A park carries a `decision` block: the one-sentence question, the options the run
+had already weighed, and the repository documents it named. The park slug stays
+as `decision.questionId` - an identifier, never the question itself.
+`ParkedDecisionReader` lifts the block out of the park reason plus the run's own
+`results/needs-input.md`; a run that stated no question keeps an empty `question`
+and every surface says so instead of showing the slug in its place. The option
+field names are the ones the decision-card work (Dossier AGT-W54) specifies, so
+a park of type `operator-decision` becomes a decision card by copying the block.
+`ParkedBlockerCatalog.RequiresDecisionCard` is the single predicate for which
+parks that covers.
+
+Two invariants follow. First, the projection separates "still blocked" from
+"nothing has checked": `evaluationStale` is true exactly when no sweep verdict has
+ever been recorded, so the marker's default `blocked` status is never shown as a
+verdict somebody reached. It is not an age threshold - an unchanged verdict is
+never re-persisted, so `lastEvaluation.at` is how long the verdict has HELD.
+Second, a parked card
+never reports zero open items - `ParkedOpenItems` is applied where a summary stub
+is PRODUCED (`HumanReviewEscalation.BuildStatusStub` and the
+`TaskTransitionService` result scaffold), never by rewriting an agent's own text.
+The Task Detail renders the park ABOVE the derived escalation headline, because
+the park is a fact and the headline is an inference; the board distinguishes a
+card waiting on a person from one waiting on a fix.
+
 ## Result transition invariant
 
 `TaskTransitionService` is the single enforcement point for Result availability.

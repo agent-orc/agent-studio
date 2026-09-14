@@ -452,7 +452,13 @@ public sealed class HumanReviewEscalation
     /// cannot hold. It is appended AFTER the <c>- Category:</c> / <c>- Reason:</c>
     /// pair and must never introduce a second line of either shape: the board's
     /// <c>parseStatusStubEscalation</c> lifts exactly those two lines back
-    /// out.</para></summary>
+    /// out.</para>
+    ///
+    /// <para>AGT-2816: the stub always closes with an <c>## Open Items</c>
+    /// section naming the park. A card the runtime parked for a human has, by
+    /// definition, an open item, and the summary a parked card shows may not
+    /// claim otherwise. The section is produced here, at the stub's source, so
+    /// no surface has to rewrite an agent's own text to stay honest.</para></summary>
     public static string BuildStatusStub(
         string category, string reason, bool partialResultsPresent = false, string? detail = null)
     {
@@ -479,7 +485,9 @@ public sealed class HumanReviewEscalation
         if (d.Length > 0)
             sb.Append(d).Append(nl);
         sb.Append("- See `logs/` in this folder for the run output, and the project decision journal (`logs/decisions/<project>.jsonl`) for the escalation record.")
-          .Append(nl);
+          .Append(nl).Append(nl);
+        sb.Append(ParkedOpenItems.Section(
+            c, question: null, reason: r, ParkedBlockerCatalog.ConditionFor(c).Description));
         return sb.ToString();
     }
 

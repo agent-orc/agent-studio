@@ -72,11 +72,45 @@ public static class NeedsInputArtifact
         }
     }
 
+    /// <summary>
+    /// Points the park marker at this artifact and lifts the decision request
+    /// out of it: the question, the options the run weighed, and any document it
+    /// named. Called once per park, right after the card lands in the lane.
+    ///
+    /// <para>AGT-2816: before this, the marker carried only the park slug, so
+    /// the board could say a card was parked but never what it was parked on.
+    /// The seed written at lane-change time (slug only) is replaced here by the
+    /// full request whenever the run's message actually states one; a run that
+    /// stated nothing keeps the seed, and the surfaces say so.</para>
+    /// </summary>
     public static void ReferenceFromParkedBlocker(string jobFolder, ILogger? logger = null)
     {
         var record = ParkedBlockerMarker.TryRead(jobFolder, logger);
         if (record is null) return;
-        ParkedBlockerMarker.Write(jobFolder, record with { NeedsInputFile = RelativePath }, logger);
+        var message = TryRead(jobFolder, logger)?.Message;
+        var decision = ParkedDecisionReader.Read(record.Reason, message);
+        ParkedBlockerMarker.Write(
+            jobFolder,
+            record with
+            {
+                NeedsInputFile = RelativePath,
+                Decision = Richer(decision, record.Decision),
+            },
+            logger);
+    }
+
+    /// <summary>Keeps whichever request actually carries a question, so a
+    /// re-reference with an unreadable artifact never erases a stated one.</summary>
+    private static ParkedDecisionRequest Richer(
+        ParkedDecisionRequest parsed, ParkedDecisionRequest? existing)
+    {
+        if (existing is null) return parsed;
+        if (!parsed.Stated && existing.Stated) return existing;
+        return parsed with
+        {
+            QuestionId = parsed.QuestionId.Length > 0 ? parsed.QuestionId : existing.QuestionId,
+            DecisionCardKey = parsed.DecisionCardKey ?? existing.DecisionCardKey,
+        };
     }
 
     private static NeedsInputStatus Status(string message, string attempt, string? branch)
