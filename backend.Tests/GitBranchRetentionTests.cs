@@ -74,7 +74,7 @@ public sealed class BranchRetentionPolicyTests
 
     [Theory]
     [InlineData("feature/old")]
-    [InlineData("agent-studio/results/run/fence/sha")]
+    [InlineData("release/1.0")]
     [InlineData("main")]
     public void Evaluate_NeverDeletesBranchesOutsideManagedNamespaces(string branch)
     {
@@ -87,12 +87,135 @@ public sealed class BranchRetentionPolicyTests
 
     private static BranchRetentionFacts EligibleFacts() => new(
         "task/old",
+        BranchNamespace.Task,
         Now.AddDays(-31),
         CheckedOut: false,
         DevelopAvailable: true,
         MainAvailable: true,
         MergedIntoDevelop: true,
         MergedIntoMain: true);
+
+    [Fact]
+    public void Evaluate_DeletesResultsRefWhenTipInMain()
+    {
+        var facts = new BranchRetentionFacts(
+            "agent-studio/results/attempt1/fence-1/abc123",
+            BranchNamespace.ResultsRef,
+            Now.AddDays(-5),
+            CheckedOut: false,
+            DevelopAvailable: false,
+            MainAvailable: true,
+            MergedIntoDevelop: false,
+            MergedIntoMain: true);
+
+        Assert.Equal(BranchRetentionDecision.Delete,
+            BranchRetentionPolicy.Evaluate(facts, Now, TimeSpan.FromDays(7)));
+    }
+
+    [Fact]
+    public void Evaluate_RetainsResultsRefWhenTipNotInMain()
+    {
+        var facts = new BranchRetentionFacts(
+            "agent-studio/results/attempt1/fence-1/abc123",
+            BranchNamespace.ResultsRef,
+            Now.AddDays(-30),
+            CheckedOut: false,
+            DevelopAvailable: false,
+            MainAvailable: true,
+            MergedIntoDevelop: false,
+            MergedIntoMain: false);
+
+        Assert.Equal(BranchRetentionDecision.ResultRefNotInMain,
+            BranchRetentionPolicy.Evaluate(facts, Now, TimeSpan.FromDays(7)));
+    }
+
+    [Fact]
+    public void Evaluate_DeletesSalvageRefWhenTaskTerminalAndTipInMain()
+    {
+        var facts = new BranchRetentionFacts(
+            "agent-studio/salvage/runner/key/attempt1/fence-1/abc123",
+            BranchNamespace.SalvageRef,
+            Now.AddDays(-5),
+            CheckedOut: false,
+            DevelopAvailable: false,
+            MainAvailable: true,
+            MergedIntoDevelop: false,
+            MergedIntoMain: true,
+            IsTaskTerminal: true);
+
+        Assert.Equal(BranchRetentionDecision.Delete,
+            BranchRetentionPolicy.Evaluate(facts, Now, TimeSpan.FromDays(7)));
+    }
+
+    [Fact]
+    public void Evaluate_DeletesSalvageRefWhenOlderThan14Days()
+    {
+        var facts = new BranchRetentionFacts(
+            "agent-studio/salvage/runner/key/attempt1/fence-1/abc123",
+            BranchNamespace.SalvageRef,
+            Now.AddDays(-20),
+            CheckedOut: false,
+            DevelopAvailable: false,
+            MainAvailable: true,
+            MergedIntoDevelop: false,
+            MergedIntoMain: false,
+            IsTaskTerminal: false);
+
+        Assert.Equal(BranchRetentionDecision.Delete,
+            BranchRetentionPolicy.Evaluate(facts, Now, TimeSpan.FromDays(7)));
+    }
+
+    [Fact]
+    public void Evaluate_RetainsSalvageRefWhenTaskNotTerminalAndYoungerThan14Days()
+    {
+        var facts = new BranchRetentionFacts(
+            "agent-studio/salvage/runner/key/attempt1/fence-1/abc123",
+            BranchNamespace.SalvageRef,
+            Now.AddDays(-5),
+            CheckedOut: false,
+            DevelopAvailable: false,
+            MainAvailable: true,
+            MergedIntoDevelop: false,
+            MergedIntoMain: false,
+            IsTaskTerminal: false);
+
+        Assert.Equal(BranchRetentionDecision.SalvageRefTaskNotTerminal,
+            BranchRetentionPolicy.Evaluate(facts, Now, TimeSpan.FromDays(7)));
+    }
+
+    [Fact]
+    public void Evaluate_DeletesQuarantineRefWhenOlderThan30Days()
+    {
+        var facts = new BranchRetentionFacts(
+            "agent-studio/quarantine/runner/key/attempt1/fence-1/abc123",
+            BranchNamespace.QuarantineRef,
+            Now.AddDays(-35),
+            CheckedOut: false,
+            DevelopAvailable: false,
+            MainAvailable: false,
+            MergedIntoDevelop: false,
+            MergedIntoMain: false);
+
+        Assert.Equal(BranchRetentionDecision.Delete,
+            BranchRetentionPolicy.Evaluate(facts, Now, TimeSpan.FromDays(7)));
+    }
+
+    [Fact]
+    public void Evaluate_RetainsQuarantineRefWhenYoungerThan30Days()
+    {
+        var facts = new BranchRetentionFacts(
+            "agent-studio/quarantine/runner/key/attempt1/fence-1/abc123",
+            BranchNamespace.QuarantineRef,
+            Now.AddDays(-20),
+            CheckedOut: false,
+            DevelopAvailable: false,
+            MainAvailable: false,
+            MergedIntoDevelop: false,
+            MergedIntoMain: false);
+
+        Assert.Equal(BranchRetentionDecision.QuarantineRefTooYoung,
+            BranchRetentionPolicy.Evaluate(facts, Now, TimeSpan.FromDays(7)));
+    }
 }
 
 [Trait("Category", "MachineBound")]
