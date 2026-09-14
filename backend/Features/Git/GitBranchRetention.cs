@@ -288,19 +288,22 @@ public sealed class GitBranchRetentionService
     private readonly IConfiguration _configuration;
     private readonly ILogger<GitBranchRetentionService> _logger;
     private readonly TimeProvider _time;
+    private readonly BranchRetentionEvidenceWriter? _evidence;
 
     public GitBranchRetentionService(
         GitService git,
         AgentStudio.Registry.ProjectRegistry projects,
         IConfiguration configuration,
         ILogger<GitBranchRetentionService> logger,
-        TimeProvider? time = null)
+        TimeProvider? time = null,
+        BranchRetentionEvidenceWriter? evidence = null)
     {
         _git = git;
         _projects = projects;
         _configuration = configuration;
         _logger = logger;
         _time = time ?? TimeProvider.System;
+        _evidence = evidence;
     }
 
     public BranchRetentionRunReport RunOnce(CancellationToken cancellationToken = default)
@@ -433,6 +436,7 @@ public sealed class GitBranchRetentionService
                 repositoryPath, candidate, now, minimumAge, dryRun, cancellationToken));
         }
 
+        _evidence?.AppendDeleted(project, actions);
         return new BranchRetentionProjectReport(
             project,
             repositoryPath,
@@ -482,7 +486,8 @@ public sealed class GitBranchRetentionService
                 current.CommittedAtUtc,
                 BranchRetentionDecision.Delete,
                 false,
-                "[DRY RUN] Would be deleted after age and develop/main ancestry recheck.");
+                "[DRY RUN] Would be deleted after age and develop/main ancestry recheck.",
+                BranchRetentionPolicy.ClassifyNamespace(candidate.Branch));
         }
 
         var result = candidate.Remote
@@ -498,7 +503,8 @@ public sealed class GitBranchRetentionService
             result.Success,
             result.Success
                 ? "Deleted after age and develop/main ancestry recheck."
-                : result.Error ?? "Deletion failed; branch kept.");
+                : result.Error ?? "Deletion failed; branch kept.",
+            BranchRetentionPolicy.ClassifyNamespace(candidate.Branch));
     }
 
     private BranchRetentionFacts FactsFor(
@@ -547,7 +553,8 @@ public sealed class GitBranchRetentionService
             candidate.Reference.CommittedAtUtc,
             decision,
             false,
-            ReasonFor(decision));
+            BranchRetentionPolicy.ReasonFor(decision),
+            BranchRetentionPolicy.ClassifyNamespace(candidate.Branch));
 
     private static BranchRetentionAction Changed(RetentionCandidate candidate, string reason)
         => new(
@@ -557,22 +564,8 @@ public sealed class GitBranchRetentionService
             candidate.Reference.CommittedAtUtc,
             BranchRetentionDecision.ChangedBeforeDelete,
             false,
-            reason);
-
-    private static string ReasonFor(BranchRetentionDecision decision) => decision switch
-    {
-        BranchRetentionDecision.UnsupportedNamespace => "Branch is outside task/* and runner/*.",
-        BranchRetentionDecision.CheckedOut => "Branch is checked out in a live worktree.",
-        BranchRetentionDecision.MissingCommitTime => "Tip commit time is unavailable.",
-        BranchRetentionDecision.TooYoung => "Tip commit is inside the retention window.",
-        BranchRetentionDecision.DevelopUnavailable => "Protected develop ref is unavailable.",
-        BranchRetentionDecision.MainUnavailable => "Protected main ref is unavailable.",
-        BranchRetentionDecision.NotMergedIntoDevelop => "Tip is not contained in develop.",
-        BranchRetentionDecision.NotMergedIntoMain => "Tip is not contained in main.",
-        BranchRetentionDecision.ChangedBeforeDelete => "Branch changed before deletion.",
-        BranchRetentionDecision.DeleteFailed => "Deletion failed; branch kept.",
-        _ => "Eligible for deletion.",
-    };
+            reason,
+            BranchRetentionPolicy.ClassifyNamespace(candidate.Branch));
 
     private int ResolveRetentionDays()
         => Math.Clamp(
@@ -647,6 +640,14 @@ public sealed class GitBranchRetentionService
                     repositoryPath, candidate, startedAt, minimumAge, dryRun: false, cancellationToken));
             }
 
+            // Every candidate here was scoped to this one task key (the
+            // patterns above only match task/<taskKey>, runner/*/<taskKey>*,
+            // delivery/<taskKey>), unlike the generic RunRepository sweep
+            // which spans every task - stamp it onto the evidence.
+            for (var i = 0; i < actions.Count; i++)
+                actions[i] = actions[i] with { TaskKey = taskKey };
+
+            _evidence?.AppendDeleted(project, actions);
             return new BranchRetentionProjectReport(
                 project,
                 repositoryPath,

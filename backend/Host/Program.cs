@@ -743,8 +743,14 @@ builder.Services.AddSingleton<AgentStudio.Search.GlobalSearchService>();
 builder.Services.AddSingleton<ProjectSettingsService>();
 builder.Services.AddSingleton<AgentStudio.ExecutionPreparation.ProjectDefinitionProposalService>();
 builder.Services.AddSingleton<GitCleanupService>();
+builder.Services.AddSingleton<BranchRetentionEvidenceWriter>();
 builder.Services.AddSingleton<GitBranchRetentionService>();
 builder.Services.AddSingleton<ArchivedResultRefPruner>();
+// Event-driven counterpart to the periodic sweep above: fired from the
+// integration, archive, and promotion transitions (AcceptedIntegrationWorker,
+// TaskTransitionService, and the /api/git/branch-reclaim/promotion endpoint).
+// Same GitRetention:Enabled settings gate as GitBranchRetentionHostedService.
+builder.Services.AddSingleton<BranchReclaimTriggerService>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService<GitBranchRetentionHostedService>();
 // Slice P (ASS-1663): build-profile onboarding validation dry-run.

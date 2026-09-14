@@ -22,11 +22,15 @@ Options:
   --evidence-dir <directory>        Durable output directory for manifest, logs, and record.
   --prefer-develop-conflicts        Deprecated compatibility option; exact-SHA promotion never merges.
   --remote <name>                   Git remote (default: origin).
+  --project <name>                  Agent Studio project name. After a successful push, calls
+                                     POST /api/git/branch-reclaim/promotion?project=<name> so branches
+                                     for tasks now in main are reclaimed (AGT-2793). Omit to skip.
   -h, --help                        Show this help.
 
 Environment:
   PROMOTION_TAGGER_NAME             Annotated tagger name (default: Agent Studio Promotion).
   PROMOTION_TAGGER_EMAIL            Annotated tagger email (default: promotion@agent-studio.invalid).
+  ATP_API                           Backend base URL for --project (default: http://127.0.0.1:5031).
 
 The execute path has no gate bypass. A non-fast-forward candidate, a red or
 incomplete gate, a tag collision, or a non-atomic push leaves main unchanged.
@@ -39,6 +43,8 @@ required_ancestor=
 tag_name=
 evidence_dir=
 prefer_develop_conflicts=0
+project=
+api="${ATP_API:-http://127.0.0.1:5031}"
 PROMOTION_TAGGER_NAME=${PROMOTION_TAGGER_NAME:-Agent Studio Promotion}
 PROMOTION_TAGGER_EMAIL=${PROMOTION_TAGGER_EMAIL:-promotion@agent-studio.invalid}
 
@@ -74,6 +80,11 @@ while (($#)); do
     --remote)
       (($# >= 2)) || { usage >&2; exit 2; }
       remote=$2
+      shift 2
+      ;;
+    --project)
+      (($# >= 2)) || { usage >&2; exit 2; }
+      project=$2
       shift 2
       ;;
     -h|--help)
@@ -365,3 +376,24 @@ fi
 write_record promoted "$candidate_sha" passed "$conflict_text" true
 log "promoted develop=$develop_sha to main=$candidate_sha with tag=$tag_name candidate=$candidate_sha"
 log 'deployment handoff is ready: the main-advance cron watcher can deploy this main SHA'
+
+# Branch reclaim (AGT-2793): task/runner/delivery/results/salvage refs whose
+# tip is now reachable from main become eligible for deletion once main has
+# actually moved. Best-effort and non-fatal: promotion already succeeded and
+# pushed above, so a reclaim failure here only means those refs are picked up
+# by the next periodic sweep instead.
+if [[ -n "$project" ]]; then
+  set +e
+  reclaim_http_code=$(curl -s -o "$evidence_dir/branch-reclaim-response.json" -w '%{http_code}' \
+    --max-time 30 -X POST -G --data-urlencode "project=$project" \
+    "$api/api/git/branch-reclaim/promotion" 2>>"$evidence_dir/branch-reclaim.log")
+  reclaim_rc=$?
+  set -e
+  if ((reclaim_rc != 0)) || [[ "$reclaim_http_code" != "200" ]]; then
+    log "branch reclaim after promotion did not confirm (curl rc=$reclaim_rc http=$reclaim_http_code); the periodic sweep will retry"
+  else
+    log "branch reclaim after promotion requested for project=$project"
+  fi
+else
+  log 'branch reclaim after promotion skipped: no --project given'
+fi

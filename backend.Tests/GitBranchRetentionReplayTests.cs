@@ -87,9 +87,10 @@ public sealed class GitBranchRetentionReplayTests : IDisposable
         Assert.False(string.IsNullOrWhiteSpace(newSha));
         Assert.NotEqual(originalSha, newSha);
 
-        // Verify develop is updated
-        var developSha = RunGitOut(repo, "rev-parse", "develop").Trim();
-        Assert.Contains(newSha.Substring(0, 7), developSha);
+        // Verify develop is updated: the reissued delivery is now reachable
+        // from develop (not a literal substring of develop's own tip SHA).
+        var isAncestor = git.IsAncestor(repo, newSha, "develop");
+        Assert.True(isAncestor, "Reissued delivery should be reachable from develop");
     }
 
     [Fact]
@@ -127,7 +128,7 @@ public sealed class GitBranchRetentionReplayTests : IDisposable
         var (repo, bare, retention, git) = SetupReplayRepository();
 
         // Get ref count before dry-run
-        var beforeDelete = RunGitOut(repo, "git", "show-ref").Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
+        var beforeDelete = RunGitOut(repo, "show-ref").Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
 
         // Run in dry-run mode
         var dryReport = retention.RunRepository("Demo", repo, Now, retentionDays: 7, dryRun: true);
@@ -138,7 +139,7 @@ public sealed class GitBranchRetentionReplayTests : IDisposable
         Assert.True(liveReport.DeletedCount > 0); // Live run should delete
 
         // Verify refs were actually deleted
-        var afterDelete = RunGitOut(repo, "git", "show-ref").Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
+        var afterDelete = RunGitOut(repo, "show-ref").Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
         Assert.True(afterDelete < beforeDelete);
     }
 
@@ -167,9 +168,12 @@ public sealed class GitBranchRetentionReplayTests : IDisposable
         RunGit(repo, "merge", "-q", "--no-ff", "--no-edit", "task/original-delivery");
         RunGit(repo, "push", "-q", "--all", "origin");
 
-        // Create results ref for first delivery (proof of execution)
+        // Create results ref for first delivery (proof of execution). It is
+        // an immutable pointer at the SHA already merged into main above, not
+        // a new commit of its own - matching real production results refs
+        // (FencedGitRefs.ImmutableResult), which name the delivered SHA
+        // rather than adding to it.
         RunGit(repo, "checkout", "-q", "-b", "agent-studio/results/delivery1/fence-1/abc123");
-        Commit(repo, "result1.txt", "proof", "delivery 1 result", old: true);
         RunGit(repo, "push", "-q", "-u", "origin", "agent-studio/results/delivery1/fence-1/abc123");
 
         // Create second delivery with results ref
@@ -182,9 +186,8 @@ public sealed class GitBranchRetentionReplayTests : IDisposable
         RunGit(repo, "merge", "-q", "--no-ff", "--no-edit", "task/second-delivery");
         RunGit(repo, "push", "-q", "--all", "origin");
 
-        // Create results ref for second delivery
+        // Create results ref for second delivery, same immutable-pointer shape.
         RunGit(repo, "checkout", "-q", "-b", "agent-studio/results/delivery2/fence-1/def456");
-        Commit(repo, "result2.txt", "proof", "delivery 2 result", old: true);
         RunGit(repo, "push", "-q", "-u", "origin", "agent-studio/results/delivery2/fence-1/def456");
 
         var configuration = Configuration(repo);

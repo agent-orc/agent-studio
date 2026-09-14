@@ -8,15 +8,51 @@ namespace AgentStudio.Git;
 public sealed class BranchReclaimTriggerService
 {
     private readonly GitBranchRetentionService _retention;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<BranchReclaimTriggerService> _logger;
+    private readonly TimelineLog? _timeline;
 
     public BranchReclaimTriggerService(
         GitBranchRetentionService retention,
-        ILogger<BranchReclaimTriggerService> logger)
+        IConfiguration configuration,
+        ILogger<BranchReclaimTriggerService> logger,
+        TimelineLog? timeline = null)
     {
         _retention = retention;
+        _configuration = configuration;
         _logger = logger;
+        _timeline = timeline;
     }
+
+    /// <summary>
+    /// Best-effort per-task echo of a reclaim report into that task's own
+    /// timeline, alongside the project-wide <see cref="BranchRetentionEvidenceWriter"/>
+    /// row every deleted ref already got inside <see cref="GitBranchRetentionService"/>.
+    /// No-op without a resolved task folder (e.g. the project-wide promotion
+    /// sweep, which is not tied to one task) or without any deletions.
+    /// </summary>
+    private void AppendTimelineEcho(string? taskFolderPath, BranchRetentionProjectReport report)
+    {
+        if (_timeline is null || string.IsNullOrWhiteSpace(taskFolderPath) || report.DeletedCount == 0) return;
+        var deleted = report.Actions.Where(a => a.Deleted).ToList();
+        _timeline.Append(
+            taskFolderPath,
+            TimelineEventKinds.BranchesReclaimed,
+            TimelineActors.System,
+            $"Reclaimed {deleted.Count} git ref(s): {string.Join(", ", deleted.Select(a => a.Branch))}.",
+            details: new Dictionary<string, string>
+            {
+                ["refs"] = string.Join(",", deleted.Select(a => a.Branch)),
+                ["shas"] = string.Join(",", deleted.Select(a => a.TipSha)),
+            });
+    }
+
+    /// <summary>
+    /// Same settings gate as <see cref="GitBranchRetentionHostedService"/>
+    /// (<c>GitRetention:Enabled</c>, default on) so an operator who disables
+    /// the periodic sweep also disables the event-driven triggers.
+    /// </summary>
+    private bool IsEnabled() => _configuration.GetValue<bool?>("GitRetention:Enabled") ?? true;
 
     /// <summary>
     /// Trigger reclamation after successful integration into the configured
@@ -28,8 +64,10 @@ public sealed class BranchReclaimTriggerService
         string repositoryPath,
         string taskKey,
         string integrationBranch,
+        string? taskFolderPath = null,
         CancellationToken cancellationToken = default)
     {
+        if (!IsEnabled()) return;
         try
         {
             var report = _retention.ReclaimForTask(
@@ -51,6 +89,7 @@ public sealed class BranchReclaimTriggerService
                 _logger.LogInformation(
                     "Branch reclaim after integration for {Project}/{TaskKey}: deleted={Deleted} kept={Kept}",
                     project, taskKey, report.DeletedCount, report.KeptCount);
+                AppendTimelineEcho(taskFolderPath, report);
             }
         }
         catch (Exception ex)
@@ -70,8 +109,10 @@ public sealed class BranchReclaimTriggerService
         string project,
         string repositoryPath,
         string taskKey,
+        string? taskFolderPath = null,
         CancellationToken cancellationToken = default)
     {
+        if (!IsEnabled()) return;
         try
         {
             var report = _retention.ReclaimForTask(
@@ -93,6 +134,7 @@ public sealed class BranchReclaimTriggerService
                 _logger.LogInformation(
                     "Branch reclaim after archive for {Project}/{TaskKey}: deleted={Deleted} kept={Kept}",
                     project, taskKey, report.DeletedCount, report.KeptCount);
+                AppendTimelineEcho(taskFolderPath, report);
             }
         }
         catch (Exception ex)
@@ -113,6 +155,7 @@ public sealed class BranchReclaimTriggerService
         string repositoryPath,
         CancellationToken cancellationToken = default)
     {
+        if (!IsEnabled()) return;
         try
         {
             var report = _retention.RunOnce(dryRun: false, cancellationToken);

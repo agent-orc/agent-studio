@@ -89,7 +89,12 @@ removed before retrying the same marker.
 6. Verify `promotion-record.json` says `status=promoted`, `gate=passed`, and
    `atomicPush=true`. Verify the remote `main` and peeled tag resolve to the
    recorded `candidateSha`.
-7. Monitor the deploy handoff. The deploy cron described below detects the new
+7. Pass `--project <name>` on the `--execute` run (an Agent Studio project
+   name, e.g. `Agent Studio`) so the atomic push step also requests branch
+   reclaim - see "Branch reclaim after promotion" below. Omitting it only
+   skips that request; the branches are still picked up by the next periodic
+   sweep.
+8. Monitor the deploy handoff. The deploy cron described below detects the new
    `main`, waits for Stable to become safe to restart, runs `update-stable.sh`,
    and verifies the deployed checkout.
 
@@ -133,6 +138,27 @@ gate output, tag creation output, and remote push response. A tag or push
 failure after a passed gate writes `status=blocked-tag` or
 `status=blocked-push`, retains `gate=passed`, and records the command error so
 the evidence directory remains complete.
+
+## Branch reclaim after promotion
+
+AGT-2793: `develop`/`main` promotion is the last point at which a task's
+`task/*`, `runner/*`, `delivery/*`, and `agent-studio/results/*` refs become
+eligible for deletion (see "Branch cleanup" in
+[task-integration-and-merge-workflow.md](../concepts/task-integration-and-merge-workflow.md)).
+Promotion itself runs as a runner-host shell script, outside the backend
+process, so it has no in-process transition to hook the reclaim trigger off
+of. Instead, once the atomic `main` + tag push is verified (`write_record
+promoted ...`), the script best-effort calls
+`POST /api/git/branch-reclaim/promotion?project=<name>` against the backend
+(`ATP_API`, default `http://127.0.0.1:5031`) when `--project` was given. That
+endpoint resolves the project's configured repository and runs
+`BranchReclaimTriggerService.ReclaimAfterPromotionToMain`, which sweeps all
+six ref namespaces for every project (not just the one that promoted) and
+records evidence the same way the integration and archive triggers do. A
+failed or skipped call is logged in `branch-reclaim.log` inside the evidence
+directory and never fails or reverts the promotion; the next periodic
+`GitBranchRetentionHostedService` sweep (`GitRetention:IntervalHours`, default
+24h) covers anything missed.
 
 ## Deploy cron handoff
 

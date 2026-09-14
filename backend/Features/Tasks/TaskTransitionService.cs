@@ -39,6 +39,7 @@ public sealed class TaskTransitionService
     private readonly AttemptAuthorityService? _attemptAuthority;
     private readonly ReviewAttemptTaskLifecycleService? _reviewAttemptLifecycle;
     private readonly ResultVersionStore? _resultVersions;
+    private readonly BranchReclaimTriggerService? _branchReclaim;
     private readonly TimeProvider _time;
     private long _resultScaffoldCreatedCount;
 
@@ -83,6 +84,7 @@ public sealed class TaskTransitionService
         AttemptAuthorityService? attemptAuthority = null,
         ReviewAttemptTaskLifecycleService? reviewAttemptLifecycle = null,
         ResultVersionStore? resultVersions = null,
+        BranchReclaimTriggerService? branchReclaim = null,
         TimeProvider? timeProvider = null)
     {
         _scanner = scanner;
@@ -105,6 +107,7 @@ public sealed class TaskTransitionService
         _attemptAuthority = attemptAuthority;
         _reviewAttemptLifecycle = reviewAttemptLifecycle;
         _resultVersions = resultVersions;
+        _branchReclaim = branchReclaim;
         _time = timeProvider ?? TimeProvider.System;
     }
 
@@ -509,9 +512,42 @@ public sealed class TaskTransitionService
             {
                 _logger.LogWarning(ex, "OnJobMoved subscriber threw for {JobId} ({From} -> {To})", jobId, fromState, targetState);
             }
+
+            if (targetState == TaskStates.Archive)
+                TriggerBranchReclaimAfterArchive(jobId, watchPath, projectName, info);
         }
 
         return outcome;
+    }
+
+    /// <summary>
+    /// Fires once, synchronously, on the archive transition itself, and
+    /// covers the broader task/runner/delivery + salvage/quarantine ref
+    /// namespace for this one task (<see cref="BranchReclaimTriggerService.ReclaimAfterArchive"/>).
+    /// This is a different job from <see cref="ArchivedResultRefPruner"/>,
+    /// which instead runs on the periodic retention sweep across every
+    /// archived card and only prunes the local remote-tracking copies of
+    /// results/quarantine refs already known to that card's review subject;
+    /// it never contacts origin. Best-effort: failures are logged inside
+    /// the trigger service and never affect the already-landed archive move.
+    /// </summary>
+    private void TriggerBranchReclaimAfterArchive(
+        string jobId, string? watchPath, string projectName, TaskInfo info)
+    {
+        if (_branchReclaim == null) return;
+        var repoRoot = _git.ResolveRepoRootForWatchPath(watchPath)
+            ?? (string.IsNullOrWhiteSpace(watchPath) ? null : watchPath);
+        if (string.IsNullOrWhiteSpace(repoRoot)) return;
+        var taskKey = !string.IsNullOrWhiteSpace(info.Key)
+            ? info.Key!
+            : !string.IsNullOrWhiteSpace(info.TaskKey)
+                ? info.TaskKey
+                : info.Id;
+        // info.FolderPath is the pre-move location; the archive transition
+        // already relocated the folder, so re-resolve it post-move for the
+        // timeline echo.
+        var archivedFolderPath = _scanner.FindJob(jobId, watchPath)?.FolderPath;
+        _branchReclaim.ReclaimAfterArchive(projectName, repoRoot, taskKey, archivedFolderPath);
     }
 
     private bool HasFailedIntegrationRound(string folderPath)

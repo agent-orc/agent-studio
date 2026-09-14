@@ -36,14 +36,19 @@ public sealed class GitBranchRetentionBareRemoteTests : IDisposable
             .GroupBy(a => a.Namespace)
             .ToDictionary(g => g.Key, g => g.ToList());
 
-        // task/* - should delete merged old ones
+        // task/* - should delete merged old ones. The fixture leaves both a
+        // local branch (git checkout switched away without deleting it) and a
+        // remote-tracking ref behind, so both scopes are eligible.
         AssertNamespaceActions(byNamespace, BranchNamespace.Task,
             (actions) =>
             {
                 var merged = actions.Where(a => a.Branch == "task/merged-old").ToList();
-                Assert.Single(merged);
-                Assert.True(merged[0].Deleted);
-                Assert.Equal(BranchRetentionDecision.Delete, merged[0].Decision);
+                Assert.NotEmpty(merged);
+                Assert.All(merged, action =>
+                {
+                    Assert.True(action.Deleted);
+                    Assert.Equal(BranchRetentionDecision.Delete, action.Decision);
+                });
             });
 
         // runner/* - should delete merged old ones
@@ -51,8 +56,8 @@ public sealed class GitBranchRetentionBareRemoteTests : IDisposable
             (actions) =>
             {
                 var merged = actions.Where(a => a.Branch == "runner/agent/task-key").ToList();
-                Assert.Single(merged);
-                Assert.True(merged[0].Deleted);
+                Assert.NotEmpty(merged);
+                Assert.All(merged, action => Assert.True(action.Deleted));
             });
 
         // delivery/* - should delete merged old ones
@@ -60,8 +65,8 @@ public sealed class GitBranchRetentionBareRemoteTests : IDisposable
             (actions) =>
             {
                 var merged = actions.Where(a => a.Branch == "delivery/task-key").ToList();
-                Assert.Single(merged);
-                Assert.True(merged[0].Deleted);
+                Assert.NotEmpty(merged);
+                Assert.All(merged, action => Assert.True(action.Deleted));
             });
 
         // results/* - should delete only after in main
@@ -94,20 +99,39 @@ public sealed class GitBranchRetentionBareRemoteTests : IDisposable
     {
         var (repo, bare, retention) = SetupBareRemoteRepository();
 
-        // First run at time T: refs are young, nothing deleted
+        // A salvage ref that is neither merged into main nor yet 14 days old
+        // at T: retained at T, eligible once the 14-day window elapses. Every
+        // other namespace in the base fixture is already merged and old
+        // enough to be deleted on the very first pass, so without this ref
+        // there is nothing left for a later pass to find.
+        const string pendingSalvageRef = "agent-studio/salvage/agent/task/attempt2/fence-1/pending123";
+        RunGit(repo, "checkout", "-q", "-b", pendingSalvageRef);
+        File.WriteAllText(Path.Combine(repo, "salvage-pending.txt"), "still in progress");
+        RunGit(repo, "add", "salvage-pending.txt");
+        Run(repo, ["commit", "-q", "-m", "salvage still in progress"], new Dictionary<string, string>
+        {
+            ["GIT_AUTHOR_DATE"] = Now.AddDays(-10).ToString("o"),
+            ["GIT_COMMITTER_DATE"] = Now.AddDays(-10).ToString("o"),
+        });
+        RunGit(repo, "push", "-q", "-u", "origin", pendingSalvageRef);
+        RunGit(repo, "checkout", "-q", "main");
+
+        // First run at time T: the merged refs from the base fixture are
+        // deleted; the 10-day-old pending salvage ref is retained.
         var reportT = retention.RunRepository("Demo", repo, Now, retentionDays: 7);
         var deletedAtT = reportT.DeletedCount;
         Assert.True(deletedAtT > 0, "Some merged refs should be deleted at T");
+        Assert.Contains(reportT.Actions, a => a.Branch == pendingSalvageRef && !a.Deleted);
 
         // Simulate promotion: all main ancestry checks pass
         var mainTip = RunGitOut(repo, "rev-parse", "main").Trim();
         Assert.False(string.IsNullOrWhiteSpace(mainTip));
 
-        // Second run at later time: more refs become eligible
+        // Second run 20 days later: the pending salvage ref is now 30 days
+        // old, past the 14-day window, so it becomes eligible too.
         var laterTime = Now.AddDays(20);
         var reportLater = retention.RunRepository("Demo", repo, laterTime, retentionDays: 7);
-        Assert.True(reportLater.DeletedCount >= deletedAtT,
-            $"More refs should be deleted at later time: {reportLater.DeletedCount} >= {deletedAtT}");
+        Assert.Contains(reportLater.Actions, a => a.Branch == pendingSalvageRef && a.Deleted);
     }
 
     [Fact]
@@ -158,6 +182,35 @@ public sealed class GitBranchRetentionBareRemoteTests : IDisposable
             Assert.NotNull(action.Reason);
             Assert.NotNull(action.Namespace);
         }
+    }
+
+    /// <summary>
+    /// AGT-2793 requirement 3: every deletion lands in the per-project
+    /// <c>reports/git-branch-reclaim.jsonl</c> evidence file, so the audit
+    /// trail survives even after the ref itself is gone.
+    /// </summary>
+    [Fact]
+    public void RunRepository_WritesEvidenceRowForEveryDeletedRef()
+    {
+        var (repo, _, _) = SetupBareRemoteRepository();
+        var configuration = Configuration(repo);
+        var git = GitFor(repo, configuration);
+        var registry = new AgentStudio.Registry.ProjectRegistry(
+            configuration, NullLogger<AgentStudio.Registry.ProjectRegistry>.Instance);
+        var evidence = new BranchRetentionEvidenceWriter(
+            configuration, NullLogger<BranchRetentionEvidenceWriter>.Instance);
+        var retention = new GitBranchRetentionService(
+            git, registry, configuration, NullLogger<GitBranchRetentionService>.Instance,
+            new MockTimeProvider(Now), evidence);
+
+        var report = retention.RunRepository("Demo", repo, Now, retentionDays: 7);
+
+        Assert.True(report.DeletedCount > 0);
+        var file = evidence.ReportFile("Demo")!;
+        Assert.True(File.Exists(file));
+        var lines = File.ReadAllLines(file);
+        Assert.Equal(report.DeletedCount, lines.Length);
+        Assert.Contains(lines, line => line.Contains("\"ref\":\"task/merged-old\"", StringComparison.Ordinal));
     }
 
     private void AssertNamespaceActions(
