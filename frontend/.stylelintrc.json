@@ -194,6 +194,7 @@
         "src/app/components/copyable-task-key/copyable-task-key.component.scss",
         "src/app/components/task-reference-microcard/task-reference-microcard.scss",
         "src/app/components/project-basics-form/project-basics-form.component.scss",
+        "src/app/components/pickup-hold/pickup-hold.component.scss",
         "src/app/components/task-live-status/task-live-status.component.scss",
         "src/app/components/tooltip/tooltip.scss",
         "src/app/features/board/components/create-task-dialog/create-task-dialog.component.scss",

@@ -8272,6 +8272,13 @@ public class ProjectRunner
     private readonly HashSet<string> _waitsOnCycleWarned = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _waitsOnCycleGate = new();
 
+    // AGT-2818: an unsatisfiable release gate is the same class of fault as a
+    // cycle - a gate no run left in the system can open - so it earns the same
+    // once-per-card warning instead of the LogDebug the ordinary wait gets.
+    // Deduped separately from the cycle set so a card can move between the two
+    // classifications without losing either report.
+    private readonly HashSet<string> _waitsOnUnsatisfiableWarned = new(StringComparer.OrdinalIgnoreCase);
+
     private List<TaskInfo> ListReadyPickupCandidatesInDisplayedOrder()
     {
         var settings = _projectSettings.Get(ProjectName);
@@ -8324,8 +8331,9 @@ public class ProjectRunner
     /// is a configuration error that can never be satisfied: it is reported once
     /// per card (structured warning + the card's waits-on status drives an error
     /// chip in the UI) and the card is skipped rather than deadlocking the tick.
-    /// Cross-project + archive-inclusive resolution comes from
-    /// <paramref name="waitsOnIndex"/>.
+    /// AGT-2818 gives an unsatisfiable release gate (an archived, never released
+    /// target) the same treatment for the same reason. Cross-project +
+    /// archive-inclusive resolution comes from <paramref name="waitsOnIndex"/>.
     /// </summary>
     private bool IsBlockedByWaitsOn(TaskInfo job, TaskReferenceIndex waitsOnIndex)
     {
@@ -8347,6 +8355,30 @@ public class ProjectRunner
 
         // Not cyclic anymore: allow a future warning if a cycle recurs.
         lock (_waitsOnCycleGate) _waitsOnCycleWarned.Remove(cardKey);
+
+        // AGT-2818: a release gate whose target is archived and unreleased can
+        // never open by itself, which is a configuration error and not a wait.
+        // Warn about it exactly as loudly, and exactly as rarely, as a cycle:
+        // the reported card sat in 2-ready for a month producing nothing but
+        // LogDebug lines nobody reads.
+        if (status.UnsatisfiableGate)
+        {
+            var gates = status.Items.Where(i => i.Unsatisfiable).ToList();
+            bool firstReport;
+            lock (_waitsOnCycleGate) firstReport = _waitsOnUnsatisfiableWarned.Add(cardKey);
+            if (firstReport)
+                _logger.LogWarning(
+                    "[taskboard] unsatisfiable waits-on gate on {Job} ({Project}): {Reason} Skipping auto-pickup (configuration error). Either release {Targets} or drop the releaseGate edge and re-plan this card.",
+                    cardKey,
+                    ProjectName,
+                    gates[0].UnsatisfiableReason,
+                    string.Join(", ", gates.Select(i => i.Key)));
+            return true;
+        }
+
+        // Satisfiable again (the target was released, or the edge was dropped):
+        // allow a future warning if the card regresses into the same state.
+        lock (_waitsOnCycleGate) _waitsOnUnsatisfiableWarned.Remove(cardKey);
 
         if (status.Blocked)
         {
