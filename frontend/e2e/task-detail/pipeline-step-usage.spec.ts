@@ -153,7 +153,7 @@ function pipeline() {
           totalTokens: 1310000, totalCostUsd: 2.75, anyModelUnknown: false,
         },
         {
-          attempt: 2, current: true, startedAt: current.startedAt, completedAt: current.completedAt,
+          attempt: 2, current: !current.completedAt, startedAt: current.startedAt, completedAt: current.completedAt,
           models: [
             { model: 'claude-haiku-4-5', modelKnown: true, steps: 1, inputTokens: 1000000, outputTokens: 200000, cacheReadTokens: 0, cacheCreationTokens: 0, totalTokens: 1200000, costUsd: 2.0 },
             { model: 'claude-opus-4-8', modelKnown: true, steps: 1, inputTokens: 100000, outputTokens: 10000, cacheReadTokens: 0, cacheCreationTokens: 0, totalTokens: 110000, costUsd: 0.75 },
@@ -335,7 +335,7 @@ function pipelineWithSixRunsAndPartialUsage() {
     };
     return {
       attempt: index + 1,
-      current: index === 5,
+      current: false,
       startedAt: `2026-08-11T${String(8 + index).padStart(2, '0')}:00:00Z`,
       completedAt: `2026-08-11T${String(8 + index).padStart(2, '0')}:20:00Z`,
       models: available ? [model] : [],
@@ -602,6 +602,9 @@ test('six visible runs show their priced partial total and keep pipeline rows al
   await expect(totalCost).toContainText('incomplete (1 run without usage)');
   await expect(totalCost).not.toContainText('$0.00');
   await expect(page.getByTestId('pipeline-token-usage-run')).toHaveCount(6);
+  // Every run here has finished, so the live-run badge appears nowhere: the
+  // newest-first order alone carries which run is the newest.
+  await expect(page.getByTestId('pipeline-token-usage-run-current')).toHaveCount(0);
   await expect(page.getByTestId('overview-agent-work')).toBeVisible();
 
   const core = page.locator('[data-step-id="core-agent-run"]');
