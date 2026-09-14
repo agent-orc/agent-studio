@@ -12,7 +12,7 @@
     <span class="radar-inline-note__text">{{ emptyLabel() }}</span>
   </div>
 } @else if (hasData()) {
-  <div class="radar" data-testid="regression-radar">
+  <div class="radar" [class.radar--inline]="variant() === 'inline'" data-testid="regression-radar">
     <div class="radar__header">
       <div class="radar__title-group">
         <h4 class="radar__title">{{ title() }}</h4>

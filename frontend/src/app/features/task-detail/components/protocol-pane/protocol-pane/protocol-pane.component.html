@@ -263,10 +263,6 @@
                                          [content]="detail().statusMarkdown"
                                          [contentTransform]="statusHistoryTransform" />
               } @else {
-                <app-previous-results-control
-                  [jobId]="detail().info.id"
-                  [watchPath]="detail().info.watchPath"
-                  (resultSelected)="selectedPreviousResult.set($event)" />
                 <app-result-view class="notes-panel__body"
                                  data-detail-tab-scroll-owner
                                  data-testid="protocol-beautiful-results"
@@ -279,7 +275,12 @@
                                  (moreActions)="openProtocolMenu($event)"
                                  (openSource)="openSource($event)"
                                  (openWiki)="openWiki($event)"
-                                 (openTask)="openTask($event)" />
+                                 (openTask)="openTask($event)">
+                  <app-previous-results-control resultHeadControls
+                    [jobId]="detail().info.id"
+                    [watchPath]="detail().info.watchPath"
+                    (resultSelected)="selectedPreviousResult.set($event)" />
+                </app-result-view>
               }
             }
           </section>

@@ -7,6 +7,26 @@
 .radar {
   @include m.deck-panel;
 
+  /*
+   * Embedded under the run list: the surrounding section already draws the
+   * frame, so the radar keeps only its own content rhythm.
+   */
+  &--inline {
+    padding: 0;
+    border: 0;
+    background: transparent;
+
+    .radar__title {
+      @include m.type-label;
+    }
+
+    .radar__overall-badge {
+      font-weight: 600;
+      text-transform: none;
+      letter-spacing: 0;
+    }
+  }
+
   &--loading,
   &--empty {
     display: flex;

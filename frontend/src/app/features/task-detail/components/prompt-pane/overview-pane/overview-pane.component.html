@@ -715,14 +715,14 @@
   }
   </div>
 
-  <!-- Regression Radar block -->
-  <section class="ov-section studio-measure studio-measure--tabular" data-testid="overview-regression-radar">
-    <app-regression-radar [jobId]="job().id" [watchPath]="job().watchPath" />
-  </section>
-
   <!-- Card-scoped CLI history. Pipeline "Attempt N/M" is a separate
        completion-loop counter and remains in the Pipeline section. -->
   <app-overview-runs
     [runs]="runs()"
     [fallbackDurationSeconds]="totalDuration()" />
+
+  <!-- Radar reads the spec changes of those runs, so it follows them quietly. -->
+  <section class="ov-section studio-measure studio-measure--tabular" data-testid="overview-regression-radar">
+    <app-regression-radar variant="inline" [jobId]="job().id" [watchPath]="job().watchPath" />
+  </section>
 </div>

@@ -24,6 +24,12 @@ import { InfoButtonComponent } from '../../../../components/info-button/info-but
 })
 export class RegressionRadarComponent implements OnInit, OnDestroy {
   readonly scope = input<'task' | 'project'>('task');
+  /**
+   * 'panel' is the standalone card used on the project hub. 'inline' embeds the
+   * radar inside a pane that already owns the surrounding section frame, so it
+   * drops its own card border and heading weight.
+   */
+  readonly variant = input<'panel' | 'inline'>('panel');
   readonly jobId = input<string | null>(null);
   readonly projectName = input<string | null>(null);
   readonly watchPath = input<string>();

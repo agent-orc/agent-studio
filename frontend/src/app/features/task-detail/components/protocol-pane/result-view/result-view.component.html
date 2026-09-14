@@ -33,6 +33,9 @@
             </span>
           }
         }
+        <!-- Controls that belong to the summary row itself, projected by the
+             pane that owns the result (today: the previous-results switch). -->
+        <ng-content select="[resultHeadControls]" />
       </div>
       <div class="result__actions">
         @if (provenance(); as generation) {

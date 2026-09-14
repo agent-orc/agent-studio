@@ -1,16 +1,21 @@
 :host {
-  display: block;
+  display: inline-flex;
+  min-width: 0;
 }
 
 .previous-results {
   position: relative;
-  padding: var(--studio-spacing-2) var(--studio-spacing-3) 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--studio-spacing-1);
+  min-width: 0;
+  padding: 0;
 
   &__controls {
-    display: flex;
-    flex-wrap: wrap;
+    display: inline-flex;
+    flex: 0 0 auto;
     align-items: center;
-    gap: var(--studio-spacing-2);
+    gap: var(--studio-spacing-1);
   }
 
   &__toggle,
@@ -25,7 +30,23 @@
 
   &__toggle,
   &__current {
-    padding: var(--studio-spacing-1) var(--studio-spacing-2);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--studio-spacing-1);
+    padding: 0 var(--studio-spacing-2);
+    font: inherit;
+    font-size: 11px;
+    line-height: 1.5;
+    white-space: nowrap;
+  }
+
+  &__toggle:hover:not(:disabled),
+  &__current:hover {
+    background: var(--studio-bg-hover);
+  }
+
+  &__toggle[aria-expanded='true'] {
+    border-color: var(--studio-accent);
   }
 
   &__toggle:focus-visible,
@@ -42,7 +63,8 @@
   &__menu {
     position: absolute;
     z-index: 3;
-    top: 100%;
+    left: 0;
+    top: calc(100% + var(--studio-spacing-1));
     min-width: min(520px, calc(100vw - var(--studio-spacing-6)));
     max-height: 320px;
     overflow: auto;
@@ -84,12 +106,26 @@
     color: var(--studio-fg-muted);
   }
 
-  &__banner,
-  &__error,
   &__empty {
-    margin: var(--studio-spacing-2) 0 0;
+    margin: 0;
     border-radius: var(--studio-card-compact-radius);
     padding: var(--studio-spacing-2);
+  }
+
+  &__banner,
+  &__error {
+    display: inline-flex;
+    flex: 0 1 auto;
+    align-items: center;
+    min-width: 0;
+    margin: 0;
+    border-radius: var(--studio-card-compact-radius);
+    padding: 0 var(--studio-spacing-2);
+    overflow: hidden;
+    font-size: 11px;
+    line-height: 1.5;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   &__banner {
