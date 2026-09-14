@@ -136,7 +136,57 @@ export function projectStructuredActivityContent(
   }
 
   finishBlock();
-  return { projectionLines, events };
+  return { projectionLines, events: collapseRunnerRuns(events, source) };
+}
+
+/**
+ * A contiguous run of `[runner]` bootstrap facts (working tree ready,
+ * spawning, spec, config, ...) used to become one `system.status` row per
+ * fact, each repeating the same generic "Runner" label and each carrying its
+ * own trace affordance in the shared rendering library - six near-identical
+ * rows that read as noise even though they state six distinct facts
+ * (AGT-2793 second evidence set). Collapse a contiguous run of runner facts
+ * into one heading event whose explanation names each fact on its own line,
+ * with one merged trace range spanning the whole run, so the group reads as
+ * one row instead of six.
+ *
+ * A run of exactly one fact is left as-is (its existing specific label -
+ * "Runner ready", "Runner started", ... - already says what it states).
+ * Only a run of two or more collapses, since that is where the repeated
+ * generic label became the visible problem.
+ */
+function collapseRunnerRuns(events: readonly ConversationEvent[], source: string): ConversationEvent[] {
+  const out: ConversationEvent[] = [];
+  let run: SystemStatusEvent[] = [];
+
+  const flush = () => {
+    if (run.length === 0) return;
+    if (run.length === 1) {
+      out.push(run[0]);
+    } else {
+      const first = run[0];
+      const last = run[run.length - 1];
+      out.push({
+        ...first,
+        label: 'Runner',
+        explanation: run.map((fact) => `${fact.label}: ${fact.explanation}`).join('\n'),
+        rawRange: { source, start: first.rawRange.start, end: last.rawRange.end },
+      });
+    }
+    run = [];
+  };
+
+  for (const event of events) {
+    if (event.kind === 'system.status' && event.category === 'runner') {
+      run.push(event);
+      continue;
+    }
+    flush();
+    out.push(event);
+  }
+  flush();
+
+  return out;
 }
 
 function runnerEvent(

@@ -62,18 +62,37 @@ describe('projectStructuredActivityContent', () => {
     expect(result.projectionLines).toEqual([]);
   });
 
-  it('projects runner system records quietly and drops delivery bookkeeping', () => {
+  it('collapses a contiguous run of runner bootstrap facts into one heading row', () => {
     const result = projectStructuredActivityContent(fixture(), 'AGT-2355');
     const runner = result.events.filter((event): event is SystemStatusEvent =>
       event.kind === 'system.status' && event.category === 'runner');
 
-    expect(runner).toHaveLength(2);
-    expect(runner.map((event) => event.label)).toEqual([
-      'Runner ready',
-      'Runner started',
-    ]);
+    // "working tree ready" and "spawning" are adjacent [runner] lines, so
+    // they collapse into one row with one heading instead of two rows both
+    // labeled generically. Each fact keeps its own name inside the row.
+    expect(runner).toHaveLength(1);
+    expect(runner[0].label).toBe('Runner');
+    expect(runner[0].explanation).toBe(
+      "Runner ready: Working tree ready on branch 'main'.\n"
+      + 'Runner started: Spawning codex exec -m gpt-5.6-sol -.',
+    );
+    expect(runner[0].rawRange).toEqual({ source: 'AGT-2355', start: 1, end: 2 });
     expect(JSON.stringify(runner)).not.toContain('[runner]');
     expect(JSON.stringify(result.events)).not.toContain('[runner-log-delivery:');
+  });
+
+  it('leaves a lone runner fact with its own specific label (no grouping needed)', () => {
+    const lines: CliOutputLine[] = [
+      { timestamp: '2026-08-01T00:00:00.000Z', stream: 'system', text: "[runner] working tree ready on branch 'main'" },
+      { timestamp: '2026-08-01T00:00:01.000Z', stream: 'stderr', text: 'OpenAI Codex v0.144.1' },
+    ];
+
+    const result = projectStructuredActivityContent(lines, 'AGT-2355');
+    const runner = result.events.filter((event): event is SystemStatusEvent =>
+      event.kind === 'system.status' && event.category === 'runner');
+
+    expect(runner).toHaveLength(1);
+    expect(runner[0].label).toBe('Runner ready');
   });
 
   it('keeps markup file-tool payloads out of agent Markdown', () => {

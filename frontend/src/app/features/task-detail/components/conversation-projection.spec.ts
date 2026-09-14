@@ -279,6 +279,93 @@ describe('sanitizeProjectionLines', () => {
   });
 });
 
+describe('sanitizeProjectionLines - protocol-novelty unknown-frame grouping (AGT-2793/AGT-2814)', () => {
+  // Fixture: the runner emits one `[runner-protocol-unknown-frame]` marker
+  // per occurrence of an unmapped `tool_progress` frame from the `claude`
+  // adapter (mirrors the AGT-2793 activity stream: four unknown frames of
+  // the same kind interleaved with readable rows), followed by the readable
+  // `RUNNER FINISHED` / `RUNNER READY` rows the CLI also emitted.
+  function noveltyMarker(occurrence: number, total: number): string {
+    return '[runner-protocol-unknown-frame] ' + JSON.stringify({
+      cli: 'claude',
+      adapterVersion: '0.7.0',
+      frameType: 'tool_progress',
+      occurrence,
+      totalUnknownFrames: total,
+      payloadSha256: 'a480e2da5e52776eac9c96b85d7d6a7f'.padEnd(64, '0'),
+    });
+  }
+
+  it('groups four unknown frames of the same kind into one row with a count, leaving known rows unchanged', () => {
+    const known1 = line('[runner] RUNNER READY working tree ready', 'system');
+    const known2 = line('[runner] RUNNER FINISHED CLI exited 0', 'system');
+    const input = [
+      known1,
+      line(noveltyMarker(1, 1)),
+      line(noveltyMarker(2, 2)),
+      line(noveltyMarker(3, 3)),
+      line(noveltyMarker(4, 4)),
+      known2,
+    ];
+
+    const out = sanitizeProjectionLines(input);
+
+    // One grouped row for the four unknown frames, plus the two known rows.
+    expect(out).toHaveLength(3);
+    expect(out[0]).toBe(known1);
+    expect(out[2]).toBe(known2);
+
+    const grouped = out[1];
+    expect(grouped.text).toContain('4');
+    expect(grouped.text).toContain('tool_progress');
+    expect(grouped.text).toContain('claude');
+    expect(grouped.text).toContain('0.7.0');
+    expect(grouped.text).not.toContain('{');
+    expect(grouped.text).not.toContain('payloadSha256');
+
+    // The raw payloads stay available behind disclosure, never inline.
+    expect(grouped.internalDetail).toContain('occurrence');
+    expect(grouped.internalDetail?.match(/runner-protocol-unknown-frame/g)).toHaveLength(4);
+
+    // No bare/empty rows.
+    for (const outLine of out) {
+      expect(outLine.text.trim().length).toBeGreaterThan(0);
+    }
+  });
+
+  it('groups non-consecutive occurrences of the same (cli, adapterVersion, frameType) into one row', () => {
+    const out = sanitizeProjectionLines([
+      line(noveltyMarker(1, 1)),
+      line('real agent message'),
+      line(noveltyMarker(2, 2)),
+    ]);
+
+    expect(out).toHaveLength(2);
+    expect(out[0].text).toContain('2');
+    expect(out[1]).toEqual(line('real agent message'));
+  });
+
+  it('keeps distinct frame types in separate grouped rows', () => {
+    const otherFrameMarker = '[runner-protocol-unknown-frame] ' + JSON.stringify({
+      cli: 'claude',
+      adapterVersion: '0.7.0',
+      frameType: 'future_frame',
+      occurrence: 1,
+      totalUnknownFrames: 2,
+      payloadSha256: 'b'.repeat(64),
+    });
+
+    const out = sanitizeProjectionLines([
+      line(noveltyMarker(1, 1)),
+      line(otherFrameMarker),
+    ]);
+
+    expect(out).toHaveLength(2);
+    expect(out[0].text).toContain('tool_progress');
+    expect(out[1].text).toContain('future_frame');
+  });
+});
+
 describe('renderable-kind whitelist', () => {
   it('accepts every known activity-log kind', () => {
     for (const kind of ['read', 'search', 'command', 'edit', 'task', 'todo', 'error', 'message', 'orchestrator', 'supervisor', 'other']) {

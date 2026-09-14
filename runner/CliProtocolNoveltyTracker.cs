@@ -20,6 +20,11 @@ internal sealed class CliProtocolNoveltyTracker(string cliType)
         "user",
         "result",
         "rate_limit_event",
+        // Incremental progress heartbeat for a long-running tool call. Known
+        // to CAR 0.7.0 but intentionally not surfaced as an Activity Log row
+        // (see ClaudeOutputRenderer); it must not accumulate as protocol
+        // drift either.
+        "tool_progress",
     };
 
     private static readonly HashSet<string> CodexFrameTypes = new(StringComparer.Ordinal)

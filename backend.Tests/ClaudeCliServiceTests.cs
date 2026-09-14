@@ -270,6 +270,20 @@ public class ClaudeCliServiceTests
         Assert.Equal("● some_new_frame", lines[0].Text);
     }
 
+    [Fact]
+    public void TransformReadLine_ToolProgressHeartbeatIsDropped()
+    {
+        // tool_progress is a known Claude Code frame (CAR 0.7.0) carrying an
+        // incremental tool-call delta. It is not narrative-worthy on its own,
+        // so the renderer drops it instead of emitting a catch-all marker row.
+        var svc = NewService();
+        var raw = StdoutFrame("""{"type":"tool_progress","tool_use_id":"toolu_01","delta":"..."}""");
+
+        var lines = svc.TransformReadLine(raw).ToList();
+
+        Assert.Empty(lines);
+    }
+
     [Theory]
     // Locks NormalizeModelId's dotted-to-dashed coercion. Users sometimes
     // type "claude-opus-4.7"; the Anthropic CLI requires "claude-opus-4-7".

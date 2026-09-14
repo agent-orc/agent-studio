@@ -66,6 +66,15 @@ public sealed class CliProtocolNoveltyTests
     }
 
     [Fact]
+    public void Claude_tool_progress_heartbeat_is_known_and_never_counted()
+    {
+        var tracker = new CliProtocolNoveltyTracker("claude");
+        const string raw = "{\"type\":\"tool_progress\",\"tool_use_id\":\"toolu_01\",\"delta\":\"...\"}";
+
+        Assert.False(tracker.TryObserveFrame(raw, out _));
+    }
+
+    [Fact]
     public void Codex_error_frame_is_a_known_typed_provider_failure()
     {
         const string raw =

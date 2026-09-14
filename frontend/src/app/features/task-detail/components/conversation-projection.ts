@@ -50,6 +50,62 @@ import { stripAnsi } from '../../../utils/ansi-text';
 export const INTERNAL_EVENT_MARKER = '[internal event]';
 
 /**
+ * Marker prefix the runner's protocol-novelty telemetry writes for a
+ * structured frame the installed CLI adapter could not classify (mirrors
+ * `ProtocolNoveltyTelemetry.MarkerPrefix` in
+ * `contracts/TaskServer.Contracts/ProtocolNoveltyContracts.cs`). Unlike a raw
+ * stream-json transport frame, this text does not start with `{`/`[`, so the
+ * generic {@link isNonRenderableRawLine} whitelist never catches it - it needs
+ * its own recognition and its own grouping (per cli/adapterVersion/frameType,
+ * not merely per consecutive run) so a burst of the same unknown frame type
+ * collapses into one row with a count instead of one raw block per
+ * occurrence.
+ */
+const PROTOCOL_NOVELTY_MARKER_PREFIX = '[runner-protocol-unknown-frame] ';
+
+interface ProtocolNoveltyTelemetry {
+  cli: string;
+  adapterVersion: string;
+  frameType: string;
+  occurrence: number;
+  totalUnknownFrames: number;
+  payloadSha256: string;
+}
+
+/** Parse a protocol-novelty marker line, or return null when it is not one. */
+function parseProtocolNoveltyMarker(text: string | undefined | null): ProtocolNoveltyTelemetry | null {
+  if (!text || !text.startsWith(PROTOCOL_NOVELTY_MARKER_PREFIX)) return null;
+  try {
+    const parsed = JSON.parse(text.slice(PROTOCOL_NOVELTY_MARKER_PREFIX.length)) as Partial<ProtocolNoveltyTelemetry>;
+    if (
+      typeof parsed.cli !== 'string' || !parsed.cli
+      || typeof parsed.adapterVersion !== 'string' || !parsed.adapterVersion
+      || typeof parsed.frameType !== 'string' || !parsed.frameType
+      || typeof parsed.occurrence !== 'number'
+      || typeof parsed.totalUnknownFrames !== 'number'
+      || typeof parsed.payloadSha256 !== 'string'
+    ) {
+      return null;
+    }
+    return parsed as ProtocolNoveltyTelemetry;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Readable summary for a grouped unknown-frame row. `occurrence` is the
+ * per-(cli, frameType) counter the runner already maintains for the run, so
+ * the latest marker observed for a group carries that group's true count -
+ * no separate tally needed here.
+ */
+function formatProtocolNoveltySummary(telemetry: ProtocolNoveltyTelemetry): string {
+  const plural = telemetry.occurrence === 1 ? 'frame' : 'frames';
+  return `${INTERNAL_EVENT_MARKER} ${telemetry.occurrence} unknown ${plural} of type `
+    + `${telemetry.frameType}, adapter ${telemetry.cli} ${telemetry.adapterVersion}`;
+}
+
+/**
  * Anthropic `stream-json` event `type` values that unambiguously identify a
  * transport frame. A JSON object on stdout carrying one of these is always a
  * frame, never chat prose, so it is redacted on the type alone.
@@ -381,9 +437,15 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * Every run of consecutive non-renderable transport frames collapses into a
  * single `[internal event]` marker line (keeping the buffer compact when a CLI
  * dumps a burst of frames), with the raw JSON preserved on `internalDetail`.
- * Renderable lines pass through untouched. The input array is returned as-is
- * (same reference) when nothing needed redacting, so downstream memoisation and
- * change detection are not disturbed on the common path.
+ * A redacted frame with no content left to disclose (an empty detail) is
+ * dropped entirely rather than emitting a bare marker row. The runner's
+ * `[runner-protocol-unknown-frame]` telemetry lines are grouped separately,
+ * by (cli, adapterVersion, frameType) across the whole buffer (not just
+ * consecutive occurrences), into one row per group with an occurrence count -
+ * see {@link parseProtocolNoveltyMarker}. Renderable lines pass through
+ * untouched. The input array is returned as-is (same reference) when nothing
+ * needed redacting, so downstream memoisation and change detection are not
+ * disturbed on the common path.
  */
 export function sanitizeProjectionLines(
   lines: readonly CliOutputLine[]
@@ -399,6 +461,11 @@ export function sanitizeProjectionLines(
   // Non-null while the previous emitted line is an `[internal event]` marker,
   // so a run of consecutive frames folds into that one marker.
   let runDetails: string[] | null = null;
+  // Index into `out` of the summary row already emitted for a given
+  // (cli, adapterVersion, frameType) unknown-frame group, keyed regardless of
+  // adjacency - a burst can be interrupted by readable lines and still needs
+  // to collapse into the one row for that group.
+  const noveltyGroupRowIndex = new Map<string, number>();
 
   for (const line of lines) {
     const rawText = stripAnsi(line.text);
@@ -414,6 +481,32 @@ export function sanitizeProjectionLines(
     if (isCodexTodoListFrame(cleanText)) {
       anyRedacted = true;
       runDetails = null;
+      continue;
+    }
+
+    const novelty = parseProtocolNoveltyMarker(cleanText);
+    if (novelty) {
+      anyRedacted = true;
+      runDetails = null;
+      const key = `${novelty.cli} ${novelty.adapterVersion} ${novelty.frameType}`;
+      const summaryText = formatProtocolNoveltySummary(novelty);
+      const existingIndex = noveltyGroupRowIndex.get(key);
+      if (existingIndex !== undefined) {
+        const marker = out[existingIndex];
+        out[existingIndex] = {
+          ...marker,
+          text: summaryText,
+          internalDetail: `${marker.internalDetail}\n${cleanText}`,
+        };
+      } else {
+        noveltyGroupRowIndex.set(key, out.length);
+        out.push({
+          timestamp: line.timestamp,
+          stream: line.stream,
+          text: summaryText,
+          internalDetail: cleanText,
+        });
+      }
       continue;
     }
     if (
@@ -437,6 +530,13 @@ export function sanitizeProjectionLines(
     if (isNonRenderableRawLine(cleanText) || (repaired === null && isTruncatedJsonLine(rawText))) {
       anyRedacted = true;
       const detail = cleanText;
+      // A redacted frame with nothing left to disclose is not an event for
+      // the operator - drop it instead of emitting a bare `[internal event]`
+      // row with an empty detail behind it.
+      if (!detail || !detail.trim()) {
+        runDetails = null;
+        continue;
+      }
       if (runDetails) {
         // Extend the current marker's run instead of emitting another marker.
         runDetails.push(detail);

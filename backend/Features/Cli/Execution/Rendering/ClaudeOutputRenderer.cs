@@ -139,6 +139,14 @@ public sealed class ClaudeOutputRenderer : ICliOutputRenderer
                 }
                 yield break;
             }
+            case "tool_progress":
+                // Incremental heartbeat for a long-running tool call. High
+                // frequency and not narrative-worthy on its own (the
+                // preceding tool_use row and the eventual tool_result already
+                // tell the story), so it is intentionally dropped rather than
+                // rendered as a row. Also listed in CliProtocolNoveltyTracker
+                // so it never accumulates as an unknown-frame count.
+                yield break;
             case "rate_limit_event":
             {
                 // Anthropic streams a rate-limit telemetry frame per turn. The
