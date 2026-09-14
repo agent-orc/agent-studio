@@ -13,31 +13,78 @@ public enum BranchRetentionDecision
     NotMergedIntoMain,
     ChangedBeforeDelete,
     DeleteFailed,
+    ResultRefNotInMain,
+    ResultRefPending,
+    SalvageRefTaskNotTerminal,
+    SalvageRefTooYoung,
+    QuarantineRefTooYoung,
+    QuarantineRefReferenced,
+}
+
+public enum BranchNamespace
+{
+    Unknown,
+    Task,
+    Runner,
+    Delivery,
+    ResultsRef,
+    SalvageRef,
+    QuarantineRef,
+    Protected,
 }
 
 public sealed record BranchRetentionFacts(
     string Branch,
+    BranchNamespace Namespace,
     DateTimeOffset? TipCommittedAtUtc,
     bool CheckedOut,
     bool DevelopAvailable,
     bool MainAvailable,
     bool MergedIntoDevelop,
-    bool MergedIntoMain);
+    bool MergedIntoMain,
+    bool MergedIntoIntegrationBranch = false,
+    string? IntegrationBranch = null,
+    bool IsTaskIntegrated = false,
+    bool IsTaskTerminal = false);
 
 /// <summary>
-/// Pure retention decision for managed task-delivery refs. A branch is eligible
-/// only when its tip is old enough and is contained in both protected lines.
-/// Missing facts always retain the branch.
+/// Pure retention decision for managed task-delivery and build-proof refs across all namespaces.
+/// Classifies refs by namespace and applies namespace-specific retention rules. Missing facts always retain.
 /// </summary>
 public static class BranchRetentionPolicy
 {
+    private const int ResultsRefRetentionDays = 0;
+    private const int SalvageRefRetentionDays = 14;
+    private const int QuarantineRefRetentionDays = 30;
+
     public static BranchRetentionDecision Evaluate(
         BranchRetentionFacts facts,
         DateTimeOffset now,
         TimeSpan minimumAge)
     {
-        if (!IsManagedBranch(facts.Branch))
-            return BranchRetentionDecision.UnsupportedNamespace;
+        var ns = ClassifyNamespace(facts.Branch);
+
+        return ns switch
+        {
+            BranchNamespace.Task or BranchNamespace.Runner or BranchNamespace.Delivery
+                => EvaluateTaskDeliveryBranch(facts, now, minimumAge),
+            BranchNamespace.ResultsRef
+                => EvaluateResultsRef(facts, now),
+            BranchNamespace.SalvageRef
+                => EvaluateSalvageRef(facts, now),
+            BranchNamespace.QuarantineRef
+                => EvaluateQuarantineRef(facts, now),
+            BranchNamespace.Protected or BranchNamespace.Unknown
+                => BranchRetentionDecision.UnsupportedNamespace,
+            _ => BranchRetentionDecision.UnsupportedNamespace
+        };
+    }
+
+    private static BranchRetentionDecision EvaluateTaskDeliveryBranch(
+        BranchRetentionFacts facts,
+        DateTimeOffset now,
+        TimeSpan minimumAge)
+    {
         if (facts.CheckedOut)
             return BranchRetentionDecision.CheckedOut;
         if (facts.TipCommittedAtUtc is null)
@@ -55,9 +102,118 @@ public static class BranchRetentionPolicy
         return BranchRetentionDecision.Delete;
     }
 
+    private static BranchRetentionDecision EvaluateResultsRef(
+        BranchRetentionFacts facts,
+        DateTimeOffset now)
+    {
+        if (facts.CheckedOut)
+            return BranchRetentionDecision.CheckedOut;
+        if (facts.TipCommittedAtUtc is null)
+            return BranchRetentionDecision.MissingCommitTime;
+
+        if (!facts.MainAvailable)
+            return BranchRetentionDecision.MainUnavailable;
+
+        if (!facts.MergedIntoMain)
+            return BranchRetentionDecision.ResultRefNotInMain;
+
+        return BranchRetentionDecision.Delete;
+    }
+
+    private static BranchRetentionDecision EvaluateSalvageRef(
+        BranchRetentionFacts facts,
+        DateTimeOffset now)
+    {
+        if (facts.CheckedOut)
+            return BranchRetentionDecision.CheckedOut;
+        if (facts.TipCommittedAtUtc is null)
+            return BranchRetentionDecision.MissingCommitTime;
+
+        var age = now - facts.TipCommittedAtUtc.Value;
+        var ageDays = (int)age.TotalDays;
+
+        if (!facts.MainAvailable)
+            return BranchRetentionDecision.MainUnavailable;
+
+        if (facts.MergedIntoMain)
+            return BranchRetentionDecision.Delete;
+
+        if (ageDays >= SalvageRefRetentionDays)
+            return BranchRetentionDecision.Delete;
+
+        if (!facts.IsTaskTerminal)
+            return BranchRetentionDecision.SalvageRefTaskNotTerminal;
+
+        return BranchRetentionDecision.SalvageRefTooYoung;
+    }
+
+    private static BranchRetentionDecision EvaluateQuarantineRef(
+        BranchRetentionFacts facts,
+        DateTimeOffset now)
+    {
+        if (facts.CheckedOut)
+            return BranchRetentionDecision.CheckedOut;
+        if (facts.TipCommittedAtUtc is null)
+            return BranchRetentionDecision.MissingCommitTime;
+
+        var age = now - facts.TipCommittedAtUtc.Value;
+        if (age < TimeSpan.FromDays(QuarantineRefRetentionDays))
+            return BranchRetentionDecision.QuarantineRefTooYoung;
+
+        return BranchRetentionDecision.Delete;
+    }
+
+    public static BranchNamespace ClassifyNamespace(string branch)
+    {
+        if (branch.StartsWith("task/", StringComparison.Ordinal))
+            return BranchNamespace.Task;
+        if (branch.StartsWith("runner/", StringComparison.Ordinal))
+            return BranchNamespace.Runner;
+        if (branch.StartsWith("delivery/", StringComparison.Ordinal))
+            return BranchNamespace.Delivery;
+        if (branch.StartsWith("agent-studio/results/", StringComparison.Ordinal))
+            return BranchNamespace.ResultsRef;
+        if (branch.StartsWith("agent-studio/salvage/", StringComparison.Ordinal))
+            return BranchNamespace.SalvageRef;
+        if (branch.StartsWith("agent-studio/quarantine/", StringComparison.Ordinal))
+            return BranchNamespace.QuarantineRef;
+        if (IsProtectedRef(branch))
+            return BranchNamespace.Protected;
+        return BranchNamespace.Unknown;
+    }
+
+    private static bool IsProtectedRef(string branch)
+        => branch == "main" || branch == "develop" || branch.StartsWith("release/", StringComparison.Ordinal)
+           || branch.StartsWith("v", StringComparison.Ordinal);
+
     public static bool IsManagedBranch(string branch)
-        => branch.StartsWith("task/", StringComparison.Ordinal)
-           || branch.StartsWith("runner/", StringComparison.Ordinal);
+    {
+        var ns = ClassifyNamespace(branch);
+        return ns is BranchNamespace.Task or BranchNamespace.Runner or BranchNamespace.Delivery
+            or BranchNamespace.ResultsRef or BranchNamespace.SalvageRef or BranchNamespace.QuarantineRef;
+    }
+
+    public static string ReasonFor(BranchRetentionDecision decision) => decision switch
+    {
+        BranchRetentionDecision.Delete => "Eligible for deletion; deletion policy met.",
+        BranchRetentionDecision.UnsupportedNamespace => "Branch is outside managed namespaces.",
+        BranchRetentionDecision.CheckedOut => "Branch is checked out in a live worktree.",
+        BranchRetentionDecision.MissingCommitTime => "Tip commit time is unavailable.",
+        BranchRetentionDecision.TooYoung => "Tip commit is within the retention window.",
+        BranchRetentionDecision.DevelopUnavailable => "Protected develop ref is unavailable.",
+        BranchRetentionDecision.MainUnavailable => "Protected main ref is unavailable.",
+        BranchRetentionDecision.NotMergedIntoDevelop => "Tip is not contained in integration branch.",
+        BranchRetentionDecision.NotMergedIntoMain => "Tip is not contained in main.",
+        BranchRetentionDecision.ChangedBeforeDelete => "Branch changed before deletion attempt.",
+        BranchRetentionDecision.DeleteFailed => "Deletion failed; branch kept.",
+        BranchRetentionDecision.ResultRefNotInMain => "Result ref tip is not contained in main.",
+        BranchRetentionDecision.ResultRefPending => "Result ref is pending integration.",
+        BranchRetentionDecision.SalvageRefTaskNotTerminal => "Task is not terminal; ref retained for recovery.",
+        BranchRetentionDecision.SalvageRefTooYoung => "Salvage ref is within 14-day retention window.",
+        BranchRetentionDecision.QuarantineRefTooYoung => "Quarantine ref is within 30-day retention window.",
+        BranchRetentionDecision.QuarantineRefReferenced => "Quarantine ref is referenced by an open escalation or human-review card.",
+        _ => "Unknown retention decision.",
+    };
 }
 
 public sealed record BranchRetentionAction(
@@ -67,7 +223,11 @@ public sealed record BranchRetentionAction(
     DateTimeOffset? TipCommittedAtUtc,
     BranchRetentionDecision Decision,
     bool Deleted,
-    string Reason);
+    string Reason,
+    BranchNamespace? Namespace = null,
+    string? TaskKey = null,
+    bool Reachable = false,
+    string? ProofBranch = null);
 
 public sealed record BranchRetentionProjectReport(
     string Project,
@@ -76,7 +236,8 @@ public sealed record BranchRetentionProjectReport(
     string? MainRef,
     int StaleWorktreesPruned,
     IReadOnlyList<BranchRetentionAction> Actions,
-    string? Error)
+    string? Error,
+    DateTimeOffset RecordedAtUtc = default)
 {
     public int DeletedCount => Actions.Count(action => action.Deleted);
     public int KeptCount => Actions.Count - DeletedCount;
@@ -103,30 +264,52 @@ public sealed class GitBranchRetentionService
     public const int DefaultRetentionDays = 7;
 
     private const string OriginPrefix = "origin/";
-    private static readonly string[] LocalPatterns = ["refs/heads/task", "refs/heads/runner"];
-    private static readonly string[] RemotePatterns = ["refs/remotes/origin/task", "refs/remotes/origin/runner"];
+    private static readonly string[] LocalPatterns =
+    [
+        "refs/heads/task",
+        "refs/heads/runner",
+        "refs/heads/delivery",
+        "refs/heads/agent-studio/results",
+        "refs/heads/agent-studio/salvage",
+        "refs/heads/agent-studio/quarantine"
+    ];
+    private static readonly string[] RemotePatterns =
+    [
+        "refs/remotes/origin/task",
+        "refs/remotes/origin/runner",
+        "refs/remotes/origin/delivery",
+        "refs/remotes/origin/agent-studio/results",
+        "refs/remotes/origin/agent-studio/salvage",
+        "refs/remotes/origin/agent-studio/quarantine"
+    ];
 
     private readonly GitService _git;
     private readonly AgentStudio.Registry.ProjectRegistry _projects;
     private readonly IConfiguration _configuration;
     private readonly ILogger<GitBranchRetentionService> _logger;
     private readonly TimeProvider _time;
+    private readonly BranchRetentionEvidenceWriter? _evidence;
 
     public GitBranchRetentionService(
         GitService git,
         AgentStudio.Registry.ProjectRegistry projects,
         IConfiguration configuration,
         ILogger<GitBranchRetentionService> logger,
-        TimeProvider? time = null)
+        TimeProvider? time = null,
+        BranchRetentionEvidenceWriter? evidence = null)
     {
         _git = git;
         _projects = projects;
         _configuration = configuration;
         _logger = logger;
         _time = time ?? TimeProvider.System;
+        _evidence = evidence;
     }
 
     public BranchRetentionRunReport RunOnce(CancellationToken cancellationToken = default)
+        => RunOnce(dryRun: false, cancellationToken);
+
+    public BranchRetentionRunReport RunOnce(bool dryRun, CancellationToken cancellationToken = default)
     {
         var startedAt = _time.GetUtcNow();
         var retentionDays = ResolveRetentionDays();
@@ -153,6 +336,7 @@ public sealed class GitBranchRetentionService
                     normalizedRoot,
                     startedAt,
                     retentionDays,
+                    dryRun,
                     cancellationToken);
                 reports.Add(projectReport);
                 _logger.LogInformation(
@@ -188,16 +372,26 @@ public sealed class GitBranchRetentionService
         DateTimeOffset now,
         int retentionDays,
         CancellationToken cancellationToken = default)
+        => RunRepository(project, repositoryPath, now, retentionDays, dryRun: false, cancellationToken);
+
+    public BranchRetentionProjectReport RunRepository(
+        string project,
+        string repositoryPath,
+        DateTimeOffset now,
+        int retentionDays,
+        bool dryRun,
+        CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(repositoryPath) || !Directory.Exists(repositoryPath))
             return Failed(project, repositoryPath, "Repository path does not exist.");
 
         var staleBefore = _git.ListWorktrees(repositoryPath)
             .Count(worktree => !worktree.IsPrimary && !Directory.Exists(worktree.Path));
-        _git.WorktreePrune(repositoryPath);
-        var staleAfter = _git.ListWorktrees(repositoryPath)
+        if (!dryRun)
+            _git.WorktreePrune(repositoryPath);
+        var staleAfter = dryRun ? staleBefore : _git.ListWorktrees(repositoryPath)
             .Count(worktree => !worktree.IsPrimary && !Directory.Exists(worktree.Path));
-        var pruned = Math.Max(0, staleBefore - staleAfter);
+        var pruned = dryRun ? 0 : Math.Max(0, staleBefore - staleAfter);
 
         var fetch = _git.Fetch(repositoryPath, cancellationToken: cancellationToken);
         if (!string.IsNullOrWhiteSpace(fetch.Error))
@@ -239,9 +433,10 @@ public sealed class GitBranchRetentionService
             }
 
             actions.Add(DeleteAfterRecheck(
-                repositoryPath, candidate, now, minimumAge, cancellationToken));
+                repositoryPath, candidate, now, minimumAge, dryRun, cancellationToken));
         }
 
+        _evidence?.AppendDeleted(project, actions);
         return new BranchRetentionProjectReport(
             project,
             repositoryPath,
@@ -249,7 +444,8 @@ public sealed class GitBranchRetentionService
             main?.ShortName,
             pruned,
             actions,
-            null);
+            null,
+            now);
     }
 
     private BranchRetentionAction DeleteAfterRecheck(
@@ -257,6 +453,7 @@ public sealed class GitBranchRetentionService
         RetentionCandidate candidate,
         DateTimeOffset now,
         TimeSpan minimumAge,
+        bool dryRun,
         CancellationToken cancellationToken)
     {
         var current = _git.ListRefs(root, candidate.Reference.FullName)
@@ -280,6 +477,19 @@ public sealed class GitBranchRetentionService
         if (decision != BranchRetentionDecision.Delete)
             return ToKeptAction(candidate with { Reference = current }, decision);
 
+        if (dryRun)
+        {
+            return new BranchRetentionAction(
+                candidate.Remote ? "remote" : "local",
+                candidate.Branch,
+                current.Sha,
+                current.CommittedAtUtc,
+                BranchRetentionDecision.Delete,
+                false,
+                "[DRY RUN] Would be deleted after age and develop/main ancestry recheck.",
+                BranchRetentionPolicy.ClassifyNamespace(candidate.Branch));
+        }
+
         var result = candidate.Remote
             ? _git.DeleteRemoteBranchAtTip(
                 root, candidate.Branch, current.Sha, cancellationToken: cancellationToken)
@@ -293,7 +503,8 @@ public sealed class GitBranchRetentionService
             result.Success,
             result.Success
                 ? "Deleted after age and develop/main ancestry recheck."
-                : result.Error ?? "Deletion failed; branch kept.");
+                : result.Error ?? "Deletion failed; branch kept.",
+            BranchRetentionPolicy.ClassifyNamespace(candidate.Branch));
     }
 
     private BranchRetentionFacts FactsFor(
@@ -304,6 +515,7 @@ public sealed class GitBranchRetentionService
         GitRefLine? main)
         => new(
             candidate.Branch,
+            BranchRetentionPolicy.ClassifyNamespace(candidate.Branch),
             candidate.Reference.CommittedAtUtc,
             checkedOut.Contains(candidate.Branch),
             develop is not null,
@@ -341,7 +553,8 @@ public sealed class GitBranchRetentionService
             candidate.Reference.CommittedAtUtc,
             decision,
             false,
-            ReasonFor(decision));
+            BranchRetentionPolicy.ReasonFor(decision),
+            BranchRetentionPolicy.ClassifyNamespace(candidate.Branch));
 
     private static BranchRetentionAction Changed(RetentionCandidate candidate, string reason)
         => new(
@@ -351,22 +564,8 @@ public sealed class GitBranchRetentionService
             candidate.Reference.CommittedAtUtc,
             BranchRetentionDecision.ChangedBeforeDelete,
             false,
-            reason);
-
-    private static string ReasonFor(BranchRetentionDecision decision) => decision switch
-    {
-        BranchRetentionDecision.UnsupportedNamespace => "Branch is outside task/* and runner/*.",
-        BranchRetentionDecision.CheckedOut => "Branch is checked out in a live worktree.",
-        BranchRetentionDecision.MissingCommitTime => "Tip commit time is unavailable.",
-        BranchRetentionDecision.TooYoung => "Tip commit is inside the retention window.",
-        BranchRetentionDecision.DevelopUnavailable => "Protected develop ref is unavailable.",
-        BranchRetentionDecision.MainUnavailable => "Protected main ref is unavailable.",
-        BranchRetentionDecision.NotMergedIntoDevelop => "Tip is not contained in develop.",
-        BranchRetentionDecision.NotMergedIntoMain => "Tip is not contained in main.",
-        BranchRetentionDecision.ChangedBeforeDelete => "Branch changed before deletion.",
-        BranchRetentionDecision.DeleteFailed => "Deletion failed; branch kept.",
-        _ => "Eligible for deletion.",
-    };
+            reason,
+            BranchRetentionPolicy.ClassifyNamespace(candidate.Branch));
 
     private int ResolveRetentionDays()
         => Math.Clamp(
@@ -378,7 +577,115 @@ public sealed class GitBranchRetentionService
         string project,
         string? repositoryPath,
         string error)
-        => new(project, repositoryPath, null, null, 0, [], error);
+        => new(project, repositoryPath, null, null, 0, [], error, DateTimeOffset.UtcNow);
+
+    /// <summary>
+    /// Reclaim refs for a specific task after integration. Runs on task's configured
+    /// integration branch and main, evaluating task/runner/delivery refs for the task key.
+    /// Does not block integration if reclamation fails; failures are logged.
+    /// </summary>
+    public BranchRetentionProjectReport ReclaimForTask(
+        string project,
+        string repositoryPath,
+        string taskKey,
+        string integrationBranch = "develop",
+        bool isArchive = false,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var startedAt = _time.GetUtcNow();
+            if (string.IsNullOrWhiteSpace(repositoryPath) || !Directory.Exists(repositoryPath))
+                return Failed(project, repositoryPath, "Repository path does not exist.");
+
+            var fetch = _git.Fetch(repositoryPath, cancellationToken: cancellationToken);
+            if (!string.IsNullOrWhiteSpace(fetch.Error))
+            {
+                return new BranchRetentionProjectReport(
+                    project, repositoryPath, null, null, 0, [],
+                    $"Origin refresh failed; reclamation skipped: {fetch.Error}",
+                    startedAt);
+            }
+
+            var integration = ResolveProtectedRef(repositoryPath, integrationBranch);
+            var main = ResolveProtectedRef(repositoryPath, "main");
+            var worktrees = _git.ListWorktrees(repositoryPath);
+            var checkedOut = worktrees
+                .Where(worktree => Directory.Exists(worktree.Path) && !string.IsNullOrWhiteSpace(worktree.Branch))
+                .Select(worktree => worktree.Branch!)
+                .ToHashSet(StringComparer.Ordinal);
+
+            var taskPatterns = new[] { $"refs/remotes/origin/task/{taskKey}", $"refs/remotes/origin/runner/*/{taskKey}*", $"refs/remotes/origin/delivery/{taskKey}" };
+            var candidates = taskPatterns
+                .SelectMany(pattern => _git.ListRefs(repositoryPath, pattern))
+                .Select(reference => ToCandidate(reference, remote: true))
+                .OrderBy(candidate => candidate.Branch, StringComparer.Ordinal)
+                .ToList();
+
+            var actions = new List<BranchRetentionAction>();
+            var minimumAge = TimeSpan.FromDays(1);
+            foreach (var candidate in candidates)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var facts = FactsForReclaim(
+                    repositoryPath, candidate, checkedOut, integration, main, taskKey, isArchive);
+                var decision = BranchRetentionPolicy.Evaluate(facts, startedAt, minimumAge);
+                if (decision != BranchRetentionDecision.Delete)
+                {
+                    actions.Add(ToKeptAction(candidate, decision));
+                    continue;
+                }
+
+                actions.Add(DeleteAfterRecheck(
+                    repositoryPath, candidate, startedAt, minimumAge, dryRun: false, cancellationToken));
+            }
+
+            // Every candidate here was scoped to this one task key (the
+            // patterns above only match task/<taskKey>, runner/*/<taskKey>*,
+            // delivery/<taskKey>), unlike the generic RunRepository sweep
+            // which spans every task - stamp it onto the evidence.
+            for (var i = 0; i < actions.Count; i++)
+                actions[i] = actions[i] with { TaskKey = taskKey };
+
+            _evidence?.AppendDeleted(project, actions);
+            return new BranchRetentionProjectReport(
+                project,
+                repositoryPath,
+                integration?.ShortName,
+                main?.ShortName,
+                0,
+                actions,
+                null,
+                startedAt);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Branch reclaim failed for task {Project}/{TaskKey}", project, taskKey);
+            return Failed(project, repositoryPath, ex.Message);
+        }
+    }
+
+    private BranchRetentionFacts FactsForReclaim(
+        string root,
+        RetentionCandidate candidate,
+        IReadOnlySet<string> checkedOut,
+        GitRefLine? integration,
+        GitRefLine? main,
+        string taskKey,
+        bool isArchive)
+        => new(
+            candidate.Branch,
+            BranchRetentionPolicy.ClassifyNamespace(candidate.Branch),
+            candidate.Reference.CommittedAtUtc,
+            checkedOut.Contains(candidate.Branch),
+            integration is not null,
+            main is not null,
+            integration is not null && _git.IsAncestor(root, candidate.Reference.Sha, integration.Sha),
+            main is not null && _git.IsAncestor(root, candidate.Reference.Sha, main.Sha),
+            false,
+            integration?.ShortName,
+            true,
+            isArchive);
 
     private sealed record RetentionCandidate(GitRefLine Reference, string Branch, bool Remote);
 }

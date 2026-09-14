@@ -207,6 +207,22 @@ public static class SystemEndpoints
                 : Results.BadRequest(new { error = result.Error ?? "Could not run cleanup." });
         });
 
+        // Branch reclaim (AGT-2793) after promotion to main. Promotion runs
+        // out-of-process (scripts/release/promote-develop-to-main.sh, on the
+        // runner host, outside this backend); this is its in-process
+        // counterpart, called by the script once the atomic main+tag push is
+        // verified. Never blocks or reverts promotion: a reclaim failure here
+        // is only logged, the same as the event-driven triggers on integration
+        // and archive.
+        app.MapPost("/api/git/branch-reclaim/promotion", (string project, GitService git, BranchReclaimTriggerService reclaim) =>
+        {
+            var repoPath = git.ResolveProjectRepoRoot(project);
+            if (string.IsNullOrWhiteSpace(repoPath))
+                return Results.BadRequest(new { error = "Unknown project." });
+            reclaim.ReclaimAfterPromotionToMain(project, repoPath);
+            return Results.Ok();
+        });
+
         app.MapGet("/healthz", (HttpContext context) =>
         {
             var identity = ReadBuildIdentity();

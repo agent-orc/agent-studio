@@ -19,6 +19,8 @@ public sealed class AcceptedIntegrationWorker : BackgroundService
     private readonly ILogger<AcceptedIntegrationWorker> _logger;
     private readonly TaskTransitionService? _transitions;
     private readonly TimelineLog? _timeline;
+    private readonly GitService? _git;
+    private readonly BranchReclaimTriggerService? _branchReclaim;
 
     public AcceptedIntegrationWorker(
         AcceptedIntegrationQueue queue,
@@ -28,7 +30,9 @@ public sealed class AcceptedIntegrationWorker : BackgroundService
         TaskProvenanceService provenance,
         ILogger<AcceptedIntegrationWorker> logger,
         TaskTransitionService? transitions = null,
-        TimelineLog? timeline = null)
+        TimelineLog? timeline = null,
+        GitService? git = null,
+        BranchReclaimTriggerService? branchReclaim = null)
     {
         _queue = queue;
         _runner = runner;
@@ -38,6 +42,8 @@ public sealed class AcceptedIntegrationWorker : BackgroundService
         _logger = logger;
         _transitions = transitions;
         _timeline = timeline;
+        _git = git;
+        _branchReclaim = branchReclaim;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -156,7 +162,31 @@ public sealed class AcceptedIntegrationWorker : BackgroundService
                     ["outcome"] = result.Outcome.ToString(),
                     ["integrationBranch"] = request.IntegrationBranch,
                 });
+            TriggerBranchReclaim(request, job);
         }
+    }
+
+    /// <summary>
+    /// Fires only after a landed merge (this method runs exclusively from
+    /// <see cref="FinalizeAcceptedTaskAsync"/>, reached only when
+    /// <c>result.Outcome.IsSuccessfulIntegration()</c>); never called for a
+    /// failed or skipped merge, and never for <see cref="FinalizeBranchlessTaskAsync"/>
+    /// which has no delivery branch to reclaim. Best-effort: failures are
+    /// logged by <see cref="BranchReclaimTriggerService"/> and never affect
+    /// the already-landed transition.
+    /// </summary>
+    private void TriggerBranchReclaim(AcceptedIntegrationRequest request, TaskInfo job)
+    {
+        if (_git == null || _branchReclaim == null) return;
+        var repoPath = _git.ResolveRepoRootForWatchPath(job.WatchPath);
+        if (string.IsNullOrWhiteSpace(repoPath)) return;
+        var taskKey = !string.IsNullOrWhiteSpace(job.Key)
+            ? job.Key!
+            : !string.IsNullOrWhiteSpace(job.TaskKey)
+                ? job.TaskKey
+                : job.Id;
+        _branchReclaim.ReclaimAfterIntegration(
+            request.Project, repoPath, taskKey, request.IntegrationBranch, job.FolderPath);
     }
 
     private async Task ReturnToReviewWithFailureAsync(

@@ -196,6 +196,14 @@ public static class TimelineEventKinds
     /// </summary>
     public const string IntegrationOverridden = "integration_overridden";
     /// <summary>
+    /// AGT-2793: <c>BranchReclaimTriggerService</c> deleted one or more of this
+    /// task's remote git refs (task/runner/delivery) after a lifecycle
+    /// transition (integration or archive). Details carry the deleted ref
+    /// names, SHAs, and reasons; the full evidence row also lands in the
+    /// project's <c>reports/git-branch-reclaim.jsonl</c>.
+    /// </summary>
+    public const string BranchesReclaimed = "branches_reclaimed";
+    /// <summary>
     /// A human deliberately moved a task out of human review or escalation,
     /// opening a fresh review-attempt epoch. Details carry the operator reason,
     /// new epoch, and rotated artefact count.

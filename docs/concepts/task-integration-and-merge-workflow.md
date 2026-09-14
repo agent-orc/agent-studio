@@ -205,43 +205,99 @@ These behaviours are real today and being reviewed. See the configuration analys
 - Parallelism coupling: `MaxParallelism` is perceived as a throughput knob, but flipping it `1 <-> >=2` also silently changes the commit target, merge timing/trigger, merge command and history shape, conflict handling, and what "Accept" means. `IntegrationBranch` and `IntegrationStrategy` are not exposed in the frontend.
 - Auto-commit on transition: in sequential mode the auto-commit can land directly on the configured target branch with no `task/<id>` branch. The computed membership check recognizes this as already integrated and completes acceptance without running a merge. The completed-push target can still diverge from the integration target; that configuration detail remains under review.
 
-## Branch cleanup (Project Hub Git-Management, AGT-2009)
+## Branch cleanup (AGT-2009, AGT-2793)
 
-Over time a project repository accumulates dead refs: merged `task/*` branches
-(local and `origin/*`), operational `refs/backups/*` snapshots, and stale
-worktree registrations whose folders were removed out-of-band. Cleanup is an
-operator-driven maintenance action that prunes only what has already landed.
-It is separate from the Project Hub Git tree, which is strictly read-only.
+Over time a project repository accumulates dead refs across six namespaces: `task/*`,
+`runner/*`, `delivery/*`, `agent-studio/results/*`, `agent-studio/salvage/*`, and
+`agent-studio/quarantine/*` (see `runner/GitWorkspace.cs` for where each namespace is
+created). Branch reclamation automatically prunes these refs as the task lifecycle
+completes, so the repository does not accumulate unbounded branches.
 
-- Analysis is a read-only **dry-run plan** (`GitCleanupService.BuildPlan`, endpoint
-  `GET /api/git/cleanup/plan?project=<name>`). It classifies every `task/*` branch
-  (local + remote), every `refs/backups/*` ref and every stale worktree against the
-  project's `IntegrationBranch`: `merged` / `unmerged` / `stale`. Each row carries
-  its merge evidence and a keep/delete reason.
-- Execution (`GitCleanupService.Execute`, endpoint `POST /api/git/cleanup/execute`)
-  acts only on an operator-confirmed subset. It re-derives eligibility from a fresh
-  plan and re-checks `merge-base --is-ancestor` immediately before each branch/ref
-  delete, then dispatches the existing GitService primitives (`DeleteBranch`,
-  `DeleteRemoteBranch`, `DeleteRef`, `WorktreePrune`). The result reports
-  `n deleted / m kept` with per-item reasons.
-- **AGT-1945 invariant**: only GEMERGTES is ever deleted. Unmerged branches and
-  backup refs whose commit is not yet contained in the integration branch are never
-  touched, and a branch checked out in a live worktree is kept (remove the worktree
-  first). The guard is server-side, so a stale or crafted request cannot drop
-  unmerged work. `refs/backups/*` is dropped only when its commit is an ancestor of
-  the integration branch.
-- The existing `app-project-git-cleanup` component can render the plan with
-  per-row checkboxes, a two-step confirmation, and a result report, but it is
-  not mounted in the Project Hub Git tree. The tree exposes no mutation action.
-  Coverage: `GitCleanupServiceTests` (backend, temp repo) and
-  `project-git-cleanup.component.spec.ts` (frontend).
-- **Automation status**: cleanup is operator-triggered only. The optional
-  "auto-cleanup after a successful merge step" hook (the counterpart to the
-  push-on-merge from AGT-1999) is intentionally **not** wired yet - there is no
-  automatic ref deletion anywhere in the pipeline. When it is added it should reuse
-  `GitCleanupService.BuildPlan`/`Execute` unchanged (so the AGT-1945 guard keeps
-  holding) and gate on the same per-project setting as push-on-merge; until then,
-  removing merged refs is always an explicit operator action.
+### Automatic reclamation lifecycle
+
+`BranchReclaimTriggerService` (`backend/Features/Git/BranchReclaimTriggerService.cs`)
+is the event-driven counterpart to the periodic `GitBranchRetentionHostedService` sweep;
+both apply the same `BranchRetentionPolicy` and share `GitRetention:Enabled` as their
+settings gate. It is wired into three lifecycle points, always after the transition
+lands and never blocking it on failure:
+
+1. **After integration.** `AcceptedIntegrationWorker.FinalizeAcceptedTaskAsync` calls
+   `ReclaimAfterIntegration` once a merge into the project's integration branch
+   succeeds (`MergeIntoIntegrationResult.Outcome.IsSuccessfulIntegration()`). It never
+   runs on a failed or skipped merge, and never for the branchless-delivery path
+   (`FinalizeBranchlessTaskAsync`, which has no ref to reclaim). It evaluates the
+   task's `task/*`, `runner/*`, and `delivery/*` refs.
+2. **When a card is archived.** `TaskTransitionService.MoveAsync` calls
+   `ReclaimAfterArchive` once the move to `7-archive` lands successfully. It evaluates
+   the same task/runner/delivery namespace plus this task's salvage and quarantine
+   refs. This is distinct from `ArchivedResultRefPruner`, a periodic, all-archived-cards
+   sweep that only deletes local remote-tracking copies of already-known results/
+   quarantine refs and never contacts origin; the archive trigger is the one that
+   actually deletes the remote refs for one task, once, at the transition.
+3. **After promotion to main.** Promotion runs as
+   `scripts/release/promote-develop-to-main.sh` on the runner host, outside the
+   backend process, so it has no in-process transition to hook a trigger off of.
+   Instead, once its atomic `main` + tag push is verified, the script calls
+   `POST /api/git/branch-reclaim/promotion?project=<name>` (best-effort, logged, never
+   fails the promotion), which runs `ReclaimAfterPromotionToMain` -> the full
+   `GitBranchRetentionService.RunOnce` sweep across every project, not just the one
+   that promoted. See [develop-main-promotion.md](../operations/develop-main-promotion.md#branch-reclaim-after-promotion).
+
+### Ref eligibility by namespace
+
+| Namespace | Delete when | Retention | Evidence |
+|-----------|-------------|-----------|----------|
+| `task/*` | Merged into both develop and main, >= 7 days old | 7 days after merge | Ref name, SHA, reachability proof |
+| `runner/*` | Merged into both develop and main, >= 7 days old | 7 days after merge | Ref name, SHA, reachability proof |
+| `delivery/*` | Merged into both develop and main, >= 7 days old | 7 days after merge | Ref name, SHA, reachability proof |
+| `agent-studio/results/*` | Proof commit in main (immutable delivery proof) | 0 days after proof merge | Ref name, SHA, proof branch, task key |
+| `agent-studio/salvage/*` | Terminal task + (in main OR >= 14 days old) | 14 days or on completion | Ref name, SHA, task key, terminal status |
+| `agent-studio/quarantine/*` | >= 30 days old (unless referenced by open escalation) | 30 days | Ref name, SHA, age |
+
+Safety guardrails (AGT-1945 invariant):
+- Refs are evaluated by `BranchRetentionPolicy.ClassifyNamespace` and evaluated against `BranchRetentionPolicy.Evaluate`.
+- A second recheck immediately before deletion verifies the SHA has not changed.
+- Protected refs (`main`, `develop`, `release/*`, `v*`) are never deleted.
+- Refs checked out in a live worktree are never deleted.
+- Proof commits stay reachable in main even after their immutable ref is deleted (ancestor check binds deletion eligibility).
+- Before any ref namespace is scanned, origin is fetched to ensure ancestry checks use current develop and main tips.
+
+### Evidence and reporting
+
+`BranchRetentionEvidenceWriter` appends one JSONL row per deleted ref to
+`{TaskRepository}/projects/{project}/reports/git-branch-reclaim.jsonl`:
+```json
+{"ref":"task/AGT-1234","sha":"<sha>","class":"Task","reason":"Deleted after age and develop/main ancestry recheck.","taskKey":"AGT-1234","timestampUtc":"2026-09-14T12:00:00Z"}
+```
+This runs for both the periodic sweep (`GitBranchRetentionService.RunRepository`) and
+the per-task reclaim (`ReclaimForTask`), so it is the durable, ref-name-independent
+audit trail the deletion itself can no longer serve as evidence for once the ref is gone.
+
+The two per-task triggers (`ReclaimAfterIntegration`, `ReclaimAfterArchive`) also echo a
+`branches_reclaimed` (`TimelineEventKinds.BranchesReclaimed`) entry onto that task's own
+`logs/timeline.jsonl` when any ref was actually deleted, carrying the deleted ref names
+and SHAs in `Details`. The project-wide promotion sweep only has a repository path, not
+a task folder, so it relies on the JSONL report alone.
+
+### Manual cleanup with dry-run
+
+`GitBranchRetentionService.RunOnce(dryRun: true)` generates a report of what would be deleted without
+mutating any refs. This is useful for auditing policy changes or previewing the reclamation schedule.
+Dry-run actions are never appended to the evidence report (nothing was actually deleted).
+
+### See also (Project Hub Git-Management, AGT-2009)
+
+Operator-driven cleanup remains available as a secondary tool for edge cases:
+- Analysis via `GitCleanupService.BuildPlan` shows which `task/*`, `runner/*`, and stale worktree entries are merged.
+- Execution via `GitCleanupService.Execute` applies operator-confirmed deletions with additional safety gates.
+- This tool serves as a backstop for refs that automatic reclamation does not handle (e.g., refs from incomplete
+  or failed cleanup runs).
+
+### Out of scope
+
+The periodic stale-branch sweep across every registered repo and its operator UI is a
+separate card that depends on this policy; so is the one-off cleanup of the pre-AGT-2793
+backlog of already-stale refs. Both are unstarted.
 
 ## See also
 

@@ -11,6 +11,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 using Xunit;
@@ -455,6 +456,118 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Contains("## Acceptance integration", status);
         Assert.Contains("- Outcome: `NoTaskBranch`", status);
         Assert.Contains("task/remote-delivery", status);
+    }
+
+    /// <summary>
+    /// AGT-2793 round 4: proves <c>FinalizeAcceptedTaskAsync</c> actually calls
+    /// <see cref="BranchReclaimTriggerService.ReclaimAfterIntegration"/> after a
+    /// landed merge. The worker is given a <see cref="GitService"/> pointed at a
+    /// path that is never created on disk, so
+    /// <see cref="GitBranchRetentionService.ReclaimForTask"/> fails
+    /// deterministically on its very first check (no git process, no dependency
+    /// on merge/retention-policy state) and logs a warning - an observable,
+    /// unambiguous signal that the call site fired. The sibling test below
+    /// proves the same setup stays silent on a failed merge.
+    /// </summary>
+    [Fact]
+    public async Task SuccessfulIntegration_TriggersBranchReclaimAfterIntegration()
+    {
+        var deliverySha = PublishDelivery("wiring-success.txt", "remote work\n");
+        var deps = Build(deliverySha, backgroundIntegration: true);
+        var reviewed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        var (brokenGit, branchReclaim, recorder) = BuildBrokenBranchReclaim(deps);
+
+        var worker = new AcceptedIntegrationWorker(
+            deps.AcceptedQueue!,
+            deps.Merge,
+            deps.Scanner,
+            deps.Mutations,
+            deps.Provenance,
+            NullLogger<AcceptedIntegrationWorker>.Instance,
+            deps.Transitions,
+            deps.Timeline,
+            brokenGit,
+            branchReclaim);
+
+        var result = await worker.ProcessAsync(new AcceptedIntegrationRequest(
+            Project,
+            Slug,
+            reviewed.FolderPath,
+            _watchPath,
+            "develop",
+            IntegrationStrategies.DirectMerge));
+
+        Assert.True(result.Outcome.IsSuccessfulIntegration(), result.Outcome.ToString());
+        Assert.Contains(recorder.Entries, e =>
+            e.Level == LogLevel.Warning
+            && e.Message.Contains("Branch reclaim after integration had errors")
+            && e.Message.Contains(Project));
+    }
+
+    [Fact]
+    public async Task FailedIntegration_NeverTriggersBranchReclaim()
+    {
+        var deliverySha = PublishDelivery("wiring-failure.txt", "fenced work\n");
+        var deps = Build(deliverySha, backgroundIntegration: true, writeReviewSubject: false);
+        var reviewed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        File.WriteAllText(
+            Path.Combine(reviewed.FolderPath, "status.md"),
+            "# Status\n\n- Result: Success\n");
+        var legacyAccept = deps.States.MoveJob(Slug, TaskStates.Completed, _watchPath);
+        Assert.Equal(MoveJobStatus.Success, legacyAccept.Status);
+        var completed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        var (brokenGit, branchReclaim, recorder) = BuildBrokenBranchReclaim(deps);
+
+        var worker = new AcceptedIntegrationWorker(
+            deps.AcceptedQueue!,
+            deps.Merge,
+            deps.Scanner,
+            deps.Mutations,
+            deps.Provenance,
+            NullLogger<AcceptedIntegrationWorker>.Instance,
+            deps.Transitions,
+            deps.Timeline,
+            brokenGit,
+            branchReclaim);
+
+        var result = await worker.ProcessAsync(new AcceptedIntegrationRequest(
+            Project,
+            Slug,
+            completed.FolderPath,
+            _watchPath,
+            "develop",
+            IntegrationStrategies.DirectMerge));
+
+        Assert.Equal(MergeIntoIntegrationOutcome.NoTaskBranch, result.Outcome);
+        Assert.False(result.Outcome.IsSuccessfulIntegration());
+        Assert.Empty(recorder.Entries);
+    }
+
+    private (GitService BrokenGit, BranchReclaimTriggerService BranchReclaim, RecordingLogger<BranchReclaimTriggerService> Recorder)
+        BuildBrokenBranchReclaim(Deps deps)
+    {
+        var brokenConfig = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["WatchPaths:0:Name"] = Project,
+            ["WatchPaths:0:Path"] = _watchPath,
+            ["WatchPaths:0:RootPath"] = Path.Combine(_tempDir, "not-a-repo"),
+            ["WatchPaths:0:RepositoryPath"] = Path.Combine(_tempDir, "not-a-repo"),
+        }).Build();
+        // GitService.ResolveRepoRootForWatchPath reads the watch-path list off
+        // its TaskScannerService's own config, not off the IConfiguration passed
+        // here - deps.Scanner still points at the real fixture repo, so this
+        // needs its own scanner bound to brokenConfig for the broken RepositoryPath
+        // to actually be the one resolved.
+        var brokenSummary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, brokenConfig);
+        var brokenScanner = new TaskScannerService(brokenConfig, NullLogger<TaskScannerService>.Instance, brokenSummary);
+        var brokenGit = new GitService(NullLogger<GitService>.Instance, brokenScanner, brokenConfig);
+        var registry = new AgentStudio.Registry.ProjectRegistry(
+            brokenConfig, NullLogger<AgentStudio.Registry.ProjectRegistry>.Instance);
+        var retention = new GitBranchRetentionService(
+            brokenGit, registry, brokenConfig, NullLogger<GitBranchRetentionService>.Instance);
+        var recorder = new RecordingLogger<BranchReclaimTriggerService>();
+        var branchReclaim = new BranchReclaimTriggerService(retention, brokenConfig, recorder);
+        return (brokenGit, branchReclaim, recorder);
     }
 
     [Fact]
@@ -1773,6 +1886,23 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
                 TestedSha = request.ExpectedSha,
             };
         }
+    }
+
+    private sealed class RecordingLogger<T> : ILogger<T>
+    {
+        public List<(LogLevel Level, string Message)> Entries { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+            => Entries.Add((logLevel, formatter(state, exception)));
     }
 
     private sealed class CountingBuildTestGateRunner : IBuildTestGateRunner

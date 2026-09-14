@@ -12,6 +12,34 @@ release yet.
 
 ## [Unreleased]
 
+### Added
+
+- Branch reclamation (AGT-2793) is now wired into the product path instead of
+  sitting unreachable: `BranchReclaimTriggerService` fires after a successful
+  delivery integration, after a card archives, and (via a new
+  `POST /api/git/branch-reclaim/promotion` endpoint called from
+  `scripts/release/promote-develop-to-main.sh --project <name>`) after
+  develop is promoted to main. Every deletion is appended to a per-project
+  `reports/git-branch-reclaim.jsonl` evidence file and, for the two per-task
+  triggers, echoed onto that task's own timeline as a `branches_reclaimed`
+  entry.
+- A bare-remote integration test seeds all six managed ref namespaces
+  (`task/*`, `runner/*`, `delivery/*`, `agent-studio/results/*`,
+  `agent-studio/salvage/*`, `agent-studio/quarantine/*`) and asserts exactly
+  the expected refs are deleted while proof commits stay reachable from
+  `main`; a replay test proves a task can be reissued after its `results/*`
+  ref is deleted, and a wiring test suite proves each of the three triggers
+  fires on its transition and stays silent when that transition fails or
+  never lands.
+
+### Fixed
+
+- `BranchRetentionAction.Namespace` and `.TaskKey` were never populated on
+  the actions `GitBranchRetentionService.RunRepository`/`ReclaimForTask`
+  actually return (always `null`), so the evidence and reason-text those
+  actions carry were silently empty for the periodic sweep and every
+  per-task reclaim; both fields are now set on every returned action.
+
 ## [0.3.0] - 2026-09-14
 
 Model routing now names a Claude model and a reasoning level per tier instead
