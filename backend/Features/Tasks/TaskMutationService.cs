@@ -574,6 +574,48 @@ public class TaskMutationService
     }
 
     /// <summary>
+    /// AGT-2817 - clears the <see cref="TaskCommitSupersession.PendingAttempt"/>
+    /// placeholder from every commit the caller proves is contained in the
+    /// integration branch. A contained delivery is not superseded: the
+    /// placeholder only ever meant "requeued, replacement not published yet",
+    /// and once the commit has shipped no replacement is coming. Commits with a
+    /// named successor (a replacement SHA or a resolved attempt id) are never
+    /// touched - that is a verdict, not a placeholder.
+    /// </summary>
+    public CommitSupersessionWriteResult ResolvePendingSupersessionOnFolder(
+        string folderPath,
+        Func<TaskCommitInfo, bool> isContained)
+    {
+        if (!Directory.Exists(folderPath)) return new CommitSupersessionWriteResult(false, 0);
+        var persisted = ReadPersistedCommitChain(folderPath);
+        if (persisted is null) return new CommitSupersessionWriteResult(false, 0);
+
+        var cleared = 0;
+        var updated = persisted.Select(commit =>
+        {
+            if (!TaskCommitSupersession.IsReplacementPending(commit) || !isContained(commit)) return commit;
+            cleared++;
+            return commit with { SupersededByAttempt = null };
+        }).ToList();
+        if (cleared == 0) return new CommitSupersessionWriteResult(true, 0);
+        var written = WriteCommitState(folderPath, updated);
+        return new CommitSupersessionWriteResult(written, written ? cleared : 0);
+    }
+
+    /// <summary>
+    /// AGT-2817 - persists the grounds on which the card claims completion.
+    /// Written on every accepted move into <c>6-completed</c> and replaced, not
+    /// appended, so the card states its current claim. Passing null clears the
+    /// claim when the card leaves the delivered lane.
+    /// </summary>
+    public bool SetCompletionClaimOnFolder(string folderPath, TaskCompletionClaim? claim)
+    {
+        if (!Directory.Exists(folderPath)) return false;
+        TaskJsonFile.UpdateField(folderPath, "completionClaim", claim!, _logger);
+        return Updated();
+    }
+
+    /// <summary>
     /// Marks an explicit, policy-approved subset during the legacy healing
     /// sweep. The policy supplies the replacement attempt per SHA; this method
     /// owns the bounded task.json write and preserves every history entry.

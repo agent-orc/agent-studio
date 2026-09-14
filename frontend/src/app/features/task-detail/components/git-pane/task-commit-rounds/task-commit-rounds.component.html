@@ -45,6 +45,10 @@
             <span class="commit-chain__subject">{{ entry.message.split('\n')[0] }}</span>
             <span class="commit-chain__meta"
                   data-testid="git-commit-chain-meta">{{ entry.filesChanged }}f · {{ timestamp(entry) }}</span>
+            @if (pendingReplacementLabel(entry); as pendingLabel) {
+              <span class="commit-chain__pending-replacement"
+                    data-testid="git-commit-pending-replacement">{{ pendingLabel }}</span>
+            }
             @if (pushStatusLabel(entry); as pushLabel) {
               <span class="commit-chain__push-status commit-chain__push-status--{{ pushStatusKindOf(entry) }}"
                     data-testid="git-commit-push-status">{{ pushLabel }}</span>
@@ -55,7 +59,7 @@
     </ol>
     @if (supersededRounds().length > 0) {
       <details class="superseded" data-testid="git-superseded-rounds">
-        <summary>Superseded delivery rounds ({{ supersededRounds().length }})</summary>
+        <summary>Replaced delivery rounds ({{ supersededRounds().length }})</summary>
         @for (round of supersededRounds(); track round.key) {
           <section class="superseded__round" data-testid="git-superseded-round">
             <h4>{{ round.label }}</h4>

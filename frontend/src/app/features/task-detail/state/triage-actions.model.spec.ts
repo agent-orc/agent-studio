@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  archiveIntegrationVerdict,
+  deliveryClaimVerdict,
+  isDeliveredArchiveMove,
   mergeAcceptViewFor,
   needsPlanningAcceptWarning,
-  needsUnintegratedArchiveWarning,
   overflowActionsFor,
   primaryActionFor,
 } from './triage-actions.model';
@@ -118,8 +120,9 @@ describe('needsPlanningAcceptWarning — AGT-2069 spawn-contract accept guard', 
   });
 });
 
-describe('needsUnintegratedArchiveWarning — Delivered archive guard', () => {
-  const completed = (status: 'integrated' | 'pending' | 'conflict-skipped' | null): TaskInfo =>
+describe('archive guard: containment decides, an absent record is a question', () => {
+  type Status = 'integrated' | 'partial' | 'pending' | 'conflict-skipped' | 'no-branch';
+  const completed = (status: Status | null): TaskInfo =>
     reviewJob(null, {
       state: TaskState.Completed,
       integration: status === null ? null : {
@@ -131,16 +134,41 @@ describe('needsUnintegratedArchiveWarning — Delivered archive guard', () => {
       },
     });
 
-  it('warns for pending, conflict, and unknown integration truth', () => {
-    expect(needsUnintegratedArchiveWarning(completed('pending'), TaskState.Archive)).toBe(true);
-    expect(needsUnintegratedArchiveWarning(completed('conflict-skipped'), TaskState.Archive)).toBe(true);
-    expect(needsUnintegratedArchiveWarning(completed(null), TaskState.Archive)).toBe(true);
+  it('reads a real negative verdict as not-integrated', () => {
+    expect(archiveIntegrationVerdict(completed('pending'))).toBe('not-integrated');
+    expect(archiveIntegrationVerdict(completed('partial'))).toBe('not-integrated');
+    expect(archiveIntegrationVerdict(completed('conflict-skipped'))).toBe('not-integrated');
   });
 
-  it('does not warn once integrated or outside Delivered -> Archive', () => {
-    expect(needsUnintegratedArchiveWarning(completed('integrated'), TaskState.Archive)).toBe(false);
-    expect(needsUnintegratedArchiveWarning(completed('pending'), TaskState.Backlog)).toBe(false);
-    expect(needsUnintegratedArchiveWarning(reviewJob(), TaskState.Archive)).toBe(false);
+  /**
+   * AGT-2706: the delivery was contained in develop and in main; the dialog
+   * appeared only because the card carried no integration record. An absent
+   * projection is `unknown`, and the caller resolves it before speaking.
+   */
+  it('reads an absent projection as unknown, not as not-integrated', () => {
+    expect(archiveIntegrationVerdict(completed(null))).toBe('unknown');
+  });
+
+  it('reads integrated work and a card with nothing to integrate as non-findings', () => {
+    expect(archiveIntegrationVerdict(completed('integrated'))).toBe('integrated');
+    expect(archiveIntegrationVerdict(completed('no-branch'))).toBe('nothing-to-integrate');
+  });
+
+  it('reads the same verdict from the per-card containment answer', () => {
+    expect(deliveryClaimVerdict({ integrated: true, containmentStatus: 'integrated' }))
+      .toBe('integrated');
+    expect(deliveryClaimVerdict({ integrated: false, containmentStatus: 'pending' }))
+      .toBe('not-integrated');
+    expect(deliveryClaimVerdict({ integrated: false, containmentStatus: 'no-branch' }))
+      .toBe('nothing-to-integrate');
+    expect(deliveryClaimVerdict({ integrated: false, containmentStatus: 'unknown' }))
+      .toBe('unknown');
+  });
+
+  it('covers only the Delivered -> Archive transition', () => {
+    expect(isDeliveredArchiveMove(completed('pending'), TaskState.Archive)).toBe(true);
+    expect(isDeliveredArchiveMove(completed('pending'), TaskState.Backlog)).toBe(false);
+    expect(isDeliveredArchiveMove(reviewJob(), TaskState.Archive)).toBe(false);
   });
 });
 

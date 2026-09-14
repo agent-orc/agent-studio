@@ -11,7 +11,7 @@
  */
 
 import { TaskState } from '../../../models/task.model';
-import type { TaskInfo } from '../../../models/task.model';
+import type { TaskDeliveryClaimAnswer, TaskInfo } from '../../../models/task.model';
 import type { LandedState } from '../../../features/git';
 import { LANE_PRESENTATIONS, laneName } from '../../../models/lane-presentation';
 
@@ -172,15 +172,56 @@ export function needsPlanningAcceptWarning(info: TaskInfo, targetState: string):
 }
 
 /**
- * Temporary archive guard while the Status Dossier is still being decided.
- * Only the Delivered -> Archive transition is covered. An unknown integration
- * projection is treated as not integrated because archiving would otherwise
- * hide the unresolved delivery state without operator acknowledgement.
+ * AGT-2817 - what the archive guard knows about a card's delivery before it
+ * decides whether to interrupt the operator.
+ *
+ * `unknown` is the state the guard used to collapse into "not integrated":
+ * AGT-2706's delivery was contained in develop and in main, but its card
+ * carried no integration projection, and the dialog reported that absence as a
+ * pending integration. An absent answer is not a negative answer - it is a
+ * question the guard has to ask before it speaks.
  */
-export function needsUnintegratedArchiveWarning(info: TaskInfo, targetState: string): boolean {
-  return info.state === TaskState.Completed
-    && targetState === TaskState.Archive
-    && info.integration?.status !== 'integrated';
+export type ArchiveIntegrationVerdict =
+  | 'integrated'
+  | 'not-integrated'
+  | 'nothing-to-integrate'
+  | 'unknown';
+
+/**
+ * Reads the archive guard's verdict from the card's git-derived integration
+ * projection. Pure: resolving `unknown` is the caller's job, because it needs
+ * the per-card containment answer from the server.
+ */
+export function archiveIntegrationVerdict(info: TaskInfo): ArchiveIntegrationVerdict {
+  switch (info.integration?.status) {
+    case 'integrated': return 'integrated';
+    case 'no-branch': return 'nothing-to-integrate';
+    case 'pending':
+    case 'partial':
+    case 'conflict-skipped': return 'not-integrated';
+    default: return 'unknown';
+  }
+}
+
+/**
+ * The same verdict, read from the per-card containment answer the guard fetches
+ * when the board projection carries none.
+ */
+export function deliveryClaimVerdict(
+  answer: Pick<TaskDeliveryClaimAnswer, 'integrated' | 'containmentStatus'>,
+): ArchiveIntegrationVerdict {
+  if (answer.integrated) return 'integrated';
+  if (answer.containmentStatus === 'no-branch') return 'nothing-to-integrate';
+  return answer.containmentStatus === 'unknown' ? 'unknown' : 'not-integrated';
+}
+
+/**
+ * The archive guard's scope: leaving the Delivered lane for the Archive is the
+ * only transition that changes what the card claims about its delivery. Every
+ * other move is out of scope and never opens a dialog.
+ */
+export function isDeliveredArchiveMove(info: TaskInfo, targetState: string): boolean {
+  return info.state === TaskState.Completed && targetState === TaskState.Archive;
 }
 
 export function laneActionsFor(state: string): TriageButton[] {

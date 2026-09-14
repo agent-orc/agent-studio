@@ -40,6 +40,7 @@ import type {
   PublishAutomationMode,
   PublishWorkflowRun,
   ReviewProjectionView,
+  TaskDeliveryClaimAnswer,
 } from '../models/task.model';
 import { TaskState } from '../models/task.model';
 import type { ClaudeSessionResponse } from '../features/claude';
@@ -1401,6 +1402,20 @@ export class TaskService {
   getTaskProvenance(jobId: string, watchPath?: string) {
     return this.http.get<TaskProvenanceView>(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/provenance`,
+      this.withWatchPath(watchPath),
+    );
+  }
+
+  /**
+   * AGT-2817 - the per-card deployment answer, decided by git containment:
+   * is this delivery integrated, which merge carried it, and is it contained
+   * in the released line? Used by the card surface and by the archive guard
+   * when the board projection carries no verdict yet, so an absent projection
+   * is resolved rather than reported as "not integrated".
+   */
+  getDeliveryClaim(jobId: string, watchPath?: string) {
+    return this.http.get<TaskDeliveryClaimAnswer>(
+      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/delivery-claim`,
       this.withWatchPath(watchPath),
     );
   }

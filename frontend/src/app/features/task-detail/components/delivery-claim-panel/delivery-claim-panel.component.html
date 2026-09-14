@@ -1,0 +1,52 @@
+@if (show()) {
+  <section class="claim"
+           data-testid="delivery-claim-panel"
+           [attr.data-integration]="integration()"
+           aria-label="Delivery claim">
+    <span class="claim__label">Delivery</span>
+
+    @if (deliveryRef(); as ref) {
+      <span class="claim__ref" data-testid="delivery-claim-ref">{{ ref }}</span>
+    } @else {
+      <span class="claim__ref claim__ref--none" data-testid="delivery-claim-ref">no delivery ref</span>
+    }
+
+    <span class="claim__state"
+          data-testid="delivery-claim-integration"
+          [attr.data-state]="integration()"
+          [cacTooltip]="integrationTooltip()">
+      <span class="claim__dot" aria-hidden="true">●</span>
+      {{ integrationLabel() }}
+    </span>
+
+    @if (mergeLabel(); as merge) {
+      <span class="claim__merge"
+            data-testid="delivery-claim-merge"
+            [cacTooltip]="mergeTooltip()">via {{ merge }}</span>
+    }
+
+    <span class="claim__state"
+          data-testid="delivery-claim-release"
+          [attr.data-state]="releaseState()">
+      <span class="claim__dot" aria-hidden="true">●</span>
+      {{ releaseLabel() }}
+    </span>
+
+    @if (supersessionLabel(); as marker) {
+      <span class="claim__supersession"
+            data-testid="delivery-claim-supersession"
+            [attr.data-state]="supersession()"
+            [cacTooltip]="supersessionTooltip()">{{ marker }}</span>
+    }
+
+    @if (claimLabel(); as basis) {
+      <span class="claim__basis"
+            data-testid="delivery-claim-basis"
+            [cacTooltip]="claim()?.evidence ?? ''">{{ basis }}</span>
+    }
+
+    @if (overrideReason(); as reason) {
+      <p class="claim__reason" data-testid="delivery-claim-override-reason">{{ reason }}</p>
+    }
+  </section>
+}
