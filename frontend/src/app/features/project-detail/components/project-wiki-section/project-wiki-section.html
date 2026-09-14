@@ -494,7 +494,7 @@
                 </div>
               } @else {
                 <cac-markdown class="pwiki__viewer-body pwiki__reader-body"
-                              data-testid="project-wiki-viewer"
+                              data-testid="project-wiki-viewer" [attr.data-dossier-reference-scope]="projectName()"
                               [source]="displayContent()"
                               (click)="onRenderedWikiLink($event)"
                               (auxclick)="onRenderedWikiLink($event)"

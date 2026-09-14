@@ -1,0 +1,39 @@
+<span class="dossier-ref" [attr.data-testid]="testId()">
+  @if (interactive()) {
+    <a
+      class="dossier-ref__link"
+      [href]="route()"
+      (click)="open($event)"
+      [attr.aria-label]="ariaLabel()"
+      [appTooltip]="tooltipLabel()"
+      [appTooltipTestId]="testId() + '-tooltip'"
+      [appTooltipDelay]="300"
+    >
+      <ng-container [ngTemplateOutlet]="body"></ng-container>
+    </a>
+    <button
+      type="button"
+      class="dossier-ref__source"
+      [attr.data-testid]="testId() + '-source'"
+      [attr.aria-label]="sourceLabel()"
+      [appTooltip]="sourceLabel()"
+      [appTooltipTestId]="testId() + '-source-tooltip'"
+      (click)="openSource($event)"
+    >
+      <app-studio-icon name="file" [size]="12" />
+    </button>
+  } @else {
+    <span class="dossier-ref__link dossier-ref__link--static">
+      <ng-container [ngTemplateOutlet]="body"></ng-container>
+    </span>
+  }
+</span>
+
+<ng-template #body>
+  <app-studio-icon class="dossier-ref__icon" [name]="icon()" [size]="12" />
+  <strong class="dossier-ref__key">{{ label() }}</strong>
+  @if (!compact()) {
+    <span class="dossier-ref__title">{{ reference().title }}</span>
+  }
+  <span class="dossier-ref__status" [attr.data-status]="reference().status">{{ statusLabel() }}</span>
+</ng-template>

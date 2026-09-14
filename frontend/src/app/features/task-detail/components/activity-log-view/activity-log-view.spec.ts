@@ -6,12 +6,19 @@ import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { ActivityLogViewComponent } from './activity-log-view';
 import { CliOutputLine } from '../../../../models/task.model';
+import { DossierReferenceHydratorService } from '../../../../services/dossier-reference-hydrator.service';
+import {
+  DOSSIER_FIXTURE_KEY,
+  dossierChipsIn,
+  provideDossierCatalogueStub,
+} from '../../../../../testing/dossier-references';
 
 const standardProviders = [
   provideZonelessChangeDetection(),
   provideHttpClient(),
   provideHttpClientTesting(),
   provideRouter([]),
+  provideDossierCatalogueStub(),
 ];
 
 async function renderConversation(lines: CliOutputLine[]): Promise<ComponentFixture<ActivityLogViewComponent>> {
@@ -328,5 +335,22 @@ describe('ActivityLogViewComponent — conversation history window', () => {
     expect(host.textContent).toContain('line 399');
     expect(host.textContent).toContain('Tiny follow-up');
     fixture.destroy();
+  });
+});
+
+// AGT-2812: an agent turn that names a Dossier reads as the Dossier, not as a
+// bare key, on the same terms as every other document surface.
+describe('ActivityLogViewComponent - Dossier references', () => {
+  it('renders a Dossier named in an agent turn as a chip', async () => {
+    const fixture = await renderConversation([{
+      timestamp: '2026-09-01T10:00:00.000Z',
+      stream: 'stdout',
+      text: `Reviewed ${DOSSIER_FIXTURE_KEY} before starting.`,
+    }]);
+    TestBed.inject(DossierReferenceHydratorService).refresh();
+
+    const chips = dossierChipsIn(fixture.nativeElement as HTMLElement);
+    expect(chips).toHaveLength(1);
+    expect(chips[0].textContent).toContain('Decision cards');
   });
 });

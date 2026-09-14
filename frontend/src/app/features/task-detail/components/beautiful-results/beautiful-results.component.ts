@@ -49,6 +49,12 @@ export class BeautifulResultsComponent {
   readonly markdown = input<string>('');
   readonly jobId = input<string | null>(null);
   readonly watchPath = input<string | null>(null);
+  /**
+   * Scopes Dossier reference hydration (AGT-2812). The rendered body is the
+   * Result view's own HTML rather than a shared markdown element, so it names
+   * its project explicitly for repo-relative path resolution.
+   */
+  readonly projectName = input<string | null>(null);
 
   /** Emitted when the operator clicks a detected source reference. */
   readonly openSource = output<{ path: string; line: number | null }>();

@@ -48,7 +48,13 @@
                           (mouseenter)="activeIndex.set(resultIndex(item))" (click)="choose(item)">
                     <span class="search-project-dot" [style.background]="item.projectColor" aria-hidden="true"></span>
                     <span class="search-result-copy"><strong>{{ item.title }}</strong><small>{{ item.projectName }} · {{ item.subtitle }}</small></span>
-                    @if (item.dossierKey) { <span class="search-badge">{{ item.dossierKey }}</span> }
+                    @if (dossierReference(item); as dossier) {
+                      <app-dossier-reference-chip
+                        [reference]="dossier" [interactive]="false" [compact]="true"
+                        testId="search-dossier-chip" />
+                    } @else if (item.dossierKey) {
+                      <span class="search-badge">{{ item.dossierKey }}</span>
+                    }
                     @if (item.lane) { <span class="search-badge">{{ item.lane }}</span> }
                     @if (item.phase) { <span class="search-badge">{{ item.phase }}</span> }
                     @if (updatedLabel(item); as updated) { <span class="search-updated">{{ updated }}</span> }

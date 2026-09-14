@@ -8,6 +8,12 @@ import { CodeReviewPanelComponent } from './code-review-panel.component';
 import { CodeReviewActivityStore } from '../../../../../services/code-review-activity.store';
 import type { TaskInfo } from '../../../../../models/task.model';
 import { LARGE_DIFF_LINE_THRESHOLD } from '../../../../../utils/large-diff-gate';
+import { DossierReferenceHydratorService } from '../../../../../services/dossier-reference-hydrator.service';
+import {
+  DOSSIER_FIXTURE_PATH,
+  dossierChipsIn,
+  provideDossierCatalogueStub,
+} from '../../../../../../testing/dossier-references';
 
 /**
  * Behaviour spec for the user-triggered code-review panel. Pins the
@@ -50,6 +56,7 @@ describe('CodeReviewPanelComponent', () => {
         provideHttpClient(),
         provideHttpClientTesting(),
         provideRouter([]),
+        provideDossierCatalogueStub(),
       ],
     }).compileComponents();
   }
@@ -632,6 +639,42 @@ describe('CodeReviewPanelComponent', () => {
     fixture.detectChanges();
 
     expect(store.isRunning(key)).toBe(false);
+    httpCtrl.verify();
+  });
+
+  // AGT-2812: review documents are a document surface too. A Dossier path in a
+  // finding resolves to the Dossier view instead of a raw file link.
+  it('renders a Dossier path in a review body as a chip', async () => {
+    await setup();
+    const fixture = TestBed.createComponent(CodeReviewPanelComponent);
+    fixture.componentRef.setInput('job', seedJob());
+    fixture.detectChanges();
+
+    const httpCtrl = TestBed.inject(HttpTestingController);
+    httpCtrl.expectOne((r) => r.url.includes('/tasks/code-review/defaults'))
+      .flush({ cliType: 'claude', model: 'claude-haiku-4-5' });
+    httpCtrl.expectOne((r) => r.url.includes('/code-review/list')).flush({
+      entries: [{
+        fileName: 'code-review-dossier.md', verdict: 'concerns',
+        summary: 'Contradicts the Dossier.', model: 'claude-haiku-4-5',
+        cliType: 'claude', commit: '0aa4c5d', runAt: '2026-05-14T12:00:00Z',
+      }],
+    });
+    fixture.detectChanges();
+
+    const root = fixture.nativeElement as HTMLElement;
+    (root.querySelector('.cr-row-toggle') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    httpCtrl.expectOne((r) => r.url.includes('/code-review/code-review-dossier.md')).flush({
+      fileName: 'code-review-dossier.md',
+      content: `# Code Review Step\n\nThis contradicts \`${DOSSIER_FIXTURE_PATH}\`.\n`,
+    });
+    fixture.detectChanges();
+    TestBed.inject(DossierReferenceHydratorService).refresh();
+
+    const chips = dossierChipsIn(root);
+    expect(chips).toHaveLength(1);
+    expect(chips[0].textContent).toContain('AGT-W54');
     httpCtrl.verify();
   });
 });

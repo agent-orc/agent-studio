@@ -14,6 +14,7 @@ import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
 import { CountBadgeComponent } from '../../../../components/count-badge/count-badge.component';
 import type { TaskReferenceStatus } from '../../../../components/task-reference-microcard/task-reference-microcard';
 import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
+import { dossierStatusLabel } from '../../../../models/dossier-presentation';
 import { ProjectDocsService } from '../../../../services/project-docs.service';
 import { JobsHubClient } from '../../../../services/jobs-hub-client.service';
 import { TaskService } from '../../../../services/task.service';
@@ -158,14 +159,7 @@ export class WorkbenchOverviewComponent {
     return this.referenceStatusesByItem().get(this.itemKey(item)) ?? [];
   }
   statusLabel(item: WorkbenchOverviewItem): string {
-    const workbench = item.workbench;
-    if (!workbench.valid) return 'Needs attention';
-    if (workbench.status === 'decision-pending') return 'Decision pending';
-    if (workbench.status === 'active') return workbench.phase ?? 'Active';
-    if (workbench.status === 'decided') return 'Accepted / In progress';
-    if (workbench.status === 'archived') return 'Discarded';
-    if (workbench.status === 'documented') return 'Documented';
-    return workbench.status;
+    return dossierStatusLabel(item.workbench);
   }
   private filteredItemsWithStatus(status: string): WorkbenchOverviewItem[] {
     return this.filteredItems().filter(item => item.workbench.status === status);
