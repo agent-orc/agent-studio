@@ -1,0 +1,612 @@
+<!doctype html>
+<html lang="en" data-document-pattern="concept">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Task and board UI decisions | Concept Dossier</title>
+  <style data-article-template="v2">
+    :root {
+      color-scheme: light;
+      --article-paper: #fcfcfb;
+      --article-surface: #f2f1ee;
+      --article-surface-strong: #e9e8e3;
+      --article-ink: #151515;
+      --article-muted: #5f5e59;
+      --article-faint: #7c7a74;
+      --article-line: #d8d6cf;
+      --article-link: #1f67b2;
+      --article-link-soft: #eaf1fb;
+      --article-good: #18753a;
+      --article-good-soft: #eaf4ea;
+      --article-warn: #8b6100;
+      --article-warn-soft: #f8f0dd;
+      --article-bad: #b72f2f;
+      --article-bad-soft: #fbecec;
+      --article-serif: Georgia, "Times New Roman", serif;
+      --article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --article-paper: #1a1a19;
+        --article-surface: #232322;
+        --article-surface-strong: #2c2c2a;
+        --article-ink: #f7f7f4;
+        --article-muted: #c3c2b7;
+        --article-faint: #9d9c94;
+        --article-line: #3d3d3a;
+        --article-link: #78aef0;
+        --article-link-soft: #1e2a3a;
+        --article-good: #67b867;
+        --article-good-soft: #1f2f1f;
+        --article-warn: #d9a63f;
+        --article-warn-soft: #33301e;
+        --article-bad: #e66767;
+        --article-bad-soft: #382222;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--article-paper); }
+    body {
+      margin: 0;
+      background: var(--article-paper);
+      color: var(--article-ink);
+      font: 17px/1.75 var(--article-serif);
+      text-rendering: optimizeLegibility;
+    }
+    main,
+    .article {
+      width: min(70ch, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 0 0 80px;
+    }
+    header.page {
+      margin-bottom: 12px;
+      padding: 48px 0 28px;
+      border-bottom: 1px solid var(--article-line);
+    }
+    h1,
+    h2,
+    h3,
+    h4,
+    .kicker,
+    .meta,
+    .number,
+    nav,
+    table,
+    figcaption,
+    .box,
+    .callout,
+    .evidence-figure,
+    .variant-grid,
+    .evidence-list {
+      font-family: var(--article-sans);
+    }
+    h1 {
+      margin: 0 0 14px;
+      font-size: clamp(2.2rem, 6vw, 3.4rem);
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+    }
+    h2 {
+      margin: 56px 0 10px;
+      font-size: 1.55rem;
+      line-height: 1.25;
+    }
+    h3 { margin: 34px 0 8px; font-size: 1.08rem; line-height: 1.35; }
+    h4 { margin: 0 0 8px; font-size: 0.94rem; }
+    p { margin: 0 0 18px; }
+    p:last-child { margin-bottom: 0; }
+    .kicker,
+    .number {
+      margin: 0 0 12px;
+      color: var(--article-faint);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    .lede { margin: 0; color: var(--article-muted); font-size: 1.18rem; line-height: 1.6; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; color: var(--article-faint); font-size: 0.78rem; }
+    .meta b { color: var(--article-muted); font-weight: 650; }
+    a { color: var(--article-link); text-underline-offset: 0.16em; }
+    a:focus-visible { outline: 2px solid var(--article-link); outline-offset: 3px; border-radius: 2px; }
+    code {
+      padding: 0.08em 0.34em;
+      border-radius: 4px;
+      background: var(--article-surface-strong);
+      font: 0.84em/1.5 var(--article-mono);
+      overflow-wrap: anywhere;
+    }
+    pre {
+      overflow-x: auto;
+      margin: 24px 0;
+      padding: 16px 18px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    pre code { padding: 0; background: transparent; }
+    ul,
+    ol { margin: 0 0 18px; padding-left: 24px; }
+    li + li { margin-top: 6px; }
+    table { width: 100%; margin: 24px 0; border-collapse: collapse; font-size: 0.88rem; line-height: 1.5; }
+    th,
+    td { padding: 10px 12px; border-bottom: 1px solid var(--article-line); text-align: left; vertical-align: top; }
+    th { color: var(--article-faint); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .box,
+    .callout {
+      margin: 24px 0;
+      padding: 18px 22px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+      font-size: 0.92rem;
+      line-height: 1.65;
+    }
+    .box.accent,
+    .callout[data-tone="accent"] { border-color: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); background: var(--article-link-soft); }
+    .box.good,
+    .callout[data-tone="good"] { border-color: color-mix(in srgb, var(--article-good) 30%, var(--article-line)); background: var(--article-good-soft); }
+    .box.warn,
+    .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
+    .box.bad,
+    .callout[data-tone="bad"] { border-color: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); background: var(--article-bad-soft); }
+    figure { margin: 30px 0; }
+    figure > img,
+    figure > svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    figcaption { margin-top: 10px; color: var(--article-muted); font-size: 0.8rem; line-height: 1.5; }
+    .evidence-figure { margin-top: 38px; margin-bottom: 38px; }
+    .evidence-captures {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+      gap: 12px;
+    }
+    .evidence-capture {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    .evidence-capture > img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    .capture-theme,
+    .figure-annotation {
+      position: absolute;
+      z-index: 1;
+      border: 1px solid var(--article-line);
+      border-radius: 999px;
+      background: var(--article-surface);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      line-height: 1.35;
+    }
+    .capture-theme {
+      top: 10px;
+      left: 10px;
+      padding: 3px 8px;
+      text-transform: uppercase;
+    }
+    .figure-annotation {
+      right: 12px;
+      bottom: 12px;
+      max-width: min(28ch, calc(100% - 24px));
+      padding: 5px 10px;
+      border-color: color-mix(in srgb, var(--article-link) 45%, var(--article-line));
+      background: var(--article-link-soft);
+      color: var(--article-link);
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .figure-claim { display: block; color: var(--article-ink); font-size: 0.84rem; }
+    .figure-as-of {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px 14px;
+      margin-top: 6px;
+      color: var(--article-faint);
+      font-size: 0.72rem;
+    }
+    .breakout,
+    .media-breakout {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+    }
+    .variant-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin: 24px 0; }
+    .variant {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    .variant h3 { margin: 0 0 8px; }
+    .variant img,
+    .variant svg { display: block; width: 100%; height: auto; margin-top: 12px; }
+    [data-document-pattern="ui"] .variant-grid {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    [data-document-pattern="ui"] .mockup { width: min(1120px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
+    .evidence-list { display: grid; gap: 10px; margin: 24px 0; }
+    .evidence {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 10px 14px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid var(--article-line);
+      border-radius: 9px;
+      background: var(--article-surface);
+      color: var(--article-ink);
+      text-decoration: none;
+    }
+    .evidence:hover { border-color: var(--article-link); background: var(--article-link-soft); }
+    .evidence-class {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--article-surface-strong);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="observed"] { background: var(--article-good-soft); color: var(--article-good); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="inferred"] { background: var(--article-warn-soft); color: var(--article-warn); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="proposed"] { background: var(--article-link-soft); color: var(--article-link); }
+    .evidence b { display: block; margin-bottom: 2px; font-size: 0.88rem; }
+    .evidence small { display: block; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; }
+    .dim { color: var(--article-muted); }
+
+    @media (max-width: 760px) {
+      main,
+      .article { width: min(100% - 28px, 70ch); padding-bottom: 52px; }
+      header.page { padding-top: 32px; }
+      .breakout,
+      .media-breakout,
+      [data-document-pattern="ui"] .variant-grid,
+      [data-document-pattern="ui"] .mockup { width: calc(100vw - 20px); }
+      [data-document-pattern="ui"] .variant-grid { grid-template-columns: 1fr; }
+      .evidence { grid-template-columns: 1fr; }
+      .evidence-captures { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
+    }
+  </style>
+
+  <style data-article-extends="v2">
+    nav[aria-label="Contents"] { margin: 28px 0 0; font-size: 0.88rem; }
+    nav[aria-label="Contents"] ul { margin: 0; padding-left: 20px; }
+    caption { caption-side: top; margin-bottom: 8px; color: var(--article-faint); font-family: var(--article-sans); font-size: 0.78rem; text-align: left; }
+    figure svg text { font-family: var(--article-sans); }
+    .box ul { margin: 10px 0 0; }
+    .box > h4 + p { margin-top: 0; }
+  </style>
+</head>
+<body>
+<main class="article">
+  <header class="page">
+    <p class="kicker">Concept Dossier &middot; Agent Studio &middot; AGT-W60</p>
+    <h1>Task and board UI decisions</h1>
+    <p class="lede">Eight Dossiers argued about the same two surfaces: the task detail view and the board chrome around it. Three of those arguments are settled and in force. Five still wait for one operator choice each. This Dossier keeps the settled rules, the open choices and the evidence that still holds, and replaces the eight sources on the current list.</p>
+    <div class="meta">
+      <span><b>Status</b> decision-pending</span>
+      <span><b>Phase</b> decision-ready</span>
+      <span><b>Prepared</b> <time datetime="2026-09-14">14 September 2026</time></span>
+      <span><b>Source card</b> AGT-2802</span>
+      <span><b>Program</b> AGT-2797, from AGT-W55 (D1)</span>
+    </div>
+  </header>
+
+  <nav aria-label="Contents">
+    <p class="kicker">Contents</p>
+    <ul>
+      <li><a href="#sources">01 Scope and sources</a></li>
+      <li><a href="#topics">02 Topics: decisions in force and open choices</a></li>
+      <li><a href="#recommendation">03 Recommendation</a></li>
+      <li><a href="#evidence">04 Evidence</a></li>
+      <li><a href="#open-decisions">05 Open decisions</a></li>
+    </ul>
+  </nav>
+
+  <section id="sources">
+    <h2><span class="number">01</span> Scope and sources</h2>
+    <p>AGT-W53 read every Dossier and AGT-W55 turned the result into a target set of sixteen. One of the four new theme Dossiers is this one. It covers what the operator sees and operates in Agent Studio: the task detail view with its Overview, Timeline, Activity and Result surfaces, the escalation header, the task header and chat chips, and the project scope control in the shell. It does not cover the board status model, which belongs to the delivery chain Dossier, nor the admin surface guideline AGT-W1, which stays as it is and governs every proposal here.</p>
+    <p>Three topics carry a recorded operator decision and keep their history. Five topics carry an open choice. Nothing below is newly argued: every claim comes from one of the eight sources with its original date.</p>
+
+    <table>
+      <caption class="dim">The eight sources, their state at consolidation, and what survives into this Dossier.</caption>
+      <thead>
+        <tr><th>Source</th><th>Date</th><th>State</th><th>What survives here</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>AGT-W27 Narrative task view</td><td>24 Jul 2026</td><td>open</td><td>Reading contract, generation contract, fixed template, measured card economics, three-card cut</td></tr>
+        <tr><td>AGT-W35 Task Timeline redesign</td><td>11 Aug 2026</td><td>open</td><td>Four presentation decisions, six categories, three row registers, incident semantics, real light and dark capture</td></tr>
+        <tr><td>AGT-W45 Escalation view information architecture</td><td>12 Aug 2026</td><td>open</td><td>One owner per failure fact, four slices, real light and dark capture, the AGT-2717 data-source update</td></tr>
+        <tr><td>AGT-W21 Task header and chat chips</td><td>8 Aug 2026</td><td>open</td><td>Three mapped layout defects with file evidence, tab overflow alternatives, the structural base fix</td></tr>
+        <tr><td>AGT-W52 Project scope switch</td><td>12 Sep 2026</td><td>open</td><td>Six requirements, three alternatives, three decisions, two card cuts</td></tr>
+        <tr><td>AGT-W48 Task-detail usage block</td><td>11 Sep 2026</td><td>decided</td><td>Decision for alternative A with its date and card, and the five requirements it has to meet</td></tr>
+        <tr><td>AGT-W17 Protocol condensation</td><td>9 Aug 2026</td><td>decided, in force</td><td>The three rules the operator approved, including the no-inline-diff rule later Dossiers rely on</td></tr>
+        <tr><td>AGT-W20 status.md finalisation</td><td>10 Aug 2026</td><td>decided, documented</td><td>Ownership contract, inventory baseline, the approved option and what AGT-2585 delivered</td></tr>
+      </tbody>
+    </table>
+
+    <figure>
+      <svg viewBox="0 0 900 300" role="img" aria-labelledby="map-title map-desc" xmlns="http://www.w3.org/2000/svg">
+        <title id="map-title">Consolidation map of the eight sources</title>
+        <desc id="map-desc">Eight source Dossiers on the left feed into one consolidated Dossier on the right. Three of them, W48, W17 and W20, arrive as recorded decisions. Five of them, W27, W35, W45, W21 and W52, arrive as open choices.</desc>
+        <g fill="none" stroke="currentColor" stroke-width="1" opacity="0.45">
+          <path d="M250 46 C 360 46, 400 110, 520 110"/>
+          <path d="M250 84 C 360 84, 400 110, 520 110"/>
+          <path d="M250 122 C 360 122, 400 116, 520 116"/>
+          <path d="M250 160 C 360 160, 400 122, 520 122"/>
+          <path d="M250 198 C 360 198, 400 128, 520 128"/>
+          <path d="M250 236 C 360 236, 420 190, 520 190"/>
+          <path d="M250 262 C 360 262, 420 196, 520 196"/>
+          <path d="M250 288 C 360 288, 420 202, 520 202"/>
+        </g>
+        <g font-size="13" fill="currentColor">
+          <text x="14" y="24" font-size="11" opacity="0.6">SOURCES</text>
+          <text x="14" y="50">W27 Narrative task view</text>
+          <text x="14" y="88">W35 Task Timeline redesign</text>
+          <text x="14" y="126">W45 Escalation view IA</text>
+          <text x="14" y="164">W21 Task header and chat chips</text>
+          <text x="14" y="202">W52 Project scope switch</text>
+          <text x="14" y="240">W48 Task-detail usage block</text>
+          <text x="14" y="266">W17 Protocol condensation</text>
+          <text x="14" y="292">W20 status.md finalisation</text>
+          <text x="536" y="24" font-size="11" opacity="0.6">AGT-W60 TASK AND BOARD UI DECISIONS</text>
+          <text x="536" y="106">Five open choices,</text>
+          <text x="536" y="126">one operator decision each</text>
+          <text x="536" y="186">Three decisions in force,</text>
+          <text x="536" y="206">kept with date and card</text>
+        </g>
+        <g fill="none" stroke="currentColor" stroke-width="1" opacity="0.75">
+          <rect x="520" y="82" width="340" height="62" rx="8"/>
+          <rect x="520" y="162" width="340" height="62" rx="8"/>
+        </g>
+      </svg>
+      <figcaption>Figure 1. The consolidation. Eight source Dossiers become one current Dossier with two registers: open choices that still need the operator, and decisions that are already in force and are kept as history.</figcaption>
+    </figure>
+  </section>
+
+  <section id="topics" data-concept-section="alternatives" data-document-section="alternatives">
+    <h2><span class="number">02</span> Topics: decisions in force and open choices</h2>
+    <p>One section per topic. A topic that is decided states the decision, its date and its card. A topic that is open states the choices as an inline decision block with the recommended default marked. The options are the ones the source Dossier put in front of the operator; no option was added or dropped in consolidation.</p>
+
+    <h3 id="t1-narrative-view">2.1 Narrative task view (from AGT-W27, 24 July 2026)</h3>
+    <p>Task detail is a technical record. The proposal adds a second, equally first-class reading of the same state: a short, evidence-linked report that is already written before anybody opens the card. The technical view stays canonical and stays one click away; a narrative claim always links back to prompt, run, verdict, file or log.</p>
+    <p>Three constraints hold whatever is decided. Generation is proactive, as ordinary visible pipeline steps in the API resource class, so it can never occupy a build slot. Each reading is cached against a material-state digest built from task key, body revision, review cycle, verdict, evidence manifest, template version, prompt version and model, so a new round or verdict produces a new reading while lane timestamps and status heartbeats do not. Failure is honest: if generation or validation fails, the view says the narrative is unavailable and keeps the technical view usable, and an older complete reading never presents itself as current.</p>
+    <p>The model writes meaning, never presentation. A fixed renderer owns spacing, type, theme tokens, section order and a closed set of four visual primitives, and four sections are required: what this is about, what was done, what the evidence shows, what remains open. HTML, CSS, SVG, image paths, external URLs and section reordering are not accepted from the model.</p>
+    <div class="box warn">
+      <h4>Model tier is not settled by this Dossier</h4>
+      <p>AGT-W27 planned with July 2026 API list prices for two external models, and noted at the time that the product price catalogue returned <code>UnknownModel</code> for them. Those figures are planning calculations with a date, not a routing decision. Whichever option is chosen, the actual tier and thinking level come from <a href="../../system/domains/model-routing-policy.md">the model routing policy</a>, which owns the correctness floors and the separate pipeline-support and classification path. A pipeline row must show an unknown price rather than a false zero until the catalogue carries the selected model.</p>
+    </div>
+    <div class="box accent" role="group" aria-labelledby="d1-q">
+      <p class="kicker">Decision D1 &middot; open</p>
+      <h4 id="d1-q">Does the narrative reading view get built, and how is it generated?</h4>
+      <ul>
+        <li><b>A &middot; Proactive generation, as specified (recommended default).</b> Visible PRE and POST pipeline steps in the API pool, versioned cache against the material-state digest, one fixed renderer, a remembered Technical or Narrative mode in the task-detail head. Cut into three reviewable cards: generator steps, versioned cache, task-detail toggle.</li>
+        <li><b>B &middot; Lazy generation on open.</b> Generate when a reader asks for it. Cheaper when nobody reads, but the reader waits, and the cost lands outside the visible pipeline cost contract. AGT-W27 examined and rejected this.</li>
+        <li><b>C &middot; Do not build it.</b> Task detail stays technical only. The measured reading-time argument is declined and the three cards are dropped.</li>
+      </ul>
+    </div>
+
+    <h3 id="t2-timeline">2.2 Task Timeline redesign (from AGT-W35, 11 August 2026)</h3>
+    <p>The Timeline is a flat ledger dump. The redesign makes it a category-led, incident-aware stream: normal history stays quiet, unresolved failures are unmistakable, technical identifiers move behind explanatory copyable popovers, and raw evidence stays reachable through bounded disclosure and Trace. Timeline and the run-level Activity stream share one presentation registry but keep separate stores; Trace remains the raw evidence view and never becomes the default reading surface.</p>
+    <p>The contract is four decisions taken together. <b>Structure:</b> every event resolves to one of six categories, lane, run, integration, gate, escalation and orchestrator decision, rendered in one shared grid with at most three row registers; failure is a state treatment, not a seventh category. <b>Incidents:</b> a banner represents an open incident only, opened by a typed event carrying an incident ID and closed by a later event that recovers, succeeds, supersedes or overrides it; a lane move alone never heals an integration failure. <b>Disclosure:</b> commands, outputs, Markdown payloads and raw frames are never open prose, always one disclosure away and always copyable, and one tool call maps to one result so an aggregate equals its visible children. <b>Navigation:</b> newest first, day sections, run anchors, a sticky time context and a reserved jump row. A central glossary module owns the one-sentence explanation behind every technical chip; the explanation precedes the value and the Copy action.</p>
+    <p>Delivery is seven slices: the registry, the Timeline shell, technical disclosure, incident semantics, the payload renderer, lifecycle condensation, and scale plus proof. T2 and T3 can run in parallel after T1. T4 is the semantic correction and must land before the stale banner counts as fixed.</p>
+    <div class="box accent" role="group" aria-labelledby="d2-q">
+      <p class="kicker">Decision D2 &middot; open</p>
+      <h4 id="d2-q">Is the Timeline presentation contract approved?</h4>
+      <ul>
+        <li><b>A &middot; Approve all four decisions as one contract (recommended default).</b> Structure, incidents, disclosure and navigation together; the seven slices become delivery cards.</li>
+        <li><b>B &middot; Approve the semantic correction first.</b> Take D2 incidents, which is slice T4 plus the registry T1, and defer the presentation slices. The stale acute banner is cured, the ledger stays hard to read.</li>
+        <li><b>C &middot; Reject and name the decision that changes.</b> AGT-W35 states the remaining contract stays fully specified if one of the four is replaced.</li>
+      </ul>
+    </div>
+
+    <h3 id="t3-escalation">2.3 Escalation view information architecture (from AGT-W45, 12 August 2026)</h3>
+    <p>An escalated card states its blocker three times and hides the useful one. The header is prominent but content-free, the Pipeline section owns the only concrete blocker below its own heading, and the Result tab adds a third red outcome label. The proposal gives each fact one owner: the escalation header owns the actual blocker and the human-decision state, the Pipeline section keeps only the failed locus, and Result explains the run.</p>
+    <p>The blocker line has a defined source priority: recorded status-stub reason, structured steering reason, first structured open finding, then the explicit fallback that no blocker summary was recorded. A plausible cause is never synthesised. Zero review rounds, an unrecorded grade and zero findings do not displace the blocker. The ATTENTION marker on the failed step stays, because it answers which step failed rather than restating the task outcome. In Result, goal and stop boundary become flat sibling rows with a calm full-row tint for the stopped state and no coloured left bar, following the hard design rules.</p>
+    <p>One later change is already in the product and does not settle this topic: since 8 September 2026 (AGT-2717) the header reads review rounds, latest outcome, blocking aspect and delivery-gate state from the backend review projection, which merges the local and remote review planes so the count is no longer wrong for a remote-only review history. That is a data-source fix. The four layout and ownership slices remain open.</p>
+    <div class="box accent" role="group" aria-labelledby="d3-q">
+      <p class="kicker">Decision D3 &middot; open</p>
+      <h4 id="d3-q">Is the escalation information architecture approved?</h4>
+      <ul>
+        <li><b>A &middot; Approve all three statements as one contract (recommended default).</b> The header is the single owner of the exact blocker and the decision state; the terminal escalation strip leaves Pipeline and the outcome case badge leaves Result on escalated cards; Result rows become flat siblings with a calm full-row tint for the stopped state.</li>
+        <li><b>B &middot; Header only.</b> Promote the blocker into the header and leave the duplicate surfaces in place. Three red outcome statements keep competing.</li>
+        <li><b>C &middot; Keep every surface and improve the copy.</b> Examined and rejected in AGT-W45: better wording does not cure duplication.</li>
+      </ul>
+    </div>
+
+    <h3 id="t4-header-chips">2.4 Task header and chat chips (from AGT-W21, 8 August 2026)</h3>
+    <p>Three layout defects from an operator review, each mapped to its file. The pane tab strip overlaps when space runs short, because the tab label has no ellipsis while its host can shrink and no breakpoint touches the strip; the squeeze comes from the user-dragged pane splitter, not from the window width. The escalation banner renders two merge segments, so a project whose integration branch is its release branch shows the same branch twice, and a bare dash as the not-merged state is unreadable. The execution chip in the orchestrator side sheet sits in a chain of shrinkable elements where the revision line alone cannot shrink, so it collides with the label above it when the sheet is narrowed.</p>
+    <p>Two of the three answers are structural rather than a choice. The branch chips collapse to one segment when the integration branch equals the release branch, and the state becomes a word with the SHA in the tooltip instead of a dash. The chat chip gets the same ellipsis and minimum-width treatment as its siblings, a shortened SHA with the full value in the tooltip, and a compact state below its minimum width. For the tab strip, the ellipsis and per-tab minimum width are the base fix in every case, because they make overlap structurally impossible; the responsive behaviour above that base is the open choice. The measurement logic is the same for both variants, so a later switch is cheap.</p>
+    <div class="box accent" role="group" aria-labelledby="d4-q">
+      <p class="kicker">Decision D4 &middot; open</p>
+      <h4 id="d4-q">What does the tab strip do when space runs short?</h4>
+      <ul>
+        <li><b>A &middot; Overflow menu (recommended default).</b> Tabs that do not fit move into a menu at the end of the strip; the active tab is never moved out, and hidden badges aggregate on the menu affordance. Labels stay readable and there is no icon learning curve.</li>
+        <li><b>B &middot; Icon-only mode.</b> Inactive tabs reduce to icons, the active tab keeps its label, badges stay on the icon. More compact, but icon meanings have to be learned, and eight tabs across two strips is at the edge.</li>
+        <li><b>C &middot; Hybrid.</b> Icon-only first, then overflow when even icons do not fit.</li>
+      </ul>
+      <p class="dim">Independent of this choice: the ellipsis and minimum-width base fix, the single branch segment with a worded state, and the chat chip ellipsis symmetry are proposed as approved together with it. The responsive trigger is a container query on the strip width, not a global breakpoint.</p>
+    </div>
+
+    <h3 id="t5-project-scope">2.5 Project scope switch (from AGT-W52, 12 September 2026)</h3>
+    <p>The operator uses the all-projects view often and reaches it in two clicks. The scope has two controls with different appearances: a project pill in the title bar, which also carries the auto-pickup dot and the parallelism number on four click targets within about 250 pixels, and a grid button in the explorer header that opens the cross-project board. On top of that, an effect resets the scope on every tab change, so an explicit choice does not hold.</p>
+    <p>The requirements that follow are the durable part: all projects is one click away and one click back; exactly one control sets the scope while other places only display it; the scope holds until the user changes it; auto-pickup and parallelism are project status rather than part of choosing a project, with their own click target and tooltip; the title bar and the explorer use the same tokens; and the switch is reachable from the keyboard and listed in the command palette.</p>
+    <div class="box accent" role="group" aria-labelledby="d5-q">
+      <p class="kicker">Decision D5 &middot; open, three parts</p>
+      <h4 id="d5-q">Where does the project scope live?</h4>
+      <p><b>D5a Which alternative is built?</b></p>
+      <ul>
+        <li><b>A &middot; Segment in the title bar (recommended default).</b> An all-projects button and the project picker side by side, one click in each direction; auto-pickup and parallelism move into a separate status chip with a menu; the explorer grid button becomes a scope display that focuses the segment. Delivered in two steps, the second being the scope-holds change.</li>
+        <li><b>B &middot; The explorer is the only owner.</b> The project list carries all projects at the top and the title bar loses its picker. One click only while the explorer panel is open.</li>
+        <li><b>C &middot; Minimal.</b> A keyboard shortcut and a command-palette entry; both controls stay. Solves the finding for keyboard users only and leaves the tab effect in place.</li>
+      </ul>
+      <p><b>D5b May a tab change alter the scope?</b> A, the scope holds and a tab shows its project as context (recommended default); B, the scope follows the tab as today; C, ask once and remember the answer.</p>
+      <p><b>D5c Where does the auto-pickup switch sit?</b> A, in the status chip next to the segment, opening a menu of auto, paused and manual instead of toggling blind (recommended default); B, inside the pill as today; C, on the project row in the explorer.</p>
+    </div>
+
+    <h3 id="t6-usage-block">2.6 Task-detail usage block (from AGT-W48, decided 11 September 2026)</h3>
+    <div class="box good">
+      <h4>Decided: alternative A, the same grid as the pipeline steps</h4>
+      <p>Recorded on <time datetime="2026-09-11">11 September 2026</time> by the operator on AGT-W48; the implementation card is <b>AGT-2769</b>. Task total, tokens per run and agent work become rows of the pipeline grid instead of three components with three different layouts and four different right edges. The share bar per run replaces a second number and shows which run produced the cost.</p>
+    </div>
+    <p>Five requirements travel with the decision and are the acceptance surface for AGT-2769. The block is exactly as wide as the pipeline steps and shares their right edge. Tokens and costs sit under the token and cost columns of the steps, so reading top to bottom reads one column. The three contents survive: task total with its incomplete marker, tokens per run with the expandable model breakdown, and agent work with calls, started and last touch. No new colours; status and accent come from the Studio tokens and the dark theme is not a special case. The pipeline container query governs the block too, so a narrow pane folds the same columns away.</p>
+
+    <h3 id="t7-protocol-condensation">2.7 Protocol condensation (from AGT-W17, decided 9 August 2026, in force)</h3>
+    <div class="box good">
+      <h4>Decided: three rules, delivered through CAC-21 and AGT-2526</h4>
+      <p>Recorded on <time datetime="2026-08-09">9 August 2026</time> by the operator. The alternatives that were not taken, a display-only projection fold and a backend hysteresis in the watchdog, are closed.</p>
+    </div>
+    <ul>
+      <li><b>Supervisor lines:</b> consecutive supervisor wait events collapse into one expandable group row in the conversation library, with a counter and the full history one click away. Killed and timeout events are never condensed and keep their own conspicuous row.</li>
+      <li><b>Tool-call cluster rows:</b> a collapsed cluster carries the tool mix, the success aggregate and the duration, not only a count and a duration. Failures are never hidden by clustering.</li>
+      <li><b>Edit rows:</b> repository-relative paths with the full path in the tooltip, and an explicit counter label that distinguishes edits from files. No inline diff access in the protocol; the edit row links to the existing commit diff surface instead.</li>
+    </ul>
+    <p>The last of these is load bearing beyond its own topic: the Timeline redesign in 2.2 lists the no-inline-diff rule among its retained contracts, and its lifecycle condensation slice extends this grouping rather than reopening it. Because these rules already govern new work, they are stated here as rules in force rather than as history.</p>
+
+    <h3 id="t8-statusmd">2.8 status.md finalisation (from AGT-W20, decided 10 August 2026, documented)</h3>
+    <div class="box good">
+      <h4>Decided: option A, application-owned finalisation with an explicit degraded state</h4>
+      <p>Recorded on <time datetime="2026-08-10">10 August 2026</time> on AGT-W20 and approved through <b>AGT-2585</b>, which delivered the first two slices. The alternatives are closed: an agent-authored status duty would create two writers with probabilistic compliance, the scaffold as the normal result would make summary outages normal, and failing completion on a missing file would convert a summary-side failure into expensive agent reissues.</p>
+    </div>
+    <p>The ownership contract stands: the Dossier or report is the primary domain deliverable and <code>status.md</code> is the application-generated card summary. The root cause was a split application contract rather than agent behaviour. The legacy artifact endpoint honoured the finalisation intent and awaited the summary; the V1 client uploaded artifacts individually and dropped that intent, and no V1 endpoint invoked the summary generator. The transition backstop then wrote a marked scaffold, which was honest but hid the absent finaliser from completion semantics.</p>
+    <p>What AGT-2585 delivered: remote artifact finalisation reaches a fenced Task Server action and persists an application-generated <code>status.md</code>, exposed as an awaited post-result-finalisation step; a retry repeats only summary generation and never the completed core agent run; budget exhaustion persists a typed degraded state with attempt count and error evidence while the card stays reviewable; local completion awaits the same bounded summary-only gate. Two adjacent slices keep their own ownership and are not part of this Dossier's open decisions: making typed latest-run completion authoritative for terminal evidence, with the worker-head-advanced sequence as a regression case, and aligning Dossier link publication with generated Result ownership. That second slice is the rule this very card follows when it writes its Dossier path into <code>results/deliverables.md</code>.</p>
+  </section>
+
+  <section id="recommendation" data-concept-section="recommendation" data-document-section="recommendation">
+    <h2><span class="number">03</span> Recommendation</h2>
+    <div class="callout" data-tone="accent">
+      <h3>Take the five open decisions in one sitting, in the order the surfaces break</h3>
+      <p>Each recommended default is the one its source Dossier already argued for. Nothing here is a new proposal. The recommended set is D1 A, D2 A, D3 A, D4 A, D5 A with D5b A and D5c A.</p>
+    </div>
+    <p>Two of the five are corrections of something that is currently wrong on screen and should go first. D3 removes duplicate blocker statements and surfaces the one useful reason on escalated cards. D2 stops a healed incident from showing as acute; its slice T4 is the semantic fix and the rest of the Timeline contract can follow. These two change what an operator believes about a card, so they outrank the rest.</p>
+    <p>D4 is next and is the cheapest: the ellipsis and minimum-width base fix makes tab overlap structurally impossible regardless of the responsive variant, and the branch-chip and chat-chip repairs are unconditional. D5 removes a daily two-click detour and a scope that silently resets; its second step, the scope-holds change, is the part with behavioural risk and is deliberately sequenced after the visible one.</p>
+    <p>D1 is the only one that adds a new capability rather than repairing one, and it is the only one that spends tokens per card. It is recommended as specified, but last, and with its model tier taken from the routing policy rather than from the July price table in the source.</p>
+    <p>The three decided topics need no new decision. They are kept here so that the rules stay readable at their point of use: the usage block requirements are the acceptance surface for AGT-2769, the protocol condensation rules constrain the Timeline work in 2.2, and the status.md contract is why a concept card publishes its Dossier path instead of writing its own summary.</p>
+  </section>
+
+  <section id="evidence" data-concept-section="evidence" data-document-section="evidence">
+    <h2><span class="number">04</span> Evidence</h2>
+    <p>Two claims in this Dossier are claims about a visible product surface as it stood at the time of the source review, and both are proved by real captures carried over from their source Dossiers. The captures are reproduced unchanged, with their original capture date and provenance. No capture was re-taken for this consolidation, and nothing is claimed about the surface as it stands today.</p>
+
+    <figure class="evidence-figure media-breakout">
+      <div class="evidence-captures">
+        <div class="evidence-capture">
+          <span class="capture-theme">Light</span>
+          <img src="assets/task-timeline-agt-2577-current-light--real.png" alt="Task Timeline of card AGT-2577 in the light theme. A red escalated-to-human banner sits above a chronological list whose first visible entries are dominated by attempt identifiers, fences, branches and commit hashes rendered inline in the event sentences.">
+          <span class="figure-annotation">Stale acute banner</span>
+        </div>
+        <div class="evidence-capture">
+          <span class="capture-theme">Dark</span>
+          <img src="assets/task-timeline-agt-2577-current-dark--real.png" alt="The same Task Timeline of AGT-2577 in the dark theme, showing the identical red banner and the same inline technical identifiers in the first visible events.">
+        </div>
+      </div>
+      <figcaption>
+        <span class="figure-claim"><b>Evidence for 2.2.</b> The Timeline presents a resolved quota escalation as current acute truth while the card has moved on, and technical identifiers occupy the first visible events. The same hierarchy appears in both themes, so it is not a theme-token effect.</span>
+        <span class="figure-as-of">
+          <span><b>Light:</b> captured <time datetime="2026-08-11">11 August 2026</time> from a real Stable capture of task AGT-2577, carried over from AGT-W35.</span>
+          <span><b>Dark:</b> captured <time datetime="2026-08-11">11 August 2026</time> from a real Stable capture of the same task, carried over from AGT-W35.</span>
+        </span>
+      </figcaption>
+    </figure>
+
+    <figure class="evidence-figure media-breakout">
+      <div class="evidence-captures">
+        <div class="evidence-capture">
+          <span class="capture-theme">Light</span>
+          <img src="assets/agt-2278-escalation-current-light--real.png" alt="Escalated task detail of card AGT-2278 in the light theme. The escalation header states only review counts and that a human decision is required, while the concrete blocker text appears further down under the Pipeline heading and a third red outcome label appears in the Result area.">
+          <span class="figure-annotation">Blocker sits below Pipeline</span>
+        </div>
+        <div class="evidence-capture">
+          <span class="capture-theme">Dark</span>
+          <img src="assets/agt-2278-escalation-current-dark--real.png" alt="The same escalated task detail of AGT-2278 in the dark theme, with the same three competing failure statements and the same nested Result overview surface.">
+        </div>
+      </div>
+      <figcaption>
+        <span class="figure-claim"><b>Evidence for 2.3.</b> Three failure statements compete on one escalated card, and the only concrete blocker is the one that is not in the header. The hierarchy is invariant across themes, including the nested Result overview surface.</span>
+        <span class="figure-as-of">
+          <span><b>Light:</b> captured <time datetime="2026-08-12">12 August 2026</time> from real Stable data for task AGT-2278, carried over from AGT-W45. An unrelated crash-recovery modal was hidden in the browser page before capture; no task content or Stable data was changed.</span>
+          <span><b>Dark:</b> captured <time datetime="2026-08-12">12 August 2026</time> from real Stable data for the same task, carried over from AGT-W45.</span>
+        </span>
+      </figcaption>
+    </figure>
+
+    <div class="evidence-list">
+      <a class="evidence" href="#ev-timeline"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-timeline">AGT-2577 event snapshot, 11 August 2026</b><small>The live Task API snapshot held 42 timeline events across six runs. A quota-exceeded run at 19:10 on 10 August moved the card to escalated; runs finishing at 00:30, 02:26 and 16:24 on 11 August each returned it to review. No resolution event exists, which is why the projection still treats the older escalation as the latest terminal.</small></span></a>
+      <a class="evidence" href="#ev-status"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-status">status.md scaffold inventory, 10 August 2026</b><small>1,782 unique cards read through the stable Task API with zero read errors; 485 carried the result-scaffold marker. 341 of those came from a historical operator backfill and 144 from the transition path. Coding cards owned 142 of the 144 transition-path scaffolds, so the symptom was never specific to concept work.</small></span></a>
+      <a class="evidence" href="#ev-w20case"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-w20case">AGT-2514 completion case</b><small>A remote V1 planning run delivered its primary report, logged the done sentinel, exited zero and was accepted, yet summary generation state was null and the card received a scaffold on entry to review. This matched the V1 finalisation gap exactly and is the case the repair was built against.</small></span></a>
+      <a class="evidence" href="#ev-tokens"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-tokens">Narrative input measurement, 24 July 2026</b><small>Two real cards were measured through the permitted stable task API: the evidence-heavy AGT-2222 post bundle came to 14,915 input tokens, the small UI card AGT-2135 to 6,846. Pre-stage inputs remained estimates because review state and results do not exist yet at that point.</small></span></a>
+      <a class="evidence" href="#ev-w21"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-w21">Layout defect mapping, 8 August 2026</b><small>Each of the three header and chip defects was traced to a specific file and cause: a tab label without ellipsis in a shrinkable host, two merge segments rendered unconditionally, and a revision line without overflow handling in a chain of shrinkable elements. None of the three needs a backend or contract change.</small></span></a>
+      <a class="evidence" href="#ev-cost"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b id="ev-cost">Narrative cost per card</b><small>From the measured inputs and July 2026 list prices, one pre plus one post reading was calculated at roughly five to nine US cents per card. The daily and monthly projections rest on a filesystem-derived runner-rate proxy of 95 cards per day, not on a product throughput metric, and the price basis is superseded by the routing policy and price catalogue.</small></span></a>
+      <a class="evidence" href="#ev-2717"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-2717">Review projection change, 8 September 2026</b><small>AGT-2717 moved the escalation header's review rounds, latest outcome, blocking aspect and delivery-gate state onto the backend review projection, which merges local and remote review planes. It repairs the data source, not the information architecture, so the AGT-W45 slices stay open.</small></span></a>
+      <a class="evidence" href="#ev-curation"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-curation">Curation pass, 18 August 2026</b><small>The AGT-2671 curation found no implementation evidence for the narrative view and no completion claims for the Timeline and escalation Dossiers, which is why all three arrive here as open rather than as history.</small></span></a>
+      <a class="evidence" href="#ev-dropped"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b id="ev-dropped">What consolidation dropped</b><small>Removed: the per-alternative layout mockups of the usage block and the scope switch, whose decision or recommendation is recorded here instead; the before and after Timeline mockups and the escalation before and after sketches, which restate the recommendation as geometry; the two hand-built narrative mock reports; and the Timeline concept glossary, which belongs to the implementation module and the Wiki rather than to a decision Dossier. The sources keep all of it and stay readable in History.</small></span></a>
+    </div>
+  </section>
+
+  <section id="open-decisions" data-concept-section="open-decisions" data-document-section="open-decisions">
+    <h2><span class="number">05</span> Open decisions</h2>
+    <p>Five choices need a human. Each one is stated in full as an inline decision block in its topic section; this is the index with the recommended default. No implementation card is created by this Dossier.</p>
+    <table>
+      <thead>
+        <tr><th>Decision</th><th>Topic</th><th>Options</th><th>Recommended default</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>D1 Narrative reading view</td><td><a href="#t1-narrative-view">2.1</a>, from AGT-W27</td><td>A proactive generation as specified &middot; B lazy on open &middot; C do not build</td><td>A, with the model tier taken from the routing policy</td></tr>
+        <tr><td>D2 Timeline presentation contract</td><td><a href="#t2-timeline">2.2</a>, from AGT-W35</td><td>A all four decisions &middot; B semantic correction first &middot; C reject and name the decision that changes</td><td>A</td></tr>
+        <tr><td>D3 Escalation information architecture</td><td><a href="#t3-escalation">2.3</a>, from AGT-W45</td><td>A all three statements &middot; B header only &middot; C keep surfaces, improve copy</td><td>A</td></tr>
+        <tr><td>D4 Tab strip under pressure</td><td><a href="#t4-header-chips">2.4</a>, from AGT-W21</td><td>A overflow menu &middot; B icon-only &middot; C hybrid</td><td>A, on top of the unconditional base fix</td></tr>
+        <tr><td>D5 Project scope control</td><td><a href="#t5-project-scope">2.5</a>, from AGT-W52</td><td>D5a A segment, B explorer, C minimal &middot; D5b A scope holds, B scope follows tab, C ask once &middot; D5c A status chip, B in the pill, C explorer row</td><td>A, A, A, delivered in two steps</td></tr>
+      </tbody>
+    </table>
+    <p>Not open here, listed so the boundary is clear: the usage block (2.6) is decided and owned by AGT-2769; the protocol condensation rules (2.7) are in force and constrain the Timeline work rather than being reopened by it; the status.md contract (2.8) is decided and documented, and its two remaining adjacent slices, terminal-evidence parsing and Dossier link publication, keep their own card ownership outside this Dossier.</p>
+  </section>
+  <!-- agent-studio:implementation-section:start -->
+  <section id="implementation" data-document-section="implementation">
+    <h2><span class="number">06</span> Implementation</h2>
+    <p>Delivery slices append their current implementation status here. The decision content above stays unchanged.</p>
+    <ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<!-- agent-studio:implementation-log:end -->
+    </ol>
+  </section>
+  <!-- agent-studio:implementation-section:end -->
+</main>
+</body>
+</html>

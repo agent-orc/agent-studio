@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "task-and-board-ui",
+  "title": "Task and board UI decisions",
+  "summary": "Consolidation of the eight task and board UI Dossiers into one current Dossier (AGT-W55 D1). Three topics carry a recorded decision and are kept with date and card: the task-detail usage block (alternative A, 11.09.2026, AGT-2769), protocol condensation (three rules in force since 09.08.2026, CAC-21 and AGT-2526, including the no-inline-diff rule the Timeline work relies on) and status.md finalisation (application-owned finalisation with a typed degraded state, approved through AGT-2585, with two adjacent slices still owned elsewhere). Five topics stay open with one operator choice each: the narrative reading view (W27), the Timeline presentation contract (W35), the escalation information architecture (W45), the tab strip behaviour on top of an unconditional layout base fix (W21) and the project scope control in three parts (W52). Evidence keeps the two real light and dark captures that carry the argument, the AGT-2577 event snapshot, the 1,782-card status.md inventory and the measured narrative input bundles; duplicated layout mockups and the Timeline glossary are dropped and stay readable in the sources.",
+  "entrypoint": "index.html",
+  "status": "decision-pending",
+  "phase": "decision-ready",
+  "pattern": "concept",
+  "updatedAt": "2026-09-14T00:00:00Z",
+  "sourceTaskKeys": [
+    "AGT-2802"
+  ],
+  "relatedTaskKeys": [
+    "AGT-2797",
+    "AGT-2796",
+    "AGT-2769",
+    "AGT-2585",
+    "AGT-2526"
+  ],
+  "key": "AGT-W60",
+  "implementationTasks": []
+}

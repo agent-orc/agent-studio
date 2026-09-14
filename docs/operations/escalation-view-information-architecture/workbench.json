@@ -19,11 +19,13 @@
   "implementationTasks": [],
   "key": "AGT-W45",
   "review": {
-    "verdict": "current",
-    "supersededBy": [],
-    "reviewedAt": "2026-09-13T10:20:00Z",
+    "verdict": "superseded",
+    "supersededBy": [
+      "AGT-W60"
+    ],
+    "reviewedAt": "2026-09-14T00:00:00Z",
     "reviewedBy": "Operator",
-    "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    "note": "Consolidated into AGT-W60 Task and board UI decisions (AGT-2802, AGT-W55 D1): decisions, open choices and the evidence that still holds were carried over; this Dossier stays readable as History."
   },
   "reviewHistory": [
     {
@@ -32,6 +34,15 @@
       "reviewedAt": "2026-09-13T10:20:00Z",
       "reviewedBy": "Operator",
       "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    },
+    {
+      "verdict": "superseded",
+      "supersededBy": [
+        "AGT-W60"
+      ],
+      "reviewedAt": "2026-09-14T00:00:00Z",
+      "reviewedBy": "Operator",
+      "note": "Consolidated into AGT-W60 Task and board UI decisions (AGT-2802, AGT-W55 D1): decisions, open choices and the evidence that still holds were carried over; this Dossier stays readable as History."
     }
   ]
 }
