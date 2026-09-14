@@ -1,0 +1,329 @@
+:host {
+  display: block;
+}
+
+.swp {
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-2);
+  color: var(--studio-fg);
+  border: 1px solid var(--studio-border);
+  border-radius: 4px;
+  background: var(--studio-bg-elevated);
+  padding: var(--studio-spacing-2) var(--studio-spacing-3);
+
+  .mono { font-family: var(--font-mono); }
+
+  &__num {
+    font-variant-numeric: tabular-nums;
+  }
+
+  &__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--studio-spacing-2);
+  }
+
+  &__toggle {
+    display: flex;
+    align-items: center;
+    gap: var(--studio-spacing-2);
+    flex: 1;
+    min-width: 0;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    color: var(--studio-fg-strong);
+    font: inherit;
+    text-align: left;
+  }
+
+  &__caret {
+    display: inline-block;
+    font-size: 10px;
+    color: var(--studio-fg-dim);
+    transition: transform 0.12s ease;
+
+    &--open { transform: rotate(90deg); }
+  }
+
+  &__title {
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  &__pill {
+    font-size: 11px;
+    color: var(--studio-fg-dim);
+    background: var(--studio-bg);
+    padding: 1px 8px;
+    border-radius: 999px;
+
+    &[data-mode='reclaim'] { color: var(--studio-warn); }
+    &[data-mode='report-only'] { color: var(--studio-accent); }
+  }
+
+  &__body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--studio-spacing-2);
+  }
+
+  &__lead,
+  &__note {
+    font-size: 12px;
+    color: var(--studio-fg-dim);
+    margin: 0;
+
+    code { font-size: 11px; }
+  }
+
+  &__note--error { color: var(--studio-error); }
+
+  &__actions {
+    display: flex;
+    align-items: center;
+    gap: var(--studio-spacing-2);
+    flex-wrap: wrap;
+  }
+
+  &__spacer { flex: 1; }
+
+  &__label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--studio-fg-dim);
+  }
+
+  &__modes {
+    display: flex;
+    border: 1px solid var(--studio-border);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  &__mode {
+    font: inherit;
+    font-size: 11px;
+    padding: 3px 10px;
+    border: none;
+    background: var(--studio-bg);
+    color: var(--studio-fg-dim);
+    cursor: pointer;
+
+    &--on {
+      background: var(--studio-bg-elevated);
+      color: var(--studio-fg-strong);
+      font-weight: 600;
+    }
+
+    &:disabled { opacity: 0.5; cursor: default; }
+  }
+
+  &__table {
+    border-collapse: collapse;
+    font-size: 12px;
+
+    th,
+    td {
+      padding: 2px var(--studio-spacing-2);
+      text-align: end;
+      border-bottom: 1px solid var(--studio-border);
+    }
+
+    thead th { color: var(--studio-fg-dim); font-weight: 600; }
+    tbody th { text-align: start; color: var(--studio-fg-strong); font-weight: 500; }
+  }
+
+  &__caption {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--studio-fg-dim);
+    text-align: start;
+  }
+
+  &__hist {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  &__hist-row {
+    display: grid;
+    grid-template-columns: 8rem minmax(0, 1fr) 4rem;
+    align-items: center;
+    gap: var(--studio-spacing-2);
+    font-size: 11px;
+  }
+
+  &__hist-label { color: var(--studio-fg-dim); }
+
+  &__hist-track {
+    display: block;
+    block-size: 8px;
+    border-radius: 999px;
+    // The track has to read as an empty bar at 0 %, so it carries its own
+    // outline instead of relying on the fill for contrast.
+    border: 1px solid var(--studio-border);
+    background: var(--studio-bg);
+    overflow: hidden;
+  }
+
+  &__hist-fill {
+    display: block;
+    block-size: 100%;
+    background: var(--studio-accent);
+    transition: inline-size 0.2s ease;
+  }
+
+  &__bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--studio-spacing-2);
+    flex-wrap: wrap;
+    border-top: 1px solid var(--studio-border);
+    padding-top: var(--studio-spacing-2);
+  }
+
+  &__bar-select {
+    display: flex;
+    gap: var(--studio-spacing-3);
+  }
+
+  &__confirm {
+    display: flex;
+    align-items: center;
+    gap: var(--studio-spacing-2);
+    flex-wrap: wrap;
+  }
+
+  &__confirm-text {
+    font-size: 12px;
+    color: var(--studio-warn);
+  }
+
+  &__progress {
+    display: flex;
+    align-items: center;
+    gap: var(--studio-spacing-2);
+    font-size: 11px;
+
+    .swp__hist-track { flex: 1; min-inline-size: 6rem; }
+  }
+
+  &__action,
+  &__danger,
+  &__link {
+    font: inherit;
+    cursor: pointer;
+    border-radius: 3px;
+
+    &:disabled { opacity: 0.5; cursor: default; }
+  }
+
+  &__action {
+    font-size: 12px;
+    padding: 3px 10px;
+    border: 1px solid var(--studio-border);
+    background: var(--studio-bg);
+    color: var(--studio-fg);
+  }
+
+  &__danger {
+    font-size: 12px;
+    padding: 3px 12px;
+    border: 1px solid var(--studio-error);
+    background: none;
+    color: var(--studio-error);
+    font-weight: 600;
+  }
+
+  &__link {
+    font-size: 11px;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--studio-fg-dim);
+    text-decoration: underline;
+  }
+
+  &__rows {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  &__row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: baseline;
+    gap: 2px var(--studio-spacing-2);
+    padding: var(--studio-spacing-1) var(--studio-spacing-2);
+    border-radius: 3px;
+
+    &:hover { background: var(--studio-bg); }
+    &--kept { opacity: 0.72; }
+  }
+
+  &__check {
+    grid-row: 1 / span 2;
+    align-self: center;
+    margin: 0;
+  }
+
+  &__row-main {
+    display: flex;
+    align-items: center;
+    gap: var(--studio-spacing-2);
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+
+  &__row-name {
+    font-size: 12px;
+    color: var(--studio-fg-strong);
+    overflow-wrap: anywhere;
+  }
+
+  &__tag,
+  &__age {
+    font-size: 10px;
+    color: var(--studio-fg-dim);
+    background: var(--studio-bg);
+    padding: 1px 6px;
+    border-radius: 3px;
+  }
+
+  &__status {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 1px 6px;
+    border-radius: 3px;
+    background: var(--studio-bg);
+    color: var(--studio-fg-dim);
+
+    &[data-eligible='true'] { color: var(--studio-warn); }
+  }
+
+  &__reason {
+    grid-column: 2;
+    font-size: 11px;
+    color: var(--studio-fg-dim);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .swp__caret,
+  .swp__hist-fill {
+    transition-duration: 0s;
+  }
+}

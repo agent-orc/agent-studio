@@ -411,6 +411,12 @@ public sealed record GitActiveCheckout(
 /// via <c>update-ref -d</c>; <see cref="ShortName"/> is git's abbreviated form
 /// (e.g. <c>task/42</c>, <c>origin/task/42</c>) used for merge-base checks.
 /// </summary>
+/// <summary>
+/// Per-ref result of a batched remote delete push
+/// (<see cref="GitService.DeleteRemoteBranchesAtTip"/>).
+/// </summary>
+public record GitRemoteRefDeleteOutcome(string Branch, bool Deleted, string? Error);
+
 public record GitRefLine(
     string FullName,
     string ShortName,
@@ -3365,6 +3371,121 @@ public class GitService
         return new GitWorktreeResult(false, repoRoot, error);
     }
 
+    /// <summary>
+    /// Expected-tip delete of several remote branches in <b>one</b> push. Same
+    /// lease semantics as <see cref="DeleteRemoteBranchAtTip"/> per ref, but
+    /// the stale-branch sweep (AGT-2794) reclaims thousands of refs, and one
+    /// push per ref costs one network round trip each. Callers chunk their work
+    /// to <see cref="MaxRefsPerDeletePush"/>; anything larger is split here too,
+    /// so an oversized request cannot produce an oversized command line.
+    /// Per-ref outcomes are read from <c>git push --porcelain</c>, so one
+    /// rejected ref does not hide the refs that were deleted next to it.
+    /// </summary>
+    public IReadOnlyList<GitRemoteRefDeleteOutcome> DeleteRemoteBranchesAtTip(
+        string repoRoot,
+        IReadOnlyList<(string Branch, string ExpectedSha)> refs,
+        string remote = "origin",
+        CancellationToken cancellationToken = default)
+    {
+        if (refs.Count == 0) return [];
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot))
+            return Rejected(refs, "Repo root does not exist.");
+        if (string.IsNullOrWhiteSpace(remote) || !IsLikelyBranchName(remote))
+            return Rejected(refs, $"Invalid remote name '{remote}'.");
+        if (!HasRemote(repoRoot, remote))
+            return refs.Select(r => new GitRemoteRefDeleteOutcome(r.Branch, true, null)).ToList();
+
+        var outcomes = new List<GitRemoteRefDeleteOutcome>(refs.Count);
+        foreach (var chunk in refs.Chunk(MaxRefsPerDeletePush))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            outcomes.AddRange(DeleteRemoteRefChunk(repoRoot, chunk, remote, cancellationToken));
+        }
+        return outcomes;
+    }
+
+    /// <summary>Upper bound on refs handed to a single delete push.</summary>
+    public const int MaxRefsPerDeletePush = 100;
+
+    private IReadOnlyList<GitRemoteRefDeleteOutcome> DeleteRemoteRefChunk(
+        string repoRoot,
+        IReadOnlyList<(string Branch, string ExpectedSha)> chunk,
+        string remote,
+        CancellationToken cancellationToken)
+    {
+        var accepted = new List<(string Branch, string ExpectedSha)>();
+        var outcomes = new List<GitRemoteRefDeleteOutcome>(chunk.Count);
+        foreach (var (branch, expectedSha) in chunk)
+        {
+            if (!IsLikelyBranchName(branch))
+                outcomes.Add(new GitRemoteRefDeleteOutcome(branch, false, $"Invalid branch name '{branch}'."));
+            else if (!IsLikelyShaOrRef(expectedSha))
+                outcomes.Add(new GitRemoteRefDeleteOutcome(branch, false, "Expected branch tip is invalid."));
+            else
+                accepted.Add((branch, expectedSha));
+        }
+        if (accepted.Count == 0) return outcomes;
+
+        var args = new List<string> { "push", "--porcelain" };
+        foreach (var (branch, expectedSha) in accepted)
+            args.Add($"--force-with-lease=refs/heads/{branch}:{expectedSha}");
+        args.Add(remote);
+        foreach (var (branch, _) in accepted)
+            args.Add($":refs/heads/{branch}");
+
+        var (pushOut, pushErr, pushCode) = RunGitArgs(repoRoot, cancellationToken, [.. args]);
+        var statuses = ParsePorcelainPushStatuses(pushOut);
+        var fallback = string.IsNullOrWhiteSpace(pushErr) ? pushOut.Trim() : pushErr.Trim();
+        foreach (var (branch, _) in accepted)
+        {
+            if (statuses.TryGetValue($"refs/heads/{branch}", out var status))
+            {
+                outcomes.Add(new GitRemoteRefDeleteOutcome(branch, status.Ok, status.Ok ? null : status.Detail));
+                continue;
+            }
+            // No per-ref line: trust the overall exit code for this ref.
+            outcomes.Add(pushCode == 0
+                ? new GitRemoteRefDeleteOutcome(branch, true, null)
+                : new GitRemoteRefDeleteOutcome(branch, false, fallback.Length == 0 ? "Delete push failed." : fallback));
+        }
+
+        var deleted = outcomes.Count(o => o.Deleted);
+        _logger.LogInformation(
+            "git-batch-remote-delete remote={Remote} requested={Requested} deleted={Deleted} path={Path}",
+            remote, accepted.Count, deleted, repoRoot);
+        return outcomes;
+    }
+
+    private static List<GitRemoteRefDeleteOutcome> Rejected(
+        IReadOnlyList<(string Branch, string ExpectedSha)> refs, string reason)
+        => refs.Select(r => new GitRemoteRefDeleteOutcome(r.Branch, false, reason)).ToList();
+
+    /// <summary>
+    /// Parses <c>git push --porcelain</c> status lines into destination ref ->
+    /// outcome. Each line is <c>&lt;flag&gt;\t&lt;from&gt;:&lt;to&gt;\t&lt;summary&gt;</c>;
+    /// <c>!</c> is a rejection, every other flag is an accepted update.
+    /// </summary>
+    internal static Dictionary<string, (bool Ok, string Detail)> ParsePorcelainPushStatuses(string output)
+    {
+        var map = new Dictionary<string, (bool, string)>(StringComparer.Ordinal);
+        if (string.IsNullOrWhiteSpace(output)) return map;
+        foreach (var raw in output.Replace("\r\n", "\n").Split('\n'))
+        {
+            var parts = raw.Split('\t');
+            if (parts.Length < 2) continue;
+            var flag = parts[0];
+            if (flag.Length != 1 || flag == "=") continue;
+            var refPair = parts[1];
+            var separator = refPair.LastIndexOf(':');
+            if (separator < 0) continue;
+            var destination = refPair[(separator + 1)..].Trim();
+            if (destination.Length == 0) continue;
+            var summary = parts.Length > 2 ? parts[2].Trim() : string.Empty;
+            map[destination] = (flag != "!", summary.Length == 0 ? "Delete rejected by remote." : summary);
+        }
+        return map;
+    }
+
     // ADR-0052/ADR-0057 worktree + integration primitives. These are low-level
     // git plumbing for the worktree-per-coding-task model on task/<id> branches
     // off the integration branch. They take an explicit repo or worktree root
@@ -5075,6 +5196,34 @@ public class GitService
                 full, parts[1].Trim(), parts[2].Trim(), parts[3].Trim(), committedAt));
         }
         return list;
+    }
+
+    /// <summary>
+    /// Fully-qualified names of the refs under <paramref name="pattern"/> whose
+    /// tip is contained in <paramref name="commit"/>
+    /// (<c>git for-each-ref --merged</c>). One process answers the containment
+    /// question for every ref at once; the stale-branch sweep classifies
+    /// thousands of refs per repository and cannot afford a
+    /// <c>merge-base --is-ancestor</c> spawn per ref per protected branch.
+    /// Returns an empty set when the repo, pattern, or commit is unusable.
+    /// </summary>
+    public IReadOnlySet<string> ListRefNamesMergedInto(string repoRoot, string pattern, string commit)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot))
+            return new HashSet<string>(StringComparer.Ordinal);
+        if (!IsLikelyRefPattern(pattern) || !IsLikelyShaOrRef(commit))
+            return new HashSet<string>(StringComparer.Ordinal);
+
+        var (output, _, code) = RunGitArgs(
+            repoRoot, "for-each-ref", "--format=%(refname)", "--merged", commit, pattern);
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        if (code != 0 || string.IsNullOrWhiteSpace(output)) return names;
+        foreach (var raw in output.Replace("\r\n", "\n").Split('\n'))
+        {
+            var name = raw.Trim();
+            if (name.Length > 0) names.Add(name);
+        }
+        return names;
     }
 
     /// <summary>

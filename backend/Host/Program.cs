@@ -746,6 +746,10 @@ builder.Services.AddSingleton<GitCleanupService>();
 builder.Services.AddSingleton<BranchRetentionEvidenceWriter>();
 builder.Services.AddSingleton<GitBranchRetentionService>();
 builder.Services.AddSingleton<ArchivedResultRefPruner>();
+// AGT-2794 stale-branch sweep: the all-namespace classification, report, and
+// operator-confirmed reclamation that the event-driven path cannot reach.
+builder.Services.AddSingleton<BranchSweepReportStore>();
+builder.Services.AddSingleton<BranchSweepService>();
 // Event-driven counterpart to the periodic sweep above: fired from the
 // integration, archive, and promotion transitions (AcceptedIntegrationWorker,
 // TaskTransitionService, and the /api/git/branch-reclaim/promotion endpoint).

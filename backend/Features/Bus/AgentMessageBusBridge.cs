@@ -458,6 +458,49 @@ public sealed class AgentMessageBusBridge
     }
 
     /// <summary>
+    /// One Activity-feed line per stale-branch sweep run (AGT-2794), carrying
+    /// the run totals so an operator sees the branch state of each repository
+    /// change over time without opening the report file. A reclaim run that
+    /// failed to delete something is a warning; everything else is informational.
+    /// </summary>
+    public Task EmitBranchSweepAsync(
+        AgentStudio.Git.BranchSweepReport report,
+        CancellationToken ct = default)
+    {
+        if (report == null) return Task.CompletedTask;
+        var failed = report.DeleteFailedCount;
+        var summary = report.Error is not null
+            ? $"Branch sweep ({report.Mode}) for {report.Project} failed: {report.Error}"
+            : $"Branch sweep ({report.Mode}) for {report.Project}: {report.TotalRefs} remote ref(s), "
+              + $"{report.EligibleCount} eligible, {report.DeletedCount} deleted, {failed} delete failure(s).";
+        var msg = NewMessage(
+            participantId: ParticipantOrchestratorFor(report.Project),
+            role: "system",
+            kind: report.Error is not null || failed > 0 ? "error" : "lifecycle",
+            severity: report.Error is not null || failed > 0 ? "Warn" : "Info",
+            project: report.Project,
+            jobId: null,
+            topic: "branch-sweep",
+            summary: TruncateSummary(summary),
+            body: string.Join(
+                "\n",
+                report.Totals.Select(totals =>
+                    $"{totals.Class}: {totals.Total} refs, {totals.Eligible} eligible, {totals.Deleted} deleted")),
+            payload: new
+            {
+                mode = report.Mode,
+                refsBefore = report.RefsBefore,
+                refsAfter = report.RefsAfter,
+                eligible = report.EligibleCount,
+                deleted = report.DeletedCount,
+                deleteFailed = failed,
+                error = report.Error,
+            },
+            tags: new[] { "branch-sweep", $"mode:{report.Mode}" });
+        return EmitAsync(msg, ct);
+    }
+
+    /// <summary>
     /// Client/runner identity lifecycle event (permanent delete, retired-purge
     /// sweep). Not job-scoped, so it always lands in the <c>_workspace</c> bus
     /// stream instead of a per-project one.

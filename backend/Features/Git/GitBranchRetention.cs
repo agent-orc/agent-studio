@@ -19,6 +19,17 @@ public enum BranchRetentionDecision
     SalvageRefTooYoung,
     QuarantineRefTooYoung,
     QuarantineRefReferenced,
+    /// <summary>
+    /// Stale-branch sweep (AGT-2794): the ref is not contained in the
+    /// integration line, but its owning card is archived or no longer exists
+    /// and the tip has passed the abandoned window. This is a deletion.
+    /// </summary>
+    AbandonedRefAged,
+    /// <summary>
+    /// An open (non-terminal) card still points at this ref, so the sweep
+    /// keeps it regardless of age or containment.
+    /// </summary>
+    TaskRefReferenced,
 }
 
 public enum BranchNamespace
@@ -45,7 +56,52 @@ public sealed record BranchRetentionFacts(
     bool MergedIntoIntegrationBranch = false,
     string? IntegrationBranch = null,
     bool IsTaskIntegrated = false,
-    bool IsTaskTerminal = false);
+    bool IsTaskTerminal = false,
+    // --- stale-branch sweep facts (AGT-2794) ---
+    /// <summary>
+    /// False only when the sweep looked the task key up and found no card
+    /// (including a ref whose name carries no key at all). The default is true
+    /// so callers that do not collect task facts keep the pre-sweep behaviour.
+    /// </summary>
+    bool TaskResolved = true,
+    /// <summary>The resolved card sits in <c>7-archive</c>.</summary>
+    bool TaskArchived = false,
+    /// <summary>An open (non-terminal) card still references this exact ref.</summary>
+    bool ReferencedByOpenCard = false);
+
+/// <summary>
+/// Per-class retention windows in days. <see cref="Default"/> carries the
+/// values decided on the branch lifecycle card (AGT-2793); a project may
+/// override any of them through its branch-sweep settings (AGT-2794). Results
+/// refs have no age window at all: they are bound to main containment only.
+/// </summary>
+public sealed record BranchRetentionWindows(
+    int TaskDays = BranchRetentionWindows.DefaultTaskDays,
+    int SalvageDays = BranchRetentionWindows.DefaultSalvageDays,
+    int QuarantineDays = BranchRetentionWindows.DefaultQuarantineDays,
+    int AbandonedDays = BranchRetentionWindows.DefaultAbandonedDays)
+{
+    public const int DefaultTaskDays = GitBranchRetentionService.DefaultRetentionDays;
+    public const int DefaultSalvageDays = 14;
+    public const int DefaultQuarantineDays = 30;
+
+    /// <summary>
+    /// How long an unmerged task, runner, or delivery ref survives once its
+    /// card is archived or gone. Deliberately far longer than the merged
+    /// window: this is the only rule that drops work which never reached the
+    /// integration line, so it trades disk for a wide recovery window.
+    /// </summary>
+    public const int DefaultAbandonedDays = 90;
+
+    public static readonly BranchRetentionWindows Default = new();
+
+    /// <summary>Clamps every window into a sane range so a bad setting cannot disable or invert a rule.</summary>
+    public BranchRetentionWindows Clamped() => new(
+        Math.Clamp(TaskDays, 1, 3650),
+        Math.Clamp(SalvageDays, 1, 3650),
+        Math.Clamp(QuarantineDays, 1, 3650),
+        Math.Clamp(AbandonedDays, 1, 3650));
+}
 
 /// <summary>
 /// Pure retention decision for managed task-delivery and build-proof refs across all namespaces.
@@ -53,53 +109,105 @@ public sealed record BranchRetentionFacts(
 /// </summary>
 public static class BranchRetentionPolicy
 {
-    private const int ResultsRefRetentionDays = 0;
-    private const int SalvageRefRetentionDays = 14;
-    private const int QuarantineRefRetentionDays = 30;
-
     public static BranchRetentionDecision Evaluate(
         BranchRetentionFacts facts,
         DateTimeOffset now,
         TimeSpan minimumAge)
+        => Evaluate(
+            facts,
+            now,
+            BranchRetentionWindows.Default with { TaskDays = DaysOf(minimumAge) });
+
+    /// <summary>
+    /// Same decision matrix as the <see cref="TimeSpan"/> overload, with every
+    /// per-class window supplied explicitly. The stale-branch sweep uses this
+    /// so a project can override the defaults without a second policy.
+    /// </summary>
+    public static BranchRetentionDecision Evaluate(
+        BranchRetentionFacts facts,
+        DateTimeOffset now,
+        BranchRetentionWindows windows)
     {
         var ns = ClassifyNamespace(facts.Branch);
+        var clamped = windows.Clamped();
 
         return ns switch
         {
             BranchNamespace.Task or BranchNamespace.Runner or BranchNamespace.Delivery
-                => EvaluateTaskDeliveryBranch(facts, now, minimumAge),
+                => EvaluateTaskDeliveryBranch(facts, now, clamped),
             BranchNamespace.ResultsRef
                 => EvaluateResultsRef(facts, now),
             BranchNamespace.SalvageRef
-                => EvaluateSalvageRef(facts, now),
+                => EvaluateSalvageRef(facts, now, clamped),
             BranchNamespace.QuarantineRef
-                => EvaluateQuarantineRef(facts, now),
+                => EvaluateQuarantineRef(facts, now, clamped),
             BranchNamespace.Protected or BranchNamespace.Unknown
                 => BranchRetentionDecision.UnsupportedNamespace,
             _ => BranchRetentionDecision.UnsupportedNamespace
         };
     }
 
+    /// <summary>
+    /// Whether a decision authorises removing the ref. Two decisions delete:
+    /// the ordinary merged-and-aged <see cref="BranchRetentionDecision.Delete"/>
+    /// and the sweep's <see cref="BranchRetentionDecision.AbandonedRefAged"/>.
+    /// Call this instead of comparing against <c>Delete</c>.
+    /// </summary>
+    public static bool IsDeletion(BranchRetentionDecision decision)
+        => decision is BranchRetentionDecision.Delete or BranchRetentionDecision.AbandonedRefAged;
+
+    private static int DaysOf(TimeSpan minimumAge)
+        => (int)Math.Clamp(Math.Ceiling(minimumAge.TotalDays), 1, 3650);
+
     private static BranchRetentionDecision EvaluateTaskDeliveryBranch(
         BranchRetentionFacts facts,
         DateTimeOffset now,
-        TimeSpan minimumAge)
+        BranchRetentionWindows windows)
     {
         if (facts.CheckedOut)
             return BranchRetentionDecision.CheckedOut;
         if (facts.TipCommittedAtUtc is null)
             return BranchRetentionDecision.MissingCommitTime;
-        if (facts.TipCommittedAtUtc.Value > now - minimumAge)
+        if (facts.TipCommittedAtUtc.Value > now - TimeSpan.FromDays(windows.TaskDays))
             return BranchRetentionDecision.TooYoung;
         if (!facts.DevelopAvailable)
             return BranchRetentionDecision.DevelopUnavailable;
         if (!facts.MainAvailable)
             return BranchRetentionDecision.MainUnavailable;
-        if (!facts.MergedIntoDevelop)
-            return BranchRetentionDecision.NotMergedIntoDevelop;
-        if (!facts.MergedIntoMain)
-            return BranchRetentionDecision.NotMergedIntoMain;
-        return BranchRetentionDecision.Delete;
+        if (facts.MergedIntoDevelop && facts.MergedIntoMain)
+            return BranchRetentionDecision.Delete;
+        if (facts.ReferencedByOpenCard)
+            return BranchRetentionDecision.TaskRefReferenced;
+
+        // Unmerged. The event-driven path can only ever keep these, which is
+        // how the backlog of refs from cards archived without integration and
+        // from crashed runs accumulated. The sweep reclaims them only once the
+        // card is archived (or gone) AND the tip has passed the long
+        // abandoned window - never while a live card could still resume them.
+        if (Abandoned(facts, now, windows))
+            return BranchRetentionDecision.AbandonedRefAged;
+
+        return facts.MergedIntoDevelop
+            ? BranchRetentionDecision.NotMergedIntoMain
+            : BranchRetentionDecision.NotMergedIntoDevelop;
+    }
+
+    /// <summary>
+    /// The one rule that drops unmerged work. It needs all three: no live card
+    /// owning the ref, no open card referencing it, and a tip older than the
+    /// abandoned window. Orphans (no derivable or no matching task key) take
+    /// the same path, so a ref whose card no longer exists is decided by the
+    /// age rule of its class instead of being retained forever.
+    /// </summary>
+    private static bool Abandoned(
+        BranchRetentionFacts facts,
+        DateTimeOffset now,
+        BranchRetentionWindows windows)
+    {
+        if (facts.ReferencedByOpenCard) return false;
+        if (facts.TaskResolved && !facts.TaskArchived) return false;
+        if (facts.TipCommittedAtUtc is null) return false;
+        return facts.TipCommittedAtUtc.Value <= now - TimeSpan.FromDays(windows.AbandonedDays);
     }
 
     private static BranchRetentionDecision EvaluateResultsRef(
@@ -122,13 +230,13 @@ public static class BranchRetentionPolicy
 
     private static BranchRetentionDecision EvaluateSalvageRef(
         BranchRetentionFacts facts,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        BranchRetentionWindows windows)
     {
         if (facts.CheckedOut)
             return BranchRetentionDecision.CheckedOut;
         if (facts.TipCommittedAtUtc is null)
             return BranchRetentionDecision.MissingCommitTime;
-
         var age = now - facts.TipCommittedAtUtc.Value;
         var ageDays = (int)age.TotalDays;
 
@@ -138,7 +246,12 @@ public static class BranchRetentionPolicy
         if (facts.MergedIntoMain)
             return BranchRetentionDecision.Delete;
 
-        if (ageDays >= SalvageRefRetentionDays)
+        // A salvage ref is the recovery source for its run. While an open card
+        // still points at it, the age rule must not reclaim it.
+        if (facts.ReferencedByOpenCard)
+            return BranchRetentionDecision.TaskRefReferenced;
+
+        if (ageDays >= windows.SalvageDays)
             return BranchRetentionDecision.Delete;
 
         if (!facts.IsTaskTerminal)
@@ -149,15 +262,18 @@ public static class BranchRetentionPolicy
 
     private static BranchRetentionDecision EvaluateQuarantineRef(
         BranchRetentionFacts facts,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        BranchRetentionWindows windows)
     {
         if (facts.CheckedOut)
             return BranchRetentionDecision.CheckedOut;
         if (facts.TipCommittedAtUtc is null)
             return BranchRetentionDecision.MissingCommitTime;
+        if (facts.ReferencedByOpenCard)
+            return BranchRetentionDecision.QuarantineRefReferenced;
 
         var age = now - facts.TipCommittedAtUtc.Value;
-        if (age < TimeSpan.FromDays(QuarantineRefRetentionDays))
+        if (age < TimeSpan.FromDays(windows.QuarantineDays))
             return BranchRetentionDecision.QuarantineRefTooYoung;
 
         return BranchRetentionDecision.Delete;
@@ -212,6 +328,8 @@ public static class BranchRetentionPolicy
         BranchRetentionDecision.SalvageRefTooYoung => "Salvage ref is within 14-day retention window.",
         BranchRetentionDecision.QuarantineRefTooYoung => "Quarantine ref is within 30-day retention window.",
         BranchRetentionDecision.QuarantineRefReferenced => "Quarantine ref is referenced by an open escalation or human-review card.",
+        BranchRetentionDecision.AbandonedRefAged => "Owning card is archived or gone and the tip passed the abandoned window.",
+        BranchRetentionDecision.TaskRefReferenced => "An open card still references this ref.",
         _ => "Unknown retention decision.",
     };
 }
@@ -426,7 +544,7 @@ public sealed class GitBranchRetentionService
             cancellationToken.ThrowIfCancellationRequested();
             var facts = FactsFor(repositoryPath, candidate, checkedOut, develop, main);
             var decision = BranchRetentionPolicy.Evaluate(facts, now, minimumAge);
-            if (decision != BranchRetentionDecision.Delete)
+            if (!BranchRetentionPolicy.IsDeletion(decision))
             {
                 actions.Add(ToKeptAction(candidate, decision));
                 continue;
@@ -474,7 +592,7 @@ public sealed class GitBranchRetentionService
             develop,
             main);
         var decision = BranchRetentionPolicy.Evaluate(facts, now, minimumAge);
-        if (decision != BranchRetentionDecision.Delete)
+        if (!BranchRetentionPolicy.IsDeletion(decision))
             return ToKeptAction(candidate with { Reference = current }, decision);
 
         if (dryRun)
@@ -484,7 +602,7 @@ public sealed class GitBranchRetentionService
                 candidate.Branch,
                 current.Sha,
                 current.CommittedAtUtc,
-                BranchRetentionDecision.Delete,
+                decision,
                 false,
                 "[DRY RUN] Would be deleted after age and develop/main ancestry recheck.",
                 BranchRetentionPolicy.ClassifyNamespace(candidate.Branch));
@@ -499,7 +617,7 @@ public sealed class GitBranchRetentionService
             candidate.Branch,
             current.Sha,
             current.CommittedAtUtc,
-            result.Success ? BranchRetentionDecision.Delete : BranchRetentionDecision.DeleteFailed,
+            result.Success ? decision : BranchRetentionDecision.DeleteFailed,
             result.Success,
             result.Success
                 ? "Deleted after age and develop/main ancestry recheck."
@@ -630,7 +748,7 @@ public sealed class GitBranchRetentionService
                 var facts = FactsForReclaim(
                     repositoryPath, candidate, checkedOut, integration, main, taskKey, isArchive);
                 var decision = BranchRetentionPolicy.Evaluate(facts, startedAt, minimumAge);
-                if (decision != BranchRetentionDecision.Delete)
+                if (!BranchRetentionPolicy.IsDeletion(decision))
                 {
                     actions.Add(ToKeptAction(candidate, decision));
                     continue;
@@ -699,17 +817,20 @@ public sealed class GitBranchRetentionHostedService : BackgroundService
 {
     private readonly GitBranchRetentionService _retention;
     private readonly ArchivedResultRefPruner _archivedResultRefs;
+    private readonly BranchSweepService _sweep;
     private readonly IConfiguration _configuration;
     private readonly ILogger<GitBranchRetentionHostedService> _logger;
 
     public GitBranchRetentionHostedService(
         GitBranchRetentionService retention,
         ArchivedResultRefPruner archivedResultRefs,
+        BranchSweepService sweep,
         IConfiguration configuration,
         ILogger<GitBranchRetentionHostedService> logger)
     {
         _retention = retention;
         _archivedResultRefs = archivedResultRefs;
+        _sweep = sweep;
         _configuration = configuration;
         _logger = logger;
     }
@@ -733,6 +854,13 @@ public sealed class GitBranchRetentionHostedService : BackgroundService
             {
                 await Task.Run(() => _retention.RunOnce(stoppingToken), stoppingToken);
                 await Task.Run(() => _archivedResultRefs.RunOnce(stoppingToken), stoppingToken);
+                // AGT-2794: the same run then classifies every remaining remote
+                // ref across all namespaces and writes one report per project.
+                // Deletion here is gated on the project's own sweep mode, which
+                // defaults to report-only, so this step only reports until an
+                // operator has read a report and opted in.
+                if (_configuration.GetValue<bool?>("GitRetention:Sweep:Enabled") ?? true)
+                    await Task.Run(() => _sweep.RunAll(stoppingToken), stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
