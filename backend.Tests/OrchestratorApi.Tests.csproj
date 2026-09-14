@@ -76,6 +76,7 @@
     <Using Include="AgentStudio.AdHoc" />
     <Using Include="AgentStudio.Admin" />
     <Using Include="AgentStudio.Analysis" />
+    <Using Include="AgentStudio.Areas" />
     <Using Include="AgentStudio.Bus" />
     <Using Include="AgentStudio.Cli" />
     <Using Include="AgentStudio.Clients" />

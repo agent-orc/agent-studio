@@ -8,7 +8,7 @@ internal sealed record TaskQueryRequest
 {
     private static readonly HashSet<string> AnalysisKeys = new(StringComparer.OrdinalIgnoreCase)
     {
-        "state", "kind", "cliType", "model", "epicId", "mode", "phase", "tag",
+        "state", "kind", "cliType", "model", "epicId", "mode", "phase", "tag", "area",
         "verdict", "issueKind", "hasIssue", "minCommits", "maxCommits",
         "activitySince", "activityBefore", "createdSince", "createdBefore",
         "durationMin", "durationMax", "sortBy", "order", "limit", "offset", "fields",
@@ -25,6 +25,11 @@ internal sealed record TaskQueryRequest
     public string[] Mode { get; init; } = [];
     public string[] Phase { get; init; } = [];
     public string[] Tag { get; init; } = [];
+    /// <summary>
+    /// AGT-2803: area tag ids. Alternatives among themselves, and a
+    /// conjunction with <see cref="Tag"/>, so area plus facet narrows.
+    /// </summary>
+    public string[] Area { get; init; } = [];
     public string[] Verdict { get; init; } = [];
     public string[] IssueKind { get; init; } = [];
     public bool? HasIssue { get; init; }
@@ -62,6 +67,7 @@ internal sealed record TaskQueryRequest
             Mode = Csv(query, "mode"),
             Phase = Csv(query, "phase"),
             Tag = Csv(query, "tag"),
+            Area = Csv(query, "area"),
             Verdict = Csv(query, "verdict"),
             IssueKind = Csv(query, "issueKind"),
             HasIssue = Bool(query, "hasIssue"),
@@ -208,6 +214,7 @@ internal static partial class TaskQueryEngine
                && In(q.Mode, j.Mode)
                && In(q.Phase, j.Phase)
                && (q.Tag.Length == 0 || q.Tag.Any(t => j.Tags.Any(x => Eq(x, t))))
+               && (q.Area.Length == 0 || q.Area.Any(a => j.Tags.Any(x => Eq(x, a))))
                && In(q.Verdict, j.OrchestratorVerdict)
                && In(q.IssueKind, j.OutcomeIssue?.Kind)
                && (q.HasIssue is null || (j.OutcomeIssue != null) == q.HasIssue.Value)

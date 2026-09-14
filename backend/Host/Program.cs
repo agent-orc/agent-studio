@@ -864,6 +864,13 @@ builder.Services.AddSingleton<DossierMaintenanceService>();
 builder.Services.AddSingleton<WorkbenchChangeNotifier>();
 builder.Services.AddSingleton<WorkbenchDecisionService>();
 builder.Services.AddSingleton<WorkbenchReviewService>();
+// AGT-2803: the classification vocabulary. The areas registry merges the
+// product defaults with the project additions from the workspace project
+// settings; the glossary service owns the area's wiki page; the Dossier tag
+// writer is the descriptor's tags[] boundary.
+builder.Services.AddSingleton<AgentStudio.Areas.AreaRegistryService>();
+builder.Services.AddSingleton<AgentStudio.Areas.AreaGlossaryService>();
+builder.Services.AddSingleton<WorkbenchTagService>();
 builder.Services.AddSingleton<WorkbenchLifecycleService>();
 builder.Services.AddSingleton<AgentStudio.Proposals.ProjectProposalService>();
 builder.Services.AddSingleton<AgentStudio.Proposals.ProjectProposalDraftingService>();

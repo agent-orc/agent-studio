@@ -419,6 +419,14 @@ public record TagRegistryEntry
     public string Label { get; init; } = "";
     public string Color { get; init; } = "#94a3b8";
     public string Description { get; init; } = "";
+
+    /// <summary>
+    /// AGT-2803: <c>area</c> or <c>facet</c>. An area tag names the bounded
+    /// part of the application an item belongs to and owns a glossary; a facet
+    /// tag names a cross-cutting aspect. Rows written before this field existed
+    /// read as <c>facet</c> unless their id is an area id, which always wins.
+    /// </summary>
+    public string Kind { get; init; } = "facet";
 }
 
 /// <summary>
@@ -432,6 +440,13 @@ public record CreateTagRequest
     public string Label { get; init; } = "";
     public string? Color { get; init; }
     public string? Description { get; init; }
+
+    /// <summary>
+    /// Optional tag kind. Only <c>facet</c> is accepted here: area tags are
+    /// created by declaring the area in the project areas registry, so the
+    /// area vocabulary and its glossaries stay in one place.
+    /// </summary>
+    public string? Kind { get; init; }
 }
 
 /// <summary>

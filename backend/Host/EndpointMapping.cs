@@ -101,6 +101,7 @@ public static class EndpointMapping
         app.MapAnalysisReportEndpoints();
         app.MapDriftReportEndpoints();
         app.MapTagEndpoints();
+        app.MapAreaEndpoints();
         app.MapProjectChatEndpoints();
         app.MapConceptDocsEndpoints();
         app.MapGlobalSearchEndpoints();

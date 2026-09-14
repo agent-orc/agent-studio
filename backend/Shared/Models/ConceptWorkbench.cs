@@ -45,6 +45,12 @@ public sealed record ConceptWorkbenchDescriptor
     public string Phase { get; init; } = "shaping";
     public string Pattern { get; init; } = ArticlePatterns.Concept;
     public DateTime UpdatedAt { get; init; } = DateTime.UtcNow;
+    /// <summary>
+    /// AGT-2803: area and facet tag ids from the project's tag vocabulary.
+    /// Part of the descriptor schema, so a scaffolded Dossier already carries
+    /// the field and the catalogue projection can surface it.
+    /// </summary>
+    public List<string> Tags { get; init; } = [];
     public List<string> SourceTaskKeys { get; init; } = [];
     public List<ConceptImplementationTask> ImplementationTasks { get; init; } = [];
 }
