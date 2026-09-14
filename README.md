@@ -52,8 +52,11 @@ installs with no source checkout and no .NET prerequisite, the guided
 executable offers an isolated Docker demo, a native single-machine install, and
 a guided [multi-machine](./docs/operations/setup/multi-machine.md) join flow.
 To add execution capacity after the Studio is running, follow the
-[Agent Host guide](./docs/operations/setup/linux-runner-host.md). Source
-contributors use the separate
+[Agent Host guide](./docs/operations/setup/linux-runner-host.md), or stay in
+Docker with `docker compose --profile runner up --wait` after
+`scripts/compose-runner-bootstrap.sh` (see
+[getting started, §5](./docs/operations/setup/getting-started.md#5-add-execution-capacity)).
+Source contributors use the separate
 [contributor setup](./docs/operations/setup/contributor-setup.md).
 
 ## Testing
