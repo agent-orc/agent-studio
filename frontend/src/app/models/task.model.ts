@@ -421,6 +421,14 @@ export interface TaskInfo {
   /** Durable question that caused a NeedsInput completion or queued steer. */
   needsInput?: NeedsInputStatus | null;
   /**
+   * AGT-2816: read-time projection of the card's `parked-blocker.json` marker.
+   * Present only while the card sits in a human-decision lane. It is the
+   * AUTHORITATIVE statement about why the card is not moving - a derived
+   * escalation headline reads the run's own "Success" and never knew the run
+   * had parked itself on a question. Mirrors backend `ParkedBlockerStatus`.
+   */
+  parkedBlocker?: ParkedBlockerStatus | null;
+  /**
    * Auto-mode "stuck loop" snapshot - populated only while the orchestrator is
    * actively answering NEEDS_INPUT for this job. Mirrors backend
    * `AutoLoopSnapshot`. The card shows a "auto-loop N/M" badge so the user
@@ -1983,6 +1991,60 @@ export type ReviewDeliveryStatus = 'integrated' | 'gate-failed' | 'not-attempted
 export interface ReviewDeliveryState {
   status: ReviewDeliveryStatus;
   reason: string | null;
+}
+
+/**
+ * One option the parking run had already weighed. Same field names the
+ * decision-card work (Dossier AGT-W54) specifies for a decision card's options,
+ * so a park of type `operator-decision` becomes a decision card by copying the
+ * block rather than translating between two formats. Mirrors backend
+ * `ParkedDecisionOptionStatus`.
+ */
+export interface ParkedDecisionOption {
+  id: string;
+  label: string;
+  consequences: string | null;
+  recommended: boolean;
+}
+
+/** The question a parked card waits on. Mirrors backend `ParkedDecisionStatus`. */
+export interface ParkedDecision {
+  /** The park slug, kept as an identifier only - never shown as the question. */
+  questionId: string;
+  /** One sentence a person can answer; empty when the parking run stated none. */
+  question: string;
+  options: ParkedDecisionOption[];
+  /** Repository-relative documents the run named as the write-up of the question. */
+  documents: string[];
+  /** Linked decision card, once decision cards exist. */
+  decisionCardKey: string | null;
+}
+
+/**
+ * Why a card is parked, what would clear it, and whether anything has checked
+ * lately. Mirrors backend `ParkedBlockerStatus`; read-time only.
+ */
+export interface ParkedBlockerStatus {
+  /** Escalation category, or `operator-decision` for a manual park. */
+  blockerType: string;
+  conditionKind: string;
+  conditionDescription: string;
+  parkedAt: string;
+  parkedForSeconds: number;
+  /** The original freetext park reason, verbatim. */
+  reason: string;
+  /** Latest sweep verdict: `blocked`, `recallable`, or `undeterminable`. */
+  recallStatus: string;
+  lastEvaluatedAt: string | null;
+  detail: string;
+  lane: string;
+  decision: ParkedDecision | null;
+  needsInputFile: string | null;
+  evaluationAgeSeconds: number | null;
+  /** The last verdict is absent or too old to present as current. */
+  evaluationStale: boolean;
+  /** This park waits for a person's choice, not for a fix. */
+  requiresDecisionCard: boolean;
 }
 
 export type ReviewDecisionSource = 'parked-blocker' | 'escalation-event' | 'lane-change' | null;

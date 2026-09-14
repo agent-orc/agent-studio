@@ -55,6 +55,7 @@ import { ProtocolPaneComponent } from './components/protocol-pane/protocol-pane/
 import { deriveProtocolVerdict } from './components/protocol-pane/protocol-verdict';
 import { classifyLatestActivityOutcome } from './components/agent-outcome.util';
 import { EscalationSummaryComponent } from './components/escalation-summary/escalation-summary.component';
+import { ParkedBlockerComponent } from './components/parked-blocker/parked-blocker.component';
 import { DetailHeaderComponent } from './components/detail-header/detail-header.component';
 import { TaskLiveStatusComponent } from '../../components/task-live-status/task-live-status.component';
 import { freshestRunInfo, isTaskRunActive } from '../../services/run-activity.util';
@@ -83,6 +84,7 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
     LogOverlayComponent,
     ProtocolPaneComponent,
     EscalationSummaryComponent,
+    ParkedBlockerComponent,
     DetailHeaderComponent,
     TaskLiveStatusComponent,
     PaneToggleBarComponent,

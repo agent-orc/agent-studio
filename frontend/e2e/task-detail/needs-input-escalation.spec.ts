@@ -14,6 +14,14 @@ const QUESTION = `Which deployment strategy should I implement?
 
 Reply with A or B to continue.`;
 
+/**
+ * The dev-only error dialog re-raises itself under `ng serve` and can repaint
+ * over a panel between a dismissal and a capture. Hiding it for the duration of
+ * the screenshot is deterministic where dismissing is not; it never appears in
+ * the stable/prod build this evidence stands in for.
+ */
+const HIDE_DEV_DIALOG = 'app-error-dialog { display: none !important; }';
+
 function json(route: Route, body: unknown): Promise<void> {
   return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
 }
@@ -64,10 +72,31 @@ async function installRoutes(page: Page): Promise<void> {
       },
       parkedBlocker: {
         blockerType: 'agent-needs-input',
+        conditionKind: 'manual',
+        conditionDescription:
+          'Only a person can clear this park; no automatic precondition is recorded.',
         lane: '5e-escalated',
         parkedAt: '2026-09-11T14:44:00.000Z',
-        reason: 'choose-connector-vs-lan-deployment-strategy',
+        parkedForSeconds: 3 * 24 * 60 * 60,
+        reason:
+          '[agent-needs-input] The remote agent requires operator input: choose-connector-vs-lan-deployment-strategy',
+        recallStatus: 'blocked',
+        lastEvaluatedAt: '2026-09-14T11:50:00.000Z',
+        detail: 'Only a person can clear this park.',
+        evaluationAgeSeconds: 600,
+        evaluationStale: false,
+        requiresDecisionCard: true,
         needsInputFile: 'results/needs-input.md',
+        decision: {
+          questionId: 'choose-connector-vs-lan-deployment-strategy',
+          question: 'Which deployment strategy should I implement?',
+          options: [
+            { id: 'a', label: 'Managed connector.', consequences: 'Recommended for simpler operations.', recommended: true },
+            { id: 'b', label: 'Direct LAN deployment.', consequences: 'Requires customer network access.', recommended: false },
+          ],
+          documents: ['docs/operations/setup/docker-compose-connector-gap.md'],
+          decisionCardKey: null,
+        },
       },
     },
     promptMarkdown: 'Choose a deployment design.',
@@ -94,7 +123,7 @@ test('NeedsInput escalation shows the full question, options, and answer field',
     await setTheme(page, theme);
     await dismissDevErrorDialog(page);
     const path = join(RESULTS, `needs-input-escalation-${theme}--mocked.png`);
-    await question.screenshot({ path });
+    await question.screenshot({ path, style: HIDE_DEV_DIALOG });
     await testInfo.attach(`NeedsInput escalation ${theme}`, { path, contentType: 'image/png' });
   }
 
@@ -104,4 +133,50 @@ test('NeedsInput escalation shows the full question, options, and answer field',
   await expect(page.getByTestId('needs-input-answer')).toHaveValue(
     'Choose A. Keep a LAN fallback for isolated networks.',
   );
+});
+
+/**
+ * AGT-2816 acceptance. AGT-2736 opened after this lands shows, without opening a
+ * single file: parked since 2026-09-11, an operator decision, the question, the
+ * options, and the link to the gap document - and the park renders above the
+ * derived escalation headline, because the park is the authoritative statement.
+ */
+test('a parked card says why it is parked, above the derived escalation headline', async ({ page }, testInfo) => {
+  await installRoutes(page);
+  await page.goto(`/?job=${JOB_ID}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
+  await dismissDevErrorDialog(page);
+
+  const park = page.getByTestId('parked-blocker');
+  await expect(park).toBeVisible();
+  await expect(park).toHaveAttribute('data-decision', 'true');
+  await expect(page.getByTestId('parked-blocker-type')).toHaveText('Agent needs input');
+  await expect(page.getByTestId('parked-blocker-since')).toContainText('3 days');
+  await expect(page.getByTestId('parked-blocker-since')).toContainText('2026-09-11');
+  await expect(page.getByTestId('parked-blocker-question'))
+    .toHaveText('Which deployment strategy should I implement?');
+  await expect(page.getByTestId('parked-blocker-options').locator('li')).toHaveCount(2);
+  await expect(page.getByTestId('parked-blocker-document'))
+    .toHaveText('docs/operations/setup/docker-compose-connector-gap.md');
+  await expect(page.getByTestId('parked-blocker-condition')).toContainText('Only a person can clear');
+
+  // Never "nothing open" while the park stands.
+  const openItems = page.getByTestId('parked-blocker-open-items').locator('li');
+  await expect(openItems.first()).toBeVisible();
+  for (const item of await openItems.allTextContents()) {
+    expect(item.toLowerCase()).not.toMatch(/\bnone\b/);
+  }
+
+  // The park outranks the derived escalation headline, so it renders above it.
+  const parkTop = (await park.boundingBox())!.y;
+  const escalationTop = (await page.getByTestId('escalation-summary').boundingBox())!.y;
+  expect(parkTop).toBeLessThan(escalationTop);
+
+  mkdirSync(RESULTS, { recursive: true });
+  for (const theme of ['dark', 'light'] as const) {
+    await setTheme(page, theme);
+    await dismissDevErrorDialog(page);
+    const path = join(RESULTS, `parked-blocker-${theme}--mocked.png`);
+    await park.screenshot({ path, style: HIDE_DEV_DIALOG });
+    await testInfo.attach(`Parked blocker ${theme}`, { path, contentType: 'image/png' });
+  }
 });

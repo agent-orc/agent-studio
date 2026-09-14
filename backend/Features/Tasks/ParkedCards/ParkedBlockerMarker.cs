@@ -75,6 +75,7 @@ public static class ParkedBlockerMarker
         if (record is null) return null;
         var parkedAt = record.ParkedAt == default ? now : record.ParkedAt.ToUniversalTime();
         var age = now - parkedAt;
+        var evaluatedAt = record.LastEvaluation?.At;
         return new ParkedBlockerStatus(
             record.BlockerType,
             record.Condition.Kind,
@@ -83,7 +84,30 @@ public static class ParkedBlockerMarker
             (long)Math.Max(0, age.TotalSeconds),
             record.Reason,
             record.LastEvaluation?.Status ?? ParkedBlockerStatuses.Blocked,
-            record.LastEvaluation?.At,
-            record.LastEvaluation?.Detail ?? "No recall sweep has evaluated this blocker yet.");
+            evaluatedAt,
+            record.LastEvaluation?.Detail ?? "No recall sweep has evaluated this blocker yet.")
+        {
+            Lane = record.Lane,
+            Decision = ToDecisionStatus(record.Decision),
+            NeedsInputFile = record.NeedsInputFile,
+            EvaluationAgeSeconds = evaluatedAt is null
+                ? null
+                : (long)Math.Max(0, (now - evaluatedAt.Value.ToUniversalTime()).TotalSeconds),
+            EvaluationStale = ParkedBlockerCatalog.IsEvaluationStale(evaluatedAt),
+            RequiresDecisionCard = ParkedBlockerCatalog.RequiresDecisionCard(record.BlockerType),
+        };
     }
+
+    private static ParkedDecisionStatus? ToDecisionStatus(ParkedDecisionRequest? decision)
+        => decision is null
+            ? null
+            : new ParkedDecisionStatus(
+                decision.QuestionId,
+                decision.Question,
+                decision.Options
+                    .Select(option => new ParkedDecisionOptionStatus(
+                        option.Id, option.Label, option.Consequences, option.Recommended))
+                    .ToList(),
+                decision.Documents,
+                decision.DecisionCardKey);
 }

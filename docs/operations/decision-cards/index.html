@@ -306,6 +306,20 @@
 </div>
 <p class="muted">Sources: AGT-2792 and the operator feedback of 2026-09-13; <code>backend/Shared/Models/TaskKinds.cs</code>, <code>TaskModes.cs</code>, <code>backend/Features/Docs/WorkbenchDecisionService.cs</code>, <code>ProjectDocsEndpoints.cs</code>, <code>ProjectProposalEndpoints.cs</code>, <code>ReviewDecisionsEndpoints.cs</code>; Dossiers <code>decision-briefing</code> and <code>docker-ausfuehrungswelt-migration</code> (inline decision convention, AGT-2520).</p>
 </section>
+<!-- agent-studio:implementation-section:start -->
+<section id="implementation" data-document-section="implementation">
+  <h2>Implementation</h2>
+  <p>Delivery slices append their current implementation status here.</p>
+  <ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<li data-implementation-entry="" data-task-key="AGT-2816" data-delivered-at="2026-09-14" data-slice="Parked-card question surface">
+  <strong>AGT-2816 &middot; Parked-card question surface</strong>
+  <span>Delivered: a park now carries a <code>decision</code> block (questionId keeps the slug, plus question, options with id/label/consequences/recommended, and named documents) using this Dossier&#39;s option field names, so a park of type <code>operator-decision</code> converts to a decision card by copying the block; <code>ParkedBlockerCatalog.RequiresDecisionCard</code> is the single predicate for which parks those are. Task Detail renders <code>&lt;app-parked-blocker&gt;</code> above the derived escalation headline, the board separates &quot;Waiting on you&quot; from &quot;Parked&quot;, and <code>ParkedOpenItems</code> stops both summary-stub producers reporting zero open items for a parked card. Evidence: <code>backend.Tests/ParkedDecisionPolicyTests.cs</code> (23 tests), <code>parked-blocker-presentation.spec.ts</code>, <code>parked-blocker.component.spec.ts</code>, and <code>frontend/e2e/task-detail/needs-input-escalation.spec.ts</code>.</span>
+</li>
+<!-- agent-studio:implementation-log:end -->
+  </ol>
+</section>
+<!-- agent-studio:implementation-section:end -->
 </main>
 </body>
 </html>

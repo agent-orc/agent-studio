@@ -114,19 +114,72 @@ Cards parked before this feature existed have no marker. The sweep backfills one
 from the lane-entry stamp, so a legacy park ages visibly instead of staying
 invisible - AGT-2220 itself is in that class.
 
+### 4. The park is a question, and somebody renders it (AGT-2816)
+
+AGT-2492 made the park machine-readable. AGT-2736 showed that was not enough:
+the card sat in `5e-escalated` for three days showing `Result: Success`,
+`Case: feature`, `Open Items: None` while the run had in fact parked itself on an
+operator decision. Three things were wrong, and each has its own fix.
+
+**The park reason never reached the screen.** No component rendered
+`TaskInfo.ParkedBlocker`; the escalation summary derived its headline from the
+status stub and repeated the run's own "Success". `<app-parked-blocker>` now
+renders the park in Task Detail ABOVE that headline - the park is a fact, the
+headline is an inference - with the type, the question, the options, what would
+clear it, the last evaluation, and the documents the run named. On the board a
+park reads as `Waiting on you` when it needs a person's choice and as `Parked`
+when it needs a fix, so the two are distinguishable at a glance.
+
+**The reason was a slug, not a question.** The marker now carries a `decision`
+block: `questionId` (the slug, kept as an identifier), `question` (one sentence),
+`options` (the ones the run had already weighed), and `documents`.
+`ParkedDecisionReader` is a pure reader over the park reason plus the run's own
+`results/needs-input.md`, so nothing new has to be authored at park time. The
+option field names come from the decision-card work (Dossier AGT-W54): a park of
+type `operator-decision` converts to a decision card by copying the block.
+`ParkedBlockerCatalog.RequiresDecisionCard` names which park types those are. A
+run that stated no question leaves `question` empty and every surface says so,
+rather than presenting the slug as the question.
+
+**The status document contradicted the park.** `ParkedOpenItems` is applied where
+a summary stub is PRODUCED - `HumanReviewEscalation.BuildStatusStub` and the
+`TaskTransitionService` result scaffold - so a parked card's stub always carries
+an `## Open Items` section naming the park. An agent's own text is never
+rewritten; the park panel above it is the counter-statement.
+
+A related honesty rule: the marker's default recall status IS `blocked`, so a
+park nothing has ever evaluated would otherwise be presented as a verdict
+somebody reached. `evaluationStale` marks exactly that case and reads as "never
+checked". It is deliberately NOT an age threshold: `lastEvaluation.at` is when the
+CURRENT verdict was first observed, and an unchanged verdict is never
+re-persisted (re-writing the marker would reset the card's activity age), so an
+old instant means the verdict has held that long - evidence, not decay. An age
+rule would lie in both directions.
+
 ## Key code
 
 - `backend/Features/Tasks/ParkedCards/ParkedBlockerRecord.cs` - condition
   vocabulary, verdicts, the durable record.
-- `ParkedBlockerCatalog.cs` - pure category-to-condition mapping.
+- `ParkedBlockerCatalog.cs` - pure category-to-condition mapping, the
+  decision-park set, and the evaluation-freshness boundary.
+- `ParkedDecisionRequest.cs` - the decision block and the pure
+  `ParkedDecisionReader` that lifts it out of the reason plus the NeedsInput message.
+- `ParkedOpenItems.cs` - the "a parked card has an open item" invariant, applied
+  by the two stub producers.
 - `ParkedBlockerMarker.cs` - sidecar read/write plus the board projection.
 - `ParkedBlockerProbe.cs` - the only part that touches the outside world.
 - `ParkedCardRecallPolicy.cs` - pure decision and announcement folding.
 - `ParkedCardRecallSweep.cs` / `ParkedCardRecallSweepHostedService.cs` - the sweep.
 - `ParkedCardEndpoints.cs` - `GET /api/parked-cards`.
-- Tests: `backend.Tests/ParkedCardRecallSweepTests.cs` (acceptance) and
+- `frontend/src/app/models/parked-blocker-presentation.ts` - one source for how a
+  park reads on the board and in the detail view.
+- `frontend/src/app/features/task-detail/components/parked-blocker/` - the panel.
+- Tests: `backend.Tests/ParkedCardRecallSweepTests.cs` (acceptance),
   `backend.Tests/ParkedBlockerPolicyTests.cs` (matrix plus a real-Git
-  reproduction of the AGT-2220 remedy).
+  reproduction of the AGT-2220 remedy),
+  `backend.Tests/ParkedDecisionPolicyTests.cs` (question extraction, projection
+  with park present / absent / stale, the open-items invariant),
+  `parked-blocker-presentation.spec.ts` and `parked-blocker.component.spec.ts`.
 
 ## Related
 
