@@ -158,6 +158,12 @@ export interface PipelineCostSummary {
 export interface PipelineModelTokenUsage {
   model: string;
   modelKnown: boolean;
+  /**
+   * Effective reasoning level recorded for these tokens, or null/undefined when
+   * the ledger has no level for them (legacy rows). Model and level together
+   * are one identity, so the same model at two levels arrives as two rows.
+   */
+  thinkingLevel?: string | null;
   unpricedRuns?: number;
   pricingGaps?: PipelinePricingGap[];
   steps: number;

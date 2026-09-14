@@ -3738,6 +3738,12 @@ public class ProjectRunner
         var participantId = AgentMessageBusBridge.ParticipantForCli(cliType);
         var topic = $"{cliType!.ToLowerInvariant()}-turn";
 
+        // The effective reasoning level of the run that produced these tokens.
+        // Read from the live execution record (the same value the run-start
+        // session event persisted) so the ledger carries model AND level for
+        // every coding turn (AGT-2811); null stays "level unknown".
+        var thinkingLevel = cli.GetExecution(jobKey)?.ThinkingLevel;
+
         _ = _bus.EmitTokenUsageRichAsync(
             ProjectName,
             jobId,
@@ -3745,7 +3751,8 @@ public class ProjectRunner
             participantId,
             topic,
             usage,
-            latency);
+            latency,
+            thinkingLevel: thinkingLevel);
     }
 
     /// <summary>

@@ -87,7 +87,16 @@ public sealed record AgentMessageTokens(
     [property: JsonPropertyName("cacheWrite")] long? CacheWrite = null,
     [property: JsonPropertyName("model")] string? Model = null,
     [property: JsonPropertyName("dollars")] double? Dollars = null,
-    [property: JsonPropertyName("contextWindow")] AgentMessageContextWindow? ContextWindow = null);
+    [property: JsonPropertyName("contextWindow")] AgentMessageContextWindow? ContextWindow = null,
+    /// <summary>
+    /// Effective reasoning / thinking level the call ran at, recorded at call
+    /// time (AGT-2811). Model and level together are the call's identity: the
+    /// same model at <c>low</c> and at <c>high</c> is neither the same cost nor
+    /// the same quality. Null on rows emitted before this was recorded and for
+    /// models that have no level dimension; consumers render that as
+    /// "level unknown" and never guess a level.
+    /// </summary>
+    [property: JsonPropertyName("thinkingLevel")] string? ThinkingLevel = null);
 
 /// <summary>
 /// Snapshot of the model's context-window state at the moment one turn completed.

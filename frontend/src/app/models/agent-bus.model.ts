@@ -30,6 +30,8 @@ export interface AgentMessageTokens {
   cacheRead?: number | null;
   cacheWrite?: number | null;
   model?: string | null;
+  /** Effective reasoning level recorded at call time; null when unknown. */
+  thinkingLevel?: string | null;
   dollars?: number | null;
   contextWindow?: AgentMessageContextWindow | null;
 }
