@@ -663,6 +663,18 @@
       background: rgba(243, 139, 168, 0.22);
       border-color: rgba(243, 139, 168, 0.5);
     }
+    /* AGT-2818: a release gate whose archived target no run can release. Same
+       class of fault as a cycle, so it borrows the warn register rather than the
+       neutral "open" one - but from tokens, so it resolves in both themes. */
+    .task-card__waiting-pill--blocked {
+      color: var(--studio-warn);
+      background: color-mix(in srgb, var(--studio-warn) 14%, transparent);
+      border-color: color-mix(in srgb, var(--studio-warn) 38%, transparent);
+    }
+    .task-card__waiting-pill--blocked:hover {
+      background: color-mix(in srgb, var(--studio-warn) 22%, transparent);
+      border-color: color-mix(in srgb, var(--studio-warn) 52%, transparent);
+    }
     .task-card__waiting-pill:focus-visible {
       outline: 2px solid var(--studio-accent);
       outline-offset: 1px;

@@ -3,6 +3,7 @@ import type { TaskInfo } from '../../models/task.model';
 import { TaskState } from '../../models/task.model';
 import { NowTickService } from '../../services/now-tick.service';
 import { deriveActiveTaskRun, isTaskRunActive } from '../../services/run-activity.util';
+import { PickupHoldComponent } from '../pickup-hold/pickup-hold.component';
 
 export type TaskLiveStatusVariant = 'card' | 'detail';
 type LiveTone = 'active' | 'waiting' | 'idle' | 'stalled';
@@ -21,6 +22,7 @@ const STALE_AFTER_MS = 10 * 60 * 1000;
   selector: 'app-task-live-status',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [PickupHoldComponent],
   templateUrl: './task-live-status.component.html',
   styleUrl: './task-live-status.component.scss',
 })
@@ -80,8 +82,23 @@ export class TaskLiveStatusComponent {
     const dependencyWait = dependencyWaitHeadline(task);
     if (dependencyWait) {
       return {
-        tone: 'waiting',
+        tone: task.pickupHold?.unsatisfiable ? 'stalled' : 'waiting',
         headline: dependencyWait,
+        detail: activityDetail(task, status.latestEventAt, this.now()),
+        next,
+        attempt: status.attempt,
+      };
+    }
+
+    // AGT-2818: every other pickup hold (a refused dispatch, an epic container,
+    // a crash cooldown, a pickup-policy refusal) used to fall through to the
+    // idle branch and render as "Between steps" while the card was in fact
+    // being skipped on every tick. The hold block below carries the specifics.
+    const hold = task.pickupHold;
+    if (hold) {
+      return {
+        tone: hold.unsatisfiable ? 'stalled' : 'waiting',
+        headline: holdHeadline(hold.mechanism),
         detail: activityDetail(task, status.latestEventAt, this.now()),
         next,
         attempt: status.attempt,
@@ -153,6 +170,10 @@ export class TaskLiveStatusComponent {
  * The backend waitsOn overlay is the same archive-inclusive dependency truth
  * used by claim admission. A dependency gate therefore outranks any stale or
  * concurrent runner queue projection when choosing the one CURRENT wait state.
+ *
+ * AGT-2818: an unsatisfiable gate gets its own sentence. "Waits for release" and
+ * "this gate can never open" describe different situations and only one of them
+ * ends by waiting; a card that conflates them reads as queued for a month.
  */
 function dependencyWaitHeadline(task: TaskInfo): string | null {
   const waitsOn = task.waitsOn;
@@ -164,9 +185,22 @@ function dependencyWaitHeadline(task: TaskInfo): string | null {
 
   if (waitsOn.cycleDetected) return `Dependency gate blocked · cycle: ${primary.key}`;
 
+  const blocked = open.find(item => item.unsatisfiable);
+  if (blocked) return `this gate can never open: ${blocked.key}`;
+
   const extra = Math.max(0, open.length - 1);
   const reason = primary.waitingForRelease ? 'release' : 'completion';
   return `waits for ${reason}: ${primary.key}${extra > 0 ? ` +${extra}` : ''}`;
+}
+
+/** Short name for the non-dependency holds; the hold block states the detail. */
+function holdHeadline(mechanism: string): string {
+  switch (mechanism) {
+    case 'dispatch-rejection': return 'Queued, but the runner refused it';
+    case 'epic-container': return 'Epic container: never executed';
+    case 'crash-backoff': return 'Crash cooldown before the next attempt';
+    default: return 'Queued, but not pickable';
+  }
 }
 
 function timestamp(value: string | null | undefined): number | null {

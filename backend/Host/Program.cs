@@ -859,6 +859,11 @@ builder.Services.AddSingleton<AgentStudio.Tasks.IParkedBlockerProbe>(sp =>
     new AgentStudio.Tasks.ParkedBlockerProbe(sp.GetService<AgentStudio.Git.GitService>()));
 builder.Services.AddSingleton<AgentStudio.Tasks.ParkedCardRecallSweep>();
 builder.Services.AddHostedService<AgentStudio.Tasks.ParkedCardRecallSweepHostedService>();
+// AGT-2818: the pickup lanes get the same treatment the parked lane got. A card
+// the pickup gate skips is held, not queued, and the sweep names the existing
+// backlog of silently held cards once at boot. Report-only as well: it never
+// releases a gate and never drops an edge.
+builder.Services.AddSingleton<AgentStudio.Tasks.PickupHoldSweep>();
 // Hosted wiki publication (AGT-2278): the deployment checkout advances to the
 // accepted documentation revision through a supervised fetch + atomic
 // promotion instead of a manual file copy. Registered BEFORE ProjectDocsService
@@ -1226,6 +1231,18 @@ try
 catch (Exception ex)
 {
     crashRecorder.Record("SupersededCommitSweep", ex);
+}
+
+// AGT-2818: announce every card currently held in a pickup lane, so the backlog
+// that accumulated while the state was invisible becomes visible once. Purely a
+// report; nothing here changes what the pickup gate admits.
+try
+{
+    app.Services.GetRequiredService<AgentStudio.Tasks.PickupHoldSweep>().RunOnce();
+}
+catch (Exception ex)
+{
+    crashRecorder.Record("PickupHoldSweep", ex);
 }
 
 // One-time repair for recent remote completions whose integration branch had

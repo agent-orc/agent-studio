@@ -138,6 +138,64 @@ public sealed class WaitsOnPickupGateTests : IDisposable
         Assert.Equal("free", BuildAppRunner().GetNextReadyJob()!.Id);
     }
 
+    // AGT-2818: an archived, never released release-gate target can never open
+    // the gate. The runner must report that as loudly as a cycle - once per card,
+    // not once per tick - and must keep skipping the card either way.
+    [Fact]
+    public void UnsatisfiableReleaseGate_BlocksPickup_AndWarnsOncePerCard()
+    {
+        WriteJob(_libWatch, TaskStates.Archive, "dep", "LIB-1", order: 1);
+        WriteJob(_appWatch, TaskStates.Ready, "consumer", "APP-1", order: 1,
+            dependsOn: new[] { "LIB-1" }, releaseGate: true);
+
+        var logger = new RecordingLogger();
+        var runner = BuildAppRunner(logger);
+
+        // Three ticks, exactly as an idle runner would produce.
+        Assert.Null(runner.GetNextReadyJob());
+        Assert.Null(runner.GetNextReadyJob());
+        Assert.Null(runner.GetNextReadyJob());
+
+        var warnings = logger.Warnings
+            .Where(message => message.Contains("unsatisfiable waits-on gate", StringComparison.Ordinal))
+            .ToList();
+        var warning = Assert.Single(warnings);
+        Assert.Contains("APP-1", warning, StringComparison.Ordinal);
+        Assert.Contains("LIB-1", warning, StringComparison.Ordinal);
+        Assert.Contains("archived", warning, StringComparison.OrdinalIgnoreCase);
+        // Both ways out are named in the warning, neither is taken.
+        Assert.Contains("release", warning, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("releaseGate", warning, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SatisfiableReleaseGate_IsHeldQuietly_WithoutTheUnsatisfiableWarning()
+    {
+        // 6-completed, not archived: an ordinary wait, and it must not borrow
+        // the configuration-error warning.
+        WriteJob(_libWatch, TaskStates.Completed, "dep", "LIB-1", order: 1);
+        WriteJob(_appWatch, TaskStates.Ready, "consumer", "APP-1", order: 1,
+            dependsOn: new[] { "LIB-1" }, releaseGate: true);
+
+        var logger = new RecordingLogger();
+        Assert.Null(BuildAppRunner(logger).GetNextReadyJob());
+
+        Assert.DoesNotContain(
+            logger.Warnings,
+            message => message.Contains("unsatisfiable waits-on gate", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void UnsatisfiableReleaseGate_DoesNotHaltTheLane()
+    {
+        WriteJob(_libWatch, TaskStates.Archive, "dep", "LIB-1", order: 1);
+        WriteJob(_appWatch, TaskStates.Ready, "consumer", "APP-1", order: 1,
+            dependsOn: new[] { "LIB-1" }, releaseGate: true);
+        WriteJob(_appWatch, TaskStates.Ready, "free", "APP-2", order: 2);
+
+        Assert.Equal("free", BuildAppRunner().GetNextReadyJob()!.Id);
+    }
+
     private void WriteJob(
         string watchPath,
         string state,
@@ -160,7 +218,7 @@ public sealed class WaitsOnPickupGateTests : IDisposable
         File.WriteAllText(Path.Combine(dir, "task.json"), json);
     }
 
-    private ProjectRunner BuildAppRunner()
+    private ProjectRunner BuildAppRunner(ILogger<ProjectRunner>? logger = null)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -222,10 +280,33 @@ public sealed class WaitsOnPickupGateTests : IDisposable
 
         return new ProjectRunner(
             App, entry,
-            NullLogger<ProjectRunner>.Instance,
+            logger ?? NullLogger<ProjectRunner>.Instance,
             scanner, states, sessions, router,
             summary, prompts, transitions, chatLog, mutations,
             orchestratorLog, orchestratorRunner, orchestratorSessions,
             settings, quotaService, quotaCaps, git, pickupFailures, infraBreaker, taskAccess, bus: null);
+    }
+
+    /// <summary>
+    /// Captures warning-level lines so a "reported once, not per tick" contract
+    /// can be asserted on the formatted message rather than on a log provider.
+    /// </summary>
+    private sealed class RecordingLogger : ILogger<ProjectRunner>
+    {
+        public List<string> Warnings { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel >= LogLevel.Warning) Warnings.Add(formatter(state, exception));
+        }
     }
 }
