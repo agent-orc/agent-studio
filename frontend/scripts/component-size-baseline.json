@@ -7,10 +7,10 @@
   },
   "components": {
     "src/app/app.ts": {
-      "typeScript": 2567,
-      "template": 902,
+      "typeScript": 2677,
+      "template": 963,
       "styles": 2008,
-      "total": 5477
+      "total": 5626
     },
     "src/app/components/markdown-rich-editor/markdown-rich-editor.ts": {
       "typeScript": 466,
@@ -60,17 +60,23 @@
       "styles": 415,
       "total": 907
     },
+    "src/app/features/project-detail/components/project-observability/project-observability-panel.component.ts": {
+      "typeScript": 508,
+      "template": 382,
+      "styles": 440,
+      "total": 1330
+    },
     "src/app/features/project-detail/components/project-pipeline-panel/project-pipeline-panel.component.ts": {
       "typeScript": 628,
       "template": 313,
       "styles": 584,
       "total": 1525
     },
-    "src/app/features/project-detail/components/project-url-preview-tab/project-url-preview-tab.component.ts": {
-      "typeScript": 614,
-      "template": 295,
-      "styles": 114,
-      "total": 1023
+    "src/app/features/project-detail/components/project-product-runtime/project-product-runtime-panel.component.ts": {
+      "typeScript": 457,
+      "template": 405,
+      "styles": 221,
+      "total": 1103
     },
     "src/app/features/project-detail/components/project-steering-docs-section/project-steering-docs-section.ts": {
       "typeScript": 490,
@@ -78,23 +84,20 @@
       "styles": 719,
       "total": 1548
     },
+    "src/app/features/project-detail/components/project-url-preview-tab/project-url-preview-tab.component.ts": {
+      "typeScript": 614,
+      "template": 295,
+      "styles": 114,
+      "total": 1023
+    },
+    "src/app/features/project-detail/components/project-urls-panel/project-urls-panel.component.ts": {
+      "total": 909
+    },
     "src/app/features/project-detail/components/project-wiki-section/project-wiki-section.ts": {
-      "typeScript": 1773,
-      "template": 892,
+      "typeScript": 2301,
+      "template": 965,
       "styles": 1937,
-      "total": 4602
-    },
-    "src/app/features/project-detail/components/project-observability/project-observability-panel.component.ts": {
-      "typeScript": 508,
-      "template": 382,
-      "styles": 440,
-      "total": 1330
-    },
-    "src/app/features/project-detail/components/project-product-runtime/project-product-runtime-panel.component.ts": {
-      "typeScript": 457,
-      "template": 405,
-      "styles": 221,
-      "total": 1083
+      "total": 5169
     },
     "src/app/features/project-detail/components/uxui-panel/uxui-panel.component.ts": {
       "typeScript": 247,
@@ -102,17 +105,24 @@
       "styles": 182,
       "total": 694
     },
+    "src/app/features/project-detail/components/workbench-viewer-header/workbench-viewer-header.component.ts": {
+      "total": 912
+    },
     "src/app/features/project-token-usage/components/project-token-usage-panel/project-token-usage-panel.component.ts": {
       "typeScript": 401,
       "template": 260,
       "styles": 399,
       "total": 1060
     },
+    "src/app/features/remote-hosts/components/remote-host-card/remote-host-card.ts": {
+      "template": 298,
+      "total": 964
+    },
     "src/app/features/studio-shell/components/explorer-workspace-tree/explorer-workspace-tree.component.ts": {
       "typeScript": 508,
-      "template": 276,
+      "template": 279,
       "styles": 147,
-      "total": 931
+      "total": 937
     },
     "src/app/features/studio-shell/studio-shell.component.ts": {
       "typeScript": 1333,
@@ -141,8 +151,8 @@
     "src/app/features/task-detail/components/prompt-pane/overview-pane/overview-pane.component.ts": {
       "typeScript": 1904,
       "template": 755,
-      "styles": 1679,
-      "total": 4336
+      "styles": 1760,
+      "total": 4366
     },
     "src/app/features/task-detail/components/protocol-pane/protocol-pane/protocol-pane.component.ts": {
       "typeScript": 1390,
