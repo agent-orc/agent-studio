@@ -186,6 +186,9 @@
 </svg>
 <figcaption>Fig. 1: Lifecycle of a decision card. The record written at "decided" is the same format the Dossier decision uses today.</figcaption>
 </figure>
+<div class="box accent">
+<p><b>Operator position, 2026-09-14: separate the service from its hosts.</b> A Dossier decision and a card decision share one mechanism and nothing else. A Dossier is <em>started</em> by a decision and links the work that follows; it has no execution cycle of its own. A card has the full one: lane, claim, lease, runs, review, integration. So the decision service stays a plain service, host-agnostic, and each host binds it to its own lifecycle. What a decision does <em>after</em> it is taken therefore differs by host: on a Dossier it spawns or links cards, on a card it unblocks that card's own execution. The relationship between the two is one Dossier to many cards, and that relation is part of the working model, not an implementation detail. It is examined in its own Dossier together with the question of how Dossiers and Epics relate.</p>
+</div>
 <p>Three properties make this work in practice. The options are fields, not markdown, so the board can render them and the decider can click them. The decider is named, so the inbox can address a person or a role instead of hoping someone reads the lane. The dependants are linked, so "blocked" is a computed state rather than a convention in the prompt.</p>
 </section>
 
@@ -251,7 +254,7 @@
 
 <div class="decision" data-decision-id="representation" data-decision-kind="single" data-decision-label="Representation of a decision">
   <h3>D1 · How is a decision represented?</h3>
-  <label data-option-id="card-kind" data-option-label="A · Card kind decision with structured options (recommendation)"><input type="radio" name="representation" value="card-kind"><span><b>A · Card kind <code>decision</code> with structured options</b><span class="d">Visible on the board, decidable in the card, blocking computed from dependsOn; reuses the Dossier decision service for the record.</span></span></label>
+  <label data-option-id="card-kind" data-option-label="A · Card kind decision with structured options (recommendation)"><input type="radio" name="representation" value="card-kind"><span><b>A · Card kind <code>decision</code> with structured options</b><span class="d">Visible on the board, decidable in the card, blocking computed from dependsOn. The shared piece is a host-agnostic decision service (question, options, choice, rationale, record); the card binds it to the card lifecycle, the Dossier to its own. Not a second copy of the Dossier mechanism, and not the Dossier mechanism stretched over a card.</span></span></label>
   <label data-option-id="dossier-per-decision" data-option-label="B · Every decision is a small Dossier"><input type="radio" name="representation" value="dossier-per-decision"><span><b>B · Every decision is a small Dossier</b><span class="d">Reuses the existing UI fully, but every two-option question becomes a document and stays invisible on the board.</span></span></label>
   <label data-option-id="lane-only" data-option-label="C · Decision lane for ordinary cards"><input type="radio" name="representation" value="lane-only"><span><b>C · Decision lane for ordinary cards</b><span class="d">Cheapest; no options, no call to action, dependants unprotected. Interim at best.</span></span></label>
   <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
@@ -294,7 +297,7 @@
 <table>
 <thead><tr><th>Card</th><th>Scope</th><th>Depends on</th></tr></thead>
 <tbody>
-<tr><td>Backend: decision kind, options, decide and reopen API, blocking, wiki record</td><td><code>TaskKinds.Decision</code>, options model, <code>POST /api/tasks/{id}/decision</code> and <code>/reopen</code>, claim guard for blocked dependants, record via the decision service, tests</td><td></td></tr>
+<tr><td>Backend: host-agnostic decision service, decision kind, options, decide and reopen API, blocking, wiki record</td><td><code>TaskKinds.Decision</code>, options model, <code>POST /api/tasks/{id}/decision</code> and <code>/reopen</code>, claim guard for blocked dependants, record via the decision service, tests</td><td></td></tr>
 <tr><td>Frontend: badge, detail call to action, blocked-by, inbox</td><td>Board and list badge with decider, header count, card detail with options and rationale, blocked-by marker, inbox entries next to Dossier decisions, tests</td><td>Backend</td></tr>
 <tr><td>Apply step and creation paths</td><td>Apply on decide (prompt block or new cards), decision cards offered by runner Blocked outcome, failure intervention and Dossier promotion; reminder after due date</td><td>Backend</td></tr>
 <tr><td>Migration and docs</td><td>One-off migration of the five prose cards, docs page "Decision cards", paragraph in the task-integration workflow</td><td>Backend, Frontend</td></tr>
