@@ -10,7 +10,12 @@ namespace AgentStudio.Tests;
 /// — the read-time mapper that disambiguates why a 3-progress card looks
 /// "untouched": a live run, a failed run waiting out the rapid-crash backoff, an
 /// orphan after a backend restart, or a failed-but-idle run. No runner needed;
-/// the classifier is side-effect-free and takes its clock as a parameter.
+/// the classifier is side-effect-free.
+///
+/// <para>AGT-2703 removed its clock. A recorded backoff now rides along as
+/// BackoffUntil and the renderer decides whether it is still holding, so the
+/// kind returned here is what the card shows once the instant has passed. The
+/// cases below assert exactly that split.</para>
 /// </summary>
 public sealed class TaskRunActivityClassifierTests
 {
@@ -27,7 +32,7 @@ public sealed class TaskRunActivityClassifierTests
     {
         var facts = new RunActivityFacts(SlotActive: true, BackoffUntil: null, ConsecutiveFailures: 0);
 
-        var result = TaskRunActivityClassifier.Classify(facts, Exec("running", pid: 4242), null, Now);
+        var result = TaskRunActivityClassifier.Classify(facts, Exec("running", pid: 4242), null);
 
         Assert.Equal(TaskRunActivityKinds.Active, result.Kind);
         Assert.Equal(4242, result.ProcessId);
@@ -43,7 +48,7 @@ public sealed class TaskRunActivityClassifierTests
             ConsecutiveFailures: 0,
             ContinuingAfterRestart: true);
 
-        var result = TaskRunActivityClassifier.Classify(facts, Exec("running", pid: 2780), null, Now);
+        var result = TaskRunActivityClassifier.Classify(facts, Exec("running", pid: 2780), null);
 
         Assert.Equal(TaskRunActivityKinds.ContinuingAfterRestart, result.Kind);
         Assert.Equal(2780, result.ProcessId);
@@ -56,7 +61,7 @@ public sealed class TaskRunActivityClassifierTests
         // and must outrank a stale backoff deadline.
         var facts = new RunActivityFacts(true, Now.AddMinutes(5), ConsecutiveFailures: 2);
 
-        var result = TaskRunActivityClassifier.Classify(facts, Exec("running", pid: 7), null, Now);
+        var result = TaskRunActivityClassifier.Classify(facts, Exec("running", pid: 7), null);
 
         Assert.Equal(TaskRunActivityKinds.Active, result.Kind);
     }
@@ -71,7 +76,7 @@ public sealed class TaskRunActivityClassifierTests
         // back to Active and surface the pid.
         var facts = new RunActivityFacts(SlotActive: false, BackoffUntil: null, ConsecutiveFailures: 0);
 
-        var result = TaskRunActivityClassifier.Classify(facts, Exec("running", pid: 5151), null, Now);
+        var result = TaskRunActivityClassifier.Classify(facts, Exec("running", pid: 5151), null);
 
         Assert.Equal(TaskRunActivityKinds.Active, result.Kind);
         Assert.Equal(5151, result.ProcessId);
@@ -85,21 +90,24 @@ public sealed class TaskRunActivityClassifierTests
         // deadline is still armed from an earlier failed attempt.
         var facts = new RunActivityFacts(false, Now.AddMinutes(5), ConsecutiveFailures: 2);
 
-        var result = TaskRunActivityClassifier.Classify(facts, Exec("running", pid: 8), null, Now);
+        var result = TaskRunActivityClassifier.Classify(facts, Exec("running", pid: 8), null);
 
         Assert.Equal(TaskRunActivityKinds.Active, result.Kind);
         Assert.Equal(8, result.ProcessId);
     }
 
     [Fact]
-    public void FailedBackoff_when_backoff_in_future_and_no_slot()
+    public void Armed_backoff_is_published_as_an_instant_next_to_the_expired_kind()
     {
         var until = Now.AddSeconds(60);
         var facts = new RunActivityFacts(false, until, ConsecutiveFailures: 2);
 
-        var result = TaskRunActivityClassifier.Classify(facts, Exec("failed"), Issue("git push rejected"), Now);
+        var result = TaskRunActivityClassifier.Classify(facts, Exec("failed"), Issue("git push rejected"));
 
-        Assert.Equal(TaskRunActivityKinds.FailedBackoff, result.Kind);
+        // The renderer turns this into failed-backoff while `until` is still in
+        // the future; the server states only what is true regardless of when the
+        // response is read.
+        Assert.Equal(TaskRunActivityKinds.FailedIdle, result.Kind);
         Assert.Equal(until, result.BackoffUntil);
         Assert.Equal(2, result.Attempt);
         Assert.Equal("git push rejected", result.LastError);
@@ -107,16 +115,31 @@ public sealed class TaskRunActivityClassifierTests
     }
 
     [Fact]
-    public void NoActiveRun_when_backoff_has_expired_and_nothing_failed()
+    public void Same_facts_classify_identically_whatever_the_backoff_deadline_is()
     {
-        // Expired backoff with no failure evidence (e.g. the deadline elapsed
-        // and the streak was reset) is just an idle, pick-able task.
-        var facts = new RunActivityFacts(false, Now.AddSeconds(-1), ConsecutiveFailures: 0);
+        // The property the board ETag depends on: no wall clock, and no hidden
+        // dependency on how far away the deadline sits.
+        var armed = TaskRunActivityClassifier.Classify(
+            new RunActivityFacts(false, Now.AddHours(1), ConsecutiveFailures: 2), Exec("failed"), null);
+        var elapsed = TaskRunActivityClassifier.Classify(
+            new RunActivityFacts(false, Now.AddHours(1), ConsecutiveFailures: 2), Exec("failed"), null);
 
-        var result = TaskRunActivityClassifier.Classify(facts, null, null, Now);
+        Assert.Equal(armed, elapsed);
+    }
+
+    [Fact]
+    public void NoActiveRun_when_backoff_is_recorded_but_nothing_failed()
+    {
+        // A backoff deadline with no failure evidence (e.g. the streak was
+        // reset) is just an idle, pick-able task. The instant still travels so
+        // the renderer can hold the card until it passes.
+        var expired = Now.AddSeconds(-1);
+        var facts = new RunActivityFacts(false, expired, ConsecutiveFailures: 0);
+
+        var result = TaskRunActivityClassifier.Classify(facts, null, null);
 
         Assert.Equal(TaskRunActivityKinds.NoActiveRun, result.Kind);
-        Assert.Null(result.BackoffUntil);
+        Assert.Equal(expired, result.BackoffUntil);
     }
 
     [Fact]
@@ -127,7 +150,7 @@ public sealed class TaskRunActivityClassifierTests
         // classifier reports an orphan awaiting re-pickup.
         var facts = new RunActivityFacts(false, null, ConsecutiveFailures: 0);
 
-        var result = TaskRunActivityClassifier.Classify(facts, execution: null, outcomeIssue: null, Now);
+        var result = TaskRunActivityClassifier.Classify(facts, execution: null, outcomeIssue: null);
 
         Assert.Equal(TaskRunActivityKinds.NoActiveRun, result.Kind);
         Assert.Equal(0, result.Attempt);
@@ -140,7 +163,7 @@ public sealed class TaskRunActivityClassifierTests
     {
         var facts = new RunActivityFacts(false, null, ConsecutiveFailures: 0);
 
-        var result = TaskRunActivityClassifier.Classify(facts, Exec("failed"), Issue("missing sentinel"), Now);
+        var result = TaskRunActivityClassifier.Classify(facts, Exec("failed"), Issue("missing sentinel"));
 
         Assert.Equal(TaskRunActivityKinds.FailedIdle, result.Kind);
         Assert.Equal("missing sentinel", result.LastError);
@@ -151,7 +174,7 @@ public sealed class TaskRunActivityClassifierTests
     {
         var facts = new RunActivityFacts(false, null, ConsecutiveFailures: 1);
 
-        var result = TaskRunActivityClassifier.Classify(facts, execution: null, outcomeIssue: null, Now);
+        var result = TaskRunActivityClassifier.Classify(facts, execution: null, outcomeIssue: null);
 
         Assert.Equal(TaskRunActivityKinds.FailedIdle, result.Kind);
         Assert.Equal(1, result.Attempt);
@@ -162,7 +185,7 @@ public sealed class TaskRunActivityClassifierTests
     {
         var facts = new RunActivityFacts(false, null, ConsecutiveFailures: 1);
 
-        var result = TaskRunActivityClassifier.Classify(facts, Exec("failed"), Issue("   "), Now);
+        var result = TaskRunActivityClassifier.Classify(facts, Exec("failed"), Issue("   "));
 
         Assert.Null(result.LastError);
     }
@@ -173,9 +196,22 @@ public sealed class TaskRunActivityClassifierTests
         var facts = new RunActivityFacts(false, Now.AddSeconds(30), ConsecutiveFailures: 1);
 
         // Even if a stale execution carries a pid, only an active slot surfaces it.
-        var result = TaskRunActivityClassifier.Classify(facts, Exec("failed", pid: 999), null, Now);
+        var result = TaskRunActivityClassifier.Classify(facts, Exec("failed", pid: 999), null);
 
-        Assert.Equal(TaskRunActivityKinds.FailedBackoff, result.Kind);
+        Assert.Equal(TaskRunActivityKinds.FailedIdle, result.Kind);
         Assert.Null(result.ProcessId);
+    }
+
+    [Fact]
+    public void An_active_run_carries_no_backoff_instant()
+    {
+        // The two states are mutually exclusive, so a stale deadline left over
+        // from an earlier attempt must not travel on a live card.
+        var facts = new RunActivityFacts(true, Now.AddSeconds(30), ConsecutiveFailures: 1);
+
+        var result = TaskRunActivityClassifier.Classify(facts, Exec("running", pid: 12), null);
+
+        Assert.Equal(TaskRunActivityKinds.Active, result.Kind);
+        Assert.Null(result.BackoffUntil);
     }
 }

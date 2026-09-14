@@ -8,7 +8,7 @@ import { cliTypeIcon, cliTypeLabel, shortModelName, taskModeIcon, taskModeLabel 
 import { shouldShowFailureToast } from '../../../task-detail/services/run-outcome.util';
 import { buildThinkingLevelIndicator, type ThinkingLevelIndicator } from '../../../../services/thinking-level.util';
 import { phaseStaticLabel } from '../../../../services/lifecycle-phase.util';
-import { isTaskRunActive } from '../../../../services/run-activity.util';
+import { isTaskRunActive, resolveRunActivityKind } from '../../../../services/run-activity.util';
 import { buildTokenCostTooltip, formatTokenCostDisplay } from '../../../tokens';
 import { lanePresentation } from '../../../../models/lane-presentation';
 
@@ -1228,11 +1228,15 @@ export interface CooldownRetryBanner {
   /** Attempt this cooldown is holding for, clamped to [1, budget]. */
   attempt: number;
   budget: number;
-  /** Whole seconds until the scheduled re-pickup, or null when already due. */
-  secondsLeft: number | null;
+  /**
+   * Whole seconds until the scheduled re-pickup, at least 1. The banner only
+   * exists while the backoff is still ahead of the card's clock, so there is no
+   * elapsed case left to represent (AGT-2703).
+   */
+  secondsLeft: number;
   /** Primary line, e.g. `infra-crashed · retrying 2/3`. */
   label: string;
-  /** Countdown fragment, e.g. `in 210s` (or `now` when the timer elapsed). */
+  /** Countdown fragment, e.g. `in 210s`. */
   countdown: string;
   tooltip: string;
 }
@@ -1247,25 +1251,28 @@ export interface CooldownRetryBanner {
  *
  * Source is the already-overlaid `runActivity` (kind + backoffUntil + attempt) —
  * no new side-channel. `nowMs` is injected so the countdown ticks from the card's
- * shared clock signal. Returns null off the Progress lane, when no runActivity is
- * attached, or for any run-activity state other than `failed-backoff`.
+ * shared clock signal, and since AGT-2703 the same clock also decides whether the
+ * backoff is still holding at all: `resolveRunActivityKind` reinstates
+ * `failed-backoff` from `backoffUntil`, which the server no longer compares
+ * against its own clock. Returns null off the Progress lane, when no runActivity
+ * is attached, or once the backoff has elapsed.
  */
 export function buildCooldownRetryBanner(job: TaskInfo, nowMs: number): CooldownRetryBanner | null {
   if (job.state !== TaskState.Progress) return null;
   const activity = job.runActivity;
-  if (!activity || activity.kind !== 'failed-backoff') return null;
+  if (!activity || resolveRunActivityKind(activity, nowMs) !== 'failed-backoff') return null;
+
+  const untilMs = Date.parse(activity.backoffUntil ?? '');
+  if (!Number.isFinite(untilMs)) return null;
 
   const attempt = Math.min(Math.max(activity.attempt, 1), INFRA_RETRY_BUDGET);
-  const untilMs = activity.backoffUntil ? Date.parse(activity.backoffUntil) : Number.NaN;
-  const secondsLeft = Number.isFinite(untilMs) && untilMs > nowMs
-    ? Math.max(1, Math.round((untilMs - nowMs) / 1000))
-    : null;
-  const countdown = secondsLeft !== null ? `in ${secondsLeft}s` : 'now';
+  const secondsLeft = Math.max(1, Math.round((untilMs - nowMs) / 1000));
+  const countdown = `in ${secondsLeft}s`;
 
   const lastError = activity.lastError?.trim();
   const tooltipLines = [
     'Infra crash — the last run died before a terminal verdict.',
-    `The orchestrator kept the loop and scheduled a re-pickup (attempt ${attempt} of ${INFRA_RETRY_BUDGET})${secondsLeft !== null ? ` in ~${secondsLeft}s` : ' now'}.`,
+    `The orchestrator kept the loop and scheduled a re-pickup (attempt ${attempt} of ${INFRA_RETRY_BUDGET}) in ~${secondsLeft}s.`,
     'This is a held CooldownRetry, not a live run and not a stall.',
   ];
   if (lastError) tooltipLines.push(`Last error: ${lastError}`);

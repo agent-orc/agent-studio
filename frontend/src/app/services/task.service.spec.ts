@@ -1,6 +1,6 @@
 import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { provideHttpClient } from '@angular/common/http';
+import { HttpRequest, provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { TaskService, orchestratorContextChatSegment } from './task.service';
@@ -20,6 +20,14 @@ class JobsHubClientStub {
   }
   stop(): void { return undefined; }
 }
+
+/**
+ * The board poll is a conditional GET (AGT-2703) that also declares this client
+ * knows the ADR-0025 lane names, so it never matches on a bare URL.
+ */
+const groupedRequest = (request: HttpRequest<unknown>) =>
+  request.url === '/api/tasks/grouped'
+  && request.params.get('includeLegacyReviewLane') === 'false';
 
 const emptyGrouped = {
   backlog: [],
@@ -131,7 +139,7 @@ describe('TaskService', () => {
     expect(hub.handlers?.reconnected).toBeTruthy();
     hub.handlers?.reconnected?.();
 
-    http.expectOne('/api/tasks/grouped').flush(emptyGrouped);
+    http.expectOne(groupedRequest).flush(emptyGrouped);
     http.expectNone('/api/tasks');
     http.expectOne('/api/runner/status').flush({
       projects: {
@@ -166,7 +174,7 @@ describe('TaskService', () => {
       autoReview: [task],
       review: [task],
     };
-    http.expectOne('/api/tasks/grouped').flush(grouped);
+    http.expectOne(groupedRequest).flush(grouped);
     http.expectNone('/api/tasks');
     http.expectOne('/api/runner/status').flush({ projects: {} });
 
@@ -175,20 +183,97 @@ describe('TaskService', () => {
     expect(service.loading()).toBe(false);
   });
 
+  it('polls the board conditionally and keeps the last payload on 304', () => {
+    const task = {
+      id: 'job-1',
+      taskKey: 'DEMO-1',
+      watchPath: 'C:/projects/demo/.orchestrator/jobs',
+      state: '4-auto-review',
+      title: 'Single snapshot',
+    } as TaskInfo;
+
+    service.refresh();
+
+    // First poll: nothing is held yet, so no validator is offered.
+    const first = http.expectOne(groupedRequest);
+    expect(first.request.headers.has('If-None-Match')).toBe(false);
+    first.flush(
+      { ...emptyGrouped, autoReview: [task] },
+      { headers: { ETag: '"board-v1"' } });
+    http.expectOne('/api/runner/status').flush({ projects: {} });
+
+    expect(service.grouped().autoReview).toEqual([task]);
+
+    // Second poll: the held snapshot is offered and the board has not moved.
+    service.refresh(true);
+    const second = http.expectOne(groupedRequest);
+    expect(second.request.headers.get('If-None-Match')).toBe('"board-v1"');
+    second.flush(null, { status: 304, statusText: 'Not Modified', headers: { ETag: '"board-v1"' } });
+    http.expectOne('/api/runner/status').flush({ projects: {} });
+
+    // The rendered board survives the empty body untouched.
+    expect(service.grouped().autoReview).toEqual([task]);
+    expect(service.error()).toBeNull();
+
+    // Third poll: the board moved, so a full payload replaces it.
+    service.refresh(true);
+    const third = http.expectOne(groupedRequest);
+    expect(third.request.headers.get('If-None-Match')).toBe('"board-v1"');
+    third.flush(emptyGrouped, { headers: { ETag: '"board-v2"' } });
+    http.expectOne('/api/runner/status').flush({ projects: {} });
+
+    expect(service.grouped().autoReview).toEqual([]);
+
+    service.refresh(true);
+    const fourth = http.expectOne(groupedRequest);
+    expect(fourth.request.headers.get('If-None-Match')).toBe('"board-v2"');
+    fourth.flush(emptyGrouped);
+    http.expectOne('/api/runner/status').flush({ projects: {} });
+  });
+
+  it('drops the board validator when a response is rejected or fails', () => {
+    service.refresh();
+    http.expectOne(groupedRequest).flush(emptyGrouped, { headers: { ETag: '"board-v1"' } });
+    http.expectOne('/api/runner/status').flush({ projects: {} });
+
+    // An in-flight optimistic persist makes the service discard the snapshot.
+    // The rendered board then matches no server tag, so offering one would let
+    // the next 304 pin the board to a payload that was never applied.
+    service.beginOptimisticPersist();
+    service.refresh(true);
+    const rejected = http.expectOne(groupedRequest);
+    expect(rejected.request.headers.get('If-None-Match')).toBe('"board-v1"');
+    rejected.flush(emptyGrouped, { headers: { ETag: '"board-v2"' } });
+    http.expectOne('/api/runner/status').flush({ projects: {} });
+
+    service.refresh();
+    const afterReject = http.expectOne(groupedRequest);
+    expect(afterReject.request.headers.has('If-None-Match')).toBe(false);
+    // A failed read leaves nothing to validate against either.
+    afterReject.flush(null, { status: 500, statusText: 'Server Error' });
+    http.expectOne('/api/runner/status').flush({ projects: {} });
+
+    service.refresh();
+    const afterFailure = http.expectOne(groupedRequest);
+    expect(afterFailure.request.headers.has('If-None-Match')).toBe(false);
+    afterFailure.flush(emptyGrouped);
+    http.expectOne('/api/runner/status').flush({ projects: {} });
+  });
+
   it('coalesces overlapping board and runner refreshes into one trailing request', () => {
     service.refresh(true);
     service.refresh(true);
     service.refresh(true);
 
-    const firstGrouped = http.expectOne('/api/tasks/grouped');
+    const firstGrouped = http.expectOne(groupedRequest);
     const firstRunner = http.expectOne('/api/runner/status');
 
     firstGrouped.flush(emptyGrouped);
     firstRunner.flush({ projects: {} });
 
-    http.expectOne('/api/tasks/grouped').flush(emptyGrouped);
+    http.expectOne(groupedRequest).flush(emptyGrouped);
     http.expectOne('/api/runner/status').flush({ projects: {} });
-    http.expectNone('/api/tasks/grouped');
+    http.expectNone(groupedRequest);
     http.expectNone('/api/runner/status');
   });
 

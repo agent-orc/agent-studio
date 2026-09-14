@@ -32,6 +32,21 @@ public sealed class TaskListGitProjectionCache
     private readonly ConcurrentDictionary<string, RepoEntry> _entries =
         new(StringComparer.OrdinalIgnoreCase);
 
+    private long _generation;
+
+    /// <summary>
+    /// Monotonic version of the merged snapshot store. Every indexer write -
+    /// a completed run (<see cref="SetSnapshot"/>) and the mid-refresh marker
+    /// (<see cref="MarkRefreshing"/>, which moves the published
+    /// <see cref="GitProjectionFreshness.Stale"/> flag) - advances it. The
+    /// board read (AGT-2703) folds this into its ETag, so a client holding a
+    /// validator provably holds the Git-derived half of the board too. It is
+    /// deliberately store-wide rather than per repository: the board response
+    /// merges every repository anyway, and one counter keeps the validator a
+    /// single cheap read.
+    /// </summary>
+    public long Generation => Interlocked.Read(ref _generation);
+
     /// <summary>
     /// Returns the merged, most recently completed projection for every
     /// repository the requested tasks belong to. A repository the indexer has
@@ -113,6 +128,7 @@ public sealed class TaskListGitProjectionCache
                 existing.Refreshing = false;
                 return existing;
             });
+        Interlocked.Increment(ref _generation);
     }
 
     /// <summary>
@@ -131,6 +147,7 @@ public sealed class TaskListGitProjectionCache
                 existing.Refreshing = true;
                 return existing;
             });
+        Interlocked.Increment(ref _generation);
     }
 
     internal static string NormalizePath(string path)

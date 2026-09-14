@@ -8,6 +8,10 @@ import type { TaskInfo, TaskRunActivity } from '../../../../models/task.model';
  * and is holding out its scheduled re-pickup backoff (the `runActivity.failed-backoff`
  * state). It must read distinctly from a live "Running live" run, so the builder
  * only fires for the failed-backoff kind and reports `retrying k/3 · in Ns`.
+ *
+ * AGT-2703 moved the "is the backoff still holding?" comparison into the client,
+ * so the builder now reads `backoffUntil` against the card's clock: a deadline in
+ * the future is a cooldown, an elapsed one is not a cooldown at all.
  */
 function makeJob(overrides: Partial<TaskInfo> = {}): TaskInfo {
   return {
@@ -37,7 +41,9 @@ function makeJob(overrides: Partial<TaskInfo> = {}): TaskInfo {
 }
 
 function activity(overrides: Partial<TaskRunActivity> = {}): TaskRunActivity {
-  return { kind: 'failed-backoff', attempt: 1, ...overrides };
+  // The backend sends the post-backoff kind plus the deadline; a cooldown is
+  // therefore a card whose deadline is still ahead of the card's clock.
+  return { kind: 'failed-idle', attempt: 1, backoffUntil: new Date(NOW + 120_000).toISOString(), ...overrides };
 }
 
 const NOW = Date.parse('2026-07-11T12:00:00Z');
@@ -59,11 +65,18 @@ describe('buildCooldownRetryBanner (DtC step 6)', () => {
     expect(banner!.tooltip).toContain('CooldownRetry');
   });
 
-  it('reads "now" once the backoff timer has elapsed', () => {
+  it('stops being a cooldown once the backoff timer has elapsed', () => {
+    // The card's own clock retires the banner on the next tick; it no longer
+    // waits for a poll to reclassify the card server-side.
     const backoffUntil = new Date(NOW - 5_000).toISOString();
     const banner = buildCooldownRetryBanner(makeJob({ runActivity: activity({ backoffUntil }) }), NOW);
-    expect(banner!.secondsLeft).toBeNull();
-    expect(banner!.countdown).toBe('now');
+    expect(banner).toBeNull();
+  });
+
+  it('does NOT fire for a failed card with no scheduled re-pickup at all', () => {
+    const banner = buildCooldownRetryBanner(
+      makeJob({ runActivity: activity({ backoffUntil: null }) }), NOW);
+    expect(banner).toBeNull();
   });
 
   it('clamps the attempt into [1, budget] so the k/3 never overflows', () => {
@@ -75,8 +88,11 @@ describe('buildCooldownRetryBanner (DtC step 6)', () => {
   });
 
   it('does NOT fire for a live run, an idle run, or off the Progress lane', () => {
+    // A live run never carries a deadline, so a stale one must not resurrect the
+    // banner underneath it.
     expect(buildCooldownRetryBanner(makeJob({ runActivity: activity({ kind: 'active' }) }), NOW)).toBeNull();
-    expect(buildCooldownRetryBanner(makeJob({ runActivity: activity({ kind: 'failed-idle' }) }), NOW)).toBeNull();
+    expect(buildCooldownRetryBanner(
+      makeJob({ runActivity: activity({ kind: 'failed-idle', backoffUntil: null }) }), NOW)).toBeNull();
     expect(buildCooldownRetryBanner(makeJob({ runActivity: null }), NOW)).toBeNull();
     expect(
       buildCooldownRetryBanner(

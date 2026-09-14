@@ -447,6 +447,13 @@ builder.Services.AddSingleton<TaskWatcherService>();
 builder.Services.AddSingleton<TaskIndexCache>();
 builder.Services.AddHostedService<TaskIndexCacheDiagnosticsService>();
 builder.Services.AddSingleton<JobStatsMetadataCache>();
+// AGT-2703: conditional board reads. TaskSidecarGeneration counts the watcher
+// events the task index deliberately drops, and BoardReadSignatureSource folds
+// it together with the other board inputs into the ETag the two board reads
+// answer If-None-Match with. The watcher binding lives further down, next to
+// the other watcher wiring.
+builder.Services.AddSingleton<TaskSidecarGeneration>();
+builder.Services.AddSingleton<BoardReadSignatureSource>();
 // TaskAccess layer (ADR-0024 phase 2-4): the typed façade in front of
 // TaskScannerService / TaskMutationService / TaskStateMachine /
 // TaskTransitionService. Outside callers (endpoints, runner, supervisor)
@@ -1427,6 +1434,11 @@ taskScanner.SetIndexCache(jobIndexCache);
 taskScanner.SetStatsMetadataCache(jobStatsMetadataCache);
 watcher.OnJobChanged += _ => jobIndexCache.Invalidate(TaskIndexCache.InvalidationSource.External);
 watcher.OnJobChanged += _ => jobStatsMetadataCache.Invalidate();
+// AGT-2703: the board ETag needs the events the line above filters out. The
+// task index only cares about task.json semantics and folder structure, while
+// the board response also projects generated sidecars, so the validator folds
+// in a counter over the raw path stream.
+app.Services.GetRequiredService<TaskSidecarGeneration>().Attach(watcher);
 
 // Central wiki read model: bind the process-wide cache and rebuild it eagerly
 // on debounced docs/ watcher events. All wiki endpoints then read an

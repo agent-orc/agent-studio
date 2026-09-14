@@ -1,5 +1,5 @@
 import { Injectable, signal, inject } from '@angular/core';
-import { HttpClient, HttpParams } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse, HttpHeaders, HttpParams } from '@angular/common/http';
 import { catchError, finalize, map } from 'rxjs';
 import type {
   ArchivedTasksResponse,
@@ -274,6 +274,14 @@ export class TaskService {
   private groupedRefreshInFlight = false;
   private groupedRefreshQueued = false;
   private groupedRefreshQueuedSilent = true;
+  /**
+   * AGT-2703: validator of the board snapshot currently held in `grouped`.
+   * Sent back as `If-None-Match` so an unchanged board answers 304 with an
+   * empty body instead of re-sending the measured ~1.9 MB payload. Cleared
+   * whenever a response is rejected or dropped, so the tag can never claim we
+   * hold a snapshot we did not keep.
+   */
+  private groupedETag: string | null = null;
   private runnerRefreshInFlight = false;
   private runnerRefreshQueued = false;
   private runnerRefreshQueuedSilent = true;
@@ -424,26 +432,57 @@ export class TaskService {
       return true;
     };
 
-    this.http.get<GroupedJobsResponse>(`${this.baseUrl}/tasks/grouped`).pipe(
+    // Conditional poll (AGT-2703). `includeLegacyReviewLane=false` declares that
+    // this client knows the ADR-0025 lane names, so the backend stops appending
+    // the duplicate copy of the auto-review lane that only exists for
+    // pre-ADR-0025 clients. The tag is only ever offered when we still hold the
+    // matching snapshot.
+    const headers = this.groupedETag
+      ? new HttpHeaders({ 'If-None-Match': this.groupedETag })
+      : undefined;
+
+    this.http.get<GroupedJobsResponse>(`${this.baseUrl}/tasks/grouped`, {
+      headers,
+      params: new HttpParams().set('includeLegacyReviewLane', false),
+      observe: 'response',
+    }).pipe(
       finalize(() => this.finishGroupedRefresh()),
     ).subscribe({
-      next: ({ gitStateAt, stale, ...grouped }) => {
-        if (acceptOptimisticTarget()) {
+      next: (response) => {
+        const body = response.body;
+        if (body && acceptOptimisticTarget()) {
+          const { gitStateAt, stale, ...grouped } = body;
           this.grouped.set(grouped);
           this.jobs.set(uniqueJobsFromGrouped(grouped));
           this.gitStateAt.set(gitStateAt);
           this.gitStateStale.set(stale);
+          this.groupedETag = response.headers.get('ETag');
+        } else {
+          // The optimistic guards discarded this snapshot, so the rendered board
+          // no longer corresponds to any tag. Drop it rather than let the next
+          // poll claim we hold a payload we threw away.
+          this.groupedETag = null;
         }
         if (silent) {
           this.error.set(null);
         }
       },
       error: (err) => {
+        // 304 arrives as an error in Angular's HttpClient: the board is
+        // unchanged, so the last payload stays exactly as rendered and only the
+        // validator is refreshed for the next poll.
+        if (err instanceof HttpErrorResponse && err.status === 304) {
+          this.groupedETag = err.headers.get('ETag') ?? this.groupedETag;
+          if (silent) this.error.set(null);
+          return;
+        }
+
         const message =
           err.status === 0
             ? 'Backend not reachable — is the API running on localhost:5030?'
             : err.error?.error || err.message || 'Failed to load jobs';
 
+        this.groupedETag = null;
         this.error.set(message);
         if (!silent) {
           this.errorDialog.show(err, {

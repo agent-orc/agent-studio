@@ -1628,17 +1628,23 @@ export interface CliExecution {
 }
 
 /**
- * ASS-1751: the four ways a `3-progress` card can look "untouched", as
- * classified by the backend at read time:
+ * ASS-1751: the ways a `3-progress` card can look "untouched".
  * - `active` — a run process is alive and occupies a parallelism slot.
  * - `continuing-after-restart`: the replacement backend verified and adopted
  *   the same durable local worker.
  * - `failed-backoff` — the last run failed and a rapid-crash backoff is still
  *   in effect; the task is waiting for re-pickup (carries `backoffUntil`).
  * - `failed-idle` — the last run failed (or a fail-without-progress streak is
- *   recorded) but no backoff is active and nothing is running.
- * - `no-active-run` — no live run, no backoff, no recorded failure; e.g. an
- *   orphan after a backend restart awaiting re-pickup.
+ *   recorded) but nothing is running.
+ * - `no-active-run`: no live run, no recorded failure; e.g. an orphan after a
+ *   backend restart awaiting re-pickup.
+ *
+ * AGT-2703: the backend classifies every kind except `failed-backoff`, which is
+ * derived here. Deciding it needs a clock, and a board response that depends on
+ * the instant it was served can never be validated with an ETag; the backend
+ * therefore sends the kind the card shows once the backoff has elapsed, plus
+ * `backoffUntil`. Use `resolveRunActivityKind` rather than reading `kind`
+ * directly whenever the backoff state matters.
  */
 export type TaskRunActivityKind = 'active' | 'continuing-after-restart' | 'failed-backoff' | 'failed-idle' | 'no-active-run';
 
@@ -1652,7 +1658,12 @@ export interface TaskRunActivity {
   kind: TaskRunActivityKind;
   /** OS process id of the live run; set for active and restart-continuation runs. */
   processId?: number | null;
-  /** UTC ISO instant the rapid-crash backoff expires; set only when `kind === 'failed-backoff'`. */
+  /**
+   * UTC ISO instant the rapid-crash backoff expires, whenever the runner has
+   * one on record, including one that has already elapsed. Never set on a live
+   * run. `resolveRunActivityKind` compares it against the client clock to
+   * decide whether the card reads `failed-backoff` (AGT-2703).
+   */
   backoffUntil?: string | null;
   /** Consecutive fail-without-progress attempts recorded for this task (0 when none). */
   attempt: number;

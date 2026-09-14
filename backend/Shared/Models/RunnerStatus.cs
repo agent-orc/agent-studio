@@ -48,7 +48,14 @@ public record TaskRunActivity
     public string Kind { get; init; } = TaskRunActivityKinds.NoActiveRun;
     /// <summary>OS process id of the live run; set only when <see cref="Kind"/> is <see cref="TaskRunActivityKinds.Active"/>.</summary>
     public int? ProcessId { get; init; }
-    /// <summary>UTC instant the rapid-crash backoff expires; set only when <see cref="Kind"/> is <see cref="TaskRunActivityKinds.FailedBackoff"/>.</summary>
+    /// <summary>
+    /// UTC instant the rapid-crash backoff expires, whenever the runner has one
+    /// on record - including one that has already elapsed. AGT-2703 moved the
+    /// "is that backoff still holding?" comparison to the client, so the server
+    /// no longer folds the current clock into <see cref="Kind"/>: it publishes
+    /// the instant and the renderer compares it against its own clock. Null
+    /// when the runner recorded no backoff for this task.
+    /// </summary>
     public DateTime? BackoffUntil { get; init; }
     /// <summary>Consecutive fail-without-progress attempts recorded by the runner for this task (0 when none).</summary>
     public int Attempt { get; init; }
@@ -68,7 +75,16 @@ public static class TaskRunActivityKinds
     public const string Active = "active";
     /// <summary>A live local worker adopted by a replacement Studio backend.</summary>
     public const string ContinuingAfterRestart = "continuing-after-restart";
-    /// <summary>Last run failed and a rapid-crash backoff is still in effect; the task waits for re-pickup.</summary>
+    /// <summary>
+    /// Last run failed and a rapid-crash backoff is still in effect; the task
+    /// waits for re-pickup. <b>Client-derived since AGT-2703:</b> the server
+    /// never emits this kind, because deciding it needs the current clock and
+    /// that would make every board response depend on the instant it was
+    /// served. The renderer derives it while
+    /// <see cref="TaskRunActivity.BackoffUntil"/> still lies in the future and
+    /// falls back to the transmitted kind once it passes. The constant stays
+    /// because the kind remains part of the vocabulary the UI switches on.
+    /// </summary>
     public const string FailedBackoff = "failed-backoff";
     /// <summary>Last run failed (or a fail-without-progress attempt is recorded) but no backoff is active and nothing is running.</summary>
     public const string FailedIdle = "failed-idle";
@@ -94,22 +110,32 @@ public readonly record struct RunActivityFacts(
 /// <see cref="TaskRunActivity"/>. Kept side-effect-free and standalone so the
 /// three-state classification is directly unit-testable without spinning up a
 /// runner. ASS-1751.
+///
+/// <para>AGT-2703 also made it <b>clock-free</b>. It used to take a <c>now</c>
+/// and collapse an unexpired backoff into
+/// <see cref="TaskRunActivityKinds.FailedBackoff"/>, which made the projection
+/// - and with it every board response - a function of the instant it was
+/// served, so no ETag could validate it. The backoff instant now travels on the
+/// wire and the renderer does the comparison, so identical runner facts always
+/// produce an identical projection.</para>
 /// </summary>
 public static class TaskRunActivityClassifier
 {
     /// <summary>
     /// Classify a Progress-lane task. Precedence: a live slot wins (active),
     /// then a live CLI execution still reporting <c>running</c> even when the
-    /// in-memory slot registry has lost track of it (active — the post-restart
-    /// desync guard, ASS-1753), then an unexpired backoff (failed-backoff),
-    /// then any evidence of a prior failure (failed-idle), else no-active-run.
-    /// <paramref name="now"/> is injected so tests are deterministic.
+    /// in-memory slot registry has lost track of it (active - the post-restart
+    /// desync guard, ASS-1753), then any evidence of a prior failure
+    /// (failed-idle), else no-active-run. A recorded rapid-crash backoff rides
+    /// along as <see cref="TaskRunActivity.BackoffUntil"/> rather than changing
+    /// the kind: what this returns is what the card shows once that instant has
+    /// passed, and the renderer shows
+    /// <see cref="TaskRunActivityKinds.FailedBackoff"/> until it does.
     /// </summary>
     public static TaskRunActivity Classify(
         RunActivityFacts facts,
         CliExecution? execution,
-        TaskOutcomeIssue? outcomeIssue,
-        DateTime now)
+        TaskOutcomeIssue? outcomeIssue)
     {
         var attempt = facts.ConsecutiveFailures < 0 ? 0 : facts.ConsecutiveFailures;
         var lastError = string.IsNullOrWhiteSpace(outcomeIssue?.Summary) ? null : outcomeIssue!.Summary;
@@ -134,31 +160,16 @@ public static class TaskRunActivityClassifier
             };
         }
 
-        if (facts.BackoffUntil is { } until && until > now)
-        {
-            return new TaskRunActivity
-            {
-                Kind = TaskRunActivityKinds.FailedBackoff,
-                BackoffUntil = until,
-                Attempt = attempt,
-                LastError = lastError,
-            };
-        }
-
+        // A live run never carries a backoff instant: the two states are
+        // mutually exclusive, and leaving it out above keeps an active card's
+        // projection free of a value no renderer would read.
         var execFailed = string.Equals(execution?.Status, "failed", StringComparison.OrdinalIgnoreCase);
-        if (execFailed || attempt > 0)
-        {
-            return new TaskRunActivity
-            {
-                Kind = TaskRunActivityKinds.FailedIdle,
-                Attempt = attempt,
-                LastError = lastError,
-            };
-        }
-
         return new TaskRunActivity
         {
-            Kind = TaskRunActivityKinds.NoActiveRun,
+            Kind = execFailed || attempt > 0
+                ? TaskRunActivityKinds.FailedIdle
+                : TaskRunActivityKinds.NoActiveRun,
+            BackoffUntil = facts.BackoffUntil,
             Attempt = attempt,
             LastError = lastError,
         };

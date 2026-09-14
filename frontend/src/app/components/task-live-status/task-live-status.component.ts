@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject, input } from '@an
 import type { TaskInfo } from '../../models/task.model';
 import { TaskState } from '../../models/task.model';
 import { NowTickService } from '../../services/now-tick.service';
-import { deriveActiveTaskRun, isTaskRunActive } from '../../services/run-activity.util';
+import { deriveActiveTaskRun, isTaskRunActive, resolveRunActivityKind } from '../../services/run-activity.util';
 
 export type TaskLiveStatusVariant = 'card' | 'detail';
 type LiveTone = 'active' | 'waiting' | 'idle' | 'stalled';
@@ -99,14 +99,19 @@ export class TaskLiveStatusComponent {
       };
     }
 
-    if (task.runActivity?.kind === 'failed-backoff') {
-      const retryAt = timestamp(task.runActivity.backoffUntil);
+    // AGT-2703: the backoff verdict is the card's own, derived from the
+    // deadline in the payload against this component's clock signal, so the
+    // strip leaves the backoff state on its own tick instead of on a poll.
+    const activity = task.runActivity;
+    const activityKind = resolveRunActivityKind(activity, this.now());
+    if (activity && activityKind === 'failed-backoff') {
+      const retryAt = timestamp(activity.backoffUntil);
       return {
         tone: 'waiting',
         headline: retryAt === null
           ? 'Retry backoff · waiting for runner'
           : `Retry scheduled ${new Date(retryAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
-        detail: task.runActivity.lastError || activityDetail(task, status.latestEventAt, this.now()),
+        detail: activity.lastError || activityDetail(task, status.latestEventAt, this.now()),
         next,
         attempt: status.attempt,
       };
@@ -127,8 +132,7 @@ export class TaskLiveStatusComponent {
     // left alone: it is about silence, not about ownership.
     const runActive = isTaskRunActive(task);
     const noActiveRun = activeLane && !runActive
-      && (task.runActivity?.kind === 'failed-idle'
-        || task.runActivity?.kind === 'no-active-run');
+      && (activityKind === 'failed-idle' || activityKind === 'no-active-run');
 
     return {
       tone: stalled || noActiveRun ? 'stalled' : runActive ? 'active' : 'idle',

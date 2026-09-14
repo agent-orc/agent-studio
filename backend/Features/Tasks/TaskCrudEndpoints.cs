@@ -71,7 +71,7 @@ public static class TaskCrudEndpoints
             return Results.Ok(new TaskReferenceStatusResponse(items!));
         });
 
-        group.MapGet("/", (string? project, bool? includeFixtures, HttpContext ctx, TaskScannerService scanner, CliRouter router, TaskRunnerService runners, ITokenAggregator tokens, IConfiguration configuration, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, AgentStudio.Registry.ProjectRegistry projects, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, ILoggerFactory loggerFactory) =>
+        group.MapGet("/", (string? project, bool? includeFixtures, HttpContext ctx, TaskScannerService scanner, CliRouter router, TaskRunnerService runners, ITokenAggregator tokens, IConfiguration configuration, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, AgentStudio.Registry.ProjectRegistry projects, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, BoardReadSignatureSource boardSignature, ILoggerFactory loggerFactory) =>
         {
             using var gitTelemetry = GitProcessTelemetry.BeginRequest(
                 "tasks/list",
@@ -86,11 +86,28 @@ public static class TaskCrudEndpoints
             if (projectRequested)
                 raw = raw.Where(job => WatchPathComparison.PathsEqual(job.WatchPath, projectWatchPath)).ToList();
             if (includeFixtures != true) raw = raw.Where(j => !j.Fixture).ToList();
+            var freshness = gitProjection.ReadFreshness(raw);
+            ApplyGitStateHeaders(ctx, freshness);
+
+            // AGT-2703: everything above is a cache read over an already
+            // scanned task set. Everything below - the token / verdict /
+            // dependency / Git / live-status lookups, the per-card overlay and
+            // the serialisation of the result - only runs when the client does
+            // not already hold this exact list. The query string is part of the
+            // variant because it selects both the filter and the response shape.
+            var etag = BoardReadValidator.FormatETag(boardSignature.Compose(
+                "tasks/list",
+                ctx.Request.QueryString.Value ?? string.Empty,
+                raw,
+                freshness,
+                router,
+                runners));
+            if (BoardReadValidator.NotModified(ctx, etag) is { } notModified) return notModified;
+
             var tokenLookup = BuildTokenLookup(raw, tokens);
             var verdictLookup = BuildOrchestratorVerdictLookup(raw, configuration);
             var dependencyLookups = BuildDependencyGraphLookups(raw, scanner);
             var gitLookup = gitProjection.ReadCacheOnly(raw);
-            ApplyGitStateHeaders(ctx, gitProjection.ReadFreshness(raw));
             var liveLookup = liveStatus.BuildLookup(raw);
             var jobs = raw.Select(job => betterCandidates.Attach(
                               WithRuntime(job, router, runners, tokenLookup, verdictLookup, dependencyLookups.WaitsOn, dependencyLookups.TransitiveWaiters),
@@ -109,14 +126,16 @@ public static class TaskCrudEndpoints
                 // with TaskInfo.ProjectName inside the analysis engine.
                 query = query with { Project = [] };
                 var response = TaskQueryEngine.Execute(jobs, query);
+                // A rejected query is not a representation of the board, so it
+                // must not be published under the board's validator.
                 if (response.Error is { Length: > 0 })
                     return Results.BadRequest(new { error = response.Error });
-                return Results.Ok(response);
+                return BoardReadValidator.Ok(ctx, etag, response);
             }
-            return Results.Ok(jobs);
+            return BoardReadValidator.Ok(ctx, etag, jobs);
         });
 
-        group.MapGet("/grouped", (bool? includeFixtures, HttpContext context, TaskScannerService scanner, CliRouter router, TaskRunnerService runners, ITokenAggregator tokens, IConfiguration configuration, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, AgentStudio.Registry.ProjectRegistry projects, ILoggerFactory loggerFactory) =>
+        group.MapGet("/grouped", (bool? includeFixtures, bool? includeLegacyReviewLane, HttpContext context, TaskScannerService scanner, CliRouter router, TaskRunnerService runners, ITokenAggregator tokens, IConfiguration configuration, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, AgentStudio.Registry.ProjectRegistry projects, BoardReadSignatureSource boardSignature, ILoggerFactory loggerFactory) =>
         {
             using var gitTelemetry = GitProcessTelemetry.BeginRequest(
                 "tasks/grouped",
@@ -124,12 +143,29 @@ public static class TaskCrudEndpoints
                 includeNested: true);
             var raw = ProjectAccessAuthorization.FilterTasks(context, scanner.ScanAllJobs(), projects).ToList();
             if (includeFixtures != true) raw = raw.Where(j => !j.Fixture).ToList();
+            var gitFreshness = gitProjection.ReadFreshness(raw);
+            ApplyGitStateHeaders(context, gitFreshness);
+
+            // AGT-2703: the board poll is the single biggest response this API
+            // produces (~1.9 MB measured), and on an unchanged board every byte
+            // of it is a byte the client already has. Everything up to here is a
+            // cache read over an already scanned task set; the enrichment
+            // lookups, the per-lane sort and the serialisation below only run
+            // once the validator says the client's copy is out of date.
+            var legacyReviewLane = includeLegacyReviewLane != false;
+            var etag = BoardReadValidator.FormatETag(boardSignature.Compose(
+                "tasks/grouped",
+                $"fixtures={includeFixtures == true}&legacyReviewLane={legacyReviewLane}",
+                raw,
+                gitFreshness,
+                router,
+                runners));
+            if (BoardReadValidator.NotModified(context, etag) is { } notModified) return notModified;
+
             var tokenLookup = BuildTokenLookup(raw, tokens);
             var verdictLookup = BuildOrchestratorVerdictLookup(raw, configuration);
             var dependencyLookups = BuildDependencyGraphLookups(raw, scanner);
             var gitLookup = gitProjection.ReadCacheOnly(raw);
-            var gitFreshness = gitProjection.ReadFreshness(raw);
-            ApplyGitStateHeaders(context, gitFreshness);
             var liveLookup = liveStatus.BuildLookup(raw);
             var jobs = raw.Select(job => betterCandidates.Attach(
                               WithRuntime(job, router, runners, tokenLookup, verdictLookup, dependencyLookups.WaitsOn, dependencyLookups.TransitiveWaiters),
@@ -164,6 +200,15 @@ public static class TaskCrudEndpoints
             // "Review" key is kept (auto-review only) so older clients that
             // only know the four pre-ADR-0025 lane names keep getting a
             // populated bucket and don't crash on a missing field.
+            //
+            // AGT-2703: that alias serialises the whole AutoReview lane a second
+            // time, and on a review-heavy board it is a large share of the
+            // response. Dropping it outright would break exactly the clients it
+            // exists for, so it is opt-out instead: a client that knows the
+            // ADR-0025 lane names declares so with
+            // "?includeLegacyReviewLane=false" and stops paying for the
+            // duplicate. Omitting the parameter keeps the pre-ADR-0025 contract
+            // byte for byte.
             var autoReview = SortLane(TaskStates.AutoReview);
             var humanReview = SortLane(TaskStates.HumanReview);
             var escalated = SortLane(TaskStates.Escalated);
@@ -190,7 +235,10 @@ public static class TaskCrudEndpoints
                 AutoReview = autoReview,
                 HumanReview = humanReview,
                 Escalated = escalated,
-                Review = autoReview, // legacy alias for pre-ADR-0025 clients
+                // Kept as an always-present key (same reasoning as Archive
+                // below) so an opted-out client still parses the payload; it
+                // just stops receiving the second copy of the lane.
+                Review = legacyReviewLane ? (IReadOnlyList<TaskInfo>)autoReview : Array.Empty<TaskInfo>(),
                 Completed = SortLane(TaskStates.Completed),
                 // ASS-1727: the board response intentionally keeps Archive
                 // empty. ScanAllJobs() (cache-backed) already excludes the
@@ -214,7 +262,7 @@ public static class TaskCrudEndpoints
                 GitStateAt = gitFreshness.GitStateAt,
                 Stale = gitFreshness.Stale,
             };
-            return Results.Ok(grouped);
+            return BoardReadValidator.Ok(context, etag, grouped);
         });
 
         // ASS-1727: dedicated paged read for the terminal 7-archive lane. The
