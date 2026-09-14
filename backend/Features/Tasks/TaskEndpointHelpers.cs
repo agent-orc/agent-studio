@@ -206,6 +206,19 @@ internal static class TaskEndpointHelpers
         // JobsEndpointPerfTests contract holds. Null on every non-planning card.
         var planningSpawn = BuildPlanningSpawnSummary(job);
         var conceptDossier = BuildConceptDossierSummary(job);
+        // AGT-2818: name the queued-but-unpickable state on a pickup-lane card.
+        // Gated on the pickup lane, and both runtime lookups are the same O(1)
+        // in-memory reads the Progress-lane overlays above already perform, so
+        // the JobsEndpointPerfTests contract holds.
+        var pickupHold = PickupHoldPolicy.IsPickupLane(job.State)
+            ? PickupHoldPolicy.Evaluate(new PickupHoldFacts(
+                Task: job,
+                WaitsOn: waitsOn,
+                IntakeEnabled: runners.IsIntakeEnabled(job.ProjectName),
+                CrashBackoffUntilUtc: runners.GetRunActivityForJob(job.Id, job.ProjectName).BackoffUntil,
+                Rejection: job.RemoteDispatchRejection,
+                NowUtc: DateTime.UtcNow))
+            : null;
         return job with
         {
             Execution = exec,
@@ -238,6 +251,7 @@ internal static class TaskEndpointHelpers
             TokenSummary = tokens,
             OrchestratorVerdict = verdict,
             WaitsOn = waitsOn,
+            PickupHold = pickupHold,
             TransitiveWaiters = transitiveWaiters,
             PlanningSpawn = planningSpawn,
             ConceptDossier = conceptDossier

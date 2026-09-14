@@ -1583,12 +1583,14 @@ export function buildOutcomeIssueBadge(job: TaskInfo): OutcomeIssueBadge | null 
  * States: `open` (⏳, at least one dependency is awaiting completion or an
  * explicit release - the card is held back from auto-pickup), `ready` (✓, all complete - the card is
  * workable), `cycle` (⚠, a dependsOn cycle that can never be fulfilled -
- * a configuration error).
+ * a configuration error). AGT-2818 adds `blocked` (⚠, a release gate whose
+ * archived target no run can release): the same class of fault as a cycle, and
+ * previously indistinguishable from an ordinary wait.
  */
 export interface DependencyChip {
   glyph: string;
   label: string;
-  tone: 'open' | 'ready' | 'cycle';
+  tone: 'open' | 'ready' | 'cycle' | 'blocked';
   tooltip: string;
   /** F33 key the chip navigates to on click (first open target, else the first). */
   targetKey: string | null;
@@ -1616,6 +1618,20 @@ export function buildDependencyChip(waitsOn: TaskInfo['waitsOn']): DependencyChi
   }
 
   const open = items.filter((i) => !i.fulfilled);
+  const blocked = open.find((i) => i.unsatisfiable);
+  if (blocked) {
+    const extra = open.length - 1;
+    return {
+      glyph: '⚠',
+      label: `gate cannot open: ${blocked.key}${extra > 0 ? ` +${extra}` : ''}`,
+      tone: 'blocked',
+      tooltip,
+      targetKey: blocked.key,
+      targetJobId: blocked.targetJobId ?? null,
+      targetWatchPath: blocked.targetWatchPath ?? null,
+    };
+  }
+
   if (open.length > 0) {
     const primary = open[0];
     const extra = open.length - 1;
@@ -1682,22 +1698,26 @@ function dependencyTooltip(
   cycle: boolean,
 ): string {
   const lines = items.map((i) => {
-    const mark = i.fulfilled ? '✓' : '◦';
+    const mark = i.fulfilled ? '✓' : i.unsatisfiable ? '⚠' : '◦';
     const state = i.fulfilled
       ? 'done'
-      : i.waitingForRelease
-        ? 'completed, release pending'
-        : i.resolved
-          ? 'completion pending'
-          : 'not created yet';
+      : i.unsatisfiable
+        ? 'archived, never released - this gate can never open'
+        : i.waitingForRelease
+          ? 'completed, release pending'
+          : i.resolved
+            ? 'completion pending'
+            : 'not created yet';
     const title = i.targetTitle ? ` — ${i.targetTitle.slice(0, 40)}` : '';
     return `${mark} ${i.key} (${state})${title}`;
   });
   const head = cycle
     ? 'Dependency cycle: this task can never be auto-picked until the chain is fixed via its references.'
-    : items.every((i) => i.fulfilled)
-      ? 'All dependencies complete — this task is workable.'
-      : 'Waiting for dependency completion or explicit release before pickup:';
+    : items.some((i) => i.unsatisfiable)
+      ? 'This gate can never open by itself. Release the target, or drop the releaseGate edge and re-plan this card.'
+      : items.every((i) => i.fulfilled)
+        ? 'All dependencies complete — this task is workable.'
+        : 'Waiting for dependency completion or explicit release before pickup:';
   return `${head}\n${lines.join('\n')}`;
 }
 

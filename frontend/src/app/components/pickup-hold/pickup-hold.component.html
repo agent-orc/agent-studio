@@ -1,0 +1,35 @@
+@if (hold(); as held) {
+  <section class="pickup-hold"
+           [class.pickup-hold--detail]="variant() === 'detail'"
+           [attr.data-tone]="tone()"
+           [attr.data-mechanism]="held.mechanism"
+           data-testid="pickup-hold"
+           role="status">
+    <div class="pickup-hold__head">
+      <span class="pickup-hold__dot" aria-hidden="true"></span>
+      <span class="pickup-hold__headline" data-testid="pickup-hold-headline">{{ headline() }}</span>
+      <span class="pickup-hold__mechanism" data-testid="pickup-hold-mechanism">{{ mechanismLabel() }}</span>
+      <span class="pickup-hold__age"
+            data-testid="pickup-hold-age"
+            [appTooltip]="sinceTooltip()">{{ age() }}</span>
+    </div>
+    @if (reason(); as sentence) {
+      <p class="pickup-hold__reason" data-testid="pickup-hold-reason">{{ sentence }}</p>
+    }
+    @if (variant() === 'detail' && resolutions().length > 0) {
+      <div class="pickup-hold__ways-out" data-testid="pickup-hold-ways-out">
+        <span class="pickup-hold__ways-out-label">
+          {{ resolutions().length === 1 ? 'Way out' : 'Ways out' }}
+        </span>
+        <ul class="pickup-hold__list">
+          @for (resolution of resolutions(); track resolutionKind($index, resolution)) {
+            <li class="pickup-hold__item" [attr.data-resolution-kind]="resolution.kind">
+              <span class="pickup-hold__item-label">{{ resolution.label }}</span>
+              <span class="pickup-hold__item-detail">{{ resolution.detail }}</span>
+            </li>
+          }
+        </ul>
+      </div>
+    }
+  </section>
+}

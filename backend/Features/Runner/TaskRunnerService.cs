@@ -1122,6 +1122,17 @@ public class TaskRunnerService : BackgroundService
             : default;
     }
 
+    /// <summary>
+    /// AGT-2818: whether the project runs the orchestrator-intake gate, which is
+    /// one of the conditions that can hold a card in <c>2-ready</c>. The read is
+    /// the same cached <see cref="ProjectSettingsService"/> lookup the runner
+    /// pickup gate performs, so the projected hold and the admission decision
+    /// consult one value.
+    /// </summary>
+    public bool IsIntakeEnabled(string projectName)
+        => !string.IsNullOrEmpty(projectName)
+            && _projectSettings.Get(projectName).IntakeEnabled == true;
+
     /// <summary>Build the canonical execution location from runtime ownership facts.</summary>
     public AgentStudio.Shared.TaskExecutionLocation ResolveExecutionLocation(
         AgentStudio.Shared.TaskInfo job,

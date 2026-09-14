@@ -32,3 +32,31 @@
   padding: 5px var(--studio-spacing-2);
   font-size: 11px;
 }
+
+.remote-rejection__body {
+  display: grid;
+  gap: var(--studio-spacing-1);
+  min-width: 0;
+}
+
+.remote-rejection__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--studio-spacing-2);
+  color: var(--studio-fg-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.remote-rejection__code {
+  /* stylelint-disable-next-line scale-unlimited/declaration-strict-value -- A 1px optical inset on a 9px pill; the smallest spacing token is 4px and doubles the chip height. */
+  padding: 1px var(--studio-spacing-2);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--studio-fg-dim) 18%, transparent);
+  color: var(--studio-fg-dim);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}

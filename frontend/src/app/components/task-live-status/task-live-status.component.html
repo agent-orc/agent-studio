@@ -24,6 +24,7 @@
     @if (variant() !== 'detail' && live.detail) {
       <div class="task-live__detail">{{ live.detail }}</div>
     }
+    <app-pickup-hold class="task-live__hold" [task]="task()" [variant]="variant()" />
     @if (live.next.length > 0) {
       <div class="task-live__next" data-testid="task-live-next">
         <span class="task-live__next-label">Next</span>

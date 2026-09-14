@@ -213,6 +213,16 @@ export interface WaitsOnItem {
   releaseGate?: boolean;
   targetReleased?: boolean;
   waitingForRelease?: boolean;
+  /**
+   * AGT-2818: true when this edge can never be fulfilled by anything the system
+   * does on its own - today, a release gate whose target is archived and was
+   * never released. "Waiting for release" and "this gate can never open" are
+   * different sentences. Additive to `waitingForRelease`, because the way out
+   * is still an explicit release.
+   */
+  unsatisfiable?: boolean;
+  /** One sentence naming why `unsatisfiable` is set. Empty when it is not. */
+  unsatisfiableReason?: string;
   targetJobId?: string | null;
   targetTitle?: string | null;
   targetState?: string | null;
@@ -231,6 +241,48 @@ export interface WaitsOnStatus {
   blocked: boolean;
   /** The card sits on a dependsOn cycle - a configuration error. */
   cycleDetected: boolean;
+  /** AGT-2818: at least one edge is a gate that can never open. */
+  unsatisfiableGate?: boolean;
+}
+
+/**
+ * AGT-2818: one way an operator can clear a pickup hold. Mirrors backend
+ * `PickupHoldResolution`. Offered, never taken: releasing a validation gate is
+ * a decision about whether the validation still has to happen.
+ */
+export interface PickupHoldResolution {
+  /** Machine-readable kind, e.g. `release-target` / `drop-release-gate`. */
+  kind: string;
+  /** Short imperative label for a button or list row. */
+  label: string;
+  /** One sentence naming what the operator is deciding. */
+  detail: string;
+  /** The stable key the resolution acts on, when it has one. */
+  targetKey?: string | null;
+}
+
+/**
+ * AGT-2818: why a card sitting in a pickup lane cannot be picked. Mirrors
+ * backend `PickupHoldStatus`, derived from the same facts the runner admission
+ * gate consults, so the card and the pickup decision can never disagree. Null
+ * on every card that is genuinely pickup-eligible.
+ */
+export interface PickupHoldStatus {
+  /**
+   * `dependency-gate` | `dispatch-rejection` | `epic-container` |
+   * `crash-backoff` | `pickup-policy`.
+   */
+  mechanism: string;
+  /** The specific reason, in one operator-facing sentence. */
+  reason: string;
+  /** When the hold started (ISO 8601 UTC). */
+  sinceUtc: string;
+  /** Age of the hold at read time. */
+  heldForSeconds: number;
+  /** True when nothing the system does on its own will ever clear the hold. */
+  unsatisfiable: boolean;
+  /** The ways out, in the order they should be offered. */
+  resolutions: PickupHoldResolution[];
 }
 
 /** Server-computed active cards that transitively wait on a human decision. */
@@ -520,6 +572,12 @@ export interface TaskInfo {
    * board card. Null/absent means "no dependencies".
    */
   waitsOn?: WaitsOnStatus | null;
+  /**
+   * AGT-2818: why this card cannot be picked while it sits in a pickup lane.
+   * Mirrors backend `TaskInfo.PickupHold`; null/absent means the card is
+   * genuinely queued and the lane position is honest.
+   */
+  pickupHold?: PickupHoldStatus | null;
   /** Active cards that reach this human-review card through dependsOn edges. */
   transitiveWaiters?: TransitiveWaitersStatus | null;
   /**

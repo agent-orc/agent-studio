@@ -87,6 +87,87 @@ public class WaitsOnEvaluatorTests
         Assert.False(status.Blocked);
     }
 
+    // AGT-2818: a release gate pointing at an archived, never released target is
+    // a gate no run can open. It is a configuration error like a cycle, not a
+    // wait, and the distinction has to survive all the way to the card.
+    [Fact]
+    public void ReleaseGate_ArchivedUnreleasedTarget_IsBlockedAndUnsatisfiable()
+    {
+        var target = Task("lib", "LIB-1", TaskStates.Archive, released: false);
+        var subject = Task("app", "APP-1", TaskStates.Ready, deps: new[] { "LIB-1" }, releaseGate: true);
+        var status = TaskReferenceIndex.Build(new[] { subject, target }).EvaluateWaitsOn(subject);
+
+        var item = Assert.Single(status.Items);
+        Assert.False(item.Fulfilled);
+        Assert.True(item.Unsatisfiable);
+        Assert.Contains("archived", item.UnsatisfiableReason, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("LIB-1", item.UnsatisfiableReason, StringComparison.Ordinal);
+        Assert.True(status.Blocked);
+        Assert.True(status.UnsatisfiableGate);
+        // The way out is still an explicit release, so the flag the release
+        // affordance keys on must stay set.
+        Assert.True(item.WaitingForRelease);
+    }
+
+    [Fact]
+    public void ReleaseGate_ArchivedReleasedTarget_IsFulfilled()
+    {
+        var target = Task("lib", "LIB-1", TaskStates.Archive, released: true);
+        var subject = Task("app", "APP-1", TaskStates.Ready, deps: new[] { "LIB-1" }, releaseGate: true);
+        var status = TaskReferenceIndex.Build(new[] { subject, target }).EvaluateWaitsOn(subject);
+
+        var item = Assert.Single(status.Items);
+        Assert.True(item.Fulfilled);
+        Assert.False(item.Unsatisfiable);
+        Assert.False(status.Blocked);
+        Assert.False(status.UnsatisfiableGate);
+    }
+
+    [Fact]
+    public void ReleaseGate_CompletedUnreleasedTarget_WaitsForRelease_ButIsSatisfiable()
+    {
+        // 6-completed is terminal, but the card can still be released by an
+        // operator or a later run, so this stays an honest wait.
+        var target = Task("lib", "LIB-1", TaskStates.Completed, released: false);
+        var subject = Task("app", "APP-1", TaskStates.Ready, deps: new[] { "LIB-1" }, releaseGate: true);
+        var status = TaskReferenceIndex.Build(new[] { subject, target }).EvaluateWaitsOn(subject);
+
+        var item = Assert.Single(status.Items);
+        Assert.True(item.WaitingForRelease);
+        Assert.False(item.Unsatisfiable);
+        Assert.Equal("", item.UnsatisfiableReason);
+        Assert.True(status.Blocked);
+        Assert.False(status.UnsatisfiableGate);
+    }
+
+    [Fact]
+    public void ArchivedTargetWithoutReleaseGate_IsFulfilled_NotUnsatisfiable()
+    {
+        // Only a release-gated edge can be unsatisfiable: an ungated edge is
+        // fulfilled the moment its target reaches the archive lane.
+        var target = Task("lib", "LIB-1", TaskStates.Archive, released: false);
+        var subject = Task("app", "APP-1", TaskStates.Ready, deps: new[] { "LIB-1" });
+        var status = TaskReferenceIndex.Build(new[] { subject, target }).EvaluateWaitsOn(subject);
+
+        Assert.True(Assert.Single(status.Items).Fulfilled);
+        Assert.False(status.UnsatisfiableGate);
+    }
+
+    [Fact]
+    public void UnknownKey_StaysUnresolved_AndIsNotClassifiedUnsatisfiable()
+    {
+        // A key that does not exist yet may still be created; that is a wait,
+        // not a gate that can never open.
+        var subject = Task("app", "APP-1", TaskStates.Ready, deps: new[] { "GHOST-9" }, releaseGate: true);
+        var status = TaskReferenceIndex.Build(new[] { subject }).EvaluateWaitsOn(subject);
+
+        var item = Assert.Single(status.Items);
+        Assert.False(item.Resolved);
+        Assert.False(item.Unsatisfiable);
+        Assert.True(status.Blocked);
+        Assert.False(status.UnsatisfiableGate);
+    }
+
     [Fact]
     public void OpenTarget_IsBlocked()
     {
