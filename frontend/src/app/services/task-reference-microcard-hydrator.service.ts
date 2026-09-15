@@ -5,7 +5,16 @@ import { TaskReferenceMicrocardComponent, TaskReferenceStatus } from '../compone
 interface StatusResponse { items: TaskReferenceStatus[]; }
 interface Occurrence { node: Text; start: number; end: number; key: string; }
 
-const KEY_PATTERN = /(^|[^A-Za-z0-9_-])([A-Z][A-Z0-9]{1,5}-\d+)(?=$|[^A-Za-z0-9_-])/gi;
+/**
+ * A task key that sits inside a filesystem path (a worktree directory is
+ * literally named after its task, e.g. `.../worktrees/AGT-2814/frontend/...`)
+ * is a path segment, not a reference to the task. Excluding `/` and `\` from
+ * the boundary classes means a slash immediately before or after the key
+ * disqualifies the match, so `worktrees/AGT-2814/frontend` never turns into a
+ * task chip mid-path while `See AGT-2793.` still matches on its word
+ * boundary (AGT-2793, "task chip in path" report).
+ */
+const KEY_PATTERN = /(^|[^A-Za-z0-9_/\\-])([A-Z][A-Z0-9]{1,5}-\d+)(?=$|[^A-Za-z0-9_/\\-])/gi;
 
 @Injectable({ providedIn: 'root' })
 export class TaskReferenceMicrocardHydratorService {

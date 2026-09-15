@@ -50,6 +50,46 @@ import { stripAnsi } from '../../../utils/ansi-text';
 export const INTERNAL_EVENT_MARKER = '[internal event]';
 
 /**
+ * Prefix the backend `ProtocolNoveltyTelemetry.ToMarker()` puts on a diagnostic
+ * line for a provider frame the installed CLI adapter could not classify (see
+ * `contracts/TaskServer.Contracts/ProtocolNoveltyContracts.cs`). The payload
+ * after the prefix is JSON, but the line as a whole is `"prefix {json}"`, not a
+ * complete JSON value, so the generic bracket-matched {@link
+ * isNonRenderableRawLine} check never recognises it - it must be matched on
+ * this literal prefix instead.
+ */
+const PROTOCOL_NOVELTY_MARKER_PREFIX = '[runner-protocol-unknown-frame] ';
+
+export interface ProtocolNoveltyMarker {
+  cli: string;
+  adapterVersion: string;
+  frameType: string;
+  occurrence: number;
+  totalUnknownFrames: number;
+  payloadSha256: string;
+}
+
+/** JS mirror of `ProtocolNoveltyTelemetry.TryParseMarker`, kept library-free. */
+export function parseProtocolNoveltyMarker(text: string | undefined | null): ProtocolNoveltyMarker | null {
+  if (!text || !text.startsWith(PROTOCOL_NOVELTY_MARKER_PREFIX)) return null;
+  try {
+    const parsed = JSON.parse(text.slice(PROTOCOL_NOVELTY_MARKER_PREFIX.length)) as Partial<ProtocolNoveltyMarker>;
+    if (
+      !parsed
+      || typeof parsed.cli !== 'string' || !parsed.cli
+      || typeof parsed.adapterVersion !== 'string' || !parsed.adapterVersion
+      || typeof parsed.frameType !== 'string' || !parsed.frameType
+      || typeof parsed.occurrence !== 'number' || parsed.occurrence < 1
+      || typeof parsed.totalUnknownFrames !== 'number' || parsed.totalUnknownFrames < parsed.occurrence
+      || typeof parsed.payloadSha256 !== 'string' || parsed.payloadSha256.length !== 64
+    ) return null;
+    return parsed as ProtocolNoveltyMarker;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Anthropic `stream-json` event `type` values that unambiguously identify a
  * transport frame. A JSON object on stdout carrying one of these is always a
  * frame, never chat prose, so it is redacted on the type alone.
@@ -307,6 +347,7 @@ function annotateTruncatedFrame(
  */
 export function isNonRenderableRawLine(text: string | undefined | null): boolean {
   if (!text) return false;
+  if (parseProtocolNoveltyMarker(text.trim()) !== null) return true;
   const trimmed = text.trim();
   // A complete JSON value serialised onto one line. Partial pretty-printed
   // fragments (a lone `{`) are not complete JSON and are intentionally out of
@@ -385,6 +426,30 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * (same reference) when nothing needed redacting, so downstream memoisation and
  * change detection are not disturbed on the common path.
  */
+/**
+ * A pretty-printed transport frame (`JSON.stringify(frame, null, 2)`) opens
+ * with a physical line that is the bare opener and nothing else. The log
+ * pipeline splits stdout on `\n`, so each physical line of such a frame
+ * arrives as its own {@link CliOutputLine} - none of them is complete JSON in
+ * isolation, so {@link isNonRenderableRawLine} (which only ever looks at one
+ * line) cannot see the frame and the raw fragments used to reach the chat as
+ * a burst of tiny prose lines, or - once the library's own line-joining
+ * kicked in - as one raw JSON blob (AGT-2793, "tool_result envelopes print as
+ * text, repeated 3x"). The check is intentionally narrow (the trimmed line
+ * must be exactly `{` or `[`, nothing else) so ordinary prose that merely
+ * starts with a brace is never swept into the buffer.
+ */
+const MULTILINE_FRAME_OPENER = /^[{[]$/;
+
+/** Bound on how many physical lines a buffered multi-line frame may span
+ * before it is treated as a false positive and flushed unredacted. */
+const MAX_MULTILINE_FRAME_LINES = 200;
+
+interface PendingMultilineFrame {
+  readonly first: CliOutputLine;
+  readonly texts: string[];
+}
+
 export function sanitizeProjectionLines(
   lines: readonly CliOutputLine[]
 ): CliOutputLine[] {
@@ -399,6 +464,55 @@ export function sanitizeProjectionLines(
   // Non-null while the previous emitted line is an `[internal event]` marker,
   // so a run of consecutive frames folds into that one marker.
   let runDetails: string[] | null = null;
+  // Non-null while accumulating the physical lines of a suspected
+  // pretty-printed transport frame; see {@link MULTILINE_FRAME_OPENER}.
+  let pendingFrame: PendingMultilineFrame | null = null;
+
+  const emitNonRenderable = (timestamp: string, stream: string, detail: string): void => {
+    anyRedacted = true;
+    if (runDetails) {
+      runDetails.push(detail);
+      const marker = out[out.length - 1];
+      out[out.length - 1] = {
+        ...marker,
+        text: protocolNoveltyGroupLabel(runDetails) ?? INTERNAL_EVENT_MARKER,
+        internalDetail: joinDetails(runDetails),
+      };
+      return;
+    }
+    if (!detail.trim()) return;
+    runDetails = [detail];
+    out.push({
+      timestamp,
+      stream,
+      text: protocolNoveltyGroupLabel(runDetails) ?? INTERNAL_EVENT_MARKER,
+      internalDetail: detail,
+    });
+  };
+
+  const emitLine = (line: CliOutputLine, cleanText: string, preserveCodexStderr: boolean): void => {
+    const cleanLine = normalizeProjectionLine(line, cleanText, preserveCodexStderr);
+    if (cleanLine !== line) anyRedacted = true;
+    if (isNonRenderableRawLine(cleanText) || isTruncatedJsonLine(cleanText)) {
+      emitNonRenderable(cleanLine.timestamp, cleanLine.stream, cleanText);
+      return;
+    }
+    runDetails = null;
+    out.push(cleanLine);
+  };
+
+  // Give up on the current buffer: replay every accumulated fragment through
+  // the ordinary single-line path so nothing is lost when the suspected
+  // frame turns out not to be one (or never closes before EOF).
+  const flushPendingFrame = (): void => {
+    if (!pendingFrame) return;
+    const { first, texts } = pendingFrame;
+    pendingFrame = null;
+    emitLine(first, texts[0], inCodexTextModeTranscript);
+    for (const text of texts.slice(1)) {
+      emitLine({ timestamp: first.timestamp, stream: first.stream, text }, text, inCodexTextModeTranscript);
+    }
+  };
 
   for (const line of lines) {
     const rawText = stripAnsi(line.text);
@@ -431,35 +545,52 @@ export function sanitizeProjectionLines(
       inCodexTextModeTranscript = false;
     }
 
-    const cleanLine = normalizeProjectionLine(line, cleanText, inCodexTextModeTranscript);
-    if (cleanLine !== line) anyRedacted = true;
-    // A cut frame that could not be rebuilt is still transport, never prose.
-    if (isNonRenderableRawLine(cleanText) || (repaired === null && isTruncatedJsonLine(rawText))) {
-      anyRedacted = true;
-      const detail = cleanText;
-      if (runDetails) {
-        // Extend the current marker's run instead of emitting another marker.
-        runDetails.push(detail);
-        const marker = out[out.length - 1];
-        out[out.length - 1] = {
-          ...marker,
-          internalDetail: joinDetails(runDetails),
-        };
-        continue;
+    if (pendingFrame) {
+      pendingFrame.texts.push(cleanText);
+      const joined = pendingFrame.texts.join('\n');
+      const scan = scanJson(joined);
+      if (scan.stack.length === 0 && !scan.inString && scan.pendingEscapeStart < 0) {
+        // Braces balanced: the buffer is either a complete transport frame or
+        // a false positive that merely closed its brace count by chance.
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(joined);
+        } catch {
+          parsed = undefined;
+        }
+        if (parsed !== undefined && isTransportFrame(parsed)) {
+          const first = pendingFrame.first;
+          pendingFrame = null;
+          emitNonRenderable(first.timestamp, first.stream, joined);
+        } else {
+          flushPendingFrame();
+        }
+      } else if (pendingFrame.texts.length >= MAX_MULTILINE_FRAME_LINES) {
+        flushPendingFrame();
       }
-      runDetails = [detail];
-      out.push({
-        timestamp: cleanLine.timestamp,
-        stream: cleanLine.stream,
-        text: INTERNAL_EVENT_MARKER,
-        internalDetail: detail,
-      });
       continue;
     }
 
-    runDetails = null;
-    out.push(cleanLine);
+    // A truncated frame is still handled on the single-line path below (it is
+    // never a bare `{`/`[` opener followed by more lines - the pipeline cuts
+    // it mid-payload on the SAME physical line). Only a genuine pretty-printed
+    // frame opener starts multi-line buffering.
+    if (
+      !inCodexTextModeTranscript
+      && repaired === null
+      && MULTILINE_FRAME_OPENER.test(cleanText.trim())
+    ) {
+      pendingFrame = { first: line, texts: [cleanText] };
+      continue;
+    }
+
+    // emitLine's isTruncatedJsonLine(cleanText) check subsumes the original
+    // `repaired === null && isTruncatedJsonLine(rawText)` guard: cleanText
+    // equals rawText whenever repaired is null.
+    emitLine(line, cleanText, inCodexTextModeTranscript);
   }
+
+  flushPendingFrame();
 
   return anyRedacted ? out : (lines as CliOutputLine[]);
 }
@@ -520,7 +651,35 @@ function joinDetails(details: readonly string[]): string {
   return `${joined.slice(0, MAX_DETAIL_CHARS)}\n… (${details.length} frames, truncated)`;
 }
 
-/** True when the line is a redacted internal-event marker produced above. */
+/**
+ * True when the line is a redacted internal-event marker produced above: the
+ * generic `[internal event]` placeholder, or the friendlier protocol-novelty
+ * group summary ({@link protocolNoveltyGroupLabel}) - both carry the original
+ * raw payload on `internalDetail` for on-demand disclosure.
+ */
 export function isInternalEventLine(line: CliOutputLine): boolean {
-  return line.text === INTERNAL_EVENT_MARKER && typeof line.internalDetail === 'string';
+  return typeof line.internalDetail === 'string' && line.internalDetail.trim().length > 0;
+}
+
+/**
+ * When every frame collapsed into one run is the same {@link
+ * ProtocolNoveltyMarker} identity (cli, adapter, frame type), replace the
+ * generic `[internal event]` marker with a one-line, muted summary carrying
+ * the occurrence count - a diagnostic collapses into one row per kind, not one
+ * raw JSON block per occurrence. Mixed or non-novelty runs keep the generic
+ * marker; their payloads still disclose in full via `internalDetail`.
+ */
+function protocolNoveltyGroupLabel(details: readonly string[]): string | null {
+  const markers = details.map((detail) => parseProtocolNoveltyMarker(detail));
+  const first = markers[0];
+  if (!first) return null;
+  const homogeneous = markers.every((marker) =>
+    marker !== null
+    && marker.cli === first.cli
+    && marker.adapterVersion === first.adapterVersion
+    && marker.frameType === first.frameType);
+  if (!homogeneous) return null;
+  const count = markers.length;
+  return `${count} unknown ${count === 1 ? 'frame' : 'frames'} of type ${first.frameType}`
+    + ` (${first.cli} adapter ${first.adapterVersion})`;
 }

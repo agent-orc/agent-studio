@@ -20,6 +20,11 @@ internal sealed class CliProtocolNoveltyTracker(string cliType)
         "user",
         "result",
         "rate_limit_event",
+        // Progress heartbeat for an in-flight tool call. CAR 0.7.0 emits it
+        // frequently but the product has no per-tool progress UI yet, so it
+        // is ignorable rather than unknown: it must not inflate
+        // totalUnknownFrames or reach the activity stream.
+        "tool_progress",
     };
 
     private static readonly HashSet<string> CodexFrameTypes = new(StringComparer.Ordinal)
