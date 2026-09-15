@@ -661,6 +661,47 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
     }
 
     [Fact]
+    public void BuildLookup_PreparationFailure_ShowsTheStderrTailInTheIntegrationDetail()
+    {
+        // AGT-2822: a repository preparation failure reached the card as a bare
+        // "Prepare command failed with exit code -65536". The preparation gate now
+        // appends the bounded stderr tail to its reason, the merge step carries that
+        // reason, and the card's integration detail must show it verbatim.
+        const string tail = "NuGet.targets(203,5): error MSB4018: Value cannot be null. (Parameter path1)";
+        var repo = SeedDevelopMainRepo();
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "checkout -q -b task/preparation-tail");
+        File.WriteAllText(Path.Combine(repo, "preparation-tail.txt"), "wip");
+        Commit(repo, "feat: preparation tail wip");
+        var anchor = RunGit(repo, "rev-parse task/preparation-tail").Out.Trim();
+        RunGit(repo, "checkout -q develop");
+
+        var svc = BuildService(repo, out var project, out var log);
+        var job = Job("preparation-tail", "AGT-3021", project, repo, log, commits: new[] { Commit(anchor) },
+            prov: Prov(branch: "task/preparation-tail"));
+
+        log.EnsureRun(job.FolderPath, PipelineCatalogue.Standard, project, job.Id);
+        log.RecordStep(job.FolderPath, new PipelineStepExecution
+        {
+            StepId = PipelineCatalogue.MergeIntoDevelopStepId,
+            Kind = StepKind.Tool,
+            Status = PipelineStepStatus.Failed,
+            Verdict = "gate-failed",
+            Reason = "The build gate blocked the merge into develop: Prepare command failed with exit code 9. "
+                + $"Output tail: {tail}. develop was rolled back and nothing was pushed; "
+                + "start a steer round so the delivery builds on top of the current integration branch.",
+            FailureCode = AcceptedIntegrationFailureCodes.BuildGateFailed,
+        });
+
+        var status = svc.BuildLookup(new[] { job })[job.TaskKey];
+
+        Assert.Equal(IntegrationStatuses.ConflictSkipped, status.Status);
+        Assert.Contains(tail, status.Detail);
+        Assert.Contains(tail, status.Failure?.Reason);
+        Assert.Equal(AcceptedIntegrationFailureCodes.BuildGateFailed, status.Failure?.Code);
+    }
+
+    [Fact]
     public void BuildLookup_GateEnvironmentFailure_StaysPendingNotConflictSkipped()
     {
         // CAC-18: a toolchain/bundler crash before test discovery (e.g. vite's

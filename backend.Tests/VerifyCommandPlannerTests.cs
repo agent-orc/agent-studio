@@ -712,6 +712,41 @@ public sealed class BuildTestGateRunnerBehaviorTests : IDisposable
         Assert.True(result.Reason.Length <= BuildTestGateRunner.MaxFailureExcerptChars + 500);
     }
 
+    // AGT-2822: a failed repository preparation used to reach the card as a bare
+    // "exit code -65536". The gate reason now carries the bounded stderr tail the
+    // manifest keeps, which is the string the integration failure detail renders.
+    [Fact]
+    public async Task RepositoryPreparationFailure_CarriesTheStderrTailIntoTheGateReason()
+    {
+        const string marker = "AGT-2822-gate-restore-refused";
+        WriteFixtureFile(".agent-studio/project.yml", """
+            schemaVersion: 1
+            stack: [node]
+            toolVersions:
+            commands:
+              prepare: .agent-studio/prepare
+              build:
+              test:
+              lint:
+            testSuites:
+            cachePaths: [node_modules]
+            capabilities: [linux]
+            environment:
+              CI: "true"
+            """);
+        WriteFixtureFile(".agent-studio/prepare", $"""
+            #!/bin/sh
+            echo '{marker}: the dependency source rejected the restore' 1>&2
+            exit 9
+            """);
+
+        var result = await Run(profile: null);
+
+        Assert.Equal(BuildTestGateVerdict.Fail, result.Verdict);
+        Assert.Contains(marker, result.Reason);
+        Assert.Contains(marker, result.PreparationManifest!.FailureOutputTail);
+    }
+
     [Fact]
     public async Task ExactSubjectNodeFixture_ReusesDependenciesAndAngularCacheOnSecondRun()
     {

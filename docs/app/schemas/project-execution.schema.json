@@ -16,7 +16,7 @@
       "additionalProperties": false,
       "required": ["prepare", "build", "test", "lint"],
       "properties": {
-        "prepare": { "$ref": "#/$defs/relativePath" },
+        "prepare": { "description": "Repository-relative POSIX prepare script. Windows runs a sibling '<prepare>.ps1' when the repository ships one, otherwise the POSIX script through Git Bash; a Windows host with neither fails with the named reason 'prepare:windows-entry-missing'.", "$ref": "#/$defs/relativePath" },
         "build": { "$ref": "#/$defs/commands" },
         "test": { "$ref": "#/$defs/commands" },
         "lint": { "$ref": "#/$defs/commands" }
