@@ -207,6 +207,13 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
     internal static readonly string PreparationCacheRoot = Path.Combine(
         Path.GetTempPath(), "agentstudio-preparation-cache");
 
+    /// <summary>
+    /// Product cache root for this runner. Only a hermetic test overrides it, so
+    /// its published entries and per-run folders stay inside the test's own
+    /// temporary directory.
+    /// </summary>
+    private readonly string _preparationCacheRoot = PreparationCacheRoot;
+
     private static readonly Regex SafeSha = new(
         "^[0-9a-fA-F]{40,64}$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private static readonly Regex VolatileHex = new(
@@ -247,10 +254,13 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
 
     internal BuildTestGateRunner(
         ILogger<BuildTestGateRunner> logger,
-        BuildTestMachineGateMode machineGateMode)
+        BuildTestMachineGateMode machineGateMode,
+        string? preparationCacheRoot = null)
         : this(logger)
     {
         _machineGateMode = machineGateMode;
+        if (!string.IsNullOrWhiteSpace(preparationCacheRoot))
+            _preparationCacheRoot = preparationCacheRoot;
     }
 
     public async Task<BuildTestGateResult> RunAsync(
@@ -380,10 +390,11 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
 
             if (completed is null)
             {
-                var preparationManifestPath = PreparationManifestPath(repositoryPath);
+                var preparationManifestPath = PreparationManifestPath(
+                    repositoryPath, _preparationCacheRoot);
                 projectPreparation = await ProjectPreparationExecutor.RunAsync(
                     workspace!,
-                    PreparationCacheRoot,
+                    _preparationCacheRoot,
                     preparationManifestPath,
                     testedSha,
                     message => _logger.LogInformation("{ProjectPreparationMessage}", message),
@@ -451,7 +462,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                         }
                         : await RunCommandsAsync(
                             workspace!, preparation, commands, plan.Source, mode, timeout,
-                            [], ct)
+                            [], projectPreparation, ct)
                             .ConfigureAwait(false);
                     var completedAudit = CompleteAudit(staged.Audit, commands, completed.Processes);
                     completed = completed with
@@ -517,6 +528,11 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
             {
                 await workspaceLease.RemoveBestEffortAsync(infrastructureTimeout).ConfigureAwait(false);
             }
+            // The gate owns the preparation's per-run cache folder for exactly as
+            // long as its verify commands need it. Releasing it here - after the
+            // last command, on every exit path - keeps the published immutable
+            // entries as the only long-lived cache state.
+            ProjectPreparationExecutor.ReleaseRunRoot(projectPreparation);
             var completedAt = completed?.GateCompletedAtUtc ?? DateTimeOffset.UtcNow;
             _logger.LogInformation(
                 "build_test_gate_completed gate_run_id={GateRunId} gate_id={GateId} completed_at_utc={CompletedAtUtc:o} repository={Repository} expected_sha={ExpectedSha} tested_sha={TestedSha} attempt_chain_id={AttemptChainId} executor={Executor} workspace={Workspace} verdict={Verdict} exit={ExitCode} signal={Signal} failure_kind={FailureKind} failure_fingerprint={FailureFingerprint} violated_budget={ViolatedBudget} budget_limit_ms={BudgetLimitMs} budget_consumed_ms={BudgetConsumedMs} collision={CollisionDetected} queue_wait_ms={QueueWaitMs} self_healed={SelfHealed} dependency_cache={DependencyCacheDecision}",
@@ -549,11 +565,14 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
     }
 
     internal static string PreparationManifestPath(string repositoryPath)
+        => PreparationManifestPath(repositoryPath, PreparationCacheRoot);
+
+    private static string PreparationManifestPath(string repositoryPath, string cacheRoot)
     {
         var key = Convert.ToHexString(SHA256.HashData(
             Encoding.UTF8.GetBytes(Path.GetFullPath(repositoryPath).ToUpperInvariant())))
             .ToLowerInvariant()[..24];
-        return Path.Combine(PreparationCacheRoot, "manifests", key, "latest.json");
+        return Path.Combine(cacheRoot, "manifests", key, "latest.json");
     }
 
     private static bool HasHealthContext(BuildTestGateRequest request)
@@ -603,6 +622,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         PostStepMode mode,
         TimeSpan timeout,
         IReadOnlyList<string> cacheRestoreMessages,
+        ProjectPreparationResult? projectPreparation,
         CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
@@ -669,7 +689,8 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 elapsedBefore,
                 output,
                 ct,
-                phase: "preparation").ConfigureAwait(false);
+                phase: "preparation",
+                projectPreparation).ConfigureAwait(false);
             evidence.Add(process);
             if (process.ExitCode != 0 || process.TimedOut || process.Cancelled || process.LaunchError is not null)
             {
@@ -732,7 +753,8 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 elapsedBefore,
                 output,
                 ct,
-                phase: "verification")
+                phase: "verification",
+                projectPreparation)
                 .ConfigureAwait(false);
             evidence.Add(process);
             if (process.ExitCode != 0 || process.TimedOut || process.Cancelled || process.LaunchError is not null)
@@ -1428,7 +1450,8 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         TimeSpan elapsedBefore,
         RingOutput output,
         CancellationToken ct,
-        string phase)
+        string phase,
+        ProjectPreparationResult? projectPreparation)
     {
         var (fileName, args) = shell == VerifyCommandShell.Bash
             ? (BashExecutable.Path, (IReadOnlyList<string>)["-lc", command])
@@ -1437,7 +1460,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 : ("/bin/sh", (IReadOnlyList<string>)["-c", command]);
         return RunProcessAsync(
             workingDirectory, command, fileName, args, processTimeout,
-            budgetLimit, elapsedBefore, output, ct, phase);
+            budgetLimit, elapsedBefore, output, ct, phase, projectPreparation);
     }
 
     private async Task<BuildTestGateProcessEvidence> RunProcessAsync(
@@ -1450,7 +1473,8 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         TimeSpan elapsedBefore,
         RingOutput output,
         CancellationToken ct,
-        string phase)
+        string phase,
+        ProjectPreparationResult? projectPreparation)
     {
         var startedAt = DateTimeOffset.UtcNow;
         var psi = new ProcessStartInfo
@@ -1464,6 +1488,12 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         };
         foreach (var arg in args) psi.ArgumentList.Add(arg);
         psi.Environment["NPM_CONFIG_CACHE"] = NpmCachePath;
+        // Repository preparation restored this gate's dependencies into its own
+        // per-run cache folders. A verify command that does not see them resolves
+        // against a package folder the restore never wrote to and fails with
+        // NETSDK1064 on `--no-restore` (TE-52), so the preparation binding is the
+        // last layer and overrides the gate's own dependency cache.
+        PreparationCacheEnvironment.Apply(psi, projectPreparation);
         output.AppendLine($"> {fileName} {string.Join(' ', args)}");
 
         Process? process;

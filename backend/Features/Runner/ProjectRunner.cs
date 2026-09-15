@@ -2815,6 +2815,12 @@ public class ProjectRunner
                         jobId,
                         info.Title));
                 }
+                // The per-run dependency caches this preparation resolved belong to
+                // the whole coding run: the agent's build, test and lint commands
+                // must see the same NUGET_PACKAGES / NPM_CONFIG_CACHE /
+                // PLAYWRIGHT_BROWSERS_PATH the prepare restored into (TE-52). The
+                // run root is released with the slot in ReleaseRun.
+                preparationRun.Preparation = preparation;
                 _timeline?.Append(
                     info.FolderPath,
                     "project_preparation",
@@ -3118,6 +3124,7 @@ public class ProjectRunner
                 permissionMode: permissionMode,
                 contextMode: contextMode,
                 executionEngine: executionEngine,
+                environment: activeRunForSpawn?.Preparation?.Environment,
                 ct: ct);
 
             if (execution == null)
@@ -7099,6 +7106,10 @@ public class ProjectRunner
         var released = _activeRuns.Release(jobId);
         if (releasePickupLock && released?.PickupLockFolder is { } folder)
             ReleasePickupLockIfHeld(folder);
+        // The coding run held the preparation's per-run cache folder for as long
+        // as the agent could still run build, test or lint. The published
+        // immutable entries survive; only this run's copy goes.
+        ProjectPreparationExecutor.ReleaseRunRoot(released?.Preparation);
         return released;
     }
 

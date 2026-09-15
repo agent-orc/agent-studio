@@ -37,7 +37,12 @@ internal sealed record DetachedJobSpec(
     string? Engine = null,
     string? RunId = null,
     string? ResumeSessionId = null,
-    string? CleanContextKey = null);
+    string? CleanContextKey = null,
+    // TE-52 — the coding run's dependency cache binding: the per-run
+    // NUGET_PACKAGES / NPM_CONFIG_CACHE / PLAYWRIGHT_BROWSERS_PATH locations
+    // repository preparation restored into. Additive like the blocks above; a
+    // pre-TE-52 spec.json deserialises with null and simply binds nothing.
+    IReadOnlyDictionary<string, string>? Environment = null);
 
 internal sealed record DetachedJobLogLine(long Sequence, DateTime Timestamp, string Stream, string Text);
 
@@ -95,7 +100,8 @@ internal sealed class DurableAgentProcess
         RunSpecDto? runSpec = null,
         string? runId = null,
         string? resumeSessionId = null,
-        string? cleanContextKey = null)
+        string? cleanContextKey = null,
+        IReadOnlyDictionary<string, string>? environment = null)
     {
         Directory.CreateDirectory(workerDirectory);
         var specPath = Path.Combine(workerDirectory, "spec.json");
@@ -108,7 +114,8 @@ internal sealed class DurableAgentProcess
             runSpec,
             runId,
             resumeSessionId,
-            cleanContextKey);
+            cleanContextKey,
+            environment);
         File.WriteAllText(specPath, JsonSerializer.Serialize(spec, Json));
 
         var executable = Environment.ProcessPath
@@ -155,7 +162,8 @@ internal sealed class DurableAgentProcess
         RunSpecDto? runSpec = null,
         string? runId = null,
         string? resumeSessionId = null,
-        string? cleanContextKey = null)
+        string? cleanContextKey = null,
+        IReadOnlyDictionary<string, string>? environment = null)
     {
         // One resolution truth for both engines: which CLI runs (card wish vs.
         // host binaries, foreign-CLI fallback drops the model pins) comes from
@@ -178,7 +186,27 @@ internal sealed class DurableAgentProcess
             Engine: options.ExecEngine,
             RunId: runId,
             ResumeSessionId: resumeSessionId,
-            CleanContextKey: cleanContextKey);
+            CleanContextKey: cleanContextKey,
+            Environment: environment);
+    }
+
+    /// <summary>
+    /// The preparation cache binding a worker was started with, or null when the
+    /// specification is missing, unreadable, or predates TE-52. Used by a resumed
+    /// attempt, which must keep the binding of the preparation that ran once for
+    /// the whole run.
+    /// </summary>
+    internal static IReadOnlyDictionary<string, string>? TryReadEnvironment(string workerDirectory)
+    {
+        try
+        {
+            var path = Path.Combine(workerDirectory, "spec.json");
+            return File.Exists(path) ? ReadSpec(path).Environment : null;
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or InvalidDataException)
+        {
+            return null;
+        }
     }
 
     /// <summary>Read a worker specification back, including one written before the T0b fields existed.</summary>
@@ -444,6 +472,10 @@ internal sealed class DurableAgentProcess
                 };
                 if (ProviderAuthEnvironment.TryGetForCli(spec.CliType, out var authName, out var authValue))
                     environment[authName] = authValue;
+                // The agent's own build/test/lint must resolve against the caches
+                // repository preparation restored into for this run (TE-52).
+                foreach (var entry in spec.Environment ?? new Dictionary<string, string>())
+                    environment[entry.Key] = entry.Value;
                 processResult = await ProcessRunner.RunAsync(
                     spec.FileName,
                     spec.Arguments,

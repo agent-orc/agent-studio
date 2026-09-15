@@ -389,6 +389,7 @@ public partial class GenericCliExecutionService : ICliExecutionService
         string? permissionMode = null,
         string? contextMode = null,
         string? executionEngine = null,
+        IReadOnlyDictionary<string, string>? environment = null,
         CancellationToken ct = default)
     {
         var engine = CliExecutionEngines.Normalize(executionEngine);
@@ -397,7 +398,7 @@ public partial class GenericCliExecutionService : ICliExecutionService
             return StartCarAsync(
                 jobId, jobKey, prompt, workingDirectory, sessionName,
                 resumeSession, model, thinkingLevel, jobFolderPath,
-                permissionMode, contextMode, ct);
+                permissionMode, contextMode, environment, ct);
         }
 
         if (engine == CliExecutionEngines.Car)
@@ -410,7 +411,7 @@ public partial class GenericCliExecutionService : ICliExecutionService
         return StartLegacyAsync(
             jobId, jobKey, prompt, workingDirectory, sessionName,
             resumeSession, model, thinkingLevel, jobFolderPath,
-            permissionMode, contextMode, ct);
+            permissionMode, contextMode, environment, ct);
     }
 
     private async Task<(CliExecution? Execution, string? Error)> StartLegacyAsync(
@@ -425,6 +426,7 @@ public partial class GenericCliExecutionService : ICliExecutionService
         string? jobFolderPath,
         string? permissionMode,
         string? contextMode,
+        IReadOnlyDictionary<string, string>? environment,
         CancellationToken ct)
     {
         if (_processes.TryGetValue(jobKey, out var existing))
@@ -523,6 +525,13 @@ public partial class GenericCliExecutionService : ICliExecutionService
         {
             psi.Environment["JOB_RESULTS_DIR"]            = Path.Combine(jobFolderPath, "results");
         }
+
+        // Repository preparation restored this run's dependencies into per-run
+        // cache folders. The agent's own build, test and lint commands must read
+        // the same folders, otherwise a `--no-restore` build resolves against a
+        // package folder the restore never wrote to (TE-52).
+        foreach (var entry in environment ?? new Dictionary<string, string>())
+            psi.Environment[entry.Key] = entry.Value;
 
         // T1b (ASS-1742): clean context. When the run resolves to CLEAN and this
         // adapter supports it, seed an isolated per-task config home and point the

@@ -713,7 +713,7 @@ internal sealed class FakeRunningCliService : ICliExecutionService
     public string GetCliPath() => throw new NotImplementedException();
     public bool IsAvailable() => throw new NotImplementedException();
     public (bool Available, string? Version, string Path) TestCliPath(string? path = null) => throw new NotImplementedException();
-    public Task<(CliExecution? Execution, string? Error)> StartAsync(string jobId, string jobKey, string prompt, string workingDirectory, string? sessionName = null, bool resumeSession = false, string? model = null, string? thinkingLevel = null, string? jobFolderPath = null, string? permissionMode = null, string? contextMode = null, string? executionEngine = null, CancellationToken ct = default) => throw new NotImplementedException();
+    public Task<(CliExecution? Execution, string? Error)> StartAsync(string jobId, string jobKey, string prompt, string workingDirectory, string? sessionName = null, bool resumeSession = false, string? model = null, string? thinkingLevel = null, string? jobFolderPath = null, string? permissionMode = null, string? contextMode = null, string? executionEngine = null, IReadOnlyDictionary<string, string>? environment = null, CancellationToken ct = default) => throw new NotImplementedException();
     public bool Stop(string jobKey, RunStopReason reason = RunStopReason.UserStop) => throw new NotImplementedException();
     public bool SendInput(string jobKey, string input) => throw new NotImplementedException();
     public List<CliOutputLine> GetOutput(string jobKey) => throw new NotImplementedException();

@@ -37,10 +37,12 @@ Set-DefaultEnvironment 'COMPUTERNAME' ([Environment]::MachineName)
 # reuses or leaves one.
 $env:MSBUILDDISABLENODEREUSE = '1'
 $env:DOTNET_CLI_USE_MSBUILD_SERVER = '0'
-# The gate points NUGET_PACKAGES at a per-run working folder and moves that
-# folder into its cache after a miss, but the later `dotnet build --no-restore`
-# is not given the new location (NETSDK1064: package not found). Restoring into
-# the user's global packages folder keeps the assets file valid for the build.
+# Interim (TE-52). A Task Server that carries the preparation cache binding
+# keeps the per-run folder in place and hands NUGET_PACKAGES to every later
+# command, so this line is then unnecessary. An older Task Server still moves
+# the folder away and leaves `dotnet build --no-restore` with NETSDK1064, so the
+# line is removed only in the change that rolls the new Task Server out to the
+# Windows host. See docs/operations/setup/preparation-isolation-orchestrator.md.
 Remove-Item Env:NUGET_PACKAGES -ErrorAction SilentlyContinue
 
 $candidates = @()

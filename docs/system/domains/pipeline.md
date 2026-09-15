@@ -544,6 +544,18 @@ steer the pipeline in this policy version.
   have not adopted the contract retain the derived Build Profile preparation
   path temporarily: an explicit `installCmd` is authoritative, otherwise the
   selected .NET and Node scopes receive `dotnet restore` and `npm ci`.
+- Preparation and every later command of the same gate or coding run share one
+  cache binding. Prepare works in per-run folders under
+  `<product-cache>/.runs/<run>/<block>` - on a hit through its own copy of the
+  published entry, never inside it - and a green miss publishes a copy of that
+  folder as the immutable entry. `ProjectPreparationResult.Environment` exposes
+  the resolved `NUGET_PACKAGES`, `NPM_CONFIG_CACHE` and `PLAYWRIGHT_BROWSERS_PATH`
+  locations; the gate applies them to every preparation and verify process, and a
+  coding run applies them to the agent's CLI launch. Without that binding a
+  follow-up `dotnet build --no-restore` resolves against a package folder the
+  restore never wrote to (NETSDK1064, TE-52). The folder is released when the
+  gate finishes or the run's slot is freed; an unreleased folder is reclaimed by
+  age after 24 hours.
 - Immutable Remote Review plans carry that same preparation command, lockfile
   scopes, and preserve globs to the Review Executor. Preparation runs before
   verification in both the candidate and any materialized baseline workspace.

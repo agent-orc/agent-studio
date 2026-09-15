@@ -28,6 +28,7 @@ public interface ICliExecutionService
         string? permissionMode = null,
         string? contextMode = null,
         string? executionEngine = null,
+        IReadOnlyDictionary<string, string>? environment = null,
         CancellationToken ct = default);
 
     /// <summary>

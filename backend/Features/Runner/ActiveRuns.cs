@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Runner;
 
@@ -149,6 +150,14 @@ internal sealed class ActiveRun
     /// worktree only, never the shared checkout.
     /// </summary>
     public string? MainCheckoutStatusBefore { get; set; }
+
+    /// <summary>
+    /// Result of the repository preparation that ran for this slot. It carries
+    /// the per-run dependency cache locations the agent's own build, test and
+    /// lint commands must resolve against, and the run root released when the
+    /// slot is freed (TE-52).
+    /// </summary>
+    public ProjectPreparationResult? Preparation { get; set; }
 
     /// <summary>True when this run is isolated in its own worktree.</summary>
     public bool IsWorktreeRun => !string.IsNullOrEmpty(WorktreePath);

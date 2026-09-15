@@ -929,6 +929,27 @@ public sealed record ProjectPreparationResult(
     string? FailureSignature,
     string? FailureReason)
 {
+    /// <summary>
+    /// Resolved cache locations of this preparation, keyed by the environment
+    /// variable that points at them (<c>NPM_CONFIG_CACHE</c>,
+    /// <c>NUGET_PACKAGES</c>, <c>PLAYWRIGHT_BROWSERS_PATH</c>). Every later
+    /// command of the same gate or coding run must receive them; without that
+    /// binding the restore this preparation performed is invisible to a
+    /// follow-up <c>dotnet build --no-restore</c>, which fails with NETSDK1064
+    /// against a package folder that no longer exists (TE-52). Empty when
+    /// preparation is not configured or failed.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> Environment { get; init; }
+        = new Dictionary<string, string>(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Per-run root the <see cref="Environment"/> paths live in. It stays in
+    /// place for the whole gate or coding run and is released afterwards with
+    /// <see cref="ProjectPreparationExecutor.ReleaseRunRoot"/>. Null when there
+    /// is nothing to release.
+    /// </summary>
+    public string? RunRoot { get; init; }
+
     public bool CacheHit => Manifest?.Caches.Count > 0
                             && Manifest.Caches.All(cache => cache.State == "hit");
 
@@ -937,10 +958,49 @@ public sealed record ProjectPreparationResult(
 }
 
 /// <summary>
+/// Binds a finished preparation onto the commands that run after it inside the
+/// same gate or coding run. The preparation's cache variables are applied last:
+/// a host-owned or gate-owned value for the same variable would point the
+/// follow-up command at a directory the prepare restore never wrote into.
+/// </summary>
+public static class PreparationCacheEnvironment
+{
+    /// <summary>Applies the resolved cache locations to a process launch.</summary>
+    public static void Apply(
+        ProcessStartInfo start,
+        ProjectPreparationResult? preparation)
+    {
+        if (preparation is null) return;
+        foreach (var entry in preparation.Environment) start.Environment[entry.Key] = entry.Value;
+    }
+
+    /// <summary>
+    /// Applies the resolved cache locations to the environment overlay a CLI
+    /// launch carries, for the coding-run path where the agent process - not the
+    /// gate - runs build, test and lint.
+    /// </summary>
+    public static void Apply(
+        IDictionary<string, string> target,
+        IReadOnlyDictionary<string, string>? environment)
+    {
+        if (environment is null) return;
+        foreach (var entry in environment) target[entry.Key] = entry.Value;
+    }
+}
+
+/// <summary>
 /// Runs the repository-owned prepare script with product-owned technology
-/// caches. Every cache miss writes into a private staging directory. Only a
-/// green prepare atomically publishes a new immutable entry, and a failed run
-/// deletes all staging content.
+/// caches. Every prepare - hit or miss - works inside a private per-run folder
+/// under <c>&lt;productCacheRoot&gt;/.runs/&lt;runId&gt;</c>, never inside a
+/// published entry. Only a green prepare atomically publishes a new immutable
+/// entry (by copy, so the per-run folder survives the publication), and a
+/// failed run deletes its whole run root.
+///
+/// The per-run folder is what <see cref="ProjectPreparationResult.Environment"/>
+/// points at, and it stays in place until the gate or coding run that asked for
+/// the preparation calls <see cref="ReleaseRunRoot"/>. That is what keeps a
+/// later <c>dotnet build --no-restore</c> resolvable against the packages the
+/// prepare restored (TE-52).
 /// </summary>
 public static partial class ProjectPreparationExecutor
 {
@@ -949,6 +1009,13 @@ public static partial class ProjectPreparationExecutor
 
     /// <summary>Characters of that tail repeated in the operator-facing reason.</summary>
     public const int ReasonTailLimit = 600;
+
+    /// <summary>
+    /// How long an unreleased per-run cache folder is assumed to still belong to
+    /// a live gate or coding run. Both are bounded far below this by their own
+    /// timeouts, so anything older is the residue of a killed process.
+    /// </summary>
+    public static readonly TimeSpan RunRootRetention = TimeSpan.FromHours(24);
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
@@ -979,6 +1046,7 @@ public static partial class ProjectPreparationExecutor
 
         var started = DateTimeOffset.UtcNow;
         var stopwatch = Stopwatch.StartNew();
+        PruneStaleRunRoots(productCacheRoot);
         var runRoot = Path.Combine(productCacheRoot, ".runs", Guid.NewGuid().ToString("N"));
         var cacheBindings = BuildCacheBindings(workspace, productCacheRoot, runRoot, read.Definition, log);
         var selectedNodeBin = ResolveNvmNodeBin(read.Definition, workspace);
@@ -1109,7 +1177,49 @@ public static partial class ProjectPreparationExecutor
         WriteManifest(manifestPath, manifest);
         log?.Invoke($"project-prepare completed succeeded={succeeded} durationMs={stopwatch.ElapsedMilliseconds} cacheHit={manifest.Caches.All(cache => cache.State == "hit")}");
         return new(true, succeeded, manifest, [], Bound(stdout, stderr), exitCode,
-            failureKind, signature, reason);
+            failureKind, signature, reason)
+        {
+            Environment = succeeded
+                ? cacheBindings.ToDictionary(
+                    binding => binding.EnvironmentVariable,
+                    binding => binding.WorkingPath,
+                    StringComparer.Ordinal)
+                : new Dictionary<string, string>(StringComparer.Ordinal),
+            RunRoot = succeeded ? runRoot : null,
+        };
+    }
+
+    /// <summary>
+    /// Releases the per-run cache folder a successful preparation handed to the
+    /// gate or coding run. Call it once the last command of that gate or run has
+    /// finished; the published immutable entries are untouched by it.
+    /// </summary>
+    public static void ReleaseRunRoot(ProjectPreparationResult? preparation)
+    {
+        if (preparation?.RunRoot is { Length: > 0 } runRoot) DeleteBestEffort(runRoot);
+    }
+
+    /// <summary>
+    /// Drops per-run folders left behind by a process that died before it could
+    /// release its own. Bounded by age so a run that is still using its folder
+    /// is never touched: no preparation consumer outlives
+    /// <see cref="RunRootRetention"/>.
+    /// </summary>
+    private static void PruneStaleRunRoots(string productCacheRoot)
+    {
+        var runs = Path.Combine(productCacheRoot, ".runs");
+        if (!Directory.Exists(runs)) return;
+        var deadline = DateTime.UtcNow - RunRootRetention;
+        try
+        {
+            foreach (var candidate in Directory.EnumerateDirectories(runs))
+            {
+                if (Directory.GetLastWriteTimeUtc(candidate) > deadline) continue;
+                DeleteBestEffort(candidate);
+            }
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     public static (PreparationFailureKind Kind, string Signature, string Reason) Classify(
@@ -1359,20 +1469,27 @@ public static partial class ProjectPreparationExecutor
         return null;
     }
 
+    /// <summary>
+    /// Publishes each missed block as a new immutable entry. The per-run working
+    /// folder is copied, not moved: it remains the location the gate's or run's
+    /// later commands read through <see cref="ProjectPreparationResult.Environment"/>.
+    /// A block whose entry another run published in the meantime keeps this run's
+    /// own copy and publishes nothing - the entry is immutable once it exists.
+    /// </summary>
     private static void Publish(IReadOnlyList<CacheBinding> bindings, Action<string>? log)
     {
         foreach (var binding in bindings.Where(binding => !binding.Hit))
         {
             if (Directory.Exists(binding.EntryPath))
             {
-                DeleteBestEffort(binding.WorkingPath);
+                log?.Invoke($"project-prepare cache block={binding.Block} key={binding.Key} state=already-published");
                 continue;
             }
             var parent = Path.GetDirectoryName(binding.EntryPath)!;
             Directory.CreateDirectory(parent);
             var staging = binding.EntryPath + ".staging-" + Guid.NewGuid().ToString("N");
             Directory.CreateDirectory(staging);
-            Directory.Move(binding.WorkingPath, Path.Combine(staging, "content"));
+            CopyDirectory(binding.WorkingPath, Path.Combine(staging, "content"));
             File.WriteAllText(Path.Combine(staging, "manifest.json"), JsonSerializer.Serialize(new
             {
                 schemaVersion = 1,
