@@ -1,6 +1,6 @@
 # Tasks Domain Map
 
-Version: 2026-09-11
+Version: 2026-09-15
 Status: System-of-record map for task storage, lanes, and API mutation changes.
 
 Use this when a change touches job folders, lane states, task metadata,
@@ -63,6 +63,17 @@ or commit attribution.
   independently reviewable slice and becomes one card with a bounded
   `acceptanceScope`. Promotion rejects an open-ended entry such as `implement
   all recommendations`; use one entry per slice or an Epic with slice children.
+- `POST /api/tasks/{id}/continue` on a `concept` or `planning` card refuses
+  (`409`) a follow-up prompt that reads as a code-change request, naming the
+  card's mode and the matching promotion path (`promote-concept` or
+  `promote-to-coding`) in the message. This is `ContinueModeGuardPolicy`
+  (`backend/Shared/Runner/ContinueModeGuardPolicy.cs`): a card repurposed into
+  a concept card must not silently re-run in concept mode against an
+  implementation prompt, do no implementation, and escalate with no useful
+  work (AGT-2795). The caller bypasses the guard by echoing the card's current
+  mode back on `ContinueJobRequest.ModeOverride`; any other value, including a
+  mismatched mode, does not bypass it. The guard runs before the follow-up is
+  written to disk, so a rejected continue leaves no trace on the card.
 
 ## Entry Points
 

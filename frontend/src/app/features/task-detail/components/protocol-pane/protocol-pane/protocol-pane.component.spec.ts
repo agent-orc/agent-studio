@@ -5,7 +5,7 @@ import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { ProtocolPaneComponent } from './protocol-pane.component';
-import { outcomeIssueExplanation } from './protocol-pane-view-model';
+import { deriveComposeMode, outcomeIssueExplanation } from './protocol-pane-view-model';
 
 /**
  * Cycle 11c smoke. Compiles + instantiates the standalone component.
@@ -75,6 +75,27 @@ describe('ProtocolPaneComponent (smoke)', () => {
       console.warn('[smoke] ProtocolPaneComponent initial render skipped:', (e as Error).message);
     }
     expect(fixture.componentInstance).toBeTruthy();
+  });
+});
+
+describe('deriveComposeMode', () => {
+  it('defaults an undefined mode to coding and marks it unguarded', () => {
+    expect(deriveComposeMode(undefined)).toEqual({
+      mode: 'coding',
+      icon: '💻',
+      label: 'Coding',
+      guarded: false,
+    });
+  });
+
+  it('marks concept and planning as guarded, matching ContinueModeGuardPolicy', () => {
+    expect(deriveComposeMode('concept')).toMatchObject({ label: 'Concept', guarded: true });
+    expect(deriveComposeMode('planning')).toMatchObject({ label: 'Planning', guarded: true });
+  });
+
+  it('leaves coding and research unguarded', () => {
+    expect(deriveComposeMode('coding')).toMatchObject({ guarded: false });
+    expect(deriveComposeMode('research')).toMatchObject({ label: 'Research', guarded: false });
   });
 });
 

@@ -686,11 +686,18 @@ public class TaskRunnerService : BackgroundService
     /// continuation they asked for instead of a 400 - at the cost of conversation
     /// memory that wasn't already on disk.
     /// </summary>
-    public async Task<ContinueJobResponse> ContinueJobAsync(string jobId, string followupPrompt, string? watchPath = null, string? modelOverride = null, string? cliTypeOverride = null, string? thinkingLevelOverride = null, string? mode = null, CancellationToken ct = default)
+    public async Task<ContinueJobResponse> ContinueJobAsync(string jobId, string followupPrompt, string? watchPath = null, string? modelOverride = null, string? cliTypeOverride = null, string? thinkingLevelOverride = null, string? mode = null, string? modeOverride = null, CancellationToken ct = default)
     {
         _executionAdmission?.Demand(ExecutionAdmissionPath.Continue);
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) throw new TaskOperationException("Job not found", 404);
+
+        // Boundary validation before any mutation (AGT-2795): a concept or
+        // planning card whose follow-up reads as a code-change request is
+        // refused here, before the follow-up is ever written to disk below.
+        var guard = ContinueModeGuardPolicy.Decide(new ContinueModeGuardFacts(jobId, info.Mode, followupPrompt, modeOverride));
+        if (guard.Action == ContinueModeGuardAction.Reject)
+            throw new TaskOperationException(guard.Message!, 409);
 
         var runner = _runners.Values.FirstOrDefault(r => r.Entry.Name == info.ProjectName);
         if (runner == null) throw new TaskOperationException($"No runner configured for project '{info.ProjectName}'", 400);

@@ -1693,14 +1693,21 @@ export class TaskService {
     cliType?: CliType,
     thinkingLevel?: string,
     mode?: ContinueMode,
+    modeOverride?: string,
   ) {
-    const body: { prompt: string; model?: string; cliType?: CliType; thinkingLevel?: string; mode?: ContinueMode } = {
-      prompt,
-    };
+    const body: {
+      prompt: string;
+      model?: string;
+      cliType?: CliType;
+      thinkingLevel?: string;
+      mode?: ContinueMode;
+      modeOverride?: string;
+    } = { prompt };
     if (model) body.model = model;
     if (cliType) body.cliType = cliType;
     if (thinkingLevel) body.thinkingLevel = thinkingLevel;
     if (mode) body.mode = mode;
+    if (modeOverride) body.modeOverride = modeOverride;
     return this.http.post<ContinueTaskResponse>(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/continue`,
       body,
