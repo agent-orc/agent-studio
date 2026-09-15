@@ -27,6 +27,7 @@ import { ActivityLogViewComponent } from '../../activity-log-view/activity-log-v
 import { buildConversationTurns, parseActivityLog, sanitizeProjectionLines } from '../../activity-log.parser';
 import { classifyLatestActivityOutcome, OutcomeAssessment, QuickReply } from '../../agent-outcome.util';
 import { copyTextToClipboard } from '../../../../../services/clipboard.util';
+import { taskModeIcon, taskModeLabel } from '../../../../../services/format.util';
 import { sessionFetch } from '../../../../../services/session-fetch';
 import { ClaudeSessionPollService } from '../../../../polling/services/claude-session-poll.service';
 import { CliOutputPollService } from '../../../../polling/services/cli-output-poll.service';
@@ -565,6 +566,17 @@ export class ProtocolPaneComponent implements OnDestroy {
       ? 'Message this task. Sending pauses the current run first. Ctrl+Enter to send.'
       : 'Message this task. Ctrl+Enter to send.';
   }
+
+  /**
+   * The card's execution mode, shown next to the send button so an operator
+   * sees before sending that a concept or planning card runs document-only
+   * (AGT-2825): a code-change prompt sent here is refused with 409 unless
+   * the request explicitly overrides the mode.
+   */
+  readonly composeModeLabel = computed<string>(() => {
+    const mode = this.detail().info.mode ?? 'coding';
+    return `${taskModeIcon(mode)} ${taskModeLabel(mode)} mode`;
+  });
 
   /** Task / Activity / Result tab strip for the shared pane-tabs component. */
   readonly protocolTabs = computed(() =>

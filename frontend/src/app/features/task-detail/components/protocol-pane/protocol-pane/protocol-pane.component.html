@@ -484,15 +484,18 @@
                             (input)="followupPromptChange.emit($any($event.target).value)"
                             (keydown.control.enter)="sendChat.emit()"
                             (keydown.meta.enter)="sendChat.emit()"></textarea>
-                  <button type="button"
-                          class="btn-sm btn-sm--primary chat-compose__send"
-                          data-testid="activity-chat-send"
-                          aria-keyshortcuts="Control+Enter Meta+Enter"
-                          [attr.title]="isRunning() ? 'Pause the current run and send this message' : 'Send message'"
-                          [disabled]="!canSendChat()"
-                          (click)="sendChat.emit()">
-                    {{ chatSendLabel() }}
-                  </button>
+                  <div class="chat-compose__send-group">
+                    <span class="chat-compose__mode" data-testid="activity-chat-mode">{{ composeModeLabel() }}</span>
+                    <button type="button"
+                            class="btn-sm btn-sm--primary chat-compose__send"
+                            data-testid="activity-chat-send"
+                            aria-keyshortcuts="Control+Enter Meta+Enter"
+                            [attr.title]="isRunning() ? 'Pause the current run and send this message' : 'Send message'"
+                            [disabled]="!canSendChat()"
+                            (click)="sendChat.emit()">
+                      {{ chatSendLabel() }}
+                    </button>
+                  </div>
                 </div>
                 @if (chatError()) {
                   <p class="chat-compose__status chat-compose__status--error"

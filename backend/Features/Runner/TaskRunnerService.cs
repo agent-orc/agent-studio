@@ -686,7 +686,7 @@ public class TaskRunnerService : BackgroundService
     /// continuation they asked for instead of a 400 - at the cost of conversation
     /// memory that wasn't already on disk.
     /// </summary>
-    public async Task<ContinueJobResponse> ContinueJobAsync(string jobId, string followupPrompt, string? watchPath = null, string? modelOverride = null, string? cliTypeOverride = null, string? thinkingLevelOverride = null, string? mode = null, CancellationToken ct = default)
+    public async Task<ContinueJobResponse> ContinueJobAsync(string jobId, string followupPrompt, string? watchPath = null, string? modelOverride = null, string? cliTypeOverride = null, string? thinkingLevelOverride = null, string? mode = null, bool modeOverride = false, CancellationToken ct = default)
     {
         _executionAdmission?.Demand(ExecutionAdmissionPath.Continue);
         var info = _scanner.FindJob(jobId, watchPath);
@@ -694,6 +694,16 @@ public class TaskRunnerService : BackgroundService
 
         var runner = _runners.Values.FirstOrDefault(r => r.Entry.Name == info.ProjectName);
         if (runner == null) throw new TaskOperationException($"No runner configured for project '{info.ProjectName}'", 400);
+
+        // Boundary validation before any mutation (AGT-2825): a concept or
+        // planning card that receives an implementation-flavored prompt is
+        // refused here, before the CLI/model overrides below are persisted
+        // and before RecordUserFollowUpAsync writes anything - see
+        // ImplementationContinueGuardPolicy for the AGT-2795 incident this
+        // closes.
+        var guard = ImplementationContinueGuardPolicy.Decide(info.Mode, followupPrompt, modeOverride);
+        if (guard.Action == ImplementationContinueAction.Reject)
+            throw new TaskOperationException(guard.Reason!, 409);
 
         if (!string.IsNullOrWhiteSpace(cliTypeOverride) && cliTypeOverride != info.CliType)
         {

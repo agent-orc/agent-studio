@@ -25,6 +25,16 @@ public record ContinueJobRequest
     /// See <see cref="ContinueModes"/>.
     /// </summary>
     public string? Mode { get; init; }
+
+    /// <summary>
+    /// Explicit one-shot operator decision to run this prompt on a card whose
+    /// execution mode (<see cref="TaskModes.Concept"/>,
+    /// <see cref="TaskModes.Planning"/>) would otherwise refuse an
+    /// implementation-flavored prompt with <c>409</c>. Modeled on
+    /// <see cref="MoveJobRequest.OperatorOverride"/>: never inferred from the
+    /// prompt text. See <see cref="ImplementationContinueGuardPolicy"/>.
+    /// </summary>
+    public bool ModeOverride { get; init; }
 }
 
 /// <summary>

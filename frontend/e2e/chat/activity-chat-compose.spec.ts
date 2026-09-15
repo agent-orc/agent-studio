@@ -53,6 +53,27 @@ test.describe('Activity tab — chat compose', () => {
     await expect(send).toBeDisabled();
   });
 
+  test('compose strip shows the card mode next to Send (AGT-2825)', async ({ page }) => {
+    const target = await findJobWithOutput();
+    if (!target) {
+      test.skip(true, 'No job with CLI output available');
+      return;
+    }
+
+    await page.goto(`/?job=${encodeURIComponent(target.id)}&watchPath=${encodeURIComponent(target.watchPath)}`);
+    await page.getByTestId('inspector-tab-activity').click();
+
+    const compose = page.getByTestId('activity-chat-compose');
+    await expect(compose).toBeVisible({ timeout: 5_000 });
+
+    // The operator sees the card's execution mode before sending, since a
+    // concept or planning card refuses an implementation-flavored prompt
+    // with 409 unless the request explicitly overrides the mode.
+    const modeLabel = page.getByTestId('activity-chat-mode');
+    await expect(modeLabel).toBeVisible();
+    await expect(modeLabel).toContainText(/mode$/i);
+  });
+
   test('activity log body has the auto-scroll testid', async ({ page }) => {
     const target = await findJobWithOutput();
     if (!target) {
