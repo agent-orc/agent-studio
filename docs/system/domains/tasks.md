@@ -516,6 +516,14 @@ site or derived from the lane pair for a human actor) and `details.causeDetail`
 (a short qualifier); see the lane-transition section of the
 [cycle-time stage model](../../concepts/cycle-time-stage-model.md#lane-transitions).
 
+A park whose run ended without a terminal sentinel carries its reason through the
+move, so the marker is never written with an empty `reason` and its `blockerType`
+is the real escalation category rather than `operator-decision`. When the commit
+candidate gate withheld files on the landing attempt, the reason additionally
+names the gate and the count, and the card lists which files and why from
+`withheld-commit-candidates.json`; see the
+[commit / push doctrine](../../operations/git/commit-push-doctrine.md).
+
 `ParkedCardRecallSweep` re-evaluates those conditions on a timer and through
 `GET /api/parked-cards`. A card whose precondition is provably gone is REPORTED -
 one `parked_blocker_resolved` timeline row plus a `recallable` status on

@@ -1536,6 +1536,31 @@ public class ProjectRunner
     private sealed record WorktreeCommitRange(string HeadShaBefore, string HeadShaAfter);
 
     /// <summary>
+    /// AGT-2828: persist (or clear) the durable withheld-candidate marker for a
+    /// landing attempt. A successful, complete commit clears it; a gate that
+    /// withheld files leaves exactly what is still waiting in the worktree, so
+    /// the park reason and the operator action have a subject.
+    /// </summary>
+    private void RecordWithheldCommitCandidates(TaskInfo info, GitCommitResult commit)
+    {
+        var record = WithheldCommitCandidatePolicy.Describe(commit.Gate);
+        WithheldCommitCandidateStore.Persist(info.FolderPath, record, _logger);
+        if (record is { Count: > 0 })
+        {
+            _logger.LogWarning(
+                "[taskboard] commit candidate gate {Decision} withheld {Count} file(s) for {Job}; nothingCommitted={NothingCommitted}",
+                record.Decision, record.Count, info.Id, record.NothingCommitted);
+        }
+    }
+
+    private static string WithheldDetailSuffix(GitCommitResult commit)
+    {
+        var detail = WithheldCommitCandidatePolicy.BuildDetail(
+            WithheldCommitCandidatePolicy.Describe(commit.Gate));
+        return detail.Length == 0 ? string.Empty : Environment.NewLine + Environment.NewLine + detail;
+    }
+
+    /// <summary>
     /// Post-run integration for an isolated coding run: commit the agent's
     /// edits onto the task branch, then under the per-project merge-queue lock
     /// merge the branch into the work branch (develop). Teardown is DEFERRED to
@@ -1581,6 +1606,11 @@ public class ProjectRunner
             var commit = _git.WorktreeRunCommit(ProjectName, run.WorktreePath!,
                 $"{info.Title}\n\n{GitService.WorktreeRunCommitTrailer(run.JobId)}",
                 run.JobId, info.Runner?.RunnerId, run.Branch);
+            // AGT-2828: record WHICH files the gate withheld before anything can
+            // park this card. WEB-21 escalated with an empty reason while a
+            // finished delivery sat uncommitted; the marker is what lets the
+            // park name the gate, the count, and the files.
+            RecordWithheldCommitCandidates(info, commit);
             if (commit.Success)
             {
                 _logger.LogInformation("[taskboard] parallel run {Job} committed agent edits on {Branch} at {Sha}",
@@ -1600,7 +1630,8 @@ public class ProjectRunner
                     run.JobId, run.Branch, commit.Error);
                 _chatLog.Append(info, OrchestratorMessageKind.IntegrationError,
                     $"[integration-error] Could not commit worktree edits onto `{run.Branch}` before integration: {commit.Error}. "
-                    + "The work stays in the worktree and is snapshotted as a WIP safety commit at teardown.");
+                    + "The work stays in the worktree and is snapshotted as a WIP safety commit at teardown."
+                    + WithheldDetailSuffix(commit));
             }
             var branchHeadAfterRun = _git.ReadHeadShaAt(run.WorktreePath!);
             var pushResult = await PushTaskBranchForPortabilityAsync(info, run, branchHeadAfterRun);

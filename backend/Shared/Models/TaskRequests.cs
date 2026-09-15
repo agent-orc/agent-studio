@@ -512,6 +512,18 @@ public record GitCommitRequest
     public string Message { get; init; } = "";
 }
 
+/// <summary>
+/// Body for <c>POST /api/tasks/{jobId}/git/withheld-candidates/commit</c>
+/// (AGT-2828). Both fields are optional: an empty body commits exactly the
+/// recorded withheld set under a generated message. <see cref="Paths"/> narrows
+/// the commit to the reviewed subset of that set.
+/// </summary>
+public record CommitWithheldCandidatesRequest
+{
+    public string? Message { get; init; }
+    public IReadOnlyList<string>? Paths { get; init; }
+}
+
 public record SetAutoCommitRequest
 {
     public bool Enabled { get; init; }

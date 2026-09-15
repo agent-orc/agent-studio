@@ -125,7 +125,7 @@ public sealed class PublicDemoExecutionProfileTests : IDisposable
             var routes = ExecutionRoutes(factory.Services);
             // Security inventory tripwire: adding, removing, or reclassifying an
             // executable endpoint requires an explicit update to this matrix.
-            Assert.Equal(81, routes.Count);
+            Assert.Equal(82, routes.Count);
             Assert.Equal(
                 ExecutionAdmissionPolicy.AllPaths.OrderBy(path => path),
                 routes.Select(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)
@@ -140,7 +140,7 @@ public sealed class PublicDemoExecutionProfileTests : IDisposable
                     [ExecutionAdmissionPath.Review] = 8,
                     [ExecutionAdmissionPath.Chat] = 9,
                     [ExecutionAdmissionPath.Preview] = 24,
-                    [ExecutionAdmissionPath.PostStep] = 10,
+                    [ExecutionAdmissionPath.PostStep] = 11,
                 },
                 routes.GroupBy(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)
                     .ToDictionary(group => group.Key, group => group.Count()));

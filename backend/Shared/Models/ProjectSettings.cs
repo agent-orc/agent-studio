@@ -349,6 +349,23 @@ public record ProjectSettings
     public TaskSpawnerConfig? TaskSpawner { get; init; }
 
     /// <summary>
+    /// AGT-2828: repository-relative directories this project declares as
+    /// evidence-asset locations (e.g. <c>["docs/assets", "frontend/e2e/screenshots"]</c>).
+    /// A recognized asset type under one of these prefixes, within
+    /// <see cref="AgentStudio.Git.EvidenceAssetPolicy.MaxAssetBytes"/>, is
+    /// committable by the commit candidate gate without a manual review step -
+    /// screenshots a task was explicitly asked to produce are the deliverable,
+    /// not a binary surprise.
+    ///
+    /// <para>Null or empty means "no declared asset paths": the gate admits
+    /// nothing and every binary keeps pausing for explicit review, which is the
+    /// pre-AGT-2828 behaviour. Persisted in <c>project-settings.json</c>.</para>
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore(
+        Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? EvidenceAssetPaths { get; init; }
+
+    /// <summary>
     /// AGT-2749: per-project override of the build/test gate-run budget, in
     /// seconds. Null falls back to <see cref="AgentStudio.Pipeline.GateRunBudgetPolicy"/>
     /// (a measured run-history p95 when enough history exists, otherwise

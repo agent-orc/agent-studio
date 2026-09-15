@@ -34,6 +34,21 @@ release yet.
 
 ### Fixed
 
+- A delivery blocked by the commit candidate gate said so instead of escalating
+  without a reason (AGT-2828). WEB-21 captured 12 screenshots, the gate warned
+  `binary-surprise` on every one of them, nothing was committed, and the card
+  landed in `5e-escalated` with cause `no-completion-signal` and an empty parked
+  reason. Now: the gate records what it held back as
+  `withheld-commit-candidates.json` on the card (path plus finding codes per
+  file); the no-completion-signal park carries its reason through the lane move,
+  so the parked marker names the escalation category, the gate, and the count
+  instead of being empty, and the card lists which files and why; evidence assets
+  under a path the project declares in `ProjectSettings.EvidenceAssetPaths` (a
+  recognized asset type at or below 5 MiB) commit without a manual step; and
+  `POST /api/tasks/{id}/git/withheld-candidates/commit` is the operator action
+  that commits the withheld set after review. Explicit review clears the warnings
+  that withheld the files, never a block, so secret material stays refused.
+
 - Concurrent Remote Review workers shared one host-global .NET build server
   (AGT-2831). The attempt workspace fenced every writable path per attempt, but
   Roslyn's `VBCSCompiler` listens on `/tmp/<pipename>` and reusable MSBuild

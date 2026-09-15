@@ -637,7 +637,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         string? watchPath = null,
         string? cause = null,
         string? transitionCause = null,
-        string? transitionDetail = null)
+        string? transitionDetail = null,
+        string? reason = null)
     {
         _postProcessingGitGate.Wait();
         try
@@ -648,6 +649,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     TargetLane = targetState,
                     WatchPath = watchPath,
                     Cause = cause,
+                    Reason = reason,
                     TransitionCause = transitionCause,
                     TransitionDetail = transitionDetail,
                 })
@@ -1812,15 +1814,27 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         CancellationToken ct)
     {
         var current = _scanner.FindJob(pending.Job.Id, entry.Path) ?? pending.Job;
+        // AGT-2828: a run can end without a sentinel while its delivery is
+        // complete but uncommitted, because the commit candidate gate withheld
+        // it. WEB-21 parked exactly that way with an empty reason. Name the gate
+        // and the count in the park reason, and list the files on the card.
+        var withheld = WithheldCommitCandidateStore.TryRead(current.FolderPath, _logger);
         reason = HumanReviewEscalation.FormatReason(
             HumanReviewEscalationCategories.NoCompletionSignal,
-            reason);
+            WithheldCommitCandidatePolicy.ComposeParkReason(reason, withheld));
+        var withheldDetail = WithheldCommitCandidatePolicy.BuildDetail(withheld, current.Id);
 
         _chatLog.AppendSupervisor(current, "escalate",
-            $"Orchestrator could not obtain a deterministic completion signal. Reason: {reason}. Promoted to {TaskStates.Escalated}.");
+            $"Orchestrator could not obtain a deterministic completion signal. Reason: {reason}. Promoted to {TaskStates.Escalated}."
+            + (withheldDetail.Length == 0
+                ? string.Empty
+                : Environment.NewLine + Environment.NewLine + withheldDetail));
 
+        // Carry the reason through the move: the lane-change choke point builds
+        // the parked-blocker marker from it, so an unpassed reason is the empty
+        // parked reason the board showed for WEB-21.
         var move = GuardedMoveJob(
-            current.Id, TaskStates.Escalated, entry.Path,
+            current.Id, TaskStates.Escalated, entry.Path, reason: reason,
             transitionCause: LaneChangeCauses.Escalated, transitionDetail: "no-completion-signal");
         if (move.Status != MoveJobStatus.Success)
         {
@@ -1837,6 +1851,15 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             TimelineEventKinds.OrchestratorEscalated, TimelineActors.Orchestrator, reason,
             BuildEscalateDetails("no-completion-signal", reason,
                 CountPriorReissues(workspace, entry.Name, current.Id)));
+
+        // The status stub is the card's own summary. Give it the withheld list
+        // so the operator sees WHICH files are waiting, not only how many.
+        if (withheldDetail.Length > 0)
+        {
+            _humanReviewEscalation?.WriteStatusStub(
+                escalatedFolder ?? string.Empty,
+                HumanReviewEscalationCategories.NoCompletionSignal, reason, withheldDetail);
+        }
 
         AppendReviewDecision(workspace, new ReviewDecisionRecord(
             CreatedAt: DateTime.UtcNow,

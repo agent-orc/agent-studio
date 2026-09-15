@@ -483,6 +483,19 @@ public sealed class HumanReviewEscalation
         return sb.ToString();
     }
 
+    /// <summary>
+    /// Status half only, no journal append. AGT-2828: the deterministic
+    /// no-completion-signal escalate path writes its own decision record, so it
+    /// needs the Result scaffold - with the withheld-candidate detail - without
+    /// a second Escalate row in the journal. Keeps the never-clobber-a-real-
+    /// summary guard of the shared writer.
+    /// </summary>
+    public void WriteStatusStub(string folderPath, string category, string reason, string? detail = null)
+    {
+        if (string.IsNullOrWhiteSpace(folderPath)) return;
+        WriteStatusStubIfMissing(folderPath, category, reason, detail);
+    }
+
     private void WriteStatusStubIfMissing(
         string folderPath, string category, string reason, string? detail = null)
     {

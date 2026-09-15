@@ -15,6 +15,14 @@ public static class CommitGateDecisions
 
 public static class CommitGateSeverities
 {
+    /// <summary>
+    /// Recorded for the operator, never for the decision. An informational
+    /// finding leaves <see cref="CommitGateResult.CanCommit"/> and the decision
+    /// untouched, so the gate can explain WHY a candidate needed no manual
+    /// review (AGT-2828: declared evidence assets) without turning the
+    /// explanation into a pause.
+    /// </summary>
+    public const string Info = "info";
     public const string Warning = "warning";
     public const string Block = "block";
 }
@@ -69,7 +77,8 @@ public sealed record CommitGateRequest(
     string? ExpectedBranch = null,
     bool ExplicitlyReviewed = false,
     string? EvidenceDirectory = null,
-    bool RequireExplicitPaths = false);
+    bool RequireExplicitPaths = false,
+    IReadOnlyCollection<string>? EvidenceAssetPaths = null);
 
 public sealed class CommitBoundIndex : IDisposable
 {
@@ -283,9 +292,18 @@ public sealed class CommitCandidateGate
             }
             if (binary)
             {
-                findings.Add(new CommitGateFinding(
-                    "binary-surprise", CommitGateSeverities.Warning, normalized,
-                    "Binary candidate requires explicit review.", "policy"));
+                // AGT-2828: a screenshot the task was told to produce, under a
+                // path the project declared for assets, is the deliverable, not
+                // a surprise. Everything outside that narrow rule keeps the
+                // manual-review pause.
+                var asset = EvidenceAssetPolicy.Decide(normalized, size, request.EvidenceAssetPaths);
+                findings.Add(asset.Admitted
+                    ? new CommitGateFinding(
+                        EvidenceAssetCodes.Admitted, CommitGateSeverities.Info, normalized,
+                        asset.Message, "policy")
+                    : new CommitGateFinding(
+                        "binary-surprise", CommitGateSeverities.Warning, normalized,
+                        $"Binary candidate requires explicit review ({asset.Code}).", "policy"));
             }
 
             foreach (var scanner in _scanners)

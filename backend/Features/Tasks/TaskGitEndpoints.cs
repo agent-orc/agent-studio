@@ -52,6 +52,37 @@ public static class TaskGitEndpoints
                 : Results.BadRequest(new { error = result.Error });
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
 
+        // AGT-2828: what the commit candidate gate withheld from this card, and
+        // why. Read-only projection of the durable marker in the job folder, so
+        // the parked card can name the files instead of only the count.
+        group.MapGet("/{jobId}/git/withheld-candidates", (string jobId, string? project, string? watchPath, TaskScannerService scanner, AgentStudio.Registry.ProjectRegistry projects) =>
+        {
+            watchPath = ResolveWatchPath(projects, project, watchPath);
+            var info = scanner.FindJob(jobId, watchPath);
+            if (info == null) return Results.NotFound();
+            var record = WithheldCommitCandidateStore.TryRead(info.FolderPath);
+            return Results.Ok(new
+            {
+                withheld = record?.Count ?? 0,
+                nothingCommitted = record?.NothingCommitted ?? false,
+                decision = record?.Decision,
+                candidates = record?.Candidates ?? [],
+            });
+        });
+
+        // The operator action that ends the WEB-21 failure: after reviewing the
+        // list above, commit it. The gate re-inspects the exact bytes and still
+        // refuses anything that BLOCKS - explicit review clears warnings, never
+        // secret material.
+        group.MapPost("/{jobId}/git/withheld-candidates/commit", (string jobId, string? project, string? watchPath, CommitWithheldCandidatesRequest? req, GitService git, AgentStudio.Registry.ProjectRegistry projects) =>
+        {
+            watchPath = ResolveWatchPath(projects, project, watchPath);
+            var result = git.CommitWithheldCandidates(jobId, watchPath, req?.Message, req?.Paths);
+            return result.Success
+                ? Results.Ok(new { sha = result.Sha, committed = result.Gate?.IncludedPaths ?? [] })
+                : Results.BadRequest(new { error = result.Error });
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
+
         group.MapPost("/{jobId}/git/generate-message", async (string jobId, string? project, string? watchPath, GitService git, AgentStudio.Registry.ProjectRegistry projects, CancellationToken ct) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
