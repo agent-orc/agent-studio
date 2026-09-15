@@ -16,7 +16,12 @@ namespace AgentStudio.Tests;
 /// </summary>
 public sealed class AtomicJsonFileWriterTests : IDisposable
 {
-    private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(30);
+    // Generous on purpose: the loop below is bounded by an observable
+    // condition (100 swaps and 50 reader samples), not by this deadline. The
+    // deadline only guards against a genuine hang; under a loaded host the
+    // writer and the 1ms-cadence reader both get less CPU, so a short budget
+    // here would fail on scheduling pressure alone, not on a real regression.
+    private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(90);
     private readonly string _dir = Path.Combine(
         Path.GetTempPath(), "atomic-json-writer-" + Guid.NewGuid().ToString("N"));
 

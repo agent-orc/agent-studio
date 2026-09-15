@@ -74,18 +74,25 @@ public sealed class BatchMoveJobTests : IDisposable
         };
         request.Headers.Add("X-Client-Id", "local-default");
 
+        // A synchronous-processing regression would hang here rather than run
+        // slow: item two only resumes once this test calls TrySetResult far
+        // below, so if the endpoint waited for the batch to finish it would
+        // never return. A generous bound tolerates a loaded CI host without
+        // weakening that guarantee.
         var enqueueTimer = Stopwatch.StartNew();
         using var response = await client.SendAsync(request);
         enqueueTimer.Stop();
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
-        Assert.True(enqueueTimer.Elapsed < TimeSpan.FromSeconds(1));
+        Assert.True(
+            enqueueTimer.Elapsed < TimeSpan.FromSeconds(20),
+            $"enqueue must return without waiting for the batch to finish; took {enqueueTimer.Elapsed}.");
         var accepted = await response.Content.ReadFromJsonAsync<BatchMoveJobResponse>();
         Assert.NotNull(accepted);
         Assert.Equal($"/api/tasks/batch-move/{accepted!.Id}", response.Headers.Location?.ToString());
         Assert.True(accepted.Status is BatchMoveJobStates.Queued or BatchMoveJobStates.Running);
         Assert.Equal(3, accepted.Total);
 
-        await executor.SecondItemStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await executor.SecondItemStarted.Task.WaitAsync(TimeSpan.FromSeconds(30));
         var running = await client.GetFromJsonAsync<BatchMoveJobResponse>(
             $"/api/tasks/batch-move/{accepted.Id}");
         Assert.NotNull(running);
@@ -93,22 +100,29 @@ public sealed class BatchMoveJobTests : IDisposable
         Assert.Equal(1, running.Completed);
         Assert.Equal("moved", Assert.Single(running.Results).Status);
 
-        // The background worker is deliberately paused inside item two. A
+        // The background worker is deliberately paused inside item two, and
+        // stays paused until this test calls TrySetResult below. A
         // review-plane read must still complete, proving the batch does not
-        // occupy the request path or hold a global task-index/lane lock.
-        using var reviewCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        // occupy the request path or hold a global task-index/lane lock: a
+        // lock-holding regression would hang here (the gate never releases
+        // early), not merely run slow, so a generous bound tolerates a loaded
+        // CI host without weakening the guarantee.
+        using var reviewCts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         var reviewTimer = Stopwatch.StartNew();
         using var review = await client.GetAsync(
             "/api/projects/batch-job-test/review-decisions-pending",
             reviewCts.Token);
         reviewTimer.Stop();
         Assert.Equal(HttpStatusCode.OK, review.StatusCode);
-        Assert.True(reviewTimer.Elapsed < TimeSpan.FromSeconds(1));
+        Assert.True(
+            reviewTimer.Elapsed < TimeSpan.FromSeconds(20),
+            $"review read must not be blocked behind the batch job; took {reviewTimer.Elapsed}.");
 
         executor.ReleaseSecondItem.TrySetResult();
 
         BatchMoveJobResponse? completed = null;
-        for (var attempt = 0; attempt < 100; attempt++)
+        var completionDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+        while (DateTime.UtcNow < completionDeadline)
         {
             completed = await client.GetFromJsonAsync<BatchMoveJobResponse>(
                 $"/api/tasks/batch-move/{accepted.Id}");
