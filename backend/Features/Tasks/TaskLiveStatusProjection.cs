@@ -155,9 +155,30 @@ public sealed class TaskLiveStatusProjection(
             var position = reviewQueue.PositionOf(job.ProjectName, job.Id);
             if (position.HasValue)
                 return new TaskLiveQueue { Kind = "review", Position = position.Value };
+
+            // Between two post-processing passes a deferred card has left the
+            // local slot queue (it has no Position) but is not actually idle -
+            // it is waiting out its backoff, most commonly for the canonical
+            // remote review executor to claim it. Naming that wait keeps the
+            // card from reading as an unexplained empty queue (AGT-2842).
+            var wait = reviewQueue.WaitStateOf(job.ProjectName, job.Id);
+            if (wait is not null)
+                return new TaskLiveQueue { Kind = "review", Reason = DescribeWait(wait) };
         }
 
         return null;
+    }
+
+    private static string DescribeWait(AutoReviewQueueWaitState wait)
+    {
+        if (string.Equals(
+                wait.Reason, PostProcessingCardResult.AwaitingCanonicalReviewExecutor, StringComparison.Ordinal))
+        {
+            return string.IsNullOrWhiteSpace(wait.Detail)
+                ? "waiting for review executor"
+                : $"waiting for review executor: {wait.Detail}";
+        }
+        return $"waiting to retry ({wait.Reason})";
     }
 
     private static string? NonBlank(string? value) =>

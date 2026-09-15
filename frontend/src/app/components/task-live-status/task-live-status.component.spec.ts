@@ -98,6 +98,25 @@ describe('TaskLiveStatusComponent', () => {
     expect(fixture.nativeElement.textContent).toContain('Requirement fit');
   });
 
+  it('names the wait reason instead of an empty queue when no slot position is known', () => {
+    fixture.componentRef.setInput('task', task({
+      liveStatus: {
+        attempt: 1,
+        activeStep: null,
+        nextSteps: [],
+        queue: {
+          kind: 'review',
+          reason: 'waiting for review executor: agent-runner-01-review is registered and active',
+        },
+        latestEventAt: new Date().toISOString(),
+      },
+    }));
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).toContain(
+      'Waiting for review slot · waiting for review executor: agent-runner-01-review is registered and active');
+  });
+
   it('keeps detail status to compact CURRENT and NEXT rows', () => {
     fixture.componentRef.setInput('variant', 'detail');
     fixture.componentRef.setInput('task', task({

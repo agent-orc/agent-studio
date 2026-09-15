@@ -1676,7 +1676,10 @@ export interface TaskLiveStepPreview {
 
 export interface TaskLiveQueue {
   kind: 'runner' | 'review' | string;
-  position: number;
+  /** One-based slot position. Absent while waiting between passes; see `reason`. */
+  position?: number | null;
+  /** Human-readable reason there is no `position`, e.g. "waiting for review executor: ...". */
+  reason?: string | null;
 }
 
 export interface TaskLiveStatus {

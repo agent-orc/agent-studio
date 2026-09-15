@@ -7,6 +7,8 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 using Xunit;
 
+using Contract = AgentStudio.TaskServer.Contracts;
+
 namespace AgentStudio.Tests;
 
 public sealed class AutoReviewPostProcessingWorkerTests : IDisposable
@@ -347,6 +349,158 @@ public sealed class AutoReviewPostProcessingWorkerTests : IDisposable
         Assert.Equal(
             AutoReviewPostProcessingWorker.DeferralRetryMaxDelay,
             AutoReviewPostProcessingWorker.DeferralRetryDelay(99));
+    }
+
+    [Fact]
+    public void DeferralRetryDelay_HonorsAnExplicitLowerCap()
+    {
+        // AGT-2842: the canonical-review-executor wait uses a tighter cap than
+        // the generic ten-minute backoff while an executor is registered.
+        Assert.Equal(
+            TimeSpan.FromSeconds(30),
+            AutoReviewPostProcessingWorker.DeferralRetryDelay(0, AutoReviewPostProcessingWorker.CanonicalReviewExecutorRegisteredMaxDelay));
+        Assert.Equal(
+            AutoReviewPostProcessingWorker.CanonicalReviewExecutorRegisteredMaxDelay,
+            AutoReviewPostProcessingWorker.DeferralRetryDelay(1, AutoReviewPostProcessingWorker.CanonicalReviewExecutorRegisteredMaxDelay));
+        Assert.Equal(
+            AutoReviewPostProcessingWorker.CanonicalReviewExecutorRegisteredMaxDelay,
+            AutoReviewPostProcessingWorker.DeferralRetryDelay(4, AutoReviewPostProcessingWorker.CanonicalReviewExecutorRegisteredMaxDelay));
+    }
+
+    [Fact]
+    public void ResolveReviewExecutorAvailability_RegisteredExecutor_CapsTheEffectiveDelayAtSixtySeconds()
+    {
+        // Regression for AGT-2842: without a registered executor, attempt 4 of
+        // this reason computes the generic 480s step of the ten-minute-capped
+        // schedule (30,60,120,240,480,...). With one registered, the resolved
+        // cap must bring that down to 60s so the card - and its liveStatus
+        // queue reason - keep re-checking at least once a minute instead of
+        // going quiet for minutes at a time.
+        var deps = BuildDeps();
+        var registry = new V1ReviewExecutorRegistry();
+        registry.Register("agent-runner-01-review", new Contract.RegisterRunnerRequest(
+            "agent-runner-01-review",
+            "review-host",
+            "review-host:1",
+            "1.0.0",
+            Contract.TaskServerProtocol.Current,
+            [Contract.ReviewCapabilities.ReviewExecutor]));
+        var worker = new AutoReviewPostProcessingWorker(
+            deps.Queue,
+            deps.Orchestrator,
+            deps.Scanner,
+            deps.Mutations,
+            deps.Configuration,
+            NullLogger<AutoReviewPostProcessingWorker>.Instance,
+            registry);
+
+        var availability = worker.ResolveReviewExecutorAvailability(
+            PostProcessingCardResult.AwaitingCanonicalReviewExecutor);
+        Assert.NotNull(availability);
+        Assert.True(availability!.AnyRegistered);
+
+        var uncapped = AutoReviewPostProcessingWorker.DeferralRetryDelay(4);
+        var capped = AutoReviewPostProcessingWorker.DeferralRetryDelay(
+            4, AutoReviewPostProcessingWorker.CanonicalReviewExecutorRegisteredMaxDelay);
+
+        Assert.Equal(TimeSpan.FromSeconds(480), uncapped);
+        Assert.Equal(AutoReviewPostProcessingWorker.CanonicalReviewExecutorRegisteredMaxDelay, capped);
+    }
+
+    [Fact]
+    public void ResolveReviewExecutorAvailability_NoRegistry_ReturnsNullAndKeepsTheGenericCap()
+    {
+        var deps = BuildDeps();
+        var worker = BuildWorker(deps, maxParallelism: 1);
+
+        var availability = worker.ResolveReviewExecutorAvailability(
+            PostProcessingCardResult.AwaitingCanonicalReviewExecutor);
+
+        Assert.Null(availability);
+    }
+
+    [Fact]
+    public void ResolveReviewExecutorAvailability_UnrelatedReason_NeverConsultsTheRegistry()
+    {
+        var deps = BuildDeps();
+        var registry = new V1ReviewExecutorRegistry();
+        registry.Register("agent-runner-01-review", new Contract.RegisterRunnerRequest(
+            "agent-runner-01-review",
+            "review-host",
+            "review-host:1",
+            "1.0.0",
+            Contract.TaskServerProtocol.Current,
+            [Contract.ReviewCapabilities.ReviewExecutor]));
+        var worker = new AutoReviewPostProcessingWorker(
+            deps.Queue,
+            deps.Orchestrator,
+            deps.Scanner,
+            deps.Mutations,
+            deps.Configuration,
+            NullLogger<AutoReviewPostProcessingWorker>.Instance,
+            registry);
+
+        var availability = worker.ResolveReviewExecutorAvailability("card-already-in-flight");
+
+        Assert.Null(availability);
+    }
+
+    [Fact]
+    public void ApplyOutcome_CanonicalReviewExecutorDeferral_ExposesTheWaitReasonOnTheQueue()
+    {
+        SeedNoOpReviewJob("named-wait-task");
+        var deps = BuildDeps();
+        var registry = new V1ReviewExecutorRegistry();
+        registry.Register("agent-runner-01-review", new Contract.RegisterRunnerRequest(
+            "agent-runner-01-review",
+            "review-host",
+            "review-host:1",
+            "1.0.0",
+            Contract.TaskServerProtocol.Current,
+            [Contract.ReviewCapabilities.ReviewExecutor]));
+        var worker = new AutoReviewPostProcessingWorker(
+            deps.Queue,
+            deps.Orchestrator,
+            deps.Scanner,
+            deps.Mutations,
+            deps.Configuration,
+            NullLogger<AutoReviewPostProcessingWorker>.Instance,
+            registry);
+        worker.DeferralDelayOverride = _ => TimeSpan.FromHours(1);
+
+        worker.ApplyOutcome(
+            Request("named-wait-task"),
+            PostProcessingCardResult.Deferred(PostProcessingCardResult.AwaitingCanonicalReviewExecutor),
+            CancellationToken.None);
+
+        // The card left `_pending` (PositionOf is null) but the wait is named
+        // instead of reading as an unexplained empty queue.
+        Assert.Null(deps.Queue.PositionOf(Project, "named-wait-task"));
+        var wait = deps.Queue.WaitStateOf(Project, "named-wait-task");
+        Assert.NotNull(wait);
+        Assert.Equal(PostProcessingCardResult.AwaitingCanonicalReviewExecutor, wait!.Reason);
+        Assert.Contains("agent-runner-01-review", wait.Detail);
+    }
+
+    [Fact]
+    public void ApplyOutcome_CanonicalReviewExecutorDeferral_WithoutARegisteredExecutor_KeepsTheGenericBackoff()
+    {
+        // The counter-example: with no registry wired in (production default
+        // when a project never runs Remote Review) or no executor registered,
+        // the generic ten-minute-capped exponential backoff still applies.
+        SeedNoOpReviewJob("uncapped-task");
+        var deps = BuildDeps();
+        var worker = BuildWorker(deps, maxParallelism: 1);
+        worker.DeferralDelayOverride = _ => TimeSpan.FromHours(1);
+
+        worker.ApplyOutcome(
+            Request("uncapped-task") with { Attempt = 2 },
+            PostProcessingCardResult.Deferred(PostProcessingCardResult.AwaitingCanonicalReviewExecutor),
+            CancellationToken.None);
+
+        var wait = deps.Queue.WaitStateOf(Project, "uncapped-task");
+        Assert.NotNull(wait);
+        Assert.Null(wait!.Detail);
     }
 
     /// <summary>Puts a card's lifecycle into the active post-processing state.</summary>
