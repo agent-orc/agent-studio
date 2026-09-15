@@ -44,26 +44,39 @@ public sealed class PreDevelopBuildGate
     /// Verifies <paramref name="request"/>'s exact subject. The level is pinned
     /// to work-package for a known frontend diff and build-only otherwise, so
     /// lane configuration cannot turn this into the promotion-only full suite.
+    /// <paramref name="reuseRemoteReviewVerdict"/> drops it one further step to
+    /// compile-only (AGT-2839): the merge result still has to compile, but the
+    /// tests and lint were just run on exactly this content by the Remote
+    /// Review. Only <see cref="MergeIntoDevelopRunner"/> sets it, and only after
+    /// <see cref="IntegrationGateReusePolicy"/> proved the base is unchanged.
     /// </summary>
     public Task<BuildTestGateResult> RunAsync(
         BuildTestGateRequest request,
         IReadOnlyList<string> changedFiles,
         BuildProfile? profile,
         TimeSpan timeout,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool reuseRemoteReviewVerdict = false)
         => _runner.RunAsync(
             request with
             {
                 RequireExactSubject = true,
-                RequiredTestLevel = FrontendWorkPackagePlanner.TouchesFrontend(changedFiles)
-                    ? TestExecutionLevels.WorkPackage
-                    : TestExecutionLevels.BuildOnly,
+                RequiredTestLevel = LevelFor(changedFiles, reuseRemoteReviewVerdict),
             },
             changedFiles,
             profile,
             PostStepMode.Fail,
             timeout,
             ct);
+
+    internal static string LevelFor(
+        IReadOnlyList<string>? changedFiles,
+        bool reuseRemoteReviewVerdict)
+        => reuseRemoteReviewVerdict
+            ? TestExecutionLevels.CompileOnly
+            : FrontendWorkPackagePlanner.TouchesFrontend(changedFiles)
+                ? TestExecutionLevels.WorkPackage
+                : TestExecutionLevels.BuildOnly;
 
     /// <summary>
     /// The gate is green on <see cref="BuildTestGateVerdict.Ok"/> and on

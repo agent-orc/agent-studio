@@ -77,6 +77,23 @@ public class ProjectSettingsService
         }
     }
 
+    /// <summary>
+    /// AGT-2839: may the local integration gate stand on the Remote Review
+    /// verdict on an unchanged merge base? Null clears the override and falls
+    /// back to <see cref="IntegrationGateReusePolicy.IsEnabled"/>.
+    /// </summary>
+    public void SetIntegrationGateReviewReuse(string projectName, bool? enabled)
+    {
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var s) ? s : new ProjectSettings();
+            _cache[key] = current with { IntegrationGateReviewReuse = enabled };
+            Persist();
+        }
+    }
+
     public void SetAutoPushStrategy(string projectName, string strategy)
     {
         EnsureLoaded();
