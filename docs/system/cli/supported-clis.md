@@ -174,6 +174,28 @@ explicitly admits `CLAUDE_CODE_OAUTH_TOKEN` from the process environment after
 clean-context preparation. Credential paths are never an authentication source;
 the optional native-file read is freshness metadata only.
 
+**Probe isolation (AGT-2823).** The idle probe must never share config or
+session context with an active coding run: the composition root
+([`runner/Program.cs`](../../../runner/Program.cs)) gives each provider its own
+stable [`TaskCleanContextStore`](../../../cli-hosting/TaskCleanContextStore.cs)
+home, keyed by the fixed identity `ProviderAuthProbe.CleanContextIdentity`
+rather than a task id, and runs the status command with that home's directory
+as both `CLAUDE_CONFIG_DIR`/`CODEX_HOME` and the working directory. The OAuth
+credential is linked in (so a refresh still writes through to the operator's
+real token) but no project transcript or run history ever reaches it, so the
+probe can never read back another run's session JSONL by sharing a
+`<home>/projects/<cwd>` bucket. As defense in depth,
+[`ProviderAuthProbe.Interpret`](../../../runner/RunnerCapabilityProbe.cs)
+recognizes the shape of a Claude `stream-json` frame
+(`"type":"user"|"assistant"|"system"|"result"|"tool_use"|"tool_result"`) in the
+raw process output and classifies it as indeterminate with a fixed, sanitized
+detail before the shared `ProviderAccessClassifier` ever sees it, so a leaked
+frame can neither be misread as a logout signal nor echo agent content into the
+advertised capability detail. [`ProviderAuthProbeTests`](../../../runner.Tests/ProviderAuthProbeTests.cs)
+pins both: `Leaked_agent_stream_json_frame_is_indeterminate_and_never_leaks_content`
+feeds a captured `tool_result` frame through the classifier and asserts neither
+a logout signal nor the raw content survives.
+
 Execution Hosts renders `OK`, `Retrying`, `Limited`, `Expiring`, `Unavailable`,
 or `Unknown` for each advertised CLI and exposes the probe detail as a tooltip.
 Provider-auth state changes are retained in capability recovery history. Only

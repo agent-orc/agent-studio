@@ -232,6 +232,41 @@ public sealed class ProviderAuthProbeTests
         Assert.DoesNotContain("sk-ant-api03", status.Detail, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// AGT-2823: an isolation gap let the idle probe's stdout pick up a
+    /// stream-json frame from a real, concurrently running agent session
+    /// instead of a `claude auth status --text` answer. The fragment's text
+    /// (a tool_result carrying "Exit code 2" and a `git log` line mentioning
+    /// "timeouts") is exactly what accidentally matched the transient-signal
+    /// list and produced the reported `outcome=transient` log line. The fix
+    /// must recognise the stream-json shape before classification runs, so a
+    /// leaked frame is never read as a logout signal and never echoed back
+    /// verbatim in the advertised detail.
+    /// </summary>
+    [Fact]
+    public async Task Leaked_agent_stream_json_frame_is_indeterminate_and_never_leaks_content()
+    {
+        const string leakedFrame =
+            "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\"," +
+            "\"content\":\"Exit code 2\\nb5c278564 fix(frontend-tests): raise Vitest test and hook " +
+            "timeouts to 30 s\\ndfc478ad7 fix(prepare): give the Windows preparation run the " +
+            "environment NuGet, npm and MSBuild need\"}]}}";
+        var probe = Probe(Answers(1, leakedFrame));
+
+        var first = await probe.RefreshAsync("claude", CancellationToken.None);
+        var second = await probe.RefreshAsync("claude", CancellationToken.None);
+
+        foreach (var status in new[] { first, second })
+        {
+            Assert.Equal(ProviderAuthProbe.Ready, status.Status);
+            Assert.True(status.ProbeDegraded);
+            Assert.NotEqual(ProviderAuthProbe.SignalSignedOut, status.Signal);
+            Assert.DoesNotContain("tool_result", status.Detail, StringComparison.Ordinal);
+            Assert.DoesNotContain("b5c278564", status.Detail, StringComparison.Ordinal);
+            Assert.DoesNotContain("Exit code 2", status.Detail, StringComparison.Ordinal);
+        }
+    }
+
     [Fact]
     public async Task Empty_success_output_is_indeterminate_and_does_not_erase_last_good()
     {
