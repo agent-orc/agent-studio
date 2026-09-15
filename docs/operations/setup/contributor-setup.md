@@ -198,6 +198,48 @@ changed to run `npm install`, it must remove `frontend/.angular/cache` after the
 install and before starting the frontend, for the same in-place dependency
 patch reason as the Stable updater.
 
+The frontend must be supervised, not started once and left. An unsupervised
+`ng serve` that dies (uncaught exception, OOM, a harness sweep) previously
+left the Stable UI answering `000` with no notice until an operator happened
+to notice and restart it by hand. `start.sh` / `start-stable.sh` must launch
+the frontend through
+[`scripts/frontend-watchdog.sh`](../../../scripts/frontend-watchdog.sh)
+instead of invoking `npm start` / `ng serve` directly, for example:
+
+```sh
+scripts/frontend-watchdog.sh --cwd frontend --log-dir frontend \
+  -- npm start -- --port "$FRONTEND_PORT"
+```
+
+The watchdog restarts a crashed frontend with exponential backoff, logs each
+restart with the child's exit code and the last lines of its own log
+(`frontend.log` in `--log-dir`), and gives up loudly (non-zero exit, a
+`giving up after N consecutive fast crashes` message) after repeated fast
+crashes instead of looping forever. It only supervises the frontend; backend
+start is unaffected and still goes through `api.sh`.
+
+Wire it in per the existing `DETACH` convention (`scripts/update-stable.sh`
+already sets `DETACH=1` when it calls `$start_script`):
+
+- Under `DETACH=1`, background the watchdog itself (a plain `&` plus
+  `disown` is enough; the watchdog does its own child process-group
+  management) so the wrapper can return as soon as the watchdog has taken
+  over, while `scripts/update-stable.sh`'s separate frontend boot probe
+  confirms the port actually comes up.
+- Without `DETACH`, `exec` the watchdog as the wrapper's last statement
+  rather than calling it as a plain foreground command. `exec` replaces the
+  wrapper's own process with the watchdog, so a single interactive stop
+  signal (Ctrl+C / SIGTERM) sent to the wrapper's PID reaches the watchdog
+  directly. A plain (non-`exec`) foreground call leaves the watchdog as a
+  child that is not signalled when the wrapper dies, which orphans the
+  frontend instead of stopping it.
+
+Either way, `stop-stable.sh` / `stop-dev.sh` must stop the frontend by
+signalling the watchdog's own PID (`<log-dir>/.frontend-watchdog.pid`), not
+by searching for `ng serve` directly, so a stop cannot race a pending
+restart. Proof, including the exec-vs-plain-call distinction above:
+[`scripts/test-frontend-watchdog.sh`](../../../scripts/test-frontend-watchdog.sh).
+
 `start.sh` / `start-stable.sh` must not run under a bare `set -e` against
 `api.sh start`'s exit code (AGT-2830). A cold `dotnet run` compile can take a
 couple of minutes, and on Windows Git Bash the launcher PID `api.sh` tracks is
