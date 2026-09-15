@@ -345,7 +345,7 @@ public sealed class GitWorkspaceTests : IDisposable
     }
 
     [Fact]
-    public async Task Correct_push_with_missing_sentinel_builds_verified_out_of_band_completion()
+    public async Task Correct_push_with_missing_sentinel_is_reported_as_an_incident()
     {
         await SeedOriginAsync();
         var workspace = CreateProjectWorkspace(_origin);
@@ -361,7 +361,7 @@ public sealed class GitWorkspaceTests : IDisposable
                 "refs/heads/runner/runner-test/QS-30",
                 localHead),
             result.DeliveryProof);
-        var request = RemoteTaskRunner.BuildVerifiedOutOfBandRequest(
+        var incident = RemoteTaskRunner.MissingSentinelIncidentFor(
             new RunOutcome(RunOutcomeKind.Unknown, "terminal sentinel missing"),
             ExecutionOutcomeAdapter.Classify(new ExecutionRawFacts(
                 "run-test",
@@ -371,11 +371,10 @@ public sealed class GitWorkspaceTests : IDisposable
             result,
             workspace.BaseSha,
             "runner-test");
-        Assert.NotNull(request);
-        Assert.Contains(localHead, request!.Summary);
-        Assert.Contains(
-            request.Deliverables!,
-            item => item.Path == $"refs/heads/runner/runner-test/QS-30@{localHead}");
+        Assert.NotNull(incident);
+        Assert.Contains(localHead, incident!.Reason);
+        Assert.Contains($"refs/heads/runner/runner-test/QS-30@{localHead}", incident.GateItem);
+        Assert.Contains(MissingSentinelIncidentPolicy.GateKey, incident.GateItem);
     }
 
     [Fact]

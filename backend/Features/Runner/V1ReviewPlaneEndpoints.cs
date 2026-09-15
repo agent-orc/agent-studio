@@ -174,6 +174,7 @@ public static class V1ReviewPlaneEndpoints
             string runnerId,
             Contract.CapabilityAdvertisementRequest request,
             V1ReviewExecutorRegistry registry,
+            AdaptiveReviewParallelismAdvisor reviewParallelism,
             AgentStudio.Clients.ClientIdentityStore clients) =>
         {
             if (!RunnerMatches(context, runnerId))
@@ -186,6 +187,18 @@ public static class V1ReviewPlaneEndpoints
             {
                 var snapshot = registry.AdvertiseCapabilities(runnerId, request);
                 clients.RecordSeen(runnerId);
+                // AGT-2820: the review plane's parallelism recommendation used to
+                // be an unread number on a diagnostics endpoint - it answered
+                // "2" while four reviews deadlocked the host. It now rides the
+                // minutely capability advertisement as the role ceiling, the way
+                // the coding runner already adopts its central capacity.
+                if (registry.TryGetReviewExecutor(runnerId, request.InstanceId, out _))
+                {
+                    snapshot = snapshot with
+                    {
+                        RoleMaxParallelism = reviewParallelism.Current.RecommendedParallelism,
+                    };
+                }
                 return Results.Ok(snapshot);
             }
             catch (ArgumentException exception)

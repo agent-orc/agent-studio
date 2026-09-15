@@ -1016,6 +1016,72 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// AGT-2820: four concurrent reviews sat on the same <c>dotnet test</c> at
+    /// 0.0% CPU with nothing written for ten minutes and a host load average of
+    /// 0.47. Each would have held its review slot for the full two-hour command
+    /// budget, so one stuck batch cost eight review-hours.
+    /// </summary>
+    [Fact]
+    public async Task A_command_that_goes_completely_silent_is_killed_long_before_its_budget()
+    {
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var command = new ReviewCommandDto(
+            "verify-2",
+            "build-tests",
+            PosixShell.RequirePath(),
+            ["-c", "echo working; sleep 600"],
+            TimeoutSeconds: 7200);
+        var (workspace, _) = Workspace(
+            "attempt-stalled",
+            subjectSha,
+            [command],
+            26160,
+            resultRef: "refs/heads/task/new-failure",
+            integrationRef: "refs/heads/main",
+            commandSilenceWatchdogSeconds: 2);
+        await workspace.PrepareAsync(null!, default);
+
+        var exception = await Assert.ThrowsAsync<ReviewInfrastructureException>(
+            () => workspace.ExecutePlanAsync(default));
+
+        Assert.Equal("CommandStalled", exception.Classification);
+        Assert.Contains("produced no output for", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("silence watchdog", exception.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The watchdog must never shorten a command that is still talking, and a
+    /// command whose own budget is tighter than the window keeps its budget.
+    /// </summary>
+    [Fact]
+    public async Task A_command_that_keeps_talking_is_left_alone_by_the_silence_watchdog()
+    {
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var command = new ReviewCommandDto(
+            "verify-2",
+            "build-tests",
+            PosixShell.RequirePath(),
+            ["-c", "for i in 1 2 3 4 5 6; do echo tick $i; sleep 1; done"],
+            TimeoutSeconds: 7200);
+        var (workspace, _) = Workspace(
+            "attempt-talking",
+            subjectSha,
+            [command],
+            26168,
+            resultRef: "refs/heads/task/new-failure",
+            integrationRef: "refs/heads/main",
+            commandSilenceWatchdogSeconds: 3);
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        Assert.Equal("Pass", evidence.Outcome);
+        var commandEvidence = CandidateVerification(evidence);
+        Assert.Equal(0, commandEvidence.ExitCode);
+        Assert.Null(commandEvidence.Signal);
+    }
+
     [Fact]
     public async Task An_unfetchable_integration_ref_is_reported_with_an_unresolved_base()
     {
@@ -1068,7 +1134,8 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         string? integrationRef = null,
         IReadOnlyList<ReviewPreparationCommandDto>? preparation = null,
         IReadOnlyList<string>? preserveGlobs = null,
-        string? codexCliBin = null)
+        string? codexCliBin = null,
+        int commandSilenceWatchdogSeconds = 600)
     {
         var repositoryId = TaskServerClient.RepositoryIdentity(_origin)!;
         var subject = new ReviewSubjectDto(
@@ -1119,6 +1186,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             CodexCliBin = codexCliBin ?? "codex",
             TtlSeconds = 120,
             HeartbeatSeconds = 30,
+            CommandSilenceWatchdogSeconds = commandSilenceWatchdogSeconds,
         };
         return (new RemoteReviewWorkspace(options, subject, lease, _ => { }), subject);
     }

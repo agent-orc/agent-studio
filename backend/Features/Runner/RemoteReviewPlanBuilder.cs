@@ -86,15 +86,22 @@ public sealed class RemoteReviewPlanBuilder
                 model,
                 PipelineStepConfigResolver.ResolvePrompt(settings, step.Id),
                 step.Id);
-            // AGT-2749: per-toolchain budget, not one flat number - a Claude
-            // aspect call regularly needs longer than a Codex one.
-            var timeoutSeconds = ReviewAspectTimeoutPolicy.SecondsFor(cliType, _configuration);
+            // AGT-2820: the budget is derived from the toolchain, the model, the
+            // thinking level, and the size of the prompt - not from a constant.
+            // The executor re-derives it once it has appended the authoritative
+            // diff, which is material this frozen prompt does not yet carry.
+            var budget = ReviewAspectTimeoutPolicy.Derive(
+                cliType,
+                model,
+                thinking,
+                Contract.ReviewAspectBudgetPolicy.MaterialCharacters(prompt),
+                _configuration);
             commands.Add(new Contract.ReviewCommandDto(
                 step.Id,
                 aspectId,
                 cliType,
                 [],
-                TimeoutSeconds: timeoutSeconds,
+                TimeoutSeconds: budget.Seconds,
                 ExecutionKind: Contract.ReviewCommandKinds.AgentAspect,
                 Prompt: prompt,
                 CliType: cliType,

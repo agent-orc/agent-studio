@@ -43,6 +43,7 @@ public sealed class TaskServerClient : IDisposable
     private long _lastHostReportSequence;
     private int? _centralHostMaxParallelism;
     private DateTime? _centralHostMaxParallelismAppliedAt;
+    private int? _roleMaxParallelism;
     private long? _centralRuntimeCapacityVersion;
     private readonly RuntimeCapacityCache? _runtimeCapacityCache;
 
@@ -996,12 +997,37 @@ public sealed class TaskServerClient : IDisposable
             generation,
             capabilities,
             telemetry);
-        _ = await SendJsonAsync<Contract.CapabilityAdvertisementRequest, Contract.RunnerCapabilitySnapshotDto>(
+        var snapshot = await SendJsonAsync<Contract.CapabilityAdvertisementRequest, Contract.RunnerCapabilitySnapshotDto>(
             HttpMethod.Put,
             $"/api/v1/runners/{Uri.EscapeDataString(options.RunnerId)}/capabilities",
             request,
             ct);
+        AdoptRoleMaxParallelism(snapshot?.RoleMaxParallelism);
     }
+
+    /// <summary>
+    /// AGT-2820: the review plane's own parallelism recommendation, adopted on
+    /// the minutely capability advertisement. This is the review counterpart of
+    /// <see cref="AdoptCentralMaxParallelism"/>: before it, the recommendation
+    /// was published on a diagnostics endpoint nothing consumed, and a review
+    /// host kept claiming up to its static RUNNER_MAX_PARALLELISM while the
+    /// product was already answering "2".
+    /// </summary>
+    private void AdoptRoleMaxParallelism(int? roleMaxParallelism)
+    {
+        if (roleMaxParallelism is not (>= 1 and <= 256)) return;
+        _roleMaxParallelism = roleMaxParallelism;
+    }
+
+    /// <summary>
+    /// Slots this host may run for its role. The adopted recommendation wins over
+    /// the bootstrap RUNNER_MAX_PARALLELISM; an active slot is never cancelled by
+    /// a lowered ceiling, it only stops new claims (see ReviewSlotAdmissionPolicy).
+    /// </summary>
+    internal int RoleMaxParallelism => Math.Clamp(
+        _roleMaxParallelism ?? _options?.HostMaxParallelism ?? 1,
+        1,
+        256);
 
     public async Task<Contract.HostCliUpdateDto?> GetCliUpdateAsync(CancellationToken ct)
     {
@@ -1374,7 +1400,10 @@ public sealed class TaskServerClient : IDisposable
                 IdempotencyKey: req.IdempotencyKey,
                 OutcomeDecision: req.OutcomeDecision,
                 NeedsInputMessage: req.NeedsInputMessage,
-                SalvageBranch: req.SalvageRecoveryBranch ?? req.SalvageBranch),
+                SalvageBranch: req.SalvageRecoveryBranch ?? req.SalvageBranch,
+                // AGT-2820: gate items are not legacy-only. A completion that
+                // names an incident must name it on both planes.
+                GateItems: req.GateItems),
             ct);
         _v1Leases.TryRemove(req.TaskKey, out _);
         _v1TaskBodies.TryRemove(req.TaskKey, out _);
@@ -1464,7 +1493,8 @@ public sealed class TaskServerClient : IDisposable
                         item.Sequence,
                         payload.OutcomeDecision,
                         payload.NeedsInputMessage,
-                        payload.SalvageBranch),
+                        payload.SalvageBranch,
+                        payload.GateItems),
                     ct);
                 _v1Leases.TryRemove(authority.TaskKey, out _);
                 _v1TaskBodies.TryRemove(authority.TaskKey, out _);
@@ -1525,40 +1555,6 @@ public sealed class TaskServerClient : IDisposable
         RemoteEpicPlanningPromptRequest req, CancellationToken ct)
         => await PostJsonAsync<RemoteEpicPlanningPromptRequest, RemoteEpicPlanningPromptResponse>(
             "/api/runner/epic-planning-prompt", req, ct);
-
-    public async Task<ExternalCompletionResponse?> CompleteAsync(string jobId, ExternalCompletionRequest req, CancellationToken ct)
-    {
-        if (_useV1)
-        {
-            var authority = V1Authority(jobId);
-            var detail = JsonSerializer.Serialize(req, Json);
-            await PostJsonAsync<Contract.EventIngestRequest, Contract.EventDto>(
-                $"/api/v1/runs/{Uri.EscapeDataString(authority.RunId)}/events",
-                new Contract.EventIngestRequest(
-                    $"evt_{Guid.NewGuid():N}",
-                    "runner.escalation",
-                    detail,
-                    $"runner-escalation:{authority.RunId}:{Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(detail)))[..16]}",
-                    authority.Lease.FencingToken),
-                ct);
-            _ = await PostJsonAsync<Contract.CompleteRunRequest, Contract.RunDto>(
-                $"/api/v1/runs/{Uri.EscapeDataString(authority.RunId)}/completion",
-                new Contract.CompleteRunRequest(
-                    authority.Lease.RunnerId,
-                    authority.InstanceId,
-                    authority.Lease.LeaseId,
-                    authority.Lease.FencingToken,
-                    "blocked",
-                    req.Summary),
-                ct);
-            _v1Leases.TryRemove(jobId, out _);
-            _v1TaskBodies.TryRemove(jobId, out _);
-            _hostAcceptedWork.TryRemove(jobId, out _);
-            return new ExternalCompletionResponse(jobId, "4-auto-review", req.Source);
-        }
-        return await PostJsonAsync<ExternalCompletionRequest, ExternalCompletionResponse>(
-            $"/api/tasks/{Uri.EscapeDataString(jobId)}/external-completion", req, ct);
-    }
 
     /// <summary>Fetch a text file from the task's job folder, e.g. prompt.md. Returns null on 404.</summary>
     public async Task<string?> ReadTaskFileAsync(string jobId, string relativePath, CancellationToken ct)

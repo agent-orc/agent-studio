@@ -198,4 +198,10 @@ public sealed record CompleteRunRequest(
     long? Sequence = null,
     ExecutionOutcomeDecision? OutcomeDecision = null,
     string? NeedsInputMessage = null,
-    string? SalvageBranch = null);
+    string? SalvageBranch = null,
+    // AGT-2820: board-visible incident lines for this completion. The legacy
+    // completion plane has carried them since AGT-2220; the durable plane
+    // dropped them, so a missing-terminal-sentinel incident reported through
+    // the outbox reached the card as prose only. Additive and optional: an
+    // older runner omits the field and the server records no gate item.
+    IReadOnlyList<string>? GateItems = null);

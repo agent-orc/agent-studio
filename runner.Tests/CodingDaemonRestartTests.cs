@@ -353,13 +353,16 @@ public sealed class CodingDaemonRestartTests : IDisposable
             return new LogIngestResponse(initialLease.TaskKey, 2);
         }
 
-        private ExternalCompletionResponse Complete()
+        private RemoteRunCompletionResponse Complete()
         {
             Completion.TrySetResult();
-            return new ExternalCompletionResponse(
-                JobId: initialLease.TaskKey,
+            // The shape the endpoint being faked actually returns; the runner's
+            // own duplicate external-completion wire records are gone (AGT-2820).
+            return new RemoteRunCompletionResponse(
+                TaskKey: initialLease.TaskKey,
+                Outcome: "Done",
                 TargetState: "4-auto-review",
-                Source: "remote-runner");
+                Message: "remote-runner");
         }
     }
 }

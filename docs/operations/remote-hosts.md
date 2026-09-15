@@ -259,6 +259,93 @@ corruption, or Task Server authority uncertainty. The UI labels it
 separately as **Operator-requested host drain**. Both block new claims, but
 neither kills an existing lease.
 
+## Review parallelism is advertised, not configured
+
+The same minutely capability advertisement carries the review plane's own
+recommended parallelism as `RoleMaxParallelism`, and the Review daemon claims
+against that number. `GET /api/runner/auto-review-parallelism-recommendation`
+reports the same advisor's recommendation, refreshed on request, so the two
+surfaces agree except across a refresh boundary. Before AGT-2820 the
+recommendation was published and nothing consumed it, so a host kept claiming
+up to its static `RUNNER_MAX_PARALLELISM` while the product was already
+answering `2`.
+
+`RUNNER_MAX_PARALLELISM` is therefore a bootstrap for Review as well as for
+Coding. It seeds the ceiling until the first advertisement is answered and
+remains the fallback for an older server. A file change does not replace the
+recommendation. Each adopted value is visible in the daemon journal:
+
+```bash
+journalctl -u agent-runner-review -n 200 --no-pager | grep 'review slot ceiling adopted'
+```
+
+A lowered ceiling stops new claims and never cancels an active review. Pin the
+environment value only to hold a host below the recommendation while an
+incident is open, and remove the pin afterwards. The systemd drop-in that
+pinned `RUNNER_MAX_PARALLELISM=2` during the 2026-09-14/15 incident is such a
+pin and can be removed once the host follows the recommendation.
+
+## Review budgets are derived from the model
+
+One review aspect call's wall-clock budget is derived, not configured flat:
+
+```text
+base(toolchain) * weight(model) * weight(thinking level) + material
+```
+
+clamped to 60 through 7200 seconds. The per-toolchain base is the budget a
+small, fast model needs for an aspect prompt with no appended material (Codex
+120 s, Claude 240 s, Gemini 180 s). The model weight follows the model class,
+not the generation: economy 1.0, mid 1.25, flagship 2.0, and an unrecognized
+model 1.5, deliberately above mid so a new flagship is not starved. The
+material term grants 0.5 s per 1000 characters of prompt plus appended review
+material and is capped at 600 s, so one enormous diff cannot buy an unbounded
+budget. Override a single toolchain's base with
+`ReviewDecisionOrchestrator:AspectTimeoutSeconds:<cliType>`; the derivation
+still applies on top of it.
+
+This is why routing cards to a strong model no longer requires knowing whether
+the reviewer can keep up. Before AGT-2820 the budget was a fixed two minutes for
+every model, so ten cards queued on `claude-opus-5` lost every review:
+`aspect-code-quality` consumed 122202 ms against a 120000 ms limit and was
+reported as a broken toolchain, while `aspect-requirement-fit` on the same model
+and attempt finished in 78020 ms and passed.
+
+A call that runs out of budget is reported as a budget violation naming the
+model and the limit (`violated review-command budget on model '<model>'`), so it
+is never read as a verdict about the change. A command that produces no output
+at all for `RUNNER_COMMAND_SILENCE_WATCHDOG_SECONDS` (default 600 s, engaged
+only when it is tighter than that command's budget) is killed as
+`CommandStalled` rather than holding its review slot for the rest of the budget.
+
+## Incident: missing terminal sentinel
+
+A run that delivers work but never emits its terminal sentinel is an incident,
+not a completion. The card carries a `missing-terminal-sentinel` gate item
+naming the host, the delivery ref and SHA, and the observed cause: an OOM kill,
+a signal, a host shutdown, a lost lease, an exceeded run budget, a transport or
+durable-output state, or a clean exit with no sentinel. The run is routed to
+`4-auto-review` so the delivery is graded, and the line is written so that it
+cannot be read as an acceptance.
+
+Both completion planes report it. On the durable v1 plane the incident rides
+`CompleteRunRequest.GateItems` to `POST /api/v1/runs/{runId}/completion` and is
+recorded on the run's `lifecycle.run-completed` event and its `run.completed`
+audit entry. The daemon logs it as:
+
+```text
+remote-runner-missing-terminal-sentinel task=<key> plane=durable ref=<ref> sha=<sha>; routing to review as an incident
+```
+
+Before AGT-2820 such a run was stamped "Completed out-of-band" into
+`5-human-review`, where the acceptance guard correctly refused it because the
+delivery is not in the integration branch, so the work was neither reviewed nor
+integrated and nothing on the card said so (AGT-2794, AGT-2817, AGT-2819).
+
+When the cause names a host kill under load, treat it as a symptom: check
+review parallelism, host load, and orphaned build processes before closing the
+incident.
+
 ## Provider auth
 
 Every host holds its own Claude and Codex session; never copy a credential

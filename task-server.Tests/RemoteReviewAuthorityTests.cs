@@ -43,7 +43,7 @@ public sealed class RemoteReviewAuthorityTests
         var subject = await SeedReviewSubjectAsync(store, plan: plan);
 
         Assert.Equal(
-            "dotnet test -maxcpucount:2 -p:ParallelizeTestCollections=false",
+            "dotnet test -maxcpucount:2 -nodeReuse:false -p:ParallelizeTestCollections=false",
             Assert.Single(subject.Plan.Commands).Arguments[1]);
     }
 
