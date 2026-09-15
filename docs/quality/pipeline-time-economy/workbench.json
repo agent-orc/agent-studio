@@ -18,9 +18,9 @@
   "review": {
     "verdict": "historical",
     "supersededBy": [],
-    "reviewedAt": "2026-09-13T10:20:00Z",
-    "reviewedBy": "Operator",
-    "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    "reviewedAt": "2026-09-14T00:00:00Z",
+    "reviewedBy": "AGT-2801",
+    "note": "Kept as the evidence appendix of the Gates theme Dossier docs/operations/gates (AGT-W57), recorded 2026-09-14; historical under AGT-W55 D2, no separate artefact required."
   },
   "reviewHistory": [
     {
@@ -29,6 +29,13 @@
       "reviewedAt": "2026-09-13T10:20:00Z",
       "reviewedBy": "Operator",
       "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    },
+    {
+      "verdict": "historical",
+      "supersededBy": [],
+      "reviewedAt": "2026-09-14T00:00:00Z",
+      "reviewedBy": "AGT-2801",
+      "note": "Kept as the evidence appendix of the Gates theme Dossier docs/operations/gates (AGT-W57), recorded 2026-09-14; historical under AGT-W55 D2, no separate artefact required."
     }
   ]
 }
