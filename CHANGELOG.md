@@ -34,6 +34,22 @@ release yet.
 
 ### Fixed
 
+- The local merge gate no longer hands a verify command the Studio's own
+  listener (AGT-2840). `api.sh start` runs the backend through `dotnet run`,
+  whose launch profile exports `ASPNETCORE_URLS` into the process environment
+  even though the port comes from `--urls`; the gate passed that environment to
+  `dotnet test`, and the five `ConnectorProfileTests` that boot
+  `WebApplicationFactory<Program>` read the Studio's URL as the connector's own
+  and failed with "The connector may listen only on http://[::1]:5031" - only on
+  the machine that runs the Studio, sending three already-reviewed cards
+  (AGT-2825, AGT-2826, AGT-2827) to Human Review. `HostListenerEnvironment` now
+  names the keys that carry a listener (`ASPNETCORE_URLS`, `URLS`,
+  `DOTNET_URLS`, the `ASPNETCORE_*_PORTS` pair, and anything under `Kestrel__`)
+  and `BuildTestGateRunner` drops them from every verify child, the way the
+  preparation gate already curates the prepare script's environment. The
+  connector tests additionally boot with those keys set aside, so the class is
+  hermetic against any launcher.
+
 - A delivery blocked by the commit candidate gate said so instead of escalating
   without a reason (AGT-2828). WEB-21 captured 12 screenshots, the gate warned
   `binary-surprise` on every one of them, nothing was committed, and the card

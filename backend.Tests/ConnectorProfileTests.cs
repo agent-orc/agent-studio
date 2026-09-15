@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Net;
 using System.Net.Http.Json;
 using System.Net.WebSockets;
@@ -35,11 +36,10 @@ public sealed class ConnectorProfileTests
     public async Task Published_api_and_hub_surface_is_fully_classified_and_hosts_no_authority_worker()
     {
         var transport = new RecordingTransport();
-        await using var factory = BuildFactory(transport);
-        using var client = CreateClient(factory);
-        using var start = await SessionAsync(client);
+        await using var connector = ConnectorUnderTest.Boot(transport);
+        using var start = await SessionAsync(connector.Client);
 
-        var endpoints = factory.Services.GetServices<EndpointDataSource>()
+        var endpoints = connector.Services.GetServices<EndpointDataSource>()
             .SelectMany(source => source.Endpoints)
             .OfType<RouteEndpoint>()
             .Where(endpoint => endpoint.RoutePattern.RawText?.StartsWith("/api", StringComparison.OrdinalIgnoreCase) == true
@@ -61,7 +61,7 @@ public sealed class ConnectorProfileTests
             .Select(item => new ConnectorRouteKey(item.Method, ConnectorRouteKey.NormalizePath(item.Path)))
             .Distinct()
             .Count());
-        Assert.DoesNotContain(factory.Services.GetServices<IHostedService>(),
+        Assert.DoesNotContain(connector.Services.GetServices<IHostedService>(),
             service => service.GetType().Assembly == typeof(ConnectorProfile).Assembly);
     }
 
@@ -69,8 +69,8 @@ public sealed class ConnectorProfileTests
     public async Task Host_origin_session_and_csrf_are_enforced()
     {
         var transport = new RecordingTransport();
-        await using var factory = BuildFactory(transport);
-        using var client = CreateClient(factory);
+        await using var connector = ConnectorUnderTest.Boot(transport);
+        var client = connector.Client;
 
         using (var badHost = new HttpRequestMessage(HttpMethod.Get, "/healthz"))
         {
@@ -106,9 +106,8 @@ public sealed class ConnectorProfileTests
     public async Task Proxy_strips_browser_identity_and_injects_the_studio_credential_and_protocol()
     {
         var transport = new RecordingTransport();
-        await using var factory = BuildFactory(transport);
-        using var client = CreateClient(factory);
-        using var session = await SessionAsync(client);
+        await using var connector = ConnectorUnderTest.Boot(transport);
+        using var session = await SessionAsync(connector.Client);
         var csrf = ReadCookie(session, ConnectorSessionStore.CsrfCookieName);
 
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/projects");
@@ -120,7 +119,7 @@ public sealed class ConnectorProfileTests
         request.Headers.Add("X-Client-Id", "studio-window-1");
         request.Content = JsonContent.Create(new { displayName = "test" });
 
-        Assert.Equal(HttpStatusCode.OK, (await client.SendAsync(request)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await connector.Client.SendAsync(request)).StatusCode);
         var observed = Assert.Single(transport.ProxiedRequests);
         Assert.Equal("Bearer studio-secret", observed.Authorization);
         Assert.Equal(TaskServerProtocol.Current.ToString(), observed.Protocol);
@@ -140,9 +139,8 @@ public sealed class ConnectorProfileTests
         // it must forward using the reserved unscoped-project token rather
         // than failing the request.
         var transport = new RecordingTransport();
-        await using var factory = BuildFactory(transport);
-        using var client = CreateClient(factory);
-        using var session = await SessionAsync(client);
+        await using var connector = ConnectorUnderTest.Boot(transport);
+        using var session = await SessionAsync(connector.Client);
         var csrf = ReadCookie(session, ConnectorSessionStore.CsrfCookieName);
 
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/tasks/tsk_core-attach-demo/move");
@@ -150,7 +148,7 @@ public sealed class ConnectorProfileTests
         request.Headers.Add(ConnectorSessionStore.CsrfHeaderName, csrf);
         request.Content = JsonContent.Create(new { targetState = "2-ready" });
 
-        Assert.Equal(HttpStatusCode.OK, (await client.SendAsync(request)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await connector.Client.SendAsync(request)).StatusCode);
         var observed = Assert.Single(transport.ProxiedRequests);
         Assert.Equal(
             $"/api/v1/projects/{ConnectorProxy.UnscopedProjectToken}/tasks/tsk_core-attach-demo/move",
@@ -196,13 +194,12 @@ public sealed class ConnectorProfileTests
     public async Task Health_separates_liveness_from_redacted_upstream_readiness()
     {
         var transport = new RecordingTransport();
-        await using var factory = BuildFactory(transport);
-        using var client = CreateClient(factory);
+        await using var connector = ConnectorUnderTest.Boot(transport);
 
-        using var liveness = await client.GetAsync("/healthz");
+        using var liveness = await connector.Client.GetAsync("/healthz");
         Assert.Equal(HttpStatusCode.OK, liveness.StatusCode);
 
-        using var readiness = await client.GetAsync("/readyz");
+        using var readiness = await connector.Client.GetAsync("/readyz");
         Assert.Equal(HttpStatusCode.OK, readiness.StatusCode);
         var json = await readiness.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("ready", json.GetProperty("status").GetString());
@@ -213,6 +210,35 @@ public sealed class ConnectorProfileTests
         Assert.DoesNotContain("studio-secret", body, StringComparison.Ordinal);
         Assert.DoesNotContain("task-server.invalid", body, StringComparison.Ordinal);
         Assert.DoesNotContain(ConnectorCredentialSource.DockerSecretPath, body, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("ASPNETCORE_URLS", "http://127.0.0.1:5031")]
+    [InlineData("URLS", "http://127.0.0.1:5031")]
+    [InlineData("Kestrel__Endpoints__Http__Url", "http://127.0.0.1:5031")]
+    public async Task Host_boots_while_the_launching_process_owns_a_listener(string variable, string value)
+    {
+        // The gate condition: the Studio backend starts `dotnet test`, so the
+        // test process inherits the listener configuration of a host that is
+        // already serving on the connector's port. Every host-booting test in
+        // this class then failed inside the gate with "The connector may listen
+        // only on http://[::1]:5031" while passing from an operator shell
+        // (AGT-2840). The fixture owns the listener configuration instead of
+        // inheriting it, so the suite no longer depends on its launcher.
+        var previous = Environment.GetEnvironmentVariable(variable);
+        Environment.SetEnvironmentVariable(variable, value);
+        try
+        {
+            var transport = new RecordingTransport();
+            await using var connector = ConnectorUnderTest.Boot(transport);
+
+            using var liveness = await connector.Client.GetAsync("/healthz");
+            Assert.Equal(HttpStatusCode.OK, liveness.StatusCode);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(variable, previous);
+        }
     }
 
     [Fact]
@@ -290,6 +316,80 @@ public sealed class ConnectorProfileTests
             HandleCookies = true,
             AllowAutoRedirect = false,
         });
+
+    /// <summary>
+    /// A booted connector host and its client. WebApplicationFactory runs the
+    /// real entry point inside the xunit process, so
+    /// <see cref="ConnectorHost.ValidateConfiguredListener"/> reads the
+    /// configuration of whichever process started the test run. The host
+    /// therefore boots with the ambient listener configuration removed: the
+    /// connector owns exactly one endpoint and must not inherit a listener from
+    /// its launcher. The collection is serial, so no other host boots while the
+    /// ambient configuration is set aside.
+    /// </summary>
+    private sealed class ConnectorUnderTest : IAsyncDisposable
+    {
+        private readonly WebApplicationFactory<Program> _factory;
+
+        private ConnectorUnderTest(WebApplicationFactory<Program> factory, HttpClient client)
+        {
+            _factory = factory;
+            Client = client;
+        }
+
+        public HttpClient Client { get; }
+        public IServiceProvider Services => _factory.Services;
+
+        public static ConnectorUnderTest Boot(RecordingTransport transport)
+        {
+            using var owned = new OwnedListenerConfiguration();
+            var factory = BuildFactory(transport);
+            try
+            {
+                // CreateClient starts the host, so the boot - and with it the
+                // listener guard - has to happen inside the scope rather than
+                // at the first request.
+                return new ConnectorUnderTest(factory, CreateClient(factory));
+            }
+            catch
+            {
+                factory.Dispose();
+                throw;
+            }
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            Client.Dispose();
+            await _factory.DisposeAsync();
+        }
+    }
+
+    /// <summary>
+    /// Removes every variable that carries listener configuration
+    /// (<see cref="HostListenerEnvironment"/>) for the duration of a host boot
+    /// and restores the process environment afterwards.
+    /// </summary>
+    private sealed class OwnedListenerConfiguration : IDisposable
+    {
+        private readonly List<KeyValuePair<string, string?>> _removed = [];
+
+        public OwnedListenerConfiguration()
+        {
+            foreach (DictionaryEntry entry in Environment.GetEnvironmentVariables())
+            {
+                var name = (string)entry.Key;
+                if (!HostListenerEnvironment.Carries(name)) continue;
+                _removed.Add(new KeyValuePair<string, string?>(name, entry.Value as string));
+                Environment.SetEnvironmentVariable(name, null);
+            }
+        }
+
+        public void Dispose()
+        {
+            foreach (var (name, value) in _removed) Environment.SetEnvironmentVariable(name, value);
+        }
+    }
 
     private static async Task<HttpResponseMessage> SessionAsync(HttpClient client)
     {

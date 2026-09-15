@@ -674,6 +674,31 @@ public sealed class BuildTestGateRunnerBehaviorTests : IDisposable
     }
 
     [Fact]
+    public async Task CommandExecution_DoesNotHandTheHostListenerConfigurationToTheChild()
+    {
+        // The Studio backend starts the gate, so without a boundary the child
+        // inherits the Studio's own listener configuration and anything it boots
+        // reads the Studio's URL as its own. That is what made the connector
+        // profile tests fail inside the gate and pass in an operator shell
+        // (AGT-2840). The child must see no listener at all.
+        const string variable = "ASPNETCORE_URLS";
+        const string command = "echo \"observed=[${ASPNETCORE_URLS:-none}]\"";
+        var previous = Environment.GetEnvironmentVariable(variable);
+        Environment.SetEnvironmentVariable(variable, "http://127.0.0.1:5031");
+        try
+        {
+            var r = await Run(new BuildProfile { BuildCmds = [command] });
+
+            Assert.Equal(BuildTestGateVerdict.Ok, r.Verdict);
+            Assert.Contains("observed=[none]", r.Output, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(variable, previous);
+        }
+    }
+
+    [Fact]
     public async Task ProfileOverride_FirstFailure_StopsAndFails()
     {
         var profile = new BuildProfile { BuildCmds = ["exit 7", "exit 0"] };
