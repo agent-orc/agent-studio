@@ -83,6 +83,11 @@ public sealed class RemoteReviewWorkspace
             ["CARGO_HOME"] = Path.Combine(CachePath, "cargo"),
             ["GRADLE_USER_HOME"] = Path.Combine(CachePath, "gradle"),
             ["DOTNET_CLI_HOME"] = Path.Combine(CachePath, "dotnet"),
+            // AGT-2820: a reused MSBuild node outlives the build that created it
+            // and is reparented to init when its review worker goes away. The
+            // frozen plan already passes -nodeReuse:false; this covers the
+            // MSBuild invocations a preparation script nests underneath it.
+            ["MSBUILDDISABLENODEREUSE"] = "1",
             ["COMPOSE_PROJECT_NAME"] = _lease.ResourceNamespace,
             ["AGENT_REVIEW_NAMESPACE"] = _lease.ResourceNamespace,
             ["AGENT_REVIEW_DATABASE_NAMESPACE"] = _lease.ResourceNamespace,
@@ -211,9 +216,9 @@ public sealed class RemoteReviewWorkspace
                 artifacts,
                 ct);
 
-            foreach (var command in _subject.Plan.Commands)
+            foreach (var plannedCommand in _subject.Plan.Commands)
             {
-                if (CanResumeCommand(command, commands, verdicts))
+                if (CanResumeCommand(plannedCommand, commands, verdicts))
                     continue;
 
                 var headBefore = await GitValueAsync("rev-parse", "HEAD", ct);
@@ -221,19 +226,39 @@ public sealed class RemoteReviewWorkspace
                 if (!string.Equals(headBefore, _subject.ExpectedResultSha, StringComparison.OrdinalIgnoreCase))
                     throw new ReviewInfrastructureException(
                         "CommandSubjectMismatch",
-                        $"Step '{command.StepId}' would run at '{headBefore}', not '{_subject.ExpectedResultSha}'.");
+                        $"Step '{plannedCommand.StepId}' would run at '{headBefore}', not '{_subject.ExpectedResultSha}'.");
+
+                // AGT-2820: the plan froze a budget for the prompt as authored.
+                // The authoritative diff is appended here, at execution time, so
+                // the budget is re-derived against what the model actually has to
+                // read. The executed budget - never the frozen one - is what the
+                // evidence and any violation report.
+                var command = plannedCommand;
+                if (ReviewCommandKinds.IsAgent(command.ExecutionKind))
+                {
+                    var prompt = AppendReviewMaterial(
+                        command.Prompt!,
+                        reviewMaterial ??= await BuildReviewMaterialAsync(
+                            ReviewMaterialMaximumFiles,
+                            ReviewMaterialMaximumLines,
+                            ct));
+                    var budget = ReviewAspectBudgetPolicy.Derive(
+                        command.CliType,
+                        command.Model,
+                        command.ThinkingLevel,
+                        ReviewAspectBudgetPolicy.MaterialCharacters(prompt));
+                    command = command with
+                    {
+                        Prompt = prompt,
+                        TimeoutSeconds = Math.Max(plannedCommand.TimeoutSeconds, budget.Seconds),
+                    };
+                    _log(
+                        $"review-aspect-budget step={command.StepId} {budget.Describe()} " +
+                        $"planned={plannedCommand.TimeoutSeconds}s effective={command.TimeoutSeconds}s");
+                }
+
                 var execution = ReviewCommandKinds.IsAgent(command.ExecutionKind)
-                    ? await _agentCommands.RunAsync(
-                        command with
-                        {
-                            Prompt = AppendReviewMaterial(
-                                command.Prompt!,
-                                reviewMaterial ??= await BuildReviewMaterialAsync(
-                                    ReviewMaterialMaximumFiles,
-                                    ReviewMaterialMaximumLines,
-                                    ct)),
-                        },
-                        ct)
+                    ? await _agentCommands.RunAsync(command, ct)
                     : await RunCommandAsync(command, RepositoryPath, ct);
                 if (AspectCommandTimedOut(command, execution))
                 {
@@ -270,9 +295,48 @@ public sealed class RemoteReviewWorkspace
                     SaveCaches(candidateCache);
                     throw await InfrastructureFailureAsync(
                         "AspectTimeout",
-                        $"Review aspect '{command.StepId}' was killed on its timeout, not its toolchain: " +
+                        $"Review aspect '{command.StepId}' violated review-command budget on " +
+                        $"model '{command.Model ?? "unspecified"}'; it was killed on its timeout, " +
+                        $"not on its toolchain, and says nothing about the reviewed change: " +
                         $"{CommandLine(command)}; exit={execution.Process.ExitCode}; " +
-                        $"budget={BudgetSummary(command.TimeoutSeconds, execution)}.",
+                        $"budget={BudgetSummary(command.TimeoutSeconds, execution, command.Model)}.",
+                        commands,
+                        artifacts,
+                        ct);
+                }
+
+                if (execution.Signal == "stalled")
+                {
+                    commands.Add(await AddCommandEvidenceAsync(
+                        command.StepId,
+                        command.Aspect,
+                        command.FileName,
+                        command.Arguments,
+                        headBefore,
+                        treeBefore,
+                        execution.Process,
+                        execution.StartedAt,
+                        execution.FinishedAt,
+                        execution.Signal,
+                        command.TimeoutSeconds,
+                        "verification",
+                        "candidate",
+                        baselineSha: null,
+                        comparison: null,
+                        retryPerformed: false,
+                        dependencyCacheHit: false,
+                        dependencyCache: null,
+                        artifacts,
+                        ct,
+                        command,
+                        execution.AgentUsage));
+                    SaveCaches(candidateCache);
+                    throw await InfrastructureFailureAsync(
+                        "CommandStalled",
+                        $"Review command '{command.StepId}' produced no output for its whole silence " +
+                        $"window and was killed: {CommandLine(command)}; " +
+                        $"{FailureDetail(execution.Process)}; " +
+                        $"budget={BudgetSummary(command.TimeoutSeconds, execution, command.Model)}.",
                         commands,
                         artifacts,
                         ct);
@@ -309,7 +373,7 @@ public sealed class RemoteReviewWorkspace
                         "ToolUnavailable",
                         $"Review command '{command.StepId}' could not use its declared toolchain: " +
                         $"{CommandLine(command)}; exit={execution.Process.ExitCode}; " +
-                        $"budget={BudgetSummary(command.TimeoutSeconds, execution)}.",
+                        $"budget={BudgetSummary(command.TimeoutSeconds, execution, command.Model)}.",
                         commands,
                         artifacts,
                         ct);
@@ -346,7 +410,7 @@ public sealed class RemoteReviewWorkspace
                         $"Review command '{command.StepId}' failed with a torn-down-/tmp signature " +
                         "(MSB1025, SocketException (99), or a NuGet mkdtemp ENOENT), not a product failure: " +
                         $"{CommandLine(command)}; exit={execution.Process.ExitCode}; " +
-                        $"budget={BudgetSummary(command.TimeoutSeconds, execution)}.",
+                        $"budget={BudgetSummary(command.TimeoutSeconds, execution, command.Model)}.",
                         commands,
                         artifacts,
                         ct);
@@ -400,7 +464,7 @@ public sealed class RemoteReviewWorkspace
                             throw await InfrastructureFailureAsync(
                                 "ToolUnavailable",
                                 $"Review retry '{command.StepId}' lost its declared toolchain; " +
-                                $"exit={execution.Process.ExitCode}; budget={BudgetSummary(command.TimeoutSeconds, execution)}.",
+                                $"exit={execution.Process.ExitCode}; budget={BudgetSummary(command.TimeoutSeconds, execution, command.Model)}.",
                                 commands,
                                 artifacts,
                                 ct);
@@ -433,7 +497,7 @@ public sealed class RemoteReviewWorkspace
                                 "TmpMountTornDown",
                                 $"Review retry '{command.StepId}' failed with a torn-down-/tmp signature " +
                                 "(MSB1025, SocketException (99), or a NuGet mkdtemp ENOENT), not a product failure; " +
-                                $"exit={execution.Process.ExitCode}; budget={BudgetSummary(command.TimeoutSeconds, execution)}.",
+                                $"exit={execution.Process.ExitCode}; budget={BudgetSummary(command.TimeoutSeconds, execution, command.Model)}.",
                                 commands,
                                 artifacts,
                                 ct);
@@ -549,25 +613,57 @@ public sealed class RemoteReviewWorkspace
         var started = DateTime.UtcNow;
         ProcessResult process;
         string? signal = null;
+        var silenceWindow = SilenceWindow(timeoutSeconds);
+        var clock = new CommandOutputClock();
+        var stall = new StallDetection();
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(timeoutSeconds, 1, 7200)));
+            using var watchdog = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
             var completeStdout = new StringBuilder();
             var completeStderr = new StringBuilder();
-            var boundedProcess = await ProcessRunner.RunAsync(
-                fileName,
-                arguments,
-                workingDirectory,
-                onStdOut: line => completeStdout.AppendLine(line),
-                onStdErr: line => completeStderr.AppendLine(line),
-                environment: environment ?? ProcessEnvironment(),
-                clearEnvironment: true,
-                ct: timeout.Token);
+            var watching = WatchForSilenceAsync(
+                stepId, clock, stall, silenceWindow, timeout, watchdog.Token);
+            try
+            {
+                var boundedProcess = await ProcessRunner.RunAsync(
+                    fileName,
+                    arguments,
+                    workingDirectory,
+                    onStdOut: line =>
+                    {
+                        clock.Mark();
+                        completeStdout.AppendLine(line);
+                    },
+                    onStdErr: line =>
+                    {
+                        clock.Mark();
+                        completeStderr.AppendLine(line);
+                    },
+                    environment: environment ?? ProcessEnvironment(),
+                    clearEnvironment: true,
+                    ct: timeout.Token);
+                process = new ProcessResult(
+                    boundedProcess.ExitCode,
+                    completeStdout.ToString(),
+                    completeStderr.ToString());
+            }
+            finally
+            {
+                watchdog.Cancel();
+                await watching;
+            }
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested && stall.Silence is { } silent)
+        {
             process = new ProcessResult(
-                boundedProcess.ExitCode,
-                completeStdout.ToString(),
-                completeStderr.ToString());
+                -1,
+                string.Empty,
+                $"Review command '{stepId}' produced no output for {silent.TotalSeconds:F0}s and was " +
+                $"killed by the silence watchdog (window {silenceWindow.TotalSeconds:F0}s) rather than " +
+                "holding its review slot for the remaining command budget.");
+            signal = "stalled";
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
@@ -901,12 +997,74 @@ public sealed class RemoteReviewWorkspace
         return detail.Length <= maximumLength ? detail : detail[..maximumLength];
     }
 
-    private static string BudgetSummary(int timeoutSeconds, CommandExecution execution)
+    /// <summary>
+    /// AGT-2820: a review command that produces nothing at all is not making
+    /// progress, and the command budget is the wrong instrument to notice it -
+    /// four stuck reviews would each have waited out two hours. The watchdog
+    /// never shortens a command that is still talking; it only cuts one that has
+    /// gone completely silent for a window far longer than any real gap in
+    /// build or test output.
+    /// </summary>
+    private TimeSpan SilenceWindow(int timeoutSeconds)
+    {
+        var configured = _options.CommandSilenceWatchdogSeconds;
+        if (configured <= 0) return TimeSpan.Zero;
+        // A window that is not strictly tighter than the command budget would
+        // only ever fire at, or after, the budget itself - it adds nothing and
+        // would turn a short-budget command into a stall report.
+        var budget = Math.Clamp(timeoutSeconds, 1, 7200);
+        return configured >= budget ? TimeSpan.Zero : TimeSpan.FromSeconds(configured);
+    }
+
+    private async Task WatchForSilenceAsync(
+        string stepId,
+        CommandOutputClock clock,
+        StallDetection stall,
+        TimeSpan silenceWindow,
+        CancellationTokenSource kill,
+        CancellationToken ct)
+    {
+        if (silenceWindow <= TimeSpan.Zero) return;
+        var poll = TimeSpan.FromSeconds(Math.Clamp(silenceWindow.TotalSeconds / 20, 1, 30));
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                await Task.Delay(poll, ct).ConfigureAwait(false);
+                var silent = clock.SilentFor(DateTime.UtcNow);
+                if (silent < silenceWindow) continue;
+                stall.Record(silent);
+                _log(
+                    $"review-command-stalled step={stepId} silentSeconds={silent.TotalSeconds:F0} " +
+                    $"window={silenceWindow.TotalSeconds:F0}s; killing the command instead of " +
+                    "holding the review slot for the rest of its budget");
+                await kill.CancelAsync().ConfigureAwait(false);
+                return;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // The command finished (or its own budget fired) first.
+        }
+    }
+
+    /// <summary>
+    /// AGT-2820: the budget line names the model as well as the limit. A review
+    /// killed on its budget is an infrastructure fact about this model on this
+    /// host, and an operator reading the card has to be able to tell that from a
+    /// verdict about the change without opening the plan.
+    /// </summary>
+    private static string BudgetSummary(
+        int timeoutSeconds,
+        CommandExecution execution,
+        string? model = null)
     {
         var limit = Math.Clamp(timeoutSeconds, 1, 7200) * 1000L;
         var consumed = Math.Max(0, (long)(execution.FinishedAt - execution.StartedAt).TotalMilliseconds);
-        return $"review-command limit={limit}ms consumed={consumed}ms " +
-               $"violated={(execution.Signal == "timeout" || consumed > limit).ToString().ToLowerInvariant()}";
+        var violated = execution.Signal == "timeout" || consumed > limit;
+        var summary = $"review-command limit={limit}ms consumed={consumed}ms " +
+                      $"violated={violated.ToString().ToLowerInvariant()}";
+        return string.IsNullOrWhiteSpace(model) ? summary : $"{summary} model={model}";
     }
 
     private static string ArtifactName(string workspaceRole, string stepId, string stream)
@@ -1038,7 +1196,7 @@ public sealed class RemoteReviewWorkspace
                     "ToolUnavailable",
                     $"Baseline review command '{command.StepId}' could not use its declared toolchain: " +
                     $"{CommandLine(command)}; exit={execution.Process.ExitCode}; " +
-                    $"budget={BudgetSummary(command.TimeoutSeconds, execution)}.",
+                    $"budget={BudgetSummary(command.TimeoutSeconds, execution, command.Model)}.",
                     commands,
                     artifacts,
                     ct);
@@ -1854,6 +2012,38 @@ public sealed class RemoteReviewWorkspace
 
     internal static string SafeSegment(string value)
         => new(value.Select(ch => char.IsLetterOrDigit(ch) || ch is '-' or '_' ? ch : '_').ToArray());
+}
+
+/// <summary>
+/// Last time a running review command wrote anything on either stream. Shared
+/// between the process reader callbacks and the silence watchdog, so the only
+/// mutable state is one interlocked tick count.
+/// </summary>
+internal sealed class CommandOutputClock
+{
+    private long _ticks = DateTime.UtcNow.Ticks;
+
+    public void Mark() => Interlocked.Exchange(ref _ticks, DateTime.UtcNow.Ticks);
+
+    public TimeSpan SilentFor(DateTime nowUtc)
+        => TimeSpan.FromTicks(Math.Max(0, nowUtc.Ticks - Interlocked.Read(ref _ticks)));
+}
+
+/// <summary>
+/// Records that the silence watchdog - not the command budget - ended a review
+/// command, so the cancellation can be reported as the stall it is.
+/// </summary>
+internal sealed class StallDetection
+{
+    private long _silentTicks = -1;
+
+    public void Record(TimeSpan silence)
+        => Interlocked.CompareExchange(ref _silentTicks, silence.Ticks, -1);
+
+    public TimeSpan? Silence
+        => Interlocked.Read(ref _silentTicks) is var ticks && ticks >= 0
+            ? TimeSpan.FromTicks(ticks)
+            : null;
 }
 
 public sealed record ReviewExecutionEvidence(

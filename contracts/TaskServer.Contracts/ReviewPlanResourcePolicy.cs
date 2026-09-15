@@ -8,6 +8,25 @@ namespace AgentStudio.TaskServer.Contracts;
 /// before a subject is stored keeps the executed command and its fenced
 /// evidence identical while preventing one .NET review from occupying the
 /// entire host.
+/// <para>
+/// AGT-2820 (2026-09-15): the cap now covers <c>dotnet build</c>, not only
+/// <c>dotnet test</c>. Four parallel reviews each ran an uncapped
+/// <c>dotnet build agent-taskboard.sln --no-restore</c>; the host carried 46
+/// dotnet processes at load 38 on 12 cores and killed a run with exit 143,
+/// while the test step immediately after was careful to pass
+/// <c>-maxcpucount:2</c>. Capping the build deterministically was chosen over
+/// admitting reviews against measured host load: the plan is frozen before an
+/// executor claims it, so a load-derived cap would make the fenced command
+/// depend on when it happened to be built, and the host's load is already a
+/// separate admission gate (<c>ReviewSlotAdmissionPolicy</c>).
+/// </para>
+/// <para>
+/// The same pass turns MSBuild node reuse off. A reused node outlives the build
+/// that created it and is reparented to init when its review worker goes away:
+/// 26 orphaned <c>/nodemode:1</c> nodes, the oldest idle for eight days, held
+/// 2963 MB on one host. A review is a one-shot build; it has nothing to gain
+/// from a persistent node pool.
+/// </para>
 /// </summary>
 public static partial class ReviewPlanResourcePolicy
 {
@@ -58,7 +77,7 @@ public static partial class ReviewPlanResourcePolicy
     {
         if (IsDotNet(command.FileName)
             && command.Arguments.FirstOrDefault() is { } verb
-            && string.Equals(verb, "test", StringComparison.OrdinalIgnoreCase))
+            && IsCappedVerb(verb))
         {
             var directArguments = LimitDirectArguments(command.Arguments, maxCpuCount);
             return command.Arguments.SequenceEqual(directArguments, StringComparer.Ordinal)
@@ -84,11 +103,13 @@ public static partial class ReviewPlanResourcePolicy
         IReadOnlyList<string> source,
         int maxCpuCount)
     {
-        var filtered = new List<string>(source.Count + 2) { source[0] };
+        var isTest = string.Equals(source[0], "test", StringComparison.OrdinalIgnoreCase);
+        var filtered = new List<string>(source.Count + 3) { source[0] };
         for (var index = 1; index < source.Count; index++)
         {
             var argument = source[index];
             if (MaxCpuArgument().IsMatch(argument)
+                || NodeReuseArgument().IsMatch(argument)
                 || TestCollectionParallelismArgument().IsMatch(argument))
                 continue;
             if (argument is "--maxcpucount" or "-maxcpucount"
@@ -100,21 +121,39 @@ public static partial class ReviewPlanResourcePolicy
             }
             filtered.Add(argument);
         }
-        filtered.Insert(1, $"-maxcpucount:{maxCpuCount}");
-        filtered.Insert(2, "-p:ParallelizeTestCollections=false");
+        filtered.InsertRange(1, LimitArguments(maxCpuCount, isTest));
         return filtered;
     }
 
     private static string LimitShellCommand(string shellCommand, int maxCpuCount)
     {
-        if (!DotNetTest().IsMatch(shellCommand)) return shellCommand;
+        if (!DotNetBuildOrTest().IsMatch(shellCommand)) return shellCommand;
         var limited = MaxCpuShellArgument().Replace(shellCommand, string.Empty);
+        limited = NodeReuseShellArgument().Replace(limited, string.Empty);
         limited = TestCollectionParallelismShellArgument().Replace(limited, string.Empty);
         limited = CollapseUnquotedHorizontalWhitespace(limited);
-        return DotNetTest().Replace(
+        return DotNetBuildOrTest().Replace(
             limited,
-            match => $"{match.Value} -maxcpucount:{maxCpuCount} -p:ParallelizeTestCollections=false");
+            match =>
+            {
+                var isTest = match.Value.EndsWith("test", StringComparison.OrdinalIgnoreCase);
+                return $"{match.Value} {string.Join(' ', LimitArguments(maxCpuCount, isTest))}";
+            });
     }
+
+    /// <summary>
+    /// The bounds, in one place so the shell form and the argv form cannot
+    /// drift. Collection parallelism is a test-only knob; the CPU cap and the
+    /// node-reuse switch apply to every MSBuild invocation a review makes.
+    /// </summary>
+    private static string[] LimitArguments(int maxCpuCount, bool isTest)
+        => isTest
+            ? [$"-maxcpucount:{maxCpuCount}", "-nodeReuse:false", "-p:ParallelizeTestCollections=false"]
+            : [$"-maxcpucount:{maxCpuCount}", "-nodeReuse:false"];
+
+    private static bool IsCappedVerb(string verb)
+        => string.Equals(verb, "test", StringComparison.OrdinalIgnoreCase)
+           || string.Equals(verb, "build", StringComparison.OrdinalIgnoreCase);
 
     private static string CollapseUnquotedHorizontalWhitespace(string value)
     {
@@ -168,8 +207,14 @@ public static partial class ReviewPlanResourcePolicy
     [GeneratedRegex(@"^(?:-[pP]:|/[pP]:|--property:?)ParallelizeTestCollections=(?:true|false)$", RegexOptions.IgnoreCase)]
     private static partial Regex TestCollectionParallelismArgument();
 
-    [GeneratedRegex(@"(?<![\w./-])dotnet\s+test\b", RegexOptions.IgnoreCase)]
-    private static partial Regex DotNetTest();
+    [GeneratedRegex(@"(?<![\w./-])dotnet\s+(?:test|build)\b", RegexOptions.IgnoreCase)]
+    private static partial Regex DotNetBuildOrTest();
+
+    [GeneratedRegex(@"^(?:-{1,2}nodeReuse|/nodeReuse):(?:true|false)$", RegexOptions.IgnoreCase)]
+    private static partial Regex NodeReuseArgument();
+
+    [GeneratedRegex(@"(?<!\S)(?:-{1,2}nodeReuse|/nodeReuse):(?:true|false)", RegexOptions.IgnoreCase)]
+    private static partial Regex NodeReuseShellArgument();
 
     [GeneratedRegex(@"(?<!\S)(?:-{1,2}maxcpucount|/maxcpucount|-[mM])(?::\d+|\s+\d+)", RegexOptions.IgnoreCase)]
     private static partial Regex MaxCpuShellArgument();

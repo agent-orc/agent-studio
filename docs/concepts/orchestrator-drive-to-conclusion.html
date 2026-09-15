@@ -2374,6 +2374,40 @@
             <span class="lane">5e-escalated</span>; the corrected replay reaches a green gate after cache eviction.
           </td>
         </tr>
+        <tr id="case-agt-2820-missing-terminal-sentinel">
+          <td>2026-09-14<br>&ndash;15</td>
+          <td><code>AGT-2820</code><br><span class="small">a delivered run without a terminal sentinel skipped review entirely</span></td>
+          <td>
+            <code>AGT-2794</code>, <code>AGT-2817</code> and <code>AGT-2819</code> each reported
+            <code>Result: Completed out-of-band (agent-runner-01). Remote work completed without a terminal sentinel.</code>
+            Their deliveries were real (29, 43 and 61 files) and were pushed to result branches. No review ran. All three
+            landed in <span class="lane">5-human-review</span>, where the acceptance guard correctly refused them because
+            the delivery is not in the integration branch. The same night, ten cards queued on
+            <code>claude-opus-5</code> lost every review to a fixed two-minute per-aspect budget, and four concurrent
+            reviews held their slots on a <code>dotnet test</code> that had produced nothing for ten minutes.
+          </td>
+          <td>
+            A <code>ProtocolInconclusive</code> outcome with a verified delivery was reconciled through the external
+            completion endpoint with <code>TargetState: 5-human-review</code>. That path mints no ReviewAttempt, so the
+            delivery was never a review subject and the card carried one status line and no incident. Separately, the
+            per-aspect budget was a constant sized for a small model, review builds ran with no
+            <code>-maxcpucount</code> while the test step right after them was capped, MSBuild node reuse left 26
+            orphaned nodes at <code>ppid=1</code> holding 2963&nbsp;MB, and the orphan sweep matched only
+            <code>claude</code> and <code>codex</code> so stranded <code>dotnet</code> trees survived every pass.
+          </td>
+          <td>
+            <span class="pill ok">fixed in dev</span> a run that delivers without a terminal sentinel is reported as a
+            delivery bound for <span class="lane">4-auto-review</span> carrying a
+            <code>missing-terminal-sentinel</code> gate item that names the host, the delivery ref, and the observed
+            cause (signal, OOM kill, lease loss, transport state), and refuses to read as an acceptance. The aspect
+            budget is derived from the toolchain, the model, the thinking level and the size of the material, and a
+            violation names the model and the limit. Review plans cap <code>dotnet build</code> like
+            <code>dotnet test</code> and start every MSBuild invocation with node reuse off. A review command that
+            produces no output for its silence window is killed as <code>command-stalled</code> instead of holding its
+            slot for the full budget, and the orphan sweep reaps any stranded process under a review work root plus
+            orphaned MSBuild nodes.
+          </td>
+        </tr>
       </tbody>
     </table>
 

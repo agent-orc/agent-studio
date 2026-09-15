@@ -1,6 +1,6 @@
 # Runner Domain Map
 
-Version: 2026-09-12
+Version: 2026-09-15
 Status: System-of-record map for runner-side changes.
 
 Use this when a change touches task pickup, active execution, post-run outcome
@@ -502,9 +502,21 @@ state.
   local result commit. The configured `origin` push URL is not delivery
   evidence. A missing or mismatched registered-repository ref retains the host
   worktree and routes the card to the visible Escalated failure state with
-  hostname, worktree path, branch, cause, and a recovery recipe. "Completed
-  out-of-band" is reserved for a missing terminal sentinel after this exact
-  remote proof succeeds.
+  hostname, worktree path, branch, cause, and a recovery recipe.
+- A run that ends without its terminal sentinel is an incident, not a
+  completion. When its delivery is nonetheless secured and proven by that exact
+  remote proof, the runner reports it as a delivery bound for `4-auto-review`
+  and attaches a `missing-terminal-sentinel` gate item naming the host, the
+  delivery ref and SHA, and the observed cause (OOM kill, signal, host
+  shutdown, lease loss, run-budget timeout, transport state, durable-output
+  state, or a clean exit with no sentinel). It is never stamped as "Completed
+  out-of-band" into `5-human-review`, where the acceptance guard refuses a
+  delivery that is not in the integration branch and the work is left neither
+  reviewed nor integrated (AGT-2794, AGT-2817, AGT-2819). This covers the legacy
+  completion plane, which is the one that produced the incident. On the durable
+  v1 plane the runner still reports the typed `ExecutionOutcomeDecision` outcome
+  and `CompleteRunRequest` carries no gate items, so the incident travels there
+  only in the completion reason.
 - Coding and review service identities are not interchangeable. A
   `review-executor` capability cannot claim coding work, mixed capabilities are
   rejected, and a registered identity cannot switch executor roles. Review
@@ -544,10 +556,29 @@ state.
   new slot per poll only when `Load1 < CpuCores * ClaimMaxLoadPerCore`. Missing
   load or core evidence closes admission. The configured slot ceiling remains a
   hard upper bound, and an admission decision never cancels an active review.
-  Immutable ReviewPlans normalize every direct or shell-wrapped `dotnet test`
-  command to `-maxcpucount:2 -p:ParallelizeTestCollections=false` before storage
-  or claim. Subject, baseline, retry, and fenced command evidence therefore use
-  the same bounded command.
+  Immutable ReviewPlans normalize every direct or shell-wrapped `dotnet build`
+  and `dotnet test` command to `-maxcpucount:2 -nodeReuse:false` (plus
+  `-p:ParallelizeTestCollections=false` for the test verb) before storage or
+  claim. Subject, baseline, retry, and fenced command evidence therefore use
+  the same bounded command. The review runner adopts the review plane's
+  parallelism recommendation as its slot ceiling from the capability
+  advertisement's `RoleMaxParallelism`; `RUNNER_MAX_PARALLELISM` is only the
+  bootstrap value used until the first advertisement is answered.
+- Review and coding builds start with MSBuild node reuse off
+  (`-nodeReuse:false` in the frozen plan, `MSBUILDDISABLENODEREUSE=1` in the
+  review workspace, detached coding worker, and backend gate environments). A
+  reused node outlives the build that created it and is reparented to init when
+  its worker dies; one host carried 26 such orphans, the oldest idle for eight
+  days, holding 2963 MB. `CliOrphanSweep` additionally reaps any process under a
+  review work root whose workspace directory has already been removed, plus
+  orphaned MSBuild worker nodes, while never touching a workspace the daemon
+  still owns.
+- A review command that produces no output at all for
+  `RUNNER_COMMAND_SILENCE_WATCHDOG_SECONDS` (default 600, engaged only when it
+  is strictly tighter than that command's budget) is killed and typed
+  `ReviewInfra` / `CommandStalled`. Before this, four concurrent reviews each
+  sat on the same silent `dotnet test` and would have held their slots for the
+  full two-hour command budget.
 - Capability-aware Remote admission (AGT-2186) is Task Server authority, not a
   daemon-local slot reduction. Coding and review services publish versioned,
   expiring health for provider authentication, Git fetch/push, repository

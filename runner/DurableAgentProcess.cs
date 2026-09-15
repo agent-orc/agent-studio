@@ -132,6 +132,11 @@ internal sealed class DurableAgentProcess
             start.Environment[authName] = authValue;
         else
             start.Environment.Remove(ProviderAuthEnvironment.ClaudeCodeOAuthToken);
+        // AGT-2820: a coding run's builds must not leave a build farm behind.
+        // A reused MSBuild node survives the build that started it and is
+        // reparented to init the moment this detached worker is killed, so the
+        // orphans outlive every attempt-scoped reap.
+        start.Environment["MSBUILDDISABLENODEREUSE"] = "1";
         var process = Process.Start(start)
             ?? throw new InvalidOperationException("Failed to start the detached runner worker.");
         var started = process.StartTime.ToUniversalTime();

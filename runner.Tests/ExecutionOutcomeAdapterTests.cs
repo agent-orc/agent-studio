@@ -342,7 +342,7 @@ public sealed class ExecutionOutcomeAdapterTests
     }
 
     [Fact]
-    public void Missing_sentinel_uses_out_of_band_only_with_exact_registered_repo_proof()
+    public void Missing_sentinel_is_an_incident_only_with_exact_registered_repo_proof()
     {
         var baseSha = new string('0', 40);
         var commit = new string('a', 40);
@@ -363,27 +363,26 @@ public sealed class ExecutionOutcomeAdapterTests
             ExitCode: 0,
             FinalAssistantOutput: "Work was committed."));
 
-        var request = RemoteTaskRunner.BuildVerifiedOutOfBandRequest(
+        var incident = RemoteTaskRunner.MissingSentinelIncidentFor(
             missingSentinel,
             inconclusive,
             verified,
             baseSha,
             "agent-runner-01");
 
-        Assert.NotNull(request);
-        Assert.Equal("5-human-review", request!.TargetState);
-        Assert.Contains(commit, request.Summary);
-        Assert.Contains(
-            request.Deliverables!,
-            item => item.Path == $"refs/heads/runner/agent-runner-01/AGT-2220@{commit}");
+        Assert.NotNull(incident);
+        Assert.Contains(MissingSentinelIncidentPolicy.GateKey, incident!.GateItem);
+        Assert.Contains(commit, incident.Reason);
+        Assert.Contains($"refs/heads/runner/agent-runner-01/AGT-2220@{commit}", incident.GateItem);
+        Assert.Contains("agent-runner-01", incident.GateItem);
 
-        Assert.Null(RemoteTaskRunner.BuildVerifiedOutOfBandRequest(
+        Assert.Null(RemoteTaskRunner.MissingSentinelIncidentFor(
             missingSentinel,
             inconclusive,
             verified with { DeliveryProof = null },
             baseSha,
             "agent-runner-01"));
-        Assert.Null(RemoteTaskRunner.BuildVerifiedOutOfBandRequest(
+        Assert.Null(RemoteTaskRunner.MissingSentinelIncidentFor(
             missingSentinel,
             inconclusive,
             verified with
@@ -393,7 +392,7 @@ public sealed class ExecutionOutcomeAdapterTests
             },
             baseSha,
             "agent-runner-01"));
-        Assert.Null(RemoteTaskRunner.BuildVerifiedOutOfBandRequest(
+        Assert.Null(RemoteTaskRunner.MissingSentinelIncidentFor(
             missingSentinel,
             inconclusive,
             verified with
@@ -402,7 +401,7 @@ public sealed class ExecutionOutcomeAdapterTests
             },
             baseSha,
             "agent-runner-01"));
-        Assert.Null(RemoteTaskRunner.BuildVerifiedOutOfBandRequest(
+        Assert.Null(RemoteTaskRunner.MissingSentinelIncidentFor(
             new RunOutcome(RunOutcomeKind.Done, "Sentinel present."),
             ExecutionOutcomeAdapter.Classify(Coding(
                 ExitCode: 0,
@@ -413,7 +412,7 @@ public sealed class ExecutionOutcomeAdapterTests
     }
 
     [Fact]
-    public void Turn_failed_with_unchanged_secured_work_reports_failure_instead_of_external_completion()
+    public void Turn_failed_with_unchanged_secured_work_reports_failure_instead_of_a_sentinel_incident()
     {
         var baseSha = new string('a', 40);
         const string message = "Selected model is at capacity. Please try a different model.";
@@ -446,14 +445,14 @@ public sealed class ExecutionOutcomeAdapterTests
             message);
         Assert.Equal(RunOutcomeKind.Unknown, failedAttempt.Kind);
         Assert.Equal(message, failedAttempt.Reason);
-        Assert.Null(RemoteTaskRunner.BuildVerifiedOutOfBandRequest(
+        Assert.Null(RemoteTaskRunner.MissingSentinelIncidentFor(
             failedAttempt,
             decision,
             teardown,
             baseSha,
             "agent-runner-01"));
         var changedSha = new string('b', 40);
-        Assert.Null(RemoteTaskRunner.BuildVerifiedOutOfBandRequest(
+        Assert.Null(RemoteTaskRunner.MissingSentinelIncidentFor(
             failedAttempt,
             decision,
             teardown with

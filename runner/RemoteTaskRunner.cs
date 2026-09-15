@@ -1218,7 +1218,8 @@ public sealed class RemoteTaskRunner
         string? artifactManifestDigest,
         IReadOnlyList<string> outputLines,
         bool sourceMutated,
-        CancellationToken ct)
+        CancellationToken ct,
+        IReadOnlyList<string>? gateItems = null)
     {
         var (envelopeBaseSha, envelopeResultRef, envelopeManifestDigest) =
             BuildEnvelopeCompletionFields(teardown, baseSha, artifactManifestDigest);
@@ -1248,7 +1249,8 @@ public sealed class RemoteTaskRunner
             ImmutableResultRef: envelopeResultRef,
             ArtifactManifestDigest: envelopeManifestDigest,
             IntegrationBranch: integrationBranch,
-            NeedsInputMessage: outcome.NeedsInputMessage), ct);
+            NeedsInputMessage: outcome.NeedsInputMessage,
+            GateItems: gateItems), ct);
         _log($"remote-runner-completion recorded: outcome {resp?.Outcome}, state {resp?.TargetState}, result-envelope {(envelopeResultRef is null ? "absent" : "attached")}");
     }
 
@@ -1266,25 +1268,30 @@ public sealed class RemoteTaskRunner
         bool sourceMutated,
         CancellationToken ct)
     {
-        var external = BuildVerifiedOutOfBandRequest(
-            outcome,
-            outcomeDecision,
-            teardown,
-            baseSha,
-            _options.RunnerName);
-        if (external is not null)
+        // AGT-2820: a run that delivered without a terminal sentinel used to be
+        // reconciled into 5-human-review as "Completed out-of-band", where the
+        // acceptance guard refused it for not being in the integration branch -
+        // so the delivery was neither reviewed nor integrated. It is an
+        // incident, and its delivery is unreviewed, so it is reported as a
+        // delivery bound for the review lane with the incident named on the card.
+        var incident = MissingSentinelIncidentFor(
+            outcome, outcomeDecision, teardown, baseSha, _options.Hostname);
+        if (incident is not null)
         {
-            var response = await _client.CompleteAsync(taskKey, external, ct);
             _log(
-                $"remote-runner-verified-out-of-band recorded: state {response?.TargetState}, " +
-                $"ref {teardown.DeliveryProof!.Ref}, sha {teardown.DeliveryProof.CommitSha}");
-            return;
+                $"remote-runner-missing-terminal-sentinel task={taskKey} " +
+                $"cause=\"{incident.Cause}\" ref={teardown.DeliveryProof!.Ref} " +
+                $"sha={teardown.DeliveryProof.CommitSha}; routing to review as an incident");
         }
 
         await CompleteAsync(
             taskKey,
             lease,
-            outcome,
+            incident is null ? outcome : outcome with
+            {
+                Kind = RunOutcomeKind.Done,
+                Reason = incident.Reason,
+            },
             outcomeDecision,
             teardown,
             repository,
@@ -1293,53 +1300,41 @@ public sealed class RemoteTaskRunner
             artifactManifestDigest,
             outputLines,
             sourceMutated,
-            ct);
+            ct,
+            incident is null ? null : [incident.GateItem]);
     }
 
-    internal static ExternalCompletionRequest? BuildVerifiedOutOfBandRequest(
+    /// <summary>
+    /// The incident this run is, or null when it is an ordinary completion. The
+    /// admission conditions are the ones the retired out-of-band reconciliation
+    /// used: an inconclusive protocol outcome whose delivery was nonetheless
+    /// secured and proven against the registered project repository.
+    /// </summary>
+    internal static MissingSentinelIncident? MissingSentinelIncidentFor(
         RunOutcome outcome,
         ExecutionOutcomeDecision outcomeDecision,
         WorktreeTeardownResult teardown,
         string? baseSha,
-        string source)
+        string host)
     {
         var proof = teardown.DeliveryProof;
-        if (outcome.Kind != RunOutcomeKind.Unknown
-            || outcomeDecision.Outcome != ExecutionOutcomeKind.ProtocolInconclusive
-            || !teardown.SecuredWork
-            || proof is null
-            || !IsCommitSha(baseSha)
-            || string.IsNullOrWhiteSpace(teardown.ResultSha)
-            || string.Equals(baseSha, teardown.ResultSha, StringComparison.OrdinalIgnoreCase)
-            || !string.Equals(
-                proof.CommitSha,
-                teardown.ResultSha,
-                StringComparison.OrdinalIgnoreCase))
-        {
-            return null;
-        }
-
-        var summary =
-            $"Remote work completed without a terminal sentinel. " +
-            $"The registered project repository was verified at {proof.Ref} " +
-            $"with commit {proof.CommitSha}.";
-        return new ExternalCompletionRequest(
-            Summary: summary,
-            Deliverables:
-            [
-                new ExternalDeliverable(
-                    Path: $"{proof.Ref}@{proof.CommitSha}",
-                    Note: "Verified by ls-remote against the project registration.")
-            ],
-            Source: source,
-            TargetState: "5-human-review",
-            // AGT-2220: hand the proof over as data, not only as prose. The
-            // sentence above used to BE the evidence - the server stamped on a
-            // string it never re-checked. These two fields are what the server
-            // now independently verifies against the target repository.
-            ResultSha: proof.CommitSha,
-            ResultRef: proof.Ref,
-            BaseSha: baseSha);
+        var verified = outcome.Kind == RunOutcomeKind.Unknown
+                       && teardown.SecuredWork
+                       && proof is not null
+                       && IsCommitSha(baseSha)
+                       && !string.IsNullOrWhiteSpace(teardown.ResultSha)
+                       && !string.Equals(baseSha, teardown.ResultSha, StringComparison.OrdinalIgnoreCase)
+                       && string.Equals(
+                           proof.CommitSha,
+                           teardown.ResultSha,
+                           StringComparison.OrdinalIgnoreCase);
+        return MissingSentinelIncidentPolicy.Evaluate(
+            outcomeDecision.Outcome,
+            outcomeDecision.RawFacts,
+            verified,
+            proof?.Ref,
+            proof?.CommitSha,
+            host);
     }
 
     /// <summary>
