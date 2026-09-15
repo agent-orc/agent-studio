@@ -12,6 +12,19 @@ navigation reuses that snapshot. The Wiki header reports the source branch and
 short commit, so Stable and Dev never imply a source from their deployment
 checkout.
 
+When hosted publication is enabled, the branch-backed source is pinned to the
+**published commit** rather than re-resolved per reader. A supervised sync
+fetches the accepted ref, materializes its `docs/` snapshot, and only then swaps
+one immutable published-revision reference; every Wiki surface resolves against
+that commit until the next promotion. This is what keeps tree, page, assets,
+history, search, Pulse, and revision preview single-valued while the source
+branch moves on, and it is why a failed fetch or an invalid revision leaves the
+previous revision online instead of degrading a read. A published Wiki stays
+read-only under the write policy below. The operational contract - freshness
+SLO, credentials, triggers, typed deployment failures, and the rollback drill -
+is in
+[Hosted Wiki publication](../../operations/setup/hosted-wiki-publication.md).
+
 The same source selection applies to Workbench discovery and document reads.
 `GET /api/projects/{projectName}/workbenches`, the Workbench catalogue embedded
 in Pulse, `GET /api/projects/{projectName}/workbenches/{id}`, the Wiki tree, and
