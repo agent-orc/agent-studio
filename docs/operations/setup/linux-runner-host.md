@@ -530,7 +530,8 @@ identity values such as `RUNNER_ID=agent-runner-01` are not renamed.
 | `RUNNER_TTL_SECONDS` | `--ttl` | `900` | Requested lease TTL; the server clamps it. The default grants a bounded 15-minute authority window so an already-claimed run can survive ten minutes of transport loss. |
 | `RUNNER_HEARTBEAT_SECONDS` | | `30` | Renew cadence, kept below the TTL. |
 | `RUNNER_RUN_TIMEOUT_SECONDS` | | `3600` | Hard cap on a single CLI run. |
-| `RUNNER_MAX_PARALLELISM` | `--max-parallelism` | `2` | Role-local slot ceiling. Coding uses it for bootstrap and as a fallback for an older server; the centrally managed Execution Hosts ceiling can reduce Coding capacity. Review uses the role value directly. Managed hosts accept only values 1 through 6 through the sanctioned role-config command below. |
+| `RUNNER_MAX_PARALLELISM` | `--max-parallelism` | `2` | Bootstrap slot ceiling for both roles. Neither role uses it as the live control any more. Coding is bounded by the centrally managed Execution Hosts ceiling; since AGT-2820 Review adopts the review plane's own `RoleMaxParallelism` recommendation from the minutely capability advertisement and falls back to this value only until the first advertisement is answered. Managed hosts accept only values 1 through 6 through the sanctioned role-config command below. |
+| `RUNNER_COMMAND_SILENCE_WATCHDOG_SECONDS` | none | `600` | A review command that produces no output at all for this long is killed and typed `ReviewInfra` / `CommandStalled` instead of holding its slot for the rest of its budget. Engaged only when it is strictly tighter than that command's budget. Set to `0` to disable the watchdog and rely on the command budget alone. |
 | `RUNNER_POLL_SECONDS` | `--poll-seconds` | `5` | Delay after an empty claim poll. |
 | `RUNNER_SERVER_REQUEST_TIMEOUT_SECONDS` | `--server-request-timeout-seconds` | `60` | Hard deadline for every Task Server HTTP request, including capability advertisement and worker-loss release. |
 | `RUNNER_IDLE_WATCHDOG_MINUTES` | `--idle-watchdog-minutes` | `5` | A daemon with no active slots exits after this long without starting a claim poll. The fatal journal line is followed by a service-manager restart. |
@@ -594,6 +595,16 @@ tr '\0' '\n' <"/proc/$review_pid/environ" |
 journalctl -t agent-runner-deploy --since '-5 minutes' --no-pager |
   grep 'action=config role=review .* new=4 .* result=applied'
 ```
+
+Since AGT-2820 a Review value set this way is a bootstrap and a ceiling of last
+resort, not the live control. The review plane publishes its own recommended
+parallelism, the capability advertisement delivers it as `RoleMaxParallelism`
+once a minute, and the daemon claims against that number. Each change is
+visible in the journal as `review slot ceiling adopted=<n> previous=<n>
+bootstrap=<RUNNER_MAX_PARALLELISM>`. A lowered ceiling stops new claims and
+never cancels an active review. Pin the environment value only to hold a host
+below the recommendation while an incident is open, and remove the pin
+afterwards so the host follows the recommendation again.
 
 The hard limit of 6 is a host-flood guard, not a capacity recommendation. Keep
 Review admission load-aware, compare active slots with host telemetry, and

@@ -612,6 +612,49 @@ public sealed class V1ReviewPlaneDiagnosticsEndpointTests : IDisposable
         registration.EnsureSuccessStatusCode();
     }
 
+    /// <summary>
+    /// AGT-2820: <c>GET /api/runner/auto-review-parallelism-recommendation</c>
+    /// answered <c>recommendedParallelism: 2</c> while four reviews deadlocked
+    /// agent-runner-01, and nothing consumed the answer - the host kept claiming
+    /// up to its static RUNNER_MAX_PARALLELISM. The recommendation now rides the
+    /// minutely capability advertisement as the review role's ceiling.
+    /// </summary>
+    [Fact]
+    public async Task Capability_advertisement_hands_a_review_executor_the_parallelism_recommendation()
+    {
+        using var factory = BuildFactory(extraConfiguration: new Dictionary<string, string?>
+        {
+            ["AutoReviewQueueAdaptiveParallelism:BaselineParallelism"] = "3",
+        });
+        using var http = factory.CreateClient();
+        var registration = await http.PutAsJsonAsync(
+            $"/api/v1/runners/{RunnerId}",
+            Registration(Instance) with { BootstrapMaxParallelism = 6 });
+        registration.EnsureSuccessStatusCode();
+
+        var advertisement = await http.PostAsJsonAsync(
+            $"/api/v1/runners/{RunnerId}/capabilities",
+            new Contract.CapabilityAdvertisementRequest(
+                RunnerId,
+                Instance,
+                Contract.CapabilityProtocol.CurrentSchemaVersion,
+                DateTime.UtcNow,
+                180,
+                1,
+                [new Contract.AdvertisedCapabilityDto(Contract.CapabilityProtocol.DotNet, "toolchain")]));
+        advertisement.EnsureSuccessStatusCode();
+
+        var snapshot = await advertisement.Content
+            .ReadFromJsonAsync<Contract.RunnerCapabilitySnapshotDto>();
+        var recommendation = factory.Services
+            .GetRequiredService<AdaptiveReviewParallelismAdvisor>()
+            .Current
+            .RecommendedParallelism;
+
+        Assert.Equal(3, recommendation);
+        Assert.Equal(recommendation, snapshot!.RoleMaxParallelism);
+    }
+
     private static Contract.RegisterRunnerRequest Registration(
         string instanceId,
         IReadOnlyList<Contract.RunnerActiveAttempt>? activeAttempts = null)
@@ -660,13 +703,16 @@ public sealed class V1ReviewPlaneDiagnosticsEndpointTests : IDisposable
         return (await response.Content.ReadFromJsonAsync<Contract.ReviewClaimResponse>())!;
     }
 
-    private WebApplicationFactory<Program> BuildFactory(string? runnerPrincipalId = null) =>
+    private WebApplicationFactory<Program> BuildFactory(
+        string? runnerPrincipalId = null,
+        IReadOnlyDictionary<string, string?>? extraConfiguration = null) =>
         new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {
                 builder.UseEnvironment("Test");
                 builder.ConfigureAppConfiguration((_, config) =>
-                    config.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    var settings = new Dictionary<string, string?>
                     {
                         ["TaskRepository"] = _workspace,
                         ["WatchPaths:0:Name"] = ProjectName,
@@ -674,7 +720,11 @@ public sealed class V1ReviewPlaneDiagnosticsEndpointTests : IDisposable
                         ["WatchPaths:0:RootPath"] = _watchPath,
                         ["WatchPaths:0:RepositoryPath"] = _watchPath,
                         ["ReviewDecisionOrchestrator:Enabled"] = "false",
-                    }));
+                    };
+                    foreach (var (key, value) in extraConfiguration ?? new Dictionary<string, string?>())
+                        settings[key] = value;
+                    config.AddInMemoryCollection(settings);
+                });
                 if (runnerPrincipalId is not null)
                 {
                     builder.ConfigureTestServices(services => services.AddSingleton<IStartupFilter>(

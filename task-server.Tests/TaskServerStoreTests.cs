@@ -2026,6 +2026,93 @@ public sealed class TaskServerStoreTests
         Assert.Equal(legacyDigest, replay.EnvelopeDigest);
     }
 
+    /// <summary>
+    /// AGT-2820: a run that delivered without a terminal sentinel is an
+    /// incident, and the durable plane is where the fleet reports it. The
+    /// completion carries the incident line, the run reaches the review lane,
+    /// and the line is on the run-completed lifecycle event rather than living
+    /// only in the runner's log.
+    /// </summary>
+    [Fact]
+    public async Task Completion_gate_items_reach_the_run_completed_lifecycle_event()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        var run = claim.Run!;
+        var lease = claim.Lease!;
+        const string gateItem =
+            "missing-terminal-sentinel: host=agent-runner-01; "
+            + "delivery=refs/heads/agent-studio/results/r/1@abc; "
+            + "cause=the worker exited cleanly but emitted no sentinel. "
+            + "This run is an incident, not a completion.";
+
+        await store.CompleteRunAsync(
+            run.RunId,
+            new CompleteRunRequest(
+                "runner-a",
+                "instance-a",
+                lease.LeaseId,
+                lease.Fence,
+                ExecutionOutcomeKind.ProtocolInconclusive.ToString(),
+                Summary: "The run delivered but never emitted a terminal sentinel.",
+                IdempotencyKey: $"completion:{run.RunId}",
+                Sequence: 1,
+                GateItems: [gateItem, gateItem, "   "]),
+            "runner-a",
+            default);
+
+        var completed = await store.GetTaskAsync(project.ProjectId, task.TaskId, default);
+        Assert.Equal("4-auto-review", completed!.State);
+
+        var events = await store.ListEventsAsync(run.RunId, 0, default);
+        var runCompleted = Assert.Single(
+            events,
+            item => item.Kind == LifecycleEventKinds.RunCompleted);
+        using var payload = JsonDocument.Parse(runCompleted.PayloadJson);
+        var recorded = payload.RootElement.GetProperty("gateItems");
+        // Blank and duplicate lines are dropped; the incident is recorded once.
+        Assert.Equal(gateItem, Assert.Single(recorded.EnumerateArray()).GetString());
+
+        var audit = await store.ListAuditAsync(0, default);
+        var completion = Assert.Single(audit, record => record.Action == "run.completed");
+        Assert.Contains("missing-terminal-sentinel", completion.DetailJson!, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The completion envelope is a bounded contract. A half-recorded incident
+    /// reads as a complete one, so an oversized field is refused rather than
+    /// silently truncated.
+    /// </summary>
+    [Fact]
+    public async Task An_oversized_gate_item_is_refused_rather_than_truncated()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        await SeedReadyTaskAsync(store);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        var lease = claim.Lease!;
+
+        await Assert.ThrowsAsync<ArgumentException>(() => store.CompleteRunAsync(
+            claim.Run!.RunId,
+            new CompleteRunRequest(
+                "runner-a",
+                "instance-a",
+                lease.LeaseId,
+                lease.Fence,
+                ExecutionOutcomeKind.ProtocolInconclusive.ToString(),
+                IdempotencyKey: $"completion:{claim.Run.RunId}",
+                Sequence: 1,
+                GateItems: [new string('x', 8 * 1024)]),
+            "runner-a",
+            default));
+    }
+
     private static ResultHandoffRequest Handoff(string runId, LeaseDto lease, long sequence)
     {
         var envelope = new ImmutableResultEnvelope(

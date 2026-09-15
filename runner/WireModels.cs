@@ -441,30 +441,3 @@ public sealed record ArtifactIngestResponse(
     bool ResultDocumentGenerated = false,
     string? ResultDocumentStatus = null);
 
-/// <summary>One delivered artifact recorded by the external-completion endpoint.</summary>
-public sealed record ExternalDeliverable(string? Path = null, string? Url = null, string? Note = null);
-
-/// <summary>
-/// Runner -> Server: reconcile the task the runner finished out-of-band
-/// (/api/tasks/{jobId}/external-completion). This is how the remote run's result
-/// re-enters the local board: the server writes status.md + deliverables,
-/// terminalises the lifecycle, and moves the lane.
-/// </summary>
-public sealed record ExternalCompletionRequest(
-    string? Summary,
-    List<ExternalDeliverable>? Deliverables = null,
-    string? Source = null,
-    string? TargetState = null,
-    List<string>? GateItems = null,
-    // AGT-2220: the structured delivery claim. The runner's own ls-remote proof
-    // is no longer trusted as prose in Summary - the server re-verifies these two
-    // fields against the target repository before it stamps anything.
-    string? ResultSha = null,
-    string? ResultRef = null,
-    string? BaseSha = null);
-
-public sealed record ExternalCompletionResponse(
-    string? JobId = null,
-    string? TargetState = null,
-    string? Source = null,
-    string? EvidenceCommitSha = null);

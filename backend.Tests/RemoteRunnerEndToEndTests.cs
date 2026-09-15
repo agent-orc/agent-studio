@@ -36,8 +36,6 @@ using RLogIngest = Runner::AgentRunner.LogIngestRequest;
 using RCliLine = Runner::AgentRunner.CliOutputLine;
 using RArtifactIngest = Runner::AgentRunner.ArtifactIngestRequest;
 using RArtifact = Runner::AgentRunner.RunnerArtifactUpload;
-using RComplete = Runner::AgentRunner.ExternalCompletionRequest;
-using RDeliverable = Runner::AgentRunner.ExternalDeliverable;
 using RRemoteComplete = Runner::AgentRunner.RemoteRunCompletionRequest;
 using ROptions = Runner::AgentRunner.RunnerOptions;
 using RTaskRunner = Runner::AgentRunner.RemoteTaskRunner;
@@ -185,11 +183,30 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Equal(1, artResp!.Uploaded);
         Assert.Contains("results/runner-evidence--real.txt", artResp.Files);
 
-        // 5. Reconcile out-of-band: the card re-enters the local board.
-        var completion = await client.CompleteAsync(TaskKey, new RComplete(
-            "Ran on the remote runner; evidence uploaded.",
-            [new RDeliverable(Path: "results/runner-evidence--real.txt", Note: "runner evidence")],
-            Source: ProjectName), ct);
+        // 5. Reconcile out-of-band: the card re-enters the local board. AGT-2820
+        //    retired the runner-side client for this endpoint - a delivered run
+        //    without a terminal sentinel now completes as a delivery bound for
+        //    review instead - so the transport is exercised directly here, where
+        //    operator chat and external agents still use it.
+        var completionResponse = await http.PostAsJsonAsync(
+            $"/api/tasks/{TaskKey}/external-completion",
+            new ExternalCompletionRequest
+            {
+                Summary = "Ran on the remote runner; evidence uploaded.",
+                Deliverables =
+                [
+                    new ExternalDeliverable
+                    {
+                        Path = "results/runner-evidence--real.txt",
+                        Note = "runner evidence",
+                    },
+                ],
+                Source = ProjectName,
+            },
+            ct);
+        completionResponse.EnsureSuccessStatusCode();
+        var completion = await completionResponse.Content
+            .ReadFromJsonAsync<ExternalCompletionResponse>(ct);
         Assert.NotNull(completion);
         Assert.Equal(TaskStates.HumanReview, completion!.TargetState);
 

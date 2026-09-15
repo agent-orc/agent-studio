@@ -448,8 +448,11 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         var model = _configuration.GetValue(
             "ReviewDecisionOrchestrator:Model", ModelFamilyResolver.Resolve(ModelFamilies.GptMini));
         var aspectModel = _configuration.GetValue("ReviewDecisionOrchestrator:AspectModel", model);
-        // AGT-2749: per-toolchain budget, not one flat 60s number that starved Claude aspect calls.
-        var aspectTimeoutSeconds = ReviewAspectTimeoutPolicy.SecondsFor(cliBinary, _configuration);
+        // AGT-2820: the budget is derived from the toolchain and the routed
+        // model, not from one flat number that starved every strong model.
+        var aspectTimeoutSeconds = ReviewAspectTimeoutPolicy
+            .Derive(cliBinary, aspectModel, thinkingLevel: null, materialCharacters: 0, _configuration)
+            .Seconds;
         var maxReissues = _configuration.GetValue("ReviewDecisionOrchestrator:MaxAutoReissueAttempts", MaxAutoReissueAttempts);
         var maxParallelReviews = ParallelSlotPolicy.ClampMax(
             _configuration.GetValue("ReviewDecisionOrchestrator:MaxParallelReviews", DefaultMaxParallelReviews));
@@ -694,8 +697,11 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         var model = _configuration.GetValue(
             "ReviewDecisionOrchestrator:Model", ModelFamilyResolver.Resolve(ModelFamilies.GptMini));
         var aspectModel = _configuration.GetValue("ReviewDecisionOrchestrator:AspectModel", model);
-        // AGT-2749: per-toolchain budget, not one flat 60s number that starved Claude aspect calls.
-        var aspectTimeoutSeconds = ReviewAspectTimeoutPolicy.SecondsFor(cliBinary, _configuration);
+        // AGT-2820: the budget is derived from the toolchain and the routed
+        // model, not from one flat number that starved every strong model.
+        var aspectTimeoutSeconds = ReviewAspectTimeoutPolicy
+            .Derive(cliBinary, aspectModel, thinkingLevel: null, materialCharacters: 0, _configuration)
+            .Seconds;
         var maxPerHour = _configuration.GetValue("ReviewDecisionOrchestrator:CallsPerHour", DefaultCallsPerHour);
         var maxReissues = _configuration.GetValue("ReviewDecisionOrchestrator:MaxAutoReissueAttempts", MaxAutoReissueAttempts);
 

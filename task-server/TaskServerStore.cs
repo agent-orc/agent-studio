@@ -1642,6 +1642,7 @@ public sealed partial class TaskServerStore
         if (request.NeedsInputMessage is not null
             && Encoding.UTF8.GetByteCount(request.NeedsInputMessage) > 16 * 1024)
             throw new ArgumentException("NeedsInputMessage exceeds the 16 KiB completion-envelope limit.");
+        var gateItems = NormalizeGateItems(request.GateItems);
         var needsInput = !string.IsNullOrWhiteSpace(request.NeedsInputMessage);
         var nextState = needsInput ? "5-human-review" : "4-auto-review";
         RunDto? completed = null;
@@ -1827,6 +1828,10 @@ public sealed partial class TaskServerStore
                     needsInputFirstLine = FirstNonEmptyLine(request.NeedsInputMessage),
                     needsInputArtifact = needsInput ? "results/needs-input.md" : null,
                     salvageBranch = request.SalvageBranch,
+                    // AGT-2820: the board-visible incident lines this completion
+                    // carries. Omitted entirely when there are none, so an
+                    // ordinary completion reads exactly as it did before.
+                    gateItems = gateItems.Count == 0 ? null : gateItems,
                 },
                 ct);
             await AppendLifecycleEventAsync(
@@ -1853,6 +1858,7 @@ public sealed partial class TaskServerStore
                     request.IdempotencyKey,
                     request.NeedsInputMessage,
                     request.SalvageBranch,
+                    gateItems = gateItems.Count == 0 ? null : gateItems,
                     classifierVersion = request.OutcomeDecision?.ClassifierVersion,
                     recoveryAction = request.OutcomeDecision?.RecoveryAction.ToString(),
                 }), ct);
@@ -4128,6 +4134,36 @@ public sealed partial class TaskServerStore
         => text?.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
             .Select(line => line.Trim())
             .FirstOrDefault(line => line.Length > 0);
+
+    private const int MaximumCompletionGateItems = 32;
+    private const int MaximumCompletionGateItemBytes = 4 * 1024;
+
+    /// <summary>
+    /// AGT-2820: completion gate items reduced to what a board row can carry -
+    /// one line each, no blanks, no duplicates. The bounds are the boundary
+    /// check for this field; a runner that floods the completion envelope with
+    /// incident lines is rejected rather than silently truncated, because a
+    /// half-recorded incident reads as a complete one.
+    /// </summary>
+    private static IReadOnlyList<string> NormalizeGateItems(IReadOnlyList<string>? gateItems)
+    {
+        if (gateItems is null || gateItems.Count == 0) return [];
+        if (gateItems.Count > MaximumCompletionGateItems)
+            throw new ArgumentException(
+                $"A run completion carries at most {MaximumCompletionGateItems} gate items.");
+        var normalized = gateItems
+            .Where(item => !string.IsNullOrWhiteSpace(item))
+            .Select(item => item.Replace('\r', ' ').Replace('\n', ' ').Trim())
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        foreach (var item in normalized)
+        {
+            if (Encoding.UTF8.GetByteCount(item) > MaximumCompletionGateItemBytes)
+                throw new ArgumentException(
+                    $"A completion gate item exceeds the {MaximumCompletionGateItemBytes}-byte limit.");
+        }
+        return normalized;
+    }
 
     private static async Task ValidateRunnerAsync(SqliteConnection connection, SqliteTransaction transaction, string runnerId, string instanceId, CancellationToken ct)
     {
