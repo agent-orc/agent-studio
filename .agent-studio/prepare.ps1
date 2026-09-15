@@ -37,10 +37,14 @@ Set-DefaultEnvironment 'COMPUTERNAME' ([Environment]::MachineName)
 # reuses or leaves one.
 $env:MSBUILDDISABLENODEREUSE = '1'
 $env:DOTNET_CLI_USE_MSBUILD_SERVER = '0'
-# The gate points NUGET_PACKAGES at a per-run working folder and moves that
-# folder into its cache after a miss, but the later `dotnet build --no-restore`
-# is not given the new location (NETSDK1064: package not found). Restoring into
-# the user's global packages folder keeps the assets file valid for the build.
+# Interim (AGT-2834): a gate that does not yet hand its resolved cache locations
+# to the commands after preparation leaves the later `dotnet build --no-restore`
+# pointing at a package folder that moved (NETSDK1064: package not found).
+# Restoring into the user's global packages folder keeps the assets file valid
+# for that build. Remove this line once the Windows host running the merge gate
+# executes a Studio with the preparation environment contract described in
+# docs/operations/setup/preparation-isolation-orchestrator.md; the gate then
+# supplies NUGET_PACKAGES to the build itself.
 Remove-Item Env:NUGET_PACKAGES -ErrorAction SilentlyContinue
 
 $candidates = @()

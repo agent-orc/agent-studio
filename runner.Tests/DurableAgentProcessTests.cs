@@ -52,6 +52,49 @@ public sealed class DurableAgentProcessTests : IDisposable
         Assert.Contains(attached.ReadAfter(0), line => line.Text == "[[TASK_DONE]]");
     }
 
+    /// <summary>
+    /// AGT-2834 (coding-run path): the detached worker, and therefore the agent
+    /// and every command it runs, must carry the product cache locations the
+    /// repository preparation of this claim restored into. Without them the
+    /// checkout's assets file points at a package folder the agent cannot see
+    /// and its first `dotnet build --no-restore` fails with NETSDK1064.
+    /// </summary>
+    [Fact]
+    public async Task Detached_worker_runs_the_agent_with_the_prepared_cache_locations()
+    {
+        var worktree = Path.Combine(_root, "prepared-worktree");
+        var results = Path.Combine(_root, "prepared-results");
+        var stateRoot = Path.Combine(_root, "prepared-state");
+        var packages = Path.Combine(_root, "prepared-packages");
+        Directory.CreateDirectory(worktree);
+        Directory.CreateDirectory(results);
+        Directory.CreateDirectory(packages);
+        var options = Options(stateRoot, worktree,
+            "-c \"echo NUGET_PACKAGES=$NUGET_PACKAGES; printf '[[TASK_DONE]]\\n'\"");
+        var lease = Lease("AGT-PREPARED-ENV");
+        var store = new RunnerStateStore(stateRoot);
+        var slot = store.Create(lease.TaskKey, lease, worktree);
+
+        var worker = DurableAgentProcess.Start(
+            options, slot.WorkerDirectory, worktree, "", results,
+            preparationEnvironment: new Dictionary<string, string> { ["NUGET_PACKAGES"] = packages });
+
+        DetachedJobResult? result = null;
+        for (var i = 0; i < 40 && result is null; i++)
+        {
+            await Task.Delay(100);
+            result = worker.ReadResult();
+        }
+
+        Assert.NotNull(result);
+        Assert.Equal(0, result!.ExitCode);
+        Assert.Contains("NUGET_PACKAGES=" + packages, result.StdOut);
+        // The spec is the durable record a replacement daemon relaunches from.
+        Assert.Contains(
+            packages,
+            await File.ReadAllTextAsync(Path.Combine(slot.WorkerDirectory, "spec.json")));
+    }
+
     [Fact]
     public void Terminal_result_wins_when_worker_exits_between_discovery_checks()
     {

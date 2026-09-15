@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentRunner;
 
@@ -37,7 +38,11 @@ internal sealed record DetachedJobSpec(
     string? Engine = null,
     string? RunId = null,
     string? ResumeSessionId = null,
-    string? CleanContextKey = null);
+    string? CleanContextKey = null,
+    // AGT-2834: the product cache locations the repository preparation of this
+    // run restored into. Additive like the blocks above: a spec written before
+    // this field deserialises with null and the worker simply adds nothing.
+    IReadOnlyDictionary<string, string>? PreparationEnvironment = null);
 
 internal sealed record DetachedJobLogLine(long Sequence, DateTime Timestamp, string Stream, string Text);
 
@@ -95,7 +100,8 @@ internal sealed class DurableAgentProcess
         RunSpecDto? runSpec = null,
         string? runId = null,
         string? resumeSessionId = null,
-        string? cleanContextKey = null)
+        string? cleanContextKey = null,
+        IReadOnlyDictionary<string, string>? preparationEnvironment = null)
     {
         Directory.CreateDirectory(workerDirectory);
         var specPath = Path.Combine(workerDirectory, "spec.json");
@@ -108,7 +114,8 @@ internal sealed class DurableAgentProcess
             runSpec,
             runId,
             resumeSessionId,
-            cleanContextKey);
+            cleanContextKey,
+            preparationEnvironment);
         File.WriteAllText(specPath, JsonSerializer.Serialize(spec, Json));
 
         var executable = Environment.ProcessPath
@@ -132,6 +139,10 @@ internal sealed class DurableAgentProcess
             start.Environment[authName] = authValue;
         else
             start.Environment.Remove(ProviderAuthEnvironment.ClaudeCodeOAuthToken);
+        // The worker and every command below it must see the packages the
+        // repository preparation restored; the assets file of this checkout
+        // points at those locations by absolute path (NETSDK1064 otherwise).
+        PreparationCommandEnvironment.ApplyTo(start.Environment, spec.PreparationEnvironment);
         var process = Process.Start(start)
             ?? throw new InvalidOperationException("Failed to start the detached runner worker.");
         var started = process.StartTime.ToUniversalTime();
@@ -155,7 +166,8 @@ internal sealed class DurableAgentProcess
         RunSpecDto? runSpec = null,
         string? runId = null,
         string? resumeSessionId = null,
-        string? cleanContextKey = null)
+        string? cleanContextKey = null,
+        IReadOnlyDictionary<string, string>? preparationEnvironment = null)
     {
         // One resolution truth for both engines: which CLI runs (card wish vs.
         // host binaries, foreign-CLI fallback drops the model pins) comes from
@@ -178,7 +190,8 @@ internal sealed class DurableAgentProcess
             Engine: options.ExecEngine,
             RunId: runId,
             ResumeSessionId: resumeSessionId,
-            CleanContextKey: cleanContextKey);
+            CleanContextKey: cleanContextKey,
+            PreparationEnvironment: preparationEnvironment);
     }
 
     /// <summary>Read a worker specification back, including one written before the T0b fields existed.</summary>
@@ -444,6 +457,7 @@ internal sealed class DurableAgentProcess
                 };
                 if (ProviderAuthEnvironment.TryGetForCli(spec.CliType, out var authName, out var authValue))
                     environment[authName] = authValue;
+                PreparationCommandEnvironment.ApplyTo(environment, spec.PreparationEnvironment);
                 processResult = await ProcessRunner.RunAsync(
                     spec.FileName,
                     spec.Arguments,

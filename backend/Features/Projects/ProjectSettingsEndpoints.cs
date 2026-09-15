@@ -9,6 +9,7 @@ using AgentStudio.ExecutionPreparation;
 using ProjectDefinitionIssue = AgentStudio.TaskServer.Contracts.ProjectDefinitionIssue;
 using ProjectDefinitionReader = AgentStudio.TaskServer.Contracts.ProjectDefinitionReader;
 using ProjectPreparationManifest = AgentStudio.TaskServer.Contracts.ProjectPreparationManifest;
+using ProjectPreparationManifestFile = AgentStudio.TaskServer.Contracts.ProjectPreparationManifestFile;
 using ProjectPreparationPaths = AgentStudio.TaskServer.Contracts.ProjectPreparationPaths;
 
 /// <summary>
@@ -79,21 +80,7 @@ public static class ProjectSettingsEndpoints
             var read = ProjectDefinitionReader.ReadWorkspace(repositoryPath);
             var definitionPath = Path.Combine(repositoryPath, ProjectPreparationPaths.Definition.Replace('/', Path.DirectorySeparatorChar));
             var manifestPath = BuildTestGateRunner.PreparationManifestPath(repositoryPath);
-            ProjectPreparationManifest? manifest = null;
-            try
-            {
-                if (File.Exists(manifestPath))
-                {
-                    var manifestJson = new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web);
-                    manifestJson.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
-                    manifest = System.Text.Json.JsonSerializer.Deserialize<ProjectPreparationManifest>(
-                        File.ReadAllText(manifestPath), manifestJson);
-                }
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
-            {
-                SilentCatch.Note(ex, "ProjectSettingsEndpoints: last preparation manifest");
-            }
+            var manifest = ProjectPreparationManifestFile.TryRead(manifestPath);
             return Results.Ok(new
             {
                 repositoryDefinition = File.Exists(definitionPath) ? File.ReadAllText(definitionPath) : null,

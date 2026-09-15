@@ -451,7 +451,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                         }
                         : await RunCommandsAsync(
                             workspace!, preparation, commands, plan.Source, mode, timeout,
-                            [], ct)
+                            [], projectPreparation?.CommandEnvironment, ct)
                             .ConfigureAwait(false);
                     var completedAudit = CompleteAudit(staged.Audit, commands, completed.Processes);
                     completed = completed with
@@ -603,6 +603,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         PostStepMode mode,
         TimeSpan timeout,
         IReadOnlyList<string> cacheRestoreMessages,
+        IReadOnlyDictionary<string, string>? preparationEnvironment,
         CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
@@ -612,6 +613,12 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         var dependencyCache = new List<BuildTestGateDependencyCacheEvidence>();
         output.AppendLine($"# verify plan: {planSource} ({commands.Count} command(s))");
         foreach (var message in cacheRestoreMessages) output.AppendLine($"# {message}");
+        // The packages the repository preparation restored live in product cache
+        // locations that only an environment variable points at. Naming them in
+        // the gate output keeps a later NETSDK1064 diagnosable from the evidence.
+        foreach (var variable in (preparationEnvironment ?? PreparationCommandEnvironment.None)
+                     .OrderBy(entry => entry.Key, StringComparer.Ordinal))
+            output.AppendLine($"# preparation environment: {variable.Key}={variable.Value}");
         var ranBackend = false;
         var ranFrontend = false;
 
@@ -668,6 +675,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 timeout,
                 elapsedBefore,
                 output,
+                preparationEnvironment,
                 ct,
                 phase: "preparation").ConfigureAwait(false);
             evidence.Add(process);
@@ -731,6 +739,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 timeout,
                 elapsedBefore,
                 output,
+                preparationEnvironment,
                 ct,
                 phase: "verification")
                 .ConfigureAwait(false);
@@ -1427,6 +1436,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         TimeSpan budgetLimit,
         TimeSpan elapsedBefore,
         RingOutput output,
+        IReadOnlyDictionary<string, string>? preparationEnvironment,
         CancellationToken ct,
         string phase)
     {
@@ -1437,7 +1447,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 : ("/bin/sh", (IReadOnlyList<string>)["-c", command]);
         return RunProcessAsync(
             workingDirectory, command, fileName, args, processTimeout,
-            budgetLimit, elapsedBefore, output, ct, phase);
+            budgetLimit, elapsedBefore, output, preparationEnvironment, ct, phase);
     }
 
     private async Task<BuildTestGateProcessEvidence> RunProcessAsync(
@@ -1449,6 +1459,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         TimeSpan budgetLimit,
         TimeSpan elapsedBefore,
         RingOutput output,
+        IReadOnlyDictionary<string, string>? preparationEnvironment,
         CancellationToken ct,
         string phase)
     {
@@ -1464,6 +1475,9 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         };
         foreach (var arg in args) psi.ArgumentList.Add(arg);
         psi.Environment["NPM_CONFIG_CACHE"] = NpmCachePath;
+        // Last word: a command must see the package locations the repository
+        // preparation restored into, not the gate's own default cache.
+        PreparationCommandEnvironment.ApplyTo(psi.Environment, preparationEnvironment);
         output.AppendLine($"> {fileName} {string.Join(' ', args)}");
 
         Process? process;

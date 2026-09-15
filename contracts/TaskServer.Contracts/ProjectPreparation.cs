@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
@@ -884,12 +885,21 @@ public enum PreparationFailureKind
     Cancelled,
 }
 
+/// <summary>
+/// One product cache block of a preparation run. <paramref name="ContentPath"/>
+/// is the resolved package location the prepare process actually used and the
+/// location every later command of the same gate or run must be pointed at
+/// through <paramref name="EnvironmentVariable"/>; both stay null for a
+/// discarded block, which has no location to hand on.
+/// </summary>
 public sealed record PreparationCacheManifest(
     string Block,
     string Key,
     string State,
     string EntryPath,
-    IReadOnlyList<string> Inputs);
+    IReadOnlyList<string> Inputs,
+    string? EnvironmentVariable = null,
+    string? ContentPath = null);
 
 public sealed record ProjectPreparationManifest(
     int SchemaVersion,
@@ -908,6 +918,163 @@ public sealed record ProjectPreparationManifest(
     string? FailureReason,
     string? FailureOutputTail);
 
+/// <summary>
+/// Reads a persisted <c>preparation-manifest.json</c>. The manifest is the
+/// durable record of one preparation, so a consumer that did not run the
+/// preparation itself (a resumed attempt, a reattaching daemon, the Execution
+/// settings view) derives the same evidence and the same
+/// <see cref="PreparationCommandEnvironment"/> from it.
+/// </summary>
+public static class ProjectPreparationManifestFile
+{
+    private static readonly JsonSerializerOptions Options = CreateOptions();
+
+    private static JsonSerializerOptions CreateOptions()
+    {
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        options.Converters.Add(new JsonStringEnumConverter());
+        return options;
+    }
+
+    /// <summary>The manifest at <paramref name="path"/>, or null when it is missing or unreadable.</summary>
+    public static ProjectPreparationManifest? TryRead(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return null;
+        try
+        {
+            return JsonSerializer.Deserialize<ProjectPreparationManifest>(File.ReadAllText(path), Options);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return null;
+        }
+    }
+}
+
+/// <summary>
+/// Pure resolution of the environment every command after a green preparation
+/// has to run with. The prepare process restores its packages into product
+/// cache locations that no toolchain can rediscover on its own: the assets file
+/// a later <c>dotnet build --no-restore</c> reads points at whatever
+/// <c>NUGET_PACKAGES</c> said during restore, so a gate or run that starts its
+/// build without the same variable fails with NETSDK1064 "package ... was not
+/// found. It might have been deleted since NuGet restore" (Windows merge gate,
+/// 15.09.2026). Playwright browsers and the npm cache break the same way.
+///
+/// <para>The contract is therefore: preparation publishes its resolved cache
+/// locations, and build, test, lint, e2e and the coding-run agent of the same
+/// gate or run receive exactly those locations. Resolution is a projection of
+/// the manifest, so a consumer that only has <c>preparation-manifest.json</c>
+/// derives the identical environment.</para>
+/// </summary>
+public static class PreparationCommandEnvironment
+{
+    /// <summary>Nothing to hand on: not configured, failed, or no cache block.</summary>
+    public static readonly IReadOnlyDictionary<string, string> None =
+        new Dictionary<string, string>(0, StringComparer.Ordinal);
+
+    /// <summary>Cache states whose content path is a usable package location.</summary>
+    private static readonly string[] ResolvedStates = ["hit", "published"];
+
+    public static IReadOnlyDictionary<string, string> Resolve(ProjectPreparationManifest? manifest)
+        => manifest is null || !manifest.Succeeded ? None : Resolve(manifest.Caches);
+
+    public static IReadOnlyDictionary<string, string> Resolve(
+        IEnumerable<PreparationCacheManifest>? caches)
+    {
+        if (caches is null) return None;
+        var resolved = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var cache in caches)
+        {
+            if (string.IsNullOrWhiteSpace(cache.EnvironmentVariable)
+                || string.IsNullOrWhiteSpace(cache.ContentPath)
+                || !ResolvedStates.Contains(cache.State, StringComparer.Ordinal))
+                continue;
+            resolved[cache.EnvironmentVariable] = cache.ContentPath;
+        }
+        return resolved.Count == 0 ? None : resolved;
+    }
+
+    /// <summary>
+    /// Layers the resolved locations onto a child process environment. Applied
+    /// last on purpose: a gate default such as its own <c>NPM_CONFIG_CACHE</c>
+    /// must not win over the location the prepare process restored into.
+    /// </summary>
+    public static void ApplyTo(
+        IDictionary<string, string?> environment,
+        IReadOnlyDictionary<string, string>? variables)
+    {
+        if (variables is null) return;
+        foreach (var variable in variables) environment[variable.Key] = variable.Value;
+    }
+
+    /// <inheritdoc cref="ApplyTo(IDictionary{string,string?},IReadOnlyDictionary{string,string})"/>
+    public static void ApplyTo(
+        Dictionary<string, string> environment,
+        IReadOnlyDictionary<string, string>? variables)
+    {
+        if (variables is null) return;
+        foreach (var variable in variables) environment[variable.Key] = variable.Value;
+    }
+}
+
+/// <summary>
+/// Process-local binding table from a prepared workspace to its preparation
+/// environment. The coding-run agent is started through the CLI execution
+/// surface that four CLI backends and their test doubles share, so the prepared
+/// locations travel next to that surface instead of through its signature. A
+/// run binds its workspace after a green preparation and releases it when the
+/// run ends; a lookup also answers for a working directory inside the prepared
+/// workspace, because a run may execute in a component subdirectory.
+/// </summary>
+public static class PreparedWorkspaceEnvironment
+{
+    private static readonly ConcurrentDictionary<string, IReadOnlyDictionary<string, string>> Bound =
+        new(PathComparer);
+
+    private static StringComparer PathComparer
+        => OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+
+    public static void Bind(string? workspace, IReadOnlyDictionary<string, string>? variables)
+    {
+        if (Key(workspace) is not { } key) return;
+        if (variables is null || variables.Count == 0) Bound.TryRemove(key, out _);
+        else Bound[key] = variables;
+    }
+
+    public static void Release(string? workspace)
+    {
+        if (Key(workspace) is { } key) Bound.TryRemove(key, out _);
+    }
+
+    /// <summary>
+    /// The environment bound for <paramref name="workingDirectory"/> or for the
+    /// nearest prepared ancestor of it; <see cref="PreparationCommandEnvironment.None"/>
+    /// when the directory belongs to no prepared workspace.
+    /// </summary>
+    public static IReadOnlyDictionary<string, string> For(string? workingDirectory)
+    {
+        if (Bound.IsEmpty || Key(workingDirectory) is not { } key)
+            return PreparationCommandEnvironment.None;
+        for (var directory = key; !string.IsNullOrEmpty(directory);
+             directory = Path.GetDirectoryName(directory))
+        {
+            if (Bound.TryGetValue(directory, out var variables)) return variables;
+        }
+        return PreparationCommandEnvironment.None;
+    }
+
+    private static string? Key(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return null;
+        try { return Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)); }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return null;
+        }
+    }
+}
+
 public sealed record ProjectPreparationResult(
     bool Configured,
     bool Succeeded,
@@ -922,6 +1089,15 @@ public sealed record ProjectPreparationResult(
     public bool CacheHit => Manifest?.Caches.Count > 0
                             && Manifest.Caches.All(cache => cache.State == "hit");
 
+    /// <summary>
+    /// The cache locations this preparation resolved, keyed by the environment
+    /// variable that points a later command at them. Every build, test, lint,
+    /// e2e or coding-run command of the same gate or run must be started with
+    /// these variables; see <see cref="PreparationCommandEnvironment"/>.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> CommandEnvironment
+        => Succeeded ? PreparationCommandEnvironment.Resolve(Manifest) : PreparationCommandEnvironment.None;
+
     public static ProjectPreparationResult NotConfigured() =>
         new(false, true, null, [], string.Empty, null, PreparationFailureKind.None, null, null);
 }
@@ -930,7 +1106,10 @@ public sealed record ProjectPreparationResult(
 /// Runs the repository-owned prepare script with product-owned technology
 /// caches. Every cache miss writes into a private staging directory. Only a
 /// green prepare atomically publishes a new immutable entry, and a failed run
-/// deletes all staging content.
+/// deletes all staging content. A hit binds the prepare process to the
+/// published entry directly, so the location it restored into is the same one
+/// <see cref="ProjectPreparationResult.CommandEnvironment"/> hands to every
+/// later command of the gate or run.
 /// </summary>
 public static partial class ProjectPreparationExecutor
 {
@@ -1087,7 +1266,9 @@ public static partial class ProjectPreparationExecutor
 
         var succeeded = failureKind == PreparationFailureKind.None;
         if (succeeded) Publish(cacheBindings, log);
-        else DeleteBestEffort(runRoot);
+        // Either way the per-run root has served its purpose: a green run moved
+        // every staged block into its immutable entry, a red one discards them.
+        DeleteBestEffort(runRoot);
         // A failed prepare is unreadable while only its exit code survives. The
         // bounded tail goes into the manifest and, shortened, into the reason
         // that the gate hands to the card's integration failure detail.
@@ -1167,14 +1348,19 @@ public static partial class ProjectPreparationExecutor
         var key = ContentKey(block, workspace, allInputs);
         var entry = Path.Combine(cacheRoot, "entries", block, key);
         var content = Path.Combine(entry, "content");
-        var working = Path.Combine(runRoot, block);
         var entryExists = Directory.Exists(entry);
         var hit = File.Exists(Path.Combine(entry, "manifest.json"))
                   && Directory.Exists(content)
                   && ContainsAnyFile(content);
         var invalidEntry = entryExists && !hit;
-        if (hit) CopyDirectory(content, working);
-        else Directory.CreateDirectory(working);
+        // A hit binds the prepare process to the published entry itself. The
+        // former private copy was both a full duplication of the package folder
+        // per run and a source of drift: whatever the prepare script added to
+        // the copy was thrown away, while the build that followed had to read
+        // some other location. A miss keeps its private staging folder, so a
+        // failed first prepare still publishes nothing.
+        var working = hit ? content : Path.Combine(runRoot, block);
+        if (!hit) Directory.CreateDirectory(working);
         log?.Invoke($"project-prepare cache block={block} key={key} state={(invalidEntry ? "incomplete" : hit ? "hit" : "miss")}");
         var relativeInputs = allInputs
             .Select(path => Path.GetRelativePath(workspace, path).Replace('\\', '/'))
@@ -1183,7 +1369,7 @@ public static partial class ProjectPreparationExecutor
             path => Path.GetRelativePath(workspace, path).Replace('\\', '/'),
             path => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))).ToLowerInvariant(),
             StringComparer.Ordinal);
-        return new(block, environmentVariable, key, entry, working, hit, invalidEntry,
+        return new(block, environmentVariable, key, entry, content, working, hit, invalidEntry,
             relativeInputs, inputHashes);
     }
 
@@ -1394,9 +1580,14 @@ public static partial class ProjectPreparationExecutor
         return new(1, subjectSha, read.DefinitionSha256!, started, DateTimeOffset.UtcNow,
             stopwatch.ElapsedMilliseconds, succeeded, read.Definition!.Commands.Prepare,
             tools, lockHashes,
-            bindings.Select(binding => new PreparationCacheManifest(
-                binding.Block, binding.Key, binding.Hit ? "hit" : succeeded ? "published" : "discarded",
-                binding.EntryPath, binding.Inputs)).ToArray(), kind, signature, reason, outputTail);
+            bindings.Select(binding =>
+            {
+                var state = binding.Hit ? "hit" : succeeded ? "published" : "discarded";
+                return new PreparationCacheManifest(
+                    binding.Block, binding.Key, state, binding.EntryPath, binding.Inputs,
+                    binding.EnvironmentVariable,
+                    state == "discarded" ? null : binding.ContentPath);
+            }).ToArray(), kind, signature, reason, outputTail);
     }
 
     private static void WriteManifest(string path, ProjectPreparationManifest manifest)
@@ -1454,15 +1645,6 @@ public static partial class ProjectPreparationExecutor
         }
     }
 
-    private static void CopyDirectory(string source, string destination)
-    {
-        Directory.CreateDirectory(destination);
-        foreach (var file in Directory.EnumerateFiles(source))
-            File.Copy(file, Path.Combine(destination, Path.GetFileName(file)), overwrite: false);
-        foreach (var directory in Directory.EnumerateDirectories(source))
-            CopyDirectory(directory, Path.Combine(destination, Path.GetFileName(directory)));
-    }
-
     private static void DeleteBestEffort(string path)
     {
         try { if (Directory.Exists(path)) Directory.Delete(path, recursive: true); }
@@ -1505,11 +1687,18 @@ public static partial class ProjectPreparationExecutor
         return string.IsNullOrWhiteSpace(reason) ? excerpt : $"{reason} Output tail: {excerpt}";
     }
 
+    /// <summary>
+    /// One bound cache block. <see cref="WorkingPath"/> is where the prepare
+    /// process writes (the immutable entry itself on a hit, private staging on a
+    /// miss); <see cref="ContentPath"/> is where that content lives once the run
+    /// succeeded and is what later commands are pointed at.
+    /// </summary>
     private sealed record CacheBinding(
         string Block,
         string EnvironmentVariable,
         string Key,
         string EntryPath,
+        string ContentPath,
         string WorkingPath,
         bool Hit,
         bool InvalidEntry,

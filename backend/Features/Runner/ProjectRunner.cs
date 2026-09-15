@@ -2784,6 +2784,13 @@ public class ProjectRunner
                         jobId,
                         info.Title));
                 }
+                // The prepare script restored into product cache locations that
+                // only an environment variable names. Bind them to this run's
+                // workspace so the coding agent's own `dotnet build --no-restore`
+                // or `npm test` sees the packages preparation put there
+                // (NETSDK1064 otherwise). The binding ends with the run.
+                PreparedWorkspaceEnvironment.Bind(
+                    preparationRun.WorkingDirectory, preparation.CommandEnvironment);
                 _timeline?.Append(
                     info.FolderPath,
                     "project_preparation",
@@ -7066,6 +7073,9 @@ public class ProjectRunner
     private ActiveRun? ReleaseRun(string jobId, bool releasePickupLock = true)
     {
         var released = _activeRuns.Release(jobId);
+        // A released run no longer owns its workspace, so its preparation cache
+        // locations must not stay bound for whatever picks the workspace up next.
+        PreparedWorkspaceEnvironment.Release(released?.WorkingDirectory);
         if (releasePickupLock && released?.PickupLockFolder is { } folder)
             ReleasePickupLockIfHeld(folder);
         return released;

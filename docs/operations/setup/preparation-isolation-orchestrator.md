@@ -38,9 +38,25 @@ The executor supplies these general building blocks:
 | .NET and NuGet | `global.json`, `packages.lock.json` when present | content-addressed NuGet package cache | observed SDK version and cache key |
 | Playwright | Node lockfile and Playwright configuration | content-addressed browser cache | browser cache key |
 
-An entry is immutable after publication. A failed prepare run discards its staging cache, so poisoned dependencies are never written back. `preparation-manifest.json` records the subject SHA, definition hash, observed versions, lockfile hashes, duration, per-block cache state, a stable failure signature, and, for a failed run, `failureOutputTail`: the bounded tail of what the script printed (stderr, or stdout when stderr stayed empty). A shortened single-line excerpt of that tail is appended to `failureReason`, so the card's integration failure detail names the real error instead of only an exit code. A second unchanged run should report `hit` for every configured block.
+A cache miss restores into a private staging folder under the per-run root and publishes it as an immutable entry only after a green prepare, so poisoned dependencies are never written back. A cache hit binds the prepare process to the existing entry directly; there is no per-run copy of the package folder, and whatever the prepare script adds on a hit stays where the following commands read it. `preparation-manifest.json` records the subject SHA, definition hash, observed versions, lockfile hashes, duration, per-block cache state, a stable failure signature, and, for a failed run, `failureOutputTail`: the bounded tail of what the script printed (stderr, or stdout when stderr stayed empty). A shortened single-line excerpt of that tail is appended to `failureReason`, so the card's integration failure detail names the real error instead of only an exit code. A second unchanged run should report `hit` for every configured block.
 
 The standalone Linux Runner keeps one clean checkout for each project and executor. It fetches and fast-forwards the integration branch only, then leases a separate worktree at the card's subject commit. The stable checkout is never a coding workspace. It keeps product caches warm and is the baseline for later integration runs.
+
+## Preparation environment for later commands
+
+Restoring dependencies is only half the contract. The location they were restored into is written into the build inputs: `project.assets.json` records the absolute package folder that `NUGET_PACKAGES` named during restore, Playwright records its browser directory, npm its cache. A command that starts without those variables therefore fails against a location it cannot see, which is what the Windows merge gate reported on 15.09.2026: a green 7.2 s preparation followed by `dotnet build --no-restore -c Release` ending in `NETSDK1064: Package xunit.analyzers, version 1.4.0 was not found. It might have been deleted since NuGet restore.`
+
+The decision is therefore **preparation publishes its resolved locations, and every later command of the same gate or run receives them**; the working folders are not kept alive until the gate ends. Concretely:
+
+- Every cache block of the manifest carries `environmentVariable` (for example `NUGET_PACKAGES`) and `contentPath`, the resolved package location. On a miss that is the freshly published entry content, on a hit the entry the prepare process was already bound to, and on a discarded block it stays null.
+- Build, test, lint, e2e and dependency-preparation commands of the build/test gate run with exactly those variables; the gate logs one `# preparation environment: <VAR>=<path>` line per block, so a later package error is diagnosable from the gate evidence alone.
+- A coding run binds the same locations to its prepared workspace, and the agent CLI is started with them on the local orchestrator and on the standalone runner. The runner persists them in the detached worker specification, so a resumed attempt and a reattaching daemon relaunch with the identical locations.
+- Because the resolution is a projection of `preparation-manifest.json`, any consumer that only has the manifest derives the same environment.
+- A cache hit and a cache miss both leave `dotnet build --no-restore` and `npm test` working, and both resolve to the same immutable entry content.
+
+The published entry stays the shared package folder for the commands that follow, which is how NuGet and npm expect a global package folder to be used: later commands may add packages to it, nothing removes or rewrites an entry. Eviction remains an orchestrator action.
+
+Until a Windows Studio host runs a version carrying this contract, this repository's own `.agent-studio/prepare.ps1` keeps its interim `Remove-Item Env:NUGET_PACKAGES`, which forces the restore into the user's global packages folder. It can be removed once the host executing the Windows merge gate is updated; the gate then supplies the location itself.
 
 ## Boundaries for later stages
 
@@ -54,8 +70,9 @@ The standalone Linux Runner keeps one clean checkout for each project and execut
 1. Open Settings > Execution and confirm the repository definition is valid.
 2. Run a card and inspect `preparation-manifest.json` in its results.
 3. Run the unchanged subject again and confirm every cache state is `hit`.
-4. Break the prepare command deliberately in a test project. Confirm no immutable cache entry is published, a proposal card includes the failure signature, and the manifest's `failureOutputTail` plus the card's integration failure detail show the script's own error text.
-5. On a Windows Studio, run a card for a repository without `.agent-studio/prepare.ps1` and confirm preparation runs the POSIX script through Git Bash.
-6. Confirm the stable checkout is clean, follows the integration branch by fast-forward only, and has no task edits.
+4. Confirm the gate output names one `# preparation environment:` line per cache block and that the build step after both a miss and a hit passes.
+5. Break the prepare command deliberately in a test project. Confirm no immutable cache entry is published, a proposal card includes the failure signature, and the manifest's `failureOutputTail` plus the card's integration failure detail show the script's own error text.
+6. On a Windows Studio, run a card for a repository without `.agent-studio/prepare.ps1` and confirm preparation runs the POSIX script through Git Bash.
+7. Confirm the stable checkout is clean, follows the integration branch by fast-forward only, and has no task edits.
 
 The schemas are [`project-execution.schema.json`](../../app/schemas/project-execution.schema.json) and [`preparation-manifest.schema.json`](../../app/schemas/preparation-manifest.schema.json). The source decisions and migration plan remain in the [Docker execution-world migration Dossier](../docker-ausfuehrungswelt-migration/index.html).

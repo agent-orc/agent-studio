@@ -5,6 +5,8 @@ using CodingAgentRunner.Delegation;
 using CodingAgentRunner.Execution;
 using CarRunInfo = CodingAgentRunner.Model.CliRunInfo;
 using LibOutcome = CodingAgentRunner.Model.RunOutcome;
+using PreparationCommandEnvironment = AgentStudio.TaskServer.Contracts.PreparationCommandEnvironment;
+using PreparedWorkspaceEnvironment = AgentStudio.TaskServer.Contracts.PreparedWorkspaceEnvironment;
 
 namespace AgentStudio.Cli;
 
@@ -89,6 +91,11 @@ public partial class GenericCliExecutionService
         var extraEnvironment = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         if (!string.IsNullOrWhiteSpace(jobFolderPath))
             extraEnvironment["JOB_RESULTS_DIR"] = Path.Combine(jobFolderPath, "results");
+        // The repository preparation of this run restored its packages into
+        // product cache locations; the agent's build and test commands only find
+        // them when they carry the same variables.
+        PreparationCommandEnvironment.ApplyTo(
+            extraEnvironment, PreparedWorkspaceEnvironment.For(workingDirectory));
         if (cleanContext != null)
             foreach (var pair in cleanContext.EnvOverrides)
                 extraEnvironment[pair.Key] = pair.Value;

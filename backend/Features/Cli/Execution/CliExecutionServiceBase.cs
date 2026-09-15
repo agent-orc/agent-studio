@@ -4,6 +4,8 @@ using System.Text;
 using System.Text.Json;
 using AgentStudio.CliHosting;
 using LibOutcome = CodingAgentRunner.Model.RunOutcome;
+using PreparationCommandEnvironment = AgentStudio.TaskServer.Contracts.PreparationCommandEnvironment;
+using PreparedWorkspaceEnvironment = AgentStudio.TaskServer.Contracts.PreparedWorkspaceEnvironment;
 
 namespace AgentStudio.Cli;
 
@@ -554,6 +556,13 @@ public partial class GenericCliExecutionService : ICliExecutionService
                     CliType, jobId, cleanContextReused ? "reusing session-stable" : "seeded fresh", cleanContext.TempHome);
             }
         }
+
+        // The repository preparation of this run restored its packages into
+        // product cache locations that only these variables name. Applied after
+        // the generic hardening so the agent's `dotnet build --no-restore` and
+        // `npm test` read the same locations preparation wrote (NETSDK1064).
+        PreparationCommandEnvironment.ApplyTo(
+            psi.Environment, PreparedWorkspaceEnvironment.For(workingDirectory));
 
         AgentGitCommandGuard.Apply(psi);
 

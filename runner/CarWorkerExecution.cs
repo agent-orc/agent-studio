@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AgentStudio.CliHosting;
+using PreparationCommandEnvironment = AgentStudio.TaskServer.Contracts.PreparationCommandEnvironment;
 using CodingAgentRunner;
 using CodingAgentRunner.Abstractions;
 using CodingAgentRunner.Adapters;
@@ -140,6 +141,9 @@ internal static class CarWorkerExecution
             {
                 ["JOB_RESULTS_DIR"] = spec.ResultsDirectory,
             };
+            // The packages the repository preparation restored live in product
+            // cache locations named only by these variables.
+            PreparationCommandEnvironment.ApplyTo(extraEnvironment, spec.PreparationEnvironment);
             // Clean context redirects the provider's config home. Keep the
             // service-provisioned headless credential independent of that home
             // by explicitly admitting only Claude's supported environment token.

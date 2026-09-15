@@ -749,7 +749,8 @@ public sealed class RemoteTaskRunner
                 _options, slot.WorkerDirectory, workspace.RepoPath, prompt, resultsDir,
                 runSpec: runSpec,
                 runId: slot.AttemptId,
-                cleanContextKey: taskKey);
+                cleanContextKey: taskKey,
+                preparationEnvironment: projectPreparation.CommandEnvironment);
         }
         catch (Exception ex)
         {
@@ -890,7 +891,14 @@ public sealed class RemoteTaskRunner
                             resumeSlot.RunSpec,
                             runId: resumeSlot.AttemptId,
                             resumeSessionId: carEngine ? sessionId : null,
-                            cleanContextKey: resumeSlot.TaskKey);
+                            cleanContextKey: resumeSlot.TaskKey,
+                            // The resumed attempt works in the same prepared
+                            // checkout; its cache locations are read back from
+                            // the manifest this run's preparation wrote.
+                            preparationEnvironment: PreparationCommandEnvironment.Resolve(
+                                ProjectPreparationManifestFile.TryRead(Path.Combine(
+                                    ResultsDir(slot.TaskKey),
+                                    ProjectPreparationPaths.ManifestFileName))));
                         resumeSlot = _state.Save(resumeSlot with
                         {
                             ProcessId = resumed.ProcessId,
