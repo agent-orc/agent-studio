@@ -38,13 +38,16 @@ internal sealed record DurableLocalCliObservation(
 /// <summary>
 /// Durable process boundary for a Studio-local CLI invocation. The worker is
 /// the process recorded in the active-jobs ledger; it owns the real CLI and
-/// mirrors stdout, stderr, and the terminal result to disk. Anonymous pipes are
-/// therefore only a live-delivery optimization. A replacement backend tails
-/// the files and verifies PID plus start time before adopting the same run.
+/// mirrors stdout, stderr, and the terminal result to disk. The worker
+/// directory is the only transport between the two processes: the backend
+/// writes the prompt into <c>input.bin</c> and reads live output back from
+/// <c>output.jsonl</c>, so no anonymous pipe has to outlive the backend that
+/// started the worker (AGT-2821). A replacement backend tails the same files
+/// and verifies PID plus start time before adopting the run.
 /// </summary>
 internal sealed class DurableLocalCliProcess
 {
-    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    internal static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private readonly string _directory;
     private readonly object _cursorGate = new();
     private readonly HashSet<long> _deliveredBeyondCursor = [];
@@ -65,6 +68,24 @@ internal sealed class DurableLocalCliProcess
     public string ResultPath => Path.Combine(_directory, "result.json");
     public string IdentityPath => Path.Combine(_directory, "worker.json");
     public string CursorPath => Path.Combine(_directory, "cursor.json");
+    public string InputPath => Path.Combine(_directory, "input.bin");
+    public string InputCompletedPath => Path.Combine(_directory, "input.done");
+
+    /// <summary>
+    /// Writable prompt channel for CAR. Writes land in the worker's input file
+    /// and closing the stream publishes the completion marker, which is the
+    /// worker's signal to close the CLI's stdin.
+    /// </summary>
+    public Stream OpenInput() => new DurableLocalCliInputStream(InputPath, InputCompletedPath);
+
+    /// <summary>
+    /// Live reader for one worker stream ("stdout" or "stderr"), tailing the
+    /// same append-only log a replacement backend would read after a restart.
+    /// </summary>
+    public StreamReader OpenOutput(string stream)
+        => new(
+            new DurableLocalCliOutputStream(LogPath, ResultPath, ProcessId, stream),
+            new UTF8Encoding(false));
 
     public static DurableLocalCliProcess Start(string workerDirectory, ProcessStartInfo cliStartInfo)
     {
@@ -96,7 +117,10 @@ internal sealed class DurableLocalCliProcess
             UseShellExecute = false,
             CreateNoWindow = true,
             WorkingDirectory = spec.WorkingDirectory,
-            RedirectStandardInput = spec.RedirectStandardInput,
+            // The worker talks to the backend through its directory, never
+            // through these handles. They are redirected only so the detached
+            // worker cannot inherit (or write to) the Studio console.
+            RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             StandardOutputEncoding = Encoding.UTF8,
@@ -317,7 +341,9 @@ internal sealed class DurableLocalCliProcess
             FileShare.ReadWrite | FileShare.Delete,
             4096,
             FileOptions.WriteThrough | FileOptions.Asynchronous);
-        await using var logWriter = new StreamWriter(logStream, Encoding.UTF8) { AutoFlush = true };
+        // No byte-order mark: the log is a JSON-lines stream that the backend
+        // parses line by line, not a document.
+        await using var logWriter = new StreamWriter(logStream, new UTF8Encoding(false)) { AutoFlush = true };
 
         void Append(string stream, string text)
         {
@@ -340,16 +366,16 @@ internal sealed class DurableLocalCliProcess
             if (!child.Start())
                 throw new InvalidOperationException("The durable worker could not start the CLI process.");
 
-            var stdout = PumpLinesAsync(child.StandardOutput, Console.Out, "stdout", Append);
-            var stderr = PumpLinesAsync(child.StandardError, Console.Error, "stderr", Append);
+            var stdout = PumpLinesAsync(child.StandardOutput, "stdout", Append);
+            var stderr = PumpLinesAsync(child.StandardError, "stderr", Append);
             var stdin = spec.RedirectStandardInput
-                ? PumpInputAsync(Console.OpenStandardInput(), child.StandardInput.BaseStream)
+                ? PumpInputAsync(directory, child)
                 : Task.CompletedTask;
 
             await child.WaitForExitAsync(CancellationToken.None);
             await Task.WhenAll(stdout, stderr);
             try { await stdin.WaitAsync(TimeSpan.FromSeconds(1)); }
-            catch (Exception ex) { _ = ex; /* parent stdin can remain open until worker exit */ }
+            catch (Exception ex) { _ = ex; /* the backend may never close the prompt file */ }
             result = new DurableLocalCliResult(child.ExitCode, DateTime.UtcNow);
         }
         catch (Exception ex)
@@ -391,49 +417,97 @@ internal sealed class DurableLocalCliProcess
         return start;
     }
 
+    /// <summary>
+    /// Drains one CLI stream into the append-only worker log. The log is the
+    /// only output transport, so a backend that disappears mid-run costs
+    /// nothing here and a replacement reads the same lines.
+    /// </summary>
     private static async Task PumpLinesAsync(
         StreamReader source,
-        TextWriter destination,
         string stream,
         Action<string, string> append)
     {
-        var liveDestination = true;
-        while (await source.ReadLineAsync() is { } line)
-        {
-            append(stream, line);
-            if (!liveDestination) continue;
-            try
-            {
-                await destination.WriteLineAsync(line);
-                await destination.FlushAsync();
-            }
-            catch (Exception ex) when (ex is IOException or ObjectDisposedException)
-            {
-                // The Studio pipe is an optimization. Once its reader goes
-                // away, the worker must keep draining the CLI into output.jsonl.
-                liveDestination = false;
-                SilentCatch.Note(ex, "DurableLocalCliProcess: Studio output pipe disconnected");
-            }
-        }
+        while (await source.ReadLineAsync() is { } line) append(stream, line);
     }
 
-    private static async Task PumpInputAsync(Stream source, Stream destination)
+    /// <summary>
+    /// Forwards the backend's prompt file to the CLI's stdin. The backend
+    /// appends bytes to <c>input.bin</c> and publishes <c>input.done</c> with
+    /// the total byte count when it closes the stream; until that count is
+    /// forwarded (or the CLI exits) the worker keeps tailing, so a prompt that
+    /// is still being written is never truncated into an early EOF.
+    /// </summary>
+    private static async Task PumpInputAsync(string directory, Process child)
     {
+        var inputPath = Path.Combine(directory, "input.bin");
+        var completedPath = Path.Combine(directory, "input.done");
+        var destination = child.StandardInput.BaseStream;
+        var started = DateTime.UtcNow;
+        long forwarded = 0;
         try
         {
-            await source.CopyToAsync(destination);
-            await destination.FlushAsync();
+            while (true)
+            {
+                forwarded += await ForwardInputAsync(inputPath, destination, forwarded);
+                var expected = ReadExpectedInputLength(completedPath);
+                if (expected is not null && forwarded >= expected) break;
+                if (child.HasExited) break;
+                // The one-shot prompt lands within milliseconds. A CLI that
+                // keeps stdin open for a whole run does not need that cadence.
+                await Task.Delay(DateTime.UtcNow - started < TimeSpan.FromSeconds(5)
+                    ? TimeSpan.FromMilliseconds(20)
+                    : TimeSpan.FromMilliseconds(250));
+            }
         }
-        catch (IOException ex)
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException)
         {
-            // The backend can disappear after writing the one-shot prompt. EOF
-            // closes the child input while the detached worker keeps running.
-            SilentCatch.Note(ex, "DurableLocalCliProcess: parent stdin disconnected");
+            // The CLI can close its own stdin (one-shot prompt already read).
+            SilentCatch.Note(ex, "DurableLocalCliProcess: CLI stdin closed early");
         }
         finally
         {
             try { destination.Close(); }
-            catch (Exception ex) { _ = ex; }
+            catch (Exception ex) { SilentCatch.Note(ex, "DurableLocalCliProcess: CLI stdin close"); }
+        }
+    }
+
+    private static async Task<long> ForwardInputAsync(string path, Stream destination, long offset)
+    {
+        if (!File.Exists(path)) return 0;
+        await using var source = new FileStream(
+            path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        if (source.Length <= offset) return 0;
+        source.Seek(offset, SeekOrigin.Begin);
+
+        var buffer = new byte[8192];
+        long copied = 0;
+        int read;
+        while ((read = await source.ReadAsync(buffer)) > 0)
+        {
+            await destination.WriteAsync(buffer.AsMemory(0, read));
+            copied += read;
+        }
+        await destination.FlushAsync();
+        return copied;
+    }
+
+    private static long? ReadExpectedInputLength(string completedPath)
+    {
+        if (!File.Exists(completedPath)) return null;
+        try
+        {
+            return long.TryParse(
+                File.ReadAllText(completedPath).Trim(),
+                System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var expected)
+                ? expected
+                : 0;
+        }
+        catch (IOException ex)
+        {
+            SilentCatch.Note(ex, "DurableLocalCliProcess: prompt completion marker unreadable");
+            return null;
         }
     }
 
@@ -457,7 +531,7 @@ internal sealed class DurableLocalCliProcess
         catch (Exception ex) when (ex is IOException or JsonException) { return 0; }
     }
 
-    private static void WriteAtomic(string path, string content)
+    internal static void WriteAtomic(string path, string content)
     {
         var temporary = path + $".{Environment.ProcessId}.{Guid.NewGuid():N}.tmp";
         File.WriteAllText(temporary, content, new UTF8Encoding(false));
@@ -488,14 +562,30 @@ internal sealed class DurableLocalCliProcessSpawner(
 
     public CliSpawn Spawn(ProcessStartInfo startInfo)
     {
-        Worker = DurableLocalCliProcess.Start(workerDirectory, startInfo);
-        var process = Worker.OpenProcess();
-        SpawnedProcess = process;
-        onSpawned?.Invoke(process);
-        return new CliSpawn(
-            process,
-            startInfo.RedirectStandardInput ? process.StandardInput.BaseStream : Stream.Null,
-            process.StandardOutput,
-            process.StandardError);
+        var worker = DurableLocalCliProcess.Start(workerDirectory, startInfo);
+        Worker = worker;
+        try
+        {
+            // The reopened worker handle never has redirected pipes, so the
+            // run's streams come from the worker directory instead (AGT-2821).
+            var process = worker.OpenProcess();
+            SpawnedProcess = process;
+            onSpawned?.Invoke(process);
+            return new CliSpawn(
+                process,
+                startInfo.RedirectStandardInput ? worker.OpenInput() : Stream.Null,
+                worker.OpenOutput("stdout"),
+                worker.OpenOutput("stderr"));
+        }
+        catch
+        {
+            // The worker already owns a live CLI child; a spawn CAR never
+            // receives must not leave that subtree running.
+            worker.Kill();
+            worker.Delete();
+            Worker = null;
+            SpawnedProcess = null;
+            throw;
+        }
     }
 }

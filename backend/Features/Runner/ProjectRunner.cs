@@ -207,6 +207,13 @@ public class ProjectRunner
     // circuit-breaker paths — those own their own cooldown semantics.
     private string? _autoResumeCliAfterPause;
     private DateTime _autoResumeNextProbeUtc = DateTime.MinValue;
+    // Flap guard (AGT-2821): consecutive CLI-recovery auto-resumes that never
+    // produced a started CLI process. A CLI that answers --version while every
+    // run still fails to spawn would otherwise cycle pause -> probe -> resume
+    // -> spawn-budget -> pause forever, flapping the card between 2-ready and
+    // 3-progress. Reset by a confirmed process start and by an operator mode
+    // change; bounded by CliRecoveryResumePolicy.MaxConsecutiveResumes.
+    private int _cliRecoveryResumes;
     private RunnerCircuitBreakerOptions _circuitBreakerOptions = RunnerCircuitBreakerOptions.Default;
     private DateTime? _globalBreakerCooldownUntil;
     private string? _globalBreakerReason;
@@ -573,6 +580,9 @@ public class ProjectRunner
         _modeChangedAt = DateTime.UtcNow;
         var modeSource = ClassifyModeSource(effectiveReason);
         _modeSource = modeSource;
+        // An operator toggle is a fresh start for the bounded CLI-recovery
+        // resume: the person deciding to run again has seen the stop reason.
+        if (string.Equals(modeSource, "user", StringComparison.Ordinal)) _cliRecoveryResumes = 0;
         // A direct, fully-applied SetMode supersedes any deferred change still
         // waiting on the active job. Clear the pending slot so the status DTO
         // does not advertise a "MANUAL (after current)" pill that will never
@@ -597,6 +607,15 @@ public class ProjectRunner
     }
 
     /// <summary>
+    /// A CLI process really started, so the bounded CLI-recovery resume budget
+    /// was spent on a transient break and starts over.
+    /// </summary>
+    private void NoteConfirmedCliStart() => _cliRecoveryResumes = 0;
+
+    /// <summary>Test seam for <see cref="NoteConfirmedCliStart"/> without driving a real run.</summary>
+    internal void NoteConfirmedCliStartForTest() => NoteConfirmedCliStart();
+
+    /// <summary>
     /// Restores the operator's durable mode after a CLI-unspawnable pickup
     /// pause, once the CLI spawns again. Armed only by the spawn-failure pause
     /// path (never by circuit-breaker trips, which own their cooldown
@@ -604,16 +623,25 @@ public class ProjectRunner
     /// check launches <c>&lt;cli&gt; --version</c>. The resume target is
     /// <see cref="ProjectSettings.DesiredRunnerMode"/> — the value the boot
     /// restore would use — so a restart and an in-place recovery land in the
-    /// same mode. Public-ish via TickAsync; internal for tests.
+    /// same mode. Bounded by <see cref="CliRecoveryResumePolicy"/>: a CLI that
+    /// answers the probe while its runs still fail to spawn stops the loop
+    /// instead of flapping the card. Public-ish via TickAsync; internal for tests.
     /// </summary>
     internal void TickCliRecoveryResume()
+        => TickCliRecoveryResume(cliType => _router.Get(cliType).IsAvailable(), DateTime.UtcNow);
+
+    /// <summary>
+    /// Injectable form used by the flap-guard tests: the availability probe and
+    /// the clock are parameters so a test can drive the bounded resume loop
+    /// without a real CLI on the machine.
+    /// </summary>
+    internal void TickCliRecoveryResume(Func<string, bool> probeAvailability, DateTime nowUtc)
     {
         var cli = _autoResumeCliAfterPause;
         if (cli == null) return;
         if (_mode != "manual") { _autoResumeCliAfterPause = null; return; }
-        var now = DateTime.UtcNow;
-        if (now < _autoResumeNextProbeUtc) return;
-        _autoResumeNextProbeUtc = now.AddSeconds(60);
+        if (nowUtc < _autoResumeNextProbeUtc) return;
+        _autoResumeNextProbeUtc = nowUtc.AddSeconds(60);
 
         string? desired;
         try { desired = _projectSettings.Get(ProjectName).DesiredRunnerMode; }
@@ -622,29 +650,51 @@ public class ProjectRunner
             _logger.LogDebug(ex, "CLI-recovery resume: could not read settings for {Project}", ProjectName);
             return;
         }
-        if (desired is not ("auto-single" or "auto-continuous"))
-        {
-            // No durable auto intent to restore — disarm instead of probing forever.
-            _autoResumeCliAfterPause = null;
-            return;
-        }
+        var hasDurableAutoIntent = desired is "auto-single" or "auto-continuous";
 
         bool available;
-        try { available = _router.Get(cli).IsAvailable(); }
+        try { available = hasDurableAutoIntent && probeAvailability(cli); }
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "CLI-recovery resume: availability probe for '{Cli}' threw", cli);
             return;
         }
-        if (!available) return;
 
-        _logger.LogInformation(
-            "Runner '{Project}': the {Cli} CLI is available again; restoring desired mode '{Mode}' after the pickup pause",
-            ProjectName, cli, desired);
-        // SetMode clears the marker; reason starts with "auto-resume" so
-        // ClassifyModeSource files it as system and DesiredRunnerMode stays
-        // untouched.
-        SetMode(desired!, $"auto-resume: the {cli} CLI is available again after the pickup pause");
+        var decision = CliRecoveryResumePolicy.Decide(
+            armed: true,
+            manualMode: true,
+            hasDurableAutoIntent,
+            available,
+            _cliRecoveryResumes);
+        switch (decision)
+        {
+            case CliRecoveryResumeAction.Wait:
+                // No durable auto intent to restore — disarm instead of probing forever.
+                if (!hasDurableAutoIntent) _autoResumeCliAfterPause = null;
+                return;
+
+            case CliRecoveryResumeAction.StopProbing:
+                // The CLI binary answers, the runs still do not start. Stop
+                // cycling the card and leave the operator a reason to act on.
+                var stopReason = CliRecoveryResumePolicy.StopProbingReason(cli, _cliRecoveryResumes);
+                _logger.LogError(
+                    "Runner '{Project}': {Reason}",
+                    ProjectName, stopReason);
+                _autoResumeCliAfterPause = null;
+                SetMode("manual", stopReason);
+                return;
+
+            default:
+                _cliRecoveryResumes++;
+                _logger.LogInformation(
+                    "Runner '{Project}': the {Cli} CLI is available again; restoring desired mode '{Mode}' after the pickup pause (resume {Attempt}/{Budget})",
+                    ProjectName, cli, desired, _cliRecoveryResumes, CliRecoveryResumePolicy.MaxConsecutiveResumes);
+                // SetMode clears the marker; reason starts with "auto-resume" so
+                // ClassifyModeSource files it as system and DesiredRunnerMode stays
+                // untouched.
+                SetMode(desired!, $"auto-resume: the {cli} CLI is available again after the pickup pause");
+                return;
+        }
     }
 
     /// <summary>
@@ -3131,6 +3181,7 @@ public class ProjectRunner
                     Message: cliError ?? $"Failed to start {cli.CliType} CLI process"));
             }
             processStartConfirmed = true;
+            NoteConfirmedCliStart();
 
             if (plan.ReissuePromptAssignment is { } promptAssignment)
             {

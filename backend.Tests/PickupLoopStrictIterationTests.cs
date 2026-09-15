@@ -780,6 +780,152 @@ public sealed class PickupLoopStrictIterationTests : IDisposable
     /// and <c>TickAsync</c> will fall through to <see cref="TaskInfo"/> from
     /// 2-ready next).
     /// </summary>
+    // ===== Scenario 4: the spawn-failure flap guard (AGT-2821) =====
+
+    /// <summary>
+    /// The pickup pause and the CLI-recovery auto-resume are each bounded, but
+    /// they used to compose into an unbounded loop: a CLI that answers
+    /// <c>--version</c> while every run still fails to spawn got the runner
+    /// back into auto every minute, burned the spawn budget again, and paused
+    /// again - the card flapping between 2-ready and 3-progress for as long as
+    /// the backend ran (Stable 0.3.0, durable-worker pipes). The resume is now
+    /// bounded: after <see cref="CliRecoveryResumePolicy.MaxConsecutiveResumes"/>
+    /// resumes that never started a process the runner rests in manual with an
+    /// operator-readable reason, and the card stops moving.
+    /// </summary>
+    [Fact]
+    public void SpawnFailureLoop_BoundsAutoResume_ThenRestsInManualWithAVisibleReason()
+    {
+        var runner = BuildRunner(out var settings, out var scanner);
+        settings.SetRunnerMode(ProjectName, "auto-continuous");
+        runner.SetMode("auto-continuous");
+
+        var resumes = 0;
+        var probes = 0;
+        var now = DateTime.UtcNow;
+        var cycles = CliRecoveryResumePolicy.MaxConsecutiveResumes + 2;
+        for (var cycle = 0; cycle < cycles; cycle++)
+        {
+            // One full spawn-failure cycle: the card sits in 3-progress with a
+            // burnt budget of attempts that never started the CLI, so the
+            // reroute returns it to 2-ready and pauses the runner.
+            ReplaceWithProgressJob(scanner, "cli-down");
+            runner.SetPickupAttemptsForTest(
+                "cli-down",
+                ProjectRunner.PickupFailureThreshold,
+                ProjectRunner.SpawnFailedExecutionStatus);
+            InvokePickerLoop(runner);
+            Assert.Equal("manual", runner.GetStatus().Mode);
+
+            now = now.AddMinutes(2);
+            runner.TickCliRecoveryResume(
+                _ =>
+                {
+                    probes++;
+                    return true;
+                },
+                now);
+            if (runner.GetStatus().Mode != "manual") resumes++;
+        }
+
+        Assert.Equal(CliRecoveryResumePolicy.MaxConsecutiveResumes, resumes);
+        Assert.True(probes <= cycles, "the stopped runner must not keep probing the CLI");
+
+        var status = runner.GetStatus();
+        Assert.Equal("manual", status.Mode);
+        Assert.Contains("auto-resume stopped", status.ModeReason ?? "");
+        Assert.Contains("stays manual", status.ModeReason ?? "");
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.Ready, "cli-down")),
+            "the card must come to rest in 2-ready, not keep flapping");
+        Assert.False(Directory.Exists(Path.Combine(_watchPath, TaskStates.Progress, "cli-down")));
+    }
+
+    /// <summary>
+    /// A CLI break that really heals is still self-healing: the run starts, the
+    /// budget resets, and a later break gets the full resume budget again.
+    /// </summary>
+    [Fact]
+    public void ConfirmedCliStart_ResetsTheAutoResumeBudget()
+    {
+        var runner = BuildRunner(out var settings, out var scanner);
+        settings.SetRunnerMode(ProjectName, "auto-continuous");
+        runner.SetMode("auto-continuous");
+        var now = DateTime.UtcNow;
+
+        for (var cycle = 0; cycle < CliRecoveryResumePolicy.MaxConsecutiveResumes; cycle++)
+        {
+            ReplaceWithProgressJob(scanner, "cli-down");
+            runner.SetPickupAttemptsForTest(
+                "cli-down",
+                ProjectRunner.PickupFailureThreshold,
+                ProjectRunner.SpawnFailedExecutionStatus);
+            InvokePickerLoop(runner);
+            now = now.AddMinutes(2);
+            runner.TickCliRecoveryResume(_ => true, now);
+            Assert.Equal("auto-continuous", runner.GetStatus().Mode);
+        }
+
+        // A run that really started is the proof the CLI works again.
+        runner.NoteConfirmedCliStartForTest();
+
+        ReplaceWithProgressJob(scanner, "cli-down");
+        runner.SetPickupAttemptsForTest(
+            "cli-down",
+            ProjectRunner.PickupFailureThreshold,
+            ProjectRunner.SpawnFailedExecutionStatus);
+        InvokePickerLoop(runner);
+        Assert.Equal("manual", runner.GetStatus().Mode);
+
+        runner.TickCliRecoveryResume(_ => true, now.AddMinutes(2));
+        Assert.Equal("auto-continuous", runner.GetStatus().Mode);
+    }
+
+    /// <summary>
+    /// Direct matrix for the pure resume decision. The budget outranks the
+    /// availability probe: that combination (CLI answers, runs still do not
+    /// start) is exactly the looping case.
+    /// </summary>
+    [Theory]
+    // armed, manual, durable auto intent, CLI available, resumes so far
+    [InlineData(false, true, true, true, 0, CliRecoveryResumeAction.Wait)]
+    [InlineData(true, false, true, true, 0, CliRecoveryResumeAction.Wait)]
+    [InlineData(true, true, false, true, 0, CliRecoveryResumeAction.Wait)]
+    [InlineData(true, true, true, false, 0, CliRecoveryResumeAction.Wait)]
+    [InlineData(true, true, true, true, 0, CliRecoveryResumeAction.Resume)]
+    [InlineData(true, true, true, true, 2, CliRecoveryResumeAction.Resume)]
+    [InlineData(true, true, true, true, 3, CliRecoveryResumeAction.StopProbing)]
+    [InlineData(true, true, true, false, 3, CliRecoveryResumeAction.StopProbing)]
+    [InlineData(true, true, true, true, 9, CliRecoveryResumeAction.StopProbing)]
+    public void CliRecoveryResumePolicy_Matrix(
+        bool armed,
+        bool manualMode,
+        bool hasDurableAutoIntent,
+        bool cliAvailable,
+        int consecutiveResumes,
+        CliRecoveryResumeAction expected)
+    {
+        Assert.Equal(
+            expected,
+            CliRecoveryResumePolicy.Decide(
+                armed, manualMode, hasDurableAutoIntent, cliAvailable, consecutiveResumes));
+    }
+
+    /// <summary>
+    /// Re-creates the card in 3-progress wherever the last cycle left it. The
+    /// folder write bypasses the state machine, so the runner's task index is
+    /// invalidated explicitly the way a real mutation would.
+    /// </summary>
+    private void ReplaceWithProgressJob(TaskScannerService scanner, string slug)
+    {
+        foreach (var state in TaskStates.All)
+        {
+            var folder = Path.Combine(_watchPath, state, slug);
+            if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
+        }
+        WriteJob(TaskStates.Progress, slug);
+        scanner.InvalidateCache();
+    }
+
     private static TaskInfo? InvokePickerLoop(ProjectRunner runner)
     {
         var method = typeof(ProjectRunner).GetMethod("TryPickProgressJobOrDeadLetter",
@@ -851,6 +997,18 @@ public sealed class PickupLoopStrictIterationTests : IDisposable
         ILogger? logger = null,
         IReadOnlyList<ProjectUrlRecord>? projectUrls = null,
         AgentStudio.Registry.IProjectUrlPortInspector? projectUrlPortInspector = null)
+        => BuildRunner(out _, out _, logger, projectUrls, projectUrlPortInspector);
+
+    /// <summary>
+    /// Same runner, with the project settings service the caller needs to
+    /// prime the operator's durable runner mode.
+    /// </summary>
+    private ProjectRunner BuildRunner(
+        out ProjectSettingsService projectSettings,
+        out TaskScannerService runnerScanner,
+        ILogger? logger = null,
+        IReadOnlyList<ProjectUrlRecord>? projectUrls = null,
+        AgentStudio.Registry.IProjectUrlPortInspector? projectUrlPortInspector = null)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -873,11 +1031,13 @@ public sealed class PickupLoopStrictIterationTests : IDisposable
 
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
+        runnerScanner = scanner;
         var states = new TaskStateMachine(scanner, NullLogger<TaskStateMachine>.Instance);
         var mutations = new TaskMutationService(scanner, new ClientIdentityStore(config, NullLogger<ClientIdentityStore>.Instance), new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance), new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance), NullLogger<TaskMutationService>.Instance);
         var sessions = new TaskSessionLog(scanner, NullLogger<TaskSessionLog>.Instance);
         var prompts = new RuntimePromptService(config, NullLogger<RuntimePromptService>.Instance);
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
+        projectSettings = settings;
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config, prompts);
         var transitions = new TaskTransitionService(scanner, states, mutations, git, settings, NullLogger<TaskTransitionService>.Instance);
         var chatLog = new OrchestratorChatLog(NullLogger<OrchestratorChatLog>.Instance);
