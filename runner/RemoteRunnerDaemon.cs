@@ -144,6 +144,11 @@ public sealed class RemoteRunnerDaemon
                         _options.RunnerId,
                         StringComparison.Ordinal))
                 {
+                    _log(
+                        $"coding-slot-reconciliation scope=startup task={slot.TaskKey} " +
+                        $"attempt={slot.AttemptId} outcome=retained " +
+                        $"reason=runner-identity-mismatch expected={_options.RunnerId} " +
+                        $"actual={accepted.Lease.RunnerId}");
                     throw new InvalidOperationException(
                         $"Host journal retains live permit '{accepted.PermitId}' for runner " +
                         $"'{accepted.Lease.RunnerId}', but this service is '{_options.RunnerId}'. " +
@@ -151,9 +156,15 @@ public sealed class RemoteRunnerDaemon
                 }
                 if (accepted is not null)
                     _client.RestoreHostWorkAuthority(accepted);
+                _log(
+                    $"coding-slot-reconciliation scope=startup task={slot.TaskKey} " +
+                    $"attempt={slot.AttemptId} outcome=reattached reason={observation.Detail}");
                 _log($"persisted attempt accepted task={slot.TaskKey} attempt={slot.AttemptId} " +
                      $"pid={slot.ProcessId} verification={observation.Detail}");
-                var execution = taskRunner.ReattachAsync(slot, CancellationToken.None);
+                var execution = taskRunner.ReattachAsync(
+                    slot,
+                    CancellationToken.None,
+                    shutdown);
                 active.Add(new ActiveSlot(
                     slot.TaskKey,
                     accepted is null
@@ -167,9 +178,17 @@ public sealed class RemoteRunnerDaemon
             else
             {
                 if (!await taskRunner.ReleaseDeadAsync(slot, observation.Detail))
+                {
+                    _log(
+                        $"coding-slot-reconciliation scope=startup task={slot.TaskKey} " +
+                        $"attempt={slot.AttemptId} outcome=retained reason=release-failed");
                     throw new InvalidOperationException(
                         $"Dead attempt '{slot.AttemptId}' for task '{slot.TaskKey}' could not be released. " +
                         "Startup is fail-closed and retained the durable state for the next bounded systemd retry.");
+                }
+                _log(
+                    $"coding-slot-reconciliation scope=startup task={slot.TaskKey} " +
+                    $"attempt={slot.AttemptId} outcome=purged reason={observation.Detail}");
                 if (accepted is not null)
                     hostJournal.Complete(accepted.Task.TaskId);
             }
@@ -663,7 +682,8 @@ public sealed class RemoteRunnerDaemon
                                     permitClaim.TaskKind,
                                     permitClaim.RunId,
                                     permitClaim.LeaseInstanceId,
-                                    permitClaim.RunSpec))));
+                                    permitClaim.RunSpec,
+                                    shutdown))));
                         idleWatchdog.RecordActiveSlots(active.Count);
                         continue;
                     }
@@ -742,7 +762,8 @@ public sealed class RemoteRunnerDaemon
                             // T0b: the card's execution spec. Null from a server
                             // that predates it - the runner then falls back to
                             // its RUNNER_CLI_* configuration as before.
-                            claim.RunSpec)));
+                            claim.RunSpec,
+                            shutdown)));
                     idleWatchdog.RecordActiveSlots(active.Count);
                 }
 
@@ -787,6 +808,12 @@ public sealed class RemoteRunnerDaemon
         // atomically flushed at claim/process/output boundaries and detached
         // workers are intentionally left alive for the replacement daemon.
         state.Flush();
+        var codingHandoffs = active
+            .Where(slot => slot.TaskKey is not null)
+            .Select(slot => slot.Execution)
+            .ToArray();
+        if (codingHandoffs.Length > 0)
+            await Task.WhenAll(codingHandoffs);
         _log($"daemon drain complete; leaving {active.Count} detached job(s) for startup reattach");
         if (idleWatchdog.Tripped)
             throw new InvalidOperationException(
@@ -811,11 +838,16 @@ public sealed class RemoteRunnerDaemon
         CancellationToken adopted)
     {
         var durable = DurableLeaseAuthority.Read(slot.WorkerDirectory);
-        var stopBefore = durable?.StopBeforeUtc
-                         ?? DurableLeaseAuthority.ComputeStopBefore(
-                             slot.Lease.ExpiresAt,
-                             TimeSpan.FromSeconds(
-                                 Math.Max(5, _options.HeartbeatSeconds)));
+        var persistedLeaseStopBefore = DurableLeaseAuthority.ComputeStopBefore(
+            slot.Lease.ExpiresAt,
+            TimeSpan.FromSeconds(Math.Max(5, _options.HeartbeatSeconds)));
+        // The ordinary heartbeat persists its latest deadline in
+        // lease-authority.json, while the planned-handoff renewal also writes
+        // the returned lease into the slot. A crash between those two atomic
+        // writes must retain whichever server-confirmed deadline is later.
+        var stopBefore = durable is null || persistedLeaseStopBefore > durable.StopBeforeUtc
+            ? persistedLeaseStopBefore
+            : durable.StopBeforeUtc;
         var remaining = stopBefore - DateTime.UtcNow;
         if (remaining > TimeSpan.Zero)
             await Task.Delay(remaining, adopted);
