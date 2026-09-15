@@ -189,6 +189,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Workflow-sized task cutting and Dossier slice acceptance | [operations/workflow-sized-task-cutting.md](../operations/workflow-sized-task-cutting.md) |
 | Services killed by a harness sweep | [common-problems/services-killed-by-harness-sweep/](../operations/common-problems/services-killed-by-harness-sweep/) |
 | api.sh restart reports success while the old backend keeps serving | [common-problems/hollow-api-restart/](../operations/common-problems/hollow-api-restart/) |
+| api.sh start reports a crash on Windows while dotnet run is still compiling | [common-problems/windows-launcher-exit-during-compile/](../operations/common-problems/windows-launcher-exit-during-compile/) |
 | Integration push blocked on main lineage starves origin/develop, causing infinite reclaim loops (AGT-2688) | [common-problems/lineage-blocked-integration-push/](../operations/common-problems/lineage-blocked-integration-push/) |
 | Orchestrator drive-to-conclusion & CLI-crash resilience | [concepts/orchestrator-drive-to-conclusion.html](../concepts/orchestrator-drive-to-conclusion.html) |
 | Task integration & worktree/merge workflow | [concepts/task-integration-and-merge-workflow.md](../concepts/task-integration-and-merge-workflow.md) |

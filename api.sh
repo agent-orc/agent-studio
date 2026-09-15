@@ -26,6 +26,20 @@
 # the watchdog's restart path was hollow.
 # Proof that the contract holds: tools/api-restart-selfcheck.sh
 #
+# Start exit codes (AGT-2830). `dotnet run` under Windows Git Bash hands the
+# PID captured by `$!` to a launcher, not the native process that compiles and
+# then owns the port; that launcher can exit minutes before the real work is
+# done, which used to be misread as a crash. `start` now only reports a
+# confirmed failure (exit 1) when neither the port nor a live process tied to
+# this project's build/run exists. If the bounded wait (START_TIMEOUT_SECS)
+# runs out while such a process is still active, it exits 2 ("inconclusive,
+# still starting") instead, so a caller such as an outer start.sh wrapper can
+# tell that apart from a confirmed crash and still bring up the frontend
+# rather than aborting under `set -e`. See
+# docs/operations/setup/contributor-setup.md and
+# docs/operations/common-problems/windows-launcher-exit-during-compile/.
+# Proof: scripts/api-start-windows-launcher.test.sh
+#
 # Usage:
 #   ./api.sh start
 #   ./api.sh stop
@@ -78,6 +92,10 @@ LOG_ERR="${SCRIPT_DIR}/.api.log.err"
 PROJECT_MARKER="OrchestratorApi"
 # Budget for a graceful shutdown before the stop escalates to a forced kill.
 STOP_TIMEOUT_SECS="${API_STOP_TIMEOUT_SECS:-20}"
+# Budget for start's health-check poll. A cold `dotnet run` compile (no prior
+# build cache) can take roughly two minutes; 180s leaves headroom instead of
+# failing fast on a boot that is merely slow rather than actually dead.
+START_TIMEOUT_SECS="${API_START_TIMEOUT_SECS:-180}"
 # Set by cmd_start before it launches; read by the ownership check afterwards.
 PRE_LAUNCH_IDS=""
 
@@ -395,6 +413,37 @@ matches_project() {
   lc_cmd="$(printf '%s' "${cmd}" | tr 'A-Z\\' 'a-z/')"
   lc_dir="$(printf '%s' "${NATIVE_SCRIPT_DIR}" | tr 'A-Z\\' 'a-z/')"
   cmd_names_backend "${lc_cmd}" "${lc_dir}" "orchestratorapi.csproj"
+}
+
+# Loosened version of matches_project for "is a build or run for this
+# checkout still active" only - never for the stop/kill sweep. matches_project
+# excludes MSBuild worker command lines so cmd_stop never sweeps an unrelated
+# `dotnet test` run (AGT-2678); that same exclusion also hides the exact
+# process doing the work while `dotnet run` is still compiling. Matching the
+# literal csproj path (not just the OrchestratorApi marker) already keeps this
+# from matching OrchestratorApi.Tests.csproj or an unrelated project that
+# merely references OrchestratorApi, so it is safe to drop the exclusion here.
+matches_project_build() {
+  local cmd="$1" lc_cmd lc_dir
+  cmd_names_backend "${cmd}" "${SCRIPT_DIR}" "OrchestratorApi.csproj" && return 0
+  [[ -n "${NATIVE_SCRIPT_DIR}" && "${NATIVE_SCRIPT_DIR}" != "${SCRIPT_DIR}" ]] || return 1
+  lc_cmd="$(printf '%s' "${cmd}" | tr 'A-Z\\' 'a-z/')"
+  lc_dir="$(printf '%s' "${NATIVE_SCRIPT_DIR}" | tr 'A-Z\\' 'a-z/')"
+  cmd_names_backend "${lc_cmd}" "${lc_dir}" "orchestratorapi.csproj"
+}
+
+# PIDs of anything still building or running this launch's project. On
+# Windows Git Bash the PID `$!` captures for `dotnet run` is a launcher, not
+# the native process that compiles and then owns the port; that launcher can
+# exit minutes before the real work is done. `start`'s poll loop uses this to
+# tell "the backend crashed" apart from "the launcher exited but the build is
+# still going", which is the false-positive this function exists to prevent.
+launch_activity_pids() {
+  local pid cmd
+  process_table 2>/dev/null | while read -r pid cmd; do
+    [[ "${pid}" =~ ^[0-9]+$ ]] || continue
+    matches_project_build "${cmd}" && printf '%s\n' "${pid}"
+  done | sort -u
 }
 
 # Every process of this checkout's backend, listening or not. This is what
@@ -763,23 +812,29 @@ cmd_start() {
   echo "${launched_pid}" > "${PID_FILE}"
   echo "API launcher started with PID: ${launched_pid}. Waiting for health check..."
 
-  # Wait up to 30 s for the health endpoint to come up
-  local attempts=0 lp code impostors listener_pid
-  while (( attempts < 60 )); do
+  # Wait for the health endpoint to come up, bounded by START_TIMEOUT_SECS.
+  local max_attempts=$(( $(printf '%.0f' "${START_TIMEOUT_SECS}") * 2 ))
+  local attempts=0 lp code impostors listener_pid activity
+  while (( attempts < max_attempts )); do
     sleep 0.5
     attempts=$((attempts + 1))
 
     lp="$(listener_pids | tr '\n' ' ')"
 
     if [[ -z "${lp// /}" ]] && ! pid_alive "${launched_pid}"; then
-      # The launcher is gone and nothing is listening. Waiting out the full
-      # timeout would only delay the same verdict, and the reason is already
-      # in the log we just rotated in.
-      echo "ERROR: the backend exited before it started listening on port ${PORT}." >&2
-      echo "       Last lines of ${LOG_ERR}:" >&2
-      tail -n 20 "${LOG_ERR}" >&2 2>/dev/null || true
-      rm -f "${PID_FILE}" "${LAUNCHER_PID_FILE}"
-      exit 1
+      # The launcher PID is gone. On Windows Git Bash that PID is `dotnet
+      # run`'s own launcher, not the native process that compiles and then
+      # owns the port, so it can exit minutes before the real work is done.
+      # Only call this a crash when nothing tied to this project is doing
+      # anything either; otherwise keep polling within the budget.
+      activity="$(launch_activity_pids | tr '\n' ' ')"
+      if [[ -z "${activity// /}" ]]; then
+        echo "ERROR: the backend exited before it started listening on port ${PORT}." >&2
+        echo "       Last lines of ${LOG_ERR}:" >&2
+        tail -n 20 "${LOG_ERR}" >&2 2>/dev/null || true
+        rm -f "${PID_FILE}" "${LAUNCHER_PID_FILE}"
+        exit 1
+      fi
     fi
 
     [[ -n "${lp// /}" ]] || continue
@@ -812,8 +867,30 @@ cmd_start() {
     return 0
   done
 
-  echo "ERROR: API started but did not become healthy within 30 seconds." >&2
-  echo "Check ${LOG_OUT} and ${LOG_ERR} for details." >&2
+  # The budget ran out. Distinguish a confirmed crash (nothing is listening
+  # and nothing tied to this project is still running) from a still-active
+  # build or slow boot, which is not a crash and must not be reported as one.
+  lp="$(listener_pids | tr '\n' ' ')"
+  if [[ -n "${lp// /}" ]]; then
+    echo "ERROR: API started but did not become healthy within ${START_TIMEOUT_SECS} seconds." >&2
+    echo "Check ${LOG_OUT} and ${LOG_ERR} for details." >&2
+    exit 1
+  fi
+  activity="$(launch_activity_pids | tr '\n' ' ')"
+  if [[ -n "${activity// /}" ]]; then
+    # Exit 2 means "inconclusive, still starting": distinct from exit 1's
+    # "confirmed dead" so a caller such as an outer start.sh wrapper can tell
+    # them apart and still bring up the frontend instead of aborting under
+    # `set -e`. See docs/operations/setup/contributor-setup.md.
+    echo "API did not become healthy within ${START_TIMEOUT_SECS} seconds, but a build or" >&2
+    echo "run process for this checkout is still active (PID(s):${activity})." >&2
+    echo "Not a confirmed failure: run './api.sh status' to check again once it finishes." >&2
+    exit 2
+  fi
+  echo "ERROR: the backend exited before it started listening on port ${PORT}." >&2
+  echo "       Last lines of ${LOG_ERR}:" >&2
+  tail -n 20 "${LOG_ERR}" >&2 2>/dev/null || true
+  rm -f "${PID_FILE}" "${LAUNCHER_PID_FILE}"
   exit 1
 }
 
@@ -875,6 +952,7 @@ print_usage() {
     PORT                    override the port pinned by the checkout folder name
     API_PORT_OVERRIDE=1     accept a PORT that disagrees with that default
     API_STOP_TIMEOUT_SECS   graceful shutdown budget before a forced kill (default 20)
+    API_START_TIMEOUT_SECS  health-check poll budget before start gives up (default 180)
 
 EOF
 }
