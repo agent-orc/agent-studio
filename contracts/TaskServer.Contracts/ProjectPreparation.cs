@@ -14,6 +14,101 @@ public static class ProjectPreparationPaths
     public const string ManifestFileName = "preparation-manifest.json";
 }
 
+/// <summary>
+/// Host environment variables the preparation gate copies into the prepare
+/// process. The portable list is the cross-platform minimum. Windows needs its
+/// base variables on top, because MSBuild, NuGet, and the .NET SDK resolve user
+/// and machine paths through them; without them NuGet.targets fails with
+/// "Value cannot be null. (Parameter path1)". Neither list carries a secret.
+/// </summary>
+public static class PreparationHostEnvironment
+{
+    public static readonly IReadOnlyList<string> PortableKeys =
+    [
+        "PATH",
+        "HOME",
+        "USERPROFILE",
+        "TMPDIR",
+        "TEMP",
+        "TMP",
+        "LANG",
+        "LC_ALL",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+    ];
+
+    public static readonly IReadOnlyList<string> WindowsKeys =
+    [
+        "SystemRoot",
+        "windir",
+        "ComSpec",
+        "PATHEXT",
+        "ProgramData",
+        "ProgramFiles",
+        "ProgramFiles(x86)",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "USERNAME",
+        "COMPUTERNAME",
+    ];
+
+    public static IReadOnlyList<string> KeysFor(bool windows) =>
+        windows ? [.. PortableKeys, .. WindowsKeys] : PortableKeys;
+}
+
+/// <summary>
+/// How the gate starts the repository prepare script, or why it cannot.
+/// </summary>
+public sealed record PreparationEntryPoint(
+    string FileName,
+    IReadOnlyList<string> Arguments,
+    string? FailureSignature = null,
+    string? FailureReason = null)
+{
+    public bool Resolved => FailureSignature is null;
+}
+
+/// <summary>
+/// Pure entry-point decision for the repository prepare script. POSIX hosts run
+/// the script through <c>/bin/sh</c>. Windows prefers a repository-owned
+/// <c>prepare.ps1</c>, otherwise runs the extensionless POSIX script through Git
+/// Bash, because <c>powershell -File</c> refuses a file without a PowerShell
+/// extension. A Windows host with neither entry point fails with a named reason
+/// instead of an opaque exit code.
+/// </summary>
+public static class PreparationEntryPointPolicy
+{
+    public const string WindowsEntryMissing = "prepare:windows-entry-missing";
+
+    public static readonly IReadOnlyList<string> PowerShellArguments =
+        ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"];
+
+    public static PreparationEntryPoint Resolve(
+        string scriptPath,
+        bool windows,
+        Func<string, bool> fileExists,
+        Func<string?> gitBash)
+    {
+        if (!windows) return new("/bin/sh", [scriptPath]);
+
+        var powerShellScript = scriptPath + ".ps1";
+        if (fileExists(powerShellScript))
+            return new("powershell.exe", [.. PowerShellArguments, powerShellScript]);
+
+        if (gitBash() is { } bash && !string.IsNullOrWhiteSpace(bash))
+            return new(bash, ["-e", scriptPath.Replace('\\', '/')]);
+
+        return new(
+            string.Empty,
+            [],
+            WindowsEntryMissing,
+            $"Windows preparation needs either '{Path.GetFileName(powerShellScript)}' next to the prepare script "
+            + $"or Git Bash (bash.exe) to run '{Path.GetFileName(scriptPath)}'. Neither was found on this host.");
+    }
+}
+
 public sealed record ProjectCommandSet(
     string Prepare,
     IReadOnlyList<string> Build,
@@ -810,7 +905,8 @@ public sealed record ProjectPreparationManifest(
     IReadOnlyList<PreparationCacheManifest> Caches,
     PreparationFailureKind FailureKind,
     string? FailureSignature,
-    string? FailureReason);
+    string? FailureReason,
+    string? FailureOutputTail);
 
 public sealed record ProjectPreparationResult(
     bool Configured,
@@ -838,6 +934,12 @@ public sealed record ProjectPreparationResult(
 /// </summary>
 public static partial class ProjectPreparationExecutor
 {
+    /// <summary>Characters of the failed prepare output kept in the manifest.</summary>
+    public const int ManifestTailLimit = 4_000;
+
+    /// <summary>Characters of that tail repeated in the operator-facing reason.</summary>
+    public const int ReasonTailLimit = 600;
+
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true,
@@ -894,18 +996,29 @@ public static partial class ProjectPreparationExecutor
                 versionFailure.Value.Kind, versionFailure.Value.Signature, versionFailure.Value.Reason);
         }
 
+        var entryPoint = ScriptInvocation(workspace, read.Definition.Commands.Prepare);
+        if (!entryPoint.Resolved)
+        {
+            var entryReason = entryPoint.FailureReason!;
+            var failedManifest = Manifest(read, subjectSha, started, stopwatch, false, tools,
+                cacheBindings, PreparationFailureKind.ScriptMissing, entryPoint.FailureSignature, entryReason);
+            WriteManifest(manifestPath, failedManifest);
+            DeleteBestEffort(runRoot);
+            return new(true, false, failedManifest, [], string.Empty, null,
+                PreparationFailureKind.ScriptMissing, entryPoint.FailureSignature, entryReason);
+        }
+
         Directory.CreateDirectory(runRoot);
-        var (fileName, arguments) = ScriptInvocation(workspace, read.Definition.Commands.Prepare);
         var processStart = new ProcessStartInfo
         {
-            FileName = fileName,
+            FileName = entryPoint.FileName,
             WorkingDirectory = workspace,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
         };
-        foreach (var argument in arguments) processStart.ArgumentList.Add(argument);
+        foreach (var argument in entryPoint.Arguments) processStart.ArgumentList.Add(argument);
         processStart.Environment.Clear();
         CopySafeHostEnvironment(processStart.Environment);
         if (selectedNodeBin is not null)
@@ -975,9 +1088,14 @@ public static partial class ProjectPreparationExecutor
         var succeeded = failureKind == PreparationFailureKind.None;
         if (succeeded) Publish(cacheBindings, log);
         else DeleteBestEffort(runRoot);
+        // A failed prepare is unreadable while only its exit code survives. The
+        // bounded tail goes into the manifest and, shortened, into the reason
+        // that the gate hands to the card's integration failure detail.
+        var outputTail = succeeded ? null : OutputTail(stdout, stderr);
+        if (!succeeded) reason = ReasonWithOutputTail(reason, outputTail);
         stopwatch.Stop();
         var manifest = Manifest(read, subjectSha, started, stopwatch, succeeded, tools,
-            cacheBindings, failureKind, signature, reason);
+            cacheBindings, failureKind, signature, reason, outputTail);
         WriteManifest(manifestPath, manifest);
         log?.Invoke($"project-prepare completed succeeded={succeeded} durationMs={stopwatch.ElapsedMilliseconds} cacheHit={manifest.Caches.All(cache => cache.State == "hit")}");
         return new(true, succeeded, manifest, [], Bound(stdout, stderr), exitCode,
@@ -1265,7 +1383,8 @@ public static partial class ProjectPreparationExecutor
         IReadOnlyList<CacheBinding> bindings,
         PreparationFailureKind kind,
         string? signature,
-        string? reason)
+        string? reason,
+        string? outputTail = null)
     {
         stopwatch.Stop();
         var lockHashes = bindings.SelectMany(binding => binding.InputHashes)
@@ -1277,7 +1396,7 @@ public static partial class ProjectPreparationExecutor
             tools, lockHashes,
             bindings.Select(binding => new PreparationCacheManifest(
                 binding.Block, binding.Key, binding.Hit ? "hit" : succeeded ? "published" : "discarded",
-                binding.EntryPath, binding.Inputs)).ToArray(), kind, signature, reason);
+                binding.EntryPath, binding.Inputs)).ToArray(), kind, signature, reason, outputTail);
     }
 
     private static void WriteManifest(string path, ProjectPreparationManifest manifest)
@@ -1289,22 +1408,46 @@ public static partial class ProjectPreparationExecutor
         File.Move(temporary, path, overwrite: true);
     }
 
-    private static (string FileName, IReadOnlyList<string> Arguments) ScriptInvocation(
+    private static PreparationEntryPoint ScriptInvocation(
         string workspace,
         string relativeScript)
     {
         var full = Path.GetFullPath(Path.Combine(workspace, relativeScript.Replace('/', Path.DirectorySeparatorChar)));
-        if (OperatingSystem.IsWindows())
+        return PreparationEntryPointPolicy.Resolve(
+            full, OperatingSystem.IsWindows(), File.Exists, FindGitBash);
+    }
+
+    /// <summary>
+    /// First Git for Windows bash.exe on this host. Only paths derived from a
+    /// Git installation are considered, so the WSL launcher in System32 is never
+    /// picked up as a POSIX shell.
+    /// </summary>
+    private static string? FindGitBash() =>
+        GitBashCandidates().FirstOrDefault(File.Exists);
+
+    private static IEnumerable<string> GitBashCandidates()
+    {
+        foreach (var root in new[] { "ProgramFiles", "ProgramW6432", "ProgramFiles(x86)", "LOCALAPPDATA" })
         {
-            var powershell = File.Exists(full + ".ps1") ? full + ".ps1" : full;
-            return ("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", powershell]);
+            var value = Environment.GetEnvironmentVariable(root);
+            if (string.IsNullOrWhiteSpace(value)) continue;
+            yield return Path.Combine(value, "Git", "bin", "bash.exe");
+            yield return Path.Combine(value, "Programs", "Git", "bin", "bash.exe");
         }
-        return ("/bin/sh", [full]);
+        foreach (var directory in (Environment.GetEnvironmentVariable("PATH") ?? string.Empty)
+                     .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            string? installation;
+            try { installation = Path.GetDirectoryName(Path.GetDirectoryName(Path.Combine(directory, "git.exe"))); }
+            catch (ArgumentException) { continue; }
+            if (!string.IsNullOrWhiteSpace(installation) && File.Exists(Path.Combine(directory, "git.exe")))
+                yield return Path.Combine(installation, "bin", "bash.exe");
+        }
     }
 
     private static void CopySafeHostEnvironment(IDictionary<string, string?> target)
     {
-        foreach (var key in new[] { "PATH", "HOME", "USERPROFILE", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR" })
+        foreach (var key in PreparationHostEnvironment.KeysFor(OperatingSystem.IsWindows()))
         {
             var value = Environment.GetEnvironmentVariable(key);
             if (!string.IsNullOrWhiteSpace(value)) target[key] = value;
@@ -1334,6 +1477,32 @@ public static partial class ProjectPreparationExecutor
     {
         var value = $"stdout:\n{stdout}\nstderr:\n{stderr}".Trim();
         return value.Length <= 32_000 ? value : value[^32_000..];
+    }
+
+    /// <summary>
+    /// Bounded tail of what the failed prepare script actually printed. stderr
+    /// wins because that is where a prepare script reports why it stopped;
+    /// stdout is the fallback for scripts that only write there.
+    /// </summary>
+    internal static string? OutputTail(string stdout, string stderr, int limit = ManifestTailLimit)
+    {
+        var source = string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;
+        var normalized = (source ?? string.Empty).Replace("\r\n", "\n").Trim();
+        if (normalized.Length == 0) return null;
+        return normalized.Length <= limit ? normalized : normalized[^limit..];
+    }
+
+    /// <summary>
+    /// Operator-facing reason plus a short single-line excerpt of the tail, so
+    /// the integration failure detail on the card names the real error instead
+    /// of an opaque exit code.
+    /// </summary>
+    internal static string? ReasonWithOutputTail(string? reason, string? tail)
+    {
+        if (string.IsNullOrWhiteSpace(tail)) return reason;
+        var excerpt = Regex.Replace(tail, "\\s+", " ").Trim();
+        if (excerpt.Length > ReasonTailLimit) excerpt = "..." + excerpt[^ReasonTailLimit..];
+        return string.IsNullOrWhiteSpace(reason) ? excerpt : $"{reason} Output tail: {excerpt}";
     }
 
     private sealed record CacheBinding(

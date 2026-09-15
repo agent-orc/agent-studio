@@ -386,6 +386,170 @@ public sealed class ProjectPreparationTests : IDisposable
         Assert.True(second.CacheHit, "The unchanged Agent Studio pilot must hit every technology cache.");
     }
 
+    [Theory]
+    // POSIX hosts never consult a PowerShell entry point.
+    [InlineData(false, true, true, "/bin/sh", null)]
+    [InlineData(false, false, false, "/bin/sh", null)]
+    // Windows prefers a repository-owned prepare.ps1 when the repository ships one.
+    [InlineData(true, true, true, "powershell.exe", null)]
+    [InlineData(true, true, false, "powershell.exe", null)]
+    // AGT-2822: without it the extensionless POSIX script still runs, through Git
+    // Bash, because `powershell -File` refuses a file without a PowerShell extension.
+    [InlineData(true, false, true, GitBash, null)]
+    // Neither entry point: a named reason instead of an opaque exit code.
+    [InlineData(true, false, false, "", PreparationEntryPointPolicy.WindowsEntryMissing)]
+    public void Prepare_entry_point_follows_host_and_available_entry(
+        bool windows,
+        bool powerShellEntry,
+        bool gitBashInstalled,
+        string expectedFileName,
+        string? expectedSignature)
+    {
+        var script = windows ? @"C:\repo\.agent-studio\prepare" : "/repo/.agent-studio/prepare";
+
+        var entry = PreparationEntryPointPolicy.Resolve(
+            script,
+            windows,
+            candidate => powerShellEntry && candidate.EndsWith(".ps1", StringComparison.Ordinal),
+            () => gitBashInstalled ? GitBash : null);
+
+        Assert.Equal(expectedFileName, entry.FileName);
+        Assert.Equal(expectedSignature, entry.FailureSignature);
+        Assert.Equal(expectedSignature is null, entry.Resolved);
+        if (!entry.Resolved)
+        {
+            Assert.Contains("prepare.ps1", entry.FailureReason);
+            Assert.Contains("bash.exe", entry.FailureReason);
+            return;
+        }
+        if (entry.FileName == "powershell.exe")
+        {
+            Assert.Contains("-File", entry.Arguments);
+            Assert.Equal(script + ".ps1", entry.Arguments[^1]);
+        }
+        else if (entry.FileName == GitBash)
+        {
+            // Git Bash needs a POSIX-style path, and -e keeps a failing step fatal.
+            Assert.Equal(["-e", "C:/repo/.agent-studio/prepare"], entry.Arguments);
+        }
+        else
+        {
+            Assert.Equal([script], entry.Arguments);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Safe_host_environment_adds_the_windows_base_variables_only_on_windows(bool windows)
+    {
+        var keys = PreparationHostEnvironment.KeysFor(windows);
+
+        Assert.Equal(keys.Distinct(StringComparer.Ordinal).Count(), keys.Count);
+        Assert.All(PreparationHostEnvironment.PortableKeys, key => Assert.Contains(key, keys));
+        // AGT-2822: NuGet.targets fails with "Value cannot be null. (Parameter path1)"
+        // when the Windows base variables are missing from the prepare environment.
+        foreach (var windowsKey in PreparationHostEnvironment.WindowsKeys)
+            Assert.Equal(windows, keys.Contains(windowsKey, StringComparer.Ordinal));
+        Assert.DoesNotContain(keys, key => key.Contains("SECRET", StringComparison.OrdinalIgnoreCase)
+                                           || key.Contains("TOKEN", StringComparison.OrdinalIgnoreCase)
+                                           || key.Contains("PASSWORD", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Theory]
+    [InlineData("stdout only", "", "stdout only")]
+    [InlineData("noise", "the real error", "the real error")]
+    [InlineData("", "   ", null)]
+    public void Failed_prepare_output_tail_prefers_stderr(string stdout, string stderr, string? expected)
+        => Assert.Equal(expected, ProjectPreparationExecutor.OutputTail(stdout, stderr));
+
+    [Fact]
+    public void Failed_prepare_output_tail_is_bounded_from_the_end()
+    {
+        var tail = ProjectPreparationExecutor.OutputTail(string.Empty, new string('a', 50) + "LAST", limit: 4);
+
+        Assert.Equal("LAST", tail);
+        Assert.EndsWith("LAST", ProjectPreparationExecutor.ReasonWithOutputTail("Prepare failed.", tail));
+        Assert.StartsWith("Prepare failed. Output tail: ", ProjectPreparationExecutor.ReasonWithOutputTail("Prepare failed.", tail));
+        Assert.Equal("Prepare failed.", ProjectPreparationExecutor.ReasonWithOutputTail("Prepare failed.", null));
+    }
+
+    [Fact]
+    public async Task Failing_prepare_records_its_stderr_tail_in_the_manifest_and_reason()
+    {
+        const string marker = "AGT-2822-restore-refused";
+        WritePreparedRepository($"""
+            echo 'restoring dependencies'
+            echo '{marker}: the dependency source rejected the restore' 1>&2
+            exit 9
+            """);
+        var manifestPath = Path.Combine(_root, "manifests", ProjectPreparationPaths.ManifestFileName);
+
+        var result = await ProjectPreparationExecutor.RunAsync(
+            _root, Path.Combine(_root, "cache"), manifestPath, "0f0f0f0", null,
+            TimeSpan.FromMinutes(2), CancellationToken.None);
+
+        Assert.False(result.Succeeded, result.Output);
+        Assert.Equal(PreparationFailureKind.Command, result.FailureKind);
+        Assert.Equal(9, result.ExitCode);
+        // The manifest keeps the readable tail, the reason repeats a bounded
+        // excerpt so the card's integration detail names the real error instead
+        // of only "Prepare command failed with exit code 9".
+        Assert.Contains(marker, result.Manifest!.FailureOutputTail);
+        Assert.Contains(marker, File.ReadAllText(manifestPath));
+        Assert.Contains("failureOutputTail", File.ReadAllText(manifestPath));
+        Assert.Contains("Output tail:", result.FailureReason);
+        Assert.Contains(marker, result.FailureReason);
+    }
+
+    [Fact]
+    public async Task Green_prepare_keeps_no_output_tail_in_the_manifest()
+    {
+        WritePreparedRepository("exit 0");
+        var manifestPath = Path.Combine(_root, "manifests", ProjectPreparationPaths.ManifestFileName);
+
+        var result = await ProjectPreparationExecutor.RunAsync(
+            _root, Path.Combine(_root, "cache"), manifestPath, "0f0f0f0", null,
+            TimeSpan.FromMinutes(2), CancellationToken.None);
+
+        Assert.True(result.Succeeded, result.Output);
+        Assert.Null(result.Manifest!.FailureOutputTail);
+        Assert.Null(result.Manifest.FailureReason);
+    }
+
+    // AGT-2822: proves on a real Windows host that a repository without
+    // prepare.ps1 runs its POSIX prepare through Git Bash and that the copied
+    // Windows base variables let the .NET SDK resolve its user paths.
+    [SkippableFact]
+    [Trait("Category", "MachineBound")]
+    public async Task Windows_runs_a_posix_prepare_without_a_powershell_entry_point()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(), "Windows preparation entry point.");
+        WritePreparedRepository("dotnet --info");
+        Assert.False(File.Exists(Path.Combine(_root, ".agent-studio", "prepare.ps1")));
+        var manifestPath = Path.Combine(_root, "manifests", ProjectPreparationPaths.ManifestFileName);
+
+        var result = await ProjectPreparationExecutor.RunAsync(
+            _root, Path.Combine(_root, "cache"), manifestPath, "0f0f0f0", null,
+            TimeSpan.FromMinutes(5), CancellationToken.None);
+
+        Assert.True(result.Succeeded, result.FailureReason + " | " + result.Output);
+        Assert.Contains(".NET SDK", result.Output);
+    }
+
+    /// <summary>
+    /// A fake pilot repository: the v1 definition plus a POSIX prepare script
+    /// carrying <paramref name="body"/>. No prepare.ps1 is written, so Windows
+    /// exercises the Git Bash entry point.
+    /// </summary>
+    private void WritePreparedRepository(string body)
+    {
+        Write(".agent-studio/project.yml", Definition(".agent-studio/prepare"));
+        Write(".agent-studio/prepare", "#!/bin/sh\nset -e\n" + body + "\n");
+    }
+
+    private const string GitBash = @"C:\Program Files\Git\bin\bash.exe";
+
     private static string Definition(string prepare) => $$"""
         schemaVersion: 1
         stack: [node]
