@@ -61,6 +61,64 @@ public sealed class ManagementApiTests : IDisposable
         Assert.Contains("\"outcome\":\"completed\"", audit[1]);
     }
 
+    /// <summary>
+    /// AGT-2826: Execution Hosts reads one authoritative comparison, so the
+    /// route has to name the Stable release and carry a verdict per role.
+    /// </summary>
+    [Fact]
+    public async Task HostReleases_ReportsEveryRoleAgainstTheStableRelease()
+    {
+        await using var factory = BuildFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var registry = factory.Services.GetRequiredService<V1ReviewExecutorRegistry>();
+        const string runnerId = "agent-runner-release-drift";
+        const string instanceId = "agent-runner-host:2826";
+        var release = new Contract.RunnerReleaseIdentityDto(
+            "agt-host-20260823T060000Z-bbbbbbb",
+            "0.2.7",
+            "bbbbbbb2222",
+            new DateTime(2026, 8, 23, 6, 0, 0, DateTimeKind.Utc));
+        registry.Register(
+            runnerId,
+            new Contract.RegisterRunnerRequest(
+                "Agent Runner Drift",
+                "agent-runner-host",
+                instanceId,
+                release.ReleaseId,
+                Contract.TaskServerProtocol.Current,
+                [Contract.ReviewCapabilities.CodingExecutor],
+                Release: release));
+        registry.AdvertiseCapabilities(
+            runnerId,
+            new Contract.CapabilityAdvertisementRequest(
+                runnerId,
+                instanceId,
+                Contract.CapabilityProtocol.CurrentSchemaVersion,
+                DateTime.UtcNow,
+                180,
+                1,
+                [new Contract.AdvertisedCapabilityDto(
+                    Contract.CapabilityProtocol.CodingExecutor,
+                    "executor")],
+                Release: release));
+
+        using var response = await client.GetAsync("/api/v1/management/host-releases");
+
+        response.EnsureSuccessStatusCode();
+        Assert.Contains("no-store", response.Headers.CacheControl?.ToString() ?? string.Empty);
+        var snapshot = await response.Content.ReadFromJsonAsync<HostReleaseDriftSnapshot>();
+        Assert.False(string.IsNullOrWhiteSpace(snapshot!.Stable.Version));
+        var entry = Assert.Single(snapshot.Hosts, host => host.RunnerId == runnerId);
+        Assert.Equal("coding", entry.Role);
+        Assert.Equal(release.ReleaseId, entry.Release!.ReleaseId);
+        Assert.Equal("0.2.7", entry.Release.Version);
+        // The test host has no build manifest, so Stable is the legacy identity
+        // (repository version, no build instant) and the version ordering decides.
+        Assert.Equal(HostReleaseDriftStates.Behind, entry.State);
+        Assert.Null(entry.BehindByHours);
+    }
+
     [Fact]
     public async Task RemoteHosts_ReturnsTheLatestRunnerCapabilitySnapshot()
     {

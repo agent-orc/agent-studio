@@ -28,7 +28,10 @@
 </td>
 <td class="role__load"><span class="role__placeholder" title="Reported once per machine">–</span></td>
 <td class="role__activity"><span class="role__placeholder" title="Reported once per machine">–</span></td>
-<td class="role__release"><span class="role__placeholder" title="Reported once per machine">–</span></td>
+<td class="role__release" data-testid="remote-host-role-release" [attr.title]="releaseTooltip()">
+  <app-host-release-identity [host]="h" [stableRelease]="stableRelease()"
+    testIdPrefix="remote-host-role-release" />
+</td>
 <td class="role__actions">
   <div class="role__actions-wide">
     @if (retired()) {

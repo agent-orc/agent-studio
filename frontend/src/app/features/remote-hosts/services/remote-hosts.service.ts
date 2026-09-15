@@ -12,6 +12,10 @@ import type {
   TaskServerTelemetrySnapshot,
   TaskServerRunnerCapabilitySnapshot,
 } from '../models/remote-host.model';
+import type {
+  HostReleaseDriftSnapshot,
+  StableReleaseIdentity,
+} from '../models/host-release-drift';
 import { seedRemoteHosts } from './remote-hosts.seed';
 import { ProviderAuthStatusService } from './provider-auth-status.service';
 import { NotificationService } from '../../../services/notification.service';
@@ -34,6 +38,8 @@ export class RemoteHostsService {
   readonly loading = signal<boolean>(false);
   readonly error = signal<string | null>(null);
   readonly identityDiagnostics = signal<readonly ClientSummary[]>([]);
+  /** The release every host row is measured against (AGT-2826). */
+  readonly stableRelease = signal<StableReleaseIdentity | null>(null);
 
   private static readonly FRESH_CLIENT_MS = 90_000;
   private static readonly DEGRADED_CLIENT_MS = 5 * 60_000;
@@ -148,6 +154,7 @@ export class RemoteHostsService {
         }
         this.hydrateCapabilityRegistry();
         this.hydrateLinkHealth();
+        this.hydrateReleaseDrift();
       },
       error: error => {
         this.identityDiagnostics.set([]);
@@ -225,7 +232,8 @@ export class RemoteHostsService {
               serviceRole: serviceRole(snapshot),
               status,
               lastHeartbeatAt: snapshot.lastSeenAt,
-              releaseId: snapshot.runnerVersion,
+              releaseId: snapshot.release?.releaseId ?? snapshot.runnerVersion,
+              release: snapshot.release ?? current.release ?? null,
               runnerInstanceId: snapshot.instanceId,
               runnerProtocolVersion: snapshot.protocolVersion,
               capabilityHealth: snapshot.capabilities,
@@ -275,6 +283,32 @@ export class RemoteHostsService {
         this.log('capabilities-hydrated', { runners: snapshots?.length ?? 0 });
       },
       error: error => this.log('capabilities-hydrate-failed', { message: error?.message ?? 'unknown' }),
+    });
+  }
+
+  /**
+   * The server owns the host-versus-Stable comparison so the page and the
+   * operator-feed alarm can never disagree. A failure here leaves the release
+   * column unmarked rather than inventing a verdict.
+   */
+  private hydrateReleaseDrift(): void {
+    if (!this.http) return;
+    this.http.get<HostReleaseDriftSnapshot>('/api/v1/management/host-releases').subscribe({
+      next: snapshot => {
+        this.stableRelease.set(snapshot?.stable ?? null);
+        const byRunner = new Map((snapshot?.hosts ?? []).map(drift => [drift.runnerId, drift]));
+        this.hosts.update(hosts => hosts.map(host => {
+          const drift = byRunner.get(host.clientId) ?? byRunner.get(host.id);
+          return drift
+            ? { ...host, release: drift.release, releaseDrift: drift }
+            : { ...host, releaseDrift: null };
+        }));
+        this.log('release-drift-hydrated', {
+          hosts: snapshot?.hosts?.length ?? 0,
+          behind: snapshot?.behindCount ?? 0,
+        });
+      },
+      error: error => this.log('release-drift-hydrate-failed', { message: error?.message ?? 'unknown' }),
     });
   }
 

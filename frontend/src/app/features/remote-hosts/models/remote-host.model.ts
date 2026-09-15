@@ -1,5 +1,6 @@
 import type { CliType } from '../../../models/task.model';
 import type { RunnerProjectPreflight } from '../../../models/task.model';
+import type { HostReleaseDrift, HostReleaseIdentity } from './host-release-drift';
 
 /**
  * Remote-hosts registry model (AGT-1921).
@@ -243,6 +244,8 @@ export interface TaskServerRunnerCapabilitySnapshot {
   reviewsLost?: number;
   installedClis?: readonly InstalledCli[] | null;
   cliUpdate?: HostCliUpdate | null;
+  /** Comparable deployment identity (AGT-2826); absent from pre-2826 daemons. */
+  release?: HostReleaseIdentity | null;
 }
 
 export interface InstalledCli {
@@ -341,6 +344,10 @@ export interface RemoteHost {
   clientId: string;
   /** Exact release identity advertised by the runner registration. */
   releaseId?: string | null;
+  /** Version, commit and build instant behind {@link releaseId} (AGT-2826). */
+  release?: HostReleaseIdentity | null;
+  /** Server-owned verdict against the Stable release; null until it is loaded. */
+  releaseDrift?: HostReleaseDrift | null;
   /** Process instance and wire version used for deployment diagnosis. */
   runnerInstanceId?: string | null;
   runnerProtocolVersion?: number | null;

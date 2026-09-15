@@ -1,0 +1,15 @@
+<span class="release"
+      [appTooltip]="tooltip()"
+      [appTooltipTestId]="tooltipTestId()"
+      [attr.title]="tooltip()">
+  @if (releaseLabel(); as release) {
+    <code class="release__id">{{ release }}</code>
+    @if (driftLabel(); as drift) {
+      <span class="release__drift"
+            [attr.data-tone]="driftTone()"
+            [attr.data-testid]="driftTestId()">{{ drift }}</span>
+    }
+  } @else {
+    <span class="release__placeholder" title="Not reported">–</span>
+  }
+</span>
