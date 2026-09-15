@@ -198,6 +198,21 @@ changed to run `npm install`, it must remove `frontend/.angular/cache` after the
 install and before starting the frontend, for the same in-place dependency
 patch reason as the Stable updater.
 
+`start-stable.sh` (and `start.sh`/`start-dev.sh` if you want the same
+protection for `-dev`) must **delegate** the frontend launch to the versioned
+[`scripts/supervisor/frontend-watchdog.sh`](../../../scripts/supervisor/frontend-watchdog.sh)
+(`DETACH=1 ./scripts/supervisor/frontend-watchdog.sh start`) instead of
+backgrounding `ng serve` directly. A wrapper that spawns the dev server once
+and exits leaves nobody watching it: when the process dies - OOM, a crashed
+dev-server optimizer, an operator's stray `taskkill` - the Stable seat answers
+000 until a human notices. The watchdog restarts the frontend with backoff on
+an unexpected exit, logs each restart with its exit code and the tail of its
+log under `.frontend-watchdog/`, and gives up with a clear message after
+repeated fast crashes instead of looping forever. Pair it with
+`./scripts/supervisor/frontend-watchdog.sh stop` in `stop-stable.sh`.
+`scripts/supervisor/test-frontend-watchdog.sh` force-kills the frontend and
+proves it comes back, and proves the give-up path fires on a crash loop.
+
 ## Reference: configuration knobs
 
 ### Dev vs. stable checkout markers

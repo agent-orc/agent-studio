@@ -32,6 +32,35 @@ A bundled sample fixture lives at `scripts/supervisor/fixtures/sample-bus.jsonl`
 
 Narrow start/stop/status for the **dev** backend on `:5030`, used as a Playwright target by E2E specs running from stable. This is the only place outside `start-dev.sh` / `stop-dev.sh` that should touch the dev backend.
 
+### `frontend-watchdog.sh` (AGT-2829)
+
+Supervises the frontend dev server (`ng serve`) so a crash does not leave the
+seat answering 000 until a human notices. `start-stable.sh` / `start.sh` used
+to background `ng serve` once and never look at it again; this script is what
+they should delegate to instead:
+
+```sh
+DETACH=1 ./scripts/supervisor/frontend-watchdog.sh start   # supervise, return immediately
+./scripts/supervisor/frontend-watchdog.sh stop              # stop supervisor + frontend
+./scripts/supervisor/frontend-watchdog.sh status             # exit 0 iff healthy
+```
+
+It launches `ng serve` directly (`node .../ng.js serve ...`), not `npm start`,
+because `npm start`'s `prestart` hook re-lints the whole frontend - and can
+hard-fail the boot on an unrelated violation - on every single restart. On an
+unexpected exit it restarts with exponential backoff (`FRONTEND_BACKOFF_*_SECONDS`),
+logs the exit code and the tail of the frontend's own log to
+`.frontend-watchdog/watchdog.log`, and gives up with a clear message after
+`FRONTEND_MAX_FAST_CRASHES` (default 5) consecutive crashes inside
+`FRONTEND_MIN_UPTIME_SECONDS` (default 10s) of starting, instead of looping
+forever. Port defaults follow `api.sh`'s checkout-name convention (`4011` for
+a `*-stable` checkout, `4010` otherwise).
+
+`./scripts/supervisor/test-frontend-watchdog.sh` force-kills the running
+frontend process and asserts a new one comes up and answers again, then
+separately proves the give-up path with a fixture that crashes immediately
+every time.
+
 ### `restart-stable-after-batch.sh` + `run-stable-restart-watcher.sh`
 
 External orchestrator that restarts stable cleanly at quiet boundaries. The motivation is the same crash class that produced ADR-0020: stable serves the source the running tasks edit, so if stable were ever to "restart itself" mid-batch it would be replacing its own running code. ADR-0021 makes that a hard non-goal and assigns the restart responsibility to this watcher.
