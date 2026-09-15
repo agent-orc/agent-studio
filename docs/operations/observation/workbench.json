@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "observation",
+  "title": "Observation: watcher, telemetry, project feed",
+  "summary": "Theme Dossier for the observation area, created by AGT-2800 under the operator's D1 decision on AGT-W55 (2026-09-13). It merges AGT-W15 Global Orchestrator Watcher (observe-first design, autonomy classes A0-A3, five detector classes, ticket proposals in review mode, delivered slices AGT-2654 and AGT-2721), AGT-W38 organization-wide telemetry layer (hybrid local JSONL plus best-effort local push, privacy posture, signal-to-action vocabulary, Agent Studio as operations hub) and AGT-W16 project feed (three audiences, deterministic incremental composition, cached batch rollups, visible token cost, the external-chat data gap) into one stack with four separate truths: the file, the cluster, the case and the projection. Observing never mutates; every action runs through the existing application authorities. Ten open decisions arrived unanswered from the sources and are kept as inline decision blocks: safe-rescue authority, fence policy, proposal auto-approval, telemetry transport, telemetry pilot, operations-hub positioning, feed curation, decision capture, rollup budget and the stakeholder sharing boundary.",
+  "entrypoint": "index.html",
+  "status": "decision-pending",
+  "phase": "decision-ready",
+  "updatedAt": "2026-09-14T00:00:00Z",
+  "sourceTaskKeys": [
+    "AGT-2800"
+  ],
+  "relatedTaskKeys": [
+    "AGT-2557",
+    "AGT-2581",
+    "AGT-2654",
+    "AGT-2661",
+    "AGT-2721",
+    "AGT-2796",
+    "AGT-2797"
+  ],
+  "supersedes": [
+    "AGT-W15",
+    "AGT-W16",
+    "AGT-W38"
+  ],
+  "implementationTasks": [],
+  "key": "AGT-W57"
+}

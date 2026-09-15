@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Observation: watcher, telemetry, project feed | Concept Dossier</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1: #fcfcfb; --surface-2: #f2f1ee; --surface-3: #e9e8e3;
+    --ink-1: #0b0b0b; --ink-2: #52514e; --ink-3: #8a8983; --line: #d8d6cf;
+    --develop: #2a78d6; --ok: #008300; --bad: #c93736; --warn: #9a6b00;
+    --accent-soft: #eaf1fb; --bad-soft: #fbecec; --ok-soft: #eaf4ea; --warn-soft: #f8f0dd;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --surface-1: #1a1a19; --surface-2: #232322; --surface-3: #2c2c2a;
+      --ink-1: #ffffff; --ink-2: #c3c2b7; --ink-3: #8a8983; --line: #3d3d3a;
+      --develop: #3987e5; --ok: #4eae4e; --bad: #e66767; --warn: #d9a63f;
+      --accent-soft: #1e2a3a; --bad-soft: #382222; --ok-soft: #1f2f1f; --warn-soft: #33301e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 0 0 80px; background: var(--surface-1); color: var(--ink-1); font: 16px/1.6 system-ui, "Segoe UI", sans-serif; }
+  main { max-width: 1080px; margin: 0 auto; padding: 0 28px; }
+  header.page { border-bottom: 1px solid var(--line); padding: 44px 0 26px; margin-bottom: 8px; }
+  .kicker { font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); margin: 0 0 10px; }
+  h1 { font-size: 34px; line-height: 1.2; margin: 0 0 12px; }
+  .lede { font-size: 18px; color: var(--ink-2); max-width: 62ch; margin: 0; }
+  .meta { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 18px; font-size: 13px; color: var(--ink-3); }
+  .meta b { color: var(--ink-2); font-weight: 600; }
+  h2 { font-size: 24px; margin: 56px 0 6px; scroll-margin-top: 20px; }
+  h2 .no { color: var(--ink-3); font-weight: 600; margin-right: 10px; }
+  h3 { font-size: 18px; margin: 34px 0 4px; }
+  p { max-width: 76ch; }
+  .box { border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); padding: 18px 22px; margin: 20px 0; }
+  .box.accent { background: var(--accent-soft); }
+  .box.warn { background: var(--warn-soft); }
+  .tablewrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; margin: 14px 0 22px; font-size: 14px; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--ink-2); font-weight: 600; background: var(--surface-2); white-space: nowrap; }
+  td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td .d { display: block; color: var(--ink-2); font-size: 12.5px; line-height: 1.4; margin-top: 3px; }
+  code { font: 13px ui-monospace, "Cascadia Mono", Consolas, monospace; background: var(--surface-3); padding: 1px 5px; border-radius: 4px; }
+  .tag { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--ink-2); margin-right: 4px; white-space: nowrap; }
+  .tag.bad { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
+  .tag.ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+  .tag.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+  figure { margin: 22px 0; }
+  figure svg { width: 100%; height: auto; display: block; }
+  figcaption { font-size: 13px; color: var(--ink-3); margin-top: 6px; }
+  .decision { border: 1px solid color-mix(in srgb, var(--develop) 35%, var(--line)); border-radius: 10px; padding: 18px 22px; margin: 22px 0; background: var(--accent-soft); }
+  .decision h3 { margin: 0 0 10px; font-size: 17px; }
+  .decision label { display: flex; gap: 12px; align-items: flex-start; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-1); margin: 8px 0; cursor: pointer; }
+  .decision label input { margin-top: 4px; }
+  .decision label b { display: block; }
+  .decision label span.d { display: block; color: var(--ink-2); font-size: 14px; }
+  .decision textarea { width: 100%; min-height: 64px; margin-top: 8px; font: 14px system-ui, sans-serif; border: 1px solid var(--line); border-radius: 6px; padding: 8px; background: var(--surface-1); color: var(--ink-1); }
+  ul, ol { max-width: 80ch; }
+  li { margin: 4px 0; }
+  .toc { columns: 2; gap: 28px; font-size: 14.5px; }
+  .toc a { color: var(--ink-2); text-decoration: none; }
+  .toc a:hover { color: var(--develop); }
+  .muted { color: var(--ink-3); }
+  .steps { counter-reset: st; list-style: none; padding: 0; max-width: none; }
+  .steps > li { counter-increment: st; border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px 14px 58px; margin: 12px 0; background: var(--surface-2); position: relative; }
+  .steps > li::before { content: "M" counter(st); position: absolute; left: 16px; top: 14px; font-weight: 700; color: var(--develop); }
+  .steps h4 { margin: 0 0 6px; font-size: 16px; }
+  .steps p { margin: 4px 0; font-size: 14.5px; }
+  .steps .kv { font-size: 13.5px; color: var(--ink-2); }
+  .steps .kv b { color: var(--ink-1); }
+  pre { background: var(--surface-3); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; font: 12.5px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace; overflow-x: auto; max-width: 100%; }
+  /* SVG figure classes from the haertung-verteilte-ausfuehrung template */
+  figure svg { width: 100%; height: auto; display: block; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-1); }
+  .s-node   { fill: var(--surface-2); stroke: var(--line); rx: 8; }
+  .s-node2  { fill: var(--surface-3); stroke: var(--line); }
+  .s-label  { fill: var(--ink-1); font: 600 13px system-ui, sans-serif; }
+  .s-sub    { fill: var(--ink-2); font: 12px system-ui, sans-serif; }
+  .s-tiny   { fill: var(--ink-3); font: 11px system-ui, sans-serif; }
+  .s-flow   { stroke: var(--ink-3); stroke-width: 1.6; fill: none; }
+  .s-commit { stroke-width: 2.5; fill: var(--surface-1); }
+  .s-lane   { stroke: var(--line); stroke-dasharray: 4 5; stroke-width: 1; }
+  .badge-bad  { fill: var(--bad-soft); stroke: var(--bad); }
+  .badge-ok   { fill: var(--ok-soft); stroke: var(--ok); }
+  .badge-warn { fill: var(--warn-soft); stroke: var(--warn); }
+  .t-bad  { fill: var(--bad);  font: 600 12px system-ui, sans-serif; }
+  .t-ok   { fill: var(--ok);   font: 600 12px system-ui, sans-serif; }
+  .t-warn { fill: var(--warn); font: 600 12px system-ui, sans-serif; }
+</style></head>
+<body>
+<main>
+<header class="page">
+  <p class="kicker">Concept Dossier · Agent Studio · 2026-09-14</p>
+  <h1>Observation: watcher, telemetry, project feed</h1>
+  <p class="lede">Three Dossiers described one stack from three ends: a global Watcher that turns typed failures into cases, an organization-wide telemetry layer that makes raw product signals durable and clusterable, and a project feed that renders what happened as a readable timeline. This Dossier merges them into one theme: how the fleet observes itself, what each layer is allowed to do with what it sees, and which choices are still open.</p>
+  <div class="meta">
+    <span><b>Status</b> decision-pending</span>
+    <span><b>Merges</b> AGT-W15 Global Orchestrator Watcher · AGT-W38 Organization-wide telemetry layer · AGT-W16 Project feed</span>
+    <span><b>Basis</b> AGT-W55 §3 and D1, AGT-W53 relevance matrix, operator decision 2026-09-13 07:53 UTC</span>
+    <span><b>Scope</b> concept only, no implementation in this card</span>
+  </div>
+</header>
+
+<nav class="toc" aria-label="Contents">
+  <a href="#s1">§1 Scope and sources</a>
+  <a href="#s2">§2 Alternatives</a>
+  <a href="#s3">§3 Recommendation</a>
+  <a href="#s4">§4 Evidence</a>
+  <a href="#s5">§5 Open decisions</a>
+</nav>
+
+<section id="s1">
+<h2><span class="no">§1</span>Scope and sources</h2>
+<p>Observation is one of the ten areas of AGT-W55 §5. Until now it was carried by three Dossiers that overlapped at every seam: the Watcher consumed signals the telemetry layer was meant to produce, the telemetry layer named the Watcher as its consumer, and the feed rendered the output of both. AGT-W55 §3 therefore folds all three into this Dossier, and the operator approved that target set on 2026-09-13 (D1, sixteen Dossiers).</p>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Source</th><th>Key</th><th>What it contributes here</th><th>State it arrived in</th></tr></thead>
+<tbody>
+<tr><td>Global Orchestrator Watcher</td><td>AGT-W15</td><td>Observe-first design, trigger catalogue, capability ladder, autonomy classes A0 to A3, case contract, five detector classes, ticket proposals with contingent and review mode.</td><td>Decision pending. W1 and W2 delivered as AGT-2721; the visual guardian shipped as AGT-2654. W3 safe rescue and the fence policy remain unapproved.</td></tr>
+<tr><td>Organization-wide telemetry layer</td><td>AGT-W38</td><td>Signal inventory across the organization, the <code>OrgTelemetryEvent/v1</code> envelope with its privacy posture, the file / push / hybrid transport comparison, and the signal-to-action vocabulary.</td><td>Decision pending, current-state cut 16 August 2026. No operator decision recorded; the durable event contract exists as proposed architecture documentation.</td></tr>
+<tr><td>Project feed</td><td>AGT-W16</td><td>The feed goal for three audiences, the timeline of decisions and events, cost-aware incremental composition, and the honest data gap.</td><td>Active, shaping, four open operator decisions. Originally written in German; its argument is carried here in English.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The merge rule is layering, not summary. Each source owned a different truth: the telemetry layer owns the raw fact, the Watcher owns the correlated case, the feed owns the operator-facing narrative. Everything below is organised along that boundary, and nothing that one layer proved is re-decided by another.</p>
+<p class="muted">Out of scope here: the mechanical delivery invariants themselves (integration proof, delivery envelopes, fences, stale detection). They are producers of signal for this area and are owned by the delivery-chain Dossier.</p>
+</section>
+
+<section id="s2" data-concept-section="alternatives">
+<h2><span class="no">§2</span>Alternatives</h2>
+<p>Three independent axes were weighed in the sources. They can be answered separately, which is why they stay separate here.</p>
+
+<h3>A · Transport for raw product signals</h3>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Criterion</th><th>A1 · File plus collector</th><th>A2 · Local push</th><th>A3 · Hybrid</th></tr></thead>
+<tbody>
+<tr><td>Offline operation</td><td>Full</td><td>Weak unless every app builds its own outbox</td><td>Full</td></tr>
+<tr><td>Loss boundary</td><td>Atomic file append</td><td>HTTP acknowledgement, per-app retry burden</td><td>Atomic file append, then optional HTTP receipt</td></tr>
+<tr><td>Live latency</td><td>File watcher or short poll</td><td>Immediate</td><td>Immediate when reachable, replay otherwise</td></tr>
+<tr><td>File-first fit</td><td>Strong; text is inspectable and diffable</td><td>Weak as sole source; needs backend persistence to be inspectable</td><td>Strong; raw files plus derived bus files preserve both layers</td></tr>
+<tr><td>Operational complexity</td><td>Collector discovery and checkpoints</td><td>Endpoint security, availability, per-app retry</td><td>Collector plus a small push optimization and parity tests</td></tr>
+<tr><td>Failure behavior</td><td>Delayed visibility</td><td>Potential loss or app coupling</td><td>Delayed visibility, no loss, no app blocking</td></tr>
+<tr><td>Verdict</td><td><span class="tag">Acceptable first slice</span></td><td><span class="tag bad">Reject as sole architecture</span></td><td><span class="tag ok">Recommended</span></td></tr>
+</tbody>
+</table>
+</div>
+
+<h3>B · Authority of the observing layer</h3>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Option</th><th>What it allows</th><th>Cost of being wrong</th></tr></thead>
+<tbody>
+<tr><td>B1 · Observe only</td><td>Inspect, correlate, analyze, report. Class A0. Every recovery stays a human action.</td><td>Low. The evening of 06.09.2026 is the measured cost: the operator did the correlation by hand and wrote eight cards.</td></tr>
+<tr><td>B2 · Observe plus a narrow allowlist <span class="tag ok">recommended</span></td><td>Adds class A1: re-registration of an unchanged runner identity, one precise steer append, and a requeue that existing policy already permits, all through the application API with idempotent receipts.</td><td>Bounded and reversible. Every A1 recipe has a kill switch per recipe and project, and a freshness check on task, fence, operator epoch and Git refs.</td></tr>
+<tr><td>B3 · Broad autonomy including fence transplant</td><td>Adds class A2 work without approval: fence salvage, non-trivial retries, rebase proposals executed rather than prepared.</td><td>High and not yet measurable. No promotion evidence exists for scope escapes, wrong-attempt attribution, or gate determinism on the exact subject SHA.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3>C · Composition of the feed</h3>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Option</th><th>Behavior</th><th>Token cost</th></tr></thead>
+<tbody>
+<tr><td>C1 · Re-summarize on view</td><td>Every opening of the feed asks a model to describe the current world.</td><td>Unbounded and repeated. Rejected in the source; the architecture must exclude it from the start.</td></tr>
+<tr><td>C2 · Deterministic incremental, model only for rollups <span class="tag ok">recommended</span></td><td>Events are appended as they occur from timeline events that already exist. The raw list is built without a model. A small model condenses only the daily and weekly prose, once, as a batch.</td><td>Predictable. A generated summary is an artefact with its own cost entry, cached and reused.</td></tr>
+<tr><td>C3 · Editorial only</td><td>Nothing enters the feed unless a human marks it feed-worthy.</td><td>Near zero, but the feed stops being an entry point for agents and reflects attention rather than events.</td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<section id="s3" data-concept-section="recommendation">
+<h2><span class="no">§3</span>Recommendation</h2>
+<div class="box accent">
+<h3>Recommended default</h3>
+<p>One observation stack with four layers and four separate truths: apps append redacted events to local JSONL files and a collector normalizes them (hybrid transport, option A3); the Agent Message Bus carries the derived, clustered observation; the Watcher correlates observations into durable cases and produces findings, analysis receipts and ticket proposals; the feed and Activity project the same stream for people, agents and stakeholders. Authority stays where it already is: observation never mutates. The Watcher acts only inside the narrow A1 allowlist (option B2), fence salvage stays approval-gated, and the feed is composed deterministically with model prose only in cached batch rollups (option C2).</p>
+</div>
+
+<figure>
+<svg viewBox="0 0 960 430" role="img" aria-labelledby="fig1-title fig1-desc">
+  <title id="fig1-title">The four layers of the observation stack and their separate truths</title>
+  <desc id="fig1-desc">Producers append redacted events to local JSONL files. A collector normalizes and deduplicates them and publishes a derived observation on the Agent Message Bus. The Watcher correlates observations into durable cases with detectors, evidence packs and ticket proposals. Feed and Activity project that stream for people, agents and stakeholders. A band across the bottom states that every mutation runs through existing application APIs.</desc>
+  <text class="s-tiny" x="20" y="28">Truth: the file</text>
+  <text class="s-tiny" x="260" y="28">Truth: the cluster</text>
+  <text class="s-tiny" x="500" y="28">Truth: the case</text>
+  <text class="s-tiny" x="740" y="28">Truth: the projection</text>
+
+  <rect class="s-node" x="20" y="44" width="200" height="232" rx="8"/>
+  <text class="s-label" x="38" y="72">Producers</text>
+  <text class="s-sub" x="38" y="98">Agent Studio, Chat, Runner,</text>
+  <text class="s-sub" x="38" y="116">Quality Studio, Token Economy</text>
+  <text class="s-sub" x="38" y="146">append-only local JSONL</text>
+  <text class="s-sub" x="38" y="164">redacted at the edge</text>
+  <text class="s-sub" x="38" y="182">no content, no secrets</text>
+  <text class="s-sub" x="38" y="212">the app keeps working</text>
+  <text class="s-sub" x="38" y="230">when Studio is offline</text>
+  <text class="s-tiny" x="38" y="258">OrgTelemetryEvent/v1</text>
+
+  <rect class="s-node" x="260" y="44" width="200" height="232" rx="8"/>
+  <text class="s-label" x="278" y="72">Collector and bus</text>
+  <text class="s-sub" x="278" y="98">checkpoint, replay, dedupe</text>
+  <text class="s-sub" x="278" y="116">stable fingerprint</text>
+  <text class="s-sub" x="278" y="134">optional loopback wake-up</text>
+  <text class="s-sub" x="278" y="164">one derived observation</text>
+  <text class="s-sub" x="278" y="182">on the Agent Message Bus</text>
+  <text class="s-sub" x="278" y="212">references evidence,</text>
+  <text class="s-sub" x="278" y="230">never copies it</text>
+  <text class="s-tiny" x="278" y="258">the bus stays inert</text>
+
+  <rect class="s-node" x="500" y="44" width="200" height="232" rx="8"/>
+  <text class="s-label" x="518" y="72">Watcher</text>
+  <text class="s-sub" x="518" y="98">repetition, contradiction,</text>
+  <text class="s-sub" x="518" y="116">silence, drift, hygiene</text>
+  <text class="s-sub" x="518" y="146">one durable case per</text>
+  <text class="s-sub" x="518" y="164">evidence fingerprint</text>
+  <text class="s-sub" x="518" y="194">bounded evidence pack,</text>
+  <text class="s-sub" x="518" y="212">analysis only on</text>
+  <text class="s-sub" x="518" y="230">declared uncertainty</text>
+  <text class="s-tiny" x="518" y="258">proposals in review mode</text>
+
+  <rect class="s-node" x="740" y="44" width="200" height="232" rx="8"/>
+  <text class="s-label" x="758" y="72">Feed and Activity</text>
+  <text class="s-sub" x="758" y="98">All activity is the default</text>
+  <text class="s-sub" x="758" y="116">problem, decision, action,</text>
+  <text class="s-sub" x="758" y="134">resolved finding, idea</text>
+  <text class="s-sub" x="758" y="164">deterministic live list</text>
+  <text class="s-sub" x="758" y="182">cached batch rollups</text>
+  <text class="s-sub" x="758" y="212">token cost beside</text>
+  <text class="s-sub" x="758" y="230">every entry</text>
+  <text class="s-tiny" x="758" y="258">people, agents, stakeholders</text>
+
+  <path class="s-flow" d="M220 160 H258" marker-end="url(#arrow)"/>
+  <path class="s-flow" d="M460 160 H498" marker-end="url(#arrow)"/>
+  <path class="s-flow" d="M700 160 H738" marker-end="url(#arrow)"/>
+
+  <rect class="s-node2" x="20" y="308" width="920" height="98" rx="8"/>
+  <text class="s-label" x="38" y="336">Authority boundary</text>
+  <text class="s-sub" x="38" y="360">A file, a bus message and a model receipt never move a card. Every mutation runs through the existing task, runner,</text>
+  <text class="s-sub" x="38" y="378">pipeline, registration and merge authorities, with an idempotent receipt and a verification step.</text>
+  <text class="s-tiny" x="38" y="398">A0 report · A1 bounded and reversible, allowlisted · A2 prepared for approval · A3 human only</text>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" style="fill: var(--ink-3)"/>
+    </marker>
+  </defs>
+</svg>
+<figcaption>Fig. 1: The observation stack. Each layer owns exactly one truth and hands a reference, not a copy, to the next. The bottom band is the invariant all three source Dossiers agreed on: observing is not acting.</figcaption>
+</figure>
+
+<h3>Truth boundaries</h3>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Plane</th><th>Canonical truth</th><th>What the next layer may assume</th></tr></thead>
+<tbody>
+<tr><td>Application runtime</td><td>App-local structured JSONL and the referenced evidence.</td><td>That the record is durable and redacted. Absent evidence is recorded as absent, never substituted.</td></tr>
+<tr><td>Cluster</td><td>The derived Agent Message Bus observation with fingerprint, window, distinct-correlation count and evidence references.</td><td>That the cluster is deduplicated and carries a policy version. It carries no action authority.</td></tr>
+<tr><td>Case</td><td>The durable <code>WatcherCase</code>, keyed by project, task, attempt chain, trigger class and evidence fingerprint.</td><td>That at-least-once inputs append rather than duplicate, and that each case reaches <code>resolved</code>, <code>decision-required</code> or a bounded <code>gave-up</code>.</td></tr>
+<tr><td>Action</td><td>The receipt of the application API that performed the mutation.</td><td>That a fence, a proposal or a passing model verdict is not success until the receipt and its verification exist.</td></tr>
+<tr><td>Narrative</td><td>The feed and Activity projection over the same stream.</td><td>That it is a view, not a store. Problem and decision views are filters, not separate systems.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3>Model economy</h3>
+<p>The repository's <a href="../../system/domains/model-routing-policy.md">model routing policy</a> stays authoritative, and cost follows uncertainty only after the correctness floor is met. No model is used for trigger detection, fingerprints, ancestry, counters, thresholds, allowlist checks or idempotency. Bounded compression of oversized evidence uses the cheap route; ambiguous root cause, a repeated grade loop and decision preparation use the strong analysis floor; fencing, lease authority, credible data loss, security and destructive recovery keep the hard floor that quota and price may not lower. Feed rollups are classification and condensation over short text and belong in the cheap batch route, once per day or week, cached as an artefact with its own cost entry.</p>
+
+<div class="box">
+<h3>Privacy posture, carried unchanged from AGT-W38</h3>
+<ul>
+<li>Local first, export never by default. No cloud account, vendor endpoint or internet connection is required.</li>
+<li>Never collect secrets. Credentials, tokens, cookies, keys and raw authorization failures are rejected or redacted before append.</li>
+<li>Never collect content by default. Chat messages, prompts, transcripts, audio, document bodies and source contents stay out of the shared payload.</li>
+<li>Reduce identity. Human actors use rotating app-local pseudonyms unless an audit record needs an authenticated principal.</li>
+<li>Bound paths and stacks. The bus carries a redacted summary and a reference; the full stack stays in local evidence.</li>
+<li>Publication is a separate, reviewed delivery action, not a telemetry feature.</li>
+</ul>
+</div>
+
+<h3>What the feed adds on top</h3>
+<p>The feed is a curation of signals that already exist, not a new producer. It reads task timelines (lane changes, human-review decisions, escalations, integrations, operator requeues), the bus for token and usage figures, Dossier documents as decision events, and now also Watcher findings and telemetry clusters. Three audiences are served by the same list: people see what is happening without reading eighty cards; a task or agent finds the most recent relevant context without scanning the repository; stakeholders receive a daily or weekly summary that is shareable without board access. Token cost is shown beside every entry, per task and per day, which makes the feed a window into the token economy rather than a hidden consumer of it.</p>
+<p>The honest gap stays honest: many discussions and decisions still happen in external chats outside the tool, so the feed is only as complete as what reaches the tool. Two non-exclusive remedies exist, and their order is an open decision in §5: make the orchestrator chat the preferred place for decisions, or build a light import for external ones. The feed makes the gap visible either way.</p>
+</section>
+
+<section id="s4" data-concept-section="evidence">
+<h2><span class="no">§4</span>Evidence</h2>
+<p>Classes: <span class="tag ok">observed</span> a recorded fact with a named source, <span class="tag warn">inferred</span> a reading of those facts, <span class="tag">proposed</span> a design claim that is not yet measured.</p>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Class</th><th>Statement</th><th>Source</th></tr></thead>
+<tbody>
+<tr><td><span class="tag ok">observed</span></td><td>On the evening of 06.09.2026 the operator found eight problems by hand and wrote the cards for them: stale quota probes (8 h and 30 h), a runner link down for four days behind a "waiting for sign-in" Ready lane, a CLI crash recorded as an external completion whose result SHA equalled the base, 412 remote reviews on one card with 284 in a single day and no integration, nine reviewed deliveries blocked six days by one dirty integration checkout, a pre-main gate failing before the first test for weeks behind a corrupted dependency cache, an escalation banner reporting "0 rounds, grade not recorded" on a card with seven review reports, and fifteen invalid Dossier descriptors.</td><td>AGT-W15 §10.1; cards AGT-2705, AGT-2706, AGT-2711, AGT-2712, AGT-2713, AGT-2714, AGT-2717, AGT-2720, QS-102</td></tr>
+<tr><td><span class="tag warn">inferred</span></td><td>Six of those eight were repetition of an unchanged fingerprint or a contradiction between two projections the server already held. The first job of an observing layer is therefore bookkeeping, not intelligence: fingerprint, count, compare, and stop when the count crosses a threshold.</td><td>AGT-W15 §10.1, reading</td></tr>
+<tr><td><span class="tag ok">observed</span></td><td>W1 and W2 were cut as one card chain. The Watcher runs as a hosted service on a five-minute sweep behind the <code>Watcher:Enabled</code> kill switch, default off. Cases persist restart-safe and fingerprint-deduplicated; proposals are created through the task API into <code>1-preparation</code> with the <code>watcher-proposal</code> tag and reach Ready only through an explicit operator decision. Five detector classes are wired to real production signals: hygiene to descriptor validation, repetition to the durable integration-failure code, contradiction to the lane-versus-integration projection, silence and drift to quota probe staleness and CLI version change.</td><td>AGT-W15 §10.6, card AGT-2721</td></tr>
+<tr><td><span class="tag ok">observed</span></td><td>The first productive Watcher function shipped before the global case store: after deterministic evidence passes, the runner boots the delivered checkout, derives affected routes, captures headless screenshots, and a bounded multimodal verdict labels the pixels. One precise defect steer is appended through the existing continuation boundary; exhaustion escalates to human review with the screenshots and receipts.</td><td>AGT-W15 §8a, card AGT-2654</td></tr>
+<tr><td><span class="tag ok">observed</span></td><td>Nine distinct telemetry producers already exist and land in nine different places: Git process telemetry in the backend log, product runtime events in <code>logs/runtime/</code>, the Agent Message Bus in <code>logs/bus/</code>, token ledgers and summaries, runner journals and durable outboxes, run records, review evidence per task, prompt call telemetry, and wiki usage state. What is missing is not signal but a common event contract and an action loop.</td><td>AGT-W38 §2, current-state cut 16 August 2026</td></tr>
+<tr><td><span class="tag ok">observed</span></td><td>The feed's data sources exist today: task timelines carry lane changes, human-review decisions, escalations, integrations and operator requeues; the bus carries token figures per run; Dossier documents carry decisions. Only the orchestrator chat is partial.</td><td>AGT-W16 §3</td></tr>
+<tr><td><span class="tag warn">inferred</span></td><td>The telemetry layer supplies the Watcher's missing cross-product trigger substrate. The Watcher should consume clusters and receipts, not unbounded raw streams; that is what keeps observe-only cheap and confines model spend to declared uncertainty.</td><td>AGT-W38 §5, AGT-W15 §5</td></tr>
+<tr><td><span class="tag warn">inferred</span></td><td>Token cost is the feed's main risk and its main opportunity. A feed that re-summarizes the world on every view burns tokens for no new information; the same feed, composed incrementally, becomes the surface on which the cost of every decision is visible.</td><td>AGT-W16 §4</td></tr>
+<tr><td><span class="tag">proposed</span></td><td>Pilot thresholds for the first telemetry action: three events with the same normalized fingerprint across two distinct correlations within thirty minutes produce exactly one clustered problem in Activity and exactly one idempotent Backlog healing card, with the app remaining usable and no loss while Agent Studio is offline.</td><td>AGT-W38 §7 pilot acceptance story</td></tr>
+<tr><td><span class="tag">proposed</span></td><td>Promotion rules that are not yet satisfied by evidence: A1 recipes require at least 30 shadow cases per enabled trigger class with no proposed action outside the allowlist; fence integration stays A2 until at least 30 operator-approved candidates show zero scope escapes, zero wrong-attempt attribution and no human reversal; proposal auto-approval requires ten unedited acceptances and is limited to the hygiene and repetition classes.</td><td>AGT-W15 §8, §10.4</td></tr>
+</tbody>
+</table>
+</div>
+<div class="box">
+<h3>Note on visible surfaces</h3>
+<p>This Dossier makes no new claim about a visible product surface, so it introduces no screenshot evidence. The delivered surfaces named above (the Activity entry grid, the Watcher proposal inbox, the visual guardian's evidence in human review) are claimed by their own cards and Dossiers, where their captures live. Any future statement here about how one of those surfaces looks needs a pinned capture in the full-bleed evidence figure, with light and dark variants when theme tokens, contrast, status or hierarchy are part of the claim.</p>
+</div>
+</section>
+
+<section id="s5" data-concept-section="open-decisions">
+<h2><span class="no">§5</span>Open decisions</h2>
+<p>Ten choices arrived here unanswered: three from the Watcher, three from the telemetry layer, four from the feed. None of them is settled by the consolidation, and each is recorded below exactly as it stood in its source.</p>
+
+<div class="decision" data-decision-id="safe-rescue" data-decision-kind="single" data-decision-label="Safe rescue authority (W3)">
+  <h3>D1 · How much may the Watcher repair on its own?</h3>
+  <label data-option-id="a1-allowlist" data-option-label="A · Approve the A1 allowlist with guards and kill switches (recommendation)"><input type="radio" name="safe-rescue" value="a1-allowlist"><span><b>A · Approve the A1 allowlist</b><span class="d">Re-registration of an unchanged runner identity, one precise steer append, and a requeue that existing policy already permits, each through the application API, with freshness checks on task, fence, operator epoch and Git refs, an idempotent receipt, verification, and a kill switch per recipe and project.</span></span></label>
+  <label data-option-id="observe-only" data-option-label="B · Stay observe-only; every recovery is prepared for approval"><input type="radio" name="safe-rescue" value="observe-only"><span><b>B · Stay observe-only</b><span class="d">The Watcher keeps detecting, correlating and proposing, but performs no mutation at all. Safest, and it leaves the recurring infrastructure recipes as manual work.</span></span></label>
+  <label data-option-id="wider" data-option-label="C · Wider allowlist including non-trivial retries"><input type="radio" name="safe-rescue" value="wider"><span><b>C · Wider allowlist</b><span class="d">Adds retries and rebase proposals that are currently class A2. No promotion evidence exists for these yet.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="fence-policy" data-decision-kind="single" data-decision-label="Fence salvage policy">
+  <h3>D2 · Does fence salvage stay approval-gated?</h3>
+  <label data-option-id="a2-gated" data-option-label="A · Keep fence salvage at A2, approval-gated, until recipe-specific promotion evidence exists (recommendation)"><input type="radio" name="fence-policy" value="a2-gated"><span><b>A · Keep it A2 and approval-gated</b><span class="d">The Watcher prepares the candidate in a disposable worktree with exact source and target SHAs, diff and ancestry proof, gate results, rollback and expiry. A human confirms. Promotion needs at least 30 approved candidates with zero scope escapes, zero wrong-attempt attribution and no human reversal, per recipe and never as a global switch.</span></span></label>
+  <label data-option-id="shadow-promote" data-option-label="B · Promote automatically once a shadow cohort passes"><input type="radio" name="fence-policy" value="shadow-promote"><span><b>B · Promote automatically after a shadow cohort</b><span class="d">Removes the approval step once the counters are met. Faster, and it moves the judgment about scope escapes from a person to a threshold.</span></span></label>
+  <label data-option-id="drop-fence" data-option-label="C · Drop fence salvage from the Watcher entirely"><input type="radio" name="fence-policy" value="drop-fence"><span><b>C · Drop fence salvage from the Watcher</b><span class="d">Salvage stays a manual operator procedure. Smaller surface, and the recovery that motivated the Dossier stays hand-made.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="proposal-promotion" data-decision-kind="single" data-decision-label="Proposal auto-approval">
+  <h3>D3 · May a detector class ever auto-approve its proposals?</h3>
+  <label data-option-id="ten-unedited" data-option-label="A · Promote a class after ten unedited acceptances, hygiene and repetition only (recommendation)"><input type="radio" name="proposal-promotion" value="ten-unedited"><span><b>A · Ten unedited acceptances, hygiene and repetition only</b><span class="d">Contradiction and drift stay human-approved. Rejected fingerprints feed an expiring suppression list; every proposal carries detector rule, fingerprint, evidence digest, model cost and the operator decision.</span></span></label>
+  <label data-option-id="always-human" data-option-label="B · All classes stay human-approved"><input type="radio" name="proposal-promotion" value="always-human"><span><b>B · All classes stay human-approved</b><span class="d">The Watcher inbox never empties itself. Predictable, and a recurring hygiene finding costs one operator click every time.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="telemetry-architecture" data-decision-kind="single" data-decision-label="Telemetry transport and truth boundaries">
+  <h3>D4 · Which transport carries raw product signals?</h3>
+  <label data-option-id="hybrid" data-option-label="A · Hybrid: file-first buffering plus best-effort local push, with no cloud dependency (recommendation)"><input type="radio" name="telemetry-architecture" value="hybrid"><span><b>A · Hybrid, file-first plus best-effort local push</b><span class="d">Raw app JSONL is event truth, the bus observation is cluster truth, the orchestrator receipt is action truth. Loopback intake is token-authenticated, bound to the configured local interface, with registered app roots and size caps.</span></span></label>
+  <label data-option-id="file-only" data-option-label="B · File plus collector only"><input type="radio" name="telemetry-architecture" value="file-only"><span><b>B · File plus collector only</b><span class="d">Simplest first slice with the same loss boundary, at the price of file-watcher latency for acute signals.</span></span></label>
+  <label data-option-id="push-only" data-option-label="C · Local push only"><input type="radio" name="telemetry-architecture" value="push-only"><span><b>C · Local push only</b><span class="d">Immediate, and it couples every app to Studio availability and pushes the retry burden into each product.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="telemetry-pilot" data-decision-kind="single" data-decision-label="Telemetry pilot">
+  <h3>D5 · Which application runs the first telemetry pilot?</h3>
+  <label data-option-id="chat" data-option-label="A · Coding Agent Chat with chat.message-send.failed, ending in one idempotent Backlog healing card (recommendation)"><input type="radio" name="telemetry-pilot" value="chat"><span><b>A · Coding Agent Chat, one event category</b><span class="d">The library, local workbench, website and Studio package relationship is already inventoried, so the pilot also tests attribution for a library embedded in more than one host.</span></span></label>
+  <label data-option-id="quality-studio" data-option-label="B · Quality Studio first"><input type="radio" name="telemetry-pilot" value="quality-studio"><span><b>B · Quality Studio first</b><span class="d">Higher value per event, and its app identity and event root are not yet confirmed, so the first slice risks centralizing its analysis core.</span></span></label>
+  <label data-option-id="studio-adapters" data-option-label="C · Agent Studio's own signals first, through adapters"><input type="radio" name="telemetry-pilot" value="studio-adapters"><span><b>C · Agent Studio's own signals first</b><span class="d">Adapts existing Git process telemetry, pipeline health and runner diagnostics. No new producer to build, and it does not prove the cross-app case.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="operations-hub" data-decision-kind="single" data-decision-label="Operations-hub positioning">
+  <h3>D6 · Is Agent Studio the operations hub for the organization?</h3>
+  <label data-option-id="hub" data-option-label="A · Approve Agent Studio as the operations and management hub for CI/CD, telemetry, alarms and orchestration (recommendation)"><input type="radio" name="operations-hub" value="hub"><span><b>A · Approve the hub positioning</b><span class="d">Studio owns the app registry, normalisation, redaction enforcement, clustering, policy and action receipts. Each product keeps its domain event names, raw evidence and analysis core, and keeps running when Studio is stopped.</span></span></label>
+  <label data-option-id="studio-only" data-option-label="B · Keep the layer scoped to Agent Studio"><input type="radio" name="operations-hub" value="studio-only"><span><b>B · Keep it scoped to Agent Studio</b><span class="d">No organization-wide registry or rollout order. Smaller commitment, and every other product keeps building its own alarm surface.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="feed-curation" data-decision-kind="single" data-decision-label="Feed curation">
+  <h3>D7 · What is feed-worthy?</h3>
+  <label data-option-id="rules" data-option-label="A · Automatic rules: every decision, integration, escalation and new concept (recommendation)"><input type="radio" name="feed-curation" value="rules"><span><b>A · Automatic rules</b><span class="d">Complete and cheap, because the underlying timeline events already exist. The risk is noise, which is answered by muting rather than by withholding.</span></span></label>
+  <label data-option-id="editorial" data-option-label="B · Light editorial: only marked events enter the feed"><input type="radio" name="feed-curation" value="editorial"><span><b>B · Light editorial</b><span class="d">Quiet and high-signal, and the feed then reflects what someone marked rather than what happened.</span></span></label>
+  <label data-option-id="rules-plus-mute" data-option-label="C · Rules plus a per-project mute list"><input type="radio" name="feed-curation" value="rules-plus-mute"><span><b>C · Rules plus a mute list</b><span class="d">Rule-based by default, with declared suppressions per project that are visible and expire.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="decision-capture" data-decision-kind="single" data-decision-label="Decision capture">
+  <h3>D8 · How do decisions taken outside the tool reach the feed?</h3>
+  <label data-option-id="chat-first" data-option-label="A · Make the orchestrator chat the preferred decision place first, import later (recommendation)"><input type="radio" name="decision-capture" value="chat-first"><span><b>A · Orchestrator chat first, import later</b><span class="d">Decisions land in the feed automatically because they are taken inside the tool. The gap closes at the source instead of being patched afterwards.</span></span></label>
+  <label data-option-id="import-first" data-option-label="B · Build the import for external decisions first"><input type="radio" name="decision-capture" value="import-first"><span><b>B · Import first</b><span class="d">A paste or import path turns an external decision into a feed entry immediately, and it leaves the habit unchanged.</span></span></label>
+  <label data-option-id="both" data-option-label="C · Both, in parallel"><input type="radio" name="decision-capture" value="both"><span><b>C · Both in parallel</b><span class="d">Fastest coverage, largest slice.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="rollup-budget" data-decision-kind="single" data-decision-label="Rollup budget">
+  <h3>D9 · Which token budget per daily and weekly rollup is acceptable?</h3>
+  <label data-option-id="cheap-batch" data-option-label="A · Cheapest classification route, one batch per day and per week, cached as an artefact (recommendation)"><input type="radio" name="rollup-budget" value="cheap-batch"><span><b>A · Cheapest route, one batch per day and week</b><span class="d">The raw list stays deterministic; a model writes only the prose. The generated summary is an artefact with its own visible cost entry and is reused, never regenerated per view.</span></span></label>
+  <label data-option-id="strong-weekly" data-option-label="B · Cheap daily rollup, strong model for the weekly stakeholder summary"><input type="radio" name="rollup-budget" value="strong-weekly"><span><b>B · Cheap daily, strong weekly</b><span class="d">Better stakeholder prose once a week at a higher and still bounded cost.</span></span></label>
+  <label data-option-id="no-llm" data-option-label="C · No model at all: templated summaries only"><input type="radio" name="rollup-budget" value="no-llm"><span><b>C · No model at all</b><span class="d">Zero token cost, templated text, and no condensation of what actually mattered.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="sharing-boundary" data-decision-kind="single" data-decision-label="Stakeholder sharing boundary">
+  <h3>D10 · What may a shared stakeholder summary contain?</h3>
+  <label data-option-id="no-costs" data-option-label="A · Decisions and landed work, no internal cost figures and nothing sensitive (recommendation)"><input type="radio" name="sharing-boundary" value="no-costs"><span><b>A · Decisions and landed work, without internal costs</b><span class="d">Shareable as a link or artefact. Token figures stay on the internal surfaces where they steer behavior.</span></span></label>
+  <label data-option-id="with-costs" data-option-label="B · Include cost figures in the shared summary"><input type="radio" name="sharing-boundary" value="with-costs"><span><b>B · Include cost figures</b><span class="d">Full transparency towards stakeholders about what the work cost.</span></span></label>
+  <label data-option-id="internal-only" data-option-label="C · No external sharing at all"><input type="radio" name="sharing-boundary" value="internal-only"><span><b>C · No external sharing</b><span class="d">The summary stays behind board access; stakeholders are told in person.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+</section>
+
+</main>
+</body>
+</html>

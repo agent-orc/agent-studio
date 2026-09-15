@@ -30,11 +30,13 @@
   ],
   "key": "AGT-W15",
   "review": {
-    "verdict": "current",
-    "supersededBy": [],
-    "reviewedAt": "2026-09-13T10:20:00Z",
+    "verdict": "superseded",
+    "supersededBy": [
+      "AGT-W57"
+    ],
+    "reviewedAt": "2026-09-14T00:00:00Z",
     "reviewedBy": "Operator",
-    "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    "note": "Merged into the theme Dossier AGT-W57 (docs/operations/observation) by AGT-2800 under the operator's decision D1 on AGT-W55, 2026-09-13 07:53 UTC. Every open decision of this Dossier is carried forward there as an inline decision block."
   },
   "reviewHistory": [
     {
@@ -43,6 +45,15 @@
       "reviewedAt": "2026-09-13T10:20:00Z",
       "reviewedBy": "Operator",
       "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    },
+    {
+      "verdict": "superseded",
+      "supersededBy": [
+        "AGT-W57"
+      ],
+      "reviewedAt": "2026-09-14T00:00:00Z",
+      "reviewedBy": "Operator",
+      "note": "Merged into the theme Dossier AGT-W57 (docs/operations/observation) by AGT-2800 under the operator's decision D1 on AGT-W55, 2026-09-13 07:53 UTC. Every open decision of this Dossier is carried forward there as an inline decision block."
     }
   ]
 }
