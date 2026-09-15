@@ -32,6 +32,10 @@ capabilities: [git, child-process, loopback-network]
 environment:
   DOTNET_NOLOGO: "1"
   NUGET_XMLDOC_MODE: skip
+  # Windows gate: the prepare process starts with a cleared environment and
+  # powershell.exe cannot load without SystemRoot (error 8009001d). Ignored on
+  # Linux. Remove once the gate passes the Windows base variables (AGT-2822).
+  SystemRoot: 'C:\Windows'
 release:
   identity:
     - package: CodingAgentRunner
