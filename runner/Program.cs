@@ -1,4 +1,5 @@
 using AgentRunner;
+using AgentStudio.CliHosting;
 using System.Runtime.InteropServices;
 
 // Standalone agent host. With a task key it performs the RM-5 one-shot run;
@@ -24,11 +25,46 @@ void Log(string message) => Console.Error.WriteLine($"[{DateTime.UtcNow:HH:mm:ss
 // Capability advertisements distinguish binary presence from provider login.
 // Keep the process boundary in the composition root and let the cached probe
 // decide when each bounded, low-contention status command needs to run.
+//
+// The probe must never share config or session context with an active coding
+// run: same CLAUDE_CONFIG_DIR/CODEX_HOME plus the same working directory means
+// the same `<home>/projects/<cwd>` session store, and a status command that
+// lands there can read back a live run's transcript instead of an auth answer
+// (AGT-2823). Each provider gets its own stable, linked-credential clean-context
+// home - identical isolation to a task's clean home, just keyed by a fixed
+// identity instead of a task id - so the OAuth refresh still writes through
+// but no project transcript or history ever lands in it.
+var authProbeContexts = new Dictionary<string, TaskCleanContextLease>(StringComparer.OrdinalIgnoreCase);
+
+TaskCleanContextLease? AuthProbeContext(string provider)
+{
+    if (provider is not ("claude" or "codex")) return null;
+    if (authProbeContexts.TryGetValue(provider, out var existing)) return existing;
+    try
+    {
+        var lease = TaskCleanContextStore.Acquire(provider, ProviderAuthProbe.CleanContextIdentity);
+        authProbeContexts[provider] = lease;
+        return lease;
+    }
+    catch (Exception ex)
+    {
+        Log($"provider-auth-probe clean-context isolation unavailable for '{provider}': {ex.Message}; "
+            + "probe will run without isolation from agent sessions.");
+        return null;
+    }
+}
+
 ProviderAuthProbe.Shared.UseLauncher(
     (fileName, arguments, ct) =>
     {
         var invocation = ProviderAuthProbe.LowPriorityInvocation(fileName, arguments);
-        return ProcessRunner.RunAsync(invocation.FileName, invocation.Arguments, ct: ct);
+        var context = AuthProbeContext(RunnerCapabilityProbe.Provider(fileName));
+        return ProcessRunner.RunAsync(
+            invocation.FileName,
+            invocation.Arguments,
+            workingDirectory: context?.HomePath,
+            environment: context?.Environment.ToDictionary(kv => kv.Key, kv => (string?)kv.Value),
+            ct: ct);
     },
     Log);
 

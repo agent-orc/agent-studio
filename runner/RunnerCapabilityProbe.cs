@@ -460,6 +460,14 @@ public sealed class ProviderAuthProbe
     public const string SignalExpiring = "credentials-expiring";
     public const string ConceptPath = "docs/operations/token-refresh-ohne-tunnel.md";
 
+    /// <summary>
+    /// Stable clean-context task identity for the idle auth probe (composition
+    /// root wiring, see runner/Program.cs). Fixed and distinct from any real
+    /// task id so the probe gets its own linked-credential, transcript-free home
+    /// instead of ever sharing config or session state with an active run.
+    /// </summary>
+    public const string CleanContextIdentity = "provider-auth-probe";
+
     /// <summary>Idle cost is one child process per host per five minutes.</summary>
     public static readonly TimeSpan DefaultTtl = TimeSpan.FromMinutes(5);
 
@@ -678,6 +686,10 @@ public sealed class ProviderAuthProbe
     private ProviderAuthObservation Interpret(string command, ProcessResult result)
     {
         var text = $"{result.StdOut}\n{result.StdErr}";
+        if (LooksLikeAgentStreamOutput(text))
+            return Indeterminate(
+                $"unverified: '{command}' returned agent session output instead of a status answer "
+                + $"(probe isolation gap, content not evaluated); binary presence only. See {ConceptPath}.");
         if (IndicatesUnsupportedCommand(text))
             return Indeterminate(
                 $"unverified: '{command}' is not supported by the installed CLI (exit {result.ExitCode}): "
@@ -910,6 +922,20 @@ public sealed class ProviderAuthProbe
         "unknown option", "unknown flag", "unexpected argument", "invalid choice",
         "no such command", "did you mean", "usage:", "command not found",
     ];
+
+    /// <summary>
+    /// Shape of a Claude Code <c>stream-json</c> frame (docs/system/cli/skills/cli-claude.md,
+    /// "Stream-json frame catalogue"). A bounded, isolated status command never emits this -
+    /// seeing it means the probe's stdout picked up a running agent session instead of an
+    /// auth answer (a probe isolation gap), and the content must never be classified or
+    /// echoed as if it were the CLI's own status text.
+    /// </summary>
+    private static readonly Regex AgentStreamFrameSignal = new(
+        @"""type""\s*:\s*""(?:system|user|assistant|result|tool_use|tool_result)""",
+        RegexOptions.Compiled);
+
+    public static bool LooksLikeAgentStreamOutput(string? text)
+        => !string.IsNullOrWhiteSpace(text) && AgentStreamFrameSignal.IsMatch(text);
 
     public static bool IndicatesNoUsableSession(string? text)
         => ProviderAccessClassifier.Classify(1, text, null).Kind
