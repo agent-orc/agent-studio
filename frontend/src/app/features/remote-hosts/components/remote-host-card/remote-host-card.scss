@@ -145,6 +145,24 @@
   white-space: nowrap;
 }
 
+/* Release drift marker (AGT-2826): a tinted badge, never a left accent bar (R1).
+   Only a drift past the grace window is acute (R4); a rolling update reads calm. */
+.host__release-drift {
+  display: inline-block;
+  margin-top: var(--studio-spacing-1);
+  padding: 0 var(--studio-spacing-1);
+  border-radius: 3px;
+  background: var(--studio-surface-muted);
+  color: var(--studio-fg-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.host__release-drift[data-tone='warn'] {
+  background: var(--notify-warning-tint);
+  color: var(--severity-warn);
+}
+
 .host__actions { justify-content: flex-end; gap: var(--studio-spacing-1); white-space: nowrap; }
 .host__btn {
   min-height: 28px;

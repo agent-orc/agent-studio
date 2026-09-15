@@ -28,7 +28,18 @@
 </td>
 <td class="role__load"><span class="role__placeholder" title="Reported once per machine">–</span></td>
 <td class="role__activity"><span class="role__placeholder" title="Reported once per machine">–</span></td>
-<td class="role__release"><span class="role__placeholder" title="Reported once per machine">–</span></td>
+<td class="role__release" data-testid="remote-host-role-release" [attr.title]="releaseTooltip()">
+  @if (releaseLabel(); as release) {
+    <code class="role__release-id">{{ release }}</code>
+    @if (releaseDriftLabel(); as drift) {
+      <span class="role__release-drift"
+            [attr.data-tone]="releaseDriftTone()"
+            data-testid="remote-host-role-release-drift">{{ drift }}</span>
+    }
+  } @else {
+    <span class="role__placeholder" title="Not reported">–</span>
+  }
+</td>
 <td class="role__actions">
   <div class="role__actions-wide">
     @if (retired()) {

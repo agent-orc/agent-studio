@@ -542,6 +542,40 @@ public sealed class AgentMessageBusBridge
         return EmitAsync(msg, ct);
     }
 
+    /// <summary>
+    /// Emits one operator-feed alarm for an execution host whose agent-host
+    /// release has been older than the Stable release for longer than the grace
+    /// window (AGT-2826). The caller de-duplicates, so one drift is one event.
+    /// </summary>
+    public Task EmitHostReleaseDriftAsync(
+        string hostId,
+        string runnerId,
+        string role,
+        string releaseId,
+        string stableVersion,
+        double behindHours,
+        string reason,
+        CancellationToken ct = default)
+    {
+        var age = behindHours >= 48
+            ? $"{Math.Round(behindHours / 24)} days"
+            : $"{Math.Round(behindHours)} hours";
+        var msg = NewMessage(
+            participantId: ParticipantRuntime,
+            role: "system",
+            kind: "error",
+            severity: "Warn",
+            project: null,
+            jobId: null,
+            topic: "host_release_drift",
+            summary: TruncateSummary(
+                $"{hostId} ({role}) runs release {releaseId}, {age} behind Stable {stableVersion}."),
+            body: reason,
+            payload: new { hostId, runnerId, role, releaseId, stableVersion, behindHours },
+            tags: new[] { "host-release-drift", $"host:{hostId}", $"runner:{runnerId}" });
+        return EmitAsync(msg, ct);
+    }
+
     /// <summary>Emits one typed runner-link transition for the operator feed.</summary>
     public Task EmitRunnerLinkTransitionAsync(
         string transition,

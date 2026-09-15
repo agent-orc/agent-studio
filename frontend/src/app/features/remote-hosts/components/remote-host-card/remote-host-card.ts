@@ -37,6 +37,12 @@ import {
 } from '../../models/remote-host.model';
 import { freshHostTelemetry, latestHostTelemetry } from '../../models/running-truth';
 import {
+  releaseDriftLabel,
+  releaseDriftTone,
+  releaseDriftTooltip,
+  type StableReleaseIdentity,
+} from '../../models/host-release-drift';
+import {
   claudeSignInTarget,
   providerAuthBadgesForHost,
   signInTarget,
@@ -103,6 +109,8 @@ export class RemoteHostCardComponent {
    */
   readonly projectSlots = input<readonly HostProjectSlots[]>([]);
   readonly expanded = input(false);
+  /** The release every row is measured against; null until it is loaded. */
+  readonly stableRelease = input<StableReleaseIdentity | null>(null);
   /** Injected clock so the relative heartbeat label ticks without a per-card timer. */
   readonly now = input<number>(Date.now());
   readonly action = output<{ kind: HostActionKind; id: string }>();
@@ -234,6 +242,13 @@ export class RemoteHostCardComponent {
   });
   readonly loadLabel = computed(() => this.loadPct() === null ? null : `${this.loadPct()}%`);
   readonly releaseLabel = computed(() => this.host().releaseId?.trim() || null);
+  readonly releaseVersionLabel = computed(() =>
+    this.host().release?.version?.trim() || this.releaseLabel());
+  readonly releaseDriftLabel = computed(() => releaseDriftLabel(this.host().releaseDrift));
+  readonly releaseDriftTone = computed(() => releaseDriftTone(this.host().releaseDrift));
+  readonly releaseTooltip = computed(() =>
+    releaseDriftTooltip(this.host().releaseDrift, this.stableRelease())
+    ?? this.releaseLabel());
   readonly detailId = computed(() => `remote-host-detail-${this.host().id.replace(/[^a-zA-Z0-9_-]/g, '-')}`);
   readonly healthyCapabilityCount = computed(() => {
     const health = this.host().capabilityHealth ?? [];

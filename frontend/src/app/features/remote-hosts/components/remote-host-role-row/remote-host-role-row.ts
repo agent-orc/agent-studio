@@ -7,6 +7,12 @@ import {
   type HostActionKind,
   type RemoteHost,
 } from '../../models/remote-host.model';
+import {
+  releaseDriftLabel,
+  releaseDriftTone,
+  releaseDriftTooltip,
+  type StableReleaseIdentity,
+} from '../../models/host-release-drift';
 
 /** One runner process role nested below its advertised physical machine. */
 @Component({
@@ -28,6 +34,8 @@ export class RemoteHostRoleRowComponent {
   readonly host = input.required<RemoteHost>();
   readonly activeSlots = input(0);
   readonly now = input(Date.now());
+  /** The release this role is measured against; null until it is loaded. */
+  readonly stableRelease = input<StableReleaseIdentity | null>(null);
   readonly action = output<{ kind: HostActionKind; id: string }>();
 
   readonly retired = computed(() => this.host().status === 'retired');
@@ -40,6 +48,14 @@ export class RemoteHostRoleRowComponent {
   readonly slotTotal = computed(() => roleSlotTotal(this.host()));
   readonly linkLabel = computed(() => runnerLinkLabel(this.host(), this.now()));
   readonly linkTooltip = computed(() => runnerLinkTooltip(this.host()));
+  readonly releaseLabel = computed(() =>
+    this.host().release?.version?.trim() || this.host().releaseId?.trim() || null);
+  readonly releaseDriftLabel = computed(() => releaseDriftLabel(this.host().releaseDrift));
+  readonly releaseDriftTone = computed(() => releaseDriftTone(this.host().releaseDrift));
+  readonly releaseTooltip = computed(() =>
+    releaseDriftTooltip(this.host().releaseDrift, this.stableRelease())
+    ?? this.host().releaseId
+    ?? null);
 
   emit(kind: HostActionKind): void {
     if (this.host().busyAction) return;

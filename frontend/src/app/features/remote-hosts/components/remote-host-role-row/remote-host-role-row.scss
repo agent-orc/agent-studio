@@ -136,5 +136,30 @@
   .role__activity { display: none; }
 }
 
+/* Per-role release and its drift marker (AGT-2826). Status is a tint, never a
+   left accent bar (R1); only an alarmed drift renders acute (R4). */
+.role__release-id {
+  display: block;
+  overflow: hidden;
+  color: var(--studio-fg-dim);
+  font-family: var(--font-mono, monospace);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.role__release-drift {
+  display: inline-block;
+  margin-top: var(--studio-spacing-1);
+  padding: 0 var(--studio-spacing-1);
+  border-radius: 3px;
+  background: var(--studio-surface-muted);
+  color: var(--studio-fg-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.role__release-drift[data-tone='warn'] {
+  background: var(--notify-warning-tint);
+  color: var(--severity-warn);
+}
+
 @container remote-host-table (max-width: 46rem) { .role__release { display: none; } }
 @container remote-host-table (max-width: 36rem) { .role__load { display: none; } }

@@ -36,9 +36,14 @@
     {{ heartbeatLabel() }}
   </td>
   <td class="host__release" data-testid="remote-host-release"
-      [appTooltip]="releaseLabel()" appTooltipTestId="remote-host-release-tooltip">
-    @if (releaseLabel(); as release) {
+      [appTooltip]="releaseTooltip()" appTooltipTestId="remote-host-release-tooltip">
+    @if (releaseVersionLabel(); as release) {
       <code>{{ release }}</code>
+      @if (releaseDriftLabel(); as drift) {
+        <span class="host__release-drift"
+              [attr.data-tone]="releaseDriftTone()"
+              data-testid="remote-host-release-drift">{{ drift }}</span>
+      }
     } @else {
       <span class="host__placeholder" title="Not reported">–</span>
     }
@@ -47,6 +52,7 @@
 </tr>
 @for (role of roles(); track role.id) {
   <tr appRemoteHostRoleRow [host]="role" [activeSlots]="activeSlotsFor(role)" [now]="now()"
+      [stableRelease]="stableRelease()"
       (action)="action.emit($event)"></tr>
 }
 
