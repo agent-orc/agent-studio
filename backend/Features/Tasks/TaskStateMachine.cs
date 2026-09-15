@@ -211,7 +211,7 @@ public class TaskStateMachine
                     ClearIncompatiblePhase(recheck.FolderPath, targetState);
                     RecordLaneChange(recheck.FolderPath, recheck.State, targetState, cause, authorityWrite, reason,
                         transitionCause, transitionDetail);
-                    RecordParkedBlocker(recheck.FolderPath, targetState, reason);
+                    RecordParkedBlocker(recheck.FolderPath, targetState, reason, transitionCause, transitionDetail);
                     _scanner.InvalidateCache();
                     EnqueueEvidence(recheck.WatchPath, recheck.ProjectName, recheck.Id, recheck.State, targetState);
                 }
@@ -275,7 +275,7 @@ public class TaskStateMachine
             // source folder is gone after the move above).
             RecordLaneChange(targetDir, recheck.State, targetState, cause, authorityWrite, reason,
                 transitionCause, transitionDetail);
-            RecordParkedBlocker(targetDir, targetState, reason);
+            RecordParkedBlocker(targetDir, targetState, reason, transitionCause, transitionDetail);
             // Keep the canonical id in lockstep with the (possibly suffixed)
             // folder name so FindJob resolves the moved folder immediately,
             // without waiting for the scanner's self-heal pass.
@@ -864,11 +864,17 @@ public class TaskStateMachine
     /// <para>Best-effort by design: the move has already landed when this runs,
     /// so a marker write must never undo it.</para>
     /// </summary>
-    private void RecordParkedBlocker(string jobFolderPath, string toState, string? reason)
+    private void RecordParkedBlocker(
+        string jobFolderPath,
+        string toState,
+        string? reason,
+        string? transitionCause = null,
+        string? transitionDetail = null)
     {
         try
         {
-            var record = ParkedBlockerCatalog.Build(toState, reason, DateTime.UtcNow);
+            var record = ParkedBlockerCatalog.Build(
+                toState, reason, DateTime.UtcNow, transitionCause, transitionDetail);
             if (record is null) ParkedBlockerMarker.Clear(jobFolderPath, _logger);
             else ParkedBlockerMarker.Write(jobFolderPath, record, _logger);
         }

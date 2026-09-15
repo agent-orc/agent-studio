@@ -399,6 +399,108 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
     }
 
     [Fact]
+    public void BuildLookup_EarlierCommitContentContainedInLaterIntegratedCommit_IsSupersededNotPartial()
+    {
+        // AGT-2838 / AGT-2278 style: no explicit SupersededByAttempt marker was
+        // ever stamped, but the later delivery attempt carries the same file
+        // plus an added ADR note and IS integrated. The earlier commit's content
+        // is fully covered - the projection must say "superseded by <sha>", not
+        // count it as a missing hole in the delivery (which would misreport
+        // "partial").
+        var repo = SeedDevelopMainRepo();
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "checkout -q -b task/agt-2278");
+        File.WriteAllText(Path.Combine(repo, "feature.txt"), "feature content");
+        Commit(repo, "feat: agt-2278 feature");
+        var original = RunGit(repo, "rev-parse task/agt-2278").Out.Trim();
+
+        RunGit(repo, "checkout -q develop");
+        File.WriteAllText(Path.Combine(repo, "feature.txt"), "feature content");
+        File.WriteAllText(Path.Combine(repo, "adr.md"), "adr notes");
+        Commit(repo, "feat: agt-2278 feature with adr");
+        var replacement = RunGit(repo, "rev-parse develop").Out.Trim();
+
+        var svc = BuildService(repo, out var project, out var log);
+        var job = Job(
+            "agt-2278",
+            "AGT-2278",
+            project,
+            repo,
+            log,
+            commits:
+            [
+                Commit(original) with
+                {
+                    RunAttemptId = "round-1",
+                    FilesChanged = 1,
+                    Files = ["feature.txt"],
+                },
+                Commit(replacement) with
+                {
+                    RunAttemptId = "round-2",
+                    FilesChanged = 2,
+                    Files = ["feature.txt", "adr.md"],
+                },
+            ]);
+
+        var status = svc.BuildLookup([job])[job.TaskKey];
+
+        Assert.Equal(IntegrationStatuses.Integrated, status.Status);
+        Assert.DoesNotContain("partial", status.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("superseded", status.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(original[..7], status.Detail);
+        Assert.Contains(replacement[..7], status.Detail);
+    }
+
+    [Fact]
+    public void BuildLookup_MissingCommitNotCoveredByAnyLaterCommit_StillReportsPartial()
+    {
+        // Guard rail: a genuinely missing commit whose content is NOT contained
+        // in any later integrated commit must still read as "partial", not be
+        // swallowed into a false "superseded" claim.
+        var repo = SeedDevelopMainRepo();
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "checkout -q -b task/agt-partial-2");
+        File.WriteAllText(Path.Combine(repo, "unrelated.txt"), "unrelated content");
+        Commit(repo, "feat: unrelated work");
+        var notLanded = RunGit(repo, "rev-parse task/agt-partial-2").Out.Trim();
+
+        RunGit(repo, "checkout -q develop");
+        File.WriteAllText(Path.Combine(repo, "other.txt"), "other content");
+        Commit(repo, "feat: other landed work");
+        var landed = RunGit(repo, "rev-parse develop").Out.Trim();
+
+        var svc = BuildService(repo, out var project, out var log);
+        var job = Job(
+            "agt-partial-2",
+            "AGT-3100",
+            project,
+            repo,
+            log,
+            commits:
+            [
+                Commit(notLanded) with
+                {
+                    RunAttemptId = "round-1",
+                    FilesChanged = 1,
+                    Files = ["unrelated.txt"],
+                },
+                Commit(landed) with
+                {
+                    RunAttemptId = "round-2",
+                    FilesChanged = 1,
+                    Files = ["other.txt"],
+                },
+            ]);
+
+        var status = svc.BuildLookup([job])[job.TaskKey];
+
+        Assert.Equal(IntegrationStatuses.Partial, status.Status);
+        Assert.Contains(notLanded[..7], status.Detail);
+        Assert.DoesNotContain("superseded", status.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void AttributedCommits_SupersededSha_IsReplacedWithoutPartialNoise()
     {
         const string original = "4444444444444444444444444444444444444444";

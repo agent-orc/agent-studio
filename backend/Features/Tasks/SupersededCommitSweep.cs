@@ -11,10 +11,22 @@ namespace AgentStudio.Tasks;
 /// </summary>
 public static class SupersededCommitSweepPolicy
 {
+    /// <param name="commits">The card's attributed commits, oldest to newest.</param>
+    /// <param name="isIntegrated">Target-branch ancestry check for one SHA.</param>
+    /// <param name="isCandidate">
+    /// Which non-integrated commits may be treated as missing-and-superseded.
+    /// Defaults to <see cref="IsRunnerFence"/> for the historical one-time
+    /// migration; the live integration projection passes a permissive
+    /// predicate so any attributed commit can be recognized as superseded by
+    /// a later, integrated delivery of the same card, not only a runner
+    /// lifecycle fence.
+    /// </param>
     public static SupersededCommitSweepTaskDecision Evaluate(
         IReadOnlyList<TaskCommitInfo> commits,
-        Func<string, bool> isIntegrated)
+        Func<string, bool> isIntegrated,
+        Func<TaskCommitInfo, bool>? isCandidate = null)
     {
+        isCandidate ??= IsRunnerFence;
         var replacements = new List<SupersededCommitReplacement>();
         var ambiguous = new List<SupersededCommitAmbiguity>();
 
@@ -22,7 +34,7 @@ public static class SupersededCommitSweepPolicy
         {
             var fence = commits[index];
             if (TaskCommitSupersession.IsSuperseded(fence)
-                || !IsRunnerFence(fence)
+                || !isCandidate(fence)
                 || isIntegrated(fence.Sha))
             {
                 continue;

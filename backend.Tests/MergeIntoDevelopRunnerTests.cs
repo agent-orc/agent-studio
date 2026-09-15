@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -968,6 +969,202 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         Assert.Equal(approved, result.Sha);
         Assert.Equal(approved, RemoteSha(remote, "develop"));
         Assert.NotEqual(tip, RemoteSha(remote, "develop"));
+    }
+
+    // ---- AGT-2838: immediate follow-up on a successful push ----------------
+
+    [Fact]
+    public async Task PushIntegrationBranch_Success_PrimesTheGitStateIndexImmediately()
+    {
+        // Before this fix nothing ever called GitStateIndexService.RequestRefresh,
+        // so a card's board projection stayed on its last snapshot until the
+        // debounced watcher or the periodic sweep happened to notice.
+        var (repo, remote) = SeedRepoWithOrigin("push-primes-index");
+        RunGit(repo, "checkout -q -b develop");
+        File.WriteAllText(Path.Combine(repo, "dev.txt"), "dev work");
+        Commit(repo, "feat: dev work");
+
+        var (git, log) = Build(repo);
+        var jobFolder = BeginRun(log, repo, jobId: "40");
+
+        var jobsPath = Path.Combine(_tempDir, "push-primes-index-jobs");
+        Directory.CreateDirectory(jobsPath);
+        var indexConfig = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["WatchPaths:0:Name"] = "Fixture",
+            ["WatchPaths:0:Path"] = jobsPath,
+            ["WatchPaths:0:RootPath"] = repo,
+            ["WatchPaths:0:RepositoryPath"] = repo,
+        }).Build();
+        var indexScanner = new TaskScannerService(
+            indexConfig,
+            NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, indexConfig));
+        var watcher = new TaskWatcherService(indexScanner, NullLogger<TaskWatcherService>.Instance, indexConfig);
+        var cache = new TaskListGitProjectionCache();
+        var indexCalls = 0;
+        var options = new GitStateIndexOptions(
+            MaxConcurrentRepos: 2,
+            Debounce: TimeSpan.FromMilliseconds(20),
+            SweepInterval: TimeSpan.FromSeconds(30),
+            SlowRunWarnMs: TimeSpan.FromSeconds(5));
+        using var gitStateIndex = new GitStateIndexService(
+            indexScanner,
+            watcher,
+            cache,
+            _ => { Interlocked.Increment(ref indexCalls); return Task.FromResult(TaskListGitProjection.Empty); },
+            _ => { },
+            NullLogger.Instance,
+            options,
+            TimeProvider.System);
+
+        await gitStateIndex.StartAsync(CancellationToken.None);
+        try
+        {
+            // Drain the unconditional startup pass before measuring the push's effect.
+            await WaitUntilIndexed(() => Volatile.Read(ref indexCalls) >= 1);
+            var before = Volatile.Read(ref indexCalls);
+
+            var runner = new MergeIntoDevelopRunner(
+                git, log, NullLogger<MergeIntoDevelopRunner>.Instance, gitStateIndex: gitStateIndex);
+
+            var result = await runner.PushIntegrationBranchAsync("Fixture", "40", jobFolder, repo, "develop");
+
+            Assert.True(result.Success, result.Error);
+            await WaitUntilIndexed(() => Volatile.Read(ref indexCalls) > before);
+        }
+        finally
+        {
+            await gitStateIndex.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task PushIntegrationBranch_Success_AcceptsAnIntegratedHumanReviewCard_AndClearsItsParkedBlocker()
+    {
+        // AGT-2838: the acceptance rail otherwise only notices a green
+        // integration on its next periodic tick (AcceptanceRail:IntervalSeconds,
+        // default 180s), so a card can sit in Human Review, integrated but still
+        // carrying a stale parked-blocker marker, "looking unfinished". A
+        // successful push must trigger an immediate rail pass so the card is
+        // accepted (leaving 5-human-review, which clears the marker) right away.
+        var (repo, _) = SeedRepoWithOrigin("push-accepts-card");
+        RunGit(repo, "checkout -q -b develop");
+        File.WriteAllText(Path.Combine(repo, "dev.txt"), "dev work");
+        Commit(repo, "feat: dev work");
+        var deliveredSha = RunGit(repo, "rev-parse develop").Out.Trim();
+
+        var watchPath = Path.Combine(_tempDir, "push-accepts-card-jobs");
+        foreach (var state in TaskStates.All) Directory.CreateDirectory(Path.Combine(watchPath, state));
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["WatchPaths:0:Name"] = "Fixture",
+            ["WatchPaths:0:Path"] = watchPath,
+            ["WatchPaths:0:RootPath"] = repo,
+            ["WatchPaths:0:RepositoryPath"] = repo,
+            ["AcceptanceRail:Enabled"] = "true",
+        }).Build();
+        var scanner = new TaskScannerService(
+            config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
+        var states = new TaskStateMachine(scanner, NullLogger<TaskStateMachine>.Instance, timeline: timeline);
+        var mutations = new TaskMutationService(
+            scanner,
+            new ClientIdentityStore(config, NullLogger<ClientIdentityStore>.Instance),
+            new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance),
+            new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance),
+            NullLogger<TaskMutationService>.Instance);
+        var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
+        settings.SetIntegrationBranch("Fixture", "develop");
+        var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
+        var pipeline = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var integration = new TaskIntegrationStatusService(
+            git, settings, pipeline, NullLogger<TaskIntegrationStatusService>.Instance);
+        var transitions = new TaskTransitionService(
+            scanner, states, mutations, git, settings, NullLogger<TaskTransitionService>.Instance,
+            integrationStatus: integration, timeline: timeline, pipelineLog: pipeline);
+        var escalation = new HumanReviewEscalation(
+            states, transitions, config, NullLogger<HumanReviewEscalation>.Instance, scanner);
+        var recovery = new TaskIntegrationRecoveryService(
+            scanner, mutations, states, timeline, NullLogger<TaskIntegrationRecoveryService>.Instance);
+        var rail = new AcceptanceRailHostedService(
+            scanner, integration, transitions, recovery, escalation, timeline, config,
+            NullLogger<AcceptanceRailHostedService>.Instance);
+
+        // A Human Review card whose one attributed commit is already on develop
+        // (as it would be right after the local merge, before the deferred push
+        // this test drives), still carrying a stale, empty-reason parked-blocker
+        // marker left by the earlier review verdict.
+        var folder = Path.Combine(watchPath, TaskStates.HumanReview, "41");
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(
+            Path.Combine(folder, "task.json"),
+            JsonSerializer.Serialize(
+                new
+                {
+                    id = "41",
+                    key = "AGT-2838",
+                    title = "41",
+                    state = TaskStates.HumanReview,
+                    order = 1,
+                    agent = "codex",
+                    cliType = "codex",
+                    mode = TaskModes.Coding,
+                    projectName = "Fixture",
+                    ownerClientId = DefaultClientIdentity.Id,
+                    commit = new { sha = deliveredSha, shortSha = deliveredSha[..7], message = "feat: dev work", filesChanged = 1 },
+                    commits = new[] { new { sha = deliveredSha, shortSha = deliveredSha[..7], message = "feat: dev work", filesChanged = 1 } },
+                },
+                new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }));
+        File.WriteAllText(Path.Combine(folder, "prompt.md"), "Implement 41.\n");
+        File.WriteAllText(Path.Combine(folder, "status.md"), "- Result: Awaiting acceptance.\n");
+        ReviewSubjectStore.Write(folder, new ReviewSubjectRecord
+        {
+            TaskKey = "AGT-2838",
+            RunAttemptId = "run-41",
+            Project = "Fixture",
+            Repository = repo,
+            ResultSha = deliveredSha,
+            ResultRef = "task/41",
+            AttemptChainId = "chain-41",
+            IntegrationBranch = "develop",
+            CompletedAtUtc = DateTimeOffset.UtcNow,
+        });
+        pipeline.Begin(folder, PipelineCatalogue.Standard, "Fixture", "41");
+        ParkedBlockerMarker.Write(folder, new ParkedBlockerRecord
+        {
+            BlockerType = ParkedBlockerCatalog.OperatorDecision,
+            Condition = ParkedBlockerCatalog.ConditionFor(ParkedBlockerCatalog.OperatorDecision),
+            Lane = TaskStates.HumanReview,
+            ParkedAt = DateTime.UtcNow,
+            Reason = "",
+        });
+
+        Assert.NotNull(scanner.FindJob("41", watchPath)?.ParkedBlocker);
+
+        var runner = new MergeIntoDevelopRunner(
+            git, pipeline, NullLogger<MergeIntoDevelopRunner>.Instance,
+            taskScanner: scanner, taskMutations: mutations, acceptanceRail: rail);
+
+        var result = await runner.PushIntegrationBranchAsync("Fixture", "41", folder, repo, "develop");
+        Assert.True(result.Success, result.Error);
+
+        await WaitUntilIndexed(() => scanner.FindJob("41", watchPath)?.State == TaskStates.Completed);
+
+        var moved = scanner.FindJob("41", watchPath)!;
+        Assert.Equal(TaskStates.Completed, moved.State);
+        Assert.Null(moved.ParkedBlocker);
+    }
+
+    private static async Task WaitUntilIndexed(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (!condition())
+        {
+            if (DateTime.UtcNow > deadline) throw new TimeoutException("Condition was not met in time.");
+            await Task.Delay(10);
+        }
     }
 
     [Fact]

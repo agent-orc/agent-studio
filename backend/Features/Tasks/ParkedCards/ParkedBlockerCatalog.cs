@@ -82,7 +82,17 @@ public static class ParkedBlockerCatalog
     /// Returns null when the lane is not a parked lane - the caller then clears
     /// any stale marker instead.
     /// </summary>
-    public static ParkedBlockerRecord? Build(string? lane, string? reason, DateTime parkedAt)
+    /// <param name="transitionCause">
+    /// Ledger cause id of the lane change (<see cref="LaneChangeCauses"/>), used
+    /// only as a fallback reason when the caller supplied none.
+    /// </param>
+    /// <param name="transitionDetail">Short qualifier for <paramref name="transitionCause"/>, same fallback role.</param>
+    public static ParkedBlockerRecord? Build(
+        string? lane,
+        string? reason,
+        DateTime parkedAt,
+        string? transitionCause = null,
+        string? transitionDetail = null)
     {
         if (!IsParkedLane(lane)) return null;
         var blockerType = ReadBlockerType(reason);
@@ -92,7 +102,28 @@ public static class ParkedBlockerCatalog
             Condition = ConditionFor(blockerType),
             Lane = lane!,
             ParkedAt = parkedAt,
-            Reason = (reason ?? string.Empty).Trim(),
+            Reason = ResolveReason(reason, transitionCause, transitionDetail),
         };
+    }
+
+    /// <summary>
+    /// A park must always carry a human-readable cause: an explicit operator or
+    /// escalation-formatted reason wins, otherwise the lane transition's own
+    /// cause taxonomy (<see cref="LaneChangeCauses"/> plus its qualifier) stands
+    /// in, so <see cref="ParkedBlockerRecord.Reason"/> is never blank even when
+    /// the caller forgot to pass prose (AGT-2838: a card parked with an empty
+    /// reason reads as unexplained and unfinished).
+    /// </summary>
+    internal static string ResolveReason(string? reason, string? transitionCause, string? transitionDetail)
+    {
+        var explicitReason = (reason ?? string.Empty).Trim();
+        if (explicitReason.Length > 0) return explicitReason;
+
+        var cause = (transitionCause ?? string.Empty).Trim();
+        var detail = (transitionDetail ?? string.Empty).Trim();
+        if (cause.Length > 0 && detail.Length > 0) return $"{cause}: {detail}";
+        if (detail.Length > 0) return detail;
+        if (cause.Length > 0) return cause;
+        return "Parked with no recorded cause.";
     }
 }
