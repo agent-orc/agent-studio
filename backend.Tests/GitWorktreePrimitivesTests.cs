@@ -495,6 +495,70 @@ public sealed class GitWorktreePrimitivesTests : IDisposable
         Assert.Contains("untracked-notes.txt", result.Error);
     }
 
+    [Fact]
+    public void MergeBranchFastForward_InIntegrationWorktree_AdvancesTheReleaseBranch()
+    {
+        var repo = SeedRepo("release-ff-worktree");
+        var git = BuildGitService(("Fixture", repo));
+
+        // develop carries the tested release commit; main is one commit behind.
+        RunGit(repo, "checkout -q -b develop");
+        File.WriteAllText(Path.Combine(repo, "release.txt"), "tested release work");
+        Commit(repo, "feat: tested release work");
+        var developTip = RunGit(repo, "rev-parse develop").Out.Trim();
+        var mainTipBefore = RunGit(repo, "rev-parse main").Out.Trim();
+        // The developer checkout keeps unrelated work in flight; integration
+        // runs elsewhere and must not care (AGT-2832).
+        File.WriteAllText(Path.Combine(repo, "scratch.txt"), "uncommitted developer work");
+
+        // The Studio-owned integration worktree is detached, so the release
+        // merge never takes a branch away from the developer checkout.
+        var integration = Path.Combine(_tempDir, "integration-release-ff");
+        Assert.Equal(0, RunGit(repo, $"worktree add -q --detach \"{integration}\" main").Code);
+
+        var result = git.MergeBranchFastForward(integration, "develop", "main", developTip, mainTipBefore);
+
+        Assert.Null(result.Error);
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, result.Outcome);
+        Assert.Equal(developTip, result.MergedSha);
+        // The branch ref itself advanced, published from the detached head.
+        Assert.Equal(developTip, RunGit(repo, "rev-parse refs/heads/main").Out.Trim());
+        // The developer checkout kept its branch and its uncommitted file.
+        Assert.Equal("develop", RunGit(repo, "rev-parse --abbrev-ref HEAD").Out.Trim());
+        Assert.True(File.Exists(Path.Combine(repo, "scratch.txt")));
+    }
+
+    [Fact]
+    public void MergeBranchFastForward_DirtyDeveloperCheckoutHoldsRelease_AdvancesBranchByReference()
+    {
+        var repo = SeedRepo("release-ff-dirty-holder");
+        var git = BuildGitService(("Fixture", repo));
+
+        // The release commit touches README.md, the same file the developer is
+        // editing, so git refuses to carry the checkout along.
+        RunGit(repo, "checkout -q -b develop");
+        File.WriteAllText(Path.Combine(repo, "README.md"), "released readme");
+        Commit(repo, "feat: tested readme release");
+        var developTip = RunGit(repo, "rev-parse develop").Out.Trim();
+        var mainTipBefore = RunGit(repo, "rev-parse main").Out.Trim();
+        RunGit(repo, "checkout -q main");
+        File.WriteAllText(Path.Combine(repo, "README.md"), "operator edit in flight");
+
+        var integration = Path.Combine(_tempDir, "integration-dirty-holder");
+        Assert.Equal(0, RunGit(repo, $"worktree add -q --detach \"{integration}\" main").Code);
+
+        var result = git.MergeBranchFastForward(integration, "develop", "main", developTip, mainTipBefore);
+
+        // The dirty developer checkout does not block the release.
+        Assert.Null(result.Error);
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, result.Outcome);
+        Assert.Equal(developTip, RunGit(repo, "rev-parse refs/heads/main").Out.Trim());
+        // It keeps the branch and the uncommitted edit: the ref moved
+        // underneath it, nothing in its working tree was overwritten.
+        Assert.Equal("main", RunGit(repo, "rev-parse --abbrev-ref HEAD").Out.Trim());
+        Assert.Equal("operator edit in flight", File.ReadAllText(Path.Combine(repo, "README.md")));
+    }
+
     private string SeedRepo(string name)
     {
         var repo = Path.Combine(_tempDir, name);

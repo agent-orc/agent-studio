@@ -338,8 +338,10 @@ public sealed class WorktreeTaskLifecycle
     /// Merge post-step: fold the finished <paramref name="taskBranch"/> back into
     /// <paramref name="integrationBranch"/> per <paramref name="strategy"/>.
     /// For <c>direct-merge</c>: rebase the worktree onto the integration tip, then
-    /// fast-forward the integration branch (which must be checked out in
-    /// <paramref name="repoRoot"/>). A rebase conflict returns
+    /// fast-forward the integration branch by reference. The branch no longer has
+    /// to be checked out in <paramref name="repoRoot"/>, and uncommitted work
+    /// there neither blocks the integration nor is touched by it (AGT-2832). A
+    /// rebase conflict returns
     /// <see cref="IntegrationOutcome.Conflict"/> with the branch and worktree left
     /// intact for the conflict-resolution agent / PR fallback. Pass
     /// <paramref name="preserveConflictForResolution"/> to keep the conflicted
@@ -375,7 +377,7 @@ public sealed class WorktreeTaskLifecycle
             return new IntegrationResult(IntegrationOutcome.Conflict, null, rebase.Error, rebase.ConflictedFiles);
         }
 
-        var ff = _git.MergeFastForward(repoRoot, taskBranch);
+        var ff = _git.FastForwardIntegrationBranch(repoRoot, integrationBranch, taskBranch);
         if (!ff.Success)
         {
             _logger.LogWarning("Fast-forward of {Integration} onto {Branch} failed: {Error}",
@@ -383,7 +385,7 @@ public sealed class WorktreeTaskLifecycle
             return new IntegrationResult(IntegrationOutcome.Error, null, ff.Error);
         }
 
-        var sha = _git.ReadHeadShaAt(repoRoot);
+        var sha = _git.GetBranchTip(repoRoot, integrationBranch);
         _logger.LogInformation("Integrated {Branch} into {Integration} at {Sha}", taskBranch, integrationBranch, sha ?? "<unknown>");
         return new IntegrationResult(IntegrationOutcome.Merged, sha, null);
     }
@@ -423,7 +425,7 @@ public sealed class WorktreeTaskLifecycle
             }
         }
 
-        var ff = _git.MergeFastForward(repoRoot, taskBranch);
+        var ff = _git.FastForwardIntegrationBranch(repoRoot, integrationBranch, taskBranch);
         if (!ff.Success)
         {
             return new IntegrationResult(
@@ -432,7 +434,7 @@ public sealed class WorktreeTaskLifecycle
                 string.IsNullOrWhiteSpace(ff.Error) ? "Fast-forward merge failed after conflict-resolution." : ff.Error);
         }
 
-        var sha = _git.ReadHeadShaAt(repoRoot);
+        var sha = _git.GetBranchTip(repoRoot, integrationBranch);
         _logger.LogInformation(
             "Completed resolved integration of {Branch} into {Integration} at {Sha}",
             taskBranch, integrationBranch, sha ?? "<unknown>");

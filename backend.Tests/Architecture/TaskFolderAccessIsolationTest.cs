@@ -148,6 +148,13 @@ public class TaskFolderAccessIsolationTest
             ["backend/Features/Git/GitService.cs"] =
                 "Wiki folder move/delete operate on the project repo docs/ tree, not task storage.",
 
+            // Integration worktree (AGT-2832): removes the Studio-owned
+            // integration worktree directory when its registration is stale,
+            // under the derived integration slot and never in task storage or a
+            // developer checkout.
+            ["backend/Features/Git/IntegrationWorktreeProvider.cs"] =
+                "Deletes only the derived, Studio-owned integration worktree slot, never task storage.",
+
             // Hosted wiki publication (AGT-2278): snapshot retention prunes
             // superseded SHA-addressed docs snapshots under the OS temp root.
             ["backend/Features/Docs/Publication/WikiPublicationService.cs"] =

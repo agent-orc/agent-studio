@@ -3708,13 +3708,15 @@ public class GitService
     }
 
     /// <summary>
-    /// Fast-forwards the branch checked out at <paramref name="repoRoot"/> to
-    /// <paramref name="sourceRef"/> (<c>git merge --ff-only &lt;sourceRef&gt;</c>).
-    /// After a successful <see cref="RebaseOnto"/> the task branch is a linear
-    /// descendant of the integration branch, so this folds it back in with no
-    /// merge commit. Fails (without creating a merge commit) when the source
-    /// is not a fast-forward, which is the signal to route through the
-    /// merge-queue instead.
+    /// Fast-forwards the branch <b>checked out</b> at <paramref name="repoRoot"/>
+    /// to <paramref name="sourceRef"/> (<c>git merge --ff-only &lt;sourceRef&gt;</c>),
+    /// updating that working tree with it. Fails (without creating a merge commit)
+    /// when the source is not a fast-forward.
+    ///
+    /// <para>Integration does not use this: it must not depend on what a checkout
+    /// has open and must not touch a tree Studio does not own. Use
+    /// <see cref="FastForwardIntegrationBranch"/>, which advances the named branch
+    /// by reference (AGT-2832).</para>
     /// </summary>
     public GitWorktreeResult MergeFastForward(string repoRoot, string sourceRef)
     {
@@ -3780,17 +3782,11 @@ public class GitService
                 error: dirtyRefusal);
         }
 
-        var (currentRaw, _, headCode) = RunGit(repoRoot, "rev-parse --abbrev-ref HEAD");
-        var current = headCode == 0 ? currentRaw.Trim() : null;
-        if (!string.Equals(current, targetBranch, StringComparison.Ordinal))
+        if (EnterIntegrationHead(repoRoot, targetBranch) is { } headError)
         {
-            var (_, checkoutError, checkoutCode) = RunGitArgs(repoRoot, "checkout", targetBranch);
-            if (checkoutCode != 0)
-            {
-                return MergeIntoIntegrationResult.Of(
-                    MergeIntoIntegrationOutcome.Error,
-                    error: $"Could not check out '{targetBranch}': {checkoutError.Trim()}");
-            }
+            return MergeIntoIntegrationResult.Of(
+                MergeIntoIntegrationOutcome.Error,
+                error: $"Could not check out '{targetBranch}': {headError}");
         }
 
         // Merge the immutable revision that passed the suite, not the movable
@@ -3812,6 +3808,16 @@ public class GitService
             return MergeIntoIntegrationResult.Of(
                 MergeIntoIntegrationOutcome.Error,
                 error: "Fast-forward release merge did not land on the tested source SHA.");
+        }
+
+        // The merge above ran on the detached integration head, so the target
+        // branch still points where it did when expectedTargetSha was asserted
+        // against its tip: that is the previous value the compare-and-swap
+        // needs, not the merged commit.
+        if (PublishIntegrationHead(repoRoot, targetBranch, expectedTargetSha) is { } publishError)
+        {
+            ResetHard(repoRoot, expectedTargetSha);
+            return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error, error: publishError);
         }
 
         _logger.LogInformation(
@@ -4450,7 +4456,8 @@ public class GitService
     /// engine behind the deferred, operator-triggered "Merge into Develop"
     /// post-step (<c>PipelineCatalogue.MergeIntoDevelopStepId</c>); it is NOT the
     /// automatic in-run integration (<see cref="RebaseOnto"/> +
-    /// <see cref="MergeFastForward"/>) used to keep parallel worktrees in sync.
+    /// <see cref="FastForwardIntegrationBranch"/>) used to keep parallel worktrees
+    /// in sync.
     ///
     /// <para>Contract:
     /// <list type="bullet">
@@ -4576,16 +4583,10 @@ public class GitService
                 IntegrationBranchSyncOutcome.Error,
                 dirtyRefusal);
 
-        var (currentRaw, _, headCode) = RunGit(repoRoot, "rev-parse --abbrev-ref HEAD");
-        var current = headCode == 0 ? currentRaw.Trim() : null;
-        if (!string.Equals(current, integrationBranch, StringComparison.Ordinal))
-        {
-            var (_, checkoutError, checkoutCode) = RunGitArgs(repoRoot, "checkout", integrationBranch);
-            if (checkoutCode != 0)
-                return new(
-                    IntegrationBranchSyncOutcome.Error,
-                    $"Could not check out '{integrationBranch}' for origin synchronization: {checkoutError.Trim()}");
-        }
+        if (EnterIntegrationHead(repoRoot, integrationBranch) is { } headError)
+            return new(
+                IntegrationBranchSyncOutcome.Error,
+                $"Could not check out '{integrationBranch}' for origin synchronization: {headError}");
 
         var (_, mergeError, mergeCode) = RunGitArgs(
             repoRoot, "merge", "--ff-only", remoteIntegrationRef);
@@ -4600,6 +4601,9 @@ public class GitService
                 IntegrationBranchSyncOutcome.Error,
                 $"Integration branch '{integrationBranch}' could not fast-forward to origin: {mergeError.Trim()}");
         }
+
+        if (PublishIntegrationHead(repoRoot, integrationBranch, localTip) is { } publishError)
+            return new(IntegrationBranchSyncOutcome.Error, publishError);
 
         _logger.LogInformation(
             "Integration branch {Integration} at {Path} fast-forwarded from {Before} to {After}",
@@ -4720,7 +4724,299 @@ public class GitService
         return $"{refusal} Dirty files: {string.Join(", ", status.Files.Select(file => file.Path))}.";
     }
 
+    /// <summary>
+    /// True when the working tree at <paramref name="root"/> is a linked git
+    /// worktree rather than the repository's primary checkout. Checking a branch
+    /// out in a linked worktree takes that branch away from every other checkout
+    /// of the same repository, so the Studio-owned integration worktree works on
+    /// a detached HEAD instead (see <see cref="EnterIntegrationHead"/>).
+    /// </summary>
+    private static bool IsLinkedWorktree(string root)
+    {
+        var (gitDir, _, gitDirCode) = RunGitArgs(root, "rev-parse", "--git-dir");
+        var (commonDir, _, commonCode) = RunGitArgs(root, "rev-parse", "--git-common-dir");
+        if (gitDirCode != 0 || commonCode != 0) return false;
+        return !string.Equals(gitDir.Trim(), commonDir.Trim(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsIntegrationHeadAttached(string root, string integrationBranch)
+    {
+        var (currentRaw, _, headCode) = RunGitArgs(root, "rev-parse", "--abbrev-ref", "HEAD");
+        return headCode == 0
+            && string.Equals(currentRaw.Trim(), integrationBranch, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Puts the working tree at <paramref name="repoRoot"/> onto the commit of
+    /// <paramref name="integrationBranch"/> so a merge can run there. A checkout
+    /// that already carries the branch keeps it and git advances the ref itself;
+    /// the Studio-owned integration worktree is detached at the branch tip, and
+    /// <see cref="PublishIntegrationHead"/> moves the branch afterwards. Returns
+    /// the git error, or null on success.
+    /// </summary>
+    private string? EnterIntegrationHead(string repoRoot, string integrationBranch)
+    {
+        if (IsIntegrationHeadAttached(repoRoot, integrationBranch)) return null;
+
+        var (_, error, code) = IsLinkedWorktree(repoRoot)
+            ? RunGitArgs(repoRoot, "checkout", "--detach", integrationBranch)
+            : RunGitArgs(repoRoot, "checkout", integrationBranch);
+        if (code == 0) return null;
+
+        _logger.LogWarning(
+            "Integration head could not be placed on {Branch} at {Path}: {Error}",
+            integrationBranch, repoRoot, error.Trim());
+        return error.Trim();
+    }
+
+    /// <summary>
+    /// Moves <paramref name="integrationBranch"/> onto the commit the detached
+    /// integration worktree just produced. When a checkout still holds the
+    /// branch, the fast-forward is asked of that checkout first: git refuses it
+    /// rather than overwriting a developer's local modifications, and a clean
+    /// checkout stays in step with the branch exactly as if it had pulled. Only
+    /// then is the ref advanced directly, compare-and-swapped against
+    /// <paramref name="expectedPreviousTip"/> so a concurrent mutation is never
+    /// overwritten. Returns the failure reason, or null on success.
+    /// </summary>
+    private string? PublishIntegrationHead(
+        string repoRoot,
+        string integrationBranch,
+        string? expectedPreviousTip)
+    {
+        if (IsIntegrationHeadAttached(repoRoot, integrationBranch)) return null;
+
+        var head = ReadHeadShaAt(repoRoot);
+        if (string.IsNullOrWhiteSpace(head))
+            return "Could not read the integration worktree HEAD after the merge.";
+        if (string.Equals(GetBranchTip(repoRoot, integrationBranch), head, StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        return AdvanceIntegrationBranch(repoRoot, integrationBranch, head!, expectedPreviousTip);
+    }
+
+    /// <summary>
+    /// Moves <paramref name="integrationBranch"/> forward to
+    /// <paramref name="newSha"/> without ever touching a working tree Studio does
+    /// not own. When a checkout still holds the branch, the fast-forward is asked
+    /// of that checkout first - git carries unrelated local modifications along
+    /// and refuses rather than overwriting them - so a clean checkout stays in
+    /// step with the branch. Otherwise the ref is advanced directly, compare-and-
+    /// swapped against <paramref name="expectedPreviousTip"/>.
+    /// </summary>
+    private string? AdvanceIntegrationBranch(
+        string repoRoot,
+        string integrationBranch,
+        string newSha,
+        string? expectedPreviousTip)
+    {
+        if (WorktreeHolding(repoRoot, integrationBranch) is { } holder)
+        {
+            var (_, forwardError, forwardCode) = RunGitArgs(holder, "merge", "--ff-only", newSha);
+            if (forwardCode == 0)
+            {
+                _logger.LogInformation(
+                    "Checkout {Path} was fast-forwarded with {Branch} to {Sha}",
+                    holder, integrationBranch, AbbreviateSha(newSha));
+                return null;
+            }
+            _logger.LogInformation(
+                "Checkout {Path} keeps its working tree; {Branch} is advanced by reference only: {Error}",
+                holder, integrationBranch, forwardError.Trim());
+        }
+
+        return UpdateBranchRef(repoRoot, integrationBranch, newSha, expectedPreviousTip);
+    }
+
+    /// <summary>
+    /// Fast-forwards <paramref name="integrationBranch"/> onto an already rebased
+    /// <paramref name="sourceRef"/>. The local worktree-run integration used to do
+    /// this with <c>git merge --ff-only</c> inside the developer checkout, which
+    /// silently required that checkout to have the integration branch out and
+    /// failed on unrelated local modifications (AGT-2832). Advancing the branch by
+    /// reference needs no working tree at all: the rebase that made the delivery a
+    /// descendant already happened in the task worktree.
+    /// </summary>
+    public GitWorktreeResult FastForwardIntegrationBranch(
+        string repoRoot,
+        string integrationBranch,
+        string sourceRef)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot))
+            return new GitWorktreeResult(false, null, "Repo root does not exist.");
+        if (!IsLikelyBranchName(integrationBranch))
+            return new GitWorktreeResult(false, null, $"Invalid integration branch '{integrationBranch}'.");
+        if (!IsLikelyBranchName(sourceRef))
+            return new GitWorktreeResult(false, null, $"Invalid source ref '{sourceRef}'.");
+
+        var sourceSha = GetBranchTip(repoRoot, sourceRef);
+        if (string.IsNullOrWhiteSpace(sourceSha))
+            return new GitWorktreeResult(false, repoRoot, $"Could not resolve the tip of '{sourceRef}'.");
+
+        var branchTip = GetBranchTip(repoRoot, integrationBranch);
+        if (string.IsNullOrWhiteSpace(branchTip))
+            return new GitWorktreeResult(false, repoRoot, $"Could not resolve the tip of '{integrationBranch}'.");
+        if (string.Equals(branchTip, sourceSha, StringComparison.OrdinalIgnoreCase))
+            return new GitWorktreeResult(true, repoRoot, null);
+
+        if (!IsAncestor(repoRoot, integrationBranch, sourceRef))
+        {
+            return new GitWorktreeResult(
+                false,
+                repoRoot,
+                $"'{sourceRef}' is not a fast-forward of '{integrationBranch}'.");
+        }
+
+        if (AdvanceIntegrationBranch(repoRoot, integrationBranch, sourceSha!, branchTip) is { } error)
+            return new GitWorktreeResult(false, repoRoot, error);
+
+        _logger.LogInformation(
+            "Fast-forwarded {Integration} to {Source} at {Sha}",
+            integrationBranch, sourceRef, AbbreviateSha(sourceSha!));
+        return new GitWorktreeResult(true, repoRoot, null);
+    }
+
+    /// <summary>
+    /// Compare-and-swap on a local branch ref. <c>git update-ref</c> with an old
+    /// value fails instead of overwriting when the branch moved since it was
+    /// observed, and unlike <c>git branch -f</c> it does not refuse just because
+    /// some checkout has the branch open.
+    /// </summary>
+    private string? UpdateBranchRef(
+        string repoRoot,
+        string branch,
+        string newSha,
+        string? expectedPreviousTip)
+    {
+        if (!IsLikelyBranchName(branch)) return $"Invalid integration branch '{branch}'.";
+        if (!IsLikelyShaOrRef(newSha)) return $"Invalid integration commit '{newSha}'.";
+
+        var refName = $"refs/heads/{branch}";
+        var (_, updateError, updateCode) = string.IsNullOrWhiteSpace(expectedPreviousTip)
+            ? RunGitArgs(repoRoot, "update-ref", refName, newSha)
+            : RunGitArgs(repoRoot, "update-ref", refName, newSha, expectedPreviousTip!);
+        if (updateCode == 0) return null;
+
+        _logger.LogWarning(
+            "Integration branch {Branch} at {Path} could not be advanced to {Sha}: {Error}",
+            branch, repoRoot, AbbreviateSha(newSha), updateError.Trim());
+        return $"Integration branch '{branch}' could not be advanced to {AbbreviateSha(newSha)}: {updateError.Trim()}";
+    }
+
+    /// <summary>
+    /// The live checkout of this repository that currently has
+    /// <paramref name="branch"/> checked out, if any. In the ordinary local setup
+    /// this is the developer's project checkout. The detached integration
+    /// worktree is never a holder, so callers that run there always see the other
+    /// checkout.
+    /// </summary>
+    private string? WorktreeHolding(string repoRoot, string branch)
+        => ListWorktrees(repoRoot)
+            .FirstOrDefault(entry =>
+                !entry.IsBare
+                && !entry.IsDetached
+                && string.Equals(entry.Branch, branch, StringComparison.Ordinal)
+                && Directory.Exists(entry.Path))
+            ?.Path;
+
+    /// <summary>
+    /// Returns <paramref name="integrationBranch"/> and the integration working
+    /// tree to <paramref name="toSha"/> after a gate rejected a merge this
+    /// process created. The detached integration worktree needs both halves -
+    /// working tree and branch ref - and a checkout that was fast-forwarded
+    /// along with the branch is returned as well, but only while it is clean and
+    /// still sits exactly on the commit being rolled back.
+    /// </summary>
+    public GitWorktreeResult ResetIntegrationBranch(string repoRoot, string integrationBranch, string toSha)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot))
+            return new GitWorktreeResult(false, null, "Repo root does not exist.");
+        if (!IsLikelyBranchName(integrationBranch))
+            return new GitWorktreeResult(false, null, $"Invalid integration branch '{integrationBranch}'.");
+        if (!IsLikelyShaOrRef(toSha))
+            return new GitWorktreeResult(false, null, $"Invalid rollback commit '{toSha}'.");
+
+        if (IsIntegrationHeadAttached(repoRoot, integrationBranch))
+            return ResetHard(repoRoot, toSha);
+
+        var rolledBackFrom = GetBranchTip(repoRoot, integrationBranch);
+        // Observed before the ref moves: afterwards the holder's HEAD already
+        // resolves through the rolled-back branch and cannot be recognised.
+        var forwardedCheckout = FastForwardedCheckout(repoRoot, integrationBranch, rolledBackFrom);
+        var reset = ResetHard(repoRoot, toSha);
+        if (!reset.Success) return reset;
+
+        if (string.Equals(rolledBackFrom, toSha, StringComparison.OrdinalIgnoreCase))
+            return reset;
+
+        if (UpdateBranchRef(repoRoot, integrationBranch, toSha, rolledBackFrom) is { } error)
+            return new GitWorktreeResult(false, repoRoot, error);
+
+        if (forwardedCheckout is not null)
+        {
+            var restored = ResetHard(forwardedCheckout, toSha);
+            if (!restored.Success)
+            {
+                _logger.LogWarning(
+                    "Checkout {Path} could not be returned to {Sha} after the {Branch} rollback: {Error}",
+                    forwardedCheckout, AbbreviateSha(toSha), integrationBranch, restored.Error);
+            }
+        }
+        return reset;
+    }
+
+    /// <summary>
+    /// The checkout that this process fast-forwarded along with the integration
+    /// branch and that may therefore be returned with it: it still holds the
+    /// branch, still sits exactly on the commit being rolled back, and carries
+    /// no uncommitted work of its own. Anything else is left untouched.
+    /// </summary>
+    private string? FastForwardedCheckout(
+        string repoRoot,
+        string integrationBranch,
+        string? rolledBackFrom)
+    {
+        if (string.IsNullOrWhiteSpace(rolledBackFrom)) return null;
+        if (WorktreeHolding(repoRoot, integrationBranch) is not { } holder) return null;
+        if (!string.Equals(ReadHeadShaAt(holder), rolledBackFrom, StringComparison.OrdinalIgnoreCase)) return null;
+
+        var status = GetStatusForRepoRoot(holder);
+        if (status.IsRepo && status.Files.Count == 0) return holder;
+
+        _logger.LogInformation(
+            "Checkout {Path} is left untouched by the {Branch} rollback because it has uncommitted changes",
+            holder, integrationBranch);
+        return null;
+    }
+
+    /// <summary>
+    /// Merges <paramref name="sourceRef"/> into <paramref name="integrationBranch"/>
+    /// in the working tree at <paramref name="repoRoot"/> and publishes the
+    /// result onto the branch. The publication step is what lets the merge run
+    /// in the Studio-owned integration worktree (AGT-2832) without that worktree
+    /// having to claim the branch.
+    /// </summary>
     private MergeIntoIntegrationResult MergeRefIntoIntegration(
+        string repoRoot,
+        string sourceRef,
+        string integrationBranch)
+    {
+        var tipBeforeMerge = GetBranchTip(repoRoot, integrationBranch);
+        var merged = MergeRefIntoIntegrationCore(repoRoot, sourceRef, integrationBranch);
+        if (merged.Outcome is not (MergeIntoIntegrationOutcome.Merged or MergeIntoIntegrationOutcome.MergedAfterRebase))
+            return merged;
+
+        if (PublishIntegrationHead(repoRoot, integrationBranch, tipBeforeMerge) is not { } publishError)
+            return merged;
+
+        // The merge commit exists but no ref points at it; leave the integration
+        // worktree on the tip it started from so the next attempt is clean.
+        if (!string.IsNullOrWhiteSpace(tipBeforeMerge))
+            ResetHard(repoRoot, tipBeforeMerge!);
+        return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error, error: publishError);
+    }
+
+    private MergeIntoIntegrationResult MergeRefIntoIntegrationCore(
         string repoRoot,
         string sourceRef,
         string integrationBranch)
@@ -4728,23 +5024,20 @@ public class GitService
         if (!BranchExists(repoRoot, integrationBranch))
             return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error, error: $"Integration branch '{integrationBranch}' does not exist.");
 
-        // Never merge into a dirty tree - that would entangle the operator's
-        // in-flight edits with the delivery merge.
+        // Never merge into a dirty tree - that would entangle leftover edits
+        // with the delivery merge. Integration runs in the Studio-owned
+        // worktree, which is reset before every attempt, so this is a safety
+        // net rather than a refusal aimed at a person's working copy.
         if (DirtyTreeRefusal(
                 repoRoot,
                 "Integration working tree has uncommitted changes; refusing to merge.") is { } dirtyRefusal)
             return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error, error: dirtyRefusal);
 
-        var (currentRaw, _, headCode) = RunGit(repoRoot, "rev-parse --abbrev-ref HEAD");
-        var current = headCode == 0 ? currentRaw.Trim() : null;
-        if (!string.Equals(current, integrationBranch, StringComparison.Ordinal))
+        if (EnterIntegrationHead(repoRoot, integrationBranch) is { } headError)
         {
-            var (_, coErr, coCode) = RunGitArgs(repoRoot, "checkout", integrationBranch);
-            if (coCode != 0)
-            {
-                _logger.LogWarning("Merge-into-develop: checkout of {Integration} at {Path} failed: {Error}", integrationBranch, repoRoot, coErr.Trim());
-                return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error, error: $"Could not check out '{integrationBranch}': {coErr.Trim()}");
-            }
+            return MergeIntoIntegrationResult.Of(
+                MergeIntoIntegrationOutcome.Error,
+                error: $"Could not check out '{integrationBranch}': {headError}");
         }
 
         // Idempotent: a re-trigger after a successful merge is a clean no-op.
@@ -5392,6 +5685,57 @@ public class GitService
         {
             _logger.LogWarning("Detach HEAD at {Path} failed: {Error}", worktreePath, err.Trim());
             return new GitWorktreeResult(false, worktreePath, err.Trim());
+        }
+        return new GitWorktreeResult(true, worktreePath, null);
+    }
+
+    /// <summary>
+    /// Aborts a merge or rebase a previous, interrupted integration left behind
+    /// in <paramref name="worktreePath"/>. Preparing the Studio-owned
+    /// integration worktree calls this first, so a crashed integration cannot
+    /// wedge the next one: the checkout that follows would otherwise refuse to
+    /// switch while the index is still half-resolved.
+    /// </summary>
+    public void AbortInterruptedIntegration(string worktreePath)
+    {
+        if (string.IsNullOrWhiteSpace(worktreePath) || !Directory.Exists(worktreePath)) return;
+
+        if (IsRebaseInProgress(worktreePath))
+        {
+            _logger.LogInformation("Aborting an interrupted rebase at {Path}", worktreePath);
+            RunGitArgs(worktreePath, "rebase", "--abort");
+        }
+
+        var (_, _, mergeHeadCode) = RunGitArgs(worktreePath, "rev-parse", "--verify", "--quiet", "MERGE_HEAD");
+        if (mergeHeadCode == 0)
+        {
+            _logger.LogInformation("Aborting an interrupted merge at {Path}", worktreePath);
+            RunGitArgs(worktreePath, "merge", "--abort");
+        }
+    }
+
+    /// <summary>
+    /// Detaches the worktree at <paramref name="worktreePath"/> exactly at
+    /// <paramref name="atRef"/> (<c>git checkout --force --detach</c>). The
+    /// Studio-owned integration worktree starts every integration this way: a
+    /// detached HEAD carries the same commit as the integration branch without
+    /// claiming it, so the person working in the project checkout can still
+    /// check that branch out. <c>--force</c> is safe here because the worktree
+    /// holds no work of its own; it only drops what a previous integration left.
+    /// </summary>
+    public GitWorktreeResult CheckoutDetachedAt(string worktreePath, string atRef)
+    {
+        if (string.IsNullOrWhiteSpace(worktreePath) || !Directory.Exists(worktreePath))
+            return new GitWorktreeResult(false, null, "Worktree path does not exist.");
+        if (!IsLikelyShaOrRef(atRef) && !IsLikelyBranchName(atRef))
+            return new GitWorktreeResult(false, null, $"Invalid ref '{atRef}'.");
+
+        var (_, detachError, detachCode) = RunGitArgs(worktreePath, "checkout", "--force", "--detach", atRef);
+        if (detachCode != 0)
+        {
+            _logger.LogWarning(
+                "Detached checkout of {Ref} at {Path} failed: {Error}", atRef, worktreePath, detachError.Trim());
+            return new GitWorktreeResult(false, worktreePath, detachError.Trim());
         }
         return new GitWorktreeResult(true, worktreePath, null);
     }
