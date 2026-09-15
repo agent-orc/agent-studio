@@ -93,7 +93,8 @@ public sealed class RemoteTaskRunner
         string? taskKind = null,
         string? runId = null,
         string? leaseInstanceId = null,
-        RunSpecDto? runSpec = null)
+        RunSpecDto? runSpec = null,
+        CancellationToken daemonShutdown = default)
     {
         var isProjectClone = !string.IsNullOrWhiteSpace(projectId);
         if (isProjectClone && string.IsNullOrWhiteSpace(repositoryUrl))
@@ -120,11 +121,19 @@ public sealed class RemoteTaskRunner
         var slot = _state.Create(
             taskKey, lease, workspace.RepoPath, runId, leaseInstanceId,
             projectId, repositoryUrl, defaultBranch, taskKind, runSpec);
-        return await RunPersistedAsync(slot, workspace, shutdown, reattach: false);
+        return await RunPersistedAsync(
+            slot,
+            workspace,
+            shutdown,
+            reattach: false,
+            daemonShutdown);
     }
 
     /// <summary>Continue a positively verified detached process from durable host state.</summary>
-    public async Task<int> ReattachAsync(PersistedRunnerSlot slot, CancellationToken stopRun)
+    public async Task<int> ReattachAsync(
+        PersistedRunnerSlot slot,
+        CancellationToken stopRun,
+        CancellationToken daemonShutdown = default)
     {
         _log($"reattaching task '{slot.TaskKey}' attempt {slot.AttemptId} pid={slot.ProcessId} worktree={slot.WorktreePath}");
         // Restore the recorded base SHA: this process never prepared the worktree,
@@ -135,7 +144,12 @@ public sealed class RemoteTaskRunner
             restoredBaseSha: slot.BaseSha,
             sourceRunAttemptId: slot.RunId ?? slot.Lease.AttemptId ?? slot.AttemptId,
             fencingToken: slot.Lease.FencingToken);
-        return await RunPersistedAsync(slot, workspace, stopRun, reattach: true);
+        return await RunPersistedAsync(
+            slot,
+            workspace,
+            stopRun,
+            reattach: true,
+            daemonShutdown);
     }
 
     public async Task<bool> ReleaseDeadAsync(PersistedRunnerSlot slot, string reason)
@@ -161,7 +175,8 @@ public sealed class RemoteTaskRunner
         PersistedRunnerSlot slot,
         GitWorkspace workspace,
         CancellationToken shutdown,
-        bool reattach)
+        bool reattach,
+        CancellationToken daemonShutdown = default)
     {
         var taskKey = slot.TaskKey;
         var lease = slot.Lease;
@@ -194,7 +209,10 @@ public sealed class RemoteTaskRunner
             _log,
             inventory: _inventory,
             authority: authority);
-        var heartbeatTask = heartbeat.RunAsync(stopRun, shutdown);
+        using var heartbeatShutdown = CancellationTokenSource.CreateLinkedTokenSource(
+            shutdown,
+            daemonShutdown);
+        var heartbeatTask = heartbeat.RunAsync(stopRun, heartbeatShutdown.Token);
 
         outbox?.Enqueue("status", JsonSerializer.Serialize(
             new { phase = "claimed", taskKey },
@@ -220,12 +238,27 @@ public sealed class RemoteTaskRunner
         var teardownAttempted = false;
         var resultTransferAcknowledged = false;
         var releaseOnly = false;
+        var daemonHandedOff = false;
         DurableArtifactManifest? artifactManifest = null;
         try
         {
             var execution = reattach
-                ? await AwaitDetachedAsync(slot, workspace, shipper, outbox, stopRun.Token)
-                : await ExecuteAsync(slot, workspace, shipper, outbox, stopRun, shutdown, epicPlanning);
+                ? await AwaitDetachedAsync(
+                    slot,
+                    workspace,
+                    shipper,
+                    outbox,
+                    stopRun.Token,
+                    daemonShutdown)
+                : await ExecuteAsync(
+                    slot,
+                    workspace,
+                    shipper,
+                    outbox,
+                    stopRun,
+                    shutdown,
+                    daemonShutdown,
+                    epicPlanning);
             outcome = execution.Outcome;
             outcomeDecision = execution.Decision;
             outputLines = execution.OutputLines;
@@ -446,6 +479,22 @@ public sealed class RemoteTaskRunner
             handedBack = true;
             return 1;
         }
+        catch (OperationCanceledException) when (
+            daemonShutdown.IsCancellationRequested
+            && !heartbeat.LeaseLost)
+        {
+            await SafeAwait(heartbeatTask);
+            daemonHandedOff = await HandOffForDaemonRestartAsync(slot, authority);
+            if (!daemonHandedOff)
+            {
+                releaseOnly = true;
+                _log(
+                    $"coding daemon handoff could not prove a live worker task={taskKey} " +
+                    $"attempt={slot.AttemptId}; releasing the persisted slot");
+                return 3;
+            }
+            return 0;
+        }
         catch (OperationCanceledException) when (heartbeat.LeaseLost)
         {
             var phase = authority?.Snapshot.Detail?.Contains(
@@ -486,7 +535,8 @@ public sealed class RemoteTaskRunner
             // A generation whose authority is known dead may retain useful
             // local content, but it must not publish a delivery candidate.
             // Preserve that content under a generation-specific quarantine ref.
-            if (heartbeat.LeaseLost
+            if (!daemonHandedOff
+                && heartbeat.LeaseLost
                 && !epicPlanning
                 && Directory.Exists(workspace.RepoPath))
             {
@@ -512,7 +562,10 @@ public sealed class RemoteTaskRunner
             // This path covers shutdown, cancellation, quota death, and any
             // exception before the normal completion handoff. Salvage uses an
             // independent token because SIGINT has already cancelled the run.
-            if (outbox is null && !teardownAttempted && Directory.Exists(workspace.RepoPath))
+            if (!daemonHandedOff
+                && outbox is null
+                && !teardownAttempted
+                && Directory.Exists(workspace.RepoPath))
             {
                 if (!resultTransferAcknowledged)
                 {
@@ -572,7 +625,7 @@ public sealed class RemoteTaskRunner
 
             // Completion is fenced by the live lease, so release only after the
             // normal or fail-closed handoff has finished.
-            if (outbox is null || handedBack)
+            if (!daemonHandedOff && (outbox is null || handedBack))
             {
                 var released = releaseOnly
                     ? await ReleaseWithRetryAsync(lease, "runner-process-missing")
@@ -586,7 +639,7 @@ public sealed class RemoteTaskRunner
     private async Task<RemoteExecutionResult> ExecuteAsync(
         PersistedRunnerSlot slot, GitWorkspace workspace, LogShipper shipper,
         DurableRunOutbox? outbox, CancellationTokenSource stopRun,
-        CancellationToken shutdown, bool epicPlanning)
+        CancellationToken shutdown, CancellationToken daemonShutdown, bool epicPlanning)
     {
         var taskKey = slot.TaskKey;
         var lease = slot.Lease;
@@ -769,10 +822,17 @@ public sealed class RemoteTaskRunner
         });
         _inventory.AttachProcess(slot.RunId ?? slot.AttemptId, process.ProcessId);
         _log($"detached worker started task={taskKey} pid={process.ProcessId} attempt={slot.AttemptId}");
-        var executed = await AwaitDetachedAsync(slot, workspace, shipper, outbox, stopRun.Token);
+        var executed = await AwaitDetachedAsync(
+            slot,
+            workspace,
+            shipper,
+            outbox,
+            stopRun.Token,
+            daemonShutdown);
         // Only a terminal result proves that no command of this run will read the
         // per-run cache folders again. A daemon shutdown leaves the detached
-        // worker running, so its folder stays and is reclaimed by age instead.
+        // worker running, so its folder stays and is reclaimed by age instead:
+        // the handoff path throws out of the await above and skips this release.
         ProjectPreparationExecutor.ReleaseRunRoot(projectPreparation);
         return executed;
     }
@@ -783,14 +843,19 @@ public sealed class RemoteTaskRunner
         LogShipper shipper,
         DurableRunOutbox? outbox,
         CancellationToken stopRun,
+        CancellationToken daemonShutdown = default,
         int sameSessionResumeAttempts = 0)
     {
         var process = DurableAgentProcess.Attach(slot);
         var sequence = slot.LastOutputSequence;
+        using var waitStop = CancellationTokenSource.CreateLinkedTokenSource(
+            stopRun,
+            daemonShutdown);
         try
         {
             while (true)
             {
+                daemonShutdown.ThrowIfCancellationRequested();
                 var lines = process.ReadAfter(sequence);
                 foreach (var line in lines)
                 {
@@ -921,6 +986,7 @@ public sealed class RemoteTaskRunner
                             shipper,
                             outbox,
                             stopRun,
+                            daemonShutdown,
                             sameSessionResumeAttempts + 1);
                     }
 
@@ -940,8 +1006,16 @@ public sealed class RemoteTaskRunner
                 if (!observation.IsLive)
                     throw new DetachedWorkerLostException(
                         $"Detached worker disappeared before recording a result: {observation.Detail}");
-                await Task.Delay(TimeSpan.FromMilliseconds(250), stopRun);
+                await Task.Delay(TimeSpan.FromMilliseconds(250), waitStop.Token);
             }
+        }
+        catch (OperationCanceledException) when (
+            daemonShutdown.IsCancellationRequested
+            && !stopRun.IsCancellationRequested)
+        {
+            // A daemon replacement hands this exact worker to the next process.
+            // The outer lifecycle extends and persists the lease before exit.
+            throw;
         }
         catch (OperationCanceledException)
         {
@@ -952,6 +1026,68 @@ public sealed class RemoteTaskRunner
                 CancellationToken.None);
             throw;
         }
+    }
+
+    private async Task<bool> HandOffForDaemonRestartAsync(
+        PersistedRunnerSlot originalSlot,
+        DurableLeaseAuthority? authority)
+    {
+        var slot = _state.LoadAll().FirstOrDefault(item =>
+                       string.Equals(
+                           item.AttemptId,
+                           originalSlot.AttemptId,
+                           StringComparison.Ordinal))
+                   ?? originalSlot;
+        var observation = DurableAgentProcess.InspectForReattach(slot);
+        if (!observation.IsLive && observation.Result is null) return false;
+
+        try
+        {
+            var renewed = await _client.RenewLeaseAsync(
+                new RunLeaseHeartbeatRequest(
+                    slot.TaskKey,
+                    slot.Lease.LeaseId,
+                    slot.Lease.FencingToken,
+                    _options.RunnerId,
+                    _options.HandoffLeaseTtlSeconds,
+                    slot.Lease.AttemptId,
+                    slot.Lease.AuthorityEpoch,
+                    $"coding-handoff:{slot.AttemptId}:{Guid.NewGuid():N}"),
+                CancellationToken.None);
+            if (!renewed.Granted || renewed.Lease is null)
+            {
+                throw new InvalidOperationException(
+                    $"{renewed.Outcome} - {renewed.Message ?? "lease was not granted"}");
+            }
+
+            slot = _state.Save(slot with
+            {
+                Lease = renewed.Lease,
+                Phase = "handed-off",
+            });
+            authority?.Confirm(
+                renewed.Lease.ExpiresAt,
+                "planned coding daemon handoff renewed fenced authority");
+            _log(
+                $"coding handoff lease extended task={slot.TaskKey} " +
+                $"attempt={slot.AttemptId} fence={slot.Lease.FencingToken} " +
+                $"requestedTtlSeconds={_options.HandoffLeaseTtlSeconds} " +
+                $"expiresAt={slot.Lease.ExpiresAt:O}");
+        }
+        catch (Exception exception)
+        {
+            slot = _state.Save(slot with { Phase = "handed-off" });
+            _log(
+                $"coding handoff lease extension failed task={slot.TaskKey} " +
+                $"attempt={slot.AttemptId}: {exception.Message}; " +
+                "the replacement daemon retains the persisted authority deadline");
+        }
+
+        _log(
+            $"coding daemon handoff task={slot.TaskKey} attempt={slot.AttemptId} " +
+            $"pid={slot.ProcessId?.ToString() ?? "result-ready"}; " +
+            "detached worker left running for replacement reattachment");
+        return true;
     }
 
     private RemoteExecutionResult ClassifyTimedOutResult(

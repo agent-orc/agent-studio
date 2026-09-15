@@ -662,7 +662,12 @@ state.
   `RUNNER_STATE_DIR`. Review persists the equivalent ReviewAttempt, immutable
   subject, ReviewLease, exact workspace, command checkpoints, and terminal
   evidence below `RUNNER_STATE_DIR/reviews`. SIGTERM stops claims and exits
-  without cancelling either worker type. A pre-launch slot marker plus a
+  without cancelling either worker type. Before Coding exits, every occupied
+  slot stops its old heartbeat, renews the exact lease and fence with the
+  bounded handoff TTL, persists the returned expiry, and reaches a daemon-waited
+  handoff boundary. Startup uses the later of the atomic slot and
+  lease-authority deadlines, which closes the crash gap between those writes
+  without inventing local authority. A pre-launch slot marker plus a
   worker-written atomic identity closes the `Process.Start`-to-slot-save handoff
   window. The replacement renews authority only after PID generation and Linux
   `/proc/<pid>/cwd` match the persisted worktree or review repository. It then
@@ -673,7 +678,9 @@ state.
   before declaring the worker lost, so a result written during process exit
   cannot be released as a dead attempt. Reattachment uses the
   original persisted attempt instance, never the replacement daemon's process
-  identity. Missing or mismatched coding processes are actively released and
+  identity. Each persisted Coding slot emits one startup reconciliation line:
+  `reattached`, `purged` with the process-proof reason, or fail-closed
+  `retained`. Missing or mismatched coding processes are actively released and
   returned to Ready. A non-adoptable review is settled as `ReviewInfra` with
   classification `ExecutorRestarted`, the completed-command count and duration,
   the failed process proof, and the retry reason. DB lease presence alone is

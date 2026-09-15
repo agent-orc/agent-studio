@@ -1165,15 +1165,35 @@ sudoers policy deliberately does **not** allow `--force`: automation drains, and
 only a human operator overrides.
 
 A daemon replaced through the helper keeps its leases alive across the restart
-window. Before it hands off a worker, the outgoing instance sends one final
-renewal with `RUNNER_HANDOFF_LEASE_TTL_SECONDS` (default 300, clamped by the
-Task Server) and logs `review handoff lease extended`. The replacement instance
-renews with exactly that persisted authority **before** its first heartbeat and
-logs `review adoption lease verified`. If the Task Server refuses that
-verification, the replacement re-registers and, failing that, takes the attempt
-over under a higher fence (`review lease re-claimed ... previousFence=N
-fence=N+1`), keeping the running worker and its workspace. Only an attempt that
-is gone or was deliberately superseded ends as `review lease authority lost`.
+window. Before Coding exits, each occupied slot stops its daemon-side heartbeat,
+sends one final fenced renewal with `RUNNER_HANDOFF_LEASE_TTL_SECONDS` (default
+300, clamped by the Task Server), persists the returned expiry, and logs
+`coding handoff lease extended` followed by `coding daemon handoff`. The daemon
+waits for all occupied slots to reach that boundary before logging `daemon drain
+complete`. The detached worker keeps its PID and output files throughout this
+handoff. The replacement's startup deadline watcher reads the later of the
+persisted slot and lease-authority deadlines, then reattaches the same worker
+before admitting a replacement claim.
+
+Coding startup emits exactly one `coding-slot-reconciliation scope=startup`
+line for every persisted slot. `outcome=reattached` means the PID/start-time/cwd
+proof or atomic terminal result was accepted and the slot remains occupied.
+`outcome=purged` includes the process-proof reason and means the dead attempt was
+released before its durable slot was removed. `outcome=retained
+reason=release-failed` is fail-closed and requires Task Server connectivity to
+recover. A failed outgoing handoff renewal also leaves the worker and prior
+deadline intact; the replacement may adopt only within that remaining authority
+window.
+
+Review uses the same handoff TTL. Before it hands off a worker, the outgoing
+instance sends one final renewal and logs `review handoff lease extended`. The
+replacement instance renews with exactly that persisted authority **before** its
+first heartbeat and logs `review adoption lease verified`. If the Task Server
+refuses that verification, the replacement re-registers and, failing that,
+takes the attempt over under a higher fence (`review lease re-claimed ...
+previousFence=N fence=N+1`), keeping the running worker and its workspace. Only
+an attempt that is gone or was deliberately superseded ends as `review lease
+authority lost`.
 
 ### Planned daemon restart and deploy
 
@@ -1190,20 +1210,23 @@ replacement processes, and watches for an immediate restart loop.
 sudo /usr/local/sbin/agent-runner-deploy drain
 sudo /usr/local/sbin/agent-runner-deploy
 sudo journalctl -u agent-host --since '-2 minutes' \
-  | grep -E 'planned shutdown|persisted attempt accepted|recovered .* persisted slot|releasing dead persisted attempt'
+  | grep -E 'planned shutdown|coding handoff lease extended|coding daemon handoff|coding-slot-reconciliation|persisted attempt accepted|recovered .* persisted slot|releasing dead persisted attempt'
 
 sudo journalctl -u agent-runner-review --since '-2 minutes' \
   | grep -E 'planned shutdown|review daemon draining|review handoff lease extended|review daemon handoff|persisted review accepted|adopting persisted review|review adoption lease verified|review lease re-claimed|review adoption failed'
 ```
 
 On SIGTERM the old daemon stops making claims, leaves detached coding and review
-workers running, flushes its already-atomic slot records, and exits. For a
-guarded Review replacement, the helper then starts the new daemon, which
-verifies and reattaches those workers before opening any freed slot to claims.
-For Coding, confirm every occupied slot reports
-either `persisted attempt accepted` or `releasing dead persisted attempt`; the
-latter must be followed by a Ready card and a later higher-fence claim. For
-Review, confirm `review daemon handoff` is followed by `persisted review
+workers running, flushes its already-atomic slot records, and exits. Coding
+waits for `coding handoff lease extended` and `coding daemon handoff` for every
+occupied slot before the final drain line. The replacement then reports one
+`coding-slot-reconciliation` line per persisted slot before opening any freed
+slot to claims. Confirm every expected live slot says `outcome=reattached`, the
+same PID remains live, `recovered N persisted slot(s)` reserves its capacity,
+and output after the restart reaches the task log. An `outcome=purged` line must
+be followed by a Ready card and a later higher-fence claim; investigate its
+recorded reason before treating the restart as successful. For a guarded Review
+replacement, confirm `review daemon handoff` is followed by `persisted review
 accepted`, `adopting persisted review`, and `review adoption lease verified`
 under the same attempt and fence. A verified adoption whose fence moved
 (`review lease re-claimed`) is also a success: the worker kept running and the
