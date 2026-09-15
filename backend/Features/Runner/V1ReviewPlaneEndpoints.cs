@@ -1886,7 +1886,8 @@ public sealed class V1ReviewExecutorRegistry
                     capabilities.ToHashSet(StringComparer.Ordinal),
                     request.BootstrapMaxParallelism,
                     now,
-                    now),
+                    now,
+                    request.Release),
                 (_, existing) =>
                 {
                     var existingReview =
@@ -1917,6 +1918,9 @@ public sealed class V1ReviewExecutorRegistry
                         Capabilities = capabilities.ToHashSet(StringComparer.Ordinal),
                         RoleMaxParallelism = request.BootstrapMaxParallelism,
                         LastSeenAt = now,
+                        // An older daemon omits the field; keep the last known
+                        // identity rather than reporting the host as unknown.
+                        Release = request.Release ?? existing.Release,
                     };
                 });
             if (_capabilityStates.TryGetValue(runnerId, out var capabilityState)
@@ -2104,7 +2108,11 @@ public sealed class V1ReviewExecutorRegistry
                     .ToArray();
             }
 
-            registration = registration with { LastSeenAt = now };
+            registration = registration with
+            {
+                LastSeenAt = now,
+                Release = request.Release ?? registration.Release,
+            };
             _registrations[runnerId] = registration;
             _capabilityStates[runnerId] = new CapabilityState(
                 request.InstanceId,
@@ -2140,7 +2148,8 @@ public sealed class V1ReviewExecutorRegistry
                 capabilities,
                 request.Telemetry,
                 RestartedAt: restart?.RestartedAt,
-                ReviewsLost: restart?.ReviewsLost ?? 0);
+                ReviewsLost: restart?.ReviewsLost ?? 0,
+                Release: registration.Release);
         }
         CapabilitySnapshotAdvertised?.Invoke(runnerId, advertisedAt);
         return result;
@@ -2434,7 +2443,8 @@ public sealed class V1ReviewExecutorRegistry
                         RoleMaxParallelism: registration.RoleMaxParallelism,
                         RestartedAt: restart?.RestartedAt,
                         ReviewsLost: restart?.ReviewsLost ?? 0,
-                        InstalledClis: Contract.InstalledCliProjection.FromCapabilities(capabilities));
+                        InstalledClis: Contract.InstalledCliProjection.FromCapabilities(capabilities),
+                        Release: registration.Release);
                 })
                 .ToArray();
         }
@@ -2694,7 +2704,8 @@ public sealed class V1ReviewExecutorRegistry
         IReadOnlySet<string> Capabilities,
         int RoleMaxParallelism,
         DateTime RegisteredAt,
-        DateTime LastSeenAt);
+        DateTime LastSeenAt,
+        Contract.RunnerReleaseIdentityDto? Release = null);
 
     private sealed record CapabilityState(
         string InstanceId,

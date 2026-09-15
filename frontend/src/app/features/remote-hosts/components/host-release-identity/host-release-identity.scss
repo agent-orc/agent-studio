@@ -1,0 +1,32 @@
+:host,
+.release,
+.release__id { display: block; min-width: 0; }
+
+.release__id {
+  overflow: hidden;
+  color: var(--studio-fg-dim);
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.release__drift {
+  display: inline-block;
+  margin-top: var(--studio-spacing-1);
+  padding: 0 var(--studio-spacing-1);
+  border-radius: 3px;
+  background: var(--studio-surface-muted);
+  color: var(--studio-fg-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.release__drift[data-tone='warn'] {
+  background: var(--notify-warning-tint);
+  color: var(--severity-warn);
+}
+
+.release__placeholder { color: var(--studio-fg-muted); }

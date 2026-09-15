@@ -68,6 +68,15 @@
 }
 .rh__count strong { color: var(--studio-fg-strong); font-weight: 700; }
 .rh__sep { color: var(--studio-fg-muted); }
+/* Release-drift tally (AGT-2826): tinted pill, no left accent bar (R1). */
+.rh__behind {
+  padding: 0 var(--studio-spacing-2);
+  border-radius: 10px;
+  background: var(--notify-warning-tint);
+  color: var(--severity-warn);
+  font-variant-numeric: tabular-nums;
+}
+.rh__behind strong { color: inherit; font-weight: 700; }
 .rh__retired-filter {
   display: inline-flex;
   align-items: center;
