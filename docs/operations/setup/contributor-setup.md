@@ -198,6 +198,25 @@ changed to run `npm install`, it must remove `frontend/.angular/cache` after the
 install and before starting the frontend, for the same in-place dependency
 patch reason as the Stable updater.
 
+`start.sh` / `start-stable.sh` must not run under a bare `set -e` against
+`api.sh start`'s exit code (AGT-2830). A cold `dotnet run` compile can take a
+couple of minutes, and on Windows Git Bash the launcher PID `api.sh` tracks is
+not the process that ends up owning the port, so `api.sh start` distinguishes
+three outcomes instead of a plain success/failure:
+
+- exit `0`: healthy, the process answering `/healthz` is provably the one this
+  invocation launched.
+- exit `1`: confirmed failure - neither the port nor any process building or
+  running this checkout's backend exists any more.
+- exit `2`: inconclusive - the bounded wait (`API_START_TIMEOUT_SECS`, default
+  180s) ran out, but a build or run process for this checkout is still active.
+  Not a crash; the wrapper should still start the frontend and report the
+  backend state at the end (e.g. by polling `api.sh status`) instead of
+  aborting the whole start.
+
+Only exit `1` is a reason to stop the wrapper early. Test coverage for the
+launcher-exit shape: [`scripts/api-start-windows-launcher.test.sh`](../../../scripts/api-start-windows-launcher.test.sh).
+
 ## Reference: configuration knobs
 
 ### Dev vs. stable checkout markers
