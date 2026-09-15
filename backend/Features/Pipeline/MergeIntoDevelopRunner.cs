@@ -13,7 +13,9 @@ namespace AgentStudio.Pipeline;
 /// <para>
 /// It performs the real, scoped git merge from the resolved delivery ref into
 /// the configured integration branch via
-/// <see cref="GitService.MergeBranchIntoIntegration"/> and records the outcome
+/// <see cref="GitService.MergeBranchIntoIntegration"/>, in the Studio-owned
+/// integration worktree rather than in the registered project checkout
+/// (<see cref="IntegrationWorktreeProvider"/>, AGT-2832), and records the outcome
 /// into the job's <c>pipeline-execution.json</c> so the deferred step flips from
 /// pending to passed / failed / skipped in place. A merge conflict is recorded
 /// <see cref="PipelineStepStatus.Failed"/> with the conflicted files in the
@@ -38,6 +40,7 @@ public sealed class MergeIntoDevelopRunner
     private readonly FailureInterventionService? _failureInterventions;
     private readonly AgentStudio.Git.GitStateIndexService? _gitStateIndex;
     private readonly AgentStudio.Tasks.AcceptanceRailHostedService? _acceptanceRail;
+    private readonly IntegrationWorktreeProvider _integrationWorktrees;
     private readonly TimeSpan _preMainTimeout;
     private readonly TimeSpan _preDevelopTimeout;
     private readonly Func<int, TimeSpan> _environmentalBackoff;
@@ -61,7 +64,8 @@ public sealed class MergeIntoDevelopRunner
         TaskScannerService? taskScanner = null,
         FailureInterventionService? failureInterventions = null,
         AgentStudio.Git.GitStateIndexService? gitStateIndex = null,
-        AgentStudio.Tasks.AcceptanceRailHostedService? acceptanceRail = null)
+        AgentStudio.Tasks.AcceptanceRailHostedService? acceptanceRail = null,
+        IntegrationWorktreeProvider? integrationWorktrees = null)
     {
         _git = git;
         _pipelineLog = pipelineLog;
@@ -76,6 +80,10 @@ public sealed class MergeIntoDevelopRunner
         _failureInterventions = failureInterventions;
         _gitStateIndex = gitStateIndex;
         _acceptanceRail = acceptanceRail;
+        // Deliveries are integrated in a Studio-owned worktree, never in the
+        // registered project checkout (AGT-2832). The default keeps every entry
+        // point - including tests and the compatibility worker - on that path.
+        _integrationWorktrees = integrationWorktrees ?? new IntegrationWorktreeProvider(git);
         _preMainTimeout = preMainTimeout is { } configured && configured > TimeSpan.Zero
             ? configured
             : TimeSpan.FromHours(1);
@@ -173,9 +181,9 @@ public sealed class MergeIntoDevelopRunner
         var startedAt = DateTime.UtcNow;
         try
         {
-            var repoRoot = _git.ResolveRepoRootForWatchPath(watchPath)
+            var developerRoot = _git.ResolveRepoRootForWatchPath(watchPath)
                 ?? (string.IsNullOrWhiteSpace(watchPath) ? null : watchPath);
-            if (string.IsNullOrWhiteSpace(repoRoot))
+            if (string.IsNullOrWhiteSpace(developerRoot))
             {
                 var unresolved = MergeIntoIntegrationResult.Of(
                     MergeIntoIntegrationOutcome.Error, error: "Could not resolve repository root for the project.");
@@ -223,7 +231,33 @@ public sealed class MergeIntoDevelopRunner
             // subject stores only the branch observed when the run was prepared
             // and must not retarget acceptance after project settings or
             // origin/HEAD change.
-            var branch = _git.ResolveIntegrationBranch(repoRoot, integrationBranch);
+            var branch = _git.ResolveIntegrationBranch(developerRoot, integrationBranch);
+
+            // From here on every git mutation runs in the integration worktree.
+            // The developer checkout is only ever read: the uncommitted changes
+            // of the person working there are none of integration's business
+            // and must never refuse a delivery (AGT-2832).
+            var workspace = _integrationWorktrees.Resolve(developerRoot, branch, ct);
+            if (!workspace.Success)
+            {
+                var unavailable = MergeIntoIntegrationResult.Of(
+                    MergeIntoIntegrationOutcome.Error,
+                    error: workspace.Error ?? "The integration worktree is unavailable.");
+                Record(
+                    jobFolderPath,
+                    project,
+                    jobId,
+                    branch,
+                    unavailable,
+                    preMainResult: null,
+                    preDevelopResult: null,
+                    startedAt);
+                await MaybeRaiseInterventionAsync(project, jobId, watchPath, unavailable,
+                    null, null, startedAt, ct).ConfigureAwait(false);
+                return unavailable;
+            }
+            var repoRoot = workspace.Path!;
+
             var taskBranch = delivery.Ref;
             var strategy = IntegrationStrategies.Normalize(integrationStrategy);
             var isPullRequest = string.Equals(
@@ -238,7 +272,10 @@ public sealed class MergeIntoDevelopRunner
             MergeIntoIntegrationResult result;
             ImmediateIntegrationLineageDecision? lineage = null;
             IntegrationBranchSyncResult synchronized;
-            if (!isPullRequest && IsReleaseBranch(branch) && HasDevelopLine(repoRoot))
+            // Repository identity is read where it is stable: the integration
+            // worktree runs on a detached HEAD and cannot answer "what is this
+            // repository's default line".
+            if (!isPullRequest && IsReleaseBranch(branch) && HasDevelopLine(developerRoot))
             {
                 synchronized = _git.SynchronizeIntegrationBranch(repoRoot, "develop", ct);
                 if (synchronized.Success)
@@ -336,7 +373,7 @@ public sealed class MergeIntoDevelopRunner
             if (result.Outcome == MergeIntoIntegrationOutcome.NoTaskBranch
                 && TryResolveDirectDelivery(
                     jobFolderPath,
-                    repoRoot,
+                    developerRoot,
                     branch,
                     out var directEvidence))
             {
@@ -358,7 +395,7 @@ public sealed class MergeIntoDevelopRunner
             {
                 var rollback = string.IsNullOrWhiteSpace(result.PreviousIntegrationSha)
                     ? null
-                    : _git.ResetHard(repoRoot, result.PreviousIntegrationSha);
+                    : _git.ResetIntegrationBranch(repoRoot, branch, result.PreviousIntegrationSha);
                 var detail = rollback?.Success == true
                     ? $"Mechanical rebase attribution could not be persisted; {branch} was rolled back and nothing was pushed."
                     : $"Mechanical rebase attribution could not be persisted and rollback failed ({rollback?.Error ?? "missing rollback anchor"}); manual repair is required.";
@@ -551,7 +588,7 @@ public sealed class MergeIntoDevelopRunner
             {
                 var rollback = string.IsNullOrWhiteSpace(developMerge.PreviousIntegrationSha)
                     ? null
-                    : _git.ResetHard(repoRoot, developMerge.PreviousIntegrationSha);
+                    : _git.ResetIntegrationBranch(repoRoot, workBranch, developMerge.PreviousIntegrationSha);
                 var detail = rollback?.Success == true
                     ? "Mechanical rebase attribution could not be persisted; develop was rolled back and main remained unchanged."
                     : $"Mechanical rebase attribution could not be persisted and develop rollback failed ({rollback?.Error ?? "missing rollback anchor"}); manual repair is required.";
@@ -622,8 +659,8 @@ public sealed class MergeIntoDevelopRunner
     /// </list>
     ///
     /// <para>The whole sequence runs inside the caller's <c>_mergeGate</c>, so the
-    /// merge, the gate, and the rollback are one atomic step against the shared
-    /// integration checkout.</para>
+    /// merge, the gate, and the rollback are one atomic step against the
+    /// project's integration worktree.</para>
     /// </summary>
     private async Task<(MergeIntoIntegrationResult Merge, BuildTestGateResult? Gate)> MergeIntoIntegrationGatedAsync(
         string project,
@@ -783,7 +820,7 @@ public sealed class MergeIntoDevelopRunner
         // so it fails closed without rewriting that branch. In both cases the
         // failed outcome prevents Passed and prevents a push.
         var reset = result.Outcome.IsFreshMerge()
-            ? _git.ResetHard(repoRoot, preMergeTip!)
+            ? _git.ResetIntegrationBranch(repoRoot, integrationBranch, preMergeTip!)
             : null;
         _logger.LogWarning(
             "merge-into-develop build gate FAILED for project={Project} job={JobId} integration={Integration} merged={MergedSha} verdict={Verdict} reason={Reason} rollback={Rollback}",
