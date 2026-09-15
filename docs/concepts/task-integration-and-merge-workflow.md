@@ -79,8 +79,63 @@ Local worktree runs and fenced Remote deliveries now share the same policy: a gr
   `integration-recovery-exhausted` escalation. Concept and report-only cards
   remain in Human Review. The rail emits one action event per mutation plus a
   structured sweep summary and a last-run/lane-depth read endpoint.
+- Gate environment retry: a merge gate that dies before test discovery is a
+  broken gate host, not a verdict on the delivery.
+  `GateEnvironmentRetryService` replays the integration alone on a bounded
+  ladder; see [Gate environment retry (AGT-2824)](#gate-environment-retry-agt-2824).
 - Push durability: `IntegrationPushQueue` remains in memory to keep network work off the request path. `IntegrationPushBackstopHostedService` re-drives any passed merge with a non-terminal push step after restart, so queue loss cannot leave the integration branch local-only.
 - Shutdown drain: once the accepted worker enters merge + build gate + possible rollback, it ignores host cancellation until that consistency boundary reaches a terminal result. `/healthz/drain` returns `gate-busy` during that window. The external stable restart watcher waits up to `ATP_GATE_DRAIN_TIMEOUT_SECONDS` before it invokes the hard update/restart path.
+
+### Gate environment retry (AGT-2824)
+
+On 15.09.2026 three cards passed Remote Review and then lost their merge gate to
+`Tool 'node' version v24.18.0 does not match .nvmrc`. The card said the
+integration "will be retried" and nothing retried it for over an hour: the
+accepted-integration backstop only re-drives `6-completed` / `7-archive`, and
+the acceptance rail only reacts to `conflict-skipped`, which CAC-18 deliberately
+keeps this failure out of. The only operator path left was `/move 4-auto-review`,
+a complete new remote review of a delivery whose review had already passed.
+
+`GateEnvironmentRetryService`
+(`backend/Features/Pipeline/GateEnvironmentRetry/`) closes that gap.
+
+- **Eligibility.** `GateEnvironmentRetryPolicy` is a pure matrix. A card
+  qualifies when it sits in `5-human-review` or `5e-escalated`, expects a code
+  delivery, carries integration failure code `gate-environment-failure`, and
+  attempt authority still holds a settled `Pass` for exactly the delivery SHA in
+  `review-subject.json`. Any other failure code belongs to its existing owner:
+  `merge-conflict` to rebase recovery, `build-gate-failed` to the operator,
+  `integration-push-blocked` to the push backstop.
+- **Ladder.** Rungs of 5, 15, and 45 minutes. The first rung measures from the
+  recorded gate failure, every later rung from the replay that produced the
+  current failure. Configure with `GateEnvironmentRetry:BackoffMinutes`,
+  `GateEnvironmentRetry:SweepIntervalSeconds`, and `GateEnvironmentRetry:Enabled`.
+- **No new review.** A rung replays `MergeIntoDevelopRunner` against the
+  unchanged delivery SHA and nothing else. It never creates a review attempt, so
+  a broken gate host costs zero review slots.
+- **Receipts.** `pipeline-execution.json` keeps one row per step id, so it
+  cannot carry a count. The budget is counted from append-only
+  `integration_gate_environment_retried` timeline events scoped to the delivery
+  SHA; a new delivery is a new review and therefore a new ladder. The receipt is
+  written before the merge starts, so a crash costs one rung instead of leaving a
+  budget that can never be exhausted.
+- **Parking.** After the last rung the service writes the parked reason onto the
+  durable merge step, so the integration chip, its tooltip, and the Evidence tab
+  all name the environment failure the ladder gave up on, together with the
+  original gate reason. An `integration_gate_environment_parked` receipt makes
+  the write idempotent across sweeps.
+- **Operator action.** `POST /api/tasks/{id}/integration/retry` and the
+  **Retry integration** button next to the card's integration badge run the same
+  replay with the same semantics: same delivery SHA, reused passed review, no new
+  review round. It ignores the remaining backoff, because an operator asking for
+  it is the signal that the gate host was repaired, and it restarts the bounded
+  ladder, so a parked card recovers its automatic budget instead of parking again
+  on its next fault. An operator replay is not a rung and reports `rung: 0`.
+- **One replay per card.** A sweep rung and the operator action take the same
+  in-flight guard before reading anything. During a replay the merge is already
+  in the integration branch and its gate has not run yet, so deciding from the
+  card's integration verdict mid-transaction would answer "nothing to retry" for
+  a card that is being retried right now.
 
 ### Incidents: 2026-07-24 and 2026-07-28 bulk acceptance
 

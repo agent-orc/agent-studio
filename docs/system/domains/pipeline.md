@@ -590,6 +590,18 @@ steer the pipeline in this policy version.
   retries the gate on its next pass instead of returning the card to an
   operator or spending a rebase-recovery steer round - a toolchain crash is
   never a product failure and the delivery cannot fix it (CAC-18).
+- That accepted-integration sweep only re-drives cards in `6-completed` /
+  `7-archive`, and the acceptance rail only reacts to `conflict-skipped`, which
+  CAC-18 deliberately excludes this failure from. A delivery that failed its
+  merge gate before Human Review therefore had nobody to honour the "will be
+  retried" promise. `GateEnvironmentRetryService` owns that case (AGT-2824):
+  for a card in `5-human-review` / `5e-escalated` whose integration failure code
+  is `gate-environment-failure`, it replays **only the integration** of the
+  unchanged delivery SHA on a bounded ladder of 5, 15, and 45 minutes. It never
+  creates a review attempt: it first checks that attempt authority still holds a
+  settled `Pass` for exactly that delivery SHA, and reuses it. See
+  [task integration and merge workflow](../../concepts/task-integration-and-merge-workflow.md#gate-environment-retry-agt-2824)
+  for the ladder, the receipts, and the operator action.
 - A failed preparation or verification command stores a bounded, single-line
   stderr/stdout excerpt in the gate reason that flows into the durable pipeline
   step record. Full streams remain in per-process evidence and the gate log, so

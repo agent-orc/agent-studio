@@ -35,6 +35,7 @@ export class IntegrationStatusBadgeComponent {
   readonly jobId = input<string | null>(null);
   readonly watchPath = input<string | null>(null);
   readonly recoveryPending = signal(false);
+  readonly retryPending = signal(false);
   private readonly notifications = inject(NotificationService);
   private readonly tasks = inject(TaskService);
 
@@ -66,6 +67,15 @@ export class IntegrationStatusBadgeComponent {
     // the explicit capability bit.
     return value.failure?.rebaseRecoveryAvailable ?? true;
   });
+
+  /**
+   * AGT-2824 - a gate environment failure is a broken gate host, not a verdict
+   * on the delivery, so the card offers a cheap replay of the integration that
+   * reuses the review that already passed. CAC-18 keeps this failure in
+   * `pending` rather than `conflict-skipped`, so it is keyed off the code.
+   */
+  readonly retryAvailable = computed(() =>
+    this.integration()?.failure?.code === 'gate-environment-failure');
 
   readonly label = computed(() => {
     const value = this.integration();
@@ -164,6 +174,33 @@ export class IntegrationStatusBadgeComponent {
       default: return 'No branch to integrate';
     }
   });
+
+  retryIntegration(event: Event): void {
+    event.stopPropagation();
+    const jobId = this.jobId();
+    if (!jobId || this.retryPending()) return;
+
+    this.retryPending.set(true);
+    this.tasks.retryIntegration(jobId, this.watchPath() ?? undefined).subscribe({
+      next: (response) => {
+        this.retryPending.set(false);
+        if (response.status === 'integrated') {
+          this.notifications.success(
+            `Integration retried without a new review: merged into ${response.integrationBranch}.`,
+          );
+        } else {
+          this.notifications.error(
+            `The integration retry failed again: ${response.reason}`,
+          );
+        }
+        this.tasks.refresh(true);
+      },
+      error: () => {
+        this.retryPending.set(false);
+        this.notifications.error('Could not retry the integration.');
+      },
+    });
+  }
 
   queueRecovery(event: Event): void {
     event.stopPropagation();
