@@ -140,6 +140,59 @@ public sealed class WorktreeTaskLifecycleTests : IDisposable
         Assert.NotEqual(0, RunGit(repo, "rev-parse --verify task/task-7").Code);
     }
 
+    /// <summary>
+    /// AGT-2832: the local worktree run integrated by fast-forwarding the shared
+    /// checkout, so unrelated uncommitted work there could block the integration
+    /// and a successful one moved that checkout's files. The branch is now
+    /// advanced by reference; the developer's work is neither required to be
+    /// absent nor touched.
+    /// </summary>
+    [Fact]
+    public void DirectMerge_DirtyDeveloperCheckout_IntegratesAndKeepsTheEdits()
+    {
+        var (repo, life) = SeedWithDevelop("dirty-developer-checkout", seedShared: true);
+        var prep = life.Prepare(repo, "task-dirty", "develop", WorktreeRoot());
+        Assert.True(prep.Success, prep.Error);
+        File.WriteAllText(Path.Combine(prep.WorktreePath!, "shared.txt"), "delivered content");
+        Commit(prep.WorktreePath!, "feat: task work");
+        var taskTip = RunGit(prep.WorktreePath!, "rev-parse HEAD").Out.Trim();
+        // The person working in the checkout has edits in flight on the same file
+        // the delivery touches, plus an untracked scratch file. git refuses to
+        // carry those along, which used to fail the whole integration.
+        File.WriteAllText(Path.Combine(repo, "shared.txt"), "local experiment");
+        File.WriteAllText(Path.Combine(repo, "scratch.md"), "scratch notes");
+
+        var result = life.Integrate(repo, prep.WorktreePath!, prep.Branch!, "develop", IntegrationStrategies.DirectMerge);
+
+        Assert.Equal(IntegrationOutcome.Merged, result.Outcome);
+        Assert.Equal(taskTip, RunGit(repo, "rev-parse develop").Out.Trim());
+        Assert.Equal(taskTip, result.IntegratedSha);
+        Assert.Equal("local experiment", File.ReadAllText(Path.Combine(repo, "shared.txt")));
+        Assert.Equal("scratch notes", File.ReadAllText(Path.Combine(repo, "scratch.md")));
+    }
+
+    /// <summary>
+    /// The shared checkout does not have to be sitting on the integration branch
+    /// either: advancing a ref needs no working tree.
+    /// </summary>
+    [Fact]
+    public void DirectMerge_DeveloperCheckoutOnAnotherBranch_StillIntegrates()
+    {
+        var (repo, life) = SeedWithDevelop("developer-on-other-branch");
+        var prep = life.Prepare(repo, "task-other-branch", "develop", WorktreeRoot());
+        Assert.True(prep.Success, prep.Error);
+        File.WriteAllText(Path.Combine(prep.WorktreePath!, "feature.txt"), "task work");
+        Commit(prep.WorktreePath!, "feat: task work");
+        var taskTip = RunGit(prep.WorktreePath!, "rev-parse HEAD").Out.Trim();
+        RunGit(repo, "checkout -q -b feature/local develop");
+
+        var result = life.Integrate(repo, prep.WorktreePath!, prep.Branch!, "develop", IntegrationStrategies.DirectMerge);
+
+        Assert.Equal(IntegrationOutcome.Merged, result.Outcome);
+        Assert.Equal(taskTip, RunGit(repo, "rev-parse develop").Out.Trim());
+        Assert.Equal("feature/local", RunGit(repo, "rev-parse --abbrev-ref HEAD").Out.Trim());
+    }
+
     [Fact]
     public async Task PushTaskBranchWithRetry_PushesTaskBranchToOrigin()
     {

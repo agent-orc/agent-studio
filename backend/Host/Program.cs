@@ -727,6 +727,9 @@ builder.Services.AddSingleton<IntakeRunner>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService<IntakeHostedService>();
 builder.Services.AddSingleton<GitService>();
+// AGT-2832: the Studio-owned worktree every delivery is merged in, so a dirty
+// developer checkout can no longer refuse an integration.
+builder.Services.AddSingleton<AgentStudio.Git.IntegrationWorktreeProvider>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService<GitInventoryRefreshHostedService>();
 // AGT-2726: one background Git-derived-state index per repository, change-

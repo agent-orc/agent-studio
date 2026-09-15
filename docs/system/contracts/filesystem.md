@@ -39,6 +39,18 @@ controlled migration that updates its registry record.
 
 `RootPath` is the implementation working directory for CLI runs and pointer lookup. A watch entry may also set `RepositoryPath` when Git operations should run from a different directory, such as a parent repository that contains the app folder. If `RepositoryPath` is omitted, Git operations fall back to `RootPath` and resolve the Git work-tree top-level from there.
 
+### Integration worktree (AGT-2832)
+
+Delivery merges do not run in the registered checkout. Studio derives one
+integration worktree per repository and merges there:
+`<parent of the repository>/.agent-studio-integration/<repo-name>-<digest>`, or
+`<temp>/agent-studio-integration/<repo-name>-<digest>` when that parent cannot be
+written to. The path is derived from the repository path and never stored, so no
+project needs a migration step. The directory is outside the checkout, is owned
+by Studio, and is reset before every integration; deleting it is safe and the
+next integration recreates it. See
+[operations/git/integration-worktree.md](../../operations/git/integration-worktree.md).
+
 ### Project + workspace registry (ADR-0042)
 
 In parallel with the legacy `<projectKey>` slug layout above, projects also

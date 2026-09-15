@@ -1629,7 +1629,10 @@ public class ProjectRunner
                     }
                 }
 
-                var integrationBaseSha = _git.ReadHeadShaAt(repositoryRoot);
+                // The tip of the integration branch itself, not the HEAD of the
+                // shared checkout: integration advances the branch by reference
+                // and does not require that checkout to have it checked out.
+                var integrationBaseSha = _git.GetBranchTip(repositoryRoot, workBranch);
                 var leaseSuffix = integrationLease is null
                     ? ""
                     : $" Integration lease token `{integrationLease.FencingToken}` is current.";

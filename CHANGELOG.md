@@ -39,6 +39,14 @@ release yet.
   actually return (always `null`), so the evidence and reason-text those
   actions carry were silently empty for the periodic sweep and every
   per-task reclaim; both fields are now set on every returned action.
+- Integration of a local project no longer runs in the developer checkout
+  (AGT-2832). Delivery merges happen in a Studio-owned worktree derived from
+  the repository path and reset before each integration, so unrelated
+  uncommitted edits in that checkout can no longer refuse an integration
+  ("Integration working tree has uncommitted changes; refusing to merge", most
+  recently QS-100) and a successful merge no longer switches the checkout's
+  branch. The worktree stays detached, so the integration branch remains
+  available to the person working in the project.
 
 ## [0.3.0] - 2026-09-14
 

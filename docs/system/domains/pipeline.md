@@ -209,7 +209,19 @@ steer the pipeline in this policy version.
   Review, so the card shows a visible failed integration round rather than
   silent `pending`. The common runner performs serialized merge,
   containment checks, mechanical behind-base recovery, the pre-develop build
-  gate, rollback, conflict evidence, and push hand-off. Recovery replays the
+  gate, rollback, conflict evidence, and push hand-off. Every one of those
+  mutations runs in the Studio-owned integration worktree
+  (`backend/Features/Git/IntegrationWorktreeProvider.cs`, AGT-2832), derived
+  from the repository path and reset before each integration, never in the
+  registered developer checkout: uncommitted changes there no longer refuse a
+  merge, and integration no longer switches that checkout's branch. The worktree
+  stays detached and the integration branch is advanced afterwards - preferring a
+  fast-forward asked of the checkout that holds the branch, which git refuses
+  rather than overwriting local modifications. Repository identity (default
+  line, delivery attribution) is still read from the registered checkout,
+  because a detached worktree cannot answer it. See
+  [operations/git/integration-worktree.md](../../operations/git/integration-worktree.md)
+  for placement, cleanup, and the dirty-checkout consequences. Recovery replays the
   delivery in a disposable detached worktree with `rerere` disabled and proceeds
   only after conflict-free application, exact SHA mapping, and verified cleanup.
   When the configured target resolves to `main` and the repository also has a

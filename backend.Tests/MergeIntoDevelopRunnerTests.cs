@@ -63,6 +63,116 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         Assert.Equal("merged", step.Verdict);
     }
 
+    /// <summary>
+    /// AGT-2832: the recurring "Integration working tree has uncommitted
+    /// changes; refusing to merge" incident. Unrelated edits in the developer
+    /// checkout are none of integration's business: the delivery must land, and
+    /// the edits must survive untouched.
+    /// </summary>
+    [Fact]
+    public void Run_DirtyDeveloperCheckout_MergesAnywayAndKeepsTheUncommittedEdits()
+    {
+        var repo = SeedRepo("runner-dirty-developer-checkout");
+        RunGit(repo, "checkout -q -b develop");
+        RunGit(repo, "checkout -q -b task/2832");
+        File.WriteAllText(Path.Combine(repo, "task.txt"), "task work");
+        Commit(repo, "feat: task work");
+        RunGit(repo, "checkout -q develop");
+        // Exactly the QS-100 shape: unrelated work in progress, one edit to a
+        // tracked file and one untracked scratch file.
+        File.WriteAllText(Path.Combine(repo, "README.md"), "work in progress");
+        File.WriteAllText(Path.Combine(repo, "notes.md"), "untracked scratch notes");
+
+        var (git, log) = Build(repo);
+        var jobFolder = BeginRun(log, repo, jobId: "2832");
+        var runner = new MergeIntoDevelopRunner(git, log, NullLogger<MergeIntoDevelopRunner>.Instance);
+
+        var outcome = runner.Run("Fixture", "2832", jobFolder, repo, "develop");
+
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, outcome.Outcome);
+        Assert.Equal(0, RunGit(repo, "rev-parse --verify develop^2").Code);
+        Assert.Equal(0, RunGit(repo, "merge-base --is-ancestor task/2832 develop").Code);
+        Assert.Equal("work in progress", File.ReadAllText(Path.Combine(repo, "README.md")));
+        Assert.Equal("untracked scratch notes", File.ReadAllText(Path.Combine(repo, "notes.md")));
+
+        var step = ReadMergeStep(log, jobFolder);
+        Assert.NotNull(step);
+        Assert.Equal(PipelineStepStatus.Passed, step!.Status);
+        Assert.Equal("merged", step.Verdict);
+    }
+
+    /// <summary>
+    /// The merge runs in the Studio-owned worktree, so the developer checkout
+    /// keeps the branch it was on. Integrating used to check the integration
+    /// branch out there and leave it behind.
+    /// </summary>
+    [Fact]
+    public void Run_LeavesTheDeveloperCheckoutOnItsOwnBranch()
+    {
+        var repo = SeedRepo("runner-developer-branch");
+        RunGit(repo, "checkout -q -b develop");
+        RunGit(repo, "checkout -q -b task/2832-branch");
+        File.WriteAllText(Path.Combine(repo, "task.txt"), "task work");
+        Commit(repo, "feat: task work");
+        // Committed, so the checkout is clean: this asserts the branch of the
+        // developer checkout on its own, without the dirty-tree refusal.
+        RunGit(repo, "checkout -q -b feature/wip develop");
+        File.WriteAllText(Path.Combine(repo, "wip.txt"), "in progress");
+        Commit(repo, "chore: local work in progress");
+
+        var (git, log) = Build(repo);
+        var jobFolder = BeginRun(log, repo, jobId: "2832-branch");
+        var runner = new MergeIntoDevelopRunner(git, log, NullLogger<MergeIntoDevelopRunner>.Instance);
+
+        var outcome = runner.Run("Fixture", "2832-branch", jobFolder, repo, "develop");
+
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, outcome.Outcome);
+        Assert.Equal("feature/wip", RunGit(repo, "rev-parse --abbrev-ref HEAD").Out.Trim());
+        Assert.Equal("in progress", File.ReadAllText(Path.Combine(repo, "wip.txt")));
+
+        // The delivery landed in a second, detached worktree of the same
+        // repository - never in the checkout the developer is working in.
+        var worktrees = RunGit(repo, "worktree list --porcelain").Out
+            .Replace("\r\n", "\n")
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(line => line.StartsWith("worktree ", StringComparison.Ordinal))
+            .Select(line => line["worktree ".Length..])
+            .ToList();
+        var integrationWorktree = Assert.Single(
+            worktrees.Where(path => !string.Equals(
+                Path.GetFullPath(path), Path.GetFullPath(repo), StringComparison.OrdinalIgnoreCase)));
+        Assert.Contains(IntegrationWorktreePolicy.ContainerName, integrationWorktree, StringComparison.Ordinal);
+        Assert.Equal("HEAD", RunGit(integrationWorktree, "rev-parse --abbrev-ref HEAD").Out.Trim());
+    }
+
+    /// <summary>
+    /// When the developer checkout sits on the integration branch with a local
+    /// modification the delivery also touches, git refuses to carry it along.
+    /// The integration still lands and the local modification is kept: the
+    /// branch advances by reference and that working tree is left alone.
+    /// </summary>
+    [Fact]
+    public void Run_DeveloperEditOnAnIntegratedFile_IsKeptWhileTheBranchAdvances()
+    {
+        var repo = SeedRepo("runner-overlapping-edit");
+        RunGit(repo, "checkout -q -b develop");
+        RunGit(repo, "checkout -q -b task/2832-overlap");
+        File.WriteAllText(Path.Combine(repo, "README.md"), "delivered content");
+        Commit(repo, "feat: touch the shared file");
+        RunGit(repo, "checkout -q develop");
+        File.WriteAllText(Path.Combine(repo, "README.md"), "local experiment");
+
+        var (git, log) = Build(repo);
+        var jobFolder = BeginRun(log, repo, jobId: "2832-overlap");
+        var runner = new MergeIntoDevelopRunner(git, log, NullLogger<MergeIntoDevelopRunner>.Instance);
+
+        var outcome = runner.Run("Fixture", "2832-overlap", jobFolder, repo, "develop");
+
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, outcome.Outcome);
+        Assert.Equal(outcome.MergedSha, RunGit(repo, "rev-parse develop").Out.Trim());
+        Assert.Equal("local experiment", File.ReadAllText(Path.Combine(repo, "README.md")));
+    }
+
     [Fact]
     public async Task RunAsync_BehindCurrentTarget_DirectMergePreservesShaAndRunsGate()
     {
