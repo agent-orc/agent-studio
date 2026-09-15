@@ -517,6 +517,7 @@ identity values such as `RUNNER_ID=agent-runner-01` are not renamed.
 | `RUNNER_ROLE` | `--role` | `coding` | `coding` or the separately registered `review` service. |
 | `RUNNER_REVIEW_WORKDIR` | `--review-workdir` | `$TMPDIR/agent-review-work` | Disposable review-only workspace, cache, temp, and evidence root. Must differ from `RUNNER_WORKDIR`. Settled attempt workspaces are removed after report acceptance; inactive attempt remnants older than 72 hours are swept hourly. The reusable `.baseline-cache` is preserved. |
 | `RUNNER_REVIEW_CREDENTIAL_ENV` | `--review-credential-env` | (none) | Comma-separated read-only credential variable names admitted into the cleared review environment. |
+| `RUNNER_REVIEW_NO_CPU_PROGRESS_SECONDS` | `--review-no-cpu-progress-seconds` | `900` | Hang watchdog for review commands. A command's whole process tree must burn at least one percent of one core within this window; otherwise the tree is killed and the attempt is reported as `ReviewInfra/NoCpuProgress`. `0` disables the watchdog. Linux only: the tree's CPU time is read from `/proc`. See [Review parallelism and build-server isolation](#review-parallelism-and-build-server-isolation). |
 | `RUNNER_STATE_DIR` | `--state-dir` | `$RUNNER_WORKDIR/.runner-state` | Durable slot, attempt, PID, worker result, and file-backed output state used for planned restart reattachment. Keep it on persistent local storage. |
 | `RUNNER_EXEC_ENGINE` | `--exec-engine` | `car` | CLI execution engine inside the detached worker. `car` (default since AGT-2370) drives the CLI through the CodingAgentRunner library: descriptor-built argv, `stream-json` output, permission-mode injection from the card's spec (absent = bypass/yolo), and a task-stable isolated config home whose credential file is linked so OAuth refreshes write through. `legacy` is the pre-AGT-2370 raw spawn and is removed in AGT-2373. |
 | `AGENT_STUDIO_CLEAN_CONTEXT_ROOT` | none | `$XDG_STATE_HOME/agent-studio/clean-context` or `~/.local/state/agent-studio/clean-context` | Persistent non-temporary root for task-isolated Claude and Codex homes. Keep it on host-local storage. The same task reuses its marker-validated home across attempts and daemon restarts; inactive homes expire after seven days. |
@@ -600,6 +601,77 @@ Review admission load-aware, compare active slots with host telemetry, and
 lower the value if load, memory, or I/O pressure persists. A Coding change sets
 the local bootstrap/fallback ceiling; the Task Server remains authoritative for
 its centrally versioned live capacity.
+
+### Review parallelism and build-server isolation
+
+Review slots used to be limited by a resource the workspace fence did not cover.
+`RemoteReviewWorkspace` roots every writable path of an attempt under the attempt
+directory (`HOME`, `TMPDIR`, `NUGET_PACKAGES`, `DOTNET_CLI_HOME`,
+`XDG_CACHE_HOME`) and the Task Server hands each attempt a private
+`ResourceNamespace` and an eight-port window. The .NET build servers sit outside
+that fence: on Linux, Roslyn's `VBCSCompiler` listens on `/tmp/<pipename>` derived
+from the compiler directory and the user name, and reusable MSBuild worker nodes
+listen on `/tmp/MSBuild<pid>`. One host, one service account and one SDK therefore
+shared one compiler server and one node pool across every concurrent attempt, and
+those servers kept the working directory of whichever attempt started them. After
+that attempt's workspace was deleted, later attempts connected to the same socket
+and blocked - a `dotnet test` tree at a fraction of a percent of CPU holding its
+review slot until the command budget expired (AGT-2831, 2026-09-15).
+
+Since AGT-2831 every review command - candidate, baseline and dependency
+preparation - runs with its own server-free build namespace, applied by
+`runner/ReviewBuildServerIsolation.cs` and always overriding the immutable plan:
+
+| Variable | Value | Why |
+|---|---|---|
+| `MSBUILDDISABLENODEREUSE` | `1` | Worker nodes exit with the build instead of lingering on a host-global socket for a later attempt to adopt. |
+| `DOTNET_CLI_USE_MSBUILD_SERVER` | `0` | No long-lived `dotnet` MSBuild server outlives the attempt. |
+| `UseSharedCompilation` | `false` | Read by MSBuild as a global property: `CoreCompile` invokes `csc` in-process instead of dispatching to the shared VBCSCompiler socket. |
+| `MSBUILDDEBUGPATH` | attempt `tmp` | MSBuild debug and crash files stay attempt-local. |
+
+A second guard covers anything that blocks on a host-shared handle anyway.
+`RUNNER_REVIEW_NO_CPU_PROGRESS_SECONDS` (default 900) bounds how long a command's
+process tree may run without doing work: the runner samples the tree's cumulative
+CPU time from `/proc` and kills it when it fails to burn one percent of one core
+within the window. The attempt is reported as `ReviewInfra/NoCpuProgress`, which
+is retried as infrastructure rather than graded as a product regression. The
+attempt's environment evidence carries `buildServers=per-attempt` and
+`hangWatchdogSeconds`, so a report proves which fence it ran under.
+
+**Safe parallelism.** With the fence in place, review parallelism is bounded by
+host CPU, memory and I/O, not by a shared build server. Each attempt runs
+`dotnet test` with `-maxcpucount:2` and `ParallelizeTestCollections=false`
+(`ReviewPlanResourcePolicy`), so budget roughly two cores and the peak resident
+set of one test run per slot. Four slots on a 12-core host is the validated
+configuration; the helper's hard ceiling of 6 remains a host-flood guard rather
+than a recommendation.
+
+**Raising it.** Change one step at a time and keep the previous value to hand.
+
+1. Confirm the fence is live on the host before adding slots:
+
+   ```bash
+   scripts/review-build-server-isolation-probe.sh 4
+   ```
+
+   The `isolated` mode must report `PASS` with zero surviving worker nodes and
+   zero compiler servers holding an attempt working directory.
+
+2. Raise the role value by one through the sanctioned helper below, for example
+   `config review RUNNER_MAX_PARALLELISM 3`.
+3. Watch one full review cycle. Load per core must stay under
+   `RUNNER_CLAIM_MAX_LOAD_PER_CORE`, and the host card must not raise a sustained
+   oversubscribed, memory-pressure, or VM-throttled finding.
+4. Check that no attempt was reported as `ReviewInfra/NoCpuProgress`. One such
+   report means a command still blocked on something shared; find the handle
+   before adding another slot rather than raising the watchdog window.
+5. Repeat from step 2 while all three signals stay clean.
+
+Lower the value again if load, memory or I/O pressure persists. The watchdog is a
+backstop, not a capacity control: a host that needs it regularly is oversubscribed
+or still has a shared resource, and
+[common-problems/review-parallelism-shared-build-server/](../common-problems/review-parallelism-shared-build-server/)
+lists the checks that identify which.
 
 Recommended per-CLI headless defaults (verify against your installed version):
 

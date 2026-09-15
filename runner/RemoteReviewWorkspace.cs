@@ -111,6 +111,12 @@ public sealed class RemoteReviewWorkspace
                 throw new InvalidOperationException($"Invalid review credential environment name '{name}'.");
             environment[name] = Environment.GetEnvironmentVariable(name);
         }
+        // AGT-2831, applied last on purpose: TMPDIR does not fence the .NET
+        // build servers. VBCSCompiler and the reusable MSBuild nodes listen on
+        // host-global /tmp sockets, so concurrent attempts otherwise share one
+        // compiler server that keeps the working directory of whichever attempt
+        // started it. No later configuration may weaken the fence.
+        ReviewBuildServerIsolation.ApplyTo(environment, TempPath);
         return environment;
     }
 
@@ -278,6 +284,40 @@ public sealed class RemoteReviewWorkspace
                         ct);
                 }
 
+                if (StalledWithoutCpuProgress(execution))
+                {
+                    commands.Add(await AddCommandEvidenceAsync(
+                        command.StepId,
+                        command.Aspect,
+                        command.FileName,
+                        command.Arguments,
+                        headBefore,
+                        treeBefore,
+                        execution.Process,
+                        execution.StartedAt,
+                        execution.FinishedAt,
+                        execution.Signal,
+                        command.TimeoutSeconds,
+                        "verification",
+                        "candidate",
+                        baselineSha: null,
+                        comparison: null,
+                        retryPerformed: false,
+                        dependencyCacheHit: false,
+                        dependencyCache: null,
+                        artifacts,
+                        ct,
+                        command,
+                        execution.AgentUsage));
+                    SaveCaches(candidateCache);
+                    throw await InfrastructureFailureAsync(
+                        NoCpuProgressClassification,
+                        NoProgressSummary("Review command", command.StepId, CommandLine(command), execution),
+                        commands,
+                        artifacts,
+                        ct);
+                }
+
                 if (MissingToolchain(execution.Process)
                     || AgentCommandUnavailable(command, execution.Process))
                 {
@@ -401,6 +441,41 @@ public sealed class RemoteReviewWorkspace
                                 "ToolUnavailable",
                                 $"Review retry '{command.StepId}' lost its declared toolchain; " +
                                 $"exit={execution.Process.ExitCode}; budget={BudgetSummary(command.TimeoutSeconds, execution)}.",
+                                commands,
+                                artifacts,
+                                ct);
+                        }
+                        if (StalledWithoutCpuProgress(execution))
+                        {
+                            commands.Add(await AddCommandEvidenceAsync(
+                                command.StepId,
+                                command.Aspect,
+                                command.FileName,
+                                command.Arguments,
+                                headBefore,
+                                treeBefore,
+                                execution.Process,
+                                execution.StartedAt,
+                                execution.FinishedAt,
+                                execution.Signal,
+                                command.TimeoutSeconds,
+                                "verification",
+                                "candidate",
+                                comparison.BaselineSha,
+                                comparison: null,
+                                retryPerformed: true,
+                                dependencyCacheHit: false,
+                                dependencyCache: null,
+                                artifacts,
+                                ct));
+                            SaveCaches(candidateCache);
+                            throw await InfrastructureFailureAsync(
+                                NoCpuProgressClassification,
+                                NoProgressSummary(
+                                    "Review retry",
+                                    command.StepId,
+                                    CommandLine(command),
+                                    execution),
                                 commands,
                                 artifacts,
                                 ct);
@@ -549,6 +624,10 @@ public sealed class RemoteReviewWorkspace
         var started = DateTime.UtcNow;
         ProcessResult process;
         string? signal = null;
+        var noProgressAfter = TimeSpan.FromSeconds(Math.Max(0, _options.ReviewNoCpuProgressSeconds));
+        // Owned outside the try so the catch below can tell a wall-clock timeout
+        // apart from a tree that stopped consuming CPU.
+        CommandProgressWatchdog? watchdog = null;
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -563,6 +642,19 @@ public sealed class RemoteReviewWorkspace
                 onStdErr: line => completeStderr.AppendLine(line),
                 environment: environment ?? ProcessEnvironment(),
                 clearEnvironment: true,
+                onStarted: processId => watchdog = new CommandProgressWatchdog(
+                    () => ProcessTreeCpu.Sample(processId),
+                    noProgressAfter,
+                    onStalled: () =>
+                    {
+                        _log(
+                            $"review command stalled step={stepId} pid={processId} " +
+                            $"noCpuProgressSeconds={noProgressAfter.TotalSeconds:0} action=kill-tree");
+                        // Cancelling the run token is what actually reaps the
+                        // tree: ProcessRunner kills every descendant on cancel.
+                        try { timeout.Cancel(); }
+                        catch (ObjectDisposedException) { /* the command already finished */ }
+                    }),
                 ct: timeout.Token);
             process = new ProcessResult(
                 boundedProcess.ExitCode,
@@ -571,8 +663,15 @@ public sealed class RemoteReviewWorkspace
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            process = new ProcessResult(-1, string.Empty, "Review command timed out.");
-            signal = "timeout";
+            var stalled = watchdog?.Stalled == true;
+            process = new ProcessResult(
+                -1,
+                string.Empty,
+                stalled
+                    ? "Review command was killed after " +
+                      $"{noProgressAfter.TotalSeconds:0}s without CPU progress."
+                    : "Review command timed out.");
+            signal = stalled ? StalledSignal : "timeout";
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -581,8 +680,36 @@ public sealed class RemoteReviewWorkspace
                 string.Empty,
                 $"Review step '{stepId}' could not start: {exception.Message}");
         }
+        finally
+        {
+            if (watchdog is not null) await watchdog.DisposeAsync();
+        }
         return new CommandExecution(process, started, DateTime.UtcNow, signal);
     }
+
+    /// <summary>
+    /// Evidence signal for a command the hang watchdog reaped. Distinct from
+    /// <c>timeout</c>: the command still had budget left, it had simply stopped
+    /// doing work.
+    /// </summary>
+    internal const string StalledSignal = "no-progress";
+
+    internal static bool StalledWithoutCpuProgress(CommandExecution execution)
+        => execution.Signal == StalledSignal;
+
+    /// <summary>Review report classification for a command the watchdog reaped.</summary>
+    internal const string NoCpuProgressClassification = "NoCpuProgress";
+
+    private string NoProgressSummary(
+        string subject,
+        string stepId,
+        string? commandLine,
+        CommandExecution execution)
+        => $"{subject} '{stepId}' consumed no CPU for " +
+           $"{Math.Max(0, _options.ReviewNoCpuProgressSeconds)}s and was killed as a hang, not a " +
+           $"product failure: {commandLine}; " +
+           $"signal={StalledSignal}; " +
+           $"elapsed={Math.Max(0, (long)(execution.FinishedAt - execution.StartedAt).TotalSeconds)}s.";
 
     private async Task<DependencyCacheSession?> ExecutePreparationAsync(
         string workspacePath,
@@ -707,6 +834,21 @@ public sealed class RemoteReviewWorkspace
                 dependencyCache: evidence,
                 artifacts,
                 ct));
+
+            if (StalledWithoutCpuProgress(execution))
+            {
+                foreach (var message in cache.Save()) _log(message);
+                throw await InfrastructureFailureAsync(
+                    NoCpuProgressClassification,
+                    NoProgressSummary(
+                        "Dependency preparation",
+                        command.StepId,
+                        CommandLine(command),
+                        execution),
+                    commands,
+                    artifacts,
+                    ct);
+            }
 
             if (!execution.Process.Success || execution.Signal is not null)
             {
@@ -1043,6 +1185,20 @@ public sealed class RemoteReviewWorkspace
                     artifacts,
                     ct);
             }
+            if (StalledWithoutCpuProgress(execution))
+            {
+                SaveCaches(baselineCache, candidateCache);
+                throw await InfrastructureFailureAsync(
+                    NoCpuProgressClassification,
+                    NoProgressSummary(
+                        "Baseline command",
+                        command.StepId,
+                        CommandLine(command),
+                        execution),
+                    commands,
+                    artifacts,
+                    ct);
+            }
             if (execution.Signal is not null || execution.Process.ExitCode < 0)
             {
                 var unavailable = BaselineUnavailable(
@@ -1108,6 +1264,7 @@ public sealed class RemoteReviewWorkspace
         environment["CARGO_HOME"] = Path.Combine(cache, "cargo");
         environment["GRADLE_USER_HOME"] = Path.Combine(cache, "gradle");
         environment["DOTNET_CLI_HOME"] = Path.Combine(cache, "dotnet");
+        ReviewBuildServerIsolation.ApplyTo(environment, temp);
         return environment;
     }
 
@@ -1427,6 +1584,11 @@ public sealed class RemoteReviewWorkspace
                 ["dependencyCache"] = DependencyCacheRoot,
                 ["temp"] = TempPath,
                 ["ports"] = $"{_lease.PortBase}-{_lease.PortBase + 7}",
+                ["buildServers"] = ReviewBuildServerIsolation.IsIsolated(ProcessEnvironment())
+                    ? "per-attempt"
+                    : "host-shared",
+                ["hangWatchdogSeconds"] = Math.Max(0, _options.ReviewNoCpuProgressSeconds)
+                    .ToString(System.Globalization.CultureInfo.InvariantCulture),
                 ["containers"] = _lease.ResourceNamespace,
                 ["databases"] = _lease.ResourceNamespace,
                 ["credentials"] = "review-read-only",

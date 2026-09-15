@@ -192,6 +192,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | api.sh restart reports success while the old backend keeps serving | [common-problems/hollow-api-restart/](../operations/common-problems/hollow-api-restart/) |
 | api.sh start reports a crash on Windows while dotnet run is still compiling | [common-problems/windows-launcher-exit-during-compile/](../operations/common-problems/windows-launcher-exit-during-compile/) |
 | Integration push blocked on main lineage starves origin/develop, causing infinite reclaim loops (AGT-2688) | [common-problems/lineage-blocked-integration-push/](../operations/common-problems/lineage-blocked-integration-push/) |
+| Concurrent review workers deadlock on one host-shared .NET build server (AGT-2831) | [common-problems/review-parallelism-shared-build-server/](../operations/common-problems/review-parallelism-shared-build-server/) |
 | Orchestrator drive-to-conclusion & CLI-crash resilience | [concepts/orchestrator-drive-to-conclusion.html](../concepts/orchestrator-drive-to-conclusion.html) |
 | Task integration & worktree/merge workflow | [concepts/task-integration-and-merge-workflow.md](../concepts/task-integration-and-merge-workflow.md) |
 | Merge config analysis (parallelism coupling) | [concepts/task-integration-merge-config-analysis.html](../concepts/task-integration-merge-config-analysis.html) |

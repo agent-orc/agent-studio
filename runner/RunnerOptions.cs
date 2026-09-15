@@ -83,6 +83,17 @@ public sealed class RunnerOptions
     /// </summary>
     public IReadOnlyList<string> ReviewCredentialEnvironment { get; init; } = [];
 
+    /// <summary>
+    /// How long a review verify command's process tree may run without clearing
+    /// its CPU floor before the hang watchdog kills it and the attempt is
+    /// classified <c>ReviewInfra/NoCpuProgress</c>
+    /// (<c>RUNNER_REVIEW_NO_CPU_PROGRESS_SECONDS</c>). A deadlocked build blocks
+    /// on a socket instead of exiting, so it would otherwise hold its review slot
+    /// for the whole command budget. <c>0</c> disables the watchdog. Linux only:
+    /// the tree's CPU time is read from <c>/proc</c>.
+    /// </summary>
+    public int ReviewNoCpuProgressSeconds { get; init; } = 900;
+
     /// <summary>Durable daemon slot records and detached-worker logs.</summary>
     public string StateDir { get; init; } = Path.Combine(Path.GetTempPath(), "agent-runner-state");
 
@@ -233,6 +244,13 @@ public sealed class RunnerOptions
     public static int EnvInt(string name, int fallback)
         => int.TryParse(Env(name), out var v) && v > 0 ? v : fallback;
 
+    /// <summary>
+    /// Like <see cref="EnvInt"/> but admits <c>0</c>, so an operator can switch a
+    /// guard off explicitly instead of silently getting the default back.
+    /// </summary>
+    public static int EnvIntAllowingZero(string name, int fallback)
+        => int.TryParse(Env(name), out var v) && v >= 0 ? v : fallback;
+
     /// <summary>Boolean opt-in flag as operators write it in a unit file or compose env.</summary>
     private static bool OptIn(string value)
         => value.Trim() is { Length: > 0 } flag
@@ -326,6 +344,11 @@ public sealed class RunnerOptions
                     "review-credential-env",
                 "RUNNER_REVIEW_CREDENTIAL_ENV")
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+            ReviewNoCpuProgressSeconds = overrides.TryGetValue("review-no-cpu-progress-seconds", out var noProgress)
+                                         && int.TryParse(noProgress, out var noProgressValue)
+                                         && noProgressValue >= 0
+                ? noProgressValue
+                : EnvIntAllowingZero("RUNNER_REVIEW_NO_CPU_PROGRESS_SECONDS", 900),
             StateDir = Val("state-dir", "RUNNER_STATE_DIR",
                 Path.Combine(Val("workdir", "RUNNER_WORKDIR", Path.Combine(Path.GetTempPath(), "agent-runner-work")), ".runner-state")),
             RequiredCapabilities = Val(
