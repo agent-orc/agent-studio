@@ -117,7 +117,8 @@
           "options": {
             "buildTarget": "frontend:build:development",
             "tsConfig": "tsconfig.spec.json",
-            "runner": "vitest"
+            "runner": "vitest",
+            "runnerConfig": "vitest.config.ts"
           }
         }
       }
