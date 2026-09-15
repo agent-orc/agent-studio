@@ -1,12 +1,15 @@
 {
   "schemaVersion": 1,
   "id": "nordstern",
-  "title": "★ Nordstern — Agent Studio Zielbild & Umsetzung",
-  "summary": "Der eine Einstiegspunkt fuer das Zielbild-Komplex. Haelt den grossen Bogen (Zielbild in Kuerze, Stand jetzt, die vier Phasen als Schritte, die entschiedenen Leitplanken) und verlinkt als Landkarte in die fokussierten Tiefen-Dokumente: Umsetzungsplan (Detail-Phasen + Kartenzuordnung), Architektur & Protokolle, Ausfuehrungsmodell Container-Default, Modell-Routing-Policy, Log-Retention. Grosser Bogen hier, Detail im jeweiligen verlinkten Doc. Die Tiefen-Docs stehen auf decided und erscheinen unter History. [Curation 2026-08-17: stays active by design. This is a standing north-star map, not a delivery Dossier. It makes no deliverable promises of its own and delegates every consequence to the eight linked deep documents, all of which exist. Moving the map to History would orphan the entry point it is meant to be. All four source cards are terminal, so what it needs is a refresh rather than a closure: the Stand jetzt table of 28 July predates the lagebild-2026-08 snapshot and the P2 CAR chain around AGT-2373, AGT-2404 and AGT-2262. The phase field stays unset: for an active Dossier the Explorer list renders the raw phase string as the badge (explorer-workbench-list.component.ts), and the model vocabulary is shaping, testing, decision-ready or null, so an unset phase is the correct encoding for a standing reference with no operator decision pending.]",
+  "title": "North star: Agent Studio target picture and delivery",
+  "summary": "The single entry point to the Agent Studio target picture at today's state. Holds the arc in three planes (durable Task Server authority, the operations boundary, and isolated execution with preparation scripts), the guardrails those planes imply, and a map of the Dossiers that are current. Live decisions are linked and never copied: Operations Server beside the Task Server (AGT-W49, decision pending) and isolated execution with preparation scripts, per-run isolation and a healing orchestrator (AGT-W51, decided 2026-09-12). Absorbs four superseded Dossiers as short history sections that name the decision which replaced each: AGT-W6 container default, AGT-W8 installer story, AGT-W22 implementation plan, AGT-W25 components and protocols. Rewritten by AGT-2798 as the first delivery slice of the consolidation programme AGT-2797 / AGT-W55, following the operator's answers to D1 and D2 of 2026-09-13.",
   "entrypoint": "index.html",
-  "status": "active",
-  "updatedAt": "2026-08-17T00:00:00Z",
+  "status": "decision-pending",
+  "phase": "decision-ready",
+  "pattern": "concept",
+  "updatedAt": "2026-09-14T00:00:00Z",
   "sourceTaskKeys": [
+    "AGT-2798",
     "AGT-2129",
     "AGT-2130",
     "AGT-2132",
@@ -14,14 +17,11 @@
   ],
   "key": "AGT-W14",
   "review": {
-    "verdict": "superseded",
-    "supersededBy": [
-      "AGT-W49",
-      "AGT-W51"
-    ],
-    "reviewedAt": "2026-09-13T10:20:00Z",
-    "reviewedBy": "Operator",
-    "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    "verdict": "current",
+    "supersededBy": [],
+    "reviewedAt": "2026-09-14T00:00:00Z",
+    "reviewedBy": "AGT-2798",
+    "note": "Rewritten to the September topology per AGT-W55 §2 and the operator's answer to D1 (2026-09-13). The previous 2026-07-28 version is the superseded material; this descriptor now records the rewrite as current and W14 stays the single entry point. AGT-W6, AGT-W8, AGT-W22 and AGT-W25 are recorded as superseded by AGT-W14 and absorbed as history sections in §6."
   },
   "reviewHistory": [
     {
@@ -33,6 +33,42 @@
       "reviewedAt": "2026-09-13T10:20:00Z",
       "reviewedBy": "Operator",
       "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    },
+    {
+      "verdict": "current",
+      "supersededBy": [],
+      "reviewedAt": "2026-09-14T00:00:00Z",
+      "reviewedBy": "AGT-2798",
+      "note": "Rewritten to the September topology per AGT-W55 §2 and the operator's answer to D1 (2026-09-13). The previous 2026-07-28 version is the superseded material; this descriptor now records the rewrite as current and W14 stays the single entry point. AGT-W6, AGT-W8, AGT-W22 and AGT-W25 are recorded as superseded by AGT-W14 and absorbed as history sections in §6."
+    }
+  ],
+  "implementationTasks": [
+    {
+      "title": "Record the North star encoding decision (N1) and the Operations Server naming decision (N2) in the descriptor",
+      "promptMarkdown": "Apply the operator's answers to the two open decisions in `docs/operations/nordstern/index.html` §10.\n\n**N1, catalogue encoding.** If the operator chooses A (standing map), set `status` to `active` in `docs/operations/nordstern/workbench.json`, remove the `phase` field (an unset phase is the correct encoding for a standing reference with no operator decision pending; the Explorer list renders the raw phase string as the badge for an active Dossier, see `frontend/src/app/.../explorer-workbench-list.component.ts`), and replace §10 with a one paragraph note that the entry point carries no decisions of its own and that every open question lives in the linked Dossier that owns it. If the operator chooses B, leave the descriptor at `decision-pending` / `decision-ready` until N2 is answered and then apply A. If the operator chooses C, keep the current encoding and leave §10 in place.\n\n**N2, Operations Server naming.** If the operator chooses A, keep Figure 1 and §3 as they are and delete only the N2 block from §10. If B, redraw Figure 1 without the Operations Server box, rewrite §2 and §3 to the three component target from `docs/concepts/distributed-agent-studio-target-architecture.md`, and state in §3 that AGT-W49 argues against that target and is decision pending. If C, do not raise the ADR from this card; create a separate architecture card instead, because the ADR is step 1 of the AGT-W49 programme and is gated on that Dossier's own D1.\n\nUpdate `updatedAt`, append a `reviewHistory` entry with the operator as `reviewedBy`, and change nothing else in the document. Do not touch product source, configuration, tests, or build files.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Apply the N1 and N2 answers to the North star document and descriptor only.",
+        "criteria": [
+          "docs/operations/nordstern/workbench.json carries the status and phase encoding chosen in N1 and a new reviewHistory entry naming the operator.",
+          "§10 of docs/operations/nordstern/index.html contains only decisions that are still open after the answers.",
+          "Figure 1 and §3 match the option chosen in N2.",
+          "No file outside docs/operations/nordstern/ is modified."
+        ]
+      }
+    },
+    {
+      "title": "Index the North star in docs/start/README.md and retire the installer-story row",
+      "promptMarkdown": "The documentation index `docs/start/README.md` has no row for the North star entry point, and it still advertises the installer story Dossier, which AGT-2798 recorded as superseded by AGT-W14 and moved to the Dossier History list.\n\nDo two things in `docs/start/README.md` and nothing else:\n\n1. Add one row pointing at `docs/operations/nordstern/index.html` in the section that lists operations Dossiers, described as the single entry point to the Agent Studio target picture, naming AGT-W14. Match the wording and column shape of the surrounding rows exactly.\n2. Remove or rewrite the existing installer story row (currently around line 92, linking `../operations/installer-story/index.html`). Removing it is correct if the section is meant to list current documents only; rewriting it to say the Dossier is history and is superseded by AGT-W14 is correct if the section deliberately lists historical material as well. Decide by reading the rest of the file and state which rule the file follows in the commit body.\n\nDo not modify any Dossier, product source, configuration, test, or build file.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "One row added and one row resolved in docs/start/README.md.",
+        "criteria": [
+          "docs/start/README.md contains exactly one new row linking docs/operations/nordstern/index.html and naming AGT-W14.",
+          "The installer-story row is removed or marked as superseded by AGT-W14, consistent with how the rest of the file treats historical documents.",
+          "No file other than docs/start/README.md is modified."
+        ]
+      }
     }
   ]
 }

@@ -1,100 +1,428 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en" data-document-pattern="concept">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Nordstern: Agent Studio — Zielbild &amp; Umsetzung</title>
+<title>North star: Agent Studio target picture | Concept Dossier</title>
 <style>
-  :root { color-scheme: light;
-    --surface-1:#fcfcfb; --surface-2:#f2f1ee; --surface-3:#e9e8e3;
-    --ink-1:#0b0b0b; --ink-2:#52514e; --ink-3:#8a8983; --line:#d8d6cf;
-    --develop:#2a78d6; --ok:#008300; --bad:#c93736; --warn:#9a6b00;
-    --accent-soft:#eaf1fb; --bad-soft:#fbecec; --ok-soft:#eaf4ea; --warn-soft:#f8f0dd; }
-  @media (prefers-color-scheme: dark) { :root { color-scheme: dark;
-    --surface-1:#1a1a19; --surface-2:#232322; --surface-3:#2c2c2a;
-    --ink-1:#fff; --ink-2:#c3c2b7; --ink-3:#8a8983; --line:#3d3d3a;
-    --develop:#3987e5; --ok:#4eae4e; --bad:#e66767; --warn:#d9a63f;
-    --accent-soft:#1e2a3a; --bad-soft:#382222; --ok-soft:#1f2f1f; --warn-soft:#33301e; } }
-  *{box-sizing:border-box;} body{margin:0;padding:0 0 80px;background:var(--surface-1);color:var(--ink-1);font:16px/1.6 system-ui,"Segoe UI",sans-serif;}
-  main{max-width:960px;margin:0 auto;padding:0 28px;}
-  header.page{border-bottom:1px solid var(--line);padding:44px 0 24px;margin-bottom:8px;}
-  .kicker{font-size:13px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);margin:0 0 10px;}
-  h1{font-size:34px;line-height:1.2;margin:0 0 12px;} .lede{font-size:18px;color:var(--ink-2);max-width:64ch;margin:0;}
-  h2{font-size:22px;margin:44px 0 8px;} p{max-width:78ch;} p.dim{color:var(--ink-2);}
-  .box{border:1px solid var(--line);border-radius:10px;background:var(--surface-2);padding:16px 20px;margin:16px 0;}
-  .box.accent{background:var(--accent-soft);border-color:color-mix(in srgb,var(--develop) 30%,var(--line));}
-  table{border-collapse:collapse;width:100%;margin:14px 0;font-size:14.5px;} th,td{text-align:left;padding:8px 11px;border-bottom:1px solid var(--line);vertical-align:top;} th{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-3);}
-  code{font:12.5px/1.5 ui-monospace,Consolas,monospace;background:var(--surface-3);border-radius:4px;padding:1px 5px;}
-  ul{padding-left:22px;} li{margin:5px 0;max-width:78ch;} ol{padding-left:22px;} ol li{margin:6px 0;}
-  .phase{display:flex;gap:12px;align-items:baseline;margin:10px 0;} .pnum{flex:0 0 auto;width:28px;height:28px;line-height:28px;text-align:center;border-radius:8px;background:var(--accent-soft);color:var(--develop);font-weight:700;}
-  .map{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:16px 0;} @media(max-width:640px){.map{grid-template-columns:1fr;}}
-  .card{border:1px solid var(--line);border-radius:9px;padding:12px 15px;background:var(--surface-2);}
-  .card h4{margin:0 0 4px;font-size:15px;} .card .path{font:11.5px/1.4 ui-monospace,Consolas,monospace;color:var(--ink-3);} .card p{margin:6px 0 0;font-size:13.5px;color:var(--ink-2);}
-  a.card{display:block;color:inherit;text-decoration:none;} a.card:hover{border-color:color-mix(in srgb,var(--develop) 45%,var(--line));background:var(--accent-soft);} a.card h4{color:var(--develop);}
-  .ok{color:var(--ok);} .bad{color:var(--bad);}
+  :root {
+    color-scheme: light;
+    --surface-1: #fcfcfb; --surface-2: #f2f1ee; --surface-3: #e9e8e3;
+    --ink-1: #0b0b0b; --ink-2: #52514e; --ink-3: #8a8983; --line: #d8d6cf;
+    --develop: #2a78d6; --ok: #008300; --bad: #c93736; --warn: #9a6b00;
+    --accent-soft: #eaf1fb; --bad-soft: #fbecec; --ok-soft: #eaf4ea; --warn-soft: #f8f0dd;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --surface-1: #1a1a19; --surface-2: #232322; --surface-3: #2c2c2a;
+      --ink-1: #ffffff; --ink-2: #c3c2b7; --ink-3: #8a8983; --line: #3d3d3a;
+      --develop: #3987e5; --ok: #4eae4e; --bad: #e66767; --warn: #d9a63f;
+      --accent-soft: #1e2a3a; --bad-soft: #382222; --ok-soft: #1f2f1f; --warn-soft: #33301e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 0 0 80px; background: var(--surface-1); color: var(--ink-1); font: 16px/1.6 system-ui, "Segoe UI", sans-serif; }
+  main { max-width: 1080px; margin: 0 auto; padding: 0 28px; }
+  header.page { border-bottom: 1px solid var(--line); padding: 44px 0 26px; margin-bottom: 8px; }
+  .kicker { font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); margin: 0 0 10px; }
+  h1 { font-size: 34px; line-height: 1.2; margin: 0 0 12px; }
+  .lede { font-size: 18px; color: var(--ink-2); max-width: 62ch; margin: 0; }
+  .meta { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 18px; font-size: 13px; color: var(--ink-3); }
+  .meta b { color: var(--ink-2); font-weight: 600; }
+  h2 { font-size: 24px; margin: 56px 0 6px; scroll-margin-top: 20px; }
+  h2 .no { color: var(--ink-3); font-weight: 600; margin-right: 10px; }
+  h3 { font-size: 18px; margin: 34px 0 4px; }
+  p { max-width: 76ch; }
+  .box { border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); padding: 18px 22px; margin: 20px 0; }
+  .box.accent { background: var(--accent-soft); }
+  .box.warn { background: var(--warn-soft); }
+  .box h3 { margin-top: 0; }
+  .tablewrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; margin: 14px 0 22px; font-size: 14px; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--ink-2); font-weight: 600; background: var(--surface-2); white-space: nowrap; }
+  td .d { display: block; color: var(--ink-2); font-size: 12.5px; line-height: 1.4; margin-top: 3px; }
+  code { font: 13px ui-monospace, "Cascadia Mono", Consolas, monospace; background: var(--surface-3); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+  a { color: var(--develop); text-underline-offset: .16em; }
+  a:focus-visible { outline: 2px solid var(--develop); outline-offset: 3px; border-radius: 2px; }
+  .tag { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--ink-2); margin-right: 4px; white-space: nowrap; }
+  .tag.ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+  .tag.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+  .tag.accent { background: var(--accent-soft); color: var(--develop); border-color: transparent; }
+  figure { margin: 26px 0; }
+  figure svg { width: 100%; height: auto; display: block; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-1); }
+  figcaption { font-size: 13px; color: var(--ink-3); margin-top: 8px; line-height: 1.5; max-width: 76ch; }
+  ul, ol { max-width: 80ch; }
+  li { margin: 4px 0; }
+  .toc { columns: 2; gap: 28px; font-size: 14.5px; }
+  .toc a { color: var(--ink-2); text-decoration: none; }
+  .toc a:hover { color: var(--develop); }
+  .muted { color: var(--ink-3); }
+  .map { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 18px 0; }
+  @media (max-width: 720px) { .map { grid-template-columns: 1fr; } .toc { columns: 1; } }
+  a.card { display: block; border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; background: var(--surface-2); color: inherit; text-decoration: none; }
+  a.card:hover { border-color: color-mix(in srgb, var(--develop) 45%, var(--line)); background: var(--accent-soft); }
+  a.card h4 { margin: 0 0 4px; font-size: 15px; color: var(--develop); }
+  a.card .path { font: 11.5px/1.4 ui-monospace, Consolas, monospace; color: var(--ink-3); }
+  a.card p { margin: 6px 0 0; font-size: 13.5px; color: var(--ink-2); max-width: none; }
+  .history { border: 1px solid var(--line); border-radius: 10px; padding: 16px 20px; margin: 14px 0; background: var(--surface-2); }
+  .history h3 { margin: 0 0 6px; font-size: 16px; }
+  .history p { margin: 6px 0 0; font-size: 14.5px; }
+  .history .replaced { display: block; margin-top: 8px; font-size: 13.5px; color: var(--ink-2); }
+  .evidence-list { display: grid; gap: 10px; margin: 20px 0; }
+  .evidence { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px 14px; align-items: start; padding: 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-2); }
+  .evidence-class { display: inline-flex; align-items: center; min-height: 22px; padding: 2px 8px; border-radius: 999px; background: var(--surface-3); color: var(--ink-2); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
+  .evidence-class[data-evidence-class="observed"] { background: var(--ok-soft); color: var(--ok); }
+  .evidence-class[data-evidence-class="inferred"] { background: var(--warn-soft); color: var(--warn); }
+  .evidence-class[data-evidence-class="proposed"] { background: var(--accent-soft); color: var(--develop); }
+  .evidence b { display: block; margin-bottom: 2px; font-size: 14px; }
+  .evidence small { display: block; color: var(--ink-2); font-size: 13px; line-height: 1.45; }
+  .decision { border: 1px solid color-mix(in srgb, var(--develop) 35%, var(--line)); border-radius: 10px; padding: 18px 22px; margin: 22px 0; background: var(--accent-soft); }
+  .decision h3 { margin: 0 0 10px; font-size: 17px; }
+  .decision .opt { display: block; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-1); margin: 8px 0; }
+  .decision .opt b { display: block; }
+  .decision .opt span { display: block; color: var(--ink-2); font-size: 14px; }
+  .svg-node { fill: var(--surface-2); stroke: var(--line); stroke-width: 1.3; }
+  .svg-authority { fill: var(--accent-soft); stroke: var(--develop); stroke-width: 1.5; }
+  .svg-execution { fill: var(--ok-soft); stroke: var(--ok); stroke-width: 1.5; }
+  .svg-history { fill: var(--surface-3); stroke: var(--line); stroke-width: 1.2; stroke-dasharray: 5 4; }
+  .svg-label { fill: var(--ink-1); font: 650 13px system-ui, sans-serif; }
+  .svg-sub { fill: var(--ink-2); font: 11.5px system-ui, sans-serif; }
+  .svg-tiny { fill: var(--ink-3); font: 10.5px system-ui, sans-serif; }
+  .svg-flow { fill: none; stroke: var(--ink-3); stroke-width: 1.5; marker-end: url(#ns-arrow); }
+  .svg-flow-accent { fill: none; stroke: var(--develop); stroke-width: 1.7; marker-end: url(#ns-arrow-accent); }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; } }
 </style>
 </head>
 <body>
 <main>
 <header class="page">
-  <p class="kicker">★ Nordstern · Einstiegspunkt</p>
-  <h1>Agent Studio — Zielbild &amp; Umsetzung</h1>
-  <p class="lede">Der eine Startpunkt. Hier steht der große Bogen — Zielbild, Stand, die Schritte — und von hier geht's in die fokussierten Tiefen-Dokumente. Großer Bogen ⟶ hier. Detail ⟶ das jeweilige verlinkte Doc.</p>
+  <p class="kicker">North star &middot; Agent Studio &middot; entry point</p>
+  <h1>Agent Studio: target picture and delivery</h1>
+  <p class="lede">The one starting point. It holds the arc of the target picture at today's state, names the two decisions that currently define it, and carries the history of the four Dossiers it replaced. Detail lives in the linked documents, never in a copy here.</p>
+  <div class="meta">
+    <span><b>Status</b> Decision pending</span>
+    <span><b>Phase</b> Decision ready</span>
+    <span><b>Updated</b> 14 September 2026</span>
+    <span><b>Key</b> AGT-W14</span>
+    <span><b>Card</b> AGT-2798, programme AGT-2797</span>
+  </div>
 </header>
 
-<h2>Zielbild in Kürze</h2>
-<p>Agent Studio orchestriert Coding-Agenten: Karten laufen durch <b>code → Auto-Review → Integration</b>. Das Ziel ist ein <b>verteiltes, container-isoliertes System</b>, in dem Runner und Backend über <b>ein sauberes v1-Protokoll</b> (nie driftend) sprechen, jede Ausführung im <b>Container-Default</b> läuft, Agenten <b>autonom selbst pushen</b>, und die Verifikation <b>hermetisch im selben Container</b> stattfindet.</p>
+<div class="box">
+  <h3>Contents</h3>
+  <div class="toc">
+    <a href="#s1">&sect;1 What this document is</a><br>
+    <a href="#s2">&sect;2 Target picture at today's state</a><br>
+    <a href="#s3">&sect;3 The live decisions</a><br>
+    <a href="#s4">&sect;4 Guardrails in force</a><br>
+    <a href="#s5">&sect;5 Map of current Dossiers</a><br>
+    <a href="#s6">&sect;6 History: what this Dossier absorbed</a><br>
+    <a href="#s7">&sect;7 Alternatives</a><br>
+    <a href="#s8">&sect;8 Recommendation</a><br>
+    <a href="#s9">&sect;9 Evidence</a><br>
+    <a href="#s10">&sect;10 Open decisions</a><br>
+    <a href="#sources">&sect; Sources</a>
+  </div>
+</div>
 
-<h2>Stand jetzt (28.07. abends)</h2>
-<p class="dim">Aktueller als diese Tabelle ist das <a href="../lagebild-2026-08/index.html">Lagebild vom 03.08.</a> — dort steht der belegte Betriebsstand mit Lane-Zahlen und offenen Großthemen.</p>
-<table>
-  <tr><th>Erledigt</th><th>Offen</th></tr>
-  <tr>
-    <td>
-      <b class="ok">P0 komplett, live bewiesen:</b> Auto-Review-Heilung real durchlaufen (Envelope-Probe + 13 Karten durch die volle Strecke); Welle-3-Review-Plane-Fixes deployt (Doppel-Claim-Guard, Journal-Epoch, Renew-Fail-Fast). Eskalierten-Bestand geleert.<br>
-      <b class="ok">P1 komplett:</b> 7 Docker-Images bauen (Remote-Host), Compose-Smoke grün, Installer mit Container-Default.<br>
-      <b class="ok">P2 begonnen:</b> T0a (CAR 0.7.0) + <b>T0b RunSpec auf der Leitung</b> (Karten-Pins wirken remote; Codex-Kanarienvogel grün) + T3-Guard-Fundament (Zentralisierungs-Ratchet + Paritäts-Fixtures). Host-Kapazität auf develop.<br>
-      <b class="ok">Board-Durchsatz:</b> zwei volle Wellen am 28.07. (u.&nbsp;a. MKT-6-Slices, Token-Economy-Karten, Registry-Fail-closed-Fix in Review).
-    </td>
-    <td>
-      T1–T4 der CAR-Migration als <b>koordinierte Batches</b> (2370–2373 sind Anker, nicht auto-claimbar)<br>
-      RunSpec-Fallback-Fix (2402) mergen + deployen; 2230-Entscheidungen; Epics 2129/2130/2132<br>
-      <b>Task Server remote neu geschnitten als 2404</b> (Studio bleibt bewusst lokal, kein öffentlicher Listener; ersetzt die entfernte 2277) — zugleich der Weg zu P3 Tunnel-Ablösung (2262)
-    </td>
-  </tr>
-</table>
-
-<h2>Die Schritte (vier Phasen)</h2>
-<div class="phase"><span class="pnum">0</span><div><b>Pipeline heilen</b> — Runner aufs v1-Protokoll (behebt Auto-Review), Build-Gate scharf, Reste-Batch (2302 + 2375 + Modell-Routing-Backend).</div></div>
-<div class="phase"><span class="pnum">1</span><div><b>Container-Default</b> — Basis-Images pro Komponente, <code>docker-compose up</code>, Installer wählt Container vor, Self-Push mit Git-+CLI-Tokens, Isolation via Container.</div></div>
-<div class="phase"><span class="pnum">2</span><div><b>Verteilte Plattform</b> — Control-Plane (2129/2230; Task Server remote = 2404, Studio bleibt lokal), CAR-Migration (2370–2373), gepaarte Releases (2132), Qualitäts-Ebene (2130).</div></div>
-<div class="phase"><span class="pnum">3</span><div><b>SSH-Tunnel ablösen</b> — Steuerung nur noch per API (2262); Token-Refresh-Konzept ohne Tunnel.</div></div>
-<p class="dim">Feature- und Kleinkram-Karten fließen ab Phase 0 einfach durch die geheilte Pipeline. Details + Kartenzuordnung: siehe „Umsetzungsplan" unten.</p>
-
-<h2>Leitplanken (entschieden)</h2>
+<h2 id="s1"><span class="no">&sect;1</span>What this document is</h2>
+<p>Agent Studio orchestrates coding agents: cards run through code, automatic review, and integration. The North star is the single entry point to that target picture. It answers one question, "what are we building and what has already been decided", and then hands the reader to the document that owns each area.</p>
+<p>The rule that keeps it usable is a division of labour. Live decisions are linked, never copied, so a decision has exactly one home and cannot drift into a second, slowly ageing version here. Superseded material is absorbed as history: a short section that says what the old Dossier claimed, and which decision replaced it. Dated situation reports are not part of the arc; they age out by design and are linked as snapshots.</p>
 <div class="box accent">
-  <ul>
-    <li><b>Container-Default</b>, bei Neuinstallation sofort ab Installer vorausgewählt.</li>
-    <li><b>Isolation gilt dem Agent, nicht den Sourcen</b> — alle Projekt-Sourcen + Nachbarrepos dürfen gesehen werden (bewusst). Worktree-Modell bleibt; ein Git-Checkout je Projekt.</li>
-    <li><b>Agenten pushen selbst</b> (Git-+CLI-Tokens); CLI-Token-Refresh über die lokale Umgebung; perspektivisch kein SSH-Tunnel — alles per API.</li>
-    <li><b>Gepflegte Basis-Images</b> pro Komponente; die Container-Def wird ein <b>agent-gepflegtes Repo-Artefakt</b>, das Image ein Sidecar; Verifikation läuft hermetisch im selben Container.</li>
-    <li><b>Spawn-Pfade konvergieren auf CAR</b> — ein Ausführungspfad, damit Container/Mount/Token/Image nur einmal existieren (kein Drift).</li>
-  </ul>
+  <h3>Reading order</h3>
+  <p>The arc is here. The two decisions that define the current target are <a href="../operations-server-backchannel/index.html">AGT-W49</a> (Operations Server beside the Task Server) and <a href="../docker-ausfuehrungswelt-migration/index.html">AGT-W51</a> (isolated execution with preparation scripts). Everything in &sect;6 is history and is kept for provenance only.</p>
 </div>
 
-<h2>Landkarte — die Tiefen-Dokumente</h2>
-<p class="dim">Hier geht's ins Detail. Jedes Doc bleibt fokussiert auf sein Thema; den großen Bogen hältst du hier im Nordstern. Die erste Karte ist kein Tiefen-Doc, sondern der aktuelle Schnappschuss: was gerade läuft, mit Datum.</p>
-<div class="map">
-  <a class="card" href="../lagebild-2026-08/index.html"><h4>Lagebild 03.08.2026 — wo wir stehen</h4><div class="path">operations/lagebild-2026-08/</div><p>Datierter Schnappschuss: welche Komponenten wo laufen, Stand der CAR-Ausführungsschicht, Lane-Verteilung der Karten, offene Großthemen. Ersetzt den Nordstern nicht — veraltet planmäßig.</p></a>
-  <a class="card" href="../umsetzungsplan-zielbild/index.html"><h4>Umsetzungsplan (Detail)</h4><div class="path">operations/umsetzungsplan-zielbild/</div><p>Die vier Phasen ausführlich, mit Kartenzuordnung, Bündelung (Batch vs. Task), Spawn-Konvergenz &amp; Verifikations-Container.</p></a>
-  <a class="card" href="../car-migration-plan.md"><h4>CAR-Migrations-Plan (P2)</h4><div class="path">operations/car-migration-plan.md</div><p>Koordinationsplan der Kette 2370–2373: vier Spawn-Pfade, CAR-Gap-Analyse, T0-Vorleistungen (RunSpec!), Parity-Suite, Hot-Migration, Container-Anschluss.</p></a>
-  <a class="card" href="../zielbild-komponenten-protokolle/index.html"><h4>Architektur &amp; Protokolle</h4><div class="path">operations/zielbild-komponenten-protokolle/</div><p>Komponenten, das v1-Plane, die Drift-Analyse, Schnitt/Build/Deploy im Zielbild.</p></a>
-  <a class="card" href="../execution-model-shift/index.html"><h4>Ausführungsmodell: Container-Default</h4><div class="path">operations/execution-model-shift/</div><p>Container-Spawn, Isolation, Image, Installer — die Ausführungs-Richtung im Detail.</p></a>
-  <a class="card" href="../model-routing-policy/index.html"><h4>Modell-Routing-Policy</h4><div class="path">operations/model-routing-policy/</div><p>Wie Token Economy Modell × Reasoning je Karte entscheidet.</p></a>
-  <a class="card" href="../log-retention/index.html"><h4>Log-Retention</h4><div class="path">operations/log-retention/</div><p>Deckelung, Archiv-Sweep, Runner-Backup — Task-Logs nachhaltig.</p></a>
-  <a class="card" href="../runner-link/index.html"><h4>Runner link as part of the application</h4><div class="path">operations/runner-link/</div><p>Der Tunnel zum Runner-Host als überwachtes Bauteil: LinkSupervisor im Task-Server-Prozess jetzt, Tunnel-Abbau mit dem Remote Task Server in Phase B. Entscheidungen D1 bis D3.</p></a>
-  <a class="card" href="../doku-inventur-2026-07/README.md"><h4>Documentation inventory, July 2026</h4><div class="path">operations/doku-inventur-2026-07/</div><p>Current, partial, and archived pages with sampled code checks and the bounded Phase 2 structure decision.</p></a>
+<h2 id="s2"><span class="no">&sect;2</span>Target picture at today's state</h2>
+<p>Three planes, with one authority each. Durable product truth stays in the Task Server: cards, runs, reviews, workspace identity, orchestration sessions, leases, and lane transitions. Executable work that touches a host, a checkout, a toolchain, a process, or a local secret sits behind an operations boundary and runs on a declared host. Every run of project code or an agent CLI is prepared by a script that travels with the project and executes isolated, with an orchestrator that diagnoses failures, heals the pipeline, and appends follow-up prompts.</p>
+
+<figure>
+  <svg viewBox="0 0 1040 430" role="img" aria-labelledby="fig1-title fig1-desc">
+    <title id="fig1-title">Three planes of the Agent Studio target picture</title>
+    <desc id="fig1-desc">Frontends call a browser edge. The edge calls the Task Server for durable task truth and the Operations Server for executable operations. The Operations Server dispatches to outbound operations agents on workstation, runner, and quality hosts. Every run on those hosts passes through a project preparation script and a per-run isolation boundary, watched by the orchestrator.</desc>
+    <defs>
+      <marker id="ns-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" style="fill: var(--ink-3)"></path>
+      </marker>
+      <marker id="ns-arrow-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" style="fill: var(--develop)"></path>
+      </marker>
+    </defs>
+
+    <text class="svg-tiny" x="24" y="26">FRONTENDS AND EDGE</text>
+    <rect class="svg-node" x="24" y="38" width="200" height="62" rx="9"></rect>
+    <text class="svg-label" x="40" y="62">Local Studio</text>
+    <text class="svg-sub" x="40" y="80">loopback Connector edge</text>
+    <rect class="svg-node" x="240" y="38" width="200" height="62" rx="9"></rect>
+    <text class="svg-label" x="256" y="62">Further frontends</text>
+    <text class="svg-sub" x="256" y="80">Dossier app, fleet controls</text>
+
+    <text class="svg-tiny" x="24" y="140">CONTROL PLANE (DURABLE AUTHORITY)</text>
+    <rect class="svg-authority" x="24" y="152" width="290" height="86" rx="9"></rect>
+    <text class="svg-label" x="42" y="178">Task Server</text>
+    <text class="svg-sub" x="42" y="197">cards, runs, reviews, workspace</text>
+    <text class="svg-sub" x="42" y="214">sessions, policy, permits, leases</text>
+    <text class="svg-tiny" x="42" y="230">system of record &middot; AGT-W49</text>
+    <rect class="svg-node" x="330" y="152" width="170" height="86" rx="9"></rect>
+    <text class="svg-label" x="346" y="178">Orchestrator Engine</text>
+    <text class="svg-sub" x="346" y="197">evaluates persisted facts</text>
+    <text class="svg-sub" x="346" y="214">requests bounded actions</text>
+
+    <text class="svg-tiny" x="560" y="140">OPERATIONS BOUNDARY</text>
+    <rect class="svg-authority" x="560" y="152" width="290" height="86" rx="9"></rect>
+    <text class="svg-label" x="578" y="178">Operations Server</text>
+    <text class="svg-sub" x="578" y="197">operation catalogue, dispatch</text>
+    <text class="svg-sub" x="578" y="214">bounded attempts, no task authority</text>
+    <text class="svg-tiny" x="578" y="230">proposed, decision pending &middot; AGT-W49</text>
+    <rect class="svg-node" x="866" y="152" width="150" height="86" rx="9"></rect>
+    <text class="svg-label" x="882" y="178">Operations</text>
+    <text class="svg-label" x="882" y="195">agents</text>
+    <text class="svg-sub" x="882" y="214">outbound, per host</text>
+
+    <text class="svg-tiny" x="24" y="290">EXECUTION ON EVERY HOST</text>
+    <rect class="svg-execution" x="24" y="302" width="230" height="100" rx="9"></rect>
+    <text class="svg-label" x="42" y="328">1 &middot; Preparation</text>
+    <text class="svg-sub" x="42" y="347">travels with the commit</text>
+    <text class="svg-sub" x="42" y="364">versions, dependencies, caches</text>
+    <text class="svg-tiny" x="42" y="382">owned by the project</text>
+    <rect class="svg-execution" x="270" y="302" width="230" height="100" rx="9"></rect>
+    <text class="svg-label" x="288" y="328">2 &middot; Isolation per run</text>
+    <text class="svg-sub" x="288" y="347">sandbox process by default</text>
+    <text class="svg-sub" x="288" y="364">container optional, micro VM for proofs</text>
+    <text class="svg-tiny" x="288" y="382">owned by the product</text>
+    <rect class="svg-execution" x="516" y="302" width="250" height="100" rx="9"></rect>
+    <text class="svg-label" x="534" y="328">3 &middot; Healing orchestrator</text>
+    <text class="svg-sub" x="534" y="347">diagnosis, retry, follow-up prompt</text>
+    <text class="svg-sub" x="534" y="364">test inventory and run history</text>
+    <text class="svg-tiny" x="534" y="382">owned by the product &middot; AGT-W51</text>
+    <rect class="svg-node" x="782" y="302" width="234" height="100" rx="9"></rect>
+    <text class="svg-label" x="800" y="328">Runner and review</text>
+    <text class="svg-sub" x="800" y="347">outbound claim and lease</text>
+    <text class="svg-sub" x="800" y="364">fenced by Task Server authority</text>
+    <text class="svg-tiny" x="800" y="382">one execution path, no drift</text>
+
+    <path class="svg-flow-accent" d="M 124 100 L 124 152"></path>
+    <path class="svg-flow-accent" d="M 340 100 L 340 130 L 700 130 L 700 152"></path>
+    <path class="svg-flow" d="M 314 195 L 330 195"></path>
+    <path class="svg-flow" d="M 500 195 L 560 195"></path>
+    <path class="svg-flow" d="M 850 195 L 866 195"></path>
+    <path class="svg-flow" d="M 941 238 L 941 302"></path>
+    <path class="svg-flow" d="M 139 238 L 139 302"></path>
+    <path class="svg-flow" d="M 254 352 L 270 352"></path>
+    <path class="svg-flow" d="M 500 352 L 516 352"></path>
+  </svg>
+  <figcaption><b>Figure 1.</b> The target picture as the two live decisions define it. Blue marks durable authority and the browser edge path; green marks the execution layers that AGT-W51 decided on 12 September 2026. The Operations Server box is drawn because AGT-W49 recommends it, not because it exists: that Dossier is still decision pending and its adoption requires an ADR that amends the three component target architecture.</figcaption>
+</figure>
+
+<p>The two boundaries are independent. Where the Task Server and the Operations Server run is the subject of AGT-W49. How a run is prepared and isolated on whatever host it lands on is the subject of AGT-W51. Neither answers the other, and this document does not merge them.</p>
+
+<h2 id="s3"><span class="no">&sect;3</span>The live decisions</h2>
+<p>Two Dossiers carry the current target picture. Their content is not reproduced here. The table states what each one owns, its status on 14 September 2026, and what the North star takes from it.</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Dossier</th><th>Owns</th><th>Status</th><th>What the arc takes from it</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><a href="../operations-server-backchannel/index.html">AGT-W49</a><span class="d">Operations Server beside the Task Server</span></td>
+      <td>The authority boundary between durable task truth and executable host operations, the browser and service authentication model, and the workstation, one box Docker and distributed deployment forms.</td>
+      <td><span class="tag accent">decision pending</span><span class="d">Recommends alternative D with a staged start; D1 to D4 unanswered.</span></td>
+      <td>The Task Server stays the sole durable authority. Executable operations move behind a separate boundary with scoped principals and outbound agents. One box Docker is the intended product standard after full parity.</td>
+    </tr>
+    <tr>
+      <td><a href="../docker-ausfuehrungswelt-migration/index.html">AGT-W51</a><span class="d">Isolated execution: preparation scripts, isolation, healing orchestrator</span></td>
+      <td>How any run of project code or an agent CLI is prepared and contained, on any operating system, and how the orchestrator diagnoses and heals failures.</td>
+      <td><span class="tag ok">decided</span><span class="d">Operator decisions of 12 September 2026, afternoon revision.</span></td>
+      <td>No run executes as a bare process with the Studio's inherited environment. Preparation is a project owned script; isolation is a product owned executor profile; Docker is an optional accelerator, not a precondition. Migration runs as stages M1 to M7.</td>
+    </tr>
+  </tbody>
+</table>
 </div>
+<div class="box warn">
+  <h3>The one correction the afternoon of 12 September made</h3>
+  <p>The morning wording was "Docker mandatory, Windows is no longer an execution world". The afternoon revision kept the second half and dropped the first: the source of reproducibility is the preparation script, and a container image is a built result of that script which may be used when it exists. Any text that still presents the container image as the source of truth is superseded, including the container default Dossier absorbed in &sect;6.</p>
+</div>
+
+<h2 id="s4"><span class="no">&sect;4</span>Guardrails in force</h2>
+<p>These are consequences of the two live decisions and of the architectural decision record, restated here because they constrain every card. Each one has an owner document; none of them is decided in this Dossier.</p>
+<ul>
+  <li><b>One durable authority.</b> Cards, runs, reviews, leases, and lane transitions live in the Task Server. No second store of task truth is created, and an operations credential never authorizes a task mutation. <span class="muted">Owner: AGT-W49.</span></li>
+  <li><b>Isolation applies to the run, not to the sources.</b> A run is contained in its process tree, filesystem, network, secrets, and time budget. Reading neighbouring project sources remains deliberate and allowed. The worktree model stays: one stable checkout per project, one leased worktree per run. <span class="muted">Owner: AGT-W51.</span></li>
+  <li><b>Preparation travels with the commit.</b> Versions, dependencies, and caches are declared in the project repository and executed by a script the orchestrator co-authors with the team. The product supplies the technology building blocks and the caches. <span class="muted">Owner: AGT-W51.</span></li>
+  <li><b>Git ownership belongs to the platform.</b> Pre and post pipeline steps commit, push, and manage worktrees. The agent in the run does not. <span class="muted">Owner: <a href="../git/commit-push-doctrine.md">commit and push doctrine</a>, ADR-0052.</span></li>
+  <li><b>One execution path.</b> Spawn paths converge so that container, mount, token, and image handling exist once and cannot drift apart. <span class="muted">Owner: AGT-W51, inherited from the convergence work absorbed in &sect;6.</span></li>
+  <li><b>The browser never holds a service bearer.</b> A browser talks to its edge; the edge holds audience bound credentials for the central services. <span class="muted">Owner: AGT-W49.</span></li>
+</ul>
+
+<h2 id="s5"><span class="no">&sect;5</span>Map of current Dossiers</h2>
+<p>The entry point links the documents that are current. It does not link superseded ones: those are reachable through the History list of the Dossier explorer and through &sect;6 below. The consolidation programme that produces the remaining theme Dossiers is AGT-W55; until its cards have run, some themes are still spread over their source Dossiers.</p>
+<div class="map">
+  <a class="card" href="../operations-server-backchannel/index.html"><h4>Operations Server beside the Task Server</h4><div class="path">operations/operations-server-backchannel/ &middot; AGT-W49</div><p>Authority boundary, security model, deployment forms, and the programme from the transitional Compose baseline to the standard one box profile.</p></a>
+  <a class="card" href="../docker-ausfuehrungswelt-migration/index.html"><h4>Isolated execution</h4><div class="path">operations/docker-ausfuehrungswelt-migration/ &middot; AGT-W51</div><p>Preparation script, per run isolation, healing orchestrator, tests as a product feature, migration stages M1 to M7.</p></a>
+  <a class="card" href="../dossier-consolidation-and-area-tags/index.html"><h4>Dossier consolidation and area tags</h4><div class="path">operations/dossier-consolidation-and-area-tags/ &middot; AGT-W55</div><p>The sixteen Dossier target set, the archiving rule, and the area and facet tag system. This rewrite is its first delivery slice.</p></a>
+  <a class="card" href="../lieferkette-robustheit/index.html"><h4>Delivery chain: robustness over recipes</h4><div class="path">operations/lieferkette-robustheit/ &middot; AGT-W50</div><p>Diagnosis contract, fingerprint breaking, flaky quarantine, and the recommendations the isolated execution decision did not take.</p></a>
+  <a class="card" href="../model-routing-policy/index.html"><h4>Model routing policy</h4><div class="path">operations/model-routing-policy/ &middot; AGT-W12</div><p>How model and thinking level are selected per card. The canonical contract is <a href="../../system/domains/model-routing-policy.md">docs/system/domains/model-routing-policy.md</a>.</p></a>
+  <a class="card" href="../lagebild-2026-09-01/index.html"><h4>Situation report, September 2026</h4><div class="path">operations/lagebild-2026-09-01/</div><p>Dated snapshot of what runs where, with lane numbers. It is not part of the arc and ages out by design.</p></a>
+</div>
+
+<h2 id="s6"><span class="no">&sect;6</span>History: what this Dossier absorbed</h2>
+<p>Four Dossiers are recorded as superseded by AGT-W14 and leave the current list. Their durable content is the sentence or two below, plus the decision that replaced them. Nothing else survived: their plans were written against a topology and a card set that no longer exist. Per the operator's archiving rule of 13 September 2026, a Dossier superseded by a theme Dossier needs no separate artefact, because its content lives in the theme Dossier.</p>
+
+<figure>
+  <svg viewBox="0 0 1040 250" role="img" aria-labelledby="fig2-title fig2-desc">
+    <title id="fig2-title">Lineage of the absorbed Dossiers</title>
+    <desc id="fig2-desc">Four superseded Dossiers, W6 container default, W8 installer story, W22 implementation plan, and W25 components and protocols, feed into the rewritten W14 North star as history. W14 links forward to the two live decisions W49 and W51.</desc>
+    <text class="svg-tiny" x="24" y="26">SUPERSEDED, ABSORBED AS HISTORY</text>
+    <rect class="svg-history" x="24" y="38" width="200" height="56" rx="9"></rect>
+    <text class="svg-label" x="40" y="60">AGT-W6</text>
+    <text class="svg-sub" x="40" y="80">container default</text>
+    <rect class="svg-history" x="24" y="104" width="200" height="56" rx="9"></rect>
+    <text class="svg-label" x="40" y="126">AGT-W8</text>
+    <text class="svg-sub" x="40" y="146">installer story</text>
+    <rect class="svg-history" x="24" y="170" width="200" height="56" rx="9"></rect>
+    <text class="svg-label" x="40" y="192">AGT-W22</text>
+    <text class="svg-sub" x="40" y="212">implementation plan</text>
+    <rect class="svg-history" x="240" y="104" width="200" height="56" rx="9"></rect>
+    <text class="svg-label" x="256" y="126">AGT-W25</text>
+    <text class="svg-sub" x="256" y="146">components, protocols</text>
+
+    <rect class="svg-authority" x="480" y="86" width="230" height="92" rx="9"></rect>
+    <text class="svg-label" x="498" y="114">AGT-W14 North star</text>
+    <text class="svg-sub" x="498" y="134">single entry point</text>
+    <text class="svg-sub" x="498" y="152">history in &sect;6, links in &sect;3</text>
+    <text class="svg-tiny" x="498" y="170">this document</text>
+
+    <rect class="svg-node" x="770" y="52" width="246" height="66" rx="9"></rect>
+    <text class="svg-label" x="788" y="76">AGT-W49</text>
+    <text class="svg-sub" x="788" y="96">Operations Server, deployment</text>
+    <text class="svg-tiny" x="788" y="112">decision pending</text>
+    <rect class="svg-node" x="770" y="146" width="246" height="66" rx="9"></rect>
+    <text class="svg-label" x="788" y="170">AGT-W51</text>
+    <text class="svg-sub" x="788" y="190">isolated execution, preparation</text>
+    <text class="svg-tiny" x="788" y="206">decided</text>
+
+    <path class="svg-flow" d="M 224 66 L 350 66 L 350 118 L 480 118"></path>
+    <path class="svg-flow" d="M 224 132 L 480 132"></path>
+    <path class="svg-flow" d="M 224 198 L 350 198 L 350 146 L 480 146"></path>
+    <path class="svg-flow" d="M 440 132 L 480 132"></path>
+    <path class="svg-flow-accent" d="M 710 118 L 740 118 L 740 85 L 770 85"></path>
+    <path class="svg-flow-accent" d="M 710 146 L 740 146 L 740 179 L 770 179"></path>
+  </svg>
+  <figcaption><b>Figure 2.</b> Lineage. Dashed boxes are superseded and move to the Dossier explorer History list; the solid arrows into W14 are absorption, the blue arrows out of it are links to the live decisions. AGT-W25 fed the target picture directly rather than through an intermediate plan, which is why its arrow is short.</figcaption>
+</figure>
+
+<div class="history">
+  <h3>AGT-W6, execution model: container default <span class="tag">2026-08-11</span></h3>
+  <p>Proposed the direction change from host direct operation with full access to container isolated local execution as the default, with local or mixed operation as a deliberate opt out in host administration. It carried the layer map, the change list per project, and six worked decisions E1 to E6, including spawn path convergence and gate isolation.</p>
+  <p>What survives: isolation is the default and the host direct path is gone; spawn paths converge on one execution path. What does not: the container is no longer the mechanism that delivers isolation, and an installer no longer preselects it.</p>
+  <span class="replaced"><b>Replaced by</b> <a href="../docker-ausfuehrungswelt-migration/index.html">AGT-W51</a>, operator decision of 12 September 2026: isolation per run by executor profile, sandbox process by default, container optional.</span>
+</div>
+
+<div class="history">
+  <h3>AGT-W8, installer story: guided steps, Linux all Docker and Windows <span class="tag">2026-08-18</span></h3>
+  <p>Designed the guided setup of a fresh machine with every component as a container, once for Linux and once for Windows: the component matrix container against host, per step failure modes and remedies, the state of Compose and secrets, and a test protocol template. Its core finding was that the evidence chain ended at an empty Studio board, with agent hosts in containers, provider authentication, and a dummy card completion proof all missing.</p>
+  <p>What survives: the finding that setup must be proven end to end by a card that actually completes, and the per step failure and remedy shape. What does not: the all Docker premise for both operating systems, and the three planned validation runs, which were never executed as cards.</p>
+  <span class="replaced"><b>Replaced by</b> <a href="../docker-ausfuehrungswelt-migration/index.html">AGT-W51</a> for the execution premise, which keeps two native pieces per operating system, an outer installer and a host management process, and requires that onboarding does not become harder; and by <a href="../operations-server-backchannel/index.html">AGT-W49</a> step 5 for the installer itself, which exposes the workstation, one box, and distributed profiles once the contracts are stable.</span>
+</div>
+
+<div class="history">
+  <h3>AGT-W22, implementation plan towards the target picture <span class="tag">2026-08-11</span></h3>
+  <p>The detailed card level plan from the state of 27 July in four phases: P0 heal the pipeline, P1 container default, P2 distributed platform, P3 replace the SSH tunnel. It held the guardrails, spawn path convergence, bundling by overlap, and verification in the same container.</p>
+  <p>What survives: the guardrails, restated in &sect;4, and the rule that architecture changes ship as coordinated batches while features ship as single cards. What does not: all four phases as a plan. P0 and P1 completed, P2's card chain is closed, and P3's premise changed when the direct WireGuard path replaced tunnel replacement as the goal.</p>
+  <span class="replaced"><b>Replaced by</b> <a href="../operations-server-backchannel/index.html">AGT-W49</a> &sect;08, whose ordered programme of six steps is the current delivery plan, and <a href="../docker-ausfuehrungswelt-migration/index.html">AGT-W51</a> stages M1 to M7 for the execution half.</span>
+</div>
+
+<div class="history">
+  <h3>AGT-W25, target picture: components, protocols, cut, build, deploy <span class="tag">2026-08-11</span></h3>
+  <p>Distilled from the night incident of 27 July. Its core finding was that three of five blockers were protocol drift between runner and backend, and that the integration branch did not build. It described the components and their contracts and answered four steering questions on cut, build, and deployment, with five open decisions E1 to E5.</p>
+  <p>What survives: the diagnosis that one versioned protocol plane plus a build gate before integration is the load bearing requirement, paired runner and backend releases, and the cut policy that feature equals card while architecture equals coordinated change. What does not: the component inventory itself, which the route migration and the operations boundary have since redrawn.</p>
+  <span class="replaced"><b>Replaced by</b> <a href="../operations-server-backchannel/index.html">AGT-W49</a> for components, contracts, and deployment, which records the current process shapes and the 366 route inventory; the gate and validation half is being consolidated by <a href="../dossier-consolidation-and-area-tags/index.html">AGT-W55</a> into the Gates Dossier.</span>
+</div>
+
+<p class="muted">The previous version of this Dossier, dated 28 July 2026, is superseded by this rewrite. Its situation table, its four phase list, and its map of ten deep documents were the three parts that had aged; the entry point role is what carried over.</p>
+
+<section id="s7" data-concept-section="alternatives" data-document-section="alternatives">
+<h2><span class="no">&sect;7</span>Alternatives</h2>
+<p>How should the entry point relate to the decisions it points at? Three shapes were available for this rewrite.</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Criterion</th><th>A &middot; Map with history, links only</th><th>B &middot; Full summary of both decisions</th><th>C &middot; Merge W49 and W51 into the North star</th></tr></thead>
+  <tbody>
+    <tr><td>Where a decision lives</td><td>Once, in its own Dossier.</td><td>Twice: the Dossier and an abridged copy here.</td><td>Once, here; the two Dossiers become history.</td></tr>
+    <tr><td>Drift risk</td><td>None; a link cannot age.</td><td>High; the copy ages at every revision of the source.</td><td>None, but the merge rewrites two decision records one and two days after they were taken.</td></tr>
+    <tr><td>Reader effort for the arc</td><td>One page plus two clicks.</td><td>One page.</td><td>One very long page.</td></tr>
+    <tr><td>Fits the approved target set</td><td>Yes: &sect;2 of AGT-W55 names W14 as a rewrite that links W49 and W51.</td><td>Partly: the target set forbids duplicated argument.</td><td>No: this is option B of decision D1, which the operator did not choose.</td></tr>
+    <tr><td>Cost of the next revision</td><td>Zero; the linked Dossier changes alone.</td><td>One edit here per source revision.</td><td>The whole page is rewritten whenever either decision moves.</td></tr>
+  </tbody>
+</table>
+</div>
+</section>
+
+<section id="s8" data-concept-section="recommendation" data-document-section="recommendation">
+<h2><span class="no">&sect;8</span>Recommendation</h2>
+<div class="box accent">
+  <h3>A, map with history and links only</h3>
+  <p>The North star keeps the arc, the guardrails, and the history of what it absorbed, and links every live decision instead of summarising it. This is what the operator's answer to D1 of AGT-W55 asks for: sixteen Dossiers with W14 rewritten as the single entry point, and W49 and W51 kept as separate current Dossiers rather than folded in.</p>
+</div>
+<p>Two consequences follow, and this rewrite applies both. First, the four absorbed Dossiers are recorded as superseded by AGT-W14 in their descriptors, and their status is set so that they leave the current list. Second, no separate archive artefact is written for them, because the operator's D2 note states that a Dossier superseded by a theme Dossier needs no artefact: its content lives in the theme Dossier, and artefacts are only for historical Dossiers whose knowledge has no home.</p>
+<p>The maintenance rule that keeps this document from ageing the way its predecessor did: when a decision changes, only the linked Dossier is edited. This page changes when a Dossier joins or leaves the current list, or when a new decision replaces one of the two in &sect;3. A dated situation report never becomes part of the arc.</p>
+</section>
+
+<section id="s9" data-concept-section="evidence" data-document-section="evidence">
+<h2><span class="no">&sect;9</span>Evidence</h2>
+<div class="evidence-list">
+  <div class="evidence"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>The operator's answers, 13 September 2026, 07:53 UTC</b><small>D1 A, sixteen Dossiers with W14 rewritten as the entry point. D2 A, archive when the durable knowledge has a documentation home, with the note that a Dossier superseded by a theme Dossier needs no artefact. Recorded in <a href="../dossier-consolidation-and-area-tags/index.html">AGT-W55</a> &sect;9 and its descriptor.</small></span></div>
+  <div class="evidence"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>The AGT-W53 matrix classified all 52 Dossiers on 13 September 2026</b><small>23 current, 12 partially superseded, 6 superseded, 11 historical. W6, W8, W22, W25 and the previous W14 are in the superseded row of the consolidation map in AGT-W55 &sect;3, with "target architecture" as their destination. Source: <a href="../dossier-review-2026-09/index.html">docs/operations/dossier-review-2026-09</a>.</small></span></div>
+  <div class="evidence"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Catalogue projection: status decides the current list</b><small><code>backend/Features/Docs/WorkbenchCatalogueService.cs</code> defines <code>CurrentStatuses</code> as active, decision-pending, decided, and counts archived and documented as history. Setting an absorbed descriptor to <code>documented</code> therefore removes it from the current list without deleting it.</small></span></div>
+  <div class="evidence"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>AGT-W51 is decided, AGT-W49 is decision pending</b><small>Their descriptors carry <code>status</code> decided and decision-pending, and both carry a review verdict of current with an empty <code>supersededBy</code>, reviewed by the operator on 13 September 2026. AGT-W49 &sect;09 lists D1 to D4 as unanswered.</small></span></div>
+  <div class="evidence"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b>Why the four absorbed Dossiers keep nothing beyond &sect;6</b><small>Each one is a plan or inventory keyed to the 27 July topology and its card chain. The decisions they contained are either delivered, restated as guardrails in &sect;4, or explicitly reversed by the afternoon revision of 12 September. What remains is provenance, which the History list preserves in full.</small></span></div>
+  <div class="evidence"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b>The Operations Server is drawn in Figure 1 as a target, not as a fact</b><small>AGT-W49 states that a separately deployable Operations Server is a fourth runtime component and that adopting it requires an ADR amending <code>docs/concepts/distributed-agent-studio-target-architecture.md</code>. Until that ADR exists, Figure 1 is the recommended target picture and is labelled as such.</small></span></div>
+</div>
+<p class="muted">No screenshot is included. This Dossier makes no finding about a visible product surface: its claims concern descriptor state, the catalogue projection rule in the backend, and the content of four linked documents, all of which are verifiable in the repository. The list membership statements in &sect;5 and &sect;6 are statements about <code>status</code> fields and the projection rule cited above, not about what a particular screen renders. The pinned demo workspace used for published captures contains invented Dossiers and could not prove a claim about these specific descriptors, and a capture of the real workspace is excluded by the capture runbook. Human sight review is not claimed.</p>
+</section>
+
+<section id="s10" data-concept-section="open-decisions" data-document-section="open-decisions">
+<h2><span class="no">&sect;10</span>Open decisions</h2>
+<p>Two choices remain for a human. Each names a recommended option; neither is recorded as decided by this document.</p>
+
+<div class="decision">
+  <h3>N1. How should the rewritten North star be encoded in the catalogue?</h3>
+  <div class="opt"><b>A. Standing map: status active, phase informational</b><span>Matches the curation note of 17 August 2026, which argued that an entry point makes no deliverable promises of its own and has no operator decision pending. Requires that &sect;10 be emptied once N2 is answered.</span></div>
+  <div class="opt"><b>B. Decision Dossier until N2 is answered, then A</b><span>Status decision-pending and phase decision-ready while this page still carries an unanswered question, then back to A. This is the encoding the rewrite ships with, and it is the recommendation, because the page currently does carry an open question and the concept delivery contract expects a decision-ready descriptor.</span></div>
+  <div class="opt"><b>C. Permanent decision Dossier</b><span>Keeps the entry point on the decision surface forever, which produces a standing empty decision block and trains readers to ignore it.</span></div>
+</div>
+
+<div class="decision">
+  <h3>N2. Should the North star name the Operations Server as the target before the ADR exists?</h3>
+  <div class="opt"><b>A. Name it, labelled as recommended and decision pending</b><span>Figure 1 and &sect;3 show the boundary with an explicit pending marker, so readers see the direction without mistaking it for a decided architecture. This is the recommendation and what the rewrite ships, because AGT-W49 is the only current document that describes the deployment target at all, and leaving the entry point silent would send readers to the superseded W25 inventory.</span></div>
+  <div class="opt"><b>B. Hold the three component target until the ADR lands</b><span>Strictly accurate against <code>docs/concepts/distributed-agent-studio-target-architecture.md</code>, but the North star would then describe a topology that the only current architecture Dossier already argues against.</span></div>
+  <div class="opt"><b>C. Raise the ADR from this card</b><span>Settles the question properly, but writing an architectural decision record is a different card than rewriting an entry point, and the ADR is step 1 of the AGT-W49 programme, which is gated on its own D1.</span></div>
+</div>
+</section>
+
+<h2 id="sources"><span class="no">&sect;</span>Sources</h2>
+<ul>
+  <li><a href="../dossier-consolidation-and-area-tags/index.html">docs/operations/dossier-consolidation-and-area-tags/</a> (AGT-W55): target set &sect;2, consolidation map &sect;3, archiving rule &sect;4, operator answers to D1 and D2 of 13 September 2026.</li>
+  <li><a href="../dossier-review-2026-09/index.html">docs/operations/dossier-review-2026-09/</a> (AGT-W53): the relevance matrix over all 52 Dossiers.</li>
+  <li><a href="../operations-server-backchannel/index.html">docs/operations/operations-server-backchannel/</a> (AGT-W49): ownership boundary, target topology, deployment forms, programme, open decisions D1 to D4.</li>
+  <li><a href="../docker-ausfuehrungswelt-migration/index.html">docs/operations/docker-ausfuehrungswelt-migration/</a> (AGT-W51): operator decisions of 12 September 2026, the three layers, migration stages M1 to M7.</li>
+  <li>Absorbed as history: <code>docs/operations/execution-model-shift/</code> (AGT-W6), <code>docs/operations/installer-story/</code> (AGT-W8), <code>docs/operations/umsetzungsplan-zielbild/</code> (AGT-W22), <code>docs/operations/zielbild-komponenten-protokolle/</code> (AGT-W25).</li>
+  <li><code>backend/Features/Docs/WorkbenchCatalogueService.cs</code>: <code>CurrentStatuses</code>, <code>AllowedStatuses</code>, <code>AllowedReviewVerdicts</code>, and the current against history projection.</li>
+  <li><a href="../../app/templates/article-document-v2.html">docs/app/templates/article-document-v2.html</a>: canonical article layout, theme tokens, evidence block. House style taken from the AGT-W51 Dossier as instructed.</li>
+  <li>Cards AGT-2798 (this rewrite) and AGT-2797 (the consolidation programme).</li>
+</ul>
+
+<!-- agent-studio:implementation-section:start -->
+<section id="implementation" data-document-section="implementation">
+  <h2>Implementation</h2>
+  <p>Delivery slices append their current implementation status here. Decision content above remains unchanged.</p>
+  <ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<!-- agent-studio:implementation-log:end -->
+  </ol>
+</section>
+<!-- agent-studio:implementation-section:end -->
 
 </main>
 </body>

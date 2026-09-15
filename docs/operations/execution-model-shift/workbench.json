@@ -6,7 +6,7 @@
   "entrypoint": "index.html",
   "status": "documented",
   "phase": "decision-ready",
-  "updatedAt": "2026-08-11T14:45:00Z",
+  "updatedAt": "2026-09-14T00:00:00Z",
   "editedBy": "Operator bookkeeping via AGT-2621",
   "statusReason": "The execution-model shift is implemented and every delivery card linked by this descriptor is archived.",
   "sourceTaskKeys": [
@@ -20,11 +20,11 @@
   "review": {
     "verdict": "superseded",
     "supersededBy": [
-      "AGT-W51"
+      "AGT-W14"
     ],
-    "reviewedAt": "2026-09-13T10:20:00Z",
-    "reviewedBy": "Operator",
-    "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    "reviewedAt": "2026-09-14T00:00:00Z",
+    "reviewedBy": "AGT-2798",
+    "note": "Superseded by AGT-W14: absorbed as a history section in the rewritten North star (docs/operations/nordstern/index.html §6), which names the decision that replaced it. Follows AGT-W55 §2 and §3 and the operator's answers to D1 and D2 of 2026-09-13; per the D2 note a Dossier superseded by a theme Dossier needs no separate archive artefact, because its content lives in the theme Dossier. Status moved to documented so it leaves the current list and stays readable under History. Recorded by AGT-2798."
   },
   "reviewHistory": [
     {
@@ -35,6 +35,15 @@
       "reviewedAt": "2026-09-13T10:20:00Z",
       "reviewedBy": "Operator",
       "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    },
+    {
+      "verdict": "superseded",
+      "supersededBy": [
+        "AGT-W14"
+      ],
+      "reviewedAt": "2026-09-14T00:00:00Z",
+      "reviewedBy": "AGT-2798",
+      "note": "Superseded by AGT-W14: absorbed as a history section in the rewritten North star (docs/operations/nordstern/index.html §6), which names the decision that replaced it. Follows AGT-W55 §2 and §3 and the operator's answers to D1 and D2 of 2026-09-13; per the D2 note a Dossier superseded by a theme Dossier needs no separate archive artefact, because its content lives in the theme Dossier. Status moved to documented so it leaves the current list and stays readable under History. Recorded by AGT-2798."
     }
   ]
 }

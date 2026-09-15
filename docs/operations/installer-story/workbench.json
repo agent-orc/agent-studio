@@ -4,9 +4,9 @@
   "title": "Installer-Story: Guided Steps, Linux all-Docker und Windows",
   "summary": "Konzept fuer die gefuehrte Einrichtung einer frischen Maschine mit allen Komponenten als Container, je einmal fuer Linux und Windows. Haelt die Sichtung des Bestands (Compose-Stack, Smoke-Test in CI, frische-VM-Harness, gefuehrter Installer mit Demo-only-Docker-Pfad), die Komponenten-Matrix Container gegen Host mit Windows-Annahmen (Docker Desktop, WSL2), die Schrittlisten beider Plattformen mit Fehlerbild und Abhilfe je Schritt, den Stand von Compose und Secrets, eine Testprotokoll-Vorlage und den Schnitt in drei Folgekarten. Kernbefund: die bestehende Beweiskette endet am leeren Studio-Board; Agent-Hosts im Container, Provider-Auth und ein Dummy-Karten-Abschlussbeweis fehlen, und fuer Windows existiert kein Installer. Diese Karte macht ausserdem das runner-Profil erstmals lokal validierbar und schliesst eine Repository-Luecke bei runner.token. [Curation 2026-08-18 (AGT-2671): DONE CHECK - the three planned validation runs (Linux VM, Windows, installer implementation) remain unexecuted as cards; stays active. Spot-checked in code: runner.env.template, scripts/compose-runner-bootstrap.sh and the runner.token .gitignore entry all exist as claimed.]",
   "entrypoint": "index.html",
-  "status": "active",
+  "status": "documented",
   "phase": "decision-ready",
-  "updatedAt": "2026-08-18T12:00:00Z",
+  "updatedAt": "2026-09-14T00:00:00Z",
   "sourceTaskKeys": [
     "AGT-2503"
   ],
@@ -33,12 +33,11 @@
   "review": {
     "verdict": "superseded",
     "supersededBy": [
-      "AGT-W49",
-      "AGT-W51"
+      "AGT-W14"
     ],
-    "reviewedAt": "2026-09-13T10:20:00Z",
-    "reviewedBy": "Operator",
-    "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    "reviewedAt": "2026-09-14T00:00:00Z",
+    "reviewedBy": "AGT-2798",
+    "note": "Superseded by AGT-W14: absorbed as a history section in the rewritten North star (docs/operations/nordstern/index.html §6), which names the decision that replaced it. Follows AGT-W55 §2 and §3 and the operator's answers to D1 and D2 of 2026-09-13; per the D2 note a Dossier superseded by a theme Dossier needs no separate archive artefact, because its content lives in the theme Dossier. Status moved to documented so it leaves the current list and stays readable under History. Recorded by AGT-2798."
   },
   "reviewHistory": [
     {
@@ -50,6 +49,15 @@
       "reviewedAt": "2026-09-13T10:20:00Z",
       "reviewedBy": "Operator",
       "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    },
+    {
+      "verdict": "superseded",
+      "supersededBy": [
+        "AGT-W14"
+      ],
+      "reviewedAt": "2026-09-14T00:00:00Z",
+      "reviewedBy": "AGT-2798",
+      "note": "Superseded by AGT-W14: absorbed as a history section in the rewritten North star (docs/operations/nordstern/index.html §6), which names the decision that replaced it. Follows AGT-W55 §2 and §3 and the operator's answers to D1 and D2 of 2026-09-13; per the D2 note a Dossier superseded by a theme Dossier needs no separate archive artefact, because its content lives in the theme Dossier. Status moved to documented so it leaves the current list and stays readable under History. Recorded by AGT-2798."
     }
   ]
 }
