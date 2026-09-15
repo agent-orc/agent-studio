@@ -517,6 +517,53 @@ public sealed class ProjectPreparationTests : IDisposable
         Assert.Null(result.Manifest.FailureReason);
     }
 
+    [Theory]
+    // AGT-2833: named Windows signatures instead of an opaque exit code.
+    [InlineData("Loading managed Windows PowerShell failed.", PreparationFailureKind.Environment, "prepare:powershell-environment")]
+    [InlineData(
+        "C:\\repo\\obj\\Sample.csproj.nuget.g.targets(1,1): error MSB4018: "
+            + "System.ArgumentNullException: Value cannot be null. (Parameter 'path1')",
+        PreparationFailureKind.Environment,
+        "prepare:windows-environment")]
+    // Already matched before AGT-2833 via the broader "not recognized as an
+    // internal" phrase; pinned here so the exact card wording stays covered.
+    [InlineData(
+        "'dotnet' is not recognized as an internal or external command, operable program or batch file.",
+        PreparationFailureKind.ToolMissing,
+        "tool:missing")]
+    public void Classify_names_known_windows_prepare_signatures(
+        string evidence, PreparationFailureKind expectedKind, string expectedSignature)
+    {
+        var (kind, signature, reason) = ProjectPreparationExecutor.Classify(evidence, exitCode: 1);
+
+        Assert.Equal(expectedKind, kind);
+        Assert.Equal(expectedSignature, signature);
+        Assert.False(string.IsNullOrWhiteSpace(reason));
+    }
+
+    [Fact]
+    public async Task Failing_prepare_with_the_nuget_path1_signature_is_classified_as_windows_environment()
+    {
+        WritePreparedRepository($"""
+            echo 'restoring dependencies'
+            echo "NuGet.targets(203,5): error MSB4018: Value cannot be null. (Parameter 'path1')" 1>&2
+            exit 1
+            """);
+        var manifestPath = Path.Combine(_root, "manifests", ProjectPreparationPaths.ManifestFileName);
+
+        var result = await ProjectPreparationExecutor.RunAsync(
+            _root, Path.Combine(_root, "cache"), manifestPath, "0f0f0f0", null,
+            TimeSpan.FromMinutes(2), CancellationToken.None);
+
+        Assert.False(result.Succeeded, result.Output);
+        Assert.Equal(PreparationFailureKind.Environment, result.FailureKind);
+        Assert.Equal("prepare:windows-environment", result.FailureSignature);
+        // The named reason, not just the exit code, reaches the card's
+        // integration detail alongside the bounded stderr tail.
+        Assert.Contains("Windows base variable NuGet needs", result.FailureReason);
+        Assert.Contains("Parameter 'path1'", result.FailureReason);
+    }
+
     // AGT-2822: proves on a real Windows host that a repository without
     // prepare.ps1 runs its POSIX prepare through Git Bash and that the copied
     // Windows base variables let the .NET SDK resolve its user paths.

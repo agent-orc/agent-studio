@@ -742,6 +742,51 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         Assert.False(status.Failure?.RebaseRecoveryAvailable);
     }
 
+    [Fact]
+    public void BuildLookup_WindowsPowerShellPreparationFailure_NamesTheReasonInTheIntegrationDetail()
+    {
+        // AGT-2833: a Windows PowerShell/NuGet host-environment signature gets
+        // a named reason from ProjectPreparationExecutor.Classify instead of an
+        // opaque "Prepare command failed with exit code" text, and that named
+        // reason (not just the raw exit code) must reach the card's
+        // integration detail. It is a host misconfiguration, not a product
+        // defect, so it stays Pending (CAC-18) like any other gate-environment
+        // failure.
+        const string namedReason = "Loading managed Windows PowerShell failed; the preparation host "
+            + "environment is missing a Windows base variable PowerShell needs.";
+        var repo = SeedDevelopMainRepo();
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "checkout -q -b task/powershell-environment");
+        File.WriteAllText(Path.Combine(repo, "powershell-environment.txt"), "wip");
+        Commit(repo, "feat: powershell environment wip");
+        var anchor = RunGit(repo, "rev-parse task/powershell-environment").Out.Trim();
+        RunGit(repo, "checkout -q develop");
+
+        var svc = BuildService(repo, out var project, out var log);
+        var job = Job("powershell-environment", "AGT-3022", project, repo, log, commits: new[] { Commit(anchor) },
+            prov: Prov(branch: "task/powershell-environment"));
+
+        log.EnsureRun(job.FolderPath, PipelineCatalogue.Standard, project, job.Id);
+        log.RecordStep(job.FolderPath, new PipelineStepExecution
+        {
+            StepId = PipelineCatalogue.MergeIntoDevelopStepId,
+            Kind = StepKind.Tool,
+            Status = PipelineStepStatus.Failed,
+            Verdict = "gate-environment-failure",
+            Reason = $"The build gate for develop failed before verification reached test discovery: {namedReason} "
+                + "develop was rolled back and nothing was pushed; gate environment: the build/test gate failed "
+                + "before verification could run and will be retried.",
+            FailureCode = AcceptedIntegrationFailureCodes.GateEnvironmentFailure,
+        });
+
+        var status = svc.BuildLookup(new[] { job })[job.TaskKey];
+
+        Assert.Equal(IntegrationStatuses.Pending, status.Status);
+        Assert.Contains(namedReason, status.Detail);
+        Assert.Contains(namedReason, status.Failure?.Reason);
+        Assert.Equal(AcceptedIntegrationFailureCodes.GateEnvironmentFailure, status.Failure?.Code);
+    }
+
     [Theory]
     [InlineData(
         "Release source 'origin/result' must be rebased onto 'main' before the full-suite gate.",

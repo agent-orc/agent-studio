@@ -24,6 +24,17 @@ A `.ps1` entry point is optional. `powershell -File` refuses an extensionless sc
 
 The prepare process starts from a cleared environment and receives only a fixed, non-secret allow list: `PATH`, `HOME`, `USERPROFILE`, `TMPDIR`, `TEMP`, `TMP`, `LANG`, `LC_ALL`, `SSL_CERT_FILE`, `SSL_CERT_DIR`. On Windows the base variables `SystemRoot`, `windir`, `ComSpec`, `PATHEXT`, `ProgramData`, `ProgramFiles`, `ProgramFiles(x86)`, `APPDATA`, `LOCALAPPDATA`, `HOMEDRIVE`, `HOMEPATH`, `USERNAME`, and `COMPUTERNAME` are copied on top, because MSBuild, NuGet, and the .NET SDK resolve user and machine paths through them. Without them a restore fails with `Value cannot be null. (Parameter path1)` from NuGet.targets. The repository's own `environment:` values and the product cache variables are layered on afterwards and win.
 
+`ProjectPreparationExecutor.Classify` (`contracts/TaskServer.Contracts/ProjectPreparation.cs`) recognizes known signatures in the failed run's stderr/stdout and gives each a named reason instead of the generic `command:<exitCode>:<digest>` fallback:
+
+| Evidence contains | Named signature | Failure kind |
+|---|---|---|
+| `not recognized as an internal or external command` (or the POSIX `command not found` / `No such file or directory`) | `tool:missing` | `ToolMissing` |
+| `Loading managed Windows PowerShell failed` | `prepare:powershell-environment` | `Environment` |
+| `Value cannot be null. (Parameter 'path1')` (NuGet.targets) | `prepare:windows-environment` | `Environment` |
+| Neither `.ps1` nor Git Bash is available on Windows | `prepare:windows-entry-missing` | `ScriptMissing` |
+
+The two Windows-specific signatures share the same root cause as the `path1` example above: a missing Windows base variable, just surfacing in a different tool (PowerShell's own startup versus NuGet's restore). `Environment` (like every kind other than `Command`/`Definition`) is a host misconfiguration, never a product defect, so the build/test gate classifies it as `BuildTestGateFailureKind.Environment` and the accepted-integration policy keeps the card `Pending` instead of `ConflictSkipped` (CAC-18).
+
 The project definition is read from the exact subject commit for both coding runs and the build-test gate. Central Build Profile values remain a compatibility fallback only when no repository definition exists. The Settings > Execution view shows repository truth and the latest manifest. An exceptional override requires a written justification and is recorded for review; it does not silently replace the subject-commit definition.
 
 Onboarding detects the existing stack and creates a proposal card containing both files. Accepting the card keeps the contract in the project repository. A preparation failure creates a deduplicated proposal card with the failure signature and reasoning. The orchestrator and user therefore co-author the definition through normal reviewed work.
