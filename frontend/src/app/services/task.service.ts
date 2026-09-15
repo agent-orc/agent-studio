@@ -172,6 +172,20 @@ export interface CodeReviewRunResponse {
   grade?: string | null;
 }
 
+/**
+ * AGT-2824 - reply from the "Retry integration" action. The retry replays the
+ * integration of an already reviewed delivery, so `reviewReused` is always true:
+ * no review slot is spent.
+ */
+export interface IntegrationRetryResponse {
+  status: 'integrated' | 'failed';
+  outcome: string | null;
+  attempt: number;
+  maxAutomaticAttempts: number;
+  reviewReused: boolean;
+  detail: string | null;
+}
+
 /** Reply from the accepted-delivery integration recovery action. */
 export interface IntegrationRecoveryResponse {
   status: 'queued';
@@ -722,6 +736,19 @@ export class TaskService {
   queueIntegrationRecovery(jobId: string, watchPath?: string) {
     return this.http.post<IntegrationRecoveryResponse>(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/integration/rebase`,
+      null,
+      this.withWatchPath(watchPath),
+    );
+  }
+
+  /**
+   * AGT-2824 - replay the integration of an already reviewed delivery after a
+   * gate environment failure. The passed review is reused for the same delivery
+   * SHA; the backend refuses anything else.
+   */
+  retryIntegration(jobId: string, watchPath?: string) {
+    return this.http.post<IntegrationRetryResponse>(
+      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/integration/retry`,
       null,
       this.withWatchPath(watchPath),
     );

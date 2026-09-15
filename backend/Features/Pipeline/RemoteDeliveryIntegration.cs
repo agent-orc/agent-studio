@@ -107,6 +107,12 @@ public static class RemoteDeliveryIntegrationPolicy
                && string.Equals(verdict.Classification, "NoCommands", StringComparison.OrdinalIgnoreCase));
 }
 
+/// <param name="RetryAttempt">
+/// AGT-2824: set when this request replays an already reviewed delivery after a
+/// gate environment failure, e.g. <c>backstop 2/3</c>. Carried into the
+/// integration timeline rows so a replay is distinguishable from the original
+/// integrate-on-delivery attempt. Null for the first attempt.
+/// </param>
 public sealed record RemoteDeliveryIntegrationRequest(
     string Project,
     string JobId,
@@ -115,7 +121,8 @@ public sealed record RemoteDeliveryIntegrationRequest(
     string IntegrationBranch,
     string IntegrationStrategy,
     string PipelineType,
-    DateTimeOffset DeliveredAtUtc);
+    DateTimeOffset DeliveredAtUtc,
+    string? RetryAttempt = null);
 
 /// <summary>
 /// Serializes immediately eligible fenced deliveries per project in delivery
@@ -400,14 +407,10 @@ public sealed class RemoteDeliveryIntegrationCoordinator
             request.JobFolderPath,
             TimelineEventKinds.IntegrationStarted,
             TimelineActors.System,
-            $"Remote delivery integration into {request.IntegrationBranch} started before Human Review.",
-            details: new Dictionary<string, string>
-            {
-                ["integrationBranch"] = request.IntegrationBranch,
-                ["integrationStrategy"] = request.IntegrationStrategy,
-                ["pipelineType"] = request.PipelineType,
-                ["stage"] = PreHumanReviewStage,
-            });
+            request.RetryAttempt is null
+                ? $"Remote delivery integration into {request.IntegrationBranch} started before Human Review."
+                : $"Integration retry {request.RetryAttempt} into {request.IntegrationBranch} started for the already reviewed delivery.",
+            details: RowDetails(request));
 
         var result = await runner.RunAsync(
             request.Project,
@@ -439,14 +442,33 @@ public sealed class RemoteDeliveryIntegrationCoordinator
             success
                 ? $"Remote delivery integrated into {request.IntegrationBranch} before Human Review."
                 : $"Immediate Remote delivery integration failed ({result.Outcome}); the task remains reviewable with a visible integration failure.",
-            details: new Dictionary<string, string>
-            {
-                ["outcome"] = result.Outcome.ToString(),
-                ["integrationBranch"] = request.IntegrationBranch,
-                ["detail"] = result.Error ?? string.Empty,
-                ["stage"] = PreHumanReviewStage,
-            });
+            details: RowDetails(
+                request,
+                ("outcome", result.Outcome.ToString()),
+                ("detail", result.Error ?? string.Empty)));
         return result;
+    }
+
+    /// <summary>
+    /// Shared detail map for the integration timeline rows. Carries the
+    /// AGT-2824 <c>retryAttempt</c> qualifier only when the request is a replay,
+    /// so the original integrate-on-delivery rows keep their exact shape.
+    /// </summary>
+    private static Dictionary<string, string> RowDetails(
+        RemoteDeliveryIntegrationRequest request,
+        params (string Key, string Value)[] extra)
+    {
+        var details = new Dictionary<string, string>
+        {
+            ["integrationBranch"] = request.IntegrationBranch,
+            ["integrationStrategy"] = request.IntegrationStrategy,
+            ["pipelineType"] = request.PipelineType,
+            ["stage"] = PreHumanReviewStage,
+        };
+        foreach (var (key, value) in extra) details[key] = value;
+        if (request.RetryAttempt is { Length: > 0 } retryAttempt)
+            details["retryAttempt"] = retryAttempt;
+        return details;
     }
 
     private static void RecordPreReviewFailure(

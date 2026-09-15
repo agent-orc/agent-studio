@@ -591,19 +591,29 @@ public sealed class TaskIntegrationStatusService
             // is eligible to be accepted again instead of needing a steer round.
             if (failure.Code == AcceptedIntegrationFailureCodes.GateEnvironmentFailure)
             {
+                // AGT-2824: once the bounded automatic retries are spent, the
+                // card must say so. Without the park reason the chip reads the
+                // same on minute one and on minute ninety, which is exactly why
+                // three cards sat untouched for over an hour.
+                var parkedReason = ReadGateEnvironmentParkReason(job);
+                var gateReason = parkedReason ?? visibleReason;
                 return new TaskIntegrationStatus
                 {
                     Status = IntegrationStatuses.Pending,
                     DeliveryRef = deliveryRef,
                     IntegrationBranch = branchName,
-                    Detail = $"gate environment: {visibleReason}",
+                    Detail = $"gate environment: {gateReason}",
                     Repositories = repositories ?? [],
                     Failure = new TaskIntegrationFailure
                     {
                         Code = failure.Code,
-                        Label = failure.Label,
-                        Reason = visibleReason,
+                        Label = parkedReason is null
+                            ? failure.Label
+                            : "Gate environment failure (retries exhausted)",
+                        Reason = gateReason,
                         RebaseRecoveryAvailable = failure.RebaseRecoveryAvailable,
+                        FailureClass = failure.FailureClass,
+                        FailureSignature = failure.FailureSignature,
                     },
                 };
             }
@@ -731,6 +741,24 @@ public sealed class TaskIntegrationStatusService
             pushStep.Reason,
             pushStep.VerdictSummary,
             pushStep.FailureCode);
+    }
+
+    /// <summary>
+    /// AGT-2824: the durable park reason written by the gate-environment retry
+    /// rail once its bounded budget is spent, scoped to the delivery the card
+    /// currently carries. Null while retries are still pending, so the card keeps
+    /// the plain gate reason.
+    /// </summary>
+    private static string? ReadGateEnvironmentParkReason(TaskInfo job)
+    {
+        var ledger = IntegrationRetryLedger.Read(job.FolderPath);
+        if (ledger is not { Parked: true } || string.IsNullOrWhiteSpace(ledger.ParkedReason))
+            return null;
+        var deliverySha = ReviewSubjectStore.Read(job.FolderPath)?.ResultSha;
+        return string.IsNullOrWhiteSpace(deliverySha)
+               || string.Equals(ledger.DeliverySha, deliverySha, StringComparison.OrdinalIgnoreCase)
+            ? ledger.ParkedReason
+            : null;
     }
 
     private static string VisibleFailureReason(

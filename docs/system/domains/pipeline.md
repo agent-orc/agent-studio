@@ -372,6 +372,42 @@ steer the pipeline in this policy version.
   `IntegrationPushQueue` work from durable passed-merge and pending-push
   pipeline facts. The channel is a latency optimization, not the durability
   boundary.
+- `GateEnvironmentIntegrationRetryHostedService` +
+  `GateEnvironmentIntegrationRetryService` own the bounded retry of an
+  integrate-on-delivery merge that failed with `gate-environment-failure`
+  (AGT-2824). The accepted-integration backstop starts at acceptance, so a card
+  whose review passed and whose merge died on the gate host parked in Human
+  Review with nobody to retry it; the only operator path was a complete new
+  remote review. Admission is the pure `GateEnvironmentRetryPolicy`: lane
+  `5-human-review`, latest integration failure code
+  `gate-environment-failure`, newest graded review outcome `Pass`, and the
+  reviewed SHA equal to the card's current delivery SHA. The passed review is
+  reused as-is; no review attempt is ever created. Attempts run on a bounded
+  backoff of 5, 15 and 45 minutes - the first window measured from the failed
+  merge, every later one from the previous attempt. The counter lives in the
+  task-folder sidecar `logs/integration-retry.json`
+  (`IntegrationRetryLedger`), because `pipeline-execution.json` keeps one row
+  per step id and a replay overwrites its predecessor. The budget is scoped to
+  the delivery SHA, so a new delivery starts over. The attempt is counted
+  before the merge runs, so a crash mid-gate cannot hand the card an unbounded
+  budget. A successful retry or any decided non-environment outcome (conflict,
+  red gate, error) drops the ledger and hands the card to the normal rails.
+  After the third attempt the card is parked once: the ledger stores the park
+  reason, an `integration_failed` timeline row carries
+  `retryAttempt=parked 3/3`, and `TaskIntegrationStatusService` projects the
+  reason onto the card's integration chip and Evidence tab under the label
+  `Gate environment failure (retries exhausted)`. The status stays `Pending`,
+  never `ConflictSkipped` (CAC-18). Sweep interval:
+  `Integration:GateEnvironmentRetryIntervalMinutes`, default 5, clamped 1-60.
+  `POST /api/tasks/{jobId}/integration/retry` is the operator's "Retry
+  integration": identical admission rules and the same replay, but it ignores
+  the backoff window and an already spent budget and grants a fresh bounded
+  window - a human who repaired the gate host holds the one piece of
+  information the timer does not have. The card action lives on the
+  integration status badge next to the existing rebase recovery action.
+  Integration timeline rows carry `retryAttempt` (for example `backstop 2/3`)
+  so a replay is distinguishable from the original integrate-on-delivery
+  attempt.
 - `backend/Features/Pipeline/TaskSpawnerPostStepRunner.cs` (+ `TaskSpawnerDecision.cs`,
   `TaskSpawnerModelSelector.cs`, `SpawnedTaskLedger.cs`): the opt-in
   `post-task-spawner` step (AGT-2028). After a task settles it asks the best
@@ -589,7 +625,10 @@ steer the pipeline in this policy version.
   `IsDecidedIntegrationAttempt`, so the accepted-integration recovery sweep
   retries the gate on its next pass instead of returning the card to an
   operator or spending a rebase-recovery steer round - a toolchain crash is
-  never a product failure and the delivery cannot fix it (CAC-18).
+  never a product failure and the delivery cannot fix it (CAC-18). A card that
+  has not been accepted yet is covered by the separate bounded
+  `GateEnvironmentIntegrationRetryHostedService` rail described below
+  (AGT-2824).
 - A failed preparation or verification command stores a bounded, single-line
   stderr/stdout excerpt in the gate reason that flows into the durable pipeline
   step record. Full streams remain in per-process evidence and the gate log, so

@@ -701,6 +701,70 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         Assert.False(status.Failure?.RebaseRecoveryAvailable);
     }
 
+    [Fact]
+    public void BuildLookup_GateEnvironmentRetriesExhausted_NamesTheParkedReason()
+    {
+        // AGT-2824: while the bounded retries are still running the chip keeps
+        // the plain gate reason. Once they are spent the card must say so, or it
+        // reads identically on minute one and on minute ninety - the exact
+        // reason three cards sat untouched after the 15.09.2026 incident.
+        var repo = SeedDevelopMainRepo();
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "checkout -q -b task/gate-parked");
+        File.WriteAllText(Path.Combine(repo, "gate-parked.txt"), "wip");
+        Commit(repo, "feat: gate parked wip");
+        var anchor = RunGit(repo, "rev-parse task/gate-parked").Out.Trim();
+        RunGit(repo, "checkout -q develop");
+
+        var svc = BuildService(repo, out var project, out var log);
+        var job = Job("gate-parked", "AGT-3021", project, repo, log, commits: new[] { Commit(anchor) },
+            prov: Prov(branch: "task/gate-parked"));
+        var deliverySha = new string('c', 40);
+        ReviewSubjectStore.Write(job.FolderPath, new ReviewSubjectRecord
+        {
+            TaskKey = job.TaskKey,
+            RunAttemptId = "run-gate-parked",
+            AttemptChainId = "chain-gate-parked",
+            Project = project,
+            Repository = repo,
+            ResultSha = deliverySha,
+        });
+
+        log.EnsureRun(job.FolderPath, PipelineCatalogue.Standard, project, job.Id);
+        log.RecordStep(job.FolderPath, new PipelineStepExecution
+        {
+            StepId = PipelineCatalogue.MergeIntoDevelopStepId,
+            Kind = StepKind.Tool,
+            Status = PipelineStepStatus.Failed,
+            Verdict = "gate-environment-failure",
+            Reason = "Tool 'node' version v24.18.0 does not match .nvmrc.",
+            FailureCode = AcceptedIntegrationFailureCodes.GateEnvironmentFailure,
+        });
+
+        var beforePark = svc.BuildLookup(new[] { job })[job.TaskKey];
+        Assert.Equal("Gate environment failure", beforePark.Failure?.Label);
+        Assert.DoesNotContain("Retry integration", beforePark.Detail);
+
+        IntegrationRetryLedger.RecordPark(
+            job.FolderPath,
+            AcceptedIntegrationFailureCodes.GateEnvironmentFailure,
+            deliverySha,
+            GateEnvironmentRetryPolicy.ParkedReason("Tool 'node' version v24.18.0 does not match .nvmrc."),
+            DateTimeOffset.UtcNow);
+
+        var status = svc.BuildLookup(new[] { job })[job.TaskKey];
+
+        // Still Pending, never ConflictSkipped: a toolchain crash is not a
+        // product failure no matter how often it repeats (CAC-18).
+        Assert.Equal(IntegrationStatuses.Pending, status.Status);
+        Assert.Equal(AcceptedIntegrationFailureCodes.GateEnvironmentFailure, status.Failure?.Code);
+        Assert.Equal("Gate environment failure (retries exhausted)", status.Failure?.Label);
+        Assert.StartsWith("gate environment:", status.Detail);
+        Assert.Contains("3 automatic integration retries", status.Failure!.Reason);
+        Assert.Contains("Retry integration", status.Failure.Reason);
+        Assert.Contains("a new review is not needed", status.Failure.Reason);
+    }
+
     [Theory]
     [InlineData(
         "Release source 'origin/result' must be rebased onto 'main' before the full-suite gate.",

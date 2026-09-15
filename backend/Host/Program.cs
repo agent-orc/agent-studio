@@ -787,12 +787,18 @@ if (!publicDemoExecutionProfile)
 // queued origin push was dropped by restart.
 builder.Services.AddSingleton<AgentStudio.Pipeline.AcceptedIntegrationBackstopHostedService>();
 builder.Services.AddSingleton<AcceptanceRailHostedService>();
+// AGT-2824: the accepted-integration backstop starts at acceptance. A card whose
+// review passed and whose integrate-on-delivery merge died on a gate environment
+// failure parks in Human Review before that, so it needs its own bounded retry
+// rail; the same service also serves the operator's "Retry integration".
+builder.Services.AddSingleton<AgentStudio.Pipeline.GateEnvironmentIntegrationRetryService>();
 if (!publicDemoExecutionProfile)
 {
     builder.Services.AddHostedService(sp =>
         sp.GetRequiredService<AgentStudio.Pipeline.AcceptedIntegrationBackstopHostedService>());
     builder.Services.AddHostedService<AgentStudio.Pipeline.IntegrationPushBackstopHostedService>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<AcceptanceRailHostedService>());
+    builder.Services.AddHostedService<AgentStudio.Pipeline.GateEnvironmentIntegrationRetryHostedService>();
 }
 // Global Orchestrator Watcher (orchestrator-waechter dossier §10, W1+W2):
 // detector sweep + ticket-proposal drafting. Off by default (Watcher:Enabled),

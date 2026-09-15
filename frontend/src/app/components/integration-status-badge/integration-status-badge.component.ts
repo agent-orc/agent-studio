@@ -35,6 +35,7 @@ export class IntegrationStatusBadgeComponent {
   readonly jobId = input<string | null>(null);
   readonly watchPath = input<string | null>(null);
   readonly recoveryPending = signal(false);
+  readonly retryPending = signal(false);
   private readonly notifications = inject(NotificationService);
   private readonly tasks = inject(TaskService);
 
@@ -58,6 +59,19 @@ export class IntegrationStatusBadgeComponent {
     return s === 'partial' || s === 'pending' || s === 'conflict-skipped';
   });
 
+  /**
+   * AGT-2824 - a gate environment failure is a host fault: the toolchain died
+   * before verification reached test discovery. The delivery and its passed
+   * review are untouched, so the only sensible action is replaying the
+   * integration - never a new review round.
+   */
+  readonly gateEnvironmentFailure = computed(() =>
+    this.integration()?.failure?.code === 'gate-environment-failure');
+
+  /** The "Retry integration" action; see {@link gateEnvironmentFailure}. */
+  readonly retryAvailable = computed(() =>
+    this.integration()?.status === 'pending' && this.gateEnvironmentFailure());
+
   readonly recoveryAvailable = computed(() => {
     const value = this.integration();
     if (value?.status !== 'conflict-skipped') return false;
@@ -76,7 +90,10 @@ export class IntegrationStatusBadgeComponent {
     switch (value.status) {
       case 'integrated': return value.sha ? `merged @${value.sha}` : 'merged';
       case 'partial': return 'teilweise integriert';
-      case 'pending': return 'NICHT integriert';
+      case 'pending':
+        return this.gateEnvironmentFailure()
+          ? value.failure?.label ?? 'Gate environment failure'
+          : 'NICHT integriert';
       case 'conflict-skipped': {
         const base = value.failure?.label ?? 'Integration failed';
         const requeueLabel = this.requeueClassLabel();
@@ -123,7 +140,9 @@ export class IntegrationStatusBadgeComponent {
         case 'partial':
           return `Partially integrated into ${branch} — some attributed commits are NOT in ${branch}`;
         case 'pending':
-          return `Accepted, but NOT integrated into ${branch}`;
+          return this.gateEnvironmentFailure()
+            ? `The gate environment broke the integration into ${branch}; the delivery and its passed review are unchanged`
+            : `Accepted, but NOT integrated into ${branch}`;
         case 'conflict-skipped': {
           const requeueLabel = this.requeueClassLabel();
           const failureLabel = value.failure?.label
@@ -159,11 +178,40 @@ export class IntegrationStatusBadgeComponent {
     switch (value.status) {
       case 'integrated': return `Integrated into ${branch}`;
       case 'partial': return `Partially integrated into ${branch}`;
-      case 'pending': return `Not integrated into ${branch}`;
+      case 'pending':
+        return this.gateEnvironmentFailure()
+          ? `Gate environment failure; not integrated into ${branch}`
+          : `Not integrated into ${branch}`;
       case 'conflict-skipped': return `${value.failure?.label ?? 'Integration failed'}; not integrated into ${branch}`;
       default: return 'No branch to integrate';
     }
   });
+
+  retryIntegration(event: Event): void {
+    event.stopPropagation();
+    const jobId = this.jobId();
+    if (!jobId || this.retryPending()) return;
+
+    this.retryPending.set(true);
+    this.tasks.retryIntegration(jobId, this.watchPath() ?? undefined).subscribe({
+      next: (response) => {
+        this.retryPending.set(false);
+        if (response.status === 'integrated') {
+          this.notifications.success('Integration retried successfully; the passed review was reused.');
+        } else {
+          this.notifications.error(
+            `Integration retry ${response.attempt}/${response.maxAutomaticAttempts} failed again: `
+            + `${response.detail ?? response.outcome ?? 'no diagnostic'}`,
+          );
+        }
+        this.tasks.refresh(true);
+      },
+      error: () => {
+        this.retryPending.set(false);
+        this.notifications.error('Could not retry the integration.');
+      },
+    });
+  }
 
   queueRecovery(event: Event): void {
     event.stopPropagation();

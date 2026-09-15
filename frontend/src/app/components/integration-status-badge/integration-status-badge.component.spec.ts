@@ -287,6 +287,126 @@ describe('IntegrationStatusBadgeComponent', () => {
     expect(fixture.nativeElement.querySelector('[data-testid="integration-status-badge"]')).toBeNull();
   });
 
+  function gateEnvironment(overrides: Partial<TaskIntegrationStatus> = {}): TaskIntegrationStatus {
+    return integration('pending', {
+      detail: "gate environment: Tool 'node' version v24.18.0 does not match .nvmrc.",
+      failure: {
+        code: 'gate-environment-failure',
+        label: 'Gate environment failure',
+        reason: "Tool 'node' version v24.18.0 does not match .nvmrc.",
+        rebaseRecoveryAvailable: false,
+      },
+      ...overrides,
+    });
+  }
+
+  it('offers "Retry integration" on a gate environment failure and never the rebase round', () => {
+    // AGT-2824: the toolchain died before test discovery. Rebasing the delivery
+    // cannot fix a broken host, and a new review would re-grade work that passed.
+    const fixture = render(gateEnvironment());
+    fixture.componentRef.setInput('jobId', 'task-1');
+    fixture.detectChanges();
+
+    const badge = fixture.nativeElement.querySelector('[data-testid="integration-status-badge"]') as HTMLElement;
+    expect(badge.textContent).toContain('Gate environment failure');
+    expect(badge.dataset['integrationFailureCode']).toBe('gate-environment-failure');
+    expect(fixture.nativeElement.querySelector('[data-testid="task-card-integration-retry"]')).toBeTruthy();
+    expect(fixture.nativeElement.querySelector('[data-testid="task-card-integration-recovery"]')).toBeNull();
+    expect(fixture.componentInstance.tooltip()).toContain('the delivery and its passed review are unchanged');
+  });
+
+  it('keeps the retry action off every other pending card', () => {
+    const fixture = render(integration('pending'));
+    fixture.componentRef.setInput('jobId', 'task-1');
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('[data-testid="task-card-integration-retry"]')).toBeNull();
+  });
+
+  it('replays the integration without a new review round', () => {
+    const tasks = TestBed.inject(TaskService);
+    const refresh = vi.spyOn(tasks, 'refresh').mockImplementation(() => undefined);
+    const notifications = TestBed.inject(NotificationService);
+    const fixture = TestBed.createComponent(IntegrationStatusBadgeComponent);
+    fixture.componentRef.setInput('integration', gateEnvironment());
+    fixture.componentRef.setInput('jobId', 'task-1');
+    fixture.componentRef.setInput('watchPath', '/tmp/watch');
+    fixture.detectChanges();
+
+    (fixture.nativeElement.querySelector(
+      '[data-testid="task-card-integration-retry"]',
+    ) as HTMLButtonElement).click();
+    expect(fixture.componentInstance.retryPending()).toBe(true);
+
+    const http = TestBed.inject(HttpTestingController);
+    const request = http.expectOne((req) =>
+      req.method === 'POST'
+      && req.url === '/api/tasks/task-1/integration/retry'
+      && req.params.get('watchPath') === '/tmp/watch',
+    );
+    request.flush({
+      status: 'integrated',
+      outcome: 'Merged',
+      attempt: 1,
+      maxAutomaticAttempts: 3,
+      reviewReused: true,
+      detail: null,
+    });
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.retryPending()).toBe(false);
+    expect(refresh).toHaveBeenCalledWith(true);
+    expect(notifications.notifications().at(-1)?.message).toContain('passed review was reused');
+    http.verify();
+  });
+
+  it('reports a repeated gate environment failure with the attempt it spent', () => {
+    vi.spyOn(TestBed.inject(TaskService), 'refresh').mockImplementation(() => undefined);
+    const fixture = TestBed.createComponent(IntegrationStatusBadgeComponent);
+    fixture.componentRef.setInput('integration', gateEnvironment());
+    fixture.componentRef.setInput('jobId', 'task-1');
+    fixture.detectChanges();
+
+    (fixture.nativeElement.querySelector(
+      '[data-testid="task-card-integration-retry"]',
+    ) as HTMLButtonElement).click();
+
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/tasks/task-1/integration/retry').flush({
+      status: 'failed',
+      outcome: 'GateEnvironmentFailure',
+      attempt: 2,
+      maxAutomaticAttempts: 3,
+      reviewReused: true,
+      detail: 'gate host is still broken',
+    });
+    fixture.detectChanges();
+
+    const notifications = TestBed.inject(NotificationService);
+    expect(notifications.notifications().at(-1)?.message).toContain('2/3');
+    expect(notifications.notifications().at(-1)?.message).toContain('gate host is still broken');
+    http.verify();
+  });
+
+  it('shows the parked reason once the bounded retries are exhausted', () => {
+    const fixture = render(gateEnvironment({
+      failure: {
+        code: 'gate-environment-failure',
+        label: 'Gate environment failure (retries exhausted)',
+        reason: 'The build/test gate failed before verification reached test discovery on all '
+          + '3 automatic integration retries (5 min, 15 min, 45 min after the first failure). '
+          + 'This is a gate environment failure, not a delivery failure: the passed review still '
+          + 'stands. Repair the gate host and use "Retry integration" - a new review is not needed.',
+        rebaseRecoveryAvailable: false,
+      },
+    }));
+    const badge = fixture.nativeElement.querySelector('[data-testid="integration-status-badge"]') as HTMLElement;
+
+    expect(badge.textContent).toContain('Gate environment failure (retries exhausted)');
+    expect(fixture.componentInstance.tooltip()).toContain('3 automatic integration retries');
+    expect(fixture.componentInstance.tooltip()).toContain('a new review is not needed');
+  });
+
   it('honours a custom integration branch in the label and tooltip', () => {
     const fixture = render(integration('pending', { integrationBranch: 'trunk' }));
     expect(fixture.componentInstance.tooltip()).toContain('NOT integrated into trunk');

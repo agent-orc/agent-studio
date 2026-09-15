@@ -12,6 +12,17 @@
     <span class="integration-badge__glyph" aria-hidden="true">{{ glyph() }}</span>
     <span class="integration-badge__label">{{ label() }}</span>
   </span>
+  @if (retryAvailable() && jobId()) {
+    <button type="button"
+            class="integration-recovery"
+            data-testid="task-card-integration-retry"
+            [appPendingButton]="retryPending()"
+            pendingLabel="Retrying…"
+            aria-label="Retry the integration of this already reviewed delivery without a new review"
+            (click)="retryIntegration($event)">
+      Retry integration
+    </button>
+  }
   @if (recoveryAvailable() && jobId()) {
     <button type="button"
             class="integration-recovery"
