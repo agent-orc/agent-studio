@@ -367,6 +367,57 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
         Assert.NotEqual(firstReview.Subject.Plan, retry.Subject.Plan);
     }
 
+    /// <summary>
+    /// AGT-2827: a project build-profile or pipeline-step edit must reach a
+    /// ReviewAttempt that is still queued (Pending, unclaimed) - the incident
+    /// this closes had a corrected build profile never take effect because the
+    /// queued attempt's plan had already been frozen at creation.
+    /// </summary>
+    [Fact]
+    public void ReplanPendingReview_rewrites_a_still_queued_attempts_plan()
+    {
+        var service = NewService();
+        var run = service.AcquireRun("AGT-1", "PROJ-1", null, "runner", "host", 60, "run-create").RunAttempt!;
+        service.SettleRun(new SettleRunAttemptRequest
+        {
+            Write = new AttemptWriteReference(run.AttemptId, run.LastFence, run.AuthorityEpoch, "run-complete"),
+            Outcome = "done",
+            ResultSha = "sha-a",
+        });
+        var stalePlan = new AgentStudio.TaskServer.Contracts.ReviewPlanDto(
+            [], [], BuildProfileFingerprint: "stale-profile");
+        var review = service.CreateReviewAttempt(new CreateReviewAttemptRequest(
+            "AGT-1", "PROJ-1", "sha-a", run.AttemptId, "req", "policy", [],
+            "review-create-a", Plan: stalePlan)).ReviewAttempt!;
+        Assert.Equal(AttemptLifecycleState.Pending, review.State);
+        Assert.Contains(review.AttemptId, service.ListPendingReviewAttempts().Select(r => r.AttemptId));
+
+        var freshPlan = new AgentStudio.TaskServer.Contracts.ReviewPlanDto(
+            [], [], BuildProfileFingerprint: "corrected-profile");
+        var replanned = service.ReplanPendingReview(review.AttemptId, freshPlan);
+
+        Assert.Equal(AttemptWriteStatus.Accepted, replanned.Status);
+        Assert.Same(freshPlan, replanned.ReviewAttempt!.Subject.Plan);
+        Assert.Same(freshPlan, service.GetReview(review.AttemptId)!.Subject.Plan);
+    }
+
+    [Fact]
+    public void ReplanPendingReview_leaves_a_claimed_attempts_frozen_plan_untouched()
+    {
+        var service = NewService();
+        var (_, review) = CompletedRunWithReview(service, "sha-a");
+        var claimed = service.ClaimReview(review.AttemptId, "reviewer", "host", 60, "review-claim").ReviewAttempt!;
+        Assert.Equal(AttemptLifecycleState.Leased, claimed.State);
+        Assert.DoesNotContain(claimed.AttemptId, service.ListPendingReviewAttempts().Select(r => r.AttemptId));
+
+        var freshPlan = new AgentStudio.TaskServer.Contracts.ReviewPlanDto(
+            [], [], BuildProfileFingerprint: "corrected-profile");
+        var result = service.ReplanPendingReview(claimed.AttemptId, freshPlan);
+
+        Assert.Equal(AttemptWriteStatus.InvalidState, result.Status);
+        Assert.NotSame(freshPlan, service.GetReview(claimed.AttemptId)!.Subject.Plan);
+    }
+
     [Fact]
     public void Living_process_reclaim_of_its_own_dead_lease_keeps_answering_LeaseExpired()
     {

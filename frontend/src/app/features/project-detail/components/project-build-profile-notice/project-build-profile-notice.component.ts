@@ -1,5 +1,12 @@
 import { ChangeDetectionStrategy, Component, input } from '@angular/core';
 
+/** One command list where the central BuildProfile disagrees with the repository's own `.agent-studio/project.yml`. */
+export interface BuildProfileContradiction {
+  field: string;
+  profileCommands: readonly string[];
+  repositoryCommands: readonly string[];
+}
+
 export interface BuildProfileGateSummary {
   profile: unknown | null;
   gateApplicable: boolean;
@@ -7,6 +14,7 @@ export interface BuildProfileGateSummary {
     source: string;
     commands: readonly unknown[];
   };
+  contradictions?: readonly BuildProfileContradiction[];
 }
 
 @Component({
