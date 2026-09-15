@@ -882,6 +882,16 @@ public enum PreparationFailureKind
     Command,
     Timeout,
     Cancelled,
+    /// <summary>
+    /// A known host/environment misconfiguration (for example a missing
+    /// Windows base variable) rather than a defect in the repository's own
+    /// prepare command. Every kind other than <see cref="Command"/> and
+    /// <see cref="Definition"/> already reads as
+    /// <c>BuildTestGateFailureKind.Environment</c> to the build/test gate
+    /// (CAC-18); this value names that class explicitly instead of silently
+    /// falling into the generic bucket.
+    /// </summary>
+    Environment,
 }
 
 public sealed record PreparationCacheManifest(
@@ -1114,6 +1124,17 @@ public static partial class ProjectPreparationExecutor
             return (PreparationFailureKind.Cache, "cache:integrity", "A preparation cache entry failed integrity checks.");
         if (Contains(evidence, "ENOTFOUND", "ECONNRESET", "unable to resolve host", "network is unreachable"))
             return (PreparationFailureKind.Network, "network:dependency-source", "A dependency source could not be reached.");
+        // AGT-2833: two Windows signatures traced back to the same root cause
+        // (a base Windows environment variable missing from the prepare host
+        // environment, see PreparationHostEnvironment.WindowsKeys) but each
+        // failing in a different tool, so each gets its own named reason
+        // instead of falling through to an opaque exit-code signature.
+        if (Contains(evidence, "Loading managed Windows PowerShell failed"))
+            return (PreparationFailureKind.Environment, "prepare:powershell-environment",
+                "Loading managed Windows PowerShell failed; the preparation host environment is missing a Windows base variable PowerShell needs.");
+        if (Contains(evidence, "Value cannot be null. (Parameter 'path1')", "Value cannot be null. (Parameter path1)"))
+            return (PreparationFailureKind.Environment, "prepare:windows-environment",
+                "NuGet could not resolve a restore path; the preparation host environment is missing a Windows base variable NuGet needs.");
         var normalized = Regex.Replace(evidence ?? string.Empty, "\\s+", " ").Trim();
         var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalized)))
             .ToLowerInvariant()[..16];

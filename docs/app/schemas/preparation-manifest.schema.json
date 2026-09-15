@@ -33,7 +33,7 @@
         }
       }
     },
-    "failureKind": { "description": "Stable preparation failure class.", "enum": ["None", "Definition", "ScriptMissing", "ToolMissing", "VersionMismatch", "Cache", "Network", "Command", "Timeout", "Cancelled"] },
+    "failureKind": { "description": "Stable preparation failure class.", "enum": ["None", "Definition", "ScriptMissing", "ToolMissing", "VersionMismatch", "Cache", "Network", "Command", "Timeout", "Cancelled", "Environment"] },
     "failureSignature": { "description": "Stable failure fingerprint when preparation failed.", "type": ["string", "null"] },
     "failureReason": { "description": "Bounded operator-facing reason when preparation failed. A failed prepare run appends a shortened, single-line excerpt of failureOutputTail so the card's integration failure detail names the real error.", "type": ["string", "null"] },
     "failureOutputTail": { "description": "Bounded tail (at most 4000 characters) of what the failed prepare script printed: stderr, or stdout when stderr stayed empty. Null on success.", "type": ["string", "null"], "maxLength": 4000 }
