@@ -253,7 +253,7 @@ public sealed class WikiPublicationServiceTests : IDisposable
     public void Synchronize_WithAFailedFetch_KeepsThePublishedTreeReadable()
     {
         var published = _publication.Synchronize(ProjectName).ToSha;
-        Directory.Delete(_origin, recursive: true);
+        DeleteDirectory(_origin);
 
         var outcome = _publication.Synchronize(ProjectName);
 
@@ -475,6 +475,18 @@ public sealed class WikiPublicationServiceTests : IDisposable
         process.WaitForExit(30_000);
         if (process.ExitCode != 0)
             throw new InvalidOperationException($"git {string.Join(' ', args)} failed: {error}");
+    }
+
+    // Git writes object files read-only; on Windows Directory.Delete refuses them.
+    private static void DeleteDirectory(string path)
+    {
+        foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
+        {
+            try { File.SetAttributes(file, FileAttributes.Normal); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+        Directory.Delete(path, recursive: true);
     }
 
     public void Dispose()
