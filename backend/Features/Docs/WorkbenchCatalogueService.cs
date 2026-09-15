@@ -24,6 +24,7 @@ public sealed class WorkbenchCatalogueService
     private readonly TaskScannerService _scanner;
     private readonly ProjectRegistry _registry;
     private readonly GitService _git;
+    private readonly WikiPublicationService? _publication;
     private readonly ManagedRepositoryMutationService _repositoryMutations;
     private readonly IAtomicJsonFileWriter _fileWriter;
     private readonly ConcurrentDictionary<string, DecisionCountSnapshot> _decisionCounts =
@@ -65,7 +66,8 @@ public sealed class WorkbenchCatalogueService
         GitService git,
         IAtomicJsonFileWriter? fileWriter = null,
         ManagedRepositoryMutationService? repositoryMutations = null,
-        IConfiguration? configuration = null)
+        IConfiguration? configuration = null,
+        WikiPublicationService? publication = null)
     {
         _scanner = scanner;
         _registry = registry;
@@ -74,6 +76,7 @@ public sealed class WorkbenchCatalogueService
         _repositoryMutations = repositoryMutations
             ?? new ManagedRepositoryMutationService(git);
         _reviewDueDays = Math.Clamp(configuration?.GetValue<int?>("Workbenches:ReviewDueDays") ?? 90, 1, 3650);
+        _publication = publication;
     }
 
     public WorkbenchCatalogue? List(string projectName, bool includeHistory = false)
@@ -695,7 +698,7 @@ public sealed class WorkbenchCatalogueService
             entryPath, false, error, []);
 
     private WikiSourceContext? ResolveSource(string projectName) =>
-        ProjectWikiSourceResolver.Resolve(projectName, _scanner, _registry, _git);
+        ProjectWikiSourceResolver.Resolve(projectName, _scanner, _registry, _git, _publication);
 
     private string? ResolveReadRoot(string projectName) => ResolveSource(projectName)?.BaseDir;
 

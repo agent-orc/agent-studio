@@ -20,6 +20,7 @@ public class ProjectDocsService
     private readonly TaskScannerService _scanner;
     private readonly ProjectRegistry _registry;
     private readonly GitService? _git;
+    private readonly WikiPublicationService? _publication;
     private readonly ILogger<ProjectDocsService> _logger;
     private WorkbenchCatalogueService? _workbenches;
     private readonly WikiAgentReadStore _agentReads;
@@ -91,11 +92,13 @@ public class ProjectDocsService
         ILogger<ProjectDocsService> logger,
         GitService? git = null,
         WorkbenchCatalogueService? workbenches = null,
-        WikiAgentReadStore? agentReads = null)
+        WikiAgentReadStore? agentReads = null,
+        WikiPublicationService? publication = null)
     {
         _scanner = scanner;
         _registry = registry;
         _git = git;
+        _publication = publication;
         _logger = logger;
         _workbenches = workbenches;
         _agentReads = agentReads ?? new WikiAgentReadStore();
@@ -149,7 +152,7 @@ public class ProjectDocsService
         FindProject(projectName)?.Id ?? projectName;
 
     private WikiSourceContext? ResolveWikiSource(string projectName) =>
-        ProjectWikiSourceResolver.Resolve(projectName, _scanner, _registry, _git);
+        ProjectWikiSourceResolver.Resolve(projectName, _scanner, _registry, _git, _publication);
 
     public string? WikiWriteBlockReason(string projectName)
     {

@@ -148,6 +148,11 @@ public class TaskFolderAccessIsolationTest
             ["backend/Features/Git/GitService.cs"] =
                 "Wiki folder move/delete operate on the project repo docs/ tree, not task storage.",
 
+            // Hosted wiki publication (AGT-2278): snapshot retention prunes
+            // superseded SHA-addressed docs snapshots under the OS temp root.
+            ["backend/Features/Docs/Publication/WikiPublicationService.cs"] =
+                "Prunes superseded wiki snapshots under the OS temp snapshot root, never task storage.",
+
             // Tier 3 migration complete. All former MIGRATION TARGET
             // entries (ProjectRunner, StaleProgressArchiver,
             // ReviewDecisionOrchestrator, MetaCycleHostedService,
