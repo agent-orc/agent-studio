@@ -292,4 +292,86 @@ describe('IntegrationStatusBadgeComponent', () => {
     expect(fixture.componentInstance.tooltip()).toContain('NOT integrated into trunk');
     expect(fixture.componentInstance.ariaLabel()).toContain('Not integrated into trunk');
   });
+
+  // AGT-2824: a gate environment failure keeps the card pending (never a
+  // conflict), names the environment in the tooltip, and offers the explicit
+  // replay that reuses the review which already passed.
+  function gateEnvironment(reason: string): TaskIntegrationStatus {
+    return integration('pending', {
+      detail: `gate environment: ${reason}`,
+      failure: {
+        code: 'gate-environment-failure',
+        label: 'Gate environment failure',
+        reason,
+        rebaseRecoveryAvailable: false,
+      },
+    });
+  }
+
+  it('offers "Retry integration" on a gate environment failure', () => {
+    const fixture = render(gateEnvironment(
+      "Tool 'node' version v24.18.0 does not match .nvmrc",
+    ));
+    fixture.componentRef.setInput('jobId', 'task-1');
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector(
+      '[data-testid="task-card-integration-retry"]',
+    )).toBeTruthy();
+    // It is not a conflict, so the rebase steer round is never offered.
+    expect(fixture.nativeElement.querySelector(
+      '[data-testid="task-card-integration-recovery"]',
+    )).toBeNull();
+    expect(fixture.componentInstance.tooltip()).toContain('Gate environment failure');
+    expect(fixture.componentInstance.tooltip()).toContain('does not match .nvmrc');
+    expect(fixture.componentInstance.ariaLabel()).toContain('Gate environment failure');
+  });
+
+  it('never offers "Retry integration" on an ordinary pending card', () => {
+    const fixture = render(integration('pending'));
+    fixture.componentRef.setInput('jobId', 'task-1');
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector(
+      '[data-testid="task-card-integration-retry"]',
+    )).toBeNull();
+  });
+
+  it('retries the integration without asking for a new review', () => {
+    const tasks = TestBed.inject(TaskService);
+    const refresh = vi.spyOn(tasks, 'refresh').mockImplementation(() => undefined);
+    const notifications = TestBed.inject(NotificationService);
+    const fixture = TestBed.createComponent(IntegrationStatusBadgeComponent);
+    fixture.componentRef.setInput('integration', gateEnvironment('The gate host is broken.'));
+    fixture.componentRef.setInput('jobId', 'task-1');
+    fixture.componentRef.setInput('watchPath', '/tmp/watch');
+    fixture.detectChanges();
+
+    const button = fixture.nativeElement.querySelector(
+      '[data-testid="task-card-integration-retry"]',
+    ) as HTMLButtonElement;
+    button.click();
+    expect(fixture.componentInstance.retryPending()).toBe(true);
+
+    const http = TestBed.inject(HttpTestingController);
+    const request = http.expectOne((req) =>
+      req.method === 'POST'
+      && req.url === '/api/tasks/task-1/integration/retry'
+      && req.params.get('watchPath') === '/tmp/watch',
+    );
+    request.flush({
+      status: 'integrated',
+      integrated: true,
+      attempt: 1,
+      maxAttempts: 3,
+      outcome: 'Merged',
+      reviewReused: true,
+    });
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.retryPending()).toBe(false);
+    expect(refresh).toHaveBeenCalledWith(true);
+    expect(notifications.notifications().at(-1)?.message).toContain('No new review was needed');
+    http.verify();
+  });
 });

@@ -33,6 +33,7 @@ import { PendingButtonDirective } from '../../../../components/async-feedback';
 import { ExecutionLocationBadgeComponent } from '../../../../components/execution-location-badge/execution-location-badge.component';
 import { CopyableTaskKeyComponent } from '../../../../components/copyable-task-key/copyable-task-key.component';
 import { RemoteDispatchRejectionComponent } from '../../../../components/remote-dispatch-rejection/remote-dispatch-rejection.component';
+import { IntegrationStatusBadgeComponent } from '../../../../components/integration-status-badge/integration-status-badge.component';
 /** Top header of the job-detail view: back button, editable title, state pill,
  * and the lane's primary triage action plus
  * an overflow menu of the remaining lane actions. The bottom-of-detail
@@ -44,7 +45,7 @@ import { RemoteDispatchRejectionComponent } from '../../../../components/remote-
   selector: 'app-detail-header',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [ProjectHygieneBadgeComponent, TooltipDirective, MenuComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, PendingButtonDirective, ExecutionLocationBadgeComponent, CopyableTaskKeyComponent, RemoteDispatchRejectionComponent],
+  imports: [ProjectHygieneBadgeComponent, TooltipDirective, MenuComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, PendingButtonDirective, ExecutionLocationBadgeComponent, CopyableTaskKeyComponent, RemoteDispatchRejectionComponent, IntegrationStatusBadgeComponent],
   templateUrl: './detail-header.component.html',
   styleUrl: './detail-header.component.scss'
 })

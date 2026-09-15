@@ -68,6 +68,21 @@ Local worktree runs and fenced Remote deliveries now share the same policy: a gr
   moves the card to the top of Ready, and lets the assigned remote runner
   resume its existing delivery ref, rebase it onto the current integration
   branch, resolve conflicts, and return a new fenced result for acceptance.
+- Gate-environment retry (AGT-2824): a gate environment failure is never a
+  product failure, so the card stays `pending` and renders **Retry integration**
+  instead of the rebase steer round. `GateEnvironmentRetryHostedService` replays
+  only the merge, for the delivery SHA the passed review already describes, on a
+  bounded 5 / 15 / 45-minute ladder anchored on the recorded gate failure. It
+  creates no review attempt and moves no card, so a healed gate host never costs
+  a remote review slot; a successful replay simply makes the card Git-derived
+  `integrated` for the acceptance rail above. The retry budget is durable
+  timeline evidence scoped by delivery SHA, so a new delivery starts fresh.
+  Once the ladder is spent the card parks with a reason that names the
+  environment failure and the exhausted retries, in the merge step, on the
+  timeline, and in the `## Acceptance integration` section of `status.md`.
+  `POST /api/tasks/{id}/integration/retry` is the explicit operator half: the
+  same eligibility guards and the same review reuse, minus the remaining
+  backoff, and still available after the park.
 - Deterministic acceptance rail: `AcceptanceRailHostedService` repeats the
   post-integration acceptance and conflict-recovery decisions without depending
   on a live orchestrator session. On its bounded timer it accepts only

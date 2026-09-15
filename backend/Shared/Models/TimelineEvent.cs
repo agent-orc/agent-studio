@@ -319,6 +319,22 @@ public static class TimelineEventKinds
     /// </summary>
     public const string IntegrationRecoveryQueued = "integration_recovery_queued";
     /// <summary>
+    /// AGT-2824: one bounded replay of the integration for an already reviewed
+    /// delivery after the merge gate failed with
+    /// <c>gate-environment-failure</c>. The receipt is the durable retry ledger:
+    /// <see cref="TimelineEvent.Details"/> carries <c>deliverySha</c>,
+    /// <c>attempt</c>, <c>maxAttempts</c>, <c>source</c> (sweep or operator),
+    /// and the merge <c>outcome</c>. Counting receipts per delivery SHA makes a
+    /// new delivery start with a fresh budget.
+    /// </summary>
+    public const string IntegrationRetryAttempted = "integration_retry_attempted";
+    /// <summary>
+    /// AGT-2824: the bounded gate-environment retry ladder is spent. Written
+    /// once per delivery SHA, it is the parked reason the card shows instead of
+    /// an open-ended "will be retried".
+    /// </summary>
+    public const string IntegrationRetryExhausted = "integration_retry_exhausted";
+    /// <summary>
     /// The platform-owned acceptance rail accepted, requeued, or boundedly
     /// escalated this card without a session-bound orchestrator tick.
     /// </summary>

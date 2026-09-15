@@ -87,6 +87,10 @@
                   [cacTooltip]="'This follow-up was raised automatically from pipeline failure evidence.'">Created by Orchestrator</span>
           }
           <app-execution-location-badge [execution]="info().executionLocation" />
+          <app-integration-status-badge
+            [integration]="info().integration"
+            [jobId]="info().id"
+            [watchPath]="info().watchPath" />
         </div>
         <app-remote-dispatch-rejection [execution]="info().executionLocation" />
       }

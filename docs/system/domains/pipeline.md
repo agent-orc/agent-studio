@@ -590,6 +590,26 @@ steer the pipeline in this policy version.
   retries the gate on its next pass instead of returning the card to an
   operator or spending a rebase-recovery steer round - a toolchain crash is
   never a product failure and the delivery cannot fix it (CAC-18).
+- AGT-2824: a card parked in `5-human-review` after integrate-on-delivery is
+  outside that accepted-card backstop, so `GateEnvironmentRetryPolicy` owns it.
+  When the card's current review attempt settled `Pass` for the same delivery
+  SHA that `review-subject.json` still names, `GateEnvironmentRetryService`
+  replays only `MergeIntoDevelopRunner` on a bounded 5 / 15 / 45-minute ladder
+  anchored on the recorded gate failure. It never creates a review attempt and
+  never moves the card, so a healed gate host costs no review slot; a successful
+  replay leaves the card Git-derived `integrated` for the ordinary acceptance
+  rail. The retry ledger is the timeline (`integration_retry_attempted`,
+  scoped by `deliverySha`, so a new delivery starts with a fresh budget) because
+  `pipeline-execution.json` keeps one row per step id and cannot carry a count.
+  After the ladder the rail writes `integration_retry_exhausted` and replaces
+  the merge step reason and the `## Acceptance integration` section of
+  `status.md` with a parked reason that names the environment failure and the
+  spent retries instead of promising another retry.
+  `POST /api/tasks/{id}/integration/retry` and the card's **Retry integration**
+  action are the explicit half: same eligibility guards and the same review
+  reuse, minus the remaining backoff, and still allowed after the park.
+  `Integration:GateEnvironmentRetryEnabled` and
+  `Integration:GateEnvironmentRetryIntervalSeconds` configure the sweep.
 - A failed preparation or verification command stores a bounded, single-line
   stderr/stdout excerpt in the gate reason that flows into the durable pipeline
   step record. Full streams remain in per-process evidence and the gate log, so

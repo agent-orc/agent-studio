@@ -183,6 +183,21 @@ export interface IntegrationRecoveryResponse {
   integrationBranch: string;
 }
 
+/**
+ * AGT-2824 — reply from the explicit "Retry integration" action. The retry
+ * replays the merge for the delivery that already passed review, so it reports
+ * the merge outcome and its place in the bounded retry ladder, never a new
+ * review round.
+ */
+export interface IntegrationRetryResponse {
+  status: 'integrated' | 'retried';
+  integrated: boolean;
+  attempt: number;
+  maxAttempts: number;
+  outcome: string | null;
+  reviewReused: boolean;
+}
+
 type LaneKey = keyof GroupedJobs;
 // ADR-0025: state strings use the new seven-lane order.
 // ADR-0026: 1a-orchestrator-prep joins the catalog. The 1b-needs-human-review
@@ -722,6 +737,19 @@ export class TaskService {
   queueIntegrationRecovery(jobId: string, watchPath?: string) {
     return this.http.post<IntegrationRecoveryResponse>(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/integration/rebase`,
+      null,
+      this.withWatchPath(watchPath),
+    );
+  }
+
+  /**
+   * AGT-2824 — replay the integration for a delivery whose merge gate failed
+   * with a gate environment failure. The backend reuses the review that already
+   * passed for the same delivery SHA; no review slot is spent.
+   */
+  retryIntegration(jobId: string, watchPath?: string) {
+    return this.http.post<IntegrationRetryResponse>(
+      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/integration/retry`,
       null,
       this.withWatchPath(watchPath),
     );

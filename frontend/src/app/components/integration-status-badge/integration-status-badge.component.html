@@ -23,4 +23,15 @@
       Rebase &amp; retry
     </button>
   }
+  @if (retryAvailable() && jobId()) {
+    <button type="button"
+            class="integration-recovery"
+            data-testid="task-card-integration-retry"
+            [appPendingButton]="retryPending()"
+            pendingLabel="Retrying…"
+            aria-label="Retry the integration for this reviewed delivery without a new review"
+            (click)="retryIntegration($event)">
+      Retry integration
+    </button>
+  }
 }

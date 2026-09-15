@@ -94,5 +94,51 @@ public static class TaskIntegrationRecoveryEndpoints
                 integrationBranch = result.IntegrationBranch,
             });
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
+
+        // AGT-2824: the explicit half of the healed-gate retry. Same semantics
+        // as the automatic rail - replay the integration for the delivery that
+        // already passed review, never start a new review round - minus the
+        // remaining backoff, which is the whole point of asking by hand.
+        group.MapPost("/{jobId}/integration/retry", async (
+            string jobId,
+            string? project,
+            string? watchPath,
+            TaskScannerService scanner,
+            ProjectRegistry projects,
+            GateEnvironmentRetryService retries,
+            CancellationToken ct) =>
+        {
+            watchPath = ResolveWatchPath(projects, project, watchPath);
+            var job = scanner.FindJob(jobId, watchPath);
+            if (job is null) return Results.NotFound(new { error = "Task not found." });
+            if (job.State != TaskStates.HumanReview)
+            {
+                return Results.Conflict(new
+                {
+                    error = $"Integration retry requires a task in {TaskStates.HumanReview}.",
+                    state = job.State,
+                });
+            }
+
+            var result = await retries.RetryNowAsync(job, ct);
+            if (!result.Retried)
+            {
+                return Results.Conflict(new
+                {
+                    error = "Integration retry is not available for this task.",
+                    reason = result.Reason,
+                });
+            }
+
+            return Results.Accepted(value: new
+            {
+                status = result.Integrated ? "integrated" : "retried",
+                integrated = result.Integrated,
+                attempt = result.Attempt,
+                maxAttempts = GateEnvironmentRetryPolicy.MaxRetries,
+                outcome = result.Outcome,
+                reviewReused = true,
+            });
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
     }
 }

@@ -35,6 +35,7 @@ export class IntegrationStatusBadgeComponent {
   readonly jobId = input<string | null>(null);
   readonly watchPath = input<string | null>(null);
   readonly recoveryPending = signal(false);
+  readonly retryPending = signal(false);
   private readonly notifications = inject(NotificationService);
   private readonly tasks = inject(TaskService);
 
@@ -65,6 +66,19 @@ export class IntegrationStatusBadgeComponent {
     // merge conflicts. Preserve their recovery action while new payloads use
     // the explicit capability bit.
     return value.failure?.rebaseRecoveryAvailable ?? true;
+  });
+
+  /**
+   * AGT-2824 — a gate environment failure is never a product failure: the
+   * build/test gate crashed before verification, so the reviewed delivery has
+   * nothing to fix. The card keeps its honest `pending` status and offers the
+   * explicit replay, which reuses the review that already passed instead of
+   * spending a new remote review round.
+   */
+  readonly retryAvailable = computed(() => {
+    const value = this.integration();
+    return value?.status === 'pending'
+      && value.failure?.code === 'gate-environment-failure';
   });
 
   readonly label = computed(() => {
@@ -123,7 +137,9 @@ export class IntegrationStatusBadgeComponent {
         case 'partial':
           return `Partially integrated into ${branch} — some attributed commits are NOT in ${branch}`;
         case 'pending':
-          return `Accepted, but NOT integrated into ${branch}`;
+          return this.retryAvailable()
+            ? `Gate environment failure; the delivery is reviewed but NOT integrated into ${branch}`
+            : `Accepted, but NOT integrated into ${branch}`;
         case 'conflict-skipped': {
           const requeueLabel = this.requeueClassLabel();
           const failureLabel = value.failure?.label
@@ -159,11 +175,40 @@ export class IntegrationStatusBadgeComponent {
     switch (value.status) {
       case 'integrated': return `Integrated into ${branch}`;
       case 'partial': return `Partially integrated into ${branch}`;
-      case 'pending': return `Not integrated into ${branch}`;
+      case 'pending': return this.retryAvailable()
+        ? `Gate environment failure; not integrated into ${branch}`
+        : `Not integrated into ${branch}`;
       case 'conflict-skipped': return `${value.failure?.label ?? 'Integration failed'}; not integrated into ${branch}`;
       default: return 'No branch to integrate';
     }
   });
+
+  retryIntegration(event: Event): void {
+    event.stopPropagation();
+    const jobId = this.jobId();
+    if (!jobId || this.retryPending()) return;
+
+    this.retryPending.set(true);
+    this.tasks.retryIntegration(jobId, this.watchPath() ?? undefined).subscribe({
+      next: (response) => {
+        this.retryPending.set(false);
+        if (response.integrated) {
+          this.notifications.success(
+            `Integration retry ${response.attempt} integrated the reviewed delivery. No new review was needed.`,
+          );
+        } else {
+          this.notifications.error(
+            `Integration retry ${response.attempt} of ${response.maxAttempts} ended with ${response.outcome ?? 'no outcome'}.`,
+          );
+        }
+        this.tasks.refresh(true);
+      },
+      error: () => {
+        this.retryPending.set(false);
+        this.notifications.error('Could not retry the integration for this delivery.');
+      },
+    });
+  }
 
   queueRecovery(event: Event): void {
     event.stopPropagation();

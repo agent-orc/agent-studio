@@ -2374,6 +2374,32 @@
             <span class="lane">5e-escalated</span>; the corrected replay reaches a green gate after cache eviction.
           </td>
         </tr>
+        <tr id="case-agt-2824-gate-environment-retry">
+          <td>2026-09-15</td>
+          <td><code>AGT-2811 / AGT-2812 / AGT-2813</code><br><span class="small">healed gate never retried after a gate environment failure</span></td>
+          <td>
+            Three cards passed remote review. The Windows merge gate then failed with a gate environment failure
+            (<code>Tool 'node' version v24.18.0 does not match .nvmrc</code>). The card detail said the gate
+            "will be retried", and nothing retried for over an hour. The only operator path was
+            <code>/move 4-auto-review</code>, which spends a complete new remote review of 30+ minutes on one of two
+            review slots for a verdict that already existed.
+          </td>
+          <td>
+            The accepted-integration backstop only sweeps accepted cards, and the acceptance rail's infrastructure
+            replay only fires on <code>conflict-skipped</code> and moves the card back to <span class="lane">4-auto-review</span>.
+            A gate environment failure is deliberately <code>pending</code>, so no rail owned it; the "will be retried"
+            wording named a sweep that could never reach the card.
+          </td>
+          <td>
+            <span class="pill ok">fixed in dev</span> <code>GateEnvironmentRetryPolicy</code> replays the merge for the same
+            delivery SHA on a bounded 5 / 15 / 45-minute ladder, reusing the review that already passed and never creating a
+            review attempt. <code>POST /api/tasks/{id}/integration/retry</code> and the card's
+            <strong>Retry integration</strong> action are the explicit half. After the ladder the card parks with a reason that
+            names the environment failure and the spent retries instead of promising another retry. Terminal
+            <span class="lane">5-human-review</span> with an honest reason, or
+            <span class="lane">6-completed</span> once the gate host is healthy.
+          </td>
+        </tr>
       </tbody>
     </table>
 
