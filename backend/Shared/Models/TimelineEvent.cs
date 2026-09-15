@@ -324,6 +324,19 @@ public static class TimelineEventKinds
     /// </summary>
     public const string AcceptanceRailActed = "acceptance_rail_acted";
     /// <summary>
+    /// AGT-2824: the bounded gate-environment ladder replayed the integration
+    /// for an unchanged delivery SHA, reusing its passed review instead of
+    /// spending a new review round. <see cref="TimelineEvent.Details"/> carries
+    /// the delivery SHA, the rung, and whether a sweep or an operator drove it.
+    /// </summary>
+    public const string IntegrationGateEnvironmentRetried = "integration_gate_environment_retried";
+    /// <summary>
+    /// AGT-2824: the bounded gate-environment ladder is spent. The card keeps a
+    /// parked reason naming the environment failure until an operator retries
+    /// the integration explicitly.
+    /// </summary>
+    public const string IntegrationGateEnvironmentParked = "integration_gate_environment_parked";
+    /// <summary>
     /// AGT-2220: the card's recorded <c>integrationBranch</c> disagreed with
     /// project truth when a review was claimed, so the review plane rewrote it.
     /// A stale field (still <c>refs/heads/main</c> after develop became the
