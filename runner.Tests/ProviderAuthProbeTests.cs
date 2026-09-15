@@ -329,6 +329,25 @@ public sealed class ProviderAuthProbeTests
     }
 
     [Fact]
+    public async Task Successful_run_whose_output_mentions_rate_limits_keeps_the_capability_ready()
+    {
+        // 15.09.2026: an agent read runner docs containing "rate-limited" and a
+        // rate_limit_event warning; the exit-0 run marked claude limited for
+        // 15 minutes and every Claude card on the host was refused.
+        const string agentOutput =
+            "{\"type\":\"user\",\"message\":{\"content\":[{\"type\":\"tool_result\",\"content\":\"Rate limits retain a provider-scoped Limited state; a rate-limited provider shows usage limit\"}]}}\n"
+            + "{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed_warning\",\"rateLimitType\":\"seven_day\",\"utilization\":0.9}}";
+        var probe = Probe(Answers(0, "Logged in"));
+        var ready = await probe.RefreshAsync("claude", CancellationToken.None);
+
+        var afterRun = probe.RecordProcessResult("claude", new ProcessResult(0, agentOutput, "HTTP 429 in a quoted log line"));
+
+        Assert.Equal(ready, afterRun);
+        Assert.Equal(ProviderAuthProbe.Ready, afterRun.Status);
+        Assert.Null(afterRun.LimitedUntil);
+    }
+
+    [Fact]
     public async Task Apply_patch_tool_failure_does_not_change_available_capability()
     {
         const string toolError = "ERROR codex_core::tools::router: error=apply_patch verification failed: "

@@ -722,6 +722,11 @@ public sealed class ProviderAuthProbe
     /// </summary>
     public ProviderAuthStatus RecordProcessResult(string cliBinary, ProcessResult result)
     {
+        // A run that exited 0 reached the provider. Its output is agent content
+        // (files and docs it read, rate_limit_event warnings), which can contain
+        // "rate-limited" or "usage limit" without any limit being hit.
+        if (result.ExitCode == 0) return Current(cliBinary);
+
         var evidence = ProviderAccessClassifier.Classify(
             result.ExitCode,
             result.StdOut,
