@@ -245,6 +245,9 @@ production evidence must be attached before cutover:
    only the versioned subset. Phase B must classify every Studio route as
    Task Server, local dev-seat helper, or retired, and prove all task,
    orchestration, host, file, event, and management paths remotely.
+   Classification itself is complete; see
+   [Route inventory snapshot](#route-inventory-snapshot) below for the current
+   counts and the operations still blocking cutover.
 2. **Current workspace migration acceptance, implementation delivered by B3.**
    The standalone CLI and management API now inventory and import canonical
    `task.json` data, use `job.json` only as a compatibility fallback, enforce
@@ -267,6 +270,116 @@ production evidence must be attached before cutover:
 No API listener may open on `wg0` until Studio route ownership is complete and
 the Task Server, Agent Host, Studio BFF, and connector authentication paths pass
 their negative tests.
+
+### Route inventory snapshot
+
+[`docs/studio-route-ownership/routes.json`](../studio-route-ownership/routes.json)
+is the generated source of truth; regenerate it with
+`node docs/studio-route-ownership/build-inventory.mjs --write` after any
+frontend `HttpClient`/`sessionFetch`/`EventSource`/SignalR call or backend
+`MapGroup("/api/...")` change, and a repository test fails on drift (see
+"Guard test" below). This snapshot is current as of 2026-09-15, reconciled
+against `origin/develop` after AGT-2731, AGT-2754 (connector profile),
+AGT-2756 (task detail and host control), AGT-2757 (operations and insight),
+and AGT-2758 (administration and long tail):
+
+| Metric | Count |
+|---|---:|
+| Frontend operations (total) | 408 |
+| — `/api` operations | 407 |
+| — `/hubs` operations | 1 |
+| Classified `task-server` | 309 |
+| Classified `dev-seat` | 99 |
+| Classified `retired` | 0 |
+| Backend `/api` `MapGroup` groups | 29 |
+| Frontend operations already calling `/api/v1/*` | 31 |
+| — of which the standalone Task Server implements | 31 |
+| `task-server` operations still needing a v1 route (`d4bRoutesToAdd`) | 278 |
+
+Every frontend operation is classified (0 unclassified, 0 retired), which
+satisfies the "classify every Studio route" half of gate 1 above. The 278
+`must-add` operations are the remaining work, sized and bundled by
+`docs/studio-route-ownership/routes.json` `d4bEstimate.bundles`. Release gate
+1 does not require all 278 before cutover: detached-Studio acceptance only
+needs the P0 **core-attach** bundle below; the other three bundles
+(`task-detail-and-hosts`, `operations-and-insight`,
+`administration-and-tail`) remain post-cutover work.
+
+#### Operations still blocking cutover
+
+`v1Status: must-add` means *Angular does not yet call a `/api/v1` path for
+this operation* — it says nothing about backend readiness. The Task Server
+side of the `core-attach` bundle below was already delivered by AGT-2755
+(salvaged into `develop` 2026-09-11, commit `8931b15d`; see
+[Studio core-attach bundle (P0)](setup/task-server.md#studio-core-attach-bundle-p0)),
+with the four workspace/project routes predating it. So for these 27
+operations the remaining cutover-blocking work is switching each Angular
+call site onto its versioned route (`targetRoute` in `routes.json`), not
+building new Task Server contract — that switch, plus the connector's
+Credential Manager integration, Origin/CSRF enforcement, and protocol
+negotiation (gate 4 above), is what still blocks the detached-Studio
+acceptance wave.
+
+| Feature area | Route | Owner | Target v1 route |
+|---|---|---|---|
+| Login | `POST /api/auth/bootstrap` | Shared frontend services | `/api/v1/studio/auth/bootstrap` |
+| Login | `POST /api/auth/change-password` | Shared frontend services | `/api/v1/studio/auth/change-password` |
+| Login | `POST /api/auth/login` | Shared frontend services | `/api/v1/studio/auth/login` |
+| Login | `POST /api/auth/logout` | Shared frontend services | `/api/v1/studio/auth/logout` |
+| Login | `GET /api/auth/status` | Shared frontend services | `/api/v1/studio/auth/status` |
+| Workspaces and projects | `GET /api/workspaces` | Shared frontend services | `/api/v1/workspaces` (already existed pre-AGT-2755) |
+| Workspaces and projects | `POST /api/workspaces` | Shared frontend services | `/api/v1/workspaces` (already existed pre-AGT-2755) |
+| Workspaces and projects | `GET /api/projects` | Shared frontend services | `/api/v1/projects` (already existed pre-AGT-2755) |
+| Workspaces and projects | `POST /api/projects` | Shared frontend services | `/api/v1/projects` (already existed pre-AGT-2755) |
+| Board | `GET /api/tasks/grouped` | Shared frontend services | `/api/v1/studio/board` |
+| Task mutations | `GET /api/tasks/{taskId}` | Shared frontend services | `/api/v1/projects/{projectId}/tasks/{taskId}` |
+| Task mutations | `DELETE /api/tasks/{taskId}` | Shared frontend services | `/api/v1/projects/{projectId}/tasks/{taskId}` |
+| Task mutations | `POST /api/tasks/{taskId}/continue` | Shared frontend services | `/api/v1/projects/{projectId}/tasks/{taskId}/continue` |
+| Task mutations | `POST /api/tasks/{taskId}/move` | Shared frontend services | `/api/v1/projects/{projectId}/tasks/{taskId}/move` |
+| Task mutations | `POST /api/tasks/{taskId}/move-to-top` | Shared frontend services | `/api/v1/projects/{projectId}/tasks/{taskId}/move-to-top` |
+| Task mutations | `POST /api/tasks/{taskId}/start` | Shared frontend services | `/api/v1/projects/{projectId}/tasks/{taskId}/start` |
+| Task mutations | `PUT /api/tasks/{taskId}/state` | Shared frontend services | `/api/v1/projects/{projectId}/tasks/{taskId}/state` |
+| Task mutations | `POST /api/tasks/{taskId}/stop` | Shared frontend services | `/api/v1/projects/{projectId}/tasks/{taskId}/stop` |
+| Orchestration chat | `GET /api/orchestrator/context/{contextKey}` | Shared frontend services | `/api/v1/studio/orchestrator/context/{contextKey}` |
+| Orchestration chat | `POST /api/orchestrator/context/{contextKey}/refresh` | Shared frontend services | `/api/v1/studio/orchestrator/context/{contextKey}/refresh` |
+| Orchestration chat | `GET /api/orchestrator/sessions` | Shared frontend services | `/api/v1/studio/orchestrator/sessions` |
+| Orchestration chat | `POST /api/orchestrator/sessions/workbench:{project}/{workbenchKey}/turns` | Project hub | `/api/v1/studio/orchestrator/sessions/workbench:{project}/{workbenchKey}/turns` |
+| Orchestration chat | `GET /api/runner/{project}/orchestrator-chat` | Shared frontend services | `/api/v1/studio/runner/{project}/orchestrator-chat` |
+| Orchestration chat | `POST /api/runner/{project}/orchestrator-chat` | Shared frontend services | `/api/v1/studio/runner/{project}/orchestrator-chat` |
+| Orchestration chat | `GET /api/runner/{project}/orchestrator-chat/attachments/{fileName}` | Orchestrator | `/api/v1/studio/runner/{project}/orchestrator-chat/attachments/{fileName}` |
+| Runner state | `GET /api/runner/status` | Shared frontend services | `/api/v1/studio/runner/status` |
+| Live updates | `WS /hubs/jobs` | Shared frontend services | `/hubs/v1/studio` |
+
+"Owner" is the frontend feature that calls the route
+(`docs/studio-route-ownership/routes.json` `frontendOwner`); most of these
+call sites live in shared Angular services rather than one feature folder,
+which is why "Shared frontend services" dominates this particular bundle.
+Of the 27 target routes above: 21 (auth ×5, board, the four pre-existing
+workspace/project routes, runner status, runner-chat GET/POST/attachments,
+and all seven task-mutation verbs) are confirmed present in
+`task-server/StudioEndpoints.cs`. `GET /api/v1/projects/{projectId}/tasks/{taskId}`
+(the single-task detail read) is confirmed **absent** — no bare `MapGet("")`
+exists on that route group in any `task-server/*.cs` file, so this one route
+needs actual backend work, not just a frontend switch. The remaining five
+(the four orchestrator-context/session shapes and `/hubs/v1/studio`) have
+Task Server implementations elsewhere (`TaskServerEndpoints.cs`,
+`TaskServerStudioHub.cs`) but were not re-verified path-for-path against the
+generator's guessed `targetRoute` above — confirm the exact shape before
+switching those call sites.
+
+#### Guard test
+
+`docs/studio-route-ownership/routes-inventory.test.mjs` regenerates the
+inventory from the current frontend and backend source and fails if the
+result differs from the committed `routes.json`, or if any frontend call
+site extract-routes.mjs can see is missing from `frontendEvidence`. Run it
+with `node --test docs/studio-route-ownership/routes-inventory.test.mjs`.
+`docs/studio-route-ownership/build-inventory.test.mjs` covers the generator's
+path/query normalization directly, including three call shapes
+(`` `${this.baseUrl}/cases${query}` ``, `` `${this.baseUrl}/proposals${query}` ``,
+and `` `/api/search/stream?${params.toString()}` ``) that previously produced
+malformed routes such as `/api/watcher/cases{query}` and a literal `{toString}`
+query key.
 
 ## Post-processing without an attached Studio
 

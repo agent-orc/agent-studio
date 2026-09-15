@@ -16,7 +16,7 @@ public sealed record ConnectorRouteOperation(
 public sealed class ConnectorRouteInventory
 {
     public const string ResourceName = "AgentStudio.Connector.Routes";
-    public const string ExpectedInventorySha256 = "434FFAE2C8BB46DB1F1541753D0ABB317B782EC1D92BD1A83BE32DFCD9C3FC09";
+    public const string ExpectedInventorySha256 = "908AEDEF5130CADCEB186A3715EFC035F8B0F4889D17379FCBB5F056F34707FD";
     public const string DevSeatClassification = "dev-seat";
     public const string TaskServerClassification = "task-server";
 
@@ -52,7 +52,11 @@ public sealed class ConnectorRouteInventory
             ?? throw new InvalidOperationException($"Embedded connector route inventory '{ResourceName}' is missing.");
         using var memory = new MemoryStream();
         stream.CopyTo(memory);
-        var bytes = memory.ToArray();
+        var rawBytes = memory.ToArray();
+        // The embedded resource is docs/studio-route-ownership/routes.json, checked out with the
+        // repository's native line endings (CRLF on the Windows-first runners, LF elsewhere); normalize
+        // before hashing so the pinned checksum does not depend on the checkout platform.
+        var bytes = Encoding.UTF8.GetBytes(NormalizeLineEndings(Encoding.UTF8.GetString(rawBytes)));
         var sourceChecksum = Convert.ToHexString(SHA256.HashData(bytes));
         if (!string.Equals(sourceChecksum, ExpectedInventorySha256, StringComparison.Ordinal))
             throw new InvalidOperationException(
@@ -61,10 +65,10 @@ public sealed class ConnectorRouteInventory
         var document = JsonSerializer.Deserialize<InventoryDocument>(bytes)
             ?? throw new InvalidOperationException("Connector route inventory is empty.");
         var operations = document.FrontendRoutes ?? [];
-        if (operations.Count != 366
-            || operations.Count(operation => operation.Classification == DevSeatClassification) != 98
-            || operations.Count(operation => operation.Classification == TaskServerClassification) != 268)
-            throw new InvalidOperationException("Connector route inventory does not contain the approved 98/268 route split.");
+        if (operations.Count != 408
+            || operations.Count(operation => operation.Classification == DevSeatClassification) != 99
+            || operations.Count(operation => operation.Classification == TaskServerClassification) != 309)
+            throw new InvalidOperationException("Connector route inventory does not contain the approved 99/309 route split.");
         if (operations.Any(operation => operation.Classification is not (DevSeatClassification or TaskServerClassification)))
             throw new InvalidOperationException("Connector route inventory contains an unclassified operation.");
 
@@ -83,6 +87,9 @@ public sealed class ConnectorRouteInventory
             .Order(StringComparer.Ordinal));
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
     }
+
+    private static string NormalizeLineEndings(string text)
+        => text.Replace("\r\n", "\n").Replace("\r", "\n");
 
     private sealed record InventoryDocument(
         [property: JsonPropertyName("frontendRoutes")] List<ConnectorRouteOperation>? FrontendRoutes);
