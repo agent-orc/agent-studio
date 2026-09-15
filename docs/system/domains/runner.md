@@ -1,6 +1,6 @@
 # Runner Domain Map
 
-Version: 2026-09-12
+Version: 2026-09-15
 Status: System-of-record map for runner-side changes.
 
 Use this when a change touches task pickup, active execution, post-run outcome
@@ -313,8 +313,13 @@ state.
 - `deploy/agent-host/agent-runner-deploy`, its configuration policy, and
   `scripts/harden-agent-runner-host.sh`: the root-owned least-privilege release
   and role-configuration boundary. Release promotion retains its fixed
-  no-argument ingress. Before the atomic link flip, it validates the selected
-  `agent-host.deps.json` runtime-assembly closure and runs the staged binary as
+  no-argument ingress. Before every daemon promotion, an operator runs the
+  hardening script from the trusted checkout to install the repository helper,
+  configuration policy, and dependency validator as root-owned executables.
+  They cannot be installed from the agent-writable incoming payload without
+  crossing the privilege boundary. Before the atomic link flip, the helper
+  validates the selected `agent-host.deps.json` runtime-assembly closure and
+  runs the staged binary as
   the service user under a short timeout. It then signals only the Review
   MainPID, waits for its clean exit, explicitly starts its replacement, restarts
   the fixed Coding unit, and detects an immediate crash loop from systemd
@@ -328,10 +333,12 @@ state.
   staged binary for this check. Startup and Task Server retry loops also honor
   the host-local control request, so an idle drain does not depend on server
   availability. The helper clears completed drain state and starts the unit
-  when it is inactive. Failure output names the
-  previous release and
-  prints the operator rollback command. Role configuration accepts only Coding
-  or Review
+  when it is inactive. Role configuration waits for a different active
+  MainPID, then gives the unit five bounded seconds to settle an `ExecStart`
+  re-exec or immediate replacement. Each process-environment read is accepted
+  only when systemd still owns the same active MainPID. Failure output names the
+  previous release and prints the operator rollback command. Role configuration
+  accepts only Coding or Review
   `RUNNER_MAX_PARALLELISM` values from 1 through 6, updates an EnvironmentFile
   loaded by that unit, and relies on systemd's documented precedence where
   `EnvironmentFile=` overrides `Environment=`. It replaces only the mapped

@@ -15,9 +15,11 @@ readonly compatibility_link="/opt/agent-runner"
 readonly legacy_backup="/opt/agent-runner.pre-hardening"
 readonly config_policy="/usr/local/libexec/agent-runner-config-policy"
 readonly deps_closure_validator="/usr/local/libexec/agent-runner-deps-closure"
+readonly proc_root="/proc"
 readonly maximum_release_bytes=$((1024 * 1024 * 1024))
 readonly main_pid_wait_seconds=120
 readonly main_pid_poll_seconds=0.2
+readonly effective_environment_wait_seconds=5
 readonly maximum_deps_json_bytes=$((16 * 1024 * 1024))
 readonly smoke_timeout_seconds=10
 readonly restart_observation_seconds=15
@@ -56,7 +58,7 @@ review_state_dir() {
       printf 'agent-runner-deploy: could not resolve the active review MainPID\n' >&2
       return 1
     }
-    [[ "$main_pid" =~ ^[1-9][0-9]*$ && -r "/proc/$main_pid/environ" ]] || {
+    [[ "$main_pid" =~ ^[1-9][0-9]*$ && -r "$proc_root/$main_pid/environ" ]] || {
       printf 'agent-runner-deploy: active review MainPID has no readable environment: %s\n' \
         "$main_pid" >&2
       return 1
@@ -232,8 +234,60 @@ read_process_environment_value() {
   local main_pid="$1"
   local variable="$2"
 
-  tr '\0' '\n' <"/proc/$main_pid/environ" \
+  tr '\0' '\n' <"$proc_root/$main_pid/environ" \
     | awk -F= -v key="$variable" '$1 == key { print substr($0, index($0, "=") + 1) }'
+}
+
+# Prove the requested value against the environment of the process systemd
+# currently owns. A new MainPID can be visible before an ExecStart wrapper has
+# re-execed the daemon, and an immediate service-manager retry can replace that
+# first generation. Recheck the unit identity around every /proc read and keep
+# the wait bounded so neither transition causes a correct value to roll back.
+wait_for_unit_effective_environment_value() {
+  local unit="$1"
+  local previous_main_pid="$2"
+  local variable="$3"
+  local expected_value="$4"
+  local timeout_seconds="${5:-$effective_environment_wait_seconds}"
+  local deadline=$((SECONDS + timeout_seconds))
+  local unit_state
+  local confirmed_unit_state
+  local active_state
+  local confirmed_active_state
+  local observed_main_pid
+  local confirmed_main_pid
+  local process_value
+  local observed_mismatch=0
+
+  while true; do
+    if unit_state="$(systemctl show --property=ActiveState --property=MainPID "$unit" 2>/dev/null)"; then
+      active_state="$(awk -F= '$1 == "ActiveState" { print $2 }' <<<"$unit_state")"
+      observed_main_pid="$(awk -F= '$1 == "MainPID" { print $2 }' <<<"$unit_state")"
+      if [[ "$active_state" == "active" \
+          && "$observed_main_pid" =~ ^[1-9][0-9]*$ \
+          && "$observed_main_pid" != "$previous_main_pid" ]]; then
+        if process_value="$(read_process_environment_value "$observed_main_pid" "$variable")" \
+            && confirmed_unit_state="$(systemctl show --property=ActiveState --property=MainPID "$unit" 2>/dev/null)"; then
+          confirmed_active_state="$(awk -F= '$1 == "ActiveState" { print $2 }' <<<"$confirmed_unit_state")"
+          confirmed_main_pid="$(awk -F= '$1 == "MainPID" { print $2 }' <<<"$confirmed_unit_state")"
+          if [[ "$confirmed_active_state" == "active" \
+              && "$confirmed_main_pid" == "$observed_main_pid" ]]; then
+            if [[ "$process_value" == "$expected_value" ]]; then
+              printf '%s\n' "$observed_main_pid"
+              return 0
+            fi
+            observed_mismatch=1
+          fi
+        fi
+      fi
+    fi
+
+    if ((SECONDS >= deadline)); then
+      ((observed_mismatch == 0)) || return 12
+      return 13
+    fi
+    sleep "$main_pid_poll_seconds"
+  done
 }
 
 wait_for_new_main_pid() {
@@ -596,7 +650,6 @@ configure_role() {
   candidate_file=""
 
   local main_pid
-  local process_value
   local restart_result
   if main_pid="$(restart_unit_and_wait_for_new_main_pid \
       "$AGENT_RUNNER_CONFIG_UNIT" "$previous_main_pid")"; then
@@ -609,12 +662,21 @@ configure_role() {
     10) rollback_config "unit-restart-failed" ;;
     *) rollback_config "new-main-pid-timeout" ;;
   esac
-  if ! process_value="$(read_process_environment_value \
-      "$main_pid" "$AGENT_RUNNER_CONFIG_VARIABLE")"; then
-    rollback_config "process-environment-read-failed"
+  local environment_result
+  if main_pid="$(wait_for_unit_effective_environment_value \
+      "$AGENT_RUNNER_CONFIG_UNIT" \
+      "$previous_main_pid" \
+      "$AGENT_RUNNER_CONFIG_VARIABLE" \
+      "$AGENT_RUNNER_CONFIG_VALUE")"; then
+    environment_result=0
+  else
+    environment_result="$?"
   fi
-  [[ "$process_value" == "$AGENT_RUNNER_CONFIG_VALUE" ]] \
-    || rollback_config "process-environment-mismatch"
+  case "$environment_result" in
+    0) ;;
+    12) rollback_config "process-environment-mismatch" ;;
+    *) rollback_config "process-environment-read-failed" ;;
+  esac
 
   if ! audit_config "applied" "pid=$main_pid"; then
     rollback_config "journal-write-failed"

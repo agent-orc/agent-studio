@@ -293,7 +293,7 @@ public sealed class RunnerServiceUnitTests
         Assert.Contains("readonly agent_host_binary=\"$current_link/agent-host\"", helper);
         Assert.Contains("1:restart-review)", helper);
         Assert.Contains("2:restart-review)", helper);
-        Assert.Contains("/proc/$main_pid/environ", helper);
+        Assert.Contains("$proc_root/$main_pid/environ", helper);
         Assert.Contains("result=$result", helper);
         Assert.Contains("rollback_config", helper);
         Assert.Contains("EnvironmentFiles", helper);

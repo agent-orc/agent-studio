@@ -452,6 +452,8 @@ or runner service. An `unknown` badge never produces sign-in guidance.
 
 ```bash
 git clone <origin> agent-taskboard && cd agent-taskboard
+# Run this from the trusted operator checkout before every promotion.
+sudo ./scripts/harden-agent-runner-host.sh --apply
 release_id="$(date -u +%Y%m%dT%H%M%SZ)-$(git rev-parse --short=12 HEAD)"
 staging_root="$(mktemp -d)"
 dotnet publish runner/AgentRunner.csproj -c Release -o "$staging_root"
@@ -461,6 +463,22 @@ cp -a "$staging_root/." "$incoming_root/"
 printf '%s\n' "$release_id" >"$incoming_root/release-id"
 sudo /usr/local/sbin/agent-runner-deploy
 ```
+
+The hardening step is a required, separate control-plane promotion. It installs
+the checked-out `deploy/agent-host/agent-runner-deploy` at
+`/usr/local/sbin/agent-runner-deploy`, and installs
+`agent-runner-config-policy` and `agent-runner-deps-closure.py` under
+`/usr/local/libexec` with their runtime names. All three files are `root:root`
+mode `0755`. Run it before invoking the installed helper so a release cannot use
+an older verification or dependency policy.
+
+This step cannot safely be folded into the no-argument release promotion. The
+normal incoming directory is writable by the unprivileged `agent` account and
+is therefore suitable for daemon payloads that run as `agent`, but it is not a
+trust source for code installed into a sudo-authorized root path. Keep the
+checkout and this step operator-owned. In particular, a host upgrading from
+v0.3.0 must run the step once before its next promotion because its installed
+helper cannot update itself.
 
 The selected output binary is `/opt/agent-host/current/agent-host`.
 `/opt/agent-runner` is a transition symlink for existing automation; new
@@ -570,15 +588,18 @@ only the mapped role process. Systemd applies `EnvironmentFile=` values after
 `RUNNER_MAX_PARALLELISM` value overrides a default such as
 `Environment=RUNNER_MAX_PARALLELISM=2` in the main unit. After restart, the
 helper waits up to 120 seconds for the unit to be active with a nonzero MainPID
-that differs from the pre-restart MainPID. Only then does it read
-`/proc/<MainPID>/environ`, which avoids selecting either the old daemon or a
-detached worker preserved by `KillMode=process`. A replacement, handoff timeout, or
-process-environment mismatch restores the previous file and retries the old
-configuration. Every accepted change writes an `authpriv.notice` journal
-record tagged `agent-runner-deploy` with the role, variable, old value, new
-value, unit, PID, and result. The sudoers policy independently enumerates both
-roles and every integer from 1 through 6. It does not permit another variable,
-unit, path, or argument shape.
+that differs from the pre-restart MainPID. It then allows up to five seconds for
+an `ExecStart` re-exec or immediate replacement generation to settle. On each
+attempt it reads `/proc/<MainPID>/environ` and rechecks that systemd still owns
+the same active MainPID, which avoids selecting the old daemon or a detached
+worker preserved by `KillMode=process`. The value in that stable process
+environment is the effective unit value. A replacement, handoff timeout,
+unreadable effective environment, or stable mismatch restores the previous file
+and retries the old configuration. Every accepted change writes an
+`authpriv.notice` journal record tagged `agent-runner-deploy` with the role,
+variable, old value, new value, unit, PID, and result. The sudoers policy
+independently enumerates both roles and every integer from 1 through 6. It does
+not permit another variable, unit, path, or argument shape.
 
 Set Review to four slots and prove the effective process value without reading
 any credential file:
