@@ -37,6 +37,11 @@ Set-DefaultEnvironment 'COMPUTERNAME' ([Environment]::MachineName)
 # reuses or leaves one.
 $env:MSBUILDDISABLENODEREUSE = '1'
 $env:DOTNET_CLI_USE_MSBUILD_SERVER = '0'
+# The gate points NUGET_PACKAGES at a per-run working folder and moves that
+# folder into its cache after a miss, but the later `dotnet build --no-restore`
+# is not given the new location (NETSDK1064: package not found). Restoring into
+# the user's global packages folder keeps the assets file valid for the build.
+Remove-Item Env:NUGET_PACKAGES -ErrorAction SilentlyContinue
 
 $candidates = @()
 if ($env:ProgramFiles) { $candidates += Join-Path $env:ProgramFiles 'Git\bin\bash.exe' }
