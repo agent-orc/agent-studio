@@ -1,7 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
 using System.Text.RegularExpressions;
 using AgentStudio.TaskServer.Contracts;
 
@@ -24,6 +23,8 @@ public sealed class RemoteReviewWorkspace
     private readonly RemoteReviewAgentCommandRunner _agentCommands;
     private string? _initialTree;
     private string? _baselineSha;
+    private string? _integrationHeadSha;
+    private bool _baselineCachePruned;
     private bool _dirtyBefore;
 
     public RemoteReviewWorkspace(
@@ -894,7 +895,9 @@ public sealed class RemoteReviewWorkspace
         ICollection<ReviewArtifactEvidenceDto> artifacts,
         CancellationToken ct,
         ReviewCommandDto? plannedCommand = null,
-        RemoteAgentUsage? agentUsage = null)
+        RemoteAgentUsage? agentUsage = null,
+        string? reusedFromAttemptId = null,
+        TimeSpan? reusedAge = null)
     {
         var stdoutName = ArtifactName(workspaceRole, stepId, "stdout");
         var stderrName = ArtifactName(workspaceRole, stepId, "stderr");
@@ -924,7 +927,7 @@ public sealed class RemoteReviewWorkspace
             baselineSha,
             comparison?.NewFailures,
             comparison?.PreExistingFailures,
-            comparison?.CacheHit ?? false,
+            comparison?.CacheHit ?? reusedFromAttemptId is not null,
             retryPerformed,
             comparison?.FlakyQuarantinedFailures,
             phase,
@@ -946,7 +949,9 @@ public sealed class RemoteReviewWorkspace
             agentUsage?.InputTokens ?? 0,
             agentUsage?.OutputTokens ?? 0,
             agentUsage?.CacheReadTokens ?? 0,
-            agentUsage?.CacheCreationTokens ?? 0);
+            agentUsage?.CacheCreationTokens ?? 0,
+            reusedFromAttemptId ?? comparison?.ReusedFromAttemptId,
+            (long)Math.Max(0, (reusedAge ?? comparison?.ReusedAge ?? TimeSpan.Zero).TotalSeconds));
     }
 
     private async Task<ReviewArtifactEvidenceDto> WriteArtifactAsync(
@@ -1083,35 +1088,25 @@ public sealed class RemoteReviewWorkspace
     {
         var baselineSha = await ResolveBaselineShaAsync(ct);
         var commandHash = CommandHash(command);
-        var cacheDirectory = Path.Combine(
-            BaselineCacheRoot,
-            HashText(_subject.RepositoryId),
-            baselineSha);
-        Directory.CreateDirectory(cacheDirectory);
-        var cachePath = Path.Combine(cacheDirectory, $"{commandHash}.json");
-        var cached = await ReadBaselineCacheAsync(cachePath, baselineSha, commandHash, ct);
+        var key = new ReviewBaselineCacheKey(
+            _subject.RepositoryId,
+            baselineSha,
+            commandHash,
+            ToolchainFingerprint(command));
+        await PruneBaselineCacheAsync(ct);
+        var cachePath = ReviewBaselineResultCache.EntryPath(BaselineCacheRoot, key);
+        Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
+        var cached = await ReviewBaselineResultCache.ReadAsync(
+            cachePath, key, TestFailureParserVersion, DateTime.UtcNow, ct);
         if (cached is not null)
-        {
-            _log($"review baseline cache hit repository={_subject.RepositoryId} baseline={baselineSha} step={command.StepId}");
-            return BaselineComparison.Create(
-                baselineSha,
-                cached.Failures,
-                SubjectFailures(command, subjectResult),
-                cacheHit: true);
-        }
+            return await ReuseBaselineResultAsync(command, subjectResult, cached, "hit", artifacts, commands, ct);
 
         var lockPath = cachePath + ".lock";
         await using var cacheLock = await AcquireCacheLockAsync(lockPath, ct);
-        cached = await ReadBaselineCacheAsync(cachePath, baselineSha, commandHash, ct);
+        cached = await ReviewBaselineResultCache.ReadAsync(
+            cachePath, key, TestFailureParserVersion, DateTime.UtcNow, ct);
         if (cached is not null)
-        {
-            _log($"review baseline cache hit after wait repository={_subject.RepositoryId} baseline={baselineSha} step={command.StepId}");
-            return BaselineComparison.Create(
-                baselineSha,
-                cached.Failures,
-                SubjectFailures(command, subjectResult),
-                cacheHit: true);
-        }
+            return await ReuseBaselineResultAsync(command, subjectResult, cached, "hit-after-wait", artifacts, commands, ct);
 
         var baselinePath = Path.Combine(AttemptRoot, $"baseline-{commandHash[..12]}");
         var worktree = await ProcessRunner.RunAsync(
@@ -1131,6 +1126,8 @@ public sealed class RemoteReviewWorkspace
         var workspaceRole = $"baseline-{commandHash[..12]}";
         DependencyCacheSession? baselineCache = null;
         CommandExecution execution;
+        string baselineHead;
+        string baselineTree;
         try
         {
             baselineCache = await ExecutePreparationAsync(
@@ -1141,12 +1138,12 @@ public sealed class RemoteReviewWorkspace
                 commands,
                 artifacts,
                 ct);
-            var headBefore = await GitValueAtAsync(
+            baselineHead = await GitValueAtAsync(
                 baselinePath,
                 ["rev-parse", "HEAD"],
                 environment,
                 ct);
-            var treeBefore = await GitValueAtAsync(
+            baselineTree = await GitValueAtAsync(
                 baselinePath,
                 ["rev-parse", "HEAD^{tree}"],
                 environment,
@@ -1157,8 +1154,8 @@ public sealed class RemoteReviewWorkspace
                 command.Aspect,
                 command.FileName,
                 command.Arguments,
-                headBefore,
-                treeBefore,
+                baselineHead,
+                baselineTree,
                 execution.Process,
                 execution.StartedAt,
                 execution.FinishedAt,
@@ -1222,12 +1219,19 @@ public sealed class RemoteReviewWorkspace
         var failures = ParsedTestFailures(execution.Process);
         var entry = new BaselineCacheEntry(
             TestFailureParserVersion,
-            baselineSha,
-            commandHash,
+            key.RepositoryId,
+            key.BaselineSha,
+            key.CommandHash,
+            key.ToolchainFingerprint,
+            _lease.AttemptId,
+            baselineHead,
+            baselineTree,
             execution.Process.ExitCode,
             failures,
+            execution.Process.StdOut,
+            execution.Process.StdErr,
             DateTime.UtcNow);
-        await WriteBaselineCacheAsync(cachePath, entry, ct);
+        await ReviewBaselineResultCache.WriteAsync(cachePath, entry, ct);
         _log($"review baseline cache fill repository={_subject.RepositoryId} baseline={baselineSha} step={command.StepId} failures={failures.Count}");
         return BaselineComparison.Create(
             baselineSha,
@@ -1236,10 +1240,122 @@ public sealed class RemoteReviewWorkspace
             cacheHit: false);
     }
 
+    /// <summary>
+    /// Classifies the candidate failure against a baseline result an earlier
+    /// attempt already produced. The cached process streams are re-attached as
+    /// this attempt's baseline command evidence, so the grade cites the same
+    /// artefacts a fresh baseline run would have produced. Only the baseline
+    /// run is skipped; the candidate command has already executed in this
+    /// attempt's own workspace.
+    /// </summary>
+    private async Task<BaselineComparison> ReuseBaselineResultAsync(
+        ReviewCommandDto command,
+        ProcessResult subjectResult,
+        BaselineCacheEntry cached,
+        string hitKind,
+        ICollection<ReviewArtifactEvidenceDto> artifacts,
+        ICollection<ReviewCommandEvidenceDto> commands,
+        CancellationToken ct)
+    {
+        var age = ReviewBaselineResultCache.Age(cached, DateTime.UtcNow);
+        var process = new ProcessResult(cached.ExitCode, cached.StdOut, cached.StdErr);
+        commands.Add(await AddCommandEvidenceAsync(
+            command.StepId,
+            command.Aspect,
+            command.FileName,
+            command.Arguments,
+            cached.HeadSha,
+            cached.TreeSha,
+            process,
+            cached.CreatedAt,
+            cached.CreatedAt,
+            signal: null,
+            command.TimeoutSeconds,
+            "verification",
+            $"baseline-{cached.CommandHash[..12]}",
+            cached.BaselineSha,
+            comparison: null,
+            retryPerformed: false,
+            dependencyCacheHit: false,
+            dependencyCache: null,
+            artifacts,
+            ct,
+            reusedFromAttemptId: cached.AttemptId,
+            reusedAge: age));
+        _log(
+            $"review baseline cache {hitKind} repository={_subject.RepositoryId} " +
+            $"baseline={cached.BaselineSha} step={command.StepId} " +
+            $"reusedFromAttempt={cached.AttemptId} ageMinutes={age.TotalMinutes:F0}");
+        return BaselineComparison.Create(
+            cached.BaselineSha,
+            cached.Failures,
+            SubjectFailures(command, subjectResult),
+            cacheHit: true,
+            cached.AttemptId,
+            age);
+    }
+
     private void SaveCaches(params DependencyCacheSession?[] sessions)
     {
         foreach (var session in sessions.Where(item => item is not null).Cast<DependencyCacheSession>())
             foreach (var message in session.Save()) _log(message);
+    }
+
+    /// <summary>
+    /// Digest of the toolchain entries the review grade records for this
+    /// command (<c>runtime</c>, <c>git</c>, and the resolved executable of the
+    /// command itself and of every dependency-preparation step). A host that
+    /// changed its SDK, its Git, or a planned executable therefore never
+    /// reuses a baseline result produced by the previous toolchain.
+    /// </summary>
+    private string ToolchainFingerprint(ReviewCommandDto command)
+    {
+        var text = new StringBuilder("runtime=").Append(RuntimeInformation.FrameworkDescription);
+        text.Append("\0git=").Append(ExecutableIdentity("git"));
+        text.Append("\0command:").Append(command.StepId).Append('=')
+            .Append(ExecutableIdentity(_agentCommands.PlannedExecutable(command)));
+        foreach (var preparation in _subject.Plan.Preparation ?? [])
+            text.Append("\0command:").Append(preparation.StepId).Append('=')
+                .Append(ExecutableIdentity(preparation.FileName));
+        return HashText(text.ToString());
+    }
+
+    /// <summary>
+    /// Runs once per attempt, before the first cache lookup, so a result whose
+    /// baseline SHA left the integration branch or whose bounded lifetime
+    /// expired is gone before it can be read.
+    /// </summary>
+    private async Task PruneBaselineCacheAsync(CancellationToken ct)
+    {
+        if (_baselineCachePruned) return;
+        _baselineCachePruned = true;
+        var integrationHead = _integrationHeadSha;
+        await ReviewBaselineResultCache.PruneAsync(
+            BaselineCacheRoot,
+            _subject.RepositoryId,
+            async (sha, token) => integrationHead is null
+                                  || await IsOnIntegrationBranchAsync(sha, integrationHead, token),
+            DateTime.UtcNow,
+            _log,
+            ct);
+    }
+
+    private async Task<bool> IsOnIntegrationBranchAsync(
+        string sha,
+        string integrationHead,
+        CancellationToken ct)
+    {
+        var ancestry = await ProcessRunner.RunAsync(
+            "git",
+            ["merge-base", "--is-ancestor", sha, integrationHead],
+            RepositoryPath,
+            environment: ProcessEnvironment(),
+            clearEnvironment: true,
+            ct: ct);
+        // Exit 1 is the honest "not an ancestor" answer; anything else (an
+        // unknown object, a broken repository) is not proof of removal, so the
+        // entry is kept and the bounded age remains its only expiry.
+        return ancestry.ExitCode != 1;
     }
 
     private IReadOnlyDictionary<string, string?> BaselineProcessEnvironment(string commandHash)
@@ -1289,6 +1405,7 @@ public sealed class RemoteReviewWorkspace
                 $"Integration ref '{_subject.Plan.IntegrationRef}' could not be fetched: {fetch.StdErr.Trim()}",
                 baselineSha: null,
                 command: null);
+        _integrationHeadSha = await GitValueAsync(["rev-parse", "FETCH_HEAD"], ct);
         _baselineSha = await GitValueAsync(["merge-base", _subject.ExpectedResultSha, "FETCH_HEAD"], ct);
         if (_baselineSha.Length == 0)
             throw BaselineUnavailable(
@@ -1483,51 +1600,6 @@ public sealed class RemoteReviewWorkspace
                 await Task.Delay(100, ct);
             }
         }
-    }
-
-    private static async Task<BaselineCacheEntry?> ReadBaselineCacheAsync(
-        string path,
-        string baselineSha,
-        string commandHash,
-        CancellationToken ct)
-    {
-        if (!File.Exists(path)) return null;
-        try
-        {
-            await using var stream = new FileStream(
-                path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.Asynchronous);
-            var entry = await JsonSerializer.DeserializeAsync<BaselineCacheEntry>(stream, cancellationToken: ct);
-            return entry is not null
-                   && entry.ParserVersion == TestFailureParserVersion
-                   && string.Equals(entry.BaselineSha, baselineSha, StringComparison.OrdinalIgnoreCase)
-                   && string.Equals(entry.CommandHash, commandHash, StringComparison.Ordinal)
-                ? entry
-                : null;
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-    }
-
-    private static async Task WriteBaselineCacheAsync(
-        string path,
-        BaselineCacheEntry entry,
-        CancellationToken ct)
-    {
-        var temporary = path + $".{Guid.NewGuid():N}.tmp";
-        await using (var stream = new FileStream(
-                         temporary,
-                         FileMode.CreateNew,
-                         FileAccess.Write,
-                         FileShare.None,
-                         4096,
-                         FileOptions.Asynchronous))
-        {
-            await JsonSerializer.SerializeAsync(stream, entry, cancellationToken: ct);
-            await stream.FlushAsync(ct);
-        }
-        File.Move(temporary, path, overwrite: true);
     }
 
     private async Task AddArtifactsAsync(
@@ -1772,7 +1844,8 @@ public sealed class RemoteReviewWorkspace
             command.Aspect,
             comparison.NewFailures.Count == 0 ? "pass" : "block",
             classification,
-            $"{newFailures}; {preExisting}; {quarantined}. Baseline {comparison.BaselineSha} ({(comparison.CacheHit ? "cache hit" : "cache fill")}).",
+            $"{newFailures}; {preExisting}; {quarantined}. " +
+            $"Baseline {comparison.BaselineSha} ({comparison.Provenance}).",
             $"command:{command.StepId}; baseline:{comparison.BaselineSha}",
             comparison.NewFailures.Count == 0
                 ? "none"
@@ -1966,7 +2039,7 @@ public sealed class RemoteReviewWorkspace
         => ReviewCommandKinds.IsAgent(command.ExecutionKind)
            && (execution.Signal == "timeout" || execution.Process.ExitCode == 124);
 
-    private static string HashText(string value)
+    internal static string HashText(string value)
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
 
     private string ExecutableIdentity(string fileName)
@@ -2047,27 +2120,34 @@ internal sealed record RemoteAgentUsage(
     long CacheReadTokens,
     long CacheCreationTokens);
 
-internal sealed record BaselineCacheEntry(
-    int ParserVersion,
-    string BaselineSha,
-    string CommandHash,
-    int ExitCode,
-    IReadOnlyList<string> Failures,
-    DateTime CreatedAt);
-
 internal sealed record BaselineComparison(
     string BaselineSha,
     IReadOnlyList<string> BaselineFailures,
     IReadOnlyList<string> NewFailures,
     IReadOnlyList<string> PreExistingFailures,
     IReadOnlyList<string> FlakyQuarantinedFailures,
-    bool CacheHit)
+    bool CacheHit,
+    string? ReusedFromAttemptId = null,
+    TimeSpan? ReusedAge = null)
 {
+    /// <summary>
+    /// How the baseline side of this comparison was produced, worded once for
+    /// the verdict summary, the Markdown grade, and the card projection.
+    /// </summary>
+    public string Provenance
+        => CacheHit && !string.IsNullOrWhiteSpace(ReusedFromAttemptId)
+            ? ReviewBaselineReuse.Citation(
+                ReusedFromAttemptId,
+                (long)Math.Max(0, (ReusedAge ?? TimeSpan.Zero).TotalSeconds))
+            : ReviewBaselineReuse.ExecutedInThisAttempt;
+
     public static BaselineComparison Create(
         string baselineSha,
         IReadOnlyList<string> baselineFailures,
         IReadOnlyList<string> subjectFailures,
-        bool cacheHit)
+        bool cacheHit,
+        string? reusedFromAttemptId = null,
+        TimeSpan? reusedAge = null)
     {
         var baseline = baselineFailures.ToHashSet(StringComparer.Ordinal);
         return new BaselineComparison(
@@ -2080,14 +2160,22 @@ internal sealed record BaselineComparison(
                 .Order(StringComparer.Ordinal)
                 .ToArray(),
             [],
-            cacheHit);
+            cacheHit,
+            reusedFromAttemptId,
+            reusedAge);
     }
 
     public BaselineComparison Reclassify(
         IReadOnlyList<string> subjectFailures,
         ReviewFlakyTestIndex reviewFlakyTests)
     {
-        var retried = Create(BaselineSha, BaselineFailures, subjectFailures, CacheHit);
+        var retried = Create(
+            BaselineSha,
+            BaselineFailures,
+            subjectFailures,
+            CacheHit,
+            ReusedFromAttemptId,
+            ReusedAge);
         var retriedFailures = subjectFailures.ToHashSet(StringComparer.Ordinal);
         return retried with
         {

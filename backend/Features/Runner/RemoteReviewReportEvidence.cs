@@ -66,6 +66,12 @@ internal static class RemoteReviewReportEvidence
         text.AppendLine($"expectedResultSha: {Yaml(request.Workspace.ExpectedResultSha)}");
         text.AppendLine($"actualHead: {Yaml(request.Workspace.ActualHead)}");
         text.AppendLine($"reportSha256: {Yaml(reportSha256)}");
+        var baselineReuse = BaselineReuseCitations(request.Commands);
+        if (baselineReuse is not null)
+        {
+            text.AppendLine("baselineReused: true");
+            text.AppendLine($"baselineReuse: {Yaml(baselineReuse)}");
+        }
         text.AppendLine("---");
         text.AppendLine();
         text.AppendLine("# Remote Review Grade");
@@ -109,8 +115,8 @@ internal static class RemoteReviewReportEvidence
         }
         else
         {
-            text.AppendLine("| Phase | Workspace | Step | Location | Host / executor | Command | Exit | Budget | Output | Errors |");
-            text.AppendLine("| --- | --- | --- | --- | --- | --- | ---: | --- | --- | --- |");
+            text.AppendLine("| Phase | Workspace | Step | Location | Host / executor | Command | Exit | Budget | Output | Errors | Baseline |");
+            text.AppendLine("| --- | --- | --- | --- | --- | --- | ---: | --- | --- | --- | --- |");
             foreach (var command in request.Commands)
             {
                 var budget = command.Budget is null
@@ -123,7 +129,8 @@ internal static class RemoteReviewReportEvidence
                     $"{Cell($"{command.HostId ?? request.Environment.HostId} / {command.ExecutorId ?? request.ExecutorId}")} | " +
                     $"`{Cell(CommandLine(command))}` | {Cell(command.ExitCode?.ToString() ?? command.Signal ?? "n/a")} | " +
                     $"{Cell(budget)} | {ArtifactLink("stdout", command.StdoutSha256, artifactFiles)} | " +
-                    $"{ArtifactLink("stderr", command.StderrSha256, artifactFiles)} |");
+                    $"{ArtifactLink("stderr", command.StderrSha256, artifactFiles)} | " +
+                    $"{Cell(BaselineProvenance(command))} |");
             }
         }
 
@@ -165,6 +172,35 @@ internal static class RemoteReviewReportEvidence
             files[artifact.Sha256] = fileName;
         }
         return files;
+    }
+
+    /// <summary>
+    /// How this command's baseline side was produced. A reused result names the
+    /// attempt it came from and how old it was, so a reader can tell a skipped
+    /// baseline run from one this attempt actually executed (AGT-2843).
+    /// </summary>
+    private static string BaselineProvenance(Contract.ReviewCommandEvidenceDto command)
+    {
+        if (!string.IsNullOrWhiteSpace(command.BaselineReusedFromAttemptId))
+            return Contract.ReviewBaselineReuse.Citation(
+                command.BaselineReusedFromAttemptId,
+                command.BaselineReusedAgeSeconds);
+        return string.IsNullOrWhiteSpace(command.BaselineSha)
+            ? "n/a"
+            : Contract.ReviewBaselineReuse.ExecutedInThisAttempt;
+    }
+
+    private static string? BaselineReuseCitations(
+        IReadOnlyList<Contract.ReviewCommandEvidenceDto> commands)
+    {
+        var citations = commands
+            .Where(command => !string.IsNullOrWhiteSpace(command.BaselineReusedFromAttemptId))
+            .Select(command => Contract.ReviewBaselineReuse.Citation(
+                command.BaselineReusedFromAttemptId!,
+                command.BaselineReusedAgeSeconds))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        return citations.Count == 0 ? null : string.Join("; ", citations);
     }
 
     private static string ArtifactLink(

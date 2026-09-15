@@ -150,6 +150,7 @@ internal static class TaskScopedTestEvidenceReader
             _ => "Build-tests command is missing from the Remote Review report.",
         };
 
+        var baselineReuse = frontmatter.GetValueOrDefault("baselineReuse");
         return new RemoteReviewAttemptFacts(
             AttemptId: attemptId,
             ReportRef: reportRef,
@@ -160,7 +161,8 @@ internal static class TaskScopedTestEvidenceReader
             BuildResult: buildResult,
             BuildResultLabel: buildResultLabel,
             BuildReason: buildReason,
-            BuildSteps: buildSteps);
+            BuildSteps: buildSteps,
+            BaselineReuse: string.IsNullOrWhiteSpace(baselineReuse) ? null : baselineReuse);
     }
 
     private static IReadOnlyList<TaskTestEvidenceSource> ReadRemoteReview(string path)
@@ -439,4 +441,11 @@ internal sealed record RemoteReviewAttemptFacts(
     string BuildResult,
     string BuildResultLabel,
     string BuildReason,
-    IReadOnlyList<string> BuildSteps);
+    IReadOnlyList<string> BuildSteps,
+    /// <summary>
+    /// The report's <c>baselineReuse</c> citation when this attempt classified
+    /// a candidate failure against a baseline result an earlier attempt had
+    /// already produced; null when every baseline ran in this attempt
+    /// (AGT-2843).
+    /// </summary>
+    string? BaselineReuse = null);

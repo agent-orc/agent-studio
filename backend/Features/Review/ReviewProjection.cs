@@ -52,6 +52,19 @@ public sealed record ReviewAttempt
 
     public string? SubjectSha { get; init; }
     public required string ReportRef { get; init; }
+
+    /// <summary>
+    /// True when this attempt classified a candidate verify failure against a
+    /// cached baseline result instead of re-running the baseline (AGT-2843).
+    /// </summary>
+    public bool BaselineReused { get; init; }
+
+    /// <summary>
+    /// The grade's citation for that reuse, e.g.
+    /// <c>baseline result reused from attempt r-17 (2h 5m)</c>; null when every
+    /// baseline of this attempt was executed by the attempt itself.
+    /// </summary>
+    public string? BaselineReuse { get; init; }
 }
 
 /// <summary>A blocking aspect on the latest review attempt, with its quoted reason.</summary>
@@ -183,6 +196,8 @@ public static class ReviewProjectionReader
             .ToList(),
         SubjectSha = fact.Commit,
         ReportRef = fact.ReportRef,
+        BaselineReused = !string.IsNullOrWhiteSpace(fact.BaselineReuse),
+        BaselineReuse = fact.BaselineReuse,
     };
 
     private static ReviewAttempt ToAttempt(LocalReviewAttemptFacts fact) => new()
