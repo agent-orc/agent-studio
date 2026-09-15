@@ -1494,6 +1494,13 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         // NETSDK1064 on `--no-restore` (TE-52), so the preparation binding is the
         // last layer and overrides the gate's own dependency cache.
         PreparationCacheEnvironment.Apply(psi, projectPreparation);
+        // The Studio backend starts the gate, so the child inherits the Studio's
+        // own listener configuration. A verify command that boots an ASP.NET Core
+        // host then reads the Studio's URL as its own and fails on a machine that
+        // runs the Studio while passing everywhere else (AGT-2840). Nothing a gate
+        // command does needs an inherited listener, so the boundary is unconditional
+        // and runs after every layer that builds this environment.
+        HostListenerEnvironment.RemoveFrom(psi.Environment);
         output.AppendLine($"> {fileName} {string.Join(' ', args)}");
 
         Process? process;
