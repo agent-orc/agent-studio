@@ -2493,6 +2493,64 @@ public class GitService
         return CommitBoundManifest(root, message, gate);
     }
 
+    /// <summary>
+    /// AGT-2828 operator action: commit the candidates the commit candidate gate
+    /// previously withheld, after a person reviewed them on the card.
+    ///
+    /// <para>Boundary validation (task, run location, a recorded withheld set),
+    /// then a fresh inspection carrying <c>explicitlyReviewed</c>, then the same
+    /// manifest-bound commit every other path uses. Explicit review clears the
+    /// unresolved WARNINGS that withheld the files; it never clears a block, so
+    /// secret material and an escaping path stay refused no matter who asks.</para>
+    /// </summary>
+    public GitCommitResult CommitWithheldCandidates(
+        string jobId,
+        string? watchPath,
+        string? message = null,
+        IReadOnlyCollection<string>? paths = null)
+    {
+        var task = _scanner.FindJob(jobId, watchPath);
+        if (task == null) return new GitCommitResult(false, null, $"Job '{jobId}' not found.");
+
+        var recorded = WithheldCommitCandidateStore.TryRead(task.FolderPath, _logger);
+        var expected = paths is { Count: > 0 }
+            ? paths
+            : recorded?.Candidates.Select(candidate => candidate.Path).ToArray();
+        if (expected is not { Count: > 0 })
+            return new GitCommitResult(false, null, "No withheld commit candidates are recorded for this task.");
+
+        // The gate ran in the task's own worktree, so the review must commit
+        // there too; the shared main checkout holds a sibling run's tree.
+        var location = ResolveRunLocation(jobId, watchPath);
+        if (location == null)
+            return new GitCommitResult(false, null, "Job not found or project has no RootPath configured.");
+        if (location.Root == null)
+            return new GitCommitResult(false, null, $"Not a git repository: {location.Configured}");
+
+        var gate = InspectCommitCandidates(
+            "operator-withheld-review",
+            string.IsNullOrWhiteSpace(task.ProjectName) ? jobId : task.ProjectName,
+            location.Root, jobId,
+            task.Runner?.RunnerId, expected, requireTaskWorktree: false,
+            expectedBranch: null, explicitlyReviewed: true);
+
+        var text = string.IsNullOrWhiteSpace(message)
+            ? $"chore(evidence): commit {expected.Count} candidate(s) withheld by the commit gate"
+                + $"\n\n{WorktreeRunCommitTrailer(jobId)}"
+            : message!;
+        var result = CommitBoundManifest(location.Root, text, gate);
+
+        // Keep the marker honest: a full commit clears it, a reviewed subset
+        // leaves exactly what is still waiting, a refusal leaves it untouched.
+        WithheldCommitCandidateStore.Persist(
+            task.FolderPath,
+            result.Success
+                ? WithheldCommitCandidatePolicy.Remaining(recorded, result.Gate?.IncludedPaths)
+                : recorded,
+            _logger);
+        return result;
+    }
+
     private CommitGateResult InspectCommitCandidates(
         string operation,
         string projectId,
@@ -2523,13 +2581,32 @@ public class GitService
         var gate = _commitGate.Inspect(new CommitGateRequest(
             operation, projectId, repoRoot, taskId, runnerId, expectedPaths,
             requireTaskWorktree, expectedBranch, explicitlyReviewed, evidenceDirectory,
-            requireExplicitPaths));
+            requireExplicitPaths, ResolveEvidenceAssetPaths(projectId)));
         _logger.LogInformation(
             "Commit candidate gate {Decision} for {Operation} project={Project} task={TaskId} runner={RunnerId} candidates={Candidates} included={Included} findings={Findings} evidence={Evidence}",
             gate.Decision, operation, projectId, taskId ?? "<none>", runnerId ?? "<none>",
             gate.Candidates.Count, gate.IncludedPaths.Count, gate.Findings.Count,
             gate.EvidencePath ?? "<unavailable>");
         return gate;
+    }
+
+    /// <summary>
+    /// AGT-2828: the project's declared evidence-asset paths, or an empty set
+    /// when the project declared none. Fails closed on purpose - a project that
+    /// declares nothing admits no binary without review, exactly as before.
+    /// </summary>
+    private IReadOnlyCollection<string> ResolveEvidenceAssetPaths(string projectId)
+    {
+        if (_projectSettings is null || string.IsNullOrWhiteSpace(projectId)) return [];
+        try
+        {
+            return EvidenceAssetPolicy.NormalizeDeclaredPaths(_projectSettings.Get(projectId).EvidenceAssetPaths);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Commit gate could not resolve evidence-asset paths for {Project}", projectId);
+            return [];
+        }
     }
 
     private GitCommitResult CommitBoundManifest(

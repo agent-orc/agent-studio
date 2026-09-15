@@ -313,6 +313,40 @@ Written whenever a task enters `5-human-review` or `5e-escalated`, and deleted w
 
 `blockerType` is the escalation category, or `operator-decision` for a manual park. `condition.kind` is one of `manual` or `git-ancestor`; `lastEvaluation.status` is one of `blocked`, `recallable`, or `undeterminable`. The recall sweep owns `lastEvaluation` and `reportedRecallableAt`; `TaskInfo.ParkedBlocker` projects the file at read time and adds the lane age. Legacy parks without the file are backfilled from `enteredLaneAt`. A `recallable` blocker is reported, never auto-requeued. See [parked-card recall](../../concepts/parked-card-recall.md).
 
+### withheld-commit-candidates.json (optional)
+
+Written next to `task.json` whenever the commit candidate gate held files back on
+a landing attempt, and deleted as soon as they land. It is what lets a parked
+card say a complete delivery is waiting uncommitted instead of only "no
+completion signal" (AGT-2828, from the WEB-21 park on 2026-09-15).
+
+```json
+{
+  "version": 1,
+  "decision": "warn",
+  "operation": "worktree-run",
+  "taskId": "WEB-21",
+  "branch": "task/WEB-21",
+  "repositoryRoot": "/repos/website",
+  "inspectedAtUtc": "2026-09-15T12:35:00Z",
+  "nothingCommitted": true,
+  "candidates": [
+    { "path": "docs/assets/shot-01.png", "reason": "binary-surprise", "sizeBytes": 204800, "binary": true },
+    { "path": "docs/report.md", "reason": "gate-warn", "sizeBytes": 1204, "binary": false }
+  ],
+  "evidencePath": "/workspace/.../results/commit-candidate-gate.json"
+}
+```
+
+`decision` is the gate decision (`warn` / `block`); `nothingCommitted` is true
+when the gate committed nothing at all, so the whole delivery is still in the
+worktree. Each candidate `reason` is the joined gate finding codes for that path,
+its exclusion reason, or `gate-<decision>` when only a repository-scoped finding
+applies. `GET /api/tasks/{id}/git/withheld-candidates` projects the file;
+`POST /api/tasks/{id}/git/withheld-candidates/commit` is the operator action that
+commits the reviewed set and clears it. Informational findings - a declared
+evidence asset the gate admitted - never appear as a withholding reason.
+
 ### post-processing-outcomes.jsonl (optional)
 
 Append-only JSON-Lines file holding orchestrator-owned Post Processing outcomes. This file records what happened between the coding CLI finishing and the task reaching Human Review; it does not authorize source edits or lane moves by the supporting identity.

@@ -893,6 +893,93 @@ public class ReviewDecisionOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task NoCompletionSignal_WithWithheldCommitCandidates_ParksWithGateAndCountInTheReason()
+    {
+        // AGT-2828 / WEB-21: the run ended without a sentinel because the commit
+        // candidate gate withheld its finished delivery. Before this fix the card
+        // landed in 5e-escalated with cause no-completion-signal and an EMPTY
+        // parked reason - the operator had no way to know 14 files were waiting
+        // uncommitted in the worktree.
+        SeedReviewJobWithoutSentinel("withheld-evidence",
+            title: "Capture board evidence",
+            promptBody: "# Capture board evidence\n\nTake 12 screenshots of the kanban board in both themes and record them under the project's asset path.\n");
+        AppendReissueDecision("withheld-evidence", "prior reissue 1");
+        AppendReissueDecision("withheld-evidence", "prior reissue 2");
+
+        var candidates = Enumerable.Range(1, 12)
+            .Select(i => new WithheldCommitCandidate
+            {
+                Path = $"docs/assets/shot-{i:00}.png",
+                Reason = "binary-surprise",
+                SizeBytes = 2048,
+                Binary = true,
+            })
+            .Append(new WithheldCommitCandidate { Path = "docs/report.md", Reason = "gate-warn" })
+            .Append(new WithheldCommitCandidate { Path = "status.md", Reason = "gate-warn" })
+            .ToArray();
+        WithheldCommitCandidateStore.Write(
+            Path.Combine(_watchPath, TaskStates.AutoReview, "withheld-evidence"),
+            new WithheldCommitCandidateRecord
+            {
+                Decision = CommitGateDecisions.Warn,
+                Operation = "worktree-run",
+                TaskId = "withheld-evidence",
+                Branch = "task/withheld-evidence",
+                RepositoryRoot = _watchPath,
+                InspectedAtUtc = DateTime.UtcNow,
+                NothingCommitted = true,
+                Candidates = candidates,
+            });
+
+        var orchestrator = BuildOrchestrator(cliResponse: "");
+        await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+
+        var escalated = Path.Combine(_watchPath, TaskStates.Escalated, "withheld-evidence");
+        Assert.True(Directory.Exists(escalated));
+
+        // The parked marker the board reads: no longer an empty reason, and it
+        // names the gate and the count.
+        var parked = ParkedBlockerMarker.TryRead(escalated);
+        Assert.NotNull(parked);
+        Assert.Equal(HumanReviewEscalationCategories.NoCompletionSignal, parked!.BlockerType);
+        Assert.Contains("commit candidate gate (warn) withheld 14 file(s)", parked.Reason, StringComparison.Ordinal);
+        Assert.Contains("uncommitted", parked.Reason, StringComparison.Ordinal);
+
+        // And the card says WHICH files, plus the action that lands them.
+        var log = ReadCliLog(TaskStates.Escalated, "withheld-evidence");
+        Assert.Contains("`docs/assets/shot-01.png` - binary-surprise", log);
+        Assert.Contains("`docs/report.md`", log);
+        Assert.Contains("/api/tasks/withheld-evidence/git/withheld-candidates/commit", log);
+
+        var records = ReviewDecisionLog.ReadAll(_workspace, Project);
+        Assert.Equal(ReviewDecisionKind.Escalate, records[^1].Kind);
+        Assert.Contains("withheld 14 file(s)", records[^1].Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task NoCompletionSignal_WithoutWithheldCandidates_StillCarriesItsOwnReasonIntoThePark()
+    {
+        // Negative guard for the same wiring: the park reason must be non-empty
+        // and correctly typed even when no commit candidates were withheld, so
+        // the fix cannot regress into "only gate parks are explainable".
+        SeedReviewJobWithoutSentinel("plain-no-signal",
+            title: "Wire up the metrics exporter",
+            promptBody: "# Metrics exporter\n\nExpose Prometheus counters for run starts, completions, and escalations from the orchestrator loop.\n");
+        AppendReissueDecision("plain-no-signal", "prior reissue 1");
+        AppendReissueDecision("plain-no-signal", "prior reissue 2");
+
+        var orchestrator = BuildOrchestrator(cliResponse: "");
+        await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+
+        var parked = ParkedBlockerMarker.TryRead(
+            Path.Combine(_watchPath, TaskStates.Escalated, "plain-no-signal"));
+        Assert.NotNull(parked);
+        Assert.Equal(HumanReviewEscalationCategories.NoCompletionSignal, parked!.BlockerType);
+        Assert.False(string.IsNullOrWhiteSpace(parked.Reason));
+        Assert.DoesNotContain("commit candidate gate", parked.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task NoCompletionSignal_WithEmptyPrompt_EscalatesImmediately()
     {
         // A placeholder/empty prompt cannot be driven to a sentinel by
