@@ -1,0 +1,24 @@
+<aside class="contradiction-notice"
+       data-testid="project-settings-build-profile-contradiction"
+       aria-labelledby="project-settings-build-profile-contradiction-title">
+  <span class="contradiction-notice__dot" aria-hidden="true"></span>
+  <span class="contradiction-notice__copy">
+    <span class="contradiction-notice__title-row">
+      <strong id="project-settings-build-profile-contradiction-title">Build profile disagrees with project.yml</strong>
+      <span class="contradiction-notice__badge">Overridden</span>
+    </span>
+    <span>
+      The repository's <code>.agent-studio/project.yml</code> always takes
+      precedence, so these declared BuildProfile commands never run:
+    </span>
+    <ul class="contradiction-notice__list">
+      @for (row of rows(); track row.field) {
+        <li>
+          <strong>{{ row.label }}:</strong>
+          declared <code>{{ row.profileCommands.join(' && ') }}</code>,
+          repository runs <code>{{ row.repositoryCommands.join(' && ') || '(nothing)' }}</code>
+        </li>
+      }
+    </ul>
+  </span>
+</aside>

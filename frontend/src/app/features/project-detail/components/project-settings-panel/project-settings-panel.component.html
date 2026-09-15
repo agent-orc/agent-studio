@@ -16,6 +16,9 @@
       @if (!gate.gateApplicable) {
         <app-project-build-profile-notice [summary]="gate" />
       }
+      @if (gate.contradictions && gate.contradictions.length > 0) {
+        <app-project-build-profile-contradiction-notice [contradictions]="gate.contradictions" />
+      }
     }
   </section>
 

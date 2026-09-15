@@ -1,0 +1,37 @@
+:host { display: block; }
+
+.contradiction-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--studio-spacing-2);
+  padding: var(--studio-spacing-3);
+  border: 1px solid color-mix(in srgb, var(--studio-warn) 34%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--studio-warn) 8%, var(--studio-card-bg));
+  color: var(--studio-fg-dim);
+  font-size: 0.8rem;
+}
+
+.contradiction-notice__dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  margin-top: var(--studio-spacing-1);
+  border-radius: 50%;
+  background: var(--studio-warn);
+}
+
+.contradiction-notice__copy { display: grid; gap: var(--studio-spacing-1); max-width: 72ch; }
+.contradiction-notice__title-row { display: flex; align-items: center; gap: var(--studio-spacing-2); color: var(--studio-fg); }
+.contradiction-notice__badge {
+  margin-left: auto;
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
+  border: 1px solid color-mix(in srgb, var(--studio-warn) 34%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--studio-warn) 14%, transparent);
+  color: var(--studio-warn);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.contradiction-notice__list { display: grid; gap: var(--studio-spacing-1); margin: 0; padding-left: 1.1em; }

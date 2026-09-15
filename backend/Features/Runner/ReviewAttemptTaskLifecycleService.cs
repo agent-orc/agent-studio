@@ -188,6 +188,63 @@ public sealed class ReviewAttemptTaskLifecycleService
     }
 
     /// <summary>
+    /// AGT-2827: a project's build profile or a review pipeline step just
+    /// changed. Every current ReviewAttempt still queued (Pending, unclaimed)
+    /// for this project gets its frozen Plan rebuilt from the new settings via
+    /// <paramref name="buildPlan"/>, so an attempt created before the edit does
+    /// not run stale commands once claimed - the incident this closes had a
+    /// build profile corrected two minutes before its queued attempt was
+    /// claimed, and the claim still ran the pre-correction command. A claimed
+    /// (Leased) attempt already handed its plan to an executor and is left
+    /// untouched; <see cref="AttemptAuthorityService.ReplanPendingReview"/>
+    /// re-checks the Pending guard under its own lock so a claim that wins a
+    /// race is never overwritten. The task lookup and the authority mutation
+    /// share this lifecycle lock, matching every other review-attempt mutation
+    /// in this class.
+    /// </summary>
+    public IReadOnlyList<ReviewAttemptDto> ReplanQueuedReviewAttempts(
+        string projectName,
+        Func<TaskInfo, AgentStudio.TaskServer.Contracts.ReviewPlanDto?> buildPlan)
+    {
+        ArgumentNullException.ThrowIfNull(buildPlan);
+
+        lock (_gate)
+        {
+            var tasks = BuildTaskIndex(_scanner.ScanAllJobsWithArchive());
+            var replanned = new List<ReviewAttemptDto>();
+            foreach (var review in _authority.ListPendingReviewAttempts())
+            {
+                if (!tasks.TryGetValue(review.TaskKey, out var task)
+                    || !string.Equals(task.ProjectName, projectName, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var plan = buildPlan(task);
+                if (plan is null) continue;
+
+                var result = _authority.ReplanPendingReview(review.AttemptId, plan);
+                if (result.Status != AttemptWriteStatus.Accepted || result.ReviewAttempt is not { } updated)
+                    continue;
+
+                replanned.Add(updated);
+                _timeline.Append(task.FolderPath, new TimelineEvent
+                {
+                    Ts = DateTime.UtcNow,
+                    Kind = TimelineEventKinds.ReviewAttemptReplanned,
+                    Actor = TimelineActors.System,
+                    Summary = $"ReviewAttempt {review.AttemptId} was re-planned after a project settings change.",
+                    RunId = review.AttemptId,
+                    Details = new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        ["attemptId"] = review.AttemptId,
+                        ["reason"] = "project-settings-changed",
+                    },
+                });
+            }
+            return replanned;
+        }
+    }
+
+    /// <summary>
     /// Applies the same card-state guard to the attempt-addressed compatibility
     /// claim route.
     /// </summary>

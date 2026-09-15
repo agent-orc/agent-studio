@@ -1284,6 +1284,53 @@ public sealed class AttemptAuthorityService
         }
     }
 
+    /// <summary>
+    /// AGT-2827: every current ReviewAttempt still queued (Pending, unclaimed) -
+    /// the population a build-profile or pipeline-step edit must re-plan before
+    /// an executor can claim a frozen, stale plan.
+    /// </summary>
+    public IReadOnlyList<ReviewAttemptDto> ListPendingReviewAttempts()
+    {
+        lock (_gate)
+        {
+            return _state.ReviewAttempts
+                .Where(IsCurrentReview)
+                .Where(review => review.State == AttemptLifecycleState.Pending)
+                .Select(ToDto)
+                .ToList();
+        }
+    }
+
+    /// <summary>
+    /// AGT-2827: rebuilds the Plan carried by a still-queued ReviewAttempt's
+    /// subject. Guarded on <see cref="AttemptLifecycleState.Pending"/> under the
+    /// same gate a claim uses, so a claim that wins a race with a concurrent
+    /// re-plan keeps the plan its executor actually received - only a caller
+    /// that observes the attempt still queued at write time can rewrite it.
+    /// </summary>
+    public AttemptWriteResult ReplanPendingReview(
+        string attemptId,
+        AgentStudio.TaskServer.Contracts.ReviewPlanDto plan)
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+        lock (_gate)
+        {
+            var review = FindReview(attemptId);
+            if (review is null)
+                return new AttemptWriteResult(AttemptWriteStatus.NotFound, attemptId, "ReviewAttempt not found.");
+            if (review.State != AttemptLifecycleState.Pending)
+                return new AttemptWriteResult(
+                    AttemptWriteStatus.InvalidState,
+                    attemptId,
+                    "ReviewAttempt is no longer queued; a claimed attempt keeps its frozen plan.",
+                    ReviewAttempt: ToDto(review));
+
+            review.Subject.Plan = plan;
+            PersistLocked();
+            return new AttemptWriteResult(AttemptWriteStatus.Accepted, attemptId, ReviewAttempt: ToDto(review));
+        }
+    }
+
     public IReadOnlyList<ReviewAttemptDto> ListActiveReviewAttempts()
     {
         lock (_gate)
