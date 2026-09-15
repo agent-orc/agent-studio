@@ -37,6 +37,7 @@ public static class EndpointMapping
         tasks.MapTaskMergeEndpoints();
         tasks.MapTaskIntegrationRecordEndpoints();
         tasks.MapTaskIntegrationRecoveryEndpoints();
+        tasks.MapTaskIntegrationRetryEndpoints();
 
         app.MapEpicEndpoints();
         app.MapCompletedLaneAuditEndpoints();

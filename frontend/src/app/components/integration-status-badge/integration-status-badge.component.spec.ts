@@ -207,6 +207,117 @@ describe('IntegrationStatusBadgeComponent', () => {
     http.verify();
   });
 
+  it('offers Retry integration on a gate-environment failure and reuses the passed review', () => {
+    // AGT-2824: CAC-18 keeps this failure in `pending`, and the delivery itself
+    // is fine, so the card must offer the cheap replay rather than the rebase
+    // steer round that would re-review an unchanged delivery.
+    const tasks = TestBed.inject(TaskService);
+    const refresh = vi.spyOn(tasks, 'refresh').mockImplementation(() => undefined);
+    const notifications = TestBed.inject(NotificationService);
+    const fixture = TestBed.createComponent(IntegrationStatusBadgeComponent);
+    fixture.componentRef.setInput('integration', integration('pending', {
+      detail: 'gate environment: The build gate blocked the merge into develop.',
+      failure: {
+        code: 'gate-environment-failure',
+        label: 'Gate environment failure',
+        reason: "Tool 'node' version v24.18.0 does not match .nvmrc",
+        rebaseRecoveryAvailable: false,
+      },
+    }));
+    fixture.componentRef.setInput('jobId', 'task-1');
+    fixture.componentRef.setInput('watchPath', '/tmp/watch');
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector(
+      '[data-testid="task-card-integration-recovery"]',
+    )).toBeNull();
+    const button = fixture.nativeElement.querySelector(
+      '[data-testid="task-card-integration-retry"]',
+    ) as HTMLButtonElement;
+    expect(button).toBeTruthy();
+    button.click();
+    expect(fixture.componentInstance.retryPending()).toBe(true);
+
+    const http = TestBed.inject(HttpTestingController);
+    const request = http.expectOne((req) =>
+      req.method === 'POST'
+      && req.url === '/api/tasks/task-1/integration/retry'
+      && req.params.get('watchPath') === '/tmp/watch',
+    );
+    expect(request.request.body).toBeNull();
+    request.flush({
+      status: 'integrated',
+      reason: 'The delivery integrated without a new review round.',
+      outcome: 'Merged',
+      rung: 0,
+      deliverySha: 'a'.repeat(40),
+      integrationBranch: 'develop',
+      reviewReused: true,
+    });
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.retryPending()).toBe(false);
+    expect(refresh).toHaveBeenCalledWith(true);
+    expect(notifications.notifications().at(-1)?.message).toContain('without a new review');
+    http.verify();
+  });
+
+  it('shows the policy reason when the server refuses the retry', () => {
+    // AGT-2824 - the operator button overrides the ladder's timing, never its
+    // eligibility, so a refusal must name the rule that refused it.
+    const notifications = TestBed.inject(NotificationService);
+    const fixture = TestBed.createComponent(IntegrationStatusBadgeComponent);
+    fixture.componentRef.setInput('integration', integration('pending', {
+      failure: {
+        code: 'gate-environment-failure',
+        label: 'Gate environment failure',
+        reason: "Tool 'node' version v24.18.0 does not match .nvmrc",
+        rebaseRecoveryAvailable: false,
+      },
+    }));
+    fixture.componentRef.setInput('jobId', 'task-1');
+    fixture.detectChanges();
+
+    (fixture.nativeElement.querySelector(
+      '[data-testid="task-card-integration-retry"]',
+    ) as HTMLButtonElement).click();
+
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/tasks/task-1/integration/retry').flush(
+      {
+        error: 'An acceptance integration for this task is already running; '
+          + 'wait for it to settle before retrying.',
+        status: 'not-applicable',
+        code: 'acceptance-integration-in-flight',
+      },
+      { status: 409, statusText: 'Conflict' },
+    );
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.retryPending()).toBe(false);
+    expect(notifications.notifications().at(-1)?.message)
+      .toContain('acceptance integration for this task is already running');
+    http.verify();
+  });
+
+  it('does not offer Retry integration for any other integration failure', () => {
+    const fixture = TestBed.createComponent(IntegrationStatusBadgeComponent);
+    fixture.componentRef.setInput('integration', integration('conflict-skipped', {
+      failure: {
+        code: 'merge-conflict',
+        label: 'Merge conflict',
+        reason: 'The delivery conflicts with the current integration branch.',
+        rebaseRecoveryAvailable: true,
+      },
+    }));
+    fixture.componentRef.setInput('jobId', 'task-1');
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector(
+      '[data-testid="task-card-integration-retry"]',
+    )).toBeNull();
+  });
+
   it('appends the requeue class to an infrastructure failure and its tooltip', () => {
     const fixture = render(integration('conflict-skipped', {
       detail: "Integration branch 'develop' could not be fetched from origin: git operation timed out after 30 seconds",
