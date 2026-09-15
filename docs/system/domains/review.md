@@ -74,6 +74,43 @@ inert rather than guessing a kill.
 Safe parallelism and the procedure for raising it live in
 [linux-runner-host.md](../../operations/setup/linux-runner-host.md#review-parallelism-and-build-server-isolation).
 
+## Baseline verify result cache
+
+A candidate verify failure is not a verdict by itself: the same command runs
+again on the merge-base to separate new failures from failures the integration
+branch already had. That second run costs what the first cost - the backend
+suite is roughly twenty minutes - and several attempts on one integration
+branch resolve the same baseline SHA within the hour, so before AGT-2843 a card
+paid for the identical baseline run once per attempt.
+
+`runner/ReviewBaselineResultCache.cs` stores each baseline result once per host
+under `$RUNNER_REVIEW_WORKDIR/.baseline-cache`, keyed by the inputs the grade
+already records: repository, resolved baseline SHA, verify command line, and a
+toolchain fingerprint over the `runtime`, `git`, and per-step executable
+identities in `ReviewEnvironmentDto.Toolchain`. An entry holds the parsed
+failure list plus the complete stdout and stderr, so a reused result is
+re-attached as this attempt's baseline command evidence and cites the same
+artefacts a fresh baseline run would have produced.
+
+Three rules keep a hit honest:
+
+- **A hit never replaces a candidate run.** The lookup happens only after the
+  candidate command has already failed in this attempt's own workspace, and the
+  flake retry still re-runs the candidate.
+- **Entries expire.** A result older than 24 hours is dropped and re-executed,
+  and every baseline SHA the freshly fetched integration ref no longer contains
+  is pruned before the first lookup of an attempt.
+- **Reuse is visible.** The verdict summary, the Markdown grade
+  (`baselineReused`/`baselineReuse` frontmatter plus a `Baseline` column in the
+  command evidence table), and `ReviewProjectionView.Attempts[].BaselineReused`
+  all carry the same sentence, worded once by
+  `ReviewBaselineReuse.Citation`: `baseline result reused from attempt <id>
+  (<age>)`. A baseline this attempt executed itself reads `baseline executed in
+  this attempt`.
+
+Operating the cache, including where it lives and how to clear it, is in
+[linux-runner-host.md](../../operations/setup/linux-runner-host.md#baseline-verify-result-cache).
+
 ## Verdict citation contract
 
 Every semantic aspect sentinel supplies these fields:
@@ -107,6 +144,8 @@ blocking behavior.
 - `runner/RemoteReviewWorkspace.cs`: exact checkout, integration-ref fetch,
   merge-base, bounded review material, aspect parsing, executor-side citation
   downgrade, and the per-attempt process environment.
+- `runner/ReviewBaselineResultCache.cs`: baseline result key, bounded lifetime,
+  integration-branch pruning, and the atomic per-entry store.
 - `runner/ReviewBuildServerIsolation.cs` and
   `runner/CommandProgressWatchdog.cs`: the per-attempt build namespace and the
   CPU-progress hang watchdog.
@@ -130,3 +169,9 @@ blocking behavior.
   host-global build servers left behind by concurrent attempts.
 - `backend.Tests/ReviewGradingPolicyTests.cs`: uncited-block downgrade and cited
   block preservation.
+- `backend/Features/Runner/RemoteReviewReportEvidence.cs` and
+  `backend/Features/Review/ReviewProjection.cs`: the grade's baseline-reuse
+  citation and the card projection that reads it back, covered by
+  `backend.Tests/RemoteReviewReportEvidenceTests.cs`.
+- `runner.Tests/RemoteReviewWorkspaceTests.cs`: baseline cache hit, miss,
+  expiry, pruning, and a new-failure classification against a reused baseline.

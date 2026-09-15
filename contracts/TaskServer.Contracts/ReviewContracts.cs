@@ -193,7 +193,31 @@ public sealed record ReviewCommandEvidenceDto(
     long InputTokens = 0,
     long OutputTokens = 0,
     long CacheReadTokens = 0,
-    long CacheCreationTokens = 0);
+    long CacheCreationTokens = 0,
+    string? BaselineReusedFromAttemptId = null,
+    long BaselineReusedAgeSeconds = 0);
+
+/// <summary>
+/// One sentence for a baseline verify result that was reused from an earlier
+/// attempt instead of re-executed. The executor's verdict summary, the
+/// Markdown grade, and the card review projection all read this, so the three
+/// surfaces cannot word the same fact differently.
+/// </summary>
+public static class ReviewBaselineReuse
+{
+    public const string ExecutedInThisAttempt = "baseline executed in this attempt";
+
+    public static string Citation(string attemptId, long ageSeconds)
+        => $"baseline result reused from attempt {attemptId} ({DescribeAge(ageSeconds)})";
+
+    public static string DescribeAge(long ageSeconds)
+    {
+        var age = TimeSpan.FromSeconds(Math.Max(0, ageSeconds));
+        if (age.TotalMinutes < 1) return $"{age.Seconds}s";
+        if (age.TotalHours < 1) return $"{(int)age.TotalMinutes}m";
+        return $"{(int)age.TotalHours}h {age.Minutes}m";
+    }
+}
 
 public sealed record ReviewCommandBudgetEvidenceDto(
     string Name,
