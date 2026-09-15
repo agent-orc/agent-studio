@@ -376,6 +376,25 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   commit to a replacement object id, target-branch ancestry of that reviewed
   result proves integration; attributed SHAs from superseded review epochs
   remain history and do not force a permanent `partial` card state.
+- A missing attributed commit is not automatically a hole in the delivery
+  either: `ClassifyRepositories`/`ClassifyWithRepo` also recognize *implicit*
+  supersession at read time, reusing the same conservative breadth heuristic
+  (≥90% changed-file overlap, ≤3 omissions, comparable breadth, a different
+  delivery generation) as the one-time `SupersededCommitSweep` migration, but
+  for any attributed commit, not only a `wip(runner): salvage before teardown`
+  fence. A missing commit whose content is fully covered by a later,
+  integrated commit reads as `superseded by <sha>` in the detail instead of
+  contributing to `partial`; no explicit `supersededBySha`/`supersededByAttempt`
+  marker is required (AGT-2838).
+- `MergeIntoDevelopRunner` requests an immediate `GitStateIndexService` refresh
+  and an immediate `AcceptanceRailHostedService` pass right after a successful
+  integration push, instead of only after the debounced watcher or the rail's
+  next periodic tick (AGT-2838). A card that is already integrated by the time
+  the push lands is accepted out of `5-human-review` immediately, which also
+  clears any parked-blocker marker the earlier review verdict left on it -
+  leaving a parked lane always clears the marker (see Parked-card blocker and
+  recall below). Both hooks are best-effort primes: a missed one still
+  self-heals on the next watch event or periodic sweep.
 - A move may set `operatorOverride: true` only when targeting `6-completed`.
   This is an explicit, one-shot operator waiver, never a default. Pipeline
   history and `status.md` retain the override and reason. Concept and other
@@ -507,7 +526,7 @@ workspace-scoped task file route.
 Every move into `5-human-review` or `5e-escalated` writes a machine-readable
 `parked-blocker.json` next to `task.json`: the blocker type (the escalation
 category, or `operator-decision` for a manual park), a condition a sweep can
-re-check, the park timestamp, and the original freetext reason verbatim. The
+re-check, the park timestamp, and a reason that is never blank. The
 write happens in `TaskStateMachine.RecordParkedBlocker`, at the same lane-change
 choke point that appends the `lane_changed` ledger row, so every park path gets a
 marker; leaving a parked lane clears it. That ledger row also names why the lane
@@ -515,6 +534,10 @@ changed: `details.cause` (one of `LaneChangeCauses`, supplied by the transition
 site or derived from the lane pair for a human actor) and `details.causeDetail`
 (a short qualifier); see the lane-transition section of the
 [cycle-time stage model](../../concepts/cycle-time-stage-model.md#lane-transitions).
+`ParkedBlockerCatalog.Build` preserves the caller's freetext reason verbatim
+when one was supplied; otherwise it falls back to `cause: causeDetail` (or
+whichever of the two is present) so the marker's `reason` field is never empty
+even when the lane-transition site only passed the taxonomy fields (AGT-2838).
 
 `ParkedCardRecallSweep` re-evaluates those conditions on a timer and through
 `GET /api/parked-cards`. A card whose precondition is provably gone is REPORTED -
@@ -890,6 +913,12 @@ path.
   start a second one; it marks exactly one rerun for after the current run
   finishes. `GitStateIndex:MaxConcurrentRepos` (default 2) bounds how many
   repositories index at once process-wide.
+- **`RequestRefresh(projectName, trigger)` primes a repository immediately.** A
+  mutation path that already knows it just changed a repository's ref state
+  does not have to wait for the debounced watcher or the periodic sweep;
+  `MergeIntoDevelopRunner` calls it right after a successful integration push
+  (AGT-2838) so the board's integration projection is never stale by more than
+  the immediate re-index.
 - **Stale-while-revalidate.** `TaskListGitProjectionCache.ReadCacheOnly` and
   `GitService.GetProjectInventory` always return the last completed snapshot
   immediately; a repository mid-refresh reports `stale=true` alongside it, and

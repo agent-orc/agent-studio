@@ -60,6 +60,28 @@ public sealed class ParkedBlockerPolicyTests
     public void Build_OnlyProducesAMarkerForAParkedLane(string lane, bool expected)
         => Assert.Equal(expected, ParkedBlockerCatalog.Build(lane, "[watchdog-kill] died", Now) is not null);
 
+    // AGT-2838: a park must never carry an empty reason. A caller that only
+    // knows the lane-change taxonomy (cause + qualifier), not free-form prose,
+    // must still leave a readable cause on the card.
+    [Theory]
+    [InlineData(null, null, null, "Parked with no recorded cause.")]
+    [InlineData(null, "escalated", null, "escalated")]
+    [InlineData(null, null, "no-completion-signal", "no-completion-signal")]
+    [InlineData(null, "escalated", "no-completion-signal", "escalated: no-completion-signal")]
+    [InlineData("", "review-verdict", "gate-failure", "review-verdict: gate-failure")]
+    [InlineData("   ", "review-verdict", "gate-failure", "review-verdict: gate-failure")]
+    [InlineData("[no-completion-signal] agent did not signal", "escalated", "no-completion-signal", "[no-completion-signal] agent did not signal")]
+    public void Build_NeverProducesAnEmptyReason(
+        string? reason, string? transitionCause, string? transitionDetail, string expectedReason)
+    {
+        var record = ParkedBlockerCatalog.Build(
+            TaskStates.HumanReview, reason, Now, transitionCause, transitionDetail);
+
+        Assert.NotNull(record);
+        Assert.False(string.IsNullOrWhiteSpace(record!.Reason));
+        Assert.Equal(expectedReason, record.Reason);
+    }
+
     // -- Recall policy -----------------------------------------------------
 
     [Theory]

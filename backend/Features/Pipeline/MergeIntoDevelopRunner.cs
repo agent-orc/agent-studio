@@ -36,6 +36,8 @@ public sealed class MergeIntoDevelopRunner
     private readonly TaskMutationService? _taskMutations;
     private readonly TaskScannerService? _taskScanner;
     private readonly FailureInterventionService? _failureInterventions;
+    private readonly AgentStudio.Git.GitStateIndexService? _gitStateIndex;
+    private readonly AgentStudio.Tasks.AcceptanceRailHostedService? _acceptanceRail;
     private readonly TimeSpan _preMainTimeout;
     private readonly TimeSpan _preDevelopTimeout;
     private readonly Func<int, TimeSpan> _environmentalBackoff;
@@ -57,7 +59,9 @@ public sealed class MergeIntoDevelopRunner
         AttemptAuthorityService? attemptAuthority = null,
         TaskMutationService? taskMutations = null,
         TaskScannerService? taskScanner = null,
-        FailureInterventionService? failureInterventions = null)
+        FailureInterventionService? failureInterventions = null,
+        AgentStudio.Git.GitStateIndexService? gitStateIndex = null,
+        AgentStudio.Tasks.AcceptanceRailHostedService? acceptanceRail = null)
     {
         _git = git;
         _pipelineLog = pipelineLog;
@@ -70,6 +74,8 @@ public sealed class MergeIntoDevelopRunner
         _taskMutations = taskMutations;
         _taskScanner = taskScanner;
         _failureInterventions = failureInterventions;
+        _gitStateIndex = gitStateIndex;
+        _acceptanceRail = acceptanceRail;
         _preMainTimeout = preMainTimeout is { } configured && configured > TimeSpan.Zero
             ? configured
             : TimeSpan.FromHours(1);
@@ -1326,7 +1332,46 @@ public sealed class MergeIntoDevelopRunner
                 RecordPushStep(jobFolderPath, project, jobId, result, startedAt, environmentalRetries);
         }
         catch (Exception ex) { SilentCatch.Note(ex, "MergeIntoDevelopRunner: push-step recording is best-effort"); }
+        if (result.Success) RequestImmediateIntegrationFollowUp(project);
         return result;
+    }
+
+    /// <summary>
+    /// AGT-2838: a green push means the card's Git-derived integration
+    /// projection is stale the instant it lands - without this, the board and
+    /// the acceptance rail only notice on their next debounced watch event or
+    /// periodic sweep, so an already-integrated card can sit in Human Review
+    /// looking unfinished. Primes both the read-side board projection
+    /// (<see cref="AgentStudio.Git.GitStateIndexService.RequestRefresh"/>) and an
+    /// immediate acceptance-rail pass, which accepts a now-integrated card out
+    /// of Human Review and, by leaving a parked lane, clears any parked-blocker
+    /// marker the earlier review verdict left on it. Both hooks are optional
+    /// (legacy fixtures construct this class without them) and best-effort: a
+    /// missed prime still self-heals on the next watch event or periodic sweep.
+    /// </summary>
+    private void RequestImmediateIntegrationFollowUp(string project)
+    {
+        try
+        {
+            _gitStateIndex?.RequestRefresh(project, "integration-push");
+        }
+        catch (Exception ex)
+        {
+            SilentCatch.Note(ex, "MergeIntoDevelopRunner: immediate git-state refresh is best-effort");
+        }
+
+        if (_acceptanceRail is null) return;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await _acceptanceRail.RunOnceAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                SilentCatch.Note(ex, "MergeIntoDevelopRunner: immediate acceptance-rail pass is best-effort");
+            }
+        });
     }
 
     /// <summary>
