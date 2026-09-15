@@ -130,6 +130,11 @@ function placeholder(expression) {
   return `{${simple ?? 'value'}}`;
 }
 
+function findGetterReturn(source, name) {
+  const pattern = new RegExp(`(?:private|protected|public)?\\s*${name}\\s*\\(\\s*\\)\\s*:\\s*string\\s*\\{\\s*return\\s+([^;]+);`);
+  return pattern.exec(source)?.[1] ?? null;
+}
+
 function normalise(expression, source, before, baseUrl, depth = 0) {
   if (!expression || depth > 4) return null;
   let value = expression.trim().replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ');
@@ -138,8 +143,26 @@ function normalise(expression, source, before, baseUrl, depth = 0) {
     if (assignment) return normalise(assignment, source, before, baseUrl, depth + 1);
     return null;
   }
+  // A no-argument `this.name()` getter (e.g. `this.url()`) is a call, not an
+  // identifier, so the branch above never reaches it. Some services build
+  // their route from one, either as the whole call-site expression or
+  // interpolated into a template (`` `${this.url()}/override` ``, handled
+  // below). Inline its single `return <expression>;` body and normalise
+  // that instead of falling through to a bare `{name}` placeholder.
+  const getter = value.match(/^this\.([A-Za-z_$][\w$]*)\(\)$/);
+  if (getter) {
+    const body = findGetterReturn(source, getter[1]);
+    return body ? normalise(body, source, before, baseUrl, depth + 1) : null;
+  }
   value = value.replace(/\$\{this\.baseUrl\}/g, baseUrl);
-  value = value.replace(/\$\{([^}]+)\}/g, (_, part) => placeholder(part));
+  value = value.replace(/\$\{([^}]+)\}/g, (_, part) => {
+    // Prefer resolving the interpolation itself (a module-level path
+    // constant such as `${RETENTION}`, or a `${this.url()}` getter) to its
+    // literal value; only fall back to a `{name}` path-parameter placeholder
+    // when it does not resolve to a literal `/api` or `/hubs` path.
+    const resolved = normalise(part.trim(), source, before, baseUrl, depth + 1);
+    return resolved ?? placeholder(part);
+  });
   value = value.replace(/^(["'`])|(["'`])$/g, '');
   value = value.replace(/\s*\+\s*/g, '');
   value = value.replace(/["'`]/g, '');
