@@ -1464,6 +1464,12 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         };
         foreach (var arg in args) psi.ArgumentList.Add(arg);
         psi.Environment["NPM_CONFIG_CACHE"] = NpmCachePath;
+        // The Studio backend starts the gate, so the child inherits the Studio's
+        // own listener configuration. A verify command that boots an ASP.NET Core
+        // host then reads the Studio's URL as its own and fails on a machine that
+        // runs the Studio while passing everywhere else (AGT-2840). Nothing a gate
+        // command does needs an inherited listener, so the boundary is unconditional.
+        HostListenerEnvironment.RemoveFrom(psi.Environment);
         output.AppendLine($"> {fileName} {string.Join(' ', args)}");
 
         Process? process;
