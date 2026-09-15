@@ -143,10 +143,57 @@ registration), not on a 409 that no longer occurs.
   the same shape as `AutoReviewQueueTelemetry`, surfaced through Execution
   Hosts host telemetry.
 
+## Auto Review postprocessing wait for a canonical review executor (AGT-2842)
+
+A card whose task is already tracked by the attempt authority (any RunAttempt
+or ReviewAttempt on record - `AttemptAuthorityProjection.LegacyTask == false`)
+belongs to this canonical Review Plane, not to the legacy in-process review
+loop. `ReviewDecisionOrchestrator.EnumeratePending` skips such a card with the
+stable reason `PostProcessingCardResult.AwaitingCanonicalReviewExecutor`; the
+card stays in `4-auto-review` and is re-driven with backoff by
+`AutoReviewPostProcessingWorker` until the fenced ReviewAttempt executor claims
+and settles it through `ClaimNextReview` / `.../report` above. That skip
+decision is unconditional and correct regardless of executor health - only the
+Review Plane, never the legacy loop, may act on a canonical task.
+
+Before AGT-2842 the re-drive backoff was blind to executor health: every
+deferral doubled from 30s up to the generic 10-minute cap
+(`AutoReviewPostProcessingWorker.DeferralRetryMaxDelay`) even while a
+registered review executor was active and idle, so a healthy wait looked
+identical to "nobody can ever claim this card" and the board's queue position
+(`AutoReviewPostProcessingQueue.PositionOf`) read as empty for the entire gap
+between passes (`agent-runner-01-review` registered, `review-slot-hygiene
+total=0`, 21 cards sitting in `4-auto-review` with no visible queue reason).
+
+`V1ReviewExecutorRegistry.EvaluateReviewExecutorAvailability` answers "is there
+a review-role identity this backend can expect to claim a canonical
+ReviewAttempt soon" as a coarse, immediate check: registered with the
+`review-executor` capability, a heartbeat inside a generous 2-minute budget
+(`ReviewExecutorHeartbeatStaleAfter` - the same convention
+`RemoteQueueStarvationPolicy` uses for a live coding runner), and not currently
+paused by a whole-host capability drain. It deliberately does not require a
+matching claim/instance fence, a specific advertised capability key (the
+review role advertises a different capability set than coding, so reusing
+`EvaluateCodingAdmission`'s per-key check would always read "unavailable"), or
+a freshness window tighter than the review daemon's own heartbeat cadence -
+each of those would fail-closed a perfectly healthy executor.
+`AutoReviewPostProcessingWorker.ScheduleDeferralRetry` consults it only for the
+canonical-review-executor reason and, when a review executor is registered,
+caps the backoff at `CanonicalReviewExecutorRegisteredMaxDelay` (60s) instead
+of letting it grow to the generic 10-minute cap, and records the availability
+detail as an `AutoReviewQueueWaitState`. `TaskLiveStatusProjection` reads that
+wait state whenever `PositionOf` has no real slot position and reports the
+task's `liveStatus.queue.reason`, e.g. `waiting for review executor:
+agent-runner-01-review is registered and active`, instead of an unexplained
+empty queue.
+
 ## Requirement-to-evidence map
 
 | Hand-off requirement | Evidence |
 |---|---|
+| A registered, non-drained review executor is recognized immediately, without requiring a capability key or freshness window the review role never advertises | `backend.Tests/V1ReviewExecutorAvailabilityTests.cs`: `Freshly_registered_idle_executor_is_immediately_available`, `A_capability_key_the_review_role_never_advertises_does_not_block_availability`, `Stale_heartbeat_past_the_staleness_budget_is_registered_but_not_available`, `Whole_host_capability_drain_is_registered_but_not_available`. |
+| The canonical-review-executor deferral backoff is capped at 60s while an executor is registered, and keeps the generic 10-minute-capped schedule otherwise | `backend.Tests/AutoReviewPostProcessingWorkerTests.cs`: `ResolveReviewExecutorAvailability_RegisteredExecutor_CapsTheEffectiveDelayAtSixtySeconds`, `ResolveReviewExecutorAvailability_NoRegistry_ReturnsNullAndKeepsTheGenericCap`, `ResolveReviewExecutorAvailability_UnrelatedReason_NeverConsultsTheRegistry`. |
+| The wait reason is exposed on the card instead of an empty queue | `backend.Tests/AutoReviewPostProcessingWorkerTests.cs`: `ApplyOutcome_CanonicalReviewExecutorDeferral_ExposesTheWaitReasonOnTheQueue`, `ApplyOutcome_CanonicalReviewExecutorDeferral_WithoutARegisteredExecutor_KeepsTheGenericBackoff`; `frontend/src/app/components/task-live-status/task-live-status.component.spec.ts`: `names the wait reason instead of an empty queue when no slot position is known`. |
 | Acknowledge before evidence (settlement returns before projection runs) | `backend.Tests/RemoteRunnerEndToEndTests.cs`: `Review_host_runs_tool_and_agent_aspect_end_to_end_with_honest_step_location`, `Review_daemon_restart_reports_non_adoptable_process_with_loss_extent_and_retry_reason`, and `Monolith_v1_review_report_after_operator_acceptance_keeps_terminal_lane_and_records_evidence` each assert the settlement response first, then `WaitUntilAsync` on the background-written grade file / timeline entry - the projection is proven to still be pending or racing, not already finished, when the response returns. |
 | Replay answers fast, without touching git or the task folder | `backend.Tests/RemoteRunnerEndToEndTests.cs`: `Monolith_v1_review_report_after_operator_acceptance_keeps_terminal_lane_and_records_evidence` asserts the replay response equals the original settlement with `EvidenceProjection` reported as `Duplicate` (the original stays `Queued`), i.e. the replay is a read of already-settled state, not a second write. |
 | No duplicate evidence on replay | Same test: only one grade file / evidence write is asserted across both the original report and its replay; the replay path in `V1ReviewPlaneEndpoints` returns before calling `EnqueueEvidenceProjection`. |

@@ -2441,6 +2441,67 @@ public sealed class V1ReviewExecutorRegistry
     }
 
     /// <summary>
+    /// Heartbeat staleness budget for <see cref="EvaluateReviewExecutorAvailability"/>.
+    /// Generous relative to the daemon's registration/advertisement cadence
+    /// (default 30s) so ordinary jitter or a slow tick never reads as "no
+    /// executor" - the same 2-minute convention already used to decide whether a
+    /// coding runner counts as live for ready-queue starvation
+    /// (<see cref="RemoteQueueStarvationPolicy.Evaluate"/>).
+    /// </summary>
+    internal static readonly TimeSpan ReviewExecutorHeartbeatStaleAfter = TimeSpan.FromMinutes(2);
+
+    /// <summary>
+    /// Coarse, immediate answer to "is there a review-role identity this
+    /// backend can expect to claim a canonical ReviewAttempt soon". This is
+    /// deliberately looser than <see cref="EvaluateCodingAdmission"/>: it does
+    /// not require a matching claim instance id, a specific advertised
+    /// capability key (the review role advertises a different capability set
+    /// than coding, so requiring one of the coding keys would always read as
+    /// unavailable), or a capability-advertisement freshness window tighter
+    /// than the review daemon's own heartbeat cadence. Registered, heartbeating,
+    /// and not paused by a whole-host capability drain is enough to call the
+    /// canonical-review-executor wait healthy (AGT-2842).
+    /// </summary>
+    public ReviewExecutorAvailability EvaluateReviewExecutorAvailability(DateTime? nowUtc = null)
+    {
+        var now = (nowUtc ?? DateTime.UtcNow).ToUniversalTime();
+        lock (_gate)
+        {
+            var reviewRunners = _registrations
+                .Where(entry => entry.Value.Capabilities.Contains(Contract.ReviewCapabilities.ReviewExecutor))
+                .OrderBy(entry => entry.Value.Name, StringComparer.Ordinal)
+                .ToList();
+            if (reviewRunners.Count == 0)
+                return new ReviewExecutorAvailability(false, false, "no review executor is registered");
+
+            string? blockedDetail = null;
+            foreach (var entry in reviewRunners)
+            {
+                var runnerId = entry.Key;
+                var registration = entry.Value;
+                var heartbeatAge = now - registration.LastSeenAt;
+                if (heartbeatAge > ReviewExecutorHeartbeatStaleAfter)
+                {
+                    blockedDetail ??=
+                        $"{registration.Name} heartbeat is stale ({(int)heartbeatAge.TotalSeconds}s since last contact)";
+                    continue;
+                }
+                var draining = _capabilityFailures.TryGetValue(runnerId, out var failures)
+                    ? failures.Values.FirstOrDefault(failure => failure.WholeHost && failure.CooldownUntil > now)
+                    : null;
+                if (draining is not null)
+                {
+                    blockedDetail ??= $"{registration.Name} is drained ({draining.Reason})";
+                    continue;
+                }
+                return new ReviewExecutorAvailability(true, true, $"{registration.Name} is registered and active");
+            }
+            return new ReviewExecutorAvailability(
+                true, false, blockedDetail ?? "registered review executor is not currently active");
+        }
+    }
+
+    /// <summary>
     /// Applies the published capability-admission contract to a legacy coding
     /// claim. The monolith still owns card selection, but it consumes the same
     /// fresh, ready advertisement used by the separated Task Server instead of
@@ -2677,4 +2738,15 @@ public sealed class V1ReviewExecutorRegistry
     }
 
     public sealed record ReviewExecutor(string HostId, IReadOnlySet<string> Capabilities);
+
+    /// <summary>
+    /// Result of <see cref="EvaluateReviewExecutorAvailability"/>.
+    /// <see cref="AnyRegistered"/> is true the moment any review-role identity
+    /// has ever registered, regardless of its current health; <see cref="Available"/>
+    /// additionally requires a fresh heartbeat and no active whole-host drain.
+    /// <see cref="Detail"/> is a human-readable sentence naming the specific
+    /// runner and state, meant for the operator-facing queue reason rather than
+    /// machine matching.
+    /// </summary>
+    public sealed record ReviewExecutorAvailability(bool AnyRegistered, bool Available, string Detail);
 }

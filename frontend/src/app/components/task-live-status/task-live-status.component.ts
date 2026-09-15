@@ -90,9 +90,14 @@ export class TaskLiveStatusComponent {
 
     if (status.queue) {
       const queueName = status.queue.kind === 'review' ? 'review slot' : 'runner slot';
+      const headline = status.queue.position != null
+        ? `Waiting for ${queueName} · position ${status.queue.position}`
+        : status.queue.reason
+          ? `Waiting for ${queueName} · ${status.queue.reason}`
+          : `Waiting for ${queueName}`;
       return {
         tone: 'waiting',
-        headline: `Waiting for ${queueName} · position ${status.queue.position}`,
+        headline,
         detail: activityDetail(task, status.latestEventAt, this.now()),
         next,
         attempt: status.attempt,

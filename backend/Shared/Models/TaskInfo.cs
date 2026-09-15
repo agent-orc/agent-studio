@@ -541,7 +541,19 @@ public sealed record TaskLiveQueue
 {
     /// <summary><c>runner</c> or <c>review</c>.</summary>
     public string Kind { get; init; } = string.Empty;
-    public int Position { get; init; }
+    /// <summary>
+    /// One-based slot position, when the task is actually enqueued locally.
+    /// Null while a review card is between post-processing passes, waiting out
+    /// its deferral backoff rather than sitting in the local slot queue - see
+    /// <see cref="Reason"/> for that case.
+    /// </summary>
+    public int? Position { get; init; }
+    /// <summary>
+    /// Human-readable reason the task has no <see cref="Position"/>, e.g.
+    /// "waiting for review executor: <detail>". Null when a real position is
+    /// known. Never used for machine matching.
+    /// </summary>
+    public string? Reason { get; init; }
 }
 
 /// <summary>

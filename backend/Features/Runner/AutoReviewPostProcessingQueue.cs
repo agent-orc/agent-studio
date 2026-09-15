@@ -154,6 +154,7 @@ public sealed class AutoReviewPostProcessingQueue : IAutoReviewPostProcessingQue
 
     public bool Enqueue(AutoReviewPostProcessingRequest request)
     {
+        ClearWaitState(request.ProjectName, request.JobId);
         lock (_pendingLock) _pending.Add(request);
         if (_channel.Writer.TryWrite(request)) return true;
         MarkStarted(request);
@@ -187,8 +188,43 @@ public sealed class AutoReviewPostProcessingQueue : IAutoReviewPostProcessingQue
                 && string.Equals(candidate.Source, request.Source, StringComparison.Ordinal));
             if (index >= 0) _pending.RemoveAt(index);
         }
+        ClearWaitState(request.ProjectName, request.JobId);
     }
+
+    private readonly ConcurrentDictionary<string, AutoReviewQueueWaitState> _waitStates =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    private static string WaitKey(string projectName, string jobId) => projectName + "␟" + jobId;
+
+    /// <summary>
+    /// Records why a card is not in <see cref="_pending"/> right now even
+    /// though it is still sitting in <c>4-auto-review</c>: it was deferred and
+    /// is waiting out its backoff before the next re-drive. Without this, the
+    /// liveStatus queue projection reads as empty for the entire gap between
+    /// one deferred pass and the next (AGT-2842) instead of naming the wait.
+    /// </summary>
+    public void SetWaitState(string projectName, string jobId, AutoReviewQueueWaitState state)
+        => _waitStates[WaitKey(projectName, jobId)] = state;
+
+    public void ClearWaitState(string projectName, string jobId)
+        => _waitStates.TryRemove(WaitKey(projectName, jobId), out _);
+
+    public AutoReviewQueueWaitState? WaitStateOf(string projectName, string jobId)
+        => _waitStates.TryGetValue(WaitKey(projectName, jobId), out var state) ? state : null;
 }
+
+/// <summary>
+/// Last known reason a card is waiting between post-processing passes rather
+/// than actively queued or running. Read by <see cref="AgentStudio.Tasks.TaskLiveStatusProjection"/>
+/// to fill the gap <see cref="AutoReviewPostProcessingQueue.PositionOf"/>
+/// leaves once a deferred card has been dequeued but has not yet been
+/// re-enqueued for its next attempt.
+/// </summary>
+public sealed record AutoReviewQueueWaitState(
+    string Reason,
+    string? Detail,
+    int Attempt,
+    DateTime NextRetryAtUtc);
 
 /// <summary>
 /// Drains the event-driven auto-review queue. Processing is intentionally
@@ -230,6 +266,7 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
     private readonly TaskMutationService _mutations;
     private readonly IConfiguration _configuration;
     private readonly ILogger<AutoReviewPostProcessingWorker> _logger;
+    private readonly V1ReviewExecutorRegistry? _reviewExecutorRegistry;
 
     /// <summary>
     /// Test seam: when set, one request is handed to this delegate instead of the
@@ -252,7 +289,8 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
         TaskScannerService scanner,
         TaskMutationService mutations,
         IConfiguration configuration,
-        ILogger<AutoReviewPostProcessingWorker> logger)
+        ILogger<AutoReviewPostProcessingWorker> logger,
+        V1ReviewExecutorRegistry? reviewExecutorRegistry = null)
     {
         _queue = queue;
         _reviewDecisionOrchestrator = reviewDecisionOrchestrator;
@@ -260,6 +298,7 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
         _mutations = mutations;
         _configuration = configuration;
         _logger = logger;
+        _reviewExecutorRegistry = reviewExecutorRegistry;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -482,32 +521,77 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
     /// <summary>Cap for the doubling, so a long wait still re-checks regularly.</summary>
     internal static readonly TimeSpan DeferralRetryMaxDelay = TimeSpan.FromMinutes(10);
 
-    internal static TimeSpan DeferralRetryDelay(int attempt)
+    /// <summary>
+    /// Tighter cap applied instead of <see cref="DeferralRetryMaxDelay"/> once a
+    /// review executor is registered for the canonical-review-executor wait
+    /// (<see cref="PostProcessingCardResult.AwaitingCanonicalReviewExecutor"/>):
+    /// the wait is healthy and self-resolving, so the card should keep
+    /// re-checking - and keep its liveStatus queue reason fresh - at least once
+    /// a minute rather than backing off to a ten-minute silence (AGT-2842).
+    /// </summary>
+    internal static readonly TimeSpan CanonicalReviewExecutorRegisteredMaxDelay = TimeSpan.FromSeconds(60);
+
+    internal static TimeSpan DeferralRetryDelay(int attempt) => DeferralRetryDelay(attempt, DeferralRetryMaxDelay);
+
+    internal static TimeSpan DeferralRetryDelay(int attempt, TimeSpan maxDelay)
     {
         var factor = Math.Pow(2, Math.Max(0, attempt));
         var seconds = DeferralRetryBaseDelay.TotalSeconds * factor;
-        return seconds >= DeferralRetryMaxDelay.TotalSeconds
-            ? DeferralRetryMaxDelay
+        return seconds >= maxDelay.TotalSeconds
+            ? maxDelay
             : TimeSpan.FromSeconds(seconds);
     }
+
+    /// <summary>
+    /// Whether a registered review executor should tighten this deferral's
+    /// backoff cap, and the detail sentence for the exposed wait reason. The
+    /// generic exponential backoff assumes nobody else is going to act on this
+    /// card. A canonical-review-executor wait is different: another owner (the
+    /// fenced ReviewAttempt executor) is expected to claim and settle it
+    /// independently of this queue, so a registered executor turns "still
+    /// waiting" from a symptom into the normal, healthy state. This asks the
+    /// registry directly rather than reading the reason string as proof of
+    /// anything - the queue should stay quiet even if a future caller reuses
+    /// the same reason token for a different wait. Pulled out of
+    /// <see cref="ScheduleDeferralRetry"/> so the cap decision is directly
+    /// unit-testable without spawning the real retry timer (AGT-2842).
+    /// </summary>
+    internal V1ReviewExecutorRegistry.ReviewExecutorAvailability? ResolveReviewExecutorAvailability(string reason)
+        => string.Equals(reason, PostProcessingCardResult.AwaitingCanonicalReviewExecutor, StringComparison.Ordinal)
+           && _reviewExecutorRegistry is not null
+            ? _reviewExecutorRegistry.EvaluateReviewExecutorAvailability()
+            : null;
 
     private void ScheduleDeferralRetry(
         AutoReviewPostProcessingRequest request,
         string reason,
         CancellationToken ct)
     {
+        var availability = ResolveReviewExecutorAvailability(reason);
+        var maxDelay = availability?.AnyRegistered == true
+            ? CanonicalReviewExecutorRegisteredMaxDelay
+            : DeferralRetryMaxDelay;
+
         if (request.Attempt >= MaxDeferralRetries)
         {
             _logger.LogInformation(
                 "auto-review-postprocessing-deferral-exhausted project={Project} job={JobId} reason={Reason} attempts={Attempts}",
                 request.ProjectName, request.JobId, reason, request.Attempt);
+            _queue.SetWaitState(
+                request.ProjectName,
+                request.JobId,
+                new AutoReviewQueueWaitState(reason, availability?.Detail, request.Attempt, DateTime.UtcNow));
             return;
         }
 
-        var delay = DeferralDelayOverride?.Invoke(request.Attempt) ?? DeferralRetryDelay(request.Attempt);
+        var delay = DeferralDelayOverride?.Invoke(request.Attempt) ?? DeferralRetryDelay(request.Attempt, maxDelay);
         _logger.LogInformation(
             "auto-review-postprocessing-deferred project={Project} job={JobId} reason={Reason} attempt={Attempt} retryInMs={RetryInMs}",
             request.ProjectName, request.JobId, reason, request.Attempt, (long)delay.TotalMilliseconds);
+        _queue.SetWaitState(
+            request.ProjectName,
+            request.JobId,
+            new AutoReviewQueueWaitState(reason, availability?.Detail, request.Attempt, DateTime.UtcNow + delay));
 
         _ = Task.Run(async () =>
         {
