@@ -128,6 +128,29 @@ registration), not on a 409 that no longer occurs.
   attempt had already settled server-side. A coding slot's reporting rule is
   unchanged.
 
+## Reported review baseline (AGT-2839)
+
+`ReviewWorkspaceProofDto` carries two optional fields beside the existing
+`ExpectedResultSha`:
+
+| Field | Meaning |
+|---|---|
+| `IntegrationRef` | The integration line from the immutable plan that the executor resolved its baseline against. |
+| `MergeBaseSha` | The merge base between `ExpectedResultSha` and a freshly fetched `IntegrationRef` - the exact base this review verified the delivery on top of. |
+
+Both are optional and default to null, so a report from an older executor stays
+valid on the wire. The executor fills them from the same baseline it already
+resolves for review material and baseline-compared commands; a plan without an
+integration ref, or a ref that cannot be fetched, reports null rather than
+failing the report.
+
+The monolith persists the triple into `logs/review-verification.json` beside the
+task when the report settles, ahead of any integration. The local integration
+gate consumes it to reuse the review verdict on an unchanged base instead of
+re-running the suite; see
+[task integration and the worktree/merge workflow](../../concepts/task-integration-and-merge-workflow.md#integration-gate-reuse-of-the-remote-review-verdict-agt-2839).
+A report without `MergeBaseSha` is not an error: the gate then runs in full.
+
 ## Telemetry
 
 - The report endpoint logs `review-report-accepted` /

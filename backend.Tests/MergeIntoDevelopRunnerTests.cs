@@ -1723,6 +1723,166 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
     }
 
     /// <summary>
+    /// AGT-2839: the Remote Review already built, tested, and linted this exact
+    /// delivery on this exact base. The gate keeps only the compile step and
+    /// records which review attempt it stood on.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_UnchangedReviewedBase_ReusesTheReviewVerdictAndCompilesOnly()
+    {
+        var (repo, jobFolder, gateRunner, runner, delivery, mergeBase) = SeedReviewedDelivery("reuse-green");
+        WriteReviewVerification(jobFolder, delivery, mergeBase, "refs/heads/develop");
+
+        var outcome = await runner.RunAsync(
+            "Fixture", "reuse-green", jobFolder, repo, "develop", CancellationToken.None);
+
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, outcome.Outcome);
+        Assert.Equal(1, gateRunner.Invocations);
+        Assert.Equal(TestExecutionLevels.CompileOnly, gateRunner.Request!.RequiredTestLevel);
+        var evidence = ReadGateEvidence(jobFolder);
+        Assert.Contains("reviewReuse=reused attempt=rev_1", evidence);
+        Assert.Contains("unchanged develop base", evidence);
+    }
+
+    /// <summary>
+    /// AGT-2839: the recorded base is not the base this merge landed on, so the
+    /// reviewed verdict says nothing about the merge result - full gate.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_MovedBaseSinceTheReview_RunsTheFullGateAndSaysWhy()
+    {
+        var (repo, jobFolder, gateRunner, runner, delivery, _) = SeedReviewedDelivery("reuse-moved");
+        var olderBase = RunGit(repo, "rev-parse develop~1").Out.Trim();
+        WriteReviewVerification(jobFolder, delivery, olderBase, "refs/heads/develop");
+
+        var outcome = await runner.RunAsync(
+            "Fixture", "reuse-moved", jobFolder, repo, "develop", CancellationToken.None);
+
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, outcome.Outcome);
+        Assert.Equal(1, gateRunner.Invocations);
+        Assert.Equal(TestExecutionLevels.BuildOnly, gateRunner.Request!.RequiredTestLevel);
+        var evidence = ReadGateEvidence(jobFolder);
+        Assert.Contains("reviewReuse=full attempt=rev_1", evidence);
+        Assert.Contains("develop moved since the review", evidence);
+    }
+
+    /// <summary>
+    /// AGT-2839: a review report that carries no merge base leaves nothing to
+    /// compare, so the gate never guesses one.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_ReviewReportWithoutABase_RunsTheFullGate()
+    {
+        var (repo, jobFolder, gateRunner, runner, delivery, _) = SeedReviewedDelivery("reuse-no-base");
+        WriteReviewVerification(jobFolder, delivery, mergeBaseSha: null, "refs/heads/develop");
+
+        var outcome = await runner.RunAsync(
+            "Fixture", "reuse-no-base", jobFolder, repo, "develop", CancellationToken.None);
+
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, outcome.Outcome);
+        Assert.Equal(TestExecutionLevels.BuildOnly, gateRunner.Request!.RequiredTestLevel);
+        var evidence = ReadGateEvidence(jobFolder);
+        Assert.Contains("reviewReuse=full", evidence);
+        Assert.Contains("records no merge base", evidence);
+    }
+
+    /// <summary>
+    /// AGT-2839: the project opted out, so an otherwise reusable merge still
+    /// runs the full gate and the evidence names the setting as the cause.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_ReuseDisabledForTheProject_RunsTheFullGate()
+    {
+        var (repo, jobFolder, gateRunner, runner, delivery, mergeBase, settings) =
+            SeedReviewedDeliveryWithSettings("reuse-off");
+        settings.SetIntegrationGateReviewReuse("Fixture", false);
+        WriteReviewVerification(jobFolder, delivery, mergeBase, "refs/heads/develop");
+
+        await runner.RunAsync(
+            "Fixture", "reuse-off", jobFolder, repo, "develop", CancellationToken.None);
+
+        Assert.Equal(TestExecutionLevels.BuildOnly, gateRunner.Request!.RequiredTestLevel);
+        Assert.Contains("reviewReuse=full", ReadGateEvidence(jobFolder));
+    }
+
+    /// <summary>
+    /// Seeds <c>develop</c> with two commits plus a task branch cut from its
+    /// tip, and returns the delivery SHA together with the merge base a Remote
+    /// Review would have recorded for it.
+    /// </summary>
+    private (string Repo,
+        string JobFolder,
+        CapturingBuildTestGateRunner Gate,
+        MergeIntoDevelopRunner Runner,
+        string DeliverySha,
+        string MergeBaseSha) SeedReviewedDelivery(string name)
+    {
+        var seeded = SeedReviewedDeliveryWithSettings(name);
+        return (seeded.Repo, seeded.JobFolder, seeded.Gate, seeded.Runner, seeded.DeliverySha, seeded.MergeBaseSha);
+    }
+
+    private (string Repo,
+        string JobFolder,
+        CapturingBuildTestGateRunner Gate,
+        MergeIntoDevelopRunner Runner,
+        string DeliverySha,
+        string MergeBaseSha,
+        ProjectSettingsService Settings) SeedReviewedDeliveryWithSettings(string name)
+    {
+        var repo = SeedRepo(name);
+        RunGit(repo, "checkout -q -b develop");
+        File.WriteAllText(Path.Combine(repo, "develop.txt"), "integration work");
+        Commit(repo, "chore: integration work");
+        var mergeBase = RunGit(repo, "rev-parse develop").Out.Trim();
+        RunGit(repo, $"checkout -q -b task/{name}");
+        File.WriteAllText(Path.Combine(repo, "task.txt"), "task work");
+        Commit(repo, "feat: task work");
+        var delivery = RunGit(repo, "rev-parse HEAD").Out.Trim();
+        RunGit(repo, "checkout -q develop");
+
+        var (git, log, settings) = BuildWithSettings(repo);
+        settings.SetBuildProfile("Fixture", new BuildProfile { BuildCmds = ["cd ."] });
+        // Remote placement is what makes this project a Remote Review project,
+        // and therefore what turns the reuse default on.
+        settings.SetExecutionSettings("Fixture", PickupModes.Auto, "agent-runner-01");
+        var gateRunner = new CapturingBuildTestGateRunner(new BuildTestGateResult(
+            BuildTestGateVerdict.Ok, 0, 5, string.Empty, "gate passed", true, false));
+        var jobFolder = BeginRun(log, repo, jobId: name);
+        var runner = new MergeIntoDevelopRunner(
+            git,
+            log,
+            NullLogger<MergeIntoDevelopRunner>.Instance,
+            projectSettings: settings,
+            preDevelopBuildGate: new PreDevelopBuildGate(gateRunner));
+        return (repo, jobFolder, gateRunner, runner, delivery, mergeBase, settings);
+    }
+
+    private static void WriteReviewVerification(
+        string jobFolder,
+        string deliverySha,
+        string? mergeBaseSha,
+        string integrationRef)
+        => ReviewVerificationStore.Write(jobFolder, new ReviewVerificationRecord
+        {
+            TaskKey = "AGT-1",
+            AttemptId = "rev_1",
+            SubjectId = "subj_1",
+            Outcome = "Pass",
+            ResultSha = deliverySha,
+            IntegrationRef = integrationRef,
+            MergeBaseSha = mergeBaseSha,
+            BuildTestGate = ReviewBuildTestGateClasses.Passed,
+            VerifiedAtUtc = DateTimeOffset.UtcNow,
+        });
+
+    private static string ReadGateEvidence(string jobFolder)
+    {
+        var path = Path.Combine(jobFolder, "post-steps", "pre-develop-build-gate-1.log");
+        Assert.True(File.Exists(path), $"Expected gate evidence at {path}");
+        return File.ReadAllText(path);
+    }
+
+    /// <summary>
     /// A verify command that leaves a durable, checkable trace and exits zero on
     /// every platform: it tags the commit the gate actually checked out. Git tags
     /// are written to the shared repository, so the test can read them from the

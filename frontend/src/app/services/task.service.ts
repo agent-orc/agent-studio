@@ -2227,6 +2227,21 @@ export class TaskService {
     );
   }
 
+  /**
+   * AGT-2839: project override for integration-gate review reuse. `null` clears
+   * the override and falls back to the safe default (on where Remote Review
+   * runs, off where it does not).
+   */
+  setProjectIntegrationGateReviewReuse(projectName: string, enabled: boolean | null) {
+    return this.http.put<{
+      integrationGateReviewReuse: boolean | null;
+      integrationGateReviewReuseEffective: boolean;
+    }>(
+      `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/integration-gate-review-reuse`,
+      { enabled },
+    );
+  }
+
   setProjectAutoPushStrategy(
     projectName: string,
     strategy: 'never' | 'on-completed' | 'always-immediate',

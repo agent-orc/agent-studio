@@ -132,6 +132,10 @@ public static class ProjectSnapshotEndpoints
                     executionLocation = ProjectExecutionPolicy.ResolveExecutionLocation(settings),
                     orchestratorModel = settings.OrchestratorModel,
                     orchestratorThinkingLevel = settings.OrchestratorThinkingLevel,
+                    // AGT-2839: raw override (null = inherit) plus the value the
+                    // integration gate actually applies.
+                    integrationGateReviewReuse = settings.IntegrationGateReviewReuse,
+                    integrationGateReviewReuseEffective = IntegrationGateReusePolicy.IsEnabled(settings),
                     // F35: every lane resolved to its effective strategy.
                     // The kanban renders the lane-header icon and the
                     // drag-disabled hint from this map.

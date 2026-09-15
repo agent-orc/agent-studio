@@ -270,6 +270,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
             && !HasCodeDiff(changedFiles)
             && requestedLevel != TestExecutionLevels.Full
             && requestedLevel != TestExecutionLevels.BuildOnly
+            && requestedLevel != TestExecutionLevels.CompileOnly
             && !hasContinuousBaseline)
             return Skipped("no code diff");
 

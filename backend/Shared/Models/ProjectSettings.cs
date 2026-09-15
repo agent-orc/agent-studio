@@ -358,6 +358,19 @@ public record ProjectSettings
     /// suite as an infrastructure timeout.
     /// </summary>
     public int? BuildTestGateTimeoutSeconds { get; init; }
+
+    /// <summary>
+    /// AGT-2839: may the local integration gate stand on the Remote Review
+    /// verdict when the merge lands on the exact base the review verified? When
+    /// it may, the gate keeps only the compile step on the merge result and
+    /// skips the test and lint commands the review just ran. Null resolves
+    /// through <see cref="AgentStudio.Pipeline.IntegrationGateReusePolicy.IsEnabled"/>:
+    /// on for a project that executes remotely (and therefore has Remote
+    /// Review), off for one that does not. A moved integration base, a
+    /// mechanically replayed delivery, or a review report without a merge base
+    /// always runs the full gate regardless of this setting.
+    /// </summary>
+    public bool? IntegrationGateReviewReuse { get; init; }
 }
 
 public sealed record ProjectExecutionDefinitionOverride(
@@ -992,6 +1005,15 @@ public static class TestExecutionLevels
     /// the full suite remains a promotion-only boundary.
     /// </summary>
     public const string BuildOnly = "build-only";
+
+    /// <summary>
+    /// Compile evidence and nothing else: only the derived build commands run,
+    /// the lint commands are left out along with every test command. This is
+    /// the stage the integration gate uses when it reuses a Remote Review
+    /// verdict (AGT-2839) - the merge result is a commit nobody compiled
+    /// before, while the tests and lint were just run on exactly this content.
+    /// </summary>
+    public const string CompileOnly = "compile-only";
     public const string Continuous = "continuous";
     public const string WorkPackage = "work-package";
     public const string Full = "full";
@@ -1000,6 +1022,7 @@ public static class TestExecutionLevels
         => value?.Trim().ToLowerInvariant() switch
         {
             BuildOnly => BuildOnly,
+            CompileOnly => CompileOnly,
             Continuous => Continuous,
             WorkPackage => WorkPackage,
             Full => Full,
