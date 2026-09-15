@@ -24,11 +24,11 @@
   "review": {
     "verdict": "superseded",
     "supersededBy": [
-      "AGT-W57"
+      "AGT-W59"
     ],
     "reviewedAt": "2026-09-14T00:00:00Z",
     "reviewedBy": "AGT-2801",
-    "note": "Consolidated into the Gates theme Dossier docs/operations/gates (AGT-W57) on 2026-09-14 per AGT-W55 D1 and D2; content preserved there, this Dossier stays readable as History."
+    "note": "Consolidated into the Gates theme Dossier docs/operations/gates (AGT-W59) on 2026-09-14 per AGT-W55 D1 and D2; content preserved there, this Dossier stays readable as History."
   },
   "reviewHistory": [
     {
@@ -41,11 +41,11 @@
     {
       "verdict": "superseded",
       "supersededBy": [
-        "AGT-W57"
+        "AGT-W59"
       ],
       "reviewedAt": "2026-09-14T00:00:00Z",
       "reviewedBy": "AGT-2801",
-      "note": "Consolidated into the Gates theme Dossier docs/operations/gates (AGT-W57) on 2026-09-14 per AGT-W55 D1 and D2; content preserved there, this Dossier stays readable as History."
+      "note": "Consolidated into the Gates theme Dossier docs/operations/gates (AGT-W59) on 2026-09-14 per AGT-W55 D1 and D2; content preserved there, this Dossier stays readable as History."
     }
   ]
 }
