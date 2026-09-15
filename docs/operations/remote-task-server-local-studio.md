@@ -240,11 +240,18 @@ backup but never opens it while the remote server is authoritative.
 These are the remaining Phase B gates and the delivered milestones whose
 production evidence must be attached before cutover:
 
-1. **Studio API coverage.** Angular still consumes a broad legacy `/api`
-   surface, while the standalone Task Server and current `studio-bff` expose
-   only the versioned subset. Phase B must classify every Studio route as
-   Task Server, local dev-seat helper, or retired, and prove all task,
-   orchestration, host, file, event, and management paths remotely.
+1. **Studio API coverage, in progress.** Angular still calls the legacy
+   `/api` surface for most operations. The
+   [route ownership inventory](../studio-route-ownership/routes.json)
+   classifies every one of the 408 Studio operations as Task Server (308) or
+   local dev-seat helper (100); none is unclassified or retired. AGT-2756,
+   AGT-2757, and AGT-2758 implemented 282 of the 308 `task-server` operations
+   in the standalone Task Server v1 API (reconciled 2026-09-15, AGT-2835); 26
+   remain, concentrated in task detail and host control (see the dossier's
+   [Estimate section](../studio-route-ownership/index.html#estimate) for the
+   route-by-route remainder). Phase B still needs the complete task,
+   orchestration, host, file, event, and management path set proved remotely
+   through the connector, not only present in the Task Server API.
 2. **Current workspace migration acceptance, implementation delivered by B3.**
    The standalone CLI and management API now inventory and import canonical
    `task.json` data, use `job.json` only as a compatibility fallback, enforce
@@ -545,17 +552,18 @@ concept.
 
 | Order | Slice | Acceptance result | Estimate |
 |---:|---|---|---:|
-| B1 | Studio route ownership and secure local connector | Full `/api` and `/hubs` matrix; remote task workflows pass; local-only dev-seat routes are explicit; connector keeps secrets out of Angular and enforces Origin and CSRF | 5 to 8 engineering days |
+| B1 | Studio route ownership and secure local connector | Connector profile implemented by AGT-2754 (loopback listener, Origin/CSRF, credential injection, atomic upstream switch); route classification complete for all 408 operations (routes.json, reconciled by AGT-2835 on 2026-09-15); 282 of 308 `task-server` operations implemented in standalone v1 by AGT-2756/2757/2758, 26 remain | 5 to 8 engineering days for the connector, plus roughly 8 remaining route-implementation days (routes.json `d4bEstimate`) |
 | B2 | Task Server principal and scope hardening | Implemented by AGT-2730: separate hash-only Studio, Engine, and per-Runner credentials; route scopes; hub auth boundary; rotation and revoke tests; `X-Client-Id` negative tests | Complete 2026-09-07 |
 | B3 | Current-workspace migration and evidence | Implemented by AGT-2732: `task.json` with `job.json` fallback; canonical per-project and per-state inventory; archive, events, pointer-only artifacts, Git and authority evidence; counted orphan ledger; Maintenance-only idempotent import; signed reports; mismatch stops; and backup/restore inventory-hash continuity. The Windows operator still performs the frozen rehearsal and production cutover and attaches both reports to D7. | Complete 2026-09-11; operator cutover evidence pending |
 | B4 | Windows fallback and switch tooling | Implemented by AGT-2735 on 2026-09-09: version-matched Windows service for all three components; cross-platform full-backup restore with a case-collision guard; warm standby pull; atomic connector profile switch; scripted reverse-tunnel drill in both directions with a measured sub-15-minute report; Windows CI coverage. The timed real-infrastructure rehearsal remains a B6 operator drill. | Complete 2026-09-09 |
 | B5 | Private Hetzner foundation | Dedicated VM, WireGuard peers, private TLS, dual firewall, systemd packages, off-host backup, monitoring, and proof of no public API listener | 2 to 3 engineering days plus operator access |
 | B6 | Rehearsal and production cutover | Representative dry run, signed evidence, maintenance-window cutover, detached-Studio proof, rollback drill, and operator handoff | 2 to 4 engineering days plus one operator window |
 
-Expected total: 18 to 30 engineering days plus one to two operator days. The
-largest uncertainty is B1 because current Angular functionality still spans
-legacy backend routes. B1 produces a route-counted estimate before the
-remaining schedule is committed.
+Expected total: 18 to 30 engineering days plus one to two operator days. B1's
+route-counted estimate (routes.json `d4bEstimate`, reconciled 2026-09-15) puts
+its remaining uncertainty at roughly 8 route-implementation days across 26
+operations, now that AGT-2756/2757/2758 have implemented the majority of the
+originally estimated surface; B5 and B6 are the larger remaining unknowns.
 
 ## Release gates
 
