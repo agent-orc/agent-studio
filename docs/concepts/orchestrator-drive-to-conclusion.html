@@ -2293,6 +2293,29 @@
             process stderr into the failure detail and the durable grade's explicit Detail line, including the full path.
           </td>
         </tr>
+        <tr id="case-agt-2836-coding-daemon-restart-worker-loss">
+          <td>2026-09-15</td>
+          <td><code>AGT-2836</code><br><span class="small">planned Coding daemon restart reaped detached workers before adoption</span></td>
+          <td>
+            During the v0.3.0 hotfix promotion on <code>agent-runner-01</code>, Coding logged a clean SIGTERM drain with two
+            detached jobs left for startup reattachment. The replacement logged no adoption, and both workers, including
+            sixteen minutes of active Opus work, disappeared. Review workers on the same host survived and were adopted.
+          </td>
+          <td>
+            Coding stopped its daemon-side heartbeat and exited without Review's final handoff renewal. The replacement
+            started a deadline watcher from the last ordinary lease authority before registration and reattachment. A slot
+            near its stop-before boundary was therefore reaped even though <code>KillMode=process</code> had preserved its
+            positively identified worker; neither the process group, parent-death behavior, nor the old drain path killed it.
+          </td>
+          <td>
+            <span class="pill ok">fixed in dev</span> Coding now stops the old heartbeat, requests and persists the bounded
+            handoff TTL, leaves the worker alive, and waits for every occupied slot to reach that boundary before daemon exit.
+            Startup uses the latest persisted deadline and emits one reconciliation line per slot with
+            <code>outcome=reattached</code>, <code>outcome=purged</code> plus reason, or fail-closed retained state. A Linux
+            fake-CLI restart regression proves the same PID survives, consumes one recovered slot, and ships output produced
+            after replacement adoption.
+          </td>
+        </tr>
         <tr id="case-agt-2750-private-tmp-restart-teardown">
           <td>2026-09-07</td>
           <td><code>AGT-2750</code><br><span class="small">runner-review-daemon-restart-privatetmp-teardown</span></td>
