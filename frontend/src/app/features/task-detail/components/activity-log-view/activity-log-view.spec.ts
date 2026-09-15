@@ -214,6 +214,54 @@ describe('ActivityLogViewComponent — internal-event rendering (Trace)', () => 
     expect(convoText).not.toContain('secret reasoning');
     fixture.destroy();
   });
+
+  /**
+   * AGT-2793 deliverable #4 at the DOM boundary: a fixture stream with four
+   * unknown protocol-novelty frames of the same kind plus two known rows
+   * renders as one grouped row carrying the count, no empty rows, and the
+   * known rows unchanged. The pure-function version of this assertion lives
+   * in conversation-projection.spec.ts; this pins the Trace template is
+   * actually wired to the grouped output (not just the projection helper).
+   */
+  it('renders four unknown frames of the same kind as one grouped Trace row, known rows unchanged', async () => {
+    const sha = 'a'.repeat(64);
+    const noveltyMarker = (occurrence: number) =>
+      `[runner-protocol-unknown-frame] ${JSON.stringify({
+        cli: 'claude',
+        adapterVersion: '0.7.0',
+        frameType: 'tool_progress',
+        occurrence,
+        totalUnknownFrames: 4,
+        payloadSha256: sha,
+      })}`;
+
+    const fixture = await renderTrace([
+      line('RUNNER FINISHED', 'system'),
+      line(noveltyMarker(1)),
+      line(noveltyMarker(2)),
+      line(noveltyMarker(3)),
+      line(noveltyMarker(4)),
+      line('RUNNER READY', 'system'),
+    ]);
+    const host: HTMLElement = fixture.nativeElement;
+
+    const summaries = Array.from(host.querySelectorAll<HTMLElement>('.trace-line__text'));
+    const summaryTexts = summaries.map((el) => el.textContent?.trim() ?? '');
+
+    // Exactly one grouped row for the four unknown frames, carrying the count.
+    expect(summaryTexts).toContain('4 unknown frames of type tool_progress (claude adapter 0.7.0)');
+    expect(summaryTexts.filter((t) => t.startsWith('4 unknown frames'))).toHaveLength(1);
+
+    // No empty `[internal event]` rows and no raw per-occurrence row leaked through.
+    expect(summaryTexts.every((t) => t.trim().length > 0)).toBe(true);
+    expect(summaryTexts).not.toContain('[internal event]');
+
+    // The known rows around the group render unchanged.
+    expect(summaryTexts).toContain('RUNNER FINISHED');
+    expect(summaryTexts).toContain('RUNNER READY');
+
+    fixture.destroy();
+  });
 });
 
 describe('ActivityLogViewComponent — conversation history window', () => {
