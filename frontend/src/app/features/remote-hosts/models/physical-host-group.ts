@@ -1,3 +1,4 @@
+import { worstDrift } from './host-release-drift';
 import type { HostHeartbeatStatus, RemoteHost, RunnerServiceRole } from './remote-host.model';
 
 export interface PhysicalHostGroup {
@@ -38,6 +39,10 @@ export function groupPhysicalHosts(
       status: aggregateStatus(roles),
       lastHeartbeatAt: latestRole.lastHeartbeatAt,
       releaseId: latestRole.releaseId ?? detailRole.releaseId ?? null,
+      release: latestRole.release ?? detailRole.release ?? null,
+      // One late role makes the machine late: the aggregate must not read
+      // calmer than the rows it summarises (R3).
+      releaseDrift: worstDrift(roles.map(role => role.releaseDrift)),
       stats: telemetryRole.stats,
       telemetry: telemetryRole.telemetry,
       telemetryLoading: roles.some(role => role.telemetryLoading),

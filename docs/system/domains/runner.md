@@ -585,6 +585,17 @@ state.
   Runner registration advertises the deployment release directory selected by
   `/opt/agent-host/current` (or `RUNNER_RELEASE_ID`) rather than the generic
   assembly package version.
+- `runner/RunnerReleaseIdentity.cs`,
+  `backend/Features/Runner/HostReleaseDrift.cs`, and
+  `backend/Features/Runner/HostReleaseDriftWatchdog.cs`: release-drift detection
+  (AGT-2826). The daemon reports release id, version, commit, and build instant
+  in registration and in every capability heartbeat; the pure policy compares
+  one host against the release this server runs; the watchdog projects the
+  verdict at `GET /api/v1/management/host-releases` for Execution Hosts and
+  raises one `host_release_drift` operator-feed alarm per host release that
+  stays more than 24 hours behind Stable. Operator behaviour and the incident
+  that motivated it live in
+  [docs/operations/remote-hosts.md](../../operations/remote-hosts.md).
 - Provider-auth advertisement changes are appended to the same bounded recovery
   history exposed by the management snapshot. Execution Hosts turns that data
   into per-CLI `OK`, `Retrying`, `Limited`, `Expiring`, `Unavailable`, and

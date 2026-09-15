@@ -47,6 +47,70 @@ public sealed class RunnerReleaseIdentityTests
             RunnerReleaseIdentity.Resolve(AppContext.BaseDirectory, " release-explicit "));
     }
 
+    /// <summary>
+    /// AGT-2826: the release id alone does not say how old a host is. The
+    /// pipeline stamps the build instant into the id, so the reported identity
+    /// carries a comparable timestamp without trusting file mtimes.
+    /// </summary>
+    [Fact]
+    public void Describe_reads_version_commit_and_build_instant_from_the_release()
+    {
+        var identity = RunnerReleaseIdentity.Describe(
+            "agt-2650b-20260812T064049Z-ca5cbd6ff",
+            informationalVersion: "0.2.7+ca5cbd6ff9a1",
+            assemblyVersion: "0.2.7",
+            configuredCommit: "",
+            configuredBuiltAt: "");
+
+        Assert.Equal("agt-2650b-20260812T064049Z-ca5cbd6ff", identity.ReleaseId);
+        Assert.Equal("0.2.7", identity.Version);
+        Assert.Equal("ca5cbd6ff9a1", identity.Commit);
+        Assert.Equal(new DateTime(2026, 8, 12, 6, 40, 49, DateTimeKind.Utc), identity.BuiltAt);
+    }
+
+    [Fact]
+    public void Describe_prefers_the_configured_commit_and_build_instant()
+    {
+        var identity = RunnerReleaseIdentity.Describe(
+            "agt-2650b-20260812T064049Z-ca5cbd6ff",
+            informationalVersion: "0.2.7+ca5cbd6ff9a1",
+            assemblyVersion: "0.2.7",
+            configuredCommit: " deadbeef ",
+            configuredBuiltAt: "2026-09-01T10:00:00Z");
+
+        Assert.Equal("deadbeef", identity.Commit);
+        Assert.Equal(new DateTime(2026, 9, 1, 10, 0, 0, DateTimeKind.Utc), identity.BuiltAt);
+    }
+
+    /// <summary>
+    /// A host built outside the release pipeline reports what it knows. An
+    /// invented build stamp would be read as drift evidence, so the field stays
+    /// null and the server falls back to a version ordering.
+    /// </summary>
+    [Fact]
+    public void Describe_leaves_unknown_facts_null_for_an_unstamped_release()
+    {
+        var identity = RunnerReleaseIdentity.Describe(
+            "local-dev",
+            informationalVersion: "0.3.0",
+            assemblyVersion: "0.3.0",
+            configuredCommit: "",
+            configuredBuiltAt: "");
+
+        Assert.Equal("local-dev", identity.ReleaseId);
+        Assert.Equal("0.3.0", identity.Version);
+        Assert.Null(identity.Commit);
+        Assert.Null(identity.BuiltAt);
+    }
+
+    [Theory]
+    [InlineData("agt-2650b-20260812T064049Z-ca5cbd6ff", true)]
+    [InlineData("release-20260812T064049Z", true)]
+    [InlineData("release-2026-08-12", false)]
+    [InlineData("", false)]
+    public void ParseReleaseStamp_only_accepts_a_compact_utc_stamp(string releaseId, bool parsed)
+        => Assert.Equal(parsed, RunnerReleaseIdentity.ParseReleaseStamp(releaseId) is not null);
+
     private static bool TryCreateDirectoryLink(string link, string target)
     {
         try
