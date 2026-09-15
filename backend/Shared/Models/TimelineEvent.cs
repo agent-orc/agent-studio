@@ -340,6 +340,17 @@ public static class TimelineEventKinds
     /// base commit / step / command the runner reported.
     /// </summary>
     public const string ReviewInfrastructureRepeatDiagnosed = "review_infrastructure_repeat_diagnosed";
+    /// <summary>
+    /// AGT-2841: a ReviewInfra outcome (AspectTimeout, ToolUnavailable,
+    /// BaselineUnavailable, or another infrastructure classification) had
+    /// retry budget left, so a replacement attempt was scheduled for the same
+    /// delivery SHA after a bounded backoff instead of needing an operator
+    /// move to get a new attempt. <see cref="TimelineEvent.Summary"/> carries
+    /// the retry number, the budget, the delay, and the failure reason;
+    /// <see cref="TimelineEvent.Details"/> carries the same facts plus the due
+    /// time.
+    /// </summary>
+    public const string ReviewInfrastructureRetryScheduled = "review_infrastructure_retry_scheduled";
     /// AGT-2492: the recall sweep found that a parked card's recorded
     /// precondition no longer holds. <see cref="TimelineEvent.Summary"/> carries
     /// how long the card has been parked and why the blocker is considered gone;

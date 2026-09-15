@@ -74,6 +74,33 @@ inert rather than guessing a kill.
 Safe parallelism and the procedure for raising it live in
 [linux-runner-host.md](../../operations/setup/linux-runner-host.md#review-parallelism-and-build-server-isolation).
 
+## Infrastructure retry scheduling
+
+A `ReviewInfra` outcome (`AspectTimeout`, `ToolUnavailable`, `BaselineUnavailable`,
+a workspace failure, ...) does not mint its linked retry attempt in the same
+instant as the failure report. `AttemptAuthorityService.ScheduleReviewInfrastructureRetry`
+records a due time instead: bounded backoff of 1, 3, then 9 minutes, indexed by
+how many linked retries the chain has already spent
+(`AttemptAuthorityService.ReviewInfrastructureRetryBackoff`). The card timeline
+gets a `review_infrastructure_retry_scheduled` entry naming the retry number,
+the budget of three, the delay, and the failure reason at schedule time; the
+card stays in `4-auto-review` with no successor to claim until the delay
+elapses. `ReviewInfrastructureRetryScheduler`, a background service, polls
+`AttemptAuthorityService.DueReviewInfrastructureRetries` and mints the
+successor once it is due, reusing the failed attempt's exact ReviewSubject
+(same Result-SHA, same commands) unless the failure was `PreparationFailed`, in
+which case it rebuilds the plan the same way the endpoint's inline retry used
+to (AGT-2831 stale checkouts get a fresh preparation profile). This closes the
+AGT-2841 gap where a `ReviewInfra` verdict left a card sitting in Auto Review
+with no automatic next attempt until an operator issued `POST /move`.
+
+Once `AttemptAuthorityService.ReviewInfrastructureRetryBudget` (three) linked
+retries have all failed, no further retry is scheduled and the card is parked
+in `5e-escalated` with a named reason exactly as before this change - the
+budget-exhaustion and repeat-diagnosis behavior in
+[`ReviewInfrastructureRepeatPolicy`](../../../backend/Features/Runner/ReviewInfrastructureRepeatPolicy.cs)
+is unaffected by the scheduling delay.
+
 ## Verdict citation contract
 
 Every semantic aspect sentinel supplies these fields:
@@ -130,3 +157,15 @@ blocking behavior.
   host-global build servers left behind by concurrent attempts.
 - `backend.Tests/ReviewGradingPolicyTests.cs`: uncited-block downgrade and cited
   block preservation.
+- `backend/Features/Runner/AttemptAuthorityService.cs`
+  (`ScheduleReviewInfrastructureRetry`, `DueReviewInfrastructureRetries`,
+  `ClearScheduledReviewInfrastructureRetry`) and
+  `backend/Features/Runner/ReviewInfrastructureRetryScheduler.cs`: bounded
+  backoff scheduling and firing of linked `ReviewInfra` retries.
+- `backend.Tests/AttemptAuthorityServiceTests.cs`
+  (`Schedule_review_infrastructure_retry_defers_the_successor_by_one_backoff_step`,
+  `Schedule_review_infrastructure_retry_uses_widening_backoff_and_stops_at_the_cap`)
+  and `backend.Tests/RemoteRunnerEndToEndTests.cs`
+  (`Monolith_v1_review_plane_schedules_a_named_retry_for_a_fake_aspect_timeout_without_an_operator_move`):
+  the backoff schedule, the three-retry cap, and the
+  `review_infrastructure_retry_scheduled` timeline entry.

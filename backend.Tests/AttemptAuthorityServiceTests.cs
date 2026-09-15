@@ -986,6 +986,127 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
             service.GetTaskProjection("AGT-1").ReviewAttempts.Count);
     }
 
+    /// <summary>
+    /// AGT-2841: a ReviewInfra outcome (a fake AspectTimeout here, standing in
+    /// for the aspect model call that timed out on AGT-2836) must not mint its
+    /// successor in the same instant as the failure report - that was the
+    /// symptom (16:56, an operator had to POST /move to get a new attempt 18
+    /// minutes later). Scheduling instead records a due time one backoff step
+    /// in the future and leaves no successor claimable until that time passes.
+    /// </summary>
+    [Fact]
+    public void Schedule_review_infrastructure_retry_defers_the_successor_by_one_backoff_step()
+    {
+        var now = new DateTime(2026, 9, 15, 16, 56, 0, DateTimeKind.Utc);
+        var service = NewService(() => now);
+        var (_, initial) = CompletedRunWithReview(service, "sha-a");
+        var claimed = service.ClaimReview(
+            initial.AttemptId, "reviewer", "review-host", 60, "claim-1").ReviewAttempt!;
+        service.SettleReview(new SettleReviewAttemptRequest(
+            new AttemptWriteReference(claimed.AttemptId, claimed.LastFence, claimed.AuthorityEpoch, "infra-1"),
+            "sha-a",
+            ReviewTerminalOutcome.InfrastructureFailure,
+            "AspectTimeout"));
+
+        var schedule = service.ScheduleReviewInfrastructureRetry(
+            claimed.AttemptId, "AspectTimeout: one aspect model call timed out.");
+
+        Assert.Equal(AttemptWriteStatus.Accepted, schedule.Status);
+        Assert.Equal(1, schedule.RetryNumber);
+        Assert.Equal(AttemptAuthorityService.ReviewInfrastructureRetryBudget, schedule.RetryBudget);
+        Assert.Equal(AttemptAuthorityService.ReviewInfrastructureRetryBackoff[0], schedule.Delay);
+        Assert.Equal(now.Add(AttemptAuthorityService.ReviewInfrastructureRetryBackoff[0]), schedule.DueAtUtc);
+        Assert.Contains("AspectTimeout", schedule.Reason);
+
+        // Not due yet: no successor to claim.
+        Assert.Empty(service.DueReviewInfrastructureRetries());
+        Assert.Equal(AttemptWriteStatus.NotFound, service.ClaimNextReview("r", "h", "i", 60).Status);
+
+        // A few seconds short of the backoff: still not due.
+        now = now.Add(AttemptAuthorityService.ReviewInfrastructureRetryBackoff[0]).AddSeconds(-1);
+        Assert.Empty(service.DueReviewInfrastructureRetries());
+
+        // Past the backoff: due, and only now does a successor exist to claim.
+        now = now.AddSeconds(2);
+        var due = Assert.Single(service.DueReviewInfrastructureRetries());
+        Assert.Equal(claimed.AttemptId, due.AttemptId);
+        Assert.Equal(1, due.RetryNumber);
+        Assert.Equal("AGT-1", due.TaskKey);
+
+        var successor = service.CreateReviewAttempt(new CreateReviewAttemptRequest(
+            claimed.TaskKey, claimed.RepositoryId, claimed.Subject.ExpectedResultSha,
+            claimed.SourceRunAttemptId, claimed.Subject.TaskRequirementsHash,
+            claimed.Subject.ReviewPolicyHash, claimed.Subject.EvidenceDigestInputs,
+            "review-infra-retry:" + claimed.AttemptId, claimed.AttemptId)).ReviewAttempt!;
+        service.ClearScheduledReviewInfrastructureRetry(claimed.AttemptId);
+
+        Assert.Equal(AttemptLifecycleState.Pending, successor.State);
+        Assert.Equal(claimed.AttemptId, successor.SourceReviewAttemptId);
+        // The failed attempt's own schedule is gone; it never surfaces again.
+        Assert.Empty(service.DueReviewInfrastructureRetries());
+    }
+
+    /// <summary>
+    /// The three configured backoff steps (1, 3, 9 minutes) apply to
+    /// successive retries in one chain, and no fourth retry is ever scheduled -
+    /// the fourth ReviewInfra outcome must park the card instead (verified at
+    /// the endpoint level by
+    /// <c>Monolith_v1_review_plane_exhausts_three_infrastructure_retries_to_escalated</c>).
+    /// </summary>
+    [Fact]
+    public void Schedule_review_infrastructure_retry_uses_widening_backoff_and_stops_at_the_cap()
+    {
+        var now = new DateTime(2026, 9, 15, 12, 0, 0, DateTimeKind.Utc);
+        var service = NewService(() => now);
+        var (_, initial) = CompletedRunWithReview(service, "sha-a");
+        var current = initial;
+
+        for (var retryNumber = 1;
+             retryNumber <= AttemptAuthorityService.ReviewInfrastructureRetryBudget;
+             retryNumber++)
+        {
+            var claimed = service.ClaimReview(
+                current.AttemptId, "reviewer", "review-host", 60, $"claim-{retryNumber}").ReviewAttempt!;
+            service.SettleReview(new SettleReviewAttemptRequest(
+                new AttemptWriteReference(
+                    claimed.AttemptId, claimed.LastFence, claimed.AuthorityEpoch, $"infra-{retryNumber}"),
+                "sha-a",
+                ReviewTerminalOutcome.InfrastructureFailure,
+                "AspectTimeout"));
+
+            var schedule = service.ScheduleReviewInfrastructureRetry(claimed.AttemptId, "AspectTimeout");
+            Assert.Equal(AttemptWriteStatus.Accepted, schedule.Status);
+            Assert.Equal(retryNumber, schedule.RetryNumber);
+            Assert.Equal(
+                AttemptAuthorityService.ReviewInfrastructureRetryBackoff[retryNumber - 1],
+                schedule.Delay);
+
+            now = schedule.DueAtUtc!.Value.AddSeconds(1);
+            var due = Assert.Single(service.DueReviewInfrastructureRetries());
+            current = service.CreateReviewAttempt(new CreateReviewAttemptRequest(
+                claimed.TaskKey, claimed.RepositoryId, claimed.Subject.ExpectedResultSha,
+                claimed.SourceRunAttemptId, claimed.Subject.TaskRequirementsHash,
+                claimed.Subject.ReviewPolicyHash, claimed.Subject.EvidenceDigestInputs,
+                $"retry-{retryNumber}", claimed.AttemptId)).ReviewAttempt!;
+            service.ClearScheduledReviewInfrastructureRetry(due.AttemptId);
+        }
+
+        var finalClaim = service.ClaimReview(
+            current.AttemptId, "reviewer", "review-host", 60, "claim-terminal").ReviewAttempt!;
+        service.SettleReview(new SettleReviewAttemptRequest(
+            new AttemptWriteReference(
+                finalClaim.AttemptId, finalClaim.LastFence, finalClaim.AuthorityEpoch, "infra-terminal"),
+            "sha-a",
+            ReviewTerminalOutcome.InfrastructureFailure,
+            "AspectTimeout"));
+
+        // Budget is spent: no fourth retry can be scheduled.
+        var exhausted = service.ScheduleReviewInfrastructureRetry(finalClaim.AttemptId, "AspectTimeout");
+        Assert.Equal(AttemptWriteStatus.InvalidState, exhausted.Status);
+        Assert.False(exhausted.Accepted);
+        Assert.Empty(service.DueReviewInfrastructureRetries());
+    }
+
     [Fact]
     public void Legacy_review_subject_without_result_envelope_is_terminalized_once()
     {
