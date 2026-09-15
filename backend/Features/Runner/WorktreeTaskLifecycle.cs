@@ -375,7 +375,7 @@ public sealed class WorktreeTaskLifecycle
             return new IntegrationResult(IntegrationOutcome.Conflict, null, rebase.Error, rebase.ConflictedFiles);
         }
 
-        var ff = _git.MergeFastForward(repoRoot, taskBranch);
+        var ff = AdvanceIntegrationBranch(repoRoot, worktreePath, taskBranch, integrationBranch);
         if (!ff.Success)
         {
             _logger.LogWarning("Fast-forward of {Integration} onto {Branch} failed: {Error}",
@@ -383,9 +383,45 @@ public sealed class WorktreeTaskLifecycle
             return new IntegrationResult(IntegrationOutcome.Error, null, ff.Error);
         }
 
-        var sha = _git.ReadHeadShaAt(repoRoot);
+        var sha = _git.GetBranchTip(repoRoot, integrationBranch);
         _logger.LogInformation("Integrated {Branch} into {Integration} at {Sha}", taskBranch, integrationBranch, sha ?? "<unknown>");
         return new IntegrationResult(IntegrationOutcome.Merged, sha, null);
+    }
+
+    /// <summary>
+    /// Publishes the rebased task branch onto the integration branch by moving
+    /// the branch ref (compare-and-swap), not by fast-forwarding whatever the
+    /// project checkout happens to have checked out. AGT-2832: the checkout is
+    /// the developer's, so it must neither be read as integration truth - a
+    /// different branch there used to advance the wrong ref - nor written to.
+    /// After <see cref="GitService.RebaseOnto"/> the task branch is a linear
+    /// descendant of the integration branch, so this is always a fast-forward.
+    /// </summary>
+    private GitWorktreeResult AdvanceIntegrationBranch(
+        string repoRoot,
+        string worktreePath,
+        string taskBranch,
+        string integrationBranch)
+    {
+        var integrationTip = _git.GetBranchTip(repoRoot, integrationBranch);
+        if (string.IsNullOrWhiteSpace(integrationTip))
+            return new GitWorktreeResult(
+                false, null, $"Integration branch '{integrationBranch}' does not exist locally.");
+
+        var taskTip = _git.ReadHeadShaAt(worktreePath);
+        if (string.IsNullOrWhiteSpace(taskTip))
+            return new GitWorktreeResult(
+                false, null, $"Could not resolve the tip of task branch '{taskBranch}'.");
+
+        if (string.Equals(taskTip, integrationTip, StringComparison.OrdinalIgnoreCase))
+            return new GitWorktreeResult(true, repoRoot, null);
+        if (!_git.IsAncestor(repoRoot, integrationTip, taskTip))
+            return new GitWorktreeResult(
+                false,
+                null,
+                $"Task branch '{taskBranch}' is not a fast-forward of '{integrationBranch}'.");
+
+        return _git.AdvanceBranchRef(repoRoot, integrationBranch, taskTip, integrationTip);
     }
 
     /// <summary>
@@ -423,7 +459,7 @@ public sealed class WorktreeTaskLifecycle
             }
         }
 
-        var ff = _git.MergeFastForward(repoRoot, taskBranch);
+        var ff = AdvanceIntegrationBranch(repoRoot, worktreePath, taskBranch, integrationBranch);
         if (!ff.Success)
         {
             return new IntegrationResult(
@@ -432,7 +468,7 @@ public sealed class WorktreeTaskLifecycle
                 string.IsNullOrWhiteSpace(ff.Error) ? "Fast-forward merge failed after conflict-resolution." : ff.Error);
         }
 
-        var sha = _git.ReadHeadShaAt(repoRoot);
+        var sha = _git.GetBranchTip(repoRoot, integrationBranch);
         _logger.LogInformation(
             "Completed resolved integration of {Branch} into {Integration} at {Sha}",
             taskBranch, integrationBranch, sha ?? "<unknown>");

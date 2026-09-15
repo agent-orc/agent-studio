@@ -313,6 +313,18 @@ export interface GitHygieneStatus {
   stagedCount: number;
   unstagedCount: number;
   untrackedCount: number;
+  /**
+   * Studio's own integration checkout for this project, when one has been
+   * prepared. Integration runs there, never in this checkout (AGT-2832), so
+   * the dirty-tree counts above are a hint and never a blocker.
+   */
+  integrationWorktreePath: string | null;
+  /**
+   * True when this checkout has the project's integration branch checked out.
+   * Studio advances that branch by ref, so freshly integrated files read as
+   * missing here until the checkout refreshes or moves to a feature branch.
+   */
+  onIntegrationBranch: boolean;
   lastCommitSha: string | null;
   lastCommitShortSha: string | null;
   lastCommitSubject: string | null;

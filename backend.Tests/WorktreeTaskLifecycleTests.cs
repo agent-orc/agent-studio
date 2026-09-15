@@ -215,9 +215,11 @@ public sealed class WorktreeTaskLifecycleTests : IDisposable
         Assert.Equal(IntegrationOutcome.Merged, result.Outcome);
         // develop now contains both the sibling work and the rebased task work,
         // with the sibling commit as an ancestor (linear history, no merge commit).
+        // AGT-2832: the assertion is about the BRANCH, not the project checkout's
+        // working tree - integration advances the ref and never writes there.
         Assert.Equal(0, RunGit(repo, $"merge-base --is-ancestor {advancedTip} develop").Code);
-        Assert.True(File.Exists(Path.Combine(repo, "task.txt")));
-        Assert.True(File.Exists(Path.Combine(repo, "other.txt")));
+        Assert.Equal(0, RunGit(repo, "cat-file -e develop:task.txt").Code);
+        Assert.Equal(0, RunGit(repo, "cat-file -e develop:other.txt").Code);
     }
 
     [Fact]
@@ -367,7 +369,7 @@ public sealed class WorktreeTaskLifecycleTests : IDisposable
         var result = life.CompleteIntegrationAfterResolution(repo, prep.WorktreePath!, prep.Branch!, "develop");
 
         Assert.Equal(IntegrationOutcome.Merged, result.Outcome);
-        Assert.Equal("develop version + task version", File.ReadAllText(Path.Combine(repo, "shared.txt")));
+        Assert.Equal("develop version + task version", RunGit(repo, "show develop:shared.txt").Out);
         Assert.True(string.IsNullOrWhiteSpace(RunGit(prep.WorktreePath!, "status --porcelain").Out));
         Assert.Equal(RunGit(prep.WorktreePath!, "rev-parse HEAD").Out.Trim(), RunGit(repo, "rev-parse develop").Out.Trim());
     }
@@ -640,7 +642,10 @@ public sealed class WorktreeTaskLifecycleTests : IDisposable
         var res = life.Integrate(repo, prep.WorktreePath!, prep.Branch!, "develop", IntegrationStrategies.DirectMerge);
 
         Assert.Equal(IntegrationOutcome.Merged, res.Outcome);
-        Assert.True(File.Exists(Path.Combine(repo, "agent.txt")));
+        Assert.Equal(0, RunGit(repo, "cat-file -e develop:agent.txt").Code);
+        // AGT-2832: the project checkout is the developer's; integration moves
+        // the branch ref and leaves that working tree untouched.
+        Assert.False(File.Exists(Path.Combine(repo, "agent.txt")));
     }
 
     [Fact]

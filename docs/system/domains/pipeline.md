@@ -1059,7 +1059,10 @@ operator changes cause the step to fail before its writer runs.
   preserve unambiguous delivery SHA attribution.` to the timeline. This loop is
   limited to one automatic round per operator-owned review epoch. Repetition
   reaches Human Review with the failed step and conflicted files visible. Every
-  failed attempt leaves the integration working tree clean. Once
+  failed attempt leaves the integration working tree clean. That working tree is
+  the Studio-owned integration worktree, never the project's own checkout: see
+  [the integration worktree](../../concepts/task-integration-and-merge-workflow.md#the-studio-owned-integration-worktree-agt-2832)
+  (AGT-2832). Once
   merge/gate/rollback starts, host cancellation
   does not interrupt that consistency boundary. `/healthz/drain` reports
   `gate-busy` while the boundary is active so the external stable restart

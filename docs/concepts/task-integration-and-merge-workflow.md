@@ -23,6 +23,7 @@ from the registry instead of accepting the scratch-feed hash.
 - Whether a `task/<id>` branch and worktree exist at all depends on `MaxParallelism`:
   - `MaxParallelism == 1` (default, sequential): NO worktree, NO `task/<id>` branch. The agent edits the shared main checkout directly, on whatever branch it has checked out.
   - `MaxParallelism >= 2` (parallel): each run gets an isolated git worktree on its own `task/<id>` branch, cut from `IntegrationBranch`. `WorktreeTaskLifecycle.Prepare` / `PrepareOrReuse` create/reuse it.
+- Integration itself never runs in either of those checkouts: it uses the Studio-owned integration worktree described below.
 - File: `backend/Features/Runner/WorktreeTaskLifecycle.cs`.
 
 ## The git pipeline steps
@@ -155,11 +156,63 @@ For `MaxParallelism >= 2`, integration happens automatically at run finalization
 
 - Entry: `ProjectRunner.IntegrateWorktreeRunAsync` (`backend/Features/Runner/ProjectRunner.cs`, line ~907). Guarded by `if (!run.IsWorktreeRun) return null;` - a no-op for the sequential path.
 - Sequence: commit agent edits onto `task/<id>` (`WorktreeRunCommit`) -> push `task/<id>` to origin for portability -> acquire the per-project merge serialization (local `_integrateLock` semaphore + a cross-runner integration lease) -> `WorktreeTaskLifecycle.Integrate`.
-- `Integrate` (direct-merge): rebase the worktree onto the `IntegrationBranch` tip, then `git merge --ff-only` into the integration branch checked out in the main checkout. Result history is linear with rewritten SHAs.
+- `Integrate` (direct-merge): rebase the worktree onto the `IntegrationBranch` tip, then advance the `IntegrationBranch` ref to the rebased tip with a compare-and-swap `git update-ref`. Result history is linear with rewritten SHAs, and no checkout is written to (AGT-2832).
 - Conflicts: a rebase conflict returns `IntegrationOutcome.Conflict`; the conflicted state can be preserved and escalated to a managed conflict-resolution agent (`CompleteIntegrationAfterResolution`). Unresolved work is left in place.
 - `IntegrationStrategy == pull-request`: `Integrate` returns `IntegrationOutcome.PushedForReview` without merging. Operator acceptance also honors this strategy and records the delivery as awaiting a pull request instead of reporting a successful merge.
 
 Fenced Remote delivery is orthogonal to `MaxParallelism`: after its Remote Review gates pass, it uses the common `post-merge-into-develop` runner before Human Review regardless of the local worktree setting. Human acceptance is only its retry path.
+
+## The Studio-owned integration worktree (AGT-2832)
+
+Integration never runs in the project's own checkout. That checkout belongs to
+whoever works in it; before AGT-2832 the platform checked out, merged into,
+fast-forwarded, and `reset --hard`-ed it, so an unrelated uncommitted file
+refused every merge for that project ("Integration working tree has uncommitted
+changes; refusing to merge") and a successful merge rewrote the working tree
+under an open editor. See the incident entry
+[common-problems/integration-in-developer-checkout/](../operations/common-problems/integration-in-developer-checkout/).
+
+- **Where.** `<root>/<project>/_integration`, where `<root>` is
+  `Integration:WorktreeRoot` if configured and `%TEMP%/ass-worktrees` otherwise -
+  the same root the per-task coding worktrees use. The project segment is the
+  project name with non-`[A-Za-z0-9_.-]` characters replaced by `-`.
+  `IntegrationWorktreeLocator` is the single place that computes it.
+- **What it is.** A linked git worktree of the project repository
+  (`git worktree add --detach`), created on demand at the first integration.
+  Objects and refs are shared, so local `task/<id>` deliveries are visible and
+  the integration branch still advances; only the working tree is separate. It
+  is not a clone - a clone could not see local delivery branches.
+- **Reset per integration.** Before every integration `Prepare` aborts an
+  in-progress merge or rebase, `reset --hard`s, and `clean -fd`s it, so a
+  crashed attempt cannot poison the next one.
+- **Lifecycle.** `IntegrationWorktreePolicy.Decide` maps four observable facts
+  (repository resolved, directory exists, registered with the repository, has a
+  `.git` link) onto create / reuse / recreate / unavailable. A deleted directory,
+  a stale registration, and a pruned worktree all converge on a usable worktree.
+  When it cannot be prepared, integration reports a typed error; there is no
+  fallback to the project checkout.
+- **Publishing the result.** Git allows only one checkout of a branch, so when
+  the integration branch is checked out elsewhere the merge runs on a detached
+  HEAD and the branch is advanced with a compare-and-swap
+  `git update-ref` (`GitService.AdvanceBranchRef`). The same primitive replaced
+  the in-run `git merge --ff-only`, which used to advance whichever branch the
+  project checkout happened to have checked out.
+- **Cleanup.** The worktree is disposable; deleting the directory costs one
+  re-creation. Remove it with
+  `git worktree remove --force <root>/<project>/_integration` (or
+  `IntegrationWorktreeService.Remove`), then `git worktree prune` in the project
+  repository. The orphan-directory sweeper deliberately leaves it alone: it only
+  reaps worktree directories that have lost their `.git` link.
+- **Migration.** Nothing to configure or move. Existing projects keep their
+  configured repository path; Studio adds the worktree under the worktree root on the first
+  integration after the upgrade.
+
+The project checkout's own state is a hint, never a gate: `GET /api/git/hygiene`
+reports `integrationWorktreePath` and `onIntegrationBranch` next to the existing
+dirty-tree counts. A checkout that sits *on* the integration branch keeps its
+files but reports freshly integrated ones as missing until it refreshes
+(`git checkout .`) or moves to a feature branch - `onIntegrationBranch` names
+exactly that state.
 
 ## Worktree cleanup policy
 

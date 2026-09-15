@@ -727,6 +727,9 @@ builder.Services.AddSingleton<IntakeRunner>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService<IntakeHostedService>();
 builder.Services.AddSingleton<GitService>();
+// AGT-2832: integration mutates a Studio-owned worktree, never the project's
+// own (developer) checkout.
+builder.Services.AddSingleton<IntegrationWorktreeService>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService<GitInventoryRefreshHostedService>();
 // AGT-2726: one background Git-derived-state index per repository, change-

@@ -36,6 +36,7 @@ public sealed class MergeIntoDevelopRunner
     private readonly TaskMutationService? _taskMutations;
     private readonly TaskScannerService? _taskScanner;
     private readonly FailureInterventionService? _failureInterventions;
+    private readonly IntegrationWorktreeService? _integrationWorktrees;
     private readonly TimeSpan _preMainTimeout;
     private readonly TimeSpan _preDevelopTimeout;
     private readonly Func<int, TimeSpan> _environmentalBackoff;
@@ -57,7 +58,8 @@ public sealed class MergeIntoDevelopRunner
         AttemptAuthorityService? attemptAuthority = null,
         TaskMutationService? taskMutations = null,
         TaskScannerService? taskScanner = null,
-        FailureInterventionService? failureInterventions = null)
+        FailureInterventionService? failureInterventions = null,
+        IntegrationWorktreeService? integrationWorktrees = null)
     {
         _git = git;
         _pipelineLog = pipelineLog;
@@ -70,6 +72,7 @@ public sealed class MergeIntoDevelopRunner
         _taskMutations = taskMutations;
         _taskScanner = taskScanner;
         _failureInterventions = failureInterventions;
+        _integrationWorktrees = integrationWorktrees;
         _preMainTimeout = preMainTimeout is { } configured && configured > TimeSpan.Zero
             ? configured
             : TimeSpan.FromHours(1);
@@ -167,9 +170,9 @@ public sealed class MergeIntoDevelopRunner
         var startedAt = DateTime.UtcNow;
         try
         {
-            var repoRoot = _git.ResolveRepoRootForWatchPath(watchPath)
+            var projectRepository = _git.ResolveRepoRootForWatchPath(watchPath)
                 ?? (string.IsNullOrWhiteSpace(watchPath) ? null : watchPath);
-            if (string.IsNullOrWhiteSpace(repoRoot))
+            if (string.IsNullOrWhiteSpace(projectRepository))
             {
                 var unresolved = MergeIntoIntegrationResult.Of(
                     MergeIntoIntegrationOutcome.Error, error: "Could not resolve repository root for the project.");
@@ -185,6 +188,36 @@ public sealed class MergeIntoDevelopRunner
                 await MaybeRaiseInterventionAsync(project, jobId, watchPath, unresolved,
                     null, null, startedAt, ct).ConfigureAwait(false);
                 return unresolved;
+            }
+
+            // AGT-2832: every mutation below (fetch, checkout, merge, rollback)
+            // runs in the Studio-owned integration worktree, never in the
+            // project's own checkout. Objects and refs are shared, so local
+            // task/<id> deliveries stay visible and the integration branch still
+            // advances - but an operator's uncommitted edits are neither read,
+            // blocked on, nor overwritten.
+            var repoRoot = projectRepository;
+            if (_integrationWorktrees is not null)
+            {
+                var lease = _integrationWorktrees.Prepare(project, projectRepository, ct);
+                if (!lease.Success)
+                {
+                    var unprepared = MergeIntoIntegrationResult.Of(
+                        MergeIntoIntegrationOutcome.Error, error: lease.Error);
+                    Record(
+                        jobFolderPath,
+                        project,
+                        jobId,
+                        integrationBranch,
+                        unprepared,
+                        preMainResult: null,
+                        preDevelopResult: null,
+                        startedAt);
+                    await MaybeRaiseInterventionAsync(project, jobId, watchPath, unprepared,
+                        null, null, startedAt, ct).ConfigureAwait(false);
+                    return unprepared;
+                }
+                repoRoot = lease.Path!;
             }
 
             var reviewSubject = ReviewSubjectStore.Read(jobFolderPath);
@@ -352,7 +385,7 @@ public sealed class MergeIntoDevelopRunner
             {
                 var rollback = string.IsNullOrWhiteSpace(result.PreviousIntegrationSha)
                     ? null
-                    : _git.ResetHard(repoRoot, result.PreviousIntegrationSha);
+                    : _git.ResetIntegrationBranch(repoRoot, branch, result.PreviousIntegrationSha);
                 var detail = rollback?.Success == true
                     ? $"Mechanical rebase attribution could not be persisted; {branch} was rolled back and nothing was pushed."
                     : $"Mechanical rebase attribution could not be persisted and rollback failed ({rollback?.Error ?? "missing rollback anchor"}); manual repair is required.";
@@ -545,7 +578,7 @@ public sealed class MergeIntoDevelopRunner
             {
                 var rollback = string.IsNullOrWhiteSpace(developMerge.PreviousIntegrationSha)
                     ? null
-                    : _git.ResetHard(repoRoot, developMerge.PreviousIntegrationSha);
+                    : _git.ResetIntegrationBranch(repoRoot, workBranch, developMerge.PreviousIntegrationSha);
                 var detail = rollback?.Success == true
                     ? "Mechanical rebase attribution could not be persisted; develop was rolled back and main remained unchanged."
                     : $"Mechanical rebase attribution could not be persisted and develop rollback failed ({rollback?.Error ?? "missing rollback anchor"}); manual repair is required.";
@@ -777,7 +810,7 @@ public sealed class MergeIntoDevelopRunner
         // so it fails closed without rewriting that branch. In both cases the
         // failed outcome prevents Passed and prevents a push.
         var reset = result.Outcome.IsFreshMerge()
-            ? _git.ResetHard(repoRoot, preMergeTip!)
+            ? _git.ResetIntegrationBranch(repoRoot, integrationBranch, preMergeTip!)
             : null;
         _logger.LogWarning(
             "merge-into-develop build gate FAILED for project={Project} job={JobId} integration={Integration} merged={MergedSha} verdict={Verdict} reason={Reason} rollback={Rollback}",

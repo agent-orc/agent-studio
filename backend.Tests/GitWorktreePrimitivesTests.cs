@@ -198,7 +198,7 @@ public sealed class GitWorktreePrimitivesTests : IDisposable
     }
 
     [Fact]
-    public void MergeFastForward_FoldsRebasedBranchIntoIntegration()
+    public void AdvanceBranchRef_FoldsRebasedBranchIntoIntegration_WithoutTouchingAnyCheckout()
     {
         var repo = SeedRepo("ff");
         var git = BuildGitService(("Fixture", repo));
@@ -209,16 +209,21 @@ public sealed class GitWorktreePrimitivesTests : IDisposable
         File.WriteAllText(Path.Combine(wtPath, "task.txt"), "task work");
         Commit(wtPath, "feat: task work");
         var taskTip = RunGit(wtPath, "rev-parse HEAD").Out.Trim();
+        var mainTipBefore = RunGit(repo, "rev-parse main").Out.Trim();
 
-        // repo has main checked out; fast-forward it to the task branch tip.
-        var result = git.MergeFastForward(repo, "task/6");
+        // main is checked out in repo and its tree carries an unrelated edit;
+        // advancing the ref must neither be blocked by it nor discard it.
+        File.WriteAllText(Path.Combine(repo, "unrelated.txt"), "developer work in progress");
+
+        var result = git.AdvanceBranchRef(repo, "main", taskTip, mainTipBefore);
 
         Assert.True(result.Success, result.Error);
         Assert.Equal(taskTip, RunGit(repo, "rev-parse main").Out.Trim());
+        Assert.Equal("developer work in progress", File.ReadAllText(Path.Combine(repo, "unrelated.txt")));
     }
 
     [Fact]
-    public void MergeFastForward_NonFastForward_FailsWithoutMergeCommit()
+    public void AdvanceBranchRef_StaleExpectedTip_LeavesTheBranchWhereItWas()
     {
         var repo = SeedRepo("ff-no");
         var git = BuildGitService(("Fixture", repo));
@@ -227,16 +232,17 @@ public sealed class GitWorktreePrimitivesTests : IDisposable
         Assert.True(git.WorktreeAdd(repo, wtPath, "task/7", "main").Success);
         File.WriteAllText(Path.Combine(wtPath, "task.txt"), "task work");
         Commit(wtPath, "feat: task work");
+        var taskTip = RunGit(wtPath, "rev-parse HEAD").Out.Trim();
+        var staleExpectation = RunGit(repo, "rev-parse main").Out.Trim();
 
-        // main diverges, so the task branch is no longer a fast-forward.
+        // A concurrent writer moved main after the caller read its tip.
         File.WriteAllText(Path.Combine(repo, "main.txt"), "main diverged");
         Commit(repo, "chore: diverge main");
         var mainTipBefore = RunGit(repo, "rev-parse main").Out.Trim();
 
-        var result = git.MergeFastForward(repo, "task/7");
+        var result = git.AdvanceBranchRef(repo, "main", taskTip, staleExpectation);
 
         Assert.False(result.Success);
-        // No merge commit was created; main is exactly where it was.
         Assert.Equal(mainTipBefore, RunGit(repo, "rev-parse main").Out.Trim());
     }
 

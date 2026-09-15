@@ -1629,7 +1629,10 @@ public class ProjectRunner
                     }
                 }
 
-                var integrationBaseSha = _git.ReadHeadShaAt(repositoryRoot);
+                // The pre-integration anchor is the integration branch tip, not
+                // the project checkout's HEAD: that checkout belongs to the
+                // developer and may sit on any branch (AGT-2832).
+                var integrationBaseSha = _git.GetBranchTip(repositoryRoot, workBranch);
                 var leaseSuffix = integrationLease is null
                     ? ""
                     : $" Integration lease token `{integrationLease.FencingToken}` is current.";
