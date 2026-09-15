@@ -22,6 +22,26 @@ public record GitStatusResult(
     bool IsWorktree = false);
 
 public record GitCommitResult(bool Success, string? Sha, string? Error, CommitGateResult? Gate = null);
+
+/// <summary>
+/// Outcome of the operator action that commits candidates the commit candidate
+/// gate previously withheld. <paramref name="StillWithheld"/> names every
+/// recorded candidate that is still uncommitted afterwards - the ones the
+/// operator did not select, plus any a deterministic exclusion kept out despite
+/// the explicit review - so the operator is told rather than left to compare
+/// lists.
+/// </summary>
+public record WithheldCandidateCommitResult(
+    bool Success,
+    GitCommitResult? Commit,
+    IReadOnlyList<string> Committed,
+    IReadOnlyList<string> StillWithheld,
+    string? Error)
+{
+    public static WithheldCandidateCommitResult Failed(string error)
+        => new(false, null, [], [], error);
+}
+
 public record GitPushResult(bool Success, string Sha, string Status, string? Error);
 public record GitDiffLookupResult(bool Success, string Diff, string? Error);
 public record GitWorkerCommitCleanupResult(bool Success, string Status, string? Error);
@@ -2409,6 +2429,97 @@ public class GitService
         return CommitBoundManifest(root, message, gate);
     }
 
+    /// <summary>
+    /// Operator action for a card whose delivery the commit candidate gate
+    /// withheld: re-inspect exactly the recorded candidates with the operator's
+    /// explicit review attached, then commit them through the same
+    /// manifest-bound path every platform commit uses.
+    ///
+    /// <para>Explicit review resolves warnings only. A hard block (secret
+    /// material, an unreadable candidate, a refused worktree) still blocks, and
+    /// deterministic exclusions (root scratch, credential homes) still exclude,
+    /// so this button can never become a way around the gate. Paths outside the
+    /// recorded manifest are rejected at the boundary rather than quietly
+    /// widening the commit.</para>
+    /// </summary>
+    public WithheldCandidateCommitResult CommitWithheldCandidates(
+        string jobId, string? watchPath, IReadOnlyCollection<string>? paths = null, string? message = null)
+    {
+        var task = _scanner.FindJob(jobId, watchPath);
+        if (task == null || string.IsNullOrWhiteSpace(task.FolderPath))
+            return WithheldCandidateCommitResult.Failed("Job not found.");
+
+        var report = CommitWithholdingMarker.TryRead(task.FolderPath, _logger);
+        if (report == null)
+            return WithheldCandidateCommitResult.Failed(
+                "No withheld commit candidates are recorded for this task.");
+
+        var recorded = report.Withheld.Select(w => w.Path).ToHashSet(StringComparer.Ordinal);
+        var requested = paths is { Count: > 0 }
+            ? paths.Select(p => (p ?? string.Empty).Replace('\\', '/').Trim().TrimStart('/'))
+                   .Where(p => p.Length > 0)
+                   .Distinct(StringComparer.Ordinal)
+                   .ToArray()
+            : recorded.OrderBy(p => p, StringComparer.Ordinal).ToArray();
+        var unknown = requested.Where(p => !recorded.Contains(p)).ToArray();
+        if (unknown.Length > 0)
+            return WithheldCandidateCommitResult.Failed(
+                $"Not part of the withheld manifest: {string.Join(", ", unknown)}.");
+        if (requested.Length == 0)
+            return WithheldCandidateCommitResult.Failed("No candidate paths selected.");
+
+        var root = ResolveGitToplevel(report.RepositoryRoot) ?? report.RepositoryRoot;
+        if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+            return WithheldCandidateCommitResult.Failed(
+                $"The repository recorded with the withheld candidates is gone: {report.RepositoryRoot}");
+
+        var gate = InspectCommitCandidates(
+            "operator-reviewed-candidates",
+            string.IsNullOrWhiteSpace(task.ProjectName) ? jobId : task.ProjectName, root, jobId,
+            task.Runner?.RunnerId, requested, requireTaskWorktree: false,
+            expectedBranch: null, explicitlyReviewed: true, requireExplicitPaths: true);
+
+        var text = string.IsNullOrWhiteSpace(message)
+            ? $"chore(evidence): commit {requested.Length} operator-reviewed candidate"
+              + (requested.Length == 1 ? "" : "s")
+            : message!.Trim();
+        var commit = CommitBoundManifest(root, text, gate);
+        if (!commit.Success)
+        {
+            // The inspection above cleared the marker when it decided the
+            // manifest could commit. The commit did not happen, so the card
+            // must keep saying that work is waiting.
+            CommitWithholdingMarker.Write(task.FolderPath, report, _logger);
+            return new WithheldCandidateCommitResult(false, commit, [], [], commit.Error);
+        }
+
+        // Anything the operator did not select, and anything a deterministic
+        // exclusion kept out of the commit anyway, is still uncommitted. The
+        // inspection above cleared the marker because THAT manifest could
+        // commit, so the remainder has to be written back or the card would
+        // claim a partial commit finished the delivery.
+        var committed = gate.IncludedPaths;
+        var remaining = report.Withheld
+            .Where(w => !committed.Contains(w.Path, StringComparer.Ordinal))
+            .ToArray();
+        if (remaining.Length > 0)
+        {
+            CommitWithholdingMarker.Write(task.FolderPath, report with
+            {
+                Withheld = remaining,
+                CandidateCount = remaining.Length,
+                FindingCodes = remaining
+                    .Select(r => r.Reason)
+                    .Distinct(StringComparer.Ordinal)
+                    .OrderBy(c => c, StringComparer.Ordinal)
+                    .ToArray(),
+                InspectedAtUtc = gate.Provenance.InspectedAtUtc,
+            }, _logger);
+        }
+        return new WithheldCandidateCommitResult(
+            true, commit, committed, remaining.Select(r => r.Path).ToArray(), null);
+    }
+
     private CommitGateResult InspectCommitCandidates(
         string operation,
         string projectId,
@@ -2421,31 +2532,77 @@ public class GitService
         bool explicitlyReviewed,
         bool requireExplicitPaths = false)
     {
-        string? evidenceDirectory = null;
-        if (!string.IsNullOrWhiteSpace(taskId))
-        {
-            try
-            {
-                var task = _scanner.FindJob(taskId);
-                if (!string.IsNullOrWhiteSpace(task?.FolderPath))
-                    evidenceDirectory = Path.Combine(task.FolderPath, "results");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogDebug(ex, "Commit gate could not resolve evidence folder for {TaskId}", taskId);
-            }
-        }
+        var jobFolder = ResolveJobFolder(taskId);
+        var evidenceDirectory = string.IsNullOrWhiteSpace(jobFolder)
+            ? null
+            : Path.Combine(jobFolder, "results");
 
         var gate = _commitGate.Inspect(new CommitGateRequest(
             operation, projectId, repoRoot, taskId, runnerId, expectedPaths,
             requireTaskWorktree, expectedBranch, explicitlyReviewed, evidenceDirectory,
-            requireExplicitPaths));
+            requireExplicitPaths, ResolveEvidenceAssetPaths(projectId)));
         _logger.LogInformation(
             "Commit candidate gate {Decision} for {Operation} project={Project} task={TaskId} runner={RunnerId} candidates={Candidates} included={Included} findings={Findings} evidence={Evidence}",
             gate.Decision, operation, projectId, taskId ?? "<none>", runnerId ?? "<none>",
             gate.Candidates.Count, gate.IncludedPaths.Count, gate.Findings.Count,
             gate.EvidencePath ?? "<unavailable>");
+        RecordWithholding(jobFolder, gate);
         return gate;
+    }
+
+    /// <summary>The job folder of a task id, or null when it cannot be
+    /// resolved. Best-effort: a gate inspection must never fail because the
+    /// scanner could not find the card.</summary>
+    private string? ResolveJobFolder(string? taskId)
+    {
+        if (string.IsNullOrWhiteSpace(taskId)) return null;
+        try
+        {
+            var task = _scanner.FindJob(taskId);
+            return string.IsNullOrWhiteSpace(task?.FolderPath) ? null : task!.FolderPath;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Commit gate could not resolve the job folder for {TaskId}", taskId);
+            return null;
+        }
+    }
+
+    /// <summary>The project's declared evidence asset paths, or null to let
+    /// <see cref="CommitCandidateAssetPolicy"/> apply its platform default.</summary>
+    private IReadOnlyCollection<string>? ResolveEvidenceAssetPaths(string projectId)
+    {
+        if (string.IsNullOrWhiteSpace(projectId)) return null;
+        try
+        {
+            return _projectSettings?.Get(projectId).EvidenceAssetPaths?.ToArray();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Commit gate could not read evidence asset paths for {Project}", projectId);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Persists (or clears) the card's <c>commit-withheld.json</c> marker so a
+    /// refused commit is visible on the card instead of dying in a log line.
+    /// The park marker and the operator action both read it.
+    /// </summary>
+    private void RecordWithholding(string? jobFolder, CommitGateResult gate)
+    {
+        if (string.IsNullOrWhiteSpace(jobFolder)) return;
+        var report = CommitWithholdingPolicy.From(gate);
+        if (report is null)
+        {
+            CommitWithholdingMarker.Clear(jobFolder!, _logger);
+            return;
+        }
+        CommitWithholdingMarker.Write(jobFolder!, report, _logger);
+        _logger.LogWarning(
+            "commit-candidates-withheld task={TaskId} operation={Operation} decision={Decision} withheld={Withheld} candidates={Candidates} codes={Codes}",
+            report.TaskId ?? "<none>", report.Operation, report.Decision,
+            report.WithheldCount, report.CandidateCount, string.Join(",", report.FindingCodes));
     }
 
     private GitCommitResult CommitBoundManifest(
@@ -2458,7 +2615,10 @@ public class GitService
             return new GitCommitResult(false, null, "Nothing to commit. Working tree is clean.", gate);
         if (!gate.CanCommit)
         {
-            var codes = string.Join(", ", gate.Findings.Select(f => f.Code).Distinct(StringComparer.Ordinal));
+            var codes = string.Join(", ", gate.Findings
+                .Where(f => f.Severity != CommitGateSeverities.Notice)
+                .Select(f => f.Code)
+                .Distinct(StringComparer.Ordinal));
             return new GitCommitResult(false, null,
                 $"Commit candidate gate {gate.Decision}: {codes}.", gate);
         }
@@ -2930,7 +3090,11 @@ public class GitService
             requireExplicitPaths: pathspecs is not { Count: > 0 });
         if (!gate.CanCommit)
             return (new GitCommitResult(false, null,
-                $"Commit candidate gate {gate.Decision}: {string.Join(", ", gate.Findings.Select(f => f.Code).Distinct())}.", gate), "");
+                $"Commit candidate gate {gate.Decision}: "
+                + string.Join(", ", gate.Findings
+                    .Where(f => f.Severity != CommitGateSeverities.Notice)
+                    .Select(f => f.Code).Distinct(StringComparer.Ordinal))
+                + ".", gate), "");
 
         // The deterministic fallback count reflects the manifest that can
         // actually commit, never the larger dirty tree.
@@ -2940,6 +3104,9 @@ public class GitService
         if (!string.IsNullOrWhiteSpace(msg.SuspiciousReason))
         {
             gate = AddSemanticGateFinding(gate, msg.SuspiciousReason);
+            // The deterministic gate allowed this manifest, so no marker exists
+            // yet. Record it now: the semantic pause withholds the same files.
+            RecordWithholding(ResolveJobFolder(jobId), gate);
             return (new GitCommitResult(false, null,
                 "Commit semantic review reported a suspicious or unrelated candidate; review the gate evidence.", gate), "");
         }

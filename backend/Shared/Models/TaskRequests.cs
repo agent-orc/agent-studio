@@ -512,6 +512,23 @@ public record GitCommitRequest
     public string Message { get; init; } = "";
 }
 
+/// <summary>
+/// Body for <c>POST /api/tasks/{jobId}/git/commit-withheld-candidates</c>. The
+/// operator has reviewed what the commit candidate gate withheld and asks the
+/// platform to record it.
+/// </summary>
+public record CommitWithheldCandidatesRequest
+{
+    /// <summary>Subset of the recorded withheld paths to commit. Empty commits
+    /// all of them. A path that is not in the recorded manifest is rejected;
+    /// this action never widens the commit beyond what the gate inspected.</summary>
+    public IReadOnlyList<string>? Paths { get; init; }
+
+    /// <summary>Optional commit message. Blank uses a deterministic
+    /// <c>chore(evidence)</c> subject; no model is called on this path.</summary>
+    public string? Message { get; init; }
+}
+
 public record SetAutoCommitRequest
 {
     public bool Enabled { get; init; }
@@ -584,6 +601,17 @@ public record SetExecutionRunnerRequest
 public record SetIntegrationBranchRequest
 {
     public string? Branch { get; init; }
+}
+
+/// <summary>
+/// Body for <c>PUT /api/projects/{name}/evidence-asset-paths</c>. Declares the
+/// repository-relative directories that hold the project's evidence assets, so
+/// the commit candidate gate stops treating requested screenshots as binary
+/// surprises. Null or empty restores the platform default.
+/// </summary>
+public record SetEvidenceAssetPathsRequest
+{
+    public IReadOnlyList<string>? Paths { get; init; }
 }
 
 /// <summary>

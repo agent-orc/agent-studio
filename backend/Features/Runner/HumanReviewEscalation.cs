@@ -36,6 +36,13 @@ public static class HumanReviewEscalationCategories
     /// recognized terminal completion signal.</summary>
     public const string NoCompletionSignal = "no-completion-signal";
 
+    /// <summary>The commit candidate gate refused the platform commit, so a
+    /// finished delivery is sitting uncommitted in the task worktree. The park
+    /// reason names the gate and the withheld count; the card carries the file
+    /// list. Cleared by the operator action that commits the reviewed
+    /// candidates (WEB-21, 15.09.2026).</summary>
+    public const string CommitCandidatesWithheld = "commit-candidates-withheld";
+
     /// <summary>A remote run ended without a recognized terminal outcome.</summary>
     public const string RemoteOutcomeUnknown = "remote-outcome-unknown";
 

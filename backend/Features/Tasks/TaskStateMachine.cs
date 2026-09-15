@@ -868,7 +868,14 @@ public class TaskStateMachine
     {
         try
         {
-            var record = ParkedBlockerCatalog.Build(toState, reason, DateTime.UtcNow);
+            // The card may be carrying a delivery the commit candidate gate
+            // refused. Read that marker at the single park choke point so every
+            // park path - system escalation, review park, operator move - says
+            // so without touching the ~15 individual call sites.
+            var withheld = ParkedBlockerCatalog.IsParkedLane(toState)
+                ? CommitWithholdingMarker.TryRead(jobFolderPath, _logger)
+                : null;
+            var record = ParkedBlockerCatalog.Build(toState, reason, DateTime.UtcNow, withheld);
             if (record is null) ParkedBlockerMarker.Clear(jobFolderPath, _logger);
             else ParkedBlockerMarker.Write(jobFolderPath, record, _logger);
         }

@@ -135,6 +135,16 @@ public sealed record ParkedBlockerRecord
     [JsonPropertyName("needsInputFile")]
     public string? NeedsInputFile { get; init; }
 
+    /// <summary>
+    /// Files the commit candidate gate withheld from the platform commit while
+    /// this card was being parked, with the finding code that withheld each
+    /// one. Empty when the park has nothing to do with a refused commit.
+    /// WEB-21 (15.09.2026) parked a complete delivery with an empty reason
+    /// because this list had nowhere to live.
+    /// </summary>
+    [JsonPropertyName("withheldCommitCandidates")]
+    public IReadOnlyList<WithheldCommitCandidate> WithheldCommitCandidates { get; init; } = [];
+
     /// <summary>The latest probe verdict, or null when no sweep has run yet.</summary>
     [JsonPropertyName("lastEvaluation")]
     public ParkedBlockerEvaluation? LastEvaluation { get; init; }

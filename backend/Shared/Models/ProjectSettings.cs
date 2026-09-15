@@ -349,6 +349,22 @@ public record ProjectSettings
     public TaskSpawnerConfig? TaskSpawner { get; init; }
 
     /// <summary>
+    /// Repository-relative directories that hold evidence assets this project's
+    /// tasks are asked to produce (review screenshots, exported reports). A
+    /// still image or PDF under one of these paths, inside
+    /// <see cref="AgentStudio.Git.CommitCandidateAssetPolicy.MaxAssetBytes"/>,
+    /// is expected output rather than a binary surprise, so the commit
+    /// candidate gate commits it without an explicit review step. Null or empty
+    /// falls back to
+    /// <see cref="AgentStudio.Git.CommitCandidateAssetPolicy.DefaultAssetPaths"/>.
+    /// Everything else keeps the review requirement. Persisted in
+    /// <c>project-settings.json</c>.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore(
+        Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? EvidenceAssetPaths { get; init; }
+
+    /// <summary>
     /// AGT-2749: per-project override of the build/test gate-run budget, in
     /// seconds. Null falls back to <see cref="AgentStudio.Pipeline.GateRunBudgetPolicy"/>
     /// (a measured run-history p95 when enough history exists, otherwise

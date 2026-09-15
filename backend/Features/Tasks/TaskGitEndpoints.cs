@@ -356,6 +356,77 @@ public static class TaskGitEndpoints
             return Results.Ok(new { commit = commitInfo });
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
 
+        // What the commit candidate gate withheld from this card's platform
+        // commit: the file list plus the finding code behind each one. The
+        // parked card summarizes this in one sentence; this route is the "which
+        // files and why" an operator reads before committing them.
+        group.MapGet("/{jobId}/git/withheld-candidates", (
+            string jobId, string? project, string? watchPath,
+            TaskScannerService scanner, AgentStudio.Registry.ProjectRegistry projects) =>
+        {
+            watchPath = ResolveWatchPath(projects, project, watchPath);
+            var info = scanner.FindJob(jobId, watchPath);
+            if (info == null) return Results.NotFound(new { error = "Job not found" });
+            var report = CommitWithholdingMarker.TryRead(info.FolderPath);
+            return Results.Ok(new { report });
+        });
+
+        // Operator action for the WEB-21 failure: a complete delivery that the
+        // commit candidate gate refused stays dirty in the worktree until a
+        // person reviews it. This records that review and commits through the
+        // same manifest-bound path every platform commit uses - hard blocks
+        // still block, deterministic exclusions still exclude.
+        group.MapPost("/{jobId}/git/commit-withheld-candidates", (
+            string jobId, string? project, string? watchPath,
+            CommitWithheldCandidatesRequest? req,
+            GitService git, TaskScannerService scanner, TaskMutationService mutations,
+            OrchestratorChatLog chat, AgentStudio.Registry.ProjectRegistry projects) =>
+        {
+            watchPath = ResolveWatchPath(projects, project, watchPath);
+            var info = scanner.FindJob(jobId, watchPath);
+            if (info == null) return Results.NotFound(new { error = "Job not found" });
+
+            var result = git.CommitWithheldCandidates(
+                jobId, watchPath, req?.Paths, req?.Message);
+            if (!result.Success || result.Commit?.Sha is null)
+                return Results.BadRequest(new
+                {
+                    error = result.Error ?? "Commit failed",
+                    findings = result.Commit?.Gate?.Findings ?? [],
+                });
+
+            var sha = result.Commit.Sha!;
+            var files = git.GetCommitFiles(jobId, watchPath, sha);
+            var commitInfo = new TaskCommitInfo
+            {
+                Sha = sha,
+                ShortSha = sha.Length > 7 ? sha[..7] : sha,
+                Message = $"Operator-reviewed commit candidates ({result.Committed.Count})",
+                FilesChanged = files.Count > 0 ? files.Count : result.Committed.Count,
+                Files = files.Count > 0
+                    ? files.Select(f => f.Path).ToList()
+                    : result.Committed.ToList(),
+                At = DateTime.UtcNow,
+            };
+            mutations.SetJobCommitOnFolder(info.FolderPath, commitInfo);
+            git.InvalidateHygieneCache();
+
+            var refreshed = scanner.FindJob(jobId, watchPath) ?? info;
+            try
+            {
+                chat.Append(refreshed, OrchestratorMessageKind.Decision,
+                    $"Operator committed {result.Committed.Count} candidate(s) the commit candidate gate had withheld: {commitInfo.ShortSha}.");
+            }
+            catch (Exception __ex) { SilentCatch.Note(__ex, "TaskGitEndpoints: chat-log is best-effort"); }
+
+            return Results.Ok(new
+            {
+                commit = commitInfo,
+                committed = result.Committed,
+                stillWithheld = result.StillWithheld,
+            });
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
+
         group.MapPost("/{jobId}/open-in-vscode", (string jobId, string? project, string? watchPath, GitService git, AgentStudio.Registry.ProjectRegistry projects) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);

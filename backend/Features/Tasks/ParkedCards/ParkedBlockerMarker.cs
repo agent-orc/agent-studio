@@ -84,6 +84,7 @@ public static class ParkedBlockerMarker
             record.Reason,
             record.LastEvaluation?.Status ?? ParkedBlockerStatuses.Blocked,
             record.LastEvaluation?.At,
-            record.LastEvaluation?.Detail ?? "No recall sweep has evaluated this blocker yet.");
+            record.LastEvaluation?.Detail ?? "No recall sweep has evaluated this blocker yet.",
+            record.WithheldCommitCandidates);
     }
 }

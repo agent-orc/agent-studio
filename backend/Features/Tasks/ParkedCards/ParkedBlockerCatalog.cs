@@ -1,3 +1,4 @@
+using AgentStudio.Git;
 using AgentStudio.Runner;
 
 namespace AgentStudio.Tasks;
@@ -82,17 +83,41 @@ public static class ParkedBlockerCatalog
     /// Returns null when the lane is not a parked lane - the caller then clears
     /// any stale marker instead.
     /// </summary>
-    public static ParkedBlockerRecord? Build(string? lane, string? reason, DateTime parkedAt)
+    public static ParkedBlockerRecord? Build(
+        string? lane, string? reason, DateTime parkedAt,
+        CommitWithholdingReport? withheld = null)
     {
         if (!IsParkedLane(lane)) return null;
-        var blockerType = ReadBlockerType(reason);
+        var text = (reason ?? string.Empty).Trim();
+        var blockerType = ReadBlockerType(text);
+
+        // A refused platform commit outranks a silent park. WEB-21 was parked
+        // with an empty reason while twelve screenshots and two edited files
+        // sat uncommitted, so the card could not tell anyone what was waiting.
+        // Whatever else parked the card, the reason now names the gate and the
+        // count, and an untyped park is typed by it.
+        if (withheld is not null)
+        {
+            var sentence = CommitWithholdingPolicy.ParkReason(withheld);
+            if (blockerType == OperatorDecision)
+            {
+                blockerType = HumanReviewEscalationCategories.CommitCandidatesWithheld;
+                text = HumanReviewEscalation.FormatReason(blockerType, sentence);
+            }
+            else
+            {
+                text = (text + " " + sentence).Trim();
+            }
+        }
+
         return new ParkedBlockerRecord
         {
             BlockerType = blockerType,
             Condition = ConditionFor(blockerType),
             Lane = lane!,
             ParkedAt = parkedAt,
-            Reason = (reason ?? string.Empty).Trim(),
+            Reason = text,
+            WithheldCommitCandidates = withheld?.Withheld ?? [],
         };
     }
 }

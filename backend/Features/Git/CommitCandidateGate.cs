@@ -15,6 +15,10 @@ public static class CommitGateDecisions
 
 public static class CommitGateSeverities
 {
+    /// <summary>Recorded for the audit trail and never gates. Used where a
+    /// deterministic rule already decided the candidate is expected output, so
+    /// the manifest stays explainable without pausing the commit.</summary>
+    public const string Notice = "notice";
     public const string Warning = "warning";
     public const string Block = "block";
 }
@@ -69,7 +73,8 @@ public sealed record CommitGateRequest(
     string? ExpectedBranch = null,
     bool ExplicitlyReviewed = false,
     string? EvidenceDirectory = null,
-    bool RequireExplicitPaths = false);
+    bool RequireExplicitPaths = false,
+    IReadOnlyCollection<string>? EvidenceAssetPaths = null);
 
 public sealed class CommitBoundIndex : IDisposable
 {
@@ -152,7 +157,9 @@ public sealed class BuiltInCommitCandidateScanner : ICommitCandidateScanner
 /// </summary>
 public sealed class CommitCandidateGate
 {
-    internal const long OversizedBytes = 5 * 1024 * 1024;
+    // One size ceiling for both rules: above it a candidate is an oversized
+    // surprise AND too large to pass as a declared evidence asset.
+    internal const long OversizedBytes = CommitCandidateAssetPolicy.MaxAssetBytes;
     private readonly IReadOnlyList<ICommitCandidateScanner> _scanners;
 
     public CommitCandidateGate(ILogger logger, IEnumerable<ICommitCandidateScanner>? scanners = null)
@@ -283,9 +290,23 @@ public sealed class CommitCandidateGate
             }
             if (binary)
             {
-                findings.Add(new CommitGateFinding(
-                    "binary-surprise", CommitGateSeverities.Warning, normalized,
-                    "Binary candidate requires explicit review.", "policy"));
+                // A declared evidence asset is the deliverable, not a surprise.
+                // Recording it as a notice keeps the manifest honest while
+                // letting the commit proceed (WEB-21: twelve requested
+                // screenshots withheld the whole delivery).
+                if (CommitCandidateAssetPolicy.IsEvidenceAsset(normalized, size, request.EvidenceAssetPaths))
+                {
+                    findings.Add(new CommitGateFinding(
+                        "evidence-asset", CommitGateSeverities.Notice, normalized,
+                        "Declared evidence asset within the size limit; committed without explicit review.",
+                        "policy"));
+                }
+                else
+                {
+                    findings.Add(new CommitGateFinding(
+                        "binary-surprise", CommitGateSeverities.Warning, normalized,
+                        "Binary candidate requires explicit review.", "policy"));
+                }
             }
 
             foreach (var scanner in _scanners)

@@ -24,6 +24,10 @@ namespace AgentStudio.Shared;
 /// <c>recallable</c> card is reported, never requeued automatically.</param>
 /// <param name="LastEvaluatedAt">When the sweep last evaluated the condition.</param>
 /// <param name="Detail">Why the sweep reached that verdict.</param>
+/// <param name="WithheldCommitCandidates">Files the commit candidate gate
+/// withheld from the platform commit, each with the finding code that withheld
+/// it. Empty unless the park is carrying an uncommitted delivery; this is the
+/// "which files and why" half that <see cref="Reason"/> can only summarize.</param>
 public sealed record ParkedBlockerStatus(
     string BlockerType,
     string ConditionKind,
@@ -33,4 +37,5 @@ public sealed record ParkedBlockerStatus(
     string Reason,
     string RecallStatus,
     DateTime? LastEvaluatedAt,
-    string Detail);
+    string Detail,
+    IReadOnlyList<AgentStudio.Git.WithheldCommitCandidate>? WithheldCommitCandidates = null);

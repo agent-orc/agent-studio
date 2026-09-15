@@ -296,6 +296,29 @@ public class ProjectSettingsService
     }
 
     /// <summary>
+    /// Declares the repository-relative directories that hold this project's
+    /// evidence assets. A still image or PDF under one of them, inside the
+    /// asset size limit, commits without an explicit review step. An empty or
+    /// null list clears the declaration and restores the platform default.
+    /// </summary>
+    public void SetEvidenceAssetPaths(string projectName, IReadOnlyList<string>? paths)
+    {
+        EnsureLoaded();
+        var normalized = AgentStudio.Git.CommitCandidateAssetPolicy
+            .ResolveDeclaredPaths(paths);
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var s) ? s : new ProjectSettings();
+            _cache[key] = current with { EvidenceAssetPaths = normalized };
+            Persist();
+        }
+        _logger.LogInformation(
+            "Evidence asset paths set to [{Paths}] for project {Project}",
+            normalized is null ? "<default>" : string.Join(", ", normalized), projectName);
+    }
+
+    /// <summary>
     /// ADR-0052: sets how a finished task branch is folded back into the
     /// integration branch. Unknown values normalize to <c>direct-merge</c>.
     /// </summary>

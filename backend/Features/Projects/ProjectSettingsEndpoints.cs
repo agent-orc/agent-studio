@@ -834,6 +834,20 @@ public static class ProjectSettingsEndpoints
             return Results.Ok(settings.Get(projectName));
         });
 
+        // Which directories hold this project's evidence assets. Declaring them
+        // is what lets a task's requested screenshots reach the commit without
+        // an operator step (WEB-21).
+        app.MapPut("/api/projects/{projectName}/evidence-asset-paths", (
+            string projectName, SetEvidenceAssetPathsRequest req,
+            ProjectSettingsService settings, TaskScannerService scanner) =>
+        {
+            var known = scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
+            if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+
+            settings.SetEvidenceAssetPaths(projectName, req.Paths);
+            return Results.Ok(settings.Get(projectName));
+        });
+
         // ADR-0052: how a finished task branch folds back into the integration
         // branch (direct-merge default, or pull-request).
         app.MapPut("/api/projects/{projectName}/integration-strategy", (string projectName, SetIntegrationStrategyRequest req, ProjectSettingsService settings, TaskScannerService scanner) =>
