@@ -570,7 +570,6 @@ public static class V1ReviewPlaneEndpoints
             AgentStudio.Registry.ProjectRegistry projects,
             AgentStudio.Projects.ProjectSettingsService settings,
             RemoteReviewPlanBuilder remoteReviewPlans,
-            GitService git,
             TaskTransitionService transitions,
             HumanReviewEscalation escalation,
             RemoteDeliveryIntegrationCoordinator remoteIntegration,
@@ -782,42 +781,38 @@ public static class V1ReviewPlaneEndpoints
             var taskState = TaskStates.AutoReview;
             if (retry)
             {
+                // AGT-2841: the successor attempt used to be minted in the same
+                // instant as this report, so a host outage that took a few
+                // minutes to clear burned the whole retry budget in one breath
+                // and, once the FailureIntervention step withheld a retry, left
+                // the card sitting in Auto Review with no automatic next attempt
+                // at all. ReviewInfrastructureRetryScheduler creates the
+                // successor once the bounded backoff elapses; this request only
+                // records when that is and why.
                 var review = settled.ReviewAttempt;
-                var retryPlan = ReviewPlanForInfrastructureRetry(
-                    request.FailureClassification,
-                    review.Subject.Plan,
-                    () =>
+                var scheduleReason = string.IsNullOrWhiteSpace(request.Summary)
+                    ? request.FailureClassification ?? request.Outcome
+                    : $"{request.FailureClassification ?? request.Outcome}: {request.Summary}";
+                var schedule = authority.ScheduleReviewInfrastructureRetry(review.AttemptId, scheduleReason);
+                if (!schedule.Accepted)
+                    return AttemptError(new AttemptWriteResult(schedule.Status, schedule.AttemptId, schedule.Message));
+
+                timeline.Append(
+                    task.FolderPath,
+                    TimelineEventKinds.ReviewInfrastructureRetryScheduled,
+                    TimelineActors.System,
+                    $"Review infrastructure retry {schedule.RetryNumber}/{schedule.RetryBudget} scheduled in "
+                    + $"{FormatRetryDelay(schedule.Delay!.Value)}: {schedule.Reason}",
+                    runId: review.AttemptId,
+                    details: new Dictionary<string, string>
                     {
-                        var project = projects.FindByStorageLocation(task.WatchPath)
-                                      ?? projects.FindByIdOrDisplayName(task.ProjectName);
-                        var taskSettings = settings.Get(task.ProjectName);
-                        var integrationRef = ResolveBaselineBranch(
-                            task,
-                            project,
-                            settings).IntegrationRef;
-                        var repositoryPath = git.ResolveRepoRootForWatchPath(task.WatchPath)
-                                             ?? project?.RepositoryPath;
-                        return remoteReviewPlans.Build(
-                            task,
-                            repositoryPath,
-                            taskSettings,
-                            integrationRef);
+                        ["attemptId"] = review.AttemptId,
+                        ["retryNumber"] = schedule.RetryNumber.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        ["retryBudget"] = schedule.RetryBudget.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        ["dueAtUtc"] = schedule.DueAtUtc!.Value.ToString("O", System.Globalization.CultureInfo.InvariantCulture),
+                        ["failureClassification"] = request.FailureClassification ?? string.Empty,
+                        ["reason"] = schedule.Reason ?? string.Empty,
                     });
-                var created = authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
-                    review.TaskKey,
-                    review.RepositoryId,
-                    review.Subject.ExpectedResultSha,
-                    review.SourceRunAttemptId,
-                    review.Subject.TaskRequirementsHash,
-                    review.Subject.ReviewPolicyHash,
-                    review.Subject.EvidenceDigestInputs,
-                    $"v1-review-retry:{attemptId}:{request.IdempotencyKey}",
-                    review.AttemptId,
-                    review.Subject.RepositoryUrl,
-                    review.Subject.ResultRef,
-                    retryPlan));
-                if (!created.Accepted)
-                    return AttemptError(created);
             }
             else if (!infrastructureFailure)
             {
@@ -1286,7 +1281,7 @@ public static class V1ReviewPlaneEndpoints
     /// and repository truth outrank the card's recorded branch, which is only a
     /// snapshot from worktree preparation and goes stale.
     /// </summary>
-    private static ReviewBaselineBranchDecision ResolveBaselineBranch(
+    internal static ReviewBaselineBranchDecision ResolveBaselineBranch(
         TaskInfo task,
         AgentStudio.Shared.ProjectRecord? project,
         AgentStudio.Projects.ProjectSettingsService settings)
@@ -1672,7 +1667,12 @@ public static class V1ReviewPlaneEndpoints
         };
     }
 
-    private static TaskInfo? FindTask(TaskScannerService scanner, string taskKey)
+    /// <summary>Whole-minute delays only (see <see cref="AttemptAuthorityService.ReviewInfrastructureRetryBackoff"/>),
+    /// so this never needs to fall back to a sub-minute unit.</summary>
+    internal static string FormatRetryDelay(TimeSpan delay)
+        => $"{(int)Math.Round(delay.TotalMinutes, MidpointRounding.AwayFromZero)}m";
+
+    internal static TaskInfo? FindTask(TaskScannerService scanner, string taskKey)
         => scanner.ScanAllJobsWithArchive().FirstOrDefault(task =>
             string.Equals(task.TaskKey, taskKey, StringComparison.OrdinalIgnoreCase)
             || string.Equals(task.Key, taskKey, StringComparison.OrdinalIgnoreCase)

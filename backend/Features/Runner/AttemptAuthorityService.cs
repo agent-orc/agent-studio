@@ -46,6 +46,21 @@ public sealed class AttemptAuthorityService
     public const int DefaultTerminalRetentionCount = 2_000;
     public const int ReviewInfrastructureRetryBudget = 3;
     public const string UnmaterializableReviewSubjectReason = "review-subject-unmaterialisierbar";
+
+    /// <summary>
+    /// Bounded backoff before each linked infrastructure retry is created,
+    /// indexed by retry number (1-based). AGT-2841: an infra retry used to be
+    /// created in the same instant as the failure report, so a host outage that
+    /// takes a few minutes to clear burned its whole budget in one breath. The
+    /// delay gives a transient host or provider fault time to pass before the
+    /// next attempt spends more of the budget on the same cause.
+    /// </summary>
+    public static readonly IReadOnlyList<TimeSpan> ReviewInfrastructureRetryBackoff =
+    [
+        TimeSpan.FromMinutes(1),
+        TimeSpan.FromMinutes(3),
+        TimeSpan.FromMinutes(9),
+    ];
     private const int CurrentSchemaVersion = 6;
     private const int ArchiveSchemaVersion = 1;
     private const string ArchiveFilePattern = "attempt-authority.archive-*.json";
@@ -973,24 +988,133 @@ public sealed class AttemptAuthorityService
         lock (_gate)
         {
             var review = FindReview(attemptId);
-            if (review is null) return false;
+            return review is not null && ReviewInfrastructureRetryCountLocked(review) < ReviewInfrastructureRetryBudget;
+        }
+    }
 
-            var retryCount = 0;
-            var cursor = review;
-            var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            {
-                cursor.AttemptId,
-            };
-            while (!Blank(cursor.SourceReviewAttemptId)
-                   && retryCount < ReviewInfrastructureRetryBudget)
-            {
-                retryCount++;
-                var source = FindReview(cursor.SourceReviewAttemptId!);
-                if (source is null || !visited.Add(source.AttemptId)) break;
-                cursor = source;
-            }
+    /// <summary>
+    /// Number of linked infrastructure retries already spent in the chain
+    /// ending at <paramref name="review"/> (the review itself is not counted -
+    /// only its <see cref="ReviewAttemptRecord.SourceReviewAttemptId"/>
+    /// ancestors are). Caller must hold <see cref="_gate"/>.
+    /// </summary>
+    private int ReviewInfrastructureRetryCountLocked(ReviewAttemptRecord review)
+    {
+        var retryCount = 0;
+        var cursor = review;
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            cursor.AttemptId,
+        };
+        while (!Blank(cursor.SourceReviewAttemptId)
+               && retryCount < ReviewInfrastructureRetryBudget)
+        {
+            retryCount++;
+            var source = FindReview(cursor.SourceReviewAttemptId!);
+            if (source is null || !visited.Add(source.AttemptId)) break;
+            cursor = source;
+        }
+        return retryCount;
+    }
 
-            return retryCount < ReviewInfrastructureRetryBudget;
+    /// <summary>
+    /// Schedules the next linked infrastructure retry for the terminal,
+    /// current, InfrastructureFailure <paramref name="attemptId"/> after its
+    /// bounded backoff (<see cref="ReviewInfrastructureRetryBackoff"/>). Returns
+    /// <c>InvalidState</c> when the attempt is not eligible (not current, not a
+    /// terminal infrastructure failure, or its retry budget is already spent) -
+    /// the caller keeps its own <see cref="HasReviewInfrastructureRetryBudget"/>
+    /// gate, this is the second, authoritative check taken under the same lock
+    /// as the schedule write.
+    /// </summary>
+    public ReviewInfrastructureRetryScheduleResult ScheduleReviewInfrastructureRetry(string attemptId, string? reason)
+    {
+        lock (_gate)
+        {
+            var review = FindReview(attemptId);
+            if (review is null)
+                return new ReviewInfrastructureRetryScheduleResult(AttemptWriteStatus.NotFound, attemptId);
+            if (!IsCurrentReview(review)
+                || review.State != AttemptLifecycleState.Failed
+                || review.Outcome != ReviewTerminalOutcome.InfrastructureFailure)
+                return new ReviewInfrastructureRetryScheduleResult(
+                    AttemptWriteStatus.InvalidState, attemptId, ReviewAttempt: ToDto(review));
+
+            var retryCount = ReviewInfrastructureRetryCountLocked(review);
+            if (retryCount >= ReviewInfrastructureRetryBudget)
+                return new ReviewInfrastructureRetryScheduleResult(
+                    AttemptWriteStatus.InvalidState, attemptId,
+                    "Review infrastructure retry budget is exhausted.", ToDto(review));
+
+            var retryNumber = retryCount + 1;
+            var backoff = ReviewInfrastructureRetryBackoff[
+                Math.Min(retryNumber, ReviewInfrastructureRetryBackoff.Count) - 1];
+            var now = _utcNow();
+            var dueAt = now.Add(backoff);
+            var resolvedReason = Blank(reason)
+                ? review.TerminalReason ?? review.FailureClassification ?? "review infrastructure failure"
+                : reason!;
+
+            review.PendingInfrastructureRetryAt = dueAt;
+            review.PendingInfrastructureRetryNumber = retryNumber;
+            review.PendingInfrastructureRetryReason = resolvedReason;
+            PersistLocked();
+
+            return new ReviewInfrastructureRetryScheduleResult(
+                AttemptWriteStatus.Accepted,
+                attemptId,
+                ReviewAttempt: ToDto(review),
+                RetryNumber: retryNumber,
+                RetryBudget: ReviewInfrastructureRetryBudget,
+                DueAtUtc: dueAt,
+                Delay: backoff,
+                Reason: resolvedReason);
+        }
+    }
+
+    /// <summary>
+    /// Every current review attempt whose scheduled infrastructure retry is now
+    /// due. A retry stops being due once its successor is created (the failed
+    /// attempt is no longer current) or once <see cref="ClearScheduledReviewInfrastructureRetry"/>
+    /// abandons it, so a tick can never fire the same due retry twice.
+    /// </summary>
+    public IReadOnlyList<ReviewInfrastructureRetryDue> DueReviewInfrastructureRetries()
+    {
+        lock (_gate)
+        {
+            var now = _utcNow();
+            return _state.ReviewAttempts
+                .Where(review => review.PendingInfrastructureRetryAt is { } due && due <= now)
+                .Where(IsCurrentReview)
+                .OrderBy(review => review.PendingInfrastructureRetryAt)
+                .Select(review => new ReviewInfrastructureRetryDue(
+                    review.AttemptId,
+                    review.TaskKey,
+                    review.PendingInfrastructureRetryNumber ?? 0,
+                    ReviewInfrastructureRetryBudget,
+                    review.PendingInfrastructureRetryReason ?? string.Empty,
+                    review.PendingInfrastructureRetryAt!.Value))
+                .ToList();
+        }
+    }
+
+    /// <summary>
+    /// Clears a scheduled retry without creating a successor - either because
+    /// the successor was just created (it is no longer current, so it would
+    /// never surface from <see cref="DueReviewInfrastructureRetries"/> again
+    /// anyway) or because the owning card left Auto Review before the retry
+    /// came due and the schedule is now moot.
+    /// </summary>
+    public void ClearScheduledReviewInfrastructureRetry(string attemptId)
+    {
+        lock (_gate)
+        {
+            var review = FindReview(attemptId);
+            if (review is null) return;
+            review.PendingInfrastructureRetryAt = null;
+            review.PendingInfrastructureRetryNumber = null;
+            review.PendingInfrastructureRetryReason = null;
+            PersistLocked();
         }
     }
 
@@ -2408,6 +2532,12 @@ public sealed class AttemptAuthorityService
         public HashSet<string> IdempotencyKeys { get; set; } = [];
         public List<ReviewReClaimDeliveryRecord> ReClaimDeliveries { get; set; } = [];
         public List<ReviewReportDeliveryRecord> Reports { get; set; } = [];
+
+        /// <summary>UTC time the bounded-backoff infrastructure retry becomes due, or
+        /// null while none is scheduled. See <see cref="ScheduleReviewInfrastructureRetry"/>.</summary>
+        public DateTime? PendingInfrastructureRetryAt { get; set; }
+        public int? PendingInfrastructureRetryNumber { get; set; }
+        public string? PendingInfrastructureRetryReason { get; set; }
     }
 
     private sealed class ReviewReClaimDeliveryRecord

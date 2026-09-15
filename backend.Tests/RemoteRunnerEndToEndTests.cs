@@ -2819,6 +2819,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
                         ["WatchPaths:0:RepositoryPath"] = repositoryPath ?? _watchPath,
                         ["ReviewDecisionOrchestrator:Enabled"] = "false",
                         ["Runner:RunLiveness:Enabled"] = authorityNow is null ? null : "false",
+                        ["Runner:ReviewInfrastructureRetry:Enabled"] = authorityNow is null ? null : "false",
                         ["Runner:RemoteRequeue:GraceSeconds"] =
                             remoteRequeueGraceSeconds?.ToString(System.Globalization.CultureInfo.InvariantCulture),
                     };
@@ -4915,8 +4916,10 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         const string baselineSha = "b649ff8dab649ff8dab649ff8dab649ff8dab649f";
         SeedTask(TaskStates.AutoReview, TaskKey, "Repeated baseline failure", "Build and verify.");
 
-        using var factory = BuildFactory();
+        var now = DateTime.UtcNow;
+        using var factory = BuildFactory(authorityNow: () => now);
         using var http = factory.CreateClient();
+        var scheduler = factory.Services.GetRequiredService<ReviewInfrastructureRetryScheduler>();
         SeedReviewAttempt(factory.Services, includeResultEnvelope: true);
         await RegisterReviewExecutorAsync(http, reviewRunnerId, reviewInstance);
         using var reviewClient = new RClient(http, reviewRunnerId, usesDurableTaskServer: true);
@@ -4947,6 +4950,13 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
                         ])),
                 CancellationToken.None);
             Assert.True(report.RetryScheduled);
+
+            // The successor is not minted in the same instant as the report
+            // (AGT-2841's bounded backoff); advance the fake clock past the
+            // scheduled delay and drive the scheduler's tick explicitly so the
+            // next claim in this loop has something to pick up.
+            now = now.AddMinutes(10);
+            scheduler.RunOnce();
         }
 
         var diagnosed = Assert.Single(
@@ -4964,6 +4974,102 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             baselineSha,
             diagnosed.GetProperty("summary").GetString(),
             StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// AGT-2836 reproduction (15.09.2026 16:56): a fake aspect model call times
+    /// out, the review plane reports ReviewInfra/AspectTimeout, and the card
+    /// must not need an operator move to get a new attempt. This asserts the
+    /// full acceptance shape end to end: the report response schedules a
+    /// retry instead of minting it inline, the card timeline names the retry
+    /// number, the budget, and the reason, no successor exists before the
+    /// backoff elapses, and once it does the successor reuses the exact same
+    /// immutable ReviewSubject (same SHA, same commands - nothing rebuilt)
+    /// rather than a freshly built plan.
+    /// </summary>
+    [Fact]
+    public async Task Monolith_v1_review_plane_schedules_a_named_retry_for_a_fake_aspect_timeout_without_an_operator_move()
+    {
+        const string reviewRunnerId = "review-runner-aspect-timeout";
+        const string reviewInstance = "review-aspect-timeout-host:4243";
+        SeedTask(TaskStates.AutoReview, TaskKey, "Fake aspect timeout", "Build and verify.");
+
+        // A fixed clock rather than the 16:56 AGT-2836 incident time: the report
+        // endpoint checks lease expiry against the real wall clock (not the
+        // injected authority clock), so the fake "now" must track real time.
+        var now = DateTime.UtcNow;
+        using var factory = BuildFactory(authorityNow: () => now);
+        using var http = factory.CreateClient();
+        var scheduler = factory.Services.GetRequiredService<ReviewInfrastructureRetryScheduler>();
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        SeedReviewAttempt(factory.Services, includeResultEnvelope: true);
+        await RegisterReviewExecutorAsync(http, reviewRunnerId, reviewInstance);
+        using var reviewClient = new RClient(http, reviewRunnerId, usesDurableTaskServer: true);
+
+        var claim = await reviewClient.ClaimReviewAsync(
+            new Contract.ReviewClaimRequest(reviewRunnerId, reviewInstance, 120),
+            CancellationToken.None);
+        Assert.Equal("claimed", claim.Status);
+        var failedAttemptId = claim.Attempt!.AttemptId;
+        var subjectId = claim.Subject!.SubjectId;
+
+        var report = await reviewClient.ReportReviewAsync(
+            failedAttemptId,
+            InfrastructureReport(
+                claim,
+                reviewRunnerId,
+                reviewInstance,
+                "review-aspect-timeout-1",
+                "AspectTimeout",
+                "Review aspect 'aspect-code-quality' was killed on its timeout, not its toolchain."),
+            CancellationToken.None);
+
+        Assert.True(report.RetryScheduled);
+        Assert.Equal(TaskStates.AutoReview, report.TaskState);
+
+        var scheduled = Assert.Single(
+            ReadTimeline(TaskStates.AutoReview),
+            entry => entry.GetProperty("kind").GetString() == "review_infrastructure_retry_scheduled");
+        Assert.Equal(
+            failedAttemptId,
+            scheduled.GetProperty("details").GetProperty("attemptId").GetString());
+        Assert.Equal("1", scheduled.GetProperty("details").GetProperty("retryNumber").GetString());
+        Assert.Equal(
+            AttemptAuthorityService.ReviewInfrastructureRetryBudget.ToString(
+                System.Globalization.CultureInfo.InvariantCulture),
+            scheduled.GetProperty("details").GetProperty("retryBudget").GetString());
+        var summary = scheduled.GetProperty("summary").GetString()!;
+        Assert.Contains("review infrastructure retry 1/3 scheduled in 1m", summary, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("AspectTimeout", summary, StringComparison.Ordinal);
+        Assert.Contains("killed on its timeout", summary, StringComparison.Ordinal);
+
+        // No successor exists yet: the card would still sit unattended without
+        // an operator move if the backoff had not elapsed.
+        Assert.Equal(AttemptWriteStatus.NotFound, authority.ClaimNextReview("r", "h", "i", 60).Status);
+
+        // A moment before the 1-minute backoff: still nothing due.
+        now = now.AddSeconds(59);
+        Assert.Equal(0, scheduler.RunOnce());
+
+        // Past the backoff: the scheduler mints the successor on its own,
+        // reusing the identical ReviewSubject (AspectTimeout never requires a
+        // plan rebuild, unlike PreparationFailed).
+        now = now.AddSeconds(2);
+        Assert.Equal(1, scheduler.RunOnce());
+
+        var projection = authority.GetTaskProjection(TaskKey);
+        var successor = projection.CurrentReviewAttempt!;
+        Assert.NotEqual(failedAttemptId, successor.AttemptId);
+        Assert.Equal(failedAttemptId, successor.SourceReviewAttemptId);
+        Assert.Equal(subjectId, successor.Subject.SubjectId);
+        Assert.Equal(claim.Subject.ExpectedResultSha, successor.Subject.ExpectedResultSha);
+        Assert.Equal(AttemptLifecycleState.Pending, successor.State);
+
+        var reclaimed = await reviewClient.ClaimReviewAsync(
+            new Contract.ReviewClaimRequest(reviewRunnerId, reviewInstance, 120),
+            CancellationToken.None);
+        Assert.Equal("claimed", reclaimed.Status);
+        Assert.Equal(successor.AttemptId, reclaimed.Attempt!.AttemptId);
     }
 
     private void SetCardIntegrationBranch(string state, string integrationBranch)
@@ -5001,8 +5107,10 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         const string reviewInstance = "review-budget-host:4243";
         SeedTask(TaskStates.AutoReview, TaskKey, "Remote review retry budget", "Build and verify.");
 
-        using var factory = BuildFactory();
+        var now = DateTime.UtcNow;
+        using var factory = BuildFactory(authorityNow: () => now);
         using var http = factory.CreateClient();
+        var scheduler = factory.Services.GetRequiredService<ReviewInfrastructureRetryScheduler>();
         SeedReviewAttempt(factory.Services, includeResultEnvelope: true);
         await RegisterReviewExecutorAsync(http, reviewRunnerId, reviewInstance);
         using var reviewClient = new RClient(http, reviewRunnerId, usesDurableTaskServer: true);
@@ -5029,6 +5137,14 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             {
                 Assert.True(report.RetryScheduled);
                 Assert.Equal(TaskStates.AutoReview, report.TaskState);
+
+                // AGT-2841: the successor is scheduled with bounded backoff, not
+                // minted synchronously - advance the fake clock past the
+                // longest configured delay and fire the scheduler so the next
+                // claim in this loop has a successor to pick up.
+                now = now.Add(AttemptAuthorityService.ReviewInfrastructureRetryBackoff[^1])
+                          .Add(TimeSpan.FromSeconds(1));
+                Assert.Equal(1, scheduler.RunOnce());
             }
             else
             {
@@ -5071,8 +5187,10 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         const string reviewInstance = "review-divergent-host:4243";
         SeedTask(TaskStates.AutoReview, TaskKey, "Remote review divergent chain", "Build and verify.");
 
-        using var factory = BuildFactory();
+        var now = DateTime.UtcNow;
+        using var factory = BuildFactory(authorityNow: () => now);
         using var http = factory.CreateClient();
+        var scheduler = factory.Services.GetRequiredService<ReviewInfrastructureRetryScheduler>();
         SeedReviewAttempt(factory.Services, includeResultEnvelope: true);
         await RegisterReviewExecutorAsync(http, reviewRunnerId, reviewInstance);
         using var reviewClient = new RClient(http, reviewRunnerId, usesDurableTaskServer: true);
@@ -5094,6 +5212,16 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
                     "Materialized HEAD '744deb892' does not match expected Result-SHA 'f538f896'.")
                 : InfrastructureReport(claim, reviewRunnerId, reviewInstance, $"review-infra-{attemptNumber}");
             await reviewClient.ReportReviewAsync(claim.Attempt!.AttemptId, report, CancellationToken.None);
+
+            if (attemptNumber < last)
+            {
+                // AGT-2841: bounded backoff - advance past the longest
+                // configured delay and fire the scheduler so the chain keeps
+                // moving without an operator move.
+                now = now.Add(AttemptAuthorityService.ReviewInfrastructureRetryBackoff[^1])
+                          .Add(TimeSpan.FromSeconds(1));
+                scheduler.RunOnce();
+            }
         }
 
         var status = await File.ReadAllTextAsync(
