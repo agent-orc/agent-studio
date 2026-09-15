@@ -92,9 +92,7 @@
   background: var(--studio-wiki-source-card-bg);
   color: var(--studio-wiki-source-card-fg);
 }
-.ps-settings__card--wiki-source .ps-settings__card-desc {
-  color: var(--studio-wiki-source-description-fg);
-}
+.ps-settings__card--wiki-source .ps-settings__card-desc { color: var(--studio-wiki-source-description-fg); }
 .ps-settings__card-head {
   display: flex;
   align-items: center;
@@ -207,9 +205,7 @@
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
-.ps-settings__card--wiki-source .ps-settings__field-label {
-  color: var(--studio-wiki-source-label-fg);
-}
+.ps-settings__card--wiki-source .ps-settings__field-label { color: var(--studio-wiki-source-label-fg); }
 .ps-settings__select {
   font: inherit;
   font-size: 0.85rem;
