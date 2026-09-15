@@ -16,5 +16,12 @@
   "ErrorHandling": {
     "IncludeExceptionDetails": false
   },
+  "WikiPublication": {
+    "Enabled": true,
+    "Remote": "origin",
+    "IntervalSeconds": 120,
+    "SnapshotRetention": 3,
+    "AcceptedRefs": [ "main", "develop", "release/*" ]
+  },
   "AllowedHosts": "tasks.example.com"
 }

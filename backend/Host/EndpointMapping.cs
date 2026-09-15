@@ -68,6 +68,7 @@ public static class EndpointMapping
         app.MapProjectDocsEndpoints();
         app.MapProjectProposalEndpoints();
         app.MapWikiGradingEndpoints();
+        app.MapWikiPublicationEndpoints();
         app.MapProjectSteeringDocsEndpoints();
         app.MapSkillReadinessEndpoints();
         app.MapSecurityReviewEndpoints();

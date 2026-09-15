@@ -847,12 +847,20 @@ builder.Services.AddSingleton<AgentStudio.Tasks.IParkedBlockerProbe>(sp =>
     new AgentStudio.Tasks.ParkedBlockerProbe(sp.GetService<AgentStudio.Git.GitService>()));
 builder.Services.AddSingleton<AgentStudio.Tasks.ParkedCardRecallSweep>();
 builder.Services.AddHostedService<AgentStudio.Tasks.ParkedCardRecallSweepHostedService>();
+// Hosted wiki publication (AGT-2278): the deployment checkout advances to the
+// accepted documentation revision through a supervised fetch + atomic
+// promotion instead of a manual file copy. Registered BEFORE ProjectDocsService
+// so the docs surface resolves reads against the published commit.
+builder.Services.AddSingleton<WikiPublicationService>();
 builder.Services.AddSingleton<ProjectDocsService>();
 builder.Services.AddSingleton<WikiContentCache>();
 // Warms the central wiki cache off the startup path and logs the periodic
 // hit/miss/fill rollup. See WikiCacheWarmupService for why this must not block
 // StartAsync.
 builder.Services.AddHostedService<WikiCacheWarmupService>();
+// Scheduled publication trigger. Off unless WikiPublication:Enabled is set, so
+// a local dev seat and the stable supervisor seat never fetch for the wiki.
+builder.Services.AddHostedService<WikiPublicationSyncService>();
 // Lexical wiki search (BM25 in-memory index, lazily rebuilt on a docs
 // fingerprint change) with the fail-open semantic query-expansion layer.
 builder.Services.AddSingleton<WikiSearchService>();
@@ -1439,6 +1447,11 @@ var wikiContentCache = app.Services.GetRequiredService<WikiContentCache>();
 var projectDocs = app.Services.GetRequiredService<ProjectDocsService>();
 projectDocs.SetWorkbenchCatalogue(app.Services.GetRequiredService<WorkbenchCatalogueService>());
 projectDocs.SetWikiContentCache(wikiContentCache);
+// Publication refreshes the same cache after it promotes a revision, so the
+// first reader after a promotion is warm on the new commit. The binding is
+// deferred for the same reason as the one above: the cache is built over
+// ProjectDocsService, which reads the published revision back from this service.
+app.Services.GetRequiredService<WikiPublicationService>().SetWikiContentCache(wikiContentCache);
 watcher.OnWikiChanged += (projectName, _) =>
     wikiContentCache.Invalidate(projectName, WikiContentCache.InvalidationSource.Watcher);
 

@@ -719,10 +719,24 @@ public class GitService
         var key = root + CacheKeySep + gitRef;
         if (_refShaCache.TryGetValue(key, out var cached) && DateTime.UtcNow - cached.At < HeadShaTtl)
             return cached.Sha;
+        return GetRefShaFresh(root, gitRef);
+    }
+
+    /// <summary>
+    /// Resolves a ref with NO TTL window, then refreshes the shared cache with
+    /// the result. A caller that has just fetched must see the commit the fetch
+    /// wrote: reading through the two-second window would let a sync triggered
+    /// immediately after a merge report "already published" against the
+    /// pre-fetch SHA and silently miss a revision until the next tick.
+    /// </summary>
+    public string? GetRefShaFresh(string root, string gitRef)
+    {
+        if (string.IsNullOrWhiteSpace(root) || string.IsNullOrWhiteSpace(gitRef)
+            || !IsLikelyBranchName(gitRef)) return null;
         var (output, _, code) = RunGitArgs(root, "rev-parse", "--verify", "--quiet", gitRef + "^{commit}");
         var sha = code == 0 ? output.Trim() : null;
         if (string.IsNullOrWhiteSpace(sha)) sha = null;
-        _refShaCache[key] = (DateTime.UtcNow, sha);
+        _refShaCache[root + CacheKeySep + gitRef] = (DateTime.UtcNow, sha);
         return sha;
     }
 
@@ -740,36 +754,106 @@ public class GitService
         if (sha == null)
             return new(gitRef, "", "", "", $"Git ref '{gitRef}' was not found. Fetch it or choose another wiki source.");
 
+        return MaterializeWikiSnapshot(root, gitRef, sha);
+    }
+
+    /// <summary>
+    /// Materializes docs/ at an ALREADY-RESOLVED commit. Hosted wiki publication
+    /// resolves the accepted revision once and then pins every read to that
+    /// commit, so it must be able to materialize a specific SHA instead of
+    /// re-resolving a ref that may have moved in the meantime.
+    /// </summary>
+    public WikiBranchSnapshot GetWikiSnapshotForShaCached(string repoRoot, string gitRef, string sha)
+    {
+        if (string.IsNullOrWhiteSpace(sha))
+            return new(gitRef, "", "", "", "No commit was resolved for the wiki source.");
+        var root = ResolveGitToplevel(repoRoot) ?? repoRoot;
+        if (!Directory.Exists(root))
+            return new(gitRef, sha, ShortSha(sha), "", "Repository not found.");
+        return MaterializeWikiSnapshot(root, gitRef, sha);
+    }
+
+    /// <summary>
+    /// Per-repository parent of the SHA-addressed wiki snapshot directories.
+    /// Exposed so the publication service can bound snapshot retention without
+    /// re-deriving the layout.
+    /// </summary>
+    public static string WikiSnapshotBaseDir(string repoRoot)
+    {
+        var normalized = string.IsNullOrWhiteSpace(repoRoot) ? "" : repoRoot;
+        var rootHash = Convert.ToHexString(
+            System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(normalized)))[..12];
+        return Path.Combine(Path.GetTempPath(), "agent-studio", "wiki-snapshots", rootHash);
+    }
+
+    private static string ShortSha(string sha) => sha[..Math.Min(8, sha.Length)];
+
+    private static void TryDeleteSnapshotStaging(string staging)
+    {
+        try
+        {
+            if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            SilentCatch.Note(ex, "Wiki snapshot staging folder could not be removed.");
+        }
+    }
+
+    private WikiBranchSnapshot MaterializeWikiSnapshot(string root, string gitRef, string sha)
+    {
         var key = root + CacheKeySep + sha;
         lock (_wikiSnapshotLock)
         {
-            if (_wikiSnapshots.TryGetValue(key, out var hit) && Directory.Exists(hit.RootPath))
+            // The docs tree, not just the folder that holds it: an entry whose
+            // tree was removed (a temp sweep, an interrupted extraction) must
+            // rebuild rather than hand a reader a dead snapshot root.
+            if (_wikiSnapshots.TryGetValue(key, out var hit)
+                && Directory.Exists(Path.Combine(hit.RootPath, "docs")))
                 return hit;
 
-            var rootHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(root)))[..12];
-            var snapshotRoot = Path.Combine(Path.GetTempPath(), "agent-studio", "wiki-snapshots", rootHash, sha);
+            var baseDir = WikiSnapshotBaseDir(root);
+            var snapshotRoot = Path.Combine(baseDir, sha);
             var docsDir = Path.Combine(snapshotRoot, "docs");
             if (!Directory.Exists(docsDir))
             {
-                Directory.CreateDirectory(snapshotRoot);
-                var archive = Path.Combine(snapshotRoot, "docs.tar");
-                var (_, error, code) = RunGitArgs(root, "archive", "--format=tar", $"--output={archive}", sha, "--", "docs");
-                if (code != 0)
-                    return new(gitRef, sha, sha[..Math.Min(8, sha.Length)], snapshotRoot,
-                        string.IsNullOrWhiteSpace(error) ? "The selected ref has no readable docs/ tree." : error.Trim());
+                // Build in a staging folder and publish it with one directory
+                // move. A process that dies mid-extract therefore leaves an
+                // abandoned staging folder behind instead of a half-populated
+                // snapshot that the next reader would mistake for a complete
+                // tree. This is the atomicity the hosted-publication promotion
+                // relies on.
+                var staging = Path.Combine(baseDir, $".staging-{Guid.NewGuid():N}");
                 try
                 {
-                    TarFile.ExtractToDirectory(archive, snapshotRoot, overwriteFiles: true);
+                    Directory.CreateDirectory(staging);
+                    var archive = Path.Combine(staging, "docs.tar");
+                    var (_, error, code) = RunGitArgs(root, "archive", "--format=tar", $"--output={archive}", sha, "--", "docs");
+                    if (code != 0)
+                        return new(gitRef, sha, ShortSha(sha), snapshotRoot,
+                            string.IsNullOrWhiteSpace(error) ? "The selected ref has no readable docs/ tree." : error.Trim());
+                    TarFile.ExtractToDirectory(archive, staging, overwriteFiles: true);
                     File.Delete(archive);
+                    if (!Directory.Exists(Path.Combine(staging, "docs")))
+                        return new(gitRef, sha, ShortSha(sha), snapshotRoot,
+                            "The selected ref has no readable docs/ tree.");
+                    // A leftover snapshotRoot without docs/ is the residue of an
+                    // earlier interrupted extraction; no reader can be inside it.
+                    if (Directory.Exists(snapshotRoot)) Directory.Delete(snapshotRoot, recursive: true);
+                    Directory.Move(staging, snapshotRoot);
                 }
                 catch (Exception ex)
                 {
-                    return new(gitRef, sha, sha[..Math.Min(8, sha.Length)], snapshotRoot,
+                    return new(gitRef, sha, ShortSha(sha), snapshotRoot,
                         $"Could not materialize the wiki source: {ex.Message}");
+                }
+                finally
+                {
+                    TryDeleteSnapshotStaging(staging);
                 }
             }
 
-            var snapshot = new WikiBranchSnapshot(gitRef, sha, sha[..Math.Min(8, sha.Length)], snapshotRoot, null);
+            var snapshot = new WikiBranchSnapshot(gitRef, sha, ShortSha(sha), snapshotRoot, null);
             _wikiSnapshots[key] = snapshot;
             return snapshot;
         }

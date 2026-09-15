@@ -180,6 +180,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Private Hetzner Task Server with local Angular Studio (Phase A architecture, migration, security, and rollback) | [operations/remote-task-server-local-studio.md](../operations/remote-task-server-local-studio.md) |
 | Control plane on Docker (task-server-01): install, update, rollback, backup restore, firewall, WireGuard | [operations/setup/control-plane-docker.md](../operations/setup/control-plane-docker.md) |
 | Windows Task Server fallback runbook (Phase B slice B4: install, warm standby, sub-15-minute switch drill both directions; AGT-2735) | [operations/setup/windows-fallback-runbook.md](../operations/setup/windows-fallback-runbook.md) |
+| Hosted Wiki publication (published revision, freshness SLO, credentials, atomic promotion, typed failures, rollback drill) | [operations/setup/hosted-wiki-publication.md](../operations/setup/hosted-wiki-publication.md) |
 | Common problems | [common-problems/README.md](../operations/common-problems/README.md) |
 | Ready shows waiting for sign-in but the host is logged in | [common-problems/ready-sign-in-runner-link-down/](../operations/common-problems/ready-sign-in-runner-link-down/) |
 | claude CLI not available right after a CLI auto-update (launcher stub) | [common-problems/claude-launcher-stub-after-autoupdate/](../operations/common-problems/claude-launcher-stub-after-autoupdate/) |
