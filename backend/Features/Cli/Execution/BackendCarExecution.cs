@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using AgentStudio.TaskServer.Contracts;
 using CodingAgentRunner;
 using CodingAgentRunner.Abstractions;
 using CodingAgentRunner.Delegation;
@@ -44,6 +45,7 @@ public partial class GenericCliExecutionService
         string? jobFolderPath,
         string? permissionMode,
         string? contextMode,
+        IReadOnlyDictionary<string, string>? environment,
         CancellationToken ct)
     {
         ProcInfo? previousExited = null;
@@ -92,6 +94,10 @@ public partial class GenericCliExecutionService
         if (cleanContext != null)
             foreach (var pair in cleanContext.EnvOverrides)
                 extraEnvironment[pair.Key] = pair.Value;
+        // Repository preparation restored this run's dependencies into per-run
+        // cache folders; the agent's build, test and lint commands must resolve
+        // against the same folders (TE-52).
+        PreparationCacheEnvironment.Apply(extraEnvironment, environment);
 
         // Codex has no system-prompt-file flag. Preserve the Studio-owned
         // completion/sandbox instructions in the stdin prompt while CAR owns

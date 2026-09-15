@@ -62,6 +62,28 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
     }
 
     [Fact]
+    public async Task CodingRun_HandsThePreparationCacheBindingToTheCliLaunch()
+    {
+        // TE-52: the coding run's agent runs this repository's own build, test
+        // and lint commands, so the cache folders repository preparation restored
+        // into must be part of the CLI launch environment.
+        WritePreparationContract();
+        WriteJob(TaskStates.Ready, "job-prepared");
+        var cli = new FailingCliService();
+        var runner = BuildRunner(cli);
+        runner.SetMode("auto-continuous");
+
+        await runner.TickAsync(CancellationToken.None);
+
+        Assert.True(cli.StartCalled, "the fake CLI should have reached the spawn boundary");
+        Assert.NotNull(cli.EnvironmentAtStart);
+        Assert.Contains("NUGET_PACKAGES", cli.EnvironmentAtStart!.Keys);
+        Assert.Contains("xunit.analyzers/1.4.0/xunit.analyzers.nupkg", cli.PackagesVisibleAtStart);
+        // Freeing the slot releases the per-run copy; the shared entries remain.
+        Assert.False(Directory.Exists(cli.EnvironmentAtStart["NUGET_PACKAGES"]));
+    }
+
+    [Fact]
     public async Task AutoPickupAdmissionFault_RevertsReady_RemovesLock_AndFreesSlot()
     {
         WriteJob(TaskStates.Ready, "job-fault");
@@ -213,6 +235,46 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
             $"\"agent\":\"claude\",\"cliType\":\"{cliType}\",\"ownerClientId\":\"local-default\"}}");
     }
 
+    /// <summary>
+    /// Gives the fixture repository a repository preparation contract whose
+    /// prepare restores one package into the executor-owned NuGet folder, the
+    /// minimal stand-in for `dotnet restore`.
+    /// </summary>
+    private void WritePreparationContract()
+    {
+        WriteRepositoryFile("packages.lock.json", "{\"version\":1,\"dependencies\":{}}");
+        WriteRepositoryFile(".agent-studio/project.yml", """
+            schemaVersion: 1
+            stack: [dotnet]
+            toolVersions:
+            commands:
+              prepare: .agent-studio/prepare
+              build:
+              test:
+              lint:
+            testSuites:
+            cachePaths: [bin]
+            capabilities: [linux]
+            environment:
+              CI: "true"
+            """);
+        WriteRepositoryFile(".agent-studio/prepare", """
+            #!/bin/sh
+            set -eu
+            mkdir -p "$NUGET_PACKAGES/xunit.analyzers/1.4.0"
+            printf nupkg > "$NUGET_PACKAGES/xunit.analyzers/1.4.0/xunit.analyzers.nupkg"
+            """);
+        RunGit("add", "packages.lock.json", ".agent-studio");
+        RunGit("commit", "-q", "-m", "chore: repository preparation contract");
+    }
+
+    private void WriteRepositoryFile(string relative, string content)
+    {
+        var path = Path.Combine(_watchPath, relative.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, content);
+    }
+
     private void InitializeGitRepository()
     {
         RunGit("init", "-q", "-b", "main");
@@ -352,6 +414,16 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
         public bool PickupLockExistedAtStart { get; private set; }
         public string? ExecutionEngineAtStart { get; private set; }
 
+        /// <summary>Preparation cache binding this launch was handed (TE-52).</summary>
+        public IReadOnlyDictionary<string, string>? EnvironmentAtStart { get; private set; }
+
+        /// <summary>
+        /// Files visible under the bound NuGet folder at launch time. Captured
+        /// here because the run releases its per-run folder as soon as the slot
+        /// is freed, which for a rejected spawn is immediately.
+        /// </summary>
+        public IReadOnlyList<string> PackagesVisibleAtStart { get; private set; } = [];
+
         public string GetCliPath() => "fake-claude";
         public bool IsAvailable() => true;
         public (bool Available, string? Version, string Path) TestCliPath(string? path = null) => (true, "test", path ?? GetCliPath());
@@ -369,10 +441,19 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
             string? permissionMode = null,
             string? contextMode = null,
             string? executionEngine = null,
+            IReadOnlyDictionary<string, string>? environment = null,
             CancellationToken ct = default)
         {
             StartCalled = true;
             ExecutionEngineAtStart = executionEngine;
+            EnvironmentAtStart = environment;
+            PackagesVisibleAtStart = environment is not null
+                                     && environment.TryGetValue("NUGET_PACKAGES", out var packages)
+                                     && Directory.Exists(packages)
+                ? Directory.EnumerateFiles(packages, "*", SearchOption.AllDirectories)
+                    .Select(path => Path.GetRelativePath(packages, path).Replace('\\', '/'))
+                    .ToArray()
+                : [];
             PickupLockExistedAtStart = !string.IsNullOrWhiteSpace(jobFolderPath)
                 && File.Exists(Path.Combine(jobFolderPath, PickupLockFile.LockFileName));
             if (_throwOnStart) throw new InvalidOperationException("injected admission fault");
@@ -427,6 +508,7 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
             string? permissionMode = null,
             string? contextMode = null,
             string? executionEngine = null,
+            IReadOnlyDictionary<string, string>? environment = null,
             CancellationToken ct = default)
         {
             var started = new CliExecution
@@ -498,6 +580,7 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
             string? permissionMode = null,
             string? contextMode = null,
             string? executionEngine = null,
+            IReadOnlyDictionary<string, string>? environment = null,
             CancellationToken ct = default)
         {
             StartCount++;

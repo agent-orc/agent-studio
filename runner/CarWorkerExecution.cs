@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AgentStudio.CliHosting;
+using AgentStudio.TaskServer.Contracts;
 using CodingAgentRunner;
 using CodingAgentRunner.Abstractions;
 using CodingAgentRunner.Adapters;
@@ -150,6 +151,9 @@ internal static class CarWorkerExecution
                 foreach (var pair in cleanContext.Environment)
                     extraEnvironment[pair.Key] = pair.Value;
             }
+            // The agent's own build/test/lint must resolve against the caches
+            // repository preparation restored into for this run (TE-52).
+            PreparationCacheEnvironment.Apply(extraEnvironment, spec.Environment);
 
             var request = new CliRunRequest
             {

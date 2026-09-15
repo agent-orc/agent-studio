@@ -749,7 +749,12 @@ public sealed class RemoteTaskRunner
                 _options, slot.WorkerDirectory, workspace.RepoPath, prompt, resultsDir,
                 runSpec: runSpec,
                 runId: slot.AttemptId,
-                cleanContextKey: taskKey);
+                cleanContextKey: taskKey,
+                // The agent runs this repository's own build, test and lint
+                // commands. Without the preparation's cache binding its first
+                // `--no-restore` build resolves against a package folder the
+                // prepare restore never wrote to (TE-52).
+                environment: projectPreparation.Environment);
         }
         catch (Exception ex)
         {
@@ -764,7 +769,12 @@ public sealed class RemoteTaskRunner
         });
         _inventory.AttachProcess(slot.RunId ?? slot.AttemptId, process.ProcessId);
         _log($"detached worker started task={taskKey} pid={process.ProcessId} attempt={slot.AttemptId}");
-        return await AwaitDetachedAsync(slot, workspace, shipper, outbox, stopRun.Token);
+        var executed = await AwaitDetachedAsync(slot, workspace, shipper, outbox, stopRun.Token);
+        // Only a terminal result proves that no command of this run will read the
+        // per-run cache folders again. A daemon shutdown leaves the detached
+        // worker running, so its folder stays and is reclaimed by age instead.
+        ProjectPreparationExecutor.ReleaseRunRoot(projectPreparation);
+        return executed;
     }
 
     private async Task<RemoteExecutionResult> AwaitDetachedAsync(
@@ -890,7 +900,12 @@ public sealed class RemoteTaskRunner
                             resumeSlot.RunSpec,
                             runId: resumeSlot.AttemptId,
                             resumeSessionId: carEngine ? sessionId : null,
-                            cleanContextKey: resumeSlot.TaskKey);
+                            cleanContextKey: resumeSlot.TaskKey,
+                            // The resumed attempt is the same run and keeps the
+                            // same preparation cache binding, which a reattaching
+                            // daemon can only read back from the first attempt's
+                            // own worker specification.
+                            environment: DurableAgentProcess.TryReadEnvironment(slot.WorkerDirectory));
                         resumeSlot = _state.Save(resumeSlot with
                         {
                             ProcessId = resumed.ProcessId,

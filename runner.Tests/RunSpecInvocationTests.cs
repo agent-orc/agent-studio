@@ -210,6 +210,57 @@ public sealed class RunSpecInvocationTests : IDisposable
     }
 
     [Fact]
+    public void The_worker_spec_carries_the_preparation_cache_binding_into_the_coding_run()
+    {
+        // TE-52: the agent itself runs this repository's build, test and lint
+        // commands. The cache locations repository preparation restored into
+        // therefore have to reach the worker, and a resumed attempt of the same
+        // run must read the same binding back from the first attempt's spec.
+        var workerDirectory = Path.Combine(_root, "worker");
+        Directory.CreateDirectory(workerDirectory);
+        var specPath = Path.Combine(workerDirectory, "spec.json");
+        var binding = new Dictionary<string, string>
+        {
+            ["NUGET_PACKAGES"] = "/srv/cache/.runs/abc/nuget",
+            ["NPM_CONFIG_CACHE"] = "/srv/cache/.runs/abc/npm",
+        };
+        var built = DurableAgentProcess.BuildSpec(
+            Options("claude", "-p"),
+            _root,
+            "do the thing",
+            Path.Combine(_root, "results"),
+            environment: binding);
+        File.WriteAllText(specPath, JsonSerializer.Serialize(built, Json));
+
+        var reloaded = DurableAgentProcess.ReadSpec(specPath);
+
+        Assert.Equal(binding, reloaded.Environment);
+        Assert.Equal(binding, DurableAgentProcess.TryReadEnvironment(workerDirectory));
+    }
+
+    [Fact]
+    public void A_worker_spec_written_before_the_cache_binding_existed_still_loads()
+    {
+        Directory.CreateDirectory(_root);
+        var specPath = Path.Combine(_root, "pre-binding-spec.json");
+        File.WriteAllText(specPath, """
+            {
+              "fileName": "claude",
+              "arguments": ["-p"],
+              "workingDirectory": "/srv/work/AGT-1",
+              "prompt": "do the thing",
+              "resultsDirectory": "/srv/work/AGT-1/results",
+              "timeoutSeconds": 3600
+            }
+            """);
+
+        var reloaded = DurableAgentProcess.ReadSpec(specPath);
+
+        Assert.Null(reloaded.Environment);
+        Assert.Null(DurableAgentProcess.TryReadEnvironment(Path.Combine(_root, "missing-worker")));
+    }
+
+    [Fact]
     public void The_run_spec_with_prompt_enrichment_survives_the_persisted_daemon_slot()
     {
         var stateRoot = Path.Combine(_root, "state");

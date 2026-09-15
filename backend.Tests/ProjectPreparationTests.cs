@@ -328,6 +328,121 @@ public sealed class ProjectPreparationTests : IDisposable
     }
 
     [Fact]
+    public async Task Preparation_binds_its_restored_packages_for_later_commands_on_a_miss_and_on_a_hit()
+    {
+        // TE-52: a green preparation is worthless to the gate when the packages it
+        // restored are no longer where the run's own project.assets.json points.
+        WriteRestoringDotNetRepository();
+        var cache = Path.Combine(_root, "product-cache");
+
+        var miss = await PrepareAsync(cache, "miss.json");
+        Assert.True(miss.Succeeded, miss.Output);
+        var missPackages = miss.Environment["NUGET_PACKAGES"];
+        Assert.True(File.Exists(RestoredPackage(missPackages)),
+            "After a cache miss `dotnet build --no-restore` must still find the restored package.");
+        Assert.StartsWith(miss.RunRoot!, missPackages, StringComparison.Ordinal);
+
+        var hit = await PrepareAsync(cache, "hit.json");
+        Assert.True(hit.CacheHit);
+        var hitPackages = hit.Environment["NUGET_PACKAGES"];
+        Assert.True(File.Exists(RestoredPackage(hitPackages)),
+            "After a cache hit `dotnet build --no-restore` must find the same restored package.");
+        Assert.NotEqual(missPackages, hitPackages);
+        // The published entry is shared and immutable: a hit works on its own copy.
+        var entry = hit.Manifest!.Caches.Single(cacheEntry => cacheEntry.Block == "nuget").EntryPath;
+        Assert.False(hitPackages.StartsWith(entry, StringComparison.Ordinal));
+        Assert.True(File.Exists(RestoredPackage(Path.Combine(entry, "content"))));
+    }
+
+    [Fact]
+    public async Task Failed_prepare_on_a_cache_hit_leaves_the_published_entry_byte_identical()
+    {
+        WriteRestoringDotNetRepository();
+        var cache = Path.Combine(_root, "product-cache");
+        var published = await PrepareAsync(cache, "published.json");
+        Assert.True(published.Succeeded, published.Output);
+        var entry = published.Manifest!.Caches.Single(entry => entry.Block == "nuget").EntryPath;
+        var before = Fingerprint(entry);
+
+        // A hit whose prepare wrecks its own cache folder and then fails. The
+        // shared entry may not be touched by it, and deleting the run root must
+        // be enough to roll the whole attempt back.
+        Write(".agent-studio/prepare", """
+            #!/bin/sh
+            rm -rf "$NUGET_PACKAGES"/*
+            printf poison > "$NUGET_PACKAGES/poisoned"
+            exit 9
+            """);
+        var failed = await PrepareAsync(cache, "failed.json");
+
+        Assert.False(failed.Succeeded);
+        Assert.Empty(failed.Environment);
+        Assert.Null(failed.RunRoot);
+        Assert.Equal(before, Fingerprint(entry));
+        Assert.All(failed.Manifest!.Caches, cacheEntry => Assert.Equal("hit", cacheEntry.State));
+    }
+
+    [Fact]
+    public async Task Concurrent_prepares_on_one_entry_each_keep_their_own_copy()
+    {
+        WriteRestoringDotNetRepository();
+        var cache = Path.Combine(_root, "product-cache");
+
+        var first = PrepareAsync(cache, "concurrent-a.json");
+        var second = PrepareAsync(cache, "concurrent-b.json");
+        var results = await Task.WhenAll(first, second);
+
+        Assert.All(results, result => Assert.True(result.Succeeded, result.Output));
+        Assert.All(results, result => Assert.True(
+            File.Exists(RestoredPackage(result.Environment["NUGET_PACKAGES"])),
+            "Losing the publication race must not take the loser's own packages away."));
+        Assert.NotEqual(results[0].Environment["NUGET_PACKAGES"], results[1].Environment["NUGET_PACKAGES"]);
+        // Exactly one immutable entry, complete, and no abandoned staging folder.
+        var entries = Directory.GetDirectories(Path.Combine(cache, "entries", "nuget"));
+        Assert.Single(entries);
+        Assert.True(File.Exists(Path.Combine(entries[0], "manifest.json")));
+        Assert.True(File.Exists(RestoredPackage(Path.Combine(entries[0], "content"))));
+
+        var third = await PrepareAsync(cache, "concurrent-c.json");
+        Assert.True(third.CacheHit);
+    }
+
+    [Fact]
+    public async Task Releasing_the_run_root_drops_the_per_run_copy_and_keeps_the_published_entry()
+    {
+        WriteRestoringDotNetRepository();
+        var cache = Path.Combine(_root, "product-cache");
+        var prepared = await PrepareAsync(cache, "released.json");
+        var entry = prepared.Manifest!.Caches.Single(cacheEntry => cacheEntry.Block == "nuget").EntryPath;
+
+        ProjectPreparationExecutor.ReleaseRunRoot(prepared);
+
+        Assert.False(Directory.Exists(prepared.RunRoot));
+        Assert.True(File.Exists(RestoredPackage(Path.Combine(entry, "content"))));
+    }
+
+    [Fact]
+    public async Task Coding_run_launch_environment_carries_the_preparation_cache_binding()
+    {
+        // The coding run's agent runs build, test and lint itself, so the binding
+        // travels as the launch environment overlay (backend CAR + legacy spawn,
+        // runner worker specification) instead of as a gate process variable.
+        WriteRestoringDotNetRepository();
+        var prepared = await PrepareAsync(Path.Combine(_root, "product-cache"), "coding-run.json");
+        var launch = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["JOB_RESULTS_DIR"] = Path.Combine(_root, "results"),
+            ["NUGET_PACKAGES"] = Path.Combine(_root, "host-owned-packages"),
+        };
+
+        PreparationCacheEnvironment.Apply(launch, prepared.Environment);
+
+        Assert.Equal(prepared.Environment["NUGET_PACKAGES"], launch["NUGET_PACKAGES"]);
+        Assert.Equal(Path.Combine(_root, "results"), launch["JOB_RESULTS_DIR"]);
+        Assert.True(File.Exists(RestoredPackage(launch["NUGET_PACKAGES"])));
+    }
+
+    [Fact]
     public void Generator_proposes_both_repository_files_for_detected_stack()
     {
         Write("Sample.slnx", "<Solution />");
@@ -608,6 +723,61 @@ public sealed class ProjectPreparationTests : IDisposable
           lint:
         testSuites:
         cachePaths: [node_modules]
+        capabilities: [linux]
+        environment:
+          CI: "true"
+        """;
+
+    /// <summary>
+    /// A .NET repository whose prepare performs the one thing the binding has to
+    /// survive: it restores a package into the executor-owned NuGet folder.
+    /// </summary>
+    private void WriteRestoringDotNetRepository()
+    {
+        Write("packages.lock.json", "{\"version\":1,\"dependencies\":{}}");
+        Write(".agent-studio/project.yml", DotNetDefinition(".agent-studio/prepare"));
+        Write(".agent-studio/prepare", """
+            #!/bin/sh
+            set -eu
+            mkdir -p "$NUGET_PACKAGES/xunit.analyzers/1.4.0"
+            printf nupkg > "$NUGET_PACKAGES/xunit.analyzers/1.4.0/xunit.analyzers.nupkg"
+            """);
+    }
+
+    private static string RestoredPackage(string packagesFolder)
+        => Path.Combine(packagesFolder, "xunit.analyzers", "1.4.0", "xunit.analyzers.nupkg");
+
+    private Task<ProjectPreparationResult> PrepareAsync(string cacheRoot, string manifestName)
+        => ProjectPreparationExecutor.RunAsync(
+            _root,
+            cacheRoot,
+            Path.Combine(_root, "manifests", manifestName),
+            "subject-1",
+            null,
+            TimeSpan.FromSeconds(60),
+            CancellationToken.None);
+
+    /// <summary>Content fingerprint of a published cache entry, path by path.</summary>
+    private static string Fingerprint(string root)
+        => string.Join("\n", Directory
+            .EnumerateFiles(root, "*", SearchOption.AllDirectories)
+            .OrderBy(path => path, StringComparer.Ordinal)
+            .Select(path => Path.GetRelativePath(root, path).Replace('\\', '/')
+                            + ":"
+                            + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                                File.ReadAllBytes(path)))));
+
+    private static string DotNetDefinition(string prepare) => $$"""
+        schemaVersion: 1
+        stack: [dotnet]
+        toolVersions:
+        commands:
+          prepare: {{prepare}}
+          build:
+          test:
+          lint:
+        testSuites:
+        cachePaths: [bin]
         capabilities: [linux]
         environment:
           CI: "true"
