@@ -34,6 +34,25 @@ release yet.
 
 ### Fixed
 
+- Concurrent Remote Review workers shared one host-global .NET build server
+  (AGT-2831). The attempt workspace fenced every writable path per attempt, but
+  Roslyn's `VBCSCompiler` listens on `/tmp/<pipename>` and reusable MSBuild
+  worker nodes on `/tmp/MSBuild<pid>`, neither of which honours `TMPDIR`, and
+  both keep the working directory of the attempt that started them. At
+  `RUNNER_MAX_PARALLELISM=4` a later attempt connected to a server answering
+  from a deleted tree and blocked, holding its review slot at near-zero CPU for
+  the whole command budget. Every review command - candidate, baseline and
+  dependency preparation - now runs with its own server-free build namespace
+  (`MSBUILDDISABLENODEREUSE=1`, `DOTNET_CLI_USE_MSBUILD_SERVER=0`,
+  `UseSharedCompilation=false`, attempt-local `MSBUILDDEBUGPATH`), applied over
+  the immutable plan so a plan can never re-enable a shared server.
+- A review verify command that blocks instead of working is now reaped on a
+  bounded budget. `RUNNER_REVIEW_NO_CPU_PROGRESS_SECONDS` (default 900, `0`
+  disables) kills a command whose whole process tree fails to burn one percent
+  of one core within the window and reports the attempt as
+  `ReviewInfra/NoCpuProgress`, checked before baseline comparison so a hang is
+  never graded as a product regression.
+
 - `BranchRetentionAction.Namespace` and `.TaskKey` were never populated on
   the actions `GitBranchRetentionService.RunRepository`/`ReclaimForTask`
   actually return (always `null`), so the evidence and reason-text those

@@ -36,6 +36,7 @@ public static class ProcessRunner
         IReadOnlyDictionary<string, string?>? environment = null,
         bool clearEnvironment = false,
         bool isolateProcessGroup = false,
+        Action<int>? onStarted = null,
         CancellationToken ct = default)
     {
         var actualFileName = fileName;
@@ -91,6 +92,9 @@ public static class ProcessRunner
 
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
+        // Handed out before the first await so a caller-owned watchdog can watch
+        // the whole tree from the moment it exists.
+        onStarted?.Invoke(process.Id);
 
         if (stdin != null)
         {
