@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Delivery chain: integration, recovery, robustness | Concept Dossier</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1: #fcfcfb; --surface-2: #f2f1ee; --surface-3: #e9e8e3;
+    --ink-1: #0b0b0b; --ink-2: #52514e; --ink-3: #8a8983; --line: #d8d6cf;
+    --develop: #2a78d6; --ok: #008300; --bad: #c93736; --warn: #9a6b00;
+    --accent-soft: #eaf1fb; --bad-soft: #fbecec; --ok-soft: #eaf4ea; --warn-soft: #f8f0dd;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --surface-1: #1a1a19; --surface-2: #232322; --surface-3: #2c2c2a;
+      --ink-1: #ffffff; --ink-2: #c3c2b7; --ink-3: #8a8983; --line: #3d3d3a;
+      --develop: #3987e5; --ok: #4eae4e; --bad: #e66767; --warn: #d9a63f;
+      --accent-soft: #1e2a3a; --bad-soft: #382222; --ok-soft: #1f2f1f; --warn-soft: #33301e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 0 0 80px; background: var(--surface-1); color: var(--ink-1); font: 16px/1.6 system-ui, "Segoe UI", sans-serif; }
+  main { max-width: 1080px; margin: 0 auto; padding: 0 28px; }
+  header.page { border-bottom: 1px solid var(--line); padding: 44px 0 26px; margin-bottom: 8px; }
+  .kicker { font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); margin: 0 0 10px; }
+  h1 { font-size: 34px; line-height: 1.2; margin: 0 0 12px; }
+  .lede { font-size: 18px; color: var(--ink-2); max-width: 62ch; margin: 0; }
+  .meta { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 18px; font-size: 13px; color: var(--ink-3); }
+  .meta b { color: var(--ink-2); font-weight: 600; }
+  h2 { font-size: 24px; margin: 56px 0 6px; scroll-margin-top: 20px; }
+  h2 .no { color: var(--ink-3); font-weight: 600; margin-right: 10px; }
+  h3 { font-size: 18px; margin: 34px 0 4px; }
+  p { max-width: 76ch; }
+  .box { border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); padding: 18px 22px; margin: 20px 0; }
+  .box.accent { background: var(--accent-soft); }
+  .box.warn { background: var(--warn-soft); }
+  .tablewrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; margin: 14px 0 22px; font-size: 14px; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--ink-2); font-weight: 600; background: var(--surface-2); white-space: nowrap; }
+  td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td .d { display: block; color: var(--ink-2); font-size: 12.5px; line-height: 1.4; margin-top: 3px; }
+  code { font: 13px ui-monospace, "Cascadia Mono", Consolas, monospace; background: var(--surface-3); padding: 1px 5px; border-radius: 4px; }
+  .tag { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--ink-2); margin-right: 4px; white-space: nowrap; }
+  .tag.bad { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
+  .tag.ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+  .tag.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+  figure { margin: 22px 0; }
+  figure svg { width: 100%; height: auto; display: block; }
+  figcaption { font-size: 13px; color: var(--ink-3); margin-top: 6px; }
+  .decision { border: 1px solid color-mix(in srgb, var(--develop) 35%, var(--line)); border-radius: 10px; padding: 18px 22px; margin: 22px 0; background: var(--accent-soft); }
+  .decision h3 { margin: 0 0 10px; font-size: 17px; }
+  .decision label { display: flex; gap: 12px; align-items: flex-start; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-1); margin: 8px 0; cursor: pointer; }
+  .decision label input { margin-top: 4px; }
+  .decision label b { display: block; }
+  .decision label span.d { display: block; color: var(--ink-2); font-size: 14px; }
+  .decision textarea { width: 100%; min-height: 64px; margin-top: 8px; font: 14px system-ui, sans-serif; border: 1px solid var(--line); border-radius: 6px; padding: 8px; background: var(--surface-1); color: var(--ink-1); }
+  ul, ol { max-width: 80ch; }
+  li { margin: 4px 0; }
+  .toc { columns: 2; gap: 28px; font-size: 14.5px; }
+  .toc a { color: var(--ink-2); text-decoration: none; }
+  .toc a:hover { color: var(--develop); }
+  .muted { color: var(--ink-3); }
+  .steps { counter-reset: st; list-style: none; padding: 0; max-width: none; }
+  .steps > li { counter-increment: st; border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px 14px 58px; margin: 12px 0; background: var(--surface-2); position: relative; }
+  .steps > li::before { content: "M" counter(st); position: absolute; left: 16px; top: 14px; font-weight: 700; color: var(--develop); }
+  .steps h4 { margin: 0 0 6px; font-size: 16px; }
+  .steps p { margin: 4px 0; font-size: 14.5px; }
+  .steps .kv { font-size: 13.5px; color: var(--ink-2); }
+  .steps .kv b { color: var(--ink-1); }
+  pre { background: var(--surface-3); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; font: 12.5px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace; overflow-x: auto; max-width: 100%; }
+  /* Tooltips ohne Verzögerung: data-tip statt title. Ohne Script: CSS-Blase; mit Script: feste Position, nie abgeschnitten. */
+  [data-tip] { text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; position: relative; }
+  html:not(.js) [data-tip]::after { content: attr(data-tip); position: absolute; left: 0; top: calc(100% + 6px); z-index: 20; width: max-content; max-width: 340px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-1); color: var(--ink-1); font-size: 12.5px; line-height: 1.4; font-weight: 400; white-space: normal; box-shadow: 0 6px 20px rgba(0,0,0,.14); opacity: 0; pointer-events: none; transition: opacity .06s; }
+  html:not(.js) [data-tip]:hover::after, html:not(.js) [data-tip]:focus-visible::after { opacity: 1; }
+  #tipbox { position: fixed; z-index: 1000; max-width: 360px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-1); color: var(--ink-1); font-size: 12.5px; line-height: 1.45; box-shadow: 0 8px 24px rgba(0,0,0,.16); pointer-events: none; display: none; }
+  /* SVG figure classes from the haertung-verteilte-ausfuehrung template */
+  figure svg { width: 100%; height: auto; display: block; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-1); }
+  .s-node   { fill: var(--surface-2); stroke: var(--line); rx: 8; }
+  .s-node2  { fill: var(--surface-3); stroke: var(--line); }
+  .s-label  { fill: var(--ink-1); font: 600 13px system-ui, sans-serif; }
+  .s-sub    { fill: var(--ink-2); font: 12px system-ui, sans-serif; }
+  .s-tiny   { fill: var(--ink-3); font: 11px system-ui, sans-serif; }
+  .s-flow   { stroke: var(--ink-3); stroke-width: 1.6; fill: none; }
+  .s-commit { stroke-width: 2.5; fill: var(--surface-1); }
+  .s-lane   { stroke: var(--line); stroke-dasharray: 4 5; stroke-width: 1; }
+  .badge-bad  { fill: var(--bad-soft); stroke: var(--bad); }
+  .badge-ok   { fill: var(--ok-soft); stroke: var(--ok); }
+  .badge-warn { fill: var(--warn-soft); stroke: var(--warn); }
+  .t-bad  { fill: var(--bad);  font: 600 12px system-ui, sans-serif; }
+  .t-ok   { fill: var(--ok);   font: 600 12px system-ui, sans-serif; }
+  .t-warn { fill: var(--warn); font: 600 12px system-ui, sans-serif; }
+</style></head>
+<body>
+<main>
+<header class="page">
+  <p class="kicker">Concept Dossier &middot; Agent Studio &middot; 2026-09-14</p>
+  <h1>Delivery chain: integration, recovery, robustness</h1>
+  <p class="lede">One Dossier for the path a delivery takes from the agent's last commit to a published release, and for everything that goes wrong on it. It carries the Git policy per stage, the board status contract that policy depends on, the five structural patterns behind the incidents of the last thirty days, the eleven failure classes the fleet produced in live operation, and the measured cost of repeating work. Six Dossiers are merged into it; one rolling log is synthesised into its evidence.</p>
+  <div class="meta">
+    <span><b>Status</b> 2026-09-14, decision-pending</span>
+    <span><b>Trigger</b> Consolidation card of AGT-W55 (operator decision D1 and D2, 2026-09-13)</span>
+    <span><b>Absorbs</b> AGT-W37, AGT-W50, AGT-W42, AGT-W23, AGT-W44, AGT-W3; synthesises AGT-W39</span>
+    <span><b>Neighbours</b> AGT-W51 isolated execution, AGT-W36 batch gate, AGT-W15 watcher, AGT-W49 operations server</span>
+    <span><b>Concept card</b> see workbench.json</span>
+  </div>
+</header>
+
+<nav class="toc" aria-label="Contents">
+  <a href="#s1">&sect;1 The chain and where it breaks</a>
+  <a href="#s2">&sect;2 Decisions taken</a>
+  <a href="#s3">&sect;3 Alternatives</a>
+  <a href="#s4">&sect;4 Recommendation</a>
+  <a href="#s5">&sect;5 Evidence</a>
+  <a href="#s6">&sect;6 Open decisions</a>
+  <a href="#s7">&sect;7 Consolidation record</a>
+  <a href="#s8">&sect; Sources</a>
+</nav>
+
+<section id="s1">
+<h2><span class="no">&sect;1</span> The chain and where it breaks</h2>
+
+<p>The delivery chain is one loop with one release arm. An agent delivers on a fenced ref, a deterministic gate builds and tests it, a review judges it, canonical integration merges it into the integration branch, acceptance closes the card, and a separate promotion train publishes a pinned candidate to <code>main</code>. Under the loop lie two layers that the loop cannot see: the control plane that moves the loop forward, and the substrate that actually executes it.</p>
+
+<p>Every failure this Dossier records sits at exactly one place in that picture, and almost every one of them is silent. A self-running fleet does not fail with an exception and a shouting user. It fails with a feed that stops moving, a closed auto-pickup with <code>lastRejection=null</code>, a breaker on <code>mode=paused</code> with an empty halt reason, a "Delivered" badge over work that never reached the integration branch. Six different causes surfaced under the same sentence, "System appears stalled". The visible work is therefore not the fix, it is making the silence legible and giving it an owner that survives a session.</p>
+
+<figure>
+<svg viewBox="0 0 1040 470" role="img" aria-labelledby="fig1title fig1desc">
+  <title id="fig1title">The delivery chain, the two layers under it, and the five structural patterns</title>
+  <desc id="fig1desc">The chain runs Deliver, Gate, Review, Integrate, Accept and Promote. Beneath it a control plane band and a substrate band carry the failure classes. Below that, five pattern chips name the properties that keep regenerating the classes.</desc>
+
+  <text class="s-tiny" x="16" y="22">Delivery chain</text>
+  <g>
+    <rect class="s-node" x="16"  y="34" width="150" height="54" rx="8"/>
+    <rect class="s-node" x="182" y="34" width="150" height="54" rx="8"/>
+    <rect class="s-node" x="348" y="34" width="150" height="54" rx="8"/>
+    <rect class="s-node" x="514" y="34" width="150" height="54" rx="8"/>
+    <rect class="s-node" x="680" y="34" width="150" height="54" rx="8"/>
+    <rect class="s-node" x="846" y="34" width="178" height="54" rx="8"/>
+    <text class="s-label" x="34"  y="58">Deliver</text><text class="s-sub" x="34"  y="76">fenced result SHA</text>
+    <text class="s-label" x="200" y="58">Gate</text><text class="s-sub" x="200" y="76">build and test</text>
+    <text class="s-label" x="366" y="58">Review</text><text class="s-sub" x="366" y="76">aspects, verdict</text>
+    <text class="s-label" x="532" y="58">Integrate</text><text class="s-sub" x="532" y="76">merge first</text>
+    <text class="s-label" x="698" y="58">Accept</text><text class="s-sub" x="698" y="76">human judgement</text>
+    <text class="s-label" x="864" y="58">Promote</text><text class="s-sub" x="864" y="76">exact candidate to main</text>
+  </g>
+  <g class="s-flow">
+    <path d="M166 61 H182" marker-end="url(#ar)"/>
+    <path d="M332 61 H348" marker-end="url(#ar)"/>
+    <path d="M498 61 H514" marker-end="url(#ar)"/>
+    <path d="M664 61 H680" marker-end="url(#ar)"/>
+    <path d="M830 61 H846" marker-end="url(#ar)"/>
+    <path d="M91 88 V112 H420 V88" marker-end="url(#ar)"/>
+  </g>
+  <text class="s-tiny" x="196" y="128">bounce: rebase onto current base, new fence, new attribution</text>
+
+  <line class="s-lane" x1="16" y1="150" x2="1024" y2="150"/>
+
+  <text class="s-tiny" x="16" y="172">Control plane: what moves the loop forward</text>
+  <rect class="s-node2" x="16" y="182" width="1008" height="52" rx="8"/>
+  <text class="s-sub" x="32" y="204">Session orchestrator tick &middot; acceptance and requeue rail &middot; reverse tunnel &middot; supervision cron</text>
+  <rect class="badge-bad" x="32" y="212" width="168" height="16" rx="8"/><text class="t-bad" x="40" y="224">session-bound loop dies</text>
+  <rect class="badge-bad" x="212" y="212" width="132" height="16" rx="8"/><text class="t-bad" x="220" y="224">transport death</text>
+  <rect class="badge-warn" x="356" y="212" width="176" height="16" rx="8"/><text class="t-warn" x="364" y="224">hollow restart and deploy</text>
+  <rect class="badge-warn" x="544" y="212" width="150" height="16" rx="8"/><text class="t-warn" x="552" y="224">silent gate closure</text>
+
+  <text class="s-tiny" x="16" y="262">Substrate: what actually executes it</text>
+  <rect class="s-node2" x="16" y="272" width="1008" height="52" rx="8"/>
+  <text class="s-sub" x="32" y="294">Three execution worlds &middot; dependency and plan caches &middot; worktrees and child processes &middot; one shared provider account</text>
+  <rect class="badge-bad" x="32" y="302" width="150" height="16" rx="8"/><text class="t-bad" x="40" y="314">poisoned cache entry</text>
+  <rect class="badge-bad" x="194" y="302" width="176" height="16" rx="8"/><text class="t-bad" x="202" y="314">account limit, no back-off</text>
+  <rect class="badge-warn" x="382" y="302" width="166" height="16" rx="8"/><text class="t-warn" x="390" y="314">orphaned process tree</text>
+  <rect class="badge-warn" x="560" y="302" width="184" height="16" rx="8"/><text class="t-warn" x="568" y="314">world-specific product bug</text>
+
+  <line class="s-lane" x1="16" y1="350" x2="1024" y2="350"/>
+  <text class="s-tiny" x="16" y="372">Five properties that keep regenerating those classes</text>
+  <g>
+    <rect class="s-node" x="16"  y="384" width="194" height="62" rx="8"/>
+    <rect class="s-node" x="222" y="384" width="194" height="62" rx="8"/>
+    <rect class="s-node" x="428" y="384" width="194" height="62" rx="8"/>
+    <rect class="s-node" x="634" y="384" width="194" height="62" rx="8"/>
+    <rect class="s-node" x="840" y="384" width="184" height="62" rx="8"/>
+    <text class="s-label" x="32"  y="406">M1 mutable state</text><text class="s-sub" x="32"  y="426">survives runs, unvalidated</text>
+    <text class="s-label" x="238" y="406">M2 wrong class</text><text class="s-sub" x="238" y="426">signature lists, not proof</text>
+    <text class="s-label" x="444" y="406">M3 blind repeat</text><text class="s-sub" x="444" y="426">budgets per card, not cause</text>
+    <text class="s-label" x="650" y="406">M4 three worlds</text><text class="s-sub" x="650" y="426">one commit, three results</text>
+    <text class="s-label" x="856" y="406">M5 no owner</text><text class="s-sub" x="856" y="426">processes and lifecycles</text>
+  </g>
+
+  <defs>
+    <marker id="ar" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L8 4 L0 8 z" fill="currentColor" style="fill: var(--ink-3)"/>
+    </marker>
+  </defs>
+</svg>
+<figcaption>Fig. 1: the same six-stage chain carries every decision in &sect;2 and every failure class in &sect;5. The two bands are the layers the chain itself cannot observe; the five chips are the properties that regenerate the classes after each individual fix. A hardening that removes a class but leaves its property standing buys time, not robustness.</figcaption>
+</figure>
+
+<div class="box">
+<p><b>Two boundaries that hold the rest of the document together.</b> First, a <i>stage boundary</i>: a fresh recovery round may rewrite delivery identity because it records a new fence and new attribution before review, whereas canonical integration must preserve the identity that the acceptance evidence already names, and promotion may not change it at all. That is not one Git policy applied inconsistently three times, it is three different relationships to the same evidence. Second, a <i>proof boundary</i>: lane, pipeline and Git may each tell a different story, so "completed" and "delivered" are statements that must be derived from target-branch presence, not from the lane a card happens to sit in.</p>
+</div>
+</section>
+
+<section id="s2">
+<h2><span class="no">&sect;2</span> Decisions taken</h2>
+
+<p>These are settled. They are carried forward because the open choices in &sect;6 only make sense against them, and because the sources that held them leave the current Dossier list.</p>
+
+<div class="tablewrap">
+<table>
+<thead><tr><th>Date</th><th>Decision</th><th>Reason it was taken</th><th>From</th></tr></thead>
+<tbody>
+<tr><td>2026-07-31</td><td>Integration truth is derived from target-branch presence of the accepted result commit, not from the last merge attempt.</td><td>AGT-2301 stood in <code>6-completed</code> with a failed merge recorded while the delivered commit was already reachable on <code>origin/develop</code>. The reverse case, archived but never integrated, is the dangerous one.</td><td>W3 &sect;10 R4</td></tr>
+<tr><td>2026-08-09</td><td>"Completed" is an evidence-bearing statement. A card carries it only when its delivery is provably integrated or a human recorded an explicit override.</td><td>Two deliveries existed only on salvage fences and one of them was booked as completed anyway.</td><td>W23 &sect;5</td></tr>
+<tr><td>2026-08-09</td><td>The salvage fence push before teardown becomes a contract part, and an incomplete result envelope is <code>delivery-failed</code> with automatic requeue rather than a silent pass.</td><td>The fence push was the only mechanism that saved all four work states in the incident. AGT-2543, AGT-2544 and AGT-2545 turn the two breaks and the concealment into invariants.</td><td>W23 &sect;5</td></tr>
+<tr><td>2026-08-11</td><td>Canonical integration preserves delivery SHAs: <code>merge --no-ff</code> first, then one mechanical three-way merge, and only then a disposable-worktree rebase whose commit cardinality and old-to-new map stay one to one. Ambiguous attribution fails closed as <code>AgentRoundRequired</code>.</td><td>The first recovery cut rebased before trying a merge. Rewriting objects before proving that preservation was possible made acceptance attribution fragile; the AGT-2632 amendment reversed the order.</td><td>W37 &sect;2, &sect;5</td></tr>
+<tr><td>2026-08-11</td><td>Squash at canonical integration is rejected under the current acceptance contract, and promotion publishes the exact gated candidate SHA to <code>main</code> by fast-forward.</td><td>A squash breaks commit ancestry and per-commit evidence. A merge, squash or rebase between the receipt and <code>main</code> would test one object and release another.</td><td>W37 &sect;5, &sect;6</td></tr>
+<tr><td>2026-08-11</td><td>A fresh recovery round rebases the delivery onto current <code>origin/&lt;integration-branch&gt;</code>, resolves conservatively, reruns the gate and delivers anew.</td><td>The round already owns a fresh fence, so renewed identity is legitimate and produces the simplest new review subject. Merging develop inwards stays a documented exception; cherry-pick stays behind a reviewed salvage manifest.</td><td>W37 &sect;4</td></tr>
+<tr><td>2026-08-21</td><td>No plane restart without fifteen minutes of proven silence: no claims, no live workers, aged pendings. Compare release trees before forming topology theories.</td><td>Thirty-second measurement windows plus eager restarts produced apparent silence and killed in-flight work. A probe result once matched the expected failure signature of a wrong theory; a tree-hash comparison would have falsified it in one command.</td><td>W42 &sect;5, W39 08-20/08-21</td></tr>
+<tr><td>2026-08-26</td><td>The acceptance and requeue loop moves onto the platform as a backend hosted service that is on by default; the session orchestrator becomes an observer, not a mover.</td><td>The session-bound tick died with its session five times over thirteen days; one manual tick cleared thirty-eight cards in a single pass, which proves the work was deterministic all along.</td><td>W42 &sect;3, W39 08-26</td></tr>
+<tr><td>2026-09-12</td><td>Windows stops being an execution world. Worktree preparation is a script owned by the project that handles versions, dependencies and caches; a container image is an optional accelerator, not an obligation; an orchestrator diagnoses, heals the pipeline and stabilises tests.</td><td>The same commit had no defined result across three worlds, so a green gate was a sample rather than a proof. The consequences per project and the migration path are owned by AGT-W51.</td><td>W50 D1</td></tr>
+<tr><td>2026-09-12</td><td>Four measures enter the weekly fleet report: review attempts per card, share of cards charged for an environment fault, operator interventions per week, and review duration p90.</td><td>Without measurement, "sustainable" stays a feeling.</td><td>W50 D5</td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<section id="s3" data-concept-section="alternatives" data-document-section="alternatives">
+<h2><span class="no">&sect;3</span> Alternatives</h2>
+
+<p>The Git policy per stage is settled (&sect;2). What remains genuinely open is the shape of the robustness programme: which property from Fig. 1 is attacked first, and therefore what the chain looks like in three months. Three candidates, deliberately different in approach.</p>
+
+<div class="tablewrap">
+<table>
+<thead><tr><th>&nbsp;</th><th>A &middot; Diagnosis and breaker first</th><th>B &middot; Isolation first</th><th>C &middot; Keep hardening per signature</th></tr></thead>
+<tbody>
+<tr><th>What it builds first</th>
+<td>A mandatory classification contract before any failure charges a card: baseline comparison on the integration state, one clean repeat run without a restored cache, fingerprint comparison across cards. Plus a fleet-wide breaker on cause fingerprints and a flaky quarantine with an expiry date.</td>
+<td>The preparation script and per-run isolation from AGT-W51, applied to gates first and then to runs, with content-addressed write-once caches and a declared environment.</td>
+<td>The status quo: each new incident adds one more environment signature, one more retry rule, one more visibility surface.</td></tr>
+<tr><th>Properties removed</th>
+<td>M2 outright and M3 outright; M1 only where a diagnosis discards the state that caused the fault.</td>
+<td>M1 and M4 outright, and the container boundary happens to bound child processes, which helps M5.</td>
+<td>None. Each fix removes one class and leaves the property that produced it.</td></tr>
+<tr><th>Effect on the measured waste</th>
+<td>Every incident of the last two weeks would have stopped after one to three attempts instead of running for days.</td>
+<td>The largest lever on reproducibility, but it does not by itself stop a wrong classification from charging a card or a loop from repeating.</td>
+<td>The signature list can never be complete, so the next unknown signature lands as a product fault again.</td></tr>
+<tr><th>Cost</th><td>Small. Baseline cache, cache eviction and fingerprints already exist; what is new is the mandatory order. Days.</td><td>Large. Operational decisions per host and per project, already scoped as a migration in AGT-W51. Weeks.</td><td>Continuous and unbounded, paid per incident.</td></tr>
+<tr><th>Risk</th><td>Doubled gate runtime in the failure case, and the baseline must be kept reliably green or everything becomes "environment". A fingerprint that is too coarse merges distinct faults; a threshold that is too low halts the fleet. Both are parameters, not rebuilds.</td><td>Evidence that genuinely needs a specific world needs an executor profile that can provide it. Until the migration lands the operator stays the safety net.</td><td>Accepts that the operator remains the safety net permanently. The roughly twenty-five recipes stay in a session memory rather than in the product.</td></tr>
+<tr><th>Fit with what is already decided</th><td>Complements AGT-W51 rather than competing with it, and supplies the classification that a healing orchestrator needs before it may act.</td><td>Already decided in direction by D1 on 2026-09-12; the question here is only whether it comes first.</td><td>Contradicts the 2026-09-12 decision.</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="box">
+<p><b>The three are not exclusive.</b> A and B are sequenced, not chosen against each other; C is the outcome if neither is sequenced. The decision the order forces is which one pays first, and that matters because a healing orchestrator that acts on a wrong classification heals into the void.</p>
+</div>
+</section>
+
+<section id="s4" data-concept-section="recommendation" data-document-section="recommendation">
+<h2><span class="no">&sect;4</span> Recommendation</h2>
+
+<div class="box accent">
+<p><b>A, then B, then lifecycle ownership.</b> Build the diagnosis contract and the cause breaker now, because they are days of work against measurable daily waste; run the isolation migration owned by AGT-W51 next, because it is the only thing that makes a green gate a proof; then give processes, worktrees and leases an owner and turn the operator recipes into executable healings that the watcher may run inside declared authority limits.</p>
+</div>
+
+<p><b>Keep the hybrid Git policy and make its boundary explicit.</b> The stage boundary from &sect;2 is the load-bearing part: renew identity on requeue, preserve it at canonical integration, never mutate after the gate. Nothing in the robustness programme is allowed to weaken it. Changing canonical integration to squash or to an unmapped rebase would require a new acceptance evidence contract first, and that contract does not exist.</p>
+
+<p><b>Move the first recoverable bounce out of the session.</b> A reviewed card in <code>conflict-skipped</code> is a typed, structured situation: branch, result ref, failure code, epoch, attempt, conflict paths and retry count are all already recorded. No model is needed to append a precise steer, supersede the failed generation, pick the safe mechanical route and queue the card ready. Give that one deterministic round per operator review epoch to a restart-safe backend rule built on the services that already exist, and reserve a strong guardian for the second round, where the evidence is contradictory or the conflict is genuinely semantic. Model authority ends at authoring the explanation and the proposed steer; the lane change and the Git mutation stay with pure policy.</p>
+
+<p><b>Make the board status model honest in the same pass.</b> The diagnosis contract decides whether a failure is the delivery's fault; the status contract decides whether a card may claim it delivered. Both are the same question asked at different stages, and neither survives alone: a correct classification that still lets an unintegrated card reach "Delivered" has not removed the class of error this chain produces.</p>
+
+<p><b>Sequencing note.</b> Wave one is buildable in days and would have bounded every incident of the last two weeks to a single attempt. Wave two carries the operational decisions and belongs to AGT-W51. Wave three presupposes that situations are recognised correctly, which is exactly what wave one delivers. Throughput work, guard tests first and the full suite only after they pass, runs in parallel and its larger form is decided in the Gates Dossier, not here.</p>
+</section>
+
+<section id="s5" data-concept-section="evidence" data-document-section="evidence">
+<h2><span class="no">&sect;5</span> Evidence</h2>
+
+<p>Everything here is dated and still holds at the time of writing. Measurements are kept as measurements of their window, not as claims about today; where a number has since been acted on, the action is named.</p>
+
+<h3>E1 &middot; Repetition is the largest single consumer of the chain</h3>
+<p>Window 2026-08-13 to 2026-09-12, all projects, from <code>.metadata/attempt-authority.json</code> with the task-folder gate logs and the backend log.</p>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Measure</th><th class="n">Value</th><th>Reading</th></tr></thead>
+<tbody>
+<tr><td>Review attempts</td><td class="n">1,077</td><td>for 157 cards, so 6.9 attempts per card; in Agent Studio 320 attempts for 120 cards, 61 of them with more than one attempt</td></tr>
+<tr><td>Attempts with <code>PreparationFailed</code></td><td class="n">412</td><td>408 of them identical: CAC-18, <code>npm ci</code> exit 127, 411 attempts over six days with nothing stopping them</td></tr>
+<tr><td>Attempts with <code>ToolUnavailable</code></td><td class="n">59</td><td>09-07 to 09-10, review model withdrawn by its provider; 38 hours until discovery, two fleet standstills</td></tr>
+<tr><td>Gate results "new test failures"</td><td class="n">166</td><td>containing 344 individual mentions of exactly five tests already known to be flaky</td></tr>
+<tr><td>Post-processing "build-test-gate failed"</td><td class="n">588</td><td>across all task folders; one project failed three times identically on a dependency cache entry that had been incomplete since 08-11</td></tr>
+<tr><td>Review duration, Agent Studio since 09-01</td><td class="n">100 / 366 / 473 min</td><td>median, p90, maximum, with four parallel full suites on one host while leases run 27 minutes</td></tr>
+<tr><td>Parked cards in <code>5e-escalated</code></td><td class="n">11</td><td>nine with an empty <code>reason</code>: the card does not know why it is standing still</td></tr>
+<tr><td>Operator recipes in session memory</td><td class="n">~25</td><td>each a manual intervention, none of them in the product</td></tr>
+</tbody>
+</table>
+</div>
+<p>Two readings survive the window. The larger part of the review layer's work is repetition without new information, and the fleet holds because a human intervenes daily.</p>
+
+<h3>E2 &middot; The retry tax is measurable in tokens, not only in latency</h3>
+<p>Window 2026-08-11 23:52:46 CEST to 2026-08-12 09:24:37 CEST, anchored on the first telemetry events reporting 68% and 95% quota. 8,540 <code>token_count</code> events reported 1,091,939,651 processed tokens, priced at an API-list equivalent of $743.64 for comparison only.</p>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Class</th><th class="n">Sessions</th><th class="n">Total tokens</th><th class="n">Quota points</th></tr></thead>
+<tbody>
+<tr><td>First-run coding, real work</td><td class="n">13</td><td class="n">169,225,381</td><td class="n">3</td></tr>
+<tr><td>Conflict and rebase re-rounds, retry tax</td><td class="n">61</td><td class="n">834,052,877</td><td class="n">22</td></tr>
+<tr><td>Aborted, duplicate and probe runs, overhead</td><td class="n">7</td><td class="n">88,661,393</td><td class="n">2</td></tr>
+<tr><td>First-run reviews, deterministic shell</td><td class="n">0</td><td class="n">0</td><td class="n">0</td></tr>
+<tr><td><b>Total</b></td><td class="n"><b>81</b></td><td class="n"><b>1,091,939,651</b></td><td class="n"><b>27</b></td></tr>
+</tbody>
+</table>
+</div>
+<p>11.1% of the night was useful first-run coding and 88.9% was retry or aborted-run tax. The shape is the problem, not only the size: a cold rebase-only round had a median of 12,112,130 tokens and 1,258.8 seconds, which is 3.9% more tokens and 26.1% longer than a first coding run. A mechanical continuation that costs more than the original work is the wrong shape. Reviews executed deterministic commands and consumed no model tokens at all, so review retries are host time and latency, not quota.</p>
+<p class="muted">The saving estimated for a resumed mechanical round, 17.6 to 19.8 quota points per week against a 1.211 million token ceiling, is an engineering target to validate in a pilot, not a demonstrated property of the CLI. Session continuation and model substitution overlap and must not be added together.</p>
+
+<h3>E3 &middot; A card can be completed and have delivered nothing</h3>
+<p>Incident of 2026-08-09, reconstructed from task folders, the backend log and Git history. Two deliveries existed only on salvage fences. One of them, a gate fix, was set to <code>6-completed</code> after the runner reported an incomplete result envelope; thirty-eight minutes later the accepted-integration worker processed it with outcome <code>NoTaskBranch</code> in 1,075 ms and reported nothing back to the card, which stayed completed with <code>integration=null</code>. Neither break alone would have done this: the envelope failure without the silent acceptance would have been a visible escalation, and the silent acceptance without the envelope failure would have found a branch and integrated normally.</p>
+<p>The concealment mattered as much as the breaks. The accepted-integration backstop repeated the failed integrations every fifteen minutes while reporting <code>integrated N accepted delivery(s)</code> with a counter rising to ten, because "integrated" also counted <code>AlreadyMerged</code> repeats and failed attempts. Anyone reading the log saw normal operation.</p>
+<p>What worked: the salvage fence push before teardown preserved all four work states without loss, and the escalation categories named the missing envelope fields exactly. Recovery was two card-scoped merges, <code>6ea7f7978</code> and <code>720129404</code>, verified with a baseline counter-run that proved no new breaks. The three hardening cards AGT-2543 (acceptance invariant), AGT-2544 (envelope duty with automatic requeue and the fence push as contract) and AGT-2545 (honest telemetry with an alarm after thirty minutes without successful integration) each close one of the three.</p>
+
+<h3>E4 &middot; Eleven failure classes from live operation</h3>
+<p>Recorded 2026-08-27 over the outage waves from 08-13 to 08-26. Almost every fix in the last column is either "make the silence visible" or "take the moving logic out of the session".</p>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Class</th><th>Core cause</th><th>Hardening</th></tr></thead>
+<tbody>
+<tr><td>Reverse-tunnel deaths</td><td>The control plane is a roaming laptop that sleeps; amplified by a power policy that stops the keeper on battery, an unguarded ssh call that turned a failed connect into a silent script death, and a zombie-port cleanup that was a no-op because the agent may not run <code>sudo ss</code>.</td><td>Guarded ssh, exit-code logging with rotation, no-sudo zombie kill, server-side <code>ClientAliveInterval</code>; watchdog registration and the power policy remain operator actions.</td></tr>
+<tr><td>Session-bound acceptance loop</td><td>The accept, requeue and train tick dies with its session; recreating the cron per session fails every night.</td><td>Platform acceptance rail as a hosted service, on by default; session becomes observer.</td></tr>
+<tr><td>Wedged review workers</td><td>The reviewer CLI never attaches, and cancelled runs wedge a single-reader queue that has neither watchdog nor reclaim.</td><td>Watchdog and queue reclaim, catalogue support for the current model family, sensor scaling.</td></tr>
+<tr><td>Restart silence and lease churn</td><td>Thirty-second measurement windows plus eager restarts kill live workers and orphan them into lease-recovery requeues; startup leaves aged report-pendings behind.</td><td>The fifteen-minute silence rule, startup reconciliation, automatic requeue as the net.</td></tr>
+<tr><td>Hollow restart</td><td>The stop step misses the listener, so the old API process is never replaced and keeps serving; config patches and rollouts appear applied and are not, and the stale process can hold locks that fail the next build.</td><td>The restart must replace the process, with a self-check; assert a new process start time after every restart.</td></tr>
+<tr><td>Vanishing CLI shims</td><td>An npm auto-update removed the bin shims while leaving the package in place, twice.</td><td>Shim detection with bounded auto-repair and visibility.</td></tr>
+<tr><td>Provider limit storm</td><td>One shared account for the whole fleet: an account limit fails every card of that provider, and because failures escalate it produces an escalation storm; the breaker then pauses with an empty reason and does not resume itself.</td><td>Limit-aware runner behaviour with <code>quotaWait</code> and a banner instead of escalation, visible breaker reasons, automatic resume at reset.</td></tr>
+<tr><td>Silent gate starvation</td><td>A rewritten build profile reset its status to <code>declared</code>, so the gate closed auto-pickup for every card of the project for five days with <code>lastRejection=null</code> and no banner. The local validation dry run can never go green because it runs in a workspace without the project sources.</td><td>Gate starvation must be visible, validation must run where the gate runs, and edit semantics must not silently close a gate.</td></tr>
+<tr><td>Requirement-fit carousel</td><td>The prompt demanded all recommendations while one delivery carries one slice, so the aspect could never pass: block, requeue, re-code, same block. 17 of 19 auto-review cards were in this loop while the review layer itself was healthy.</td><td>Requirement-fit may not demand more than the card's deliverable scope; the same aspect blocking across N rounds escalates; such cards are cut one per slice.</td></tr>
+<tr><td>"Delivered" that is not live</td><td>Integration is not deployment. A runner-side fix is live only once a runner release is deployed; conflict-skipped integrations report delivered without ever reaching stable, and concept-only cards get counted as delivered.</td><td>A read-only live verification sweep found 4 of 8 recent deliveries not implemented; "runner deploy due?" became part of the tick checklist.</td></tr>
+<tr><td>World-specific product bugs</td><td>All six failures dismissed as environmental were real platform defects on one world: a path-length limit killing <code>rev-list</code> on long refs, connection pooling holding an index file open so backups failed silently, a two-rename atomic-write window dropping writes under readers, and a review slot admission that required a file that does not exist on that platform and therefore stayed closed forever.</td><td>Six direct product fixes; the full suite became honest at 5547/5576.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3>E5 &middot; Recurring classes from the rolling supervision log</h3>
+<p>The live improvement log ran from 2026-08-18 under a discipline worth keeping: every observation is reconciled against in-flight cards and existing Dossiers before it may become work, and a card is cut on the second sighting, not the first. Synthesised, the log produced eight recurring shapes rather than a list of incidents.</p>
+<ol>
+<li><b>Session-bound control loops die with their session.</b> Five sightings across thirteen days before the platform rail was cut. The band-aid, recreating the cron each session, failed every night.</li>
+<li><b>Transport death on the control plane.</b> Five tunnel deaths, root-caused on 08-23 and then immediately re-broken by the hardening itself, because a port check exited non-zero when the port was free and the guard read that as "remote unreachable".</li>
+<li><b>Silent gate closure.</b> A settings edit closed auto-pickup for a whole project for five days with no banner and no rejection reason.</li>
+<li><b>Hollow restarts and stale binaries.</b> A restart that never replaced the process, and an integrated fix that stayed invisible because the runner binary on the host was ten days old.</li>
+<li><b>Shared-resource exhaustion.</b> One account limit produced 32 escalations and a zero-claim morning, and the breaker that paused carried no reason.</li>
+<li><b>Unbounded loops against an unachievable gate.</b> A review aspect that no single delivery could satisfy kept post-processing full while the review layer was healthy.</li>
+<li><b>Integration that never reaches the remote.</b> 705 claims and 0 acceptances in one night because the merge into the local integration branch succeeded while the push was skipped as lineage-blocked, so acceptance read the remote and saw <code>pending</code> forever.</li>
+<li><b>Half-installed tooling.</b> Package present, shims gone, twice.</li>
+</ol>
+<p>The log also measured the carousel rather than describing it. Over thirty days in Agent Studio: 5,842 lane moves, 1,187 of them backward across 259 tasks; operator requeue 354 moves amounting to 95 days of cumulative rework at a median of 1.9 hours each; escalation requeue 187 moves, lease recovery 263, quality loop 163, gate failure 112, integration recovery 42. Cycle-time medians from the same period put post-processing wait at 1.2 days and human review at 2.1 days against a lead time of 3.8 days. Most rework is the chain reacting to its own movement, and the two dominant waits are both queues in front of a human, not compute.</p>
+<p class="muted">Cause attribution in that taxonomy is inferred from neighbouring ledger rows. Writing cause and reason onto the lane-change rows would make it exact; until then treat the split between categories as indicative and the totals as solid.</p>
+
+<h3>E6 &middot; The status model the chain runs on</h3>
+<p>Inventory of 2026-07-31. Twelve persisted lane values: eight regular lanes, the escalation lane, and three additive lanes of which one is retired, one is drain-only and one has no productive writer at all. The central state machine validates only that the target lane is known, so any lane is technically reachable from any other and no domain edge matrix exists. Acceptance happens before integration: the lane change lands first, while merge, gate and push run afterwards in the background and cannot take the visible completion back. Archive has no integration guard, so an operator or management sweep can archive cards that were never integrated.</p>
+<p>The vocabulary that a guarded model needs is already drafted: <code>integrated</code> and <code>not-applicable</code> permit review, accept and archive; <code>pending</code> and <code>partial</code> permit none of them; <code>no-branch</code>, <code>conflict</code>, <code>gate-failed</code> and <code>error</code> route to escalation and allow archive only by explicit override. What is missing is not the vocabulary but the decision about where the guard sits, which is why it appears in &sect;6 rather than &sect;2.</p>
+</section>
+
+<section id="s6" data-concept-section="open-decisions" data-document-section="open-decisions">
+<h2><span class="no">&sect;6</span> Open decisions</h2>
+
+<p>Seven choices are still open on this chain. Each one arrived here unsettled from its source Dossier and each is stated with the options as they stand today.</p>
+
+<div class="decision" data-decision-id="first-bounce-owner" data-decision-kind="single" data-decision-label="Owner of the first bounce">
+  <h3>D1 &middot; Who owns the first recoverable <code>conflict-skipped</code> bounce?</h3>
+  <label data-option-id="platform-rule" data-option-label="A &middot; Deterministic backend rule, one round per operator review epoch (recommendation)"><input type="radio" name="first-bounce-owner" value="platform-rule"><span><b>A &middot; Deterministic backend rule</b><span class="d">One automatic round per operator review epoch, built on the existing recovery, supersession, requeue and timeline services. Restart replays the idempotent obligation, so the queue no longer depends on a session being alive. It does not resolve content, edit Git, waive a gate or requeue a card on hold.</span></span></label>
+  <label data-option-id="session" data-option-label="B &middot; Keep the session orchestrator as owner"><input type="radio" name="first-bounce-owner" value="session"><span><b>B &middot; Session orchestrator keeps it</b><span class="d">Adaptable and available today, but session availability is queue availability. On one night seventeen eligible cards accumulated because the session stopped.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="guardian-trigger" data-decision-kind="single" data-decision-label="Guardian escalation trigger">
+  <h3>D2 &middot; When does a strong guardian analyse instead of retrying?</h3>
+  <label data-option-id="on-repeat" data-option-label="A &middot; On repetition, semantic conflict or contradictory evidence (recommendation)"><input type="radio" name="guardian-trigger" value="on-repeat"><span><b>A &middot; On repeat and on genuine ambiguity</b><span class="d">One strong call per evidence fingerprint, one targeted retry only if pure policy permits it, then human review. The model authors the diagnosis and the proposed steer, never the lane change or the Git mutation.</span></span></label>
+  <label data-option-id="straight-to-human" data-option-label="B &middot; Route repeats straight to human review"><input type="radio" name="guardian-trigger" value="straight-to-human"><span><b>B &middot; Straight to human review on repeat</b><span class="d">Cheaper and simpler; the human receives no prepared evidence pack and the generic template is simply not repeated.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="batch-member-assembly" data-decision-kind="single" data-decision-label="Batch member assembly shape">
+  <h3>D3 &middot; How does a batch candidate assemble its members?</h3>
+  <p class="muted">The batch gate itself is decided in the Gates Dossier. Only the assembly shape belongs here, because it is the one place where batching touches delivery attribution.</p>
+  <label data-option-id="shadow-compare" data-option-label="A &middot; Shadow-compare replay against prebuilt member merges before fixing one (recommendation)"><input type="radio" name="batch-member-assembly" value="shadow-compare"><span><b>A &middot; Measure both shapes in shadow mode first</b><span class="d">Mapped rebase replay gives a compact candidate but spends attribution complexity on every member; prebuilt no-fast-forward member merges preserve the original SHAs and make acceptance simpler at the cost of a more branched candidate.</span></span></label>
+  <label data-option-id="fix-replay" data-option-label="B &middot; Fix rebase replay now and treat its replacement map as a launch-blocking evidence contract"><input type="radio" name="batch-member-assembly" value="fix-replay"><span><b>B &middot; Fix replay now</b><span class="d">No shadow phase, but the per-member original-to-replacement map becomes a launch blocker that the batch evidence contract must own completely.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="flaky-policy" data-decision-kind="single" data-decision-label="Flaky test policy">
+  <h3>D4 &middot; How are flaky tests handled?</h3>
+  <label data-option-id="quarantine" data-option-label="A &middot; Quarantine with an expiry date and a card (recommendation)"><input type="radio" name="flaky-policy" value="quarantine"><span><b>A &middot; Quarantine with expiry and a card</b><span class="d">They stop blocking deliveries but do not disappear: after the expiry they are armed again or the card has resolved them. Five known-flaky tests produced 344 individual failure mentions in one month.</span></span></label>
+  <label data-option-id="remove" data-option-label="B &middot; Remove them"><input type="radio" name="flaky-policy" value="remove"><span><b>B &middot; Remove them</b><span class="d">Fast, and it loses the coverage they were written for.</span></span></label>
+  <label data-option-id="keep-armed" data-option-label="C &middot; Keep them armed and let the clean repeat run decide per case"><input type="radio" name="flaky-policy" value="keep-armed"><span><b>C &middot; Keep them armed</b><span class="d">The diagnosis contract's second run decides case by case; correct, and it pays gate time on every occurrence.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="integrated-only-review" data-decision-kind="single" data-decision-label="Integrated-only human review">
+  <h3>D5 &middot; May an integrable but not yet integrated delivery enter human review?</h3>
+  <label data-option-id="integrated-only" data-option-label="A &middot; No, the card stays in auto-review until integrated (recommendation)"><input type="radio" name="integrated-only-review" value="integrated-only"><span><b>A &middot; Integrated-only human review</b><span class="d">The card stays in <code>4-auto-review</code> in an integration phase; on <code>integrated</code> it advances, on conflict, gate failure or unrecoverable error it escalates with a category and a recovery action. Accept then confirms an already integrated state instead of triggering the merge, and archive becomes fail-closed with a privileged, audited per-card override. A workspace-wide switch is acceptable for the migration, never a silent per-card exception.</span></span></label>
+  <label data-option-id="badge-and-block" data-option-label="B &middot; Review allowed, accept blocked by a hard badge"><input type="radio" name="integrated-only-review" value="badge-and-block"><span><b>B &middot; Review allowed, accept blocked</b><span class="d">Less process rework, but human review stays semantically mixed and full of technically unfinished deliveries.</span></span></label>
+  <label data-option-id="warn-after-accept" data-option-label="C &middot; Today's behaviour: warn after accept"><input type="radio" name="integrated-only-review" value="warn-after-accept"><span><b>C &middot; Keep today's behaviour</b><span class="d">Accept first, then a pending tag, a background merge and a backstop. "Delivered" and archive remain reachable before the delivery is proven; that is the documented loss risk.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="pull-request-projects" data-decision-kind="single" data-decision-label="Pull-request projects under integrated-only review">
+  <h3>D6 &middot; How do pull-request projects fit an integrated-only review?</h3>
+  <label data-option-id="pr-surface" data-option-label="A &middot; Pull-request approval is a separate decision surface before human review (recommendation)"><input type="radio" name="pull-request-projects" value="pr-surface"><span><b>A &middot; Separate decision surface</b><span class="d">Approval happens on the pull request; human review begins after the merge. The integration strategy stays a project setting while lane semantics stay global.</span></span></label>
+  <label data-option-id="pr-as-gate" data-option-label="B &middot; Human review becomes the merge gate for pull-request projects"><input type="radio" name="pull-request-projects" value="pr-as-gate"><span><b>B &middot; Human review becomes the merge gate</b><span class="d">No new surface, at the price of one lane meaning two different things depending on the project.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="mechanical-round-execution" data-decision-kind="single" data-decision-label="Execution of a mechanical rebase round">
+  <h3>D7 &middot; How is a mechanical rebase round executed?</h3>
+  <label data-option-id="resume-session" data-option-label="A &middot; Pilot session continuation with a token ceiling (recommendation)"><input type="radio" name="mechanical-round-execution" value="resume-session"><span><b>A &middot; Resume the prior session, bounded</b><span class="d">Resume only when task key, provider, repository, worktree path and branch lineage still match; pass a compact delta of base SHA, conflict paths, steer and verification plan rather than the original prompt; cap the round at 1.211 million tokens; any mismatch is a typed fresh-run decision. Estimated 17.6 to 19.8 quota points per week on the measured workload.</span></span></label>
+  <label data-option-id="platform-rebase" data-option-label="B &middot; Platform-owned clean rebase with no model at all"><input type="radio" name="mechanical-round-execution" value="platform-rebase"><span><b>B &middot; Platform-owned rebase, no model</b><span class="d">A cleanly provable rebase needs no agent; only semantic conflicts route back to a policy-qualified model. Upper bound of 22 points, overlapping with A. The two savings must not be added.</span></span></label>
+  <label data-option-id="cold-rounds" data-option-label="C &middot; Keep cold rounds"><input type="radio" name="mechanical-round-execution" value="cold-rounds"><span><b>C &middot; Keep cold rounds</b><span class="d">No new machinery, and the measured shape stands: a mechanical continuation costs 3.9% more tokens and 26.1% more time than the original work.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="box warn">
+<p><b>Route and floor constraint on all of the above.</b> A mechanical Git instruction can still touch a security boundary or a subtle persistent-state conflict, so a blanket downgrade is unsafe. Any automation computes the policy floor from the model routing policy first and only then applies a cheaper thinking level, never below a hard floor and never over an explicit operator pin. Every action receipt records the previous route, the selected route, the reason, the policy version and whether a pin was present.</p>
+</div>
+</section>
+
+<section id="s7">
+<h2><span class="no">&sect;7</span> Consolidation record</h2>
+
+<p>This Dossier replaces six entries on the current list and takes the durable part of a seventh. The mapping is recorded so that the sources stay readable in History and nothing has to be reconstructed from them.</p>
+
+<div class="tablewrap">
+<table>
+<thead><tr><th>Source</th><th>Source section</th><th>Target section</th><th>What survives</th></tr></thead>
+<tbody>
+<tr><td rowspan="5">AGT-W37 rebase, merge and bounce steering</td><td>&sect;1 attribution lens, &sect;2 current hybrid, &sect;3 SHA attribution</td><td>&sect;1, &sect;2</td><td>The stage boundary and the merge-first invariant, as the two boundaries and four dated decisions</td></tr>
+<tr><td>&sect;4 delivery reconciliation, &sect;5 integration choices, &sect;6 decision table</td><td>&sect;2</td><td>Rebase on a fresh fence, merge first at integration, squash rejected, exact-SHA promotion</td></tr>
+<tr><td>&sect;7 batch gate interaction</td><td>&sect;6 D3</td><td>The member assembly question only; the batch gate itself moves to the Gates Dossier</td></tr>
+<tr><td>&sect;8 bounce steering today, &sect;9 automation scenarios, &sect;10 route policy, &sect;11 migration slices</td><td>&sect;4, &sect;6 D1 and D2, route box</td><td>Deterministic rail versus session, guardian escalation tier, floor-aware routing; the slice plan moves into the implementation card</td></tr>
+<tr><td>&sect;12 operator choices</td><td>&sect;6 D1, D2, D3</td><td>The three unsettled questions with their current options</td></tr>
+<tr><td rowspan="4">AGT-W50 delivery chain robustness</td><td>&sect;1 findings in numbers</td><td>&sect;5 E1</td><td>The full measurement table for 08-13 to 09-12</td></tr>
+<tr><td>&sect;2 five patterns, &sect;3 why the previous fixes are not enough</td><td>&sect;1 figure, &sect;3</td><td>M1 to M5 as the chips in Fig. 1 and as the rows of the alternatives table</td></tr>
+<tr><td>&sect;4 directions, &sect;5 assessment, &sect;6 recommendation and order</td><td>&sect;3, &sect;4</td><td>Diagnosis contract, cause breaker, isolation, lifecycle ownership, throughput, and the wave order</td></tr>
+<tr><td>&sect;7 measures, &sect;8 decisions, &sect;9 card cut</td><td>&sect;2, &sect;6 D4, implementation</td><td>The confirmed four measures, the open flaky policy, the wave-one slices</td></tr>
+<tr><td>AGT-W42 operational resilience</td><td>&sect;1 control loop, &sect;2 to &sect;12 the eleven classes, &sect;13 overview</td><td>&sect;1, &sect;5 E4</td><td>The control-plane and substrate bands of Fig. 1 and the eleven classes as one table of cause and hardening</td></tr>
+<tr><td rowspan="2">AGT-W23 unverified deliveries</td><td>&sect;1 sequence, &sect;2 breaks, &sect;3 salvage mechanics</td><td>&sect;5 E3</td><td>The incident reconstruction, the concealment by telemetry, and the fence push as the mechanism that worked</td></tr>
+<tr><td>&sect;4 immediate measures, &sect;5 hardening, &sect;6 criteria</td><td>&sect;2, &sect;5 E3</td><td>AGT-2543, AGT-2544 and AGT-2545 as the invariants that close each break</td></tr>
+<tr><td rowspan="2">AGT-W44 token and retry tax</td><td>&sect;01 accounting boundary, &sect;02 split, &sect;03 unit economics</td><td>&sect;5 E2</td><td>The 27-point split, the unit medians and the cold-round shape, as dated evidence of that window</td></tr>
+<tr><td>&sect;05 session continuation, &sect;07 savings table</td><td>&sect;6 D7</td><td>Resume conditions, the token ceiling and the counterfactual range as an open option</td></tr>
+<tr><td rowspan="2">AGT-W3 board status model</td><td>&sect;4 lane inventory, &sect;5 transition map, &sect;7 field findings</td><td>&sect;5 E6</td><td>The twelve lane values, any-to-any reachability, accept before integration, archive without a guard</td></tr>
+<tr><td>&sect;9 alternatives, &sect;10 target rules, &sect;17 E1 to E4 and E3 on pull requests</td><td>&sect;2, &sect;6 D5 and D6</td><td>Target-branch presence as the truth rule (decided) and the review, accept, archive and pull-request guards (open)</td></tr>
+<tr><td>AGT-W39 live improvement log</td><td>Rolling entries 08-18 to 08-28</td><td>&sect;5 E5</td><td>Eight recurring shapes, the second-sighting discipline, and the measured lane-transition and cycle-time figures</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3>Dropped on purpose</h3>
+<p>Dated position snapshots that describe a state rather than a rule: card-by-card status lists, per-incident release identifiers, the running "open work" schedules of W23 &sect;7 and the per-card hardening inventories of W42, the full 19-point breakpoint catalogue and the edge-case register of W3, and the per-session token ledger rows of W44 whose totals are reproduced above. The argument that merge and rebase are asymmetric is made once, in &sect;1 and &sect;2, instead of three times. The container-versus-preparation-script debate is not repeated at all; it was decided on 2026-09-12 and its consequences belong to AGT-W51.</p>
+
+<h3>Supersession</h3>
+<p>The six sources become History with this Dossier as their replacement, and the rolling log is marked historical. Per the operator's note on D2, a Dossier superseded by a theme Dossier needs no separate archive artefact because its content lives here; the artefact rule applies only to historical Dossiers whose knowledge would otherwise have no home. The log's durable knowledge has a home in &sect;5 E5, so it needs no separate artefact either.</p>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Descriptor</th><th>Verdict</th><th>Superseded by</th><th>Artefact</th></tr></thead>
+<tbody>
+<tr><td>AGT-W3 board status model</td><td>superseded</td><td>AGT-W57</td><td>not needed, content in &sect;2, &sect;5 E6, &sect;6 D5 and D6</td></tr>
+<tr><td>AGT-W23 unverified deliveries</td><td>superseded</td><td>AGT-W57</td><td>not needed, content in &sect;2 and &sect;5 E3</td></tr>
+<tr><td>AGT-W37 rebase, merge and bounce steering</td><td>superseded</td><td>AGT-W57</td><td>not needed, content in &sect;1, &sect;2, &sect;4, &sect;6 D1 to D3</td></tr>
+<tr><td>AGT-W42 operational resilience</td><td>superseded</td><td>AGT-W57</td><td>not needed, content in &sect;1 and &sect;5 E4</td></tr>
+<tr><td>AGT-W44 token and retry tax</td><td>superseded</td><td>AGT-W57</td><td>not needed, content in &sect;5 E2 and &sect;6 D7</td></tr>
+<tr><td>AGT-W50 delivery chain robustness</td><td>superseded</td><td>AGT-W57</td><td>not needed, content in &sect;1, &sect;3, &sect;4, &sect;5 E1, &sect;6 D4</td></tr>
+<tr><td>AGT-W39 live improvement log</td><td>historical</td><td>none</td><td>not needed, the recurring classes are synthesised in &sect;5 E5</td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<section id="s8">
+<h2><span class="no">&sect;</span> Sources</h2>
+<ul>
+<li>Merged Dossiers: <code>docs/operations/rebase-merge-and-steering</code> (AGT-W37), <code>docs/operations/lieferkette-robustheit</code> (AGT-W50), <code>docs/operations/operational-resilience</code> (AGT-W42), <code>docs/operations/unverifizierte-lieferungen</code> (AGT-W23), <code>docs/operations/token-retry-tax-analysis</code> (AGT-W44), <code>docs/operations/board-statusmodell-ist-soll</code> (AGT-W3), <code>docs/operations/live-improvement-log</code> (AGT-W39).</li>
+<li>Consolidation mandate: <code>docs/operations/dossier-consolidation-and-area-tags</code> (AGT-W55) &sect;3 consolidation map and &sect;4 archiving table, with the operator decisions D1 and D2 of 2026-09-13 07:53 UTC; the relevance matrix in <code>docs/operations/dossier-review-2026-09</code> (AGT-W53).</li>
+<li>Neighbouring decisions that stay separate and are referenced rather than copied: AGT-W51 isolated execution and the healing orchestrator, AGT-W36 batch gate, AGT-W18 remote gate, AGT-W15 global orchestrator watcher, AGT-W49 operations server.</li>
+<li>Measurement sources named by the merged Dossiers: the workspace attempt-authority ledger for 2026-08-13 to 2026-09-12, task-folder gate logs and post-processing outcome records, the backend log, the rollout session ledgers for 2026-08-11 and 2026-08-12, and the read-only live verification sweep of 2026-08-25.</li>
+<li>Policy sources: <code>docs/system/domains/model-routing-policy.md</code> for hard floors and the rule not to promote a stale-base or environmental reissue; <code>docs/operations/git/commit-push-doctrine.md</code> and the ADR archive for the integration and acceptance contract.</li>
+</ul>
+</section>
+<!-- agent-studio:implementation-section:start -->
+<section id="implementation" data-document-section="implementation">
+  <h2><span class="no">&sect;</span> Implementation</h2>
+  <p>Delivery slices append their current implementation status here.</p>
+  <ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<!-- agent-studio:implementation-log:end -->
+  </ol>
+</section>
+<!-- agent-studio:implementation-section:end -->
+</main>
+</body>
+</html>

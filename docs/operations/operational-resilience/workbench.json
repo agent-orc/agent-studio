@@ -4,9 +4,9 @@
   "title": "Operative Resilienz",
   "summary": "Synthese-Dossier zur operativen Resilienz einer selbstfahrenden Agenten-Fleet: elf Ausfallklassen aus dem Live-Betrieb, jeweils mit Symptom, Ursache, Härtung und zuständiger Karte. Verbindende These: Fleet-Ausfälle sind fast immer still - das Symptom heißt fast immer 'System appears stalled'. Enthält ein Regelkreis-Diagramm (deliver -> gate -> review -> integrate -> accept) mit Markierung, wo jede Klasse zuschlägt, eine Symptom-Ursache-Fix-Tabelle und Querverweise auf die Quell-Dossiers sowie den öffentlichen Concept-Doc.",
   "entrypoint": "index.html",
-  "status": "decided",
+  "status": "documented",
   "phase": "informational",
-  "updatedAt": "2026-08-27T00:00:00Z",
+  "updatedAt": "2026-09-14T18:43:49Z",
   "sourceTaskKeys": [],
   "relatedTaskKeys": [
     "AGT-2658",
@@ -29,14 +29,13 @@
   ],
   "key": "AGT-W42",
   "review": {
-    "verdict": "partially-superseded",
+    "verdict": "superseded",
     "supersededBy": [
-      "AGT-W50",
-      "AGT-W51"
+      "AGT-W57"
     ],
-    "reviewedAt": "2026-09-13T10:20:00Z",
+    "reviewedAt": "2026-09-14T18:43:49Z",
     "reviewedBy": "Operator",
-    "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    "note": "Consolidated into AGT-W57 Delivery chain: integration, recovery, robustness (AGT-2799), per AGT-W55 section 3 and operator decisions D1 and D2 of 2026-09-13. No separate archive artefact: the durable knowledge lives in the theme Dossier."
   },
   "reviewHistory": [
     {
@@ -48,6 +47,15 @@
       "reviewedAt": "2026-09-13T10:20:00Z",
       "reviewedBy": "Operator",
       "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    },
+    {
+      "verdict": "superseded",
+      "supersededBy": [
+        "AGT-W57"
+      ],
+      "reviewedAt": "2026-09-14T18:43:49Z",
+      "reviewedBy": "Operator",
+      "note": "Consolidated into AGT-W57 Delivery chain: integration, recovery, robustness (AGT-2799), per AGT-W55 section 3 and operator decisions D1 and D2 of 2026-09-13. No separate archive artefact: the durable knowledge lives in the theme Dossier."
     }
   ]
 }

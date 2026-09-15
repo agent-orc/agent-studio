@@ -4,10 +4,10 @@
   "title": "Lieferkette: Robustheit statt Rezepte",
   "summary": "Operator-Auftrag 12.09.2026: nachhaltige Lösung für die wiederkehrenden Ausfälle der Lieferkette. Datenbasis 13.08.–12.09.: 1.077 Review-Versuche für 157 Karten (6,9 je Karte), 411 identische Fehlversuche einer Karte ohne Abbruch, 138 rote QS-Gates aus fünf flaky Tests, Review-Dauer p90 sechs Stunden, rund 25 Operator-Rezepte als einziges Sicherheitsnetz. Fünf strukturelle Muster (veränderlicher Zustand ohne Nachweis, falsche Fehlerklasse, Wiederholung ohne Abbruch, drei Ausführungswelten, fehlender Lebenszyklus-Besitz), fünf Richtungen (Hermetik, Diagnosekontrakt, Unterbrecher auf Fingerprints, Besitz und Heilungen als Code, Durchsatz), Empfehlung in drei Wellen, vier Messgrößen, fünf Entscheidungen D1–D5, Kartenschnitt K1–K9. Abgrenzung 12.09. nachmittags: R1 und R4 sind in AGT-W51 ausgeführt (Vorbereitung, Isolation, Orchestrator, Tests/CI); hier bleiben Analyse, Welle 1 (Diagnosekontrakt, Unterbrecher, Flaky-Quarantäne, Guard zuerst), D4 und D5; D2/D3 fallen in AGT-W51 (D2/D6).",
   "entrypoint": "index.html",
-  "status": "decision-pending",
+  "status": "documented",
   "phase": "decision-ready",
   "pattern": "architecture",
-  "updatedAt": "2026-09-12T11:20:00Z",
+  "updatedAt": "2026-09-14T18:43:49Z",
   "sourceTaskKeys": [],
   "relatedTaskKeys": [
     "AGT-2780",
@@ -27,13 +27,13 @@
   ],
   "key": "AGT-W50",
   "review": {
-    "verdict": "partially-superseded",
+    "verdict": "superseded",
     "supersededBy": [
-      "AGT-W51"
+      "AGT-W57"
     ],
-    "reviewedAt": "2026-09-13T10:20:00Z",
+    "reviewedAt": "2026-09-14T18:43:49Z",
     "reviewedBy": "Operator",
-    "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    "note": "Consolidated into AGT-W57 Delivery chain: integration, recovery, robustness (AGT-2799), per AGT-W55 section 3 and operator decisions D1 and D2 of 2026-09-13. No separate archive artefact: the durable knowledge lives in the theme Dossier."
   },
   "reviewHistory": [
     {
@@ -44,6 +44,15 @@
       "reviewedAt": "2026-09-13T10:20:00Z",
       "reviewedBy": "Operator",
       "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    },
+    {
+      "verdict": "superseded",
+      "supersededBy": [
+        "AGT-W57"
+      ],
+      "reviewedAt": "2026-09-14T18:43:49Z",
+      "reviewedBy": "Operator",
+      "note": "Consolidated into AGT-W57 Delivery chain: integration, recovery, robustness (AGT-2799), per AGT-W55 section 3 and operator decisions D1 and D2 of 2026-09-13. No separate archive artefact: the durable knowledge lives in the theme Dossier."
     }
   ]
 }

@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 1,
+  "id": "delivery-chain",
+  "key": "AGT-W57",
+  "title": "Delivery chain: integration, recovery, robustness",
+  "summary": "Theme Dossier for the path from an agent's last commit to a published release. It carries the settled Git policy per stage (renew identity on a fresh fenced recovery round, preserve delivery SHAs at canonical integration with merge first, publish only the exact gated candidate to main), the board status contract that policy depends on (integration truth derived from target-branch presence, 'completed' as an evidence-bearing statement), the five structural patterns behind the incidents of 2026-08-13 to 2026-09-12, the eleven failure classes from live operation, the measured retry tax of 2026-08-11 and 2026-08-12 (11.1 percent useful first-run coding, 88.9 percent retry tax), and the recurring failure shapes synthesised from the rolling supervision log. Recommends the wave order diagnosis contract and cause breaker first, then isolation per AGT-W51, then lifecycle ownership and executable healings. Seven open decisions: first-bounce ownership, guardian trigger, batch member assembly, flaky policy, integrated-only human review, pull-request projects, and how a mechanical rebase round is executed. Consolidates AGT-W3, W23, W37, W42, W44, W50 and synthesises AGT-W39.",
+  "entrypoint": "index.html",
+  "status": "decision-pending",
+  "phase": "decision-ready",
+  "pattern": "concept",
+  "updatedAt": "2026-09-14T18:43:49Z",
+  "sourceTaskKeys": [
+    "AGT-2799"
+  ],
+  "relatedTaskKeys": [
+    "AGT-2797",
+    "AGT-2796"
+  ],
+  "implementationTasks": [
+    {
+      "title": "Diagnosis contract: classify every gate and review failure by experiment before it charges a card",
+      "promptMarkdown": "# Diagnosis contract\n\nSource of truth: docs/operations/delivery-chain (AGT-W57) sections 3, 4 and 5 E1. Replaces the signature lists in `ClassifyFailure` and in the review-grade mapping.\n\nDeliver a mandatory classification step that runs before any gate or review failure charges a card:\n\n1. **Baseline comparison.** Run the same tests on the integration state without the delivery. The baseline cache already exists; make the comparison a required step, not an option.\n2. **Clean repeat run.** One run without a restored dependency cache, on another executor when the project declares one.\n3. **Fingerprint comparison.** The same normalised failure on other cards or on the baseline within the last 24 hours.\n\nThe result is a class with evidence and a confidence value. `product` only when the baseline is green, the clean run is red and the fingerprint is card specific. `environment` when the clean run is green or the baseline shows the same failure. `flaky` when the failure is sporadic on both sides. Review concerns are not a failure class: a reviewer block without evidence against the diff is a concern and must not produce a `ProductFailure`.\n\nOnly confirmed product failures charge the retry budget, the anti-churn limit and the reissue counter. An environment verdict evacuates the state that took part in the failure (dependency cache entry, frozen review plan, worktree) and charges nothing.\n\n**Proof:** replay the recorded cases from the logs (the `npm ci` exit-127 preparation failures, the green delivery that was blocked as a delivery-gate failure, the guard-test case, and the incomplete dependency-cache case) and show four correct classes. Add unit coverage for each branch of the decision and for the concern-versus-failure split.\n\n**Constraint:** in the failure case the gate runtime roughly doubles. Keep the baseline reliably green, and report when a baseline is red, because everything then classifies as environment.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Diagnosis contract only: the three-step classification, the class-with-evidence result, and the budget-charging rule.",
+        "criteria": [
+          "Baseline comparison, clean repeat run and fingerprint comparison run as required steps before any failure charges a card.",
+          "Only a confirmed product failure charges retry budget, anti-churn limit and reissue counter; an environment verdict evacuates the state that took part.",
+          "A reviewer block without evidence against the diff is a concern, not a failure class.",
+          "Replay of the recorded cases produces the correct class for each."
+        ]
+      }
+    },
+    {
+      "title": "Cause breaker: count failure fingerprints fleet-wide, open a cause card, let affected cards wait instead of retrying",
+      "promptMarkdown": "# Cause breaker\n\nSource of truth: docs/operations/delivery-chain (AGT-W57) sections 3, 4 and 5 E1. Depends on the diagnosis contract card.\n\nDeliver:\n\n1. A stable failure fingerprint of failure class, normalised failure text and toolchain context, counted fleet-wide rather than per card.\n2. A threshold (proposal: three attempts or two distinct cards) that opens the breaker. Both numbers are configuration, not code.\n3. On opening, create a cause card automatically through the existing intervention mechanism, carrying the fingerprint, the affected cards and the evidence paths.\n4. Affected cards move to a visible waiting state that names the cause card, instead of being escalated or requeued. The lane shows \"waiting for <key>\", not \"escalated\".\n5. Review plans are planned fresh from current project settings on every attempt instead of being frozen per attempt, so a withdrawn model costs exactly one attempt.\n6. The breaker closes when the cause card is integrated or a probe run goes green.\n\n**Proof:** replay the withdrawn-review-model window and the repeated preparation failure from the logs. Expected result in both replays: a stop after three attempts and exactly one cause card, instead of 59 and 411 attempts.\n\n**Watch:** a fingerprint that is too coarse merges distinct faults, a threshold that is too low halts the fleet. Log both, and make the parameters adjustable per project without a deploy.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Cause breaker only: fleet-wide fingerprint counting, threshold, cause card, waiting state, per-attempt review planning.",
+        "criteria": [
+          "Identical fingerprints are counted fleet-wide and open the breaker at a configurable threshold.",
+          "Opening creates one cause card and moves affected cards to a visible waiting state naming it.",
+          "Review plans are planned fresh per attempt, so a withdrawn model costs one attempt.",
+          "Replay of the two recorded repetition windows stops after the threshold with exactly one cause card."
+        ]
+      }
+    },
+    {
+      "title": "Flaky quarantine with expiry, and guard tests as the first gate step",
+      "promptMarkdown": "# Flaky quarantine and guard-first gate\n\nSource of truth: docs/operations/delivery-chain (AGT-W57) section 6 D4 and section 4. Build only after the operator answers D4; option A is the recommendation.\n\nDeliver two independent slices in one card:\n\n**Quarantine.** A per-project list of quarantined tests, each with an expiry date and an owning card. The gate ignores failures of quarantined tests for the delivery verdict but keeps reporting them in the run report and in the weekly fleet report. On expiry the test is armed again unless its card resolved it. Nothing is silently removed.\n\n**Guard first.** Architecture and guard tests run as their own first gate step, in seconds. The full suite runs only after they are green. A guard violation returns a result immediately instead of after a full suite.\n\n**Proof:** the five known-flaky store tests no longer block a delivery and remain visible in the report; a guard violation produces a gate verdict in seconds rather than hours. Cover the expiry transition and the report projection with tests.\n\n**Scope note:** batch gating and test sharding are decided in the Gates Dossier and are not part of this card.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Quarantine list with expiry plus guard tests as the first gate step. No batch gating, no sharding.",
+        "criteria": [
+          "Quarantined tests no longer block a delivery and stay visible in the run report and the weekly fleet report.",
+          "Expiry re-arms a test unless its owning card resolved it.",
+          "Guard and architecture tests run first and alone; the full suite runs only after they pass."
+        ]
+      }
+    },
+    {
+      "title": "Deterministic bounce rail: the first recoverable conflict-skipped round becomes a restart-safe backend obligation",
+      "promptMarkdown": "# Deterministic bounce rail\n\nSource of truth: docs/operations/delivery-chain (AGT-W57) section 4 and section 6 D1. Build only after the operator answers D1; option A is the recommendation.\n\nDeliver in two stages.\n\n**Stage 1, contract and shadow.** Define an integration bounce obligation carrying task, attempt, operator review epoch, failure code, evidence fingerprint, branch, result ref and SHA, conflict paths, round count, hold state, route decision and an idempotency key. Observe the current manual actions without mutating anything. Acceptance: every eligible manual bounce projects exactly one identical proposed obligation, and duplicate ticks or a backend restart still produce one record. Measure eligible count, latency, manual interventions, repeats and false eligibility.\n\n**Stage 2, deterministic rail.** Extend the existing integration recovery policy to own the first eligible reviewed `conflict-skipped` round: append an idempotent steer template, supersede the failed generation, select the safe mechanical route, queue the card ready. Reuse the existing continuation intent, supersession, review epoch, timeline and ready-promotion services; do not add a scheduler and do not write to the filesystem outside the owning services. No model call.\n\n**Bounds.** One automatic round per operator review epoch. The rule never resolves content, edits Git, waives a gate or requeues a card on hold. A global and per-project kill switch leaves typed obligations visible and returns ownership to the operator path. Service objective: claim or visibly defer an eligible obligation within five minutes; an unavailable worker becomes a visible platform problem rather than a quiet pile of cards.\n\n**Route floor.** Compute the model routing policy floor first and only then apply a cheaper thinking level. Never drop below a hard floor and never overwrite an explicit operator pin. The action receipt records previous route, selected route, reason, policy version and pin presence.\n\n**Proof:** a matrix test over stale attempt, changed ref, hold, non-recoverable code, already integrated, duplicate event, backend restart, exhausted budget and partial side-effect recovery. The seventeen-card session-loss shape drains after a backend restart with no open studio session.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "The first recoverable conflict-skipped round only: obligation contract, shadow observation, then the deterministic rail.",
+        "criteria": [
+          "Every eligible manual bounce projects exactly one identical obligation; duplicate ticks and a backend restart still produce one record.",
+          "The rail owns one automatic round per operator review epoch and makes no model call.",
+          "The rail never resolves content, edits Git, waives a gate or requeues a card on hold; a kill switch returns ownership while leaving obligations visible.",
+          "The selected route never drops below a hard floor and never overwrites an explicit operator pin."
+        ]
+      }
+    },
+    {
+      "title": "Integrated-only human review: admission guard, accept confirmation, guarded archive, self-healing integration status",
+      "promptMarkdown": "# Integrated-only human review\n\nSource of truth: docs/operations/delivery-chain (AGT-W57) section 2, section 5 E6 and section 6 D5 and D6. Build only after the operator answers D5 and D6; option A is the recommendation in both.\n\nDeliver:\n\n1. **Admission guard.** A card with `requiresIntegration` and an integration status other than `integrated` may not enter `5-human-review`. After a passing auto review it stays in `4-auto-review` in an integration phase. On `integrated` it advances. On conflict, gate failure, missing branch with an expected code delivery, or an unrecoverable error it goes to `5e-escalated` with a category and a recovery action. The external completion path passes through the same guard.\n2. **Delivery class.** `not-applicable` is decided by the actual delivery contract, not by the card title: every repository change is integration-required. The class is configurable, the truth rule is not.\n3. **Accept.** `5-human-review` to `6-completed` requires `integrated` or `not-applicable`. Accept confirms an already integrated state and binds the human judgement to exactly the delivery epoch and result SHA that were reviewed. If the target branch or the delivery changes afterwards, the verdict goes stale and the card returns to the integration and review flow.\n4. **Archive.** `6-completed` to `7-archive` is fail-closed. A privileged per-card override records reason, actor, time, delivery epoch, target branch, current integration status and any known recovery reference, and appears as a timeline and audit event. The guard applies centrally to single move, drag, batch move and the management archive sweep; a sweep skips blocked cards and reports them individually. No project kill switch and no batch override.\n5. **Self-healing status.** Integration status is derived primarily from target-branch presence of the accepted result commit: the current delivery epoch and its immutable result SHA first, then the commits attributed to that epoch, then a curated or rewritten merge only with a durable source-SHA to integration-SHA mapping. The last merge attempt is diagnosis, never the sole truth. Re-evaluate whenever the target-branch ref fingerprint changes, so an earlier failed attempt is shown as history while the current status heals to `integrated`.\n6. **Pull-request projects.** Pull-request approval is a separate decision surface before human review; human review begins after the merge. The integration strategy stays a project setting, lane semantics stay global.\n\n**Migration.** A workspace-wide switch between the guarded and the badge-only behaviour is acceptable for the migration only. No silent per-card exception, ever.\n\n**Proof:** enumerate the permitted edges in tests and prove that the accept and archive guards hold across every API path, including batch move and the management sweep. Replay the recorded case in which a card sat in `6-completed` with a failed merge while its commit was already reachable on the integration branch, and show that the status heals to `integrated`.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Admission, accept and archive guards plus the target-branch truth rule. No changes to the review aspects themselves.",
+        "criteria": [
+          "An integrable card that is not integrated cannot enter human review; conflict, gate failure and unrecoverable error escalate with a category.",
+          "Accept requires integrated or not-applicable and binds the judgement to the reviewed delivery epoch and result SHA.",
+          "Archive is fail-closed with a privileged, audited per-card override; no batch override and no project kill switch.",
+          "Integration status is derived from target-branch presence and heals itself when the ref fingerprint changes."
+        ]
+      }
+    },
+    {
+      "title": "Bounded session continuation for mechanical rebase rounds, with a durable per-generation token ledger",
+      "promptMarkdown": "# Session continuation for mechanical rounds\n\nSource of truth: docs/operations/delivery-chain (AGT-W57) section 5 E2 and section 6 D7. Build only after the operator answers D7. Options A and B overlap; implement the chosen one and do not add their savings.\n\n**Option A, resume.** Persist the captured coding-session id on the fenced run attempt and expose it to the next attempt-chain generation. Resume only when task key, provider, clean-context identity, repository, worktree path and branch lineage all still match; any mismatch is a typed fresh-run decision with a recorded reason. Pass a compact requeue delta of current base SHA, conflict paths, new steer and verification plan; never resend the original full prompt as a new task. Cap a resumed mechanical round at 1,211,213 tokens and roughly 300 seconds, and fall back to a policy-qualified fresh attempt on a semantic conflict, a stale or missing session, a provider change or a failed deterministic gate. Permit exactly one resumed mechanical continuation.\n\n**Option B, platform rebase.** Perform a cleanly provable rebase in the platform with no model at all, and route only semantic conflicts back to a policy-qualified agent. Re-score semantic conflicts against the model routing policy rather than assuming the mechanical route.\n\n**Ledger, required either way.** Record input session id, captured session id, resume decision, rejection reason and per-generation token usage in a durable ledger on the task, so the night has not to be reconstructed from rollout files again. The measured window found a null token summary on the inspected cards, which is why the numbers in section 5 E2 are reconstructions.\n\n**Proof:** a pilot on rebase-only rounds that reports achieved tokens and duration per resumed round against the ceiling, plus the fallback rate and its reasons. Report the result against the 17.6 to 19.8 quota point estimate rather than assuming it.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "One execution path for a mechanical rebase round plus the durable per-generation token ledger.",
+        "criteria": [
+          "The chosen path is implemented; the two savings estimates are not added together.",
+          "A resumed round runs only on a full identity match and within the token and duration ceiling, with a typed fallback otherwise.",
+          "Input session id, captured session id, resume decision, rejection reason and per-generation token usage are durable on the task.",
+          "The pilot reports achieved tokens, duration and fallback rate against the estimate."
+        ]
+      }
+    },
+    {
+      "title": "Record the six merged Dossiers as superseded and the rolling log as historical, so they move to History",
+      "promptMarkdown": "# Record the supersessions for the Delivery chain Dossier\n\nSource of truth: docs/operations/delivery-chain (AGT-W57) section 7, and AGT-W55 D2 with the operator note.\n\nOnce the Delivery chain Dossier is integrated and its key is minted, record the review verdicts on the seven source descriptors through `PUT /api/projects/{project}/workbenches/{id}/review`, using the minted key rather than a guessed one:\n\n| Descriptor | Verdict | supersededBy |\n|---|---|---|\n| AGT-W3 board-statusmodell-ist-soll | superseded | the Delivery chain key |\n| AGT-W23 unverifizierte-lieferungen | superseded | the Delivery chain key |\n| AGT-W37 rebase-merge-and-steering | superseded | the Delivery chain key |\n| AGT-W42 operational-resilience | superseded | the Delivery chain key |\n| AGT-W44 token-retry-tax-analysis | superseded | the Delivery chain key |\n| AGT-W50 lieferkette-robustheit | superseded | the Delivery chain key |\n| AGT-W39 live-improvement-log | historical | none |\n\nSet `reviewedBy` to the operator, `reviewedAt` to the run time, and a note naming this consolidation. Set the status of each source so it leaves the current list and appears under History.\n\n**No archive artefacts are needed.** Per the operator note on D2, a Dossier superseded by a theme Dossier needs none because its content lives in the theme Dossier, and the rolling log's durable knowledge is synthesised in section 5 E5 of the Delivery chain Dossier. Verify that claim per source before recording the verdict; if anything in a source is not represented, fix the theme Dossier first rather than writing a separate artefact.\n\n**Proof:** the Dossier list shows one Dossier for this theme and seven entries under History, each linking to its replacement.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Recording the seven review verdicts and statuses only. No content changes to the sources.",
+        "criteria": [
+          "The six merged Dossiers carry verdict superseded with the minted Delivery chain key; the rolling log carries verdict historical.",
+          "All seven leave the current list and appear under History linking to their replacement.",
+          "Each source is verified as represented in the theme Dossier before its verdict is recorded; no separate archive artefact is written."
+        ]
+      }
+    }
+  ]
+}
