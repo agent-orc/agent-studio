@@ -21,6 +21,30 @@ public static class ReviewCommandKinds
         => string.Equals(value, AgentAspect, StringComparison.OrdinalIgnoreCase);
 }
 
+/// <summary>
+/// How a baseline-compared review command is compared against the merge base
+/// (AGT-2819). Frozen into the review plan so the executor's comparison is
+/// immutable for the attempt.
+/// </summary>
+public static class ReviewBaselineModes
+{
+    /// <summary>
+    /// Diff parsed test-failure names. A suite that is already red over there
+    /// still blocks the card for any failure name the merge base did not have.
+    /// </summary>
+    public const string TestFailures = "test-failures";
+
+    /// <summary>
+    /// Compare only the command's exit status. For a lint or build command
+    /// there are no failure names to diff, and synthesising one made an
+    /// already-red gate look like a new product failure on every card.
+    /// </summary>
+    public const string ExitStatus = "exit-status";
+
+    public static bool IsExitStatus(string? value)
+        => string.Equals(value, ExitStatus, StringComparison.OrdinalIgnoreCase);
+}
+
 public sealed record ReviewDependencyScopeDto(
     string WorkingSubdir,
     IReadOnlyList<string> Lockfiles);
@@ -45,7 +69,8 @@ public sealed record ReviewCommandDto(
     string? Prompt = null,
     string? CliType = null,
     string? Model = null,
-    string? ThinkingLevel = null);
+    string? ThinkingLevel = null,
+    string BaselineMode = ReviewBaselineModes.TestFailures);
 
 public sealed record ReviewPlanDto(
     IReadOnlyList<ReviewCommandDto> Commands,
@@ -195,7 +220,13 @@ public sealed record ReviewCommandEvidenceDto(
     long CacheReadTokens = 0,
     long CacheCreationTokens = 0,
     string? BaselineReusedFromAttemptId = null,
-    long BaselineReusedAgeSeconds = 0);
+    long BaselineReusedAgeSeconds = 0,
+    /// <summary>
+    /// Exit code the same command produced on the merge base, when the frozen
+    /// plan asked for a baseline comparison (AGT-2819). Null means no baseline
+    /// run happened, which attributes any failure to the delivery.
+    /// </summary>
+    int? BaselineExitCode = null);
 
 /// <summary>
 /// The one word every surface uses for a test failure that a targeted re-run

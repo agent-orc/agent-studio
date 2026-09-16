@@ -1,3 +1,4 @@
+using AgentStudio.Shared;
 using Contract = AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Pipeline;
@@ -36,7 +37,17 @@ public static class RemoteDeliveryIntegrationPolicy
                 "The source run has no settled immutable Result-Envelope.");
         }
 
-        if (!string.Equals(reviewOutcome, "Pass", StringComparison.OrdinalIgnoreCase))
+        // AGT-2819: a gate that was already red on the merge base is a defect of
+        // the integration branch, not of this delivery. Refusing the card for it
+        // stalled the whole board in Human Review for weeks while the deliveries
+        // were merged by hand instead. The card does not make the branch worse,
+        // so it is admissible; the branch defect carries its own operator alert.
+        var integrationBranchDefect = string.Equals(
+            reviewOutcome,
+            nameof(ReviewTerminalOutcome.IntegrationBranchDefect),
+            StringComparison.OrdinalIgnoreCase);
+        if (!string.Equals(reviewOutcome, "Pass", StringComparison.OrdinalIgnoreCase)
+            && !integrationBranchDefect)
         {
             return new RemoteDeliveryIntegrationDecision(
                 false,
@@ -87,12 +98,16 @@ public static class RemoteDeliveryIntegrationPolicy
         var gateClass = buildTests.All(IsNotApplicable)
             ? RemoteBuildTestGateClass.NotApplicable
             : RemoteBuildTestGateClass.Passed;
+        var reason = gateClass == RemoteBuildTestGateClass.Passed
+            ? "All applicable Remote Review build/test gates passed."
+            : "Every Remote Review build/test gate is not applicable.";
         return new RemoteDeliveryIntegrationDecision(
             true,
             gateClass,
-            gateClass == RemoteBuildTestGateClass.Passed
-                ? "All applicable Remote Review build/test gates passed."
-                : "Every Remote Review build/test gate is not applicable.");
+            integrationBranchDefect
+                ? reason + " A gate was already red on the integration branch; that defect is"
+                  + " reported against the branch and does not refuse this delivery."
+                : reason);
     }
 
     private static bool IsGreenOrNotApplicable(Contract.ReviewVerdictDto verdict)

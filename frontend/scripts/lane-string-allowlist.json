@@ -1,6 +1,6 @@
 [
   {
-    "file": "src/app/app.ts",
+    "file": "src/app/features/board/components/board-lane-layout.util.ts",
     "literal": "Backlog",
     "reason": "Lane-GROUP container label, not a lane. The 'backlog' group holds the Ready, Preparation, and Backlog lanes; it is a different axis that happens to share a word with one of them."
   },

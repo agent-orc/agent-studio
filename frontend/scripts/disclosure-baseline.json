@@ -17,10 +17,6 @@
     "src/app/features/task-detail/components/protocol-pane/protocol-verdict-banner/protocol-verdict-banner.component.html"
   ],
   "documented": {
-    "src/app/app.html": {
-      "kind": "popup-trigger",
-      "reason": "Studio tab overflow: aria-haspopup=\"menu\" trigger that opens an overlay menu, not an in-place body. Menu grammar, see chapter 02."
-    },
     "src/app/components/cli-model-selector/cli-model-selector.component.html": {
       "kind": "popup-trigger",
       "reason": "Model picker trigger. The list opens as an overlay popover anchored to the control; the value chip is the affordance."
@@ -144,6 +140,10 @@
     "src/app/features/studio-shell/components/diff-tab-view/diff-tab-view.component.html": {
       "kind": "staged-adoption",
       "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
+    },
+    "src/app/features/studio-shell/components/studio-tab-actions/studio-tab-actions.component.html": {
+      "kind": "popup-trigger",
+      "reason": "Studio tab overflow: aria-haspopup=\"menu\" trigger that opens an overlay menu, not an in-place body. Menu grammar, see chapter 02."
     },
     "src/app/features/task-detail/components/activity-log-view/activity-log-view.html": {
       "kind": "popup-trigger",

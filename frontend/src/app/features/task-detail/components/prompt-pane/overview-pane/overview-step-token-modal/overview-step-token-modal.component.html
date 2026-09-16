@@ -1,0 +1,109 @@
+<app-dialog
+  eyebrow="Pipeline tokens"
+  [title]="row().label"
+  [subtitle]="tokenStepSourceLabel(row())"
+  role="dialog"
+  widthTier="lg"
+  testid="overview-step-token-modal"
+  (closeRequest)="closeRequest.emit()"
+  (backdropClick)="closeRequest.emit()">
+  <div class="ov-token-modal" data-testid="overview-step-token-modal-body">
+    <section class="ov-token-modal__summary" aria-label="Step token summary">
+      <div class="ov-token-modal__metric ov-token-modal__metric--primary">
+        <span class="ov-token-modal__label">Total</span>
+        <span class="ov-token-modal__value ov-value--mono">{{ formatTokens(row().totalTokens) }}</span>
+      </div>
+      <div class="ov-token-modal__metric">
+        <span class="ov-token-modal__label">Calls</span>
+        <span class="ov-token-modal__value">{{ tokenStepCallsLabel(row()) }}</span>
+      </div>
+      <div class="ov-token-modal__metric">
+        <span class="ov-token-modal__label">Cost</span>
+        <span class="ov-token-modal__value ov-value--mono"
+              data-testid="overview-step-token-modal-cost"
+              [cacTooltip]="row().costTooltip">
+          {{ costDisplay(row().costUsd, row().totalTokens, row().unpricedRuns) }}
+          @if (isPartialCost(row().costUsd, row().unpricedRuns)) {
+            <span class="ov-cost-incomplete">{{ incompleteCostLabel(row().unpricedRuns) }}</span>
+          }
+        </span>
+      </div>
+      <div class="ov-token-modal__metric">
+        <span class="ov-token-modal__label">Model</span>
+        <span class="ov-token-modal__value ov-token-modal__model">{{ row().model || 'unknown' }}</span>
+      </div>
+    </section>
+
+    <section class="ov-token-modal__panel">
+      <h4 class="ov-token-modal__panel-title">Breakdown</h4>
+      <table class="ov-token-modal__table" data-testid="overview-step-token-modal-breakdown">
+        <thead>
+          <tr>
+            <th>Component</th>
+            <th class="ov-token-modal__num">Tokens</th>
+            <th class="ov-token-modal__num">Cost</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (part of tokenBreakdownRows(row()); track part.label) {
+            <tr>
+              <td>{{ part.label }}</td>
+              <td class="ov-token-modal__num ov-value--mono">{{ formatTokens(part.tokens) }}</td>
+              <td class="ov-token-modal__num ov-value--mono" [cacTooltip]="row().costTooltip">
+                {{ costDisplay(part.costUsd, part.tokens, row().unpricedRuns) }}
+                @if (isPartialCost(part.costUsd, row().unpricedRuns)) {
+                  <span class="ov-cost-incomplete">{{ incompleteCostLabel(row().unpricedRuns) }}</span>
+                }
+              </td>
+            </tr>
+          }
+          <tr class="ov-token-modal__total-row">
+            <td>Total</td>
+            <td class="ov-token-modal__num ov-value--mono">{{ formatTokens(row().totalTokens) }}</td>
+            <td class="ov-token-modal__num ov-value--mono"
+                data-testid="overview-step-token-modal-total-cost"
+                [cacTooltip]="row().costTooltip">
+              {{ costDisplay(row().costUsd, row().totalTokens, row().unpricedRuns) }}
+              @if (isPartialCost(row().costUsd, row().unpricedRuns)) {
+                <span class="ov-cost-incomplete">{{ incompleteCostLabel(row().unpricedRuns) }}</span>
+              }
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      @if (!tokenComponentMatchesTotal(row())) {
+        <p class="ov-token-modal__note" data-testid="overview-step-token-modal-total-note">
+          Component sum is {{ formatTokens(tokenComponentTotal(row())) }}; the reported step total is {{ formatTokens(row().totalTokens) }}.
+        </p>
+      }
+    </section>
+
+    <section class="ov-token-modal__panel">
+      <h4 class="ov-token-modal__panel-title">Context</h4>
+      <dl class="ov-token-modal__facts">
+        <div>
+          <dt>Step</dt>
+          <dd>{{ stepKindLabel(row().kind) }} · {{ row().id }}</dd>
+        </div>
+        <div>
+          <dt>Source</dt>
+          <dd>{{ tokenStepSourceLabel(row()) }}</dd>
+        </div>
+        <div>
+          <dt>Time</dt>
+          <dd>{{ tokenStepTimeLabel(row()) }}</dd>
+        </div>
+        @if (!row().costKnown) {
+          <div>
+            <dt>Cost</dt>
+            <dd>No historical price data for this model and run date.</dd>
+          </div>
+        }
+      </dl>
+      <p class="ov-token-modal__note">
+        {{ row().kind === 'core' ? 'CORE totals come from the agent CLI footer when reported by the run.' : 'This total is scoped to the pipeline step that produced it.' }}
+      </p>
+      <p class="ov-token-modal__note">Actual CLI billing uses the subscription or plan, not these API rates.</p>
+    </section>
+  </div>
+</app-dialog>

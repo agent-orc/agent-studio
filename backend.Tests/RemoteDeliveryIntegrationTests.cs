@@ -100,6 +100,43 @@ public sealed class RemoteDeliveryIntegrationPolicyTests
         Assert.Equal(RemoteBuildTestGateClass.Failed, decision.BuildTestGate);
     }
 
+    /// <summary>
+    /// AGT-2819: the acceptance rail refused every card with "Remote Review ended
+    /// with 'ProductFailure', not Pass" while the lint gate was red on develop
+    /// itself. A gate that is red on the integration branch does not refuse the
+    /// delivery; the branch defect carries its own alert instead.
+    /// </summary>
+    [Fact]
+    public void Decide_IntegrationBranchDefect_IsAdmittedAndNamesTheBranch()
+    {
+        var decision = RemoteDeliveryIntegrationPolicy.Decide(
+            hasSettledResultEnvelope: true,
+            reviewOutcome: nameof(ReviewTerminalOutcome.IntegrationBranchDefect),
+            Plan("build-tests"),
+            [new Contract.ReviewVerdictDto(
+                "build-tests",
+                "pass",
+                "IntegrationBranchDefect",
+                "0 new failures; step verify-5 is already exiting 1 on the merge base.")]);
+
+        Assert.True(decision.ShouldIntegrate);
+        Assert.Equal(RemoteBuildTestGateClass.Passed, decision.BuildTestGate);
+        Assert.Contains("already red on the integration branch", decision.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Decide_ProductFailure_StillRefusesTheDelivery()
+    {
+        var decision = RemoteDeliveryIntegrationPolicy.Decide(
+            hasSettledResultEnvelope: true,
+            reviewOutcome: nameof(ReviewTerminalOutcome.ProductFailure),
+            Plan("build-tests"),
+            [new Contract.ReviewVerdictDto("build-tests", "block", "NewTestFailures", "1 new failure.")]);
+
+        Assert.False(decision.ShouldIntegrate);
+        Assert.Equal(RemoteBuildTestGateClass.Failed, decision.BuildTestGate);
+    }
+
     private static Contract.ReviewPlanDto Plan(string aspect)
         => new(
             [new Contract.ReviewCommandDto("verify", aspect, "git", ["status", "--short"])],

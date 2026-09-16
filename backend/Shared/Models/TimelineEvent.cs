@@ -374,6 +374,14 @@ public static class TimelineEventKinds
     /// </summary>
     public const string ReviewInfrastructureRepeatDiagnosed = "review_infrastructure_repeat_diagnosed";
     /// <summary>
+    /// AGT-2819: a deterministic review gate failed on the card AND on the merge
+    /// base, so the failure belongs to the integration branch, not to the card.
+    /// The card carries this entry instead of a product finding.
+    /// <see cref="TimelineEvent.Details"/> carries the branch, step, command,
+    /// merge-base commit, and the last commit the gate was measured green at.
+    /// </summary>
+    public const string IntegrationBranchGateDefect = "integration_branch_gate_defect";
+    /// <summary>
     /// AGT-2841: a ReviewInfra outcome (AspectTimeout, ToolUnavailable,
     /// BaselineUnavailable, or another infrastructure classification) had
     /// retry budget left, so a replacement attempt was scheduled for the same

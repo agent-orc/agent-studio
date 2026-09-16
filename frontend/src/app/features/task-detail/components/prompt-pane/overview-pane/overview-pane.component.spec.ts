@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
@@ -141,15 +141,6 @@ describe('OverviewPaneComponent (smoke)', () => {
   it('compiles + instantiates without throwing', async () => {
     const fixture = await build(baseJob());
     expect(fixture.componentInstance).toBeTruthy();
-  });
-
-  it('shows orchestrator creation provenance in the visible task heading', async () => {
-    const fixture = await build(baseJob({ creationSource: 'orchestrator', createdBy: 'Orchestrator' }));
-    const provenance = fixture.nativeElement.querySelector(
-      '[data-testid="overview-created-by-orchestrator"]',
-    ) as HTMLElement | null;
-
-    expect(provenance?.textContent).toContain('Created by Orchestrator');
   });
 
   it('tokens: standalone section is removed even when lastUsage exists', async () => {
@@ -359,9 +350,12 @@ describe('OverviewPaneComponent (smoke)', () => {
     const c = fixture.componentInstance;
     expect(c.hasAgentWork()).toBe(true);
     expect(c.agentWork()!.calls).toBe(3);
-    expect(c.topToolCounts().map(tc => tc.tool)).toEqual(['Read', 'Edit', 'Bash']);
-    expect(c.toolCountsTooltip()).toContain('Read: 24');
-    expect(c.sessionDebugTooltip()).toContain('sess-1');
+    // AGT-2819: the block's own rendering moved to
+    // <app-overview-agent-work>; the pane still decides whether it appears.
+    expect(fixture.nativeElement.querySelector('[data-testid="overview-agent-work"]')).not.toBeNull();
+    expect(
+      fixture.nativeElement.querySelector('[data-testid="agent-work-tools"]')?.textContent,
+    ).toContain('Read');
   });
 
   it('agent-work block hides when there is no work yet', async () => {
@@ -375,34 +369,6 @@ describe('OverviewPaneComponent (smoke)', () => {
       currentSessionId: null,
     });
     expect(fixture.componentInstance.hasAgentWork()).toBe(false);
-  });
-
-  it('hero title block: displayedTitle falls back to job.id when title is missing', async () => {
-    const fixture = await build(baseJob({ title: '', id: 'fallback-task-id' }));
-    expect(fixture.componentInstance.displayedTitle()).toBe('fallback-task-id');
-  });
-
-  it('hero title block: startTitleEdit seeds the draft and flips editingTitle', async () => {
-    const fixture = await build(baseJob({ title: 'Original title' }));
-    const c = fixture.componentInstance;
-    expect(c.editingTitle()).toBe(false);
-    c.startTitleEdit();
-    expect(c.editingTitle()).toBe(true);
-    expect(c.titleDraft()).toBe('Original title');
-    c.cancelTitleEdit();
-    expect(c.editingTitle()).toBe(false);
-  });
-
-  it('hero title block: saving an unchanged title just exits edit mode (no PUT, no override)', async () => {
-    const fixture = await build(baseJob({ title: 'Same title' }));
-    const c = fixture.componentInstance;
-    c.startTitleEdit();
-    c.onTitleDraftInput('   Same title   ');
-    c.saveTitle();
-    expect(c.editingTitle()).toBe(false);
-    // displayedTitle still reflects the underlying job because no optimistic
-    // override was set.
-    expect(c.displayedTitle()).toBe('Same title');
   });
 
   it('pipeline block: joins catalogue + execution + cost into per-step rows and a task total', async () => {
@@ -2118,75 +2084,6 @@ describe('OverviewPaneComponent (smoke)', () => {
     expect(row.explanation.body).toContain('tooling step');
   });
 
-  it('promote affordance: shown only on a finished planning task across its finished lanes', async () => {
-    const fixture = await build(baseJob({ mode: 'planning', state: '4-auto-review' }));
-    const c = fixture.componentInstance;
-    expect(c.canPromote()).toBe(true);
-    for (const state of ['5-human-review', '6-completed']) {
-      fixture.componentRef.setInput('job', baseJob({ mode: 'planning', state }));
-      try { fixture.detectChanges(); } catch { /* ignore */ }
-      expect(c.canPromote()).toBe(true);
-    }
-  });
-
-  it('promote affordance: hidden on a planning task that has not finished', async () => {
-    const fixture = await build(baseJob({ mode: 'planning', state: '1-preparation' }));
-    const c = fixture.componentInstance;
-    expect(c.canPromote()).toBe(false);
-    for (const state of ['2-ready', '3-progress', '1b-needs-human-review']) {
-      fixture.componentRef.setInput('job', baseJob({ mode: 'planning', state }));
-      try { fixture.detectChanges(); } catch { /* ignore */ }
-      expect(c.canPromote()).toBe(false);
-    }
-  });
-
-  it('promote affordance: hidden on research tasks even when finished (research is read-only)', async () => {
-    const fixture = await build(baseJob({ mode: 'research', state: '6-completed' }));
-    expect(fixture.componentInstance.canPromote()).toBe(false);
-  });
-
-  it('promote affordance: hidden on coding tasks and on legacy payloads with no mode', async () => {
-    const fixture = await build(baseJob({ mode: 'coding', state: '6-completed' }));
-    const c = fixture.componentInstance;
-    expect(c.canPromote()).toBe(false);
-
-    // Legacy payloads omit `mode`; the affordance must stay hidden (read as coding).
-    fixture.componentRef.setInput('job', baseJob({ state: '6-completed' }));
-    try { fixture.detectChanges(); } catch { /* ignore */ }
-    expect(c.canPromote()).toBe(false);
-  });
-
-  it('promote affordance: the promote button is in the DOM for a finished planning task, absent for research', async () => {
-    const fixture = await build(baseJob({ mode: 'planning', state: '5-human-review' }));
-    expect(
-      fixture.nativeElement.querySelector('[data-testid="overview-promote-btn"]'),
-    ).not.toBeNull();
-
-    fixture.componentRef.setInput('job', baseJob({ mode: 'research', state: '5-human-review' }));
-    try { fixture.detectChanges(); } catch { /* ignore */ }
-    expect(
-      fixture.nativeElement.querySelector('[data-testid="overview-promote-btn"]'),
-    ).toBeNull();
-  });
-
-  it('promote affordance: the compact spawn-panel action delegates to the existing promote flow', async () => {
-    const fixture = await build(baseJob({
-      mode: 'planning',
-      state: '5-human-review',
-      planningSpawn: {
-        spawned: [],
-        spawnedCount: 0,
-        noFollowUpDeclared: false,
-        contractSatisfied: false,
-      },
-    }));
-    const promote = vi.spyOn(fixture.componentInstance, 'promote').mockImplementation(() => undefined);
-
-    (fixture.nativeElement.querySelector('[data-testid="overview-promote-btn"]') as HTMLButtonElement).click();
-
-    expect(promote).toHaveBeenCalledOnce();
-  });
-
   it('agent-execution row: run count is read from the run-timeline (same source as the Overview Runs value)', async () => {
     const lastEndedAt = '2026-06-02T09:12:00Z';
     const runs = [
@@ -2337,20 +2234,9 @@ describe('OverviewPaneComponent (smoke)', () => {
     expect(fixture.componentInstance).toBeTruthy();
   });
 
-  it('shows loop-waiting with elapsed time in task detail', async () => {
-    const fixture = await build(baseJob({
-      state: '3-progress',
-      phase: 'loop-waiting',
-      phaseEnteredAt: new Date(Date.now() - 42_000).toISOString(),
-    }));
-    fixture.detectChanges();
-    await fixture.whenStable();
-
-    const phase = (fixture.nativeElement as HTMLElement)
-      .querySelector('[data-testid="overview-title-phase"]');
-    expect(phase?.textContent).toContain('Waiting for loop continuation 0:42');
-  });
-
+  // AGT-2819: the hero block is now <app-overview-title-block>. It is still
+  // asserted here, because the pane composing it correctly is the pane's own
+  // contract; the block's internals live in its own spec.
   it('keeps overview content on reusable left-aligned measures', async () => {
     const fixture = await build(baseJob());
     TestBed.inject(TaskPipelinePollService).pipeline.set(agentPipeline());

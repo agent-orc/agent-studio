@@ -12,6 +12,7 @@
 @use 'styles/markdown-body';
 @use 'styles/empty-state';
 @use 'styles/lane-tone';
+@use 'styles/dialog-surfaces';
 @use 'app/components/tooltip/tooltip';
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
