@@ -138,6 +138,32 @@ public sealed class TaskLanePipelineBusinessStateMachineTests : IDisposable
         Assert.Contains("- Integration: `pending`", status);
     }
 
+    /// <summary>
+    /// AGT-2816. AGT-2736 sat parked for three days with <c>Open Items: None</c>
+    /// on a card the runtime had just parked for a human. The scaffold is one of
+    /// the two places a summary stub is produced, so it names the park instead
+    /// of reporting nothing open.
+    /// </summary>
+    [Fact]
+    public async Task HumanReviewMove_ResultScaffold_NamesTheParkInsteadOfReportingNothingOpen()
+    {
+        const string id = "parked-open-items";
+        _fixture.SeedTask(TaskStates.AutoReview, id, LifecyclePhases.AwaitingReview);
+
+        var outcome = await _fixture.Transitions.MoveAsync(
+            id,
+            TaskStates.HumanReview,
+            _fixture.WatchPath,
+            cause: "human:api",
+            reason: "Parked for an operator decision.");
+
+        Assert.Equal(MoveJobStatus.Success, outcome.Status);
+        var status = File.ReadAllText(Path.Combine(outcome.NewFolderPath!, "status.md"));
+        Assert.Contains(ParkedOpenItems.Heading, status);
+        Assert.DoesNotContain("None recorded in this synthesized scaffold", status);
+        Assert.Contains("- [ ] This card is parked", status);
+    }
+
     [Fact]
     public void AcceptedCards_StartupBackfill_ReceiveOperatorMarkedResultOnce()
     {

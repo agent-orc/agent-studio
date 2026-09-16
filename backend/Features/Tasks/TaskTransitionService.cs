@@ -954,12 +954,44 @@ public sealed class TaskTransitionService
             .Append("`.").Append(nl);
         sb.Append("- Grade, deliverables, and integration facts are linked or stated above when available.")
             .Append(nl).Append(nl);
-        sb.Append("## Open Items").Append(nl).Append(nl);
-        sb.Append("- None recorded in this synthesized scaffold.").Append(nl).Append(nl);
+        // AGT-2816: a card that parked itself has an open item by definition.
+        // The scaffold is one of the two places a summary stub is produced, so
+        // the park is named here rather than by rewriting an agent's own text.
+        var park = ResolveScaffoldPark(task, targetState, atUtc);
+        if (park is not null)
+        {
+            sb.Append(ParkedOpenItems.Heading).Append(nl).Append(nl);
+            foreach (var item in ParkedOpenItems.Items(park))
+                sb.Append("- [ ] ").Append(item).Append(nl);
+            sb.Append(nl);
+        }
+        else
+        {
+            sb.Append("## Open Items").Append(nl).Append(nl);
+            sb.Append("- None recorded in this synthesized scaffold.").Append(nl).Append(nl);
+        }
         sb.Append("## Notes").Append(nl).Append(nl);
         sb.Append("- This document does not infer work that is absent from task.json and the task artifact folder.")
             .Append(nl);
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// The park this scaffold is being written for. Prefers the durable marker
+    /// in the folder, falls back to the projection already on the task, and
+    /// finally to a lane-only park for a transition whose marker is written by
+    /// the move that has not happened yet. Null when the card is not parking.
+    /// </summary>
+    private static ParkedBlockerStatus? ResolveScaffoldPark(
+        TaskInfo task, string targetState, DateTime atUtc)
+    {
+        if (!ParkedBlockerCatalog.IsParkedLane(targetState)) return null;
+        var fromMarker = ParkedBlockerMarker.ToStatus(
+            ParkedBlockerMarker.TryRead(task.FolderPath), atUtc);
+        if (fromMarker is not null) return fromMarker;
+        if (task.ParkedBlocker is not null) return task.ParkedBlocker;
+        return ParkedBlockerMarker.ToStatus(
+            ParkedBlockerCatalog.Build(targetState, reason: null, parkedAt: atUtc), atUtc);
     }
 
     private static string ResolveScaffoldResult(TaskInfo task, string targetState)

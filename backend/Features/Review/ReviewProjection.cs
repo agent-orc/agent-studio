@@ -297,11 +297,16 @@ public static class ReviewProjectionReader
     {
         if (parkedBlocker is not null)
         {
+            // AGT-2816: the question outranks the reason. A park reason is often
+            // the slug the run parked under, and "decision required:
+            // choose-connector-vs-lan" is not something an operator can act on.
+            var question = parkedBlocker.Decision?.Question;
+            var reason = string.IsNullOrWhiteSpace(question) ? parkedBlocker.Reason : question;
             return new ReviewDecisionRequired
             {
                 Required = true,
                 Source = "parked-blocker",
-                Reason = string.IsNullOrWhiteSpace(parkedBlocker.Reason) ? null : parkedBlocker.Reason,
+                Reason = string.IsNullOrWhiteSpace(reason) ? null : reason,
             };
         }
 
