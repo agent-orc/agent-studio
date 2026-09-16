@@ -348,6 +348,15 @@ public static class TimelineEventKinds
     /// </summary>
     public const string IntegrationGateEnvironmentParked = "integration_gate_environment_parked";
     /// <summary>
+    /// AGT-2853: the integration build/test gate re-ran exactly the tests that
+    /// failed in its full run, they passed, and the gate stayed green.
+    /// <see cref="TimelineEvent.Details"/> carries the quarantined test names,
+    /// the gate that ran them, the tested SHA, and the shared
+    /// <c>FlakyQuarantine</c> classification, so the flake list is visible on
+    /// the card instead of being silently absorbed.
+    /// </summary>
+    public const string IntegrationGateFlakyRerun = "integration_gate_flaky_rerun";
+    /// <summary>
     /// AGT-2220: the card's recorded <c>integrationBranch</c> disagreed with
     /// project truth when a review was claimed, so the review plane rewrote it.
     /// A stale field (still <c>refs/heads/main</c> after develop became the

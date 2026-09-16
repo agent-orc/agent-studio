@@ -567,6 +567,16 @@ steer the pipeline in this policy version.
   rows, candidate inventory, chosen ids/commands, selector/model, and reasons.
   `FullSuiteRan` is execution evidence, not a planning claim: it becomes true
   only after every selected full-suite test command was attempted.
+- A red test step earns exactly one targeted re-run before it blocks a merge
+  (AGT-2853): the same build, `--no-build`, and a `FullyQualifiedName=` filter
+  built from the exact failed names. A second red is the verdict; a green
+  re-run passes the gate and records the names as `FlakyQuarantine` in the gate
+  reason, in the `post-steps/*-gate-N.log` header line, and as one
+  `integration_gate_flaky_rerun` timeline event. The re-run is charged to the
+  same gate-run budget, so a spent budget leaves the original red standing.
+  Same classification and evidence fields as the remote review executor's
+  baseline comparison. Operations note:
+  [build-test-gate-flaky-rerun.md](../../operations/testing/build-test-gate-flaky-rerun.md).
 - Repositories with `.agent-studio/project.yml` run their exact-subject
   `.agent-studio/prepare` before verification. Coding runs and build-test gates
   share this boundary and its `preparation-manifest.json` contract. npm, NuGet,

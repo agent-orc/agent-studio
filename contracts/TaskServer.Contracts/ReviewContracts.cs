@@ -198,6 +198,20 @@ public sealed record ReviewCommandEvidenceDto(
     long BaselineReusedAgeSeconds = 0);
 
 /// <summary>
+/// The one word every surface uses for a test failure that a targeted re-run
+/// cleared: the remote review executor's baseline comparison and, since
+/// AGT-2853, the Windows build/test integration gate. Both write the same
+/// evidence fields (<c>RetryPerformed</c> plus the quarantined test names) and
+/// the same classification, so an operator reading a gate log and an operator
+/// reading a review verdict see the same fact under the same name.
+/// </summary>
+public static class ReviewFlakyQuarantine
+{
+    /// <summary>Verdict/evidence classification for a re-run-cleared failure.</summary>
+    public const string Classification = "FlakyQuarantine";
+}
+
+/// <summary>
 /// One sentence for a baseline verify result that was reused from an earlier
 /// attempt instead of re-executed. The executor's verdict summary, the
 /// Markdown grade, and the card review projection all read this, so the three

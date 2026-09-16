@@ -1,5 +1,6 @@
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentRunner;
 
@@ -13,7 +14,11 @@ internal sealed class ReviewFlakyTestIndex
 {
     internal const string TraitName = "Category";
     internal const string TraitValue = "ReviewFlaky";
-    internal const string VerdictClassification = "FlakyQuarantine";
+    /// <summary>
+    /// The shared classification both flaky surfaces write (AGT-2853). Kept as
+    /// an alias so existing call sites read the executor's own vocabulary.
+    /// </summary>
+    internal const string VerdictClassification = ReviewFlakyQuarantine.Classification;
 
     private readonly HashSet<string> _types;
     private readonly HashSet<string> _methods;

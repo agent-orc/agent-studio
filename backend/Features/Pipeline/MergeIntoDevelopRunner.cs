@@ -42,6 +42,7 @@ public sealed class MergeIntoDevelopRunner
     private readonly AgentStudio.Tasks.AcceptanceRailHostedService? _acceptanceRail;
     private readonly IntegrationWorktreeProvider _integrationWorktrees;
     private readonly IConfiguration? _configuration;
+    private readonly AgentStudio.Tasks.TimelineLog? _timeline;
     private readonly TimeSpan? _preMainTimeout;
     private readonly TimeSpan? _preDevelopTimeout;
     private readonly Func<int, TimeSpan> _environmentalBackoff;
@@ -78,7 +79,8 @@ public sealed class MergeIntoDevelopRunner
         AgentStudio.Git.GitStateIndexService? gitStateIndex = null,
         AgentStudio.Tasks.AcceptanceRailHostedService? acceptanceRail = null,
         IntegrationWorktreeProvider? integrationWorktrees = null,
-        IConfiguration? configuration = null)
+        IConfiguration? configuration = null,
+        AgentStudio.Tasks.TimelineLog? timeline = null)
     {
         _git = git;
         _pipelineLog = pipelineLog;
@@ -98,6 +100,7 @@ public sealed class MergeIntoDevelopRunner
         // point - including tests and the compatibility worker - on that path.
         _integrationWorktrees = integrationWorktrees ?? new IntegrationWorktreeProvider(git);
         _configuration = configuration;
+        _timeline = timeline;
         // No hard-coded fallback here (AGT-2843): an unset explicit timeout is
         // resolved per call, per project, by ResolveGateTimeout.
         _preMainTimeout = preMainTimeout is { } configured && configured > TimeSpan.Zero
@@ -1712,7 +1715,7 @@ public sealed class MergeIntoDevelopRunner
     /// for both merge gates, so the evidence reads identically whether main or
     /// develop was the target.
     /// </summary>
-    private static void RecordGateEvidence(
+    private void RecordGateEvidence(
         string jobFolderPath,
         string prefix,
         BuildTestGateResult result)
@@ -1733,11 +1736,21 @@ public sealed class MergeIntoDevelopRunner
             ? "budget=none"
             : $"budget={result.ViolatedBudget.Name} limitMs={result.ViolatedBudget.LimitMs} " +
               $"consumedMs={result.ViolatedBudget.ConsumedMs} phase={result.ViolatedBudget.Phase}";
+        // AGT-2853: the flake list is evidence, not a footnote. It is written on
+        // its own header line so an operator greps one gate log for it, and it is
+        // appended to the card timeline so the same names accumulate across cards.
+        var flaky =
+            $"retryPerformed={result.RetryPerformed.ToString().ToLowerInvariant()} " +
+            $"classification={result.FlakyClassification ?? "none"} " +
+            $"flakyQuarantined={(result.FlakyQuarantinedFailures.Count == 0
+                ? "none"
+                : string.Join(", ", result.FlakyQuarantinedFailures))}";
         var body =
             $"verdict={result.Verdict} exit={result.ExitCode?.ToString() ?? "n/a"} durationMs={result.DurationMs}\n" +
             $"expectedSha={result.ExpectedSha ?? "n/a"} testedSha={result.TestedSha ?? "n/a"}\n" +
             $"reason={result.Reason}\n" +
             budget + "\n" +
+            flaky + "\n" +
             "--- dependency-cache-decision.json ---\n" +
             dependencyCacheDecision + "\n" +
             "--- dependency-cache.json ---\n" +
@@ -1749,6 +1762,11 @@ public sealed class MergeIntoDevelopRunner
         File.WriteAllText(
             Path.Combine(dir, $"{prefix}-{index}.log"),
             body);
+        if (_timeline is not null)
+        {
+            GateFlakyRerunReceipts.Record(
+                _timeline, jobFolderPath, prefix, result.TestedSha, result.FlakyQuarantinedFailures);
+        }
     }
 
     private static (PipelineStepStatus Status, string? Verdict, string? Reason, string? Summary) Project(
