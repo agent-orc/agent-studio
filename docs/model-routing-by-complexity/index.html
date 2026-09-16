@@ -515,6 +515,10 @@ svg.diagram .sub { font: 400 10.5px var(--article-sans); fill: var(--article-mut
     unchanged. Implementation cards are drafted once the operator records selections in &sect;8.</p>
     <ol class="implementation-log">
 <!-- agent-studio:implementation-log:start -->
+<li data-implementation-entry="" data-task-key="AGT-2811" data-delivered-at="2026-09-14" data-slice="Reasoning level in the task token panel">
+  <strong>AGT-2811 · Reasoning level in the task token panel</strong>
+  <span>Delivered: the token ledger now records the effective reasoning level at call time (<code>AgentMessageTokens.thinkingLevel</code> on the bus, <code>OrchestratorTokenUsage.ThinkingLevel</code>, <code>TaskTokenCall.ThinkingLevel</code>), and <code>PipelineCostCalculator</code> groups usage by the (model, level) identity, so one model run at two levels yields two rows and rows without a recorded level stay readable as &quot;level unknown&quot;. The Overview token panel names model and level together through the shared board badge (<code>app-token-model-identity</code>), sits in its own band (space plus one hairline above the pipeline steps), renames its head to &quot;Tokens across all runs&quot; so it no longer collides with the step list&#39;s &quot;Task total SUM&quot;, and mutes pipeline sections that carry no numbers. Evidence: before/after desktop screenshots in both themes (results/before, results/after), 2 new backend grouping tests in <code>PipelineConfigAndCostTests</code>, 8 new frontend unit tests, and the extended Playwright spec <code>e2e/task-detail/pipeline-step-usage.spec.ts</code>.</span>
+</li>
 <!-- agent-studio:implementation-log:end -->
     </ol>
   </section>

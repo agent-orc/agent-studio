@@ -647,9 +647,8 @@
     &[data-tone='warn']   { color: var(--severity-warn); }
     &[data-tone='concern'] { color: var(--severity-warn); }
     &[data-tone='danger'] { color: var(--severity-high); }
-    &[data-tone='muted']  { color: var(--studio-fg-muted); }
-    &[data-tone='not-applicable'] { color: var(--studio-fg-muted); }
-    &[data-tone='not-run'] { color: var(--studio-fg-muted); }
+    // No numbers yet: muted, and no bolder than the data-carrying tones.
+    &[data-tone='muted'], &[data-tone='not-applicable'], &[data-tone='not-run'], &[data-tone='neutral'] { color: var(--studio-fg-muted); }
   }
 
   &__count {
@@ -674,16 +673,16 @@
   // Aggregate tone wins over the phase-identity accent so the header reads as
   // state first: green when the section passed, amber while it runs, red when
   // something failed / blocked / needs a decision, dimmed when fully disabled.
-  // Neutral (nothing run yet) keeps the phase-identity accent above.
+  // A section with no numbers yet (pending / not run / not applicable /
+  // disabled) drops to the muted scale so it cannot shout as loudly as the
+  // rows that carry real data (operator, 2026-09-14).
   &[data-tone='ok']     { --ov-pl-phase-accent: var(--severity-pass); }
   &[data-tone='warn']   { --ov-pl-phase-accent: var(--severity-warn); }
   &[data-tone='concern'] { --ov-pl-phase-accent: var(--severity-warn); }
   &[data-tone='danger'] { --ov-pl-phase-accent: var(--severity-high); }
-  &[data-tone='muted'],
-  &[data-tone='not-applicable'],
-  &[data-tone='not-run'] {
+  &[data-tone='muted'], &[data-tone='not-applicable'], &[data-tone='not-run'], &[data-tone='neutral'] {
     --ov-pl-phase-accent: var(--studio-border-strong, var(--studio-border));
-    opacity: 0.75;
+    opacity: 0.7;
   }
 }
 

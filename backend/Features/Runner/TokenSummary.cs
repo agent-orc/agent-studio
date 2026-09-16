@@ -162,6 +162,7 @@ public class TokenSummaryService
                 // Canonical id, never the display label - see TaskTokenCall.Model.
                 Model = string.IsNullOrWhiteSpace(canonicalModel) ? null : canonicalModel,
                 DisplayModel = displayModel,
+                ThinkingLevel = string.IsNullOrWhiteSpace(u.ThinkingLevel) ? null : u.ThinkingLevel.Trim(),
                 ParticipantId = entry.ParticipantId,
                 InputTokens = u.InputTokens,
                 OutputTokens = u.OutputTokens,

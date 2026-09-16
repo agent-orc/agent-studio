@@ -14,10 +14,12 @@ function model(
   cost: number,
   known = true,
   steps = 1,
+  thinkingLevel: string | null = null,
 ): PipelineModelTokenUsage {
   return {
     model: name,
     modelKnown: known,
+    thinkingLevel,
     steps,
     inputTokens: total,
     outputTokens: 0,
@@ -51,8 +53,8 @@ const SUMMARY: PipelineModelUsageSummary = {
     ]),
   ],
   totalByModel: [
-    model('claude-haiku-4-5', 2_400_000, 4, true, 3),
-    model('claude-opus-4-8', 110_000, 0.75),
+    model('claude-haiku-4-5', 2_400_000, 4, true, 3, 'low'),
+    model('claude-opus-4-8', 110_000, 0.75, true, 1, 'medium'),
   ],
   totalTokens: 2_510_000,
   totalCostUsd: 4.75,
@@ -85,7 +87,7 @@ describe('PipelineTokenUsageComponent', () => {
     expect(one(root(fixture), 'pipeline-token-usage')).toBeNull();
   });
 
-  it('TASK TOTAL SUM is collapsed by default: lifetime total shows, model split hidden', () => {
+  it('the all-runs total is collapsed by default: lifetime total shows, model split hidden', () => {
     const fixture = setup(SUMMARY);
     // The total toggle line is always visible with the lifetime tokens + cost.
     expect(one(root(fixture), 'pipeline-token-usage-total')).not.toBeNull();
@@ -95,11 +97,78 @@ describe('PipelineTokenUsageComponent', () => {
     expect(all(root(fixture), 'pipeline-token-usage-total-model').length).toBe(0);
   });
 
-  it('expanding TASK TOTAL SUM reveals the all-runs-by-model breakdown inline', () => {
+  it('expanding the all-runs total reveals the by-model breakdown inline', () => {
     const fixture = setup(SUMMARY);
     fixture.componentInstance.toggleSummary();
     fixture.detectChanges();
     expect(all(root(fixture), 'pipeline-token-usage-total-model').length).toBe(2);
+  });
+
+  it('names the head and the breakdown differently, so one label never covers two quantities', () => {
+    const fixture = setup(SUMMARY);
+    const head = one(root(fixture), 'pipeline-token-usage-total-toggle');
+    // The pipeline step list above this panel owns "Task total SUM"; this head
+    // must not repeat that label over a different set of summands.
+    expect(head?.textContent).toContain('Tokens across all runs');
+    expect(head?.textContent?.toLowerCase()).not.toContain('task total sum');
+
+    fixture.componentInstance.toggleSummary();
+    fixture.detectChanges();
+    expect(one(root(fixture), 'pipeline-token-usage-total-caption')?.textContent)
+      .toContain('Per model and reasoning level');
+  });
+
+  it('names model and reasoning level together on every identity row', () => {
+    const fixture = setup(SUMMARY);
+    fixture.componentInstance.toggleSummary();
+    fixture.detectChanges();
+
+    const identity = one(root(fixture), 'pipeline-token-usage-total-identity') as HTMLElement;
+    expect(identity.textContent).toContain('claude-haiku-4-5');
+    expect(identity.textContent).toContain('low');
+    expect(identity.getAttribute('data-thinking-level')).toBe('low');
+    // Same vocabulary as the board badge (model code + level code).
+    const badge = identity.querySelector('[data-testid="pipeline-token-usage-total-identity-badge"]');
+    expect(badge?.textContent).toContain('HAI4.5');
+    expect(badge?.textContent).toContain('l');
+  });
+
+  it('says level unknown instead of guessing when the ledger recorded no level', () => {
+    const fixture = setup({
+      runs: [run(1, true, [model('claude-opus-4-8', 700, 0.25)])],
+      totalByModel: [model('claude-opus-4-8', 700, 0.25)],
+      totalTokens: 700,
+      totalCostUsd: 0.25,
+      anyModelUnknown: false,
+    });
+    fixture.componentInstance.toggleSummary();
+    fixture.detectChanges();
+
+    const level = one(root(fixture), 'pipeline-token-usage-total-identity-level');
+    expect(level?.textContent).toContain('level unknown');
+    expect(one(root(fixture), 'pipeline-token-usage-total-identity')
+      ?.getAttribute('data-thinking-level')).toBeNull();
+  });
+
+  it('keeps one row per reasoning level when a run used the same model twice', () => {
+    const rows = [
+      model('claude-opus-4-8', 100_000, 1, true, 1, 'medium'),
+      model('claude-opus-4-8', 40_000, 0.5, true, 1, 'high'),
+    ];
+    const fixture = setup({
+      runs: [run(1, true, rows)],
+      totalByModel: rows,
+      totalTokens: 140_000,
+      totalCostUsd: 1.5,
+      anyModelUnknown: false,
+    });
+    fixture.componentInstance.toggleSummary();
+    fixture.detectChanges();
+
+    const identities = all(root(fixture), 'pipeline-token-usage-total-identity');
+    expect(identities.length).toBe(2);
+    expect([...identities].map((el) => el.getAttribute('data-thinking-level')))
+      .toEqual(['medium', 'high']);
   });
 
   it('renders one collapsible row per run, every run collapsed by default', () => {

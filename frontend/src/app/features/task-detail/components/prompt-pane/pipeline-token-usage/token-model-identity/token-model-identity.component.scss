@@ -1,0 +1,45 @@
+// Layout (grid placement, flex row, gap) stays with the calling row so this
+// component never reaches into the token panel's grid.
+:host {
+  min-width: 0;
+}
+
+.tmi {
+  &__badge {
+    flex: 0 0 auto;
+  }
+
+  &__id {
+    overflow: hidden;
+    color: var(--studio-fg);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__sep,
+  &__level {
+    flex: 0 0 auto;
+    color: var(--studio-fg-muted);
+    font-size: 10.5px;
+    white-space: nowrap;
+  }
+
+  // A missing level is a data gap, not a level: it stays quieter than a real
+  // one so it never reads as a value.
+  &__level--unknown {
+    font-style: italic;
+    opacity: 0.8;
+  }
+
+  &__steps {
+    flex: 0 0 auto;
+    padding: 0 var(--studio-spacing-1);
+    border-radius: 4px;
+    background: var(--studio-bg-hover);
+    color: var(--studio-fg-muted);
+    font-size: 9.5px;
+    font-weight: 600;
+  }
+}

@@ -215,6 +215,65 @@ function pipeline() {
   };
 }
 
+/**
+ * AGT-2811: the token panel names model AND reasoning level. The ledger now
+ * records the level per call, so one run can carry the same model at two
+ * levels (two identity rows) next to a legacy row with no recorded level.
+ */
+function pipelineWithReasoningLevels() {
+  const fixture = pipeline();
+  const [previous, current] = fixture.tokensByModel.runs;
+  const identity = (
+    model: string,
+    thinkingLevel: string | null,
+    totalTokens: number,
+    costUsd: number,
+    steps = 1,
+  ) => ({
+    model,
+    modelKnown: true,
+    thinkingLevel,
+    steps,
+    inputTokens: Math.round(totalTokens * 0.9),
+    outputTokens: Math.round(totalTokens * 0.1),
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    totalTokens,
+    costUsd,
+  });
+
+  return {
+    ...fixture,
+    tokensByModel: {
+      ...fixture.tokensByModel,
+      runs: [
+        {
+          ...previous,
+          models: [identity('claude-haiku-4-5', null, 1_200_000, 2.0)],
+          totalTokens: 1_200_000,
+          totalCostUsd: 2.0,
+        },
+        {
+          ...current,
+          models: [
+            identity('claude-opus-4-8', 'medium', 110_000, 0.75),
+            identity('claude-opus-4-8', 'high', 40_000, 0.5),
+          ],
+          totalTokens: 150_000,
+          totalCostUsd: 1.25,
+        },
+      ],
+      totalByModel: [
+        identity('claude-haiku-4-5', null, 1_200_000, 2.0),
+        identity('claude-opus-4-8', 'medium', 110_000, 0.75),
+        identity('claude-opus-4-8', 'high', 40_000, 0.5),
+      ],
+      totalTokens: 1_350_000,
+      totalCostUsd: 3.25,
+    },
+  };
+}
+
 function pipelineWithMissingPrices(mixed: boolean) {
   const fixture = pipeline();
   const gap = { modelId: 'gpt-5.6-sol', reason: 'NoPriceForDate', affectedRuns: 1 };
@@ -959,4 +1018,80 @@ test('council reaction links the targeted follow-up round and renders in both th
     await page.getByTestId('code-review-panel').screenshot({ path });
     await testInfo.attach(fileName, { path, contentType: 'image/png' });
   }
+});
+
+test('token panel: own band, one label per quantity, and model + reasoning level per row', async ({ page, devBackend }) => {
+  void devBackend;
+  await page.setViewportSize({ width: 1440, height: 1100 });
+  await page.addInitScript(() => {
+    try {
+      localStorage.setItem('taskboard.panesVisible', JSON.stringify({ prompt: true, protocol: false, git: false }));
+    } catch { /* ignore */ }
+  });
+  await installFixtureRoutes(page);
+  const id = JOB_ID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  await page.route(new RegExp(`/api/tasks/${id}/pipeline(\\?|$)`), route =>
+    route.fulfill(json(pipelineWithReasoningLevels())));
+
+  await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
+  const panel = page.getByTestId('pipeline-token-usage');
+  await expect(panel).toBeVisible({ timeout: 10_000 });
+
+  // Own band: the block is separated from the step list above by real space
+  // plus one hairline rule, so its first row cannot read as one more step.
+  const band = await panel.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      marginTop: Number.parseFloat(style.marginTop),
+      paddingTop: Number.parseFloat(style.paddingTop),
+      borderTopWidth: Number.parseFloat(style.borderTopWidth),
+      borderTopStyle: style.borderTopStyle,
+    };
+  });
+  expect(band.marginTop).toBeGreaterThanOrEqual(8);
+  expect(band.paddingTop).toBeGreaterThan(0);
+  expect(band.borderTopWidth).toBeGreaterThan(0);
+  expect(band.borderTopStyle).toBe('solid');
+
+  // One label per quantity: the step list keeps "Task total", the panel head
+  // names its own scope.
+  await expect(page.getByTestId('overview-pipeline-total')).toContainText('Task total');
+  const head = page.getByTestId('pipeline-token-usage-total-toggle');
+  await expect(head).toContainText('Tokens across all runs');
+  await expect(head).not.toContainText(/task total/i);
+
+  await head.click();
+  await expect(page.getByTestId('pipeline-token-usage-total-caption'))
+    .toContainText('Per model and reasoning level');
+
+  // Model + level on every identity row, in the board badge's vocabulary; one
+  // row per level, and an honest "level unknown" where the ledger has none.
+  const identities = page.getByTestId('pipeline-token-usage-total-identity');
+  await expect(identities).toHaveCount(3);
+  await expect(identities.nth(0)).toContainText('claude-haiku-4-5');
+  await expect(identities.nth(0)).toContainText('level unknown');
+  await expect(identities.nth(1)).toHaveAttribute('data-thinking-level', 'medium');
+  await expect(identities.nth(1)).toContainText('claude-opus-4-8');
+  await expect(identities.nth(1)).toContainText('medium');
+  await expect(identities.nth(2)).toHaveAttribute('data-thinking-level', 'high');
+  await expect(page.getByTestId('pipeline-token-usage-total-identity-badge').nth(1))
+    .toContainText('OP4.8');
+
+  // The current run repeats the same identity vocabulary per run.
+  await page.getByTestId('pipeline-token-usage-run-toggle').first().click();
+  await expect(page.getByTestId('pipeline-token-usage-run-identity')).toHaveCount(2);
+
+  // A section with no numbers yet stays on the muted scale.
+  const pending = page.locator('[data-testid="overview-pipeline-phase"][data-tone="neutral"]').first();
+  if (await pending.count() > 0) {
+    const opacity = await pending.evaluate(element => Number.parseFloat(getComputedStyle(element).opacity));
+    expect(opacity).toBeLessThan(1);
+  }
+
+  // Both themes: the band rule, the badge hues, and the muted scale must read
+  // in each one.
+  await page.evaluate(() => { document.documentElement.dataset['studioTheme'] = 'light'; });
+  await savePipelineAndUsageShot(page, 'token-panel-identity-band-light--mocked.png');
+  await page.evaluate(() => { document.documentElement.dataset['studioTheme'] = 'dark'; });
+  await savePipelineAndUsageShot(page, 'token-panel-identity-band-dark--mocked.png');
 });
