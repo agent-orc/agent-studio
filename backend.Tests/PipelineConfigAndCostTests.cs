@@ -312,7 +312,9 @@ public class PipelineConfigAndCostTests
         var summary = PipelineCostCalculator.SummarizeByModel(record);
 
         var run = Assert.Single(summary.Runs);
-        Assert.True(run.Current);
+        // The record carries a CompletedAt stamp, so it is the newest run but
+        // not a live one.
+        Assert.False(run.Current);
         Assert.Equal(1, run.Attempt);
         Assert.Equal(2, run.Models.Count);
 
@@ -386,6 +388,71 @@ public class PipelineConfigAndCostTests
         Assert.Equal(4.00m, total.CostUsd);
         Assert.Equal(4.00m, summary.TotalCostUsd);
         Assert.False(summary.AnyModelUnknown);
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void SummarizeByModel_RecordVariant_MarksCurrentOnlyWhileTheRunIsLive(
+        bool finished,
+        bool expectedCurrent)
+    {
+        var startedAt = new DateTime(2026, 9, 3, 9, 0, 0, DateTimeKind.Utc);
+        var record = new PipelineExecutionRecord
+        {
+            Attempt = 1,
+            StartedAt = startedAt,
+            CompletedAt = finished ? startedAt.AddMinutes(5) : null,
+            Steps =
+            {
+                new PipelineStepExecution
+                {
+                    StepId = "core-agent-run", Kind = StepKind.Core,
+                    Model = "claude-haiku-4-5", InputTokens = 1_000_000, OutputTokens = 200_000,
+                },
+            },
+        };
+
+        var summary = PipelineCostCalculator.SummarizeByModel(record);
+
+        var run = Assert.Single(summary.Runs);
+        Assert.Equal(expectedCurrent, run.Current);
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void SummarizeByModel_SessionVariant_MarksCurrentOnlyWhileTheRunIsLive(
+        bool finished,
+        bool expectedCurrent)
+    {
+        var first = new DateTime(2026, 9, 3, 8, 0, 0, DateTimeKind.Utc);
+        var sessions = new List<SessionEvent>
+        {
+            new()
+            {
+                Ts = first,
+                FinishedAt = first.AddMinutes(20),
+                Kind = "start",
+                Model = "claude-haiku-4-5",
+                Status = "completed",
+            },
+            new()
+            {
+                Ts = first.AddHours(1),
+                FinishedAt = finished ? first.AddHours(1).AddMinutes(20) : null,
+                Kind = "continue",
+                Model = "claude-haiku-4-5",
+                Status = finished ? "completed" : "running",
+            },
+        };
+
+        var summary = PipelineCostCalculator.SummarizeByModel(null, sessions, null);
+
+        Assert.Equal(2, summary.Runs.Count);
+        // An older session never carries the marker, whatever the newest one does.
+        Assert.False(summary.Runs[0].Current);
+        Assert.Equal(expectedCurrent, summary.Runs[1].Current);
     }
 
     [Fact]

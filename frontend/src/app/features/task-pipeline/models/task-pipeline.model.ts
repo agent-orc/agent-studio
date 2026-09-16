@@ -171,8 +171,10 @@ export interface PipelineModelTokenUsage {
 
 /**
  * One pipeline run (attempt) with its tokens grouped per model. `current`
- * marks the live run; older runs come from previous attempts. Mirrors
- * backend `PipelineRunTokenUsage`.
+ * marks a run that is still live (no completion stamp), never merely the
+ * newest: the panel sorts newest-first, so position already carries recency
+ * and a finished newest run shows no badge. Older runs come from previous
+ * attempts. Mirrors backend `PipelineRunTokenUsage`.
  */
 export interface PipelineRunTokenUsage {
   attempt: number;

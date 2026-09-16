@@ -80,8 +80,11 @@ public sealed record PipelineModelTokenUsage(
 
 /// <summary>
 /// One pipeline run (a <see cref="PipelineExecutionRecord"/> attempt) with
-/// its tokens grouped per model. <see cref="Current"/> marks the live run;
-/// older runs come from <see cref="PipelineExecutionRecord.PreviousAttempts"/>.
+/// its tokens grouped per model. <see cref="Current"/> marks a run that is
+/// still live (no completion stamp), never merely the newest: the panel
+/// already sorts newest-first, so position carries recency and a finished
+/// newest run gets no marker. Older runs come from
+/// <see cref="PipelineExecutionRecord.PreviousAttempts"/>.
 /// </summary>
 public sealed record PipelineRunTokenUsage(
     int Attempt,
@@ -354,7 +357,9 @@ public static class PipelineCostCalculator
         {
             runs.Add(BuildRun(prev, current: false));
         }
-        runs.Add(BuildRun(record, current: true));
+        // The live record still carries a CompletedAt stamp once the attempt
+        // finished, so recency alone must not light the Current marker.
+        runs.Add(BuildRun(record, current: record.CompletedAt == null));
 
         return BuildModelSummary(runs);
     }
@@ -393,7 +398,7 @@ public static class PipelineCostCalculator
             var models = GroupCallsByModel(runCalls, session.Model);
             runs.Add(new PipelineRunTokenUsage(
                 Attempt: index + 1,
-                Current: index == sessionEvents.Count - 1,
+                Current: index == sessionEvents.Count - 1 && session.FinishedAt == null,
                 StartedAt: session.Ts,
                 CompletedAt: session.FinishedAt,
                 Models: models,
