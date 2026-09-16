@@ -9,6 +9,12 @@
   flex-direction: column;
   width: 100%;
   min-width: 0;
+  // Own band. Without the break the first row read as one more step of the
+  // last pipeline phase (operator, 2026-09-14); the hairline matches the
+  // section rhythm of the pane.
+  margin-top: var(--studio-spacing-3);
+  padding-top: var(--studio-spacing-2);
+  border-top: 1px solid var(--studio-border);
 
   &__level {
     display: flex;
@@ -52,9 +58,7 @@
   }
 
   &__row--sum {
-    margin-top: calc(var(--studio-spacing-1) * -0.5);
     padding-block: var(--studio-spacing-1);
-    border-top: 1px dashed var(--studio-border);
   }
 
   &__level--run {
@@ -231,6 +235,8 @@
     }
   }
 
+  // Placement only: the (model, level) identity itself is rendered by
+  // `app-token-model-identity`, which this class is applied to.
   &__model {
     grid-column: 3;
     min-width: 0;
@@ -238,25 +244,16 @@
     align-items: center;
     gap: var(--studio-spacing-1);
     padding-left: var(--studio-spacing-2);
-
-    code {
-      overflow: hidden;
-      color: var(--studio-fg);
-      font-family: var(--font-mono);
-      font-size: 11px;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
   }
 
-  &__steps {
-    flex: 0 0 auto;
-    padding: 0 var(--studio-spacing-1);
-    border-radius: 4px;
-    background: var(--studio-bg-hover);
+  &__breakdown-caption {
+    margin: 0 0 0 var(--ov-pipeline-step-indent);
+    padding: 0 var(--studio-spacing-2);
     color: var(--studio-fg-muted);
     font-size: 9.5px;
     font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
   }
 
   &__split {

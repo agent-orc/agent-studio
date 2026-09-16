@@ -47,6 +47,14 @@ public record TaskTokenCall
     public string? Model { get; init; }
     /// <summary>Human-readable model label for the UI (e.g. <c>Claude Sonnet 5</c>). Falls back to <see cref="Model"/> for ids absent from the registry.</summary>
     public string? DisplayModel { get; init; }
+    /// <summary>
+    /// Effective reasoning / thinking level this call ran at, recorded at call
+    /// time (AGT-2811). Model and level together determine both cost and
+    /// quality, so the ledger carries both. Null on rows written before the
+    /// level was recorded and for models without a level dimension - UIs show
+    /// those as "level unknown" rather than guessing a level.
+    /// </summary>
+    public string? ThinkingLevel { get; init; }
     /// <summary>Bus participant that produced this token usage row, e.g. <c>agent:codex</c> or <c>orchestrator:Project</c>.</summary>
     public string? ParticipantId { get; init; }
     public long InputTokens { get; init; }

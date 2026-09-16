@@ -1,0 +1,14 @@
+<app-model-level-indicator
+  class="tmi__badge"
+  [model]="model()"
+  [thinkingLevel]="level()"
+  [testId]="testId() + '-badge'"
+  [levelTestId]="testId() + '-badge-level'" />
+<code class="tmi__id">{{ model() }}</code>
+<span class="tmi__sep" aria-hidden="true">·</span>
+<span class="tmi__level"
+      [class.tmi__level--unknown]="!level()"
+      [attr.data-testid]="testId() + '-level'">{{ levelLabel() }}</span>
+@if (steps() > 1) {
+  <span class="tmi__steps">×{{ steps() }}</span>
+}

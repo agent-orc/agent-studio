@@ -482,6 +482,119 @@ public class PipelineConfigAndCostTests
     }
 
     [Fact]
+    public void SummarizeByModel_SplitsOneModelIntoOneRowPerReasoningLevel()
+    {
+        var record = new PipelineExecutionRecord
+        {
+            Attempt = 1,
+            StartedAt = new DateTime(2026, 9, 2, 10, 0, 0, DateTimeKind.Utc),
+            Steps =
+            {
+                new PipelineStepExecution
+                {
+                    StepId = "core-agent-run", Kind = StepKind.Core,
+                    Model = "claude-opus-4-8", ThinkingLevel = "medium",
+                    InputTokens = 100_000, OutputTokens = 10_000,
+                },
+                new PipelineStepExecution
+                {
+                    StepId = "post-code-review", Kind = StepKind.Module,
+                    Model = "claude-opus-4-8", ThinkingLevel = "high",
+                    InputTokens = 40_000, OutputTokens = 4_000,
+                },
+                // Same model, no recorded level: its own "level unknown" row.
+                new PipelineStepExecution
+                {
+                    StepId = "post-drift-check", Kind = StepKind.Drift,
+                    Model = "claude-opus-4-8",
+                    InputTokens = 10_000, OutputTokens = 1_000,
+                },
+            },
+        };
+
+        var summary = PipelineCostCalculator.SummarizeByModel(record);
+
+        var run = Assert.Single(summary.Runs);
+        Assert.Equal(3, run.Models.Count);
+        Assert.Equal(new[] { "medium", "high", null }, run.Models.Select(m => m.ThinkingLevel));
+        Assert.All(run.Models, m => Assert.Equal("claude-opus-4-8", m.Model));
+        // The lifetime rollup keeps the same three identities.
+        Assert.Equal(3, summary.TotalByModel.Count);
+        Assert.Equal(165_000, summary.TotalTokens);
+        Assert.Equal(summary.TotalTokens, summary.TotalByModel.Sum(m => m.TotalTokens));
+    }
+
+    [Fact]
+    public void SummarizeByModel_LedgerLevelWins_AndRunLevelOnlyFillsTheRunsOwnModel()
+    {
+        var first = new DateTime(2026, 9, 3, 8, 0, 0, DateTimeKind.Utc);
+        var sessions = new List<SessionEvent>
+        {
+            new()
+            {
+                Ts = first,
+                FinishedAt = first.AddMinutes(30),
+                Kind = "start",
+                Model = "claude-opus-4-8",
+                ThinkingLevel = "medium",
+                Status = "completed",
+            },
+        };
+        var tokens = new TaskTokenSummary
+        {
+            Calls = 3,
+            InputTokens = 160_000,
+            OutputTokens = 16_000,
+            TotalTokens = 176_000,
+            AllModelsPriced = true,
+            LastModel = "claude-opus-4-8",
+            LastUpdate = first.AddMinutes(20),
+            Entries =
+            [
+                // Recorded level on the call wins over the run's level.
+                new TaskTokenCall
+                {
+                    Ts = first.AddMinutes(5),
+                    Model = "claude-opus-4-8",
+                    ThinkingLevel = "high",
+                    InputTokens = 100_000,
+                    OutputTokens = 10_000,
+                },
+                // No recorded level, but this IS the run's model -> the run's
+                // recorded level applies.
+                new TaskTokenCall
+                {
+                    Ts = first.AddMinutes(10),
+                    Model = "claude-opus-4-8",
+                    InputTokens = 50_000,
+                    OutputTokens = 5_000,
+                },
+                // A different model with no recorded level stays unknown; the
+                // run's level is never borrowed for it.
+                new TaskTokenCall
+                {
+                    Ts = first.AddMinutes(20),
+                    Model = "claude-haiku-4-5",
+                    InputTokens = 10_000,
+                    OutputTokens = 1_000,
+                },
+            ],
+        };
+
+        var summary = PipelineCostCalculator.SummarizeByModel(null, sessions, tokens);
+
+        var run = Assert.Single(summary.Runs);
+        var identities = run.Models
+            .Select(m => (m.Model, m.ThinkingLevel))
+            .ToList();
+        Assert.Contains(("claude-opus-4-8", "high"), identities);
+        Assert.Contains(("claude-opus-4-8", "medium"), identities);
+        Assert.Contains(("claude-haiku-4-5", (string?)null), identities);
+        Assert.Equal(176_000, summary.TotalTokens);
+        Assert.Equal(summary.TotalTokens, run.Models.Sum(m => m.TotalTokens));
+    }
+
+    [Fact]
     public void SummarizeByModel_SessionRunsWithoutLedgerNeverMasqueradeAsZeroUsage()
     {
         var first = new DateTime(2026, 8, 11, 8, 0, 0, DateTimeKind.Utc);

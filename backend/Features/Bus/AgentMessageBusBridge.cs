@@ -587,7 +587,8 @@ public sealed class AgentMessageBusBridge
             CacheRead: cacheRead == 0 ? null : cacheRead,
             CacheWrite: cacheWrite == 0 ? null : cacheWrite,
             Model: usage.Model,
-            Dollars: null);
+            Dollars: null,
+            ThinkingLevel: usage.ThinkingLevel);
 
         var msg = NewMessage(
             participantId: participantId,
@@ -619,11 +620,16 @@ public sealed class AgentMessageBusBridge
         ParsedTurnUsage usage,
         AgentMessageLatency? latency = null,
         string? correlationId = null,
+        string? thinkingLevel = null,
         CancellationToken ct = default)
     {
         if (usage == null) return Task.CompletedTask;
 
-        var tokens = usage.ToBusTokens();
+        // The CLI frame reports the model but never the reasoning level, so the
+        // level is the caller's knowledge (the resolved execution / step
+        // config). Recording it here makes model+level the call's identity in
+        // the ledger instead of a later guess (AGT-2811).
+        var tokens = usage.ToBusTokens() with { ThinkingLevel = thinkingLevel };
         var pct = usage.ContextWindow?.TotalSize is { } total and > 0
             ? $" ctx={usage.ContextUsed * 100 / total}%"
             : string.Empty;

@@ -12,9 +12,9 @@
         <app-disclosure-marker class="ptu__disclosure" [open]="summaryOpen()" [size]="10" />
         <span class="ptu__marker-slot" aria-hidden="true"></span>
         <span class="ptu__head-label">
-          <span class="ptu__sum-title">Task total sum</span>
+          <span class="ptu__sum-title">Tokens across all runs</span>
         </span>
-        <span class="ptu__scope">all models · {{ runCount() }} run{{ runCount() === 1 ? '' : 's' }}</span>
+        <span class="ptu__scope">every model · {{ runCount() }} run{{ runCount() === 1 ? '' : 's' }}</span>
         <span class="ptu__timing" aria-hidden="true"></span>
         <span class="ptu__head-total ptu__num ptu__strong"
               data-testid="pipeline-token-usage-grand-total-tokens">{{ tokenLabel(taskTotal().totalTokens, taskTotal().missingTokenRuns < runCount()) }}</span>
@@ -32,16 +32,18 @@
 
       @if (summaryOpen()) {
         <div class="ptu__breakdown">
-          @for (m of totalByModel(); track m.model) {
+          <p class="ptu__breakdown-caption" data-testid="pipeline-token-usage-total-caption">
+            Per model and reasoning level, all runs
+          </p>
+          @for (m of totalByModel(); track identityKey(m)) {
             <div class="ptu__model-row"
                  data-testid="pipeline-token-usage-total-model"
                  [cacTooltip]="modelTooltip(m)">
-              <span class="ptu__model">
-                <code>{{ m.model }}</code>
-                @if (m.steps > 1) {
-                  <span class="ptu__steps">×{{ m.steps }}</span>
-                }
-              </span>
+              <app-token-model-identity class="ptu__model"
+                                        [model]="m.model"
+                                        [thinkingLevel]="m.thinkingLevel"
+                                        [steps]="m.steps"
+                                        testId="pipeline-token-usage-total-identity" />
               <span class="ptu__split">
                 Input {{ tokens(m.inputTokens) }} · Output {{ tokens(m.outputTokens) }} · Cache read {{ tokens(m.cacheReadTokens) }} · Cache write {{ tokens(m.cacheCreationTokens) }}
               </span>
@@ -118,16 +120,15 @@
 
         @if (isRunOpen(run.attempt)) {
           <div class="ptu__breakdown">
-            @for (m of run.models; track m.model) {
+            @for (m of run.models; track identityKey(m)) {
               <div class="ptu__model-row"
                    data-testid="pipeline-token-usage-run-model"
                    [cacTooltip]="modelTooltip(m)">
-                <span class="ptu__model">
-                  <code>{{ m.model }}</code>
-                  @if (m.steps > 1) {
-                    <span class="ptu__steps">×{{ m.steps }}</span>
-                  }
-                </span>
+                <app-token-model-identity class="ptu__model"
+                                          [model]="m.model"
+                                          [thinkingLevel]="m.thinkingLevel"
+                                          [steps]="m.steps"
+                                          testId="pipeline-token-usage-run-identity" />
                 <span class="ptu__split">
                   Input {{ tokens(m.inputTokens) }} · Output {{ tokens(m.outputTokens) }} · Cache read {{ tokens(m.cacheReadTokens) }} · Cache write {{ tokens(m.cacheCreationTokens) }}
                 </span>

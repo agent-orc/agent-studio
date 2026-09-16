@@ -127,6 +127,10 @@
           "type": ["string", "null"],
           "description": "Concrete model id used for this message, e.g. claude-opus-4-7."
         },
+        "thinkingLevel": {
+          "type": ["string", "null"],
+          "description": "Effective reasoning / thinking level the call ran at, e.g. medium. Recorded at call time by the producer; null when the producer does not know it or the model has no level. Model and level together identify what spent the tokens."
+        },
         "dollars": {
           "type": ["number", "null"],
           "minimum": 0
