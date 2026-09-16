@@ -588,6 +588,7 @@ public static class V1ReviewPlaneEndpoints
             RemoteDeliveryIntegrationCoordinator remoteIntegration,
             TimelineLog timeline,
             FailureInterventionService failureInterventions,
+            IntegrationBranchGateReporter integrationGates,
             IRemoteReviewEvidenceProjectionQueue evidenceQueue,
             ILoggerFactory loggerFactory,
             CancellationToken ct) =>
@@ -664,7 +665,8 @@ public static class V1ReviewPlaneEndpoints
             if (!TryOutcome(request.Outcome, out var outcome))
                 return Results.BadRequest(new Contract.ApiError(
                     "invalid-review-outcome",
-                    "Outcome must be Pass, ProductFailure, ReviewInfra, Inconclusive, or Cancellation."));
+                    "Outcome must be Pass, ProductFailure, IntegrationBranchDefect, ReviewInfra, "
+                    + "Inconclusive, or Cancellation."));
 
             var settled = authority.SettleReview(new SettleReviewAttemptRequest(
                 new AttemptWriteReference(
@@ -718,6 +720,28 @@ public static class V1ReviewPlaneEndpoints
                     RetryScheduled: false,
                     task.State,
                     EvidenceProjection: Contract.ReviewEvidenceProjectionStatus.Duplicate));
+            }
+
+            // AGT-2819: every deterministic gate was measured on the merge base
+            // before its failure was attributed, so this report also carries the
+            // integration branch's own health. Record it and alert the operator
+            // feed on the day a gate turns red, naming the step and the commits
+            // it turned red between.
+            var branchGateFindings = await integrationGates.RecordAsync(
+                task,
+                settled.ReviewAttempt.Subject.Plan,
+                request.Commands,
+                settled.ReviewAttempt.Subject.Plan?.IntegrationRef,
+                settled.ReviewAttempt.AttemptId,
+                receivedAt,
+                ct).ConfigureAwait(false);
+            if (branchGateFindings.Count > 0)
+            {
+                logger.LogWarning(
+                    "review-integration-branch-gate-red attempt={AttemptId} branch={Branch} steps={Steps}",
+                    attemptId,
+                    settled.ReviewAttempt.Subject.Plan?.IntegrationRef,
+                    string.Join(", ", branchGateFindings.Select(finding => finding.StepId)));
             }
 
             if (settled.ReviewAttempt.Outcome == ReviewTerminalOutcome.Pass)
@@ -1350,13 +1374,22 @@ public static class V1ReviewPlaneEndpoints
                 // "<unparsed failure in verify-2>" ProductFailure (subject).
                 // Build/test verify commands get the full clamp window instead;
                 // the runner-side hard clamp (7200s) stays the ceiling.
+                // AGT-2819: every deterministic gate is compared against the
+                // merge base before its failure is charged to the delivery. A
+                // lint or build gate has no failure names to diff, so it is
+                // compared on exit status; a test gate keeps failure-name
+                // diffing so a new failure inside an already-red suite still
+                // blocks the card.
                 return new Contract.ReviewCommandDto(
                     $"verify-{index + 1}",
                     command.Kind == VerifyCommandKind.Lint ? "lint" : "build-tests",
                     "sh",
                     ["-lc", shellCommand],
                     TimeoutSeconds: 7200,
-                    CompareToBaseline: command.Kind == VerifyCommandKind.Test);
+                    CompareToBaseline: true,
+                    BaselineMode: command.Kind == VerifyCommandKind.Test
+                        ? Contract.ReviewBaselineModes.TestFailures
+                        : Contract.ReviewBaselineModes.ExitStatus);
             })
             .ToList();
         if (commands.Count == 0)
@@ -1659,6 +1692,7 @@ public static class V1ReviewPlaneEndpoints
         {
             "pass" => ReviewTerminalOutcome.Pass,
             "productfailure" => ReviewTerminalOutcome.ProductFailure,
+            "integrationbranchdefect" => ReviewTerminalOutcome.IntegrationBranchDefect,
             "reviewinfra" => ReviewTerminalOutcome.InfrastructureFailure,
             "inconclusive" => ReviewTerminalOutcome.Inconclusive,
             "cancellation" => ReviewTerminalOutcome.Cancellation,

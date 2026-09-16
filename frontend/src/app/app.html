@@ -96,173 +96,29 @@
              tab gets filter + compact + add-task; task tabs reuse the
              existing detail-pane toggles via the TaskDetail's own header. -->
         <div studioTabActions class="studio-tab-actions">
-          @if (isDocumentTabActive()) {
-            <div class="studio-document-history" data-testid="studio-document-history"
-                 [attr.data-history-length]="studioTabState.activeDocumentHistoryLength()">
-              <button type="button" class="studio-tab-action"
-                      data-testid="studio-document-back"
-                      aria-label="Back in this document tab"
-                      [disabled]="!studioTabState.canNavigateDocumentBack()"
-                      (click)="projectHubUrls.navigateDocumentHistory(-1)">←</button>
-              <button type="button" class="studio-tab-action"
-                      data-testid="studio-document-forward"
-                      aria-label="Forward in this document tab"
-                      [disabled]="!studioTabState.canNavigateDocumentForward()"
-                      (click)="projectHubUrls.navigateDocumentHistory(1)">→</button>
-            </div>
-          }
-          @if (studioTabState.activeTab()?.kind === 'board') {
-            <div class="studio-board-actions" data-testid="studio-board-actions">
-              <button type="button"
-                      class="studio-tab-action studio-tab-action--toggle"
-                      [class.studio-tab-action--active]="groupByEpic()"
-                      [attr.aria-pressed]="groupByEpic()"
-                      data-testid="studio-board-epic-toggle"
-                      [cacTooltip]="groupByEpic() ? 'Show lane columns' : 'Group tasks by epic'"
-                      (click)="toggleGroupByEpic()">
-                <app-studio-icon [name]="groupByEpic() ? 'epic' : 'grid'" [size]="14"></app-studio-icon>
-                <span>{{ groupByEpic() ? 'Epics' : 'Lanes' }}</span>
-              </button>
-              <span class="studio-tab-actions-sep" aria-hidden="true"></span>
-              <button type="button"
-                      class="studio-tab-action studio-tab-action--primary"
-                      data-testid="studio-board-add-task" [disabled]="updateClient.mutationsBlocked()"
-                      (click)="openCreate()">＋ Add task</button>
-            </div>
-          }
-          @if (studioTabState.activeTab()?.kind === 'task' && !detailPreview() && !detailLoading() && !detailLoadError() && selectedJob(); as detail) {
-            @let gitCommitCount = detail.info.commits?.length || (detail.info.commit ? 1 : 0);
-            @if (studioRunActivityBadge(); as ra) {
-              <span class="studio-tab-action__run-activity"
-                    [class]="'studio-tab-action__run-activity studio-tab-action__run-activity--' + ra.tone"
-                    [cacTooltip]="ra.tooltip"
-                    data-testid="studio-run-activity"
-                    [attr.data-run-activity-kind]="ra.kind">
-                <span class="studio-tab-action__run-activity-dot"></span>
-                {{ ra.label }}
-              </span>
-              <span class="studio-tab-actions-sep" aria-hidden="true"></span>
-            }
-            @if (detail.info.executionLocation && detail.info.executionLocation.state !== 'no-active-execution') {
-              <app-execution-location-badge data-testid="studio-execution-location" [execution]="detail.info.executionLocation" /><span class="studio-tab-actions-sep" aria-hidden="true"></span>
-            }
-            <div class="studio-tab-action__pane-toggles"
-                 data-testid="studio-pane-toggles"
-                 role="group"
-                 aria-label="Toggle detail panes">
-              <button type="button"
-                      class="studio-tab-action studio-tab-action--icon"
-                      [class.studio-tab-action--active]="shellPanesVisible().prompt"
-                      [attr.aria-pressed]="shellPanesVisible().prompt"
-                      aria-label="Toggle Description panel"
-                      data-testid="studio-pane-toggle-prompt"
-                      [cacTooltip]="'Description'"
-                      (click)="onShellTogglePane('prompt')">
-                <app-studio-icon name="book" [size]="14"></app-studio-icon>
-              </button>
-              <button type="button"
-                      class="studio-tab-action studio-tab-action--icon"
-                      [class.studio-tab-action--active]="shellPanesVisible().protocol"
-                      [attr.aria-pressed]="shellPanesVisible().protocol"
-                      aria-label="Toggle Protocol panel"
-                      data-testid="studio-pane-toggle-protocol"
-                      [cacTooltip]="'Protocol &amp; chat'"
-                      (click)="onShellTogglePane('protocol')">
-                <app-studio-icon name="bot" [size]="14"></app-studio-icon>
-              </button>
-              <button type="button"
-                      class="studio-tab-action studio-tab-action--icon studio-tab-action--has-badge"
-                      [class.studio-tab-action--active]="shellPanesVisible().git"
-                      [attr.aria-pressed]="shellPanesVisible().git"
-                      aria-label="Toggle Git panel"
-                      data-testid="studio-pane-toggle-git"
-                      [cacTooltip]="'Git diff &amp; file tree'"
-                      (click)="onShellTogglePane('git')">
-                <app-studio-icon name="diff" [size]="14"></app-studio-icon>
-                @if (gitCommitCount > 0) {
-                  <span class="studio-tab-action__badge"
-                        data-testid="studio-pane-toggle-git-badge"
-                        [attr.aria-label]="gitCommitCount + ' commits'">{{ gitCommitCount }}</span>
-                }
-              </button>
-            </div>
-            <span class="studio-tab-actions-sep" aria-hidden="true"></span>
-            <button type="button"
-                    class="studio-tab-action studio-tab-action--icon"
-                    data-testid="studio-task-prev"
-                    [cacTooltip]="'Previous task in lane'"
-                    (click)="onTriagePrev(detail.info)">‹</button>
-            @if (slimPagerTotal() > 0) {
-              <span class="studio-tab-action studio-tab-action--counter"
-                    data-testid="studio-task-pager-position"
-                    aria-live="polite">{{ slimPagerPosition() > 0 ? slimPagerPosition() : '—' }} / {{ slimPagerTotal() }}</span>
-            }
-            <button type="button"
-                    class="studio-tab-action studio-tab-action--icon"
-                    data-testid="studio-task-next"
-                    [cacTooltip]="'Next task in lane'"
-                    (click)="onTriageNext(detail.info)">›</button>
-            <span class="studio-tab-actions-sep" aria-hidden="true"></span>
-            <select class="studio-tab-action studio-tab-action--lane-select"
-                    [attr.data-lane-tone]="laneTone(studioPagerLaneState())"
-                    [value]="studioPagerLaneState()"
-                    data-testid="studio-lane-select"
-                    aria-label="Page through lane"
-                    [cacTooltip]="'Select which lane to page through'"
-                    (change)="onStudioLaneChange(detail.info, $event)">
-              @for (lane of studioLaneOptions; track lane.state) {
-                <option [value]="lane.state" [selected]="lane.state === studioPagerLaneState()">{{ lane.label }}</option>
-              }
-              @if (!isStandardLane(studioPagerLaneState())) {
-                <option [value]="studioPagerLaneState()" [selected]="true">{{ stateLabel(studioPagerLaneState()) }}</option>
-              }
-            </select>
-            @if (studioTriageHasActions()) {
-              <span class="studio-tab-actions-sep" aria-hidden="true"></span>
-              <div class="studio-tab-action__triage" data-testid="studio-triage-panel" data-triage-root>
-                @if (studioTriagePrimary(); as primary) {
-                  <button type="button"
-                          class="studio-tab-action studio-tab-action--primary"
-                          [class.studio-tab-action--git-loading]="studioPrimaryAwaitingGit()"
-                          [attr.data-testid]="'studio-triage-action-' + primary.id"
-                          [attr.data-action-id]="primary.id"
-                          [attr.data-git-loading]="studioPrimaryAwaitingGit() ? 'true' : null"
-                          [disabled]="updateClient.mutationsBlocked() || studioPrimaryAwaitingGit() || studioTriageActingId() !== null"
-                          [appPendingButton]="studioTriageActingId() === primary.id"
-                          [pendingLabel]="studioPrimaryLabel() + '…'"
-                          [cacTooltip]="studioPrimaryAwaitingGit()
-                            ? 'Checking git status — action available once loaded.'
-                            : (studioMergeAcceptView()?.statusTooltip || studioPrimaryLabel()) + ' (Enter)'"
-                          (click)="onStudioTriagePrimary()">
-                    @if (studioPrimaryAwaitingGit()) {
-                      <span class="studio-tab-action__skeleton" aria-hidden="true"></span>
-                      <span class="visually-hidden">Checking git status…</span>
-                    } @else {
-                      {{ studioPrimaryLabel() }}
-                    }
-                  </button>
-                }
-                <button type="button"
-                        class="studio-tab-action studio-tab-action--icon"
-                        data-testid="studio-triage-overflow-btn"
-                        aria-haspopup="menu"
-                        [attr.aria-expanded]="studioTriageOverflowOpen()"
-                        [disabled]="updateClient.mutationsBlocked()"
-                        [cacTooltip]="'More task actions'"
-                        (click)="toggleStudioTriageOverflow($event)">⋯</button>
-                <app-menu
-                  [items]="studioTriageMenuItems()"
-                  [open]="studioTriageOverflowOpen()"
-                  [anchorEl]="studioTriageOverflowAnchor()"
-                  placement="below"
-                  testIdPrefix="studio-triage-overflow"
-                  ariaLabel="Lane actions"
-                  [minWidth]="220"
-                  (itemClick)="onStudioTriageMenuItemClick($event)"
-                  (closeRequest)="closeStudioTriageOverflow()" />
-              </div>
-            }
-          }
+          <app-studio-tab-actions
+            [documentHistoryVisible]="isDocumentTabActive()"
+            [canNavigateBack]="studioTabState.canNavigateDocumentBack()"
+            [canNavigateForward]="studioTabState.canNavigateDocumentForward()"
+            [documentHistoryLength]="studioTabState.activeDocumentHistoryLength()"
+            [boardActionsVisible]="studioTabState.activeTab()?.kind === 'board'"
+            [groupByEpic]="groupByEpic()"
+            [mutationsBlocked]="updateClient.mutationsBlocked()"
+            [task]="studioTabActionsTask()"
+            [runActivity]="studioRunActivityBadge()"
+            [panes]="shellPanesVisible()"
+            [pager]="studioTabActionsPager()"
+            [laneOptions]="studioLaneOptions"
+            [triage]="studioTabActionsTriage()"
+            (navigateDocumentHistory)="projectHubUrls.navigateDocumentHistory($event)"
+            (toggleGroupByEpic)="toggleGroupByEpic()"
+            (addTask)="openCreate()"
+            (togglePane)="onShellTogglePane($event)"
+            (previousTask)="onStudioPagerPrev()"
+            (nextTask)="onStudioPagerNext()"
+            (laneChange)="onStudioLaneChange($event)"
+            (triagePrimary)="onStudioTriagePrimary()"
+            (triageMenuItem)="onStudioTriageMenuItemClick($event)" />
         </div>
         <div studioContent class="studio-projected-content">
           <app-workspace-banner [projects]="bannerProjects()" />

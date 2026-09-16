@@ -29,12 +29,15 @@ import {
   BoardDragStateService,
   BoardMutationsService,
   CreateTaskFormService,
+  buildFocusLanes,
+  buildLaneGroups,
   buildProjectTokenChip,
   flattenGrouped,
+  type BoardLane,
+  type BoardLaneGroup,
   excludeEpics,
   projectAutoInfo,
   projectRunnerIndicator,
-  splitReadyByPhase,
 } from './features/board';
 import {
   TaskDetailComponent,
@@ -78,7 +81,12 @@ import {
   WorkspaceOverlaysService,
   type WorkspaceSettingsSection,
 } from './features/shell';
-import { E2ECleanupDialogComponent, TagManagerDialogComponent } from './features/dev-tools';
+import {
+  buildDevtoolsMenuItems,
+  DEVTOOLS_MENU_IDS,
+  E2ECleanupDialogComponent,
+  TagManagerDialogComponent,
+} from './features/dev-tools';
 import {
   UpdateBlockModalComponent,
   UpdateCenterComponent,
@@ -89,6 +97,7 @@ import {
 import { VerboseDebugOverlayComponent } from './features/verbose-debug';
 import {
   StudioShellComponent,
+  StudioTabActionsComponent,
   ProjectHubViewComponent,
   StudioDiffViewComponent,
   StudioActivityViewComponent,
@@ -102,7 +111,10 @@ import {
   studioProjectSlug,
   studioRouteForTab,
   taskTabProjectScope,
+  type ShellPanesVisible,
   type StudioTab,
+  type StudioTabPager,
+  type StudioTabTriage,
   type TaskDetailRouteTab,
   type TaskInspectorRouteTab,
 } from './features/studio-shell';
@@ -111,16 +123,14 @@ import { ClientService } from './services/client.service';
 import { NotificationService } from './services/notification.service';
 import type { TaskDetail, TaskInfo, WatchPathEntry, CliType } from './models/task.model';
 import { CLI_TYPES, TaskState } from './models/task.model';
-import { laneName, laneTone as laneToneFor, lanePresentation } from './models/lane-presentation';
+import { laneName } from './models/lane-presentation';
 import { ErrorDialogService } from './services/error-dialog.service';
 import {
   cliTypeLabel as fmtCliTypeLabel,
   formatMultiplier as fmtMultiplier,
-  stateLabel as fmtStateLabel,
 } from './services/format.util';
 import { ErrorDialogComponent } from './components/error-dialog/error-dialog.component';
 import { ConfirmDialogComponent } from './components/app-dialog/confirm-dialog/confirm-dialog.component';
-import { StudioIconComponent } from './components/studio-icon/studio-icon.component';
 import { NotificationStackComponent } from './components/app-dialog/notification-stack/notification-stack.component';
 import { MediaLightboxComponent } from './components/media-lightbox/media-lightbox.component';
 import { OfflineBannerComponent } from './components/offline-banner/offline-banner.component';
@@ -143,9 +153,8 @@ import type { TaskScreenshot } from './features/screenshots';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { MenuComponent, MenuItem, MenuItemClickEvent } from './components/menu';
 import { CostBreakdownDialogComponent, type TaskTokenSummary } from './features/tokens'; // verbose-debug overlay context types
-import { LoadingSurfaceComponent, PendingButtonDirective } from './components/async-feedback';
+import { LoadingSurfaceComponent } from './components/async-feedback';
 import { AuthGateComponent, AuthService } from './components/auth-gate/auth-gate';
-import { ExecutionLocationBadgeComponent } from './components/execution-location-badge/execution-location-badge.component';
 import { CodexSignInDialogComponent, ClaudeSignInDialogComponent } from './features/remote-hosts';
 interface VerboseDebugContext {
   lines: CliOutputLine[];
@@ -154,7 +163,6 @@ interface VerboseDebugContext {
   tokenSummary: TaskTokenSummary | null;
   job: TaskInfo | null;
 }
-interface ShellPanesVisible { prompt: boolean; protocol: boolean; git: boolean; }
 const SHELL_PANES_FALLBACK: ShellPanesVisible = {
   prompt: false,
   protocol: false,
@@ -198,17 +206,15 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
     MenuComponent,
     EpicOverviewScreenComponent,
     StudioShellComponent,
+    StudioTabActionsComponent,
     ProjectHubViewComponent,
     StudioDiffViewComponent,
     StudioActivityViewComponent,
     LoadingSurfaceComponent,
-    PendingButtonDirective,
     CostBreakdownDialogComponent,
     ProjectUrlPreviewTabComponent,
     WorkbenchTabHostComponent,
-    StudioIconComponent,
     AuthGateComponent,
-    ExecutionLocationBadgeComponent,
     CodexSignInDialogComponent,
     ClaudeSignInDialogComponent,
   ],
@@ -570,105 +576,16 @@ export class App implements OnInit, OnDestroy {
   // epics still surface there and via the Epic navigation. See `excludeEpics`.
   readonly displayGrouped = computed(() => excludeEpics(this.filteredGrouped()));
 
-  readonly focusGroups = computed(() => {
-    const grouped = this.displayGrouped();
-    // ADR-0025: seven lanes. The robot icon is the orchestrator's machine
-    // pass; the eye icon is the user's "needs me" lane.
-    // Orchestrator prep is no longer a backlog lane: it now runs in-place on
-    // 1-preparation as the optional pipeline step `pre-orchestrator-prep`
-    // (see PipelineCatalogue), so the retired 1a lane is not rendered.
-    // Backlog-lane spec: 0-backlog leads the focus list when populated.
-    const lanes: { state: string; title: string; icon: string; jobs: TaskInfo[] }[] = [
-      { ...laneChrome(TaskState.Backlog), jobs: grouped.backlog ?? [] },
-      { ...laneChrome(TaskState.Preparation), jobs: grouped.preparation },
-    ];
-    lanes.push(
-      { ...laneChrome(TaskState.Ready), jobs: grouped.ready },
-      { ...laneChrome(TaskState.Progress), jobs: grouped.progress },
-    );
-    // 3b-code-not-complete: hide-when-empty park lane.
-    if ((grouped.codeNotComplete ?? []).length > 0) {
-      lanes.push({ ...laneChrome(TaskState.CodeNotComplete), jobs: grouped.codeNotComplete });
-    }
-    lanes.push(
-      { ...laneChrome(TaskState.AutoReview), jobs: grouped.autoReview },
-      { ...laneChrome(TaskState.Escalated), jobs: grouped.escalated ?? [] },
-      { ...laneChrome(TaskState.HumanReview), jobs: grouped.humanReview },
-      { ...laneChrome(TaskState.Completed), jobs: grouped.completed },
-      { ...laneChrome(TaskState.Archive), jobs: grouped.archive ?? [] },
-    );
-    return lanes;
-  });
-
   /**
-   * Board lane groups. Three contiguous containers map the workflow:
-   *
-   *  - backlog: 0-backlog, 1-preparation, 2-ready
-   *  - active:  3-progress, 4-auto-review
-   *  - decide:  5e-escalated, 5-human-review, 6-completed, 7-archive ("Done & Decide" -
-   *             intervention precedes acceptance in the user-owned tail.)
-   *
-   * The previous human/agent axis suffix was misleading (Backlog mixes
-   * agent prep with human triage) and is removed.
+   * AGT-2819: the lane ordering rules live in `buildFocusLanes` /
+   * `buildLaneGroups` (features/board). The shell only feeds them the filtered
+   * board state.
    */
-  readonly laneGroups = computed(() => {
-    const grouped = this.displayGrouped();
-    // Backlog lanes put the most actionable work first; the old order buried
-    // Ready under large backlogs.
-    //   1. 2-ready      "Ready"              — pick-up candidates
-    //   2. 1-preparation                     — in human preparation
-    //   3. 0-backlog                         — fresh inbox / triage
-    const readySplit = splitReadyByPhase(grouped.ready);
-    const backlogLanes: { state: string; title: string; icon: string; jobs: TaskInfo[] }[] = [];
-    backlogLanes.push({ ...laneChrome(TaskState.Ready), jobs: readySplit.humanReady });
-    if (readySplit.intake.length > 0) {
-      // Own "Preparation" lane: only pushed (so only rendered) while the
-      // orchestrator-prep/intake loop is actually working a card, so the lane
-      // is hidden whenever nothing is mid-preparation.
-      backlogLanes.push({ ...laneChrome('2-ready-intake'), jobs: readySplit.intake });
-    }
-    backlogLanes.push({ ...laneChrome(TaskState.Preparation), jobs: grouped.preparation });
-    backlogLanes.push({ ...laneChrome(TaskState.Backlog), jobs: grouped.backlog ?? [] });
-    const activeLanes: { state: string; title: string; icon: string; jobs: TaskInfo[] }[] = [
-      { ...laneChrome(TaskState.Progress), jobs: grouped.progress },
-    ];
-    // 3b-code-not-complete is a hide-when-empty park lane: the runner moves a
-    // task here when it exhausts its auto-pickup retry budget without reaching
-    // review, and keeps auto-mode
-    // running. It sits at 3-progress / before review so the operator sees stuck
-    // work next to what is actively running.
-    if ((grouped.codeNotComplete ?? []).length > 0) {
-      activeLanes.push({ ...laneChrome(TaskState.CodeNotComplete), jobs: grouped.codeNotComplete });
-    }
-    activeLanes.push({ ...laneChrome(TaskState.AutoReview), jobs: grouped.autoReview });
-    const escalatedJobs = grouped.escalated ?? [];
-    // Future option: metadata could apply this empty-lane policy to exception
-    // lanes such as 1-preparation. For now it is intentionally Escalated-only.
-    const showEscalated = escalatedJobs.length > 0 || this.boardDrag.active();
-    return [
-      {
-        id: 'backlog',
-        label: 'Backlog',
-        lanes: backlogLanes,
-      },
-      {
-        id: 'active',
-        label: 'Active',
-        lanes: activeLanes,
-      },
-      {
-        id: 'decide',
-        label: 'Done & Decide',
-        lanes: [
-          // Intervention comes before acceptance in the visible workflow.
-          ...(showEscalated ? [{ ...laneChrome(TaskState.Escalated), jobs: escalatedJobs }] : []),
-          { ...laneChrome(TaskState.HumanReview), jobs: grouped.humanReview },
-          { ...laneChrome(TaskState.Completed), jobs: grouped.completed },
-          { ...laneChrome(TaskState.Archive), jobs: grouped.archive ?? [] },
-        ],
-      },
-    ];
-  });
+  readonly focusGroups = computed<BoardLane[]>(() => buildFocusLanes(this.displayGrouped()));
+
+  readonly laneGroups = computed<BoardLaneGroup[]>(
+    () => buildLaneGroups(this.displayGrouped(), this.boardDrag.active()),
+  );
   // Copilot removed: no CLI exposes the inline path/token config card, so the
   // error-dialog "Open CLI config" affordance is permanently disabled.
   readonly selectedJobUsesCopilot = computed(() => false);
@@ -719,19 +636,6 @@ export class App implements OnInit, OnDestroy {
     TaskState.Archive,
   ].map((state) => ({ state, label: laneName(state) }));
 
-  /** Lane tone key for the slim header's lane chip (AGT-2715). */
-  laneTone(state: string): string {
-    return laneToneFor(state);
-  }
-
-  isStandardLane(state: string): boolean {
-    return this.studioLaneOptions.some((o) => o.state === state);
-  }
-
-  stateLabel(state: string): string {
-    return fmtStateLabel(state);
-  }
-
   /**
    * Slim-header lane dropdown change → navigation only (ASS-661). Re-points
    * the pager at the chosen lane and opens a task in it; the current task is
@@ -741,7 +645,9 @@ export class App implements OnInit, OnDestroy {
    * reflects the landed lane; when navigation is declined (empty lane) it
    * stays put, snapping the <select> back off the user's transient pick.
    */
-  onStudioLaneChange(info: TaskInfo, event: Event): void {
+  onStudioLaneChange(event: Event): void {
+    const info = this.selectedJob()?.info;
+    if (!info) return;
     const target = event.target as HTMLSelectElement;
     const next = target.value;
     const current = this.studioPagerLaneState() || info.state;
@@ -777,63 +683,22 @@ export class App implements OnInit, OnDestroy {
 
   readonly devToolsFlags = computed(() => this.devTools.flags());
 
-  /**
-   * F23: typed menu-item list driving the shared <app-menu> in the header.
-   * Replaces the inline button-per-row markup that lived directly in
-   * app.html (and its companion .devtools-menu* SCSS block).
-   */
-  readonly devtoolsMenuItems = computed<readonly MenuItem[]>(() => {
-    const flags = this.devToolsFlags();
-    const items: MenuItem[] = [
-      { kind: 'header', label: 'System' },
-      {
-        kind: 'row',
-        id: 'orch-config',
-        label: 'Orchestrator config',
-        hint: 'supervisor + meta-cycle flags',
-      },
-      {
-        kind: 'row',
-        id: 'tag-manager',
-        label: 'Tag manager',
-        hint: 'add, edit, and remove registry tags',
-      },
-    ];
-    if (flags.updateStableEnabled || flags.deleteE2EJobsEnabled) {
-      items.push({ kind: 'header', label: 'Dev tools' });
-    }
-    if (flags.updateStableEnabled) {
-      items.push({
-        kind: 'row',
-        id: 'update-stable',
-        label: 'Update Stable',
-        hint: 'open resilient update center',
-      });
-    }
-    if (flags.deleteE2EJobsEnabled) {
-      items.push({
-        kind: 'row',
-        id: 'delete-e2e',
-        label: 'Delete E2E Tasks',
-        hint: 'across all projects',
-        danger: true,
-      });
-    }
-    return items;
-  });
+  readonly devtoolsMenuItems = computed<readonly MenuItem[]>(
+    () => buildDevtoolsMenuItems(this.devToolsFlags()),
+  );
 
   onDevtoolsMenuItemClick(ev: MenuItemClickEvent): void {
     switch (ev.id) {
-      case 'orch-config':
+      case DEVTOOLS_MENU_IDS.orchestratorConfig:
         this.onPickOrchestratorConfig();
         break;
-      case 'tag-manager':
+      case DEVTOOLS_MENU_IDS.tagManager:
         this.onPickTagManager();
         break;
-      case 'update-stable':
+      case DEVTOOLS_MENU_IDS.updateStable:
         this.onPickUpdateStable();
         break;
-      case 'delete-e2e':
+      case DEVTOOLS_MENU_IDS.deleteE2E:
         this.onPickDeleteE2E();
         break;
     }
@@ -1389,8 +1254,49 @@ export class App implements OnInit, OnDestroy {
   readonly studioTriageHasActions = computed(
     () => this.studioTriagePrimary() !== null || this.studioTriageOverflow().length > 0 || this.studioCommitActionsAvailable(),
   );
-  readonly studioTriageOverflowOpen = signal(false);
-  readonly studioTriageOverflowAnchor = signal<HTMLElement | null>(null);
+  /**
+   * AGT-2819: view models for the extracted `<app-studio-tab-actions>` strip.
+   * The decisions stay here because they read the embedded task-detail instance
+   * this shell owns; the strip only renders them.
+   */
+  readonly studioTabActionsTask = computed<TaskDetail | null>(() => {
+    if (this.studioTabState.activeTab()?.kind !== 'task') return null;
+    if (this.detailPreview() || this.detailLoading() || this.detailLoadError()) return null;
+    return this.selectedJob();
+  });
+
+  readonly studioTabActionsPager = computed<StudioTabPager>(() => ({
+    position: this.slimPagerPosition(),
+    total: this.slimPagerTotal(),
+    laneState: this.studioPagerLaneState(),
+  }));
+
+  readonly studioTabActionsTriage = computed<StudioTabTriage>(() => {
+    const primary = this.studioTriagePrimary();
+    const label = this.studioPrimaryLabel();
+    return {
+      hasActions: this.studioTriageHasActions(),
+      primaryId: primary?.id ?? null,
+      primaryLabel: label,
+      primaryTooltip: this.studioPrimaryAwaitingGit()
+        ? 'Checking git status — action available once loaded.'
+        : `${this.studioMergeAcceptView()?.statusTooltip || label} (Enter)`,
+      awaitingGit: this.studioPrimaryAwaitingGit(),
+      actingId: this.studioTriageActingId(),
+      menuItems: this.studioTriageMenuItems(),
+    };
+  });
+
+  /** Pager arrows in the tab-action strip; they always act on the open task. */
+  onStudioPagerPrev(): void {
+    const sel = this.selectedJob();
+    if (sel) this.onTriagePrev(sel.info);
+  }
+  onStudioPagerNext(): void {
+    const sel = this.selectedJob();
+    if (sel) this.onTriageNext(sel.info);
+  }
+
   studioCommitActionsAvailable(): boolean {
     return this.selectedJob() !== null && !!this.jobDetailRef?.commitActionsAvailable();
   }
@@ -1434,31 +1340,18 @@ export class App implements OnInit, OnDestroy {
     this.dispatchStudioTriage(sel.info, p);
   }
 
-  toggleStudioTriageOverflow(event: MouseEvent): void {
-    event.stopPropagation();
-    if (this.updateClient.mutationsBlocked()) return;
-    this.studioTriageOverflowAnchor.set(event.currentTarget as HTMLElement);
-    this.studioTriageOverflowOpen.update(v => !v);
-  }
-  closeStudioTriageOverflow(): void {
-    this.studioTriageOverflowOpen.set(false);
-  }
-
   onStudioTriageMenuItemClick(ev: MenuItemClickEvent): void {
     if (ev.id === 'generate-commit-message') {
-      this.studioTriageOverflowOpen.set(false);
       this.jobDetailRef?.generateCommitMessage();
       return;
     }
     if (ev.id === 'add-commit') {
-      this.studioTriageOverflowOpen.set(false);
       this.jobDetailRef?.addCommitFromMenu();
       return;
     }
     const button = this.studioTriageOverflow().find(b => b.id === ev.id);
     const sel = this.selectedJob();
     if (!sel || !button) return;
-    this.studioTriageOverflowOpen.set(false);
     if (button.id === 'delete') {
       this.onDeleteFromDetail(sel.info);
       return;
@@ -2661,16 +2554,3 @@ export class App implements OnInit, OnDestroy {
   }
 }
 
-/**
- * Board chrome for one lane: its state key, display name, and glyph, all read
- * from the lane presentation catalogue.
- *
- * AGT-2715: the board used to spell out `title:` and `icon:` inline at each of
- * the ~18 lane definitions across `focusGroups` and `laneGroups`. That is how
- * the board column ended up calling `5-human-review` "Review" while the Result
- * tab called the same lane "Human review lane".
- */
-function laneChrome(state: string): { state: string; title: string; icon: string } {
-  const lane = lanePresentation(state);
-  return { state, title: lane.name, icon: lane.glyph };
-}

@@ -1,0 +1,37 @@
+/**
+ * AGT-2819: the strip's layout, button chrome, and tone rules are shared with
+ * the rest of the tab bar and stay in `studio-shell.component.scss`. Only the
+ * rules that belong to markup this component alone renders live here; they came
+ * out of `app.scss`, which had kept them global purely because the markup used
+ * to be inlined in the shell template.
+ */
+
+// The component is a pass-through wrapper: its children have to remain direct
+// flex items of the tab bar's action strip, exactly as the inlined markup was.
+:host { display: contents; }
+
+/* Commit-count badge on the slim tab-bar Git pane-toggle. Mirrors the
+   legacy .pane-toggle__badge so the two render contexts read the same;
+   only shown when the open task carries at least one commit. */
+.studio-tab-action--has-badge {
+  position: relative;
+  overflow: visible;
+}
+
+.studio-tab-action__badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  box-sizing: border-box;
+  border-radius: 7px;
+  background: var(--studio-accent);
+  color: var(--studio-on-accent);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 14px;
+  text-align: center;
+  pointer-events: none;
+}

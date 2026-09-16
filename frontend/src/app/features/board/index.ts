@@ -45,5 +45,12 @@ export {
 
 // utilities
 export { splitReadyByPhase } from './components/ready-lane-split.util';
+export {
+  buildFocusLanes,
+  buildLaneGroups,
+  laneChrome,
+  type BoardLane,
+  type BoardLaneGroup,
+} from './components/board-lane-layout.util';
 export { groupReviewJobs } from './components/review-grouping.util';
 export { buildEpicGroups, flattenGrouped, excludeEpics, type EpicGroupView } from './components/epic-grouping.util';

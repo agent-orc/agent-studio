@@ -11,6 +11,12 @@ public sealed partial class TaskServerStore
 {
     private static readonly JsonSerializerOptions ReviewJson = new(JsonSerializerDefaults.Web);
 
+    /// <summary>
+    /// Wire token for the distinct terminal of a review whose only failing gate
+    /// was already red on the integration branch (AGT-2819).
+    /// </summary>
+    private const string IntegrationBranchDefectOutcome = "IntegrationBranchDefect";
+
     internal async Task ApplyReviewMigrationAsync(SqliteConnection connection, CancellationToken ct)
     {
         await AddColumnIfMissingAsync(connection, "result_handoffs", "repository_url", "TEXT", ct);
@@ -1067,6 +1073,10 @@ public sealed partial class TaskServerStore
                 && (!ValidDigest(command.BaselineSha, 40, 64)
                     || command.NewFailures is null
                     || command.PreExistingFailures is null
+                    // AGT-2819: attribution needs the merge base's own exit
+                    // status. A report that measured a baseline but withheld it
+                    // is incomplete evidence, not a product finding.
+                    || command.BaselineExitCode is null or < 0
                     || (command.NewFailures.Count > 0 && !command.RetryPerformed)
                     || (command.FlakyQuarantinedFailures is { Count: > 0 }
                         && (!command.RetryPerformed
@@ -1092,21 +1102,20 @@ public sealed partial class TaskServerStore
         if (request.Verdicts.Any(verdict =>
                 verdict.Status is not ("pass" or "concerns" or "block" or "fail")))
             return ("ReviewInfra", "InvalidAspectVerdict");
-        var commandFailures = request.Commands.Any(command =>
-        {
-            if (command.Phase != "verification" || command.WorkspaceRole != "candidate")
-                return false;
-            var planned = subject.Plan.Commands.Single(item =>
-                string.Equals(item.StepId, command.StepId, StringComparison.Ordinal));
-            if (planned.CompareToBaseline && command.NewFailures is { Count: > 0 })
-                return true;
-            if (command.ExitCode == 0) return false;
-            return !planned.CompareToBaseline
-                   || command.BaselineSha is null
-                   || command.NewFailures is null
-                   || command.NewFailures.Count > 0;
-        });
-        if (commandFailures
+        // AGT-2819: a failing verification command is attributed before it is
+        // graded. Only a failure the merge base did not already have charges the
+        // card; a step that is red on the integration branch too is reported as
+        // that branch's defect, with its own terminal and its own alert.
+        var attributions = request.Commands
+            .Where(command => command.Phase == "verification" && command.WorkspaceRole == "candidate")
+            .Select(command => (
+                command.StepId,
+                Owner: ReviewFailureAttributionPolicy.Attribute(
+                    subject.Plan.Commands.Single(item =>
+                        string.Equals(item.StepId, command.StepId, StringComparison.Ordinal)),
+                    command)))
+            .ToArray();
+        if (attributions.Any(item => item.Owner == ReviewFailureOwner.Delivery)
             || ReviewGradingPolicy.Grade(request.Verdicts.Select(verdict => verdict.Status))
                 == ReviewGrade.ProductFailure)
             return ("ProductFailure", request.FailureClassification ?? "ReviewFinding");
@@ -1114,9 +1123,19 @@ public sealed partial class TaskServerStore
             return ("ReviewInfra", string.IsNullOrWhiteSpace(request.FailureClassification)
                 ? "UnclassifiedReviewInfrastructure"
                 : request.FailureClassification);
+        var branchDefects = attributions
+            .Where(item => item.Owner == ReviewFailureOwner.IntegrationBranch)
+            .Select(item => item.StepId)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
         if (string.Equals(request.Outcome, "Pass", StringComparison.Ordinal)
-            || string.Equals(request.Outcome, "ProductFailure", StringComparison.Ordinal))
-            return ("Pass", request.FailureClassification);
+            || string.Equals(request.Outcome, "ProductFailure", StringComparison.Ordinal)
+            || string.Equals(request.Outcome, IntegrationBranchDefectOutcome, StringComparison.Ordinal))
+        {
+            return branchDefects.Length > 0
+                ? (IntegrationBranchDefectOutcome, IntegrationBranchDefectOutcome)
+                : ("Pass", request.FailureClassification);
+        }
         return ("ReviewInfra", "InvalidReviewOutcome");
     }
 
@@ -1539,20 +1558,27 @@ public sealed partial class TaskServerStore
         {
             var planned = subject.Plan.Commands.Single(item =>
                 string.Equals(item.StepId, command.StepId, StringComparison.Ordinal));
-            var failed = command.Signal is not null
-                         || command.ExitCode is null or < 0
-                         || (planned.CompareToBaseline
-                             && command.NewFailures is { Count: > 0 })
-                         || (command.ExitCode != 0
-                             && (!planned.CompareToBaseline
-                                 || command.BaselineSha is null
-                                 || command.NewFailures is null
-                                 || command.NewFailures is { Count: > 0 }));
-            return new ReviewOrchestrationGateDto(
-                command.StepId,
-                command.Aspect,
-                failed ? "failed" : "passed",
-                failed ? attempt.FailureClassification ?? "ReviewCommandFailed" : null);
+            var owner = ReviewFailureAttributionPolicy.Attribute(planned, command);
+            return owner switch
+            {
+                ReviewFailureOwner.Delivery => new ReviewOrchestrationGateDto(
+                    command.StepId,
+                    command.Aspect,
+                    "failed",
+                    attempt.FailureClassification ?? "ReviewCommandFailed"),
+                // AGT-2819: red here and red on the merge base. The gate is not
+                // green, and saying "passed" would hide the branch defect.
+                ReviewFailureOwner.IntegrationBranch => new ReviewOrchestrationGateDto(
+                    command.StepId,
+                    command.Aspect,
+                    "integration-branch-defect",
+                    IntegrationBranchDefectOutcome),
+                _ => new ReviewOrchestrationGateDto(
+                    command.StepId,
+                    command.Aspect,
+                    "passed",
+                    null),
+            };
         }).ToArray();
         var payload = new ReviewOrchestrationPayloadDto(
             subject.SourceRunId,

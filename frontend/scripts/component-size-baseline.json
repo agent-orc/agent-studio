@@ -7,10 +7,10 @@
   },
   "components": {
     "src/app/app.ts": {
-      "typeScript": 2677,
-      "template": 963,
-      "styles": 2008,
-      "total": 5626
+      "typeScript": 2557,
+      "template": 819,
+      "styles": 1082,
+      "total": 4458
     },
     "src/app/components/markdown-rich-editor/markdown-rich-editor.ts": {
       "typeScript": 466,
@@ -94,10 +94,10 @@
       "total": 909
     },
     "src/app/features/project-detail/components/project-wiki-section/project-wiki-section.ts": {
-      "typeScript": 2301,
-      "template": 965,
-      "styles": 1937,
-      "total": 5169
+      "typeScript": 1955,
+      "template": 850,
+      "styles": 1711,
+      "total": 4516
     },
     "src/app/features/project-detail/components/uxui-panel/uxui-panel.component.ts": {
       "typeScript": 247,
@@ -149,10 +149,10 @@
       "total": 1789
     },
     "src/app/features/task-detail/components/prompt-pane/overview-pane/overview-pane.component.ts": {
-      "typeScript": 1904,
-      "template": 755,
-      "styles": 1760,
-      "total": 4366
+      "typeScript": 1180,
+      "template": 500,
+      "styles": 1295,
+      "total": 2975
     },
     "src/app/features/task-detail/components/protocol-pane/protocol-pane/protocol-pane.component.ts": {
       "typeScript": 1390,

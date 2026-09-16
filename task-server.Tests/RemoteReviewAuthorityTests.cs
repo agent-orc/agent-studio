@@ -1259,8 +1259,12 @@ public sealed class RemoteReviewAuthorityTests
         Assert.Equal("CommandSubjectMismatch", subjectMismatch.FailureClassification);
     }
 
+    // AGT-2819: a test command that is red on the merge base too no longer
+    // settles as a silent Pass. It settles as the integration branch's own
+    // defect, and only a failure name the merge base did not have is charged to
+    // the card.
     [Theory]
-    [InlineData(false, "Pass")]
+    [InlineData(false, "IntegrationBranchDefect")]
     [InlineData(true, "ProductFailure")]
     public async Task Baseline_evidence_allows_only_pre_existing_nonzero_test_commands(
         bool hasNewFailure,
@@ -1289,6 +1293,7 @@ public sealed class RemoteReviewAuthorityTests
             {
                 ExitCode = 1,
                 BaselineSha = new string('c', 40),
+                BaselineExitCode = 1,
                 NewFailures = hasNewFailure ? ["Product.NewFailure"] : [],
                 PreExistingFailures = ["Product.ExistingFailure"],
                 RetryPerformed = hasNewFailure,
@@ -1312,6 +1317,113 @@ public sealed class RemoteReviewAuthorityTests
             default);
 
         Assert.Equal(expectedOutcome, report.Outcome);
+    }
+
+    /// <summary>
+    /// AGT-2819, the load-bearing case. <c>npm --prefix frontend run lint</c> was
+    /// red on <c>develop</c> itself, so review step <c>verify-5</c> exited 1 for
+    /// every delivery and every review graded <c>ProductFailure</c>. A lint gate
+    /// is compared on exit status: red on both sides is the branch's defect, red
+    /// only on the delivery is still the card's.
+    /// </summary>
+    [Theory]
+    [InlineData(1, "IntegrationBranchDefect")]
+    [InlineData(0, "ProductFailure")]
+    public async Task A_lint_gate_failing_on_the_merge_base_is_an_integration_branch_defect(
+        int baselineExitCode,
+        string expectedOutcome)
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var plan = new ReviewPlanDto(
+            [new ReviewCommandDto(
+                "verify-5",
+                "lint",
+                "sh",
+                ["-lc", "npm --prefix frontend run lint"],
+                CompareToBaseline: true,
+                BaselineMode: ReviewBaselineModes.ExitStatus)],
+            ["lint"],
+            IntegrationRef: "refs/heads/develop");
+        await SeedReviewSubjectAsync(store, plan: plan);
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        var claim = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+        var request = PassingReport(claim);
+        request = request with
+        {
+            Commands = request.Commands.Select(command => command with
+            {
+                ExitCode = 1,
+                BaselineSha = new string('c', 40),
+                BaselineExitCode = baselineExitCode,
+                NewFailures = [],
+                PreExistingFailures = [],
+            }).ToArray(),
+            Verdicts =
+            [
+                new ReviewVerdictDto(
+                    "lint",
+                    baselineExitCode == 0 ? "block" : "pass",
+                    baselineExitCode == 0 ? "CommandFailed" : "IntegrationBranchDefect",
+                    "0 new failures; the lint gate exited 1.")
+            ],
+        };
+
+        var report = await store.ReportReviewAsync(
+            claim.Attempt!.AttemptId,
+            request,
+            "review-a",
+            default);
+
+        Assert.Equal(expectedOutcome, report.Outcome);
+    }
+
+    /// <summary>
+    /// A report that measured a baseline but withheld its exit code cannot be
+    /// attributed, so it is incomplete evidence rather than a product finding.
+    /// </summary>
+    [Fact]
+    public async Task Baseline_evidence_without_the_merge_base_exit_code_is_review_infrastructure()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var plan = new ReviewPlanDto(
+            [new ReviewCommandDto(
+                "verify-5",
+                "lint",
+                "sh",
+                ["-lc", "npm --prefix frontend run lint"],
+                CompareToBaseline: true,
+                BaselineMode: ReviewBaselineModes.ExitStatus)],
+            ["lint"],
+            IntegrationRef: "refs/heads/develop");
+        await SeedReviewSubjectAsync(store, plan: plan);
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        var claim = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+        var request = PassingReport(claim);
+        request = request with
+        {
+            Commands = request.Commands.Select(command => command with
+            {
+                ExitCode = 1,
+                BaselineSha = new string('c', 40),
+                NewFailures = [],
+                PreExistingFailures = [],
+            }).ToArray(),
+        };
+
+        var report = await store.ReportReviewAsync(
+            claim.Attempt!.AttemptId,
+            request,
+            "review-a",
+            default);
+
+        Assert.Equal("ReviewInfra", report.Outcome);
+        Assert.Equal("BaselineEvidenceInvalid", report.FailureClassification);
     }
 
     [Fact]
@@ -1340,6 +1452,7 @@ public sealed class RemoteReviewAuthorityTests
             {
                 ExitCode = 0,
                 BaselineSha = new string('c', 40),
+                BaselineExitCode = 0,
                 NewFailures = [],
                 PreExistingFailures = [],
                 RetryPerformed = true,
