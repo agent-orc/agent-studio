@@ -533,7 +533,7 @@ identity values such as `RUNNER_ID=agent-runner-01` are not renamed.
 | `RUNNER_BASE_BRANCH` | `--base-branch` | `main` | Fallback when the task branch is absent on origin. |
 | `RUNNER_WORKDIR` | `--workdir` | `$TMPDIR/agent-runner-work` | Where the repo checkout and `results/` live. |
 | `RUNNER_ROLE` | `--role` | `coding` | `coding` or the separately registered `review` service. |
-| `RUNNER_REVIEW_WORKDIR` | `--review-workdir` | `$TMPDIR/agent-review-work` | Disposable review-only workspace, cache, temp, and evidence root. Must differ from `RUNNER_WORKDIR`. Settled attempt workspaces are removed after report acceptance; inactive attempt remnants older than 72 hours are swept hourly. The reusable `.baseline-cache` is preserved. |
+| `RUNNER_REVIEW_WORKDIR` | `--review-workdir` | `$TMPDIR/agent-review-work` | Disposable review-only workspace, cache, temp, and evidence root. Must differ from `RUNNER_WORKDIR`. Settled attempt workspaces are removed after report acceptance; inactive attempt remnants older than 72 hours are swept hourly. The reusable `.baseline-cache` is preserved; see [Baseline verify result cache](#baseline-verify-result-cache). |
 | `RUNNER_REVIEW_CREDENTIAL_ENV` | `--review-credential-env` | (none) | Comma-separated read-only credential variable names admitted into the cleared review environment. |
 | `RUNNER_REVIEW_NO_CPU_PROGRESS_SECONDS` | `--review-no-cpu-progress-seconds` | `900` | Floor for the hang watchdog on review commands. A command's whole process tree must burn at least one percent of one core within the *effective* window; otherwise the tree is killed and the attempt is reported as `ReviewInfra/NoCpuProgress`. The effective window is `max(this value, 50%` of that command's own budget`)` (AGT-2851), so a legitimately quiet suite with a large budget is not killed for sitting near 0% CPU during a real test wait. `0` disables the watchdog outright, ignoring the budget-derived floor. Linux only: the tree's CPU time is read from `/proc`. See [Review parallelism and build-server isolation](#review-parallelism-and-build-server-isolation). |
 | `RUNNER_STATE_DIR` | `--state-dir` | `$RUNNER_WORKDIR/.runner-state` | Durable slot, attempt, PID, worker result, and file-backed output state used for planned restart reattachment. Keep it on persistent local storage. |
@@ -734,6 +734,55 @@ is advertised as unavailable and only blocks cards pinned to that provider.
   tool, diff, or diagnostic payloads. When quoting gets awkward, point
   `RUNNER_CLI_BIN` at a small wrapper script instead of fighting the space-split
   arg parser.
+
+### Baseline verify result cache
+
+After a candidate verify command fails, the executor runs the same command once
+more on the merge-base to tell new failures apart from failures the integration
+branch already had. Both runs cost the same wall clock, and several attempts on
+one integration branch resolve the same baseline SHA within the hour, so each
+baseline result is stored once per host and reused (AGT-2843).
+
+**Where it lives.** `$RUNNER_REVIEW_WORKDIR/.baseline-cache`, beside the
+disposable attempt directories and outside every attempt fence:
+
+```text
+$RUNNER_REVIEW_WORKDIR/.baseline-cache/<repository-hash>/<baseline-sha>/<command-hash>.<toolchain>.json
+```
+
+One JSON file per repository, baseline SHA, verify command line and toolchain
+fingerprint. It holds the parsed failure list and the complete stdout and stderr
+of that baseline run, so a reused result is reported with the same artefacts a
+fresh one would have produced. Files are written atomically under a per-entry
+`.lock`, so concurrent attempts on the same baseline never write a torn entry.
+
+**What it never does.** A cache hit only replaces the baseline run. The
+candidate command always executes in the attempt's own workspace, and the flake
+retry still re-runs it, so a hit cannot turn a real regression into a pass.
+
+**When entries go away.** Automatically, before the first lookup of an attempt:
+any entry older than 24 hours, and every baseline SHA the freshly fetched
+integration ref no longer contains (a rebased or force-pushed line). The hourly
+workspace sweep does not touch the cache.
+
+**How to see whether a grade used it.** The review grade carries
+`baselineReused: true` in its frontmatter, a `Baseline` column in the command
+evidence table, and the sentence `baseline result reused from attempt <id>
+(<age>)` in the build-tests verdict summary. The same sentence is on the card's
+review projection. The journal lines are
+`review baseline cache hit|fill|prune ...`.
+
+**How to clear it.** Stop the review unit, delete the tree, restart. Clearing it
+is always safe: the next attempt re-runs the baseline and refills the entry.
+
+```bash
+sudo systemctl stop agent-runner-review
+sudo -u agent-review rm -rf "$RUNNER_REVIEW_WORKDIR/.baseline-cache"
+sudo systemctl start agent-runner-review
+```
+
+To drop one repository or one baseline only, delete the matching
+`<repository-hash>` or `<baseline-sha>` subdirectory instead of the whole tree.
 
 ### Multi-repository clone layout and eligibility
 

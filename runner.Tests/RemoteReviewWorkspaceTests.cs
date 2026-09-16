@@ -940,8 +940,212 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         var secondEvidence = await second.ExecutePlanAsync(default);
 
         Assert.False(CandidateVerification(firstEvidence).BaselineCacheHit);
-        Assert.True(CandidateVerification(secondEvidence).BaselineCacheHit);
+        var reused = CandidateVerification(secondEvidence);
+        Assert.True(reused.BaselineCacheHit);
+        Assert.Equal("attempt-cache-fill", reused.BaselineReusedFromAttemptId);
         Assert.Single(Directory.EnumerateFiles(second.BaselineCacheRoot, "*.json", SearchOption.AllDirectories));
+
+        // The reused result carries the complete baseline evidence a fresh run
+        // would have produced, so the grade can cite the same streams.
+        var baselineEvidence = Assert.Single(secondEvidence.Commands, item =>
+            item is { Phase: "verification" } && item.WorkspaceRole.StartsWith("baseline-", StringComparison.Ordinal));
+        Assert.Equal("attempt-cache-fill", baselineEvidence.BaselineReusedFromAttemptId);
+        Assert.Equal(
+            BaselineArtifactText(firstEvidence, "stdout"),
+            BaselineArtifactText(secondEvidence, "stdout"));
+        Assert.Contains(
+            $"baseline result reused from attempt attempt-cache-fill (",
+            Assert.Single(secondEvidence.Verdicts).Summary,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "baseline executed in this attempt",
+            Assert.Single(firstEvidence.Verdicts).Summary,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Baseline_result_past_the_cache_lifetime_is_re_executed_instead_of_reused()
+    {
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var command = BaselineCommand(
+            "printf '  Failed Product.ExistingFailure [1 ms]\\n'; exit 1");
+        var first = Workspace(
+            "attempt-expiry-fill",
+            subjectSha,
+            [command],
+            26120,
+            resultRef: "refs/heads/task/new-failure",
+            integrationRef: "refs/heads/main").Workspace;
+        await first.PrepareAsync(null!, default);
+        await first.ExecutePlanAsync(default);
+        await first.CleanupAsync();
+        AgeBaselineCacheEntries(first.BaselineCacheRoot, DateTime.UtcNow.AddHours(-25));
+
+        var second = Workspace(
+            "attempt-expiry-miss",
+            subjectSha,
+            [command],
+            26128,
+            resultRef: "refs/heads/task/new-failure",
+            integrationRef: "refs/heads/main").Workspace;
+        await second.PrepareAsync(null!, default);
+        var evidence = await second.ExecutePlanAsync(default);
+
+        var candidate = CandidateVerification(evidence);
+        Assert.False(candidate.BaselineCacheHit);
+        Assert.Null(candidate.BaselineReusedFromAttemptId);
+        // The expired entry was dropped and refilled by this attempt, not kept
+        // alongside a second copy.
+        var entry = Assert.Single(
+            Directory.EnumerateFiles(second.BaselineCacheRoot, "*.json", SearchOption.AllDirectories));
+        Assert.True(
+            DateTime.UtcNow - File.GetLastWriteTimeUtc(entry) < TimeSpan.FromMinutes(5),
+            "The refilled entry must be the one this attempt wrote.");
+    }
+
+    [Fact]
+    public async Task Candidate_failure_against_a_reused_baseline_is_still_classified_as_new()
+    {
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var command = BaselineCommand(
+            "if grep -q subject product.txt; then " +
+            "printf '  Failed Product.ExistingFailure [1 ms]\\n  Failed Product.NewFailure [1 ms]\\n'; " +
+            "else printf '  Failed Product.ExistingFailure [1 ms]\\n'; fi; exit 1");
+        var first = Workspace(
+            "attempt-new-fill",
+            subjectSha,
+            [command],
+            26136,
+            resultRef: "refs/heads/task/new-failure",
+            integrationRef: "refs/heads/main").Workspace;
+        await first.PrepareAsync(null!, default);
+        await first.ExecutePlanAsync(default);
+        await first.CleanupAsync();
+
+        var second = Workspace(
+            "attempt-new-reuse",
+            subjectSha,
+            [command],
+            26144,
+            resultRef: "refs/heads/task/new-failure",
+            integrationRef: "refs/heads/main").Workspace;
+        await second.PrepareAsync(null!, default);
+        var evidence = await second.ExecutePlanAsync(default);
+
+        Assert.Equal("ProductFailure", evidence.Outcome);
+        var candidate = CandidateVerification(evidence);
+        Assert.True(candidate.BaselineCacheHit);
+        Assert.Equal(["Product.NewFailure"], candidate.NewFailures);
+        Assert.Equal(["Product.ExistingFailure"], candidate.PreExistingFailures);
+        // A hit replaces the baseline run only: the candidate command still ran
+        // in this attempt's own workspace, including its one flake retry.
+        Assert.True(candidate.RetryPerformed);
+        Assert.Equal(1, candidate.ExitCode);
+        Assert.Equal("attempt-new-reuse", candidate.AttemptId);
+        var verdict = Assert.Single(evidence.Verdicts);
+        Assert.Equal("NewTestFailures", verdict.Classification);
+        Assert.Equal("block", verdict.Status);
+    }
+
+    [Theory]
+    [InlineData("same key", true)]
+    [InlineData("other repository", false)]
+    [InlineData("other baseline", false)]
+    [InlineData("other command", false)]
+    [InlineData("other toolchain", false)]
+    [InlineData("older parser", false)]
+    [InlineData("expired", false)]
+    public void Baseline_cache_reuse_decision_matrix(string variant, bool reusable)
+    {
+        var now = new DateTime(2026, 9, 15, 20, 0, 0, DateTimeKind.Utc);
+        Assert.Equal(TimeSpan.FromHours(24), ReviewBaselineResultCache.MaximumAge);
+        var key = new ReviewBaselineCacheKey("repo", new string('a', 40), "command", "toolchain");
+        var entry = Entry(key, now.AddHours(-2), parserVersion: 3);
+        entry = variant switch
+        {
+            "same key" => entry,
+            "other repository" => entry with { RepositoryId = "other-repo" },
+            "other baseline" => entry with { BaselineSha = new string('b', 40) },
+            "other command" => entry with { CommandHash = "other-command" },
+            "other toolchain" => entry with { ToolchainFingerprint = "other-toolchain" },
+            "older parser" => entry with { ParserVersion = 2 },
+            "expired" => entry with { CreatedAt = now.AddHours(-25) },
+            _ => throw new ArgumentOutOfRangeException(nameof(variant), variant, null),
+        };
+
+        Assert.Equal(
+            reusable,
+            ReviewBaselineResultCache.IsReusable(entry, key, parserVersion: 3, now));
+    }
+
+    [Fact]
+    public async Task Baseline_cache_prune_drops_results_the_integration_branch_no_longer_contains()
+    {
+        var now = new DateTime(2026, 9, 15, 20, 0, 0, DateTimeKind.Utc);
+        var root = Path.Combine(_root, "baseline-cache");
+        var onBranch = new ReviewBaselineCacheKey("repo", new string('a', 40), "command", "toolchain");
+        var rebasedAway = onBranch with { BaselineSha = new string('b', 40) };
+        var stale = onBranch with { BaselineSha = new string('c', 40) };
+        await ReviewBaselineResultCache.WriteAsync(
+            ReviewBaselineResultCache.EntryPath(root, onBranch), Entry(onBranch, now.AddHours(-1)), default);
+        await ReviewBaselineResultCache.WriteAsync(
+            ReviewBaselineResultCache.EntryPath(root, rebasedAway), Entry(rebasedAway, now.AddHours(-1)), default);
+        await ReviewBaselineResultCache.WriteAsync(
+            ReviewBaselineResultCache.EntryPath(root, stale),
+            Entry(stale, now.AddHours(-25)),
+            default);
+
+        var result = await ReviewBaselineResultCache.PruneAsync(
+            root,
+            "repo",
+            (sha, _) => Task.FromResult(!sha.Equals(rebasedAway.BaselineSha, StringComparison.Ordinal)),
+            now,
+            _ => { },
+            default);
+
+        Assert.Equal(new ReviewBaselineCachePruneResult(3, 1, 1, 0), result);
+        Assert.True(File.Exists(ReviewBaselineResultCache.EntryPath(root, onBranch)));
+        Assert.False(File.Exists(ReviewBaselineResultCache.EntryPath(root, rebasedAway)));
+        Assert.False(File.Exists(ReviewBaselineResultCache.EntryPath(root, stale)));
+    }
+
+    private static BaselineCacheEntry Entry(
+        ReviewBaselineCacheKey key,
+        DateTime createdAt,
+        int parserVersion = 3)
+        => new(
+            parserVersion,
+            key.RepositoryId,
+            key.BaselineSha,
+            key.CommandHash,
+            key.ToolchainFingerprint,
+            "attempt-source",
+            key.BaselineSha,
+            new string('t', 40),
+            1,
+            ["Product.ExistingFailure"],
+            "baseline stdout",
+            "baseline stderr",
+            createdAt);
+
+    private static void AgeBaselineCacheEntries(string root, DateTime createdAt)
+    {
+        foreach (var path in Directory.EnumerateFiles(root, "*.json", SearchOption.AllDirectories))
+        {
+            var node = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(path))!;
+            node["CreatedAt"] = createdAt;
+            File.WriteAllText(path, node.ToJsonString());
+        }
+    }
+
+    private static string BaselineArtifactText(ReviewExecutionEvidence evidence, string stream)
+    {
+        var command = Assert.Single(evidence.Commands, item =>
+            item is { Phase: "verification" }
+            && item.WorkspaceRole.StartsWith("baseline-", StringComparison.Ordinal));
+        var artifact = Assert.Single(evidence.Artifacts, item =>
+            item.Name == $"{command.WorkspaceRole}.{command.StepId}.{stream}.log");
+        return System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(artifact.ContentBase64!));
     }
 
     [Fact]
