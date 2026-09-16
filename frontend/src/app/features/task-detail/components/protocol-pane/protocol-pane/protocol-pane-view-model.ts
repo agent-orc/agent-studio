@@ -1,11 +1,37 @@
-import type { TaskOutcomeIssue, TaskSummaryStatus } from '../../../../../models/task.model';
+import type { TaskMode, TaskOutcomeIssue, TaskSummaryStatus } from '../../../../../models/task.model';
 import type { ClaudeRateLimitSnapshot, ClaudeSessionInfo } from '../../../../../features/claude';
 import type { PaneTabDef } from '../../../../../components/pane-tabs/pane-tabs.component';
 import {
   formatTokens as fmtTokens,
   formatRateWindow as fmtRateWindow,
   formatResetIn as fmtResetIn,
+  taskModeIcon,
+  taskModeLabel,
 } from '../../../../../services/format.util';
+
+export interface ComposeModeBadge {
+  mode: TaskMode;
+  icon: string;
+  label: string;
+  /** True for the read-only modes ContinueModeGuardPolicy guards on the backend. */
+  guarded: boolean;
+}
+
+/**
+ * Derives the small mode badge shown next to the Activity composer's Send
+ * button (AGT-2795), so an operator sees a concept or planning card is
+ * read-only before the backend has to say so with a 409. Pure so the badge
+ * shape is unit-testable without instantiating the component.
+ */
+export function deriveComposeMode(mode: TaskMode | undefined): ComposeModeBadge {
+  const resolved = mode ?? 'coding';
+  return {
+    mode: resolved,
+    icon: taskModeIcon(resolved),
+    label: taskModeLabel(resolved),
+    guarded: resolved === 'concept' || resolved === 'planning',
+  };
+}
 
 /**
  * Builds the inspector tab strip (Task / Activity / Result) for the shared

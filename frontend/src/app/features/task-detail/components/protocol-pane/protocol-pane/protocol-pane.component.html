@@ -484,15 +484,25 @@
                             (input)="followupPromptChange.emit($any($event.target).value)"
                             (keydown.control.enter)="sendChat.emit()"
                             (keydown.meta.enter)="sendChat.emit()"></textarea>
-                  <button type="button"
-                          class="btn-sm btn-sm--primary chat-compose__send"
-                          data-testid="activity-chat-send"
-                          aria-keyshortcuts="Control+Enter Meta+Enter"
-                          [attr.title]="isRunning() ? 'Pause the current run and send this message' : 'Send message'"
-                          [disabled]="!canSendChat()"
-                          (click)="sendChat.emit()">
-                    {{ chatSendLabel() }}
-                  </button>
+                  <div class="chat-compose__actions">
+                    <span class="chat-compose__mode"
+                          [class.chat-compose__mode--guarded]="composeMode().guarded"
+                          data-testid="activity-chat-card-mode"
+                          [attr.data-mode]="composeMode().mode"
+                          [cacTooltip]="'Card mode: ' + composeMode().label">
+                      <span aria-hidden="true">{{ composeMode().icon }}</span>
+                      {{ composeMode().label }}
+                    </span>
+                    <button type="button"
+                            class="btn-sm btn-sm--primary chat-compose__send"
+                            data-testid="activity-chat-send"
+                            aria-keyshortcuts="Control+Enter Meta+Enter"
+                            [attr.title]="isRunning() ? 'Pause the current run and send this message' : 'Send message'"
+                            [disabled]="!canSendChat()"
+                            (click)="sendChat.emit()">
+                      {{ chatSendLabel() }}
+                    </button>
+                  </div>
                 </div>
                 @if (chatError()) {
                   <p class="chat-compose__status chat-compose__status--error"

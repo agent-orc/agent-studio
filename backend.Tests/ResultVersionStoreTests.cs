@@ -70,4 +70,53 @@ public sealed class ResultVersionStoreTests : IDisposable
         Assert.Equal("Result replaced by external completion (operator-chat), previous version kept as #1", evt.Summary);
         Assert.Equal(previous.StatusPath, evt.PayloadRef);
     }
+
+    /// <summary>
+    /// AGT-2795 acceptance item 3: a continue must never destroy an existing
+    /// result. The concept card's dossier scaffold in
+    /// <see cref="SummaryGenerationService"/> writes every post-run summary
+    /// through <see cref="ResultVersionStore.Replace"/> (never a raw
+    /// <c>File.WriteAllText</c>), so an implementation result that predates a
+    /// card being repurposed into a concept card - exactly what AGT-2795's
+    /// card AGT-2795/Dossier AGT-W54 did - survives a later concept-mode
+    /// continue in <c>results/history/</c> instead of being overwritten in
+    /// place.
+    /// </summary>
+    [Fact]
+    public void Replace_OnConceptCard_PreservesPriorImplementationResultInHistory()
+    {
+        var store = new ResultVersionStore(NullLogger<ResultVersionStore>.Instance);
+
+        var implementationResult =
+            "# Status\n- Result: Success\n- Implemented the demo route count fix (81 to 83).\n";
+        store.Replace(
+            _folder,
+            implementationResult,
+            ResultProducer.RunAttempt("1"),
+            TaskStates.Completed,
+            new DateTime(2026, 8, 20, 9, 0, 0, DateTimeKind.Utc));
+
+        // The card is repurposed into the concept card of Dossier AGT-W54 and a
+        // later continue (allowed here, e.g. via an explicit mode override)
+        // produces a fresh concept-mode summary.
+        var conceptSummary = "# Status\n- Dossier: docs/agt-w54/index.html\n";
+        var replacement = store.Replace(
+            _folder,
+            conceptSummary,
+            ResultProducer.RunAttempt("2"),
+            TaskStates.HumanReview,
+            new DateTime(2026, 9, 15, 10, 0, 0, DateTimeKind.Utc));
+
+        // The current status.md is the new concept summary...
+        Assert.Equal(conceptSummary, File.ReadAllText(Path.Combine(_folder, "status.md")));
+
+        // ...and the prior implementation result is not lost: it is byte-for-byte
+        // preserved under results/history/, still readable as version #1.
+        var preserved = Assert.IsType<ResultHistoryVersion>(replacement.Preserved);
+        Assert.Equal(1, preserved.Number);
+        Assert.Equal(
+            implementationResult,
+            File.ReadAllText(Path.Combine(_folder, preserved.StatusPath)));
+        Assert.Equal(implementationResult, store.ReadLocalVersion(_folder, 1));
+    }
 }

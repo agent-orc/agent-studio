@@ -25,6 +25,16 @@ public record ContinueJobRequest
     /// See <see cref="ContinueModes"/>.
     /// </summary>
     public string? Mode { get; init; }
+
+    /// <summary>
+    /// Explicit confirmation of the card's current <c>TaskModes</c> value
+    /// (<c>"concept"</c> or <c>"planning"</c>), not the conversational
+    /// <see cref="Mode"/> above. Set this to bypass
+    /// <c>ContinueModeGuardPolicy</c>'s rejection of an implementation-shaped
+    /// prompt on a read-only card; any other value (including a mismatch
+    /// with the card's actual mode) does not bypass the guard.
+    /// </summary>
+    public string? ModeOverride { get; init; }
 }
 
 /// <summary>

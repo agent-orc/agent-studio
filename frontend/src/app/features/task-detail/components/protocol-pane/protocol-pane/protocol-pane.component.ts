@@ -58,6 +58,7 @@ import { ProtocolVerdictBannerComponent } from '../protocol-verdict-banner/proto
 import {
   buildInspectorTabs,
   claudeSessionTooltip,
+  deriveComposeMode,
   formatRateWindow,
   formatResetIn,
   formatTokens,
@@ -565,6 +566,13 @@ export class ProtocolPaneComponent implements OnDestroy {
       ? 'Message this task. Sending pauses the current run first. Ctrl+Enter to send.'
       : 'Message this task. Ctrl+Enter to send.';
   }
+
+  /**
+   * The card's execution mode, shown next to Send so an operator sending a
+   * follow-up sees at a glance that a concept or planning card is read-only
+   * before the backend's ContinueModeGuardPolicy has to say so (AGT-2795).
+   */
+  readonly composeMode = computed(() => deriveComposeMode(this.detail().info.mode));
 
   /** Task / Activity / Result tab strip for the shared pane-tabs component. */
   readonly protocolTabs = computed(() =>
