@@ -192,6 +192,16 @@ public sealed class RunnerOptions
     /// <summary>New claims stop when the one-minute load average divided by CPU cores exceeds this value.</summary>
     public double ClaimMaxLoadPerCore { get; init; } = 1.5;
 
+    /// <summary>
+    /// How long a review command may produce no output at all before the silence
+    /// watchdog kills it (AGT-2820). Four concurrent reviews once sat on the same
+    /// <c>dotnet test</c> at 0.0% CPU with nothing written for ten minutes and a
+    /// host load average of 0.47; each would have held its slot for the full
+    /// two-hour command budget, so one stuck batch cost eight review-hours. Set
+    /// to 0 to disable the watchdog and fall back to the command budget alone.
+    /// </summary>
+    public int CommandSilenceWatchdogSeconds { get; init; } = 600;
+
     /// <summary>Continuous high-load duration required before claim admission closes.</summary>
     public int LoadGateSustainedSeconds { get; init; } = 120;
 
@@ -400,6 +410,7 @@ public sealed class RunnerOptions
                                       && maxLoadValue > 0
                 ? maxLoadValue
                 : EnvDouble("RUNNER_CLAIM_MAX_LOAD_PER_CORE", 1.5),
+            CommandSilenceWatchdogSeconds = EnvInt("RUNNER_COMMAND_SILENCE_WATCHDOG_SECONDS", 600),
             LoadGateSustainedSeconds = EnvInt("RUNNER_LOAD_GATE_SUSTAINED_SECONDS", 120),
             AllowInsecureHttp = OptIn(Val("allow-insecure-http", "RUNNER_ALLOW_INSECURE_HTTP")),
             HealthCheckOnly = healthCheck,

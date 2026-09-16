@@ -33,6 +33,43 @@ prompt contains a visible `REVIEW_DIFF_TRUNCATED` marker stating the shown and
 total file and line counts plus the configured budget. Truncation is never
 silent.
 
+## Aspect budget contract
+
+`contracts/TaskServer.Contracts/ReviewAspectBudgetPolicy.cs` derives one aspect
+call's wall-clock budget as `base(cli) * weight(model) * weight(thinking level)
++ material`, clamped to 60..7200 seconds. Each term answers a question an
+operator can check: which toolchain, how much thinking the routed model does,
+and how much there is to read. The material term is bounded so one enormous diff
+cannot buy an unbounded budget.
+
+The plan builder freezes a budget derived from the authored prompt;
+`RemoteReviewWorkspace` re-derives it once it has appended the authoritative
+diff and runs the larger of the two, because the frozen prompt does not yet
+carry that material. The executed budget, never the frozen one, is what the
+command evidence and any violation report.
+
+A review that runs out of budget is an infrastructure fact about a model on a
+host, not a verdict about the change. The failure is classified `AspectTimeout`,
+and its sentence names the model and the limit
+(`violated review-command budget on model '<model>'`). A command that produces
+no output at all for its silence window
+(`RUNNER_COMMAND_SILENCE_WATCHDOG_SECONDS`, default 600 s, engaged only when it
+is strictly tighter than the command budget) is killed as `CommandStalled`
+rather than holding its review slot for the rest of the budget. That watchdog and
+the no-CPU-progress watchdog below are separate detectors and neither subsumes
+the other: silence catches a command that keeps burning CPU without ever
+producing a line, no-CPU-progress catches a tree blocked on a host-shared
+handle. A blocked tree trips both, and the silence window is the tighter default,
+so it is the one that reports the kill.
+
+`contracts/TaskServer.Contracts/ReviewPlanResourcePolicy.cs` caps every
+`dotnet build` and `dotnet test` in a frozen plan at `-maxcpucount:2` and starts
+them with `-nodeReuse:false`. The cap is deterministic rather than derived from
+measured host load: the plan is frozen before an executor claims it, so a
+load-derived cap would make the fenced command depend on when it was built, and
+host load is already a separate admission gate
+(`runner/ReviewSlotAdmissionPolicy.cs`).
+
 ## Attempt isolation contract
 
 One host runs several fenced ReviewAttempts at once. Isolation is what makes
@@ -73,6 +110,22 @@ inert rather than guessing a kill.
 
 Safe parallelism and the procedure for raising it live in
 [linux-runner-host.md](../../operations/setup/linux-runner-host.md#review-parallelism-and-build-server-isolation).
+
+## Review-plane parallelism
+
+`AdaptiveReviewParallelismAdvisor` owns the review plane's recommended
+parallelism. The recommendation rides the minutely capability advertisement as
+`RoleMaxParallelism`, and `TaskServerClient.RoleMaxParallelism` is the ceiling
+`RemoteReviewDaemon` actually claims against - the review counterpart of the
+coding runner's central capacity. A lowered ceiling stops new claims; it never
+cancels an active slot.
+
+`RUNNER_MAX_PARALLELISM` is deprecated as the live review control. It seeds the
+ceiling until the first advertisement is answered and remains the fallback for
+an older server; a later file change does not replace the recommendation. The
+operator-facing form of this is in
+[docs/operations/remote-hosts.md](../../operations/remote-hosts.md) and
+[docs/operations/setup/linux-runner-host.md](../../operations/setup/linux-runner-host.md).
 
 ## Infrastructure retry scheduling
 
@@ -169,3 +222,11 @@ blocking behavior.
   (`Monolith_v1_review_plane_schedules_a_named_retry_for_a_fake_aspect_timeout_without_an_operator_move`):
   the backoff schedule, the three-retry cap, and the
   `review_infrastructure_retry_scheduled` timeline entry.
+- `contracts/TaskServer.Contracts/ReviewAspectBudgetPolicy.cs` and
+  `runner.Tests/ReviewAspectBudgetPolicyTests.cs`: the derived per-aspect budget.
+- `contracts/TaskServer.Contracts/ReviewPlanResourcePolicy.cs` and
+  `runner.Tests/ReviewPlanResourcePolicyTests.cs`: CPU cap and node-reuse switch
+  for every .NET command in a frozen plan.
+- `backend/Features/Runner/AdaptiveReviewParallelismPolicy.cs` and
+  `backend.Tests/V1ReviewPlaneDiagnosticsEndpointTests.cs`: the recommendation
+  and the advertisement that delivers it to the review runner.

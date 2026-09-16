@@ -1488,6 +1488,11 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         };
         foreach (var arg in args) psi.ArgumentList.Add(arg);
         psi.Environment["NPM_CONFIG_CACHE"] = NpmCachePath;
+        // AGT-2820: gate builds are one-shot. A reused MSBuild node outlives the
+        // gate that started it, is reparented to init when the backend or the
+        // worker goes away, and accumulates - 26 such nodes held 2963 MB on one
+        // host, the oldest idle for eight days.
+        psi.Environment["MSBUILDDISABLENODEREUSE"] = "1";
         // Repository preparation restored this gate's dependencies into its own
         // per-run cache folders. A verify command that does not see them resolves
         // against a package folder the restore never wrote to and fails with

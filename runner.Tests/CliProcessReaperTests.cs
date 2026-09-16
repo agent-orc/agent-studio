@@ -178,6 +178,80 @@ public sealed class CliProcessReaperTests : IDisposable
     }
 
     /// <summary>
+    /// AGT-2820: the sweep used to match only <c>claude</c> and <c>codex</c>, so
+    /// four <c>sh -lc dotnet test ...</c> trees stranded at <c>ppid=1</c> with a
+    /// deleted cwd survived every pass - the oldest for 6.6 hours, each still
+    /// holding the review slot it was launched from.
+    /// </summary>
+    [SkippableFact]
+    [Trait(PlatformGate.TraitName, PlatformGate.Linux)]
+    public async Task OrphanSweep_kills_any_process_whose_workspace_was_already_deleted()
+    {
+        PlatformGate.LinuxOnly("the sweep scans /proc for comm and cwd");
+
+        var root = Path.Combine(_root, "review-work-build");
+        var deletedCwd = Path.Combine(root, "review-attempt-build", "repository");
+        Directory.CreateDirectory(deletedCwd);
+        var logs = new List<string>();
+
+        var processTask = ProcessRunner.RunAsync(
+            "/bin/sh",
+            ["-c", "sleep 300 & wait"],
+            workingDirectory: deletedCwd,
+            isolateProcessGroup: true);
+        for (var attempt = 0;
+             attempt < 100 && WorktreeProcessReaper.FindByCwd(deletedCwd).Count == 0;
+             attempt++)
+            await Task.Delay(20);
+        Assert.NotEmpty(WorktreeProcessReaper.FindByCwd(deletedCwd));
+        Directory.Delete(Path.Combine(root, "review-attempt-build"), recursive: true);
+
+        var reaped = CliOrphanSweep.Sweep([root], TimeSpan.FromDays(365), logs.Add);
+        var process = await processTask;
+
+        Assert.True(reaped > 0, "expected the stranded shell tree to be reaped");
+        Assert.NotEqual(0, process.ExitCode);
+        Assert.Contains(logs, line =>
+            line.StartsWith("cli-process-reaped", StringComparison.Ordinal)
+            && line.Contains("cwd was already removed", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A durable worker survives a daemon restart on purpose and is re-adopted
+    /// by reconciliation. The widened sweep must never treat the workspaces the
+    /// daemon still owns as garbage.
+    /// </summary>
+    [SkippableFact]
+    [Trait(PlatformGate.TraitName, PlatformGate.Linux)]
+    public async Task OrphanSweep_spares_a_workspace_the_daemon_still_owns()
+    {
+        PlatformGate.LinuxOnly("the sweep scans /proc for comm and cwd");
+
+        var root = Path.Combine(_root, "review-work-owned");
+        var owned = Path.Combine(root, "review-attempt-owned");
+        var workspace = Path.Combine(owned, "repository");
+        Directory.CreateDirectory(workspace);
+        var claudeBin = FakeCliBinary(root, "claude");
+        var logs = new List<string>();
+
+        var processTask = ProcessRunner.RunAsync(
+            claudeBin,
+            ["300"],
+            workingDirectory: workspace,
+            isolateProcessGroup: true);
+        await WaitForCommAsync(workspace, "claude");
+
+        var reaped = CliOrphanSweep.Sweep([root], TimeSpan.Zero, logs.Add, [owned]);
+
+        Assert.Equal(0, reaped);
+        Assert.Empty(logs);
+        Assert.NotEmpty(WorktreeProcessReaper.FindByCwd(workspace));
+        await CliProcessReaper.ReapWorkspaceAsync(
+            workspace, "review-attempt-owned", _ => { }, CancellationToken.None);
+        await processTask;
+    }
+
+    /// <summary>
     /// /proc/&lt;pid&gt;/comm reflects the basename of the path passed to
     /// execve, not argv[0]. A symlink named "claude" pointing at the real
     /// `sleep` binary and invoked by that symlink path is enough to produce a

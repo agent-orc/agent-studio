@@ -65,6 +65,21 @@ public sealed class RemoteReviewDaemon
         var nextSlotHygieneLog = DateTime.MinValue;
         var nextSlotReconciliation = DateTime.MinValue;
 
+        // AGT-2820: the workspaces this daemon still owns, in the shape the
+        // orphan sweep compares against. A durable worker survives a daemon
+        // restart on purpose, so it must never be reaped for having been
+        // reparented to init before reconciliation re-adopted it.
+        IReadOnlyList<string> ActiveWorkspacePaths()
+        {
+            var root = Path.GetFullPath(_options.ReviewWorkDir);
+            return active
+                .Select(slot => Path.Combine(root, RemoteReviewWorkspace.SafeSegment(slot.ResourceNamespace)))
+                .Concat(state.LoadAll().Select(slot => slot.WorkspacePath))
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+        }
+
         void LogSlotHygiene(bool force = false)
         {
             var now = DateTime.UtcNow;
@@ -288,7 +303,8 @@ public sealed class RemoteReviewDaemon
             CliProcessReaper.RecordExternalReap(CliOrphanSweep.Sweep(
                 [_options.ReviewWorkDir],
                 ReviewSlotReconciler.MaximumDormantAge,
-                _log));
+                _log,
+                ActiveWorkspacePaths()));
             if (active.Count > 0)
             {
                 _log(
@@ -304,6 +320,7 @@ public sealed class RemoteReviewDaemon
 
             var nextCapabilityAdvertisement = DateTime.UtcNow.AddMinutes(1);
             var admissionClosed = false;
+            int? announcedSlotCeiling = null;
             var nextRetentionSweep = DateTime.MinValue;
             var consecutiveFaults = 0;
             string? announcedControlRequestId = null;
@@ -412,7 +429,8 @@ public sealed class RemoteReviewDaemon
                             CliProcessReaper.RecordExternalReap(CliOrphanSweep.Sweep(
                                 [_options.ReviewWorkDir],
                                 ReviewSlotReconciler.MaximumDormantAge,
-                                _log));
+                                _log,
+                                ActiveWorkspacePaths()));
                         }
                         catch (Exception exception)
                         {
@@ -439,10 +457,21 @@ public sealed class RemoteReviewDaemon
 
                     idleWatchdog.RecordPollStarted();
 
+                    var slotCeiling = _client.RoleMaxParallelism;
+                    if (slotCeiling != announcedSlotCeiling)
+                    {
+                        _log(
+                            $"review slot ceiling adopted={slotCeiling} " +
+                            $"previous={(announcedSlotCeiling?.ToString() ?? "bootstrap")} " +
+                            $"bootstrap={_options.HostMaxParallelism} " +
+                            $"activeSlots={active.Count}; active slots are never cancelled by a lower ceiling");
+                        announcedSlotCeiling = slotCeiling;
+                    }
+
                     var admission = ReviewSlotAdmissionPolicy.Decide(
                         admissionTelemetry,
                         active.Count,
-                        _options.HostMaxParallelism,
+                        slotCeiling,
                         _options.ClaimMaxLoadPerCore);
                     if (!admission.Admitted)
                     {
@@ -493,7 +522,7 @@ public sealed class RemoteReviewDaemon
                                 _log(
                                     $"claimed remote review attempt={claim.Attempt!.AttemptId} " +
                                     $"subject={claim.Subject!.SubjectId} " +
-                                    $"slot={active.Count + 1}/{_options.HostMaxParallelism}");
+                                    $"slot={active.Count + 1}/{slotCeiling}");
                                 var executor = new RemoteReviewExecutor(_options, _client, state, _log);
                                 var stale = state.Find(claim.Attempt.AttemptId);
                                 if (stale is not null

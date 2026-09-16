@@ -35,6 +35,7 @@ public static class RunFailureSignatures
     // Infrastructure
     public const string GateBudgetExceeded = "gate-budget-exceeded";
     public const string CommandTimeout = "command-timeout";
+    public const string CommandStalled = "command-stalled";
     public const string GitNetworkTimeout = "git-network-timeout";
     public const string UnparsedTestOutput = "unparsed-test-output";
     public const string MsBuildNodeUnavailable = "msbuild-node-unavailable";
@@ -95,6 +96,13 @@ public sealed record RunFailureEvidence
 
     /// <summary>The command was killed because it exceeded its own timeout.</summary>
     public bool TimedOut { get; init; }
+
+    /// <summary>
+    /// The command was killed because it produced no output at all for its
+    /// silence window. Distinct from <see cref="TimedOut"/>: a stall says the
+    /// command stopped making progress long before its budget ran out.
+    /// </summary>
+    public bool Stalled { get; init; }
 
     /// <summary>The command never started.</summary>
     public bool LaunchFailed { get; init; }
@@ -160,6 +168,12 @@ public static class RunFailureClassifier
         "violated review-command budget",
         "violated machine-gate-queue budget",
         "violated workspace-materialization budget",
+    ];
+
+    private static readonly string[] StallSignals =
+    [
+        "produced no output for",
+        "silence watchdog",
     ];
 
     private static readonly string[] TimeoutSignals =
@@ -282,6 +296,14 @@ public static class RunFailureClassifier
                 text,
                 BudgetSignals);
         }
+        if (evidence.Stalled)
+        {
+            return Infrastructure(
+                RunFailureSignatures.CommandStalled,
+                "The verification command stopped producing output and was killed before its budget ran out.",
+                text,
+                StallSignals);
+        }
         if (evidence.TimedOut)
         {
             return Infrastructure(
@@ -386,6 +408,14 @@ public static class RunFailureClassifier
                 "A git network operation against origin did not complete in time.",
                 text,
                 GitNetworkSignals);
+        }
+        if (Contains(text, StallSignals))
+        {
+            return Infrastructure(
+                RunFailureSignatures.CommandStalled,
+                "The verification command stopped producing output and was killed before its budget ran out.",
+                text,
+                StallSignals);
         }
         if (Contains(text, TimeoutSignals))
         {
