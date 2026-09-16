@@ -51,6 +51,16 @@ public sealed class FakeBackendHarness : IAsyncDisposable
     /// </summary>
     public int JobsGroupedFailFirstN { get; set; }
     public int JobsGroupedCallCount;
+    /// <summary>
+    /// Overrides the <c>/api/system/version</c> payload with raw build-manifest
+    /// JSON. The restart drill points this at whichever manifest the real
+    /// backend would have resolved at boot (<c>ATP_BUILD_MANIFEST</c> when the
+    /// start script was handed one, otherwise the manifest in the checkout
+    /// root), so the identity handoff is exercised the way
+    /// <c>BuildIdentity.Load</c> resolves it. Null keeps the default payload.
+    /// </summary>
+    public Func<string?>? RuntimeManifestJson { get; set; }
+
     public Dictionary<string, string> ProjectModes { get; } = new()
     {
         ["agent-taskboard"] = "auto-continuous",
@@ -77,12 +87,18 @@ public sealed class FakeBackendHarness : IAsyncDisposable
                 return Results.Json("still compiling", statusCode: 503);
             return Results.Text("\"ok\"", "application/json");
         });
-        app.MapGet("/api/system/version", () => Results.Json(new
+        app.MapGet("/api/system/version", IResult () =>
         {
-            version = "2026.07.11-1200+aaaaaaa",
-            commit = "aaaaaaa",
-            deployedAt = "2026-07-11T12:00:00Z"
-        }));
+            var manifest = RuntimeManifestJson?.Invoke();
+            if (!string.IsNullOrWhiteSpace(manifest))
+                return Results.Text(manifest, "application/json");
+            return Results.Json(new
+            {
+                version = "2026.07.11-1200+aaaaaaa",
+                commit = "aaaaaaa",
+                deployedAt = "2026-07-11T12:00:00Z"
+            });
+        });
 
         app.MapGet("/api/runner/status", () =>
         {

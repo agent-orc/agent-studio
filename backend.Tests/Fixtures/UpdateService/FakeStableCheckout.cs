@@ -15,6 +15,7 @@ namespace AgentStudio.Tests;
 ///   <root>/stable/                       working clone with one prepared commit + VERSION
 ///   <root>/devspace/                     where stop-stable.sh + start-stable.sh live
 ///   <root>/runs/                         RunsDirectory
+///   <root>/metadata/                     candidate manifest + approved tag cache
 ///   <root>/stable-updates.jsonl          HistoryFile
 ///
 /// The fake scripts just touch a marker file inside <c>devspace/</c> so the
@@ -33,6 +34,19 @@ public sealed class FakeStableCheckout : IDisposable
     public string VersionFile { get; }
     public string StopMarkerPath { get; }
     public string StartMarkerPath { get; }
+    /// <summary>
+    /// File the fake start script writes <c>ATP_BUILD_MANIFEST</c> into, so a
+    /// test can prove which build manifest the orchestrator handed to the
+    /// backend it restarted (AGT-2847).
+    /// </summary>
+    public string StartManifestEnvPath { get; }
+    public string MetadataDir { get; }
+    /// <summary>Immutable candidate manifest cache the outer updater fills.</summary>
+    public string CandidateManifestFile { get; }
+    /// <summary>Cached latest-approved release tag.</summary>
+    public string ApprovedTagFile { get; }
+    /// <summary>The installed manifest in the checkout root.</summary>
+    public string RootManifestFile { get; }
     public string BashPath { get; }
     public string GitPath { get; }
 
@@ -47,6 +61,11 @@ public sealed class FakeStableCheckout : IDisposable
         VersionFile = Path.Combine(StableDir, "VERSION");
         StopMarkerPath = Path.Combine(DevspaceDir, ".stop-stable.marker");
         StartMarkerPath = Path.Combine(DevspaceDir, ".start-stable.marker");
+        StartManifestEnvPath = Path.Combine(DevspaceDir, ".start-stable.build-manifest-env");
+        MetadataDir = Path.Combine(root, "metadata");
+        CandidateManifestFile = Path.Combine(MetadataDir, "stable-candidate-manifest.json");
+        ApprovedTagFile = Path.Combine(MetadataDir, "stable-approved-tag");
+        RootManifestFile = Path.Combine(StableDir, "build-manifest.json");
         BashPath = bashPath;
         GitPath = gitPath;
     }
@@ -68,6 +87,7 @@ public sealed class FakeStableCheckout : IDisposable
         Directory.CreateDirectory(checkout.RemoteDir);
         Directory.CreateDirectory(checkout.DevspaceDir);
         Directory.CreateDirectory(checkout.RunsDir);
+        Directory.CreateDirectory(checkout.MetadataDir);
 
         // bare remote
         Run(gitPath, checkout.RemoteDir, "init", "--bare", "--initial-branch=main");
@@ -91,11 +111,20 @@ public sealed class FakeStableCheckout : IDisposable
         Run(gitPath, checkout.StableDir, "commit", "-m", "test: initial");
         Run(gitPath, checkout.StableDir, "push", "-u", "origin", "main");
 
-        // fake start/stop scripts: just touch a marker, exit 0.
+        // fake start/stop scripts: touch a marker and exit 0, so the stop+
+        // start sequence is observable without forking a real backend.
         WriteScript(Path.Combine(checkout.DevspaceDir, "stop-stable.sh"),
             $"#!/bin/bash\ntouch \"$(dirname \"$0\")/.stop-stable.marker\"\nexit 0\n");
+        // The start script records the build-manifest environment it was
+        // handed. The real start-stable.sh / api.sh pair has to pass that
+        // variable through to `dotnet run`; recording it here is how the
+        // restart drill proves the orchestrator sets it (AGT-2847).
         WriteScript(Path.Combine(checkout.DevspaceDir, "start-stable.sh"),
-            $"#!/bin/bash\ntouch \"$(dirname \"$0\")/.start-stable.marker\"\nexit 0\n");
+            "#!/bin/bash\n"
+            + "dir=\"$(dirname \"$0\")\"\n"
+            + "touch \"$dir/.start-stable.marker\"\n"
+            + "printf '%s' \"${ATP_BUILD_MANIFEST:-}\" > \"$dir/.start-stable.build-manifest-env\"\n"
+            + "exit 0\n");
 
         return checkout;
     }
@@ -104,10 +133,56 @@ public sealed class FakeStableCheckout : IDisposable
     {
         // Normalize to LF so Git Bash on Windows doesn't reject a CRLF shebang.
         File.WriteAllText(path, body.Replace("\r\n", "\n"));
+        // The orchestrator starts the stack as `./start-stable.sh`, which needs
+        // the execute bit on a POSIX host (Git Bash on Windows does not care).
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(path,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+                | UnixFileMode.GroupRead | UnixFileMode.GroupExecute
+                | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+        }
     }
 
     public bool StopRan() => File.Exists(StopMarkerPath);
     public bool StartRan() => File.Exists(StartMarkerPath);
+
+    /// <summary>
+    /// The <c>ATP_BUILD_MANIFEST</c> value the last start-script run saw, or
+    /// null when the script never ran or the variable was not set.
+    /// </summary>
+    public string? ReadStartManifestEnv()
+    {
+        if (!File.Exists(StartManifestEnvPath)) return null;
+        var value = File.ReadAllText(StartManifestEnvPath).Trim();
+        return value.Length == 0 ? null : value;
+    }
+
+    /// <summary>
+    /// Publishes one release commit carrying <paramref name="files"/> on
+    /// origin/main and tags it, mirroring how an immutable release reaches the
+    /// remote the Update Service fetches from. Returns the full commit SHA so
+    /// the caller can write a candidate manifest that names it.
+    /// </summary>
+    public string PublishReleaseCommit(string tag, IReadOnlyDictionary<string, string> files)
+    {
+        var cloneDir = Path.Combine(Root, "release-work-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+        Run(GitPath, Root, "clone", "--branch", "main", RemoteDir, cloneDir);
+        Run(GitPath, cloneDir, "config", "user.email", "test@example.com");
+        Run(GitPath, cloneDir, "config", "user.name", "Update Service Test");
+        foreach (var file in files)
+        {
+            var path = Path.Combine(cloneDir, file.Key.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, file.Value.Replace("\r\n", "\n"));
+        }
+        Run(GitPath, cloneDir, "add", ".");
+        Run(GitPath, cloneDir, "commit", "-m", $"release: {tag}");
+        Run(GitPath, cloneDir, "tag", tag);
+        Run(GitPath, cloneDir, "push", "origin", "main");
+        Run(GitPath, cloneDir, "push", "origin", tag);
+        return RunCapture(GitPath, cloneDir, "rev-parse", "HEAD");
+    }
 
     /// <summary>Current HEAD of the working stable checkout.</summary>
     public string ReadStableHead() => RunCapture(GitPath, StableDir, "rev-parse", "HEAD");

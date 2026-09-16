@@ -30,6 +30,9 @@ public sealed class UpdateServiceTestFactory : WebApplicationFactory<UpdSvc::Pro
     private readonly int _doneLingerSeconds;
     private readonly int _healthWaitSeconds;
     private readonly string _mode;
+    private readonly bool _requireReleaseManifest;
+    private readonly int _restartHealthWaitSeconds;
+    private readonly string _frontendUrl;
 
     public UpdateServiceTestFactory(
         FakeStableCheckout checkout,
@@ -37,7 +40,17 @@ public sealed class UpdateServiceTestFactory : WebApplicationFactory<UpdSvc::Pro
         bool autoRollback,
         int doneLingerSeconds = 2,
         int healthWaitSeconds = 10,
-        string mode = "scheduled")
+        string mode = "scheduled",
+        // Immutable-release mode, opted into by the restart drill (AGT-2847).
+        // It also shortens the restart health budget so a backend that never
+        // reports healthy fails the test instead of hanging it for the
+        // production default of ten minutes.
+        bool requireReleaseManifest = false,
+        int restartHealthWaitSeconds = 600,
+        // Defaults to the fake backend's port: the orchestrator only TCP-probes
+        // this address before declaring the stack up, and the suite must not
+        // depend on a real frontend dev server listening on the host.
+        string? frontendUrl = null)
     {
         _checkout = checkout;
         _backend = backend;
@@ -45,6 +58,9 @@ public sealed class UpdateServiceTestFactory : WebApplicationFactory<UpdSvc::Pro
         _doneLingerSeconds = doneLingerSeconds;
         _healthWaitSeconds = healthWaitSeconds;
         _mode = mode;
+        _requireReleaseManifest = requireReleaseManifest;
+        _restartHealthWaitSeconds = restartHealthWaitSeconds;
+        _frontendUrl = frontendUrl ?? backend.BaseUrl;
     }
 
     protected override IHost CreateHost(IHostBuilder builder)
@@ -74,10 +90,14 @@ public sealed class UpdateServiceTestFactory : WebApplicationFactory<UpdSvc::Pro
                 ["UpdateService:ProbeIntervalSeconds"] = "5",
                 ["UpdateService:AutoRollback"]       = _autoRollback ? "true" : "false",
                 ["UpdateService:Mode"]               = _mode,
+                ["UpdateService:RestartHealthWaitSeconds"] = _restartHealthWaitSeconds.ToString(),
+                ["UpdateService:FrontendUrl"]        = _frontendUrl,
+                ["UpdateService:CandidateManifestFile"] = _checkout.CandidateManifestFile,
+                ["UpdateService:ApprovedTagFile"]    = _checkout.ApprovedTagFile,
                 // The established integration harness exercises the legacy
-                // branch-update pipeline. Immutable-release behavior has its
-                // own contract tests and requires signed fixture manifests.
-                ["UpdateService:RequireReleaseManifest"] = "false",
+                // branch-update pipeline; the restart drill opts into the
+                // immutable-release pipeline with fixture manifests.
+                ["UpdateService:RequireReleaseManifest"] = _requireReleaseManifest ? "true" : "false",
             });
         });
 
@@ -136,10 +156,15 @@ public sealed class UpdateServiceTestFactory : WebApplicationFactory<UpdSvc::Pro
         RunsDirectory = _checkout.RunsDir,
         VersionFile = _checkout.VersionFile,
         HealthWaitSeconds = _healthWaitSeconds,
+        RestartHealthWaitSeconds = _restartHealthWaitSeconds,
+        FrontendUrl = _frontendUrl,
         DoneLingerSeconds = _doneLingerSeconds,
         ProbeIntervalSeconds = 5,
         AutoRollback = _autoRollback,
         Mode = _mode,
+        RequireReleaseManifest = _requireReleaseManifest,
+        CandidateManifestFile = _checkout.CandidateManifestFile,
+        ApprovedTagFile = _checkout.ApprovedTagFile,
         TriggerToken = null,
     };
 }

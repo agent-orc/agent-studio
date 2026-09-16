@@ -23,6 +23,23 @@ namespace AgentTaskboard.UpdateService;
 /// </summary>
 public sealed class UpdateOrchestrator
 {
+    /// <summary>
+    /// Environment variable the backend's build identity loader reads its
+    /// manifest path from. The restarted backend otherwise resolves
+    /// <c>build-manifest.json</c> next to its own assembly, which the build
+    /// copies from the checkout root, and the checkout root still carries the
+    /// previous release until this run's mutation boundary. Handing the run
+    /// folder's intended manifest to the started process is what lets the
+    /// runtime-identity check see the candidate without installing it early.
+    /// </summary>
+    public const string BuildManifestEnvVar = "ATP_BUILD_MANIFEST";
+
+    /// <summary>Run-folder file name of the candidate manifest handed to the restarted backend.</summary>
+    public const string IntendedManifestFileName = "intended-build-manifest.json";
+
+    /// <summary>Run-folder file name of the manifest the rollback path restarts at.</summary>
+    public const string RollbackManifestFileName = "rollback-build-manifest.json";
+
     private readonly UpdateStatusStore _store;
     private readonly IGitProbe _git;
     private readonly IBackendProbe _backend;
@@ -183,10 +200,10 @@ public sealed class UpdateOrchestrator
                 }
                 intendedRelease = release.Candidate;
                 if (release.Installed is not null)
-                    folder.WriteOutput("rollback-build-manifest.json", System.Text.Json.JsonSerializer.Serialize(release.Installed,
+                    folder.WriteOutput(RollbackManifestFileName, System.Text.Json.JsonSerializer.Serialize(release.Installed,
                         new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase, WriteIndented = true }));
                 if (intendedRelease is not null)
-                    folder.WriteOutput("intended-build-manifest.json", System.Text.Json.JsonSerializer.Serialize(intendedRelease,
+                    folder.WriteOutput(IntendedManifestFileName, System.Text.Json.JsonSerializer.Serialize(intendedRelease,
                         new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase, WriteIndented = true }));
 
                 if (release.Direction == ReleaseDirection.SameVersion)
@@ -319,10 +336,26 @@ public sealed class UpdateOrchestrator
                 return;
             }
 
-            // PHASE 5 — restarting
+            // PHASE 5 — restarting. The candidate manifest stays out of the
+            // checkout root until the mutation boundary below, so the started
+            // backend is told where its intended manifest is instead
+            // (ATP_BUILD_MANIFEST). Without that handoff the freshly built
+            // process reports the previous release and the runtime-identity
+            // check below can never pass for an upgrade.
             SetPhase("restarting", "starting stable backend", runId, startedAt);
+            var intendedManifestPath = intendedRelease is null
+                ? null
+                : Path.Combine(folder.Root, IntendedManifestFileName);
+            if (intendedManifestPath is not null && !File.Exists(intendedManifestPath))
+            {
+                await RollbackCheckoutToAsync(headBefore, ct);
+                FinishFailed(runId, startedAt, headBefore, headAfterPull, trigger,
+                    $"intended build manifest handoff file is missing: {intendedManifestPath}", null, folder, preSnapshot,
+                    intendedRelease, null, releaseComparison?.Direction.ToString());
+                return;
+            }
             var restartStartedAt = DateTime.UtcNow;
-            var (startRc, startOut) = await StartStackAsync(ct);
+            var (startRc, startOut) = await StartStackAsync(intendedManifestPath, ct);
             folder.WriteOutput("start-stable-output.txt", startOut);
             if (startRc != 0)
             {
@@ -473,7 +506,7 @@ public sealed class UpdateOrchestrator
         var headBefore = _git.HeadShort();
         var rollbackStartedAt = DateTime.UtcNow;
         var rollbackTrigger = manual ? "manual-rollback" : "auto-rollback";
-        var rollbackManifest = ReadReleaseManifest(Path.Combine(folder.Root, "rollback-build-manifest.json"));
+        var rollbackManifest = ReadReleaseManifest(Path.Combine(folder.Root, RollbackManifestFileName));
 
         // Read the snapshot SHA + project modes from disk so manual rollback
         // works even after a process restart. Modes feed phase-6 (strict
@@ -533,11 +566,12 @@ public sealed class UpdateOrchestrator
 
             if (rollbackManifest is not null)
             {
-                File.Copy(Path.Combine(folder.Root, "rollback-build-manifest.json"),
+                File.Copy(Path.Combine(folder.Root, RollbackManifestFileName),
                     Path.Combine(_options.StableCheckoutDir, _options.BuildManifestFile), overwrite: true);
             }
 
-            var (startRc, startOut) = await RunRestartAsync(ct);
+            var (startRc, startOut) = await RunRestartAsync(
+                rollbackManifest is null ? null : Path.Combine(folder.Root, RollbackManifestFileName), ct);
             folder.WriteOutput("rollback-start-output.txt", startOut);
             var healthy = await _backend.WaitForHealthyAsync(TimeSpan.FromSeconds(_options.HealthWaitSeconds), ct);
 
@@ -756,7 +790,8 @@ public sealed class UpdateOrchestrator
 
     // ─── shell helpers ──────────────────────────────────────────────────────
 
-    private async Task<(int Rc, string Output)> RunBashAsync(string firstArg, string secondArg, string workingDir, CancellationToken ct)
+    private async Task<(int Rc, string Output)> RunBashAsync(string firstArg, string secondArg, string workingDir,
+        CancellationToken ct, IReadOnlyDictionary<string, string>? environment = null)
     {
         var psi = new ProcessStartInfo
         {
@@ -769,6 +804,8 @@ public sealed class UpdateOrchestrator
         };
         psi.ArgumentList.Add(firstArg);
         if (!string.IsNullOrEmpty(secondArg)) psi.ArgumentList.Add(secondArg);
+        if (environment is not null)
+            foreach (var entry in environment) psi.Environment[entry.Key] = entry.Value;
 
         try
         {
@@ -925,13 +962,13 @@ public sealed class UpdateOrchestrator
         return (0, output, true);
     }
 
-    private async Task<(int Rc, string Output)> RunRestartAsync(CancellationToken ct)
+    private async Task<(int Rc, string Output)> RunRestartAsync(string? buildManifestPath, CancellationToken ct)
     {
         var (stopRc, stopOut) = await RunBashAsync(_options.StopScript, "", _options.DevspaceDir, ct);
         // Stop always succeeds in spirit; downstream start is what we care about.
         var (startRc, startOut) = await RunBashAsync("-c",
             $"DETACH=1 ./{_options.StartScript}",
-            _options.DevspaceDir, ct);
+            _options.DevspaceDir, ct, BuildManifestEnvironment(buildManifestPath));
         return (startRc, $"--- stop (rc={stopRc}) ---\n{stopOut}\n--- start (rc={startRc}) ---\n{startOut}");
     }
 
@@ -1023,8 +1060,24 @@ public sealed class UpdateOrchestrator
     private Task<(int Rc, string Output)> StopStackAsync(CancellationToken ct)
         => RunBashAsync(_options.StopScript, "", _options.DevspaceDir, ct);
 
-    private Task<(int Rc, string Output)> StartStackAsync(CancellationToken ct)
-        => RunBashAsync("-c", $"DETACH=1 ./{_options.StartScript}", _options.DevspaceDir, ct);
+    private Task<(int Rc, string Output)> StartStackAsync(string? buildManifestPath, CancellationToken ct)
+        => RunBashAsync("-c", $"DETACH=1 ./{_options.StartScript}", _options.DevspaceDir, ct,
+            BuildManifestEnvironment(buildManifestPath));
+
+    /// <summary>
+    /// Environment handed to the start script (and through it to the backend)
+    /// so the started process loads the manifest this run intends to install.
+    /// Null when the run has no intended manifest (legacy branch updates),
+    /// which leaves the started backend on its own resolution exactly as
+    /// before.
+    /// </summary>
+    private static IReadOnlyDictionary<string, string>? BuildManifestEnvironment(string? buildManifestPath)
+        => string.IsNullOrWhiteSpace(buildManifestPath)
+            ? null
+            : new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                [BuildManifestEnvVar] = Path.GetFullPath(buildManifestPath),
+            };
 
     /// <summary>
     /// Reverts the checkout to <paramref name="sha"/> when it is not already

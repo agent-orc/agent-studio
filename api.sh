@@ -749,6 +749,27 @@ cmd_start() {
 
   require_port_inspection || exit 1
 
+  # Build-manifest handoff (AGT-2847). An Update Service run keeps the
+  # candidate build-manifest.json in its run folder until the restarted
+  # backend has cleared health and runtime-identity verification, and points
+  # the backend at it with ATP_BUILD_MANIFEST. That variable has to survive
+  # this script into `dotnet run`: the build copies the checkout root's
+  # manifest beside the assembly, so a backend started without the override
+  # reports the previously installed release and the update's identity check
+  # can never pass for an upgrade. Validate it here rather than letting the
+  # backend silently fall back to that stale identity.
+  if [[ -n "${ATP_BUILD_MANIFEST:-}" ]]; then
+    if [[ ! -f "${ATP_BUILD_MANIFEST}" ]]; then
+      echo "ERROR: ATP_BUILD_MANIFEST is set but is not a readable file:" >&2
+      echo "       ${ATP_BUILD_MANIFEST}" >&2
+      echo "       Refusing to start: the backend would report the previously" >&2
+      echo "       installed build identity instead of the intended one." >&2
+      exit 1
+    fi
+    export ATP_BUILD_MANIFEST
+    echo "Build manifest override: ${ATP_BUILD_MANIFEST}"
+  fi
+
   # Nothing may be launched on top of a port somebody else owns. Reporting
   # "started and healthy" while a stranger answers /healthz is how a rollout
   # silently keeps serving the old build.

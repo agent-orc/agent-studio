@@ -137,6 +137,35 @@ manifest is committed automatically reverts the checkout to the pre-run
 commit; the manifest file is never touched, so the next preflight is
 unaffected and no manual manifest deletion is needed.
 
+**Identity handoff.** The restarted backend has to report the candidate
+identity before that manifest is installed, otherwise the mutation boundary and
+the identity source contradict each other: the backend resolves its build
+identity from `ATP_BUILD_MANIFEST`, or from the `build-manifest.json` the build
+copies beside its assembly out of the checkout root, and the checkout root
+still carries the previous release at restart time. A run that does not hand
+the candidate over therefore always observes the previous identity and can
+never pass its own runtime-identity check for an upgrade (v0.3.0 to v0.4.0,
+2026-09-16). The Update Service starts the stack with
+`ATP_BUILD_MANIFEST=<run folder>/intended-build-manifest.json`, and refuses to
+start at all when that file is missing. The outer wrappers must pass the
+variable through unchanged: the devspace-owned `start-stable.sh` into
+[`api.sh`](../../api.sh), and `api.sh` into `dotnet run`. `api.sh` refuses to
+start when the variable is set but names no readable file, so a dropped or
+mistyped handoff fails loudly instead of booting at the previously installed
+identity. The rollback path starts the same way, with the run folder's
+`rollback-build-manifest.json`. Nothing else moves: the manifest still reaches
+the checkout root only after verification passes, and the started process keeps
+the manifest it was handed for its whole lifetime.
+
+**Upgrade in verification.** Between that restart and the mutation boundary the
+running identity is the candidate while the installed manifest is still the
+previous or legacy one. The preflight names this state `upgrade in
+verification` (`upgradeInVerification` on the comparison, and the same wording
+in its summary) and allows it. It is a running/installed divergence only when
+the running identity is neither what is installed nor the candidate. Re-running
+the update from that state is the intended recovery: it installs the candidate
+again and commits the manifest.
+
 *Recovery if this still happens.* If a run somehow leaves the checkout ahead
 of the installed manifest anyway (for example, a crash of the Update Service
 process itself between the checkout move and the revert), running the next

@@ -105,6 +105,78 @@ public sealed class StableReleaseContractTests
     }
 
     [Fact]
+    public void RunningAtCandidateWhileRootStillHoldsPreviousManifest_IsUpgradeInVerification()
+    {
+        // AGT-2847 restart drill, pure form: the Update Service restarted the
+        // backend at the candidate identity and has not reached the mutation
+        // boundary yet, so the checkout root still carries the previous
+        // release. This is the ordering contract working, not divergence.
+        var installed = Manifest("0.3.0", "aaa");
+        var candidate = Manifest("0.4.0", "bbb");
+
+        var result = StableReleaseContract.Compare(candidate, installed, candidate, "v0.4.0", offline: false);
+
+        Assert.True(result.Allowed, string.Join("; ", result.Errors));
+        Assert.True(result.UpgradeInVerification);
+        Assert.Equal(ReleaseDirection.Upgrade, result.Direction);
+        Assert.DoesNotContain(result.Errors, e => e.Contains("running identity diverges"));
+        Assert.Contains("upgrade in verification", result.Summary);
+    }
+
+    [Fact]
+    public void LegacyRootManifestWithRunningAtCandidate_IsUpgradeInVerification()
+    {
+        var legacy = Manifest("0.0.0-migration", "legacy") with
+        {
+            Tag = "untagged",
+            Dirty = true,
+            BuiltAt = null,
+            Integrity = "unverified",
+            Legacy = true
+        };
+        var candidate = Manifest("0.4.0", "bbb");
+
+        var result = StableReleaseContract.Compare(candidate, legacy, candidate, "v0.4.0", offline: false);
+
+        Assert.True(result.Allowed, string.Join("; ", result.Errors));
+        Assert.True(result.UpgradeInVerification);
+        Assert.Equal(ReleaseDirection.Upgrade, result.Direction);
+        Assert.DoesNotContain(result.Errors, e => e.Contains("running identity diverges"));
+    }
+
+    [Fact]
+    public void RunningAtNeitherInstalledNorCandidate_IsStillRefusedAsDivergence()
+    {
+        var running = Manifest("0.3.5", "ccc");
+        var installed = Manifest("0.3.0", "aaa");
+        var candidate = Manifest("0.4.0", "bbb");
+
+        var result = StableReleaseContract.Compare(running, installed, candidate, "v0.4.0", offline: false);
+
+        Assert.False(result.Allowed);
+        Assert.False(result.UpgradeInVerification);
+        Assert.Contains(result.Errors, e => e.Contains("running identity diverges"));
+    }
+
+    [Fact]
+    public void RunningAtCandidateOnADowngrade_IsNotTreatedAsUpgradeInVerification()
+    {
+        // The escape hatch is scoped to the forward path. A running backend at
+        // a lower release than what is installed still needs explicit
+        // downgrade authorization and stays a divergence.
+        var running = Manifest("0.3.0", "aaa");
+        var installed = Manifest("0.4.0", "bbb");
+
+        var result = StableReleaseContract.Compare(running, installed, running, "v0.3.0", offline: false);
+
+        Assert.False(result.Allowed);
+        Assert.False(result.UpgradeInVerification);
+        Assert.Equal(ReleaseDirection.Downgrade, result.Direction);
+        Assert.Contains(result.Errors, e => e.Contains("running identity diverges"));
+        Assert.Contains(result.Errors, e => e.Contains("explicit approval"));
+    }
+
+    [Fact]
     public void MissingLatestApprovedTag_IsRefused()
     {
         var installed = Manifest("1.2.0", "aaa");

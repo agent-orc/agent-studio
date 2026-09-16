@@ -7,6 +7,13 @@
 # active, and must only report a confirmed failure once neither the port nor
 # such a process exists.
 #
+# The same hermetic harness also covers the build-manifest handoff (AGT-2847):
+# an Update Service run starts the backend with ATP_BUILD_MANIFEST pointing at
+# the candidate manifest in its run folder, and that variable has to reach
+# `dotnet run` unchanged. A start that silently drops it boots at the
+# previously installed identity and makes every upgrade fail its own
+# runtime-identity check.
+#
 # Fakes `dotnet`, `lsof`, and `curl` on PATH so no real .NET build or network
 # bind is required; the rest of api.sh (process table, pid liveness) runs for
 # real against real background shell processes. Each scenario gets its own
@@ -57,6 +64,11 @@ EOF
 cat > "${fake_bin}/dotnet" <<EOF
 #!/usr/bin/env bash
 set -u
+# Records the build-manifest environment it inherited, which is what proves
+# api.sh passed the Update Service's handoff through to the backend process.
+if [[ -n "\${FAKE_ENV_CAPTURE:-}" ]]; then
+  printf '%s' "\${ATP_BUILD_MANIFEST:-}" > "\${FAKE_ENV_CAPTURE}"
+fi
 if [[ "\${FAKE_SPAWN_WORKER:-1}" == "1" ]]; then
   "${fake_bin}/fake-worker" "\$@" &
   disown
@@ -158,6 +170,56 @@ if echo "${out_c}" | grep -qi "exited before it started listening"; then
   bad "must not report a crash while the build is still active at the timeout"
 else
   ok "did not misreport the timeout as a crash"
+fi
+
+echo "== scenario: build-manifest handoff reaches the backend process =="
+checkout_d="${test_root}/proj-d-stable"
+new_checkout "${checkout_d}"
+manifest_d="${test_root}/intended-build-manifest.json"
+printf '{"schemaVersion":1}' > "${manifest_d}"
+out_d="$(cd "${checkout_d}" && env -u PORT -u API_PORT_OVERRIDE \
+  PATH="${fake_bin}:${PATH}" \
+  FAKE_SPAWN_WORKER=1 FAKE_WORKER_DELAY=0 \
+  FAKE_LISTEN_MARKER="${test_root}/listening-d" \
+  FAKE_WORKER_PIDFILE="${test_root}/worker-pid-d" \
+  FAKE_ENV_CAPTURE="${test_root}/env-capture-d" \
+  FAKE_PORT=5031 \
+  API_START_TIMEOUT_SECS=10 \
+  ATP_BUILD_MANIFEST="${manifest_d}" \
+  bash ./api.sh start 2>&1)"; rc_d=$?
+if [[ "${rc_d}" -eq 0 ]] && [[ "$(cat "${test_root}/env-capture-d" 2>/dev/null)" == "${manifest_d}" ]]; then
+  ok "passes ATP_BUILD_MANIFEST through to the launched backend"
+else
+  bad "expected the manifest handoff in the backend environment; rc=${rc_d} captured=$(cat "${test_root}/env-capture-d" 2>/dev/null) out=${out_d}"
+fi
+if echo "${out_d}" | grep -q "Build manifest override: ${manifest_d}"; then
+  ok "names the manifest override it started with"
+else
+  bad "expected the override to be named in the start output; out=${out_d}"
+fi
+
+echo "== scenario: build-manifest handoff names a file that is not there =="
+checkout_e="${test_root}/proj-e-stable"
+new_checkout "${checkout_e}"
+out_e="$(cd "${checkout_e}" && env -u PORT -u API_PORT_OVERRIDE \
+  PATH="${fake_bin}:${PATH}" \
+  FAKE_SPAWN_WORKER=1 FAKE_WORKER_DELAY=0 \
+  FAKE_LISTEN_MARKER="${test_root}/listening-e" \
+  FAKE_WORKER_PIDFILE="${test_root}/worker-pid-e" \
+  FAKE_ENV_CAPTURE="${test_root}/env-capture-e" \
+  FAKE_PORT=5031 \
+  API_START_TIMEOUT_SECS=10 \
+  ATP_BUILD_MANIFEST="${test_root}/gone/intended-build-manifest.json" \
+  bash ./api.sh start 2>&1)"; rc_e=$?
+if [[ "${rc_e}" -ne 0 ]] && echo "${out_e}" | grep -qi "not a readable file"; then
+  ok "refuses to start rather than booting at the previously installed identity (exit ${rc_e})"
+else
+  bad "expected a refusal for an unreadable manifest handoff; rc=${rc_e} out=${out_e}"
+fi
+if [[ ! -e "${test_root}/env-capture-e" ]]; then
+  ok "never launched the backend"
+else
+  bad "the backend was launched despite the unusable manifest handoff"
 fi
 
 echo

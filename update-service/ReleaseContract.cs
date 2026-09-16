@@ -47,7 +47,13 @@ public sealed record ReleaseComparison(
     // which has no access to run history) when Errors contains the
     // running/installed divergence message, so the refusal names the run
     // that caused it instead of leaving the operator to guess.
-    string? DivergenceExplanation = null);
+    string? DivergenceExplanation = null,
+    // True while an upgrade sits between restart and the mutation boundary:
+    // the running backend already reports the candidate identity, the
+    // checkout root still carries the previous (or legacy) manifest. That is
+    // an expected intermediate state of the ordering contract, not a
+    // running/installed divergence.
+    bool UpgradeInVerification = false);
 
 /// <summary>
 /// Pure Stable release gate. It never uses filesystem timestamps and can run
@@ -85,15 +91,30 @@ public static class StableReleaseContract
         else if (candidate is not null && !string.Equals(candidate.Tag, latestApprovedTag, StringComparison.Ordinal))
             errors.Add($"candidate tag {candidate.Tag} does not equal latest approved tag {latestApprovedTag}");
 
-        if (running is not null && installed is not null && !IdentityEquals(running, installed))
-            errors.Add("running identity diverges from the installed manifest");
-
         var direction = installed?.Legacy == true && candidate is not null
             ? ReleaseDirection.Upgrade
             : Classify(installed?.Version, candidate?.Version, installed?.Commit, candidate?.Commit);
         if (direction == ReleaseDirection.SameVersion && installed is not null && candidate is not null
             && !IdentityEquals(installed, candidate))
             direction = ReleaseDirection.Divergence;
+
+        // Upgrade in verification. The Update Service hands the candidate
+        // manifest to the restarted backend and only commits it into the
+        // checkout root after verification passes, so between restart and the
+        // mutation boundary the running identity is the candidate while the
+        // installed manifest is still the previous (or legacy) one. That
+        // ordering is the contract, so it must not be read as the running
+        // backend having drifted away from what is installed.
+        var upgradeInVerification =
+            running is not null && installed is not null && candidate is not null
+            && direction == ReleaseDirection.Upgrade
+            && !IdentityEquals(running, installed)
+            && IdentityEquals(running, candidate);
+
+        if (running is not null && installed is not null && !IdentityEquals(running, installed)
+            && !upgradeInVerification)
+            errors.Add("running identity diverges from the installed manifest");
+
         if (direction == ReleaseDirection.Downgrade && !allowDowngrade)
             errors.Add("downgrade requires explicit approval");
         if (direction == ReleaseDirection.Divergence)
@@ -102,13 +123,14 @@ public static class StableReleaseContract
         return new ReleaseComparison(
             errors.Count == 0,
             direction,
-            Summary(direction, offline),
+            Summary(direction, offline, upgradeInVerification),
             errors,
             running,
             installed,
             candidate,
             latestApprovedTag,
-            offline);
+            offline,
+            UpgradeInVerification: upgradeInVerification);
     }
 
     public static bool IdentityEquals(ReleaseManifest left, ReleaseManifest right) =>
@@ -366,13 +388,13 @@ public static class StableReleaseContract
             $"{match.Groups["major"].Value}.{match.Groups["minor"].Value}.{match.Groups["patch"].Value}", out version!);
     }
 
-    private static string Summary(ReleaseDirection direction, bool offline) =>
-        $"{direction switch
+    private static string Summary(ReleaseDirection direction, bool offline, bool upgradeInVerification) =>
+        $"{(upgradeInVerification ? "upgrade in verification" : direction switch
         {
             ReleaseDirection.SameVersion => "same version",
             ReleaseDirection.Upgrade => "upgrade",
             ReleaseDirection.Downgrade => "downgrade",
             ReleaseDirection.Divergence => "divergence",
             _ => "comparison unavailable"
-        }}{(offline ? " (offline, cached approval)" : "")}";
+        })}{(offline ? " (offline, cached approval)" : "")}";
 }
