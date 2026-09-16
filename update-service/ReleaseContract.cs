@@ -47,7 +47,12 @@ public sealed record ReleaseComparison(
     // which has no access to run history) when Errors contains the
     // running/installed divergence message, so the refusal names the run
     // that caused it instead of leaving the operator to guess.
-    string? DivergenceExplanation = null);
+    string? DivergenceExplanation = null,
+    // True while a backend already reports the candidate identity and the
+    // checkout root still carries the previous manifest. That is the normal
+    // window between the Update Service's restart and its manifest commit,
+    // not a divergence. See StableReleaseContract.Compare.
+    bool UpgradeInVerification = false);
 
 /// <summary>
 /// Pure Stable release gate. It never uses filesystem timestamps and can run
@@ -85,7 +90,22 @@ public static class StableReleaseContract
         else if (candidate is not null && !string.Equals(candidate.Tag, latestApprovedTag, StringComparison.Ordinal))
             errors.Add($"candidate tag {candidate.Tag} does not equal latest approved tag {latestApprovedTag}");
 
-        if (running is not null && installed is not null && !IdentityEquals(running, installed))
+        // The Update Service hands the intended manifest to the backend it
+        // restarts (ATP_BUILD_MANIFEST -> <run folder>/intended-build-manifest.json)
+        // and only commits that manifest into the checkout root once restart,
+        // health, runtime identity, and the frontend port have been verified.
+        // Between those two points the running backend legitimately reports
+        // the candidate while the root still carries the previous release.
+        // That state is "upgrade in verification", not "running identity
+        // diverges from the installed manifest": a divergence is a running
+        // identity that matches neither side of the release being applied.
+        var upgradeInVerification =
+            running is not null && installed is not null && candidate is not null
+            && !IdentityEquals(running, installed)
+            && IdentityEquals(running, candidate);
+
+        if (running is not null && installed is not null && !IdentityEquals(running, installed)
+            && !upgradeInVerification)
             errors.Add("running identity diverges from the installed manifest");
 
         var direction = installed?.Legacy == true && candidate is not null
@@ -102,13 +122,15 @@ public static class StableReleaseContract
         return new ReleaseComparison(
             errors.Count == 0,
             direction,
-            Summary(direction, offline),
+            Summary(direction, offline, upgradeInVerification),
             errors,
             running,
             installed,
             candidate,
             latestApprovedTag,
-            offline);
+            offline,
+            DivergenceExplanation: null,
+            UpgradeInVerification: upgradeInVerification);
     }
 
     public static bool IdentityEquals(ReleaseManifest left, ReleaseManifest right) =>
@@ -366,7 +388,7 @@ public static class StableReleaseContract
             $"{match.Groups["major"].Value}.{match.Groups["minor"].Value}.{match.Groups["patch"].Value}", out version!);
     }
 
-    private static string Summary(ReleaseDirection direction, bool offline) =>
+    private static string Summary(ReleaseDirection direction, bool offline, bool upgradeInVerification) =>
         $"{direction switch
         {
             ReleaseDirection.SameVersion => "same version",
@@ -374,5 +396,5 @@ public static class StableReleaseContract
             ReleaseDirection.Downgrade => "downgrade",
             ReleaseDirection.Divergence => "divergence",
             _ => "comparison unavailable"
-        }}{(offline ? " (offline, cached approval)" : "")}";
+        }}{(upgradeInVerification ? " (in verification, manifest not committed yet)" : "")}{(offline ? " (offline, cached approval)" : "")}";
 }

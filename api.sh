@@ -803,6 +803,15 @@ cmd_start() {
 
   # Background-launch dotnet detached from this shell. nohup keeps it alive
   # after the script exits; the redirects keep stdout/stderr persistent.
+  #
+  # The caller's environment is passed through unchanged, deliberately. The
+  # Update Service restarts Stable with ATP_BUILD_MANIFEST pointing at the
+  # run folder's intended-build-manifest.json so the restarted backend
+  # reports the release being installed, before that manifest is committed
+  # into the checkout root. Never scrub or reset the environment here (no
+  # `env -i`, no allowlist): that would put the runtime identity check back
+  # into the state where no upgrade could ever verify itself. See
+  # docs/operations/stable-release-contract.md, "Identity handoff at restart".
   nohup dotnet run --project "${PROJECT_FILE}" --urls "${BASE_URL}" \
     > "${LOG_OUT}" 2> "${LOG_ERR}" &
   local launched_pid=$!

@@ -28,9 +28,16 @@ public sealed record BuildIdentity(
         assembly ??= typeof(BuildIdentity).Assembly;
         var configured = configuration["Release:BuildManifestPath"]
             ?? Environment.GetEnvironmentVariable("ATP_BUILD_MANIFEST");
-        var path = string.IsNullOrWhiteSpace(configured)
-            ? Path.Combine(AppContext.BaseDirectory, "build-manifest.json")
-            : Path.GetFullPath(configured);
+        var beside = Path.Combine(AppContext.BaseDirectory, "build-manifest.json");
+        // The Update Service points ATP_BUILD_MANIFEST at the run folder's
+        // intended manifest so a backend it restarts reports the release being
+        // installed rather than the one the build copied next to the assembly.
+        // That path lives as long as the run folder, and the environment is
+        // inherited by anything the backend later spawns, so a pointed-at file
+        // that is gone falls back to the manifest beside the assembly instead
+        // of degrading a released installation to the legacy identity.
+        var path = string.IsNullOrWhiteSpace(configured) ? beside : Path.GetFullPath(configured);
+        if (!File.Exists(path)) path = beside;
 
         if (File.Exists(path))
         {

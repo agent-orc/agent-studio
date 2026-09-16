@@ -105,6 +105,93 @@ public sealed class StableReleaseContractTests
     }
 
     [Fact]
+    public void RunningCandidateWithPreviousInstalledManifest_IsUpgradeInVerification_NotDivergence()
+    {
+        // The window the Update Service restart opens: the backend was handed
+        // the candidate manifest (ATP_BUILD_MANIFEST) and already reports it,
+        // while the checkout root still carries the previous release because
+        // the manifest is committed only after verification passes.
+        var installed = Manifest("1.2.0", "aaa");
+        var candidate = Manifest("1.3.0", "bbb");
+
+        var result = StableReleaseContract.Compare(candidate, installed, candidate, "v1.3.0", offline: false);
+
+        Assert.True(result.Allowed, string.Join("; ", result.Errors));
+        Assert.True(result.UpgradeInVerification);
+        Assert.Equal(ReleaseDirection.Upgrade, result.Direction);
+        Assert.DoesNotContain(result.Errors, e => e.Contains("running identity diverges"));
+        Assert.Contains("in verification", result.Summary);
+    }
+
+    [Fact]
+    public void RunningThirdIdentity_IsStillRefusedAsDivergence()
+    {
+        // Neither the installed nor the candidate release: a real divergence
+        // that the in-verification state must not absorb.
+        var running = Manifest("1.1.0", "ccc");
+        var installed = Manifest("1.2.0", "aaa");
+        var candidate = Manifest("1.3.0", "bbb");
+
+        var result = StableReleaseContract.Compare(running, installed, candidate, "v1.3.0", offline: false);
+
+        Assert.False(result.Allowed);
+        Assert.False(result.UpgradeInVerification);
+        Assert.Contains(result.Errors, e => e.Contains("running identity diverges"));
+    }
+
+    [Fact]
+    public void RunningEqualsInstalled_IsNotReportedAsUpgradeInVerification()
+    {
+        var installed = Manifest("1.2.0", "aaa");
+        var candidate = Manifest("1.3.0", "bbb");
+
+        var result = StableReleaseContract.Compare(installed, installed, candidate, "v1.3.0", offline: false);
+
+        Assert.True(result.Allowed);
+        Assert.False(result.UpgradeInVerification);
+        Assert.DoesNotContain("in verification", result.Summary);
+    }
+
+    [Fact]
+    public void UpgradeInVerification_DoesNotExcuseAnUnapprovedCandidate()
+    {
+        // Suppressing the divergence error must not suppress anything else:
+        // the candidate still has to be the approved release.
+        var installed = Manifest("1.2.0", "aaa");
+        var candidate = Manifest("1.3.0", "bbb");
+
+        var result = StableReleaseContract.Compare(candidate, installed, candidate, "v1.4.0", offline: false);
+
+        Assert.False(result.Allowed);
+        Assert.True(result.UpgradeInVerification);
+        Assert.Contains(result.Errors, e => e.Contains("does not equal latest approved tag"));
+    }
+
+    [Fact]
+    public void RunningCandidateWithLegacyInstalledManifest_IsUpgradeInVerification()
+    {
+        // First tagged release on top of a pre-contract installation: the
+        // restarted backend reports the candidate while the checkout root
+        // still has no manifest at all, so "installed" is the legacy boot
+        // identity preserved by the preflight.
+        var legacy = Manifest("0.0.0-migration", "legacy") with
+        {
+            Tag = "untagged",
+            Dirty = true,
+            BuiltAt = null,
+            Integrity = "unverified",
+            Legacy = true
+        };
+        var candidate = Manifest("1.0.0", "first");
+
+        var result = StableReleaseContract.Compare(candidate, legacy, candidate, "v1.0.0", offline: false);
+
+        Assert.True(result.Allowed, string.Join("; ", result.Errors));
+        Assert.True(result.UpgradeInVerification);
+        Assert.Equal(ReleaseDirection.Upgrade, result.Direction);
+    }
+
+    [Fact]
     public void MissingLatestApprovedTag_IsRefused()
     {
         var installed = Manifest("1.2.0", "aaa");

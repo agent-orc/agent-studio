@@ -30,6 +30,10 @@ public sealed class UpdateServiceTestFactory : WebApplicationFactory<UpdSvc::Pro
     private readonly int _doneLingerSeconds;
     private readonly int _healthWaitSeconds;
     private readonly string _mode;
+    private readonly bool _requireReleaseManifest;
+    private readonly string? _frontendUrl;
+    private readonly int _frontendWaitSeconds;
+    private readonly int _restartHealthWaitSeconds;
 
     public UpdateServiceTestFactory(
         FakeStableCheckout checkout,
@@ -37,7 +41,11 @@ public sealed class UpdateServiceTestFactory : WebApplicationFactory<UpdSvc::Pro
         bool autoRollback,
         int doneLingerSeconds = 2,
         int healthWaitSeconds = 10,
-        string mode = "scheduled")
+        string mode = "scheduled",
+        bool requireReleaseManifest = false,
+        string? frontendUrl = null,
+        int frontendWaitSeconds = 120,
+        int restartHealthWaitSeconds = 600)
     {
         _checkout = checkout;
         _backend = backend;
@@ -45,6 +53,10 @@ public sealed class UpdateServiceTestFactory : WebApplicationFactory<UpdSvc::Pro
         _doneLingerSeconds = doneLingerSeconds;
         _healthWaitSeconds = healthWaitSeconds;
         _mode = mode;
+        _requireReleaseManifest = requireReleaseManifest;
+        _frontendUrl = frontendUrl;
+        _frontendWaitSeconds = frontendWaitSeconds;
+        _restartHealthWaitSeconds = restartHealthWaitSeconds;
     }
 
     protected override IHost CreateHost(IHostBuilder builder)
@@ -75,9 +87,12 @@ public sealed class UpdateServiceTestFactory : WebApplicationFactory<UpdSvc::Pro
                 ["UpdateService:AutoRollback"]       = _autoRollback ? "true" : "false",
                 ["UpdateService:Mode"]               = _mode,
                 // The established integration harness exercises the legacy
-                // branch-update pipeline. Immutable-release behavior has its
-                // own contract tests and requires signed fixture manifests.
-                ["UpdateService:RequireReleaseManifest"] = "false",
+                // branch-update pipeline. The immutable-release pipeline is
+                // opted into per case (restart identity drill) and needs the
+                // candidate/approved-tag fixture files below.
+                ["UpdateService:RequireReleaseManifest"] = _requireReleaseManifest ? "true" : "false",
+                ["UpdateService:CandidateManifestFile"] = _checkout.CandidateManifestFile,
+                ["UpdateService:ApprovedTagFile"]       = _checkout.ApprovedTagFile,
             });
         });
 
@@ -141,5 +156,15 @@ public sealed class UpdateServiceTestFactory : WebApplicationFactory<UpdSvc::Pro
         AutoRollback = _autoRollback,
         Mode = _mode,
         TriggerToken = null,
+        RequireReleaseManifest = _requireReleaseManifest,
+        CandidateManifestFile = _checkout.CandidateManifestFile,
+        ApprovedTagFile = _checkout.ApprovedTagFile,
+        // The restart health wait is floored at RestartHealthWaitSeconds
+        // (600s in production, sized for a cold compile). A case that has to
+        // observe a restart *failing* lowers it; the fake checkout never
+        // compiles, so nothing legitimate needs the long budget.
+        RestartHealthWaitSeconds = _restartHealthWaitSeconds,
+        FrontendUrl = _frontendUrl ?? "http://127.0.0.1:4011",
+        FrontendWaitSeconds = _frontendWaitSeconds,
     };
 }
