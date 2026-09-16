@@ -12,6 +12,20 @@ release yet.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-16
+
+Operations release. The review executor and the integration gate stop
+needing an operator to recover from their own failures: a ReviewInfra verdict
+schedules its replacement attempt, auto-review postprocessing no longer waits
+for an executor that is already idle, a coding daemon restart keeps its
+detached workers, and a successful run never marks its provider as limited.
+Branch reclamation is wired into integration, archive and promotion. The
+Windows integration gate prepares the repository with a complete base
+environment, runs verify commands without the Studio's own listener, and no
+longer fails on tests that only measure the host. The product renders one
+disclosure grammar (ADM-17), links dossiers wherever they are named, reviews
+the models it actually runs, and shows the true integration state of a card.
+
 ### Added
 
 - Branch reclamation (AGT-2793) is now wired into the product path instead of
