@@ -6,6 +6,12 @@ import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { ModalStackService } from '../../../../../services/modal-stack.service';
 import { TaskPromptPopoverComponent } from './task-prompt-popover.component';
+import { DossierReferenceHydratorService } from '../../../../../services/dossier-reference-hydrator.service';
+import {
+  DOSSIER_FIXTURE_KEY,
+  dossierChipsIn,
+  provideDossierCatalogueStub,
+} from '../../../../../../testing/dossier-references';
 
 async function mount(markdown: string | null | undefined) {
   await TestBed.configureTestingModule({
@@ -15,6 +21,7 @@ async function mount(markdown: string | null | undefined) {
       provideHttpClient(),
       provideHttpClientTesting(),
       provideRouter([]),
+      provideDossierCatalogueStub(),
     ],
   }).compileComponents();
   const fixture = TestBed.createComponent(TaskPromptPopoverComponent);
@@ -111,5 +118,19 @@ describe('TaskPromptPopoverComponent', () => {
     overlayEl('overview-prompt-popover-backdrop')?.click();
     fixture.detectChanges();
     expect(fixture.componentInstance.open()).toBe(false);
+  });
+
+  // AGT-2812: the prompt is one of the document surfaces, so a Dossier named
+  // in it is recognisable through the shared chip.
+  it('renders a Dossier named in the prompt as a chip', async () => {
+    const fixture = await mount(`Continue the work in ${DOSSIER_FIXTURE_KEY}.`);
+    (el(fixture, 'overview-prompt-trigger') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    TestBed.inject(DossierReferenceHydratorService).refresh();
+
+    const body = overlayEl('overview-prompt-popover-body')!;
+    const chips = dossierChipsIn(body);
+    expect(chips).toHaveLength(1);
+    expect(chips[0].textContent).toContain('Decision cards');
   });
 });

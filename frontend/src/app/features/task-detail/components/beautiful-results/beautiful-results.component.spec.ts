@@ -5,22 +5,30 @@ import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { BeautifulResultsComponent } from './beautiful-results.component';
+import { DossierReferenceHydratorService } from '../../../../services/dossier-reference-hydrator.service';
+import {
+  DOSSIER_FIXTURE_PATH,
+  dossierChipsIn,
+  provideDossierCatalogueStub,
+} from '../../../../../testing/dossier-references';
 
 describe('BeautifulResultsComponent', () => {
-  async function mount(markdown: string): Promise<HTMLElement> {
+  async function mount(markdown: string, projectName: string | null = null): Promise<HTMLElement> {
     await TestBed.configureTestingModule({
       imports: [BeautifulResultsComponent],
       providers: [
         provideZonelessChangeDetection(),
         provideHttpClient(),
         provideHttpClientTesting(),
-        provideRouter([])
+        provideRouter([]),
+        provideDossierCatalogueStub()
       ]
     }).compileComponents();
     const fixture = TestBed.createComponent(BeautifulResultsComponent);
     fixture.componentRef.setInput('markdown', markdown);
     fixture.componentRef.setInput('jobId', 'demo');
     fixture.componentRef.setInput('watchPath', 'C:/repo');
+    fixture.componentRef.setInput('projectName', projectName);
     fixture.detectChanges();
     return fixture.nativeElement as HTMLElement;
   }
@@ -59,5 +67,21 @@ describe('BeautifulResultsComponent', () => {
     expect(missing?.textContent ?? '').toContain('results/does-not-exist.png');
     // The broken <img> is gone, so no silently empty figure remains.
     expect(host.querySelector('img.results-figure__img')).toBeNull();
+  });
+
+  // AGT-2812: the Result view renders its own HTML rather than the shared
+  // markdown element, so it opts its body into Dossier reference hydration.
+  it('renders a named Dossier as a chip that opens the Dossier view', async () => {
+    const host = await mount(`Decided in AGT-W54, see ${DOSSIER_FIXTURE_PATH}.`, 'Demo');
+    TestBed.inject(DossierReferenceHydratorService).refresh();
+
+    const chips = dossierChipsIn(host);
+    expect(chips).toHaveLength(2);
+    expect(chips[0].textContent).toContain('AGT-W54');
+    expect(chips[0].textContent).toContain('Decision cards');
+    expect(chips[0].querySelector('a')?.getAttribute('href'))
+      .toContain('/workbenches/decision-cards');
+    expect(host.querySelector('[data-testid="results-rendered"]')
+      ?.getAttribute('data-dossier-reference-scope')).toBe('Demo');
   });
 });

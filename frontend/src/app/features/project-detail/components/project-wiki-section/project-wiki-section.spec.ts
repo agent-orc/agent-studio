@@ -11,6 +11,12 @@ import { ProjectWikiSectionComponent } from './project-wiki-section';
 import { WikiStarsService } from './wiki-stars.service';
 import { ProjectDocsService } from '../../../../services/project-docs.service';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
+import { DossierReferenceHydratorService } from '../../../../services/dossier-reference-hydrator.service';
+import {
+  DOSSIER_FIXTURE_KEY,
+  dossierChipsIn,
+  provideDossierCatalogueStub,
+} from '../../../../../testing/dossier-references';
 import { WIKI_LIVE_REFRESH_MS } from '../../services/wiki-live-refresh.service';
 import { WikiLinkedElementsComponent } from './wiki-linked-elements/wiki-linked-elements.component';
 import {
@@ -243,6 +249,7 @@ async function setup(
       provideHttpClientTesting(),
       provideRouter([]),
       { provide: TaskReferenceNavigationService, useValue: taskNavigationStub },
+      provideDossierCatalogueStub(),
     ],
   }).compileComponents();
 
@@ -2535,6 +2542,24 @@ describe('ProjectWikiSectionComponent', () => {
     expect(frame!.getAttribute('srcdoc') ?? frame!.srcdoc).toContain('Architecture');
     expect(root.querySelector('[data-testid="project-wiki-viewer-path"]')!.textContent)
       .toContain('architecture/index.html');
+    http.verify();
+  });
+
+  // AGT-2812: a Wiki page body names Dossiers as often as a status report does,
+  // and the viewer scope tells the resolver which project the paths belong to.
+  it('renders a Dossier named in a page body as a chip', async () => {
+    const { fixture, http } = await setup();
+    expandConcepts(fixture);
+    el(fixture).querySelector<HTMLElement>('[data-testid="project-wiki-file-concepts/overview.md"]')?.click();
+    http.expectOne('/api/projects/Demo/wiki/files/concepts/overview.md')
+      .flush({ relPath: 'concepts/overview.md', content: `Superseded by ${DOSSIER_FIXTURE_KEY}.` });
+    http.expectOne('/api/projects/Demo/wiki/history/concepts/overview.md').flush(HISTORY);
+    fixture.detectChanges();
+    TestBed.inject(DossierReferenceHydratorService).refresh();
+
+    const viewer = el(fixture).querySelector('[data-testid="project-wiki-viewer"]')!;
+    expect(viewer.getAttribute('data-dossier-reference-scope')).toBe('Demo');
+    expect(dossierChipsIn(viewer)[0]?.textContent).toContain('Decision cards');
     http.verify();
   });
 });

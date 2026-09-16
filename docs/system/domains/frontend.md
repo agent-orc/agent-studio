@@ -449,6 +449,18 @@ without a parallel surface.
   task reference control shared by Wiki and coding-agent-chat markdown. The
   host hydrator batches bare registry-key candidates and owns task-tab
   navigation; code blocks and unknown shortcodes remain plain text.
+- `frontend/src/app/components/dossier-reference-chip/`: the Dossier sibling of
+  that control (AGT-2812). `services/dossier-reference.util.ts` is the single
+  resolver for the three ways a Dossier is named - the reference key
+  (`AGT-W54`), the Dossier folder or its HTML entry point, and the folder's
+  `workbench.json` - against the catalogue cached by
+  `services/dossier-catalogue.service.ts`. `services/dossier-reference-hydrator.service.ts`
+  applies it to every rendered document surface (Result view, review documents,
+  task prompt, activity, Wiki page bodies); the chip opens the Dossier view, not
+  the raw file, and keeps the entry point as a secondary "open source" action.
+  A surface outside `<cac-markdown>` opts in with
+  `data-dossier-reference-scope="<project name>"`, which also hints which
+  project a repo-relative path belongs to. Unresolved paths stay plain text.
 - `frontend/src/app/features/polling/`: bounded polling services for detail
   panes and runtime data.
 - `frontend/src/app/features/shell/components/workspace-overlays/`: the global

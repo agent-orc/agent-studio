@@ -125,6 +125,7 @@
           [markdown]="d.detailMarkdown"
           [jobId]="detail().info.id"
           [watchPath]="detail().info.watchPath"
+          [projectName]="detail().info.projectName"
           (openSource)="openSource.emit($event)"
           (openWiki)="openWiki.emit($event)"
           (openTask)="openTask.emit($event)" />

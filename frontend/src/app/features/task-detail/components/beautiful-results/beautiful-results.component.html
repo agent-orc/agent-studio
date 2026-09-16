@@ -21,6 +21,7 @@
              class="results-view__body markdown-body"
              cacMarkdownLightbox
              data-testid="results-rendered"
+             [attr.data-dossier-reference-scope]="projectName() ?? ''"
              (click)="onBodyClick($event)"
              [innerHTML]="bodyHtml()" tabindex="0" (keydown.enter)="onBodyClick($event)" (keydown.space)="onBodyClick($event); $event.preventDefault()"></article>
   } @else {

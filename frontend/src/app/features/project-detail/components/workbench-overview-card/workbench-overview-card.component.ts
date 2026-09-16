@@ -8,6 +8,7 @@ import { StudioIconComponent, type StudioIconName } from '../../../../components
 import type { ArticlePattern, WorkbenchOverviewItem } from '../../../../models/project-docs.model';
 import { ProjectLookupService } from '../../../../services/project-lookup.service';
 import { WorkbenchReviewTagComponent } from '../workbench-review-tag/workbench-review-tag.component';
+import { dossierStatusLabel } from '../../../../models/dossier-presentation';
 
 type OverviewCardMode = 'decision' | 'current' | 'invalid' | 'history';
 
@@ -53,14 +54,7 @@ export class WorkbenchOverviewCardComponent {
   readonly actionsTestId = computed(() => `workbench-overview-actions-${this.item().projectName}-${this.item().workbench.id}`);
 
   statusLabel(): string {
-    const workbench = this.item().workbench;
-    if (!workbench.valid) return 'Needs attention';
-    if (workbench.status === 'decision-pending') return 'Decision pending';
-    if (workbench.status === 'active') return workbench.phase ?? 'Active';
-    if (workbench.status === 'decided') return 'Accepted / In progress';
-    if (workbench.status === 'archived') return 'Discarded';
-    if (workbench.status === 'documented') return 'Documented';
-    return workbench.status;
+    return dossierStatusLabel(this.item().workbench);
   }
 
   updatedLabel(): string {

@@ -448,6 +448,12 @@ keys inside the opaque Dossier iframe remain plain text or ordinary links:
 the Angular hydrator cannot and must not mount components across that sandbox
 boundary. The HTML itself receives no task data or credentials.
 
+The reverse direction is symmetric (AGT-2812): wherever a *Dossier* is named in
+prose - by key, by folder or entry-point path, or by its `workbench.json` - the
+[Dossier reference chip](../../frontend/src/app/components/dossier-reference-chip/)
+resolves it against this catalogue and links into the Dossier view rather than
+the raw file. A path that is not a Dossier stays plain text.
+
 ## 8. Boundary with adjacent systems
 
 | Object | Primary question | Source and lifecycle | Conversion to work |
