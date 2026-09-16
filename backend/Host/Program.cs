@@ -499,6 +499,15 @@ builder.Services.AddSingleton<SessionToTaskIndex>();
 builder.Services.AddSingleton<SessionRegistry>();
 builder.Services.AddSingleton<ContextUsageParser>();
 builder.Services.AddSingleton<SummaryGenerationService>();
+// AGT-2850: a delivered remote result is acknowledged as soon as its artefacts
+// are durable. The Result summary is a retryable step behind that
+// acknowledgement, so a saturated host can no longer turn a finished run into a
+// requeued one. ResultSummaryRetryScheduler is the driver that makes an owed
+// summary real once the load throttle clears.
+builder.Services.AddSingleton<RemoteResultFinalizationService>();
+builder.Services.AddSingleton<ResultSummaryRetryScheduler>();
+if (!publicDemoExecutionProfile)
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<ResultSummaryRetryScheduler>());
 builder.Services.AddSingleton<PromptCallTelemetryService>();
 builder.Services.AddSingleton<RuntimePromptService>();
 builder.Services.AddSingleton<VisualQaService>();
