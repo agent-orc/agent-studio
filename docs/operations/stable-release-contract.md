@@ -137,6 +137,41 @@ manifest is committed automatically reverts the checkout to the pre-run
 commit; the manifest file is never touched, so the next preflight is
 unaffected and no manual manifest deletion is needed.
 
+**Runtime identity handoff.** The mutation boundary and the identity source
+have to be reconciled, or no upgrade could ever verify. `BuildIdentity` reads
+`ATP_BUILD_MANIFEST` first and only then the `build-manifest.json` that the
+build copies next to the assembly out of the checkout root. Because the root
+still carries the previous release at restart time, a backend started without
+that variable reports the previous identity, and the restart check
+(`runtime identity does not equal intended build manifest`) rejects every
+upgrade while the running process is in fact the candidate build. This is what
+happened on 2026-09-16 (v0.3.0 -> v0.4.0, run `197866f8`).
+
+Phase 5 therefore starts the stack with
+`ATP_BUILD_MANIFEST=<run folder>/intended-build-manifest.json`. The run folder
+copy is written in phase 1 and the run refuses to restart if it is missing, so
+the restarted process never falls back to a stale identity by accident. The
+variable is a pass-through: the Update Service sets it on `start-stable.sh`,
+which passes its environment to `api.sh`, which passes it to `dotnet run`.
+Neither wrapper may scrub or reset the environment. The handed-over path is
+recorded at the top of the run folder's `start-stable-output.txt`. Nothing
+about the mutation boundary moves: the checkout root manifest is still only
+written after verification passes, and the rollback path deliberately restarts
+*without* the variable, because there the checkout root is the identity that
+must be observed.
+
+**Upgrade in verification.** The handoff opens a window in which the running
+identity is the candidate while the checkout root still carries the previous
+(or a legacy, pre-contract) manifest. That is the intended state between
+restart and the manifest commit, and it survives a run that fails after
+restart. The preflight classifies it as `upgrade in verification`
+(`direction=Upgrade`, `upgradeInVerification=true`, allowed) instead of
+`running identity diverges from the installed manifest`, so re-running the
+update is the recovery: it installs the same candidate again and closes the
+window. A running identity that is neither the installed nor the candidate
+manifest, and a running identity that equals a *downgrade* candidate, are
+still refused as divergence.
+
 *Recovery if this still happens.* If a run somehow leaves the checkout ahead
 of the installed manifest anyway (for example, a crash of the Update Service
 process itself between the checkout move and the revert), running the next

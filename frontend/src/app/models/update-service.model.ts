@@ -42,6 +42,13 @@ export interface ReleaseComparison {
   errors: string[];
   latestApprovedTag: string | null;
   offline: boolean;
+  /**
+   * True while the restarted backend already reports the candidate but the
+   * candidate manifest has not been committed into the Stable checkout yet.
+   * That window is part of a normal upgrade, not a running/installed
+   * divergence.
+   */
+  upgradeInVerification?: boolean;
 }
 
 export interface RuntimeVersion {

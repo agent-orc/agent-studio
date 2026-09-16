@@ -801,6 +801,18 @@ cmd_start() {
   : > "${LOG_OUT}"
   : > "${LOG_ERR}"
 
+  # Runtime identity handoff (AGT-2847). BuildIdentity reads
+  # ATP_BUILD_MANIFEST before it falls back to the build-manifest.json copied
+  # next to the assembly. The Update Service sets it on the start wrapper so a
+  # backend restarted mid-update reports the CANDIDATE release while the
+  # checkout root still carries the previous manifest; without that, runtime
+  # identity verification could never pass for an upgrade. The launch below
+  # inherits the environment as-is, so this is a pass-through, not a
+  # re-export. Do not scrub or reset the environment around it.
+  if [[ -n "${ATP_BUILD_MANIFEST:-}" ]]; then
+    echo "[api.sh] runtime identity handoff: ATP_BUILD_MANIFEST=${ATP_BUILD_MANIFEST}"
+  fi
+
   # Background-launch dotnet detached from this shell. nohup keeps it alive
   # after the script exits; the redirects keep stdout/stderr persistent.
   nohup dotnet run --project "${PROJECT_FILE}" --urls "${BASE_URL}" \

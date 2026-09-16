@@ -36,6 +36,29 @@ public sealed class FakeStableCheckout : IDisposable
     public string BashPath { get; }
     public string GitPath { get; }
 
+    /// <summary>Checkout-root manifest, i.e. the installed release identity.</summary>
+    public string InstalledManifestPath { get; }
+
+    /// <summary>
+    /// AGT-2847 restart drill: what the "restarted backend" reports. The fake
+    /// start script writes it exactly the way <c>BuildIdentity.Load</c>
+    /// resolves its manifest, so the suite observes the identity handoff
+    /// rather than asserting on it indirectly.
+    /// </summary>
+    public string RuntimeIdentityPath { get; }
+
+    /// <summary>
+    /// Value of <c>ATP_BUILD_MANIFEST</c> as the start script saw it, or an
+    /// empty file when the variable was not passed through.
+    /// </summary>
+    public string StartEnvPath { get; }
+
+    /// <summary>Workspace-side candidate manifest (UpdateServiceOptions.CandidateManifestFile).</summary>
+    public string CandidateManifestPath { get; }
+
+    /// <summary>Workspace-side approved tag file (UpdateServiceOptions.ApprovedTagFile).</summary>
+    public string ApprovedTagPath { get; }
+
     private FakeStableCheckout(string root, string bashPath, string gitPath)
     {
         Root = root;
@@ -47,6 +70,11 @@ public sealed class FakeStableCheckout : IDisposable
         VersionFile = Path.Combine(StableDir, "VERSION");
         StopMarkerPath = Path.Combine(DevspaceDir, ".stop-stable.marker");
         StartMarkerPath = Path.Combine(DevspaceDir, ".start-stable.marker");
+        InstalledManifestPath = Path.Combine(StableDir, "build-manifest.json");
+        RuntimeIdentityPath = Path.Combine(root, "runtime-identity.json");
+        StartEnvPath = Path.Combine(root, "start-build-manifest-env.txt");
+        CandidateManifestPath = Path.Combine(root, "metadata", "stable-candidate-manifest.json");
+        ApprovedTagPath = Path.Combine(root, "metadata", "stable-approved-tag");
         BashPath = bashPath;
         GitPath = gitPath;
     }
@@ -68,6 +96,7 @@ public sealed class FakeStableCheckout : IDisposable
         Directory.CreateDirectory(checkout.RemoteDir);
         Directory.CreateDirectory(checkout.DevspaceDir);
         Directory.CreateDirectory(checkout.RunsDir);
+        Directory.CreateDirectory(Path.GetDirectoryName(checkout.CandidateManifestPath)!);
 
         // bare remote
         Run(gitPath, checkout.RemoteDir, "init", "--bare", "--initial-branch=main");
@@ -91,11 +120,28 @@ public sealed class FakeStableCheckout : IDisposable
         Run(gitPath, checkout.StableDir, "commit", "-m", "test: initial");
         Run(gitPath, checkout.StableDir, "push", "-u", "origin", "main");
 
-        // fake start/stop scripts: just touch a marker, exit 0.
+        // fake stop script: just touch a marker, exit 0.
         WriteScript(Path.Combine(checkout.DevspaceDir, "stop-stable.sh"),
-            $"#!/bin/bash\ntouch \"$(dirname \"$0\")/.stop-stable.marker\"\nexit 0\n");
+            "#!/bin/bash\ntouch \"$(dirname \"$0\")/.stop-stable.marker\"\nexit 0\n");
+
+        // fake start script. Beyond the marker it resolves the runtime
+        // identity the launched backend would report, mirroring
+        // BuildIdentity.Load: ATP_BUILD_MANIFEST wins, and the manifest the
+        // build copies out of the checkout root is the fallback. That makes
+        // the Update Service's identity handoff observable end-to-end instead
+        // of only asserting that some environment variable was set.
         WriteScript(Path.Combine(checkout.DevspaceDir, "start-stable.sh"),
-            $"#!/bin/bash\ntouch \"$(dirname \"$0\")/.start-stable.marker\"\nexit 0\n");
+            $$"""
+              #!/bin/bash
+              touch "$(dirname "$0")/.start-stable.marker"
+              printf '%s' "${ATP_BUILD_MANIFEST:-}" > "{{checkout.StartEnvPath}}"
+              if [ -n "${ATP_BUILD_MANIFEST:-}" ] && [ -f "${ATP_BUILD_MANIFEST}" ]; then
+                cp "${ATP_BUILD_MANIFEST}" "{{checkout.RuntimeIdentityPath}}"
+              elif [ -f "{{checkout.InstalledManifestPath}}" ]; then
+                cp "{{checkout.InstalledManifestPath}}" "{{checkout.RuntimeIdentityPath}}"
+              fi
+              exit 0
+              """ + "\n");
 
         return checkout;
     }
@@ -104,10 +150,87 @@ public sealed class FakeStableCheckout : IDisposable
     {
         // Normalize to LF so Git Bash on Windows doesn't reject a CRLF shebang.
         File.WriteAllText(path, body.Replace("\r\n", "\n"));
+        // The start wrapper is invoked as `./start-stable.sh`, which needs the
+        // execute bit on POSIX hosts (Windows ignores it).
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(path,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+                | UnixFileMode.GroupRead | UnixFileMode.GroupExecute
+                | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
     }
 
     public bool StopRan() => File.Exists(StopMarkerPath);
     public bool StartRan() => File.Exists(StartMarkerPath);
+
+    /// <summary>
+    /// The <c>ATP_BUILD_MANIFEST</c> the last start saw, or null when the
+    /// start ran without the identity handoff.
+    /// </summary>
+    public string? StartBuildManifestEnv()
+    {
+        if (!File.Exists(StartEnvPath)) return null;
+        var value = File.ReadAllText(StartEnvPath).Trim();
+        return value.Length == 0 ? null : value;
+    }
+
+    /// <summary>Raw JSON the fake backend would report after the last start.</summary>
+    public string? ReadRuntimeIdentityJson() =>
+        File.Exists(RuntimeIdentityPath) ? File.ReadAllText(RuntimeIdentityPath) : null;
+
+    /// <summary>
+    /// Prepares the immutable-release inputs for a restart drill: commits a
+    /// <c>.agent-studio/project.yml</c> carrying the release identity rules
+    /// and restore commands, tags that commit, and pushes the tag to the bare
+    /// remote so the orchestrator's candidate preflight can fetch it. The
+    /// working checkout is left on the PREVIOUS commit, which is what an
+    /// upgrade starts from: the run has to move it to the candidate, and a
+    /// failure before the mutation boundary has to move it back.
+    /// Returns the tagged commit SHA.
+    /// </summary>
+    public string TagRelease(string tag, IReadOnlyList<string> restoreCommands)
+    {
+        var definitionDir = Path.Combine(StableDir, ".agent-studio");
+        Directory.CreateDirectory(definitionDir);
+        var restore = string.Join("\n", restoreCommands.Select(command => $"    - {command}"));
+        File.WriteAllText(Path.Combine(definitionDir, "project.yml"),
+            $"""
+             schemaVersion: 1
+             stack: [dotnet, node]
+             toolVersions:
+             commands:
+               prepare: .agent-studio/prepare
+               build:
+               test:
+               lint:
+             testSuites:
+             cachePaths: [frontend/node_modules]
+             capabilities: [linux]
+             environment:
+               CI: "true"
+             release:
+               identity:
+                 - package: CodingAgentRunner
+                   ecosystem: nuget
+                   version: 0.5.0
+                   integrity: sha512-package
+                 - package: coding-agent-chat
+                   ecosystem: npm
+                   version: 0.1.0
+                   integrity: sha512-package
+               restore:
+             {restore}
+             """.Replace("\r\n", "\n") + "\n");
+
+        var previous = RunCapture(GitPath, StableDir, "rev-parse", "HEAD");
+        Run(GitPath, StableDir, "add", ".agent-studio");
+        Run(GitPath, StableDir, "commit", "-m", $"release: {tag}");
+        Run(GitPath, StableDir, "tag", tag);
+        Run(GitPath, StableDir, "push", "origin", "main");
+        Run(GitPath, StableDir, "push", "origin", tag);
+        var released = RunCapture(GitPath, StableDir, "rev-parse", "HEAD");
+        Run(GitPath, StableDir, "checkout", "--detach", "--force", previous);
+        return released;
+    }
 
     /// <summary>Current HEAD of the working stable checkout.</summary>
     public string ReadStableHead() => RunCapture(GitPath, StableDir, "rev-parse", "HEAD");

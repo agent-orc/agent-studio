@@ -23,6 +23,25 @@ namespace AgentTaskboard.UpdateService;
 /// </summary>
 public sealed class UpdateOrchestrator
 {
+    /// <summary>
+    /// Run-folder name of the candidate manifest. It is both the run's
+    /// evidence artefact and the identity handed to the restarted backend
+    /// through <see cref="BuildManifestEnvVar"/>.
+    /// </summary>
+    private const string IntendedManifestFileName = "intended-build-manifest.json";
+
+    /// <summary>Run-folder copy of the identity a rollback restores.</summary>
+    private const string RollbackManifestFileName = "rollback-build-manifest.json";
+
+    /// <summary>
+    /// Environment variable <c>BuildIdentity.Load</c> reads before it falls
+    /// back to the manifest next to the assembly. Setting it for the backend
+    /// this run starts is what makes runtime-identity verification able to
+    /// observe the candidate while the checkout root still carries the
+    /// previous release.
+    /// </summary>
+    private const string BuildManifestEnvVar = "ATP_BUILD_MANIFEST";
+
     private readonly UpdateStatusStore _store;
     private readonly IGitProbe _git;
     private readonly IBackendProbe _backend;
@@ -183,10 +202,10 @@ public sealed class UpdateOrchestrator
                 }
                 intendedRelease = release.Candidate;
                 if (release.Installed is not null)
-                    folder.WriteOutput("rollback-build-manifest.json", System.Text.Json.JsonSerializer.Serialize(release.Installed,
+                    folder.WriteOutput(RollbackManifestFileName, System.Text.Json.JsonSerializer.Serialize(release.Installed,
                         new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase, WriteIndented = true }));
                 if (intendedRelease is not null)
-                    folder.WriteOutput("intended-build-manifest.json", System.Text.Json.JsonSerializer.Serialize(intendedRelease,
+                    folder.WriteOutput(IntendedManifestFileName, System.Text.Json.JsonSerializer.Serialize(intendedRelease,
                         new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase, WriteIndented = true }));
 
                 if (release.Direction == ReleaseDirection.SameVersion)
@@ -280,6 +299,10 @@ public sealed class UpdateOrchestrator
             // and restart look, to the next preflight, like the new
             // candidate was already running when the live backend was still
             // the old process (the "false divergence refusal" incident).
+            // The restarted backend still has to be able to report the
+            // candidate identity, or verification could never pass; phase 5
+            // hands it the run-folder copy through ATP_BUILD_MANIFEST
+            // instead of moving the mutation boundary.
             var headAfterPull = _git.HeadShort();
             _store.SetHead(headAfterPull);
 
@@ -319,11 +342,34 @@ public sealed class UpdateOrchestrator
                 return;
             }
 
-            // PHASE 5 — restarting
+            // PHASE 5 — restarting. The backend reads its identity from
+            // ATP_BUILD_MANIFEST before the manifest next to the assembly, so
+            // pointing it at the run folder's candidate copy lets the
+            // restarted process report the candidate without the checkout
+            // root being mutated first. Without this handoff the process
+            // always reported the previous release and runtime-identity
+            // verification could never pass for an upgrade.
+            string? identityHandoffPath = null;
+            if (intendedRelease is not null)
+            {
+                identityHandoffPath = Path.Combine(folder.Root, IntendedManifestFileName);
+                if (!File.Exists(identityHandoffPath))
+                {
+                    await RollbackCheckoutToAsync(headBefore, ct);
+                    FinishFailed(runId, startedAt, headBefore, headAfterPull, trigger,
+                        $"intended build manifest is missing from the run folder ({identityHandoffPath}); " +
+                        "refusing to restart without the runtime identity handoff",
+                        null, folder, preSnapshot, intendedRelease, null, releaseComparison?.Direction.ToString());
+                    return;
+                }
+            }
+
             SetPhase("restarting", "starting stable backend", runId, startedAt);
             var restartStartedAt = DateTime.UtcNow;
-            var (startRc, startOut) = await StartStackAsync(ct);
-            folder.WriteOutput("start-stable-output.txt", startOut);
+            var (startRc, startOut) = await StartStackAsync(identityHandoffPath, ct);
+            folder.WriteOutput("start-stable-output.txt", identityHandoffPath is null
+                ? startOut
+                : $"--- identity handoff ---\n{BuildManifestEnvVar}={identityHandoffPath}\n{startOut}");
             if (startRc != 0)
             {
                 await RollbackCheckoutToAsync(headBefore, ct);
@@ -473,7 +519,7 @@ public sealed class UpdateOrchestrator
         var headBefore = _git.HeadShort();
         var rollbackStartedAt = DateTime.UtcNow;
         var rollbackTrigger = manual ? "manual-rollback" : "auto-rollback";
-        var rollbackManifest = ReadReleaseManifest(Path.Combine(folder.Root, "rollback-build-manifest.json"));
+        var rollbackManifest = ReadReleaseManifest(Path.Combine(folder.Root, RollbackManifestFileName));
 
         // Read the snapshot SHA + project modes from disk so manual rollback
         // works even after a process restart. Modes feed phase-6 (strict
@@ -533,7 +579,7 @@ public sealed class UpdateOrchestrator
 
             if (rollbackManifest is not null)
             {
-                File.Copy(Path.Combine(folder.Root, "rollback-build-manifest.json"),
+                File.Copy(Path.Combine(folder.Root, RollbackManifestFileName),
                     Path.Combine(_options.StableCheckoutDir, _options.BuildManifestFile), overwrite: true);
             }
 
@@ -756,7 +802,12 @@ public sealed class UpdateOrchestrator
 
     // ─── shell helpers ──────────────────────────────────────────────────────
 
-    private async Task<(int Rc, string Output)> RunBashAsync(string firstArg, string secondArg, string workingDir, CancellationToken ct)
+    private async Task<(int Rc, string Output)> RunBashAsync(
+        string firstArg,
+        string secondArg,
+        string workingDir,
+        CancellationToken ct,
+        IReadOnlyDictionary<string, string>? environment = null)
     {
         var psi = new ProcessStartInfo
         {
@@ -769,6 +820,8 @@ public sealed class UpdateOrchestrator
         };
         psi.ArgumentList.Add(firstArg);
         if (!string.IsNullOrEmpty(secondArg)) psi.ArgumentList.Add(secondArg);
+        if (environment is not null)
+            foreach (var (key, value) in environment) psi.Environment[key] = value;
 
         try
         {
@@ -1023,8 +1076,20 @@ public sealed class UpdateOrchestrator
     private Task<(int Rc, string Output)> StopStackAsync(CancellationToken ct)
         => RunBashAsync(_options.StopScript, "", _options.DevspaceDir, ct);
 
-    private Task<(int Rc, string Output)> StartStackAsync(CancellationToken ct)
-        => RunBashAsync("-c", $"DETACH=1 ./{_options.StartScript}", _options.DevspaceDir, ct);
+    /// <summary>
+    /// Starts the stack, optionally handing the restarted backend the
+    /// candidate manifest through <see cref="BuildManifestEnvVar"/>. The
+    /// variable is inherited by the start wrapper and by the `dotnet run`
+    /// api.sh launches from it, so the new process reports the candidate
+    /// identity while the checkout root still carries the previous manifest.
+    /// The rollback path deliberately restarts without it: there the
+    /// checkout root is the identity that must be observed.
+    /// </summary>
+    private Task<(int Rc, string Output)> StartStackAsync(string? intendedManifestPath, CancellationToken ct)
+        => RunBashAsync("-c", $"DETACH=1 ./{_options.StartScript}", _options.DevspaceDir, ct,
+            environment: intendedManifestPath is null
+                ? null
+                : new Dictionary<string, string> { [BuildManifestEnvVar] = intendedManifestPath });
 
     /// <summary>
     /// Reverts the checkout to <paramref name="sha"/> when it is not already

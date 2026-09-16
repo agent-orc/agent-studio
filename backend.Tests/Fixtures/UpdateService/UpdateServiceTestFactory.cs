@@ -30,6 +30,9 @@ public sealed class UpdateServiceTestFactory : WebApplicationFactory<UpdSvc::Pro
     private readonly int _doneLingerSeconds;
     private readonly int _healthWaitSeconds;
     private readonly string _mode;
+    private readonly bool _requireReleaseManifest;
+    private readonly string _frontendUrl;
+    private readonly int _frontendWaitSeconds;
 
     public UpdateServiceTestFactory(
         FakeStableCheckout checkout,
@@ -37,7 +40,10 @@ public sealed class UpdateServiceTestFactory : WebApplicationFactory<UpdSvc::Pro
         bool autoRollback,
         int doneLingerSeconds = 2,
         int healthWaitSeconds = 10,
-        string mode = "scheduled")
+        string mode = "scheduled",
+        bool requireReleaseManifest = false,
+        string? frontendUrl = null,
+        int frontendWaitSeconds = 120)
     {
         _checkout = checkout;
         _backend = backend;
@@ -45,6 +51,12 @@ public sealed class UpdateServiceTestFactory : WebApplicationFactory<UpdSvc::Pro
         _doneLingerSeconds = doneLingerSeconds;
         _healthWaitSeconds = healthWaitSeconds;
         _mode = mode;
+        _requireReleaseManifest = requireReleaseManifest;
+        // Default to the fake backend's own listening port so the phase-5
+        // frontend port wait is satisfied unless a test deliberately points
+        // it somewhere closed.
+        _frontendUrl = frontendUrl ?? backend.BaseUrl;
+        _frontendWaitSeconds = frontendWaitSeconds;
     }
 
     protected override IHost CreateHost(IHostBuilder builder)
@@ -75,9 +87,14 @@ public sealed class UpdateServiceTestFactory : WebApplicationFactory<UpdSvc::Pro
                 ["UpdateService:AutoRollback"]       = _autoRollback ? "true" : "false",
                 ["UpdateService:Mode"]               = _mode,
                 // The established integration harness exercises the legacy
-                // branch-update pipeline. Immutable-release behavior has its
-                // own contract tests and requires signed fixture manifests.
-                ["UpdateService:RequireReleaseManifest"] = "false",
+                // branch-update pipeline. The immutable-release restart drill
+                // (AGT-2847) opts in and supplies the candidate manifest and
+                // approved tag from the fake checkout.
+                ["UpdateService:RequireReleaseManifest"] = _requireReleaseManifest ? "true" : "false",
+                ["UpdateService:CandidateManifestFile"] = _checkout.CandidateManifestPath,
+                ["UpdateService:ApprovedTagFile"]    = _checkout.ApprovedTagPath,
+                ["UpdateService:FrontendUrl"]        = _frontendUrl,
+                ["UpdateService:FrontendWaitSeconds"] = _frontendWaitSeconds.ToString(),
             });
         });
 
@@ -140,6 +157,11 @@ public sealed class UpdateServiceTestFactory : WebApplicationFactory<UpdSvc::Pro
         ProbeIntervalSeconds = 5,
         AutoRollback = _autoRollback,
         Mode = _mode,
+        RequireReleaseManifest = _requireReleaseManifest,
+        CandidateManifestFile = _checkout.CandidateManifestPath,
+        ApprovedTagFile = _checkout.ApprovedTagPath,
+        FrontendUrl = _frontendUrl,
+        FrontendWaitSeconds = _frontendWaitSeconds,
         TriggerToken = null,
     };
 }

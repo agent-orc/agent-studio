@@ -51,6 +51,15 @@ public sealed class FakeBackendHarness : IAsyncDisposable
     /// </summary>
     public int JobsGroupedFailFirstN { get; set; }
     public int JobsGroupedCallCount;
+    /// <summary>
+    /// AGT-2847 restart drill: when set, <c>/api/system/version</c> serves the
+    /// JSON in this file verbatim instead of the fixed legacy shape. The fake
+    /// start script writes it the same way <c>BuildIdentity.Load</c> picks its
+    /// manifest (ATP_BUILD_MANIFEST first, the checkout copy second), so the
+    /// suite can observe which identity a restarted backend would report.
+    /// </summary>
+    public string? RuntimeIdentityFile { get; set; }
+
     public Dictionary<string, string> ProjectModes { get; } = new()
     {
         ["agent-taskboard"] = "auto-continuous",
@@ -77,12 +86,18 @@ public sealed class FakeBackendHarness : IAsyncDisposable
                 return Results.Json("still compiling", statusCode: 503);
             return Results.Text("\"ok\"", "application/json");
         });
-        app.MapGet("/api/system/version", () => Results.Json(new
+        app.MapGet("/api/system/version", () =>
         {
-            version = "2026.07.11-1200+aaaaaaa",
-            commit = "aaaaaaa",
-            deployedAt = "2026-07-11T12:00:00Z"
-        }));
+            var identityFile = RuntimeIdentityFile;
+            if (!string.IsNullOrEmpty(identityFile) && File.Exists(identityFile))
+                return Results.Text(File.ReadAllText(identityFile), "application/json");
+            return Results.Json(new
+            {
+                version = "2026.07.11-1200+aaaaaaa",
+                commit = "aaaaaaa",
+                deployedAt = "2026-07-11T12:00:00Z"
+            });
+        });
 
         app.MapGet("/api/runner/status", () =>
         {
