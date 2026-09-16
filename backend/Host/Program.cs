@@ -351,6 +351,7 @@ builder.Services.AddSingleton<AgentStudio.Tasks.MergeService>();
 builder.Services.AddSingleton<AgentStudio.Tasks.AcceptanceEvidenceDetector>();
 builder.Services.AddSingleton<AgentStudio.Tasks.AuditRunStore>();
 builder.Services.AddSingleton<AgentStudio.Tasks.CompletedLaneAuditService>();
+builder.Services.AddSingleton<AgentStudio.Tasks.DeliveryClaimSweep>();
 builder.Services.AddSingleton<FixtureMigrationService>();
 builder.Services.AddSingleton<TaskSessionLog>();
 builder.Services.AddSingleton<TimelineLog>();

@@ -63,6 +63,39 @@ evidence SHAs are recorded on the integration step. A missing task branch with
 missing or unresolved attributed commits remains `NoTaskBranch`; direct-delivery
 recognition never waives commit membership or the push durability rules above.
 
+### Out-of-pipeline card-scoped merge (operator recipe)
+
+Two operator paths land a reviewed delivery on the integration branch without
+the pipeline: the card-scoped merge
+(`merge(AGT-nnnn): integrate reviewed delivery (operator card-scoped merge)`)
+and the salvage recipe, which merges work that exists only on a runner salvage
+fence. Both leave the card integrated in Git and silent in its own record. That
+is how AGT-2706 shipped with v0.3.0 while its `integration` field stayed
+`undefined`, and how the AGT-2736 merge `fc7aa3a73` left no record at all.
+
+Recording the merge is a step of the recipe, not an afterthought:
+
+1. Merge the reviewed delivery (or the salvage fence) into the integration
+   branch and push it, as today.
+2. Run the record step from the repository that carries the merge:
+
+   ```bash
+   scripts/record-operator-merge.sh --task AGT-2706 --merge 9cfc0e074 --project PROJ-002
+   ```
+
+   It derives the delivery commits from the merge, posts the integration record
+   through `POST /api/tasks/{key}/integration-records`, and then reconciles the
+   project so the `next-attempt` placeholder the merge left standing is cleared
+   and anything still contradicting Git is reported.
+3. Check the card's delivery claim
+   (`GET /api/tasks/{key}/delivery-claim`, and the claim shown on the card):
+   it must read as integrated, naming the merge that carried the delivery.
+
+Skipping step 2 is recoverable but not free: containment still decides the
+card's verdict, so the card is not reported as unintegrated, but the merge, its
+branch, its timestamp, and who performed it are lost. See
+[The completion contract](../../concepts/task-integration-and-merge-workflow.md#the-completion-contract-agt-2817).
+
 ## What models / CLIs should leave to the platform
 
 Worker prompts use a calm ownership rule: please do not commit or push yourself; the platform commits after review. If a worker still creates a normal linear commit, that is recoverable bookkeeping drift. The runner shows an Info finding and folds the commit back into the platform commit where safe. If cleanup cannot be proven safe, the pipeline continues with a visible `worker advanced HEAD - needs cleanup` hint.

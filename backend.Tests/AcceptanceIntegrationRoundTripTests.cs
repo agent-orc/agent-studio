@@ -606,6 +606,136 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Contains("Concept outcome has no branch to merge.", status);
     }
 
+    /// <summary>
+    /// AGT-2817 - the completion contract runs at the lane change, including
+    /// the ones the acceptance rail never sees. AGT-2795 was dragged into the
+    /// delivered lane while its attributed delivery had failed review and was
+    /// never integrated; the rail's own guard
+    /// (<c>ValidateIntegratedAcceptance</c>) only covers
+    /// <c>5-human-review -> 6-completed</c>, so a drag from any other lane used
+    /// to need no proof at all. Now the contract refuses it: the card stays
+    /// where it was and records no claim.
+    /// </summary>
+    [Fact]
+    public async Task OperatorMoveToCompleted_FromAnotherLane_IsRefusedByTheContract()
+    {
+        var deliverySha = PublishDelivery("never-integrated.txt", "abandoned\n");
+        var deps = Build(deliverySha, backgroundIntegration: true, initialState: TaskStates.AutoReview);
+        Assert.NotEqual(0, Git(_repo, "merge-base", "--is-ancestor", deliverySha, "origin/develop").Code);
+
+        var refused = await deps.Transitions.MoveAsync(
+            Slug,
+            TaskStates.Completed,
+            _watchPath,
+            cause: TimelineActors.Human("operator"));
+
+        Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
+        Assert.Contains("not contained in develop", refused.Message ?? "", StringComparison.Ordinal);
+        Assert.Contains("written reason", refused.Message ?? "", StringComparison.Ordinal);
+        var stillInReview = deps.Scanner.FindJob(Slug, _watchPath);
+        Assert.NotNull(stillInReview);
+        Assert.Equal(TaskStates.AutoReview, stillInReview!.State);
+        Assert.Null(stillInReview.CompletionClaim);
+        Assert.False(deps.AcceptedQueue!.Reader.TryRead(out _));
+    }
+
+    /// <summary>
+    /// The same refusal must not stop an automated path: the runner, the
+    /// orchestrator, and the deferred integration worker reach the same move
+    /// without a human cause and have already decided integration. They record
+    /// the claim they can prove and are never gated on it.
+    /// </summary>
+    [Fact]
+    public async Task AutomatedMoveToCompleted_WithUnintegratedDelivery_IsNotRefused()
+    {
+        var deliverySha = PublishDelivery("automated.txt", "runner path\n");
+        var deps = Build(deliverySha, backgroundIntegration: true, initialState: TaskStates.AutoReview);
+
+        var outcome = await deps.Transitions.MoveAsync(
+            Slug,
+            TaskStates.Completed,
+            _watchPath,
+            cause: TimelineActors.Orchestrator);
+
+        Assert.NotEqual(MoveJobStatus.IntegrationFailed, outcome.Status);
+    }
+
+    /// <summary>
+    /// AGT-2817 - an override is a claim the card carries and shows, so the
+    /// boundary refuses it without a written reason before the transition runs.
+    /// The identical request with a reason is accepted, which is what makes the
+    /// missing reason - and not the lane or the delivery - the cause of the 400.
+    /// </summary>
+    [Fact]
+    public async Task OperatorOverrideWithoutWrittenReason_IsRefusedAtTheHttpBoundary()
+    {
+        var deliverySha = PublishDelivery("override-boundary.txt", "abandoned\n");
+        var deps = Build(deliverySha, backgroundIntegration: true);
+
+        using var factory = new WebApplicationFactory<Program>()
+            .WithWebHostBuilder(builder =>
+            {
+                builder.UseEnvironment("Test");
+                builder.ConfigureAppConfiguration((_, config) =>
+                {
+                    config.AddInMemoryCollection(new Dictionary<string, string?>
+                    {
+                        ["TaskRepository"] = _tempDir,
+                        ["WatchPaths:0:Name"] = Project,
+                        ["WatchPaths:0:Path"] = _watchPath,
+                        ["WatchPaths:0:RootPath"] = _repo,
+                        ["WatchPaths:0:RepositoryPath"] = _repo,
+                    });
+                });
+                builder.ConfigureTestServices(services =>
+                {
+                    services.RemoveAll<IHostedService>();
+                    services.RemoveAll<ProjectSettingsService>();
+                    services.AddSingleton(deps.Settings);
+                });
+            });
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var route = $"/api/tasks/{Slug}/move?watchPath={Uri.EscapeDataString(_watchPath)}";
+
+        foreach (var unusable in new object[]
+        {
+            new { targetState = TaskStates.Completed, operatorOverride = true },
+            new { targetState = TaskStates.Completed, operatorOverride = true, reason = "   " },
+            new { targetState = TaskStates.Completed, operatorOverride = true, reason = "no" },
+        })
+        {
+            using var refused = await client.PostAsJsonAsync(route, unusable).WaitAsync(AsyncTestDeadline);
+            Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
+            using var body = JsonDocument.Parse(await refused.Content.ReadAsStringAsync());
+            Assert.Contains(
+                "needs a written reason",
+                body.RootElement.GetProperty("error").GetString() ?? "",
+                StringComparison.Ordinal);
+        }
+
+        var untouched = factory.Services.GetRequiredService<TaskScannerService>().FindJob(Slug, _watchPath);
+        Assert.NotNull(untouched);
+        Assert.Equal(TaskStates.HumanReview, untouched!.State);
+        Assert.Null(untouched.CompletionClaim);
+
+        using var accepted = await client.PostAsJsonAsync(
+            route,
+            new
+            {
+                targetState = TaskStates.Completed,
+                operatorOverride = true,
+                reason = "Delivery failed review and was abandoned; closing the card.",
+            }).WaitAsync(AsyncTestDeadline);
+
+        Assert.NotEqual(HttpStatusCode.BadRequest, accepted.StatusCode);
+        var claim = factory.Services.GetRequiredService<TaskScannerService>()
+            .FindJob(Slug, _watchPath)?.CompletionClaim;
+        Assert.NotNull(claim);
+        Assert.Equal(CompletionClaimBases.OperatorOverride, claim!.Basis);
+        Assert.Equal("Delivery failed review and was abandoned; closing the card.", claim.Reason);
+    }
+
     [Fact]
     public async Task AcceptRemoteDelivery_UsesConfiguredPullRequestStrategy_AndReturnsToReview()
     {

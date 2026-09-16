@@ -196,3 +196,19 @@
   background: color-mix(in srgb, var(--studio-warning, #b8860b) 16%, var(--studio-bg-elevated));
   color: var(--studio-warning, #b8860b);
 }
+
+/*
+ * AGT-2817 - a requeued delivery whose replacement has not published yet.
+ * A quiet marker on a live commit, not the replaced-history treatment: the
+ * commit is still the delivery this card has.
+ */
+.commit-chain__pending-replacement {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--studio-bg-elevated);
+  color: var(--studio-fg-muted);
+}

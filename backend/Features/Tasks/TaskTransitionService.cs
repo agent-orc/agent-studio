@@ -256,6 +256,40 @@ public sealed class TaskTransitionService
                 + $"{ResolveIntegrationBranch(info, settings)}.");
         }
 
+        // AGT-2817 - the completion contract. Entering the delivered lane is
+        // the moment the card starts claiming a delivery, so this is where the
+        // claim is checked and recorded: a delivery contained in the
+        // integration branch, a named deliverable without code, or an operator
+        // override carrying a written reason. Operator-initiated moves are
+        // refused when none holds; automated paths record the claim they can
+        // prove and never block on it.
+        CompletionContractDecision? completionContract = null;
+        if (targetState == TaskStates.Completed
+            && fromState != TaskStates.Completed
+            && !suppressProductExecution)
+        {
+            completionContract = DecideCompletionContract(
+                info,
+                settings,
+                integrationRequired,
+                operatorOverride,
+                reason,
+                cause);
+            // The refusal stops a person, never an automated path. Pipeline
+            // completions that already decided integration pass
+            // suppressIntegrationTrigger and are recorded, not gated - the
+            // deferred worker moves the card only after its merge succeeded.
+            if (!completionContract.Accepted
+                && !suppressIntegrationTrigger
+                && TimelineActors.IsHuman(cause))
+            {
+                return new MoveJobOutcome(
+                    MoveJobStatus.IntegrationFailed,
+                    completionContract.Message,
+                    info.FolderPath);
+            }
+        }
+
         ReleaseCliOutputResourcesBeforeMove(info);
         MoveJobOutcome MoveCore() => _states.MoveJob(
                 jobId,
@@ -472,6 +506,13 @@ public sealed class TaskTransitionService
                         ClearAcceptanceIntegrationMarkers(accepted);
                 }
             }
+
+            // AGT-2817 - the card records which ground it completed on, so
+            // "delivered" can be read back as a checkable statement. Writing
+            // it after the move keeps the claim with the folder's new location
+            // and can never undo the transition.
+            if (completionContract?.Claim is not null)
+                RecordCompletionClaim(jobId, watchPath, completionContract.Claim);
 
             // ASS-1724: the ONE commit-provenance recording hook. Anchor the
             // task/<id> tip + integration head at this lane crossing so the board
@@ -1108,6 +1149,96 @@ public sealed class TaskTransitionService
             $"Acceptance does not integrate deliveries. The task remains in Human Review because its current delivery is "
             + $"'{status?.Status ?? IntegrationStatuses.Pending}' on '{integrationBranch}'. {detail}",
             reviewed.FolderPath);
+    }
+
+    /// <summary>
+    /// AGT-2817 - collects the completion-contract facts for one card and runs
+    /// the pure decision. Containment is asked of Git through the shared
+    /// status service; a missing or unreadable answer becomes
+    /// <see cref="CompletionContractPolicy.ContainmentUnknown"/> and is never
+    /// reported as "not integrated".
+    /// </summary>
+    private CompletionContractDecision DecideCompletionContract(
+        TaskInfo info,
+        ProjectSettings settings,
+        bool integrationRequired,
+        bool operatorOverride,
+        string? reason,
+        string? actor)
+    {
+        var status = _integrationStatus?.BuildLookup([info]).GetValueOrDefault(info.TaskKey);
+        var attributed = info.Commits ?? [];
+        var deliverable = NamedDeliverableReader.Read(info);
+        var facts = new CompletionContractFacts(
+            IntegrationRequired: integrationRequired,
+            HasAttributedCommits: attributed.Count > 0,
+            HasEffectiveCommits: attributed.Any(TaskCommitSupersession.IsEffectiveDelivery),
+            ContainmentStatus: status?.Status ?? CompletionContractPolicy.ContainmentUnknown,
+            ContainmentCommitSha: status?.Sha,
+            IntegrationBranch: status?.IntegrationBranch ?? ResolveIntegrationBranch(info, settings),
+            OperatorOverride: operatorOverride,
+            OverrideReason: reason,
+            DeliverablePath: deliverable.Path,
+            DeliverableKey: deliverable.Key,
+            Actor: actor);
+        return CompletionContractPolicy.Decide(facts);
+    }
+
+    /// <summary>
+    /// Persists the claim onto the moved card and, when the claim rests on
+    /// containment, resolves the <c>next-attempt</c> placeholder the shipped
+    /// commits should no longer carry. Best-effort: the move has already
+    /// landed and is never undone from here.
+    /// </summary>
+    private void RecordCompletionClaim(string jobId, string? watchPath, TaskCompletionClaim claim)
+    {
+        var moved = _scanner.FindJob(jobId, watchPath);
+        if (moved is null) return;
+
+        var stamped = claim with { RecordedAtUtc = _time.GetUtcNow().UtcDateTime };
+        if (!_mutations.SetCompletionClaimOnFolder(moved.FolderPath, stamped))
+        {
+            _logger.LogWarning(
+                "completion-claim-write-failed project={Project} job={JobId} basis={Basis}",
+                moved.ProjectName,
+                moved.Id,
+                stamped.Basis);
+            return;
+        }
+
+        if (stamped.Basis != CompletionClaimBases.IntegratedDelivery) return;
+        ResolveContainedSupersessionPlaceholders(moved);
+    }
+
+    /// <summary>
+    /// AGT-2817 - a delivery contained in the integration branch is not
+    /// superseded. The <c>next-attempt</c> placeholder only ever meant
+    /// "requeued, replacement not published yet"; once the commit has shipped,
+    /// no replacement is coming, so the placeholder is cleared here as well as
+    /// on the reconciliation pass. A named successor is never touched.
+    /// </summary>
+    private void ResolveContainedSupersessionPlaceholders(TaskInfo task)
+    {
+        var status = _integrationStatus?.BuildLookup([task]).GetValueOrDefault(task.TaskKey);
+        if (status is null) return;
+        var contained = status.Repositories
+            .SelectMany(repository => repository.Commits)
+            .Where(commit => commit.OnIntegrationBranch)
+            .Select(commit => commit.Sha)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (contained.Count == 0) return;
+
+        var cleared = _mutations.ResolvePendingSupersessionOnFolder(
+            task.FolderPath,
+            commit => contained.Contains(commit.Sha));
+        if (cleared.Succeeded && cleared.MarkedCommits > 0)
+        {
+            _logger.LogInformation(
+                "supersession-placeholder-resolved project={Project} job={JobId} commits={Count}",
+                task.ProjectName,
+                task.Id,
+                cleared.MarkedCommits);
+        }
     }
 
     private void ClearAcceptanceIntegrationMarkers(TaskInfo accepted)

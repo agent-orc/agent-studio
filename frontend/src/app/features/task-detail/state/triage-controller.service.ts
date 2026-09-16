@@ -1,5 +1,6 @@
 import { Injectable, inject } from '@angular/core';
-import { TaskInfo } from '../../../models/task.model';
+import { firstValueFrom } from 'rxjs';
+import { TaskInfo, type TaskDeliveryClaimAnswer } from '../../../models/task.model';
 import { TaskService } from '../../../services/task.service';
 import { ErrorDialogService } from '../../../services/error-dialog.service';
 import { ConfirmDialogService } from '../../../services/confirm-dialog.service';
@@ -8,9 +9,11 @@ import { TaskDetailPrefetchService } from './task-detail-prefetch.service';
 import { TaskSelectionService } from './task-selection.service';
 import { LanePagerService, LANE_LABELS } from './lane-pager.service';
 import {
+  archiveIntegrationVerdict,
+  deliveryClaimVerdict,
+  isDeliveredArchiveMove,
   laneLabelFor,
   needsPlanningAcceptWarning,
-  needsUnintegratedArchiveWarning,
 } from './triage-actions.model';
 
 /**
@@ -83,8 +86,8 @@ export class TriageController {
    * must explicitly accept anyway. Every other move goes straight through.
    */
   move(info: TaskInfo, ev: { targetState: string; actionId: string }): void {
-    if (needsUnintegratedArchiveWarning(info, ev.targetState)) {
-      void this.confirmUnintegratedArchiveThenMove(info, ev);
+    if (isDeliveredArchiveMove(info, ev.targetState)) {
+      void this.archiveDelivered(info, ev);
       return;
     }
     if (needsPlanningAcceptWarning(info, ev.targetState)) {
@@ -94,19 +97,47 @@ export class TriageController {
     this.performMove(info, ev);
   }
 
-  private async confirmUnintegratedArchiveThenMove(
+  /**
+   * AGT-2817 - the Delivered -> Archive guard, decided by containment.
+   *
+   * The old guard fired on `status !== 'integrated'`, which folded "no verdict
+   * on this payload" into "not integrated". AGT-2706 was contained in develop
+   * and in main and still produced the dialog, phrased as a pending
+   * integration. Now an absent verdict is a question: the per-card containment
+   * answer is fetched once, and only a genuine negative interrupts the
+   * operator. Archiving integrated work never opens a dialog at all.
+   */
+  private async archiveDelivered(
     info: TaskInfo,
     ev: { targetState: string; actionId: string },
   ): Promise<void> {
-    const integration = info.integration;
-    const status = integration?.status ?? 'unknown';
-    const branch = integration?.integrationBranch || 'develop';
+    let verdict = archiveIntegrationVerdict(info);
+    let deliveryRef = info.integration?.deliveryRef ?? null;
+    let branch = info.integration?.integrationBranch || 'develop';
+
+    if (verdict === 'unknown') {
+      const answer = await this.resolveDeliveryClaim(info);
+      if (answer) {
+        verdict = deliveryClaimVerdict(answer);
+        deliveryRef = answer.deliveryRef;
+        branch = answer.integrationBranch || branch;
+      }
+    }
+
+    if (verdict !== 'not-integrated') {
+      this.performMove(info, ev);
+      return;
+    }
+
+    const lost = deliveryRef
+      ? `The delivery ${deliveryRef} stays on its branch and is never integrated into ${branch}.`
+      : `This task's delivery is not in ${branch} and archiving will not integrate it.`;
+    const reason = `Archived with an unintegrated delivery${deliveryRef ? ` (${deliveryRef})` : ''}; not integrated into ${branch}.`;
     const ok = await this.confirmDialog.confirm({
-      title: 'Archive before integration?',
+      title: 'Archive an unintegrated delivery?',
       message:
-        `This task is not integrated into ${branch} (status: ${status}). ` +
-        'Archiving keeps the task and its evidence, but moves the unresolved integration state out of Delivered.',
-      detail: integration?.detail || info.title || info.id,
+        `${lost} The archive keeps the task and all of its evidence, and records why it was closed.`,
+      detail: info.integration?.detail || info.title || info.id,
       confirmLabel: 'Archive anyway',
       cancelLabel: 'Keep in Delivered',
       kind: 'primary',
@@ -115,7 +146,19 @@ export class TriageController {
       this.clearActing();
       return;
     }
-    this.performMove(info, ev);
+    this.performMove(info, ev, reason);
+  }
+
+  /** One containment lookup; a failed lookup leaves the verdict unknown rather than negative. */
+  private async resolveDeliveryClaim(info: TaskInfo): Promise<TaskDeliveryClaimAnswer | null> {
+    try {
+      return await firstValueFrom(
+        this.jobService.getDeliveryClaim(info.id, info.watchPath ?? undefined),
+      );
+    }
+    catch {
+      return null;
+    }
   }
 
   private async confirmPlanningAcceptThenMove(
@@ -140,7 +183,11 @@ export class TriageController {
     this.performMove(info, ev);
   }
 
-  private performMove(info: TaskInfo, ev: { targetState: string; actionId: string }): void {
+  private performMove(
+    info: TaskInfo,
+    ev: { targetState: string; actionId: string },
+    reason?: string,
+  ): void {
     const lane = this.jobSelection.triageLaneState ?? info.state;
     const peers = this.jobSelection.triageLanePeers();
     // Capture prev lane + slot BEFORE the optimistic move so undo can
@@ -194,7 +241,7 @@ export class TriageController {
       persisted,
     });
 
-    this.jobService.moveJob(info.id, ev.targetState, info.watchPath).subscribe({
+    this.jobService.moveJob(info.id, ev.targetState, info.watchPath, undefined, reason).subscribe({
       next: () => {
         this.jobService.endOptimisticPersist();
         persistResolve();

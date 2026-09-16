@@ -125,7 +125,13 @@ public sealed class PublicDemoExecutionProfileTests : IDisposable
             var routes = ExecutionRoutes(factory.Services);
             // Security inventory tripwire: adding, removing, or reclassifying an
             // executable endpoint requires an explicit update to this matrix.
-            Assert.Equal(83, routes.Count);
+            // AGT-2817 added POST /api/projects/{projectId}/delivery-claims/reconcile
+            // on the Review path: it is the acceptance-rail audit that repairs the
+            // integration records of already reviewed deliveries, the same admission
+            // path its sibling POST /api/projects/{projectId}/completed-lane/audit
+            // carries. The two read-only delivery-claim reports stay unmarked,
+            // like every other GET that only re-derives git state.
+            Assert.Equal(84, routes.Count);
             Assert.Equal(
                 ExecutionAdmissionPolicy.AllPaths.OrderBy(path => path),
                 routes.Select(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)
@@ -137,7 +143,7 @@ public sealed class PublicDemoExecutionProfileTests : IDisposable
                     [ExecutionAdmissionPath.Claim] = 6,
                     [ExecutionAdmissionPath.Start] = 12,
                     [ExecutionAdmissionPath.Continue] = 13,
-                    [ExecutionAdmissionPath.Review] = 8,
+                    [ExecutionAdmissionPath.Review] = 9,
                     [ExecutionAdmissionPath.Chat] = 9,
                     [ExecutionAdmissionPath.Preview] = 24,
                     [ExecutionAdmissionPath.PostStep] = 11,

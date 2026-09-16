@@ -31,6 +31,7 @@ import type { PipelineStepResultHeader } from '../pipeline-step-result/pipeline-
 import { ReferencesSectionComponent } from '../../references-section/references-section.component';
 import { PlanningSpawnPanelComponent } from '../../planning-spawn-panel/planning-spawn-panel.component';
 import { ConceptDossierNoticeComponent } from '../../concept-dossier-notice/concept-dossier-notice.component';
+import { DeliveryClaimPanelComponent } from '../../delivery-claim-panel/delivery-claim-panel.component';
 import { TooltipDirective, type StructuredTooltip, type TooltipSeverity } from 'coding-agent-chat/shared';
 import { TaskPromptPopoverComponent } from '../task-prompt-popover/task-prompt-popover.component';
 import { PipelineRunHistoryComponent } from '../pipeline-run-history/pipeline-run-history.component';
@@ -501,7 +502,7 @@ function buildStepExplanation(stepId: string, label: string, kind: StepKind): St
   selector: 'app-overview-pane',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, DialogComponent, CliModelSelectorComponent, RegressionRadarComponent, AgentWorkDetailComponent, ReferencesSectionComponent, PlanningSpawnPanelComponent, ConceptDossierNoticeComponent, TooltipDirective, CompletionLoopIndicatorComponent, TaskPromptPopoverComponent, PipelineRunHistoryComponent, PipelineTokenUsageComponent, PipelineStepDetailsComponent, PipelineStepToggleComponent, PostStepControlsComponent, StudioIconComponent, CostBreakdownTriggerDirective, ExecutionLocationBadgeComponent, PipelineHistoryNoticeComponent, OverviewRunsComponent, CopyableTaskKeyComponent],
+  imports: [FormsModule, DialogComponent, CliModelSelectorComponent, RegressionRadarComponent, AgentWorkDetailComponent, ReferencesSectionComponent, PlanningSpawnPanelComponent, ConceptDossierNoticeComponent, DeliveryClaimPanelComponent, TooltipDirective, CompletionLoopIndicatorComponent, TaskPromptPopoverComponent, PipelineRunHistoryComponent, PipelineTokenUsageComponent, PipelineStepDetailsComponent, PipelineStepToggleComponent, PostStepControlsComponent, StudioIconComponent, CostBreakdownTriggerDirective, ExecutionLocationBadgeComponent, PipelineHistoryNoticeComponent, OverviewRunsComponent, CopyableTaskKeyComponent],
   templateUrl: './overview-pane.component.html',
   styleUrl: './overview-pane.component.scss',
 })

@@ -702,6 +702,7 @@ public class TaskScannerService : ITaskScanner
                 Commit = legacyCommit,
                 Commits = commitChain,
                 IntegrationRecords = ReadIntegrationRecords(raw),
+                CompletionClaim = ReadCompletionClaim(raw),
                 IntegrationBranch = raw.TryGetProperty("integrationBranch", out var integrationBranch)
                     && integrationBranch.ValueKind == JsonValueKind.String
                     ? TaskIntegrationBranch.NormalizeRef(integrationBranch.GetString())
@@ -913,6 +914,30 @@ public class TaskScannerService : ITaskScanner
         catch (JsonException ex)
         {
             SilentCatch.Note(ex, "TaskScannerService: malformed acceptanceScope ignored");
+            return null;
+        }
+    }
+
+    private static TaskCompletionClaim? ReadCompletionClaim(JsonElement raw)
+    {
+        if (!raw.TryGetProperty("completionClaim", out var claim)
+            || claim.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        try
+        {
+            var parsed = claim.Deserialize<TaskCompletionClaim>(TaskJsonFile.ReadOpts);
+            if (parsed is null) return null;
+            var basis = CompletionClaimBases.Normalize(parsed.Basis);
+            // An unknown basis is not a claim: refusing it keeps a hand-edited
+            // or future-version value from rendering as a verified ground.
+            return basis is null ? null : parsed with { Basis = basis };
+        }
+        catch (JsonException ex)
+        {
+            SilentCatch.Note(ex, "TaskScannerService: malformed completion claim");
             return null;
         }
     }

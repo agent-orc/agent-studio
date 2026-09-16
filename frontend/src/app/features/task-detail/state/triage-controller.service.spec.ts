@@ -264,7 +264,7 @@ describe('TriageController · planning accept spawn-contract guard', () => {
       mode: 'coding',
     }) as unknown as TaskInfo;
 
-  const makeCompletedJob = (status: 'integrated' | 'pending' | null): TaskInfo =>
+  const makeCompletedJob = (status: 'integrated' | 'pending' | 'no-branch' | null): TaskInfo =>
     ({
       id: 'done-a',
       taskKey: `${wp}::done-a`,
@@ -307,6 +307,14 @@ describe('TriageController · planning accept spawn-contract guard', () => {
     vi.spyOn(jobService, 'applyOptimisticMove').mockReturnValue({} as never);
     vi.spyOn(jobService, 'findLaneIndex').mockReturnValue(-1);
     vi.spyOn(jobService, 'moveJob').mockReturnValue(of({}));
+    // AGT-2817: the archive guard resolves an absent verdict through the
+    // per-card containment answer before it decides whether to speak.
+    vi.spyOn(jobService, 'getDeliveryClaim').mockReturnValue(of({
+      containmentStatus: 'integrated',
+      integrated: true,
+      deliveryRef: 'task/triage-fixture',
+      integrationBranch: 'develop',
+    }) as never);
     vi.spyOn(selection, 'advanceAfterMutation').mockReturnValue(true);
     vi.spyOn(selection, 'triageLanePeers').mockReturnValue([]);
   });
@@ -332,7 +340,7 @@ describe('TriageController · planning accept spawn-contract guard', () => {
     ctrl.move(job, { targetState: '6-completed', actionId: 'mark-done' });
     await flush();
 
-    expect(jobService.moveJob).toHaveBeenCalledWith('plan-a', '6-completed', wp);
+    expect(jobService.moveJob).toHaveBeenCalledWith('plan-a', '6-completed', wp, undefined, undefined);
   });
 
   it('moves a contract-satisfied planning task straight through with no warning', async () => {
@@ -343,7 +351,7 @@ describe('TriageController · planning accept spawn-contract guard', () => {
     await flush();
 
     expect(confirmSpy).not.toHaveBeenCalled();
-    expect(jobService.moveJob).toHaveBeenCalledWith('plan-a', '6-completed', wp);
+    expect(jobService.moveJob).toHaveBeenCalledWith('plan-a', '6-completed', wp, undefined, undefined);
   });
 
   it('never gates a coding task', async () => {
@@ -357,7 +365,7 @@ describe('TriageController · planning accept spawn-contract guard', () => {
     expect(jobService.moveJob).toHaveBeenCalled();
   });
 
-  it('requires a second click before archiving a non-integrated Delivered task', async () => {
+  it('names what is lost and what the archive keeps for a genuinely unintegrated delivery', async () => {
     const job = makeCompletedJob('pending');
     const confirmSpy = vi.spyOn(confirmDialog, 'confirm').mockResolvedValue(false);
 
@@ -365,22 +373,47 @@ describe('TriageController · planning accept spawn-contract guard', () => {
     await flush();
 
     expect(confirmSpy).toHaveBeenCalledTimes(1);
-    expect(confirmSpy.mock.calls[0][0].confirmLabel).toBe('Archive anyway');
-    expect(confirmSpy.mock.calls[0][0].message).toContain('status: pending');
+    const options = confirmSpy.mock.calls[0][0];
+    expect(options.confirmLabel).toBe('Archive anyway');
+    expect(String(options.message)).toContain('task/triage-fixture');
+    expect(String(options.message)).toContain('develop');
+    expect(String(options.message)).toContain('keeps the task and all of its evidence');
+    // "pending" is only honest when something is genuinely waiting.
+    expect(String(options.message)).not.toContain('status: pending');
     expect(jobService.moveJob).not.toHaveBeenCalled();
   });
 
-  it('archives after the operator confirms the non-integrated warning', async () => {
-    const job = makeCompletedJob(null);
+  it('records the archive reason on the move when the operator closes anyway', async () => {
+    const job = makeCompletedJob('pending');
     vi.spyOn(confirmDialog, 'confirm').mockResolvedValue(true);
 
     ctrl.move(job, { targetState: '7-archive', actionId: 'archive' });
     await flush();
 
-    expect(jobService.moveJob).toHaveBeenCalledWith('done-a', '7-archive', wp);
+    const call = (jobService.moveJob as unknown as { mock: { calls: unknown[][] } }).mock.calls[0];
+    expect(call[0]).toBe('done-a');
+    expect(call[1]).toBe('7-archive');
+    expect(String(call[4])).toContain('task/triage-fixture');
   });
 
-  it('archives an integrated Delivered task without a warning', async () => {
+  /**
+   * AGT-2706: the card carried no integration projection while its delivery
+   * was contained in develop and in main. The guard now resolves the absence
+   * instead of reporting it as a pending integration, so no dialog appears.
+   */
+  it('resolves an absent verdict through containment instead of warning', async () => {
+    const job = makeCompletedJob(null);
+    const confirmSpy = vi.spyOn(confirmDialog, 'confirm').mockResolvedValue(true);
+
+    ctrl.move(job, { targetState: '7-archive', actionId: 'archive' });
+    await flush();
+
+    expect(jobService.getDeliveryClaim).toHaveBeenCalledWith('done-a', wp);
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(jobService.moveJob).toHaveBeenCalledWith('done-a', '7-archive', wp, undefined, undefined);
+  });
+
+  it('archives an integrated Delivered task without a warning or a lookup', async () => {
     const job = makeCompletedJob('integrated');
     const confirmSpy = vi.spyOn(confirmDialog, 'confirm').mockResolvedValue(true);
 
@@ -388,6 +421,18 @@ describe('TriageController · planning accept spawn-contract guard', () => {
     await flush();
 
     expect(confirmSpy).not.toHaveBeenCalled();
-    expect(jobService.moveJob).toHaveBeenCalledWith('done-a', '7-archive', wp);
+    expect(jobService.getDeliveryClaim).not.toHaveBeenCalled();
+    expect(jobService.moveJob).toHaveBeenCalledWith('done-a', '7-archive', wp, undefined, undefined);
+  });
+
+  it('does not dialog when the card has nothing to integrate', async () => {
+    const job = makeCompletedJob('no-branch');
+    const confirmSpy = vi.spyOn(confirmDialog, 'confirm').mockResolvedValue(true);
+
+    ctrl.move(job, { targetState: '7-archive', actionId: 'archive' });
+    await flush();
+
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(jobService.moveJob).toHaveBeenCalled();
   });
 });
