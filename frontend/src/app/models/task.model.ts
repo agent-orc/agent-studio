@@ -1823,6 +1823,10 @@ export interface ProjectSnapshot {
     autoPushStrategy: 'never' | 'on-completed' | 'always-immediate';
     runnerMode: string | null;
     orchestratorModel: string | null;
+    /** AGT-2839: project override for integration-gate review reuse; null inherits. */
+    integrationGateReviewReuse?: boolean | null;
+    /** AGT-2839: the reuse value the merge gate actually applies. */
+    integrationGateReviewReuseEffective?: boolean;
     /** F35: every lane resolved to its effective sort strategy (defaults filled in). */
     laneSortStrategies?: Record<string, string>;
   };

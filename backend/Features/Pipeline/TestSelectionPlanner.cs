@@ -98,6 +98,35 @@ public static class TestSelectionPlanner
         var fullTests = verifyPlan.Commands.Where(command => command.Kind == VerifyCommandKind.Test).ToList();
         var nonTests = verifyPlan.Commands.Where(command => command.Kind != VerifyCommandKind.Test).ToList();
 
+        // Compile-only stage (an integration gate that reuses a Remote Review
+        // verdict, AGT-2839): the merge result still has to compile, but the
+        // lint and test commands were just run on exactly this content. Both
+        // omitted inventories stay in the audit.
+        if (level == TestExecutionLevels.CompileOnly)
+        {
+            const string compileOnlyReason =
+                "compile-only stage: build commands only, the lint and test commands are covered "
+                + "by the reused remote review verdict";
+            var lint = verifyPlan.Commands
+                .Where(command => command.Kind == VerifyCommandKind.Lint)
+                .ToList();
+            return new StagedVerifyPlan(
+                nonTests.Where(command => command.Kind != VerifyCommandKind.Lint).ToList(),
+                new TestSelectionAudit
+                {
+                    Level = level,
+                    Lane = lane ?? "",
+                    DiffInput = diff,
+                    HistoryInput = history,
+                    SelectedCommands = [],
+                    OmittedTestCommands = fullTests.Concat(lint).Select(Describe).ToList(),
+                    Reasons = [compileOnlyReason],
+                    Selector = "compile-only",
+                    FullSuiteRequired = false,
+                    FullSuiteRan = false,
+                });
+        }
+
         // Build-only stage (the pre-develop merge gate): compile evidence without
         // any test command - not the impacted selection, not the continuous
         // baseline. The omitted inventory stays in the audit so the evidence log

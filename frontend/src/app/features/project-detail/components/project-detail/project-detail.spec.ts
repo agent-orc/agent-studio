@@ -66,6 +66,40 @@ describe('ProjectDetailComponent (smoke)', () => {
     expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="project-cli-onboarding-status"]')).toBeNull();
   });
 
+  // AGT-2839: the integration-gate reuse rule is a project setting, so it has
+  // to be visible and editable in Project settings, not only in a JSON file.
+  it('renders the integration-gate review-reuse setting in settings view', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ProjectDetailComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+      ],
+    }).compileComponents();
+
+    const fixture = TestBed.createComponent(ProjectDetailComponent);
+    fixture.componentRef.setInput('projectName', 'demo');
+    fixture.componentRef.setInput('view', 'settings');
+    fixture.detectChanges();
+
+    const host = fixture.nativeElement as HTMLElement;
+    const select = host.querySelector<HTMLSelectElement>(
+      '[data-testid="project-detail-integration-gate-reuse"]',
+    );
+    expect(select).toBeTruthy();
+    expect([...select!.options].map((option) => option.value)).toEqual([
+      'inherit',
+      'enabled',
+      'disabled',
+    ]);
+    // ngModel writes the select value asynchronously; the draft is the state
+    // the control binds to and is the honest assertion at this point.
+    expect(fixture.componentInstance.integrationGateReuseDraft).toBe('inherit');
+    expect(host.textContent ?? '').toContain('Integration gate');
+  });
+
   it('keeps the retired legacy overview free of machine plumbing', async () => {
     await TestBed.configureTestingModule({
       imports: [ProjectDetailComponent],

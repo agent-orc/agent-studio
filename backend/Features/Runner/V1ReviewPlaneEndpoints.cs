@@ -834,6 +834,19 @@ public static class V1ReviewPlaneEndpoints
                 // Carried onto the Human Review lane row as the verdict's
                 // qualifier: the integration outcome behind the park.
                 string? integrationOutcome = null;
+                // AGT-2839: record what this review actually verified - the
+                // integration ref, the merge base on it, and the immutable
+                // result SHA - beside the task, synchronously, before any
+                // integration is triggered. The local gate reads it to tell an
+                // unchanged base from a moved one instead of repeating the
+                // suite the review just ran. Evidence projection is async and
+                // would race the merge.
+                WriteReviewVerification(
+                    task,
+                    settled.ReviewAttempt,
+                    request,
+                    integrationDecision.BuildTestGate,
+                    receivedAt);
                 if (string.Equals(task.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
                 {
                     var projectSettings = settings.Get(task.ProjectName);
@@ -1077,6 +1090,51 @@ public static class V1ReviewPlaneEndpoints
         catch (ArgumentException)
         {
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Persists what this settled review verified so the local integration gate
+    /// can reuse the verdict instead of repeating the suite (AGT-2839). The
+    /// triple that carries the decision - integration ref, merge base, result
+    /// SHA - comes from the executor's own workspace proof; a report that does
+    /// not carry a merge base is written as-is with a null base, and the gate
+    /// then runs in full rather than guessing one.
+    /// </summary>
+    private static void WriteReviewVerification(
+        TaskInfo task,
+        ReviewAttemptDto review,
+        Contract.ReviewReportRequest request,
+        RemoteBuildTestGateClass buildTestGate,
+        DateTime receivedAt)
+    {
+        try
+        {
+            ReviewVerificationStore.Write(task.FolderPath, new ReviewVerificationRecord
+            {
+                TaskKey = review.TaskKey,
+                AttemptId = review.AttemptId,
+                SubjectId = review.Subject.SubjectId,
+                Outcome = review.Outcome?.ToString() ?? request.Outcome,
+                ResultSha = review.Subject.ExpectedResultSha,
+                IntegrationRef = request.Workspace.IntegrationRef
+                                 ?? review.Subject.Plan?.IntegrationRef,
+                MergeBaseSha = request.Workspace.MergeBaseSha,
+                BuildTestGate = buildTestGate switch
+                {
+                    RemoteBuildTestGateClass.Passed => ReviewBuildTestGateClasses.Passed,
+                    RemoteBuildTestGateClass.NotApplicable => ReviewBuildTestGateClasses.NotApplicable,
+                    _ => ReviewBuildTestGateClasses.Failed,
+                },
+                VerifiedAtUtc = new DateTimeOffset(
+                    DateTime.SpecifyKind(receivedAt, DateTimeKind.Utc)),
+            });
+        }
+        catch (Exception exception)
+        {
+            // The record is an optimization, never a gate authority. A task
+            // folder that cannot take it keeps the full integration gate.
+            SilentCatch.Note(exception, "V1ReviewPlaneEndpoints: review-verification record is best-effort");
         }
     }
 

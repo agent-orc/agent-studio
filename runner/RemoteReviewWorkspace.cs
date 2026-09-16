@@ -984,6 +984,20 @@ public sealed class RemoteReviewWorkspace
 
     private async Task<ReviewWorkspaceProofDto> CurrentProofAsync(CancellationToken ct)
     {
+        // AGT-2839: the final proof carries the base this review compared
+        // against, so the integration gate can tell an unchanged base from a
+        // moved one. A plan without an integration ref, or a ref that cannot be
+        // fetched, simply reports no base - it never fails the report.
+        if (_baselineSha is null
+            && !string.IsNullOrWhiteSpace(_subject.Plan.IntegrationRef))
+        {
+            try { await ResolveBaselineShaAsync(ct); }
+            catch (ReviewInfrastructureException exception)
+            {
+                _log($"review baseline unavailable for the workspace proof: {exception.Message}");
+            }
+        }
+
         var finalHead = await GitValueAsync("rev-parse", "HEAD", ct);
         var finalTree = await GitValueAsync("rev-parse", "HEAD^{tree}", ct);
         var status = await GitValueAsync("status", "--porcelain", "--untracked-files=all", ct);
@@ -1722,7 +1736,12 @@ public sealed class RemoteReviewWorkspace
             _dirtyBefore,
             dirtyAfter,
             HashText(Path.GetFullPath(AttemptRoot)),
-            _lease.ResourceNamespace);
+            _lease.ResourceNamespace,
+            _subject.Plan.IntegrationRef,
+            // Reported only once actually resolved. Claiming a base the review
+            // never compared against would let the integration gate skip a
+            // suite on a state nobody verified (AGT-2839).
+            _baselineSha);
 
     private static ReviewVerdictDto ParseVerdict(ReviewCommandDto command, ProcessResult result)
     {
