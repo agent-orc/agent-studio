@@ -51,6 +51,15 @@ public sealed class FakeBackendHarness : IAsyncDisposable
     /// </summary>
     public int JobsGroupedFailFirstN { get; set; }
     public int JobsGroupedCallCount;
+    /// <summary>
+    /// Build manifest the "booted" backend reports on
+    /// <c>/api/system/version</c>. <see cref="FakeStableCheckout"/>'s fake
+    /// start script writes it the same way <c>BuildIdentity.Load</c> resolves
+    /// the manifest, so the runtime identity follows the restart instead of
+    /// being a test constant. Null (or an absent file) keeps the legacy
+    /// untagged response the branch-update cases expect.
+    /// </summary>
+    public string? RuntimeIdentityFile { get; set; }
     public Dictionary<string, string> ProjectModes { get; } = new()
     {
         ["agent-taskboard"] = "auto-continuous",
@@ -77,12 +86,20 @@ public sealed class FakeBackendHarness : IAsyncDisposable
                 return Results.Json("still compiling", statusCode: 503);
             return Results.Text("\"ok\"", "application/json");
         });
-        app.MapGet("/api/system/version", () => Results.Json(new
+        app.MapGet("/api/system/version", () =>
         {
-            version = "2026.07.11-1200+aaaaaaa",
-            commit = "aaaaaaa",
-            deployedAt = "2026-07-11T12:00:00Z"
-        }));
+            // The manifest is read per request, not cached: a restart that
+            // hands the backend a different manifest must be observable here.
+            var manifestFile = RuntimeIdentityFile;
+            if (manifestFile is not null && File.Exists(manifestFile))
+                return Results.Text(File.ReadAllText(manifestFile), "application/json");
+            return Results.Json(new
+            {
+                version = "2026.07.11-1200+aaaaaaa",
+                commit = "aaaaaaa",
+                deployedAt = "2026-07-11T12:00:00Z"
+            });
+        });
 
         app.MapGet("/api/runner/status", () =>
         {

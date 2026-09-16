@@ -115,9 +115,10 @@ manifests and the cached latest-approved tag still pass the same comparison.
 
 ## Update Service ordering, mutation boundary, and health wait
 
-Three incidents from the first tagged release (v0.2.0, 2026-09-13) changed the
-Update Service's phase ordering. This section documents the current contract
-so a future change does not reintroduce them.
+Four incidents from the first tagged releases (v0.2.0, 2026-09-13; v0.4.0,
+2026-09-16) changed the Update Service's phase ordering and its identity
+handoff. This section documents the current contract so a future change does
+not reintroduce them.
 
 **Stop before restore.** The stack (backend, frontend dev server, and any
 process the checkout owns) is stopped before the locked dependency restore
@@ -136,6 +137,41 @@ port check. The intended manifest is kept in the run folder
 manifest is committed automatically reverts the checkout to the pre-run
 commit; the manifest file is never touched, so the next preflight is
 unaffected and no manual manifest deletion is needed.
+
+**Identity handoff at restart.** The mutation boundary and the runtime
+identity source used to contradict each other. `BuildIdentity` reads
+`ATP_BUILD_MANIFEST`, and otherwise the `build-manifest.json` sitting next to
+the assembly, which the build copies from the checkout root. Because the
+candidate manifest is deliberately not in that root yet, a restarted backend
+reported the previous release and the runtime-identity check refused every
+upgrade while the new build was already serving (run `197866f8`, 16.09.2026,
+v0.3.0 to v0.4.0).
+
+The restart phase therefore exports the intended manifest to the backend it
+starts, without installing it:
+
+```
+ATP_BUILD_MANIFEST=<run folder>/intended-build-manifest.json   # forward run
+ATP_BUILD_MANIFEST=<run folder>/rollback-build-manifest.json   # rollback
+```
+
+The variable is set on the `start-stable.sh` invocation only. `start-stable.sh`
+and `api.sh` pass their environment through to `dotnet run` unchanged, so it
+reaches the backend process; neither may scrub or allowlist the environment.
+The run folder's `start-stable-output.txt` opens with an
+`identity handoff` header, so an operator can read which manifest a given
+restart was told to report. The checkout root is still written only after verification passes, and
+a backend that is pointed at a manifest path that no longer exists falls back
+to the manifest beside its assembly rather than degrading to the legacy
+untagged identity.
+
+**Upgrade in verification.** Between that restart and the manifest commit, the
+running backend reports the candidate while the checkout root still carries the
+previous release. The preflight names this state `upgradeInVerification` and
+does not refuse it: a divergence is a running identity that matches *neither*
+the installed manifest nor the candidate. Every other gate still applies, so an
+unapproved or dirty candidate is refused exactly as before, and a re-triggered
+run simply reinstalls and re-verifies the same candidate.
 
 *Recovery if this still happens.* If a run somehow leaves the checkout ahead
 of the installed manifest anyway (for example, a crash of the Update Service

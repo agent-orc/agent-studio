@@ -36,6 +36,29 @@ public sealed class FakeStableCheckout : IDisposable
     public string BashPath { get; }
     public string GitPath { get; }
 
+    /// <summary>Manifest installed in the checkout root (the rollback target).</summary>
+    public string InstalledManifestFile { get; }
+
+    /// <summary>Candidate manifest cache the outer updater fills; preflight input.</summary>
+    public string CandidateManifestFile { get; }
+
+    /// <summary>Latest approved immutable tag; preflight input.</summary>
+    public string ApprovedTagFile { get; }
+
+    /// <summary>
+    /// Manifest the fake start script resolved for the backend it "booted",
+    /// mirroring <c>BuildIdentity.Load</c>. <see cref="FakeBackendHarness"/>
+    /// serves it as the runtime identity, so the drill can prove which
+    /// manifest the restarted process actually reports.
+    /// </summary>
+    public string RuntimeIdentityFile { get; }
+
+    /// <summary>
+    /// Value of <c>ATP_BUILD_MANIFEST</c> as the fake start script saw it.
+    /// Empty when the update run handed no manifest over.
+    /// </summary>
+    public string StartEnvFile { get; }
+
     private FakeStableCheckout(string root, string bashPath, string gitPath)
     {
         Root = root;
@@ -47,6 +70,11 @@ public sealed class FakeStableCheckout : IDisposable
         VersionFile = Path.Combine(StableDir, "VERSION");
         StopMarkerPath = Path.Combine(DevspaceDir, ".stop-stable.marker");
         StartMarkerPath = Path.Combine(DevspaceDir, ".start-stable.marker");
+        InstalledManifestFile = Path.Combine(StableDir, "build-manifest.json");
+        CandidateManifestFile = Path.Combine(root, "stable-candidate-manifest.json");
+        ApprovedTagFile = Path.Combine(root, "stable-approved-tag");
+        RuntimeIdentityFile = Path.Combine(root, "runtime-identity.json");
+        StartEnvFile = Path.Combine(DevspaceDir, ".start-stable.env");
         BashPath = bashPath;
         GitPath = gitPath;
     }
@@ -91,16 +119,107 @@ public sealed class FakeStableCheckout : IDisposable
         Run(gitPath, checkout.StableDir, "commit", "-m", "test: initial");
         Run(gitPath, checkout.StableDir, "push", "-u", "origin", "main");
 
-        // fake start/stop scripts: just touch a marker, exit 0.
+        // fake stop script: just touch a marker, exit 0.
         WriteScript(Path.Combine(checkout.DevspaceDir, "stop-stable.sh"),
             $"#!/bin/bash\ntouch \"$(dirname \"$0\")/.stop-stable.marker\"\nexit 0\n");
+
+        // The fake start script stands in for the real
+        // start-stable.sh -> api.sh -> `dotnet run` chain. It touches the
+        // same marker the older cases assert on, and additionally resolves
+        // the booted backend's build manifest exactly the way
+        // BuildIdentity.Load does: ATP_BUILD_MANIFEST first, otherwise the
+        // manifest the build copies next to the assembly from the checkout
+        // root. Whatever it resolves becomes the runtime identity the fake
+        // backend reports, so a run that hands no manifest over is visibly
+        // stuck on the previous release.
         WriteScript(Path.Combine(checkout.DevspaceDir, "start-stable.sh"),
-            $"#!/bin/bash\ntouch \"$(dirname \"$0\")/.start-stable.marker\"\nexit 0\n");
+            $$"""
+            #!/bin/bash
+            dir="$(dirname "$0")"
+            touch "$dir/.start-stable.marker"
+            printf '%s' "${ATP_BUILD_MANIFEST:-}" > "$dir/.start-stable.env"
+            manifest="${ATP_BUILD_MANIFEST:-}"
+            if [ -z "$manifest" ] || [ ! -f "$manifest" ]; then
+              manifest="{{ShellPath(checkout.InstalledManifestFile)}}"
+            fi
+            if [ -f "$manifest" ]; then
+              cp "$manifest" "{{ShellPath(checkout.RuntimeIdentityFile)}}"
+            else
+              rm -f "{{ShellPath(checkout.RuntimeIdentityFile)}}"
+            fi
+            exit 0
+
+            """);
 
         return checkout;
     }
 
+    /// <summary>
+    /// Git Bash understands <c>C:/dir/file</c> but not <c>C:\dir\file</c>, so
+    /// embedded absolute paths are normalized to forward slashes.
+    /// </summary>
+    private static string ShellPath(string path) => path.Replace('\\', '/');
+
+    /// <summary>
+    /// Publishes an immutable release candidate on the bare remote: a commit
+    /// carrying the project release definition, plus the matching tag. The
+    /// returned SHA is what the candidate manifest must declare, because the
+    /// Update Service refuses a tag that does not dereference to it.
+    /// </summary>
+    public string PublishReleaseCandidate(string tag, string projectDefinitionYaml)
+    {
+        var cloneDir = Path.Combine(Root, "release-work-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+        Run(GitPath, Root, "clone", "--branch", "main", RemoteDir, cloneDir);
+        Run(GitPath, cloneDir, "config", "user.email", "test@example.com");
+        Run(GitPath, cloneDir, "config", "user.name", "Update Service Test");
+        var definitionDir = Path.Combine(cloneDir, ".agent-studio");
+        Directory.CreateDirectory(definitionDir);
+        WriteText(Path.Combine(definitionDir, "project.yml"), projectDefinitionYaml);
+        WriteScript(Path.Combine(definitionDir, "prepare"), "#!/bin/bash\nexit 0\n");
+        Run(GitPath, cloneDir, "add", ".");
+        Run(GitPath, cloneDir, "commit", "-m", $"release: {tag}");
+        Run(GitPath, cloneDir, "push", "origin", "main");
+        Run(GitPath, cloneDir, "tag", tag);
+        Run(GitPath, cloneDir, "push", "origin", tag);
+        return RunCapture(GitPath, cloneDir, "rev-parse", "HEAD");
+    }
+
+    /// <summary>Installs the manifest the checkout root carries before a run.</summary>
+    public void InstallManifest(string manifestJson) =>
+        File.WriteAllText(InstalledManifestFile, manifestJson);
+
+    /// <summary>Fills the candidate cache and the approved-tag file the preflight reads.</summary>
+    public void PublishCandidateManifest(string manifestJson, string approvedTag)
+    {
+        File.WriteAllText(CandidateManifestFile, manifestJson);
+        File.WriteAllText(ApprovedTagFile, approvedTag);
+    }
+
+    /// <summary>
+    /// Seeds the identity the fake backend reports before any restart, i.e.
+    /// the process that is already running when the update run starts.
+    /// </summary>
+    public void BootBackendWith(string manifestJson) =>
+        File.WriteAllText(RuntimeIdentityFile, manifestJson);
+
+    /// <summary>Value of ATP_BUILD_MANIFEST the fake start script received.</summary>
+    public string ReadStartManifestEnv() =>
+        File.Exists(StartEnvFile) ? File.ReadAllText(StartEnvFile).Trim() : "";
+
     private static void WriteScript(string path, string body)
+    {
+        WriteText(path, body);
+        // The orchestrator starts the stack with `bash -c "DETACH=1 ./start-stable.sh"`,
+        // which needs the execute bit on a POSIX host. Git Bash on Windows
+        // ignores the mode, so this is a no-op there.
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(path,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+                | UnixFileMode.GroupRead | UnixFileMode.GroupExecute
+                | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+    }
+
+    private static void WriteText(string path, string body)
     {
         // Normalize to LF so Git Bash on Windows doesn't reject a CRLF shebang.
         File.WriteAllText(path, body.Replace("\r\n", "\n"));

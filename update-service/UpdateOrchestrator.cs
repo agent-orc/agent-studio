@@ -23,6 +23,25 @@ namespace AgentTaskboard.UpdateService;
 /// </summary>
 public sealed class UpdateOrchestrator
 {
+    /// <summary>
+    /// Run-folder copy of the manifest the run intends to install. It is the
+    /// identity source handed to the restarted backend; it is copied into the
+    /// checkout root only after verification passes.
+    /// </summary>
+    public const string IntendedManifestFileName = "intended-build-manifest.json";
+
+    /// <summary>Run-folder copy of the manifest a rollback restores.</summary>
+    public const string RollbackManifestFileName = "rollback-build-manifest.json";
+
+    /// <summary>
+    /// Environment variable <c>BuildIdentity.Load</c> reads before falling
+    /// back to <c>&lt;AppContext.BaseDirectory&gt;/build-manifest.json</c>.
+    /// The restart phases export it so the backend they start reports the
+    /// identity this run intends, without the run having to install that
+    /// manifest into the checkout before the mutation boundary.
+    /// </summary>
+    public const string BuildManifestEnvironmentVariable = "ATP_BUILD_MANIFEST";
+
     private readonly UpdateStatusStore _store;
     private readonly IGitProbe _git;
     private readonly IBackendProbe _backend;
@@ -183,10 +202,10 @@ public sealed class UpdateOrchestrator
                 }
                 intendedRelease = release.Candidate;
                 if (release.Installed is not null)
-                    folder.WriteOutput("rollback-build-manifest.json", System.Text.Json.JsonSerializer.Serialize(release.Installed,
+                    folder.WriteOutput(RollbackManifestFileName, System.Text.Json.JsonSerializer.Serialize(release.Installed,
                         new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase, WriteIndented = true }));
                 if (intendedRelease is not null)
-                    folder.WriteOutput("intended-build-manifest.json", System.Text.Json.JsonSerializer.Serialize(intendedRelease,
+                    folder.WriteOutput(IntendedManifestFileName, System.Text.Json.JsonSerializer.Serialize(intendedRelease,
                         new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase, WriteIndented = true }));
 
                 if (release.Direction == ReleaseDirection.SameVersion)
@@ -280,6 +299,11 @@ public sealed class UpdateOrchestrator
             // and restart look, to the next preflight, like the new
             // candidate was already running when the live backend was still
             // the old process (the "false divergence refusal" incident).
+            // The restarted backend still reports the candidate identity:
+            // phase 5 hands it that same run-folder manifest through
+            // ATP_BUILD_MANIFEST (see IdentityHandoffFor below), so the
+            // mutation boundary and the identity source no longer
+            // contradict each other.
             var headAfterPull = _git.HeadShort();
             _store.SetHead(headAfterPull);
 
@@ -322,8 +346,22 @@ public sealed class UpdateOrchestrator
             // PHASE 5 — restarting
             SetPhase("restarting", "starting stable backend", runId, startedAt);
             var restartStartedAt = DateTime.UtcNow;
-            var (startRc, startOut) = await StartStackAsync(ct);
-            folder.WriteOutput("start-stable-output.txt", startOut);
+            var identityHandoff = IdentityHandoffFor(intendedRelease is null ? null : folder.Root, IntendedManifestFileName);
+            if (intendedRelease is not null && identityHandoff is null)
+            {
+                // Without the handoff the restarted backend would report the
+                // manifest still sitting in the checkout root, i.e. the
+                // previous release, and fail its own identity check further
+                // down for a reason that has nothing to do with the build.
+                // Say so here instead.
+                await RollbackCheckoutToAsync(headBefore, ct);
+                FinishFailed(runId, startedAt, headBefore, headAfterPull, trigger,
+                    $"run folder is missing {IntendedManifestFileName}; refusing to restart without the identity handoff",
+                    null, folder, preSnapshot, intendedRelease, null, releaseComparison?.Direction.ToString());
+                return;
+            }
+            var (startRc, startOut) = await StartStackAsync(identityHandoff, ct);
+            folder.WriteOutput("start-stable-output.txt", DescribeHandoff(identityHandoff) + startOut);
             if (startRc != 0)
             {
                 await RollbackCheckoutToAsync(headBefore, ct);
@@ -473,7 +511,7 @@ public sealed class UpdateOrchestrator
         var headBefore = _git.HeadShort();
         var rollbackStartedAt = DateTime.UtcNow;
         var rollbackTrigger = manual ? "manual-rollback" : "auto-rollback";
-        var rollbackManifest = ReadReleaseManifest(Path.Combine(folder.Root, "rollback-build-manifest.json"));
+        var rollbackManifest = ReadReleaseManifest(Path.Combine(folder.Root, RollbackManifestFileName));
 
         // Read the snapshot SHA + project modes from disk so manual rollback
         // works even after a process restart. Modes feed phase-6 (strict
@@ -533,12 +571,20 @@ public sealed class UpdateOrchestrator
 
             if (rollbackManifest is not null)
             {
-                File.Copy(Path.Combine(folder.Root, "rollback-build-manifest.json"),
+                File.Copy(Path.Combine(folder.Root, RollbackManifestFileName),
                     Path.Combine(_options.StableCheckoutDir, _options.BuildManifestFile), overwrite: true);
             }
 
-            var (startRc, startOut) = await RunRestartAsync(ct);
-            folder.WriteOutput("rollback-start-output.txt", startOut);
+            // The rollback target manifest is already back in the checkout
+            // root, but the backend is started against the run folder's copy
+            // for the same reason the forward path does: the identity the
+            // restarted process reports must be the identity this phase
+            // decided on, never whatever a previous build happened to leave
+            // next to the assembly.
+            var rollbackHandoff = IdentityHandoffFor(
+                rollbackManifest is null ? null : folder.Root, RollbackManifestFileName);
+            var (startRc, startOut) = await RunRestartAsync(rollbackHandoff, ct);
+            folder.WriteOutput("rollback-start-output.txt", DescribeHandoff(rollbackHandoff) + startOut);
             var healthy = await _backend.WaitForHealthyAsync(TimeSpan.FromSeconds(_options.HealthWaitSeconds), ct);
 
             if (startRc != 0 || !healthy)
@@ -756,7 +802,12 @@ public sealed class UpdateOrchestrator
 
     // ─── shell helpers ──────────────────────────────────────────────────────
 
-    private async Task<(int Rc, string Output)> RunBashAsync(string firstArg, string secondArg, string workingDir, CancellationToken ct)
+    private async Task<(int Rc, string Output)> RunBashAsync(
+        string firstArg,
+        string secondArg,
+        string workingDir,
+        CancellationToken ct,
+        IReadOnlyDictionary<string, string>? environment = null)
     {
         var psi = new ProcessStartInfo
         {
@@ -769,6 +820,11 @@ public sealed class UpdateOrchestrator
         };
         psi.ArgumentList.Add(firstArg);
         if (!string.IsNullOrEmpty(secondArg)) psi.ArgumentList.Add(secondArg);
+        // Inherited environment plus the run-scoped entries. start-stable.sh
+        // and api.sh pass their environment straight through to `dotnet run`,
+        // so anything set here reaches the backend process itself.
+        if (environment is not null)
+            foreach (var (name, value) in environment) psi.Environment[name] = value;
 
         try
         {
@@ -925,13 +981,14 @@ public sealed class UpdateOrchestrator
         return (0, output, true);
     }
 
-    private async Task<(int Rc, string Output)> RunRestartAsync(CancellationToken ct)
+    private async Task<(int Rc, string Output)> RunRestartAsync(
+        IReadOnlyDictionary<string, string>? identityHandoff, CancellationToken ct)
     {
         var (stopRc, stopOut) = await RunBashAsync(_options.StopScript, "", _options.DevspaceDir, ct);
         // Stop always succeeds in spirit; downstream start is what we care about.
         var (startRc, startOut) = await RunBashAsync("-c",
             $"DETACH=1 ./{_options.StartScript}",
-            _options.DevspaceDir, ct);
+            _options.DevspaceDir, ct, identityHandoff);
         return (startRc, $"--- stop (rc={stopRc}) ---\n{stopOut}\n--- start (rc={startRc}) ---\n{startOut}");
     }
 
@@ -1023,8 +1080,40 @@ public sealed class UpdateOrchestrator
     private Task<(int Rc, string Output)> StopStackAsync(CancellationToken ct)
         => RunBashAsync(_options.StopScript, "", _options.DevspaceDir, ct);
 
-    private Task<(int Rc, string Output)> StartStackAsync(CancellationToken ct)
-        => RunBashAsync("-c", $"DETACH=1 ./{_options.StartScript}", _options.DevspaceDir, ct);
+    private Task<(int Rc, string Output)> StartStackAsync(
+        IReadOnlyDictionary<string, string>? identityHandoff, CancellationToken ct)
+        => RunBashAsync("-c", $"DETACH=1 ./{_options.StartScript}", _options.DevspaceDir, ct, identityHandoff);
+
+    /// <summary>
+    /// Build-manifest handoff for a backend this run is about to start.
+    /// <c>BuildIdentity.Load</c> prefers <c>ATP_BUILD_MANIFEST</c> over the
+    /// manifest next to the assembly, which the build copies from the
+    /// checkout root. Without the handoff a restarted backend can only ever
+    /// report the *previous* release, because the mutation boundary keeps the
+    /// candidate manifest out of the checkout root until verification has
+    /// passed, so every upgrade failed its own runtime-identity check.
+    /// Returns null when the run has no manifest to hand over (legacy branch
+    /// updates), leaving the backend on its default lookup.
+    /// </summary>
+    private static IReadOnlyDictionary<string, string>? IdentityHandoffFor(string? runFolderRoot, string manifestFileName)
+    {
+        if (string.IsNullOrEmpty(runFolderRoot)) return null;
+        var manifestPath = Path.Combine(runFolderRoot, manifestFileName);
+        if (!File.Exists(manifestPath)) return null;
+        return new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [BuildManifestEnvironmentVariable] = manifestPath,
+        };
+    }
+
+    /// <summary>
+    /// Records the handoff at the top of the captured start output so a run
+    /// folder shows which manifest the restarted backend was told to report.
+    /// </summary>
+    private static string DescribeHandoff(IReadOnlyDictionary<string, string>? identityHandoff) =>
+        identityHandoff is not null && identityHandoff.TryGetValue(BuildManifestEnvironmentVariable, out var path)
+            ? $"--- identity handoff ---\n{BuildManifestEnvironmentVariable}={path}\n"
+            : "--- identity handoff ---\n(none; backend uses the manifest beside its assembly)\n";
 
     /// <summary>
     /// Reverts the checkout to <paramref name="sha"/> when it is not already

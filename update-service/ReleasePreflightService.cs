@@ -43,6 +43,10 @@ public sealed class ReleasePreflightService
                 comparison = comparison with { Errors = enriched, DivergenceExplanation = explanation };
             }
         }
+        else if (comparison.UpgradeInVerification)
+        {
+            comparison = comparison with { DivergenceExplanation = ExplainUpgradeInVerification(candidate) };
+        }
         return comparison;
     }
 
@@ -69,6 +73,32 @@ public sealed class ReleasePreflightService
         catch
         {
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Names the run that put the installation into "upgrade in verification":
+    /// the backend already reports the candidate because the update run handed
+    /// it the intended manifest at restart, and the checkout root still
+    /// carries the previous release because the manifest is committed only
+    /// after verification passes.
+    /// </summary>
+    private string? ExplainUpgradeInVerification(ReleaseManifest? candidate)
+    {
+        const string state = "upgrade in verification: the running backend already reports the candidate "
+            + "and the checkout manifest is committed only after verification passes";
+        if (_store is null || candidate is null || string.IsNullOrWhiteSpace(candidate.Tag)) return state;
+        try
+        {
+            var run = _store.ReadHistory(50)
+                .Where(h => string.Equals(h.IntendedTag, candidate.Tag, StringComparison.Ordinal))
+                .OrderByDescending(h => h.FinishedAt ?? h.StartedAt)
+                .FirstOrDefault();
+            return run is null ? state : $"{state} (run {run.RunId}, status={run.Status})";
+        }
+        catch
+        {
+            return state;
         }
     }
 
