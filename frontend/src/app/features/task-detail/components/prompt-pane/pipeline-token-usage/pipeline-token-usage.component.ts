@@ -12,6 +12,7 @@ import {
   formatTokenCostDisplay,
   incompleteTokenCostLabel,
 } from '../../../../tokens';
+import { TokenModelIdentityComponent } from './token-model-identity/token-model-identity.component';
 
 /** The task-wide total (every model summed over every run). */
 interface TaskTotal {
@@ -30,11 +31,20 @@ interface TaskTotal {
  * so a single token number per run hides where the spend went.
  *
  * Two collapsible levels on one quiet surface (no special boxes):
- *  - TASK TOTAL SUM (primary, collapsed by default) shows the lifetime total;
- *    expanding it reveals the all-runs-by-model breakdown inline.
+ *  - TOKENS ACROSS ALL RUNS (primary, collapsed by default) shows the lifetime
+ *    total; expanding it reveals the per-(model, level) breakdown inline. It is
+ *    deliberately NOT called "task total": the pipeline step list right above
+ *    already ends in a `Task total SUM` row over a different set of summands,
+ *    and one label over two quantities is what made the panel read as noise
+ *    (operator, 2026-09-14).
  *  - TOKENS BY RUN lists every run newest-first, each run collapsed by default;
- *    expanding a run reveals its per-model rows. Default-collapsed scales to
- *    dozens of runs.
+ *    expanding a run reveals its per-(model, level) rows. Default-collapsed
+ *    scales to dozens of runs.
+ *
+ * Every row that names a model names its reasoning level too, through the
+ * shared board badge (`app-token-model-identity`), because model and level
+ * together determine cost and quality. The level comes from the recorded
+ * ledger; a row without one says so.
  *
  * The toggle line of each level IS that level's total row, so the per-model
  * rows it discloses are literally its summands - no duplicated footer. A single
@@ -51,7 +61,7 @@ interface TaskTotal {
 @Component({
   selector: 'app-pipeline-token-usage',
   standalone: true,
-  imports: [TooltipDirective],
+  imports: [TooltipDirective, TokenModelIdentityComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './pipeline-token-usage.component.html',
   styleUrl: './pipeline-token-usage.component.scss',
@@ -72,7 +82,7 @@ export class PipelineTokenUsageComponent {
 
   readonly runCount = computed<number>(() => this.runs().length);
 
-  /** Lifetime total over every run and model - the TASK TOTAL SUM toggle line. */
+  /** Lifetime total over every run and model - the all-runs toggle line. */
   readonly taskTotal = computed<TaskTotal>(() => ({
     totalTokens: this.summary()?.totalTokens ?? 0,
     costUsd: this.summary()?.totalCostUsd ?? 0,
@@ -84,7 +94,7 @@ export class PipelineTokenUsageComponent {
       ?? this.runs().filter((run) => !this.usageAvailableForRun(run)).length,
   }));
 
-  /** TASK TOTAL SUM is collapsed by default (the lifetime number is enough). */
+  /** The all-runs total is collapsed by default (the lifetime number is enough). */
   readonly summaryOpen = signal(false);
 
   /** Set of run attempts currently expanded; every run is collapsed by default. */
@@ -109,6 +119,14 @@ export class PipelineTokenUsageComponent {
 
   tokens(n: number): string {
     return formatTokens(n);
+  }
+
+  /**
+   * Stable row identity: a model can appear more than once in one breakdown,
+   * once per reasoning level, so the model id alone is not a key.
+   */
+  identityKey(model: PipelineModelTokenUsage): string {
+    return `${model.model}\u0001${model.thinkingLevel ?? ''}`;
   }
 
   tokenLabel(totalTokens: number, usageAvailable = true): string {
@@ -225,7 +243,7 @@ export class PipelineTokenUsageComponent {
   /** Per-model row tooltip: full model id + step count + token split. */
   modelTooltip(m: PipelineModelTokenUsage): string {
     const context = [
-      `${m.model} - ${m.steps} step(s)`,
+      `${m.model} · ${m.thinkingLevel?.trim() || 'level unknown'} - ${m.steps} step(s)`,
       `Input ${this.tokens(m.inputTokens)} / Output ${this.tokens(m.outputTokens)}`,
       `Cache read ${this.tokens(m.cacheReadTokens)} / Cache write ${this.tokens(m.cacheCreationTokens)}`,
       `Total ${this.tokens(m.totalTokens)}`,

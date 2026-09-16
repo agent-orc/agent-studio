@@ -76,7 +76,14 @@ public sealed record PipelineModelTokenUsage(
     long CacheReadTokens,
     long CacheCreationTokens,
     long TotalTokens,
-    decimal CostUsd);
+    decimal CostUsd,
+    /// <summary>
+    /// Effective reasoning level the model ran at for these tokens, or null
+    /// when the recorded data carries no level (legacy rows, models without a
+    /// level dimension). Model and level together are one identity, so a run
+    /// that used the same model at two levels yields two rows (AGT-2811).
+    /// </summary>
+    string? ThinkingLevel = null);
 
 /// <summary>
 /// One pipeline run (a <see cref="PipelineExecutionRecord"/> attempt) with
@@ -390,7 +397,7 @@ public static class PipelineCostCalculator
         {
             var session = sessionEvents[index];
             var runCalls = callsByRun[index];
-            var models = GroupCallsByModel(runCalls, session.Model);
+            var models = GroupCallsByModel(runCalls, session.Model, session.ThinkingLevel);
             runs.Add(new PipelineRunTokenUsage(
                 Attempt: index + 1,
                 Current: index == sessionEvents.Count - 1,
@@ -411,11 +418,13 @@ public static class PipelineCostCalculator
     private static PipelineModelUsageSummary BuildModelSummary(
         IReadOnlyList<PipelineRunTokenUsage> runs)
     {
+        // Identity is (model, level): the lifetime rollup must not merge the
+        // same model run at two reasoning levels into one row (AGT-2811).
         var totalByModel = runs
             .SelectMany(r => r.Models)
-            .GroupBy(m => m.Model, StringComparer.OrdinalIgnoreCase)
+            .GroupBy(m => IdentityKey(m.Model, m.ThinkingLevel))
             .Select(g => new PipelineModelTokenUsage(
-                g.Key,
+                g.First().Model,
                 g.All(m => m.ModelKnown),
                 g.Sum(m => m.UnpricedRuns),
                 MergePricingGaps(g.SelectMany(m => m.PricingGaps)),
@@ -425,9 +434,11 @@ public static class PipelineCostCalculator
                 g.Sum(m => m.CacheReadTokens),
                 g.Sum(m => m.CacheCreationTokens),
                 g.Sum(m => m.TotalTokens),
-                Round(g.Sum(m => m.CostUsd))))
+                Round(g.Sum(m => m.CostUsd)),
+                g.First().ThinkingLevel))
             .OrderByDescending(m => m.TotalTokens)
             .ThenBy(m => m.Model, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(m => m.ThinkingLevel ?? string.Empty, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
         long totalTokens = totalByModel.Sum(m => m.TotalTokens);
@@ -516,6 +527,7 @@ public static class PipelineCostCalculator
             {
                 Ts = item.Step.StartedAt ?? item.Run.StartedAt,
                 Model = item.Step.Model,
+                ThinkingLevel = item.Step.ThinkingLevel,
                 InputTokens = item.Step.InputTokens,
                 OutputTokens = item.Step.OutputTokens,
                 CacheReadTokens = item.Step.CacheReadTokens,
@@ -543,14 +555,16 @@ public static class PipelineCostCalculator
 
     private static IReadOnlyList<PipelineModelTokenUsage> GroupCallsByModel(
         IReadOnlyList<TaskTokenCall> calls,
-        string? runModel)
+        string? runModel,
+        string? runThinkingLevel = null)
     {
         var byModel = new List<PipelineModelTokenUsage>();
-        var groups = calls.GroupBy(
-            call => string.IsNullOrWhiteSpace(call.Model)
-                ? string.IsNullOrWhiteSpace(runModel) ? "unknown" : runModel.Trim()
-                : call.Model.Trim(),
-            StringComparer.OrdinalIgnoreCase);
+        var groups = calls
+            .Select(call => (
+                Call: call,
+                Model: ResolveCallModel(call, runModel),
+                Level: ResolveCallThinkingLevel(call, runModel, runThinkingLevel)))
+            .GroupBy(item => IdentityKey(item.Model, item.Level));
 
         foreach (var group in groups)
         {
@@ -561,7 +575,8 @@ public static class PipelineCostCalculator
             decimal cost = 0m;
             var modelKnown = true;
             var gaps = new List<PipelinePricingGap>();
-            foreach (var call in group)
+            var model = group.First().Model;
+            foreach (var (call, _, _) in group)
             {
                 input += call.InputTokens;
                 output += call.OutputTokens;
@@ -570,7 +585,7 @@ public static class PipelineCostCalculator
                 var tokens = call.InputTokens + call.OutputTokens
                     + call.CacheReadTokens + call.CacheCreationTokens;
                 var estimate = TokenPricing.Estimate(
-                    group.Key,
+                    model,
                     call.InputTokens,
                     call.OutputTokens,
                     call.CacheReadTokens,
@@ -579,12 +594,12 @@ public static class PipelineCostCalculator
                 var priceResolved = tokens == 0 || call.ModelPriced || estimate.ModelKnown;
                 modelKnown &= priceResolved;
                 if (!priceResolved)
-                    gaps.AddRange(PricingGapsFor(estimate, tokens, group.Key));
+                    gaps.AddRange(PricingGapsFor(estimate, tokens, model));
                 cost += call.ModelPriced ? call.EstimatedApiCostUsd : estimate.Total;
             }
 
             byModel.Add(new PipelineModelTokenUsage(
-                Model: group.Key,
+                Model: model,
                 ModelKnown: modelKnown,
                 UnpricedRuns: modelKnown ? 0 : 1,
                 PricingGaps: MergePricingGaps(gaps, oneRun: true),
@@ -594,14 +609,49 @@ public static class PipelineCostCalculator
                 CacheReadTokens: cacheRead,
                 CacheCreationTokens: cacheCreation,
                 TotalTokens: input + output + cacheRead + cacheCreation,
-                CostUsd: Round(cost)));
+                CostUsd: Round(cost),
+                ThinkingLevel: group.First().Level));
         }
 
         return byModel
             .OrderByDescending(model => model.TotalTokens)
             .ThenBy(model => model.Model, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(model => model.ThinkingLevel ?? string.Empty, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
+
+    /// <summary>Canonical model id for a ledger call, falling back to the run's recorded model.</summary>
+    private static string ResolveCallModel(TaskTokenCall call, string? runModel)
+        => string.IsNullOrWhiteSpace(call.Model)
+            ? string.IsNullOrWhiteSpace(runModel) ? "unknown" : runModel.Trim()
+            : call.Model.Trim();
+
+    /// <summary>
+    /// The reasoning level for one ledger call. Prefers the level recorded on
+    /// the call itself. Falls back to the run's own recorded level only when
+    /// the call ran on the run's recorded model - that pair is what the
+    /// run-start session event persisted, so it is recorded data rather than a
+    /// guess. Every other case stays null ("level unknown").
+    /// </summary>
+    private static string? ResolveCallThinkingLevel(
+        TaskTokenCall call,
+        string? runModel,
+        string? runThinkingLevel)
+    {
+        if (!string.IsNullOrWhiteSpace(call.ThinkingLevel)) return call.ThinkingLevel.Trim();
+        if (string.IsNullOrWhiteSpace(runThinkingLevel)) return null;
+        var model = ResolveCallModel(call, runModel);
+        return string.Equals(model, runModel?.Trim(), StringComparison.OrdinalIgnoreCase)
+            ? runThinkingLevel.Trim()
+            : null;
+    }
+
+    /// <summary>
+    /// Case-insensitive grouping key for one (model, reasoning level) identity.
+    /// A missing level is its own bucket, never merged into a levelled one.
+    /// </summary>
+    private static string IdentityKey(string model, string? thinkingLevel)
+        => $"{model.Trim().ToLowerInvariant()}\u0001{thinkingLevel?.Trim().ToLowerInvariant() ?? string.Empty}";
 
     // Sum a flat list of steps into per-model rows, busiest model first.
     private static IReadOnlyList<PipelineModelTokenUsage> GroupByModel(
@@ -609,32 +659,39 @@ public static class PipelineCostCalculator
         DateTime recordedAt)
     {
         var byModel = new List<PipelineModelTokenUsage>();
+        // Steps already record their own reasoning level, so the (model, level)
+        // identity comes straight out of the execution record (AGT-2811).
         var groups = steps
             .Where(s => s.InputTokens + s.OutputTokens + s.CacheReadTokens + s.CacheCreationTokens > 0)
-            .GroupBy(s => string.IsNullOrWhiteSpace(s.Model) ? "unknown" : s.Model!.Trim(),
-                StringComparer.OrdinalIgnoreCase);
+            .Select(s => (
+                Step: s,
+                Model: string.IsNullOrWhiteSpace(s.Model) ? "unknown" : s.Model!.Trim(),
+                Level: string.IsNullOrWhiteSpace(s.ThinkingLevel) ? null : s.ThinkingLevel!.Trim()))
+            .GroupBy(item => IdentityKey(item.Model, item.Level));
 
         foreach (var g in groups)
         {
-            long input = g.Sum(s => s.InputTokens);
-            long output = g.Sum(s => s.OutputTokens);
-            long cacheRead = g.Sum(s => s.CacheReadTokens);
-            long cacheCreation = g.Sum(s => s.CacheCreationTokens);
-            var est = TokenPricing.Estimate(g.Key, input, output, cacheRead, cacheCreation, recordedAt);
+            var model = g.First().Model;
+            long input = g.Sum(item => item.Step.InputTokens);
+            long output = g.Sum(item => item.Step.OutputTokens);
+            long cacheRead = g.Sum(item => item.Step.CacheReadTokens);
+            long cacheCreation = g.Sum(item => item.Step.CacheCreationTokens);
+            var est = TokenPricing.Estimate(model, input, output, cacheRead, cacheCreation, recordedAt);
 
             byModel.Add(new PipelineModelTokenUsage(
-                Model: g.Key,
+                Model: model,
                 ModelKnown: est.ModelKnown,
                 UnpricedRuns: est.ModelKnown ? 0 : 1,
                 PricingGaps: PricingGapsFor(
-                    est, input + output + cacheRead + cacheCreation, g.Key),
+                    est, input + output + cacheRead + cacheCreation, model),
                 Steps: g.Count(),
                 InputTokens: input,
                 OutputTokens: output,
                 CacheReadTokens: cacheRead,
                 CacheCreationTokens: cacheCreation,
                 TotalTokens: input + output + cacheRead + cacheCreation,
-                CostUsd: Round(est.Total)));
+                CostUsd: Round(est.Total),
+                ThinkingLevel: g.First().Level));
         }
 
         return byModel

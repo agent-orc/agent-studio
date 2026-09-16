@@ -14,4 +14,9 @@ public record OrchestratorTokenUsage
     public int OutputTokens { get; init; }
     public int CacheReadTokens { get; init; }
     public int CacheCreationTokens { get; init; }
+    /// <summary>
+    /// Effective reasoning / thinking level of the call, when the caller knows
+    /// it (AGT-2811). Null keeps legacy rows readable as "level unknown".
+    /// </summary>
+    public string? ThinkingLevel { get; init; }
 }
