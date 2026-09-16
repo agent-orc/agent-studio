@@ -382,6 +382,16 @@ public static class TimelineEventKinds
     /// </summary>
     public const string ReviewAttemptClaimed = "review_attempt_claimed";
     /// <summary>
+    /// AGT-2827: a project's build profile or a review pipeline step changed
+    /// while this task's ReviewAttempt was still queued (Pending, unclaimed), so
+    /// its frozen <c>Plan</c> was rebuilt from the new settings before an
+    /// executor could claim the stale one. A claimed (Leased) attempt already
+    /// handed its plan to the executor and never emits this event - it keeps
+    /// the plan it was claimed with. <see cref="TimelineEvent.Details"/> carries
+    /// <c>attemptId</c> and <c>reason</c>.
+    /// </summary>
+    public const string ReviewAttemptReplanned = "review_attempt_replanned";
+    /// <summary>
     /// AGT-2747: a user follow-up was admitted as a queued intent instead of a
     /// local run, because the card's lane, its delivery state, or its configured
     /// execution location forbade spawning a process here.

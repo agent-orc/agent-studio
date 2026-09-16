@@ -32,6 +32,7 @@ import {
   ProjectBuildProfileNoticeComponent,
   type BuildProfileGateSummary,
 } from '../project-build-profile-notice/project-build-profile-notice.component';
+import { ProjectBuildProfileContradictionNoticeComponent } from '../project-build-profile-contradiction-notice/project-build-profile-contradiction-notice.component';
 import { RetentionRulesTableComponent } from '../../../retention/components/retention-rules-table/retention-rules-table.component';
 import { ProjectExecutionDefinitionComponent } from '../project-execution-definition/project-execution-definition';
 
@@ -99,6 +100,7 @@ interface WorkspaceListItemLite {
     ProjectBasicsCardComponent,
     ProjectUrlsPanelComponent,
     ProjectBuildProfileNoticeComponent,
+    ProjectBuildProfileContradictionNoticeComponent,
     RetentionRulesTableComponent,
     ProjectExecutionDefinitionComponent,
   ],

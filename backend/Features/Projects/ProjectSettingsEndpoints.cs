@@ -2,6 +2,7 @@
 
 namespace AgentStudio.Projects;
 
+using AgentStudio.Git;
 using AgentStudio.Pipeline;
 using AgentStudio.Registry;
 using AgentStudio.Security;
@@ -400,7 +401,16 @@ public static class ProjectSettingsEndpoints
 
         // Per-project pipeline-step override. Sets enabled / mode / model for
         // one step; an all-null body clears the override (revert to default).
-        app.MapPut("/api/projects/{projectName}/pipeline-step", (string projectName, SetPipelineStepRequest req, ProjectSettingsService settings, TaskScannerService scanner, RuntimePromptService prompts) =>
+        app.MapPut("/api/projects/{projectName}/pipeline-step", (
+            string projectName,
+            SetPipelineStepRequest req,
+            ProjectSettingsService settings,
+            TaskScannerService scanner,
+            RuntimePromptService prompts,
+            ProjectRegistry projects,
+            GitService git,
+            RemoteReviewPlanBuilder remoteReviewPlans,
+            ReviewAttemptTaskLifecycleService reviewLifecycle) =>
         {
             var known = scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
             if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
@@ -488,6 +498,7 @@ public static class ProjectSettingsEndpoints
                 PromptBaseDefaultContent = promptBaseDefaultContent,
                 Condition = req.Condition,
             });
+            ReplanQueuedReviewAttempts(projectName, settings, projects, git, remoteReviewPlans, reviewLifecycle);
             return Results.Ok(new
             {
                 stepId = req.StepId,
@@ -865,6 +876,10 @@ public static class ProjectSettingsEndpoints
                 ? project.RootPath
                 : project.RepositoryPath;
             var verifyPlan = VerifyCommandPlanner.Plan(repositoryPath, profile);
+            var repositoryDefinition = ProjectDefinitionReader.ReadWorkspace(repositoryPath);
+            var contradictions = BuildProfileContradictionPolicy.Evaluate(
+                repositoryDefinition.IsValid ? repositoryDefinition.Definition : null,
+                profile);
             return Results.Ok(new
             {
                 profile,
@@ -878,13 +893,22 @@ public static class ProjectSettingsEndpoints
                     source = verifyPlan.Source,
                     commands = verifyPlan.Commands,
                 },
+                contradictions,
             });
         });
 
         // PUT declares or edits the build profile. A first declaration blocks;
         // an edit to a validated profile receives the bounded revalidation grace
         // defined by ProjectSettingsService.
-        app.MapPut("/api/projects/{projectName}/build-profile", (string projectName, SetBuildProfileRequest req, ProjectSettingsService settings, TaskScannerService scanner) =>
+        app.MapPut("/api/projects/{projectName}/build-profile", (
+            string projectName,
+            SetBuildProfileRequest req,
+            ProjectSettingsService settings,
+            TaskScannerService scanner,
+            ProjectRegistry projects,
+            GitService git,
+            RemoteReviewPlanBuilder remoteReviewPlans,
+            ReviewAttemptTaskLifecycleService reviewLifecycle) =>
         {
             var known = scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
             if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
@@ -899,6 +923,7 @@ public static class ProjectSettingsEndpoints
                 PreserveGlobs = req.PreserveGlobs,
                 PoolSize = req.PoolSize,
             });
+            ReplanQueuedReviewAttempts(projectName, settings, projects, git, remoteReviewPlans, reviewLifecycle);
             var profile = settings.Get(projectName).BuildProfile;
             return Results.Ok(new { profile, pickupAllowed = BuildProfileGate.AllowsAutoPickup(profile) });
         });
@@ -923,12 +948,20 @@ public static class ProjectSettingsEndpoints
 
         // DELETE clears the build profile entirely, reverting the project to the
         // legacy "no onboarding gate" behaviour.
-        app.MapDelete("/api/projects/{projectName}/build-profile", (string projectName, ProjectSettingsService settings, TaskScannerService scanner) =>
+        app.MapDelete("/api/projects/{projectName}/build-profile", (
+            string projectName,
+            ProjectSettingsService settings,
+            TaskScannerService scanner,
+            ProjectRegistry projects,
+            GitService git,
+            RemoteReviewPlanBuilder remoteReviewPlans,
+            ReviewAttemptTaskLifecycleService reviewLifecycle) =>
         {
             var known = scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
             if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
 
             settings.SetBuildProfile(projectName, null);
+            ReplanQueuedReviewAttempts(projectName, settings, projects, git, remoteReviewPlans, reviewLifecycle);
             return Results.Ok(new { cleared = true });
         });
 
@@ -1118,6 +1151,37 @@ public static class ProjectSettingsEndpoints
             {
                 return Results.BadRequest(new { error = ex.Message });
             }
+        });
+    }
+
+    /// <summary>
+    /// AGT-2827: a build-profile or pipeline-step edit lands here so every
+    /// ReviewAttempt still queued for this project gets its frozen Plan rebuilt
+    /// from the settings that were just written, instead of running the plan
+    /// frozen at its creation. Rebuilds the plan the exact way the original
+    /// creation path does (<see cref="RemoteReviewPlanBuilder.Build"/> over the
+    /// task's resolved repository path and baseline ref) so a re-plan can never
+    /// diverge from what a fresh ReviewAttempt would have received.
+    /// </summary>
+    private static void ReplanQueuedReviewAttempts(
+        string projectName,
+        ProjectSettingsService settings,
+        ProjectRegistry projects,
+        GitService git,
+        RemoteReviewPlanBuilder remoteReviewPlans,
+        ReviewAttemptTaskLifecycleService reviewLifecycle)
+    {
+        reviewLifecycle.ReplanQueuedReviewAttempts(projectName, task =>
+        {
+            var repositoryPath = git.ResolveRepoRootForWatchPath(task.WatchPath);
+            var project = projects.FindByStorageLocation(task.WatchPath)
+                          ?? projects.FindByIdOrDisplayName(task.ProjectName);
+            var taskSettings = settings.Get(task.ProjectName);
+            var integrationRef = ReviewBaselineBranchPolicy.Decide(
+                task.IntegrationBranch,
+                taskSettings.IntegrationBranch,
+                RemoteProjectRepositoryResolver.ReadRepositoryDefaultBranch(project)).IntegrationRef;
+            return remoteReviewPlans.Build(task, repositoryPath, taskSettings, integrationRef);
         });
     }
 

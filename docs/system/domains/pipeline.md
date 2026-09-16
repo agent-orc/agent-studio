@@ -297,6 +297,26 @@ steer the pipeline in this policy version.
   `ReviewInfra / PreparationFailed` retry rebuilds the plan from the current
   registered source instead of inheriting the failed preparation layout; other
   infrastructure retries retain the frozen plan.
+- AGT-2827: a project's build profile or a review pipeline-step edit only
+  reaches a ReviewAttempt that is still queued (`Pending`, unclaimed) for that
+  project - `AttemptAuthorityService.ReplanPendingReview`, driven by
+  `ReviewAttemptTaskLifecycleService.ReplanQueuedReviewAttempts`, rebuilds the
+  frozen `Plan` from the new settings the same way
+  `RemoteReviewPlanBuilder.Build` builds it for a fresh attempt, and records a
+  `review_attempt_replanned` timeline event on the task. A claimed (`Leased`)
+  attempt already handed its plan to an executor and keeps it - `ReplanPendingReview`
+  re-checks the `Pending` guard under the authority lock so a claim that wins a
+  race is never overwritten. This closes the QS-103 incident: a corrected
+  central build profile took effect two minutes too late for a review attempt
+  that had already been queued with the pre-correction command frozen in.
+  `backend/Features/Projects/ProjectSettingsEndpoints.cs` triggers the re-plan
+  from every build-profile and pipeline-step write. Separately,
+  `backend/Features/Pipeline/BuildProfileContradictionPolicy.cs` flags when a
+  declared central `BuildProfile` command disagrees with a valid repository
+  `.agent-studio/project.yml` - the repository definition always wins outright
+  (`VerifyCommandPlanner.Plan`), so a disagreement is otherwise silent. The
+  `GET /api/projects/{name}/build-profile` response carries the result as
+  `contradictions`, and Project Settings renders it as a warning.
   `backend/Features/Runner/RemotePipelineReviewEvidenceProjector.cs` projects
   accepted, fenced command evidence back into the ordinary
   `pipeline-execution.json`, aspect Markdown/JSON, file provenance, and
