@@ -347,8 +347,21 @@ public sealed record TaskIntegrationFailure
 /// </summary>
 public static class IntegrationStatuses
 {
-    /// <summary>Every attributed commit the card shows is provably present in the current integration-branch graph.</summary>
+    /// <summary>
+    /// Every attributed commit the card shows is provably reachable from the
+    /// PUBLISHED integration branch (<c>origin/&lt;branch&gt;</c>, or the local
+    /// branch in a repository that has no origin mirror at all).
+    /// </summary>
     public const string Integrated = "integrated";
+
+    /// <summary>
+    /// Every attributed commit is in the local integration-branch graph, but not
+    /// (yet) reachable from the pushed remote branch (AGT-2849). A merge that
+    /// only a local or worktree ref can see is not integrated: a restart, a
+    /// rollback, or a blocked push can still take it away, and no other machine
+    /// can see it. The card says so instead of claiming the delivery landed.
+    /// </summary>
+    public const string MergedLocally = "merged-locally";
 
     /// <summary>Some — but not all — of the attributed commits the card shows are in develop; the rest have not landed yet.</summary>
     public const string Partial = "partial";
@@ -368,7 +381,8 @@ public static class IntegrationStatuses
     /// <summary>The card has no delivery ref and no attributed commit - nothing to integrate.</summary>
     public const string NoBranch = "no-branch";
 
-    public static readonly string[] All = [Integrated, Partial, Pending, ConflictSkipped, NoBranch];
+    public static readonly string[] All =
+        [Integrated, MergedLocally, Partial, Pending, ConflictSkipped, NoBranch];
 
     /// <summary>
     /// Persisted recovery marker stamped while transactional acceptance is
@@ -389,10 +403,27 @@ public static class IntegrationStatuses
         => string.Equals(tag, PendingTag, StringComparison.OrdinalIgnoreCase)
            || string.Equals(tag, "integration:pending", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>True when the card carries integrable work that is not (fully) in develop (partial, pending or conflict).</summary>
+    /// <summary>
+    /// True when the delivery is present in the integration branch graph, whether
+    /// or not the push has published it yet. This is the merge-completion
+    /// question: acceptance, the acceptance rail, and integration recovery ask it
+    /// because the origin push is a separate, backstopped step and re-running the
+    /// merge cannot advance it. Use <see cref="Integrated"/> itself wherever the
+    /// claim is that the delivery has actually landed for everyone.
+    /// </summary>
+    public static bool IsMerged(string? status)
+        => string.Equals(status, Integrated, StringComparison.Ordinal)
+           || string.Equals(status, MergedLocally, StringComparison.Ordinal);
+
+    /// <summary>
+    /// True when the card carries integrable work that is not (fully) published
+    /// on the integration branch: partial, pending, conflict, or merged only in
+    /// the local graph.
+    /// </summary>
     public static bool IsNotIntegrated(string? status)
         => string.Equals(status, Partial, StringComparison.Ordinal)
            || string.Equals(status, Pending, StringComparison.Ordinal)
+           || string.Equals(status, MergedLocally, StringComparison.Ordinal)
            || string.Equals(status, ConflictSkipped, StringComparison.Ordinal);
 
     public static string Normalize(string? value)
