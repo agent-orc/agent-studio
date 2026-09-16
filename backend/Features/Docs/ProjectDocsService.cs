@@ -80,10 +80,12 @@ public class ProjectDocsService
 
     // Building the wiki projection opens documents for titles, summaries,
     // lifecycle fields, and Pulse metadata. WikiContentCache owns the assembled
-    // snapshot and rebuild boundary. This per-file title memo survives eager
-    // rebuilds so an unchanged page does not need another title sniff after a
-    // neighboring page changes.
-    private readonly ConcurrentDictionary<string, (long Mtime, long Size, string? Title)> _titleCache =
+    // snapshot and rebuild boundary. This per-file memo survives eager
+    // rebuilds so an unchanged page does not need another sniff after a
+    // neighboring page changes. One entry carries both the display title and
+    // the article front-matter tags (AGT-2803), so a warm page costs no read
+    // for either.
+    private readonly ConcurrentDictionary<string, (long Mtime, long Size, string? Title, string[] Tags)> _titleCache =
         new(StringComparer.OrdinalIgnoreCase);
 
     public ProjectDocsService(
@@ -509,7 +511,7 @@ public class ProjectDocsService
             _titleCache,
             folderOrder,
             fileOrder,
-            LoadRegisteredWorkbenchEntryPaths(wikiDir));
+            LoadRegisteredWorkbenchTags(wikiDir));
         var tree = new WikiTree(projectName, "docs", true, root, source.Info);
         var treeResult = new WikiTreeResult(
             tree,
@@ -1550,10 +1552,10 @@ public class ProjectDocsService
         DirectoryInfo dir,
         string docsRoot,
         IReadOnlyDictionary<string, WikiTreeMetadata> metadataByRelPath,
-        ConcurrentDictionary<string, (long Mtime, long Size, string? Title)> titleCache,
+        ConcurrentDictionary<string, (long Mtime, long Size, string? Title, string[] Tags)> titleCache,
         IReadOnlyDictionary<string, IReadOnlyList<string>> folderOrderByParent,
         IReadOnlyDictionary<string, IReadOnlyList<string>> fileOrderByParent,
-        IReadOnlySet<string> registeredWorkbenchEntryPaths)
+        IReadOnlyDictionary<string, string[]> registeredWorkbenchTags)
     {
         var nodes = new List<WikiTreeNode>();
 
@@ -1564,7 +1566,7 @@ public class ProjectDocsService
             if (IsWikiAppPath(subRel)) continue; // docs/app/ is code contract, not a wiki page
             var children = BuildTreeNodes(
                 sub, docsRoot, metadataByRelPath, titleCache, folderOrderByParent,
-                fileOrderByParent, registeredWorkbenchEntryPaths);
+                fileOrderByParent, registeredWorkbenchTags);
             if (children.Count == 0) continue; // prune empty folders
             var rel = Path.GetRelativePath(docsRoot, sub.FullName).Replace('\\', '/');
             nodes.Add(new WikiTreeNode(
@@ -1584,9 +1586,11 @@ public class ProjectDocsService
                 : ext.Equals(".json", StringComparison.OrdinalIgnoreCase)
                     ? "json"
                     : "html";
-            var title = ResolveDocTitleCached(titleCache, file, ext)
+            var facts = ResolveDocFactsCached(titleCache, file, ext);
+            var title = facts.Title
                 ?? StripOrderPrefix(Path.GetFileNameWithoutExtension(file.Name));
             metadataByRelPath.TryGetValue(rel, out var metadata);
+            var isWorkbenchEntry = registeredWorkbenchTags.TryGetValue(rel, out var descriptorTags);
             nodes.Add(new WikiTreeNode(
                 file.Name, title, rel, type, [], metadata,
                 BuildClassification(
@@ -1595,7 +1599,10 @@ public class ProjectDocsService
                     metadata?.ClassificationSupersededBy,
                     metadata?.ClassificationType,
                     metadata?.ClassificationAnalyzedAt,
-                    registeredWorkbenchEntryPaths.Contains(rel) ? "workbench" : null)));
+                    isWorkbenchEntry ? "workbench" : null),
+                // A Dossier entry page is tagged by its descriptor, an article
+                // by its own front matter; both reach the tree the same way.
+                isWorkbenchEntry ? descriptorTags! : facts.Tags));
         }
 
         var dirRel = Path.GetRelativePath(docsRoot, dir.FullName).Replace('\\', '/');
@@ -1607,24 +1614,86 @@ public class ProjectDocsService
     }
 
     /// <summary>
-    /// Sniffs a doc's title, memoized by (path, mtime, size). A cache hit returns
-    /// the previously-sniffed title without opening the file - the read that
-    /// dominated tree building. The actual read (on a miss) happens inside
-    /// <see cref="ExtractDocTitle"/>, which is where the file-read is recorded
-    /// against the ambient telemetry scope, so the rollup's file count reflects
-    /// only genuine disk work.
+    /// Sniffs a doc's display title and its article tags, memoized by
+    /// (path, mtime, size). A cache hit returns both without opening the file -
+    /// the read that dominated tree building. The reads (on a miss) happen
+    /// inside <see cref="ExtractDocTitle"/> and <see cref="ExtractDocTags"/>,
+    /// which is where each file-read is recorded against the ambient telemetry
+    /// scope, so the rollup's file count reflects only genuine disk work.
     /// </summary>
-    private static string? ResolveDocTitleCached(
-        ConcurrentDictionary<string, (long Mtime, long Size, string? Title)> cache,
+    private static (string? Title, string[] Tags) ResolveDocFactsCached(
+        ConcurrentDictionary<string, (long Mtime, long Size, string? Title, string[] Tags)> cache,
         FileInfo file, string ext)
     {
         var mtime = file.LastWriteTimeUtc.Ticks;
         var size = file.Length;
         if (cache.TryGetValue(file.FullName, out var e) && e.Mtime == mtime && e.Size == size)
-            return e.Title;
+            return (e.Title, e.Tags);
         var title = ExtractDocTitle(file.FullName, ext);
-        cache[file.FullName] = (mtime, size, title);
-        return title;
+        var tags = ExtractDocTags(file.FullName, ext);
+        cache[file.FullName] = (mtime, size, title, tags);
+        return (title, tags);
+    }
+
+    /// <summary>
+    /// Article front-matter tags (AGT-2803). Only Markdown articles carry them;
+    /// an HTML Dossier entry page is tagged by its descriptor instead. Ids that
+    /// do not match the stable tag grammar are dropped rather than surfaced, so
+    /// a hand-edited page cannot inject arbitrary strings into the filter.
+    /// </summary>
+    private static string[] ExtractDocTags(string path, string extension)
+    {
+        if (!extension.Equals(".md", StringComparison.OrdinalIgnoreCase)) return [];
+        GitProcessTelemetry.RecordFileRead();
+        try
+        {
+            using var reader = new StreamReader(path);
+            var head = new char[4096];
+            var read = reader.ReadBlock(head, 0, head.Length);
+            return FrontmatterTags(new string(head, 0, read));
+        }
+        catch (Exception __ex)
+        {
+            SilentCatch.Note(__ex, "ProjectDocsService: unreadable article front matter; the page carries no tags.");
+            return [];
+        }
+    }
+
+    /// <summary>
+    /// Reads <c>tags:</c> out of a YAML front-matter block in both accepted
+    /// forms: the inline list <c>tags: [a, b]</c> and the block list of
+    /// <c>- a</c> items.
+    /// </summary>
+    internal static string[] FrontmatterTags(string text)
+    {
+        var frontmatter = WikiFrontmatterRegex.Match(text);
+        if (!frontmatter.Success) return [];
+        var lines = frontmatter.Groups["body"].Value.Replace("\r\n", "\n").Split('\n');
+        var tags = new List<string>();
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i];
+            var match = Regex.Match(line, @"^tags:\s*(?<inline>.*)$", RegexOptions.IgnoreCase);
+            if (!match.Success) continue;
+            var inline = match.Groups["inline"].Value.Trim().Trim('[', ']');
+            if (inline.Length > 0)
+            {
+                tags.AddRange(inline.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                    .Select(value => value.Trim('"', '\'')));
+                break;
+            }
+            for (var j = i + 1; j < lines.Length; j++)
+            {
+                var item = Regex.Match(lines[j], @"^\s*-\s*(?<value>.+?)\s*$");
+                if (!item.Success) break;
+                tags.Add(item.Groups["value"].Value.Trim('"', '\''));
+            }
+            break;
+        }
+        return [.. tags
+            .Select(tag => tag.Trim())
+            .Where(AgentStudio.Areas.AreaTaxonomy.IsValidId)
+            .Distinct(StringComparer.Ordinal)];
     }
 
     /// <summary>
@@ -1826,13 +1895,15 @@ public class ProjectDocsService
     }
 
     /// <summary>
-    /// Resolves Workbench entry pages from their colocated registrations. This
-    /// is the registry half of page-type derivation and keeps the Wiki tree's
-    /// eye icon aligned with Explorer and the Workbench tab.
+    /// Resolves Workbench entry pages from their colocated registrations, each
+    /// with the descriptor's tag ids. This is the registry half of page-type
+    /// derivation, keeps the Wiki tree's eye icon aligned with Explorer and the
+    /// Workbench tab, and lets a Dossier entry page answer the same area / tag
+    /// filter as a Markdown article (AGT-2803).
     /// </summary>
-    private static IReadOnlySet<string> LoadRegisteredWorkbenchEntryPaths(string docsRoot)
+    private static IReadOnlyDictionary<string, string[]> LoadRegisteredWorkbenchTags(string docsRoot)
     {
-        var entries = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var entries = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
         foreach (var descriptor in Directory.EnumerateFiles(docsRoot, "workbench.json", SearchOption.AllDirectories))
         {
             try
@@ -1846,7 +1917,16 @@ public class ProjectDocsService
                     ? docsRoot
                     : docsRoot + Path.DirectorySeparatorChar;
                 if (!full.StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase)) continue;
-                entries.Add(Path.GetRelativePath(docsRoot, full).Replace('\\', '/'));
+                var tags = json.RootElement.TryGetProperty("tags", out var stored)
+                           && stored.ValueKind == JsonValueKind.Array
+                    ? stored.EnumerateArray()
+                        .Where(item => item.ValueKind == JsonValueKind.String)
+                        .Select(item => item.GetString()!)
+                        .Where(AgentStudio.Areas.AreaTaxonomy.IsValidId)
+                        .Distinct(StringComparer.Ordinal)
+                        .ToArray()
+                    : [];
+                entries[Path.GetRelativePath(docsRoot, full).Replace('\\', '/')] = tags;
             }
             catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
             {
@@ -3318,7 +3398,39 @@ public record WikiTreeNode(
     WikiTreeMetadata? Metadata,
     // Page nodes only: the curated classification (sidecar first, folder-default
     // type as fallback); null for folders and unclassified pages.
-    WikiClassification? Classification = null);
+    WikiClassification? Classification = null,
+    // Page nodes only (AGT-2803): area and facet tag ids, read from the
+    // article's front matter or, for a Dossier entry page, from its descriptor.
+    string[]? Tags = null);
+
+/// <summary>
+/// Prunes a wiki tree to the pages that satisfy an area / tag filter. A folder
+/// survives only while it still has a matching descendant, so the filtered tree
+/// is navigable rather than a flat hit list.
+/// </summary>
+public static class WikiTreeFilter
+{
+    public static WikiTree Apply(WikiTree tree, AgentStudio.Areas.TagFilter filter) =>
+        filter.IsActive ? tree with { Root = Prune(tree.Root, filter) } : tree;
+
+    private static List<WikiTreeNode> Prune(
+        IEnumerable<WikiTreeNode> nodes,
+        AgentStudio.Areas.TagFilter filter)
+    {
+        var kept = new List<WikiTreeNode>();
+        foreach (var node in nodes)
+        {
+            if (node.Type == "folder")
+            {
+                var children = Prune(node.Children, filter);
+                if (children.Count > 0) kept.Add(node with { Children = children });
+                continue;
+            }
+            if (filter.Matches(node.Tags)) kept.Add(node);
+        }
+        return kept;
+    }
+}
 
 /// <summary>The physical docs/ folder tree exposed to the wiki UI.</summary>
 public record WikiSourceInfo(

@@ -375,6 +375,30 @@ public record ProjectSettings
     /// suite as an infrastructure timeout.
     /// </summary>
     public int? BuildTestGateTimeoutSeconds { get; init; }
+
+    /// <summary>
+    /// AGT-2803: this project's additions to the areas registry. The ten
+    /// product-default areas are inherited by every project and are not stored
+    /// here; an entry with a product id only re-labels that area. The active
+    /// <c>project.yml</c> (v1) is closed for new fields and the v2 plan records
+    /// <c>project.areas</c> as a later extension request, so the project-level
+    /// area configuration lives in this workspace setting until a v2 reader
+    /// exists. Persisted in <c>project-settings.json</c>.
+    /// </summary>
+    public IReadOnlyList<ProjectAreaSetting>? Areas { get; init; }
+}
+
+/// <summary>
+/// One project addition to the areas registry. The id is the stable
+/// classification key and is also the area's tag id; label and description are
+/// display metadata. The glossary itself is a wiki page under the area and is
+/// never stored in the settings file.
+/// </summary>
+public sealed record ProjectAreaSetting
+{
+    public string Id { get; init; } = "";
+    public string Label { get; init; } = "";
+    public string Description { get; init; } = "";
 }
 
 public sealed record ProjectExecutionDefinitionOverride(

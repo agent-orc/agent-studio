@@ -65,6 +65,25 @@ public class ProjectSettingsService
         }
     }
 
+    /// <summary>
+    /// Replace-all write of this project's additions to the areas registry
+    /// (AGT-2803). The product defaults are never stored; an entry that carries
+    /// a product id only re-labels that area. Validation belongs to the calling
+    /// boundary, which owns the stability rules in
+    /// <see cref="AgentStudio.Areas.AreaTaxonomy"/>.
+    /// </summary>
+    public void SetProjectAreas(string projectName, IReadOnlyList<ProjectAreaSetting> areas)
+    {
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var s) ? s : new ProjectSettings();
+            _cache[key] = current with { Areas = areas.Count == 0 ? null : areas };
+            Persist();
+        }
+    }
+
     public void SetCrashRecoveryEnabled(string projectName, bool enabled)
     {
         EnsureLoaded();

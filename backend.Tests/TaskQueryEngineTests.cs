@@ -119,6 +119,34 @@ public class TaskQueryEngineTests : IDisposable
         Assert.Equal(90d, item["duration"]);
     }
 
+    [Fact]
+    public void Execute_FiltersByAreaAndTagAsAConjunction()
+    {
+        var delivery = Job("delivery", TaskStates.Ready, "merge bounce", tags: ["delivery-chain", "incident"]);
+        var observation = Job("observation", TaskStates.Ready, "watcher probe", tags: ["observation", "incident"]);
+        var untagged = Job("untagged", TaskStates.Ready, "nothing");
+        TaskInfo[] jobs = [delivery, observation, untagged];
+
+        // area alone
+        Assert.Equal(["delivery"], Ids(TaskQueryEngine.Execute(jobs, Query("area=delivery-chain&fields=id"))));
+        // areas inside one parameter are alternatives
+        Assert.Equal(["delivery", "observation"],
+            Ids(TaskQueryEngine.Execute(jobs, Query("area=delivery-chain,observation&sortBy=key&order=asc&fields=id"))));
+        // area and tag narrow each other
+        Assert.Equal(["delivery"],
+            Ids(TaskQueryEngine.Execute(jobs, Query("area=delivery-chain&tag=incident&fields=id"))));
+        Assert.Empty(Ids(TaskQueryEngine.Execute(jobs, Query("area=delivery-chain&tag=evidence&fields=id"))));
+    }
+
+    [Fact]
+    public void FromQuery_TreatsAreaAsAnAnalysisParameter() =>
+        Assert.True(Query("area=observation").IsActive);
+
+    private static List<object?> Ids(TaskQueryResponse response) =>
+        [.. response.Items
+            .Cast<Dictionary<string, object?>>()
+            .Select(item => item["id"])];
+
     private static TaskQueryRequest Query(string queryString)
     {
         var context = new DefaultHttpContext();
@@ -136,11 +164,13 @@ public class TaskQueryEngineTests : IDisposable
         string? cliType = null,
         string? verdict = null,
         string? issue = null,
-        string? folder = null)
+        string? folder = null,
+        List<string>? tags = null)
     {
         folder ??= MakeFolder(id);
         return new TaskInfo
         {
+            Tags = tags ?? [],
             Id = id,
             Key = "ATP-" + id,
             TaskKey = _root + "::" + id,

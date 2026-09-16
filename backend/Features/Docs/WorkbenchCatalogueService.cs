@@ -540,6 +540,7 @@ public sealed class WorkbenchCatalogueService
                 {
                     Key = key,
                     Pattern = ArticlePatterns.Normalize(OptionalString(obj, "pattern")),
+                    Tags = ReadTags(obj),
                     DescriptorSourceTaskKeys = StringArray(obj, "sourceTaskKeys"),
                     RelatedTaskKeys = StringArray(obj, "relatedTaskKeys"),
                     LifecycleState = lifecycleState ?? LifecycleFromStatus(status, phase),
@@ -854,6 +855,31 @@ public sealed class WorkbenchCatalogueService
         obj.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Array
             ? value.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!).ToArray()
             : [];
+
+    /// <summary>
+    /// Reads the optional <c>tags[]</c> of a descriptor. The shape is strict -
+    /// an array of tag ids in the stable grammar - while membership in the
+    /// registry is not checked here: a descriptor must not become invalid
+    /// because a tag was retired after it was written.
+    /// </summary>
+    private static string[] ReadTags(JsonElement obj)
+    {
+        if (!obj.TryGetProperty("tags", out var value)) return [];
+        if (value.ValueKind != JsonValueKind.Array)
+            throw new InvalidDataException("tags must be an array of tag ids.");
+        var tags = new List<string>();
+        foreach (var item in value.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.String)
+                throw new InvalidDataException("tags must be an array of tag ids.");
+            var id = item.GetString() ?? "";
+            if (!AreaTaxonomy.IsValidId(id))
+                throw new InvalidDataException($"Invalid tag id '{id}' in tags.");
+            if (!tags.Contains(id, StringComparer.Ordinal)) tags.Add(id);
+        }
+        if (tags.Count > 50) throw new InvalidDataException("A Dossier carries at most 50 tags.");
+        return [.. tags];
+    }
 
     private static WorkbenchReviewProjection? ReadReview(JsonElement obj)
     {
@@ -1224,6 +1250,13 @@ public record WorkbenchListItem(string Id, string Title, string Summary, string 
 {
     public string? Key { get; init; }
     public string Pattern { get; init; } = ArticlePatterns.Concept;
+    /// <summary>
+    /// AGT-2803: the descriptor's <c>tags[]</c>, area and facet ids from the
+    /// project's tag vocabulary. Reads are lenient (an id that later leaves the
+    /// registry renders as a ghost chip); writes go through
+    /// <see cref="WorkbenchTagService"/>, which refuses unknown ids.
+    /// </summary>
+    public string[] Tags { get; init; } = [];
     [System.Text.Json.Serialization.JsonIgnore]
     public string[] DescriptorSourceTaskKeys { get; init; } = [];
     public string[] RelatedTaskKeys { get; init; } = [];
