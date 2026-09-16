@@ -338,7 +338,14 @@ public sealed class HumanReviewEscalation
         }
         try
         {
-            var pass = string.Equals(outcome, "Pass", StringComparison.OrdinalIgnoreCase);
+            // AGT-2819: an integration-branch defect says nothing against the
+            // card, so the journal must not record it as an escalation of the
+            // card's content.
+            var pass = string.Equals(outcome, "Pass", StringComparison.OrdinalIgnoreCase)
+                       || string.Equals(
+                           outcome,
+                           nameof(ReviewTerminalOutcome.IntegrationBranchDefect),
+                           StringComparison.OrdinalIgnoreCase);
             var chain = attemptChain is null ? string.Empty : " " + attemptChain.Headline;
             ReviewDecisionLog.Append(_workspaceRoot!, new ReviewDecisionRecord(
                 CreatedAt: DateTime.UtcNow,

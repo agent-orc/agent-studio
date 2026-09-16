@@ -1,0 +1,273 @@
+@use '../../../../../../styles/mixins' as m;
+
+// Page-focused drift dialog, moved out of the Knowledge section in AGT-2819.
+// The four chrome classes below are carried along: emulated encapsulation scopes
+// the section's own copies to the section, and the dialog renders through the
+// overlay portal outside the section's DOM subtree anyway.
+:host { display: contents; }
+
+.pwiki__spacer { flex: 1; }
+
+.pwiki__new-group {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--studio-spacing-1);
+  min-height: 26px;
+  padding: 0 var(--studio-spacing-2);
+  border: 1px solid var(--studio-border);
+  border-radius: 5px;
+  background: var(--studio-bg-sidebar);
+  color: var(--studio-fg);
+  font-size: 0.76rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.pwiki__new-group:hover:not(:disabled) {
+  background: var(--studio-bg-hover);
+  border-color: color-mix(in srgb, var(--studio-accent) 35%, var(--studio-border));
+  color: var(--studio-fg-strong);
+}
+
+.pwiki__new-group:disabled {
+  border-color: var(--studio-wiki-source-disabled-border);
+  background: var(--studio-wiki-source-disabled-bg);
+  color: var(--studio-wiki-source-disabled-fg);
+  cursor: not-allowed;
+}
+
+.pwiki__new-group--accent {
+  border-color: color-mix(in srgb, var(--studio-accent) 34%, var(--studio-border));
+  background: color-mix(in srgb, var(--studio-accent) 8%, var(--studio-bg-sidebar));
+  color: var(--studio-accent-strong);
+}
+
+.pwiki__doc-kind {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 0 var(--studio-spacing-2);
+  border: 1px solid var(--pwiki-paper-border);
+  border-radius: 3px;
+  background: var(--pwiki-paper-soft);
+  color: var(--pwiki-paper-muted);
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.pwiki__viewer-close {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--studio-spacing-1);
+  min-height: 34px;
+  margin-left: 0;
+  padding: 0 var(--studio-spacing-2);
+  border: 0;
+  border-left: 1px solid var(--studio-border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--studio-fg-muted);
+  font-size: 0.76rem;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.pwiki__viewer-close:hover {
+  background: var(--studio-bg-hover);
+  color: var(--studio-fg);
+}
+
+.pwiki__drift-modal {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--studio-modal-padding);
+  background: var(--studio-scrim);
+  z-index: 1200;
+}
+
+.pwiki__drift-card {
+  width: min(1040px, 96vw);
+  max-height: min(780px, 92vh);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--studio-border);
+  border-radius: 8px;
+  background: var(--studio-bg-editor);
+  color: var(--studio-fg);
+  box-shadow: var(--elevation-modal);
+}
+
+.pwiki__drift-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--studio-spacing-4);
+  padding: var(--studio-spacing-5);
+  border-bottom: 1px solid var(--studio-border);
+  background: color-mix(in srgb, var(--studio-bg-sidebar) 86%, var(--studio-bg-editor));
+}
+
+.pwiki__drift-head h3 {
+  margin: var(--studio-spacing-2) 0 var(--studio-spacing-1);
+  color: var(--studio-fg-strong);
+  font-size: 1rem;
+}
+
+.pwiki__drift-head p {
+  margin: 0;
+  color: var(--studio-fg-muted);
+  font-size: 0.82rem;
+}
+
+.pwiki__drift-head .pwiki__viewer-close {
+  min-height: 26px;
+  border: 1px solid var(--studio-border);
+  border-radius: 5px;
+  background: var(--studio-bg-sidebar);
+}
+
+.pwiki__drift-grid {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+  gap: var(--studio-spacing-4);
+  flex: 1 1 auto;
+  padding: var(--studio-spacing-5);
+  overflow: hidden;
+}
+
+.pwiki__drift-config {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-3);
+}
+
+.pwiki__drift-config label {
+  display: grid;
+  gap: var(--studio-spacing-1);
+  color: var(--studio-fg-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.pwiki__drift-config select {
+  min-height: 30px;
+  border: 1px solid var(--studio-border);
+  border-radius: 5px;
+  background: var(--studio-bg-sidebar);
+  color: var(--studio-fg);
+  font: inherit;
+  text-transform: none;
+}
+
+.pwiki__drift-facts {
+  display: grid;
+  gap: var(--studio-spacing-2);
+  margin: 0;
+  padding: var(--studio-spacing-3);
+  border: 1px solid var(--studio-border);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--studio-bg-sidebar) 72%, transparent);
+}
+
+.pwiki__drift-facts div {
+  display: grid;
+  gap: var(--studio-spacing-1);
+}
+
+.pwiki__drift-facts dt {
+  margin: 0;
+  color: var(--studio-fg-muted);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.pwiki__drift-facts dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--studio-fg);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+.pwiki__drift-msg,
+.pwiki__drift-error {
+  margin: 0;
+  padding: var(--studio-spacing-2);
+  border-radius: 5px;
+  font-size: 0.78rem;
+}
+
+.pwiki__drift-msg {
+  border: 1px solid color-mix(in srgb, var(--studio-accent-teal) 35%, var(--studio-border));
+  background: color-mix(in srgb, var(--studio-accent-teal) 10%, transparent);
+  color: var(--studio-fg);
+}
+
+.pwiki__drift-error {
+  border: 1px solid color-mix(in srgb, var(--severity-high) 35%, var(--studio-border));
+  background: color-mix(in srgb, var(--severity-high) 10%, transparent);
+  color: var(--severity-high);
+}
+
+.pwiki__drift-result {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--studio-border);
+  border-radius: 7px;
+  background: var(--studio-bg-editor);
+  color: var(--studio-fg);
+  overflow: hidden;
+}
+
+.pwiki__drift-result-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 32px;
+  padding: 0 var(--studio-spacing-3);
+  border-bottom: 1px solid var(--studio-border-strong);
+  color: var(--studio-fg-dim);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.pwiki__drift-result pre {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  overflow: auto;
+  padding: var(--studio-spacing-4);
+  background: var(--studio-bg-editor);
+  color: var(--studio-fg);
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  @include m.thin-scroll;
+}
+
+.pwiki__drift-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--studio-spacing-2);
+  padding: var(--studio-spacing-4) var(--studio-spacing-5);
+  border-top: 1px solid var(--studio-border);
+}

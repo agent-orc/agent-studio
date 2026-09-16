@@ -28,7 +28,7 @@
     "docs:visual:headed": "playwright test e2e/visual-evidence/readme-screenshots.spec.ts --project=chromium --headed",
     "docs:presentation": "bash ../scripts/presentation-capture/generate.sh",
     "lint": "ng lint && npm run lint:scss && npm run lint:components && npm run lint:structure && npm run lint:process-spawns",
-    "lint:ci": "ng lint && npm run lint:scss && npm run lint:structure && npm run lint:process-spawns",
+    "lint:ci": "npm run lint",
     "lint:css": "stylelint \"src/**/*.scss\"",
     "lint:scss": "stylelint \"src/**/*.scss\"",
     "lint:scss:strict": "stylelint \"src/**/*.scss\" --max-warnings=0",

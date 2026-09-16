@@ -1,9 +1,8 @@
 import {
-  ChangeDetectionStrategy, Component, DestroyRef, ElementRef, ViewChild, computed, effect, inject, input, output, signal,
+  ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, input, output, signal,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { TaskState, type CliType, type PromoteToCodingResponse, type TaskInfo } from '../../../../../models/task.model';
-import { CreateTaskFormService, type PendingAttachment } from '../../../../board';
+import { TaskState, type CliType, type TaskInfo } from '../../../../../models/task.model';
 import type { CliModelInfo } from '../../../../cli';
 import type { RunRecord } from '../../../../run-timeline';
 import { RunTimelinePollService } from '../../../../polling/services/run-timeline-poll.service';
@@ -13,39 +12,27 @@ import { TaskPipelinePollService } from '../../../../polling/services/task-pipel
 import { TaskTimelinePollService } from '../../../../polling/services/task-timeline-poll.service';
 import type {
   PipelineExecutionRecord,
-  PipelinePricingGap,
   PipelineStep,
-  PipelineStepConfig,
-  PipelineStepStatus,
   TaskPipelineResponse,
-  StepKind,
-  StepRunMode,
 } from '../../../../task-pipeline';
 import { ClientService } from '../../../../../services/client.service';
 import { CliModelSelectorComponent } from '../../../../../components/cli-model-selector';
-import { DialogComponent } from '../../../../../components/dialog/dialog.component';
 import { StudioIconComponent } from '../../../../../components/studio-icon/studio-icon.component';
 import { RegressionRadarComponent } from '../../../../regression-radar';
-import { AgentWorkDetailComponent } from '../agent-work-detail/agent-work-detail.component';
 import type { PipelineStepResultHeader } from '../pipeline-step-result/pipeline-step-result.component';
 import { ReferencesSectionComponent } from '../../references-section/references-section.component';
-import { PlanningSpawnPanelComponent } from '../../planning-spawn-panel/planning-spawn-panel.component';
-import { ConceptDossierNoticeComponent } from '../../concept-dossier-notice/concept-dossier-notice.component';
 import { TooltipDirective, type StructuredTooltip, type TooltipSeverity } from 'coding-agent-chat/shared';
-import { TaskPromptPopoverComponent } from '../task-prompt-popover/task-prompt-popover.component';
 import { PipelineRunHistoryComponent } from '../pipeline-run-history/pipeline-run-history.component';
 import { PipelineTokenUsageComponent } from '../pipeline-token-usage/pipeline-token-usage.component';
 import { PipelineStepDetailsComponent } from '../pipeline-step-details/pipeline-step-details.component';
 import { PipelineStepToggleComponent } from '../pipeline-step-toggle/pipeline-step-toggle.component';
 import { PostStepControlsComponent } from '../post-step-controls/post-step-controls.component';
-import { lifecyclePhaseLabel } from './lifecycle-phase.util';
 import {
   isSteeringKind,
   steeringInfoFromEvent,
   type SteeringInfo,
 } from '../../../../../components/steering-detail';
 import { cliTypeLabel } from '../../../../../services/format.util';
-import { projectIdentity } from '../../../../../services/project-identity.util';
 import { TaskService } from '../../../../../services/task.service';
 import {
   CostBreakdownTriggerDirective,
@@ -54,9 +41,6 @@ import {
 } from '../../../../tokens';
 import { NotificationService } from '../../../../../services/notification.service';
 import { ModalStackService } from '../../../../../services/modal-stack.service';
-import { copyTextToClipboard } from '../../../../../services/clipboard.util';
-import { ExecutionLocationBadgeComponent } from '../../../../../components/execution-location-badge/execution-location-badge.component';
-import { CopyableTaskKeyComponent } from '../../../../../components/copyable-task-key/copyable-task-key.component';
 import {
   buildPipelineGroups,
   groupAriaLabel,
@@ -72,8 +56,13 @@ import {
   formatPipelineCost,
 } from './pipeline-cost-tooltip.util';
 import {
+  formatAbsoluteTime,
+  formatClock,
   formatDuration,
+  formatRelativeTime,
+  formatStepDuration,
   formatTokens,
+  liveStepDurationMs,
   historicalStepStatusIcon,
   laneLabel,
   stepKindIcon,
@@ -84,424 +73,36 @@ import {
 import { laneTone } from '../../../../../models/lane-presentation';
 import { PipelineHistoryNoticeComponent } from './pipeline-history-notice/pipeline-history-notice.component';
 import { OverviewRunsComponent } from './overview-runs/overview-runs.component';
+import { OverviewTitleBlockComponent } from './overview-title-block/overview-title-block.component';
+import { OverviewStepTokenModalComponent } from './overview-step-token-modal/overview-step-token-modal.component';
+import { OverviewAgentWorkComponent } from './overview-agent-work/overview-agent-work.component';
 import { distinctStepVerdict } from './pipeline-status-verdict.util';
 import type { ProtocolVerdict } from '../../protocol-pane/protocol-verdict';
 import { outcomeDecisionBadge, type DecisionBadgeVm } from './outcome-decision-badge.util';
 
-interface PipelineRowVm {
-  id: string;
-  label: string;
-  kind: StepKind;
-  phaseKey: PipelinePhaseKey;
-  phaseLabel: string;
-  phaseDescription: string;
-  startsPhase: boolean;
-  /**
-   * 'parallel' for the read-only aspect reviews that run concurrently in the
-   * orchestrator pool; 'sequential' for the core run and the single final
-   * verdict. Drives the "Parallel" badge so the two phases read as distinct.
-   */
-  runMode: StepRunMode;
-  /** True only for `post-orchestrator-decision`. */
-  isFinalVerdict: boolean;
-  /** Historical rows are read-only evidence and never use live state colour. */
-  historical: boolean;
-  enabled: boolean;
-  canDisable: boolean;
-  hasExecution: boolean;
-  config: PipelineStepConfig | null;
-  /** Effective display status: 'disabled' for project-disabled steps. */
-  status: PipelineStepStatus | 'disabled' | 'not-run';
-  /** Failure/skip detail, plus honest coverage scope for a passed staged test gate. */
-  statusTooltip: StructuredTooltip | null;
-  /** Small causal note for the designed skip cascade after an early escalate. */
-  skipHint: string | null;
-  /** This local step is structurally absent from the remote execution route. */
-  remoteNotApplicable: boolean;
-  /** A required build/test gate was skipped instead of reaching a verdict. */
-  attentionRequired: boolean;
-  /** Remote Review Plane explanation when this is its projected decision row. */
-  remoteReviewDetail: string | null;
-  model: string | null;
-  thinkingLevel: string | null;
-  cliType: CliType | null;
-  /**
-   * Whether {@link model} is the pre-run resolved effective model (no run has
-   * recorded one yet) vs the model an actual execution used. Drives a subtler
-   * "will run on" presentation before the run.
-   */
-  modelIsResolved: boolean;
-  /** Tooltip explaining where {@link model} comes from (the resolution chain). */
-  modelTooltip: StructuredTooltip | null;
-  /**
-   * Whether this row exposes an inline per-step agent selector. The Overview
-   * rows now only display the resolved model; per-step model changes live in
-   * project/global configuration instead of individual aspect rows.
-   */
-  modelEditable: boolean;
-  /**
-   * The raw per-step model override stored for this step (`''` = inherit), as
-   * opposed to {@link model} which is the resolved effective model. Bound to
-   * the inline selector so it reflects the persisted knob, not the inherited
-   * value.
-   */
-  modelOverride: string;
-  thinkingLevelOverride: string | null;
-  verdict: string | null;
-  /**
-   * Structured tooltip for the verdict pill, built from the per-aspect
-   * concern summary. Null unless the step flagged a concern, so a pass
-   * verdict never grows a misleading tooltip.
-   */
-  concernTooltip: StructuredTooltip | null;
-  /**
-   * Always-present "what does this step do" tooltip shown on hovering the
-   * step name. Keyed by step id with a per-kind fallback so a future
-   * catalogue step still explains itself rather than rendering bare.
-   */
-  explanation: StructuredTooltip;
-  /** Recorded wall-clock duration of the step in ms; 0 when not yet run. */
-  durationMs: number;
-  /** ISO start stamp from the execution record; null until the step starts. */
-  startedAt: string | null;
-  /** ISO end stamp; null while running or before the step is reached. */
-  completedAt: string | null;
-  tokenUsageSource: string | null;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheCreationTokens: number;
-  totalTokens: number;
-  inputCostUsd: number;
-  outputCostUsd: number;
-  cacheReadCostUsd: number;
-  cacheCreationCostUsd: number;
-  costUsd: number;
-  /** False when the historical price resolver could not price all usage. */
-  costKnown: boolean;
-  unpricedRuns: number;
-  pricingGaps: PipelinePricingGap[];
-  tokenTooltip: StructuredTooltip | null;
-  costTooltip: StructuredTooltip | null;
-}
+import {
+  type PipelineRowVm,
+  type PipelineRunOptionVm,
+  type PipelineTotalVm,
+} from './pipeline-row.vm';
+import {
+  FINAL_VERDICT_STEP_ID,
+  buildStepExplanation,
+  pipelinePhaseForKind,
+} from './pipeline-step-explanations.util';
+import {
+  buildConcernTooltip,
+  buildDecisionTooltip,
+  buildStepStatusTooltip,
+  decisionTooltipSeverity,
+  reconcileCoreVerdict,
+} from './pipeline-step-tooltips.util';
 
-type PipelinePhaseKey = 'pre' | 'core' | 'aspect' | 'tool' | 'analysis' | 'decision' | 'drift';
-
-interface PipelinePhaseVm {
-  key: PipelinePhaseKey;
-  label: string;
-  description: string;
-}
-
-interface PipelineTotalVm {
-  totalInputTokens: number;
-  totalOutputTokens: number;
-  totalCacheReadTokens: number;
-  totalCacheCreationTokens: number;
-  totalTokens: number;
-  totalInputCostUsd: number;
-  totalOutputCostUsd: number;
-  totalCacheReadCostUsd: number;
-  totalCacheCreationCostUsd: number;
-  totalCostUsd: number;
-  anyModelUnknown: boolean;
-  unpricedRuns: number;
-  pricingGaps: PipelinePricingGap[];
-  tokenTooltip: StructuredTooltip | null;
-  costTooltip: StructuredTooltip | null;
-}
-
-interface TokenBreakdownRowVm {
-  label: string;
-  tokens: number;
-  costUsd: number;
-}
-
-/**
- * One run in the Runs chip strip. The current run is written out (number,
- * status dot, OK/fail counter, duration); prior runs render as compact
- * clickable mini chips, newest first. Per-run tokens / cost live in the
- * dedicated tokens-by-model section, so the strip only needs the at-a-glance
- * outcome and timing.
- */
-interface PipelineRunOptionVm {
-  attempt: number;
-  current: boolean;
-  startedAt: string | null;
-  durationMs: number;
-  passed: number;
-  failed: number;
-  /** Text result glyph for the mini chip: '✓' clean, '✗' had failures, '·' nothing ran. */
-  glyph: string;
-  /** Outcome class driving the chip / status-dot colour. */
-  kind: 'pass' | 'fail' | 'pending';
-  /** Honest label when no step reached a pass/fail terminal state. */
-  emptyOutcomeLabel: 'pending' | 'not run';
-  /** Compact hover summary: "N OK M fail · 3m34s · 6h ago". */
-  tooltip: StructuredTooltip;
-}
-
-/** Short unique id for a seeded create-modal attachment (mirrors the dialog's own). */
-function makeAttachmentId(): string {
-  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
-    return crypto.randomUUID().replace(/-/g, '').slice(0, 12);
-  }
-  return Math.random().toString(36).slice(2, 14);
-}
-
-/** Title-case label for execution detail that belongs behind a verdict pill. */
-function verdictTitle(verdict: string | null): string | null {
-  switch ((verdict ?? '').toLowerCase()) {
-    case 'concern':
-    case 'concerns':      return 'Concerns';
-    case 'blocked':
-    case 'block':         return 'Blocking concern';
-    // Auto-mode Ralph-loop guard verdicts (pre-loop-guard step).
-    case 'looping':       return 'Loop forming';
-    case 'loop-detected': return 'Loop detected';
-    case 'open-items':    return 'Open items';
-    case 'escalated':
-    case 'escalate':      return 'Escalation reason';
-    case 'selected':      return 'Economy selection';
-    case 'override':      return 'Card override';
-    case 'fallback':      return 'Default fallback';
-    default:              return null;
-  }
-}
-
-/**
- * Reconcile the CORE step's self-reported verdict against its deterministic
- * status so the row can never show a red "Failed" icon next to a green
- * "SUCCESS" badge (bug ASS-2). The status (icon) is authoritative — it is the
- * classified run status, not a prompt-based self-report — so a non-passed CORE
- * step that still claims a success-class outcome ('success'/'noop') has its
- * verdict dropped. The backend now writes a reconciled record, but this also
- * guards legacy on-disk records persisted before the fix, which are only
- * rewritten when the task re-runs. Every consistent pairing passes through.
- */
-function reconcileCoreVerdict(
-  status: PipelineRowVm['status'],
-  verdict: string | null,
-): string | null {
-  if (status === 'passed') return verdict;
-  const claim = (verdict ?? '').toLowerCase();
-  if (claim === 'success' || claim === 'noop') return null;
-  return verdict;
-}
-
-/**
- * Build the structured tooltip for detail behind a step verdict. Aspect
- * concerns, loop-guard findings, and reissue open-item/escalation decisions
- * all use the same compact verdict pill and details-dialog concern section.
- * A pass verdict or a step with no recorded detail stays bare.
- */
-function buildConcernTooltip(
-  label: string,
-  verdict: string | null,
-  summary: string | null,
-): StructuredTooltip | null {
-  const text = summary?.trim();
-  if (!text) return null;
-  const kind = verdictTitle(verdict);
-  if (!kind) return null;
-  return { title: `${label} · ${kind}`, body: text };
-}
-
-/** Show failures, skips, and the honest coverage scope behind a passed test gate. */
-function buildStepStatusTooltip(
-  label: string,
-  status: PipelineRowVm['status'],
-  detail: string | null,
-): StructuredTooltip | null {
-  const body = detail?.trim();
-  if (!body) return null;
-  const passedTestCoverage = status === 'passed' && /(?:^|;\s*)test-level=/i.test(body);
-  if (status !== 'failed' && status !== 'skipped' && status !== 'notApplicable' && status !== 'not-run' && !passedTestCoverage) return null;
-  const title = status === 'failed'
-    ? 'Failed'
-    : status === 'skipped'
-      ? 'Skipped'
-      : status === 'notApplicable'
-        ? 'Not applicable'
-      : status === 'not-run' ? 'Not run' : 'Passed';
-  return { title: `${label}: ${title}`, body };
-}
-
-/** Map a steering tone to the tooltip accent colour. */
-function decisionTooltipSeverity(tone: SteeringInfo['tone']): TooltipSeverity {
-  switch (tone) {
-    case 'ok':     return 'success';
-    case 'warn':   return 'warn';
-    case 'danger': return 'error';
-    default:       return 'info';
-  }
-}
-
-/**
- * Build the decision badge tooltip: the orchestrator's reasoning headline, the
- * open items behind the ruling, and the run context, composed into the body so
- * the inline badge stays compact and the detail is available on hover / focus.
- */
-function buildDecisionTooltip(info: SteeringInfo): StructuredTooltip {
-  const lines: string[] = [];
-  if (info.reason) lines.push(info.reason);
-  if (info.openItems.length > 0) {
-    if (lines.length > 0) lines.push('');
-    lines.push('Open items:');
-    for (const item of info.openItems) {
-      const verdict = item.verdict ? ` [${item.verdict}]` : '';
-      const reason = item.reason ? `: ${item.reason}` : '';
-      lines.push(`• ${item.aspect}${verdict}${reason}`);
-    }
-  }
-  if (info.context.length > 0) {
-    if (lines.length > 0) lines.push('');
-    for (const line of info.context) lines.push(`${line.key}: ${line.value}`);
-  }
-  const body = lines.join('\n').trim();
-  return {
-    title: `Decision · ${info.verdictLabel}`,
-    body: body || info.verdictLabel,
-  };
-}
-
-/**
- * Per-step "what happens here" copy, keyed by the stable catalogue step id
- * (see backend PipelineCatalogue). Surfaced as the hover tooltip on every
- * pipeline-step name so the operator can learn what each pre / core / aspect /
- * tool / decision / drift step actually does without leaving the Overview.
- */
-const PIPELINE_STEP_EXPLANATIONS: Record<string, string> = {
-  'pre-loop-guard':
-    'Auto-mode loop guard. Before the agent runs, a deterministic check makes sure the same task is not being re-issued in circles: it flags a forming loop while still under budget and trips the circuit-breaker once the iteration or token limit is hit, pausing for the user.',
-  'pre-orchestrator-prep':
-    'Opt-in prompt-readiness pass. Scores the task prompt for clarity while it is still in Preparation and either admits it to Ready or bounces it back for refinement. Runs off the coding seat, so it never blocks throughput.',
-  'pre-model-qualification':
-    'Zero-token model qualification. Classifies task type, size, affected surface, and similar project history, then maps that profile onto the selected CLI\'s live model and reasoning ladders. A model or level pinned on the card always wins; the recommendation remains visible for comparison.',
-  'pre-reissue-open-items':
-    'Re-issue guard. On a re-issued run it detects open items left from the previous attempt (the auto-review follow-up reason, unchecked checklist boxes, aspect concerns) and foregrounds them into the run prompt so the agent finishes them instead of starting over.',
-  'core-agent-run':
-    'The actual CLI coding run. The agent works the task in the repository until it reports done, blocks, or asks for input. This is the single sequential coding seat; every pre- and post-step wraps around it.',
-  'aspect-requirement-fit':
-    'Parallel review aspect. Checks whether the work matches the prompt\'s acceptance criteria and whether anything landed that the prompt did not ask for.',
-  'aspect-code-quality':
-    'Parallel review aspect. Scans the diff and changed-file list for obvious regressions, dead code, missing tests, or type errors.',
-  'aspect-documentation-impact':
-    'Parallel review aspect. Checks whether the change needs documentation updates (AGENTS.md, ROADMAP, ADRs, cli-skills, docs) and whether they were made.',
-  'aspect-tests-and-evidence':
-    'Parallel review aspect. Checks whether the agent shipped tests that fail before and pass after the change, and whether screenshot or log evidence is present where the contract requires it.',
-  'post-git-commit-attribution':
-    'Determines which git commits belong to this task by matching commit author-dates against the run\'s wall-clock windows. The work runs on the lane transition ahead of this bracket, so the row shows as planned here.',
-  'post-lint-scss':
-    'Runs stylelint over the frontend SCSS tree after the run. Depending on the configured gate mode (off, warn, or fail) a failure can trigger a re-issue back to Ready.',
-  'post-regression-radar':
-    'Deterministic spec-change analysis. Reads the task\'s attributed commits and classifies each changed spec as intended, at-risk, or drift. Reporting only: it never triggers a re-issue.',
-  'post-orchestrator-review':
-    'Post-core completeness check. Right after the agent reports done, a deterministic scan reads the run\'s own close-out evidence (open items, notes, the result line, and the log tail) for unfinished-work signals such as open checklist boxes or self-reported build / test failures. A hit re-issues the task with those items foregrounded before any review pass runs, so a task is never accepted while its own evidence says it is unfinished.',
-  'post-orchestrator-decision':
-    'The orchestrator\'s single final ruling. Aggregates the parallel aspect verdicts and decides re-issue, accept-as-done, or escalate. This is the step that moves the task out of auto-review.',
-  'post-drift-adr-code':
-    'Opt-in drift check (off by default). An LLM pass that looks for drift between the code and the decisions recorded in the ADRs.',
-  'post-drift-software-architecture':
-    'Opt-in drift check (off by default). An LLM pass that compares the code against the documented software-architecture intent.',
-  'post-drift-docs-marketing':
-    'Opt-in drift check (off by default). An LLM pass that checks whether docs and marketing copy still match what the software does.',
-  'post-drift-spec-task-job':
-    'Opt-in drift check (off by default). An LLM pass that checks whether specs, tasks, and jobs still agree with the implementation.',
-  'post-drift-code-pattern':
-    'Opt-in drift check (off by default). A rule-based scan for code-pattern drift, optionally enriched by an LLM verdict.',
-  'post-abort-review':
-    'Abort-triggered review (off by default). Runs only after a non-clean run end such as a watchdog timeout, non-zero exit, or unexpected stop: it reads the abort evidence and recommends rerun, a stronger re-issue, accept, or human review.',
-};
-
-/** Per-kind fallback copy for a step id not in the explicit catalogue map. */
-const PIPELINE_KIND_EXPLANATIONS: Record<StepKind, string> = {
-  module:       'A deterministic pre-processing step that runs before the agent.',
-  core:         'The core CLI agent run for this task.',
-  aspect:       'A read-only review aspect that runs in parallel after the agent finishes.',
-  orchestrator: 'An orchestrator decision step that aggregates verdicts and chooses the next move.',
-  tool:         'A deterministic tooling step that runs after the agent finishes.',
-  analysis:     'A named Quality Studio analysis that returns canonical findings and provenance in process.',
-  drift:        'An opt-in drift-analysis pass that runs after auto-review.',
-};
-
-/**
- * Catalogue id of the single FINAL orchestrator ruling. Only this row earns
- * the "Final verdict" chip / divider; the post-core `post-orchestrator-review`
- * early gate shares the `orchestrator` kind but is NOT the final verdict.
- * Mirrors backend `PipelineCatalogue.OrchestratorDecisionStepId`.
- */
-const FINAL_VERDICT_STEP_ID = 'post-orchestrator-decision';
-
-const PIPELINE_PHASES: Record<PipelinePhaseKey, PipelinePhaseVm> = {
-  pre: {
-    key: 'pre',
-    label: 'PRE STEPS',
-    description: 'Preparation checks before the agent gets the task.',
-  },
-  core: {
-    key: 'core',
-    label: 'CORE AGENT WORK',
-    description: 'The coding agent work.',
-  },
-  aspect: {
-    key: 'aspect',
-    label: 'ASPECT',
-    description: 'Parallel review passes over the finished work.',
-  },
-  tool: {
-    key: 'tool',
-    label: 'TOOL',
-    description: 'Deterministic post-run tooling and evidence steps.',
-  },
-  analysis: {
-    key: 'analysis',
-    label: 'ANALYSIS',
-    description: 'Named Quality Studio quality analyses over the completed change.',
-  },
-  decision: {
-    key: 'decision',
-    label: 'DECISION',
-    description: 'The orchestrator ruling that accepts, reissues, or escalates.',
-  },
-  drift: {
-    key: 'drift',
-    label: 'DRIFT',
-    description: 'Optional drift-analysis passes.',
-  },
-};
-
-function pipelinePhaseForKind(kind: StepKind): PipelinePhaseVm {
-  switch (kind) {
-    case 'module':       return PIPELINE_PHASES.pre;
-    case 'core':         return PIPELINE_PHASES.core;
-    case 'aspect':       return PIPELINE_PHASES.aspect;
-    case 'tool':         return PIPELINE_PHASES.tool;
-    case 'analysis':     return PIPELINE_PHASES.analysis;
-    case 'orchestrator': return PIPELINE_PHASES.decision;
-    case 'drift':        return PIPELINE_PHASES.drift;
-    default:             return PIPELINE_PHASES.tool;
-  }
-}
-
-/**
- * Build the always-present step-name explanation tooltip: the step's display
- * label as the title and the "what happens here" copy as the body, keyed by
- * step id with a per-kind fallback so a new catalogue step still explains
- * itself rather than rendering with no tooltip.
- */
-function buildStepExplanation(stepId: string, label: string, kind: StepKind): StructuredTooltip {
-  const body =
-    PIPELINE_STEP_EXPLANATIONS[stepId.toLowerCase()] ??
-    PIPELINE_KIND_EXPLANATIONS[kind] ??
-    'A pipeline step.';
-  return { title: label, body };
-}
 @Component({
   selector: 'app-overview-pane',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, DialogComponent, CliModelSelectorComponent, RegressionRadarComponent, AgentWorkDetailComponent, ReferencesSectionComponent, PlanningSpawnPanelComponent, ConceptDossierNoticeComponent, TooltipDirective, CompletionLoopIndicatorComponent, TaskPromptPopoverComponent, PipelineRunHistoryComponent, PipelineTokenUsageComponent, PipelineStepDetailsComponent, PipelineStepToggleComponent, PostStepControlsComponent, StudioIconComponent, CostBreakdownTriggerDirective, ExecutionLocationBadgeComponent, PipelineHistoryNoticeComponent, OverviewRunsComponent, CopyableTaskKeyComponent],
+  imports: [FormsModule, CliModelSelectorComponent, RegressionRadarComponent, ReferencesSectionComponent, TooltipDirective, CompletionLoopIndicatorComponent, PipelineRunHistoryComponent, PipelineTokenUsageComponent, PipelineStepDetailsComponent, PipelineStepToggleComponent, PostStepControlsComponent, StudioIconComponent, CostBreakdownTriggerDirective, PipelineHistoryNoticeComponent, OverviewRunsComponent, OverviewTitleBlockComponent, OverviewStepTokenModalComponent, OverviewAgentWorkComponent],
   templateUrl: './overview-pane.component.html',
   styleUrl: './overview-pane.component.scss',
 })
@@ -543,50 +144,14 @@ export class OverviewPaneComponent {
   private readonly jobService = inject(TaskService);
   private readonly notifs = inject(NotificationService);
   private readonly modalStack = inject(ModalStackService);
-  private readonly createForm = inject(CreateTaskFormService);
   private readonly destroyRef = inject(DestroyRef);
 
   readonly timeline = this.runTimelinePoll.timeline;
   readonly runs = this.runTimelinePoll.runs;
 
-  /** Title inline-edit state — local to this pane (the detail-header's edit
-   *  is parent-owned and separate). Optimistic: `optimisticTitle` overrides
-   *  the displayed value the moment the user hits Enter / blurs, so there
-   *  is no spinner between PUT and the parent's re-fetch landing. */
-  readonly editingTitle = signal(false);
-  readonly titleDraft = signal('');
-  readonly savingTitle = signal(false);
   readonly selectedTokenStepId = signal<string | null>(null);
   readonly selectedPipelineAttempt = signal<number | null>(null);
-  private readonly optimisticTitle = signal<string | null>(null);
-  private modalStackDisposer: (() => void) | null = null;
   private tokenModalStackDisposer: (() => void) | null = null;
-
-  /** Title the H1 renders. Falls back to the job id when no title is set. */
-  readonly displayedTitle = computed<string>(() => {
-    const opt = this.optimisticTitle();
-    if (opt != null) return opt;
-    return this.job().title || this.job().id;
-  });
-
-  /** Visual identity (initial + colour) of the project, for the sub-line. */
-  readonly identity = computed(() => projectIdentity(this.job().projectName));
-
-  /** In-flight guard for the promote-to-coding fetch (payload + images). */
-  readonly promoting = signal(false);
-
-  /**
-   * Lanes a planning task counts as "finished successfully" for the
-   * promote affordance — it has reached review or completion, not a
-   * failure / still-running lane. See
-   * docs/concepts/planning-research-task-kinds-2026-05.md.
-   */
-  private static readonly FINISHED_STATES = new Set<string>([
-    TaskState.AutoReview,
-    TaskState.HumanReview,
-    TaskState.Escalated,
-    TaskState.Completed,
-  ]);
 
   /**
    * Pending project-level step switches are useful only while this task can
@@ -617,69 +182,6 @@ export class OverviewPaneComponent {
     OverviewPaneComponent.PIPELINE_CONFIGURABLE_STATES.has(this.job().state),
   );
 
-  /**
-   * "Promote to coding task" is offered only on a planning task whose latest
-   * run finished. Research tasks are read-only reports by design and never
-   * show it; coding tasks have nothing to promote to.
-   */
-  readonly canPromote = computed(() =>
-    this.job().mode === 'planning'
-    && OverviewPaneComponent.FINISHED_STATES.has(this.job().state),
-  );
-
-  /**
-   * Fetch the pre-fill draft for this planning task, pull each copyable image
-   * down as a blob (so the create modal can re-upload it byte-for-byte), then
-   * open the create-task modal seeded with that draft. The modal stays the
-   * single source of truth for the create UX.
-   */
-  promote(): void {
-    if (this.promoting() || !this.canPromote()) return;
-    const job = this.job();
-    this.promoting.set(true);
-    this.jobService.getPromoteToCoding(job.id, job.watchPath).subscribe({
-      next: (payload) => {
-        void this.fetchPromoteAttachments(payload).then((attachments) => {
-          this.createForm.openPromotePlanning(payload, attachments);
-          this.promoting.set(false);
-        });
-      },
-      error: () => {
-        this.promoting.set(false);
-        this.notifs.warning(
-          'Could not prepare a coding task from this planning report. Try again in a moment.',
-          'Promote failed',
-        );
-      },
-    });
-  }
-
-  /**
-   * Download each promote attachment as a File wrapped in a PendingAttachment.
-   * A single failed image is skipped (the rest still come along) rather than
-   * failing the whole promotion.
-   */
-  private async fetchPromoteAttachments(payload: PromoteToCodingResponse): Promise<PendingAttachment[]> {
-    const pending: PendingAttachment[] = [];
-    for (const ref of payload.attachments) {
-      try {
-        const res = await fetch(ref.url);
-        if (!res.ok) continue;
-        const blob = await res.blob();
-        const file = new File([blob], ref.fileName, { type: blob.type || 'image/png' });
-        pending.push({
-          id: makeAttachmentId(),
-          file,
-          alt: ref.fileName,
-          previewUrl: URL.createObjectURL(blob),
-        });
-      } catch {
-        // Skip this image; keep the rest of the promotion intact.
-      }
-    }
-    return pending;
-  }
-
   /** Effective CLI + model the Agent block renders. The override wins when
    *  the parent provides one (optimistic state from the picker commit) so
    *  the badge updates without a network round-trip; otherwise we fall
@@ -697,99 +199,6 @@ export class OverviewPaneComponent {
     return override !== undefined ? override : (this.job().thinkingLevel ?? null);
   });
   readonly agentConfigReadOnly = computed(() => this.job().state === TaskState.Completed || this.job().state === TaskState.Archive);
-  /** Clear the optimistic override once the real `job().title` catches up
-   *  to the saved value (parent re-fetched the detail after PUT). */
-  private clearOptimisticOnSync = effect(() => {
-    const opt = this.optimisticTitle();
-    if (opt == null) return;
-    const current = this.job().title || this.job().id;
-    if (current === opt) {
-      this.optimisticTitle.set(null);
-    }
-  });
-
-  @ViewChild('titleInput') private titleInputEl?: ElementRef<HTMLInputElement>;
-
-  private focusOnEdit = effect(() => {
-    if (this.editingTitle()) {
-      queueMicrotask(() => this.titleInputEl?.nativeElement.select());
-    }
-  });
-
-  startTitleEdit(): void {
-    if (this.editingTitle()) return;
-    this.titleDraft.set(this.displayedTitle());
-    this.editingTitle.set(true);
-    // Push a modal-stack entry so Escape closes the edit, not the detail
-    // panel. The parent's modal-stack entry only checks its own
-    // editingTitle / editingPrompt signals (set by the detail-header), so
-    // without this Escape would bubble past our local cancel and close
-    // the whole detail view.
-    this.modalStackDisposer = this.modalStack.push('overview-title-edit', () => {
-      this.cancelTitleEdit();
-      return true;
-    });
-    this.destroyRef.onDestroy(() => this.disposeModalStack());
-  }
-
-  cancelTitleEdit(): void {
-    this.editingTitle.set(false);
-    this.savingTitle.set(false);
-    this.disposeModalStack();
-  }
-
-  saveTitle(): void {
-    if (!this.editingTitle()) return;
-    const trimmed = this.titleDraft().trim();
-    if (!trimmed) {
-      this.cancelTitleEdit();
-      return;
-    }
-    const current = this.displayedTitle();
-    if (trimmed === current) {
-      this.cancelTitleEdit();
-      return;
-    }
-    // Optimistic: paint the new title immediately, drop edit mode, fire
-    // the PUT without a spinner. Revert on error.
-    const job = this.job();
-    this.optimisticTitle.set(trimmed);
-    this.editingTitle.set(false);
-    this.savingTitle.set(false);
-    this.disposeModalStack();
-    this.jobService.setJobTitle(job.id, trimmed, job.watchPath).subscribe({
-      next: () => {
-        this.titleSaved.emit();
-      },
-      error: () => {
-        this.optimisticTitle.set(null);
-        this.notifs.warning(
-          'The new title could not be saved. The previous title was restored.',
-          'Title save failed',
-        );
-      },
-    });
-  }
-
-  copyTitle(): void {
-    const text = this.displayedTitle();
-    if (!text) return;
-    copyTextToClipboard(text).then(ok => {
-      if (ok) this.notifs.success('Task title copied to clipboard', 'Title copied');
-    });
-  }
-
-  onTitleDraftInput(value: string): void {
-    this.titleDraft.set(value);
-  }
-
-  private disposeModalStack(): void {
-    if (this.modalStackDisposer) {
-      this.modalStackDisposer();
-      this.modalStackDisposer = null;
-    }
-  }
-
   /**
    * Derived from `logs/session-events.jsonl` + `logs/tool-calls.jsonl`.
    * Drives the Agent Work block that replaced the raw SESSION row.
@@ -799,27 +208,6 @@ export class OverviewPaneComponent {
   readonly hasAgentWork = computed(() => {
     const s = this.agentWork();
     return s != null && (s.calls > 0 || s.toolCalls > 0);
-  });
-
-  /** Top N tool counts to render as compact chips. */
-  readonly topToolCounts = computed(() => {
-    const s = this.agentWork();
-    if (s == null) return [];
-    return s.toolCounts.slice(0, 6);
-  });
-
-  /** Comma-separated tool tooltip (full list) for the "Tools" row. */
-  readonly toolCountsTooltip = computed(() => {
-    const s = this.agentWork();
-    if (s == null || s.toolCounts.length === 0) return '';
-    return s.toolCounts.map(tc => `${tc.tool}: ${tc.count}`).join('\n');
-  });
-
-  /** Short rendering of the session id for the optional debug tooltip. */
-  readonly sessionDebugTooltip = computed(() => {
-    const id = this.job().sessionName;
-    if (!id) return '';
-    return `Session id (debug): ${id}`;
   });
 
   readonly owner = computed(() => {
@@ -1347,41 +735,6 @@ export class OverviewPaneComponent {
     this.selectedTokenStepId.set(null);
   }
 
-  tokenBreakdownRows(row: PipelineRowVm): TokenBreakdownRowVm[] {
-    return [
-      { label: 'Input', tokens: row.inputTokens, costUsd: row.inputCostUsd },
-      { label: 'Output', tokens: row.outputTokens, costUsd: row.outputCostUsd },
-      { label: 'Cache read', tokens: row.cacheReadTokens, costUsd: row.cacheReadCostUsd },
-      { label: 'Cache write', tokens: row.cacheCreationTokens, costUsd: row.cacheCreationCostUsd },
-    ];
-  }
-
-  tokenComponentTotal(row: PipelineRowVm): number {
-    return row.inputTokens + row.outputTokens + row.cacheReadTokens + row.cacheCreationTokens;
-  }
-
-  tokenComponentMatchesTotal(row: PipelineRowVm): boolean {
-    return this.tokenComponentTotal(row) === row.totalTokens;
-  }
-
-  tokenStepCallsLabel(row: PipelineRowVm): string {
-    if (row.kind === 'core' && this.selectedPipelineIsCurrent()) {
-      const n = this.agentRunCount();
-      if (n > 0) return n === 1 ? '1 agent run' : `${n} agent runs`;
-    }
-    if (row.status === 'passed' || row.status === 'failed' || row.status === 'skipped' || row.status === 'notApplicable') {
-      return '1 step execution';
-    }
-    return 'Not reported';
-  }
-
-  tokenStepSourceLabel(row: PipelineRowVm): string {
-    const source = row.tokenUsageSource?.trim();
-    if (source) return source;
-    if (row.kind === 'core') return 'CORE agent run';
-    return 'Pipeline step usage';
-  }
-
   costDisplay(costUsd: number, totalTokens: number, unpricedRuns: number): string {
     return formatTokenCostDisplay({ costUsd, totalTokens, unpricedRuns });
   }
@@ -1392,15 +745,6 @@ export class OverviewPaneComponent {
 
   isPartialCost(costUsd: number, unpricedRuns: number): boolean {
     return costUsd > 0 && unpricedRuns > 0;
-  }
-
-  tokenStepTimeLabel(row: PipelineRowVm): string {
-    const parts: string[] = [];
-    if (row.startedAt) parts.push(`Started ${this.formatAbsoluteTime(row.startedAt)}`);
-    if (row.completedAt) parts.push(`Ended ${this.formatAbsoluteTime(row.completedAt)}`);
-    const duration = this.liveStepDurationMs(row);
-    if (duration > 0) parts.push(`Duration ${this.formatStepDuration(duration)}`);
-    return parts.length > 0 ? parts.join(' · ') : 'No step time recorded';
   }
 
   /** Task-total tokens + cost across all recorded steps. */
@@ -1744,7 +1088,9 @@ export class OverviewPaneComponent {
    * Deliberately not read by `pipelineRows` / `anyStepRunning` so ticking
    * the clock never re-triggers the interval-management effect below.
    */
-  private readonly now = signal(Date.now());
+  /** Live tick, also passed to the title block so the phase chip's elapsed
+   *  wording advances on the same clock as the step timings. */
+  readonly now = signal(Date.now());
   private tickHandle: ReturnType<typeof setInterval> | null = null;
 
   private readonly manageLiveTick = effect(() => {
@@ -1790,20 +1136,10 @@ export class OverviewPaneComponent {
    * second; a completed row is independent of the clock.
    */
   liveStepDurationMs(row: PipelineRowVm): number {
-    if (row.status === 'running' && row.startedAt) {
-      const start = new Date(row.startedAt).getTime();
-      if (!Number.isNaN(start)) return Math.max(0, this.now() - start);
-    }
-    return row.durationMs;
+    return liveStepDurationMs(row, this.now());
   }
 
-  /** Wall-clock "HH:MM" for a step timestamp; empty string when unset. */
-  formatClock(iso: string | null): string {
-    if (!iso) return '';
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return '';
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  }
+  readonly formatClock = formatClock;
 
   /**
    * Structured tooltip for a step's timing cell: absolute start (and end, or
@@ -1831,46 +1167,13 @@ export class OverviewPaneComponent {
     return formatPipelineAggregateCost(usd, anyModelUnknown);
   }
 
-  formatRelativeTime(iso: string): string {
-    if (!iso) return '';
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return iso;
-    const diffMs = Date.now() - d.getTime();
-    const minutes = Math.round(diffMs / 60_000);
-    if (minutes < 1) return 'just now';
-    if (minutes < 60) return `${minutes}m ago`;
-    const hours = Math.round(minutes / 60);
-    if (hours < 24) return `${hours}h ago`;
-    const days = Math.round(hours / 24);
-    if (days < 30) return `${days}d ago`;
-    const months = Math.round(days / 30);
-    if (months < 12) return `${months}mo ago`;
-    return `${Math.round(months / 12)}y ago`;
-  }
+  readonly formatRelativeTime = formatRelativeTime;
+  readonly formatAbsoluteTime = formatAbsoluteTime;
 
-  formatAbsoluteTime(iso: string): string {
-    if (!iso) return '';
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return iso;
-    return d.toLocaleString();
-  }
-
-  /**
-   * Per-step duration for the pipeline rows. Sub-second steps (most
-   * deterministic Tool steps) show in ms; longer steps fall through to the
-   * coarser m/s/h formatter. Returns an em-dash when nothing ran yet.
-   */
-  formatStepDuration(ms: number): string {
-    if (ms <= 0) return '—';
-    if (ms < 1000) return `${Math.round(ms)}ms`;
-    return this.formatDuration(ms / 1000);
-  }
+  readonly formatStepDuration = formatStepDuration;
 
   cliTypeLabel(t: CliType): string {
     return cliTypeLabel(t);
   }
 
-  phaseLabel(phase: string | null | undefined, entered?: string | null, steerSince?: string | null): string | null {
-    return lifecyclePhaseLabel(phase, entered, steerSince, this.now());
-  }
 }

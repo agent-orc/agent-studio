@@ -688,6 +688,7 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.TaskSpawnerPostStepRunner>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.FailureInterventionService>();
 builder.Services.AddSingleton<AspectRunnerService>();
 builder.Services.AddSingleton<RemoteReviewPlanBuilder>();
+builder.Services.AddSingleton<IntegrationBranchGateReporter>();
 builder.Services.AddSingleton<RemotePipelineReviewEvidenceProjector>();
 builder.Services.AddSingleton<AgentStudio.Review.CodeReviewStepService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.WorkspaceArtifactPushQueue>();

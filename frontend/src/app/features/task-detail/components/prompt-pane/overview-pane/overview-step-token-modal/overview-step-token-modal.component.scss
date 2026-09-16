@@ -1,0 +1,149 @@
+// The modal body is projected into <app-dialog>, which owns the surface. This
+// stylesheet covers only the breakdown layout moved out of the Overview pane in
+// AGT-2819, plus the two shared value classes the pane's own sheet can no
+// longer reach across the component boundary.
+.ov-value {
+  &--mono {
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+
+  &--strong {
+    font-weight: 700;
+    color: var(--studio-fg-strong);
+  }
+}
+
+.ov-cost-incomplete {
+  color: var(--studio-fg-muted);
+  font-family: var(--font-sans);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1.25;
+  white-space: normal;
+}
+
+.ov-token-modal {
+  display: grid;
+  gap: 12px;
+  color: var(--studio-fg);
+  font-size: 13px;
+
+  &__summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 8px;
+  }
+
+  &__metric,
+  &__panel {
+    border: 1px solid var(--studio-border);
+    background: var(--studio-bg-hover);
+    border-radius: 8px;
+  }
+
+  &__metric {
+    display: grid;
+    gap: 4px;
+    padding: 10px 12px;
+    min-width: 0;
+
+    &--primary {
+      border-color: color-mix(in srgb, var(--studio-accent) 42%, var(--studio-border));
+      background: color-mix(in srgb, var(--studio-accent) 10%, var(--studio-bg-hover));
+    }
+  }
+
+  &__label,
+  &__panel-title,
+  &__table th,
+  &__facts dt {
+    color: var(--studio-fg-muted);
+    font-size: 10px;
+    font-weight: 750;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  &__value {
+    min-width: 0;
+    color: var(--studio-fg-strong);
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  &__model {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--font-mono);
+    font-size: 11px;
+  }
+
+  &__panel {
+    padding: 10px 12px;
+    min-width: 0;
+  }
+
+  &__panel-title {
+    margin: 0 0 8px;
+  }
+
+  &__table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+
+    th,
+    td {
+      padding: 6px 7px;
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid var(--studio-border);
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+  }
+
+  &__num {
+    text-align: right;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+
+  &__total-row td {
+    color: var(--studio-fg-strong);
+    font-weight: 750;
+    border-top: 1px solid var(--studio-border-strong);
+  }
+
+  &__facts {
+    display: grid;
+    gap: 7px;
+    margin: 0;
+
+    div {
+      display: grid;
+      grid-template-columns: 74px 1fr;
+      gap: 8px;
+      align-items: baseline;
+      min-width: 0;
+    }
+
+    dd {
+      margin: 0;
+      min-width: 0;
+      color: var(--studio-fg);
+      overflow-wrap: anywhere;
+    }
+  }
+
+  &__note {
+    margin: 8px 0 0;
+    color: var(--studio-fg-dim);
+    font-size: 12px;
+    line-height: 1.45;
+  }
+}
