@@ -556,4 +556,17 @@ public static class TimelineActors
     /// </summary>
     public const string External = "external";
     public static string Human(string email) => string.IsNullOrWhiteSpace(email) ? "human" : $"human:{email}";
+
+    /// <summary>
+    /// True when an actor or lane-change cause names a person rather than an
+    /// automated path. Used where a guard must stop an operator but must not
+    /// break a runner, sweep, or orchestrator transition.
+    /// </summary>
+    public static bool IsHuman(string? actor)
+    {
+        if (string.IsNullOrWhiteSpace(actor)) return false;
+        var value = actor.Trim();
+        return value.Equals("human", StringComparison.OrdinalIgnoreCase)
+            || value.StartsWith("human:", StringComparison.OrdinalIgnoreCase);
+    }
 }

@@ -530,6 +530,14 @@ export interface TaskIntegrationStatus {
   failure?: TaskIntegrationFailure | null;
   /** Repository-scoped commit membership, including multi-repository deliveries. */
   repositories?: TaskRepositoryIntegrationStatus[];
+  /**
+   * AGT-2817 - the deployment half of the answer: is the delivery also
+   * contained in the released line? `null` means there is no repository
+   * evidence to roll up, which reads as "not yet checked", never as "no".
+   */
+  released?: boolean | null;
+  /** Release branch `released` was computed against (usually "main"). */
+  releaseBranch?: string;
 }
 
 export interface TaskRepositoryIntegrationStatus {

@@ -102,6 +102,79 @@ import type { OrchestratorLogEntry, OrchestratorSession } from '../features/orch
 
 // (GitProjectSummary, GitHygieneStatus, TaskHygieneContext now in features/git/models/git.model.ts; re-exported above)
 
+/**
+ * AGT-2817 - the three grounds on which a card may claim completion. Mirrors
+ * backend `CompletionClaimBases`.
+ */
+export type CompletionClaimBasis =
+  | 'integrated-delivery'
+  | 'deliverable-without-code'
+  | 'operator-override';
+
+/**
+ * AGT-2817 - the recorded completion claim. Written by the completion contract
+ * on the move into `6-completed` and replaced, never appended, so the card
+ * always states its current grounds. Mirrors backend `TaskCompletionClaim`.
+ */
+export interface TaskCompletionClaim {
+  basis: CompletionClaimBasis;
+  /** Human-readable evidence for `basis`, shown next to the completion claim. */
+  evidence: string;
+  /** Verbatim operator reason. Present only for `operator-override`. */
+  reason?: string | null;
+  /** Who moved the card into the delivered lane. */
+  actor?: string | null;
+  /** Delivery commit that proved containment; present only for `integrated-delivery`. */
+  commitSha?: string | null;
+  /** Integration branch the containment answer was computed against. */
+  integrationBranch?: string | null;
+  /** Repository-relative Dossier path for a code-free deliverable. */
+  deliverablePath?: string | null;
+  /** Dossier or workbench key for a code-free deliverable. */
+  deliverableKey?: string | null;
+  recordedAt?: string | null;
+}
+
+/** Containment and release membership of one attributed commit. */
+export interface TaskDeliveryCommitAnswer {
+  sha: string;
+  shortSha: string;
+  onIntegrationBranch: boolean;
+  onReleaseBranch: boolean;
+  /** One of the three supersession states; `next-attempt` renders as pending, never as replaced. */
+  supersession: 'current' | 'replacement-pending' | 'replaced';
+}
+
+/**
+ * AGT-2817 - the per-card deployment answer from
+ * `GET /api/tasks/{id}/delivery-claim`. Containment decides `integrated`;
+ * `hasIntegrationRecord` is reported beside it as a cache, never instead of it.
+ * `released` is `null` when there is no repository evidence to roll up, which
+ * reads as "not yet checked".
+ */
+export interface TaskDeliveryClaimAnswer {
+  taskKey: string;
+  jobId: string;
+  lane: string;
+  deliveryRef: string | null;
+  integrationBranch: string;
+  releaseBranch: string;
+  containmentStatus: string;
+  integrated: boolean;
+  released: boolean | null;
+  integratedSha: string | null;
+  /** The curated `merge(KEY): ...` commit that carried the delivery; null when none can be named. */
+  mergeCommit: string | null;
+  mergeSubject: string | null;
+  mergedAt: string | null;
+  hasIntegrationRecord: boolean;
+  class: string;
+  findings: string[];
+  completionClaim: TaskCompletionClaim | null;
+  commits: TaskDeliveryCommitAnswer[];
+  detail: string | null;
+}
+
 /** Card kind: `epic` is a container for sub-tasks; `task` is an ordinary card. */
 export type TaskKind = 'task' | 'epic';
 
@@ -551,6 +624,15 @@ export interface TaskInfo {
    * attempts cannot force membership. Null on cards not in an accepted lane.
    */
   integration?: TaskIntegrationStatus | null;
+
+  /**
+   * AGT-2817: the grounds on which this card claims completion - a contained
+   * delivery, a named deliverable without code, or an operator override with a
+   * written reason. Mirrors backend `TaskInfo.CompletionClaim`. Null on cards
+   * that have never been completed and on cards completed before the contract
+   * existed; an absent claim is "not recorded", never "no ground".
+   */
+  completionClaim?: TaskCompletionClaim | null;
 
   /**
    * PUB-1: read-time "publishable to" signal for accepted (6-completed) cards -
