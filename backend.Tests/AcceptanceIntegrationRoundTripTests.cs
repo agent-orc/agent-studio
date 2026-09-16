@@ -25,7 +25,12 @@ namespace AgentStudio.Tests;
 /// </summary>
 public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
 {
-    private static readonly TimeSpan AsyncTestDeadline = TimeSpan.FromSeconds(30);
+    // Generous on purpose: several call sites wait on a WebApplicationFactory's
+    // first HTTP round trip, which JITs and spins up the whole app in-process.
+    // Under CPU contention (e.g. two backend suites running concurrently) that
+    // startup alone can eat tens of seconds, so a short fixed budget flakes
+    // under load even though the awaited condition is genuinely reached.
+    private static readonly TimeSpan AsyncTestDeadline = TimeSpan.FromSeconds(120);
     private const string Project = "Fixture";
     private const string Slug = "remote-delivery";
     private const string TaskKey = "AGT-2227";
