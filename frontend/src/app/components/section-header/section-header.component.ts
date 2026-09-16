@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, ViewEncapsulation, input, output } from '@angular/core';
 import { StudioIconComponent, StudioIconName } from '../studio-icon/studio-icon.component';
+import { DisclosureMarkerComponent } from '../disclosure-marker/disclosure-marker.component';
 import { CountBadgeComponent } from '../count-badge/count-badge.component';
 
 /**
@@ -14,7 +15,8 @@ import { CountBadgeComponent } from '../count-badge/count-badge.component';
  * Two shapes:
  *   - static (default): a non-interactive heading <div>.
  *   - collapsible (`[collapsible]="true"`): the whole row is a toggle
- *     button — a leading chevron flips between expanded / collapsed and
+ *     button — the shared `<app-disclosure-marker>` (guideline rule
+ *     ADM-17) flips between expanded / collapsed and
  *     `collapsedChange` fires the flipped state so the parent can persist
  *     it (see ExplorerSectionsService). `aria-expanded` + the caller's
  *     `testid` are the contract the F27/F46 explorer-collapse specs
@@ -29,7 +31,7 @@ import { CountBadgeComponent } from '../count-badge/count-badge.component';
   selector: 'app-section-header',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [StudioIconComponent, CountBadgeComponent],
+  imports: [StudioIconComponent, CountBadgeComponent, DisclosureMarkerComponent],
   encapsulation: ViewEncapsulation.None,
   templateUrl: './section-header.component.html',
   styleUrl: './section-header.component.scss',

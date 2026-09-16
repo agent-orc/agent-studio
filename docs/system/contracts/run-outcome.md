@@ -106,7 +106,7 @@ Hard sentinel matches win over process exit code. This is load-bearing on Window
 - UI failure surfacing must use the `runOutcome` field when present and fall back to legacy `execution.status === 'failed'` only when it is absent.
 - Raw process status and exit code remain visible for diagnostics, but they do not override a terminal sentinel.
 - **UI outcome precedence.** Task detail derives one current-run presentation in `protocol-verdict.ts` with strict precedence `failed > needs-decision > unclear > succeeded`. A live run excludes stale terminal records and remains `Running`. Runner issues, terminal execution, `status.md`, Activity, pipeline, review, and lane are raw inputs, never independent head states.
-- **One UI projection.** The task-detail parent passes that same presentation object to the protocol banner, Result chip, and final Pipeline verdict. No consumer reclassifies it. Raw inputs remain available only in the collapsed `Why this status?` disclosure. The separate verdict chain, outcome-issue chip, Activity outcome banner, and Overview FAILURE row are not primary status surfaces.
+- **One UI projection.** The task-detail parent passes that same presentation object to the protocol banner, Result chip, and final Pipeline verdict. No consumer reclassifies it. Raw inputs remain available only behind the collapsed status line of the protocol banner (expanded through the line itself; guideline rule ADM-17). The separate verdict chain, outcome-issue chip, Activity outcome banner, and Overview FAILURE row are not primary status surfaces.
 
 ## Expected Cases
 

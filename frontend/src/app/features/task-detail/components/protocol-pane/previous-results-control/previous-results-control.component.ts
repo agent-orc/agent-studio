@@ -2,11 +2,13 @@ import { ChangeDetectionStrategy, Component, effect, inject, input, output, sign
 import type { ResultHistoryDocument, ResultHistoryEntry } from '../../../../../models/task.model';
 import { TaskService } from '../../../../../services/task.service';
 import { formatDateTimeUtc } from '../../../../../services/format.util';
+import { DisclosureMarkerComponent } from '../../../../../components/disclosure-marker/disclosure-marker.component';
 
 @Component({
   selector: 'app-previous-results-control',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [DisclosureMarkerComponent],
   templateUrl: './previous-results-control.component.html',
   styleUrl: './previous-results-control.component.scss',
 })

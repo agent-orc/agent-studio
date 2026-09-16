@@ -263,6 +263,24 @@
     .adoption-step + .adoption-step { border-left: 0; border-top: 1px solid var(--line); }
     header.page { padding-top: 30px; }
   }
+  /* Section 14 - disclosure affordance demos. */
+  .disc-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin: 18px 0 0; }
+  .disc-demo { border: 1px solid var(--line); padding: 14px 16px; background: var(--surface-2); }
+  .disc-demo h4 { margin: 0 0 4px; font-size: 13px; letter-spacing: .04em; text-transform: uppercase; }
+  .disc-demo h4.good { color: var(--green); }
+  .disc-demo h4.bad { color: var(--red); }
+  .disc-demo p { margin: 6px 0 0; color: var(--ink-2); font-size: 13px; }
+  .disc-demo .frame { margin-top: 10px; padding: 10px; border: 1px solid var(--line); background: var(--surface-1); }
+  .disc-row { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 4px; font-size: 13px; }
+  .disc-row.hovered { background: var(--surface-3); }
+  .disc-row.focused { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .disc-marker { flex: 0 0 auto; width: 12px; color: var(--ink-3); font: 600 11px ui-monospace, Consolas, monospace; }
+  .disc-marker.open { color: var(--ink-2); }
+  .disc-caret-trailing { margin-left: auto; color: var(--ink-3); font-size: 11px; }
+  .disc-body { margin: 6px 0 0 26px; color: var(--ink-2); font-size: 12px; }
+  .disc-ghost { color: var(--ink-3); font-style: italic; }
+  .disc-blue { color: var(--accent); }
+  @media (max-width: 900px) { .disc-grid { grid-template-columns: 1fr; } }
   @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
 </style>
 </head>
@@ -299,6 +317,7 @@
         <li><a href="#lane-header-dos-donts">10 · Lane header Dos &amp; Don&apos;ts</a></li>
         <li><a href="#panel-keyboard-containment">11 · Panel keyboard</a></li>
         <li><a href="#dossier-list-addendum">12 · Dossier lists</a></li>
+        <li><a href="#disclosure-affordance">14 · Disclosure affordance</a></li>
       </ul>
     </nav>
   </header>
@@ -981,7 +1000,84 @@
     <p class="muted">Evidence: <code>RunFailureClassifierTests</code>, <code>AcceptanceRailPolicyTests</code>, and <code>AcceptanceRailHostedServiceTests</code> pin the classification and requeue behaviour; a Playwright capture of the lane showing class and retry counter lands with the card that applies this addendum's visual surface.</p>
   </section>
 
-  <footer>Prepared 10 August 2026; flat outcome-summary, panel keyboard containment, lane-header, and Dossier-list guidance extended 12 August 2026; promoted to living standard with visual dos-and-donts and applied-surfaces subpages by AGT-2617 on 16 August 2026; Human Review requeue addendum (AGT-2749) added 8 September 2026. Source card AGT-2583. Related evidence: AGT-2565, AGT-2567, AGT-2568, AGT-2549, AGT-2579, AGT-2606, AGT-2638, AGT-2642, AGT-2643, AGT-2644, and AGT-2749. Multi-page format (index.html + pages/) introduced by AGT-2617; task-header status pair added by AGT-2637.</footer>
+
+  <section id="disclosure-affordance" data-concept-section="recommendation">
+    <h2><span class="section-no">14</span>Disclosure affordance</h2>
+    <p>Operator observation, 14 September 2026: on the result header the line <q>Pipeline failure · 1 pipeline step failed: core-agent-run.</q> expands, but the only hint was a dot-sized glyph at the end of the sentence. The operator never saw it. The product had already compensated for the weak affordance with a second control below, <q>Why this status?</q>, whose only purpose was to trigger the same expansion - pure redundancy once open. Elsewhere the same interaction was drawn three ways: a leading triangle on token-panel rows, a trailing caret on <q>Why this status?</q>, and clickable text with no marker at all. One interaction, three grammars.</p>
+
+    <div class="rule-list">
+      <article class="rule">
+        <div class="rule-id">ADM-17</div>
+        <div>
+          <h4>An expandable element announces itself the same way everywhere</h4>
+          <p><strong>Every element that expands content in place MUST carry the shared disclosure marker</strong> (<code>&lt;app-disclosure-marker&gt;</code>, rendering the class <code>studio-disclosure__marker</code>), and the element that owns the marker MUST be the element that owns the click handler and <code>aria-expanded</code>.</p>
+          <ul>
+            <li><strong>Marker shape and position.</strong> One chevron, pointing right while collapsed, as the <em>first</em> child of the control - leading, never a trailing caret at the far edge. Size 12 px on normal rows, 10 px on dense rails; it inherits <code>currentColor</code> and reads the muted foreground token.</li>
+            <li><strong>Rotation on open.</strong> Open is the same chevron rotated 90 degrees, never a second glyph and never a swapped icon name. The 0.12 s rotation collapses to zero duration under <code>prefers-reduced-motion: reduce</code> (hard rule R5).</li>
+            <li><strong>Hit area.</strong> The whole label row is the control: marker, label, count, and any trailing metadata belong to one focusable element with a minimum target of 24 px. A marker that is clickable on its own while the label beside it is not is a defect.</li>
+            <li><strong>Hover.</strong> The row washes with <code>--studio-bg-hover</code> and lifts its text to <code>--studio-fg-strong</code>. The marker's visibility MUST NOT depend on hover.</li>
+            <li><strong>Focus.</strong> <code>:focus-visible</code> renders a 2 px outline in the surface's accent token. Keyboard operation follows from using a real <code>&lt;button&gt;</code>; a clickable <code>&lt;div&gt;</code> is not the pattern.</li>
+            <li><strong>ARIA contract.</strong> <code>aria-expanded</code> mirrors the state on the control itself; the disclosed body carries an <code>id</code> and the control points at it with <code>aria-controls</code> while open. The marker is decoration and stays <code>aria-hidden="true"</code>.</li>
+            <li><strong>MUST NOT: a second control for the same expansion.</strong> One expansion has exactly one trigger. A helper row, link, or button that repeats what the line above already does is removed, not restyled.</li>
+            <li><strong>MUST NOT: colour alone.</strong> A tint, a border colour, or a bold weight may reinforce the open state but may never be the only signal that an element expands.</li>
+            <li><strong>MUST NOT: a marker that appears on hover.</strong> The affordance has to be legible before the pointer arrives, and on touch and keyboard there is no hover at all.</li>
+          </ul>
+        </div>
+      </article>
+    </div>
+
+    <h3>One compliant pattern, three rejected variants</h3>
+    <div class="disc-grid">
+      <div class="disc-demo">
+        <h4 class="good">Do - the status line is the control</h4>
+        <div class="frame">
+          <div class="disc-row"><span class="disc-marker">&#9656;</span><span><strong>Pipeline failure</strong> · 1 pipeline step failed: core-agent-run.</span></div>
+          <div class="disc-row hovered"><span class="disc-marker">&#9656;</span><span><strong>Pipeline failure</strong> · 1 pipeline step failed: core-agent-run.</span></div>
+          <div class="disc-row focused"><span class="disc-marker open">&#9662;</span><span><strong>Pipeline failure</strong> · 1 pipeline step failed: core-agent-run.</span></div>
+          <p class="disc-body">runner · Watchdog timeout · The run will finalize as failed.</p>
+        </div>
+        <p>Leading marker, whole sentence clickable, hover wash, accent focus ring, marker rotated while open, and the raw signals below with no head of their own. Collapsed, hovered, and open states of one element.</p>
+      </div>
+
+      <div class="disc-demo">
+        <h4 class="bad">Don't - a second control for the same expansion</h4>
+        <div class="frame">
+          <div class="disc-row"><span><strong>Pipeline failure</strong> · 1 pipeline step failed: core-agent-run.</span><span class="disc-caret-trailing">&#8226;</span></div>
+          <div class="disc-row"><span class="disc-ghost">Why this status?</span><span class="disc-caret-trailing">&#9662;</span></div>
+        </div>
+        <p>The weak affordance on the first line is compensated with a helper row that triggers the same expansion. Once open, the helper row says nothing. Delete the second control and fix the first.</p>
+      </div>
+
+      <div class="disc-demo">
+        <h4 class="bad">Don't - colour as the only signal</h4>
+        <div class="frame">
+          <div class="disc-row"><span class="disc-blue"><strong>Pipeline failure</strong> · 1 pipeline step failed: core-agent-run.</span></div>
+        </div>
+        <p>Blue text or an accent border tells an operator that something is special, not that it expands - and it disappears for anyone who reads the tint as a link, a status, or nothing at all.</p>
+      </div>
+
+      <div class="disc-demo">
+        <h4 class="bad">Don't - a marker only on hover</h4>
+        <div class="frame">
+          <div class="disc-row"><span class="disc-marker">&nbsp;</span><span><strong>Pipeline failure</strong> · 1 pipeline step failed: core-agent-run.</span></div>
+          <div class="disc-row hovered"><span class="disc-marker">&#9656;</span><span><strong>Pipeline failure</strong> · 1 pipeline step failed: core-agent-run.</span></div>
+        </div>
+        <p>The row is indistinguishable from prose until the pointer is already on it. On touch and keyboard the affordance never appears at all. The marker is always visible; hover only adds the wash.</p>
+      </div>
+    </div>
+
+    <h3>What the rule does not cover, and what is still pending</h3>
+    <p>Not every <code>aria-expanded</code> in the app is an in-place disclosure. Each template that owns one is classified in <code>frontend/scripts/disclosure-baseline.json</code>, and the reasons are exactly three:</p>
+    <ul>
+      <li><strong><code>popup-trigger</code> - outside ADM-17.</strong> A trigger whose content opens as an anchored overlay (menu, popover, dialog): the studio tab overflow, the model picker, info and help popovers, board filters, step details and step result, the prompt popover, the run-history and post-step attempt lists. Their affordance belongs to the menu grammar in chapter 02 - a kebab, a caret on a control, or the value chip itself - because nothing expands in place. Giving them a leading chevron would promise inline growth that never happens.</li>
+      <li><strong><code>tree-chevron</code> - owned by chapter 08.</strong> <code>role="treeitem"</code> rows (the canonical <code>&lt;app-tree-row&gt;</code>, the wiki and steering-docs trees, the git file tree, the run-diff viewer) already carry the navigation citizenship chevron, indentation, and active-item bar. One marker component there would fight the nav rhythm, so the tree contract wins inside a tree.</li>
+      <li><strong><code>staged-adoption</code> - covered, not yet migrated.</strong> Genuine in-place disclosures that this card did not touch (escalation summary, git pane heads, commit rounds, files pane, epic and board toggles, wiki meta and pulse, regression radar, remote hosts, retention history, cycle-time rows, CLI usage modal, artifact gallery, code-review rows, run timeline, inspector report, references). They follow the chapter 05 adoption contract: adopt the marker and move the file into the enforced list the next time the surface is touched. They are recorded rather than silently divergent, and a reviewer can read the current count straight out of the baseline file.</li>
+    </ul>
+
+    <p class="muted">Enforcement: <code>frontend/scripts/check-disclosure-markers.mjs</code> (run by <code>npm run lint:structure</code>) scans every Angular template, finds each element carrying <code>aria-expanded</code>, and fails when an enforced template renders one without <code>&lt;app-disclosure-marker&gt;</code> or the <code>studio-disclosure__marker</code> class. A template in neither list fails as unclassified, so a newly added toggle cannot appear without either adopting the marker or recording a reason; a divergence entry needs one of the three kinds above plus a written reason. <code>check-disclosure-markers.test.mjs</code> proves the gate fails on a bare toggle, on a new unclassified template, and on an empty reason. Applied by AGT-2813 to the result-header status line (which lost its duplicate <q>Why this status?</q> row), the token-panel rows, the previous-results toggle, the agent-work detail toggles, the Dossier decision panel sections, and the shared <code>&lt;app-section-header&gt;</code>.</p>
+  </section>
+
+  <footer>Prepared 10 August 2026; flat outcome-summary, panel keyboard containment, lane-header, and Dossier-list guidance extended 12 August 2026; promoted to living standard with visual dos-and-donts and applied-surfaces subpages by AGT-2617 on 16 August 2026; Human Review requeue addendum (AGT-2749) added 8 September 2026; disclosure affordance chapter (ADM-17, AGT-2813) added 14 September 2026. Source card AGT-2583. Related evidence: AGT-2565, AGT-2567, AGT-2568, AGT-2549, AGT-2579, AGT-2606, AGT-2638, AGT-2642, AGT-2643, AGT-2644, and AGT-2749. Multi-page format (index.html + pages/) introduced by AGT-2617; task-header status pair added by AGT-2637.</footer>
 </main>
 </body>
 </html>
