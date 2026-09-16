@@ -1125,8 +1125,13 @@ public sealed class TaskTransitionService
     {
         if (_integrationStatus == null) return false;
         var lookup = _integrationStatus.BuildLookup([job]);
+        // AGT-2849: the merge is the acceptance boundary; publishing it is the
+        // push step's job and is recovered by the integration push backstop. A
+        // delivery that is merged but not pushed yet must therefore not be sent
+        // back to Human Review - its badge says merged-locally until the push
+        // lands, which is exactly the honesty this distinction is for.
         return lookup.TryGetValue(job.TaskKey, out var status)
-               && status.Status == IntegrationStatuses.Integrated;
+               && IntegrationStatuses.IsMerged(status.Status);
     }
 
     private string ResolveIntegrationBranch(TaskInfo job, ProjectSettings settings)
@@ -1844,7 +1849,7 @@ public sealed class TaskTransitionService
         out bool isIntegrated)
     {
         var status = _integrationStatus?.BuildLookup([job]).GetValueOrDefault(job.TaskKey);
-        isIntegrated = status?.Status == IntegrationStatuses.Integrated;
+        isIntegrated = IntegrationStatuses.IsMerged(status?.Status);
         if (isIntegrated)
         {
             var anchor = pending.LastOrDefault(c => !TaskCommitSupersession.IsSuperseded(c)) ?? pending[^1];

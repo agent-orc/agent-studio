@@ -647,6 +647,22 @@ steer the pipeline in this policy version.
   it. See
   [task integration and merge workflow](../../concepts/task-integration-and-merge-workflow.md#gate-environment-retry-agt-2824)
   for the ladder, the receipts, and the operator action.
+- A gate that never reached a verdict at all - the process that owned the merge
+  disappeared through a restart, a host timeout, or a kill - is a separate class
+  from a red or environment verdict (AGT-2849). `MergeIntoIntegrationGatedAsync`
+  opens `<job folder>/post-steps/integration-gate.inflight.json` BEFORE the merge
+  with the exact rollback anchor, completes it with the merge result, and clears
+  it on every path that reaches a verdict, including the rollback. An entry that
+  survives into the next process is therefore by construction an interrupted run.
+  `InterruptedIntegrationGateRecoveryHostedService` performs one pass per process
+  start, before the merge gate opens for new work, and decides per integration
+  branch: resume when a durable receipt matches the exact merge result, otherwise
+  roll the branch back to the OLDEST unverified pre-merge tip and re-queue every
+  affected card. It escalates instead of guessing when the anchor is no longer on
+  the branch or no longer contains `origin/<branch>`. The repaired cards carry the
+  `gate-interrupted` failure code, which joins `gate-environment-failure` in the
+  host-fault family the ladder above replays without a new review. See
+  [interrupted integration gate](../../operations/git/interrupted-integration-gate.md).
 - A failed preparation or verification command stores a bounded, single-line
   stderr/stdout excerpt in the gate reason that flows into the durable pipeline
   step record. Full streams remain in per-process evidence and the gate log, so

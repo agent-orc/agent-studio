@@ -346,6 +346,17 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   HEAD. Lane state, provenance merge records, pipeline success, and curated
   merge subjects do not force `integrated`; an out-of-band merge is detected on
   the next read.
+- `integrated` means reachable from the PUSHED integration branch
+  (`origin/<branch>`). A delivery that only a local branch or a worktree ref can
+  see is `merged-locally`, with the unreachable commits named in the detail; a
+  repository without an origin mirror of the branch is its own publication and
+  keeps the local graph authoritative (AGT-2849). `merged-locally` is merged work
+  but not integrated work: `IntegrationStatuses.IsMerged` is true, so acceptance,
+  the acceptance rail, and integration recovery proceed while the separately
+  backstopped push is still queued, and `IsNotIntegrated` is true, so the
+  `integrationpending` marker, the archive warning, and the amber board badge
+  stay until the push lands. See
+  [interrupted integration gate](../../operations/git/interrupted-integration-gate.md).
 - Human acceptance is transactional. A coding card remains in
   `5-human-review` with phase `integrating` until the delivery reaches `Merged`,
   `MergedAfterRebase`, `AlreadyMerged`, or `AlreadyOnIntegrationBranch`. The
@@ -370,7 +381,8 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
 - `AcceptanceRailHostedService` is the platform-owned mover for routine
   post-integration progress. By default it runs immediately at backend startup
   and every 180 seconds. It accepts a coding card from `5-human-review` only
-  when the same Git-derived projection says `integrated`; concept and other
+  when the same Git-derived projection says the delivery is merged
+  (`integrated` or `merged-locally`); concept and other
   no-code cards remain for human review. A recoverable `conflict-skipped` card
   in `5-human-review` or `5e-escalated` receives the shared rebase steer and is
   promoted to the top of `2-ready`. After five rail requeues it stays escalated

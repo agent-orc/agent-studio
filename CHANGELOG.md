@@ -12,6 +12,25 @@ release yet.
 
 ## [Unreleased]
 
+### Added
+
+- A build gate that never reaches a verdict is recorded as an interrupted run.
+  The pre-develop gate writes a durable in-flight record before the merge, and
+  startup recovery rolls the integration branch back to the exact pre-merge tip -
+  the oldest one when several un-gated merges stacked up - or resumes the merge
+  whose verdict for that exact SHA is already durable. Affected cards are
+  integrated again without a new remote review. A branch whose rollback anchor is
+  gone or already published escalates instead of being rewritten (AGT-2849).
+
+### Changed
+
+- `integration.status=integrated` now requires the delivery to be reachable from
+  the pushed remote integration branch. A delivery that only a local branch or a
+  worktree ref can see reports the new `merged-locally` status, naming the
+  commits `origin/<branch>` cannot reach. Acceptance and the acceptance rail keep
+  moving such a card, because the origin push is a separate, backstopped step
+  (AGT-2849).
+
 ## [0.4.0] - 2026-09-16
 
 Operations release. The review executor and the integration gate stop

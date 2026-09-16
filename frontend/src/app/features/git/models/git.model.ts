@@ -496,9 +496,13 @@ export interface TaskMergeSignal {
   releaseSha: string | null;
 }
 
-/** One of the discrete integration verdicts (AGT-2202; `partial` added AGT-2171 fix). */
+/**
+ * One of the discrete integration verdicts (AGT-2202; `partial` added AGT-2171
+ * fix, `merged-locally` added AGT-2849).
+ */
 export type IntegrationStatusValue =
   | 'integrated'
+  | 'merged-locally'
   | 'partial'
   | 'pending'
   | 'conflict-skipped'
@@ -516,7 +520,7 @@ export type IntegrationStatusValue =
  * not in an accepted lane.
  */
 export interface TaskIntegrationStatus {
-  /** integrated | pending | conflict-skipped | no-branch. */
+  /** integrated | merged-locally | partial | pending | conflict-skipped | no-branch. */
   status: IntegrationStatusValue;
   /** Actual delivery ref from card truth; null only when no ref is evidenced. */
   deliveryRef: string | null;
