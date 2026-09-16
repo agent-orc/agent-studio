@@ -362,9 +362,11 @@ public sealed class RunnerServiceUnitTests
         Assert.Contains("rollback command:", helper);
     }
 
-    [Fact]
+    [SkippableFact]
+    [Trait(PlatformGate.TraitName, PlatformGate.Linux)]
     public void Agent_runner_cli_update_uses_fixed_packages_staging_probes_and_rollback()
     {
+        PlatformGate.LinuxOnly("the staging proof replaces a directory symlink with ln -sfn");
         var result = RunShellScript(
             "runner.Tests/Fixtures/agent-runner-deploy-cli-update.sh",
             Path.Combine(RepoRoot(), "deploy", "agent-host", "agent-runner-deploy"));
@@ -376,7 +378,8 @@ public sealed class RunnerServiceUnitTests
         Assert.Contains("failed-probe=previous-release-retained", result.StandardOutput);
     }
 
-    [Fact]
+    [SkippableFact]
+    [Trait(PlatformGate.TraitName, PlatformGate.Linux)]
     public void Review_guard_uses_the_candidate_and_the_active_process_state_directory()
     {
         PlatformGate.LinuxOnly("the restart guard resolves /proc/<pid>/environ");
