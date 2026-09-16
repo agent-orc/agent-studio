@@ -10,6 +10,7 @@
   ],
   "enforced": [
     "src/app/components/section-header/section-header.component.html",
+    "src/app/features/project-detail/components/project-branch-sweep/project-branch-sweep.component.html",
     "src/app/features/project-detail/components/workbench-overview/workbench-overview.component.html",
     "src/app/features/task-detail/components/prompt-pane/agent-work-detail/agent-work-detail.component.html",
     "src/app/features/task-detail/components/prompt-pane/pipeline-token-usage/pipeline-token-usage.component.html",

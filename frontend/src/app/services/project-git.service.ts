@@ -2,6 +2,11 @@ import { Injectable, inject } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import type { Observable } from 'rxjs';
 import type {
+  BranchSweepExecutionItem,
+  BranchSweepExecutionResult,
+  BranchSweepMode,
+  BranchSweepReport,
+  BranchSweepSettings,
   CleanupExecutionItem,
   GitCleanupPlan,
   GitCleanupResult,
@@ -86,6 +91,60 @@ export class ProjectGitService {
     return this.http.post<GitCleanupResult>(
       '/api/git/cleanup/execute',
       { items },
+      { params: new HttpParams().set('project', project) },
+    );
+  }
+
+  /**
+   * Latest persisted stale-branch sweep report (AGT-2794). Resolves to null
+   * when the project has never been swept (the endpoint answers 204).
+   */
+  getBranchSweepLatest(project: string): Observable<BranchSweepReport | null> {
+    return this.http.get<BranchSweepReport | null>('/api/git/branch-sweep/latest', {
+      params: new HttpParams().set('project', project),
+    });
+  }
+
+  /** Fresh read-only classification of every remote ref. Deletes nothing. */
+  getBranchSweepPlan(project: string): Observable<BranchSweepReport> {
+    return this.http.get<BranchSweepReport>('/api/git/branch-sweep/plan', {
+      params: new HttpParams().set('project', project),
+    });
+  }
+
+  /** Runs a sweep now and persists its report. `mode` overrides the stored project mode for this run. */
+  runBranchSweep(project: string, mode?: BranchSweepMode): Observable<BranchSweepReport> {
+    let params = new HttpParams().set('project', project);
+    if (mode) params = params.set('mode', mode);
+    return this.http.post<BranchSweepReport>('/api/git/branch-sweep/run', {}, { params });
+  }
+
+  /**
+   * Deletes one operator-confirmed batch of refs. The backend re-derives
+   * eligibility and re-checks each tip before deleting, so a stale selection
+   * can never drop a ref the policy would keep.
+   */
+  executeBranchSweep(
+    project: string,
+    items: BranchSweepExecutionItem[],
+  ): Observable<BranchSweepExecutionResult> {
+    return this.http.post<BranchSweepExecutionResult>(
+      '/api/git/branch-sweep/execute',
+      { items },
+      { params: new HttpParams().set('project', project) },
+    );
+  }
+
+  getBranchSweepSettings(project: string): Observable<BranchSweepSettings> {
+    return this.http.get<BranchSweepSettings>('/api/git/branch-sweep/settings', {
+      params: new HttpParams().set('project', project),
+    });
+  }
+
+  setBranchSweepMode(project: string, mode: BranchSweepMode): Observable<BranchSweepSettings> {
+    return this.http.put<BranchSweepSettings>(
+      '/api/git/branch-sweep/settings',
+      { mode },
       { params: new HttpParams().set('project', project) },
     );
   }

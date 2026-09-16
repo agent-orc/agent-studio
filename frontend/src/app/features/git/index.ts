@@ -45,6 +45,18 @@ export type {
   CleanupExecutionItem,
   CleanupActionOutcome,
   GitCleanupResult,
+  // Stale-branch sweep (AGT-2794).
+  BranchSweepMode,
+  BranchSweepClass,
+  BranchSweepCandidate,
+  BranchSweepClassTotals,
+  BranchSweepAgeBucket,
+  BranchSweepDeletion,
+  BranchRetentionWindows,
+  BranchSweepReport,
+  BranchSweepExecutionItem,
+  BranchSweepExecutionResult,
+  BranchSweepSettings,
 } from './models/git.model';
 
 // Project Hub Git View tree model (pure builder + node types).
