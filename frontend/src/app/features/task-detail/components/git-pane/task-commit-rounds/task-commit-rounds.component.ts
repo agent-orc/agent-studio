@@ -1,8 +1,15 @@
 import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
-import type { TaskCommitInfo } from '../../../../git';
+import { commitSupersessionState, isReplacedCommit, type TaskCommitInfo } from '../../../../git';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { formatCompactDateTime, formatDateTime } from '../../../../../services/format.util';
 
+/**
+ * AGT-2817 - this block used to be the only place a card's supersession was
+ * shown, and it rendered the `next-attempt` placeholder as a replacement. A
+ * requeued-but-not-yet-replaced delivery is still the card's live delivery, so
+ * it stays in the current list with its own pending marker, and only commits
+ * with a named successor move into the replaced history below.
+ */
 interface SupersededRound {
   key: string;
   label: string;
@@ -25,7 +32,7 @@ export class TaskCommitRoundsComponent {
 
   readonly collapsed = signal(readCollapsed());
   readonly activeCommits = computed(() =>
-    this.commits().filter((commit) => !isSuperseded(commit)),
+    this.commits().filter((commit) => !isReplacedCommit(commit)),
   );
   readonly supersededRounds = computed<SupersededRound[]>(() => buildSupersededRounds(this.commits()));
   readonly summary = computed(() => {
@@ -47,8 +54,23 @@ export class TaskCommitRoundsComponent {
 
   tooltip(entry: TaskCommitInfo, index: number, total: number): string {
     const base = `${index + 1}/${total} · ${entry.shortSha} · ${formatDateTime(entry.at)} · ${entry.message}`;
-    const pushNote = this.pushStatusTooltip(entry);
-    return pushNote ? `${base}\n${pushNote}` : base;
+    const notes = [this.pendingReplacementTooltip(entry), this.pushStatusTooltip(entry)].filter(Boolean);
+    return notes.length > 0 ? `${base}\n${notes.join('\n')}` : base;
+  }
+
+  /**
+   * Marker for a commit that was requeued while its replacement has not been
+   * published. It is a pending state, not the verdict "replaced": the commit is
+   * still the delivery this card has.
+   */
+  pendingReplacementLabel(entry: TaskCommitInfo): string | null {
+    return commitSupersessionState(entry) === 'replacement-pending' ? 'replacement pending' : null;
+  }
+
+  private pendingReplacementTooltip(entry: TaskCommitInfo): string | null {
+    return commitSupersessionState(entry) === 'replacement-pending'
+      ? 'Requeued; the replacement attempt has not published yet. This commit is still the delivery this card has.'
+      : null;
   }
 
   timestamp(entry: TaskCommitInfo): string {
@@ -106,6 +128,7 @@ function buildSupersededRounds(commits: TaskCommitInfo[]): SupersededRound[] {
     commits: TaskCommitInfo[];
   }>();
   commits.forEach((commit, index) => {
+    if (!isReplacedCommit(commit)) return;
     const replacementSha = commit.supersededBySha?.trim();
     const replacementAttempt = commit.supersededByAttempt?.trim();
     const replacement = replacementSha || replacementAttempt;
@@ -140,7 +163,6 @@ function replacementRoundLabel(
   replacement: string,
   sourceRound: number,
 ): string {
-  if (replacement === 'next-attempt') return 'next attempt';
   const replacementCommit = commits.find((commit) =>
     commit.runAttemptId === replacement
     || commit.resultSha === replacement
@@ -148,10 +170,6 @@ function replacementRoundLabel(
   const replacementAttempt = replacementCommit?.runAttemptId ?? replacement;
   const replacementIndex = attemptIds.indexOf(replacementAttempt);
   return `round ${replacementIndex >= 0 ? replacementIndex + 1 : sourceRound + 1}`;
-}
-
-function isSuperseded(commit: TaskCommitInfo): boolean {
-  return !!commit.supersededBySha?.trim() || !!commit.supersededByAttempt?.trim();
 }
 
 const COLLAPSED_KEY = 'taskboard.gitPane.commitGroupCollapsed';

@@ -281,6 +281,20 @@ public record TaskIntegrationStatus
     /// one entry, evaluated against its own registered checkout and branches.
     /// </summary>
     public List<TaskRepositoryIntegrationStatus> Repositories { get; init; } = [];
+
+    /// <summary>
+    /// AGT-2817 - the deployment half of the card's answer: is this delivery
+    /// also contained in the released line? True only when every attributed
+    /// repository reports full release membership. Null when the card has no
+    /// repository evidence to roll up, which is "not yet checked", not "no".
+    /// </summary>
+    public bool? Released
+        => Repositories.Count == 0
+            ? null
+            : Repositories.All(repository => repository.OnReleaseBranch);
+
+    /// <summary>Release branch the <see cref="Released"/> rollup was computed against.</summary>
+    public string ReleaseBranch { get; init; } = "main";
 }
 
 /// <summary>Integration and release membership for one attributed repository.</summary>

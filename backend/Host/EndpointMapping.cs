@@ -36,11 +36,13 @@ public static class EndpointMapping
         tasks.MapTaskPipelineEndpoints();
         tasks.MapTaskMergeEndpoints();
         tasks.MapTaskIntegrationRecordEndpoints();
+        tasks.MapTaskDeliveryClaimEndpoint();
         tasks.MapTaskIntegrationRecoveryEndpoints();
         tasks.MapTaskIntegrationRetryEndpoints();
 
         app.MapEpicEndpoints();
         app.MapCompletedLaneAuditEndpoints();
+        app.MapDeliveryClaimEndpoints();
         app.MapParkedCardEndpoints();
         app.MapRunnerEndpoints();
         app.MapRemoteQueueStarvationEndpoints();

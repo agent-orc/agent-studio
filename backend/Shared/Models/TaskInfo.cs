@@ -158,6 +158,14 @@ public record TaskInfo
     /// </summary>
     public List<TaskIntegrationRecord> IntegrationRecords { get; init; } = [];
     /// <summary>
+    /// AGT-2817 - the grounds on which this card claims completion: a
+    /// contained delivery, a named deliverable without code, or an operator
+    /// override with a written reason. Persisted by the completion contract on
+    /// the move into <c>6-completed</c>; null on cards that have never been
+    /// completed and on cards completed before the contract existed.
+    /// </summary>
+    public TaskCompletionClaim? CompletionClaim { get; init; }
+    /// <summary>
     /// Actual repository base line used to prepare the latest runner checkout,
     /// persisted as <c>refs/heads/main</c> or <c>refs/heads/develop</c>.
     /// Null on legacy tasks that have not yet been backfilled.

@@ -135,6 +135,65 @@ public static class TaskCommitSupersession
     public static bool IsSuperseded(TaskCommitInfo commit)
         => !string.IsNullOrWhiteSpace(commit.SupersededBySha)
             || !string.IsNullOrWhiteSpace(commit.SupersededByAttempt);
+
+    /// <summary>
+    /// AGT-2817 - the commit carries the <see cref="PendingAttempt"/>
+    /// placeholder: it was requeued and the replacement has not published yet.
+    /// This is a pending state, not the verdict "this commit was replaced".
+    /// Rendering it as a replacement is what made AGT-2706's shipped delivery
+    /// read as superseded long after it had been integrated.
+    /// </summary>
+    public static bool IsReplacementPending(TaskCommitInfo commit)
+        => string.IsNullOrWhiteSpace(commit.SupersededBySha)
+            && string.Equals(
+                commit.SupersededByAttempt?.Trim(),
+                PendingAttempt,
+                StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// A named successor exists: a replacement SHA, or a resolved run attempt
+    /// id that is not the placeholder. Only this is "replaced by this".
+    /// </summary>
+    public static bool IsReplaced(TaskCommitInfo commit)
+        => IsSuperseded(commit) && !IsReplacementPending(commit);
+
+    /// <summary>
+    /// Commits that still count towards the card's current delivery
+    /// expectation. A pending placeholder keeps the commit effective: until a
+    /// replacement publishes, it is still the only delivery the card has.
+    /// </summary>
+    public static bool IsEffectiveDelivery(TaskCommitInfo commit)
+        => !IsReplaced(commit);
+
+    /// <summary>
+    /// One of <see cref="CommitSupersessionStates"/>, for callers that render
+    /// the distinction instead of re-deriving it.
+    /// </summary>
+    public static string State(TaskCommitInfo commit)
+    {
+        if (IsReplaced(commit)) return CommitSupersessionStates.Replaced;
+        return IsReplacementPending(commit)
+            ? CommitSupersessionStates.ReplacementPending
+            : CommitSupersessionStates.Current;
+    }
+}
+
+/// <summary>
+/// Wire values for <see cref="TaskCommitSupersession.State"/>. The UI must not
+/// render <see cref="ReplacementPending"/> with replacement wording.
+/// </summary>
+public static class CommitSupersessionStates
+{
+    /// <summary>No supersession marker; the commit is the card's live delivery.</summary>
+    public const string Current = "current";
+
+    /// <summary>Requeued, replacement not published yet.</summary>
+    public const string ReplacementPending = "replacement-pending";
+
+    /// <summary>Replaced by a named successor SHA or resolved attempt id.</summary>
+    public const string Replaced = "replaced";
+
+    public static readonly string[] All = [Current, ReplacementPending, Replaced];
 }
 
 /// <summary>Terminal <see cref="TaskCommitInfo.PushStatus"/> values the completed-push backstop persists.</summary>

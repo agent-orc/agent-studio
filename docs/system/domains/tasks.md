@@ -584,6 +584,39 @@ the same idempotent repair over missing Results in `5-human-review`,
 `6-completed`, and `7-archive`; repaired files are marked as operator
 backfills.
 
+## Completion contract (AGT-2817)
+
+`TaskTransitionService` is also the single enforcement point for what a card is
+allowed to claim when it enters the delivered lane. Every move into
+`6-completed` runs `CompletionContractPolicy` (pure, matrix-tested) and records
+the accepted ground in `task.json.completionClaim`:
+`integrated-delivery`, `deliverable-without-code`, or `operator-override` with
+its verbatim reason. Operator-initiated moves are refused with a typed reason
+(`IntegrationFailed`, HTTP 409); automated paths record the claim they can
+prove and are never blocked by it. `operatorOverride` without a written reason
+is refused at the endpoint boundary with HTTP 400.
+
+Containment is the only proof of integration. The verdict comes from
+`TaskIntegrationStatusService`'s Git-derived membership; a stored integration
+record, a pipeline verdict, and a lane position are read beside it, never
+instead of it. An unanswered containment question is `unknown` and is never
+worded as "not integrated".
+
+`TaskCommitSupersession` distinguishes the `next-attempt` placeholder
+(`replacement-pending`: requeued, replacement not published yet - still the
+card's effective delivery) from a named successor (`replaced`). A contained
+delivery is not superseded, so the completion contract and the reconciliation
+pass clear the placeholder from contained commits and never touch a named
+successor.
+
+Three read surfaces consume this:
+`GET /api/tasks/{id}/delivery-claim` (per-card deployment answer, including the
+curated `merge(KEY): ...` commit that carried the delivery and release-line
+membership), `GET /api/projects/{id}/delivery-claims` (sweep), and
+`POST /api/projects/{id}/delivery-claims/reconcile` (repairs only the caches
+that contradict positive containment, and reports what changed). Full
+rationale: [the completion contract](../../concepts/task-integration-and-merge-workflow.md#the-completion-contract-agt-2817).
+
 ## Task-tab refinement projection
 
 The task-detail inspector orders its tabs as `Task | Activity | Result`.

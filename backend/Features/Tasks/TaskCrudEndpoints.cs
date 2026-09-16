@@ -611,6 +611,10 @@ public static class TaskCrudEndpoints
             if (validation != null) return validation;
             if (req.OperatorOverride && req.TargetState != TaskStates.Completed)
                 return Results.BadRequest(new { error = "operatorOverride is valid only for a move to 6-completed." });
+            // AGT-2817: an override is a claim the card will carry and show.
+            // It needs a written reason, checked here at the boundary.
+            if (req.OperatorOverride && !CompletionContractPolicy.IsUsableReason(req.Reason?.Trim()))
+                return Results.BadRequest(new { error = OverrideReasonRequired });
 
             // T2b: these two routes are the operator-initiated move (board drag /
             // detail-view lane button), so the lane-change ledger trigger is the
@@ -633,6 +637,10 @@ public static class TaskCrudEndpoints
             if (validation != null) return validation;
             if (req.OperatorOverride && req.TargetState != TaskStates.Completed)
                 return Results.BadRequest(new { error = "operatorOverride is valid only for a move to 6-completed." });
+            // AGT-2817: an override is a claim the card will carry and show.
+            // It needs a written reason, checked here at the boundary.
+            if (req.OperatorOverride && !CompletionContractPolicy.IsUsableReason(req.Reason?.Trim()))
+                return Results.BadRequest(new { error = OverrideReasonRequired });
 
             return MoveResult(await transitions.MoveAsync(
                 jobId, req.TargetState, watchPath, ct, req.TargetIndex,
@@ -1048,6 +1056,16 @@ public static class TaskCrudEndpoints
             return Results.Ok(index.Dependents(info.Key, kind));
         });
     }
+
+    /// <summary>
+    /// AGT-2817 - an operator override completes a card against the completion
+    /// contract. The reason is stored on the card and shown wherever the card
+    /// claims completion, so an empty one is refused at the boundary.
+    /// </summary>
+    internal static readonly string OverrideReasonRequired =
+        "operatorOverride needs a written reason of at least "
+        + $"{CompletionContractPolicy.MinimumOverrideReasonLength} characters. It is stored on the "
+        + "card and shown wherever the card claims completion.";
 
     private static string OperatorActor(HttpContext context)
     {

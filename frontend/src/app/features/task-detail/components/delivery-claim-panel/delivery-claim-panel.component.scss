@@ -1,0 +1,111 @@
+:host {
+  display: contents;
+}
+
+.claim {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--studio-spacing-2);
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-spacing-1);
+  background: var(--studio-surface-muted);
+  color: var(--studio-fg);
+  font-size: 0.75rem;
+}
+
+/*
+ * Acute only when the check genuinely found an unintegrated delivery on a card
+ * that claims one. "Not checked yet" and "nothing to integrate" stay quiet:
+ * neither is a finding. Status is carried by a background tint and a dot, per
+ * the hard design rules - no left accent bar.
+ */
+.claim[data-integration='not-integrated'] {
+  border-color: color-mix(in srgb, var(--studio-warn) 35%, var(--studio-border));
+  background: color-mix(in srgb, var(--studio-warn) 7%, var(--studio-bg-surface));
+}
+
+.claim__label {
+  color: var(--studio-fg-strong);
+  font-weight: 700;
+}
+
+.claim__ref {
+  font-family: var(--font-mono, monospace);
+  font-variant-numeric: tabular-nums;
+}
+
+.claim__ref--none {
+  color: var(--studio-fg-muted);
+  font-style: italic;
+}
+
+.claim__state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--studio-spacing-1);
+  white-space: nowrap;
+}
+
+.claim__dot {
+  font-size: 0.6rem;
+  line-height: 1;
+}
+
+.claim__state[data-state='integrated'] .claim__dot,
+.claim__state[data-state='released'] .claim__dot {
+  color: var(--studio-success);
+}
+
+.claim__state[data-state='not-integrated'] .claim__dot {
+  color: var(--studio-warn);
+}
+
+/* Not a finding: not checked, nothing to integrate, or simply not released yet. */
+.claim__state[data-state='unknown'] .claim__dot,
+.claim__state[data-state='nothing-to-integrate'] .claim__dot,
+.claim__state[data-state='unreleased'] .claim__dot {
+  color: var(--studio-fg-muted);
+}
+
+.claim__state[data-state='unknown'],
+.claim__state[data-state='nothing-to-integrate'],
+.claim__state[data-state='unreleased'] {
+  color: var(--studio-fg-muted);
+}
+
+.claim__merge {
+  font-family: var(--font-mono, monospace);
+  font-variant-numeric: tabular-nums;
+  color: var(--studio-fg-muted);
+}
+
+.claim__supersession,
+.claim__basis {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--studio-bg-elevated);
+  color: var(--studio-fg-muted);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/*
+ * The marker only reads `replaced` when every attributed delivery has a named
+ * successor, which is the contradiction AGT-2743 exhibits: the card claims a
+ * delivery that was replaced. That is acute. A pending placeholder is not a
+ * verdict at all and reads quietly.
+ */
+.claim__supersession[data-state='replaced'] {
+  background: color-mix(in srgb, var(--studio-warn) 14%, var(--studio-bg-elevated));
+  color: var(--studio-warn);
+}
+
+.claim__reason {
+  flex: 1 1 100%;
+  margin: 0;
+  color: var(--studio-fg-muted);
+}

@@ -272,6 +272,120 @@ These behaviours are real today and being reviewed. See the configuration analys
 - Parallelism coupling: `MaxParallelism` is perceived as a throughput knob, but flipping it `1 <-> >=2` also silently changes the commit target, merge timing/trigger, merge command and history shape, conflict handling, and what "Accept" means. `IntegrationBranch` and `IntegrationStrategy` are not exposed in the frontend.
 - Auto-commit on transition: in sequential mode the auto-commit can land directly on the configured target branch with no `task/<id>` branch. The computed membership check recognizes this as already integrated and completes acceptance without running a merge. The completed-push target can still diverge from the integration target; that configuration detail remains under review.
 
+## The completion contract (AGT-2817)
+
+A card in the delivered lane makes a claim. Until AGT-2817 nothing checked it:
+the move endpoint accepted `operatorOverride: true` with no reason, and nothing
+asked whether an integration record existed, whether the attributed commits were
+contained in the integration branch, or whether the card declared a deliverable
+without code. AGT-2795 therefore sat in `6-completed` while its single
+attributed delivery had failed review and was never integrated.
+
+### Containment decides; the record is a cache
+
+Every place the product judges whether a delivery is integrated asks Git whether
+the delivery commit is contained in the integration branch: the archive guard,
+the completion contract, the board badge, and the per-card deployment answer.
+A stored integration record, a pipeline verdict, and a lane position are read
+beside that answer, never instead of it.
+
+**A missing record is never reported as "not integrated".** It is *unknown, not
+yet checked*, and the containment question is asked before anything is said.
+AGT-2706's delivery `79c2dcf8c` was contained in `develop` and in `main` and had
+shipped with v0.3.0, yet the archive dialog reported it as a pending
+integration purely because its `integration` field was `undefined`.
+
+### The three grounds
+
+`CompletionContractPolicy` (`backend/Features/Tasks/Acceptance/CompletionContractPolicy.cs`)
+is pure and has a direct matrix test. A move into `6-completed` is accepted on
+exactly one of three grounds, and the card records which one in
+`task.json.completionClaim`:
+
+| Basis | Accepted when |
+|---|---|
+| `integrated-delivery` | The effective delivery is contained in the integration branch. Outranks every other ground, including an override the operator did not need. |
+| `deliverable-without-code` | The card expects no code and names its deliverable - for a concept card the Dossier path and key, otherwise a workbench reference, a written `results/deliverables.md`, or a deliberate no-Dossier declaration. |
+| `operator-override` | The operator completed the card against the contract **with a written reason**, stored on the card and shown wherever the card claims completion. |
+
+Refusals are typed and answerable: `unintegrated-delivery`,
+`superseded-only-delivery`, `undeclared-deliverable`, and
+`override-without-reason`. A card whose every attributed delivery is marked
+superseded with no successor recorded claims a delivery that does not exist, so
+it is refused unless the operator overrides it in writing.
+
+The check runs at the lane change, for every transition into `6-completed`, not
+only from Human Review. Operator-initiated moves are refused (HTTP 409);
+automated paths record the claim they can prove and are never blocked by it.
+`POST /api/tasks/{id}/move` and `PUT /api/tasks/{id}/state` reject
+`operatorOverride` without a reason at the boundary (HTTP 400).
+
+### `next-attempt` is a placeholder, not a verdict
+
+`TaskCommitSupersession.PendingAttempt` (the literal `next-attempt`) is written
+between an explicit requeue and the publication of the replacement attempt, then
+resolved to the real fenced attempt id. When no replacement ever publishes - the
+card is integrated by an operator merge, or the requeue is abandoned - the
+placeholder was never cleared and every consumer that read supersession as a
+verdict saw a shipped delivery as replaced. That is AGT-2706.
+
+- `replacement-pending` means "requeued, replacement not published yet". The
+  commit is still the delivery the card has, so it stays in the current commit
+  list with its own quiet marker.
+- `replaced` means "replaced by this": a replacement SHA, or a resolved attempt
+  id. Only this moves a commit into the replaced history.
+
+A delivery contained in the integration branch is not superseded: the completion
+contract and the reconciliation pass both clear the placeholder from contained
+commits. A named successor is never touched.
+
+### The deployment answer per card
+
+`GET /api/tasks/{id}/delivery-claim` answers, for one card: the delivery ref,
+whether it is contained in the integration branch, the curated
+`merge(KEY): ...` commit that carried it, whether it is contained in the release
+line, the supersession state of each attributed commit, and the recorded
+completion claim. The task detail renders it where the operator already looks,
+beside the lane and the evidence.
+
+### Operator merges write their record
+
+A card-scoped merge performed outside the pipeline
+(`merge(AGT-nnnn): integrate reviewed delivery (operator card-scoped merge)`,
+and the salvage recipe) must write its integration record back to the card.
+[`scripts/record-operator-merge.sh`](../../scripts/record-operator-merge.sh) is
+the recorded step of that recipe: it derives the delivery commits from the merge,
+posts the record through `POST /api/tasks/{key}/integration-records`, and then
+reconciles the project so the placeholder the merge left standing is cleared.
+
+```bash
+scripts/record-operator-merge.sh --task AGT-2706 --merge 9cfc0e074 --project PROJ-002
+```
+
+### The sweep and the reconciliation pass
+
+- `GET /api/projects/{id}/delivery-claims` reports every delivered and archived
+  card's class and its contradictions. Run it after a promotion so the
+  divergence between "delivered" and "deployed" is visible without asking.
+- `POST /api/projects/{id}/delivery-claims/reconcile` runs the same sweep and
+  repairs the caches that contradict containment: it appends the integration
+  record a contained delivery is missing, and clears the stale `next-attempt`
+  placeholder. Both repairs move only in the direction where containment is
+  positive, which is the one direction that cannot lose information. Everything
+  else is reported and left alone; the pass never rewrites history it cannot
+  prove.
+
+Reported classes and findings (`DeliveryClaimSweepPolicy`, pure, matrix-tested):
+
+| Finding | Shape |
+|---|---|
+| `unintegrated-delivery` | The effective delivery is not in the integration branch (AGT-2795). |
+| `superseded-only-delivery` | Every attributed delivery is replaced and no successor is recorded (AGT-2743). |
+| `unmarked-replaced-delivery` | An uncontained delivery is kept as a live attribution beside a contained one (AGT-2744). |
+| `missing-integration-record` | Contained, but the card carries no integration record (AGT-2706). Repairable. |
+| `stale-pending-supersession` | A contained commit still carries the `next-attempt` placeholder (AGT-2706). Repairable. |
+| `nothing-claimed` | Neither a delivery nor a named deliverable. |
+
 ## Branch cleanup (AGT-2009, AGT-2793)
 
 Over time a project repository accumulates dead refs across six namespaces: `task/*`,

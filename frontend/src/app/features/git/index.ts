@@ -17,6 +17,7 @@ export type {
   TaskMergeSignal,
   TaskIntegrationStatus,
   IntegrationStatusValue,
+  TaskRepositoryIntegrationStatus,
   // Project Hub Git View inventory.
   GitBranchCategory,
   GitWorktreeEntry,
@@ -67,3 +68,11 @@ export type {
   GitTreeActiveNode,
 } from './models/git-tree.model';
 export type { GitGraphRow, GitGraphSegment } from './models/git-graph-layout.model';
+
+export type { CommitSupersessionState } from './models/commit-supersession.model';
+export {
+  PENDING_ATTEMPT,
+  commitSupersessionState,
+  isReplacedCommit,
+  isEffectiveDelivery,
+} from './models/commit-supersession.model';
