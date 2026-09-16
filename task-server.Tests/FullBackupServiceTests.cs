@@ -107,6 +107,10 @@ public sealed class FullBackupServiceTests
         Directory.CreateDirectory(collisionDirectory);
         await File.WriteAllTextAsync(Path.Combine(collisionDirectory, "note.txt"), "one");
         await File.WriteAllTextAsync(Path.Combine(collisionDirectory, "NOTE.txt"), "two");
+        // A case-insensitive volume (NTFS default) folds both writes into one file, so the
+        // collision this test needs cannot exist there; the verify path is covered on Linux.
+        if (Directory.GetFiles(collisionDirectory).Length < 2)
+            return;
 
         // The set can never restore correctly onto a case-insensitive filesystem (Windows/NTFS
         // default) once two members differ only by case, so verification must fail loudly here
