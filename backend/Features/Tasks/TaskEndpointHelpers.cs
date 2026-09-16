@@ -183,12 +183,14 @@ internal static class TaskEndpointHelpers
         // killed by a backend restart. Gated on the Progress lane (same O(1)
         // runner lookup as the auto-loop snapshot above) so the perf contract
         // holds; pure visibility, no behavior. Null on every other lane.
+        // AGT-2703: the classification no longer reads the clock. The backoff
+        // instant travels on the wire and the card decides whether it is still
+        // holding, which is what lets an unchanged board answer 304.
         TaskRunActivity? runActivity = job.State == TaskStates.Progress
             ? TaskRunActivityClassifier.Classify(
                 runners.GetRunActivityForJob(job.Id, job.ProjectName),
                 exec,
-                outcomeIssue,
-                DateTime.UtcNow)
+                outcomeIssue)
             : null;
         // AGT-2003: project the active run-lease owner onto the card while the
         // task is in-progress. Same Progress-lane gate + O(1) in-memory peek as

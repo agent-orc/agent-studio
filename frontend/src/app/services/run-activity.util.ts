@@ -1,5 +1,5 @@
 import { TaskState } from '../models/task.model';
-import type { TaskInfo, TaskRunActivityKind } from '../models/task.model';
+import type { TaskInfo, TaskRunActivity, TaskRunActivityKind } from '../models/task.model';
 import type { StructuredTooltip } from 'coding-agent-chat/shared';
 
 export type RunActivityTone = 'active' | 'failed' | 'idle';
@@ -9,6 +9,42 @@ export interface RunActivityBadge {
   label: string;
   tone: RunActivityTone;
   tooltip: StructuredTooltip;
+}
+
+/**
+ * AGT-2703: resolves the run-activity kind a card should render from the kind
+ * the backend sent plus the client's own clock.
+ *
+ * The server used to decide `failed-backoff` itself by comparing the recorded
+ * backoff deadline against its clock. That made the whole board response a
+ * function of the instant it was served, so no two responses were ever
+ * comparable and the board could never answer a conditional poll. The backoff
+ * deadline is in the payload anyway, so the comparison belongs here: the server
+ * now sends the kind the card shows once the deadline has passed
+ * (`failed-idle` or `no-active-run`) together with `backoffUntil`, and this
+ * function reinstates `failed-backoff` for as long as the deadline is still
+ * ahead. A live run never carries a deadline and is returned untouched.
+ *
+ * Callers that already track a clock signal pass it in, so a card holding out a
+ * backoff flips to its post-backoff state on the next tick rather than waiting
+ * for a server round-trip.
+ */
+export function resolveRunActivityKind(
+  activity: TaskRunActivity | null | undefined,
+  nowMs: number = Date.now(),
+): TaskRunActivityKind | null {
+  if (!activity) return null;
+  if (activity.kind === 'active' || activity.kind === 'continuing-after-restart') return activity.kind;
+
+  const until = activity.backoffUntil ? Date.parse(activity.backoffUntil) : Number.NaN;
+  if (Number.isFinite(until) && until > nowMs) return 'failed-backoff';
+
+  // A deadline that has passed, or a payload from a backend that still
+  // classified the backoff itself, resolves to what the card shows once the
+  // backoff is over, so a cooling card can never get stuck on the retry clock.
+  return activity.kind === 'failed-backoff'
+    ? (activity.attempt > 0 ? 'failed-idle' : 'no-active-run')
+    : activity.kind;
 }
 
 /**
@@ -195,9 +231,10 @@ export function deriveStalledTaskState(
   idleThresholdMs: number = STALLED_IDLE_THRESHOLD_MS,
 ): StalledTaskState | null {
   if (job.state !== TaskState.Progress || isTaskRunActive(job)) return null;
-  if (job.runActivity?.kind === 'failed-backoff') return null;
+  const kind = resolveRunActivityKind(job.runActivity, nowMs);
+  if (kind === 'failed-backoff') return null;
 
-  const failed = job.runActivity?.kind === 'failed-idle'
+  const failed = kind === 'failed-idle'
     || job.execution?.status === 'failed'
     || ((job.outcomeIssue?.severity ?? '').toLowerCase() === 'warn')
     || ((job.outcomeIssue?.severity ?? '').toLowerCase() === 'high');
@@ -264,9 +301,10 @@ export function buildRunActivityBadge(job: TaskInfo, nowMs: number = Date.now())
   // Positive live evidence wins over a stale negative runner classification.
   // This is most visible during pre-steps (activeStep, no CLI execution yet)
   // and in the hand-off between pipeline steps.
-  const effectiveKind: TaskRunActivityKind = activity.kind === 'continuing-after-restart'
-    ? activity.kind
-    : isTaskRunActive(job) ? 'active' : activity.kind;
+  const resolved = resolveRunActivityKind(activity, nowMs) ?? activity.kind;
+  const effectiveKind: TaskRunActivityKind = resolved === 'continuing-after-restart'
+    ? resolved
+    : isTaskRunActive(job) ? 'active' : resolved;
 
   switch (effectiveKind) {
     case 'active': {
@@ -300,22 +338,23 @@ export function buildRunActivityBadge(job: TaskInfo, nowMs: number = Date.now())
       };
     }
     case 'failed-backoff': {
+      // Reached only while the deadline is still ahead, so the clock is the
+      // headline rather than a conditional decoration.
       const clock = activity.backoffUntil ? formatClock(activity.backoffUntil) : null;
-      const future = activity.backoffUntil ? Date.parse(activity.backoffUntil) > nowMs : false;
-      const label = clock && future ? `failed · Backoff bis ${clock}` : 'failed · wartet auf Reissue';
+      const label = clock ? `failed · Backoff bis ${clock}` : 'failed · wartet auf Reissue';
       return {
-        kind: activity.kind,
+        kind: effectiveKind,
         label,
         tone: 'failed',
         tooltip: {
           title: 'failed — wartet auf Reissue/Review',
-          body: `<div>Der letzte Run ist fehlgeschlagen; ein Rapid-Crash-Backoff hält das Re-Pickup${clock && future ? ` bis <b>${clock}</b>` : ''} zurück.</div>${attemptLine}${errorLine}`,
+          body: `<div>Der letzte Run ist fehlgeschlagen; ein Rapid-Crash-Backoff hält das Re-Pickup${clock ? ` bis <b>${clock}</b>` : ''} zurück.</div>${attemptLine}${errorLine}`,
         },
       };
     }
     case 'failed-idle': {
       return {
-        kind: activity.kind,
+        kind: effectiveKind,
         label: 'failed · kein aktiver Run',
         tone: 'failed',
         tooltip: {

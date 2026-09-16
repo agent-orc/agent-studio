@@ -64,7 +64,15 @@ public sealed class BetterCandidateService
         if (!TryCapabilityClass(capabilityClass, out var capability)) return null;
         if (!TryEffort(thinkingLevel, out var effort)) return null;
 
-        var now = _timeProvider.GetUtcNow().UtcDateTime;
+        // AGT-2703: the note's only clock-dependent outputs (EvidenceAgeDays and
+        // the 90-day EvidenceStale flag) are whole days, so the evaluation
+        // instant is quantised to UTC midnight. A day-granular field computed
+        // from a per-request timestamp would otherwise make two responses
+        // differ over a board that did not change, and no ETag could validate
+        // it. The board read folds the same UTC date into its validator, so the
+        // age advances exactly once a day and stays correct.
+        var now = DateOnly.FromDateTime(_timeProvider.GetUtcNow().UtcDateTime)
+            .ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
         var benchmarkTypes = _evidence.Types
             .Where(type => type.CapabilityClass == capability)
             .OrderBy(type => type.Id, StringComparer.Ordinal)

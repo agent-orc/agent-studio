@@ -11,6 +11,12 @@ public sealed record BetterCandidateNote
     public string? CurrentThinkingLevel { get; init; }
     public string CapabilityClass { get; init; } = string.Empty;
     public string EvidenceSnapshot { get; init; } = string.Empty;
+    /// <summary>
+    /// UTC midnight of the day the note was evaluated. Quantised to the day on
+    /// purpose (AGT-2703): the only clock-dependent values the note carries are
+    /// whole-day counts, so a per-request instant would make an unchanged board
+    /// produce a different payload on every poll.
+    /// </summary>
     public DateTime EvaluatedAtUtc { get; init; }
     public string MatrixUrl { get; init; } = string.Empty;
     public IReadOnlyList<BetterCandidate> Candidates { get; init; } = [];

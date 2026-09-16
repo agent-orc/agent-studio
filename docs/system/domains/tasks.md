@@ -961,6 +961,62 @@ path.
   endpoint alongside each repository's index age, with a warning when
   `tasks/grouped` p95 exceeds 1 s or total spawns exceed 20/min.
 
+## Conditional board reads (AGT-2703)
+
+`GET /api/tasks/grouped` and `GET /api/tasks/` are validated reads. Both emit a
+strong `ETag` plus `Cache-Control: no-cache`, and both answer a matching
+`If-None-Match` with `304 Not Modified` and an empty body. The grouped response
+was measured at roughly 1.9 MB, polled every two seconds; on an unchanged board
+every byte of it is a byte the client already holds.
+
+- **The 304 skips the work, not just the transfer.** The validator is computed
+  from cache reads over the already scanned task set. Enrichment (token,
+  verdict, dependency, Git and live-status lookups), the per-lane sort, and
+  serialisation all run only after the validator says the client's copy is out
+  of date. `BoardReadValidator` owns the pure decision; `BoardReadSignatureSource`
+  owns the inputs.
+- **The validator must cover every input.** A missing input does not cost
+  performance, it serves a stale board behind a 304. Folded in: the task index
+  generation; `TaskSidecarGeneration` (a counter over the raw watcher stream,
+  because the task index deliberately ignores generated sidecars such as the
+  pipeline execution record, the step prompt log, the spawn ledger and the
+  planning closure); `TaskListGitProjectionCache.Generation` plus the published
+  `gitStateAt`/`stale`; `ProjectSettingsService.Version`; the per-project review
+  decision journal stamp (those files live outside every watch path); a fold
+  over the in-memory runtime state that leaves no file trace at all (CLI
+  executions, run-activity facts, auto-loop snapshots, summariser state, runner
+  badges, quota fallbacks, queue positions, execution locations); and the
+  request shape, so two clients with different project access or different query
+  parameters never share a tag.
+- **Time-derived display logic moved to the client.** A field computed from
+  `DateTime.UtcNow` makes a response depend on the instant it was served, which
+  no validator can represent. `runActivity` no longer classifies the rapid-crash
+  backoff server-side: it publishes `backoffUntil` next to the kind the card
+  shows once that instant has passed, and the renderer
+  (`resolveRunActivityKind`) decides whether the card reads `failed-backoff`. A
+  cooling card therefore also leaves that state on its own clock tick instead of
+  waiting for the next poll.
+- **Two values stay server-computed and are named here.** The better-candidate
+  evidence age is quantised to the UTC day at the source, and the UTC date is a
+  validator input, so it advances exactly once a day. The execution-location
+  freshness verdict (a 75 s heartbeat window and a 3 min activity window
+  deciding `connectionState` and the recovering state) cannot be derived from a
+  stored fact, so a 15 s tick is folded in while any card sits in the Progress
+  lane - the only lane those branches apply to. An idle board has no Progress
+  card and does not pay that tick at all.
+- **A tag never outlives the task index safety TTL.** The index publishes a new
+  generation on every snapshot publish, including the TTL rescan that finds
+  nothing changed (`TaskIndexCache:SafetyTtlSeconds`, default 30 s). The board poll
+  therefore settles at one full response per TTL window instead of one per poll,
+  and the same bound backstops the validator if the filesystem watcher ever
+  stops delivering events.
+- **Legacy `review` lane alias is opt-out.** The grouped response still carries
+  `review` as a second copy of the auto-review lane for pre-ADR-0025 clients. A
+  client that knows the ADR-0025 lane names sends
+  `?includeLegacyReviewLane=false` and receives the key as an empty array
+  instead of the duplicate, which is what the Angular board does. Omitting the
+  parameter keeps the pre-ADR-0025 contract unchanged.
+
 ## Project Git inventory contract
 
 - `GET /api/git/inventory` and `GET /api/git/history` return an in-memory
@@ -1016,6 +1072,10 @@ own lease owner rather than inheriting a project-wide runner status.
 Settled session events preserve the same projection as historical run evidence.
 Historical entries never reuse disconnected warning treatment. See the
 [execution location schema](../schemas/task-execution-location.schema.json).
+
+`runActivity.kind` is server-classified for every value except
+`failed-backoff`, which the renderer derives from `backoffUntil` against its own
+clock; see [Conditional board reads](#conditional-board-reads-agt-2703).
 
 During local restart recovery, `runActivity.kind` is
 `continuing-after-restart` only after the replacement backend has verified the

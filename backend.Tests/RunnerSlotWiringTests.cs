@@ -117,13 +117,13 @@ public sealed class RunnerSlotWiringTests : IDisposable
         // Before recovery the slot is empty and the classifier paints the
         // orphan as no-active-run.
         var before = TaskRunActivityClassifier.Classify(
-            runner.GetRunActivity("t6a"), execution: null, outcomeIssue: null, DateTime.UtcNow);
+            runner.GetRunActivity("t6a"), execution: null, outcomeIssue: null);
         Assert.Equal(TaskRunActivityKinds.NoActiveRun, before.Kind);
 
         runner.RegisterRecoveredRun("t6a", "claude");
 
         var after = TaskRunActivityClassifier.Classify(
-            runner.GetRunActivity("t6a"), execution: null, outcomeIssue: null, DateTime.UtcNow);
+            runner.GetRunActivity("t6a"), execution: null, outcomeIssue: null);
         Assert.Equal(TaskRunActivityKinds.ContinuingAfterRestart, after.Kind);
     }
 

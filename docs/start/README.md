@@ -61,6 +61,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Integration worktree: where delivery merges run, why the developer checkout is never used, and how to clean the slot up (AGT-2832) | [operations/git/integration-worktree.md](../operations/git/integration-worktree.md) |
 | Branch lifecycle and automatic reclamation (AGT-2793) | [concepts/task-integration-and-merge-workflow.md#branch-cleanup-agt-2009-agt-2793](../concepts/task-integration-and-merge-workflow.md#branch-cleanup-agt-2009-agt-2793) |
 | Tasks | [domains/tasks.md](../system/domains/tasks.md) |
+| Conditional board reads: ETag/304 on `/api/tasks/grouped` and `/api/tasks/`, what the validator has to cover, and the client-derived run-activity backoff (AGT-2703) | [domains/tasks.md#conditional-board-reads-agt-2703](../system/domains/tasks.md#conditional-board-reads-agt-2703) |
 | Frontend | [domains/frontend.md](../system/domains/frontend.md) |
 | Stable view URL contract | [contracts/stable-view-urls.md](../system/contracts/stable-view-urls.md) |
 | Global search palette and API | [domains/frontend.md#global-search](../system/domains/frontend.md#global-search) |
