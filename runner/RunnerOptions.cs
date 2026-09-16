@@ -84,13 +84,20 @@ public sealed class RunnerOptions
     public IReadOnlyList<string> ReviewCredentialEnvironment { get; init; } = [];
 
     /// <summary>
-    /// How long a review verify command's process tree may run without clearing
-    /// its CPU floor before the hang watchdog kills it and the attempt is
-    /// classified <c>ReviewInfra/NoCpuProgress</c>
+    /// Floor for how long a review verify command's process tree may run without
+    /// clearing its CPU floor before the hang watchdog kills it and the attempt
+    /// is classified <c>ReviewInfra/NoCpuProgress</c>
     /// (<c>RUNNER_REVIEW_NO_CPU_PROGRESS_SECONDS</c>). A deadlocked build blocks
     /// on a socket instead of exiting, so it would otherwise hold its review slot
     /// for the whole command budget. <c>0</c> disables the watchdog. Linux only:
     /// the tree's CPU time is read from <c>/proc</c>.
+    /// <para>
+    /// AGT-2851: this is a floor, not the effective window. A verify command's
+    /// actual no-CPU-progress window is the larger of this value and 50% of that
+    /// command's own budget (<c>RemoteReviewWorkspace.NoCpuProgressWindow</c>), so
+    /// a legitimately quiet integration suite with a large budget is not killed
+    /// mid-run for sitting near 0% CPU during a real test wait.
+    /// </para>
     /// </summary>
     public int ReviewNoCpuProgressSeconds { get; init; } = 900;
 
@@ -199,6 +206,13 @@ public sealed class RunnerOptions
     /// host load average of 0.47; each would have held its slot for the full
     /// two-hour command budget, so one stuck batch cost eight review-hours. Set
     /// to 0 to disable the watchdog and fall back to the command budget alone.
+    /// <para>
+    /// AGT-2851: <c>ReviewPlanResourcePolicy</c> adds <c>--logger
+    /// "console;verbosity=normal"</c> to every review <c>dotnet test</c>
+    /// invocation, so a healthy run keeps printing per-test lines through a long
+    /// <c>ParallelizeTestCollections=false</c> suite and this watchdog only fires
+    /// on genuine silence, not on quiet default-logger output.
+    /// </para>
     /// </summary>
     public int CommandSilenceWatchdogSeconds { get; init; } = 600;
 

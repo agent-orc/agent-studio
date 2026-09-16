@@ -688,18 +688,26 @@ public sealed class RemoteReviewWorkspace
         var started = DateTime.UtcNow;
         ProcessResult process;
         string? signal = null;
-        var noProgressAfter = TimeSpan.FromSeconds(Math.Max(0, _options.ReviewNoCpuProgressSeconds));
+        var noProgressAfter = NoCpuProgressWindow(timeoutSeconds);
         // Owned outside the try so the catch below can tell a wall-clock timeout
         // apart from a tree that stopped consuming CPU.
         CommandProgressWatchdog? watchdog = null;
         // The two hang detectors answer different questions and neither subsumes
         // the other: silence catches a command that keeps burning CPU without
         // ever producing a line, no-CPU-progress catches a tree blocked on a
-        // host-shared handle. A blocked tree trips both, and the silence window
-        // is the tighter one, so the catch filters report silence first.
+        // host-shared handle. A blocked tree can trip both; StallDetection lets
+        // whichever one actually observes its condition first claim the kill, so
+        // the report always names the detector that fired rather than assuming
+        // one window is always tighter than the other (AGT-2851: an operator
+        // raised the silence window past the no-CPU-progress window and the old
+        // "silence always wins" comment stopped matching reality).
         var silenceWindow = SilenceWindow(timeoutSeconds);
         var clock = new CommandOutputClock();
         var stall = new StallDetection();
+        if (silenceWindow > TimeSpan.Zero || noProgressAfter > TimeSpan.Zero)
+            _log(
+                $"review-command-watchdogs step={stepId} silenceWindowSeconds={silenceWindow.TotalSeconds:0} " +
+                $"noCpuProgressWindowSeconds={noProgressAfter.TotalSeconds:0} budgetSeconds={Math.Clamp(timeoutSeconds, 1, 7200)}");
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -732,9 +740,14 @@ public sealed class RemoteReviewWorkspace
                         noProgressAfter,
                         onStalled: () =>
                         {
+                            var sampledCpu = ProcessTreeCpu.Sample(processId);
+                            if (!stall.TryRecordNoCpuProgress(
+                                    DateTime.UtcNow - started, noProgressAfter, sampledCpu))
+                                return; // the silence watchdog already claimed this kill.
                             _log(
                                 $"review command stalled step={stepId} pid={processId} " +
-                                $"noCpuProgressSeconds={noProgressAfter.TotalSeconds:0} action=kill-tree");
+                                $"noCpuProgressSeconds={noProgressAfter.TotalSeconds:0} " +
+                                $"measuredCpuSeconds={(sampledCpu?.TotalSeconds ?? -1):0.0} action=kill-tree");
                             // Cancelling the run token is what actually reaps the
                             // tree: ProcessRunner kills every descendant on cancel.
                             try { timeout.Cancel(); }
@@ -752,27 +765,39 @@ public sealed class RemoteReviewWorkspace
                 await watching;
             }
         }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested && stall.Silence is { } silent)
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested
+                                                  && stall.Detector == StallDetector.Silence)
         {
+            var silent = stall.Silence!.Value;
+            var window = stall.SilenceWindow!.Value;
             process = new ProcessResult(
                 -1,
                 string.Empty,
                 $"Review command '{stepId}' produced no output for {silent.TotalSeconds:F0}s and was " +
-                $"killed by the silence watchdog (window {silenceWindow.TotalSeconds:F0}s) rather than " +
-                "holding its review slot for the remaining command budget.");
+                $"killed by the silence watchdog (window {window.TotalSeconds:F0}s) rather than " +
+                "holding its review slot for the remaining command budget; detector=silence.");
             signal = "stalled";
         }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested
+                                                  && stall.Detector == StallDetector.NoCpuProgress)
         {
-            var stalled = watchdog?.Stalled == true;
+            var window = stall.NoCpuProgressWindow!.Value;
+            var cpuText = stall.SampledCpu is { } sampled
+                ? $"{sampled.TotalSeconds:F1}s of CPU"
+                : "no observable CPU";
             process = new ProcessResult(
                 -1,
                 string.Empty,
-                stalled
-                    ? "Review command was killed after " +
-                      $"{noProgressAfter.TotalSeconds:0}s without CPU progress."
-                    : "Review command timed out.");
-            signal = stalled ? StalledSignal : "timeout";
+                $"Review command '{stepId}' consumed {cpuText} in " +
+                $"{stall.CpuElapsed!.Value.TotalSeconds:F0}s against a {window.TotalSeconds:F0}s " +
+                "no-CPU-progress window and was killed rather than holding its review slot for the " +
+                "remaining command budget; detector=no-cpu-progress.");
+            signal = StalledSignal;
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            process = new ProcessResult(-1, string.Empty, "Review command timed out.");
+            signal = "timeout";
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -785,7 +810,7 @@ public sealed class RemoteReviewWorkspace
         {
             if (watchdog is not null) await watchdog.DisposeAsync();
         }
-        return new CommandExecution(process, started, DateTime.UtcNow, signal);
+        return new CommandExecution(process, started, DateTime.UtcNow, signal, Stall: stall.ToDiagnostics());
     }
 
     /// <summary>
@@ -801,16 +826,30 @@ public sealed class RemoteReviewWorkspace
     /// <summary>Review report classification for a command the watchdog reaped.</summary>
     internal const string NoCpuProgressClassification = "NoCpuProgress";
 
-    private string NoProgressSummary(
+    /// <summary>
+    /// Names the detector, its effective window, and what was actually measured,
+    /// so a card never has to guess which watchdog fired or what threshold it
+    /// used (AGT-2851). Falls back to the command's own elapsed wall time only
+    /// when no diagnostics were captured, which should not happen for a command
+    /// classified <see cref="NoCpuProgressClassification"/>.
+    /// </summary>
+    private static string NoProgressSummary(
         string subject,
         string stepId,
         string? commandLine,
         CommandExecution execution)
-        => $"{subject} '{stepId}' consumed no CPU for " +
-           $"{Math.Max(0, _options.ReviewNoCpuProgressSeconds)}s and was killed as a hang, not a " +
-           $"product failure: {commandLine}; " +
-           $"signal={StalledSignal}; " +
-           $"elapsed={Math.Max(0, (long)(execution.FinishedAt - execution.StartedAt).TotalSeconds)}s.";
+    {
+        var stall = execution.Stall;
+        var window = stall?.NoCpuProgressWindow?.TotalSeconds ?? 0;
+        var elapsed = stall?.CpuElapsed?.TotalSeconds
+                      ?? Math.Max(0, (execution.FinishedAt - execution.StartedAt).TotalSeconds);
+        var cpuText = stall?.SampledCpu is { } sampled
+            ? $"{sampled.TotalSeconds:F1}s of CPU"
+            : "no observable CPU";
+        return $"{subject} '{stepId}' consumed {cpuText} in {elapsed:F0}s against a {window:F0}s " +
+               "no-CPU-progress window and was killed as a hang, not a product failure: " +
+               $"{commandLine}; detector=no-cpu-progress; signal={StalledSignal}; elapsed={elapsed:F0}s.";
+    }
 
     private async Task<DependencyCacheSession?> ExecutePreparationAsync(
         string workspacePath,
@@ -1163,6 +1202,27 @@ public sealed class RemoteReviewWorkspace
         return configured >= budget ? TimeSpan.Zero : TimeSpan.FromSeconds(configured);
     }
 
+    /// <summary>
+    /// AGT-2851: a healthy integration suite with <c>ParallelizeTestCollections=
+    /// false</c> and long real waits between test classes can sit near 0% CPU for
+    /// stretches well past the configured floor without being stuck - the fixed
+    /// 900s default killed reviews that would have finished in 20-25 minutes.
+    /// The effective window is never smaller than the configured floor, but it
+    /// also grows with the command's own budget, so a two-hour verify command
+    /// gets a full hour of genuine quiet before its tree is judged blocked.
+    /// </summary>
+    private TimeSpan NoCpuProgressWindow(int timeoutSeconds)
+    {
+        var configured = Math.Max(0, _options.ReviewNoCpuProgressSeconds);
+        if (configured <= 0) return TimeSpan.Zero;
+        var budget = Math.Clamp(timeoutSeconds, 1, 7200);
+        var derivedFromBudget = (int)(budget * NoCpuProgressBudgetFraction);
+        return TimeSpan.FromSeconds(Math.Max(configured, derivedFromBudget));
+    }
+
+    /// <summary>Share of a verify command's own budget the no-CPU-progress floor may grow to.</summary>
+    private const double NoCpuProgressBudgetFraction = 0.5;
+
     private async Task WatchForSilenceAsync(
         string stepId,
         CommandOutputClock clock,
@@ -1180,7 +1240,8 @@ public sealed class RemoteReviewWorkspace
                 await Task.Delay(poll, ct).ConfigureAwait(false);
                 var silent = clock.SilentFor(DateTime.UtcNow);
                 if (silent < silenceWindow) continue;
-                stall.Record(silent);
+                if (!stall.TryRecordSilence(silent, silenceWindow))
+                    return; // the no-CPU-progress watchdog already claimed this kill.
                 _log(
                     $"review-command-stalled step={stepId} silentSeconds={silent.TotalSeconds:F0} " +
                     $"window={silenceWindow.TotalSeconds:F0}s; killing the command instead of " +
@@ -1750,7 +1811,9 @@ public sealed class RemoteReviewWorkspace
                 ["buildServers"] = ReviewBuildServerIsolation.IsIsolated(ProcessEnvironment())
                     ? "per-attempt"
                     : "host-shared",
-                ["hangWatchdogSeconds"] = Math.Max(0, _options.ReviewNoCpuProgressSeconds)
+                // The configured floor, not the effective per-command window: each
+                // command's actual window also grows with its own budget (AGT-2851).
+                ["hangWatchdogFloorSeconds"] = Math.Max(0, _options.ReviewNoCpuProgressSeconds)
                     .ToString(System.Globalization.CultureInfo.InvariantCulture),
                 ["containers"] = _lease.ResourceNamespace,
                 ["databases"] = _lease.ResourceNamespace,
@@ -2196,22 +2259,76 @@ internal sealed class CommandOutputClock
         => TimeSpan.FromTicks(Math.Max(0, nowUtc.Ticks - Interlocked.Read(ref _ticks)));
 }
 
+/// <summary>Which hang detector, if any, ended a review command.</summary>
+internal enum StallDetector
+{
+    None,
+    Silence,
+    NoCpuProgress,
+}
+
 /// <summary>
-/// Records that the silence watchdog - not the command budget - ended a review
-/// command, so the cancellation can be reported as the stall it is.
+/// Records which hang detector - not the command budget - ended a review
+/// command, so the cancellation is reported under the detector that actually
+/// fired instead of assuming one always wins. The silence watchdog and the
+/// no-CPU-progress watchdog run concurrently and can both observe a blocked
+/// tree; whichever calls <see cref="TryRecordSilence"/> or
+/// <see cref="TryRecordNoCpuProgress"/> first claims the kill, and the other
+/// call is a no-op (AGT-2851).
 /// </summary>
 internal sealed class StallDetection
 {
-    private long _silentTicks = -1;
+    private readonly object _gate = new();
+    private bool _claimed;
 
-    public void Record(TimeSpan silence)
-        => Interlocked.CompareExchange(ref _silentTicks, silence.Ticks, -1);
+    public StallDetector Detector { get; private set; } = StallDetector.None;
+    public TimeSpan? Silence { get; private set; }
+    public TimeSpan? SilenceWindow { get; private set; }
+    public TimeSpan? CpuElapsed { get; private set; }
+    public TimeSpan? NoCpuProgressWindow { get; private set; }
+    public TimeSpan? SampledCpu { get; private set; }
 
-    public TimeSpan? Silence
-        => Interlocked.Read(ref _silentTicks) is var ticks && ticks >= 0
-            ? TimeSpan.FromTicks(ticks)
-            : null;
+    public bool TryRecordSilence(TimeSpan silence, TimeSpan window)
+    {
+        lock (_gate)
+        {
+            if (_claimed) return false;
+            _claimed = true;
+            Detector = StallDetector.Silence;
+            Silence = silence;
+            SilenceWindow = window;
+            return true;
+        }
+    }
+
+    public bool TryRecordNoCpuProgress(TimeSpan elapsed, TimeSpan window, TimeSpan? sampledCpu)
+    {
+        lock (_gate)
+        {
+            if (_claimed) return false;
+            _claimed = true;
+            Detector = StallDetector.NoCpuProgress;
+            CpuElapsed = elapsed;
+            NoCpuProgressWindow = window;
+            SampledCpu = sampledCpu;
+            return true;
+        }
+    }
+
+    public StallDiagnostics? ToDiagnostics()
+        => Detector == StallDetector.None
+            ? null
+            : new StallDiagnostics(Detector, Silence, SilenceWindow, CpuElapsed, NoCpuProgressWindow, SampledCpu);
 }
+
+/// <summary>Effective thresholds and measured values behind a hang-watchdog kill, for reporting.</summary>
+internal sealed record StallDiagnostics(
+    StallDetector Detector,
+    TimeSpan? Silence,
+    TimeSpan? SilenceWindow,
+    TimeSpan? CpuElapsed,
+    TimeSpan? NoCpuProgressWindow,
+    TimeSpan? SampledCpu);
 
 public sealed record ReviewExecutionEvidence(
     string Outcome,
@@ -2233,7 +2350,8 @@ internal sealed record CommandExecution(
     DateTime StartedAt,
     DateTime FinishedAt,
     string? Signal,
-    RemoteAgentUsage? AgentUsage = null);
+    RemoteAgentUsage? AgentUsage = null,
+    StallDiagnostics? Stall = null);
 
 internal sealed record RemoteAgentUsage(
     string Model,

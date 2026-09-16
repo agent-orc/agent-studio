@@ -535,7 +535,7 @@ identity values such as `RUNNER_ID=agent-runner-01` are not renamed.
 | `RUNNER_ROLE` | `--role` | `coding` | `coding` or the separately registered `review` service. |
 | `RUNNER_REVIEW_WORKDIR` | `--review-workdir` | `$TMPDIR/agent-review-work` | Disposable review-only workspace, cache, temp, and evidence root. Must differ from `RUNNER_WORKDIR`. Settled attempt workspaces are removed after report acceptance; inactive attempt remnants older than 72 hours are swept hourly. The reusable `.baseline-cache` is preserved. |
 | `RUNNER_REVIEW_CREDENTIAL_ENV` | `--review-credential-env` | (none) | Comma-separated read-only credential variable names admitted into the cleared review environment. |
-| `RUNNER_REVIEW_NO_CPU_PROGRESS_SECONDS` | `--review-no-cpu-progress-seconds` | `900` | Hang watchdog for review commands. A command's whole process tree must burn at least one percent of one core within this window; otherwise the tree is killed and the attempt is reported as `ReviewInfra/NoCpuProgress`. `0` disables the watchdog. Linux only: the tree's CPU time is read from `/proc`. See [Review parallelism and build-server isolation](#review-parallelism-and-build-server-isolation). |
+| `RUNNER_REVIEW_NO_CPU_PROGRESS_SECONDS` | `--review-no-cpu-progress-seconds` | `900` | Floor for the hang watchdog on review commands. A command's whole process tree must burn at least one percent of one core within the *effective* window; otherwise the tree is killed and the attempt is reported as `ReviewInfra/NoCpuProgress`. The effective window is `max(this value, 50%` of that command's own budget`)` (AGT-2851), so a legitimately quiet suite with a large budget is not killed for sitting near 0% CPU during a real test wait. `0` disables the watchdog outright, ignoring the budget-derived floor. Linux only: the tree's CPU time is read from `/proc`. See [Review parallelism and build-server isolation](#review-parallelism-and-build-server-isolation). |
 | `RUNNER_STATE_DIR` | `--state-dir` | `$RUNNER_WORKDIR/.runner-state` | Durable slot, attempt, PID, worker result, and file-backed output state used for planned restart reattachment. Keep it on persistent local storage. |
 | `RUNNER_EXEC_ENGINE` | `--exec-engine` | `car` | CLI execution engine inside the detached worker. `car` (default since AGT-2370) drives the CLI through the CodingAgentRunner library: descriptor-built argv, `stream-json` output, permission-mode injection from the card's spec (absent = bypass/yolo), and a task-stable isolated config home whose credential file is linked so OAuth refreshes write through. `legacy` is the pre-AGT-2370 raw spawn and is removed in AGT-2373. |
 | `AGENT_STUDIO_CLEAN_CONTEXT_ROOT` | none | `$XDG_STATE_HOME/agent-studio/clean-context` or `~/.local/state/agent-studio/clean-context` | Persistent non-temporary root for task-isolated Claude and Codex homes. Keep it on host-local storage. The same task reuses its marker-validated home across attempts and daemon restarts; inactive homes expire after seven days. |
@@ -550,7 +550,7 @@ identity values such as `RUNNER_ID=agent-runner-01` are not renamed.
 | `RUNNER_HEARTBEAT_SECONDS` | | `30` | Renew cadence, kept below the TTL. |
 | `RUNNER_RUN_TIMEOUT_SECONDS` | | `3600` | Hard cap on a single CLI run. |
 | `RUNNER_MAX_PARALLELISM` | `--max-parallelism` | `2` | Bootstrap slot ceiling for both roles. Neither role uses it as the live control any more. Coding is bounded by the centrally managed Execution Hosts ceiling; since AGT-2820 Review adopts the review plane's own `RoleMaxParallelism` recommendation from the minutely capability advertisement and falls back to this value only until the first advertisement is answered. Managed hosts accept only values 1 through 6 through the sanctioned role-config command below. |
-| `RUNNER_COMMAND_SILENCE_WATCHDOG_SECONDS` | none | `600` | A review command that produces no output at all for this long is killed and typed `ReviewInfra` / `CommandStalled` instead of holding its slot for the rest of its budget. Engaged only when it is strictly tighter than that command's budget. Set to `0` to disable the watchdog and rely on the command budget alone. Separate from `RUNNER_REVIEW_NO_CPU_PROGRESS_SECONDS` above: that one watches CPU, this one watches output, and a tree blocked on a host-shared handle trips both. |
+| `RUNNER_COMMAND_SILENCE_WATCHDOG_SECONDS` | none | `600` | A review command that produces no output at all for this long is killed and typed `ReviewInfra` / `CommandStalled` instead of holding its slot for the rest of its budget. Engaged only when it is strictly tighter than that command's budget. Set to `0` to disable the watchdog and rely on the command budget alone. Separate from `RUNNER_REVIEW_NO_CPU_PROGRESS_SECONDS` above: that one watches CPU, this one watches output. A tree blocked on a host-shared handle can trip both; whichever detector reaches its own threshold first claims the kill and the report names it (`detector=silence` or `detector=no-cpu-progress`), so raising this above the no-CPU-progress window no longer mislabels a CPU-progress kill as silence (AGT-2851). `ReviewPlanResourcePolicy` adds `--logger "console;verbosity=normal"` to every review `dotnet test` command so a healthy `ParallelizeTestCollections=false` suite keeps producing progress lines for this watchdog to reset against. |
 | `RUNNER_POLL_SECONDS` | `--poll-seconds` | `5` | Delay after an empty claim poll. |
 | `RUNNER_SERVER_REQUEST_TIMEOUT_SECONDS` | `--server-request-timeout-seconds` | `60` | Hard deadline for every Task Server HTTP request, including capability advertisement and worker-loss release. |
 | `RUNNER_IDLE_WATCHDOG_MINUTES` | `--idle-watchdog-minutes` | `5` | A daemon with no active slots exits after this long without starting a claim poll. The fatal journal line is followed by a service-manager restart. |
@@ -662,13 +662,27 @@ preparation - runs with its own server-free build namespace, applied by
 | `MSBUILDDEBUGPATH` | attempt `tmp` | MSBuild debug and crash files stay attempt-local. |
 
 A second guard covers anything that blocks on a host-shared handle anyway.
-`RUNNER_REVIEW_NO_CPU_PROGRESS_SECONDS` (default 900) bounds how long a command's
-process tree may run without doing work: the runner samples the tree's cumulative
-CPU time from `/proc` and kills it when it fails to burn one percent of one core
-within the window. The attempt is reported as `ReviewInfra/NoCpuProgress`, which
-is retried as infrastructure rather than graded as a product regression. The
-attempt's environment evidence carries `buildServers=per-attempt` and
-`hangWatchdogSeconds`, so a report proves which fence it ran under.
+`RUNNER_REVIEW_NO_CPU_PROGRESS_SECONDS` (default 900) is a *floor*, not the
+effective window: the runner samples the tree's cumulative CPU time from
+`/proc` and kills the process tree when it fails to burn one percent of one
+core within the window, but the effective window for a given verify command is
+never smaller than half that command's own budget (AGT-2851). A healthy
+integration suite run with `ParallelizeTestCollections=false` can sit near 0%
+CPU for long stretches between test classes; a fixed 900 s floor killed reviews
+on this host that would otherwise have finished in 20-25 minutes. The attempt
+is reported as `ReviewInfra/NoCpuProgress`, which is retried as infrastructure
+rather than graded as a product regression. The attempt's environment evidence
+carries `buildServers=per-attempt` and `hangWatchdogFloorSeconds` (the
+configured floor, not the effective per-command window), so a report proves
+which fence it ran under.
+
+**Never mislabeled.** The silence watchdog and the no-CPU-progress watchdog run
+concurrently and a blocked tree can trip both; whichever one reaches its own
+threshold first claims the kill, and the stall report names the detector that
+actually fired (`detector=silence` or `detector=no-cpu-progress`) together with
+its effective window and what was measured. Raising one operator knob past the
+other's default therefore changes which detector fires, and the report reflects
+that instead of always naming the same one.
 
 **Safe parallelism.** With the fence in place, review parallelism is bounded by
 host CPU, memory and I/O, not by a shared build server. Each attempt runs

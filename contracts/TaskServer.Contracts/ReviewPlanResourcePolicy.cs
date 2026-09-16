@@ -27,6 +27,14 @@ namespace AgentStudio.TaskServer.Contracts;
 /// 2963 MB on one host. A review is a one-shot build; it has nothing to gain
 /// from a persistent node pool.
 /// </para>
+/// <para>
+/// AGT-2851: <c>dotnet test</c> also gets a normal-verbosity console logger. The
+/// default console logger prints nothing between test classes, and a suite run
+/// with <c>ParallelizeTestCollections=false</c> can sit quiet for the whole
+/// length of one long integration class; the review host's silence watchdog
+/// then has no output to reset its clock against. Per-test progress lines give
+/// the watchdog something real to watch, so it only fires on genuine silence.
+/// </para>
 /// </summary>
 public static partial class ReviewPlanResourcePolicy
 {
@@ -104,7 +112,7 @@ public static partial class ReviewPlanResourcePolicy
         int maxCpuCount)
     {
         var isTest = string.Equals(source[0], "test", StringComparison.OrdinalIgnoreCase);
-        var filtered = new List<string>(source.Count + 3) { source[0] };
+        var filtered = new List<string>(source.Count + 5) { source[0] };
         for (var index = 1; index < source.Count; index++)
         {
             var argument = source[index];
@@ -115,6 +123,11 @@ public static partial class ReviewPlanResourcePolicy
             if (argument is "--maxcpucount" or "-maxcpucount"
                 && index + 1 < source.Count
                 && int.TryParse(source[index + 1], out _))
+            {
+                index++;
+                continue;
+            }
+            if (argument is "--logger" or "-logger" && index + 1 < source.Count)
             {
                 index++;
                 continue;
@@ -131,25 +144,47 @@ public static partial class ReviewPlanResourcePolicy
         var limited = MaxCpuShellArgument().Replace(shellCommand, string.Empty);
         limited = NodeReuseShellArgument().Replace(limited, string.Empty);
         limited = TestCollectionParallelismShellArgument().Replace(limited, string.Empty);
+        limited = LoggerShellArgument().Replace(limited, string.Empty);
         limited = CollapseUnquotedHorizontalWhitespace(limited);
         return DotNetBuildOrTest().Replace(
             limited,
             match =>
             {
                 var isTest = match.Value.EndsWith("test", StringComparison.OrdinalIgnoreCase);
-                return $"{match.Value} {string.Join(' ', LimitArguments(maxCpuCount, isTest))}";
+                var arguments = LimitArguments(maxCpuCount, isTest).Select(QuoteForShell);
+                return $"{match.Value} {string.Join(' ', arguments)}";
             });
     }
 
     /// <summary>
     /// The bounds, in one place so the shell form and the argv form cannot
-    /// drift. Collection parallelism is a test-only knob; the CPU cap and the
-    /// node-reuse switch apply to every MSBuild invocation a review makes.
+    /// drift. Collection parallelism and the verbose logger are test-only
+    /// knobs; the CPU cap and the node-reuse switch apply to every MSBuild
+    /// invocation a review makes.
     /// </summary>
     private static string[] LimitArguments(int maxCpuCount, bool isTest)
         => isTest
-            ? [$"-maxcpucount:{maxCpuCount}", "-nodeReuse:false", "-p:ParallelizeTestCollections=false"]
+            ? [
+                $"-maxcpucount:{maxCpuCount}", "-nodeReuse:false", "-p:ParallelizeTestCollections=false",
+                .. VerboseTestLoggerArguments,
+              ]
             : [$"-maxcpucount:{maxCpuCount}", "-nodeReuse:false"];
+
+    /// <summary>
+    /// AGT-2851: gives the review host's silence watchdog real per-test output to
+    /// watch through a long <c>ParallelizeTestCollections=false</c> run. The
+    /// value contains a semicolon, so the shell form must quote it; the direct
+    /// argv form passes it as one untouched array element either way.
+    /// </summary>
+    private static readonly string[] VerboseTestLoggerArguments = ["--logger", "console;verbosity=normal"];
+
+    private static string QuoteForShell(string value)
+        => value.IndexOfAny(ShellMetacharacters) >= 0
+            ? $"\"{value.Replace("\"", "\\\"")}\""
+            : value;
+
+    private static readonly char[] ShellMetacharacters =
+        [' ', '\t', ';', '|', '&', '<', '>', '(', ')', '$', '`', '"', '\''];
 
     private static bool IsCappedVerb(string verb)
         => string.Equals(verb, "test", StringComparison.OrdinalIgnoreCase)
@@ -221,5 +256,8 @@ public static partial class ReviewPlanResourcePolicy
 
     [GeneratedRegex(@"(?<!\S)(?:-[pP]:|/[pP]:|--property:?)ParallelizeTestCollections=(?:true|false)", RegexOptions.IgnoreCase)]
     private static partial Regex TestCollectionParallelismShellArgument();
+
+    [GeneratedRegex(@"(?<!\S)(?:--logger|-logger)\s+(?:""[^""]*""|'[^']*'|\S+)", RegexOptions.IgnoreCase)]
+    private static partial Regex LoggerShellArgument();
 
 }

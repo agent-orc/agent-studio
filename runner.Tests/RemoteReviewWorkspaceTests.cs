@@ -1051,6 +1051,49 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     /// <summary>
+    /// AGT-2851 incident: an operator raised the silence window past the
+    /// no-CPU-progress window trying to stop false-positive kills, but attempts
+    /// kept getting reported as <c>CommandStalled</c> (silence) rather than
+    /// <c>NoCpuProgress</c> - the wrong detector for the operator to have tuned.
+    /// A command that is both silent and CPU-idle the whole time must be
+    /// attributed to whichever watchdog actually reaches its own threshold
+    /// first, never to the one with the larger configured window.
+    /// </summary>
+    [SkippableFact]
+    public async Task A_looser_silence_window_never_relabels_a_no_cpu_progress_kill_as_silence()
+    {
+        Skip.IfNot(OperatingSystem.IsLinux(), "The hang watchdog reads process CPU time from /proc.");
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var command = new ReviewCommandDto(
+            "verify-2",
+            "build-tests",
+            PosixShell.RequirePath(),
+            ["-c", "sleep 100"],
+            TimeoutSeconds: 30);
+        var (workspace, _) = Workspace(
+            "attempt-mislabel-guard",
+            subjectSha,
+            [command],
+            26192,
+            resultRef: "refs/heads/task/new-failure",
+            integrationRef: "refs/heads/main",
+            // Silence window (25s) is deliberately looser than the derived
+            // no-CPU-progress window (max(2, 30 * 0.5) = 15s): the CPU detector
+            // must reach its own threshold first and own the classification.
+            commandSilenceWatchdogSeconds: 25,
+            reviewNoCpuProgressSeconds: 2);
+        await workspace.PrepareAsync(null!, default);
+
+        var exception = await Assert.ThrowsAsync<ReviewInfrastructureException>(
+            () => workspace.ExecutePlanAsync(default));
+
+        Assert.Equal("NoCpuProgress", exception.Classification);
+        Assert.Contains("detector=no-cpu-progress", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("detector=silence", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("silence watchdog", exception.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// The watchdog must never shorten a command that is still talking, and a
     /// command whose own budget is tighter than the window keeps its budget.
     /// </summary>
@@ -1080,6 +1123,84 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         var commandEvidence = CandidateVerification(evidence);
         Assert.Equal(0, commandEvidence.ExitCode);
         Assert.Null(commandEvidence.Signal);
+    }
+
+    /// <summary>
+    /// AGT-2851: a review host's no-CPU-progress watchdog cannot tell a test
+    /// process sleeping through a real integration wait apart from a deadlock by
+    /// CPU alone, so its window has to scale with the command's own budget
+    /// instead of staying a small fixed floor. Seven seconds of pure silence
+    /// would have tripped the old flat 3s-style floor immediately; it survives
+    /// here because the effective window grows to half the 20s budget.
+    /// </summary>
+    [SkippableFact]
+    public async Task A_quiet_test_wait_within_budget_survives_the_no_cpu_progress_watchdog()
+    {
+        Skip.IfNot(OperatingSystem.IsLinux(), "The hang watchdog reads process CPU time from /proc.");
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var command = new ReviewCommandDto(
+            "verify-2",
+            "build-tests",
+            PosixShell.RequirePath(),
+            ["-c", "sleep 7; echo done"],
+            TimeoutSeconds: 20);
+        var (workspace, _) = Workspace(
+            "attempt-quiet-wait",
+            subjectSha,
+            [command],
+            26176,
+            resultRef: "refs/heads/task/new-failure",
+            integrationRef: "refs/heads/main",
+            reviewNoCpuProgressSeconds: 3);
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        Assert.Equal("Pass", evidence.Outcome);
+        var commandEvidence = CandidateVerification(evidence);
+        Assert.Equal(0, commandEvidence.ExitCode);
+        Assert.Null(commandEvidence.Signal);
+    }
+
+    /// <summary>
+    /// AGT-2851: growing the no-CPU-progress window with the command budget must
+    /// not defeat the watchdog outright - a tree that never clears its CPU floor
+    /// is still reaped well inside its budget, and the report names the detector
+    /// and the effective window and measured CPU instead of guessing.
+    /// </summary>
+    [SkippableFact]
+    public async Task A_command_with_no_cpu_progress_is_still_killed_and_the_report_names_the_detector()
+    {
+        Skip.IfNot(OperatingSystem.IsLinux(), "The hang watchdog reads process CPU time from /proc.");
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var command = new ReviewCommandDto(
+            "verify-2",
+            "build-tests",
+            PosixShell.RequirePath(),
+            ["-c", "sleep 100"],
+            TimeoutSeconds: 30);
+        var (workspace, _) = Workspace(
+            "attempt-blocked-tree",
+            subjectSha,
+            [command],
+            26184,
+            resultRef: "refs/heads/task/new-failure",
+            integrationRef: "refs/heads/main",
+            reviewNoCpuProgressSeconds: 2);
+        await workspace.PrepareAsync(null!, default);
+        var started = DateTime.UtcNow;
+
+        var exception = await Assert.ThrowsAsync<ReviewInfrastructureException>(
+            () => workspace.ExecutePlanAsync(default));
+        var elapsed = DateTime.UtcNow - started;
+
+        Assert.Equal("NoCpuProgress", exception.Classification);
+        Assert.Contains("detector=no-cpu-progress", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("15s no-CPU-progress window", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("verify-2", exception.Message, StringComparison.Ordinal);
+        // Reaped around the derived window (half the 30s budget), never the
+        // full budget and never the command's own 100s sleep.
+        Assert.True(elapsed < TimeSpan.FromSeconds(25), $"expected a kill near the 15s window, took {elapsed}");
     }
 
     [Fact]
@@ -1135,7 +1256,8 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         IReadOnlyList<ReviewPreparationCommandDto>? preparation = null,
         IReadOnlyList<string>? preserveGlobs = null,
         string? codexCliBin = null,
-        int commandSilenceWatchdogSeconds = 600)
+        int commandSilenceWatchdogSeconds = 600,
+        int reviewNoCpuProgressSeconds = 900)
     {
         var repositoryId = TaskServerClient.RepositoryIdentity(_origin)!;
         var subject = new ReviewSubjectDto(
@@ -1187,6 +1309,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             TtlSeconds = 120,
             HeartbeatSeconds = 30,
             CommandSilenceWatchdogSeconds = commandSilenceWatchdogSeconds,
+            ReviewNoCpuProgressSeconds = reviewNoCpuProgressSeconds,
         };
         return (new RemoteReviewWorkspace(options, subject, lease, _ => { }), subject);
     }
