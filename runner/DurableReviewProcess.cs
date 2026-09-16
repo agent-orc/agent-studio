@@ -12,7 +12,12 @@ internal sealed record DetachedReviewSpec(
     string? CliBin = null,
     string? CliArgs = null,
     string? CodexCliBin = null,
-    string? ClaudeCliBin = null);
+    string? ClaudeCliBin = null,
+    // The detached worker rebuilds its RunnerOptions from this spec, not from the
+    // daemon's environment, so the hang detectors travel with the spec. A null
+    // (spec written by an older daemon) falls back to the worker's environment.
+    int? CommandSilenceWatchdogSeconds = null,
+    int? ReviewNoCpuProgressSeconds = null);
 
 internal sealed record DetachedReviewIdentity(
     int ProcessId,
@@ -238,16 +243,18 @@ internal sealed class DurableReviewProcess
             options.CliBin,
             options.CliArgs,
             options.CodexCliBin,
-            options.ClaudeCliBin);
+            options.ClaudeCliBin,
+            options.CommandSilenceWatchdogSeconds,
+            options.ReviewNoCpuProgressSeconds);
 
-    public static async Task<int> RunWorkerAsync(string specPath)
-    {
-        var spec = JsonSerializer.Deserialize<DetachedReviewSpec>(
-                       await File.ReadAllTextAsync(specPath),
-                       Json)
-                   ?? throw new InvalidDataException($"Detached review spec is empty: {specPath}");
-        var directory = Path.GetDirectoryName(specPath)!;
-        var options = new RunnerOptions
+    /// <summary>
+    /// Options for the detached worker. Everything the workspace needs comes
+    /// from the spec; the two hang detectors previously stayed at their property
+    /// defaults (600 s silence, 900 s without CPU) whatever the operator
+    /// configured, which killed every quiet backend suite on 16.09.2026.
+    /// </summary>
+    internal static RunnerOptions WorkerOptions(DetachedReviewSpec spec)
+        => new()
         {
             ServerUrl = "http://localhost",
             RunnerId = spec.Lease.ExecutorId,
@@ -263,7 +270,20 @@ internal sealed class DurableReviewProcess
             CliArgs = spec.CliArgs ?? string.Empty,
             CodexCliBin = spec.CodexCliBin ?? "codex",
             ClaudeCliBin = spec.ClaudeCliBin ?? "claude",
+            CommandSilenceWatchdogSeconds = spec.CommandSilenceWatchdogSeconds
+                ?? RunnerOptions.EnvInt("RUNNER_COMMAND_SILENCE_WATCHDOG_SECONDS", 600),
+            ReviewNoCpuProgressSeconds = spec.ReviewNoCpuProgressSeconds
+                ?? RunnerOptions.EnvIntAllowingZero("RUNNER_REVIEW_NO_CPU_PROGRESS_SECONDS", 900),
         };
+
+    public static async Task<int> RunWorkerAsync(string specPath)
+    {
+        var spec = JsonSerializer.Deserialize<DetachedReviewSpec>(
+                       await File.ReadAllTextAsync(specPath),
+                       Json)
+                   ?? throw new InvalidDataException($"Detached review spec is empty: {specPath}");
+        var directory = Path.GetDirectoryName(specPath)!;
+        var options = WorkerOptions(spec);
         var workspace = new RemoteReviewWorkspace(options, spec.Subject, spec.Lease, _ => { });
         using (var current = Process.GetCurrentProcess())
         {
