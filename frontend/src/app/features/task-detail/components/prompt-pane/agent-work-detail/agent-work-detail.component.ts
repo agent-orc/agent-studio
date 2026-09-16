@@ -10,6 +10,7 @@ import {
 import type { AgentWorkCall, AgentWorkDetail } from '../../../../session-events';
 import { TaskService } from '../../../../../services/task.service';
 import { TooltipDirective } from 'coding-agent-chat/shared';
+import { DisclosureMarkerComponent } from '../../../../../components/disclosure-marker/disclosure-marker.component';
 
 /**
  * Drill-down for the Overview "Agent Work" block: a grouped, expandable view
@@ -22,7 +23,7 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
   selector: 'app-agent-work-detail',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TooltipDirective],
+  imports: [TooltipDirective, DisclosureMarkerComponent],
   templateUrl: './agent-work-detail.component.html',
   styleUrl: './agent-work-detail.component.scss',
 })

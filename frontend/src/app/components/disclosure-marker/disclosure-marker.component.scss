@@ -1,0 +1,24 @@
+/*
+ * One marker, one geometry (guideline rule ADM-17). The glyph is always the
+ * right-pointing chevron; "open" is a 90deg rotation, never a second glyph, so
+ * the shape stays recognisable and the transition is continuous.
+ */
+:host {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  color: var(--studio-fg-muted);
+  transform: rotate(0deg);
+  transition: transform 0.12s ease;
+}
+
+:host(.studio-disclosure__marker--open) {
+  transform: rotate(90deg);
+}
+
+// R5: every animation collapses to zero duration under reduced motion.
+@media (prefers-reduced-motion: reduce) {
+  :host { transition-duration: 0s; }
+}

@@ -7,6 +7,8 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  // ADM-17 hit area: the label row, not the marker alone.
+  min-height: 24px;
   padding: 1px 0;
   background: none;
   border: none;
@@ -17,12 +19,9 @@
 
   &:hover { color: var(--studio-fg); }
 
-  &__chevron {
-    display: inline-block;
-    font-size: 9px;
-    transition: transform 0.12s ease;
-
-    &--open { transform: rotate(90deg); }
+  &:focus-visible {
+    outline: 2px solid var(--studio-accent);
+    outline-offset: 1px;
   }
 }
 
@@ -55,6 +54,7 @@
     align-items: center;
     gap: 6px;
     width: 100%;
+    min-height: 24px;
     padding: 3px 2px;
     background: none;
     border: none;
@@ -64,15 +64,11 @@
     text-align: left;
 
     &:hover { background: var(--studio-bg-hover); }
-  }
 
-  &__chevron {
-    display: inline-block;
-    font-size: 9px;
-    color: var(--studio-fg-dim);
-    transition: transform 0.12s ease;
-
-    &--open { transform: rotate(90deg); }
+    &:focus-visible {
+      outline: 2px solid var(--studio-accent);
+      outline-offset: -2px;
+    }
   }
 
   &__name { font-weight: 600; }

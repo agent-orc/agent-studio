@@ -5,8 +5,11 @@
             data-testid="previous-results-toggle"
             [disabled]="loading() && entries().length === 0"
             [attr.aria-expanded]="open()"
+            [attr.aria-controls]="open() ? 'previous-results-list' : null"
             (click)="toggle()">
-      Previous results <span class="previous-results__count">{{ entries().length }}</span>
+      <app-disclosure-marker [open]="open()" [size]="10" />
+      <span>Previous results</span>
+      <span class="previous-results__count">{{ entries().length }}</span>
     </button>
     @if (selected()) {
       <button type="button"
@@ -17,7 +20,7 @@
   </div>
 
   @if (open()) {
-    <div class="previous-results__menu" data-testid="previous-results-list">
+    <div class="previous-results__menu" id="previous-results-list" data-testid="previous-results-list">
       @if (entries().length === 0) {
         <p class="previous-results__empty">No previous results found.</p>
       } @else {

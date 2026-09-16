@@ -7,22 +7,25 @@
      [attr.data-testid]="'protocol-verdict-' + v.kind"
      role="status">
   <span class="protocol-verdict__emoji" aria-hidden="true">{{ v.emoji }}</span>
-  <span class="protocol-verdict__label">{{ v.label }}</span>
   @if (expandable()) {
-    <!-- BEFUND 1: the reason can be a long blocker sentence. Clicking it
-         unclamps the one-line ellipsis so it wraps in full; the tooltip
-         carries the whole text while collapsed. -->
+    <!-- ADM-17: the status line itself is the disclosure control. It carries
+         the shared leading marker, the whole sentence is the hit area, and it
+         is the ONLY control for this expansion - the former "Why this status?"
+         row that duplicated it is gone. Expanding unclamps the one-line
+         ellipsis and reveals the raw signals below. -->
     <button type="button"
-            class="protocol-verdict__detail protocol-verdict__detail--toggle"
+            class="protocol-verdict__line"
             data-testid="protocol-verdict-detail"
             [cacTooltip]="expanded() ? '' : v.detail"
             [attr.aria-expanded]="expanded()"
-            aria-label="Toggle full reason"
+            [attr.aria-controls]="expanded() && hasSignals() ? 'protocol-verdict-signals-list' : null"
             (click)="toggle()">
+      <app-disclosure-marker [open]="expanded()" />
+      <span class="protocol-verdict__label">{{ v.label }}</span>
       <span class="protocol-verdict__detail-text">{{ v.detail }}</span>
-      <span class="protocol-verdict__detail-caret" aria-hidden="true">{{ expanded() ? '▴' : '▾' }}</span>
     </button>
   } @else {
+    <span class="protocol-verdict__label">{{ v.label }}</span>
     <span class="protocol-verdict__detail"
           data-testid="protocol-verdict-detail"
           [cacTooltip]="v.detail">
@@ -56,28 +59,20 @@
     </span>
   }
 </div>
-@if (v.signals && v.signals.length > 0) {
+@if (expanded() && hasSignals()) {
   <div class="protocol-verdict-signals" data-testid="protocol-verdict-signals">
-    <button type="button"
-            class="protocol-verdict-signals__toggle"
-            data-testid="protocol-verdict-signals-toggle"
-            [attr.aria-expanded]="expanded()"
-            (click)="toggle()">
-      <span>Why this status?</span>
-      <span aria-hidden="true">{{ expanded() ? '▴' : '▾' }}</span>
-    </button>
-    @if (expanded()) {
-      <ul class="protocol-verdict-signals__list" data-testid="protocol-verdict-signals-list">
-        @for (signal of v.signals; track signal.source + signal.label) {
-          <li class="protocol-verdict-signals__item" [attr.data-status]="signal.status">
-            <span class="protocol-verdict-signals__dot" aria-hidden="true"></span>
-            <span class="protocol-verdict-signals__source">{{ signal.source }}</span>
-            <strong>{{ signal.label }}</strong>
-            <span>{{ signal.detail }}</span>
-          </li>
-        }
-      </ul>
-    }
+    <ul class="protocol-verdict-signals__list"
+        id="protocol-verdict-signals-list"
+        data-testid="protocol-verdict-signals-list">
+      @for (signal of v.signals; track signal.source + signal.label) {
+        <li class="protocol-verdict-signals__item" [attr.data-status]="signal.status">
+          <span class="protocol-verdict-signals__dot" aria-hidden="true"></span>
+          <span class="protocol-verdict-signals__source">{{ signal.source }}</span>
+          <strong>{{ signal.label }}</strong>
+          <span>{{ signal.detail }}</span>
+        </li>
+      }
+    </ul>
   </div>
 }
 }

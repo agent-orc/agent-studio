@@ -55,8 +55,7 @@
                       [attr.aria-expanded]="sectionExpanded('needs-decision')"
                       aria-controls="workbench-overview-decision-list"
                       (click)="toggleSection('needs-decision', decisionHeader, 'workbench-overview-decision-list')">
-                <app-studio-icon class="workbench-overview__section-chevron"
-                                 [name]="sectionExpanded('needs-decision') ? 'chevronDown' : 'chevronRight'" [size]="12" />
+                <app-disclosure-marker class="workbench-overview__section-chevron" [open]="sectionExpanded('needs-decision')" />
                 <div><h2>Needs a decision</h2><p>Open decision gates.</p></div>
                 <span data-testid="workbench-overview-decision-count"><app-count-badge [value]="decisionPending().length" /></span>
               </button>
@@ -89,8 +88,7 @@
                       [attr.aria-expanded]="sectionExpanded('current')"
                       aria-controls="workbench-overview-active-list"
                       (click)="toggleSection('current', currentHeader, 'workbench-overview-active-list')">
-                <app-studio-icon class="workbench-overview__section-chevron"
-                                 [name]="sectionExpanded('current') ? 'chevronDown' : 'chevronRight'" [size]="12" />
+                <app-disclosure-marker class="workbench-overview__section-chevron" [open]="sectionExpanded('current')" />
                 <div><h2>Current</h2><p>Active work and accepted delivery, ordered by latest movement.</p></div>
                 <span data-testid="workbench-overview-active-count"><app-count-badge [value]="current().length" /></span>
               </button>
@@ -115,8 +113,7 @@
                       [attr.aria-expanded]="sectionExpanded('needs-attention')"
                       aria-controls="workbench-overview-invalid-list"
                       (click)="toggleSection('needs-attention', invalidHeader, 'workbench-overview-invalid-list')">
-                <app-studio-icon class="workbench-overview__section-chevron"
-                                 [name]="sectionExpanded('needs-attention') ? 'chevronDown' : 'chevronRight'" [size]="12" />
+                <app-disclosure-marker class="workbench-overview__section-chevron" [open]="sectionExpanded('needs-attention')" />
                 <div><h2>Needs attention</h2><p>Invalid Dossier descriptors require correction.</p></div>
                 <span><app-count-badge [value]="invalid().length" /></span>
               </button>
@@ -139,8 +136,7 @@
                     [attr.aria-expanded]="sectionExpanded('history')"
                     aria-controls="workbench-overview-history-groups"
                     (click)="toggleSection('history', historyHeader, 'workbench-overview-history-groups')">
-              <app-studio-icon class="workbench-overview__section-chevron"
-                               [name]="sectionExpanded('history') ? 'chevronDown' : 'chevronRight'" [size]="12" />
+              <app-disclosure-marker class="workbench-overview__section-chevron" [open]="sectionExpanded('history')" />
               <div><h2>History</h2><p>Documented and discarded decisions remain available without acute styling.</p></div>
               <span data-testid="workbench-overview-history-section-count"><app-count-badge [value]="historyCount()" /></span>
             </button>
@@ -153,7 +149,7 @@
                       [attr.aria-expanded]="sectionExpanded('documented')"
                       aria-controls="workbench-overview-completed-list"
                       (click)="toggleSection('documented', documentedHeader, 'workbench-overview-completed-list')">
-                <app-studio-icon [name]="sectionExpanded('documented') ? 'chevronDown' : 'chevronRight'" [size]="12" />
+                <app-disclosure-marker [open]="sectionExpanded('documented')" />
                 <span>Documented</span><app-count-badge [value]="documented().length" />
               </button>
               @if (sectionExpanded('documented')) {
@@ -172,7 +168,7 @@
                       [attr.aria-expanded]="sectionExpanded('discarded')"
                       aria-controls="workbench-overview-discarded-list"
                       (click)="toggleSection('discarded', discardedHeader, 'workbench-overview-discarded-list')">
-                <app-studio-icon [name]="sectionExpanded('discarded') ? 'chevronDown' : 'chevronRight'" [size]="12" />
+                <app-disclosure-marker [open]="sectionExpanded('discarded')" />
                 <span>Discarded</span><app-count-badge [value]="discarded().length" />
               </button>
               @if (sectionExpanded('discarded')) {

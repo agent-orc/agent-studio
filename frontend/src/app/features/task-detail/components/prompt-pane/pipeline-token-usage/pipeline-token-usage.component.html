@@ -9,7 +9,7 @@
               [attr.aria-expanded]="summaryOpen()"
               [cacTooltip]="totalTooltip(taskTotal().totalTokens, taskTotal().costUsd, taskTotal().anyModelUnknown, 'The whole task across every model and run', taskTotal().unpricedRuns, taskTotal().pricingGaps, taskTotal().missingTokenRuns)"
               (click)="toggleSummary()">
-        <span class="ptu__disclosure" aria-hidden="true">{{ summaryOpen() ? '▾' : '▸' }}</span>
+        <app-disclosure-marker class="ptu__disclosure" [open]="summaryOpen()" [size]="10" />
         <span class="ptu__marker-slot" aria-hidden="true"></span>
         <span class="ptu__head-label">
           <span class="ptu__sum-title">Task total sum</span>
@@ -81,7 +81,7 @@
                 [attr.aria-expanded]="isRunOpen(run.attempt)"
                 [cacTooltip]="totalTooltip(run.totalTokens, run.totalCostUsd, run.anyModelUnknown, 'Run #' + run.attempt, unpricedRunsForRun(run), run.pricingGaps ?? [], runUsageAvailable ? 0 : 1)"
                 (click)="toggleRun(run.attempt)">
-          <span class="ptu__disclosure" aria-hidden="true">{{ isRunOpen(run.attempt) ? '▾' : '▸' }}</span>
+          <app-disclosure-marker class="ptu__disclosure" [open]="isRunOpen(run.attempt)" [size]="10" />
           <span class="ptu__run-marker"
                 [attr.data-usage]="runUsageAvailable ? 'recorded' : 'missing'"
                 aria-hidden="true"></span>
