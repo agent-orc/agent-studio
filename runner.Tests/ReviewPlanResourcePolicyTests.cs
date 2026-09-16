@@ -20,7 +20,8 @@ public sealed class ReviewPlanResourcePolicyTests
         var limited = ReviewPlanResourcePolicy.Apply(plan, dotNetMaxCpuCount: 2);
 
         Assert.Equal(
-            "cd -- backend && dotnet test -maxcpucount:2 -nodeReuse:false -p:ParallelizeTestCollections=false --filter Category!=MachineBound",
+            "cd -- backend && dotnet test -maxcpucount:2 -nodeReuse:false -p:ParallelizeTestCollections=false " +
+            "--logger \"console;verbosity=normal\" --filter Category!=MachineBound",
             Assert.Single(limited.Commands).Arguments[1]);
     }
 
@@ -36,7 +37,10 @@ public sealed class ReviewPlanResourcePolicyTests
         var limited = ReviewPlanResourcePolicy.Apply(plan, dotNetMaxCpuCount: 2);
 
         Assert.Equal(
-            ["test", "-maxcpucount:2", "-nodeReuse:false", "-p:ParallelizeTestCollections=false", "runner.Tests"],
+            [
+                "test", "-maxcpucount:2", "-nodeReuse:false", "-p:ParallelizeTestCollections=false",
+                "--logger", "console;verbosity=normal", "runner.Tests",
+            ],
             limited.Commands[0].Arguments);
         // AGT-2820: the build is capped like the test step, but collection
         // parallelism is a test-only knob and must not leak onto it.
@@ -120,7 +124,35 @@ public sealed class ReviewPlanResourcePolicyTests
 
         Assert.Equal(first, second);
         Assert.Equal(
-            "dotnet test -maxcpucount:2 -nodeReuse:false -p:ParallelizeTestCollections=false",
+            "dotnet test -maxcpucount:2 -nodeReuse:false -p:ParallelizeTestCollections=false " +
+            "--logger \"console;verbosity=normal\"",
+            Assert.Single(first.Commands).Arguments[1]);
+    }
+
+    /// <summary>
+    /// AGT-2851: a review host's default console logger prints nothing between
+    /// test classes, which starved the silence watchdog of anything to reset its
+    /// clock against. Reapplying the policy must not duplicate the logger flag.
+    /// </summary>
+    [Fact]
+    public void An_existing_logger_flag_is_replaced_rather_than_duplicated()
+    {
+        var plan = new ReviewPlanDto(
+            [new ReviewCommandDto(
+                "verify-2",
+                "build-tests",
+                "sh",
+                ["-lc", "dotnet test --logger trx"],
+                CompareToBaseline: true)],
+            ["build-tests"]);
+
+        var first = ReviewPlanResourcePolicy.Apply(plan, dotNetMaxCpuCount: 2);
+        var second = ReviewPlanResourcePolicy.Apply(first, dotNetMaxCpuCount: 2);
+
+        Assert.Equal(first, second);
+        Assert.Equal(
+            "dotnet test -maxcpucount:2 -nodeReuse:false -p:ParallelizeTestCollections=false " +
+            "--logger \"console;verbosity=normal\"",
             Assert.Single(first.Commands).Arguments[1]);
     }
 
@@ -139,7 +171,8 @@ public sealed class ReviewPlanResourcePolicyTests
         var limited = ReviewPlanResourcePolicy.Apply(plan, dotNetMaxCpuCount: 2);
 
         Assert.Equal(
-            "dotnet test -maxcpucount:2 -nodeReuse:false -p:ParallelizeTestCollections=false --filter \"Name~two  spaces\"",
+            "dotnet test -maxcpucount:2 -nodeReuse:false -p:ParallelizeTestCollections=false " +
+            "--logger \"console;verbosity=normal\" --filter \"Name~two  spaces\"",
             Assert.Single(limited.Commands).Arguments[1]);
     }
 
@@ -160,7 +193,8 @@ public sealed class ReviewPlanResourcePolicyTests
         var limited = ReviewPlanResourcePolicy.Apply(plan, dotNetMaxCpuCount: 2);
 
         Assert.Equal(
-            "dotnet test -maxcpucount:2 -nodeReuse:false -p:ParallelizeTestCollections=false --filter Category!=MachineBound && npm ci",
+            "dotnet test -maxcpucount:2 -nodeReuse:false -p:ParallelizeTestCollections=false " +
+            "--logger \"console;verbosity=normal\" --filter Category!=MachineBound && npm ci",
             Assert.Single(limited.Preparation!).Arguments[1]);
     }
 }

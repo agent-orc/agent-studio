@@ -316,7 +316,10 @@ model and the limit (`violated review-command budget on model '<model>'`), so it
 is never read as a verdict about the change. A command that produces no output
 at all for `RUNNER_COMMAND_SILENCE_WATCHDOG_SECONDS` (default 600 s, engaged
 only when it is tighter than that command's budget) is killed as
-`CommandStalled` rather than holding its review slot for the rest of the budget.
+`CommandStalled` rather than holding its review slot for the rest of the
+budget. A separate no-CPU-progress watchdog can also end the command; whichever
+one actually fires first names itself in the report (AGT-2851), see
+[Review domain map](../system/domains/review.md#aspect-budget-contract).
 
 ## Incident: missing terminal sentinel
 

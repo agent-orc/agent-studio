@@ -609,9 +609,13 @@ state.
   sat on the same silent `dotnet test` and would have held their slots for the
   full two-hour command budget. This is a separate detector from the
   no-CPU-progress watchdog (`RUNNER_REVIEW_NO_CPU_PROGRESS_SECONDS`, typed
-  `NoCpuProgress`): silence catches a command that burns CPU without printing,
-  no-CPU-progress catches a tree blocked on a host-shared handle. A blocked tree
-  trips both and the tighter silence window reports the kill.
+  `NoCpuProgress`, effective window never smaller than half the command's own
+  budget so a legitimately quiet suite survives - AGT-2851): silence catches a
+  command that burns CPU without printing, no-CPU-progress catches a tree
+  blocked on a host-shared handle. A blocked tree can trip both; whichever
+  detector reaches its own threshold first claims the kill and the report names
+  it (`detector=silence` or `detector=no-cpu-progress`), so raising one window
+  past the other's default can no longer mislabel the kill.
 - Capability-aware Remote admission (AGT-2186) is Task Server authority, not a
   daemon-local slot reduction. Coding and review services publish versioned,
   expiring health for provider authentication, Git fetch/push, repository

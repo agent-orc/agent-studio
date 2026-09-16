@@ -94,9 +94,10 @@ public sealed class ReviewConcurrentWorkspaceIsolationTests : IDisposable
             var workspace = Workspace(
                 $"attempt-stall-{index}",
                 sha,
-                // A budget far larger than the watchdog window: what ends this
-                // command has to be the absence of CPU progress, not the clock.
-                [Shell("verify-stall", $"read line < {Quote(rendezvous)}", timeoutSeconds: 3600)],
+                // AGT-2851: the effective no-CPU-progress window is never smaller
+                // than half the command's own budget, so a 2s floor against a
+                // 20s budget still ends on the watchdog (~10s), not the clock.
+                [Shell("verify-stall", $"read line < {Quote(rendezvous)}", timeoutSeconds: 20)],
                 portBase: 27100 + (index * 8),
                 noCpuProgressSeconds: 2);
             await workspace.PrepareAsync(null!, default);
@@ -108,7 +109,7 @@ public sealed class ReviewConcurrentWorkspaceIsolationTests : IDisposable
         Assert.All(failures, failure =>
         {
             Assert.Equal("NoCpuProgress", failure.Classification);
-            Assert.Contains("consumed no CPU", failure.Message, StringComparison.Ordinal);
+            Assert.Contains("detector=no-cpu-progress", failure.Message, StringComparison.Ordinal);
             Assert.Contains("verify-stall", failure.Message, StringComparison.Ordinal);
         });
         // The incident held four slots for the full budget. The bound is now the

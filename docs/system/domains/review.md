@@ -59,8 +59,19 @@ rather than holding its review slot for the rest of the budget. That watchdog an
 the no-CPU-progress watchdog below are separate detectors and neither subsumes
 the other: silence catches a command that keeps burning CPU without ever
 producing a line, no-CPU-progress catches a tree blocked on a host-shared
-handle. A blocked tree trips both, and the silence window is the tighter default,
-so it is the one that reports the kill.
+handle.
+
+A blocked tree can trip both watchdogs. `StallDetection` in
+`runner/RemoteReviewWorkspace.cs` lets whichever detector actually reaches its
+own threshold first claim the kill (an atomic first-write-wins record), so the
+report always names the detector that fired - `detector=silence` or
+`detector=no-cpu-progress` - together with its effective window and what was
+measured (AGT-2851). Earlier the silence catch always took priority whenever
+its own poll loop had independently observed silence, which happened to match
+reality only because the silence window defaulted tighter than the
+no-CPU-progress window; an operator raising the silence window past the
+no-CPU-progress window stopped changing which detector actually ended the
+command, and the report kept saying "silence" regardless.
 
 `contracts/TaskServer.Contracts/ReviewPlanResourcePolicy.cs` caps every
 `dotnet build` and `dotnet test` in a frozen plan at `-maxcpucount:2` and starts
@@ -101,12 +112,23 @@ host-shared build server. The attempt's `ReviewEnvironmentDto` carries
 prints nothing and never exits, so a wall-clock budget cannot tell it apart
 from a slow build. `runner/CommandProgressWatchdog.cs` samples the command's
 whole process tree from `/proc` and kills it when the tree fails to burn one
-percent of one core within `RUNNER_REVIEW_NO_CPU_PROGRESS_SECONDS` (default
-900, `0` disables). Such a command is evidenced with signal `no-progress` and
-reported as `ReviewInfra/NoCpuProgress` - checked before baseline comparison, so
-a hang is never parsed into test failures and graded as a product regression.
-On a host without `/proc` the sampler returns nothing and the watchdog stays
-inert rather than guessing a kill.
+percent of one core within its effective no-CPU-progress window. That window is
+never smaller than `RUNNER_REVIEW_NO_CPU_PROGRESS_SECONDS` (default 900, `0`
+disables) but also never smaller than half the executing command's own budget
+(`RemoteReviewWorkspace.NoCpuProgressWindow`, AGT-2851): a healthy integration
+suite run with `ParallelizeTestCollections=false` can sit near 0% CPU for long
+stretches between test classes, and a fixed 900 s floor killed reviews on this
+host that would otherwise have finished in 20-25 minutes. Such a command is
+evidenced with signal `no-progress` and reported as `ReviewInfra/NoCpuProgress`
+- checked before baseline comparison, so a hang is never parsed into test
+failures and graded as a product regression. On a host without `/proc` the
+sampler returns nothing and the watchdog stays inert rather than guessing a
+kill.
+
+`ReviewPlanResourcePolicy` also adds `--logger "console;verbosity=normal"` to
+every review `dotnet test` invocation, so the silence watchdog above has real
+per-test progress lines to reset its clock against through a long quiet suite
+instead of relying only on the default console logger's start/end output.
 
 Safe parallelism and the procedure for raising it live in
 [linux-runner-host.md](../../operations/setup/linux-runner-host.md#review-parallelism-and-build-server-isolation).
