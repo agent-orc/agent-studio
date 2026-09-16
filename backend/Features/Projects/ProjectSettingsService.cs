@@ -77,6 +77,37 @@ public class ProjectSettingsService
         }
     }
 
+    /// <summary>
+    /// AGT-2794: persists the project's stale-branch sweep mode and per-class
+    /// retention overrides. The mode is normalized here so an unknown value can
+    /// never enable deletion; null day fields clear the override and fall back
+    /// to the shared policy defaults.
+    /// </summary>
+    public void SetBranchSweep(string projectName, BranchSweepSettings sweep)
+    {
+        EnsureLoaded();
+        var normalized = new BranchSweepSettings
+        {
+            Mode = AgentStudio.Git.BranchSweepModes.Normalize(sweep.Mode),
+            TaskRetentionDays = ClampDays(sweep.TaskRetentionDays),
+            SalvageRetentionDays = ClampDays(sweep.SalvageRetentionDays),
+            QuarantineRetentionDays = ClampDays(sweep.QuarantineRetentionDays),
+            AbandonedRetentionDays = ClampDays(sweep.AbandonedRetentionDays),
+        };
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var s) ? s : new ProjectSettings();
+            _cache[key] = current with { BranchSweep = normalized };
+            Persist();
+        }
+        _logger.LogInformation(
+            "branch-sweep-settings-updated project={Project} mode={Mode}", projectName, normalized.Mode);
+    }
+
+    private static int? ClampDays(int? days)
+        => days is null ? null : Math.Clamp(days.Value, 1, 3650);
+
     public void SetAutoPushStrategy(string projectName, string strategy)
     {
         EnsureLoaded();

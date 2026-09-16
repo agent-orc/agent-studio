@@ -360,11 +360,96 @@ Operator-driven cleanup remains available as a secondary tool for edge cases:
 - This tool serves as a backstop for refs that automatic reclamation does not handle (e.g., refs from incomplete
   or failed cleanup runs).
 
+## Stale-branch sweep (AGT-2794)
+
+The event-driven reclamation above stops new growth. It cannot reach the refs that
+already exist: cards archived without integration, refs from crashed runs, refs whose
+card no longer exists, and every ref created before the policy did. The stale-branch
+sweep is the periodic, all-namespace pass that closes that gap. It uses the **same**
+`BranchRetentionPolicy` - `BranchSweepPolicy` only derives the class and the task key
+from the ref name and hands the facts over; there is no second policy.
+
+### What one run does
+
+`BranchSweepService.Run` (`backend/Features/Git/BranchSweep/`) runs per project
+repository, in this order:
+
+1. `git fetch --prune`, so ancestry is answered against current tips.
+2. Classify **every** ref under `refs/remotes/origin`: class, task key when the name
+   carries one, tip age, containment in `main` and `develop`, the lane state of the
+   owning card, and whether an open card still references the ref. Containment comes
+   from two `git for-each-ref --merged` calls, not one ancestry spawn per ref.
+3. Decide keep/delete per ref through `BranchRetentionPolicy.Evaluate`.
+4. Write the report, then - only in `reclaim` mode - delete what the policy allowed.
+
+`GitBranchRetentionHostedService` runs the sweep after the existing retention pass and
+the archived-result prune, gated on `GitRetention:Sweep:Enabled` (default on).
+
+### Two modes per project
+
+| Mode | Meaning |
+|---|---|
+| `report-only` | Default, including for every project that existed before this card. The run classifies and reports; no delete primitive is reached. |
+| `reclaim` | The scheduled run deletes what the policy allows. Operator-confirmed deletion from the UI works in either mode. |
+
+A project may also override the per-class retention windows. Defaults come from the
+policy above: task/runner/delivery 7 days, salvage 14, quarantine 30, results 0 (bound
+to main containment, never to age). Both live in `project-settings.json` under
+`branchSweep` and are read and written through `/api/git/branch-sweep/settings`.
+
+### The one rule that drops unmerged work
+
+Every rule in the table above only ever deletes refs that are contained in the
+integration line. That leaves the backlog untouched, so the sweep adds exactly one
+rule, `AbandonedRefAged`, for `task/*`, `runner/*`, and `delivery/*`:
+
+> An unmerged ref may be reclaimed when its owning card is archived **or** no longer
+> exists, no open card references it, and the tip is older than the abandoned window
+> (default 90 days, per-project overridable).
+
+Refs of a live card are never abandoned, however old. A result ref carries no task key
+at all, so "orphan" cannot apply to it: it stays bound to main containment and is never
+dropped on age alone. Protected refs (`main`, `develop`, `release/*`, `v*`) and refs
+outside every managed namespace are reported for completeness but are never candidates,
+and neither is a ref checked out in a live worktree.
+
+### Reports
+
+Each run writes `reports/branch-sweep/<project>/<timestamp>.json` plus a short
+`<timestamp>.md` summary under the workspace root (`TaskRepository`). The JSON carries
+the windows used, ref counts before and after, totals by class x decision, the full
+candidate list with its reason, and the deletions performed; the markdown carries the
+totals, the tip-age histogram, the decision distribution, and the deletions. One
+Activity-feed line per run (`topic: branch-sweep`) carries the same totals. The report
+is the artifact the operator reads before switching a project to `reclaim`.
+
+### Operator UI
+
+Project Hub -> Git shows the latest sweep under the graph: totals per class, the
+tip-age histogram, and every candidate with its decision and reason. Three actions:
+
+- **Run report-only sweep** / **Re-classify** - the second never writes a report.
+- **Delete selected** - the ticked subset. `BranchSweepService.Execute` re-derives
+  eligibility from a fresh classification and rejects a ref whose tip moved, the same
+  contract `GitCleanupService.Execute` uses.
+- **Reclaim all allowed** - the backlog pass. Refs go out in batches of at most 100 per
+  push (`GitService.MaxRefsPerDeletePush`), with per-batch progress and a stop button
+  that takes effect between batches.
+
+Only refs the policy marked eligible can be ticked, and nothing is pre-selected.
+
+### Backlog pass
+
+Per repository the operator runs report-only once, reads the report, then switches the
+project to `reclaim` (or uses "Reclaim all allowed" for a one-off). The first pass
+clears refs already contained in `main`; the second clears by age and card state once
+the abandoned window applies. The before/after ref counts of each pass are in its own
+report (`refsBefore` / `refsAfter`).
+
 ### Out of scope
 
-The periodic stale-branch sweep across every registered repo and its operator UI is a
-separate card that depends on this policy; so is the one-off cleanup of the pre-AGT-2793
-backlog of already-stale refs. Both are unstarted.
+Local refs. The sweep is about remote branch state; local heads and stale worktree
+registrations stay with `GitBranchRetentionService` and the Git-Management cleanup.
 
 ## See also
 
