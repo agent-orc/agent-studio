@@ -4927,7 +4927,14 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         var integration = Assert.Single(
             factory.Services.GetRequiredService<TaskIntegrationStatusService>()
                 .BuildLookup([reviewed]).Values);
-        Assert.Equal(IntegrationStatuses.Integrated, integration.Status);
+        // AGT-2849: immediate integration merges into the local integration
+        // branch and hands the origin push to its own worker. Whether that push
+        // has already landed at this instant is a race, so the assertion is the
+        // one that is actually decided here - the delivery is merged - and the
+        // exact verdict is integrated or merged-locally accordingly.
+        Assert.True(
+            IntegrationStatuses.IsMerged(integration.Status),
+            $"the delivery is not merged into develop: {integration.Status} ({integration.Detail})");
 
         var timeline = factory.Services.GetRequiredService<TimelineLog>()
             .ReadAll(reviewed.FolderPath)

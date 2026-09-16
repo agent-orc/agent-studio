@@ -43,12 +43,17 @@ export class IntegrationStatusBadgeComponent {
   /** The card renders the badge only when a verdict is present. */
   readonly visible = computed(() => !!this.integration());
 
-  /** Coarse visual kind for colour theming. */
+  /**
+   * Coarse visual kind for colour theming. AGT-2849: a delivery that only a
+   * local ref can see shares the amber "accepted, not integrated" treatment,
+   * because that is exactly what it is; the label and tooltip say why.
+   */
   readonly kind = computed<'integrated' | 'partial' | 'pending' | 'conflict' | 'no-branch'>(() => {
     switch (this.integration()?.status) {
       case 'integrated': return 'integrated';
       case 'partial': return 'partial';
       case 'pending': return 'pending';
+      case 'merged-locally': return 'pending';
       case 'conflict-skipped': return 'conflict';
       default: return 'no-branch';
     }
@@ -57,7 +62,7 @@ export class IntegrationStatusBadgeComponent {
   /** True for the states that mean "accepted, but the code is NOT (fully) in develop". */
   readonly acute = computed(() => {
     const s = this.integration()?.status;
-    return s === 'partial' || s === 'pending' || s === 'conflict-skipped';
+    return s === 'partial' || s === 'pending' || s === 'merged-locally' || s === 'conflict-skipped';
   });
 
   readonly recoveryAvailable = computed(() => {
@@ -86,6 +91,7 @@ export class IntegrationStatusBadgeComponent {
     }
     switch (value.status) {
       case 'integrated': return value.sha ? `merged @${value.sha}` : 'merged';
+      case 'merged-locally': return 'merged locally, not pushed';
       case 'partial': return 'teilweise integriert';
       case 'pending': return 'NICHT integriert';
       case 'conflict-skipped': {
@@ -131,6 +137,8 @@ export class IntegrationStatusBadgeComponent {
           return value.sha
             ? `Integrated into ${branch} (${value.sha})`
             : `Integrated into ${branch}`;
+        case 'merged-locally':
+          return `Merged into ${branch} locally, but not reachable from origin/${branch} yet`;
         case 'partial':
           return `Partially integrated into ${branch} — some attributed commits are NOT in ${branch}`;
         case 'pending':
@@ -169,6 +177,7 @@ export class IntegrationStatusBadgeComponent {
     const branch = value.integrationBranch || 'develop';
     switch (value.status) {
       case 'integrated': return `Integrated into ${branch}`;
+      case 'merged-locally': return `Merged into ${branch} locally but not pushed to origin/${branch}`;
       case 'partial': return `Partially integrated into ${branch}`;
       case 'pending': return `Not integrated into ${branch}`;
       case 'conflict-skipped': return `${value.failure?.label ?? 'Integration failed'}; not integrated into ${branch}`;

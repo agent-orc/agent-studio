@@ -121,7 +121,8 @@ describe('needsPlanningAcceptWarning — AGT-2069 spawn-contract accept guard', 
 });
 
 describe('archive guard: containment decides, an absent record is a question', () => {
-  type Status = 'integrated' | 'partial' | 'pending' | 'conflict-skipped' | 'no-branch';
+  type Status =
+    'integrated' | 'merged-locally' | 'partial' | 'pending' | 'conflict-skipped' | 'no-branch';
   const completed = (status: Status | null): TaskInfo =>
     reviewJob(null, {
       state: TaskState.Completed,
@@ -152,6 +153,16 @@ describe('archive guard: containment decides, an absent record is a question', (
   it('reads integrated work and a card with nothing to integrate as non-findings', () => {
     expect(archiveIntegrationVerdict(completed('integrated'))).toBe('integrated');
     expect(archiveIntegrationVerdict(completed('no-branch'))).toBe('nothing-to-integrate');
+  });
+
+  /**
+   * AGT-2849: the merge is done and only the push is outstanding, so the
+   * archive guard has a real answer. Reading it as `unknown` would send the
+   * dialog to the server for a containment answer that says the same thing,
+   * and reading it as `not-integrated` would accuse a finished delivery.
+   */
+  it('reads a merged but unpublished delivery as integrated', () => {
+    expect(archiveIntegrationVerdict(completed('merged-locally'))).toBe('integrated');
   });
 
   it('reads the same verdict from the per-card containment answer', () => {
@@ -275,6 +286,24 @@ describe('mergeAcceptViewFor — state-dependent Human Review acceptance primary
     }));
     expect(view.landed).toBe(true);
     expect(view.acceptLabel).toBe('Accept');
+  });
+
+  /**
+   * AGT-2849: the merge landed and only its push to origin is outstanding, so
+   * the primary action must not offer to merge again. The merged-locally badge
+   * is where the card reports the missing push.
+   */
+  it('uses Accept when the merge landed but has not been pushed yet', () => {
+    const view = mergeAcceptViewFor(reviewJob(mergedProvenance(null), {
+      integration: integrated({
+        status: 'merged-locally',
+        sha: 'ddddddd9abc',
+        detail: 'merged-locally-not-pushed',
+      }),
+    }));
+    expect(view.landed).toBe(true);
+    expect(view.acceptLabel).toBe('Accept');
+    expect(view.landedState).toBe('merged-to-develop');
   });
 
   it('does not treat a recorded merge attempt as target-branch proof', () => {

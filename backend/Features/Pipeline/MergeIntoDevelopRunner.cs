@@ -338,6 +338,7 @@ public sealed class MergeIntoDevelopRunner
                     project,
                     jobId,
                     jobFolderPath,
+                    developerRoot,
                     repoRoot,
                     delivery,
                     branch,
@@ -366,6 +367,7 @@ public sealed class MergeIntoDevelopRunner
                     project,
                     jobId,
                     jobFolderPath,
+                    developerRoot,
                     repoRoot,
                     branch,
                     () => _git.MergeRemoteDeliveryIntoIntegration(
@@ -381,6 +383,7 @@ public sealed class MergeIntoDevelopRunner
                     project,
                     jobId,
                     jobFolderPath,
+                    developerRoot,
                     repoRoot,
                     branch,
                     () => _git.MergeBranchIntoIntegration(repoRoot, taskBranch, branch, ct)).ConfigureAwait(false);
@@ -534,6 +537,7 @@ public sealed class MergeIntoDevelopRunner
         string project,
         string jobId,
         string jobFolderPath,
+        string developerRoot,
         string repoRoot,
         DeliveryRefResolution delivery,
         string releaseBranch,
@@ -545,6 +549,7 @@ public sealed class MergeIntoDevelopRunner
                 project,
                 jobId,
                 jobFolderPath,
+                developerRoot,
                 repoRoot,
                 workBranch,
                 () => _git.MergeRemoteDeliveryIntoIntegration(
@@ -557,6 +562,7 @@ public sealed class MergeIntoDevelopRunner
                 project,
                 jobId,
                 jobFolderPath,
+                developerRoot,
                 repoRoot,
                 workBranch,
                 () => _git.MergeBranchIntoIntegration(
@@ -682,20 +688,49 @@ public sealed class MergeIntoDevelopRunner
         string project,
         string jobId,
         string jobFolderPath,
+        string developerRoot,
         string repoRoot,
         string integrationBranch,
         Func<MergeIntoIntegrationResult> merge)
     {
         var profile = BuildProfileFor(project);
+        // AGT-2849: from here until a verdict is recorded, this process owns an
+        // integration branch that may carry a merge nobody has judged. The
+        // journal is the only durable trace of that ownership, so it is opened
+        // BEFORE the merge, with the anchor the branch can be returned to.
+        IntegrationGateJournal.Open(jobFolderPath, new IntegrationGateJournalEntry
+        {
+            Project = project,
+            JobId = jobId,
+            RepoRoot = developerRoot,
+            IntegrationBranch = integrationBranch,
+            PreMergeTip = _git.GetBranchTip(repoRoot, integrationBranch)
+                          ?? _git.GetBranchTip(repoRoot, "origin/" + integrationBranch),
+            StartedAt = DateTimeOffset.UtcNow,
+        });
         var result = merge();
         if (!result.Outcome.IsSuccessfulIntegration())
+        {
+            IntegrationGateJournal.Clear(jobFolderPath);
             return (result, null);
+        }
+
+        if (!result.Outcome.IsFreshMerge())
+        {
+            // This invocation did not create the graph it is about to gate, so it
+            // owns no rollback anchor. The red-gate path below deliberately fails
+            // closed rather than rewriting history somebody else created, and
+            // restart recovery must not do it either - so nothing is left behind
+            // that would invite it to.
+            IntegrationGateJournal.Clear(jobFolderPath);
+        }
 
         var gatedSha = result.Outcome.IsFreshMerge()
             ? result.MergedSha
             : _git.GetBranchTip(repoRoot, integrationBranch);
         if (string.IsNullOrWhiteSpace(gatedSha))
         {
+            IntegrationGateJournal.Clear(jobFolderPath);
             return (
                 MergeIntoIntegrationResult.Of(
                     MergeIntoIntegrationOutcome.Error,
@@ -709,6 +744,7 @@ public sealed class MergeIntoDevelopRunner
         // the exact synchronized integration tip and therefore the authoritative
         // rollback anchor.
         var preMergeTip = _git.GetFirstParent(repoRoot, gatedSha);
+        IntegrationGateJournal.RecordMergeResult(jobFolderPath, gatedSha, preMergeTip);
         var changedPaths = string.IsNullOrWhiteSpace(preMergeTip)
             ? null
             : _git.ChangedPathsAgainstMergeBase(repoRoot, preMergeTip, gatedSha);
@@ -720,6 +756,7 @@ public sealed class MergeIntoDevelopRunner
             _logger.LogInformation(
                 "merge-into-develop build gate skipped for project={Project} job={JobId} integration={Integration}: {Reason}",
                 project, jobId, integrationBranch, skipReason);
+            IntegrationGateJournal.Clear(jobFolderPath);
             return (result, null);
         }
         if (result.Outcome.IsFreshMerge()
@@ -740,7 +777,8 @@ public sealed class MergeIntoDevelopRunner
                 ExpectedSha = gatedSha,
                 FailureKind = BuildTestGateFailureKind.MissingSource,
             };
-            RecordGateEvidence(jobFolderPath, "pre-develop-build-gate", missingAnchor);
+            IntegrationGateReceipts.Record(jobFolderPath, IntegrationGateJournal.PreDevelopBuildGateStep, missingAnchor);
+            IntegrationGateJournal.Clear(jobFolderPath);
             return (
                 MergeIntoIntegrationResult.Of(
                     MergeIntoIntegrationOutcome.Error,
@@ -754,7 +792,7 @@ public sealed class MergeIntoDevelopRunner
         // Recovery may reuse only a durable verdict whose expected and tested
         // SHA match the exact branch object it is about to release.
         var gate = result.Outcome == MergeIntoIntegrationOutcome.AlreadyMerged
-            ? ReadExactGateVerdict(jobFolderPath, "pre-develop-build-gate", gatedSha)
+            ? IntegrationGateReceipts.ReadExact(jobFolderPath, IntegrationGateJournal.PreDevelopBuildGateStep, gatedSha)
             : null;
         if (gate is null)
         {
@@ -810,7 +848,7 @@ public sealed class MergeIntoDevelopRunner
                     // consistent terminal state. The gate stays bounded by its timeout.
                     CancellationToken.None).ConfigureAwait(false);
             }
-            RecordGateEvidence(jobFolderPath, "pre-develop-build-gate", gate);
+            IntegrationGateReceipts.Record(jobFolderPath, "pre-develop-build-gate", gate);
         }
         else
         {
@@ -818,6 +856,10 @@ public sealed class MergeIntoDevelopRunner
                 "merge-into-develop recovered exact build-gate verdict for project={Project} job={JobId} integration={Integration} sha={Sha} verdict={Verdict}",
                 project, jobId, integrationBranch, gatedSha, gate.Verdict);
         }
+
+        // A verdict exists, in either direction: this process is no longer the
+        // only thing standing between the branch and an un-gated merge.
+        IntegrationGateJournal.Clear(jobFolderPath);
 
         if (PreDevelopBuildGate.IsGreen(gate))
         {
@@ -999,7 +1041,7 @@ public sealed class MergeIntoDevelopRunner
                 ExpectedSha = sourceSha,
                 TestedSha = sourceSha,
             };
-            RecordGateEvidence(jobFolderPath, "pre-main-test-gate", gate);
+            IntegrationGateReceipts.Record(jobFolderPath, "pre-main-test-gate", gate);
             _logger.LogInformation(
                 "merge-into-main develop-candidate docs-only light gate for project={Project} job={JobId} changedPaths={Count}",
                 project,
@@ -1024,7 +1066,7 @@ public sealed class MergeIntoDevelopRunner
                 settings.BuildProfile,
                 preMainTimeout,
                 ct).ConfigureAwait(false);
-            RecordGateEvidence(jobFolderPath, "pre-main-test-gate", gate);
+            IntegrationGateReceipts.Record(jobFolderPath, "pre-main-test-gate", gate);
             if (gate.Verdict != BuildTestGateVerdict.Ok)
             {
                 return (
@@ -1144,7 +1186,7 @@ public sealed class MergeIntoDevelopRunner
             {
                 ExpectedSha = sourceSha,
             };
-            RecordGateEvidence(jobFolderPath, "pre-main-test-gate", lightGate);
+            IntegrationGateReceipts.Record(jobFolderPath, "pre-main-test-gate", lightGate);
             _logger.LogInformation(
                 "merge-into-main docs-only light gate for project={Project} job={JobId} changedPaths={Count}",
                 project, jobId, changedPaths.Count);
@@ -1184,7 +1226,7 @@ public sealed class MergeIntoDevelopRunner
             settings.BuildProfile,
             preMainTimeout,
             ct).ConfigureAwait(false);
-        RecordGateEvidence(jobFolderPath, "pre-main-test-gate", gate);
+        IntegrationGateReceipts.Record(jobFolderPath, "pre-main-test-gate", gate);
 
         if (gate.Verdict != BuildTestGateVerdict.Ok)
         {
@@ -1621,134 +1663,6 @@ public sealed class MergeIntoDevelopRunner
             Reason = reason,
             FailureCode = failure?.Code,
         });
-    }
-
-    /// <summary>
-    /// Reads the newest durable gate receipt for one exact subject. A receipt is
-    /// applicable only when both the expected and tested SHAs match; malformed
-    /// or partial crash debris is ignored and forces a fresh gate.
-    /// </summary>
-    private static BuildTestGateResult? ReadExactGateVerdict(
-        string jobFolderPath,
-        string prefix,
-        string expectedSha)
-    {
-        var dir = Path.Combine(jobFolderPath, "post-steps");
-        if (!Directory.Exists(dir)) return null;
-
-        foreach (var path in Directory.GetFiles(dir, $"{prefix}-*.log")
-                     .OrderByDescending(GateEvidenceIndex))
-        {
-            try
-            {
-                using var reader = new StreamReader(path);
-                var verdictLine = reader.ReadLine();
-                var shaLine = reader.ReadLine();
-                var reasonLine = reader.ReadLine();
-                if (verdictLine is null || shaLine is null || reasonLine is null) continue;
-
-                var verdictValue = HeaderValue(verdictLine, "verdict=");
-                var recordedExpected = HeaderValue(shaLine, "expectedSha=");
-                var recordedTested = HeaderValue(shaLine, "testedSha=");
-                if (!Enum.TryParse<BuildTestGateVerdict>(verdictValue, ignoreCase: true, out var verdict)
-                    || !string.Equals(recordedExpected, expectedSha, StringComparison.OrdinalIgnoreCase)
-                    || !string.Equals(recordedTested, expectedSha, StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-                var exitValue = HeaderValue(verdictLine, "exit=");
-                int? exitCode = int.TryParse(exitValue, out var parsedExitCode)
-                    ? parsedExitCode
-                    : null;
-                _ = long.TryParse(HeaderValue(verdictLine, "durationMs="), out var durationMs);
-                var reason = reasonLine.StartsWith("reason=", StringComparison.Ordinal)
-                    ? reasonLine["reason=".Length..]
-                    : "Recovered durable gate verdict.";
-                return new BuildTestGateResult(
-                    verdict,
-                    exitCode,
-                    durationMs,
-                    string.Empty,
-                    reason,
-                    false,
-                    false)
-                {
-                    ExpectedSha = recordedExpected,
-                    TestedSha = recordedTested == "n/a" ? null : recordedTested,
-                };
-            }
-            catch (Exception ex)
-            {
-                SilentCatch.Note(ex, "MergeIntoDevelopRunner: corrupt gate evidence is ignored");
-            }
-        }
-
-        return null;
-    }
-
-    private static int GateEvidenceIndex(string path)
-    {
-        var name = Path.GetFileNameWithoutExtension(path);
-        var separator = name.LastIndexOf('-');
-        return separator >= 0 && int.TryParse(name[(separator + 1)..], out var index)
-            ? index
-            : 0;
-    }
-
-    private static string? HeaderValue(string line, string key)
-    {
-        var start = line.IndexOf(key, StringComparison.Ordinal);
-        if (start < 0) return null;
-        start += key.Length;
-        var end = line.IndexOf(' ', start);
-        return end < 0 ? line[start..] : line[start..end];
-    }
-
-    /// <summary>
-    /// Writes one numbered gate-evidence log into the job's <c>post-steps</c>
-    /// folder (<c>&lt;prefix&gt;-N.log</c>): verdict, exact expected / tested SHA,
-    /// the test-selection audit, and the tail of the command output. Same shape
-    /// for both merge gates, so the evidence reads identically whether main or
-    /// develop was the target.
-    /// </summary>
-    private static void RecordGateEvidence(
-        string jobFolderPath,
-        string prefix,
-        BuildTestGateResult result)
-    {
-        var dir = Path.Combine(jobFolderPath, "post-steps");
-        Directory.CreateDirectory(dir);
-        var index = Directory.GetFiles(dir, $"{prefix}-*.log").Length + 1;
-        var selection = System.Text.Json.JsonSerializer.Serialize(
-            result.TestSelection,
-            new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
-        var dependencyCache = System.Text.Json.JsonSerializer.Serialize(
-            result.DependencyCache,
-            new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
-        var dependencyCacheDecision = System.Text.Json.JsonSerializer.Serialize(
-            result.DependencyCacheDecision,
-            new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
-        var budget = result.ViolatedBudget is null
-            ? "budget=none"
-            : $"budget={result.ViolatedBudget.Name} limitMs={result.ViolatedBudget.LimitMs} " +
-              $"consumedMs={result.ViolatedBudget.ConsumedMs} phase={result.ViolatedBudget.Phase}";
-        var body =
-            $"verdict={result.Verdict} exit={result.ExitCode?.ToString() ?? "n/a"} durationMs={result.DurationMs}\n" +
-            $"expectedSha={result.ExpectedSha ?? "n/a"} testedSha={result.TestedSha ?? "n/a"}\n" +
-            $"reason={result.Reason}\n" +
-            budget + "\n" +
-            "--- dependency-cache-decision.json ---\n" +
-            dependencyCacheDecision + "\n" +
-            "--- dependency-cache.json ---\n" +
-            dependencyCache + "\n" +
-            "--- test-selection.json ---\n" +
-            selection + "\n" +
-            "--- last-300-lines ---\n" +
-            result.Output;
-        File.WriteAllText(
-            Path.Combine(dir, $"{prefix}-{index}.log"),
-            body);
     }
 
     private static (PipelineStepStatus Status, string? Verdict, string? Reason, string? Summary) Project(

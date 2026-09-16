@@ -177,8 +177,11 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Equal(MergeIntoIntegrationOutcome.Merged, result.Outcome);
         var integratedBeforeReview = deps.Scanner.FindJob(Slug, _watchPath)!;
         Assert.Equal(TaskStates.AutoReview, integratedBeforeReview.State);
+        // AGT-2849: the merge landed in the local develop; the origin push is the
+        // next, separately backstopped step, so the honest verdict until then is
+        // merged-locally rather than a claim that the delivery is integrated.
         Assert.Equal(
-            IntegrationStatuses.Integrated,
+            IntegrationStatuses.MergedLocally,
             Assert.Single(deps.Integration.BuildLookup([integratedBeforeReview]).Values).Status);
         // Integrate-on-delivery records its start as well as its outcome, so the
         // integration span is read from the ledger pair, not from the merge step.
@@ -200,7 +203,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         var humanReview = deps.Scanner.FindJob(Slug, _watchPath)!;
         Assert.Equal(TaskStates.HumanReview, humanReview.State);
         Assert.Equal(
-            IntegrationStatuses.Integrated,
+            IntegrationStatuses.MergedLocally,
             Assert.Single(deps.Integration.BuildLookup([humanReview]).Values).Status);
 
         var developBeforeAcceptance = Git(_repo, "rev-parse", "develop").Out.Trim();
@@ -857,7 +860,10 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
 
         var reviewed = deps.Scanner.FindJob(Slug, _watchPath)!;
         var statusBeforeAccept = deps.Integration.BuildLookup([reviewed])[reviewed.TaskKey];
-        Assert.Equal(IntegrationStatuses.Integrated, statusBeforeAccept.Status);
+        // AGT-2849: the out-of-band merge is local only, so it reads
+        // merged-locally - and acceptance still moves the card, because the merge
+        // is what acceptance waits for and the push has its own backstop.
+        Assert.Equal(IntegrationStatuses.MergedLocally, statusBeforeAccept.Status);
 
         var accepted = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
 
@@ -923,7 +929,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
 
         var reviewed = deps.Scanner.FindJob(Slug, _watchPath)!;
         var before = deps.Integration.BuildLookup([reviewed])[reviewed.TaskKey];
-        Assert.Equal(IntegrationStatuses.Integrated, before.Status);
+        // AGT-2849: merged into the local main, not pushed.
+        Assert.Equal(IntegrationStatuses.MergedLocally, before.Status);
         Assert.Equal("main", before.IntegrationBranch);
 
         var accepted = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
@@ -1520,7 +1527,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         var status = File.ReadAllText(Path.Combine(completed.FolderPath, "status.md"));
         Assert.Contains("<!-- agent-studio:result-scaffold -->", status);
         Assert.Contains("- Result: Success", status);
-        Assert.Contains("- Integration: `integrated`", status);
+        Assert.Contains("- Integration: `merged-locally`", status);
     }
 
     [Fact]

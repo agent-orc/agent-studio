@@ -348,6 +348,16 @@ public static class TimelineEventKinds
     /// </summary>
     public const string IntegrationGateEnvironmentParked = "integration_gate_environment_parked";
     /// <summary>
+    /// AGT-2849: a pre-develop build gate that owned a merge on the integration
+    /// branch never reached a verdict because its process disappeared. Startup
+    /// recovery says what it did about it - rolled the branch back to the exact
+    /// pre-merge tip, resumed the merge because a durable verdict for that exact
+    /// SHA existed, or escalated because the branch could not be repaired safely.
+    /// <see cref="TimelineEvent.Details"/> carries the action, the gated SHA, the
+    /// rollback anchor, and the integration branch.
+    /// </summary>
+    public const string IntegrationGateInterrupted = "integration_gate_interrupted";
+    /// <summary>
     /// AGT-2220: the card's recorded <c>integrationBranch</c> disagreed with
     /// project truth when a review was claimed, so the review plane rewrote it.
     /// A stale field (still <c>refs/heads/main</c> after develop became the

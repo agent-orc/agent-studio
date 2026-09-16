@@ -1124,6 +1124,99 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         return repo;
     }
 
+    /// <summary>
+    /// AGT-2849: the publication boundary. A merge that only the local develop
+    /// can see is not an integration - a restart or a gate rollback can still
+    /// take it away, and no other machine can see it at all. The verdict is
+    /// <c>merged-locally</c> until origin/develop can reach it.
+    /// </summary>
+    [Fact]
+    public void BuildLookup_MergedIntoLocalDevelopButNotPushed_IsMergedLocally()
+    {
+        var repo = SeedPublishedDevelopRepo(out _);
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "checkout -q -b task/local");
+        File.WriteAllText(Path.Combine(repo, "local.txt"), "delivery");
+        Commit(repo, "feat: local delivery");
+        var anchor = RunGit(repo, "rev-parse task/local").Out.Trim();
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "merge --no-ff --no-edit task/local");
+
+        var svc = BuildService(repo, out var project, out var log);
+        var job = Job("local", "AGT-2849", project, repo, log, commits: new[] { Commit(anchor) });
+
+        var status = svc.BuildLookup(new[] { job })[job.TaskKey];
+
+        Assert.Equal(IntegrationStatuses.MergedLocally, status.Status);
+        Assert.Null(status.Sha);
+        Assert.Contains("locally only", status.Detail);
+        Assert.Contains("origin/develop", status.Detail);
+        Assert.Contains(anchor[..7], status.Detail);
+        // The card must count as work that still has to land.
+        Assert.True(IntegrationStatuses.IsNotIntegrated(status.Status));
+    }
+
+    [Fact]
+    public void BuildLookup_AfterThePushToOrigin_TheSameDeliveryIsIntegrated()
+    {
+        var repo = SeedPublishedDevelopRepo(out _);
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "checkout -q -b task/pushed");
+        File.WriteAllText(Path.Combine(repo, "pushed.txt"), "delivery");
+        Commit(repo, "feat: pushed delivery");
+        var anchor = RunGit(repo, "rev-parse task/pushed").Out.Trim();
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "merge --no-ff --no-edit task/pushed");
+        RunGit(repo, "push -q origin develop");
+        RunGit(repo, "fetch -q origin");
+
+        var svc = BuildService(repo, out var project, out var log);
+        var job = Job("pushed", "AGT-2849", project, repo, log, commits: new[] { Commit(anchor) });
+
+        var status = svc.BuildLookup(new[] { job })[job.TaskKey];
+
+        Assert.Equal(IntegrationStatuses.Integrated, status.Status);
+        Assert.Equal(anchor[..7], status.Sha);
+        Assert.Equal("anchor-ancestor", status.Detail);
+    }
+
+    /// <summary>
+    /// A repository without an origin mirror of the branch IS its own
+    /// publication: there is no remote that could be ahead, so the local graph
+    /// stays authoritative and the verdict must not degrade to local-only.
+    /// </summary>
+    [Fact]
+    public void BuildLookup_RepositoryWithoutAnOriginMirror_StaysIntegrated()
+    {
+        var repo = SeedDevelopMainRepo();
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "checkout -q -b task/no-origin");
+        File.WriteAllText(Path.Combine(repo, "no-origin.txt"), "delivery");
+        Commit(repo, "feat: delivery without a remote");
+        var anchor = RunGit(repo, "rev-parse task/no-origin").Out.Trim();
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "merge --no-ff --no-edit task/no-origin");
+
+        var svc = BuildService(repo, out var project, out var log);
+        var job = Job("no-origin", "AGT-2849", project, repo, log, commits: new[] { Commit(anchor) });
+
+        var status = svc.BuildLookup(new[] { job })[job.TaskKey];
+
+        Assert.Equal(IntegrationStatuses.Integrated, status.Status);
+    }
+
+    /// <summary>A develop that exists on a real origin, exactly as a managed project has it.</summary>
+    private string SeedPublishedDevelopRepo(out string origin)
+    {
+        var repo = SeedDevelopMainRepo();
+        origin = repo + "-origin.git";
+        RunGit(_tempDir, $"init -q --bare -b develop \"{origin}\"");
+        RunGit(repo, $"remote add origin \"{origin}\"");
+        RunGit(repo, "push -q origin develop");
+        RunGit(repo, "fetch -q origin");
+        return repo;
+    }
+
     private static TaskProvenance Prov(string branch, string? merge = null, string? tip = null)
         => new()
         {

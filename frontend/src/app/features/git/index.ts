@@ -46,6 +46,7 @@ export type {
   CleanupActionOutcome,
   GitCleanupResult,
 } from './models/git.model';
+export { isMergedIntegrationStatus } from './models/git.model';
 
 // Project Hub Git View tree model (pure builder + node types).
 export {
