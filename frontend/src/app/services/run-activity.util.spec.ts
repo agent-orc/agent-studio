@@ -174,13 +174,30 @@ describe('buildRunActivityBadge — 3-progress run states (ASS-1751)', () => {
       expect(badge!.tooltip.body).toContain('git push rejected');
     });
 
-    it('falls back to "wartet auf Reissue" when the backoff has already elapsed', () => {
+    it('leaves the backoff state on the card clock once the deadline passes', () => {
+      // AGT-2703: the client owns this comparison now, so the pill stops
+      // advertising a retry clock the moment it elapses instead of waiting for
+      // the next poll to reclassify the card.
       const backoffUntil = new Date(NOW - 5_000).toISOString();
       const badge = buildRunActivityBadge(
         makeJob({ kind: 'failed-backoff', backoffUntil, attempt: 3 }),
         NOW,
       );
-      expect(badge!.label).toBe('failed · wartet auf Reissue');
+      expect(badge!.kind).toBe('failed-idle');
+      expect(badge!.label).toBe('failed · kein aktiver Run');
+    });
+
+    it('derives the retry clock from a backoff instant the backend did not classify', () => {
+      // The wire shape the backend actually sends since AGT-2703: the kind is
+      // the post-backoff one, and the deadline decides what is rendered.
+      const backoffUntil = new Date(NOW + 90_000).toISOString();
+      const badge = buildRunActivityBadge(
+        makeJob({ kind: 'failed-idle', backoffUntil, attempt: 2 }),
+        NOW,
+      );
+      const clock = new Date(backoffUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      expect(badge!.kind).toBe('failed-backoff');
+      expect(badge!.label).toBe(`failed · Backoff bis ${clock}`);
     });
 
     it('escapes HTML in the last-error tooltip line', () => {
@@ -292,9 +309,18 @@ describe('deriveStalledTaskState', () => {
       NOW,
     )).toBeNull();
     expect(deriveStalledTaskState(
-      makeJob({ kind: 'failed-backoff', attempt: 1, backoffUntil: new Date(NOW + 60_000).toISOString() }),
+      makeJob({ kind: 'failed-idle', attempt: 1, backoffUntil: new Date(NOW + 60_000).toISOString() }),
       NOW,
     )).toBeNull();
+  });
+
+  it('flags a scheduled-retry card once its backoff has elapsed', () => {
+    // The backoff is the reason the card is excused from "stalled"; when it is
+    // over the card is a failed run with nothing running, which is acute.
+    expect(deriveStalledTaskState(
+      makeJob({ kind: 'failed-idle', attempt: 1, backoffUntil: new Date(NOW - 1_000).toISOString() }),
+      NOW,
+    )).toMatchObject({ reason: 'failed' });
   });
 
   it('does not let a retained runner badge hide a disconnected remote orphan', () => {

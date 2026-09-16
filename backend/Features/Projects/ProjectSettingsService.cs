@@ -16,6 +16,7 @@ public class ProjectSettingsService
     private readonly IAtomicJsonFileWriter _fileWriter;
     private readonly object _lock = new();
     private Dictionary<string, ProjectSettings> _cache = new(StringComparer.OrdinalIgnoreCase);
+    private long _version;
     private readonly Dictionary<string, string> _aliases = new(StringComparer.OrdinalIgnoreCase);
     private bool _loaded;
 
@@ -27,6 +28,20 @@ public class ProjectSettingsService
         _logger = logger;
         _config = config;
         _fileWriter = fileWriter ?? new AtomicJsonFileWriter();
+    }
+
+    /// <summary>
+    /// Monotonic version of the in-memory settings cache: the first load and
+    /// every persisted mutation advance it. The board read (AGT-2703) folds it
+    /// into its ETag because settings reach the response along two paths the
+    /// task index cannot see - lane sort strategies decide the order of every
+    /// lane, and the per-project pipeline and benchmark settings decide what
+    /// the live-status and better-candidate projections say. Without this
+    /// counter a strategy change could stay invisible behind a 304.
+    /// </summary>
+    public long Version
+    {
+        get { lock (_lock) return _version; }
     }
 
     public ProjectSettings Get(string projectName)
@@ -1295,6 +1310,7 @@ public class ProjectSettingsService
                         kv => kv.Key,
                         kv => ProjectExecutionPolicy.Migrate(kv.Value),
                         StringComparer.OrdinalIgnoreCase);
+                    _version++;
                     if (MigrateLegacyPipelineSettings())
                     {
                         Persist();
@@ -1365,6 +1381,9 @@ public class ProjectSettingsService
 
     private void Persist()
     {
+        // Every mutation funnels through here, so this is the one place that
+        // has to move the version. Callers already hold _lock.
+        _version++;
         var path = ResolveStorePath();
         if (path == null) return;
         try
