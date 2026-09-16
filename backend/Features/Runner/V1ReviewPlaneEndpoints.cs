@@ -192,11 +192,20 @@ public static class V1ReviewPlaneEndpoints
                 // "2" while four reviews deadlocked the host. It now rides the
                 // minutely capability advertisement as the role ceiling, the way
                 // the coding runner already adopts its central capacity.
+                // AGT-2848: the recommendation is clamped to this executor's own
+                // registered RUNNER_MAX_PARALLELISM bootstrap (already carried by
+                // `snapshot.RoleMaxParallelism` from registration) - the advisor is
+                // one global number shared by every review host, and a host's
+                // bootstrap is the operator's declared safe ceiling for that
+                // specific machine, so a recommendation must never advertise more
+                // capacity than the host itself claims to have.
                 if (registry.TryGetReviewExecutor(runnerId, request.InstanceId, out _))
                 {
+                    var recommended = reviewParallelism.Current.RecommendedParallelism;
+                    var bootstrap = snapshot.RoleMaxParallelism ?? recommended;
                     snapshot = snapshot with
                     {
-                        RoleMaxParallelism = reviewParallelism.Current.RecommendedParallelism,
+                        RoleMaxParallelism = Math.Min(recommended, bootstrap),
                     };
                 }
                 return Results.Ok(snapshot);
@@ -2139,6 +2148,7 @@ public sealed class V1ReviewExecutorRegistry
                     null),
                 capabilities,
                 request.Telemetry,
+                RoleMaxParallelism: registration.RoleMaxParallelism,
                 RestartedAt: restart?.RestartedAt,
                 ReviewsLost: restart?.ReviewsLost ?? 0);
         }

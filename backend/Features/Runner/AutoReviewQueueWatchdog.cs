@@ -7,8 +7,21 @@ namespace AgentStudio.Runner;
 /// </summary>
 public sealed record AutoReviewQueueSnapshot
 {
-    /// <summary>Cards sitting in queue waiting to be picked up by a processing slot.</summary>
+    /// <summary>
+    /// Combined review backlog: <see cref="LegacyQueueDepth"/> plus
+    /// <see cref="PendingReviewAttempts"/>. AGT-2848: on a remote-review fleet
+    /// the legacy queue is permanently empty, so this used to read the same as
+    /// <see cref="LegacyQueueDepth"/> alone and stayed at zero while attempt
+    /// authority held a real backlog. This is the number the stagnation and
+    /// parallelism policies react to.
+    /// </summary>
     public int QueueDepth { get; init; }
+
+    /// <summary>Cards sitting in the local <c>AutoReviewPostProcessingQueue</c>, not yet picked up by a processing slot.</summary>
+    public int LegacyQueueDepth { get; init; }
+
+    /// <summary>Current canonical ReviewAttempts in attempt-authority state <c>Pending</c> (queued, unclaimed).</summary>
+    public int PendingReviewAttempts { get; init; }
 
     /// <summary>
     /// Post-processing jobs actively running (inferred from the decision
@@ -48,9 +61,13 @@ public sealed record AutoReviewQueueSnapshot
 /// queue remains non-empty. Acute transitions are visible at the admin REST
 /// endpoint and as warning-level structured log events.
 ///
-/// Stagnation rule: <see cref="AutoReviewPostProcessingQueue.PendingCount"/> > 0
-/// AND no card has been started (see <see cref="AutoReviewPostProcessingQueue.LastStartedAt"/>)
-/// since the queue last became non-empty, for longer than the configured threshold.
+/// Stagnation rule: the combined backlog (<see cref="AutoReviewPostProcessingQueue.PendingCount"/>
+/// plus current attempt-authority ReviewAttempts in state Pending) is greater
+/// than zero, AND no card has left either side of that backlog (the later of
+/// <see cref="AutoReviewPostProcessingQueue.LastStartedAt"/> and
+/// <see cref="AttemptAuthorityService.LastReviewClaimAtUtc"/>) since the
+/// combined backlog last became non-empty, for longer than the configured
+/// threshold.
 /// </summary>
 public sealed class AutoReviewQueueStagnationWatchdog : BackgroundService
 {
@@ -59,6 +76,7 @@ public sealed class AutoReviewQueueStagnationWatchdog : BackgroundService
     public const int DefaultThroughputWindowMinutes = 30;
 
     private readonly AutoReviewPostProcessingQueue _queue;
+    private readonly AttemptAuthorityService _authority;
     private readonly AutoReviewStatusSnapshot _status;
     private readonly IConfiguration _configuration;
     private readonly ILogger<AutoReviewQueueStagnationWatchdog> _logger;
@@ -72,11 +90,13 @@ public sealed class AutoReviewQueueStagnationWatchdog : BackgroundService
 
     public AutoReviewQueueStagnationWatchdog(
         AutoReviewPostProcessingQueue queue,
+        AttemptAuthorityService authority,
         AutoReviewStatusSnapshot status,
         IConfiguration configuration,
         ILogger<AutoReviewQueueStagnationWatchdog> logger)
     {
         _queue = queue;
+        _authority = authority;
         _status = status;
         _configuration = configuration;
         _logger = logger;
@@ -95,8 +115,15 @@ public sealed class AutoReviewQueueStagnationWatchdog : BackgroundService
             ?? DefaultStagnantThresholdMinutes,
             1, 24 * 60);
 
-        var pendingCount = _queue.PendingCount;
-        var lastStartedAt = _queue.LastStartedAt;
+        // AGT-2848: a remote-review fleet drains ReviewAttempts through attempt
+        // authority (fenced claim/settle), not the legacy post-processing
+        // worker, so the legacy queue alone reads zero while a real backlog
+        // sits in attempt authority. Both sources feed the one backlog number
+        // the stagnation and parallelism policies react to.
+        var legacyQueueDepth = _queue.PendingCount;
+        var pendingReviewAttempts = _authority.ListPendingReviewAttempts().Count;
+        var pendingCount = legacyQueueDepth + pendingReviewAttempts;
+        var lastStartedAt = Later(_queue.LastStartedAt, _authority.LastReviewClaimAtUtc);
         var activeJobs = _status.Read().ActiveJobs.Count;
         var threshold = TimeSpan.FromMinutes(thresholdMinutes);
 
@@ -138,6 +165,8 @@ public sealed class AutoReviewQueueStagnationWatchdog : BackgroundService
             var next = new AutoReviewQueueSnapshot
             {
                 QueueDepth = pendingCount,
+                LegacyQueueDepth = legacyQueueDepth,
+                PendingReviewAttempts = pendingReviewAttempts,
                 ActiveJobs = activeJobs,
                 IsStagnant = isStagnant,
                 StagnantSince = stagnantSince,
@@ -153,6 +182,10 @@ public sealed class AutoReviewQueueStagnationWatchdog : BackgroundService
             return _current;
         }
     }
+
+    /// <summary>Later of two optional timestamps; null only when both are null.</summary>
+    private static DateTime? Later(DateTime? a, DateTime? b)
+        => a is null ? b : b is null ? a : a > b ? a : b;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {

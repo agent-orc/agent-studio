@@ -705,6 +705,54 @@ or still has a shared resource, and
 [common-problems/review-parallelism-shared-build-server/](../common-problems/review-parallelism-shared-build-server/)
 lists the checks that identify which.
 
+### How the review ceiling is derived
+
+`AdaptiveReviewParallelismAdvisor` (`backend/Features/Runner/AdaptiveReviewParallelismPolicy.cs`)
+is the sole source of the review plane's `RoleMaxParallelism` recommendation
+introduced by AGT-2820 (see [Review-plane parallelism](../../system/domains/review.md#review-plane-parallelism)
+and the AGT-2645 results dossier). Its input is one combined backlog number,
+exposed on `GET /api/runner/auto-review-queue`:
+
+- `legacyQueueDepth` — cards still waiting in the local `AutoReviewPostProcessingQueue`.
+- `pendingReviewAttempts` — current ReviewAttempts in attempt-authority state
+  `Pending` (queued, unclaimed by any executor).
+- `queueDepth` — the sum of the two above; this is what
+  `AdaptiveReviewParallelismPolicy.Evaluate` and `AutoReviewQueueStagnationWatchdog`
+  react to.
+
+AGT-2848: before this, the advisor read `legacyQueueDepth` alone. That queue is
+only ever populated by the local (non-remote) post-processing worker, so on a
+fleet running canonical Remote Review it stayed at zero no matter how many
+ReviewAttempts were queued in attempt-authority. The advisor never saw a
+backlog, never raised, and the review plane ran at its configured baseline
+regardless of host capacity or the actual queue — the symptom was a daemon
+log line naming a lower ceiling than `RUNNER_MAX_PARALLELISM` while
+attempt-authority held several pending attempts and host load had headroom.
+
+Two follow-on effects of feeding the advisor the right number:
+
+- **A raised baseline takes effect without a backend restart.** The running
+  recommendation used to be seeded once at startup; raising
+  `AutoReviewQueueAdaptiveParallelism:BaselineParallelism` in configuration only
+  reached it once an unrelated raise or lower crossed the new value in
+  passing. The advisor now adopts a higher configured baseline on its next
+  refresh whenever the combined queue is non-empty, ahead of and unblocked by
+  the raise cooldown.
+- **The recommendation never exceeds a host's own bootstrap.** The
+  capability-advertisement endpoint (`PUT /api/v1/runners/{runnerId}/capabilities`)
+  clamps the advisor's one global recommendation to the specific executor's
+  registered `RUNNER_MAX_PARALLELISM` (its `BootstrapMaxParallelism` at
+  registration) before handing it back as `RoleMaxParallelism`. The advisor has
+  no per-host capacity signal; the bootstrap value is the operator's declared
+  safe ceiling for that machine, so a recommendation can lower it (see
+  [Review-plane parallelism](../../system/domains/review.md#review-plane-parallelism))
+  but never raise it past what the host itself claims to support.
+
+The raise/lower hysteresis itself (distinct raise/lower cooldowns, sustained-
+empty-before-lower, one step at a time, `AdaptiveReviewParallelismPolicy.SanctionedMax`
+of 6) is unchanged — only the backlog number it is evaluated against, and the
+one runtime baseline-adoption exception above, are new.
+
 Recommended per-CLI headless defaults (verify against your installed version):
 
 When both CLIs are installed, keep both provider-specific binary variables even

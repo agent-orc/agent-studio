@@ -1,6 +1,6 @@
 # Review Domain Map
 
-Version: 2026-09-15
+Version: 2026-09-16
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
 
 Use this when a change touches ReviewSubject preparation, aspect prompts,
@@ -122,10 +122,19 @@ cancels an active slot.
 
 `RUNNER_MAX_PARALLELISM` is deprecated as the live review control. It seeds the
 ceiling until the first advertisement is answered and remains the fallback for
-an older server; a later file change does not replace the recommendation. The
+an older server; a later file change does not replace the recommendation. It
+still bounds the recommendation from above: the capability-advertisement
+endpoint clamps `AdaptiveReviewParallelismAdvisor`'s one global number to each
+executor's own registered bootstrap before answering `RoleMaxParallelism`, so
+one host's declared capacity is never exceeded (AGT-2848). The advisor's input
+is the combined backlog of the legacy post-processing queue and current
+attempt-authority ReviewAttempts in state Pending (`GET
+/api/runner/auto-review-queue`), and a raised
+`AutoReviewQueueAdaptiveParallelism:BaselineParallelism` is adopted on the next
+refresh once the queue is non-empty, without a backend restart. The
 operator-facing form of this is in
 [docs/operations/remote-hosts.md](../../operations/remote-hosts.md) and
-[docs/operations/setup/linux-runner-host.md](../../operations/setup/linux-runner-host.md).
+[docs/operations/setup/linux-runner-host.md](../../operations/setup/linux-runner-host.md#how-the-review-ceiling-is-derived).
 
 ## Infrastructure retry scheduling
 

@@ -655,6 +655,127 @@ public sealed class V1ReviewPlaneDiagnosticsEndpointTests : IDisposable
         Assert.Equal(recommendation, snapshot!.RoleMaxParallelism);
     }
 
+    /// <summary>
+    /// AGT-2848: on a remote-review fleet, cards queue in attempt-authority as
+    /// canonical, unclaimed ReviewAttempts (state Pending) - the legacy local
+    /// post-processing queue the advisor used to read stays at zero the whole
+    /// time. Five pending attempts at or above the default raise threshold must
+    /// move the recommendation the same way five legacy-queued cards already did.
+    /// </summary>
+    [Fact]
+    public async Task Pending_canonical_review_attempts_drive_a_raise()
+    {
+        using var factory = BuildFactory();
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        for (var i = 0; i < 5; i++)
+            CreatePendingReviewAttempt(authority, $"AGT-{i}", $"sha-{i}");
+
+        var watchdog = factory.Services.GetRequiredService<AutoReviewQueueStagnationWatchdog>();
+        var queue = watchdog.Refresh();
+        Assert.Equal(0, queue.LegacyQueueDepth);
+        Assert.Equal(5, queue.PendingReviewAttempts);
+        Assert.Equal(5, queue.QueueDepth);
+
+        var decision = factory.Services.GetRequiredService<AdaptiveReviewParallelismAdvisor>().Refresh();
+
+        Assert.Equal(ReviewParallelismAction.Raise, decision.Action);
+        Assert.Equal(3, decision.RecommendedParallelism);
+    }
+
+    /// <summary>
+    /// AGT-2848: <c>_current</c> used to be seeded from the configured baseline
+    /// once, at construction. Raising
+    /// <c>AutoReviewQueueAdaptiveParallelism:BaselineParallelism</c> in
+    /// configuration afterward only reached the running recommendation once an
+    /// unrelated raise or lower crossed it in passing - in practice, only after
+    /// a backend restart. A non-empty queue is evidence the new floor is needed
+    /// now, so a raised baseline must be adopted on the very next refresh.
+    /// </summary>
+    [Fact]
+    public async Task A_raised_baseline_is_adopted_at_runtime_without_a_restart()
+    {
+        using var factory = BuildFactory(extraConfiguration: new Dictionary<string, string?>
+        {
+            ["AutoReviewQueueAdaptiveParallelism:BaselineParallelism"] = "2",
+        });
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        CreatePendingReviewAttempt(authority, "AGT-1", "sha-1");
+
+        var watchdog = factory.Services.GetRequiredService<AutoReviewQueueStagnationWatchdog>();
+        var advisor = factory.Services.GetRequiredService<AdaptiveReviewParallelismAdvisor>();
+        watchdog.Refresh();
+        var beforeConfigChange = advisor.Refresh();
+        Assert.Equal(ReviewParallelismAction.Hold, beforeConfigChange.Action);
+        Assert.Equal(2, beforeConfigChange.RecommendedParallelism);
+
+        var configuration = factory.Services.GetRequiredService<IConfiguration>();
+        configuration["AutoReviewQueueAdaptiveParallelism:BaselineParallelism"] = "3";
+
+        watchdog.Refresh();
+        var afterConfigChange = advisor.Refresh();
+
+        Assert.Equal(ReviewParallelismAction.Raise, afterConfigChange.Action);
+        Assert.Equal(3, afterConfigChange.RecommendedParallelism);
+        Assert.Contains("baseline", afterConfigChange.Reason);
+    }
+
+    /// <summary>
+    /// AGT-2848: the advisor is one global recommendation shared by every
+    /// review host, so it cannot know any one host's actual capacity. The
+    /// per-host <c>RUNNER_MAX_PARALLELISM</c> bootstrap declared at
+    /// registration is that host's own ceiling, and the capability
+    /// advertisement must never answer more than it - even once a real
+    /// backlog pushes the shared recommendation above it.
+    /// </summary>
+    [Fact]
+    public async Task Capability_advertisement_never_exceeds_the_executors_own_bootstrap()
+    {
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        var registration = await http.PutAsJsonAsync(
+            $"/api/v1/runners/{RunnerId}",
+            Registration(Instance) with { BootstrapMaxParallelism = 2 });
+        registration.EnsureSuccessStatusCode();
+
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        for (var i = 0; i < 5; i++)
+            CreatePendingReviewAttempt(authority, $"AGT-{i}", $"sha-{i}");
+        factory.Services.GetRequiredService<AutoReviewQueueStagnationWatchdog>().Refresh();
+        var decision = factory.Services.GetRequiredService<AdaptiveReviewParallelismAdvisor>().Refresh();
+        Assert.Equal(3, decision.RecommendedParallelism);
+
+        var advertisement = await http.PostAsJsonAsync(
+            $"/api/v1/runners/{RunnerId}/capabilities",
+            new Contract.CapabilityAdvertisementRequest(
+                RunnerId,
+                Instance,
+                Contract.CapabilityProtocol.CurrentSchemaVersion,
+                DateTime.UtcNow,
+                180,
+                1,
+                [new Contract.AdvertisedCapabilityDto(Contract.CapabilityProtocol.DotNet, "toolchain")]));
+        advertisement.EnsureSuccessStatusCode();
+
+        var snapshot = await advertisement.Content
+            .ReadFromJsonAsync<Contract.RunnerCapabilitySnapshotDto>();
+
+        Assert.Equal(2, snapshot!.RoleMaxParallelism);
+    }
+
+    private static void CreatePendingReviewAttempt(AttemptAuthorityService authority, string taskKey, string sha)
+    {
+        var run = authority.AcquireRun(
+            taskKey, ProjectName, null, "coding-runner", "coding-host", 60, "acquire-" + taskKey).RunAttempt!;
+        authority.SettleRun(new SettleRunAttemptRequest
+        {
+            Write = new AttemptWriteReference(run.AttemptId, run.LastFence, run.AuthorityEpoch, "settle-" + taskKey),
+            Outcome = "done",
+            ResultSha = sha,
+        });
+        authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
+            taskKey, ProjectName, sha, run.AttemptId, "requirements-hash", "policy-hash", [], "review-create-" + taskKey));
+    }
+
     private static Contract.RegisterRunnerRequest Registration(
         string instanceId,
         IReadOnlyList<Contract.RunnerActiveAttempt>? activeAttempts = null)

@@ -2,6 +2,32 @@
 
 Newest first. Every entry: date · decision · reasoning · card/commit reference.
 
+## 2026-09-16: The parallelism advisor was reading a queue that is always empty on a remote-review fleet
+`AdaptiveReviewParallelismAdvisor.Refresh` measured
+`AutoReviewPostProcessingQueue.PendingCount` - the legacy local
+post-processing queue - which reads zero on a fleet running canonical Remote
+Review, because those cards queue as attempt-authority `ReviewAttempt`s
+(state Pending) instead. The advisor therefore never saw a backlog and never
+raised past its configured baseline, no matter how many attempts were
+actually queued or how much host headroom existed; a restarted daemon logged
+a ceiling below its own `RUNNER_MAX_PARALLELISM` while attempts sat pending.
+Decision: feed the advisor (and `AutoReviewQueueStagnationWatchdog`, on the
+same basis) the sum of the legacy queue and current attempt-authority Pending
+ReviewAttempts, expose both numbers on `GET /api/runner/auto-review-queue`
+(`legacyQueueDepth`, `pendingReviewAttempts`), and give the watchdog a
+canonical-claim progress signal (`AttemptAuthorityService.LastReviewClaimAtUtc`)
+so a fleet that drains entirely through fenced claims is not flagged
+stagnant. A raised `AutoReviewQueueAdaptiveParallelism:BaselineParallelism`
+is now adopted on the next refresh while the queue is non-empty, instead of
+only reaching the running recommendation after a backend restart or a
+crossing raise/lower. The capability-advertisement endpoint now also clamps
+the one global recommendation to each executor's own registered
+`RUNNER_MAX_PARALLELISM` bootstrap before answering `RoleMaxParallelism` -
+previously unclamped, and silently masking that `AdvertiseCapabilities`
+never populated the bootstrap value it was meant to clamp against. →
+AGT-2645 (adaptive parallelism proposal, results dossier), AGT-2848 (this
+fix), [operations note](../../operations/setup/linux-runner-host.md#how-the-review-ceiling-is-derived).
+
 ## 2026-09-07: PrivateTmp=true made the 2026-08-18 "loss-free" restart claim incomplete
 `ReviewSlotReconciler` re-adopting a detached `DurableReviewProcess` worker by
 PID-liveness/workspace match proves the worker survives a restart; it does not
