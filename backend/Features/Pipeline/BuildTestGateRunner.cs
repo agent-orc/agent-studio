@@ -56,6 +56,16 @@ public sealed record BuildTestGateRequest(
     public TestExecutionPolicy? TestExecution { get; init; }
     public string? JobFolderPath { get; init; }
 
+    /// <summary>
+    /// AGT-2843: where the caller's resolved <c>timeout</c> (the gate-run
+    /// budget passed to <see cref="IBuildTestGateRunner.RunAsync"/>) came from
+    /// - e.g. an explicit override, a configured key, a project override, or
+    /// the <see cref="GateRunBudgetPolicy"/> default - surfaced on
+    /// <c>build_test_gate_started</c> so an operator can see why a gate has
+    /// the budget it has. Purely diagnostic.
+    /// </summary>
+    public string? TimeoutBudgetSource { get; init; }
+
     public Action? OnMachineGateWaiting { get; init; }
     public Action? OnMachineGateAcquired { get; init; }
 
@@ -292,9 +302,10 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         var queueWaitTimeout = ResolveQueueWaitTimeout(
             request.QueueWaitTimeout, timeout, infrastructureTimeout);
         _logger.LogInformation(
-            "build_test_gate_started gate_run_id={GateRunId} gate_id={GateId} started_at_utc={StartedAtUtc:o} repository={Repository} expected_sha={ExpectedSha} attempt_chain_id={AttemptChainId} executor={Executor}",
+            "build_test_gate_started gate_run_id={GateRunId} gate_id={GateId} started_at_utc={StartedAtUtc:o} repository={Repository} expected_sha={ExpectedSha} attempt_chain_id={AttemptChainId} executor={Executor} budget_limit_ms={BudgetLimitMs} budget_source={BudgetSource}",
             gateRunId, request.GateId, startedAt, repositoryPath,
-            request.ExpectedSha ?? "missing", request.AttemptChainId ?? "missing", request.Executor);
+            request.ExpectedSha ?? "missing", request.AttemptChainId ?? "missing", request.Executor,
+            (long)timeout.TotalMilliseconds, request.TimeoutBudgetSource ?? "unspecified");
 
         MachineGateLease? machineLease = null;
         ExactWorkspaceLease? workspaceLease = null;

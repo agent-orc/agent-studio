@@ -41,9 +41,21 @@ public sealed class MergeIntoDevelopRunner
     private readonly AgentStudio.Git.GitStateIndexService? _gitStateIndex;
     private readonly AgentStudio.Tasks.AcceptanceRailHostedService? _acceptanceRail;
     private readonly IntegrationWorktreeProvider _integrationWorktrees;
-    private readonly TimeSpan _preMainTimeout;
-    private readonly TimeSpan _preDevelopTimeout;
+    private readonly IConfiguration? _configuration;
+    private readonly TimeSpan? _preMainTimeout;
+    private readonly TimeSpan? _preDevelopTimeout;
     private readonly Func<int, TimeSpan> _environmentalBackoff;
+
+    /// <summary>
+    /// AGT-2843: the pre-develop/pre-main gate used to fall back to a
+    /// hard-coded 30-minute budget whenever nobody passed an explicit
+    /// <c>preDevelopTimeout</c>/<c>preMainTimeout</c>, so neither the operator's
+    /// configured override nor <see cref="GateRunBudgetPolicy"/> ever reached it.
+    /// A single shared key covers both immediate-integration gates, distinct
+    /// from the post-step review gate's own
+    /// <c>PostSteps:post-build-test-gate:TimeoutSeconds</c>.
+    /// </summary>
+    internal const string GateTimeoutConfigKey = "PostSteps:build-test-gate:TimeoutSeconds";
     private readonly SemaphoreSlim _mergeGate = new(1, 1);
     private readonly SemaphoreSlim _pushGate = new(1, 1);
     private int _mergeGateUsers;
@@ -65,7 +77,8 @@ public sealed class MergeIntoDevelopRunner
         FailureInterventionService? failureInterventions = null,
         AgentStudio.Git.GitStateIndexService? gitStateIndex = null,
         AgentStudio.Tasks.AcceptanceRailHostedService? acceptanceRail = null,
-        IntegrationWorktreeProvider? integrationWorktrees = null)
+        IntegrationWorktreeProvider? integrationWorktrees = null,
+        IConfiguration? configuration = null)
     {
         _git = git;
         _pipelineLog = pipelineLog;
@@ -84,12 +97,15 @@ public sealed class MergeIntoDevelopRunner
         // registered project checkout (AGT-2832). The default keeps every entry
         // point - including tests and the compatibility worker - on that path.
         _integrationWorktrees = integrationWorktrees ?? new IntegrationWorktreeProvider(git);
+        _configuration = configuration;
+        // No hard-coded fallback here (AGT-2843): an unset explicit timeout is
+        // resolved per call, per project, by ResolveGateTimeout.
         _preMainTimeout = preMainTimeout is { } configured && configured > TimeSpan.Zero
             ? configured
-            : TimeSpan.FromHours(1);
+            : null;
         _preDevelopTimeout = preDevelopTimeout is { } configuredDevelop && configuredDevelop > TimeSpan.Zero
             ? configuredDevelop
-            : TimeSpan.FromMinutes(30);
+            : null;
         // Default to the AGT-1944 environmental backoff (30s, 120s, cap 5min); a
         // test injects a zero backoff so it does not sleep between retries.
         _environmentalBackoff = environmentalBackoff ?? PostProcessingOutcomeTaxonomy.RetryBackoff;
@@ -774,6 +790,7 @@ public sealed class MergeIntoDevelopRunner
             }
             else
             {
+                var (preDevelopTimeout, preDevelopTimeoutSource) = ResolveGateTimeout(project, _preDevelopTimeout);
                 gate = await _preDevelopBuildGate.RunAsync(
                     new BuildTestGateRequest(repoRoot, gatedSha, "merge-into-develop-build-gate")
                     {
@@ -783,10 +800,11 @@ public sealed class MergeIntoDevelopRunner
                         TestExecution = TestExecutionFor(project),
                         JobFolderPath = jobFolderPath,
                         SubjectRef = integrationBranch,
+                        TimeoutBudgetSource = preDevelopTimeoutSource,
                     },
                     changedPaths,
                     profile,
-                    _preDevelopTimeout,
+                    preDevelopTimeout,
                     // Deliberately NOT the caller's token: once the background worker
                     // starts a merge, its gate and possible rollback must reach a
                     // consistent terminal state. The gate stays bounded by its timeout.
@@ -882,6 +900,44 @@ public sealed class MergeIntoDevelopRunner
         }
     }
 
+    /// <summary>
+    /// AGT-2843: sizes the pre-develop/pre-main gate budget the same way
+    /// <c>ReviewDecisionOrchestrator</c> sizes the post-step gate budget - an
+    /// explicit constructor timeout (test/DI injection) wins outright; absent
+    /// that, the configured <see cref="GateTimeoutConfigKey"/> wins; absent
+    /// that, <see cref="GateRunBudgetPolicy.ResolveSeconds"/> applies the
+    /// project's <see cref="ProjectSettings.BuildTestGateTimeoutSeconds"/>
+    /// override, or the platform default absent both. Never the old
+    /// hard-coded 30-minute/1-hour fallback.
+    /// </summary>
+    private (TimeSpan Timeout, string Source) ResolveGateTimeout(string project, TimeSpan? explicitTimeout)
+    {
+        if (explicitTimeout is { } configured && configured > TimeSpan.Zero)
+            return (configured, "explicit-override");
+
+        var configuredSeconds = _configuration?.GetValue<int?>(GateTimeoutConfigKey);
+        if (configuredSeconds is { } fromConfig)
+            return (TimeSpan.FromSeconds(Math.Max(1, fromConfig)), $"config:{GateTimeoutConfigKey}");
+
+        var projectOverrideSeconds = ProjectGateTimeoutOverrideSecondsFor(project);
+        var resolvedSeconds = GateRunBudgetPolicy.ResolveSeconds(projectOverrideSeconds);
+        var source = projectOverrideSeconds is not null
+            ? "project-override:ProjectSettings.BuildTestGateTimeoutSeconds"
+            : "policy-default:GateRunBudgetPolicy";
+        return (TimeSpan.FromSeconds(resolvedSeconds), source);
+    }
+
+    private int? ProjectGateTimeoutOverrideSecondsFor(string project)
+    {
+        if (_projectSettings == null) return null;
+        try { return _projectSettings.Get(project).BuildTestGateTimeoutSeconds; }
+        catch (Exception ex)
+        {
+            SilentCatch.Note(ex, "MergeIntoDevelopRunner: gate-timeout override read is best-effort");
+            return null;
+        }
+    }
+
     private async Task<(MergeIntoIntegrationResult Merge, BuildTestGateResult? Gate)> PromoteDevelopToMainAsync(
         string project,
         string jobId,
@@ -953,6 +1009,7 @@ public sealed class MergeIntoDevelopRunner
         else
         {
             var settings = _projectSettings.Get(project);
+            var (preMainTimeout, preMainTimeoutSource) = ResolveGateTimeout(project, _preMainTimeout);
             gate = await _preMainTestGate.RunAsync(
                 new BuildTestGateRequest(repoRoot, sourceSha, "merge-into-main")
                 {
@@ -962,9 +1019,10 @@ public sealed class MergeIntoDevelopRunner
                     TestExecution = settings.TestExecution,
                     JobFolderPath = jobFolderPath,
                     SubjectRef = workBranch,
+                    TimeoutBudgetSource = preMainTimeoutSource,
                 },
                 settings.BuildProfile,
-                _preMainTimeout,
+                preMainTimeout,
                 ct).ConfigureAwait(false);
             RecordGateEvidence(jobFolderPath, "pre-main-test-gate", gate);
             if (gate.Verdict != BuildTestGateVerdict.Ok)
@@ -1111,6 +1169,7 @@ public sealed class MergeIntoDevelopRunner
         }
 
         var settings = _projectSettings.Get(project);
+        var (preMainTimeout, preMainTimeoutSource) = ResolveGateTimeout(project, _preMainTimeout);
         var gate = await _preMainTestGate.RunAsync(
             new BuildTestGateRequest(repoRoot, sourceSha, "merge-into-main")
             {
@@ -1120,9 +1179,10 @@ public sealed class MergeIntoDevelopRunner
                 TestExecution = settings.TestExecution,
                 JobFolderPath = jobFolderPath,
                 SubjectRef = taskBranch,
+                TimeoutBudgetSource = preMainTimeoutSource,
             },
             settings.BuildProfile,
-            _preMainTimeout,
+            preMainTimeout,
             ct).ConfigureAwait(false);
         RecordGateEvidence(jobFolderPath, "pre-main-test-gate", gate);
 

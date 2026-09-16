@@ -1986,6 +1986,155 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         Assert.DoesNotContain("build gate", step.Reason ?? string.Empty);
     }
 
+    // ---- AGT-2843: pre-develop/pre-main gate budget resolution ---------------
+
+    /// <summary>
+    /// No explicit <c>preDevelopTimeout</c>, no configured override, no project
+    /// override: the runner must use <see cref="GateRunBudgetPolicy"/>'s own
+    /// default (60 minutes), never the removed hard-coded 30-minute fallback.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_DevelopTarget_NoExplicitTimeout_UsesGateRunBudgetPolicyDefault()
+    {
+        var repo = SeedRepo("develop-gate-budget-default");
+        RunGit(repo, "checkout -q -b develop");
+        RunGit(repo, "checkout -q -b task/70");
+        File.WriteAllText(Path.Combine(repo, "task.txt"), "task work");
+        Commit(repo, "feat: task work");
+        RunGit(repo, "checkout -q develop");
+
+        var (git, log, settings) = BuildWithSettings(repo);
+        settings.SetBuildProfile("Fixture", new BuildProfile { BuildCmds = ["cd ."] });
+        var gateRunner = new CapturingBuildTestGateRunner(new BuildTestGateResult(
+            BuildTestGateVerdict.Ok, 0, 20, "", "verify gate passed", true, false));
+        var jobFolder = BeginRun(log, repo, jobId: "70");
+        var runner = new MergeIntoDevelopRunner(
+            git, log, NullLogger<MergeIntoDevelopRunner>.Instance,
+            projectSettings: settings,
+            preDevelopBuildGate: new PreDevelopBuildGate(gateRunner));
+
+        await runner.RunAsync("Fixture", "70", jobFolder, repo, "develop", CancellationToken.None);
+
+        Assert.Equal(1, gateRunner.Invocations);
+        Assert.Equal(TimeSpan.FromSeconds(GateRunBudgetDefaults.DefaultSeconds), gateRunner.Timeout);
+    }
+
+    /// <summary>
+    /// <see cref="ProjectSettings.BuildTestGateTimeoutSeconds"/> wins outright
+    /// over <see cref="GateRunBudgetPolicy"/>'s default when nothing more
+    /// specific (an explicit constructor timeout or a configured key) applies.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_DevelopTarget_NoExplicitTimeout_ProjectOverrideWinsOverPolicyDefault()
+    {
+        var repo = SeedRepo("develop-gate-budget-project-override");
+        RunGit(repo, "checkout -q -b develop");
+        RunGit(repo, "checkout -q -b task/71");
+        File.WriteAllText(Path.Combine(repo, "task.txt"), "task work");
+        Commit(repo, "feat: task work");
+        RunGit(repo, "checkout -q develop");
+
+        var (git, log, settings) = BuildWithSettings(repo);
+        settings.SetBuildProfile("Fixture", new BuildProfile { BuildCmds = ["cd ."] });
+        settings.SetBuildTestGateTimeoutSeconds("Fixture", 517);
+        var gateRunner = new CapturingBuildTestGateRunner(new BuildTestGateResult(
+            BuildTestGateVerdict.Ok, 0, 20, "", "verify gate passed", true, false));
+        var jobFolder = BeginRun(log, repo, jobId: "71");
+        var runner = new MergeIntoDevelopRunner(
+            git, log, NullLogger<MergeIntoDevelopRunner>.Instance,
+            projectSettings: settings,
+            preDevelopBuildGate: new PreDevelopBuildGate(gateRunner));
+
+        await runner.RunAsync("Fixture", "71", jobFolder, repo, "develop", CancellationToken.None);
+
+        Assert.Equal(1, gateRunner.Invocations);
+        Assert.Equal(TimeSpan.FromSeconds(517), gateRunner.Timeout);
+    }
+
+    /// <summary>
+    /// The operator host's configured <c>PostSteps:build-test-gate:TimeoutSeconds</c>
+    /// (AGT-2843 symptom: this key had no effect before this fix) wins over a
+    /// per-project override, mirroring how <c>ReviewDecisionOrchestrator</c>
+    /// resolves the post-step gate budget.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_DevelopTarget_NoExplicitTimeout_ConfiguredKeyWinsOverProjectOverride()
+    {
+        var repo = SeedRepo("develop-gate-budget-configured");
+        RunGit(repo, "checkout -q -b develop");
+        RunGit(repo, "checkout -q -b task/72");
+        File.WriteAllText(Path.Combine(repo, "task.txt"), "task work");
+        Commit(repo, "feat: task work");
+        RunGit(repo, "checkout -q develop");
+
+        var (git, log, settings) = BuildWithSettings(repo);
+        settings.SetBuildProfile("Fixture", new BuildProfile { BuildCmds = ["cd ."] });
+        settings.SetBuildTestGateTimeoutSeconds("Fixture", 517);
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                [MergeIntoDevelopRunner.GateTimeoutConfigKey] = "900",
+            })
+            .Build();
+        var gateRunner = new CapturingBuildTestGateRunner(new BuildTestGateResult(
+            BuildTestGateVerdict.Ok, 0, 20, "", "verify gate passed", true, false));
+        var jobFolder = BeginRun(log, repo, jobId: "72");
+        var runner = new MergeIntoDevelopRunner(
+            git, log, NullLogger<MergeIntoDevelopRunner>.Instance,
+            projectSettings: settings,
+            preDevelopBuildGate: new PreDevelopBuildGate(gateRunner),
+            configuration: configuration);
+
+        await runner.RunAsync("Fixture", "72", jobFolder, repo, "develop", CancellationToken.None);
+
+        Assert.Equal(1, gateRunner.Invocations);
+        Assert.Equal(TimeSpan.FromSeconds(900), gateRunner.Timeout);
+    }
+
+    /// <summary>
+    /// End-to-end against the real <see cref="BuildTestGateRunner"/>: with no
+    /// explicit timeout, a resolved budget from a tight project override, and a
+    /// command that genuinely runs long, the merge rolls back classified
+    /// <see cref="BuildTestGateFailureKind.Timeout"/> - never
+    /// <see cref="BuildTestGateFailureKind.Code"/>, which would spend a
+    /// rebase-recovery steer round chasing a budget problem the delivery cannot
+    /// fix.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_DevelopTarget_ResolvedBudgetExceeded_RollsBackClassifiedTimeoutNotCode()
+    {
+        var repo = SeedRepo("develop-gate-budget-exceeded");
+        RunGit(repo, "checkout -q -b develop");
+        RunGit(repo, "checkout -q -b task/73");
+        File.WriteAllText(Path.Combine(repo, "task.txt"), "task work");
+        Commit(repo, "feat: task work");
+        RunGit(repo, "checkout -q develop");
+        var developBefore = RunGit(repo, "rev-parse develop").Out.Trim();
+
+        var (git, log, settings) = BuildWithSettings(repo);
+        settings.SetBuildProfile(
+            "Fixture", new BuildProfile { InstallCmd = "sleep 5", BuildCmds = ["exit 0"] });
+        settings.SetBuildTestGateTimeoutSeconds("Fixture", 1);
+        var jobFolder = BeginRun(log, repo, jobId: "73");
+        var runner = new MergeIntoDevelopRunner(
+            git, log, NullLogger<MergeIntoDevelopRunner>.Instance,
+            projectSettings: settings,
+            preDevelopBuildGate: new PreDevelopBuildGate(HermeticGateRunner()));
+
+        var outcome = await runner.RunAsync(
+            "Fixture", "73", jobFolder, repo, "develop", CancellationToken.None);
+
+        // Rolled back, the same as any other red gate.
+        Assert.Equal(MergeIntoIntegrationOutcome.GateFailed, outcome.Outcome);
+        Assert.Equal(developBefore, RunGit(repo, "rev-parse develop").Out.Trim());
+
+        var evidencePath = Assert.Single(
+            Directory.GetFiles(Path.Combine(jobFolder, "post-steps"), "pre-develop-build-gate-*.log"));
+        var evidence = File.ReadAllText(evidencePath);
+        Assert.Contains("gate-run budget", evidence);
+        Assert.Contains("budget=gate-run", evidence);
+    }
+
     [Fact]
     public void Run_LocalDelivery_DivergedIntegrationBranch_ReportsHealingErrorInsteadOfMergingStale()
     {
@@ -2147,6 +2296,7 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         public int Invocations { get; private set; }
         public BuildTestGateRequest? Request { get; private set; }
         public IReadOnlyList<string>? ChangedFiles { get; private set; }
+        public TimeSpan? Timeout { get; private set; }
 
         public Task<BuildTestGateResult> RunAsync(
             BuildTestGateRequest request,
@@ -2159,6 +2309,7 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
             Invocations++;
             Request = request;
             ChangedFiles = changedFiles;
+            Timeout = timeout;
             _duringRun?.Invoke();
             return Task.FromResult(_result with
             {

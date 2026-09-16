@@ -1391,7 +1391,29 @@ public class ProjectSettingsService
             policy is null ? "cleared" : "updated", projectName);
     }
 
-    private static TestExecutionPolicy? NormalizeTestExecution(TestExecutionPolicy? policy)
+        /// <summary>
+    /// AGT-2749/AGT-2843: per-project override of the build/test gate-run
+    /// budget (<see cref="ProjectSettings.BuildTestGateTimeoutSeconds"/>). Null
+    /// clears the override so <see cref="AgentStudio.Pipeline.GateRunBudgetPolicy"/>
+    /// sizes the budget from history or the platform default instead.
+    /// </summary>
+    public void SetBuildTestGateTimeoutSeconds(string projectName, int? seconds)
+    {
+        EnsureLoaded();
+        var clamped = seconds is { } value ? Math.Max(1, value) : (int?)null;
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var s) ? s : new ProjectSettings();
+            _cache[key] = current with { BuildTestGateTimeoutSeconds = clamped };
+            Persist();
+        }
+        _logger.LogInformation(
+            "Build/test gate-run budget override set to {Seconds} for project {Project}",
+            clamped?.ToString() ?? "cleared", projectName);
+    }
+
+private static TestExecutionPolicy? NormalizeTestExecution(TestExecutionPolicy? policy)
     {
         if (policy is null) return null;
         static IReadOnlyList<string>? Clean(IReadOnlyList<string>? values)
