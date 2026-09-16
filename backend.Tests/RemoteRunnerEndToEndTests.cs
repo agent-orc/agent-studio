@@ -769,6 +769,115 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
     }
 
     [Fact]
+    public async Task Cancelled_remote_summary_still_acknowledges_the_result_and_a_later_retry_publishes_it()
+    {
+        // AGT-2850, observed 16.09.2026 (AGT-2847): the Haiku summary one-shot sat
+        // in the host load throttle until the upload request was aborted, so a
+        // finished run was acknowledged as lost and requeued. A cancelled
+        // summary must cost nothing but the summary.
+        const string resultSha = "589c462f589c462f589c462f589c462f589c462f";
+        SeedTask(TaskStates.Progress, TaskKey, "Remote summary cancelled", "Make a trivial change.");
+        File.Delete(Path.Combine(_watchPath, TaskStates.Progress, TaskKey, "status.md"));
+
+        var summaryOneShot = new CancellingSummaryOneShot(cancelledCalls: 3);
+        using var factory = BuildFactory(summaryOneShot: summaryOneShot);
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        var ct = CancellationToken.None;
+        await client.RegisterAsync(ProjectName, "service", ct);
+        var lease = await client.AcquireLeaseAsync(
+            new RAcquire(TaskKey, RunnerId, ProjectName, "hetzner-test", 4242, "claude"), ct);
+        Assert.True(lease.Granted);
+        Assert.NotNull(lease.Lease);
+
+        await client.IngestLogsAsync(new RLogIngest(TaskKey,
+        [
+            new RCliLine(DateTime.UtcNow, "stdout", "Implemented and verified."),
+            new RCliLine(DateTime.UtcNow, "stdout", "[[TASK_DONE]]"),
+        ],
+            RunnerId: lease.Lease!.RunnerId,
+            LeaseId: lease.Lease.LeaseId,
+            FencingToken: lease.Lease.FencingToken,
+            AttemptId: lease.Lease.AttemptId,
+            Fence: lease.Lease.FencingToken,
+            AuthorityEpoch: lease.Lease.AuthorityEpoch,
+            IdempotencyKey: "remote-cancelled-summary-logs"), ct);
+
+        // 1. The delivered result is acknowledged even though every summary
+        //    attempt died with the throttle's TaskCanceledException.
+        var artifactUpload = await client.UploadArtifactsAsync(new RArtifactIngest(TaskKey,
+        [
+            new RArtifact(
+                "proof.txt",
+                Convert.ToBase64String(Encoding.UTF8.GetBytes("remote proof"))),
+        ],
+            RunnerId: lease.Lease.RunnerId,
+            LeaseId: lease.Lease.LeaseId,
+            FencingToken: lease.Lease.FencingToken,
+            AttemptId: lease.Lease.AttemptId,
+            Fence: lease.Lease.FencingToken,
+            AuthorityEpoch: lease.Lease.AuthorityEpoch,
+            IdempotencyKey: "remote-cancelled-summary-artifacts",
+            FinalizeResult: true), ct);
+        Assert.NotNull(artifactUpload);
+        Assert.Equal(1, artifactUpload!.Uploaded);
+        Assert.Equal(["results/proof.txt"], artifactUpload.Files);
+        Assert.False(artifactUpload.ResultDocumentGenerated);
+        Assert.StartsWith("degraded:", artifactUpload.ResultDocumentStatus);
+        Assert.Equal(3, summaryOneShot.SummaryCalls);
+
+        var scanner = factory.Services.GetRequiredService<ITaskScanner>();
+        var delivered = Assert.Single(scanner.ScanAllJobs(), item => item.Id == TaskKey);
+        var timeline = factory.Services.GetRequiredService<TimelineLog>();
+        Assert.StartsWith(
+            "Summary pending (degraded:",
+            Assert.Single(
+                timeline.ReadAll(delivered.FolderPath),
+                row => row.Kind == TimelineEventKinds.ResultSummaryPending).Summary);
+        var finalization = factory.Services.GetRequiredService<RemoteResultFinalizationService>();
+        Assert.Equal(delivered.TaskKey, Assert.Single(finalization.Pending).TaskKey);
+
+        // 2. The acknowledged run completes normally and reaches Auto Review.
+        var completion = await client.CompleteRunAsync(new RRemoteComplete(
+            TaskKey,
+            lease.Lease.LeaseId,
+            lease.Lease.FencingToken,
+            RunnerId,
+            "Done",
+            Source: ProjectName,
+            ExitCode: 0,
+            ResultSha: resultSha,
+            AttemptChainId: lease.Lease.LeaseId,
+            Repository: "https://example.invalid/agent-studio.git",
+            AttemptId: lease.Lease.AttemptId,
+            AuthorityEpoch: lease.Lease.AuthorityEpoch,
+            IdempotencyKey: "remote-cancelled-summary-completion",
+            BaseSha: "4136f00d4136f00d4136f00d4136f00d4136f00d",
+            ImmutableResultRef: Contract.FencedGitRefs.ImmutableResult(
+                lease.Lease.AttemptId!,
+                lease.Lease.FencingToken,
+                resultSha),
+            ArtifactManifestDigest:
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            IntegrationBranch: "refs/heads/main"), ct);
+        Assert.Equal(TaskStates.AutoReview, completion!.TargetState);
+        var reviewFolder = Path.Combine(_watchPath, TaskStates.AutoReview, TaskKey);
+        Assert.Equal("remote proof", File.ReadAllText(Path.Combine(reviewFolder, "results", "proof.txt")));
+        Assert.Contains(
+            TaskTransitionService.ResultScaffoldMarker,
+            File.ReadAllText(Path.Combine(reviewFolder, "status.md")));
+
+        // 3. The owed summary comes due once the host recovers and replaces the
+        //    scaffold in the card's CURRENT lane folder.
+        Assert.Equal(1, await finalization.RunDueRetriesAsync(DateTime.UtcNow.AddMinutes(10), ct));
+        Assert.Empty(finalization.Pending);
+        Assert.Equal(4, summaryOneShot.SummaryCalls);
+        var published = File.ReadAllText(Path.Combine(reviewFolder, "status.md"));
+        Assert.DoesNotContain(TaskTransitionService.ResultScaffoldMarker, published);
+        Assert.Contains("Done and verified by the remote result fixture.", published);
+    }
+
+    [Fact]
     public async Task Coding_done_without_base_sha_requeues_with_the_salvage_fence_before_review_is_created()
     {
         const string resultSha = "589c462f589c462f589c462f589c462f589c462f";
@@ -2873,6 +2982,73 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
                     });
                 }
             });
+
+    /// <summary>
+    /// AGT-2850 fixture: the queued Haiku summary one-shot dies with the load
+    /// throttle's <see cref="TaskCanceledException"/> for the first
+    /// <c>cancelledCalls</c> summary calls, then recovers.
+    /// </summary>
+    private sealed class CancellingSummaryOneShot(int cancelledCalls) : ICliOneShot
+    {
+        private readonly object _gate = new();
+
+        public string CliType => CliTypes.Claude;
+
+        public int SummaryCalls { get; private set; }
+
+        public Task<CliOneShotResult> RunAsync(
+            CliOneShotRequest request,
+            CancellationToken ct = default)
+        {
+            var isSummary = string.Equals(
+                request.Source,
+                AdHocUsageSources.SummaryGeneration,
+                StringComparison.Ordinal);
+            bool cancel;
+            lock (_gate)
+            {
+                if (isSummary) SummaryCalls++;
+                cancel = isSummary && SummaryCalls <= cancelledCalls;
+            }
+            if (cancel) throw new TaskCanceledException("A task was canceled.");
+
+            const string markdown = """
+                # Status
+
+                - Result: Success
+                - Case: bugfix
+
+                ## Overview
+
+                - Problem: A saturated host refused the Result summary.
+                - Solution: Done and verified by the remote result fixture.
+
+                ## What Was Done
+
+                - Published the owed summary from the queued retry.
+
+                ## Open Items
+
+                - None.
+                """;
+            var requestedAt = DateTime.UtcNow;
+            var completedAt = requestedAt.AddMilliseconds(1);
+            return Task.FromResult(new CliOneShotResult(
+                Ok: true,
+                ExitCode: 0,
+                Stdout: markdown,
+                Stderr: string.Empty,
+                Duration: TimeSpan.FromMilliseconds(1),
+                ParsedText: markdown,
+                Usage: null,
+                RichUsage: null,
+                Latency: new AgentMessageLatency(
+                    RequestedAt: requestedAt,
+                    CompletedAt: completedAt,
+                    TotalMs: 1),
+                Error: null));
+        }
+    }
 
     private sealed class StubSummaryOneShot : ICliOneShot
     {

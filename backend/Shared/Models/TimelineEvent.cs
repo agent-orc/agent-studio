@@ -126,6 +126,17 @@ public static class TimelineEventKinds
     public const string AgentRunFinished = "agent_run_finished";
     /// <summary>A result producer replaced status.md after preserving the prior version.</summary>
     public const string ResultReplaced = "result_replaced";
+    /// <summary>
+    /// AGT-2850: a delivered remote result was acknowledged before its Result
+    /// summary existed, because summary generation was refused or outran the
+    /// bounded acknowledgement budget (host load throttle, CLI unavailable,
+    /// provider quota). The run is NOT lost - the artefacts are persisted and
+    /// the runner tore its worktree down normally; only the summary is owed.
+    /// <see cref="TimelineEvent.Summary"/> reads "Summary pending (&lt;reason&gt;)"
+    /// and <see cref="TimelineEvent.Details"/> carry the wire status and the
+    /// time the queued retry comes due.
+    /// </summary>
+    public const string ResultSummaryPending = "result_summary_pending";
     /// <summary>A Progress requeue was replaced by forward recovery of a completed immutable result.</summary>
     public const string SettledRunRecovered = "settled_run_recovered";
     /// <summary>A pipeline pre-step started (ADR-0045).</summary>

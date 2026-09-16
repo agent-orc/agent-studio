@@ -835,14 +835,26 @@ may enter or remain in Human Review with a visible failed/non-integrated verdict
 acceptance cannot repair it. All currently configured direct-merge Remote coding
 projects use the canonical order without a project-name exception.
 
-Result finalization is a distinct awaited post-core gate on both execution
-paths. The local application retries only `SummaryGenerationService`; the V1
-Task Server exposes `post-result-finalization`, generates the application-owned
-`status.md` artifact from durable run events and deliverables, and persists its
-typed state in task history. `Retryable` consumes the bounded summary budget
-without reopening CORE. `Ready` carries the generated artifact hash.
-`Degraded` is terminal for this post-step, keeps the completed run reviewable,
-and never presents the transition scaffold as a normal generated Result.
+Result finalization is a distinct post-core gate on both execution paths. The
+local application retries only `SummaryGenerationService`; the V1 Task Server
+exposes `post-result-finalization`, generates the application-owned `status.md`
+artifact from durable run events and deliverables, and persists its typed state
+in task history. `Retryable` consumes the bounded summary budget without
+reopening CORE. `Ready` carries the generated artifact hash. `Degraded` is
+terminal for this post-step, keeps the completed run reviewable, and never
+presents the transition scaffold as a normal generated Result.
+
+The summary is a convenience on top of a delivered result, never a precondition
+for acknowledging it. On the remote path the artefact upload acknowledges as
+soon as the deliverables are durable; summary generation runs behind a bounded
+acknowledgement budget and is detached from the caller's request token, so a
+runner that stops waiting can never cancel it. A summary that is refused (host
+load throttle, CLI unavailable, provider quota) or still running when the budget
+elapses answers `pending:<reason>` or `degraded:<error>`, records a
+`result_summary_pending` timeline row, and is owed to a queued retry that
+resolves the card's current lane folder before it publishes. `remote-result-finalize-missing`
+is reserved for a result that genuinely did not arrive, never for a summary-side
+failure; a degraded summary must not requeue a finished run (AGT-2850).
 
 A post-step has four distinct lifecycle states. **Defined** means the code-owned
 catalogue knows its id, capabilities, dependencies, and default. **Enabled**

@@ -2064,7 +2064,7 @@
             passes its declared preparation and all four verification commands in a clean workspace.
           </td>
         </tr>
-        <tr>
+        <tr id="case-agt-2585-remote-v1-result-finalization-gap">
           <td>2026-08-10</td>
           <td><code>AGT-2585 / AGT-2555</code><br><span class="small">remote-v1-result-finalization-gap</span></td>
           <td>
@@ -2435,6 +2435,42 @@
             produces no output for its silence window is killed as <code>command-stalled</code> instead of holding its
             slot for the full budget, and the orphan sweep reaps any stranded process under a review work root plus
             orphaned MSBuild nodes.
+          </td>
+        </tr>
+        <tr id="case-agt-2850-degraded-summary-lost-a-delivered-run">
+          <td>2026-09-16</td>
+          <td><code>AGT-2847</code><br><span class="small">a degraded result summary turned a delivered remote run into a lost run</span></td>
+          <td>
+            Two coding runs on <code>agent-runner-01</code> (13:48 and 14:29, Stable v0.4.0) finished and uploaded their
+            results (<code>runner-artifact-ingest ... commitStatus=committed</code>), but the upload answered
+            <code>Result finalization degraded ... error=A task was canceled</code> and
+            <code>remote-result-finalize-missing taskKey=AGT-2847 status=degraded:A task was canceled</code>. The runner
+            logged <code>result transfer was not acknowledged; retaining worktree before teardown</code>, the lease
+            authority went silent, the Task Server requeued the card after the 120&nbsp;s grace
+            (<code>remote-runner-requeue-deferred</code>), and the runner quarantined the finished worktree. Two
+            completed Opus runs of about 20 minutes each were discarded and a third started from a clean context.
+          </td>
+          <td>
+            The artefact-upload endpoint awaited <code>SummaryGenerationService.FinalizeAsync</code> on the request's own
+            cancellation token before acknowledging. Both incidents coincided with a saturated Windows host, where
+            <code>SystemLoadThrottle.WaitUntilReadyAsync</code> queues the Haiku one-shot indefinitely. The upload
+            therefore outlived the runner's delivery timeout; aborting the request cancelled the summary, all three
+            summary attempts failed instantly with <code>TaskCanceledException</code>, and the acknowledgement was
+            written to a connection the runner had already given up on. A summary-side failure was being paid for with a
+            finished core run, the same reissue-loop shape as
+            <a href="#case-agt-2585-remote-v1-result-finalization-gap">remote-v1-result-finalization-gap</a>.
+          </td>
+          <td>
+            <span class="pill ok">fixed in dev</span> the delivered result is acknowledged as soon as its artefacts are
+            durable. <code>RemoteResultFinalizationService</code> runs the summary behind a bounded acknowledgement
+            budget on <code>CancellationToken.None</code>, defers immediately while the host load throttle is active, and
+            hands a refused, still-running, or degraded summary to <code>ResultSummaryRetryScheduler</code>, which
+            re-resolves the card's current lane folder before it publishes. The card timeline carries
+            <code>result_summary_pending</code> ("Summary pending (load throttle)") and the wire answers
+            <code>pending:&lt;reason&gt;</code> or <code>degraded:&lt;error&gt;</code>;
+            <code>remote-result-finalize-missing</code> is now reserved for a result that genuinely did not arrive. The
+            run reaches <span class="lane">4-auto-review</span> once, and the owed summary replaces the transition
+            scaffold when the host recovers.
           </td>
         </tr>
       </tbody>

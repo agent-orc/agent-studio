@@ -25,9 +25,8 @@ public static class ArtifactIngestionEndpoints
             RunLeaseService leases,
             AttemptAuthorityService authority,
             WorkspaceArtifactCommitService artifactCommits,
-            SummaryGenerationService summaries,
-            ILoggerFactory loggerFactory,
-            CancellationToken ct) =>
+            RemoteResultFinalizationService finalization,
+            ILoggerFactory loggerFactory) =>
         {
             var logger = loggerFactory.CreateLogger("AgentStudio.Diagnostics.ArtifactIngestionEndpoints");
             if (!RunnerLeaseAuthorization.IsCurrent(context, leases, req.TaskKey, req.RunnerId, req.LeaseId, req.FencingToken))
@@ -92,42 +91,37 @@ public static class ArtifactIngestionEndpoints
             }
             catch (ArtifactIngestException ex)
             {
+                // The result genuinely did not arrive: nothing durable was
+                // persisted, so this - and not a degraded summary - is what
+                // "finalize missing" means (AGT-2850).
+                logger.LogWarning(
+                    "remote-result-finalize-missing taskKey={TaskKey} jobId={JobId} status=rejected:{Reason}",
+                    req.TaskKey,
+                    task.Id,
+                    CredentialRedactor.Redact(ex.Message));
                 return Results.BadRequest(new ArtifactIngestResponse(req.TaskKey, 0, [], CredentialRedactor.Redact(ex.Message)));
             }
             catch (Exception ex)
             {
+                logger.LogWarning(
+                    "remote-result-finalize-missing taskKey={TaskKey} jobId={JobId} status=failed:{Reason}",
+                    req.TaskKey,
+                    task.Id,
+                    CredentialRedactor.Redact(ex.Message));
                 return Results.Problem(CredentialRedactor.Redact($"Failed to ingest artifacts for '{req.TaskKey}': {ex.Message}"));
             }
 
-            var resultDocumentGenerated = false;
-            string? resultDocumentStatus = null;
-            if (req.FinalizeResult)
-            {
-                var finalization = await summaries.FinalizeAsync(task, ct: ct);
-                resultDocumentGenerated = finalization.Generated;
-                resultDocumentStatus = resultDocumentGenerated
-                    ? "generated"
-                    : CredentialRedactor.Redact(
-                        $"degraded:{finalization.Error ?? "summary retry budget exhausted"}");
-                if (resultDocumentGenerated)
-                {
-                    logger.LogInformation(
-                        "remote-result-finalized taskKey={TaskKey} jobId={JobId} status=generated",
-                        req.TaskKey,
-                        task.Id);
-                }
-                else
-                {
-                    logger.LogWarning(
-                        "remote-result-finalize-missing taskKey={TaskKey} jobId={JobId} status={Status}",
-                        req.TaskKey,
-                        task.Id,
-                        resultDocumentStatus);
-                }
-            }
+            // The artefacts are durable from here on, so the result HAS arrived.
+            // Summary generation is a retryable step that must not hold the
+            // acknowledgement: it runs behind a bounded budget and, when it is
+            // refused or still running, leaves a queued retry instead of a lost
+            // run (AGT-2850).
+            var resultDocument = req.FinalizeResult
+                ? await finalization.FinalizeForAcknowledgementAsync(task)
+                : ResultAcknowledgementPlan.NotRequested;
 
             var committedFiles = written.Files.ToList();
-            if (resultDocumentGenerated)
+            if (resultDocument.CommitStatusDocument)
                 committedFiles.Add("status.md");
             var commit = artifactCommits.TryCommitArtifactUpload(
                 null,
@@ -139,15 +133,17 @@ public static class ArtifactIngestionEndpoints
                 ? commit.DidCommit ? "committed" : $"skipped:{commit.Error}"
                 : $"failed:{commit.Error}";
             logger.LogInformation(
-                "runner-artifact-ingest taskKey={TaskKey} jobId={JobId} uploaded={Uploaded} commitStatus={CommitStatus} sha={Sha}",
-                req.TaskKey, task.Id, written.Uploaded, status, commit.Sha ?? "");
+                "runner-artifact-ingest taskKey={TaskKey} jobId={JobId} uploaded={Uploaded} commitStatus={CommitStatus} "
+                + "sha={Sha} resultDocument={ResultDocument}",
+                req.TaskKey, task.Id, written.Uploaded, status, commit.Sha ?? "",
+                resultDocument.ResultDocumentStatus ?? "not-requested");
 
             return Results.Ok(written with
             {
                 CommitSha = commit.Sha,
                 CommitStatus = status,
-                ResultDocumentGenerated = resultDocumentGenerated,
-                ResultDocumentStatus = resultDocumentStatus
+                ResultDocumentGenerated = resultDocument.Generated,
+                ResultDocumentStatus = resultDocument.ResultDocumentStatus
             });
         });
     }
