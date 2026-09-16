@@ -1119,13 +1119,31 @@ details; the frontend owns their compact, non-redundant sentence projection.
 
 Local coding CLIs run through a durable worker that is separate from the Studio
 backend process. The worker directory contains its immutable launch spec,
-process identity, append-only output, terminal result, and the backend's
-acknowledged output offset. `LocalCliDurability:Enabled` controls this path and
-defaults to `true`. On startup the replacement backend validates PID, process
-start time, and working directory before adopting a worker. It resumes output
-from the acknowledged offset and executes the terminal callback exactly once,
-including when the worker finished while Studio was unavailable. A legacy
-active-job entry still follows the bounded orphan-reaper path.
+process identity, prompt input file, append-only output, terminal result, and
+the backend's acknowledged output offset. `LocalCliDurability:Enabled` controls
+this path and defaults to `true`. On startup the replacement backend validates
+PID, process start time, and working directory before adopting a worker. It
+resumes output from the acknowledged offset and executes the terminal callback
+exactly once, including when the worker finished while Studio was unavailable.
+A legacy active-job entry still follows the bounded orphan-reaper path.
+
+The worker directory is also the live transport, not only the recovery record.
+The backend writes the prompt into `input.bin` and publishes `input.done` with
+the byte count when it closes stdin; the worker forwards that file to the CLI
+and closes the CLI's stdin at the recorded end. Live stdout and stderr are
+tailed from the same `output.jsonl` a replacement backend reads, and the
+worker's `result.json` is the exit-code authority for the run. No operating
+system pipe has to outlive the backend that started the worker, so the first
+generation and an adopted worker use one contract.
+
+A local CLI that answers its availability probe while its runs still fail to
+spawn used to compose two bounded mechanisms into an unbounded loop: the
+per-task spawn budget paused the runner, the CLI-recovery probe restored auto
+mode, and the card cycled between `2-ready` and `3-progress`. The auto-resume
+is now bounded by `CliRecoveryResumePolicy`. After three restored runs that
+never start a process, the runner rests in manual and its mode reason names the
+CLI and the exhausted budget. A confirmed CLI process start or an operator mode
+change resets that budget.
 
 Adoption never grants authority. `ProjectRunner` first resolves the current
 card and requires the same Progress generation before it registers the

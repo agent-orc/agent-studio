@@ -529,7 +529,11 @@ public partial class GenericCliExecutionService
 
             var duration = carRun.DurationSeconds
                            ?? (DateTime.UtcNow - info.Execution.StartedAt).TotalSeconds;
-            var exitCode = carRun.ExitCode;
+            // The durable worker's own result is the exit-code authority for a
+            // local run: CAR observes the worker through a reopened process
+            // handle, which cannot report an exit code on Linux, and the
+            // recovered-after-restart path already classifies from this file.
+            var exitCode = info.DurableWorker?.ReadResult()?.ExitCode ?? carRun.ExitCode;
             if (info.StopReason == RunStopReason.None
                 && string.Equals(carRun.Status, "stopped", StringComparison.OrdinalIgnoreCase))
             {
