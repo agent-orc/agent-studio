@@ -35,7 +35,8 @@ function run(attempt: number, current: boolean, models: PipelineModelTokenUsage[
     attempt,
     current,
     startedAt: '2026-06-09T10:00:00Z',
-    completedAt: '2026-06-09T10:05:00Z',
+    // `current` means still live, so a current run carries no completion stamp.
+    completedAt: current ? null : '2026-06-09T10:05:00Z',
     models,
     totalTokens: models.reduce((a, m) => a + m.totalTokens, 0),
     totalCostUsd: models.reduce((a, m) => a + m.costUsd, 0),
@@ -178,10 +179,33 @@ describe('PipelineTokenUsageComponent', () => {
     // No per-model rows until a run is expanded.
     expect(all(root(fixture), 'pipeline-token-usage-run-model').length).toBe(0);
 
-    // Newest-first: the current run (#2) renders on top and carries the badge.
+    // Newest-first: the live run (#2) renders on top and carries the badge.
     const first = runs[0];
     expect(first.getAttribute('data-current')).toBe('true');
     expect(first.querySelector('[data-testid="pipeline-token-usage-run-current"]')).not.toBeNull();
+  });
+
+  it('shows no Current badge when the newest run has finished', () => {
+    // Newest-first ordering already carries "which run is the newest", so a
+    // finished newest run gets no marker at all - only a live run does.
+    const finished: PipelineModelUsageSummary = {
+      ...SUMMARY,
+      runs: [
+        run(1, false, [model('claude-haiku-4-5', 1_200_000, 2)]),
+        run(2, false, [
+          model('claude-haiku-4-5', 1_200_000, 2),
+          model('claude-opus-4-8', 110_000, 0.75),
+        ]),
+      ],
+    };
+
+    const fixture = setup(finished);
+    const runs = all(root(fixture), 'pipeline-token-usage-run');
+    expect(runs.length).toBe(2);
+    // The newest run still renders on top, just without a badge.
+    expect(runs[0].getAttribute('data-attempt')).toBe('2');
+    expect(runs[0].getAttribute('data-current')).toBeNull();
+    expect(all(root(fixture), 'pipeline-token-usage-run-current').length).toBe(0);
   });
 
   it('maps each run onto the recorded task-token share and run duration', () => {
@@ -193,7 +217,9 @@ describe('PipelineTokenUsageComponent', () => {
     );
     expect(Number.parseFloat((shares[0].firstElementChild as HTMLElement).style.width))
       .toBeCloseTo(52.19, 2);
-    expect(fixture.componentInstance.durationLabel(SUMMARY.runs[1])).toBe('5m');
+    // Run #1 finished; the live Run #2 has no completion stamp yet.
+    expect(fixture.componentInstance.durationLabel(SUMMARY.runs[0])).toBe('5m');
+    expect(fixture.componentInstance.durationLabel(SUMMARY.runs[1])).toBe('-');
   });
 
   it('expanding a run reveals only that run\'s per-model rows', () => {
