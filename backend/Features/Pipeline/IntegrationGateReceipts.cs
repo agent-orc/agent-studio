@@ -114,13 +114,16 @@ public static class IntegrationGateReceipts
     /// command output. Same shape for both merge gates, so the evidence reads
     /// identically whether main or develop was the target. When
     /// <paramref name="timeline"/> is supplied, quarantined flaky tests are also
-    /// appended to the card timeline.
+    /// appended to the card timeline. <paramref name="reuse"/> is the
+    /// integration gate's Remote Review reuse decision (AGT-2839); a gate that
+    /// never evaluated one records that explicitly rather than staying silent.
     /// </summary>
     public static void Record(
         string jobFolderPath,
         string prefix,
         BuildTestGateResult result,
-        TimelineLog? timeline = null)
+        TimelineLog? timeline = null,
+        IntegrationGateReuseDecision? reuse = null)
     {
         var dir = Path.Combine(jobFolderPath, "post-steps");
         Directory.CreateDirectory(dir);
@@ -147,10 +150,17 @@ public static class IntegrationGateReceipts
             $"flakyQuarantined={(result.FlakyQuarantinedFailures.Count == 0
                 ? "none"
                 : string.Join(", ", result.FlakyQuarantinedFailures))}";
+        // The first three lines are the durable-recovery header parsed by
+        // ReadExact; the reuse line is appended after it so a new field can
+        // never shift that contract (AGT-2839).
+        var reuseLine = reuse is null
+            ? "reviewReuse=not-evaluated"
+            : $"reviewReuse={reuse.Token} attempt={reuse.ReviewAttemptId ?? "none"} reason={reuse.Reason}";
         var body =
             $"verdict={result.Verdict} exit={result.ExitCode?.ToString() ?? "n/a"} durationMs={result.DurationMs}\n" +
             $"expectedSha={result.ExpectedSha ?? "n/a"} testedSha={result.TestedSha ?? "n/a"}\n" +
             $"reason={result.Reason}\n" +
+            reuseLine + "\n" +
             budget + "\n" +
             flaky + "\n" +
             "--- dependency-cache-decision.json ---\n" +

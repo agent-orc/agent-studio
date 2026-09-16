@@ -17,6 +17,53 @@ public sealed class TestSelectionPlannerTests : IDisposable
         try { Directory.Delete(_root, recursive: true); } catch { /* best-effort */ }
     }
 
+    /// <summary>
+    /// AGT-2839: the compile-only stage keeps the build commands and drops both
+    /// the test and the lint commands, and both omissions stay in the audit.
+    /// </summary>
+    [Fact]
+    public void CompileOnly_KeepsBuildCommandsAndOmitsBothTestsAndLint()
+    {
+        var verify = new VerifyPlan([
+            new(VerifyEcosystem.DotNet, VerifyCommandKind.Build, "", "dotnet build"),
+            new(VerifyEcosystem.Node, VerifyCommandKind.Lint, "frontend", "npm run lint"),
+            new(VerifyEcosystem.DotNet, VerifyCommandKind.Test, "", "dotnet test"),
+        ], VerifyPlan.SourceBuildProfile);
+
+        var result = TestSelectionPlanner.Plan(
+            _root, verify, ["backend/Features/Pipeline/Worker.cs"], policy: null,
+            TaskStates.Completed, TestExecutionLevels.CompileOnly);
+
+        Assert.Equal(TestExecutionLevels.CompileOnly, result.Audit.Level);
+        Assert.Equal(["dotnet build"], result.Commands.Select(command => command.Command));
+        Assert.Contains("dotnet test", result.Audit.OmittedTestCommands.Single(
+            entry => entry.Contains("dotnet test", StringComparison.Ordinal)));
+        Assert.Contains("npm run lint", result.Audit.OmittedTestCommands.Single(
+            entry => entry.Contains("npm run lint", StringComparison.Ordinal)));
+        Assert.False(result.Audit.FullSuiteRan);
+        Assert.False(result.Audit.FullSuiteRequired);
+    }
+
+    /// <summary>
+    /// AGT-2839: the build-only stage is unchanged - it still runs lint. Only a
+    /// reused remote review verdict drops it.
+    /// </summary>
+    [Fact]
+    public void BuildOnly_StillRunsLint()
+    {
+        var verify = new VerifyPlan([
+            new(VerifyEcosystem.DotNet, VerifyCommandKind.Build, "", "dotnet build"),
+            new(VerifyEcosystem.Node, VerifyCommandKind.Lint, "frontend", "npm run lint"),
+            new(VerifyEcosystem.DotNet, VerifyCommandKind.Test, "", "dotnet test"),
+        ], VerifyPlan.SourceBuildProfile);
+
+        var result = TestSelectionPlanner.Plan(
+            _root, verify, ["backend/Features/Pipeline/Worker.cs"], policy: null,
+            TaskStates.Completed, TestExecutionLevels.BuildOnly);
+
+        Assert.Equal(["dotnet build", "npm run lint"], result.Commands.Select(command => command.Command));
+    }
+
     [Fact]
     public void WorkPackage_SelectsReferencedDotNetTestProjectAndPreservesMachineBoundFilter()
     {
@@ -729,6 +776,38 @@ public sealed class PreMainTestGateTests
         Assert.Equal(TestExecutionLevels.WorkPackage, runner.Request.RequiredTestLevel);
         Assert.Equal(changedFiles, runner.ChangedFiles);
         Assert.Equal(PostStepMode.Fail, runner.Mode);
+    }
+
+    /// <summary>
+    /// AGT-2839: only the merge runner's reuse decision selects compile-only;
+    /// the ordinary pre-develop levels stay on <c>ResolveTestLevel</c>'s matrix,
+    /// including the AGT-2854 work package for managed sources.
+    /// </summary>
+    [Fact]
+    public void PreDevelopLevel_DropsToCompileOnlyOnlyWhenTheReviewVerdictIsReused()
+    {
+        string[] frontend = ["frontend/src/app/app.ts"];
+        string[] backend = ["backend/Features/Pipeline/Worker.cs"];
+        string[] docs = ["docs/system/domains/pipeline.md"];
+
+        Assert.Equal(
+            TestExecutionLevels.CompileOnly,
+            PreDevelopBuildGate.LevelFor(frontend, reuseRemoteReviewVerdict: true));
+        Assert.Equal(
+            TestExecutionLevels.CompileOnly,
+            PreDevelopBuildGate.LevelFor(backend, reuseRemoteReviewVerdict: true));
+        Assert.Equal(
+            TestExecutionLevels.CompileOnly,
+            PreDevelopBuildGate.LevelFor(docs, reuseRemoteReviewVerdict: true));
+        Assert.Equal(
+            TestExecutionLevels.WorkPackage,
+            PreDevelopBuildGate.LevelFor(frontend, reuseRemoteReviewVerdict: false));
+        Assert.Equal(
+            TestExecutionLevels.WorkPackage,
+            PreDevelopBuildGate.LevelFor(backend, reuseRemoteReviewVerdict: false));
+        Assert.Equal(
+            TestExecutionLevels.BuildOnly,
+            PreDevelopBuildGate.LevelFor(docs, reuseRemoteReviewVerdict: false));
     }
 
     /// <summary>

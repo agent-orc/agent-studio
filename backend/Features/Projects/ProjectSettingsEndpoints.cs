@@ -48,6 +48,16 @@ public record SetCrashRecoveryRequest
 }
 
 /// <summary>
+/// Body for the integration-gate review-reuse setting (AGT-2839). A null
+/// <see cref="Enabled"/> clears the project override and falls back to the safe
+/// default: on where Remote Review runs, off where it does not.
+/// </summary>
+public record SetIntegrationGateReviewReuseRequest
+{
+    public bool? Enabled { get; init; }
+}
+
+/// <summary>
 /// Per-project preferences under <c>/api/projects</c> — read-all
 /// for the header bar plus the per-project auto-commit toggle.
 /// </summary>
@@ -196,6 +206,10 @@ public static class ProjectSettingsEndpoints
                     maxParallelism = kv.Value.MaxParallelism < 1 ? 1 : kv.Value.MaxParallelism,
                     integrationBranch = kv.Value.IntegrationBranch,
                     integrationStrategy = IntegrationStrategies.Normalize(kv.Value.IntegrationStrategy),
+                    // AGT-2839: raw override (null = inherit) plus the resolved
+                    // value the merge gate actually applies.
+                    integrationGateReviewReuse = kv.Value.IntegrationGateReviewReuse,
+                    integrationGateReviewReuseEffective = IntegrationGateReusePolicy.IsEnabled(kv.Value),
                     // Slice P (ASS-1663): per-project build profile + onboarding
                     // status. Null when the project never declared one (legacy
                     // "no gate" behaviour). pickupAllowed mirrors the runner's
@@ -557,6 +571,24 @@ public static class ProjectSettingsEndpoints
 
             settings.SetCrashRecoveryEnabled(projectName, req.Enabled);
             return Results.Ok(settings.Get(projectName));
+        });
+
+        app.MapPut("/api/projects/{projectName}/integration-gate-review-reuse", (
+            string projectName,
+            SetIntegrationGateReviewReuseRequest req,
+            ProjectSettingsService settings,
+            TaskScannerService scanner) =>
+        {
+            var known = scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
+            if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+
+            settings.SetIntegrationGateReviewReuse(projectName, req.Enabled);
+            var updated = settings.Get(projectName);
+            return Results.Ok(new
+            {
+                integrationGateReviewReuse = updated.IntegrationGateReviewReuse,
+                integrationGateReviewReuseEffective = IntegrationGateReusePolicy.IsEnabled(updated),
+            });
         });
 
         app.MapPut("/api/projects/{projectName}/auto-push-strategy", (string projectName, SetAutoPushStrategyRequest req, ProjectSettingsService settings, TaskScannerService scanner) =>

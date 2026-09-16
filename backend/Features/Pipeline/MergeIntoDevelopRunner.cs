@@ -792,6 +792,12 @@ public sealed class MergeIntoDevelopRunner
                 missingAnchor);
         }
 
+        // AGT-2839: the Remote Review already built, tested, and linted this
+        // delivery. Reuse its verdict for the tests and lint - and only for them
+        // - when the merge landed on the exact base the review compared against.
+        var reuse = DecideGateReuse(
+            project, repoRoot, integrationBranch, jobFolderPath, gatedSha, preMergeTip, result);
+
         // BP-02: ancestry proves only that the delivery is present. It does not
         // prove that the merge result passed its gate before a process died.
         // Recovery may reuse only a durable verdict whose expected and tested
@@ -851,9 +857,11 @@ public sealed class MergeIntoDevelopRunner
                     // Deliberately NOT the caller's token: once the background worker
                     // starts a merge, its gate and possible rollback must reach a
                     // consistent terminal state. The gate stays bounded by its timeout.
-                    CancellationToken.None).ConfigureAwait(false);
+                    CancellationToken.None,
+                    reuse.Reused).ConfigureAwait(false);
             }
-            IntegrationGateReceipts.Record(jobFolderPath, "pre-develop-build-gate", gate, _timeline);
+            IntegrationGateReceipts.Record(
+                jobFolderPath, "pre-develop-build-gate", gate, _timeline, reuse);
         }
         else
         {
@@ -869,8 +877,8 @@ public sealed class MergeIntoDevelopRunner
         if (PreDevelopBuildGate.IsGreen(gate))
         {
             _logger.LogInformation(
-                "merge-into-develop build gate passed for project={Project} job={JobId} integration={Integration} merged={MergedSha} verdict={Verdict}",
-                project, jobId, integrationBranch, gatedSha, gate.Verdict);
+                "merge-into-develop build gate passed for project={Project} job={JobId} integration={Integration} merged={MergedSha} verdict={Verdict} reuse={Reuse} reuseReason={ReuseReason}",
+                project, jobId, integrationBranch, gatedSha, gate.Verdict, reuse.Token, reuse.Reason);
             if (result.Outcome == MergeIntoIntegrationOutcome.AlreadyMerged)
             {
                 result = MergeIntoIntegrationResult.Of(
@@ -918,6 +926,62 @@ public sealed class MergeIntoDevelopRunner
               $"Rolling {integrationBranch} back to {Short(preMergeTip!)} FAILED ({reset.Error ?? "unknown error"}); " +
               "the unverified merge is still on the local integration branch and needs manual repair.";
         return (MergeIntoIntegrationResult.Of(outcome, error: error), gate);
+    }
+
+    /// <summary>
+    /// Whether this merge may stand on the Remote Review verdict for its tests
+    /// and lint (AGT-2839). Gathers the three Git facts the pure
+    /// <see cref="IntegrationGateReusePolicy"/> needs - is the reviewed delivery
+    /// really inside this merge result, was it replayed on the way in, and is
+    /// the merge base on the integration line still the one the review recorded
+    /// - and never decides anything itself.
+    ///
+    /// <para>
+    /// Only a plain fresh merge produced by this invocation has a trustworthy
+    /// pre-merge anchor. An <c>AlreadyMerged</c> recovery inherits history it
+    /// did not create, so it reports no current merge base and runs in full.
+    /// </para>
+    /// </summary>
+    private IntegrationGateReuseDecision DecideGateReuse(
+        string project,
+        string repoRoot,
+        string integrationBranch,
+        string jobFolderPath,
+        string gatedSha,
+        string? preMergeTip,
+        MergeIntoIntegrationResult result)
+    {
+        var review = ReviewVerificationStore.Read(jobFolderPath);
+        var replayed = result.Outcome == MergeIntoIntegrationOutcome.MergedAfterRebase
+                       || result.RebasedCommits.Count > 0;
+        var anchored = result.Outcome == MergeIntoIntegrationOutcome.Merged
+                       && !string.IsNullOrWhiteSpace(preMergeTip);
+        var reviewedSha = review?.ResultSha;
+        return IntegrationGateReusePolicy.Decide(new IntegrationGateReuseInput(
+            IntegrationGateReusePolicy.IsEnabled(ProjectSettingsFor(project)),
+            review,
+            integrationBranch,
+            anchored && ReviewSubjectStore.IsValidResultSha(reviewedSha)
+                ? _git.GetMergeBase(repoRoot, preMergeTip!, reviewedSha!)
+                : null,
+            ReviewSubjectStore.IsValidResultSha(reviewedSha)
+                && _git.IsAncestor(repoRoot, reviewedSha!, gatedSha),
+            replayed));
+    }
+
+    /// <summary>
+    /// The project's persisted settings, or null when no settings service is
+    /// wired (legacy fixtures) or the read fails.
+    /// </summary>
+    private ProjectSettings? ProjectSettingsFor(string project)
+    {
+        if (_projectSettings == null) return null;
+        try { return _projectSettings.Get(project); }
+        catch (Exception ex)
+        {
+            SilentCatch.Note(ex, "MergeIntoDevelopRunner: project-settings read is best-effort");
+            return null;
+        }
     }
 
     /// <summary>

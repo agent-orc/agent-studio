@@ -112,6 +112,23 @@ public class ProjectSettingsService
     }
 
     /// <summary>
+    /// AGT-2839: may the local integration gate stand on the Remote Review
+    /// verdict on an unchanged merge base? Null clears the override and falls
+    /// back to <see cref="IntegrationGateReusePolicy.IsEnabled"/>.
+    /// </summary>
+    public void SetIntegrationGateReviewReuse(string projectName, bool? enabled)
+    {
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var s) ? s : new ProjectSettings();
+            _cache[key] = current with { IntegrationGateReviewReuse = enabled };
+            Persist();
+        }
+    }
+
+    /// <summary>
     /// AGT-2794: persists the project's stale-branch sweep mode and per-class
     /// retention overrides. The mode is normalized here so an unknown value can
     /// never enable deletion; null day fields clear the override and fall back
