@@ -27,7 +27,14 @@ interface ProjectSettingsRow {
   autoPushStrategy: AutoPushStrategy;
   runnerMode: string | null;
   orchestratorModel: string | null;
+  /** AGT-2839: project override; null inherits the safe default. */
+  integrationGateReviewReuse: boolean | null;
+  /** AGT-2839: the value the integration gate actually applies. */
+  integrationGateReviewReuseEffective: boolean;
 }
+
+/** Bound value of the integration-gate reuse select. */
+type IntegrationGateReuseChoice = 'inherit' | 'enabled' | 'disabled';
 
 type AutoPushStrategy = 'never' | 'on-completed' | 'always-immediate';
 
@@ -106,6 +113,7 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
   autoCommitDraft = false;
   crashRecoveryDraft = true;
   autoPushStrategyDraft: AutoPushStrategy = 'always-immediate';
+  integrationGateReuseDraft: IntegrationGateReuseChoice = 'inherit';
   orchModelDraft = '';
 
   // Per-CLI permission/sandbox mode (YOLO default). One row per CLI shows the
@@ -326,11 +334,21 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
           autoPushStrategy: snap.settings.autoPushStrategy,
           runnerMode: snap.settings.runnerMode,
           orchestratorModel: snap.settings.orchestratorModel,
+          integrationGateReviewReuse: snap.settings.integrationGateReviewReuse ?? null,
+          integrationGateReviewReuseEffective:
+            snap.settings.integrationGateReviewReuseEffective ?? false,
         };
         this.settings.set(row);
         if (this.autoCommitDraft !== row.autoCommit) this.autoCommitDraft = row.autoCommit;
         if (this.crashRecoveryDraft !== row.crashRecoveryEnabled) this.crashRecoveryDraft = row.crashRecoveryEnabled;
         if (this.autoPushStrategyDraft !== row.autoPushStrategy) this.autoPushStrategyDraft = row.autoPushStrategy;
+        const wantedReuse: IntegrationGateReuseChoice =
+          row.integrationGateReviewReuse === null
+            ? 'inherit'
+            : row.integrationGateReviewReuse
+              ? 'enabled'
+              : 'disabled';
+        if (this.integrationGateReuseDraft !== wantedReuse) this.integrationGateReuseDraft = wantedReuse;
         const wantedModel = row.orchestratorModel ?? '';
         if (this.orchModelDraft !== wantedModel) this.orchModelDraft = wantedModel;
 
@@ -409,6 +427,21 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
     this.jobService.setProjectAutoPushStrategy(this.projectName(), strategy).subscribe({
       next: () => this.refreshAll(true),
       error: () => this.refreshAll(true)
+    });
+  }
+
+  /**
+   * AGT-2839: writes the integration-gate reuse override. "Inherit" clears it
+   * so the project falls back to on-where-Remote-Review-runs.
+   */
+  onIntegrationGateReuseChange(): void {
+    const enabled =
+      this.integrationGateReuseDraft === 'inherit'
+        ? null
+        : this.integrationGateReuseDraft === 'enabled';
+    this.jobService.setProjectIntegrationGateReviewReuse(this.projectName(), enabled).subscribe({
+      next: () => this.refreshAll(true),
+      error: () => this.refreshAll(true),
     });
   }
 

@@ -11,8 +11,9 @@ namespace AgentStudio.Pipeline;
 /// Angular specs plus the fixed studio-shell and task-detail barrel collision
 /// probes for a frontend diff, the impacted .NET test projects narrowed to the
 /// touched test classes for a managed diff. A diff that touches neither keeps
-/// the compile-only level. The full suite remains exclusive to the promotion
-/// boundary.
+/// the build-only level. The full suite remains exclusive to the promotion
+/// boundary; the cheaper <see cref="TestExecutionLevels.CompileOnly"/> level is
+/// reachable only through a reused Remote Review verdict (AGT-2839).
 ///
 /// <para>
 /// AGT-2854: before this, a backend-only diff was pinned to
@@ -77,26 +78,45 @@ public sealed class PreDevelopBuildGate
     /// <summary>
     /// Verifies <paramref name="request"/>'s exact subject. The level is pinned
     /// by <see cref="ResolveTestLevel"/>, so lane configuration can neither turn
-    /// this into the promotion-only full suite nor drop a code diff back to
-    /// compile-only.
+    /// this into the promotion-only full suite nor drop a code diff back to a
+    /// cheaper stage.
+    /// <paramref name="reuseRemoteReviewVerdict"/> is the one documented step
+    /// below that matrix (AGT-2839): it drops the level to compile-only, where
+    /// the merge result still has to compile, but the tests and lint were just
+    /// run on exactly this content by the Remote Review. Only
+    /// <see cref="MergeIntoDevelopRunner"/> sets it, and only after
+    /// <see cref="IntegrationGateReusePolicy"/> proved the base is unchanged.
     /// </summary>
     public Task<BuildTestGateResult> RunAsync(
         BuildTestGateRequest request,
         IReadOnlyList<string> changedFiles,
         BuildProfile? profile,
         TimeSpan timeout,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool reuseRemoteReviewVerdict = false)
         => _runner.RunAsync(
             request with
             {
                 RequireExactSubject = true,
-                RequiredTestLevel = ResolveTestLevel(changedFiles),
+                RequiredTestLevel = LevelFor(changedFiles, reuseRemoteReviewVerdict),
             },
             changedFiles,
             profile,
             PostStepMode.Fail,
             timeout,
             ct);
+
+    /// <summary>
+    /// The level the gate actually requests: <see cref="ResolveTestLevel"/>'s
+    /// matrix, or compile-only when the reuse policy granted a reused Remote
+    /// Review verdict for this exact merge result.
+    /// </summary>
+    internal static string LevelFor(
+        IReadOnlyList<string>? changedFiles,
+        bool reuseRemoteReviewVerdict)
+        => reuseRemoteReviewVerdict
+            ? TestExecutionLevels.CompileOnly
+            : ResolveTestLevel(changedFiles);
 
     /// <summary>
     /// The gate is green on <see cref="BuildTestGateVerdict.Ok"/> and on
