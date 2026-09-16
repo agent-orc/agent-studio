@@ -8,6 +8,7 @@ import {
   type GitProjectInventory,
   type GitWorktreeEntry,
 } from '../../../git';
+import { ProjectBranchSweepComponent } from '../project-branch-sweep/project-branch-sweep.component';
 import { ProjectGitChangesComponent } from '../project-git-changes/project-git-changes.component';
 import { ProjectGitHistoryComponent } from '../project-git-history/project-git-history.component';
 import { ProjectGitTreeComponent } from '../project-git-tree/project-git-tree.component';
@@ -30,6 +31,7 @@ type GitSelection =
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
+    ProjectBranchSweepComponent,
     ProjectGitChangesComponent,
     ProjectGitHistoryComponent,
     ProjectGitTreeComponent,

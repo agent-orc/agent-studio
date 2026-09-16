@@ -1,0 +1,166 @@
+<section class="swp" data-testid="branch-sweep">
+  <header class="swp__head">
+    <button type="button" class="swp__toggle" (click)="toggle()"
+            [attr.aria-expanded]="open()" data-testid="branch-sweep-toggle">
+      <span class="swp__caret" [class.swp__caret--open]="open()">&#9654;</span>
+      <span class="swp__title">Stale-branch sweep</span>
+      <span class="swp__pill" [attr.data-mode]="mode()" data-testid="branch-sweep-mode">{{ mode() }}</span>
+      @if (report(); as run) {
+        <span class="swp__pill swp__num">{{ run.refsAfter }} refs</span>
+      }
+    </button>
+    <app-info-button topic="branch-sweep" eyebrow="Git-Management"
+                     label="What does the branch sweep classify?"
+                     fallbackTitle="Stale-branch sweep" />
+  </header>
+
+  @if (open()) {
+    <div class="swp__body">
+      <p class="swp__lead">
+        Every remote ref of this repository, classified by the shared retention policy.
+        <strong>report-only</strong> never deletes; <strong>reclaim</strong> lets the scheduled
+        run delete what the policy allows. Reports live under
+        <code>reports/branch-sweep/{{ projectName() }}/</code>.
+      </p>
+
+      <div class="swp__actions">
+        <button type="button" class="swp__action" [disabled]="busy()"
+                (click)="runReportOnly()" data-testid="branch-sweep-run">
+          Run report-only sweep
+        </button>
+        <button type="button" class="swp__action" [disabled]="busy()"
+                (click)="refresh()" data-testid="branch-sweep-refresh">
+          Re-classify
+        </button>
+        <span class="swp__spacer"></span>
+        <span class="swp__label" id="branch-sweep-mode-label">Mode</span>
+        <div class="swp__modes" role="group" aria-labelledby="branch-sweep-mode-label">
+          <button type="button" class="swp__mode" [class.swp__mode--on]="mode() === 'report-only'"
+                  [disabled]="busy()" (click)="setMode('report-only')">report-only</button>
+          <button type="button" class="swp__mode" [class.swp__mode--on]="mode() === 'reclaim'"
+                  [disabled]="busy()" (click)="setMode('reclaim')"
+                  data-testid="branch-sweep-mode-reclaim">reclaim</button>
+        </div>
+      </div>
+
+      @if (reportError()) {
+        <p class="swp__note swp__note--error" role="alert" data-testid="branch-sweep-error">{{ reportError() }}</p>
+      }
+
+      @if (reportState() === 'loading' && !report()) {
+        <p class="swp__note">Classifying remote refs...</p>
+      } @else if (!report()) {
+        <p class="swp__note" data-testid="branch-sweep-empty">
+          This project has never been swept. Run a report-only sweep to see its branch state.
+        </p>
+      } @else if (report(); as run) {
+        @if (stale()) {
+          <p class="swp__note">
+            Last run {{ run.startedAtUtc }} (mode <code>{{ run.mode }}</code>). Re-classify for a live view.
+          </p>
+        }
+
+        <table class="swp__table" data-testid="branch-sweep-totals">
+          <caption class="swp__caption">Refs by class</caption>
+          <thead>
+            <tr><th scope="col">Class</th><th scope="col">Refs</th><th scope="col">Eligible</th><th scope="col">Kept</th><th scope="col">Deleted</th></tr>
+          </thead>
+          <tbody>
+            @for (row of totals(); track trackTotals($index, row)) {
+              <tr>
+                <th scope="row">{{ row.class }}</th>
+                <td class="swp__num">{{ row.total }}</td>
+                <td class="swp__num">{{ row.eligible }}</td>
+                <td class="swp__num">{{ row.kept }}</td>
+                <td class="swp__num">{{ row.deleted }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+
+        <div class="swp__hist" data-testid="branch-sweep-histogram">
+          <span class="swp__caption">Tip age</span>
+          @for (bucket of histogram(); track bucket.label) {
+            <div class="swp__hist-row">
+              <span class="swp__hist-label">{{ bucket.label }}</span>
+              <span class="swp__hist-track">
+                <span class="swp__hist-fill" [style.inline-size.%]="(bucket.refs / maxBucket()) * 100"></span>
+              </span>
+              <span class="swp__num">{{ bucket.refs }}</span>
+            </div>
+          }
+        </div>
+
+        <div class="swp__bar">
+          <div class="swp__bar-select">
+            <button type="button" class="swp__link" (click)="selectAllEligible()">Select all eligible</button>
+            <button type="button" class="swp__link" (click)="clearSelection()">Clear</button>
+            <button type="button" class="swp__link" (click)="showAll.set(!showAll())">
+              {{ showAll() ? 'Only eligible' : 'Show every ref' }}
+            </button>
+          </div>
+          @if (confirming()) {
+            <div class="swp__confirm">
+              <span class="swp__confirm-text">Delete {{ selectedCount() }} remote ref(s)?</span>
+              <button type="button" class="swp__danger" (click)="confirmDelete()"
+                      data-testid="branch-sweep-confirm">Yes, delete</button>
+              <button type="button" class="swp__action" (click)="cancelDelete()">Cancel</button>
+            </div>
+          } @else {
+            <div class="swp__confirm">
+              <button type="button" class="swp__danger" [disabled]="busy() || selectedCount() === 0"
+                      (click)="requestDelete()" data-testid="branch-sweep-delete">
+                Delete selected ({{ selectedCount() }})
+              </button>
+              <button type="button" class="swp__action" [disabled]="busy() || eligible().length === 0"
+                      (click)="reclaimAllAllowed()" data-testid="branch-sweep-reclaim-all">
+                Reclaim all allowed ({{ eligible().length }})
+              </button>
+            </div>
+          }
+        </div>
+
+        @if (busy() || progress().total > 0) {
+          <div class="swp__progress" data-testid="branch-sweep-progress">
+            <span class="swp__hist-track">
+              <span class="swp__hist-fill" [style.inline-size.%]="percent()"></span>
+            </span>
+            <span class="swp__num">
+              batch {{ progress().currentBatch }}/{{ progress().batches }} &middot;
+              {{ progress().processed }}/{{ progress().total }} refs &middot;
+              {{ progress().deleted }} deleted &middot; {{ progress().kept }} kept
+              @if (progress().stopped) { &middot; stopped }
+            </span>
+            <button type="button" class="swp__action" [disabled]="!busy()" (click)="stop()"
+                    data-testid="branch-sweep-stop">Stop</button>
+          </div>
+          <p class="swp__note">Deletions go out in batches of at most {{ batchSize }} refs per push.</p>
+        }
+
+        <ul class="swp__rows" data-testid="branch-sweep-candidates">
+          @for (candidate of rows(); track trackCandidate($index, candidate)) {
+            <li class="swp__row" [class.swp__row--kept]="!candidate.eligible">
+              <input type="checkbox" class="swp__check" [checked]="isSelected(candidate)"
+                     [disabled]="!candidate.eligible || busy()"
+                     (change)="toggleCandidate(candidate)"
+                     [attr.aria-label]="'Select ' + candidate.ref" />
+              <span class="swp__row-main">
+                <span class="swp__row-name mono">{{ candidate.ref }}</span>
+                <span class="swp__tag">{{ candidate.class }}</span>
+                @if (candidate.taskKey) { <span class="swp__tag">{{ candidate.taskKey }}</span> }
+                @if (candidate.ageDays !== null) {
+                  <span class="swp__num swp__age">{{ candidate.ageDays }}d</span>
+                }
+                <span class="swp__status" [attr.data-eligible]="candidate.eligible">{{ candidate.decision }}</span>
+              </span>
+              <span class="swp__reason">{{ candidate.reason }}</span>
+            </li>
+          }
+        </ul>
+        @if (hiddenRows() > 0) {
+          <p class="swp__note">{{ hiddenRows() }} further ref(s) not shown; the full list is in the JSON report.</p>
+        }
+      }
+    </div>
+  }
+</section>

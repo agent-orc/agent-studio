@@ -60,6 +60,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Workspace repository lifecycle and backlog recovery | [operations/workspace-repository-lifecycle.md](../operations/workspace-repository-lifecycle.md) |
 | Integration worktree: where delivery merges run, why the developer checkout is never used, and how to clean the slot up (AGT-2832) | [operations/git/integration-worktree.md](../operations/git/integration-worktree.md) |
 | Branch lifecycle and automatic reclamation (AGT-2793) | [concepts/task-integration-and-merge-workflow.md#branch-cleanup-agt-2009-agt-2793](../concepts/task-integration-and-merge-workflow.md#branch-cleanup-agt-2009-agt-2793) |
+| Stale-branch sweep: all-namespace classification, reports, report-only vs reclaim, operator reclamation (AGT-2794) | [concepts/task-integration-and-merge-workflow.md#stale-branch-sweep-agt-2794](../concepts/task-integration-and-merge-workflow.md#stale-branch-sweep-agt-2794) |
 | Tasks | [domains/tasks.md](../system/domains/tasks.md) |
 | Frontend | [domains/frontend.md](../system/domains/frontend.md) |
 | Stable view URL contract | [contracts/stable-view-urls.md](../system/contracts/stable-view-urls.md) |

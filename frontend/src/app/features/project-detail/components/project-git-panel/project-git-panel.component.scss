@@ -94,6 +94,14 @@
     flex: 1 1 auto;
   }
 
+  // The sweep sits under the graph as its own flat block: it is repository
+  // maintenance, not part of the read-only ref/commit workspace above it.
+  &__sweep {
+    flex: 0 0 auto;
+    max-height: 45%;
+    overflow-y: auto;
+  }
+
   &__workspace--with-changes {
     grid-template-rows: minmax(240px, 55%) minmax(220px, 45%);
   }
