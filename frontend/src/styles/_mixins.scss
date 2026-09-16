@@ -319,3 +319,52 @@
     line-height: 1.3;
   }
 }
+
+/* ---------------------------------------------------------------------
+ * disclosure-control
+ *
+ * The clickable half of the one disclosure grammar (AGT-2813, guideline
+ * rule ADM-17 in docs/operations/admin-design-guideline). Apply it to the
+ * element that carries `aria-expanded` and the click handler; pair it with
+ * `<app-disclosure-marker [open]="...">` as that element's first child.
+ *
+ * What it standardises: the whole label row is the hit area (never just the
+ * marker), a 24 px minimum target, a hover wash that proves the row is
+ * clickable, and the shared accent focus ring. What it deliberately does not
+ * do: reveal the marker on hover, or encode the state in colour.
+ * ------------------------------------------------------------------- */
+@mixin disclosure-control {
+  display: flex;
+  align-items: center;
+  gap: var(--studio-spacing-2);
+  width: 100%;
+  min-height: 24px;
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+
+  &:hover:not(:disabled) {
+    background: var(--studio-bg-hover);
+    color: var(--studio-fg-strong);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--studio-accent);
+    outline-offset: 1px;
+  }
+
+  &:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    transition-duration: 0s;
+  }
+}

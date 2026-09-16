@@ -13,7 +13,7 @@ import {
 import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
 import { CountBadgeComponent } from '../../../../components/count-badge/count-badge.component';
 import type { TaskReferenceStatus } from '../../../../components/task-reference-microcard/task-reference-microcard';
-import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
+import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
 import { ProjectDocsService } from '../../../../services/project-docs.service';
 import { JobsHubClient } from '../../../../services/jobs-hub-client.service';
 import { TaskService } from '../../../../services/task.service';
@@ -32,7 +32,7 @@ import type { WorkbenchOverview, WorkbenchOverviewItem } from '../../../../model
   imports: [
     LoadingSurfaceComponent,
     CountBadgeComponent,
-    StudioIconComponent,
+    DisclosureMarkerComponent,
     WorkbenchOverviewCardComponent,
     WorkbenchOverviewControlsComponent,
     WorkbenchViewerComponent,

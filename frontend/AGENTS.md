@@ -112,6 +112,39 @@ state from the same tokens: `background: var(--studio-nav-active-bg)`, a
 or a strengthened accent border (card rows), and a `:focus-visible` accent
 outline plus `aria-current="page"`. Do not add a new bespoke active look.
 
+## Disclosure affordance: one marker, one grammar (AGT-2813, ADM-17)
+
+Every element that expands content **in place** announces itself the same way:
+the shared `<app-disclosure-marker [open]="...">`
+([`src/app/components/disclosure-marker/`](src/app/components/disclosure-marker/))
+as the **first** child of the element that owns the click handler and
+`aria-expanded`. The marker is one chevron pointing right, rotating 90 degrees
+when open (never a swapped glyph), `aria-hidden`, and it reads
+`--studio-fg-muted`. The clickable half is the `disclosure-control` mixin in
+[`src/styles/_mixins.scss`](src/styles/_mixins.scss): whole label row as the hit
+area, 24 px minimum target, `--studio-bg-hover` wash, accent `:focus-visible`
+ring.
+
+Forbidden, because each one caused the reported defect: a **second control** for
+the same expansion (the removed `Why this status?` row under the result-header
+status line), **colour alone** as the open/expandable signal, and a **marker that
+only appears on hover**.
+
+Out of scope: overlay triggers (menus, popovers, dialogs - they follow the menu
+grammar) and `role="treeitem"` rows (the navigation chevron contract owns those).
+
+The full rule, with one compliant and three rejected examples, is chapter 14 of
+[docs/operations/admin-design-guideline/index.html](../docs/operations/admin-design-guideline/index.html#disclosure-affordance).
+
+**Enforced by `npm run lint:structure`** →
+[`scripts/check-disclosure-markers.mjs`](scripts/check-disclosure-markers.mjs).
+It scans every template for `aria-expanded` and fails when an enforced file
+renders one without the marker - and when a template owning a disclosure is in
+neither list of [`scripts/disclosure-baseline.json`](scripts/disclosure-baseline.json).
+A divergence needs a `kind` (`popup-trigger`, `tree-chevron`, `staged-adoption`)
+and a written reason. Adopt the marker and move the file into `enforced` when you
+next touch a `staged-adoption` surface.
+
 ## Side-sheet layout contract (`<app-orchestrator-side-sheet>`, `<app-kanban-filter-sidesheet>`)
 
 Both right-edge side sheets are **panels that push the workspace, not overlays that float over it**. The push behaviour rides on three coordinated pieces; break any one and the panel either floats, overlays, leaves a transparent gap, or stacks on the wrong side. Locked by the `open pushes studio-shell + inner panel fills host` test in `e2e/orchestrator-side-sheet-position.spec.ts`.

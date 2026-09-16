@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, input, signal } from '@angular/core';
 import { TooltipDirective } from 'coding-agent-chat/shared';
+import { DisclosureMarkerComponent } from '../../../../../components/disclosure-marker/disclosure-marker.component';
 import { formatTokens } from '../../../../../services/format.util';
 import type {
   PipelineModelTokenUsage,
@@ -51,7 +52,7 @@ interface TaskTotal {
 @Component({
   selector: 'app-pipeline-token-usage',
   standalone: true,
-  imports: [TooltipDirective],
+  imports: [TooltipDirective, DisclosureMarkerComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './pipeline-token-usage.component.html',
   styleUrl: './pipeline-token-usage.component.scss',

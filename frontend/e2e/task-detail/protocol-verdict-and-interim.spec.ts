@@ -346,4 +346,55 @@ test.describe('Protocol pane - verdict chip + interim status', () => {
       ).catch(() => { /* best-effort cleanup */ });
     }
   });
+
+  /**
+   * AGT-2813 / guideline rule ADM-17. The status line is the ONE disclosure
+   * control of the result header: it carries the shared marker and
+   * `aria-expanded`, and the "Why this status?" row that used to duplicate the
+   * same expansion is gone. The first assertion holds for every job; the
+   * toggle behaviour is exercised whenever the current verdict is expandable
+   * (a long reason or raw signals), which is a property of the job, not of
+   * this spec.
+   */
+  test('the status line is the only disclosure control of the result header', async ({ page }) => {
+    await page.setViewportSize({ width: 1600, height: 1100 });
+
+    const jobs = await listJobs();
+    test.skip(jobs.length === 0, 'No jobs available in workspace');
+    const first = jobs[0];
+
+    await page.goto(
+      `/?job=${encodeURIComponent(first.id)}&watchPath=${encodeURIComponent(first.watchPath)}`
+    );
+
+    const chip = page.locator('[data-testid^="protocol-verdict-"][role="status"]');
+    await expect(chip).toBeVisible({ timeout: 15_000 });
+
+    // The duplicated second control must never come back.
+    await expect(page.getByTestId('protocol-verdict-signals-toggle')).toHaveCount(0);
+
+    const line = chip.getByTestId('protocol-verdict-detail');
+    await expect(line).toBeVisible();
+
+    if ((await line.evaluate((el) => el.tagName)) !== 'BUTTON') {
+      // A short reason with no raw signals is deliberately not expandable.
+      await expect(line).not.toHaveAttribute('aria-expanded', /.*/);
+      return;
+    }
+
+    const marker = line.locator('app-disclosure-marker');
+    await expect(marker).toHaveCount(1);
+    await expect(line).toHaveAttribute('aria-expanded', 'false');
+    await expect(marker).not.toHaveClass(/studio-disclosure__marker--open/);
+    await page.screenshot({ path: 'test-results/status-header-collapsed.png', fullPage: false });
+
+    await line.click();
+    await expect(line).toHaveAttribute('aria-expanded', 'true');
+    await expect(marker).toHaveClass(/studio-disclosure__marker--open/);
+    await page.screenshot({ path: 'test-results/status-header-expanded.png', fullPage: false });
+
+    await line.click();
+    await expect(line).toHaveAttribute('aria-expanded', 'false');
+  });
+
 });

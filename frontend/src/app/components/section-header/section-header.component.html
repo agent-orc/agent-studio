@@ -9,11 +9,7 @@
           [attr.data-testid]="testid()"
           [attr.aria-expanded]="!collapsed()"
           (click)="onCollapseToggle($event)">
-    <span class="section-header__chev" aria-hidden="true">
-      <app-studio-icon
-        [name]="collapsed() ? 'chevronRight' : 'chevronDown'"
-        [size]="10"></app-studio-icon>
-    </span>
+    <app-disclosure-marker class="section-header__chev" [open]="!collapsed()" [size]="10" />
     @if (icon(); as i) {
       <span class="section-header__icon" aria-hidden="true">
         <app-studio-icon [name]="i" [size]="12"></app-studio-icon>

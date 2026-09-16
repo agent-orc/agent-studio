@@ -61,12 +61,11 @@
     border-top: 1px solid color-mix(in srgb, var(--studio-border) 60%, transparent);
   }
 
+  // ADM-17: the marker itself is <app-disclosure-marker>; the row only says
+  // where it sits in the grid.
   &__disclosure {
     grid-column: 1;
     justify-self: center;
-    color: var(--studio-fg-muted);
-    font-size: 9px;
-    line-height: 1;
   }
 
   &__marker-slot,

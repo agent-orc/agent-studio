@@ -33,7 +33,7 @@ const LONG_REASON =
   'Rewrote protocol-verdict.ts rendering all five canonical states, but could not verify the banner end to end.';
 
 describe('ProtocolVerdictBannerComponent', () => {
-  it('renders one primary banner and keeps conflicting raw signals in Why this status', async () => {
+  it('renders one primary banner and keeps conflicting raw signals behind the status line', async () => {
     const fixture = await build(verdict({
       kind: 'problem',
       status: 'failed',
@@ -49,12 +49,25 @@ describe('ProtocolVerdictBannerComponent', () => {
 
     expect(html.querySelectorAll('.protocol-verdict')).toHaveLength(1);
     expect(html.querySelector('[data-testid="protocol-verdict-signals-list"]')).toBeNull();
-    html.querySelector<HTMLButtonElement>('[data-testid="protocol-verdict-signals-toggle"]')!.click();
+
+    // ADM-17: the status line is the one control. The former separate
+    // "Why this status?" row must not come back.
+    expect(html.querySelector('[data-testid="protocol-verdict-signals-toggle"]')).toBeNull();
+    expect(html.querySelectorAll('[aria-expanded]')).toHaveLength(1);
+
+    const line = html.querySelector<HTMLButtonElement>('[data-testid="protocol-verdict-detail"]')!;
+    expect(line.getAttribute('aria-expanded')).toBe('false');
+    expect(line.querySelector('app-disclosure-marker')).not.toBeNull();
+
+    line.click();
     fixture.detectChanges();
+    expect(line.getAttribute('aria-expanded')).toBe('true');
+    expect(line.querySelector('.studio-disclosure__marker--open')).not.toBeNull();
     const disclosure = html.querySelector('[data-testid="protocol-verdict-signals-list"]');
     expect(disclosure?.textContent).toContain('Watchdog timeout');
     expect(disclosure?.textContent).toContain('Review accepted');
     expect(disclosure?.textContent).toContain('Partial');
+    expect(line.getAttribute('aria-controls')).toBe('protocol-verdict-signals-list');
   });
 
   it('renders a short reason as a plain, non-expandable line', async () => {
