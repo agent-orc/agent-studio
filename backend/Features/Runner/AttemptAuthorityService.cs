@@ -80,6 +80,16 @@ public sealed class AttemptAuthorityService
     private readonly int _terminalRetentionCount;
     private AuthorityState _state;
 
+    /// <summary>
+    /// UTC time a ReviewAttempt was most recently claimed by an executor.
+    /// In-memory only (not persisted, reset on restart), the canonical-review
+    /// counterpart of <see cref="AutoReviewPostProcessingQueue.LastStartedAt"/>:
+    /// the stagnation watchdog uses it to tell "still draining" from "stuck"
+    /// on a fleet where cards leave the combined queue through a fenced claim
+    /// rather than the legacy post-processing worker.
+    /// </summary>
+    private DateTime? _lastReviewClaimAtUtc;
+
     public AttemptAuthorityService(
         IConfiguration configuration,
         ILogger<AttemptAuthorityService> logger,
@@ -111,6 +121,12 @@ public sealed class AttemptAuthorityService
     public long AuthorityEpoch
     {
         get { lock (_gate) return _state.AuthorityEpoch; }
+    }
+
+    /// <summary>See <see cref="_lastReviewClaimAtUtc"/>.</summary>
+    public DateTime? LastReviewClaimAtUtc
+    {
+        get { lock (_gate) return _lastReviewClaimAtUtc; }
     }
 
     public AttemptWriteResult AcquireRun(
@@ -642,6 +658,7 @@ public sealed class AttemptAuthorityService
             SetReviewLeaseIsolation(review, fence);
             review.CurrentClaimDeliveryKey = deliveryKey;
             review.IdempotencyKeys.Add(deliveryKey);
+            _lastReviewClaimAtUtc = now;
             PersistLocked();
             return new AttemptWriteResult(AttemptWriteStatus.Accepted, review.AttemptId, ReviewAttempt: ToDto(review));
         }

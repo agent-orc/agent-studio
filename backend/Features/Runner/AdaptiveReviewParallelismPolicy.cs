@@ -61,6 +61,21 @@ public static class AdaptiveReviewParallelismPolicy
         var current = Math.Clamp(currentRecommendation, SanctionedMin, SanctionedMax);
         var sinceLastChange = lastChangeAtUtc is { } last ? nowUtc - last : TimeSpan.MaxValue;
 
+        // AGT-2848: an operator-raised baseline (AutoReviewQueueAdaptiveParallelism:
+        // BaselineParallelism) used to only reach a running recommendation seeded
+        // below it once a raise/lower crossed it in passing - a backend restart was
+        // the only reliable way to pick up the new floor. A non-empty queue is
+        // evidence the raised floor is actually needed right now, so it is adopted
+        // on this refresh, ahead of and unblocked by the raise cooldown below.
+        if (queueDepth > 0 && opts.BaselineParallelism > current)
+        {
+            var adopted = Math.Min(SanctionedMax, opts.BaselineParallelism);
+            return new AdaptiveReviewParallelismDecision(
+                ReviewParallelismAction.Raise,
+                adopted,
+                $"configured baseline raised to {opts.BaselineParallelism}; adopted at runtime without a backend restart");
+        }
+
         if ((queueDepth >= opts.RaiseQueueDepthThreshold || isStagnant)
             && current < SanctionedMax
             && sinceLastChange >= opts.RaiseCooldown)
@@ -98,12 +113,15 @@ public static class AdaptiveReviewParallelismPolicy
 /// rather than reading a live RUNNER_MAX_PARALLELISM value from the fleet,
 /// because the backend has no reliable per-host signal for the value
 /// currently in effect on every review runner - see the AGT-2645 dossier.
+/// Reads its queue depth and stagnation flag from
+/// <see cref="AutoReviewQueueStagnationWatchdog"/> rather than the legacy
+/// queue directly (AGT-2848), so both signals are the same combined
+/// legacy-queue-plus-attempt-authority backlog the watchdog already computes.
 /// </summary>
 public sealed class AdaptiveReviewParallelismAdvisor : BackgroundService
 {
     public const int DefaultIntervalSeconds = 30;
 
-    private readonly AutoReviewPostProcessingQueue _queue;
     private readonly AutoReviewQueueStagnationWatchdog _stagnation;
     private readonly IConfiguration _configuration;
     private readonly ILogger<AdaptiveReviewParallelismAdvisor> _logger;
@@ -114,12 +132,10 @@ public sealed class AdaptiveReviewParallelismAdvisor : BackgroundService
     private AdaptiveReviewParallelismDecision _current;
 
     public AdaptiveReviewParallelismAdvisor(
-        AutoReviewPostProcessingQueue queue,
         AutoReviewQueueStagnationWatchdog stagnation,
         IConfiguration configuration,
         ILogger<AdaptiveReviewParallelismAdvisor> logger)
     {
-        _queue = queue;
         _stagnation = stagnation;
         _configuration = configuration;
         _logger = logger;
@@ -136,8 +152,9 @@ public sealed class AdaptiveReviewParallelismAdvisor : BackgroundService
     {
         var now = (nowUtc ?? DateTime.UtcNow).ToUniversalTime();
         var options = ReadOptions(_configuration);
-        var queueDepth = _queue.PendingCount;
-        var isStagnant = _stagnation.Current.IsStagnant;
+        var reviewQueue = _stagnation.Current;
+        var queueDepth = reviewQueue.QueueDepth;
+        var isStagnant = reviewQueue.IsStagnant;
 
         lock (_gate)
         {

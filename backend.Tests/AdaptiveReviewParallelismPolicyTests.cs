@@ -72,6 +72,66 @@ public sealed class AdaptiveReviewParallelismPolicyTests
         Assert.Equal(expectedTarget, decision.RecommendedParallelism);
     }
 
+    /// <summary>
+    /// AGT-2848: a raised configured baseline must reach the running
+    /// recommendation on the next refresh while the queue is non-empty,
+    /// ahead of (and unblocked by) the ordinary raise cooldown.
+    /// </summary>
+    [Fact]
+    public void Evaluate_AdoptsARaisedBaselineOnTheNextRefreshWhenTheQueueIsNonEmpty()
+    {
+        var options = Options with { BaselineParallelism = 3 };
+
+        var decision = AdaptiveReviewParallelismPolicy.Evaluate(
+            currentRecommendation: 2,
+            queueDepth: 1,
+            isStagnant: false,
+            Now,
+            lastChangeAtUtc: Now.AddSeconds(-1),
+            queueEmptySinceUtc: null,
+            options);
+
+        Assert.Equal(ReviewParallelismAction.Raise, decision.Action);
+        Assert.Equal(3, decision.RecommendedParallelism);
+        Assert.Contains("baseline", decision.Reason);
+    }
+
+    [Fact]
+    public void Evaluate_DoesNotAdoptARaisedBaselineWhileTheQueueIsEmpty()
+    {
+        var options = Options with { BaselineParallelism = 3 };
+
+        var decision = AdaptiveReviewParallelismPolicy.Evaluate(
+            currentRecommendation: 2,
+            queueDepth: 0,
+            isStagnant: false,
+            Now,
+            lastChangeAtUtc: null,
+            queueEmptySinceUtc: Now,
+            options);
+
+        Assert.Equal(ReviewParallelismAction.Hold, decision.Action);
+        Assert.Equal(2, decision.RecommendedParallelism);
+    }
+
+    [Fact]
+    public void Evaluate_ClampsAnAdoptedBaselineToTheSanctionedMax()
+    {
+        var options = Options with { BaselineParallelism = 9 };
+
+        var decision = AdaptiveReviewParallelismPolicy.Evaluate(
+            currentRecommendation: 2,
+            queueDepth: 1,
+            isStagnant: false,
+            Now,
+            lastChangeAtUtc: null,
+            queueEmptySinceUtc: null,
+            options);
+
+        Assert.Equal(ReviewParallelismAction.Raise, decision.Action);
+        Assert.Equal(AdaptiveReviewParallelismPolicy.SanctionedMax, decision.RecommendedParallelism);
+    }
+
     [Fact]
     public void Evaluate_NeverLowersBelowTheConfiguredBaseline()
     {
