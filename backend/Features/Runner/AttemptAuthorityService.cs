@@ -1332,6 +1332,10 @@ public sealed class AttemptAuthorityService
             review.State = request.Outcome switch
             {
                 ReviewTerminalOutcome.Pass => AttemptLifecycleState.Completed,
+                // AGT-2819: the review itself completed and found nothing against
+                // the card; the defect it reports belongs to the integration
+                // branch, so the attempt is Completed, not Failed.
+                ReviewTerminalOutcome.IntegrationBranchDefect => AttemptLifecycleState.Completed,
                 ReviewTerminalOutcome.Cancellation => AttemptLifecycleState.Cancelled,
                 ReviewTerminalOutcome.Superseded => AttemptLifecycleState.Superseded,
                 _ => AttemptLifecycleState.Failed,

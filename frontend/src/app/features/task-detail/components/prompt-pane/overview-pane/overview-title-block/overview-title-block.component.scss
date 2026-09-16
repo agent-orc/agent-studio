@@ -1,0 +1,213 @@
+@use '../../../../../../../styles/lane-tone';
+
+// The hero block sits inside the Overview pane's flex column, so the host has to
+// fill it the way the plain <section> it replaced did.
+:host {
+  display: block;
+  width: 100%;
+  min-width: 0;
+}
+
+// Base section layout, carried here because emulated encapsulation scopes the
+// pane's own `.ov-section` rule to the pane.
+.ov-section {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  gap: 2px;
+}
+
+// Hero title block. Sits above the first column-group.
+.ov-title-block {
+  gap: 2px;
+  padding-top: 2px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--studio-border);
+}
+
+// Promote-to-coding affordance: only rendered on a finished planning task.
+.ov-promote {
+  margin-top: 6px;
+
+  &__btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--studio-on-accent);
+    background: var(--studio-accent);
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 5px 12px;
+    cursor: pointer;
+    transition: filter 0.12s, opacity 0.12s;
+
+    &:hover {
+      filter: brightness(1.08);
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--studio-accent);
+      outline-offset: 2px;
+    }
+
+    &:disabled {
+      opacity: 0.6;
+      cursor: progress;
+    }
+  }
+
+  &__icon {
+    font-size: 13px;
+    line-height: 1;
+  }
+}
+
+.ov-title {
+  margin: 0;
+  font-size: 1.5em;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--studio-fg-strong);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+  cursor: text;
+  outline: none;
+
+  &:focus-visible {
+    box-shadow: 0 0 0 2px var(--studio-accent);
+    border-radius: 4px;
+  }
+
+  &:hover .ov-title__edit-affordance,
+  &:focus-visible .ov-title__edit-affordance {
+    opacity: 1;
+  }
+
+  &__text {
+    // No own styles — anchors the affordance with margin-left.
+  }
+
+  &__edit-affordance {
+    all: unset;
+    margin-left: 8px;
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: lowercase;
+    letter-spacing: 0.04em;
+    color: var(--studio-fg-dim);
+    opacity: 0;
+    transition: opacity 0.15s;
+    cursor: pointer;
+    vertical-align: middle;
+    user-select: none;
+    border-bottom: 1px dotted currentColor;
+
+    &:hover,
+    &:focus-visible {
+      color: var(--studio-fg-strong);
+      opacity: 1;
+    }
+  }
+}
+
+.ov-title-input {
+  width: 100%;
+  margin: 0;
+  font-family: inherit;
+  font-size: 1.5em;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--studio-fg-strong);
+  background: var(--studio-bg-hover);
+  border: 1px solid var(--studio-border-strong);
+  border-radius: 6px;
+  padding: 6px 10px;
+
+  &:focus {
+    outline: 2px solid var(--studio-accent);
+    outline-offset: 0;
+    border-color: transparent;
+  }
+}
+
+.ov-subline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--studio-fg-dim);
+
+  &__lane {
+    // Reuses .ov-lane-pill base styles further down; no overrides needed.
+  }
+
+  &__sep {
+    color: var(--studio-fg-muted);
+    font-size: 11px;
+  }
+
+  &__project {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--studio-fg);
+  }
+
+  &__project-disk {
+    width: 14px;
+    height: 14px;
+    border-radius: 4px;
+    background: var(--project-color, var(--studio-fg-dim));
+    color: var(--studio-on-accent);
+    font-size: 9px;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  &__project-name {
+    font-weight: 500;
+    color: var(--studio-fg);
+  }
+}
+
+.ov-lane-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--studio-bg-hover);
+
+  // AGT-2715: one tone per lane, resolved from data-lane-tone rather than the
+  // per-state colour map that used to be maintained here.
+  @include lane-tone.vars;
+
+  color: var(--lane-tone-fg);
+
+  &__dot {
+    font-size: 0.65em;
+    line-height: 1;
+  }
+}
+
+.ov-phase-chip {
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-weight: 500;
+  background: var(--studio-bg-hover);
+  color: var(--studio-fg-dim);
+}

@@ -297,6 +297,21 @@ The same guard requires external `templateUrl` files and rejects inline `templat
 
 CSS linting runs with `npm run lint:css` (Stylelint, configured in `.stylelintrc.json`). CSS, component-size, and structure checks all run as part of `npm run lint`.
 
+### One lint contract, not two (AGT-2819)
+
+`lint:ci` is an alias for `lint`. It used to omit `lint:components` while the
+review's `verify-5` ran the full `lint`, so CI and Remote Review disagreed about
+whether the component budget was a gate. That divergence is what let the budget
+rot unnoticed on `develop` for four weeks (baseline last written 2026-08-19,
+found 2026-09-14): CI stayed green, and the only surface that reported the
+failure was a `ProductFailure` on unrelated cards.
+
+The component budget is a gate. It is cheap (one Node script over tracked files,
+no build), it is deterministic, and its whole value is being enforced where the
+growth happens. So both chains run it, and `lint:ci` exists only as the name CI
+configs already use. If a chain ever needs to skip a check again, add the skip to
+the chain that runs *more*, never to the one CI reads, and say so here.
+
 ## Chat surfaces (`coding-agent-chat` — `<cac-chat>` is canonical)
 
 The chat stack lives in the standalone **`coding-agent-chat`** Angular library. The app is a **host**: it consumes the library and owns only the app-specific wiring. The former in-app copies (`components/chat/**`, `components/chat-row/`, `components/markdown-view/`, `components/markdown-utils.ts`, `directives/markdown-image-lightbox.directive.ts`, `features/project-chat/`, `features/workforce/`, the `parseActivityLog`/`buildConversationTurns` halves of `activity-log.parser.ts`) were deleted when the host adoption landed — do not re-create them; change the library instead.
