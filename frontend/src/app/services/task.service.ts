@@ -183,6 +183,22 @@ export interface IntegrationRecoveryResponse {
   integrationBranch: string;
 }
 
+/**
+ * AGT-2824 - reply from the gate-environment integration retry. The delivery
+ * SHA is unchanged and its passed review is reused, so `reviewReused` is always
+ * true: no review slot is spent by this action.
+ */
+export interface IntegrationRetryResponse {
+  status: 'integrated' | 'failed';
+  reason: string;
+  outcome: string | null;
+  /** Ladder rung this replay spent; 0 for an operator replay, which restarts the ladder. */
+  rung: number;
+  deliverySha: string | null;
+  integrationBranch: string | null;
+  reviewReused: boolean;
+}
+
 type LaneKey = keyof GroupedJobs;
 // ADR-0025: state strings use the new seven-lane order.
 // ADR-0026: 1a-orchestrator-prep joins the catalog. The 1b-needs-human-review
@@ -722,6 +738,20 @@ export class TaskService {
   queueIntegrationRecovery(jobId: string, watchPath?: string) {
     return this.http.post<IntegrationRecoveryResponse>(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/integration/rebase`,
+      null,
+      this.withWatchPath(watchPath),
+    );
+  }
+
+  /**
+   * AGT-2824 - replay the integration of a delivery whose merge gate failed on
+   * the gate environment. The backend reuses the review that already passed for
+   * the unchanged delivery SHA, so this costs no review round; it also restarts
+   * the bounded automatic ladder for a card that has parked.
+   */
+  retryIntegration(jobId: string, watchPath?: string) {
+    return this.http.post<IntegrationRetryResponse>(
+      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/integration/retry`,
       null,
       this.withWatchPath(watchPath),
     );
