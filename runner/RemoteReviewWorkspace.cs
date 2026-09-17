@@ -447,7 +447,7 @@ public sealed class RemoteReviewWorkspace
                         execution.AgentUsage));
                     SaveCaches(candidateCache);
                     throw await InfrastructureFailureAsync(
-                        "TmpMountTornDown",
+                        ReviewInfraAttributionPolicy.TmpMountTornDownClassification,
                         $"Review command '{command.StepId}' failed with a torn-down-/tmp signature " +
                         "(MSB1025, SocketException (99), or a NuGet mkdtemp ENOENT), not a product failure: " +
                         $"{CommandLine(command)}; exit={execution.Process.ExitCode}; " +
@@ -570,7 +570,7 @@ public sealed class RemoteReviewWorkspace
                                 ct));
                             SaveCaches(candidateCache);
                             throw await InfrastructureFailureAsync(
-                                "TmpMountTornDown",
+                                ReviewInfraAttributionPolicy.TmpMountTornDownClassification,
                                 $"Review retry '{command.StepId}' failed with a torn-down-/tmp signature " +
                                 "(MSB1025, SocketException (99), or a NuGet mkdtemp ENOENT), not a product failure; " +
                                 $"exit={execution.Process.ExitCode}; budget={BudgetSummary(command.TimeoutSeconds, execution, command.Model)}.",
@@ -1187,34 +1187,13 @@ public sealed class RemoteReviewWorkspace
     /// <c>&lt;unparsed failure&gt;</c> entry that <see cref="BaselineVerdict"/>
     /// then reports as <c>NewTestFailures</c> - an infrastructure incident
     /// graded as a product regression. Checked before baseline comparison so
-    /// it never reaches test-failure parsing.
+    /// it never reaches test-failure parsing. The decision itself is pure and
+    /// lives in <see cref="ReviewInfraAttributionPolicy"/>, which reads
+    /// process-level evidence only (AGT-2857).
     /// </summary>
     private static bool TmpMountTornDownDuringBuild(ProcessResult process)
-    {
-        if (process.Success) return false;
-        var output = process.StdOut + "\n" + process.StdErr;
-        // A torn-down /tmp leaves no parseable test output. When the test runner
-        // did print its summary, the signature came from test content (a theory
-        // case that quotes an mkdtemp ENOENT message, for example) and the red
-        // result belongs to those tests, not to the mount.
-        if (HasTestRunSummary(output)) return false;
-        return output.Contains("MSB1025", StringComparison.Ordinal)
-               || output.Contains("SocketException (99)", StringComparison.Ordinal)
-               || (output.Contains("mkdtemp(\"/tmp/.dotnet.", StringComparison.Ordinal)
-                   && output.Contains("ENOENT", StringComparison.OrdinalIgnoreCase));
-    }
-
-    /// <summary>
-    /// The <c>dotnet test</c> console logger prints exactly one of these
-    /// summary lines once the test host finished, whatever the outcome; vstest
-    /// prints <c>Total tests:</c>. Their presence proves the runner ran to the
-    /// end, so an infrastructure signature elsewhere in the output is test
-    /// content, not a broken mount.
-    /// </summary>
-    internal static bool HasTestRunSummary(string output)
-        => output.Contains("Passed!  - Failed:", StringComparison.Ordinal)
-           || output.Contains("Failed!  - Failed:", StringComparison.Ordinal)
-           || output.Contains("Total tests:", StringComparison.Ordinal);
+        => ReviewInfraAttributionPolicy.Attribute(process)
+           == ReviewInfraAttribution.TmpMountTornDown;
 
     private static string FailureDetail(ProcessResult process)
     {

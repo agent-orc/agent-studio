@@ -688,28 +688,45 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     /// <summary>
-    /// 17.09.2026, agent-runner-01: three reviews in a row (AGT-2819 twice,
-    /// AGT-2857) were graded <c>ReviewInfra / TmpMountTornDown</c> although
-    /// <c>/tmp</c> was intact and exactly one test had failed. The mkdtemp
-    /// signature came from the display name of a passing theory case
-    /// (<c>AgentOutcomeAnalyzerTests.EnvironmentalTransient_...(reply:
-    /// "System.IO.IOException: mkdtemp(\"/tmp/.dotnet.AbC1"···)</c>). A test
-    /// run that printed its summary ran to the end; its red result is a product
-    /// failure of the named tests, never a broken mount.
+    /// AGT-2857: review attempt <c>review_849e4484f1454ea2bfcc8b4d7be6dd31</c>
+    /// (AGT-2819) was settled as <c>ReviewInfra</c>/<c>TmpMountTornDown</c>
+    /// because a passing theory case quoted the NuGet mkdtemp ENOENT signature
+    /// in its display name, while the one genuinely failed test never reached
+    /// the card and the replacement attempt never fired. The captured verify-3
+    /// excerpt must reach the normal baseline comparison and name the failed
+    /// test.
     /// </summary>
     [Fact]
-    public void A_test_run_summary_outranks_a_tmp_teardown_signature_in_test_content()
+    public async Task Tmp_signature_inside_a_test_display_name_is_still_a_product_failure()
     {
-        var output =
-            "  Passed AgentStudio.Tests.AgentOutcomeAnalyzerTests.EnvironmentalTransient_OnFailedRun" +
-            "(reply: \"System.IO.IOException: mkdtemp(\\\"/tmp/.dotnet.AbC1\"···) [< 1 ms]\n" +
-            "  Failed AgentStudio.Tests.DuplicateTaskKeyTests.Dedup_KeepsOldest [12 ms]\n" +
-            "  Error Message: errno == ENOENT was expected here\n" +
-            "Failed!  - Failed:     1, Passed:  6811, Skipped:    23, Total:  6835, Duration: 19 m - OrchestratorApi.Tests.dll (net10.0)\n";
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var command = BaselineCommand(
+            "if grep -q subject product.txt; then cat <<'CAPTURED'\n"
+            + ReviewInfraAttributionPolicyTests.CapturedVerifyOutput
+            + "\nCAPTURED\nexit 1; fi; exit 0");
+        var (workspace, _) = Workspace(
+            "attempt-tmp-display-name",
+            subjectSha,
+            [command],
+            24017,
+            resultRef: "refs/heads/task/new-failure",
+            integrationRef: "refs/heads/main");
 
-        Assert.True(RemoteReviewWorkspace.HasTestRunSummary(output));
-        Assert.False(RemoteReviewWorkspace.HasTestRunSummary(
-            "System.IO.IOException: mkdtemp(\"/tmp/.dotnet.AbC123\") == nullptr; errno == ENOENT"));
+        await workspace.PrepareAsync(null!, default);
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        Assert.Equal("ProductFailure", evidence.Outcome);
+        var candidate = CandidateVerification(evidence);
+        Assert.Equal(
+            [ReviewInfraAttributionPolicyTests.FailedTestName],
+            candidate.NewFailures);
+        var verdict = Assert.Single(evidence.Verdicts);
+        Assert.Equal("NewTestFailures", verdict.Classification);
+        Assert.Equal("block", verdict.Status);
+        Assert.Contains(
+            ReviewInfraAttributionPolicyTests.FailedTestName,
+            verdict.Summary,
+            StringComparison.Ordinal);
     }
 
     [Fact]
