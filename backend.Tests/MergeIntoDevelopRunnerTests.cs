@@ -1267,9 +1267,17 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         Assert.Null(moved.ParkedBlocker);
     }
 
+    /// <summary>
+    /// Waits for work the acceptance rail does off the calling thread. The
+    /// budget is a liveness bound, not a performance one: the condition is met
+    /// in milliseconds on an idle machine, and the wait returns the instant it
+    /// holds. A five-second deadline measured how contended the machine was -
+    /// it is what timed this out under the full suite - so it is sized for the
+    /// worst scheduling delay a loaded run can impose instead.
+    /// </summary>
     private static async Task WaitUntilIndexed(Func<bool> condition)
     {
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(60);
         while (!condition())
         {
             if (DateTime.UtcNow > deadline) throw new TimeoutException("Condition was not met in time.");

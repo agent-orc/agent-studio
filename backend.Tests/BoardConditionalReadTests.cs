@@ -78,6 +78,24 @@ public sealed class BoardConditionalReadTests : IDisposable
                     ["WatchPaths:0:Name"] = ProjectName,
                     ["WatchPaths:0:Path"] = _watchPath,
                     ["WatchPaths:0:RootPath"] = _watchPath,
+                    // The two recurring background clocks, pushed past the
+                    // lifetime of a test. Both re-publish an input the
+                    // validator folds in even when the board did not move:
+                    // the task index bumps its generation on every safety
+                    // rescan, including one that found nothing changed, and
+                    // the Git-state sweep can start another index run. A
+                    // conditional pair whose two reads straddle either
+                    // boundary then answers 200 for a board that stood still -
+                    // measured directly: with the safety TTL at 1 s the second
+                    // read sees generation 3 where the first saw 2. These
+                    // tests run for tens of seconds under a loaded suite,
+                    // which is long enough to reach the 30 s default. What
+                    // this class pins is the validator, not those timers -
+                    // ChangedBoard_AnswersTwoHundredUnderANewTag drives the
+                    // index explicitly instead of waiting for one - so they
+                    // are moved out of the way rather than raced with.
+                    ["TaskIndexCache:SafetyTtlSeconds"] = "3600",
+                    ["GitStateIndex:SweepIntervalSeconds"] = "3600",
                 });
             });
         });
@@ -87,6 +105,78 @@ public sealed class BoardConditionalReadTests : IDisposable
         var client = factory.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
         return client;
+    }
+
+    /// <summary>
+    /// Blocks until the host's background index work has settled, so a
+    /// conditional pair taken afterwards measures the validator rather than
+    /// boot scheduling.
+    ///
+    /// <para>The <c>GitStateIndexService</c> runs a "startup" pass per
+    /// repository as soon as the host is up, publishing first the
+    /// mid-refresh marker and then the snapshot. Both are folded into the
+    /// board validator by <c>BoardReadSignatureSource</c> - correctly, since
+    /// the response carries <c>gitStateAt</c> and <c>stale</c> - so a read
+    /// taken while that pass is still in flight is a read of a board that is
+    /// still moving, and the next one cannot validate against it. Measured:
+    /// holding the pass back past the first read takes the projection
+    /// generation from 0 to 2 between two reads of an unchanged board, and
+    /// the second answers 200. On an idle host the pass finishes about a
+    /// second before the first request, which is the entire margin a loaded
+    /// suite erases.</para>
+    ///
+    /// <para>The wait is on what the product publishes, not on a sleep: the
+    /// indexer's own per-repository status (<see
+    /// cref="GitStateIndexService.GetRepositoryStatuses"/>, the same surface
+    /// the Admin git-telemetry page reads) plus the generation counters the
+    /// validator itself folds in. Quiescence is "every repository has a
+    /// snapshot and none is refreshing, and no generation moved across a quiet
+    /// window".</para>
+    /// </summary>
+    private static async Task WaitForBoardQuiescenceAsync(WebApplicationFactory<Program> factory)
+    {
+        var indexer = factory.Services.GetRequiredService<GitStateIndexService>();
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var gitProjection = factory.Services.GetRequiredService<TaskListGitProjectionCache>();
+        var sidecars = factory.Services.GetRequiredService<TaskSidecarGeneration>();
+        var settings = factory.Services.GetRequiredService<ProjectSettingsService>();
+
+        (long Tasks, long Git, long Sidecars, long Settings) Generations()
+            => (scanner.SnapshotGeneration, gitProjection.Generation, sidecars.Generation, settings.Version);
+
+        // Long enough to survive a fully saturated host, short enough that a
+        // genuinely stuck indexer fails the test instead of hanging the run.
+        var deadline = DateTime.UtcNow + TimeSpan.FromMinutes(2);
+        var quietWindow = TimeSpan.FromMilliseconds(500);
+
+        var settledSince = (DateTime?)null;
+        var lastGenerations = Generations();
+        while (true)
+        {
+            var statuses = indexer.GetRepositoryStatuses();
+            var indexed = statuses.Count > 0
+                && statuses.All(status => status.GitStateAt is not null && !status.Refreshing);
+            var generations = Generations();
+
+            if (indexed && generations == lastGenerations)
+            {
+                settledSince ??= DateTime.UtcNow;
+                if (DateTime.UtcNow - settledSince >= quietWindow) return;
+            }
+            else
+            {
+                settledSince = null;
+                lastGenerations = generations;
+            }
+
+            if (DateTime.UtcNow > deadline)
+                throw new TimeoutException(
+                    "The board did not reach a quiescent state: "
+                    + $"repositories=[{string.Join(";", statuses.Select(s => $"{s.ProjectName}:indexed={s.GitStateAt is not null}:refreshing={s.Refreshing}"))}] "
+                    + $"generations={generations}");
+
+            await Task.Delay(25);
+        }
     }
 
     private void Seed(string slug, string title, string state)
@@ -113,6 +203,7 @@ public sealed class BoardConditionalReadTests : IDisposable
         Seed("t-1", "First task", TaskStates.Ready);
         using var factory = BuildFactory();
         using var client = CreateClient(factory);
+        await WaitForBoardQuiescenceAsync(factory);
 
         var first = await GetAsync(client, "/api/tasks/grouped");
         Assert.Equal(HttpStatusCode.OK, first.Status);
@@ -133,6 +224,7 @@ public sealed class BoardConditionalReadTests : IDisposable
         Seed("t-1", "First task", TaskStates.Ready);
         using var factory = BuildFactory();
         using var client = CreateClient(factory);
+        await WaitForBoardQuiescenceAsync(factory);
 
         var before = await GetAsync(client, "/api/tasks/grouped");
 
@@ -154,6 +246,7 @@ public sealed class BoardConditionalReadTests : IDisposable
         Seed("t-1", "First task", TaskStates.AutoReview);
         using var factory = BuildFactory();
         using var client = CreateClient(factory);
+        await WaitForBoardQuiescenceAsync(factory);
 
         var standard = await GetAsync(client, "/api/tasks/grouped");
         var withoutAlias = await GetAsync(client, "/api/tasks/grouped?includeLegacyReviewLane=false");
@@ -215,6 +308,7 @@ public sealed class BoardConditionalReadTests : IDisposable
             Seed($"t-review-{i}", $"Awaiting auto review {i}", TaskStates.AutoReview);
         using var factory = BuildFactory();
         using var client = CreateClient(factory);
+        await WaitForBoardQuiescenceAsync(factory);
 
         var standard = await GetAsync(client, "/api/tasks/grouped");
         var optedOut = await GetAsync(client, "/api/tasks/grouped?includeLegacyReviewLane=false");
@@ -267,6 +361,7 @@ public sealed class BoardConditionalReadTests : IDisposable
         Seed("t-1", "First task", TaskStates.Ready);
         using var factory = BuildFactory();
         using var client = CreateClient(factory);
+        await WaitForBoardQuiescenceAsync(factory);
 
         var first = await GetAsync(client, "/api/tasks/");
         Assert.Equal(HttpStatusCode.OK, first.Status);
@@ -284,6 +379,7 @@ public sealed class BoardConditionalReadTests : IDisposable
         Seed("t-1", "First task", TaskStates.Ready);
         using var factory = BuildFactory();
         using var client = CreateClient(factory);
+        await WaitForBoardQuiescenceAsync(factory);
 
         var first = await GetAsync(client, "/api/tasks/grouped");
 

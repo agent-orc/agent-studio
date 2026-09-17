@@ -26,20 +26,30 @@ public class TaskIndexCacheTests : IDisposable
         foreach (var state in TaskStates.All)
             Directory.CreateDirectory(Path.Combine(_watchPath, state));
 
-        _config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["WatchPaths:0:Name"] = "cache-test",
-                ["WatchPaths:0:Path"] = _watchPath,
-                ["TaskIndexCache:SafetyTtlSeconds"] = "1", // tight TTL for the safety test
-            })
-            .Build();
+        // The shared fixture deliberately puts the safety TTL out of reach.
+        // Most tests here assert the opposite of what the TTL does - that a
+        // read returns the previously published snapshot until something
+        // invalidates it - so a TTL that can expire mid-test turns a correct
+        // "cache returned the stale view, by design" into a failure whenever
+        // the run is slow enough for the rescan to land first. The one test
+        // that is about the TTL builds its own tight-TTL cache below.
+        _config = BuildConfig(safetyTtlSeconds: 3600);
 
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, _config);
         _scanner = new TaskScannerService(_config, NullLogger<TaskScannerService>.Instance, summary);
         _cache = new TaskIndexCache(_scanner, NullLogger<TaskIndexCache>.Instance, _config);
         _scanner.SetIndexCache(_cache);
     }
+
+    private IConfiguration BuildConfig(int safetyTtlSeconds) =>
+        new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["WatchPaths:0:Name"] = "cache-test",
+                ["WatchPaths:0:Path"] = _watchPath,
+                ["TaskIndexCache:SafetyTtlSeconds"] = safetyTtlSeconds.ToString(),
+            })
+            .Build();
 
     [Fact]
     public void FirstRead_LoadsFromDisk()
@@ -85,11 +95,23 @@ public class TaskIndexCacheTests : IDisposable
         Assert.Equal(1, _cache.MutationInvalidations);
     }
 
+    /// <summary>
+    /// The safety rescan is the only behaviour in this class that needs a TTL
+    /// short enough to expire during a test, so it gets its own scanner and
+    /// cache over the same folder rather than tightening the TTL for every
+    /// other test in the fixture.
+    /// </summary>
     [Fact]
     public void SafetyTtl_PicksUpExternalChanges_EvenWithoutInvalidation()
     {
+        var config = BuildConfig(safetyTtlSeconds: 1);
+        var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
+        var cache = new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance, config);
+        scanner.SetIndexCache(cache);
+
         WriteJob("2-ready", "job-1", "First");
-        var firstScan = _scanner.ScanAllJobs();
+        var firstScan = scanner.ScanAllJobs();
         Assert.Single(firstScan);
 
         WriteJob("2-ready", "job-2", "Second");
@@ -97,7 +119,7 @@ public class TaskIndexCacheTests : IDisposable
         // Wait past the configured 1 s safety TTL.
         Thread.Sleep(1200);
 
-        var fresh = _scanner.ScanAllJobs();
+        var fresh = scanner.ScanAllJobs();
         Assert.Equal(2, fresh.Count);
     }
 
