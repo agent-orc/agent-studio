@@ -258,6 +258,14 @@ public sealed class FakeStableCheckout : IDisposable
         RunCapture(exe, workingDir, args);
     }
 
+    /// <summary>
+    /// Bound wait for one fixture git invocation. Generous enough that a
+    /// loaded gate host never trips it, short enough that a wedged child
+    /// surfaces as a named failure instead of hanging the whole test run
+    /// until the runner's blame-hang timer fires.
+    /// </summary>
+    private static readonly TimeSpan GitTimeout = TimeSpan.FromMinutes(2);
+
     private static string RunCapture(string exe, string workingDir, params string[] args)
     {
         var psi = new ProcessStartInfo(exe)
@@ -270,9 +278,21 @@ public sealed class FakeStableCheckout : IDisposable
         };
         foreach (var a in args) psi.ArgumentList.Add(a);
         using var p = Process.Start(psi)!;
-        var stdout = p.StandardOutput.ReadToEnd();
-        var stderr = p.StandardError.ReadToEnd();
-        p.WaitForExit();
+        // Both pipes are drained concurrently. Reading stdout to the end
+        // first deadlocks the moment the child fills the stderr pipe buffer
+        // while we are still blocked on stdout, which is exactly what a
+        // git command that turns chatty under load (clone, push, fetch) can
+        // do, and it would present as a hung suite rather than a failure.
+        var stdoutTask = p.StandardOutput.ReadToEndAsync();
+        var stderrTask = p.StandardError.ReadToEndAsync();
+        if (!p.WaitForExit((int)GitTimeout.TotalMilliseconds))
+        {
+            try { p.Kill(entireProcessTree: true); } catch { /* already gone */ }
+            throw new TimeoutException(
+                $"{Path.GetFileName(exe)} {string.Join(' ', args)} did not exit within {GitTimeout.TotalSeconds:F0}s in {workingDir}");
+        }
+        var stdout = stdoutTask.GetAwaiter().GetResult();
+        var stderr = stderrTask.GetAwaiter().GetResult();
         if (p.ExitCode != 0)
             throw new InvalidOperationException(
                 $"{Path.GetFileName(exe)} {string.Join(' ', args)} exited {p.ExitCode}\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}");

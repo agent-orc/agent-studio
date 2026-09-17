@@ -58,6 +58,10 @@ namespace AgentStudio.Tests;
 /// </summary>
 // MachineBound 19.07.: gesamte Suite treibt echte Prozesse/Healthz-Polling, flakt unter Parallellast im Karten-Gate.
 [Trait("Category", "MachineBound")]
+// Same serial collection as the restart identity drill: both suites fork git
+// and bash against their own temp checkout and read wall-clock budgets, so
+// they must not be scheduled against each other or the rest of the assembly.
+[Collection(UpdateServiceSerialCollection.Name)]
 public class UpdateServiceIntegrationTests
 {
     private const int TriggerTimeoutMs = 90_000;

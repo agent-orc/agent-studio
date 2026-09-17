@@ -34,9 +34,33 @@ namespace AgentStudio.Tests;
 ///     manifest is untouched, and the following preflight reads the resulting
 ///     running/installed difference as "upgrade in verification" rather than
 ///     refusing it as a divergence.
+///   - Terminal-record ordering: a failed run's terminal record names the
+///     reverted head, i.e. the checkout was already back when the phase
+///     flipped, for the restart-health site as well as the frontend one
+///     (AGT-2855).
+///
+/// The class sits in <see cref="UpdateServiceSerialCollection"/>. Every case
+/// forks git and bash against a temp checkout and then polls wall-clock
+/// budgets for the result, so running it next to the other update-service
+/// suite (which drives the same machinery) or next to an arbitrary slice of a
+/// 6800-test assembly only adds contention to the very timings the assertions
+/// read. Serializing the collection costs a few seconds of wall clock and
+/// removes that whole class of interference; it does not relax a single
+/// assertion.
 /// </summary>
+[Collection(UpdateServiceSerialCollection.Name)]
 public class UpdateServiceRestartIdentityDrillTests
 {
+    /// <summary>
+    /// Budget for one drill to reach a terminal phase. It is a ceiling on a
+    /// hang, not a tuning knob: the upgrade case reports "done" after ~12 s
+    /// and the failure cases after ~5 s, against per-step budgets
+    /// (health/restart/frontend waits) that are configured on the factory and
+    /// bound the run long before this does. The gate publishes no wall-clock
+    /// policy a test timeout could be derived from - its resource policy caps
+    /// CPU and collection parallelism (<c>ReviewPlanResourcePolicy</c>), not
+    /// duration - so the ceiling stays an explicit constant here.
+    /// </summary>
     private const int TriggerTimeoutMs = 180_000;
     private const string PreviousVersion = "0.3.0";
     private const string CandidateVersion = "0.4.0";
@@ -114,7 +138,8 @@ public class UpdateServiceRestartIdentityDrillTests
 
         // Backend health and runtime identity pass; the frontend port never
         // opens, which is the last check before the manifest is committed.
-        using var factory = NewFactory(checkout, backend, frontendUrl: ClosedLoopbackUrl(), frontendWaitSeconds: 4);
+        using var frontendPort = new ClosedLoopbackPort();
+        using var factory = NewFactory(checkout, backend, frontendUrl: frontendPort.Url, frontendWaitSeconds: 4);
         var client = factory.CreateClient();
 
         await TriggerAsync(client);
@@ -124,6 +149,12 @@ public class UpdateServiceRestartIdentityDrillTests
             status.GetProperty("message").GetString()!.Contains("frontend dev server did not come up"),
             "expected the frontend wait to be the failing step, got: " +
             $"{status.GetProperty("message").GetString()}{RunFolderDiagnostics(checkout.RunsDir)}");
+
+        // The revert is part of the failure, not a follow-up to it: the
+        // terminal record names the head the run left behind, which it can
+        // only do if the checkout was already back when the phase flipped
+        // (AGT-2855).
+        AssertTerminalRecordNamesHead(status, headBefore);
 
         // The handoff happened, and it stayed out of the checkout: the root
         // manifest is byte-for-byte the pre-run one and HEAD is back.
@@ -145,7 +176,88 @@ public class UpdateServiceRestartIdentityDrillTests
             preflight.GetProperty("errors").ToString());
     }
 
+    /// <summary>
+    /// AGT-2855 product guard. The restart-health failure site is the other
+    /// place a run can end between the candidate checkout and the mutation
+    /// boundary, and it used to publish <c>failed</c> and revert the checkout
+    /// afterwards, in that order. Under gate load the gap between the two is
+    /// a whole process spawn wide, which is how the frontend drill above
+    /// started reading a checkout that was still on the candidate commit.
+    ///
+    /// The assertion reads the run's terminal record rather than re-reading
+    /// the checkout on a timer, so it pins the ordering instead of racing it:
+    /// <c>lastRunHeadAfter</c> is frozen at the moment the phase flips, and it
+    /// can only name the pre-run head if the revert had already happened by
+    /// then. A regression that moves the revert back behind the transition
+    /// fails this test outright instead of turning the gate flaky again.
+    /// </summary>
+    [SkippableFact]
+    public async Task RestartHealthFailure_PublishesTheTerminalPhaseOnlyAfterTheCheckoutIsBack()
+    {
+        using var checkout = FakeStableCheckout.TryCreate();
+        Skip.If(checkout == null, "git and/or bash are not available on PATH; this drill needs both.");
+
+        var headBefore = checkout!.ReadStableHead();
+        var installedManifest = ManifestJson(PreviousVersion, headBefore);
+        var candidateCommit = checkout.PublishReleaseCandidate(CandidateTag, ProjectDefinitionYaml);
+
+        checkout.InstallManifest(installedManifest);
+        checkout.PublishCandidateManifest(ManifestJson(CandidateVersion, candidateCommit), CandidateTag);
+        checkout.BootBackendWith(installedManifest);
+
+        // The restarted backend never reports healthy, so the run ends at the
+        // first check after the handoff, well before the manifest commit.
+        await using var backend = new FakeBackendHarness
+        {
+            RuntimeIdentityFile = checkout.RuntimeIdentityFile,
+            HealthzReturns503 = true,
+        };
+        await backend.StartAsync();
+
+        using var factory = new UpdateServiceTestFactory(checkout, backend,
+            autoRollback: false,
+            healthWaitSeconds: 3,
+            requireReleaseManifest: true,
+            frontendUrl: backend.BaseUrl,
+            frontendWaitSeconds: 30,
+            restartHealthWaitSeconds: 3);
+        var client = factory.CreateClient();
+
+        await TriggerAsync(client);
+        var status = await WaitForPhaseAsync(client, new[] { "done", "failed" }, TriggerTimeoutMs);
+        Assert.Equal("failed", status.GetProperty("phase").GetString());
+        Assert.True(
+            status.GetProperty("message").GetString()!.Contains("backend did not come back healthy"),
+            "expected the restart health wait to be the failing step, got: " +
+            $"{status.GetProperty("message").GetString()}{RunFolderDiagnostics(checkout.RunsDir)}");
+
+        AssertTerminalRecordNamesHead(status, headBefore);
+        Assert.Equal(headBefore, checkout.ReadStableHead());
+        Assert.Equal(installedManifest, File.ReadAllText(checkout.InstalledManifestFile));
+    }
+
     // ─── harness helpers ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Asserts that the run's terminal record names <paramref name="expectedHead"/>
+    /// as the head the run left behind.
+    ///
+    /// <c>lastRunHeadAfter</c> is the field to read, not <c>headLocal</c>:
+    /// both end up reverted once the run is over, but <c>headLocal</c> tracks
+    /// the checkout continuously, so a post-hoc read of it cannot tell an
+    /// early revert from a late one. <c>lastRunHeadAfter</c> is frozen into
+    /// the snapshot at the moment the phase flips, so reading it any time
+    /// afterwards still proves what the checkout looked like right then.
+    ///
+    /// The service publishes the abbreviated SHA, so the full SHA the fixture
+    /// reads from the checkout has to start with it.
+    /// </summary>
+    private static void AssertTerminalRecordNamesHead(JsonElement status, string expectedHead)
+    {
+        var reported = status.GetProperty("lastRunHeadAfter").GetString();
+        Assert.False(string.IsNullOrWhiteSpace(reported), "status carried no lastRunHeadAfter");
+        Assert.StartsWith(reported, expectedHead, StringComparison.Ordinal);
+    }
 
     private static UpdateServiceTestFactory NewFactory(
         FakeStableCheckout checkout,
@@ -237,16 +349,6 @@ public class UpdateServiceRestartIdentityDrillTests
     {
         Assert.True(File.Exists(path), $"expected a build manifest at {path}");
         return StableReleaseContract.Read(File.ReadAllText(path));
-    }
-
-    /// <summary>A loopback port nothing listens on, for the frontend-down case.</summary>
-    private static string ClosedLoopbackUrl()
-    {
-        var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
-        listener.Start();
-        var port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
-        listener.Stop();
-        return $"http://127.0.0.1:{port}";
     }
 
     // ─── release fixture ────────────────────────────────────────────────────
