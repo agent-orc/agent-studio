@@ -200,6 +200,21 @@ drain_review_unit() {
     "$review_unit" "$previous_main_pid"
 }
 
+# AGT-2863: promote with no mixed releases. A plain promotion replaces the
+# review daemon while its detached workers keep running, so every adopted
+# attempt keeps grading on the superseded binary until it ends. Draining first
+# costs the wait but guarantees that the next generation's workers are all the
+# promoted release. The promote step itself is unchanged.
+promote_release_after_review_drain() {
+  if systemctl is-active --quiet "$review_unit"; then
+    drain_review_unit
+  else
+    printf 'agent-runner-deploy: %s is not running; nothing to drain before promotion\n' \
+      "$review_unit"
+  fi
+  promote_release
+}
+
 audit_config() {
   local result="$1"
   local detail="$2"
@@ -972,6 +987,9 @@ main() {
       force_restart=1
       promote_release
       ;;
+    1:--restart-review-drain)
+      promote_release_after_review_drain
+      ;;
     1:drain)
       drain_review_unit
       ;;
@@ -995,7 +1013,7 @@ main() {
       configure_role "$2" "$3" "$4"
       ;;
     *)
-      die "usage: agent-runner-deploy [--force] | drain | restart-review [--force] | update-clis <codex-version> <claude-version> | config <coding|review> RUNNER_MAX_PARALLELISM <1-6> [--force]"
+      die "usage: agent-runner-deploy [--force|--restart-review-drain] | drain | restart-review [--force] | update-clis <codex-version> <claude-version> | config <coding|review> RUNNER_MAX_PARALLELISM <1-6> [--force]"
       ;;
   esac
 }

@@ -336,6 +336,49 @@ State lives in
 `<TaskRepository>/logs/integration-gate-health/<project>.json`. Losing that file
 costs one repeated alert, never a missed one.
 
+## Worker release provenance (AGT-2863)
+
+A review daemon restart adopts the running detached workers instead of killing
+them (AGT-2753 / AGT-2836), so the process that grades an adopted attempt is the
+**previous** release's `agent-host --detached-review-worker`, while the daemon
+that reports the verdict is the new one. Before this contract, the evidence
+bundle recorded only executor and fence, so a verdict graded by a superseded
+build was indistinguishable from one graded by the current release.
+
+Every review attempt now records who graded it:
+
+- The launching daemon stamps `WorkerReleaseId` and `WorkerBinaryPath` into its
+  `RUNNER_STATE_DIR/reviews/<attempt>.review-slot.json` record, and the worker
+  corroborates both in `review-worker.json`. The binary path is resolved through
+  the `current` symlink, so it names `/opt/agent-host/releases/<id>/agent-host`
+  even after a promotion moved that link.
+- The report carries `ReviewEnvironmentDto.Worker`
+  (`ReviewWorkerProvenanceDto`: worker release, worker binary, daemon release).
+  The field is optional on the wire; a report from a runner that predates it is
+  accepted unchanged.
+- `ReviewWorkerProvenancePolicy` is the single reading of that record. A release
+  is only compared when both sides are known, so a slot adopted from a
+  pre-AGT-2863 daemon reads `unknown` and never produces a false mismatch.
+- The grade file writes `workerReleaseId`, `daemonReleaseId`, and (on a
+  mismatch) `workerReleaseSuperseded` into its frontmatter, and
+  `TaskScopedTestEvidenceReader` reads them back into
+  `ReviewAttempt.WorkerReleaseId` / `DaemonReleaseId` /
+  `WorkerReleaseSuperseded`, so every review surface reads one projection
+  rather than re-parsing the report.
+
+Two restart modes use that record, and **neither ever ends an adopted worker**:
+
+| Mode | Selected by | Behaviour |
+|---|---|---|
+| Adopt and report (default) | nothing to set | The replacement finishes every adopted attempt and claims beside it. One `review worker release superseded ...` journal line per mismatched attempt, the release pair in the grade's *Immutable subject proof* block, and one `review_graded_by_superseded_release` timeline entry on the card. |
+| Release drain (opt-in) | `agent-runner-deploy --restart-review-drain`, or `RUNNER_REVIEW_RELEASE_DRAIN=1` on an already restarted daemon | The deploy form drains Review before the unchanged promote step. The daemon knob still finishes every adopted attempt but closes claim admission (`ReviewReleaseDrainPolicy`) while a superseded worker runs, so a worker-side hotfix reaches every attempt this daemon grades. |
+
+The drain decision reuses `ReviewSlotAdmissionDecision` with its
+`ActiveSlotsContinue` default, which is what makes "hold claims" structurally
+incapable of cancelling a running review. Operator procedure and the log lines
+to check live in
+[linux-runner-host.md](../../operations/setup/linux-runner-host.md#which-release-grades-an-adopted-review).
+
 ## Key code and tests
 
 - `runner/RemoteReviewWorkspace.cs`: exact checkout, integration-ref fetch,
@@ -397,6 +440,18 @@ costs one repeated alert, never a missed one.
   expiry, pruning, and a new-failure classification against a reused baseline.
 - `contracts/TaskServer.Contracts/ReviewFailureAttributionPolicy.cs` and
   `backend.Tests/ReviewFailureAttributionPolicyTests.cs`: the attribution matrix.
+- `backend/Features/TestRuns/TaskScopedTestEvidenceReader.cs` and
+  `backend/Features/Review/ReviewProjection.cs`: the grade's release provenance
+  read back onto the review projection, covered by
+  `backend.Tests/RemoteReviewReportEvidenceTests.cs`.
+- `runner/RunnerReleaseIdentity.cs`, `runner/DurableReviewProcess.cs`,
+  `runner/ReviewReleaseDrainPolicy.cs`, and
+  `contracts/TaskServer.Contracts/ReviewContracts.cs`
+  (`ReviewWorkerProvenanceDto`, `ReviewWorkerProvenancePolicy`): worker release
+  provenance and the two restart modes, covered by
+  `runner.Tests/ReviewWorkerReleaseProvenanceTests.cs`,
+  `runner.Tests/RunnerReleaseIdentityTests.cs`, and
+  `backend.Tests/RemoteReviewWorkerReleaseProjectionTests.cs`.
 - `runner/ReviewInfraAttributionPolicy.cs` and
   `runner.Tests/ReviewInfraAttributionPolicyTests.cs`: the separate,
   runner-local decision of whether a failed command is a torn-down-`/tmp`

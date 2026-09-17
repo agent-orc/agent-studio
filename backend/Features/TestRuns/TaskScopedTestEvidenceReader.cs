@@ -151,6 +151,8 @@ internal static class TaskScopedTestEvidenceReader
         };
 
         var baselineReuse = frontmatter.GetValueOrDefault("baselineReuse");
+        var workerRelease = frontmatter.GetValueOrDefault("workerReleaseId");
+        var daemonRelease = frontmatter.GetValueOrDefault("daemonReleaseId");
         return new RemoteReviewAttemptFacts(
             AttemptId: attemptId,
             ReportRef: reportRef,
@@ -162,7 +164,9 @@ internal static class TaskScopedTestEvidenceReader
             BuildResultLabel: buildResultLabel,
             BuildReason: buildReason,
             BuildSteps: buildSteps,
-            BaselineReuse: string.IsNullOrWhiteSpace(baselineReuse) ? null : baselineReuse);
+            BaselineReuse: string.IsNullOrWhiteSpace(baselineReuse) ? null : baselineReuse,
+            WorkerReleaseId: string.IsNullOrWhiteSpace(workerRelease) ? null : workerRelease,
+            DaemonReleaseId: string.IsNullOrWhiteSpace(daemonRelease) ? null : daemonRelease);
     }
 
     private static IReadOnlyList<TaskTestEvidenceSource> ReadRemoteReview(string path)
@@ -448,4 +452,12 @@ internal sealed record RemoteReviewAttemptFacts(
     /// already produced; null when every baseline ran in this attempt
     /// (AGT-2843).
     /// </summary>
-    string? BaselineReuse = null);
+    string? BaselineReuse = null,
+    /// <summary>
+    /// The agent-host release of the detached worker that produced this verdict
+    /// and the release of the daemon that reported it. A review-daemon restart
+    /// adopts running workers instead of discarding their gate work, so the two
+    /// can differ (AGT-2863). Null for a report written before this provenance.
+    /// </summary>
+    string? WorkerReleaseId = null,
+    string? DaemonReleaseId = null);

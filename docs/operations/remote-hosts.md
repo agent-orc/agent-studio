@@ -430,6 +430,39 @@ the deliberate fail-closed first-upgrade procedure for daemons that cannot yet
 acknowledge the admission barrier are in
 [Restart, drain, handoff](setup/linux-runner-host.md#restart-drain-handoff).
 
+### Which release grades an adopted review (AGT-2863)
+
+A restart hands the running detached workers to the new daemon instead of
+killing them, so those attempts keep executing the **previous** release until
+they end. That is deliberate: no gate work is lost. Two modes decide what
+happens around it, and neither ever kills an adopted worker.
+
+| Mode | Command | Behaviour |
+|---|---|---|
+| Adopt and report (default) | `sudo /usr/local/sbin/agent-runner-deploy` | The new daemon finishes the adopted attempts and claims beside them. Each mismatch is logged once and named on the card. |
+| Release drain (opt-in) | `sudo /usr/local/sbin/agent-runner-deploy --restart-review-drain` | Drains Review first, so the replacement starts with no worker of the outgoing release. Use it when the release changes worker-side behaviour. |
+
+`--restart-review-drain` is the existing `drain` followed by the unchanged
+promote step; if Review is already stopped it promotes directly. The same
+wait can also be asked of a daemon that has already adopted a superseded
+worker, by setting `RUNNER_REVIEW_RELEASE_DRAIN=1` in the Review role
+environment: that daemon still finishes every adopted attempt, but takes no
+new claim until the superseded ones are done.
+
+Every review report now carries the release and the resolved binary path of the
+worker that produced the verdict. Where to read it:
+
+- Host journal on adoption: `adopting persisted review ... worker-release=<id>
+  daemon-release=<id>`, plus one `review worker release superseded ...` line per
+  mismatched attempt.
+- Grade file `remote-review-grade-<attempt>.md`: `Worker release`, `Worker
+  binary`, and `Daemon release` in the *Immutable subject proof* block.
+- Card timeline: `Remote review graded by release <old>, current <new>`.
+
+An attempt adopted from a daemon that predates this provenance reports
+`unknown` rather than claiming the reporting daemon's release, and produces no
+mismatch notice, because the superseding cannot be proved.
+
 ## Retire, revive, delete
 
 ### Retire

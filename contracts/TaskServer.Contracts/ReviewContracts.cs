@@ -296,7 +296,60 @@ public sealed record ReviewEnvironmentDto(
     string Architecture,
     string RuntimeVersion,
     IReadOnlyDictionary<string, string> Toolchain,
-    IReadOnlyDictionary<string, string> Isolation);
+    IReadOnlyDictionary<string, string> Isolation,
+    ReviewWorkerProvenanceDto? Worker = null);
+
+/// <summary>
+/// Which agent-host build actually produced a verdict. The detached review
+/// worker survives a daemon restart on purpose (AGT-2753), so a replacement
+/// daemon can report an attempt that an older release graded. A report that
+/// names only the executor and the fence cannot tell those two cases apart
+/// (AGT-2863), so the worker's release id and resolved binary path travel with
+/// the evidence next to the daemon release that submitted it.
+/// </summary>
+public sealed record ReviewWorkerProvenanceDto(
+    string WorkerReleaseId,
+    string WorkerBinaryPath,
+    string DaemonReleaseId);
+
+/// <summary>
+/// Pure reading of <see cref="ReviewWorkerProvenanceDto"/>. A worker can only
+/// have been launched by an earlier daemon generation on the same host, so a
+/// release that differs from the reporting daemon's is by construction the
+/// superseded one.
+/// </summary>
+public static class ReviewWorkerProvenancePolicy
+{
+    /// <summary>Recorded when a pre-AGT-2863 worker or slot record is adopted.</summary>
+    public const string Unknown = "unknown";
+
+    public static bool IsKnown(string? releaseId)
+        => !string.IsNullOrWhiteSpace(releaseId)
+           && !string.Equals(releaseId.Trim(), Unknown, StringComparison.OrdinalIgnoreCase);
+
+    public static bool ReleasesDiffer(string? workerReleaseId, string? daemonReleaseId)
+        => IsKnown(workerReleaseId)
+           && IsKnown(daemonReleaseId)
+           && !string.Equals(workerReleaseId, daemonReleaseId, StringComparison.Ordinal);
+
+    public static bool ReleasesDiffer(ReviewWorkerProvenanceDto? provenance)
+        => provenance is not null
+           && ReleasesDiffer(provenance.WorkerReleaseId, provenance.DaemonReleaseId);
+
+    /// <summary>
+    /// The one operator-facing sentence about a superseded grading build. Kept
+    /// here so the runner log, the grade file, and the card cannot drift.
+    /// </summary>
+    public static string? SupersededNotice(string? workerReleaseId, string? daemonReleaseId)
+        => ReleasesDiffer(workerReleaseId, daemonReleaseId)
+            ? $"graded by release {workerReleaseId}, current {daemonReleaseId}"
+            : null;
+
+    public static string? SupersededNotice(ReviewWorkerProvenanceDto? provenance)
+        => provenance is null
+            ? null
+            : SupersededNotice(provenance.WorkerReleaseId, provenance.DaemonReleaseId);
+}
 
 public sealed record ReviewVerdictDto(
     string Aspect,

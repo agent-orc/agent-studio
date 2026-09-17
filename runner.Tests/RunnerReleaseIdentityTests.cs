@@ -47,6 +47,41 @@ public sealed class RunnerReleaseIdentityTests
             RunnerReleaseIdentity.Resolve(AppContext.BaseDirectory, " release-explicit "));
     }
 
+    /// <summary>
+    /// AGT-2863: a detached review worker outlives the promotion that moves the
+    /// <c>current</c> symlink, so the binary path recorded with its verdict has
+    /// to name the release directory, not the link it was started through.
+    /// </summary>
+    [SkippableFact]
+    public void Worker_binary_path_resolves_through_the_current_symlink()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"agent-host-binary-{Guid.NewGuid():N}");
+        var releaseId = "20260917T1550Z-v0.6.0-551484dca";
+        var release = Path.Combine(root, "releases", releaseId);
+        var current = Path.Combine(root, "current");
+        try
+        {
+            Directory.CreateDirectory(release);
+            File.WriteAllText(Path.Combine(release, "agent-host"), "binary");
+            Skip.IfNot(
+                TryCreateDirectoryLink(current, release),
+                "This host cannot create a directory symlink or Windows junction fixture.");
+
+            Assert.Equal(
+                Path.Combine(release, "agent-host"),
+                RunnerReleaseIdentity.ResolveBinaryPath(Path.Combine(current, "agent-host")));
+        }
+        finally
+        {
+            if (Directory.Exists(current)) Directory.Delete(current);
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void An_unavailable_process_path_reports_an_unknown_binary()
+        => Assert.Equal("unknown", RunnerReleaseIdentity.ResolveBinaryPath(null));
+
     private static bool TryCreateDirectoryLink(string link, string target)
     {
         try

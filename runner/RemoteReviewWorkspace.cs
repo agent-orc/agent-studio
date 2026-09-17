@@ -1895,7 +1895,9 @@ public sealed class RemoteReviewWorkspace
         }
     }
 
-    public ReviewEnvironmentDto EnvironmentEvidence(ReviewLeaseDto? authority = null)
+    public ReviewEnvironmentDto EnvironmentEvidence(
+        ReviewLeaseDto? authority = null,
+        ReviewWorkerProvenanceDto? worker = null)
     {
         // A re-claim changes who may submit the report without moving the
         // detached worker. Attribute the execution to the current authority,
@@ -1939,7 +1941,8 @@ public sealed class RemoteReviewWorkspace
                 ["containers"] = _lease.ResourceNamespace,
                 ["databases"] = _lease.ResourceNamespace,
                 ["credentials"] = "review-read-only",
-            });
+            },
+            worker);
     }
 
     public async Task<bool> CleanupAsync(string attemptId = "unknown")

@@ -412,6 +412,17 @@ public static class TimelineEventKinds
     /// time.
     /// </summary>
     public const string ReviewInfrastructureRetryScheduled = "review_infrastructure_retry_scheduled";
+    /// <summary>
+    /// AGT-2863: the Remote Review verdict on this card was produced by a
+    /// detached worker running an older agent-host release than the daemon that
+    /// reported it, because a review-daemon restart adopts running workers
+    /// instead of discarding their gate work. Reporting only - the verdict
+    /// stands. <see cref="TimelineEvent.Summary"/> carries "graded by release
+    /// &lt;old&gt;, current &lt;new&gt;"; <see cref="TimelineEvent.Details"/>
+    /// carry <c>attemptId</c>, <c>workerReleaseId</c>, <c>daemonReleaseId</c>,
+    /// <c>workerBinaryPath</c>, and <c>fence</c>.
+    /// </summary>
+    public const string ReviewGradedBySupersededRelease = "review_graded_by_superseded_release";
     /// AGT-2492: the recall sweep found that a parked card's recorded
     /// precondition no longer holds. <see cref="TimelineEvent.Summary"/> carries
     /// how long the card has been parked and why the blocker is considered gone;

@@ -1345,6 +1345,8 @@ replacement processes, and watches for an immediate restart loop.
 ```bash
 sudo /usr/local/sbin/agent-runner-deploy drain
 sudo /usr/local/sbin/agent-runner-deploy
+# Or, in one step, for a release that changes worker-side behaviour:
+# sudo /usr/local/sbin/agent-runner-deploy --restart-review-drain
 sudo journalctl -u agent-host --since '-2 minutes' \
   | grep -E 'planned shutdown|coding handoff lease extended|coding daemon handoff|coding-slot-reconciliation|persisted attempt accepted|recovered .* persisted slot|releasing dead persisted attempt'
 
@@ -1380,6 +1382,69 @@ This procedure covers a planned daemon binary restart, not a machine reboot,
 power loss, Task Server authority restart, or forced `SIGKILL`. Those cases
 still use the existing fenced containment and `process-unknown` recovery
 contracts.
+
+### Which release grades an adopted review
+
+A detached review worker deliberately outlives the daemon that launched it, so
+after a replacement the adopted attempts keep running the **previous** release
+until they end. The AGT-2863 evidence is the 17.09.2026 host: the worker-side
+`TmpMountTornDown` fix and the AGT-2858 temp-residue change reached only the
+attempts claimed after the restart, and nothing on the card said so. An adopted
+worker is still never killed for a release mismatch; AGT-2753's rule that a
+restart must not discard gate work outranks release uniformity.
+
+**Mode 1, adopt and report (default).** The replacement finishes every adopted
+attempt and keeps claiming beside it. Each adopted attempt whose worker build
+differs from the daemon's produces exactly one journal line:
+
+```
+adopting persisted review attempt=review_e069ff44 fence=2 pid=3831614 phase=handed-off \
+  worker-release=20260917T1010Z-v0.5.0-tmpguard-fcdb68b24 \
+  daemon-release=20260917T1550Z-v0.6.0-551484dca
+review worker release superseded attempt=review_e069ff44 \
+  graded by release 20260917T1010Z-v0.5.0-tmpguard-fcdb68b24, current 20260917T1550Z-v0.6.0-551484dca \
+  worker-binary=/opt/agent-host/releases/20260917T1010Z-v0.5.0-tmpguard-fcdb68b24/agent-host; \
+  the adopted attempt finishes on its own release
+```
+
+The same fact reaches the operator without shell access. The grade file
+`remote-review-grade-<attempt>.md` names `Worker release`, `Worker binary`, and
+`Daemon release` in its *Immutable subject proof* block, and the card timeline
+carries one `Remote review graded by release <old>, current <new>` entry. A
+report whose worker release equals the daemon release states the build and adds
+no notice; an attempt adopted from a daemon that predates this provenance reads
+`unknown` and produces no notice, because a mismatch cannot be proved.
+
+**Mode 2, release drain (opt-in).** When the release changes behaviour that
+lives in the worker, an operator can ask for no mixed releases at all:
+
+```bash
+# Drain Review, then promote the staged release. The promote step is unchanged;
+# only the bounded drain is added in front of it.
+sudo /usr/local/sbin/agent-runner-deploy --restart-review-drain
+```
+
+This is the existing `agent-runner-deploy drain` followed by the ordinary
+promotion, so it inherits the drain's acknowledgement protocol, its
+`RUNNER_DRAIN_TIMEOUT_SECONDS` bound (default one hour), and its fail-closed
+refusals. An already stopped Review role has nothing to drain and is promoted
+directly. The service account may run this form; `--force` remains root-only.
+
+The wait can also be asked of a daemon that has **already** adopted a
+superseded worker, for instance after an unplanned restart. Set
+`RUNNER_REVIEW_RELEASE_DRAIN=1` in the Review role environment
+(`/etc/agent-runner/runner-review.env`) or pass `--review-release-drain 1`. That
+daemon still adopts and finishes every persisted attempt, but holds claim
+admission while any of them runs a superseded build:
+
+```
+review slot admission closed: release drain: 1 adopted attempt(s) still run \
+  release 20260917T1010Z-v0.5.0-tmpguard-fcdb68b24; claims resume when they finish
+review slot admission reopened: load/core 0.42 is below 1.50
+```
+
+Active slots are never cancelled by this decision, exactly like the load gate.
+Leave the knob unset for the default behaviour, which keeps today's throughput.
 
 ## 5. Run one task end-to-end for diagnostics
 

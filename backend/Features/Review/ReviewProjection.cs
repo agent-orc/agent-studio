@@ -65,6 +65,24 @@ public sealed record ReviewAttempt
     /// baseline of this attempt was executed by the attempt itself.
     /// </summary>
     public string? BaselineReuse { get; init; }
+
+    /// <summary>
+    /// The agent-host release of the detached worker that produced this verdict,
+    /// and the release of the daemon that reported it (AGT-2863). Null on a local
+    /// attempt and on a remote report written before this provenance existed.
+    /// </summary>
+    public string? WorkerReleaseId { get; init; }
+
+    public string? DaemonReleaseId { get; init; }
+
+    /// <summary>
+    /// <c>graded by release &lt;old&gt;, current &lt;new&gt;</c> when a
+    /// review-daemon restart let a worker of a superseded release finish this
+    /// attempt; null when the verdict came from the reporting daemon's own
+    /// release or the releases cannot be compared. The verdict itself stands:
+    /// an adopted worker is never killed for a release mismatch.
+    /// </summary>
+    public string? WorkerReleaseSuperseded { get; init; }
 }
 
 /// <summary>A blocking aspect on the latest review attempt, with its quoted reason.</summary>
@@ -198,6 +216,10 @@ public static class ReviewProjectionReader
         ReportRef = fact.ReportRef,
         BaselineReused = !string.IsNullOrWhiteSpace(fact.BaselineReuse),
         BaselineReuse = fact.BaselineReuse,
+        WorkerReleaseId = fact.WorkerReleaseId,
+        DaemonReleaseId = fact.DaemonReleaseId,
+        WorkerReleaseSuperseded = AgentStudio.TaskServer.Contracts.ReviewWorkerProvenancePolicy
+            .SupersededNotice(fact.WorkerReleaseId, fact.DaemonReleaseId),
     };
 
     private static ReviewAttempt ToAttempt(LocalReviewAttemptFacts fact) => new()

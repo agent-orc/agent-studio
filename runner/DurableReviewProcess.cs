@@ -22,7 +22,11 @@ internal sealed record DetachedReviewSpec(
 internal sealed record DetachedReviewIdentity(
     int ProcessId,
     DateTime ProcessStartedAtUtc,
-    string WorkspacePath);
+    string WorkspacePath,
+    // AGT-2863: the worker's own answer to "which build am I". Null means the
+    // record was written before this provenance existed.
+    string? ReleaseId = null,
+    string? BinaryPath = null);
 
 internal sealed record DetachedReviewResult(
     ReviewExecutionEvidence? Evidence,
@@ -41,15 +45,28 @@ internal sealed class DurableReviewProcess
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private readonly string _directory;
 
-    private DurableReviewProcess(string directory, int processId, DateTime processStartedAtUtc)
+    private DurableReviewProcess(
+        string directory,
+        int processId,
+        DateTime processStartedAtUtc,
+        string releaseId = ReviewWorkerProvenancePolicy.Unknown,
+        string binaryPath = ReviewWorkerProvenancePolicy.Unknown)
     {
         _directory = directory;
         ProcessId = processId;
         ProcessStartedAtUtc = processStartedAtUtc;
+        ReleaseId = releaseId;
+        BinaryPath = binaryPath;
     }
 
     public int ProcessId { get; }
     public DateTime ProcessStartedAtUtc { get; }
+
+    /// <summary>Release of the agent-host build this worker executes.</summary>
+    public string ReleaseId { get; }
+
+    /// <summary>Resolved executable the worker runs, never the promote symlink.</summary>
+    public string BinaryPath { get; }
     public string ResultPath => Path.Combine(_directory, "review-result.json");
     public string ProgressPath => Path.Combine(_directory, "review-progress.json");
     public string IdentityPath => Path.Combine(_directory, "review-worker.json");
@@ -85,9 +102,67 @@ internal sealed class DurableReviewProcess
         var process = Process.Start(start)
                       ?? throw new InvalidOperationException("Failed to start detached review worker.");
         var started = process.StartTime.ToUniversalTime();
-        var handle = new DurableReviewProcess(slot.WorkerDirectory, process.Id, started);
+        // The daemon launches its own executable, so its release is the worker's
+        // release. Stamping it here means an attempt started by this build stays
+        // attributable even if the worker's identity file is never re-read.
+        var handle = new DurableReviewProcess(
+            slot.WorkerDirectory,
+            process.Id,
+            started,
+            RunnerReleaseIdentity.Current,
+            RunnerReleaseIdentity.CurrentBinaryPath);
         process.Dispose();
         return handle;
+    }
+
+    /// <summary>
+    /// Fills in worker provenance a pre-AGT-2863 daemon never stamped, using the
+    /// worker's own identity record. Purely additive: a record that already
+    /// names its release is never overwritten by a re-read.
+    /// </summary>
+    public static PersistedReviewSlot WithWorkerProvenance(PersistedReviewSlot slot)
+    {
+        if (slot.WorkerReleaseId is { Length: > 0 } && slot.WorkerBinaryPath is { Length: > 0 })
+            return slot;
+        var identity = ReadIdentity(slot.WorkerDirectory);
+        if (identity is null) return slot;
+        return slot with
+        {
+            WorkerReleaseId = slot.WorkerReleaseId ?? identity.ReleaseId,
+            WorkerBinaryPath = slot.WorkerBinaryPath ?? identity.BinaryPath,
+        };
+    }
+
+    /// <summary>
+    /// Provenance of the process that produced this slot's verdict, as reported
+    /// alongside the verdict. An unstamped adopted record answers
+    /// <see cref="ReviewWorkerProvenancePolicy.Unknown"/> rather than silently
+    /// claiming the reporting daemon's release.
+    /// </summary>
+    public static ReviewWorkerProvenanceDto Provenance(PersistedReviewSlot slot)
+        => new(
+            slot.WorkerReleaseId is { Length: > 0 } release
+                ? release
+                : ReviewWorkerProvenancePolicy.Unknown,
+            slot.WorkerBinaryPath is { Length: > 0 } binary
+                ? binary
+                : ReviewWorkerProvenancePolicy.Unknown,
+            RunnerReleaseIdentity.Current);
+
+    private static DetachedReviewIdentity? ReadIdentity(string workerDirectory)
+    {
+        var path = Path.Combine(workerDirectory, "review-worker.json");
+        try
+        {
+            return File.Exists(path)
+                ? JsonSerializer.Deserialize<DetachedReviewIdentity>(File.ReadAllText(path), Json)
+                : null;
+        }
+        catch (Exception exception) when (
+            exception is IOException or JsonException or UnauthorizedAccessException)
+        {
+            return null;
+        }
     }
 
     public static DurableReviewProcess Attach(PersistedReviewSlot slot)
@@ -140,6 +215,8 @@ internal sealed class DurableReviewProcess
         {
             ProcessId = identity.ProcessId,
             ProcessStartedAtUtc = identity.ProcessStartedAtUtc,
+            WorkerReleaseId = slot.WorkerReleaseId ?? identity.ReleaseId,
+            WorkerBinaryPath = slot.WorkerBinaryPath ?? identity.BinaryPath,
         };
         return VerifyLive(recovered, out reason);
     }
@@ -290,7 +367,9 @@ internal sealed class DurableReviewProcess
             var identity = new DetachedReviewIdentity(
                 current.Id,
                 current.StartTime.ToUniversalTime(),
-                Path.GetFullPath(workspace.RepositoryPath));
+                Path.GetFullPath(workspace.RepositoryPath),
+                RunnerReleaseIdentity.Current,
+                RunnerReleaseIdentity.CurrentBinaryPath);
             if (!await WriteAtomicAsync(
                 Path.Combine(directory, "review-worker.json"),
                 JsonSerializer.Serialize(identity, Json)))

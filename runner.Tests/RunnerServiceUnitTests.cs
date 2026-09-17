@@ -396,6 +396,44 @@ public sealed class RunnerServiceUnitTests
         Assert.Contains("inactive-loaded-state-dir=", result.StandardOutput);
     }
 
+    /// <summary>
+    /// AGT-2863: the promote step itself is unchanged; the new mode only puts a
+    /// bounded review drain in front of it, so the replacement daemon starts
+    /// without adopting a worker of the outgoing release.
+    /// </summary>
+    [SkippableFact]
+    public void Restart_review_drain_finishes_running_reviews_before_it_promotes()
+    {
+        PlatformGate.RequiresPosixShell();
+
+        var result = RunShellScript(
+            "runner.Tests/Fixtures/agent-runner-deploy-review-release-drain.sh",
+            Path.Combine(RepoRoot(), "deploy", "agent-host", "agent-runner-deploy"));
+
+        Assert.True(result.ExitCode == 0, result.StandardError);
+        Assert.Contains("busy-order=drain,promote", result.StandardOutput);
+        // An already stopped Review role has nothing to drain and must not block
+        // the promotion on a refusal.
+        Assert.Contains("idle-order=promote", result.StandardOutput);
+
+        var helper = File.ReadAllText(
+            Path.Combine(RepoRoot(), "deploy", "agent-host", "agent-runner-deploy"));
+        Assert.Contains("1:--restart-review-drain)", helper, StringComparison.Ordinal);
+        Assert.Contains(
+            "[--force|--restart-review-drain]",
+            helper,
+            StringComparison.Ordinal);
+        // The service account may run the composed form only because it may
+        // already run both halves; it must never gain --force.
+        var sudoers = File.ReadAllText(
+            Path.Combine(RepoRoot(), "deploy", "agent-host", "sudoers.d", "agent-runner"));
+        Assert.Contains(
+            "/usr/local/sbin/agent-runner-deploy --restart-review-drain,",
+            sudoers,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("agent-runner-deploy --force", sudoers, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Host_hardening_installs_the_root_owned_dependency_validator_without_expanding_sudoers()
     {
