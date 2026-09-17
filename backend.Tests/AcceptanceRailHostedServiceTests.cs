@@ -242,6 +242,117 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
         Assert.Equal(TaskStates.Ready, stack.Scanner.FindJob("escalated-conflict", _watchPath)!.State);
     }
 
+    /// <summary>
+    /// AGT-2856 (a) - the operator case: a card whose delivery is proven by its
+    /// reviewed result instead of an attributed commit. Its verdict must not
+    /// depend on the other cards sharing the sweep, so the rail accepts it
+    /// rather than refusing an acceptance the board already reports as
+    /// integrated.
+    /// </summary>
+    [Fact]
+    public async Task IntegratedFencedDeliveryWithoutAttributedCommit_IsAcceptedNotRefused()
+    {
+        var stack = Build();
+        var integratedSha = Git(_repo, "rev-parse", "develop");
+        SeedTask(stack, "fenced", integratedSha, attributeCommits: false);
+        SeedTask(stack, "neighbour", integratedSha);
+
+        var snapshot = await stack.Rail.RunOnceAsync();
+
+        Assert.True(snapshot.Accepted == 2, Describe(stack, snapshot));
+        Assert.Equal(TaskStates.Completed, stack.Scanner.FindJob("fenced", _watchPath)!.State);
+        Assert.DoesNotContain(
+            stack.Logs,
+            line => line.Contains("acceptance-rail-accept-refused", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// AGT-2856 (b) and (c) - a delivery the rail cannot recover is refused once
+    /// and then left alone. Only a new fact reopens the decision, and every
+    /// refusal line in the log belongs to one such state change.
+    /// </summary>
+    [Fact]
+    public async Task PendingDelivery_IsRefusedOnce_AndRetriedOnlyOnANewFact()
+    {
+        var stack = Build();
+        var deliverySha = CreateUnintegratedDelivery("unrecoverable");
+        var folder = SeedTask(
+            stack,
+            "unrecoverable",
+            deliverySha,
+            conflict: true,
+            fencedDelivery: false);
+
+        var first = await stack.Rail.RunOnceAsync();
+        Assert.True(first.Failed == 1, Describe(stack, first));
+        Assert.Equal(0, first.Suppressed);
+        Assert.Equal(1, RefusalLines(stack));
+        Assert.Contains(
+            stack.Logs,
+            line => line.Contains("acceptance-rail-requeue-refused", StringComparison.Ordinal));
+
+        var second = await stack.Rail.RunOnceAsync();
+        Assert.Equal(0, second.Failed);
+        Assert.True(second.Suppressed == 1, Describe(stack, second));
+        Assert.Equal(1, RefusalLines(stack));
+        Assert.Equal(TaskStates.HumanReview, stack.Scanner.FindJob("unrecoverable", _watchPath)!.State);
+
+        // A new fact - the next integration attempt fails differently - reopens
+        // the decision, and the refusal is logged again exactly once.
+        RecordMergeConflict(stack, folder, "Merge conflict in another-file.txt.");
+        stack.Scanner.InvalidateCache();
+
+        var third = await stack.Rail.RunOnceAsync();
+        Assert.True(third.Failed == 1, Describe(stack, third));
+        Assert.Equal(2, RefusalLines(stack));
+
+        var fourth = await stack.Rail.RunOnceAsync();
+        Assert.Equal(1, fourth.Suppressed);
+        Assert.Equal(2, RefusalLines(stack));
+    }
+
+    /// <summary>
+    /// AGT-2856 (3) - the project policy may keep a card in Human Review. It
+    /// then stays there with its integration proof and without a warning, no
+    /// matter how often the rail sweeps.
+    /// </summary>
+    [Fact]
+    public async Task HeldIntegratedCard_StaysInHumanReviewWithoutWarnings()
+    {
+        var stack = Build();
+        var integratedSha = Git(_repo, "rev-parse", "develop");
+        SeedTask(stack, "held-integrated", integratedSha, tags: [AcceptanceRailDefaults.OperatorHoldTag]);
+
+        await stack.Rail.RunOnceAsync();
+        var second = await stack.Rail.RunOnceAsync();
+
+        Assert.Equal(1, second.Held);
+        Assert.Equal(TaskStates.HumanReview, stack.Scanner.FindJob("held-integrated", _watchPath)!.State);
+        Assert.DoesNotContain(
+            stack.Logs,
+            line => line.StartsWith("Warning:", StringComparison.Ordinal));
+    }
+
+    private static int RefusalLines(Stack stack)
+        => stack.Logs.Count(line => line.Contains("-refused", StringComparison.Ordinal));
+
+    private static void RecordMergeConflict(Stack stack, string folder, string reason)
+    {
+        var now = DateTime.UtcNow;
+        stack.Pipeline.RecordStep(folder, new PipelineStepExecution
+        {
+            StepId = PipelineCatalogue.MergeIntoDevelopStepId,
+            Kind = StepKind.Tool,
+            Status = PipelineStepStatus.Failed,
+            StartedAt = now,
+            CompletedAt = now,
+            Verdict = "conflict",
+            FailureCode = AcceptedIntegrationFailureCodes.MergeConflict,
+            VerdictSummary = "Delivery conflicts with develop.",
+            Reason = reason,
+        });
+    }
+
     private Stack Build(
         int maxRequeues = AcceptanceRailDefaults.MaxRequeues,
         int maxInfrastructureRequeues = AcceptanceRailDefaults.MaxInfrastructureRequeues)
@@ -332,7 +443,9 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
         bool infrastructureFailure = false,
         string mode = TaskModes.Coding,
         IReadOnlyList<string>? tags = null,
-        string state = TaskStates.HumanReview)
+        string state = TaskStates.HumanReview,
+        bool attributeCommits = true,
+        bool fencedDelivery = true)
     {
         var folder = Path.Combine(_watchPath, state, id);
         Directory.CreateDirectory(folder);
@@ -349,8 +462,8 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
             projectName = Project,
             ownerClientId = DefaultClientIdentity.Id,
             tags = tags ?? [],
-            commit = Commit(commitSha),
-            commits = new[] { Commit(commitSha) },
+            commit = attributeCommits ? Commit(commitSha) : null,
+            commits = attributeCommits ? new[] { Commit(commitSha) } : Array.Empty<object>(),
         };
         File.WriteAllText(
             Path.Combine(folder, "task.json"),
@@ -359,18 +472,21 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
                 new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }));
         File.WriteAllText(Path.Combine(folder, "prompt.md"), $"Implement {id}.\n");
         File.WriteAllText(Path.Combine(folder, "status.md"), "- Result: Awaiting acceptance.\n");
-        ReviewSubjectStore.Write(folder, new ReviewSubjectRecord
+        if (fencedDelivery)
         {
-            TaskKey = "AGT-9001",
-            RunAttemptId = "run-" + id,
-            Project = Project,
-            Repository = _repo,
-            ResultSha = commitSha,
-            ResultRef = "task/" + id,
-            AttemptChainId = "chain-" + id,
-            IntegrationBranch = "develop",
-            CompletedAtUtc = DateTimeOffset.UtcNow,
-        });
+            ReviewSubjectStore.Write(folder, new ReviewSubjectRecord
+            {
+                TaskKey = "AGT-9001",
+                RunAttemptId = "run-" + id,
+                Project = Project,
+                Repository = _repo,
+                ResultSha = commitSha,
+                ResultRef = "task/" + id,
+                AttemptChainId = "chain-" + id,
+                IntegrationBranch = "develop",
+                CompletedAtUtc = DateTimeOffset.UtcNow,
+            });
+        }
         stack.Pipeline.Begin(folder, PipelineCatalogue.Standard, Project, id);
         if (conflict || infrastructureFailure)
         {
