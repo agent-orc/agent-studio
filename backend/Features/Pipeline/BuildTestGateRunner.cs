@@ -91,7 +91,13 @@ public sealed record BuildTestGateRequest(
 
 public sealed record BuildTestGateProcessEvidence
 {
-    /// <summary><c>preparation</c> or <c>verification</c>.</summary>
+    /// <summary>
+    /// <c>preparation</c>, <c>verification</c>, or (AGT-2853)
+    /// <c>flaky-rerun</c> for the one targeted re-run of a red test step. The
+    /// re-run is deliberately its own phase: it repeats a command the plan
+    /// already contains, so the positional coverage audit must not count it as
+    /// another planned command.
+    /// </summary>
     public string Phase { get; init; } = "verification";
     public string Command { get; init; } = "";
     public string FileName { get; init; } = "";
@@ -172,6 +178,30 @@ public sealed record BuildTestGateResult(
     public BuildTestGateBudgetEvidence? ViolatedBudget { get; init; }
     public TestSelectionAudit? TestSelection { get; init; }
     public IReadOnlyList<BuildTestGateFinding> Findings { get; init; } = [];
+
+    /// <summary>
+    /// AGT-2853: a red test step spent its one targeted re-run
+    /// (<see cref="GateFlakyRerunPolicy"/>). Same field name and meaning as the
+    /// remote review executor's <c>ReviewCommandEvidenceDto.RetryPerformed</c>.
+    /// </summary>
+    public bool RetryPerformed { get; init; }
+
+    /// <summary>
+    /// AGT-2853: the exact test names that failed in the full run and passed on
+    /// the targeted re-run. The gate is green with these recorded rather than
+    /// silently absorbing them. Same field name as the remote review executor's
+    /// <c>ReviewCommandEvidenceDto.FlakyQuarantinedFailures</c>.
+    /// </summary>
+    public IReadOnlyList<string> FlakyQuarantinedFailures { get; init; } = [];
+
+    /// <summary>
+    /// The shared classification both surfaces write for a re-run-cleared
+    /// failure, or null when this gate quarantined nothing.
+    /// </summary>
+    public string? FlakyClassification => FlakyQuarantinedFailures.Count > 0
+        ? ReviewFlakyQuarantine.Classification
+        : null;
+
     public ProjectPreparationManifest? PreparationManifest { get; init; }
     public IReadOnlyList<ProjectDefinitionIssue> ProjectDefinitionIssues { get; init; } = [];
     public bool IsInfrastructureFailure => FailureKind is not BuildTestGateFailureKind.None
@@ -204,6 +234,9 @@ internal enum BuildTestMachineGateMode
 public sealed class BuildTestGateRunner : IBuildTestGateRunner
 {
     public const int MaxOutputLines = 300;
+
+    /// <summary>Phase stamped on the AGT-2853 targeted re-run of a red test step.</summary>
+    internal const string FlakyRerunPhase = "flaky-rerun";
     public const int MaxFailureExcerptChars = 2_000;
     internal const string DependencyCacheDirectoryName = ".dependency-cache";
 
@@ -645,6 +678,8 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         foreach (var message in cacheRestoreMessages) output.AppendLine($"# {message}");
         var ranBackend = false;
         var ranFrontend = false;
+        var flakyQuarantined = new List<string>();
+        var retryPerformed = false;
 
         foreach (var command in preparation)
         {
@@ -783,6 +818,49 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                     output.AppendLine("# non-blocking finding: continuous test failure recorded separately");
                     continue;
                 }
+
+                // AGT-2853: one targeted re-run of exactly the failed tests, on
+                // the same build, charged to the same gate-run budget. A green
+                // re-run keeps the gate green and records the names as flaky; a
+                // second red leaves the original verdict untouched.
+                var rerun = GateFlakyRerunPolicy.Decide(
+                    command.Kind,
+                    kind,
+                    command.Command,
+                    $"{process.StandardOutput}\n{process.StandardError}",
+                    Remaining(timeout, sw.Elapsed, allowExhausted: true));
+                output.AppendLine(
+                    $"# flaky re-run decision: {rerun.Reason} " +
+                    $"failed={(rerun.FailedTests.Count == 0 ? "none" : string.Join(", ", rerun.FailedTests))}");
+                if (rerun.ShouldRerun)
+                {
+                    retryPerformed = true;
+                    var rerunElapsedBefore = sw.Elapsed;
+                    var rerunProcess = await RunShellAsync(
+                        workingDirectory,
+                        rerun.Command!,
+                        command.Shell,
+                        Remaining(timeout, rerunElapsedBefore),
+                        timeout,
+                        rerunElapsedBefore,
+                        output,
+                        ct,
+                        phase: FlakyRerunPhase,
+                        projectPreparation)
+                        .ConfigureAwait(false);
+                    evidence.Add(rerunProcess);
+                    if (CompletedNormally(rerunProcess) && rerunProcess.ExitCode == 0)
+                    {
+                        flakyQuarantined.AddRange(rerun.FailedTests);
+                        output.AppendLine(
+                            $"# {ReviewFlakyQuarantine.Classification}: the targeted re-run of " +
+                            $"{string.Join(", ", rerun.FailedTests)} passed; recorded as flaky, gate not blocked");
+                        continue;
+                    }
+                    output.AppendLine(
+                        "# the targeted re-run failed again; the original red is the verdict");
+                }
+
                 sw.Stop();
                 var verdict = kind == BuildTestGateFailureKind.Code && mode != PostStepMode.Fail
                     ? BuildTestGateVerdict.Warn
@@ -797,24 +875,39 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                     DependencyCache = dependencyCache,
                     TerminationSignal = process.TerminationSignal,
                     ViolatedBudget = process.ViolatedBudget,
+                    RetryPerformed = retryPerformed,
+                    FlakyQuarantinedFailures = flakyQuarantined,
                 }, kind);
             }
         }
 
         sw.Stop();
+        var passedReason = findings.Count == 0
+            ? $"verify gate passed ({planSource})"
+            : $"work-package gate passed with {findings.Count} separate non-blocking finding(s)";
         return new BuildTestGateResult(
             findings.Count == 0 ? BuildTestGateVerdict.Ok : BuildTestGateVerdict.Warn,
             0, sw.ElapsedMilliseconds, output.Text,
-            findings.Count == 0
-                ? $"verify gate passed ({planSource})"
-                : $"work-package gate passed with {findings.Count} separate non-blocking finding(s)",
+            FlakyReason(passedReason, flakyQuarantined),
             ranBackend, ranFrontend)
         {
             Processes = evidence,
             Findings = findings,
             DependencyCache = dependencyCache,
+            RetryPerformed = retryPerformed,
+            FlakyQuarantinedFailures = flakyQuarantined,
         };
     }
+
+    /// <summary>
+    /// Names the quarantined tests in the gate's own one-line reason so the
+    /// flake is visible wherever that reason is read, not only in the log body.
+    /// </summary>
+    internal static string FlakyReason(string reason, IReadOnlyList<string> flakyQuarantined)
+        => flakyQuarantined.Count == 0
+            ? reason
+            : $"{reason}; {ReviewFlakyQuarantine.Classification}: " +
+              $"{string.Join(", ", flakyQuarantined)} failed once and passed on the targeted re-run";
 
     private sealed record DependencyPreparationDecision(
         GateDependencyScope Scope,
@@ -857,7 +950,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         // after the remaining verify commands finish successfully; the verdict
         // still guards that case at the pre-main boundary.
         var verificationProcesses = processes
-            .Where(process => !string.Equals(process.Phase, "preparation", StringComparison.OrdinalIgnoreCase))
+            .Where(process => string.Equals(process.Phase, "verification", StringComparison.OrdinalIgnoreCase))
             .ToArray();
         var attemptedCount = Math.Min(commands.Count, verificationProcesses.Length);
         var allTestsAttempted = commands
@@ -1936,10 +2029,16 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         return CodeExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase);
     }
 
-    private static TimeSpan Remaining(TimeSpan timeout, TimeSpan elapsed)
+    /// <param name="allowExhausted">
+    /// AGT-2853: the flaky re-run decision must be able to see a spent budget as
+    /// spent. Every other caller starts a process and keeps the 1 ms floor, so a
+    /// zero budget still produces a real timeout rather than an argument error.
+    /// </param>
+    private static TimeSpan Remaining(TimeSpan timeout, TimeSpan elapsed, bool allowExhausted = false)
     {
         var remaining = timeout - elapsed;
-        return remaining > TimeSpan.Zero ? remaining : TimeSpan.FromMilliseconds(1);
+        if (remaining > TimeSpan.Zero) return remaining;
+        return allowExhausted ? TimeSpan.Zero : TimeSpan.FromMilliseconds(1);
     }
 
     private sealed class RingOutput
