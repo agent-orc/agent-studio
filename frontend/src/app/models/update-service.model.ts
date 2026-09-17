@@ -94,6 +94,12 @@ export type UpdatePhase =
   | 'resuming'
   | 'rolling-back'
   | 'done'
+  // AGT-2862: terminal. The backend restarted and verified at the intended
+  // identity, the frontend dev server never answered, and the checkout was
+  // deliberately left on the candidate so the running backend keeps its
+  // source. `isRunning` is false, so the block modal comes down and the
+  // operator decides.
+  | 'degraded'
   | 'failed';
 
 export interface VerificationFailure {
@@ -106,7 +112,7 @@ export interface UpdateHistoryEntry {
   runId: string;
   startedAt: string;
   finishedAt: string | null;
-  status: 'ok' | 'failed' | 'aborted';
+  status: 'ok' | 'degraded' | 'failed' | 'aborted';
   headBefore: string;
   headAfter: string;
   durationSeconds: number;

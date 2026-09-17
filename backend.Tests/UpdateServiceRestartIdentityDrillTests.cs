@@ -29,15 +29,16 @@ namespace AgentStudio.Tests;
 ///   - Upgrade: previous manifest in the checkout root, candidate only in the
 ///     run folder, restarted backend reports the candidate, verification
 ///     passes, and the manifest is committed into the checkout afterwards.
-///   - Failure after the handoff: the frontend never comes up, so the run
-///     fails before the mutation boundary. The checkout reverts, the root
-///     manifest is untouched, and the following preflight reads the resulting
-///     running/installed difference as "upgrade in verification" rather than
-///     refusing it as a divergence.
+///   - Frontend down after a verified backend: the run ends on `degraded`
+///     before the mutation boundary. The checkout stays on the candidate the
+///     running backend was built from, the root manifest is untouched, the
+///     probe evidence is in the run folder, and the following preflight reads
+///     the resulting running/installed difference as "upgrade in
+///     verification" rather than refusing it as a divergence (AGT-2862).
 ///   - Terminal-record ordering: a failed run's terminal record names the
 ///     reverted head, i.e. the checkout was already back when the phase
-///     flipped, for the restart-health site as well as the frontend one
-///     (AGT-2855).
+///     flipped (AGT-2855). Only the restart-health site reverts now; the
+///     frontend site deliberately does not.
 ///
 /// The class sits in <see cref="UpdateServiceSerialCollection"/>. Every case
 /// forks git and bash against a temp checkout and then polls wall-clock
@@ -118,8 +119,16 @@ public class UpdateServiceRestartIdentityDrillTests
         Assert.Equal(candidateCommit, checkout.ReadStableHead());
     }
 
+    /// <summary>
+    /// AGT-2862. The frontend is the only thing missing, and the backend is
+    /// already serving the candidate. Rolling the checkout back here is what
+    /// the v0.6.0 rollout did, and it left HEAD on v0.5.0 under a running
+    /// v0.6.0 process for an operator to repair by hand (run 1027d2e7,
+    /// 17.09.2026). The run therefore ends on <c>degraded</c> with the
+    /// checkout untouched, and carries the probe evidence that justifies it.
+    /// </summary>
     [SkippableFact]
-    public async Task FailureAfterTheHandoff_RevertsWithoutTouchingTheRootManifest()
+    public async Task FrontendDownAfterAVerifiedBackend_IsDegraded_AndLeavesTheCheckoutOnTheCandidate()
     {
         using var checkout = FakeStableCheckout.TryCreate();
         Skip.If(checkout == null, "git and/or bash are not available on PATH; this drill needs both.");
@@ -137,36 +146,58 @@ public class UpdateServiceRestartIdentityDrillTests
         await backend.StartAsync();
 
         // Backend health and runtime identity pass; the frontend port never
-        // opens, which is the last check before the manifest is committed.
+        // opens on any loopback spelling, which is the last check before the
+        // manifest is committed.
         using var frontendPort = new ClosedLoopbackPort();
         using var factory = NewFactory(checkout, backend, frontendUrl: frontendPort.Url, frontendWaitSeconds: 4);
         var client = factory.CreateClient();
 
         await TriggerAsync(client);
-        var status = await WaitForPhaseAsync(client, new[] { "done", "failed" }, TriggerTimeoutMs);
-        Assert.Equal("failed", status.GetProperty("phase").GetString());
-        Assert.True(
-            status.GetProperty("message").GetString()!.Contains("frontend dev server did not come up"),
-            "expected the frontend wait to be the failing step, got: " +
-            $"{status.GetProperty("message").GetString()}{RunFolderDiagnostics(checkout.RunsDir)}");
+        var status = await WaitForPhaseAsync(client, new[] { "done", "failed", "degraded" }, TriggerTimeoutMs);
+        Assert.True(status.GetProperty("phase").GetString() == "degraded",
+            $"expected the frontend-only failure to end degraded, got {status.GetProperty("phase").GetString()}; " +
+            $"message={status.GetProperty("message").GetString()}{RunFolderDiagnostics(checkout.RunsDir)}");
 
-        // The revert is part of the failure, not a follow-up to it: the
-        // terminal record names the head the run left behind, which it can
-        // only do if the checkout was already back when the phase flipped
-        // (AGT-2855).
-        AssertTerminalRecordNamesHead(status, headBefore);
+        // Terminal, not in-flight: the FE block modal has to come down.
+        Assert.False(status.GetProperty("isRunning").GetBoolean(), "a degraded run must not report isRunning");
 
-        // The handoff happened, and it stayed out of the checkout: the root
-        // manifest is byte-for-byte the pre-run one and HEAD is back.
+        // The checkout was not touched: HEAD is still the candidate the
+        // running backend was built from, and the root manifest is still the
+        // pre-run one because the mutation boundary was never crossed.
+        AssertTerminalRecordNamesHead(status, candidateCommit);
+        Assert.Equal(candidateCommit, checkout.ReadStableHead());
+        Assert.Equal(installedManifest, File.ReadAllText(checkout.InstalledManifestFile));
+
         var runFolder = LatestRunFolder(checkout.RunsDir);
         Assert.Equal(Path.Combine(runFolder, UpdateOrchestrator.IntendedManifestFileName),
             checkout.ReadStartManifestEnv());
-        Assert.Equal(installedManifest, File.ReadAllText(checkout.InstalledManifestFile));
-        Assert.Equal(headBefore, checkout.ReadStableHead());
+
+        // Probe evidence: every loopback origin that was tried, and the
+        // listener list for the port at the moment of the verdict.
+        var probeEvidence = File.ReadAllText(Path.Combine(runFolder, UpdateOrchestrator.FrontendProbeFileName));
+        Assert.Contains("verdict: DOWN", probeEvidence);
+        Assert.Contains($"http://127.0.0.1:{frontendPort.Port}", probeEvidence);
+        Assert.Contains($"http://localhost:{frontendPort.Port}", probeEvidence);
+        Assert.Contains($"http://[::1]:{frontendPort.Port}", probeEvidence);
+        Assert.Contains($"listeners on port {frontendPort.Port}", probeEvidence);
+        Assert.Contains("Frontend probe", File.ReadAllText(Path.Combine(runFolder, "summary.md")));
+
+        // The same evidence is on the wire, so the operator does not have to
+        // open the run folder to see why.
+        var failures = status.GetProperty("verificationFailures").EnumerateArray()
+            .ToDictionary(f => f.GetProperty("step").GetString()!, f => f.GetProperty("observed").GetString() ?? "");
+        Assert.Contains($"http://[::1]:{frontendPort.Port}", failures["frontend-listening"]);
+        Assert.Contains($"port {frontendPort.Port}", failures["frontend-listeners"]);
+
+        var entry = Assert.Single(ReadHistory(checkout.HistoryFile));
+        Assert.Equal("degraded", entry.Status);
+        Assert.Equal(CandidateTag, entry.IntendedTag);
+        Assert.Equal(CandidateTag, entry.ObservedTag);
 
         // The backend that stayed up is the candidate while the checkout root
         // still carries the previous release. That is the verification window,
-        // not a divergence, and the preflight has to say so.
+        // not a divergence, and the preflight has to say so, so a re-trigger
+        // after the operator restarts the frontend is not refused.
         var preflight = await GetJsonAsync(client, "/update/preflight");
         Assert.True(preflight.GetProperty("upgradeInVerification").GetBoolean(),
             "preflight did not recognise the post-restart state as an upgrade in verification");
@@ -177,12 +208,14 @@ public class UpdateServiceRestartIdentityDrillTests
     }
 
     /// <summary>
-    /// AGT-2855 product guard. The restart-health failure site is the other
-    /// place a run can end between the candidate checkout and the mutation
-    /// boundary, and it used to publish <c>failed</c> and revert the checkout
-    /// afterwards, in that order. Under gate load the gap between the two is
-    /// a whole process spawn wide, which is how the frontend drill above
-    /// started reading a checkout that was still on the candidate commit.
+    /// AGT-2855 product guard, and AGT-2862 case (d): a backend restart that
+    /// fails still rolls the checkout back, exactly as before. The
+    /// restart-health failure site is now the only place a run ends between
+    /// the candidate checkout and the mutation boundary with a revert, and it
+    /// used to publish <c>failed</c> and revert the checkout afterwards, in
+    /// that order. Under gate load the gap between the two is a whole process
+    /// spawn wide, which is how the frontend drill above started reading a
+    /// checkout that was still on the candidate commit.
     ///
     /// The assertion reads the run's terminal record rather than re-reading
     /// the checkout on a timer, so it pins the ordering instead of racing it:

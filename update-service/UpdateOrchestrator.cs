@@ -34,6 +34,16 @@ public sealed class UpdateOrchestrator
     public const string RollbackManifestFileName = "rollback-build-manifest.json";
 
     /// <summary>
+    /// Run-folder evidence for the post-restart frontend probe: every
+    /// loopback origin that was tried with its status or error, and the
+    /// listener list for the frontend port at the moment of the verdict
+    /// (AGT-2862). Written whether the probe passed or failed, because a
+    /// passing probe on the "wrong" spelling is exactly what a future
+    /// loopback regression looks like.
+    /// </summary>
+    public const string FrontendProbeFileName = "frontend-probe.txt";
+
+    /// <summary>
     /// Environment variable <c>BuildIdentity.Load</c> reads before falling
     /// back to <c>&lt;AppContext.BaseDirectory&gt;/build-manifest.json</c>.
     /// The restart phases export it so the backend they start reports the
@@ -415,40 +425,53 @@ public sealed class UpdateOrchestrator
             var healthWaitBudget = TimeSpan.FromSeconds(Math.Max(_options.HealthWaitSeconds, _options.RestartHealthWaitSeconds));
             var healthy = await _backend.WaitForHealthyAsync(healthWaitBudget, ct);
             var backendStartupSeconds = (int)(DateTime.UtcNow - restartStartedAt).TotalSeconds;
-            if (!healthy)
+
+            // Facts first, decision second (AGT-2862). Each check only runs
+            // when the previous one leaves a backend worth asking: a dead
+            // backend has no identity to read, and a backend on the wrong
+            // identity makes the frontend irrelevant.
+            var identityRequired = intendedRelease is not null;
+            var identityMatched = false;
+            if (healthy && identityRequired)
             {
-                var failure = new VerificationFailure("healthz-stable",
-                    $"timeout after {healthWaitBudget.TotalSeconds:F0}s",
-                    "/healthz=200");
-                await FailAfterRestoringCheckoutAsync(
-                    "backend did not come back healthy", new[] { failure }, null);
+                observedRelease = ReleasePreflightService.ToManifest(await _backend.ReadRuntimeVersionAsync(ct));
+                identityMatched = observedRelease is not null
+                    && StableReleaseContract.IdentityEquals(observedRelease, intendedRelease!);
+            }
+
+            // A run must not report success with the backend up and the
+            // frontend still down, so the frontend port is the last check
+            // before the mutation boundary.
+            FrontendProbeResult? frontendProbe = null;
+            if (healthy && (!identityRequired || identityMatched))
+            {
+                frontendProbe = await ProbeFrontendAsync(ct);
+                folder.WriteOutput(FrontendProbeFileName, FrontendProbe.Render(frontendProbe));
+            }
+            var frontendStartupSeconds = frontendProbe?.Seconds;
+
+            var verdict = RestartVerdictPolicy.Decide(new RestartFacts(
+                BackendHealthy: healthy,
+                IdentityRequired: identityRequired,
+                IdentityMatched: identityMatched,
+                FrontendUp: frontendProbe?.Up ?? false));
+
+            if (verdict == RestartVerdict.RollBack)
+            {
+                var (error, failure) = healthy
+                    ? ("runtime identity does not equal intended build manifest",
+                        new VerificationFailure("runtime-identity", observedRelease?.Tag ?? "missing", intendedRelease!.Tag))
+                    : ("backend did not come back healthy",
+                        new VerificationFailure("healthz-stable", $"timeout after {healthWaitBudget.TotalSeconds:F0}s", "/healthz=200"));
+                await FailAfterRestoringCheckoutAsync(error, new[] { failure }, healthy ? observedRelease : null);
                 return;
             }
 
-            if (intendedRelease is not null)
+            if (verdict == RestartVerdict.Degraded)
             {
-                observedRelease = ReleasePreflightService.ToManifest(await _backend.ReadRuntimeVersionAsync(ct));
-                if (observedRelease is null || !StableReleaseContract.IdentityEquals(observedRelease, intendedRelease))
-                {
-                    var failure = new VerificationFailure("runtime-identity", observedRelease?.Tag ?? "missing", intendedRelease.Tag);
-                    await FailAfterRestoringCheckoutAsync(
-                        "runtime identity does not equal intended build manifest",
-                        new[] { failure }, observedRelease);
-                    return;
-                }
-            }
-
-            // Backend is confirmed healthy at the intended identity. Restart
-            // the frontend dev server and wait for its port before declaring
-            // the stack up: a run must not leave backend up / frontend down.
-            var (frontendUp, frontendStartupSeconds) = await WaitForFrontendAsync(ct);
-            if (!frontendUp)
-            {
-                var failure = new VerificationFailure("frontend-listening",
-                    $"timeout after {_options.FrontendWaitSeconds}s", $"{_options.FrontendUrl} reachable");
-                await FailAfterRestoringCheckoutAsync(
-                    "frontend dev server did not come up after restart",
-                    new[] { failure }, observedRelease);
+                FinishDegraded(runId, startedAt, headBefore, headAfterPull, trigger, frontendProbe!,
+                    folder, preSnapshot, intendedRelease, observedRelease, releaseComparison?.Direction.ToString(),
+                    backendStartupSeconds);
                 return;
             }
 
@@ -508,7 +531,7 @@ public sealed class UpdateOrchestrator
             var postSnapshot = await CaptureSnapshotAsync("post", runId, headAfter, postModes, ct);
             folder.WriteSnapshot(postSnapshot);
             folder.WriteSummary(BuildSummaryMarkdown(runId, trigger, startedAt, headBefore, headAfter, preSnapshot, postSnapshot, verification, null,
-                backendStartupSeconds, frontendStartupSeconds));
+                backendStartupSeconds, frontendStartupSeconds, frontendProbe));
 
             FinishHistory(runId, startedAt, headBefore, headAfter, "ok", null, trigger, null, null, folder.Root,
                 intendedRelease?.Tag, observedRelease?.Tag, releaseComparison?.Direction.ToString(), intendedRelease?.Integrity,
@@ -1071,6 +1094,68 @@ public sealed class UpdateOrchestrator
             verificationFailures: failures);
     }
 
+    /// <summary>
+    /// AGT-2862 terminal transition for "backend up, frontend down". The
+    /// backend already serves the candidate, so the checkout stays on the
+    /// candidate commit: reverting it would desync HEAD from the live process
+    /// and is exactly what the v0.6.0 rollout had to repair by hand. The
+    /// manifest stays out of the checkout root as well, so the next preflight
+    /// reads the state as <c>upgradeInVerification</c> and a re-triggered run
+    /// simply re-verifies the same candidate.
+    ///
+    /// The operator owns the next move; this transition's job is to hand them
+    /// the evidence, so the probe report goes into the phase message, the
+    /// verification failure, and the run folder's summary.
+    /// </summary>
+    private void FinishDegraded(string runId, DateTime startedAt, string headBefore, string headAfter, string trigger,
+        FrontendProbeResult frontendProbe, RunFolder folder, UpdateRunSnapshot? preSnapshot,
+        ReleaseManifest? intendedRelease, ReleaseManifest? observedRelease, string? releaseDirection,
+        int? backendStartupSeconds)
+    {
+        var runningIdentity = observedRelease?.Tag ?? headAfter;
+        var error = $"backend is up and verified at {runningIdentity}; the frontend dev server did not answer on any "
+            + $"loopback origin within {_options.FrontendWaitSeconds}s. The checkout was left on the candidate so the "
+            + "running backend keeps its source; roll back or restart the frontend manually.";
+        var failures = new[]
+        {
+            new VerificationFailure(
+                "frontend-listening",
+                string.Join("; ", frontendProbe.Attempts.Select(a => $"{a.Url}: {a.Detail}")),
+                $"one of {string.Join(", ", frontendProbe.Attempts.Select(a => a.Url))} reachable"),
+            new VerificationFailure(
+                "frontend-listeners",
+                string.Join("; ", frontendProbe.Listeners),
+                $"a listener on port {frontendProbe.Port}"),
+        };
+
+        var now = DateTime.UtcNow;
+        FinishHistory(runId, startedAt, headBefore, headAfter, "degraded", error, trigger, failures, null, folder.Root,
+            intendedRelease?.Tag, observedRelease?.Tag, releaseDirection, intendedRelease?.Integrity,
+            intendedRelease, observedRelease, backendStartupSeconds, frontendProbe.Seconds);
+
+        try
+        {
+            folder.WriteSummary(BuildSummaryMarkdown(runId, trigger, startedAt, headBefore, headAfter,
+                preSnapshot, null, null, error, backendStartupSeconds, frontendProbe.Seconds, frontendProbe,
+                status: "degraded"));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "summary write failed for {RunId}", runId);
+        }
+
+        _logger.LogWarning(
+            "update_run_degraded run={RunId} head={Head} running={Running} listeners={Listeners}",
+            runId, headAfter, runningIdentity, string.Join("; ", frontendProbe.Listeners));
+
+        SetPhase("degraded", error, runId, startedAt,
+            finishedAt: now,
+            lastRunFinishedAt: now,
+            lastRunHeadBefore: headBefore,
+            lastRunHeadAfter: headAfter,
+            verificationFailures: failures);
+    }
+
     private void FinishHistory(string runId, DateTime startedAt, string headBefore, string headAfter, string status,
         string? error, string trigger, IReadOnlyList<VerificationFailure>? failures, string? rollbackStatus, string? runFolder,
         string? intendedTag = null, string? observedTag = null, string? releaseDirection = null, string? manifestIntegrity = null,
@@ -1228,29 +1313,34 @@ public sealed class UpdateOrchestrator
     /// Polls the frontend dev server's loopback port after backend restart.
     /// A run must not report success with the backend up and the frontend
     /// still down (or vice versa).
+    ///
+    /// Every loopback spelling of the configured origin is tried before the
+    /// frontend is called down: <c>ng serve</c> binds one address family, and
+    /// which one it binds depends on the host's name resolution, so a probe
+    /// pinned to a single spelling reports a running frontend as missing
+    /// (AGT-2862). The verdict, the attempts, and the port's listener list
+    /// are logged so the run folder can be read without re-running anything.
     /// </summary>
-    private async Task<(bool Up, int Seconds)> WaitForFrontendAsync(CancellationToken ct)
+    private async Task<FrontendProbeResult> ProbeFrontendAsync(CancellationToken ct)
     {
-        var started = DateTime.UtcNow;
-        if (!Uri.TryCreate(_options.FrontendUrl, UriKind.Absolute, out var uri))
-            return (true, 0);
+        var result = await FrontendProbe.WaitForAsync(
+            _options.FrontendUrl, TimeSpan.FromSeconds(_options.FrontendWaitSeconds), ct);
 
-        var deadline = started + TimeSpan.FromSeconds(_options.FrontendWaitSeconds);
-        while (DateTime.UtcNow < deadline)
+        if (result.Up)
         {
-            try
-            {
-                using var tcp = new System.Net.Sockets.TcpClient();
-                var connect = tcp.ConnectAsync(uri.Host, uri.Port);
-                var winner = await Task.WhenAny(connect, Task.Delay(2000, ct));
-                if (winner == connect && tcp.Connected)
-                    return (true, (int)(DateTime.UtcNow - started).TotalSeconds);
-            }
-            catch { /* not up yet */ }
-            try { await Task.Delay(2000, ct); }
-            catch (OperationCanceledException) { break; }
+            _logger.LogInformation(
+                "update_frontend_probe up=true reached={Reached} seconds={Seconds} tried={Tried}",
+                result.ReachedUrl, result.Seconds, string.Join(", ", result.Attempts.Select(a => a.Url)));
         }
-        return (false, (int)(DateTime.UtcNow - started).TotalSeconds);
+        else
+        {
+            _logger.LogWarning(
+                "update_frontend_probe up=false seconds={Seconds} attempts={Attempts} listeners={Listeners}",
+                result.Seconds,
+                string.Join("; ", result.Attempts.Select(a => $"{a.Url}: {a.Detail}")),
+                string.Join("; ", result.Listeners));
+        }
+        return result;
     }
 
     // ─── summary writer ─────────────────────────────────────────────────────
@@ -1258,7 +1348,8 @@ public sealed class UpdateOrchestrator
     private static string BuildSummaryMarkdown(string runId, string trigger, DateTime startedAt,
         string headBefore, string headAfter, UpdateRunSnapshot? pre, UpdateRunSnapshot? post,
         VerificationOutcome? verification, string? failureMessage,
-        int? backendStartupSeconds = null, int? frontendStartupSeconds = null)
+        int? backendStartupSeconds = null, int? frontendStartupSeconds = null,
+        FrontendProbeResult? frontendProbe = null, string? status = null)
     {
         var sb = new StringBuilder();
         sb.AppendLine($"# Update run {runId}");
@@ -1267,11 +1358,21 @@ public sealed class UpdateOrchestrator
         sb.AppendLine($"- Started: {startedAt:O}");
         sb.AppendLine($"- HEAD before: `{headBefore}`");
         sb.AppendLine($"- HEAD after: `{headAfter}`");
-        sb.AppendLine($"- Status: **{(failureMessage == null ? "ok" : "failed")}**");
+        sb.AppendLine($"- Status: **{status ?? (failureMessage == null ? "ok" : "failed")}**");
         if (failureMessage != null) sb.AppendLine($"- Error: {failureMessage}");
         if (backendStartupSeconds is not null) sb.AppendLine($"- Backend startup: {backendStartupSeconds}s");
         if (frontendStartupSeconds is not null) sb.AppendLine($"- Frontend startup: {frontendStartupSeconds}s");
         sb.AppendLine();
+
+        if (frontendProbe is not null)
+        {
+            sb.AppendLine("## Frontend probe");
+            sb.AppendLine();
+            sb.AppendLine("```");
+            sb.Append(FrontendProbe.Render(frontendProbe));
+            sb.AppendLine("```");
+            sb.AppendLine();
+        }
 
         if (verification != null && verification.Checks.Count > 0)
         {
@@ -1319,6 +1420,7 @@ internal static class PhaseLabels
             "resuming"                => "Resuming runners",
             "rolling-back"            => "Rolling back",
             "done"                    => "Update verified",
+            "degraded"                => "Backend up, frontend down",
             "failed"                  => "Update failed",
             "idle"                    => null,
             _                         => phase,

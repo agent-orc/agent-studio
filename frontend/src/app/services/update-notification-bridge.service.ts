@@ -20,7 +20,7 @@ const FAILED_FRESH_WINDOW_MS = 5 * 60_000;
 /**
  * F56: bridges UpdateClientService status changes to toast notifications.
  * Replaces the old <app-update-banner> component. Watches status() and
- * pushes toasts for done / done-no-change / failed states.
+ * pushes toasts for done / done-no-change / degraded / failed states.
  *
  * Instantiated once at app bootstrap (provided in root, injected in AppComponent).
  */
@@ -113,6 +113,52 @@ export class UpdateNotificationBridge {
                 this.recordDismissed(runId);
                 const el = document.querySelector('[data-testid="update-center-trigger"]') as HTMLElement | null;
                 el?.click();
+              },
+            },
+            {
+              label: 'Dismiss',
+              testId: 'toast-update-dismiss',
+              callback: () => { this.recordDismissed(runId); },
+            },
+          ],
+        });
+        return;
+      }
+
+      // AGT-2862: backend up, frontend down. The run is over and nothing was
+      // rolled back, so this is neither the success nor the failure toast: it
+      // is a warning that names the state and offers the two moves the
+      // operator actually has. Same freshness gate as the failed branch, so a
+      // long-finished degraded run does not re-toast on every reload.
+      if (s.phase === 'degraded') {
+        const degradedFinishedMs = s.lastRunFinishedAt ? Date.parse(s.lastRunFinishedAt) : NaN;
+        const degradedFresh =
+          !Number.isNaN(degradedFinishedMs)
+          && Date.now() - degradedFinishedMs <= FAILED_FRESH_WINDOW_MS;
+        if (!degradedFresh) return;
+
+        this.dismissActive();
+        this.lastHandledRunId = runId;
+        this.lastHandledPhase = 'degraded';
+
+        const degradedFailures = s.verificationFailures ?? [];
+        this.activeToastId = this.notify.notify({
+          kind: 'warning',
+          title: 'Update finished with the frontend down',
+          message:
+            s.message
+            ?? 'The backend is up on the new release; the frontend dev server did not answer. The checkout was left on the new version.',
+          details: degradedFailures.map(
+            f => `${f.step}: ${f.observed ?? '(none)'} (expected ${f.expected ?? '?'})`
+          ),
+          durationMs: 0,
+          actions: [
+            {
+              label: 'Roll back',
+              testId: 'toast-update-rollback',
+              callback: () => {
+                this.recordDismissed(runId);
+                this.client.rollback(runId).catch(() => { /* status poll surfaces failure */ });
               },
             },
             {
