@@ -560,6 +560,50 @@ public sealed class AgentMessageBusBridge
     }
 
     /// <summary>
+    /// Emits one operator-feed alert for a deterministic gate that turned red on
+    /// an integration branch (AGT-2819). Producers call this only on the
+    /// green-to-red transition, so a branch that stays broken for weeks costs one
+    /// message, not one per card that passes through it.
+    /// </summary>
+    public Task EmitIntegrationBranchGateRedAsync(
+        string? project,
+        string branch,
+        string stepId,
+        string command,
+        string? mergeBaseSha,
+        string? lastGreenSha,
+        string summary,
+        string? jobId = null,
+        CancellationToken ct = default)
+    {
+        var msg = NewMessage(
+            participantId: string.IsNullOrWhiteSpace(project)
+                ? ParticipantOrchestrator
+                : ParticipantOrchestratorFor(project),
+            role: "system",
+            kind: "error",
+            severity: "Warn",
+            project: project,
+            jobId: jobId,
+            topic: "integration-branch-gate-red",
+            summary: TruncateSummary(summary),
+            body: $"Branch: {branch}\nStep: {stepId}\nCommand: {command}\n"
+                  + $"Red at: {mergeBaseSha ?? "(unmeasured)"}\n"
+                  + $"Last green at: {lastGreenSha ?? "(no green measurement)"}\n\n"
+                  + "The gate fails on the integration branch itself, so deliveries passing through "
+                  + "it are not graded ProductFailure for it. Fix the gate on the branch.",
+            payload: new { branch, stepId, command, mergeBaseSha, lastGreenSha },
+            tags: new[]
+            {
+                "integration-branch-gate",
+                "gate-red",
+                $"branch:{branch}",
+                $"step:{stepId}",
+            });
+        return EmitAsync(msg, ct);
+    }
+
+    /// <summary>
     /// Emits one terminal operator-feed event for a host-owned provider sign-in.
     /// Device codes and credentials are intentionally absent from this contract.
     /// </summary>

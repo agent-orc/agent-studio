@@ -52,6 +52,7 @@ public sealed record ReviewAttemptChainEntry(
             ReviewTerminalOutcome.Cancellation => "Cancellation",
             ReviewTerminalOutcome.Pass => "Pass",
             ReviewTerminalOutcome.Superseded => "Superseded",
+            ReviewTerminalOutcome.IntegrationBranchDefect => "IntegrationBranchDefect",
             _ => "Ungraded",
         };
         var classification = (failureClassification ?? string.Empty).Trim();
@@ -344,6 +345,11 @@ public sealed record ReviewAttemptChainSummary(
                 [
                     "Read the newest review report: it is a finding against the card content, not an infrastructure fault.",
                     "Reissue the card with that finding as the correction brief.",
+                ],
+                ReviewTerminalOutcome.IntegrationBranchDefect =>
+                [
+                    "Read the newest review report: a gate was already red on the integration branch, so the finding is not against this card.",
+                    "Fix the named gate on the integration branch; the card itself needs no correction.",
                 ],
                 ReviewTerminalOutcome.Inconclusive =>
                 [

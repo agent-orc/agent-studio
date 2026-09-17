@@ -1,0 +1,166 @@
+@if (documentHistoryVisible()) {
+  <div class="studio-document-history" data-testid="studio-document-history"
+       [attr.data-history-length]="documentHistoryLength()">
+    <button type="button" class="studio-tab-action"
+            data-testid="studio-document-back"
+            aria-label="Back in this document tab"
+            [disabled]="!canNavigateBack()"
+            (click)="navigateDocumentHistory.emit(-1)">←</button>
+    <button type="button" class="studio-tab-action"
+            data-testid="studio-document-forward"
+            aria-label="Forward in this document tab"
+            [disabled]="!canNavigateForward()"
+            (click)="navigateDocumentHistory.emit(1)">→</button>
+  </div>
+}
+@if (boardActionsVisible()) {
+  <div class="studio-board-actions" data-testid="studio-board-actions">
+    <button type="button"
+            class="studio-tab-action studio-tab-action--toggle"
+            [class.studio-tab-action--active]="groupByEpic()"
+            [attr.aria-pressed]="groupByEpic()"
+            data-testid="studio-board-epic-toggle"
+            [cacTooltip]="groupByEpic() ? 'Show lane columns' : 'Group tasks by epic'"
+            (click)="toggleGroupByEpic.emit()">
+      <app-studio-icon [name]="groupByEpic() ? 'epic' : 'grid'" [size]="14"></app-studio-icon>
+      <span>{{ groupByEpic() ? 'Epics' : 'Lanes' }}</span>
+    </button>
+    <span class="studio-tab-actions-sep" aria-hidden="true"></span>
+    <button type="button"
+            class="studio-tab-action studio-tab-action--primary"
+            data-testid="studio-board-add-task" [disabled]="mutationsBlocked()"
+            (click)="addTask.emit()">＋ Add task</button>
+  </div>
+}
+@if (task(); as detail) {
+  @if (runActivity(); as ra) {
+    <span class="studio-tab-action__run-activity"
+          [class]="'studio-tab-action__run-activity studio-tab-action__run-activity--' + ra.tone"
+          [cacTooltip]="ra.tooltip"
+          data-testid="studio-run-activity"
+          [attr.data-run-activity-kind]="ra.kind">
+      <span class="studio-tab-action__run-activity-dot"></span>
+      {{ ra.label }}
+    </span>
+    <span class="studio-tab-actions-sep" aria-hidden="true"></span>
+  }
+  @if (executionLocation(); as execution) {
+    <app-execution-location-badge data-testid="studio-execution-location" [execution]="execution" /><span class="studio-tab-actions-sep" aria-hidden="true"></span>
+  }
+  <div class="studio-tab-action__pane-toggles"
+       data-testid="studio-pane-toggles"
+       role="group"
+       aria-label="Toggle detail panes">
+    <button type="button"
+            class="studio-tab-action studio-tab-action--icon"
+            [class.studio-tab-action--active]="panes().prompt"
+            [attr.aria-pressed]="panes().prompt"
+            aria-label="Toggle Description panel"
+            data-testid="studio-pane-toggle-prompt"
+            [cacTooltip]="'Description'"
+            (click)="togglePane.emit('prompt')">
+      <app-studio-icon name="book" [size]="14"></app-studio-icon>
+    </button>
+    <button type="button"
+            class="studio-tab-action studio-tab-action--icon"
+            [class.studio-tab-action--active]="panes().protocol"
+            [attr.aria-pressed]="panes().protocol"
+            aria-label="Toggle Protocol panel"
+            data-testid="studio-pane-toggle-protocol"
+            [cacTooltip]="'Protocol &amp; chat'"
+            (click)="togglePane.emit('protocol')">
+      <app-studio-icon name="bot" [size]="14"></app-studio-icon>
+    </button>
+    <button type="button"
+            class="studio-tab-action studio-tab-action--icon studio-tab-action--has-badge"
+            [class.studio-tab-action--active]="panes().git"
+            [attr.aria-pressed]="panes().git"
+            aria-label="Toggle Git panel"
+            data-testid="studio-pane-toggle-git"
+            [cacTooltip]="'Git diff &amp; file tree'"
+            (click)="togglePane.emit('git')">
+      <app-studio-icon name="diff" [size]="14"></app-studio-icon>
+      @if (gitCommitCount() > 0) {
+        <span class="studio-tab-action__badge"
+              data-testid="studio-pane-toggle-git-badge"
+              [attr.aria-label]="gitCommitCount() + ' commits'">{{ gitCommitCount() }}</span>
+      }
+    </button>
+  </div>
+  <span class="studio-tab-actions-sep" aria-hidden="true"></span>
+  <button type="button"
+          class="studio-tab-action studio-tab-action--icon"
+          data-testid="studio-task-prev"
+          [cacTooltip]="'Previous task in lane'"
+          (click)="previousTask.emit()">‹</button>
+  @if (pager().total > 0) {
+    <span class="studio-tab-action studio-tab-action--counter"
+          data-testid="studio-task-pager-position"
+          aria-live="polite">{{ pager().position > 0 ? pager().position : '—' }} / {{ pager().total }}</span>
+  }
+  <button type="button"
+          class="studio-tab-action studio-tab-action--icon"
+          data-testid="studio-task-next"
+          [cacTooltip]="'Next task in lane'"
+          (click)="nextTask.emit()">›</button>
+  <span class="studio-tab-actions-sep" aria-hidden="true"></span>
+  <select class="studio-tab-action studio-tab-action--lane-select"
+          [attr.data-lane-tone]="laneTone(pager().laneState)"
+          [value]="pager().laneState"
+          data-testid="studio-lane-select"
+          aria-label="Page through lane"
+          [cacTooltip]="'Select which lane to page through'"
+          (change)="laneChange.emit($event)">
+    @for (lane of laneOptions(); track lane.state) {
+      <option [value]="lane.state" [selected]="lane.state === pager().laneState">{{ lane.label }}</option>
+    }
+    @if (!isStandardLane(pager().laneState)) {
+      <option [value]="pager().laneState" [selected]="true">{{ stateLabel(pager().laneState) }}</option>
+    }
+  </select>
+  @if (triage(); as triageView) {
+    @if (triageView.hasActions) {
+      <span class="studio-tab-actions-sep" aria-hidden="true"></span>
+      <div class="studio-tab-action__triage" data-testid="studio-triage-panel" data-triage-root>
+        @if (triageView.primaryId; as primaryId) {
+          <button type="button"
+                  class="studio-tab-action studio-tab-action--primary"
+                  [class.studio-tab-action--git-loading]="triageView.awaitingGit"
+                  [attr.data-testid]="'studio-triage-action-' + primaryId"
+                  [attr.data-action-id]="primaryId"
+                  [attr.data-git-loading]="triageView.awaitingGit ? 'true' : null"
+                  [disabled]="mutationsBlocked() || triageView.awaitingGit || triageView.actingId !== null"
+                  [appPendingButton]="triageView.actingId === primaryId"
+                  [pendingLabel]="triageView.primaryLabel + '…'"
+                  [cacTooltip]="triageView.primaryTooltip"
+                  (click)="triagePrimary.emit()">
+            @if (triageView.awaitingGit) {
+              <span class="studio-tab-action__skeleton" aria-hidden="true"></span>
+              <span class="visually-hidden">Checking git status…</span>
+            } @else {
+              {{ triageView.primaryLabel }}
+            }
+          </button>
+        }
+        <button type="button"
+                class="studio-tab-action studio-tab-action--icon"
+                data-testid="studio-triage-overflow-btn"
+                aria-haspopup="menu"
+                [attr.aria-expanded]="overflowOpen()"
+                [disabled]="mutationsBlocked()"
+                [cacTooltip]="'More task actions'"
+                (click)="onToggleOverflow($event)">⋯</button>
+        <app-menu
+          [items]="triageView.menuItems"
+          [open]="overflowOpen()"
+          [anchorEl]="overflowAnchor()"
+          placement="below"
+          testIdPrefix="studio-triage-overflow"
+          ariaLabel="Lane actions"
+          [minWidth]="220"
+          (itemClick)="onOverflowItemClick($event)"
+          (closeRequest)="closeOverflow()" />
+      </div>
+    }
+  }
+}

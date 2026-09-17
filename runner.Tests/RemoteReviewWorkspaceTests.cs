@@ -118,7 +118,8 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             new string('a', 40),
             [],
             [marked, ordinary],
-            cacheHit: false);
+            cacheHit: false,
+            baselineExitCode: 0);
         var index = new ReviewFlakyTestIndex(methods: [marked]);
 
         var retried = initial.Reclassify([], index);
@@ -142,7 +143,8 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             new string('a', 40),
             [],
             [marked],
-            cacheHit: false);
+            cacheHit: false,
+            baselineExitCode: 0);
 
         var retried = initial.Reclassify(
             [marked],
@@ -927,14 +929,76 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
 
         var evidence = await workspace.ExecutePlanAsync(default);
 
-        Assert.Equal("Pass", evidence.Outcome);
+        // AGT-2819: the card adds no failure, so it is not a ProductFailure, and
+        // the step is not green either - the merge base carries the failure and
+        // the review says so with its own terminal.
+        Assert.Equal("IntegrationBranchDefect", evidence.Outcome);
         var commandEvidence = CandidateVerification(evidence);
         Assert.Empty(commandEvidence.NewFailures!);
         Assert.Equal(["Product.ExistingFailure"], commandEvidence.PreExistingFailures);
         Assert.False(commandEvidence.RetryPerformed);
+        Assert.Equal(1, commandEvidence.BaselineExitCode);
         var verdict = Assert.Single(evidence.Verdicts);
         Assert.Equal("pass", verdict.Status);
+        Assert.Equal("IntegrationBranchDefect", verdict.Classification);
         Assert.Contains("0 new failures", verdict.Summary, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// AGT-2819, the observed incident. The frontend lint gate was red on
+    /// <c>develop</c> itself, so it failed on the delivery too. A lint gate has no
+    /// test-failure names, so it is compared on exit status: red on both sides is
+    /// the integration branch's defect, and the review says so instead of grading
+    /// the card <c>ProductFailure</c>.
+    /// </summary>
+    [Fact]
+    public async Task A_lint_gate_red_on_the_merge_base_settles_as_an_integration_branch_defect()
+    {
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var command = LintCommand("printf 'lint error\n' >&2; exit 1");
+        var (workspace, _) = Workspace(
+            "attempt-branch-lint",
+            subjectSha,
+            [command],
+            26100,
+            resultRef: "refs/heads/task/new-failure",
+            integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        Assert.Equal("IntegrationBranchDefect", evidence.Outcome);
+        var commandEvidence = CandidateVerification(evidence);
+        Assert.Equal(1, commandEvidence.ExitCode);
+        Assert.Equal(1, commandEvidence.BaselineExitCode);
+        Assert.Empty(commandEvidence.NewFailures!);
+        Assert.False(commandEvidence.RetryPerformed);
+        var verdict = Assert.Single(evidence.Verdicts);
+        Assert.Equal("pass", verdict.Status);
+        Assert.Equal("IntegrationBranchDefect", verdict.Classification);
+    }
+
+    [Fact]
+    public async Task A_lint_gate_only_the_delivery_breaks_is_still_a_product_failure()
+    {
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var command = LintCommand("if grep -q subject product.txt; then exit 1; fi; exit 0");
+        var (workspace, _) = Workspace(
+            "attempt-card-lint",
+            subjectSha,
+            [command],
+            26108,
+            resultRef: "refs/heads/task/new-failure",
+            integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        Assert.Equal("ProductFailure", evidence.Outcome);
+        var commandEvidence = CandidateVerification(evidence);
+        Assert.Equal(1, commandEvidence.ExitCode);
+        Assert.Equal(0, commandEvidence.BaselineExitCode);
+        Assert.Equal("block", Assert.Single(evidence.Verdicts).Status);
     }
 
     [Fact]
@@ -1457,6 +1521,19 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             "refs/heads/retired-integration-line",
             facts[ReviewInfrastructureDiagnosis.RefKey]);
     }
+
+    /// <summary>
+    /// A deterministic lint gate: baseline-compared on exit status, because there
+    /// are no test-failure names to diff (AGT-2819).
+    /// </summary>
+    private static ReviewCommandDto LintCommand(string shell)
+        => new(
+            "verify-5",
+            "lint",
+            PosixShell.RequirePath(),
+            ["-c", shell],
+            CompareToBaseline: true,
+            BaselineMode: ReviewBaselineModes.ExitStatus);
 
     private static ReviewCommandDto BaselineCommand(string shell)
         => new(
