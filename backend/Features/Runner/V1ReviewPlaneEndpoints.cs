@@ -896,6 +896,19 @@ public static class V1ReviewPlaneEndpoints
                         ?? (sourceRun?.TerminalAt is { } terminalAt
                             ? new DateTimeOffset(DateTime.SpecifyKind(terminalAt, DateTimeKind.Utc))
                             : DateTimeOffset.UtcNow));
+                    // AGT-2860: the durable resume point. Everything from here
+                    // to the lane move lives in this request and dies with the
+                    // process; the aspect verdicts that decided the gate live
+                    // only in the report payload. Writing the decision down
+                    // before the first side effect is what lets a restarted
+                    // backend finish the sequence instead of demanding a second
+                    // 45-minute review of an already passed subject.
+                    RecordDeliverySettlement(
+                        task.FolderPath,
+                        settled.ReviewAttempt,
+                        integrationRequest,
+                        integrationDecision,
+                        logger);
                     if (integrationDecision.ShouldIntegrate)
                     {
                         var integrated = await remoteIntegration.EnqueueAsync(integrationRequest).ConfigureAwait(false);
@@ -908,6 +921,11 @@ public static class V1ReviewPlaneEndpoints
                             integrationDecision.Reason);
                         integrationOutcome = AcceptedIntegrationFailureCodes.DeliveryGateFailed;
                     }
+                    AdvanceDeliverySettlement(
+                        task.FolderPath,
+                        RemoteDeliverySettlementStage.IntegrationSettled,
+                        integrationOutcome,
+                        logger);
                 }
 
                 if (string.Equals(task.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
@@ -956,6 +974,11 @@ public static class V1ReviewPlaneEndpoints
                     else
                     {
                         taskState = TaskStates.HumanReview;
+                        AdvanceDeliverySettlement(
+                            moved.NewFolderPath ?? task.FolderPath,
+                            RemoteDeliverySettlementStage.LaneSettled,
+                            integrationOutcome,
+                            logger);
                         // Board contract: the human-review park needs a journal
                         // verdict, or the boot-time verdict-less backfill later
                         // escalates the freshly reviewed card as pre-funnel
@@ -1098,6 +1121,66 @@ public static class V1ReviewPlaneEndpoints
             "orchestrator-monolith",
             ["runner", "review-runner"],
             ["review-plane", "capability-advertisement"]);
+    }
+
+    /// <summary>
+    /// Persists the resume point for one passed Remote delivery. Best-effort by
+    /// design: the settled ReviewAttempt stays authoritative, so a sidecar the
+    /// disk refuses must never fail an accepted review report.
+    /// </summary>
+    private static void RecordDeliverySettlement(
+        string jobFolderPath,
+        ReviewAttemptDto review,
+        RemoteDeliveryIntegrationRequest request,
+        RemoteDeliveryIntegrationDecision decision,
+        ILogger logger)
+    {
+        try
+        {
+            RemoteDeliverySettlementStore.Write(jobFolderPath, new RemoteDeliverySettlementRecord
+            {
+                TaskKey = review.TaskKey,
+                ReviewAttemptId = review.AttemptId,
+                Outcome = review.Outcome?.ToString() ?? string.Empty,
+                ShouldIntegrate = decision.ShouldIntegrate,
+                BuildTestGate = decision.BuildTestGate.ToString(),
+                GateReason = decision.Reason,
+                IntegrationBranch = request.IntegrationBranch,
+                IntegrationStrategy = request.IntegrationStrategy,
+                PipelineType = request.PipelineType,
+                DeliveredAtUtc = request.DeliveredAtUtc,
+                Stage = RemoteDeliverySettlementStage.IntegrationPending,
+                RecordedAtUtc = DateTimeOffset.UtcNow,
+            });
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "remote-delivery-settlement-write-failed attempt={AttemptId} job={JobFolder}",
+                review.AttemptId,
+                jobFolderPath);
+        }
+    }
+
+    private static void AdvanceDeliverySettlement(
+        string jobFolderPath,
+        RemoteDeliverySettlementStage stage,
+        string? integrationOutcome,
+        ILogger logger)
+    {
+        try
+        {
+            RemoteDeliverySettlementStore.Advance(jobFolderPath, stage, integrationOutcome);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "remote-delivery-settlement-advance-failed stage={Stage} job={JobFolder}",
+                stage,
+                jobFolderPath);
+        }
     }
 
     private static bool HasSettledResultEnvelope(RunAttemptDto? run)

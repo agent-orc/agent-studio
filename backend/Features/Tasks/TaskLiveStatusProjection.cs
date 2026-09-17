@@ -169,16 +169,23 @@ public sealed class TaskLiveStatusProjection(
         return null;
     }
 
+    /// <summary>
+    /// Says what the card is actually waiting for. The four canonical waits used
+    /// to share one reason token and therefore one sentence about the executor,
+    /// which was wrong for a card whose review had already passed (AGT-2860).
+    /// </summary>
     private static string DescribeWait(AutoReviewQueueWaitState wait)
     {
-        if (string.Equals(
-                wait.Reason, PostProcessingCardResult.AwaitingCanonicalReviewExecutor, StringComparison.Ordinal))
+        var headline = wait.Reason switch
         {
-            return string.IsNullOrWhiteSpace(wait.Detail)
-                ? "waiting for review executor"
-                : $"waiting for review executor: {wait.Detail}";
-        }
-        return $"waiting to retry ({wait.Reason})";
+            PostProcessingCardResult.AwaitingReviewExecutorRegistration => "waiting for review executor",
+            PostProcessingCardResult.AwaitingCanonicalReviewVerdict => "waiting for review executor",
+            PostProcessingCardResult.AwaitingDeliveryIntegration => "waiting for delivery integration",
+            PostProcessingCardResult.AwaitingIntegrationCompletion => "waiting to leave auto review",
+            _ => null,
+        };
+        if (headline is null) return $"waiting to retry ({wait.Reason})";
+        return string.IsNullOrWhiteSpace(wait.Detail) ? headline : $"{headline}: {wait.Detail}";
     }
 
     private static string? NonBlank(string? value) =>

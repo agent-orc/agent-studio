@@ -699,6 +699,18 @@ steer the pipeline in this policy version.
   `gate-interrupted` failure code, which joins `gate-environment-failure` in the
   host-fault family the ladder above replays without a new review. See
   [interrupted integration gate](../../operations/git/interrupted-integration-gate.md).
+- AGT-2849 repairs the branch; the card's own post-review sequence is a second,
+  separate casualty of the same restart (AGT-2860). "Settle review -> decide the
+  delivery gate -> integrate -> move out of `4-auto-review`" ran inside one HTTP
+  request with no durable resume point, so a restart could leave a card with a
+  terminal `Pass`, `integration: pending`, and nothing left to act on it - or
+  with its merge already published by a later gate and the card still in the
+  lane. `RemoteDeliverySettlementStore` now writes that gate verdict and a
+  monotonic stage beside the card before the first side effect;
+  `AutoReviewDeliveryResumeService` resumes from it at boot and on every
+  post-processing deferral pass, integrating only what is not already on the
+  branch and never creating a second review attempt. See
+  [review-plane contract](../contracts/review-plane.md).
 - A failed preparation or verification command stores a bounded, single-line
   stderr/stdout excerpt in the gate reason that flows into the durable pipeline
   step record. Full streams remain in per-process evidence and the gate log, so

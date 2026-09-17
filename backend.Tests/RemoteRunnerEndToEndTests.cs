@@ -4948,6 +4948,17 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.True(integratedAt >= 0, "Immediate integration evidence was not recorded.");
         Assert.True(humanReviewAt > integratedAt, "Human Review was entered before integration settled.");
 
+        // AGT-2860: the durable resume point travels with the card and reaches
+        // its final stage on the happy path, so a restart anywhere inside this
+        // sequence has something to resume from instead of a terminal Pass with
+        // no record of what the delivery gate decided.
+        var settlement = RemoteDeliverySettlementStore.Read(reviewed.FolderPath);
+        Assert.NotNull(settlement);
+        Assert.Equal(claim.Attempt.AttemptId, settlement!.ReviewAttemptId);
+        Assert.True(settlement.ShouldIntegrate);
+        Assert.Equal(RemoteDeliverySettlementStage.LaneSettled, settlement.Stage);
+        Assert.Equal("develop", settlement.IntegrationBranch);
+
         var developBeforeAcceptance = (await GitAsync(repository, "rev-parse", "develop")).StdOut.Trim();
         var pipelineBeforeAcceptance = factory.Services.GetRequiredService<PipelineExecutionLog>()
             .Read(reviewed.FolderPath)!.Steps.Single(step =>

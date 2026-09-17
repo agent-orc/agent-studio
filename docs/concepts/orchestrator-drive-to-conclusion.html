@@ -2107,7 +2107,8 @@
             terminal write with bounded backoff. Missing-task and superseded replies reach an explicit terminal
             classification and local cleanup instead of permanent slot retention. Persisted-slot journal counters expose
             pending count and oldest age. The compatibility lookup now includes archive while preserving the card's
-            terminal lane. The expected <code>awaiting-canonical-review-executor</code> deferral remains a separate
+            terminal lane. The expected canonical-review deferral (since AGT-2860:
+            <code>awaiting-canonical-review-verdict</code>) remains a separate
             control-plane waiter; both paths meet only at canonical ReviewAttempt settlement.
           </td>
         </tr>
@@ -2502,6 +2503,45 @@
             still classify as <code>TmpMountTornDown</code>. The captured verify-3 excerpt is a regression test in
             <code>runner.Tests</code>; the observed attempt would now reach
             <span class="lane">5-human-review</span> naming the failed test instead of an infra retry.
+          </td>
+        </tr>
+        <tr id="case-agt-2860-restart-stranded-a-passed-review">
+          <td>2026-09-17</td>
+          <td><code>AGT-2860</code><br><span class="small">a task-server restart stranded cards that had already passed review</span></td>
+          <td>
+            The Stable backend restarted at 08:48-08:55 (v0.4.0 -&gt; v0.5.0). Every card in
+            <span class="lane">4-auto-review</span> re-entered the post-processing deferral chain from attempt 1, and by
+            09:00 all fifteen logged
+            <code>auto-review-postprocessing-deferral-exhausted ... reason=awaiting-canonical-review-executor attempts=5</code>.
+            For <code>AGT-2855</code> that was terminal: its review had passed at 08:39
+            (<code>review_e002948c</code>, <code>outcome=Pass</code>), its integration was queued behind
+            <code>AGT-2854</code>'s running gate, the restart killed that gate, and the card then sat in
+            <span class="lane">4-auto-review</span> with <code>integration: pending</code> and a terminal Pass nothing
+            would ever act on. <code>AGT-2854</code> showed the other half: its un-gated merge was published by the next
+            green gate (<code>AGT-2814</code>, 10:29) and its record read <code>integrated / anchor-ancestor</code>, yet
+            the card was still in the lane at 13:45.
+          </td>
+          <td>
+            "Settle review -&gt; decide the delivery gate -&gt; integrate -&gt; move out of Auto Review" ran inside one
+            HTTP request, with no durable resume point between its steps, and the aspect verdicts that decided the
+            delivery gate existed only in the report payload. The only thing re-driving such a card was an in-memory
+            deferral counter that does not survive a restart and gives up after five attempts. The reason string was
+            misleading on top of that: the review executor was registered and busy; what was missing was an integration
+            that had never started and a completion transition that belonged to a dead gate.
+          </td>
+          <td>
+            <span class="pill ok">fixed in dev</span> <code>RemoteDeliverySettlementStore</code> persists the gate
+            verdict and a monotonic stage beside the card before the first side effect;
+            <code>AutoReviewResumePolicy</code> decides, from the current ReviewAttempt plus integration-branch ancestry,
+            whether a card owes an integration or only its transition; and
+            <code>AutoReviewDeliveryResumeService</code> drives that at boot and on every deferral pass, never creating a
+            second ReviewAttempt. The deferral budget no longer terminates a re-drive whose blocking condition is
+            observably satisfied, so <code>deferral-exhausted</code> cannot be logged for a card with a terminal Pass;
+            AGT-2842's growing backoff is unchanged for the genuinely idle executor. The reason token was split into
+            <code>awaiting-review-executor-registration</code>, <code>awaiting-canonical-review-verdict</code>,
+            <code>awaiting-delivery-integration</code> and <code>awaiting-integration-completion</code>. Both observed
+            cards would now reach <span class="lane">5-human-review</span> on the first pass after the restart, and the
+            acceptance rail would carry them to <span class="lane">6-completed</span> from there.
           </td>
         </tr>
       </tbody>

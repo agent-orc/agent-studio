@@ -267,6 +267,7 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
     private readonly IConfiguration _configuration;
     private readonly ILogger<AutoReviewPostProcessingWorker> _logger;
     private readonly V1ReviewExecutorRegistry? _reviewExecutorRegistry;
+    private readonly AutoReviewDeliveryResumeService? _deliveryResume;
 
     /// <summary>
     /// Test seam: when set, one request is handed to this delegate instead of the
@@ -290,7 +291,8 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
         TaskMutationService mutations,
         IConfiguration configuration,
         ILogger<AutoReviewPostProcessingWorker> logger,
-        V1ReviewExecutorRegistry? reviewExecutorRegistry = null)
+        V1ReviewExecutorRegistry? reviewExecutorRegistry = null,
+        AutoReviewDeliveryResumeService? deliveryResume = null)
     {
         _queue = queue;
         _reviewDecisionOrchestrator = reviewDecisionOrchestrator;
@@ -299,6 +301,7 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
         _configuration = configuration;
         _logger = logger;
         _reviewExecutorRegistry = reviewExecutorRegistry;
+        _deliveryResume = deliveryResume;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -428,6 +431,7 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
         {
             var outcome = await _reviewDecisionOrchestrator.ProcessCardAsync(
                 workspace, request.ProjectName, request.JobId, request.WatchPath, ct);
+            outcome = await ResumeDeliveryIfOwedAsync(request, outcome, ct);
             sw.Stop();
             // completion latency = run finished (enqueue) -> post-processing done;
             // the queue-wait share separates "stau" from "step cost" in the metric.
@@ -489,8 +493,10 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
         switch (outcome.Status)
         {
             case PostProcessingCardStatus.Deferred:
-                ParkActiveLifecycle(request, outcome.Reason);
-                ScheduleDeferralRetry(request, outcome.Reason, ct);
+                var deferralReason = RefineCanonicalWaitReason(
+                    outcome.Reason, ResolveReviewExecutorAvailability(outcome.Reason));
+                ParkActiveLifecycle(request, deferralReason);
+                ScheduleDeferralRetry(request, deferralReason, ct);
                 return;
 
             case PostProcessingCardStatus.Blocked:
@@ -508,10 +514,13 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
     }
 
     /// <summary>
-    /// Highest number of automatic re-drives for a deferred card. The card is
-    /// durable in <c>4-auto-review</c> and the boot/backstop sweep re-drives it
-    /// anyway, so this only shortens the wait; exhausting it leaves the card
-    /// resting in <c>awaiting-review</c> and never blocks it.
+    /// Highest number of automatic re-drives for a deferred card whose blocking
+    /// condition is still genuinely unresolved. The card is durable in
+    /// <c>4-auto-review</c> and the boot/backstop sweep re-drives it anyway, so
+    /// this only shortens the wait; exhausting it leaves the card resting in
+    /// <c>awaiting-review</c> and never blocks it. A wait whose blocking
+    /// condition is observably satisfied resets the counter instead of
+    /// exhausting it - see <see cref="ScheduleDeferralRetry"/>.
     /// </summary>
     internal const int MaxDeferralRetries = 5;
 
@@ -524,7 +533,7 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
     /// <summary>
     /// Tighter cap applied instead of <see cref="DeferralRetryMaxDelay"/> once a
     /// review executor is registered for the canonical-review-executor wait
-    /// (<see cref="PostProcessingCardResult.AwaitingCanonicalReviewExecutor"/>):
+    /// (<see cref="PostProcessingCardResult.IsCanonicalReviewWait"/>):
     /// the wait is healthy and self-resolving, so the card should keep
     /// re-checking - and keep its liveStatus queue reason fresh - at least once
     /// a minute rather than backing off to a ten-minute silence (AGT-2842).
@@ -557,10 +566,108 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
     /// unit-testable without spawning the real retry timer (AGT-2842).
     /// </summary>
     internal V1ReviewExecutorRegistry.ReviewExecutorAvailability? ResolveReviewExecutorAvailability(string reason)
-        => string.Equals(reason, PostProcessingCardResult.AwaitingCanonicalReviewExecutor, StringComparison.Ordinal)
+        => PostProcessingCardResult.IsCanonicalReviewWait(reason)
            && _reviewExecutorRegistry is not null
             ? _reviewExecutorRegistry.EvaluateReviewExecutorAvailability()
             : null;
+
+    /// <summary>
+    /// Drives the restart-safe delivery resume for the two deferrals a terminal
+    /// <c>Pass</c> has already earned (AGT-2860). A card whose review passed but
+    /// whose integration or lane transition was killed by a restart is not
+    /// waiting for anyone - this backend owes it the rest of the sequence - so
+    /// the pass that would have deferred it settles it instead and the card
+    /// drains out of the queue. Every other deferral is returned unchanged.
+    /// </summary>
+    internal async Task<PostProcessingCardResult> ResumeDeliveryIfOwedAsync(
+        AutoReviewPostProcessingRequest request,
+        PostProcessingCardResult outcome,
+        CancellationToken ct)
+    {
+        if (_deliveryResume is null
+            || outcome.Status != PostProcessingCardStatus.Deferred
+            || !PostProcessingCardResult.IsDeliveryResumeWait(outcome.Reason))
+        {
+            return outcome;
+        }
+
+        var info = _scanner.FindJob(request.JobId, request.WatchPath);
+        if (info is null) return outcome;
+
+        try
+        {
+            var resumed = await _deliveryResume.ResumeAsync(info, "post-processing-deferral", ct);
+            if (!resumed.Resumed) return outcome;
+
+            // The pass did reach a terminal decision for this card, so its
+            // lifecycle is closed here as completed. Leaving it to the caller's
+            // safety net would terminalize it as a failure and say the verdict
+            // never landed, which is the opposite of what just happened.
+            CloseResumedLifecycle(request, resumed);
+            return PostProcessingCardResult.Decided(DeliveryResumedReason + resumed.Reason);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "auto-review-postprocessing-delivery-resume-failed project={Project} job={JobId} reason={Reason}",
+                request.ProjectName, request.JobId, outcome.Reason);
+            return outcome;
+        }
+    }
+
+    /// <summary>
+    /// Names the missing thing instead of the role that is present. The
+    /// classifier can see that the ReviewAttempt has not settled, but only the
+    /// registry knows whether that is because no review executor is registered
+    /// at all or because a registered one is simply still working. On
+    /// 17.09.2026 every deferred card said
+    /// <c>awaiting-canonical-review-executor</c> while the executor was
+    /// registered and busy, which sent the incident hunt in the wrong direction
+    /// (AGT-2860).
+    /// </summary>
+    internal static string RefineCanonicalWaitReason(
+        string reason,
+        V1ReviewExecutorRegistry.ReviewExecutorAvailability? availability)
+        => string.Equals(
+               reason, PostProcessingCardResult.AwaitingCanonicalReviewVerdict, StringComparison.Ordinal)
+           && availability is { AnyRegistered: false }
+            ? PostProcessingCardResult.AwaitingReviewExecutorRegistration
+            : reason;
+
+    /// <summary>Prefix of the <c>Decided</c> reason a resumed delivery reports.</summary>
+    internal const string DeliveryResumedReason = "remote-delivery-resumed:";
+
+    private void CloseResumedLifecycle(
+        AutoReviewPostProcessingRequest request,
+        AutoReviewResumeOutcome resumed)
+    {
+        try
+        {
+            // Re-resolve: the transition moved the card's folder.
+            var info = _scanner.FindJob(request.JobId, request.WatchPath);
+            if (info is null) return;
+            PostProcessingLifecycleStore.Terminalize(
+                info.FolderPath,
+                DateTime.UtcNow,
+                failed: false,
+                "Post Processing resumed the interrupted remote delivery ("
+                + resumed.Reason + ") and completed the transition.",
+                _logger,
+                onlyWhenActive: true);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "auto-review-postprocessing-resume-lifecycle-close-failed project={Project} job={JobId}",
+                request.ProjectName, request.JobId);
+        }
+    }
 
     private void ScheduleDeferralRetry(
         AutoReviewPostProcessingRequest request,
@@ -572,7 +679,16 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
             ? CanonicalReviewExecutorRegisteredMaxDelay
             : DeferralRetryMaxDelay;
 
-        if (request.Attempt >= MaxDeferralRetries)
+        // AGT-2860: the budget exists for a wait nobody is resolving. Neither of
+        // these is that. A registered executor means the blocking condition the
+        // budget was counting against is observably satisfied, and a card with a
+        // terminal Pass attempt is owed work by this backend, not by anyone
+        // else. In both cases the counter resets rather than stranding the card
+        // in 4-auto-review with nothing left to pick it up. The genuinely idle
+        // executor keeps AGT-2842's growing backoff and its exhaustion.
+        var blockingConditionResolved = availability?.AnyRegistered == true
+                                        || PostProcessingCardResult.IsDeliveryResumeWait(reason);
+        if (request.Attempt >= MaxDeferralRetries && !blockingConditionResolved)
         {
             _logger.LogInformation(
                 "auto-review-postprocessing-deferral-exhausted project={Project} job={JobId} reason={Reason} attempts={Attempts}",
@@ -584,14 +700,15 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
             return;
         }
 
-        var delay = DeferralDelayOverride?.Invoke(request.Attempt) ?? DeferralRetryDelay(request.Attempt, maxDelay);
+        var attempt = request.Attempt >= MaxDeferralRetries ? 0 : request.Attempt;
+        var delay = DeferralDelayOverride?.Invoke(attempt) ?? DeferralRetryDelay(attempt, maxDelay);
         _logger.LogInformation(
             "auto-review-postprocessing-deferred project={Project} job={JobId} reason={Reason} attempt={Attempt} retryInMs={RetryInMs}",
-            request.ProjectName, request.JobId, reason, request.Attempt, (long)delay.TotalMilliseconds);
+            request.ProjectName, request.JobId, reason, attempt, (long)delay.TotalMilliseconds);
         _queue.SetWaitState(
             request.ProjectName,
             request.JobId,
-            new AutoReviewQueueWaitState(reason, availability?.Detail, request.Attempt, DateTime.UtcNow + delay));
+            new AutoReviewQueueWaitState(reason, availability?.Detail, attempt, DateTime.UtcNow + delay));
 
         _ = Task.Run(async () =>
         {
@@ -600,7 +717,7 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
                 await Task.Delay(delay, ct);
                 _queue.Enqueue(request with
                 {
-                    Attempt = request.Attempt + 1,
+                    Attempt = attempt + 1,
                     EnqueuedAtUtc = DateTime.UtcNow,
                     Source = "deferral-retry",
                 });
