@@ -689,6 +689,11 @@ public class TaskScannerService : ITaskScanner
                 ThinkingLevelExplicit = !raw.TryGetProperty("thinkingLevelExplicit", out var thinkingExplicit)
                     || thinkingExplicit.ValueKind != JsonValueKind.False,
                 CliType = raw.TryGetProperty("cliType", out var ct) ? ct.GetString() : null,
+                // Highest-precedence input of ProjectSettingsService.ResolveContextMode.
+                // Only a platform-owned round that must not inherit stale CLI
+                // state writes it (AGT-2861); absent means project setting, then
+                // the platform default.
+                ContextMode = raw.TryGetProperty("contextMode", out var cxm) ? cxm.GetString() : null,
                 QuotaWait = QuotaWaitMarker.ToStatus(QuotaWaitMarker.TryRead(jobDir, _logger)),
                 QuotaFallback = AgentStudio.Cli.QuotaFallbackMarker.ToStatus(AgentStudio.Cli.QuotaFallbackMarker.TryRead(jobDir, _logger)),
                 Kind = TaskKinds.Normalize(raw.TryGetProperty("kind", out var kd) ? kd.GetString() : null),

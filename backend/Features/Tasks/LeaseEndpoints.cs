@@ -1126,6 +1126,7 @@ public static class LeaseEndpoints
             OrchestratorChatLog chatLog,
             OrchestratorLog orchestratorLog,
             HumanReviewEscalation humanReviewEscalation,
+            RunTimeoutContinuationService timeoutContinuations,
             ILoggerFactory loggerFactory,
             CancellationToken ct) =>
         {
@@ -1877,11 +1878,71 @@ public static class LeaseEndpoints
 
             if (targetState == TaskStates.Escalated)
             {
+                // AGT-2861: a run that ended without a recognized terminal
+                // outcome but transferred a salvage commit already produced a
+                // delivery; it only lacks its finishing round. One bounded
+                // automatic continuation on the salvage replaces the escalation,
+                // a repeat in the same delivery generation parks the card with
+                // the salvage named in its reason.
+                var salvage = unverifiedDelivery is null
+                                  && RunTimeoutSalvageContinuationPolicy.IsNonTerminalOutcome(outcome)
+                    ? RunSalvageReference.From(
+                        salvageBranch,
+                        salvageCommitSha,
+                        req.SalvageRecoveryBranch,
+                        req.SalvageRecoveryCommitSha)
+                    : null;
+                var continuationRoundsUsed = salvage is null
+                    ? 0
+                    : timeoutContinuations.CountAutomaticRounds(task);
+                if (RunTimeoutSalvageContinuationPolicy.Decide(
+                        outcome, salvage is not null, continuationRoundsUsed)
+                    == RunTimeoutSalvageAction.StartContinuation)
+                {
+                    var continuation = await timeoutContinuations.StartAsync(
+                        task, salvage!, reportedReason, attemptId, laneWrite, ct);
+                    if (continuation.Started)
+                    {
+                        orchestratorLog.Append(task.WatchPath, new OrchestratorLogEntry
+                        {
+                            Kind = OrchestratorLogKinds.Decision,
+                            Topic = RunTimeoutSalvageContinuationPolicy.ContinuationReason,
+                            JobId = task.Id,
+                            Summary =
+                                $"Started continuation round {continuation.Round} for \"{task.Title}\": "
+                                + $"the run ended without a terminal outcome, salvaged as {salvage!.Describe()}.",
+                            Reasoning = continuation.Reason,
+                        });
+                        return Results.Ok(new RemoteRunCompletionResponse(
+                            req.TaskKey,
+                            responseOutcome,
+                            TaskStates.Ready,
+                            $"Automatic continuation round {continuation.Round} of "
+                            + $"{RunTimeoutSalvageContinuationPolicy.MaxAutomaticContinuationRounds} "
+                            + $"started on salvage {salvage.Describe()}.",
+                            RunAttemptId: attemptId));
+                    }
+                    loggerFactory.CreateLogger("AgentStudio.Tasks.RemoteRunnerCompletion").LogWarning(
+                        "continuation-round-not-started task={TaskKey} attempt={AttemptId} salvage={SalvageBranch}@{SalvageSha} reason={Reason}",
+                        req.TaskKey,
+                        attemptId,
+                        salvage!.Branch,
+                        salvage.CommitSha,
+                        continuation.Reason);
+                    task = scanner.FindJob(task.Id, task.WatchPath) ?? task;
+                }
+
                 // An unverified completion carries its own category and exact
                 // boundary reason instead of a generic agent-outcome text.
                 var (category, reason) = unverifiedDelivery is not null
                     ? (HumanReviewEscalationCategories.UnverifiedDelivery, unverifiedDelivery)
-                    : RemoteEscalation(outcome, req.Reason, req.NeedsInputMessage, req.GateItems);
+                    : RemoteEscalation(
+                        outcome,
+                        req.Reason,
+                        req.NeedsInputMessage,
+                        req.GateItems,
+                        salvage,
+                        continuationRoundsUsed);
                 var escalated = await humanReviewEscalation.EscalateAsync(
                     task.Id,
                     task.WatchPath,
@@ -2324,7 +2385,9 @@ public static class LeaseEndpoints
         string outcome,
         string? reportedReason,
         string? needsInputMessage,
-        IReadOnlyList<string>? gateItems)
+        IReadOnlyList<string>? gateItems,
+        RunSalvageReference? salvage = null,
+        int automaticContinuationRoundsUsed = 0)
     {
         var reason = CredentialRedactor.Redact(reportedReason)
             .Replace('\r', ' ')
@@ -2361,11 +2424,13 @@ public static class LeaseEndpoints
                     : reason.Length == 0
                     ? "The remote agent requires operator input before it can continue."
                     : $"The remote agent requires operator input: {reason}"),
+            // A parked non-terminal outcome names its salvage and the automatic
+            // rounds already spent, so the manual recovery path needs no journal
+            // reading (AGT-2861).
             _ => (
                 HumanReviewEscalationCategories.RemoteOutcomeUnknown,
-                reason.Length == 0
-                    ? "The remote runner ended without a recognized terminal outcome."
-                    : $"The remote runner ended without a recognized terminal outcome: {reason}"),
+                RunTimeoutSalvageContinuationPolicy.ComposeEscalationReason(
+                    reason, salvage, automaticContinuationRoundsUsed)),
         };
     }
 

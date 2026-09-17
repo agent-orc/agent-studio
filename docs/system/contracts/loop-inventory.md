@@ -111,6 +111,17 @@ Each entry uses the same fields:
 - **Last fired:** 2026-08-11, AGT-2563 follow-up. A mechanical rebase changed delivery commit cardinality and correctly refused ambiguous SHA attribution, but the card remained in Review until manual requeue.
 - **Notes:** The automatic round saves a `steer` pending intent, retains the prior delivery as superseded history, and queues the original card at the front of Ready. An explicit operator requeue opens a new review epoch and therefore a new bounded opportunity. Automatic moves never increment the epoch.
 
+### completion.run-timeout-salvage-continuation
+
+- **Kind:** Post-Guard
+- **Where:** [`backend/Features/Runner/RunTimeoutSalvageContinuation.cs`](../../../backend/Features/Runner/RunTimeoutSalvageContinuation.cs) (`RunTimeoutSalvageContinuationPolicy` and `RunTimeoutContinuationService`), invoked from the `POST /api/runner/completion` escalation branch in `backend/Features/Tasks/LeaseEndpoints.cs`.
+- **Re-entry trigger:** A remote run reports the non-terminal outcome `Unknown` (the observed cause is a hit run timeout) and its completion carried a salvage branch plus salvage commit SHA.
+- **Budget:** `RunTimeoutSalvageContinuationPolicy.MaxAutomaticContinuationRounds` (exactly 1 automatic continuation round per delivery generation). Prior firings are counted from durable `continuation_round_started` timeline events with `automatic=true` and the same `attemptEpoch`.
+- **Action when budget exhausted:** Escalate to `5e-escalated` exactly as before the loop existed, with the salvage ref, the salvage SHA, and the spent round count folded into the escalation reason by `RunTimeoutSalvageContinuationPolicy.ComposeEscalationReason`.
+- **Breaker test:** [`backend.Tests/Architecture/RunTimeoutContinuationBreakerTest.cs`](../../../backend.Tests/Architecture/RunTimeoutContinuationBreakerTest.cs), plus the unit suite in [`backend.Tests/RunTimeoutSalvageContinuationTests.cs`](../../../backend.Tests/RunTimeoutSalvageContinuationTests.cs).
+- **Last fired:** 2026-09-17, AGT-2858 (run `run_f419c075`, salvage `521fd1e3`) and AGT-2859 (salvage `f0915674`). Both timed out at the 90-minute run budget with buildable salvaged work and were escalated without a continuation; an operator had to read the journal for the SHA and hand-write the finishing prompt.
+- **Notes:** The round is task-server-owned; runner salvage behaviour is unchanged. It saves a `steer` pending intent, appends the finishing instruction to `prompt.md` (the text the remote runner fetches verbatim), pins the round to a clean CLI context because a salvaged worktree leaves no resumable session, and queues the card at the front of Ready under the completing attempt's authority write. A terminal agent statement (`Blocked`, `NeedsInput`) and an unverified delivery never open this loop; the latter keeps its own bounded retry budget in `RemoteDeliveryFailurePolicy`. An explicit operator requeue opens a new review-attempt epoch and therefore a new bounded opportunity.
+
 ### ui-task.human-feedback-iterations
 
 - **Kind:** Post-Guard

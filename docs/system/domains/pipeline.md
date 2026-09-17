@@ -1288,6 +1288,38 @@ broken. An operator had to requeue every one by hand.
   signature in the escalation reason. `AcceptanceRailReceipts` counts a card's
   own `requeued-infrastructure` timeline receipts so the rail and the card
   projection agree on the retry number.
+- **Integration recovery round.** `RemoteIntegrationContinuationPolicy.Decide`
+  (`backend/Features/Pipeline/IntegrationAgentRoundService.cs`) opens exactly one
+  automatic steer round per operator-owned review epoch when the merge-first
+  integrator returns `AgentRoundRequired`, then leaves a repeat for Human Review.
+  The round saves a `steer` pending intent, retains the ambiguous delivery as
+  superseded history, queues the card at the front of Ready, and states itself as
+  `integration_recovery_queued` with `automatic=true`.
+- **Run timeout with a salvage commit.** The same shape one step earlier
+  (AGT-2861). `RunTimeoutSalvageContinuationPolicy.Decide`
+  (`backend/Features/Runner/RunTimeoutSalvageContinuation.cs`) reads one remote
+  completion: when the outcome is the non-terminal `Unknown` (the observed cause
+  is a hit run timeout) **and** the completion carried a salvage branch plus
+  salvage commit SHA, the delivery already exists and only lacks its finishing
+  round, so `RunTimeoutContinuationService` starts one automatic continuation
+  round instead of escalating. The round appends the finishing instruction to
+  `prompt.md` (fetch the salvage, rebase, build, run the touched tests, write
+  `results/status.md`, deliver), saves the matching `steer` intent, pins a clean
+  CLI context because a salvaged worktree leaves no resumable session, keeps the
+  card's own model, returns the card to the front of `2-ready` under the
+  completing attempt's authority write, and records
+  `continuation_round_started` with `reason=run-timeout-with-salvage`. The run
+  timeout itself is unchanged: the point is to keep the budget and finish in a
+  second round. Bounded at
+  `RunTimeoutSalvageContinuationPolicy.MaxAutomaticContinuationRounds` (1) per
+  delivery generation, counted from durable `continuation_round_started` events
+  with the same `attemptEpoch`; a second timeout escalates as before, and
+  `ComposeEscalationReason` names the salvage ref, the salvage SHA, and the spent
+  round count in the escalation summary so the manual path needs no journal
+  reading. A terminal agent statement (`Blocked`, `NeedsInput`) and an unverified
+  delivery never open this loop. Registered as
+  `completion.run-timeout-salvage-continuation` in
+  [loop-inventory.md](../contracts/loop-inventory.md).
 - **Grading consistency.** `ReviewGradingPolicy.Grade` (`contracts/TaskServer.Contracts/ReviewGradingPolicy.cs`)
   is the single place a set of aspect verdict tokens becomes one review grade:
   a blocking token (`block` / `blocked` / `fail`) yields `ProductFailure`; a
@@ -1413,3 +1445,9 @@ whose `task.integration` said `integrated`. Two defects met.
   `AcceptanceRailPolicyTests` and `AcceptanceRailHostedServiceTests` (the
   infrastructure requeue/backoff/escalation matrix), `ReviewAspectTimeoutPolicyTests`,
   and `GateRunBudgetPolicyTests`.
+- Automatic-continuation changes need
+  `backend.Tests/RunTimeoutSalvageContinuationTests.cs` (the policy matrix, the
+  escalation summary with and without a salvage, the single started round with
+  its intent / prompt note / timeline receipt, and the fresh budget after an
+  operator requeue) plus the loop breaker
+  `backend.Tests/Architecture/RunTimeoutContinuationBreakerTest.cs`.

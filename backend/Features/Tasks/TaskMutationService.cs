@@ -695,6 +695,21 @@ public class TaskMutationService
     }
 
     /// <summary>
+    /// Pins the per-task CLI context mode (<see cref="TaskInfo.ContextMode"/>),
+    /// the highest-precedence input of
+    /// <see cref="ProjectSettingsService.ResolveContextMode"/>. Used when a
+    /// platform-owned round must not inherit whatever persistent CLI state the
+    /// previous round left on its host.
+    /// </summary>
+    public bool SetContextModeOnFolder(string folderPath, string contextMode)
+    {
+        if (!Directory.Exists(folderPath) || !CliContextModes.IsValid(contextMode)) return false;
+        TaskJsonFile.UpdateField(
+            folderPath, "contextMode", CliContextModes.Normalize(contextMode), _logger);
+        return Updated();
+    }
+
+    /// <summary>
     /// Appends one stable integration bookkeeping record without changing any
     /// existing row. The record id is the idempotency key: a repeated sweep is
     /// a successful no-op, even if its wall clock or evidence text differs.
