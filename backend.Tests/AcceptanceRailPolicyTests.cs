@@ -354,6 +354,91 @@ public sealed class AcceptanceRailPolicyTests
         Assert.Equal(TimeSpan.Zero, elapsed);
     }
 
+    /// <summary>
+    /// AGT-2856 - the attempt identity must change exactly when a fact the rail
+    /// acted on changed, so an unchanged card is never retried and a changed one
+    /// always is.
+    /// </summary>
+    [Fact]
+    public void AttemptFingerprint_IsStableForUnchangedFacts()
+    {
+        var decision = new AcceptanceRailDecision(AcceptanceRailAction.Accept, "git-derived-integrated");
+
+        var first = AcceptanceRailAttemptPolicy.Fingerprint(
+            Card(),
+            Status(IntegrationStatuses.Pending),
+            decision);
+        var second = AcceptanceRailAttemptPolicy.Fingerprint(
+            Card(),
+            Status(IntegrationStatuses.Pending),
+            decision);
+
+        Assert.Equal(first, second);
+        Assert.False(AcceptanceRailAttemptPolicy.ShouldAttempt(second, first));
+    }
+
+    [Theory]
+    [InlineData("lane")]
+    [InlineData("status")]
+    [InlineData("sha")]
+    [InlineData("delivery-ref")]
+    [InlineData("detail")]
+    [InlineData("failure")]
+    [InlineData("action")]
+    public void AttemptFingerprint_ChangesWithEveryActedOnFact(string changed)
+    {
+        var decision = new AcceptanceRailDecision(AcceptanceRailAction.Accept, "git-derived-integrated");
+        var baseline = AcceptanceRailAttemptPolicy.Fingerprint(
+            Card(),
+            Status(IntegrationStatuses.Pending),
+            decision);
+
+        var card = Card();
+        var status = Status(IntegrationStatuses.Pending);
+        switch (changed)
+        {
+            case "lane":
+                card = card with { EnteredLaneAt = new DateTime(2026, 9, 17, 10, 29, 0, DateTimeKind.Utc) };
+                break;
+            case "status":
+                status = Status(IntegrationStatuses.Integrated);
+                break;
+            case "sha":
+                status = status with { Sha = "e6f8927" };
+                break;
+            case "delivery-ref":
+                status = status with { DeliveryRef = "agent-studio/results/run-1/fence-14/e6f8927" };
+                break;
+            case "detail":
+                status = status with { Detail = "Delivery ref is not yet integrated into develop." };
+                break;
+            case "failure":
+                status = RecoverableConflict();
+                break;
+            case "action":
+                decision = new AcceptanceRailDecision(
+                    AcceptanceRailAction.Escalate,
+                    "integration-requeue-budget-exhausted");
+                break;
+        }
+
+        var changedFingerprint = AcceptanceRailAttemptPolicy.Fingerprint(card, status, decision);
+
+        Assert.NotEqual(baseline, changedFingerprint);
+        Assert.True(AcceptanceRailAttemptPolicy.ShouldAttempt(changedFingerprint, baseline));
+    }
+
+    [Fact]
+    public void AttemptFingerprint_IsAttemptedWhenNothingWasRefusedYet()
+    {
+        var fingerprint = AcceptanceRailAttemptPolicy.Fingerprint(
+            Card(),
+            Status(IntegrationStatuses.Integrated),
+            new AcceptanceRailDecision(AcceptanceRailAction.Accept, "git-derived-integrated"));
+
+        Assert.True(AcceptanceRailAttemptPolicy.ShouldAttempt(fingerprint, lastRefusedFingerprint: null));
+    }
+
     private static TaskInfo Card() => new()
     {
         Id = "rail-card",

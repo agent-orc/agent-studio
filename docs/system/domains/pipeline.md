@@ -1310,10 +1310,58 @@ broken. An operator had to requeue every one by hand.
   provider quota must never fail a gate run it was never supposed to be part
   of.
 
+## Acceptance rail: one integration truth, one refusal
+
+AGT-2856 (2026-09-17, Stable v0.5.0): the API log carried one
+`acceptance-rail-accept-refused` warning per Human Review card every rail
+interval, for cards whose delivery was demonstrably on `origin/develop` and
+whose `task.integration` said `integrated`. Two defects met.
+
+- **One truth.** The integration verdict has exactly one owner,
+  `TaskIntegrationStatusService.BuildLookup`
+  (`backend/Features/Tasks/TaskIntegrationStatusService.cs`), and the rail,
+  the board projection, the card detail, and the acceptance gate in
+  `TaskTransitionService.ValidateIntegratedAcceptance` all read it. The
+  per-card verdict must therefore be **independent of the batch it is computed
+  in**. It was not: the repository ancestor sets were seeded only from cards
+  that carry an attributed commit, so a card whose delivery is proven by its
+  reviewed result alone (`reviewed-result-ancestor`, no `commits[]` entry)
+  reached an ancestor set only when some *other* card of the same repository
+  happened to share the sweep. The board (many cards) read `integrated`, the
+  single-card acceptance read `pending`, and the rail refused the acceptance it
+  had just decided. A card without commit groups now resolves its project's
+  primary repository and integration branch in the same pass, so a lookup of
+  one card and a lookup of the whole board agree by construction. This does not
+  weaken AGT-2817: the proof is still Git ancestry of the delivery against the
+  integration branch, never a lane state or a pipeline record.
+- **One refusal per state change.** A refused rail action is a decision, not a
+  symptom to retry. `AcceptanceRailAttemptPolicy`
+  (`backend/Features/Tasks/Acceptance/AcceptanceRailAttemptPolicy.cs`) is a
+  pure fingerprint over the facts the rail acted on: lane and lane-entry
+  instant, the Git-derived status with its SHA, delivery ref, detail, failure
+  code and signature, and the action those facts produced. The rail remembers
+  the fingerprint of every refused attempt and skips the card until a new fact
+  changes it - a push that lands the delivery, a new delivery, an operator
+  move, or a different failure classification. Suppressed cards are counted in
+  `AcceptanceRailSnapshot.Suppressed` (`GET /api/pipeline/acceptance-rail`), so
+  a quiet log is visible as a decision rather than as an absence. The ledger is
+  in memory: a backend restart is itself a new fact and costs exactly one
+  re-evaluation per card.
+- **Leaving Human Review.** An integrated coding delivery in `5-human-review`
+  is accepted by the rail without an orchestrator session. A card the project
+  policy holds (`AcceptanceRail:HoldList`, the `orchestrator-hold` tag, an
+  operator-decision blocker) stays in Human Review with its integration proof
+  on the card and produces no warning, however often the rail sweeps.
+
 ## Verification
 
 - Catalogue changes need `PipelineCatalogueTests` and any step-specific test
   that pins display names, ordering, run mode, and enabled defaults.
+- Acceptance-rail changes need `backend.Tests/AcceptanceRailHostedServiceTests.cs`
+  (batch-independent acceptance, one refusal per state change, held cards stay
+  warning-free), `backend.Tests/AcceptanceRailPolicyTests.cs` (the pure decision
+  and attempt-fingerprint matrices), and
+  `backend.Tests/TaskIntegrationStatusServiceTests.cs` for the verdict itself.
 - Step condition, model, or order changes need `ProjectSettingsServiceTests`,
   `PipelineStepConditionTests`, and `PipelineStepModelDefaultsTests` coverage.
 - Review and abort-review changes need `ReviewDecisionOrchestrator*Tests`,

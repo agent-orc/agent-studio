@@ -334,6 +334,9 @@ costs one repeated alert, never a missed one.
 - `task-server/TaskServerReviewStore.cs` and
   `backend/Features/Runner/V1ReviewPlaneEndpoints.cs`: authoritative report
   admission and acceptance-rail protection.
+- The rail's integration truth and its one-refusal-per-state-change rule live
+  in the pipeline domain:
+  [pipeline.md](./pipeline.md#acceptance-rail-one-integration-truth-one-refusal).
 - `orchestrator-engine/OrchestrationStageHandlers.cs`: Council records an
   uncited downgrade as a concern without turning it back into a reissue.
 - `runner.Tests/RemoteReviewWorkspaceTests.cs`: exact docs-diff visibility and

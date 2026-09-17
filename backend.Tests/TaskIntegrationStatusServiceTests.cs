@@ -1009,6 +1009,49 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         Assert.Null(status.Sha);
     }
 
+    /// <summary>
+    /// AGT-2856 - the verdict for one card must not depend on which other cards
+    /// share the batch. A card whose delivery is proven by its reviewed result
+    /// (no attributed commit) used to reach the repository ancestor set only
+    /// when some other card in the same batch had seeded it, so the board read
+    /// "integrated" while the single-card acceptance read "pending".
+    /// </summary>
+    [Fact]
+    public void BuildLookup_ReviewedResultAncestorWithoutAttributedCommit_IsIntegratedInEveryBatch()
+    {
+        var repo = SeedDevelopMainRepo();
+        RunGit(repo, "checkout -q develop");
+        File.WriteAllText(Path.Combine(repo, "delivered.txt"), "delivered");
+        Commit(repo, "feat: delivered through a fenced result ref");
+        var delivered = RunGit(repo, "rev-parse develop").Out.Trim();
+
+        var svc = BuildService(repo, out var project, out var log);
+        var job = Job("fenced-delivery", "AGT-2856", project, repo, log);
+        ReviewSubjectStore.Write(job.FolderPath, new ReviewSubjectRecord
+        {
+            TaskKey = job.Key!,
+            RunAttemptId = "run-agt-2856",
+            Project = project,
+            Repository = repo,
+            ResultSha = delivered,
+            AttemptChainId = "attempt-agt-2856",
+            ImmutableResultRef = "origin/agent-studio/results/run-agt-2856",
+            CompletedAtUtc = DateTimeOffset.UtcNow,
+        });
+        var neighbour = Job("neighbour", "AGT-2857", project, repo, log,
+            commits: [Commit(delivered)]);
+
+        var alone = svc.BuildLookup([job])[job.TaskKey];
+        var batched = svc.BuildLookup([job, neighbour])[job.TaskKey];
+
+        Assert.Equal(IntegrationStatuses.Integrated, alone.Status);
+        Assert.Equal("reviewed-result-ancestor", alone.Detail);
+        Assert.Equal(delivered[..7], alone.Sha);
+        Assert.Equal(batched.Status, alone.Status);
+        Assert.Equal(batched.Detail, alone.Detail);
+        Assert.Equal(batched.Sha, alone.Sha);
+    }
+
     [Fact]
     public void BuildLookup_OnlyDeliveredLanes_GetAVerdict()
     {

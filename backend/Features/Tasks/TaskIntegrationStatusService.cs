@@ -53,6 +53,15 @@ namespace AgentStudio.Tasks;
 /// <c>pipeline-execution.json</c> best-effort (integration-failed vs. plain
 /// pending). Never throws: a git failure yields the conservative reading.
 /// </para>
+///
+/// <para>
+/// AGT-2856 - one card's verdict never depends on the batch it was computed
+/// in. Every card contributes the repository key its verdict is read from,
+/// including the project's primary repository for a card without attributed
+/// commits, so a lookup of one card and a lookup of the whole board agree.
+/// Acceptance asks for one card and the board asks for hundreds; they must not
+/// disagree about the same delivery.
+/// </para>
 /// </summary>
 public sealed class TaskIntegrationStatusService
 {
@@ -118,14 +127,22 @@ public sealed class TaskIntegrationStatusService
 
         using var _t = GitProcessTelemetry.BeginRequest("board/integration-status", _logger);
 
-        var work = new Dictionary<TaskInfo, List<RepositoryCommitGroup>>();
+        var work = new Dictionary<TaskInfo, CardIntegrationWork>();
         var repoKeys = new HashSet<RepoBranchKey>();
         foreach (var job in jobs.Where(job => DeliveredLanes.Contains(job.State)))
         {
             var groups = BuildRepositoryGroups(job);
-            work[job] = groups;
+            // AGT-2856: a card without an attributed commit is answered from its
+            // project's primary repository, so that repository must be resolved
+            // here too. Deriving the key only from the groups made the verdict
+            // depend on the rest of the batch: the board (many cards) saw the
+            // ancestor set a neighbouring card had seeded and read "integrated",
+            // while acceptance (one card) found none and read "pending".
+            var primaryKey = groups.Count == 0 ? ResolvePrimaryRepoKey(job) : null;
+            work[job] = new CardIntegrationWork(groups, primaryKey);
             foreach (var group in groups)
                 if (group.Key is not null) repoKeys.Add(group.Key);
+            if (primaryKey is not null) repoKeys.Add(primaryKey);
         }
 
         var reaches = new ConcurrentDictionary<RepoBranchKey, RepoIntegration>();
@@ -147,9 +164,9 @@ public sealed class TaskIntegrationStatusService
                     () => ComputeRepoIntegration(key.Root, key.Branch));
             });
 
-        foreach (var (job, groups) in work)
+        foreach (var (job, card) in work)
         {
-            result[job.TaskKey] = ClassifyRepositories(job, groups, reaches);
+            result[job.TaskKey] = ClassifyRepositories(job, card, reaches);
         }
 
         return result;
@@ -265,17 +282,15 @@ public sealed class TaskIntegrationStatusService
     /// </summary>
     private TaskIntegrationStatus ClassifyRepositories(
         TaskInfo job,
-        IReadOnlyList<RepositoryCommitGroup> groups,
+        CardIntegrationWork card,
         IReadOnlyDictionary<RepoBranchKey, RepoIntegration> reaches)
     {
+        var groups = card.Groups;
         var primaryBranch = ConfiguredIntegrationBranch(job);
         if (groups.Count == 0)
         {
-            var primaryRoot = _git.ResolveRepoRootForWatchPath(job.WatchPath);
-            if (string.IsNullOrWhiteSpace(primaryRoot))
-                return ClassifyNotIntegrated(job, primaryBranch);
-            var primaryKey = new RepoBranchKey(primaryRoot, primaryBranch);
-            return reaches.TryGetValue(primaryKey, out var primaryReach)
+            return card.PrimaryKey is not null
+                   && reaches.TryGetValue(card.PrimaryKey, out var primaryReach)
                 ? ClassifyWithRepo(job, primaryReach)
                 : ClassifyNotIntegrated(job, primaryBranch);
         }
@@ -403,6 +418,20 @@ public sealed class TaskIntegrationStatusService
         }
 
         return ClassifyNotIntegrated(job, projectedBranch, repositories: repositoryEntries);
+    }
+
+    /// <summary>
+    /// The repository/branch the card is answered from when it carries no
+    /// attributed commit: its project's primary checkout on the configured
+    /// integration branch. Null when the checkout cannot be resolved, which
+    /// leaves the card on the conservative not-integrated reading.
+    /// </summary>
+    private RepoBranchKey? ResolvePrimaryRepoKey(TaskInfo job)
+    {
+        var root = _git.ResolveRepoRootForWatchPath(job.WatchPath);
+        return string.IsNullOrWhiteSpace(root)
+            ? null
+            : new RepoBranchKey(root, ConfiguredIntegrationBranch(job));
     }
 
     private List<RepositoryCommitGroup> BuildRepositoryGroups(TaskInfo job)
@@ -1151,6 +1180,17 @@ public sealed class TaskIntegrationStatusService
         bool HasPublishedBranch);
 
     private sealed record RepoBranchKey(string Root, string Branch);
+
+    /// <summary>
+    /// Everything one card needs from the batch's repository pass: its commit
+    /// groups and, when it has none, the primary repository key its verdict is
+    /// read from. Carrying the key makes the per-card verdict independent of
+    /// the other cards in the batch (AGT-2856).
+    /// </summary>
+    private sealed record CardIntegrationWork(
+        List<RepositoryCommitGroup> Groups,
+        RepoBranchKey? PrimaryKey);
+
     private sealed record RepositoryCommitGroup(
         string Repository,
         List<TaskCommitInfo> Commits,

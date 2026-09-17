@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Tasks;
@@ -13,6 +14,12 @@ public sealed record AcceptanceRailSnapshot
     public int Requeued { get; init; }
     public int Escalated { get; init; }
     public int Failed { get; init; }
+
+    /// <summary>
+    /// Cards the rail deliberately did not act on this pass because their facts
+    /// are unchanged since the attempt that was refused (AGT-2856).
+    /// </summary>
+    public int Suppressed { get; init; }
 }
 
 /// <summary>
@@ -31,6 +38,15 @@ public sealed class AcceptanceRailHostedService : BackgroundService
     private readonly IConfiguration _configuration;
     private readonly ILogger<AcceptanceRailHostedService> _logger;
     private readonly object _snapshotGate = new();
+
+    /// <summary>
+    /// Per card, the fingerprint of the last attempt that was refused. The rail
+    /// re-attempts only when a new fact changes the fingerprint (AGT-2856), so
+    /// a refusal stays a decision instead of becoming a per-interval retry. In
+    /// memory on purpose: a backend restart is a new fact too and costs exactly
+    /// one re-evaluation per card.
+    /// </summary>
+    private readonly ConcurrentDictionary<string, string> _refusedAttempts = new(StringComparer.Ordinal);
     private AcceptanceRailSnapshot _current = new()
     {
         Enabled = AcceptanceRailDefaults.Enabled,
@@ -81,6 +97,8 @@ public sealed class AcceptanceRailHostedService : BackgroundService
         var requeued = 0;
         var escalated = 0;
         var failed = 0;
+        var suppressed = 0;
+        ForgetCardsOutsideRailLanes(jobs);
 
         foreach (var job in jobs)
         {
@@ -109,15 +127,27 @@ public sealed class AcceptanceRailHostedService : BackgroundService
                     continue;
                 }
 
+                // AGT-2856: the same facts always produce the same outcome, so a
+                // refused attempt is not retried until a new fact arrives. This
+                // is what keeps a card that cannot be accepted from re-running
+                // the move - and re-logging the refusal - on every interval.
+                var fingerprint = AcceptanceRailAttemptPolicy.Fingerprint(job, status, decision);
+                if (decision.Action != AcceptanceRailAction.Ignore
+                    && !AcceptanceRailAttemptPolicy.ShouldAttempt(fingerprint, LastRefusal(job)))
+                {
+                    suppressed++;
+                    continue;
+                }
+
                 switch (decision.Action)
                 {
                     case AcceptanceRailAction.Accept:
                         if (await AcceptAsync(job, ct)) accepted++;
-                        else failed++;
+                        else { failed++; RememberRefusal(job, fingerprint); }
                         break;
                     case AcceptanceRailAction.Requeue:
                         if (status is not null && Requeue(job, status, used + 1)) requeued++;
-                        else failed++;
+                        else { failed++; RememberRefusal(job, fingerprint); }
                         break;
                     case AcceptanceRailAction.RequeueInfrastructure:
                         if (status is not null
@@ -130,7 +160,7 @@ public sealed class AcceptanceRailHostedService : BackgroundService
                         {
                             requeued++;
                         }
-                        else failed++;
+                        else { failed++; RememberRefusal(job, fingerprint); }
                         break;
                     case AcceptanceRailAction.Escalate:
                         if (job.State == TaskStates.Escalated && HasExhaustionReceipt(job))
@@ -146,11 +176,11 @@ public sealed class AcceptanceRailHostedService : BackgroundService
                             {
                                 escalated++;
                             }
-                            else failed++;
+                            else { failed++; RememberRefusal(job, fingerprint); }
                             break;
                         }
                         if (await EscalateAsync(job, used, options.MaxRequeues, ct)) escalated++;
-                        else failed++;
+                        else { failed++; RememberRefusal(job, fingerprint); }
                         break;
                 }
             }
@@ -176,9 +206,10 @@ public sealed class AcceptanceRailHostedService : BackgroundService
             Requeued = requeued,
             Escalated = escalated,
             Failed = failed,
+            Suppressed = suppressed,
         });
         _logger.LogInformation(
-            "acceptance-rail-run humanReviewDepth={HumanReviewDepth} escalatedDepth={EscalatedDepth} held={Held} accepted={Accepted} requeued={Requeued} escalated={Escalated} failed={Failed} lastRunAtUtc={LastRunAtUtc}",
+            "acceptance-rail-run humanReviewDepth={HumanReviewDepth} escalatedDepth={EscalatedDepth} held={Held} accepted={Accepted} requeued={Requeued} escalated={Escalated} failed={Failed} suppressed={Suppressed} lastRunAtUtc={LastRunAtUtc}",
             snapshot.HumanReviewDepth,
             snapshot.EscalatedDepth,
             snapshot.Held,
@@ -186,6 +217,7 @@ public sealed class AcceptanceRailHostedService : BackgroundService
             snapshot.Requeued,
             snapshot.Escalated,
             snapshot.Failed,
+            snapshot.Suppressed,
             snapshot.LastRunAtUtc);
         return snapshot;
     }
@@ -210,6 +242,25 @@ public sealed class AcceptanceRailHostedService : BackgroundService
 
             await Task.Delay(options.Interval, stoppingToken);
         }
+    }
+
+    private string? LastRefusal(TaskInfo job)
+        => _refusedAttempts.GetValueOrDefault(job.TaskKey);
+
+    private void RememberRefusal(TaskInfo job, string fingerprint)
+        => _refusedAttempts[job.TaskKey] = fingerprint;
+
+    /// <summary>
+    /// Drops ledger entries for cards that left the rail's lanes. Leaving the
+    /// lane is itself a new fact, and it also keeps the ledger bounded by the
+    /// current Human Review / Escalated depth.
+    /// </summary>
+    private void ForgetCardsOutsideRailLanes(IReadOnlyCollection<TaskInfo> jobs)
+    {
+        if (_refusedAttempts.IsEmpty) return;
+        var present = jobs.Select(job => job.TaskKey).ToHashSet(StringComparer.Ordinal);
+        foreach (var key in _refusedAttempts.Keys)
+            if (!present.Contains(key)) _refusedAttempts.TryRemove(key, out _);
     }
 
     private async Task<bool> AcceptAsync(TaskInfo job, CancellationToken ct)
