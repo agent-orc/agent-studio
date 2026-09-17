@@ -108,9 +108,22 @@ public sealed class GitStateIndexServiceTests : IDisposable
         }
     }
 
-    private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
+    /// <summary>
+    /// How long a wait for background indexer progress may take before the
+    /// test calls it stuck. Every condition here is reached in milliseconds on
+    /// an idle machine; the budget exists only to turn a hang into a failure,
+    /// so it is sized for the worst scheduling delay a fully loaded suite run
+    /// can impose rather than for the expected duration. A five-second budget
+    /// measured how busy the machine was, not whether the indexer worked, and
+    /// is what timed these tests out under the full suite. The wait still
+    /// returns the instant the condition holds, so nothing is slowed down and
+    /// no wrong answer is tolerated.
+    /// </summary>
+    private static readonly TimeSpan IndexerProgressBudget = TimeSpan.FromSeconds(60);
+
+    private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan? timeout = null)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = DateTime.UtcNow + (timeout ?? IndexerProgressBudget);
         while (!condition())
         {
             if (DateTime.UtcNow > deadline) throw new TimeoutException("Condition was not met in time.");
@@ -135,7 +148,7 @@ public sealed class GitStateIndexServiceTests : IDisposable
         {
             // The "startup" pass fires for every known repository without any
             // external trigger.
-            await WaitUntilAsync(() => Volatile.Read(ref builder.Calls) >= 1, TimeSpan.FromSeconds(5));
+            await WaitUntilAsync(() => Volatile.Read(ref builder.Calls) >= 1);
             Assert.Contains("proj", service.KnownProjects);
         }
         finally
@@ -159,7 +172,7 @@ public sealed class GitStateIndexServiceTests : IDisposable
         await service.StartAsync(CancellationToken.None);
         try
         {
-            await WaitUntilAsync(() => Volatile.Read(ref builder.Calls) >= 1, TimeSpan.FromSeconds(5));
+            await WaitUntilAsync(() => Volatile.Read(ref builder.Calls) >= 1);
             var callsAfterStartup = Volatile.Read(ref builder.Calls);
 
             // Simulate the historical pattern: many trigger events (board
@@ -169,7 +182,7 @@ public sealed class GitStateIndexServiceTests : IDisposable
             for (var i = 0; i < 300; i++) service.RequestRefresh("proj", "replay");
 
             await Task.Delay(200); // > debounce (20ms), short window to observe coalescing
-            await WaitUntilAsync(() => !service.IsRunning("proj"), TimeSpan.FromSeconds(5));
+            await WaitUntilAsync(() => !service.IsRunning("proj"));
 
             var totalCalls = Volatile.Read(ref builder.Calls);
             Assert.True(
@@ -200,13 +213,26 @@ public sealed class GitStateIndexServiceTests : IDisposable
             // Block the startup run in flight, then fire a burst of triggers
             // while it is still running - they must coalesce into exactly one
             // rerun, not one per trigger.
-            await WaitUntilAsync(() => service.IsRunning("proj"), TimeSpan.FromSeconds(5));
+            await WaitUntilAsync(() => service.IsRunning("proj"));
             for (var i = 0; i < 50; i++) service.RequestRefresh("proj", "mid-run-burst");
 
             builder.Gate.SetResult(true);
             // First run completes, exactly one coalesced rerun follows and
             // then finishes (the fake no longer blocks on the second call).
-            await WaitUntilAsync(() => !service.IsRunning("proj"), TimeSpan.FromSeconds(5));
+            //
+            // Wait for the rerun itself, not for a gap in IsRunning: between
+            // the first run completing and the coalesced rerun starting the
+            // service is legitimately not running, so a waiter on
+            // !IsRunning can return in that gap and leave only the fixed
+            // 100 ms below to cover the rerun's whole scheduling latency. On
+            // a loaded host that window is not enough and the assert reads
+            // Calls=1 for a service that did exactly the right thing - the
+            // 15:55 full-suite failure this reproduces. The rerun's own call
+            // count is the observable, so wait on that first.
+            await WaitUntilAsync(() => Volatile.Read(ref builder.Calls) >= 2);
+            await WaitUntilAsync(() => !service.IsRunning("proj"));
+            // Quiet window kept afterwards: it is what would surface a third
+            // run, which is the failure this test exists to catch.
             await Task.Delay(100);
 
             Assert.Equal(2, Volatile.Read(ref builder.Calls));
@@ -251,7 +277,7 @@ public sealed class GitStateIndexServiceTests : IDisposable
         await service.StartAsync(CancellationToken.None);
         try
         {
-            await WaitUntilAsync(() => service.IsRunning("proj"), TimeSpan.FromSeconds(5));
+            await WaitUntilAsync(() => service.IsRunning("proj"));
 
             // The run is in flight: reads must still return the prior
             // snapshot (never block, never spawn Git), but freshness reports
@@ -261,7 +287,7 @@ public sealed class GitStateIndexServiceTests : IDisposable
             Assert.True(cache.ReadFreshness([task]).Stale);
 
             gate.SetResult(true);
-            await WaitUntilAsync(() => !service.IsRunning("proj"), TimeSpan.FromSeconds(5));
+            await WaitUntilAsync(() => !service.IsRunning("proj"));
 
             Assert.False(cache.ReadFreshness([task]).Stale);
         }
@@ -286,8 +312,8 @@ public sealed class GitStateIndexServiceTests : IDisposable
         await service.StartAsync(CancellationToken.None);
         try
         {
-            await WaitUntilAsync(() => Volatile.Read(ref builder.Calls) >= 1, TimeSpan.FromSeconds(5));
-            await WaitUntilAsync(() => !service.IsRunning("proj"), TimeSpan.FromSeconds(5));
+            await WaitUntilAsync(() => Volatile.Read(ref builder.Calls) >= 1);
+            await WaitUntilAsync(() => !service.IsRunning("proj"));
 
             using var telemetry = GitProcessTelemetry.BeginRequest("tasks/list", NullLogger.Instance, includeNested: true);
             var task = new TaskInfo
@@ -333,12 +359,12 @@ public sealed class GitStateIndexServiceTests : IDisposable
         {
             // All six repositories fire their "startup" trigger at once;
             // the process-wide semaphore must cap how many run concurrently.
-            await WaitUntilAsync(() => Volatile.Read(ref builder.Calls) == maxConcurrent, TimeSpan.FromSeconds(5));
+            await WaitUntilAsync(() => Volatile.Read(ref builder.Calls) == maxConcurrent);
             await Task.Delay(100);
             Assert.Equal(maxConcurrent, Volatile.Read(ref builder.ConcurrentCalls));
 
             gate.SetResult(true);
-            await WaitUntilAsync(() => Volatile.Read(ref builder.Calls) == repoCount, TimeSpan.FromSeconds(5));
+            await WaitUntilAsync(() => Volatile.Read(ref builder.Calls) == repoCount);
 
             Assert.True(
                 builder.PeakConcurrentCalls <= maxConcurrent,
@@ -365,8 +391,8 @@ public sealed class GitStateIndexServiceTests : IDisposable
         await service.StartAsync(CancellationToken.None);
         try
         {
-            await WaitUntilAsync(() => Volatile.Read(ref builder.Calls) >= 1, TimeSpan.FromSeconds(5));
-            await WaitUntilAsync(() => !service.IsRunning("proj"), TimeSpan.FromSeconds(5));
+            await WaitUntilAsync(() => Volatile.Read(ref builder.Calls) >= 1);
+            await WaitUntilAsync(() => !service.IsRunning("proj"));
             var callsAfterStartup = Volatile.Read(ref builder.Calls);
 
             // Simulate a ref move (a commit on the current branch) purely as
@@ -374,7 +400,7 @@ public sealed class GitStateIndexServiceTests : IDisposable
             // reacts to it.
             File.WriteAllText(Path.Combine(repoPath, ".git", "refs", "heads", "main"), new string('1', 40) + "\n");
 
-            await WaitUntilAsync(() => Volatile.Read(ref builder.Calls) > callsAfterStartup, TimeSpan.FromSeconds(10));
+            await WaitUntilAsync(() => Volatile.Read(ref builder.Calls) > callsAfterStartup);
         }
         finally
         {
@@ -424,8 +450,8 @@ public sealed class GitStateIndexServiceTests : IDisposable
         await service.StartAsync(CancellationToken.None);
         try
         {
-            await WaitUntilAsync(() => Volatile.Read(ref builder.Calls) >= 1, TimeSpan.FromSeconds(5));
-            await WaitUntilAsync(() => !service.IsRunning("proj"), TimeSpan.FromSeconds(5));
+            await WaitUntilAsync(() => Volatile.Read(ref builder.Calls) >= 1);
+            await WaitUntilAsync(() => !service.IsRunning("proj"));
             var callsAfterStartup = Volatile.Read(ref builder.Calls);
 
             // Replay the full measured call volume for one repository, fired
@@ -436,7 +462,7 @@ public sealed class GitStateIndexServiceTests : IDisposable
             for (var i = 0; i < combinedTriggerCallsInWindow; i++) service.RequestRefresh("proj", "replay");
 
             await Task.Delay(200);
-            await WaitUntilAsync(() => !service.IsRunning("proj"), TimeSpan.FromSeconds(5));
+            await WaitUntilAsync(() => !service.IsRunning("proj"));
 
             var runsFromReplay = Volatile.Read(ref builder.Calls) - callsAfterStartup;
             var spawnsFromReplay = runsFromReplay * spawnsPerRunHistoricalAverage;

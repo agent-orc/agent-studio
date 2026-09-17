@@ -23,17 +23,39 @@ internal static class TaskJsonFile
     /// <summary>
     /// Reads <c>task.json</c>, replaces or adds a single top-level field, writes
     /// back preserving the existing field order.
+    ///
+    /// <para>Returns whether the field is now on disk. A missing file and a
+    /// failed write are both reported as <see langword="false"/> rather than
+    /// only logged: a caller that counts, reports, or moves on from the edit
+    /// would otherwise publish a change that never happened. Callers that
+    /// genuinely do not care may ignore the result, which keeps this the
+    /// lenient counterpart of <see cref="UpdateFieldOrThrow"/>.</para>
     /// </summary>
-    internal static void UpdateField(string jobDir, string fieldName, object value, ILogger logger)
+    internal static bool UpdateField(
+        string jobDir,
+        string fieldName,
+        object value,
+        ILogger logger,
+        IAtomicJsonFileWriter? fileWriter = null)
     {
-        if (!File.Exists(Path.Combine(jobDir, "task.json"))) return;
+        if (!File.Exists(Path.Combine(jobDir, "task.json")))
+        {
+            // Debug, not warning: a folder that moved lane under a
+            // heartbeat write is routine, and the callers that care
+            // learn about it from the return value instead.
+            logger.LogDebug(
+                "Cannot update field {Field}: task.json is missing at {Dir}", fieldName, jobDir);
+            return false;
+        }
         try
         {
-            UpdateFieldOrThrow(jobDir, fieldName, value);
+            UpdateFieldOrThrow(jobDir, fieldName, value, fileWriter);
+            return true;
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "Failed to update field {Field} in task.json at {Dir}", fieldName, jobDir);
+            return false;
         }
     }
 
@@ -42,7 +64,11 @@ internal static class TaskJsonFile
     /// when any write fails. Unlike <see cref="UpdateField"/>, this method
     /// never turns a failed write into an apparent success.
     /// </summary>
-    internal static void UpdateFieldOrThrow(string jobDir, string fieldName, object value)
+    internal static void UpdateFieldOrThrow(
+        string jobDir,
+        string fieldName,
+        object value,
+        IAtomicJsonFileWriter? fileWriter = null)
     {
         var jobJsonPath = Path.Combine(jobDir, "task.json");
         if (!File.Exists(jobJsonPath))
@@ -68,7 +94,7 @@ internal static class TaskJsonFile
         }
         if (!inserted) updated[fieldName] = value;
 
-        Write(jobJsonPath, updated);
+        Write(jobJsonPath, updated, fileWriter);
     }
 
     /// <summary>
@@ -207,6 +233,9 @@ internal static class TaskJsonFile
         }
     }
 
-    private static void Write(string path, Dictionary<string, object> value) =>
-        FileWriter.Write(path, JsonSerializer.Serialize(value, WriteOpts));
+    private static void Write(
+        string path,
+        Dictionary<string, object> value,
+        IAtomicJsonFileWriter? fileWriter = null) =>
+        (fileWriter ?? FileWriter).Write(path, JsonSerializer.Serialize(value, WriteOpts));
 }
