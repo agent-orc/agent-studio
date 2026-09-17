@@ -30,9 +30,14 @@
   ],
 
   "DevTools": {
-    "//comment": "Devtools knobs are dev-only conveniences. Leave them off on stable.",
+    "//comment": "Devtools knobs are dev-only conveniences. Leave them off on stable. UpdateStableEnabled also opens the SSE stream that runs update-stable.sh from inside the backend, which is why the Update Service's own sentinel no longer depends on it.",
     "UpdateStableEnabled": true,
     "DeleteE2EJobsEnabled": true
+  },
+
+  "//UpdateService": "Stable update contract (docs/operations/stable-release-contract.md). ProbeEnabled gates the ADR-0031 phase-6 db-touch sentinel POST /api/_internal/probe that the Update Service verifies a restart with. Unset, the sentinel follows the installed contract: open exactly while <TaskRepository>/.metadata/stable-approved-tag exists. Set true on a Stable host that runs the Update Service before that marker exists; set false to close the sentinel, which makes every update preflight refuse. ApprovedTagFile overrides the marker path when it does not live under TaskRepository.",
+  "UpdateService": {
+    "ProbeEnabled": true
   },
 
   "//TaskRepository": "Workspace root. Job folders live under <TaskRepository>/projects/<projectKey>/tasks/<bucket>/<KEY>/. The registry metadata also lives here under <TaskRepository>/.metadata/{workspaces.json,projects.json} (ADR-0042).",

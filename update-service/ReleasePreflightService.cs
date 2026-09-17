@@ -7,15 +7,34 @@ public sealed class ReleasePreflightService
     private readonly IBackendProbe _backend;
     private readonly UpdateServiceOptions _options;
     private readonly UpdateStatusStore? _store;
+    private readonly VerificationPreconditionService? _preconditions;
 
-    public ReleasePreflightService(IBackendProbe backend, UpdateServiceOptions options, UpdateStatusStore? store = null)
+    public ReleasePreflightService(
+        IBackendProbe backend,
+        UpdateServiceOptions options,
+        UpdateStatusStore? store = null,
+        VerificationPreconditionService? preconditions = null)
     {
         _backend = backend;
         _options = options;
         _store = store;
+        _preconditions = preconditions;
     }
 
-    public async Task<ReleaseComparison> EvaluateAsync(bool allowDowngrade, CancellationToken ct)
+    /// <summary>
+    /// The release gate plus, unless the caller opts out, the AGT-2865
+    /// verification preconditions read off the running instance.
+    /// <paramref name="includeVerificationPreconditions"/> exists for the
+    /// background status tick, which runs every
+    /// <see cref="UpdateServiceOptions.ProbeIntervalSeconds"/> and has no
+    /// business replaying the board query that often. The operator-facing
+    /// <c>GET /update/preflight</c> and the orchestrator's phase-1 gate both
+    /// evaluate them.
+    /// </summary>
+    public async Task<ReleaseComparison> EvaluateAsync(
+        bool allowDowngrade,
+        CancellationToken ct,
+        bool includeVerificationPreconditions = true)
     {
         var running = ToManifest(await _backend.ReadRuntimeVersionAsync(ct));
         var installed = ReadFile(Path.Combine(_options.StableCheckoutDir, _options.BuildManifestFile));
@@ -47,7 +66,30 @@ public sealed class ReleasePreflightService
         {
             comparison = comparison with { DivergenceExplanation = ExplainUpgradeInVerification(candidate) };
         }
+
+        if (includeVerificationPreconditions && _preconditions is not null)
+            comparison = WithPreconditions(comparison, await _preconditions.EvaluateAsync(ct));
+
         return comparison;
+    }
+
+    /// <summary>
+    /// Folds the precondition verdicts into the comparison. A blocking
+    /// failure is an ordinary preflight error, so every existing consumer -
+    /// the FE banner, the run folder's <c>release-preflight.json</c>, the
+    /// orchestrator's refusal message - surfaces it without new plumbing.
+    /// </summary>
+    public static ReleaseComparison WithPreconditions(
+        ReleaseComparison comparison,
+        IReadOnlyList<VerificationPreconditionResult> results)
+    {
+        var blocking = VerificationPreconditionPolicy.BlockingErrors(results);
+        return comparison with
+        {
+            VerificationPreconditions = results,
+            Errors = blocking.Count == 0 ? comparison.Errors : comparison.Errors.Concat(blocking).ToArray(),
+            Allowed = comparison.Allowed && blocking.Count == 0,
+        };
     }
 
     /// <summary>

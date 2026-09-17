@@ -52,7 +52,12 @@ public sealed record ReleaseComparison(
     // checkout root still carries the previous manifest. That is the normal
     // window between the Update Service's restart and its manifest commit,
     // not a divergence. See StableReleaseContract.Compare.
-    bool UpgradeInVerification = false);
+    bool UpgradeInVerification = false,
+    // AGT-2865: what the post-restart verification matrix needs from the
+    // instance that is running right now. Filled by ReleasePreflightService
+    // (the pure Compare below has no way to reach the backend); a blocking
+    // failure here is already folded into Allowed and Errors.
+    IReadOnlyList<VerificationPreconditionResult>? VerificationPreconditions = null);
 
 /// <summary>
 /// Pure Stable release gate. It never uses filesystem timestamps and can run
