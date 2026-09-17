@@ -1,5 +1,7 @@
 import type {
   ConversationEvent,
+  ConversationEventSeverity,
+  RawLineRange,
   SystemParserWarningEvent,
   SystemStatusEvent,
   ToolBurstEvent,
@@ -125,7 +127,98 @@ export function presentActivityEvents(
     presented.push(event);
   }
 
-  return presented;
+  return groupConsecutiveRunnerStatus(presented);
+}
+
+/**
+ * One fact from a collapsed runner status block, kept for the per-row
+ * disclosure the directive renders nested under the single group affordance.
+ */
+export interface RunnerGroupRow {
+  id: string;
+  label: string;
+  explanation: string;
+  severity: ConversationEventSeverity;
+  rawRange: RawLineRange;
+}
+
+/**
+ * Host-only extension of a `system.status` event that stands in for a run of
+ * consecutive runner-category rows. The library still renders one ordinary
+ * `<li>` for it (category `runner-group`, label "Runner"); the compatibility
+ * directive reads {@link runnerGroupRows} to nest the per-fact breakdown
+ * under a single disclosure instead of letting the library repeat one `<li>`
+ * per fact with its own "trace" button ("Runner rows block").
+ */
+export type PresentedRunnerGroupEvent = SystemStatusEvent & {
+  category: 'runner-group';
+  runnerGroupRows: readonly RunnerGroupRow[];
+};
+
+export function isPresentedRunnerGroupEvent(
+  event: ConversationEvent,
+): event is PresentedRunnerGroupEvent {
+  return event.kind === 'system.status' && event.category === 'runner-group' && 'runnerGroupRows' in event;
+}
+
+const RUNNER_SEVERITY_RANK: Record<ConversationEventSeverity, number> = {
+  error: 3,
+  warn: 2,
+  info: 1,
+};
+
+/**
+ * Collapse every run of consecutive `category: 'runner'` status events into
+ * one `runner-group` event. A single runner fact between unrelated events
+ * stays as-is (nothing to group); grouping a lone fact would only add a
+ * disclosure around one line for no benefit.
+ */
+function groupConsecutiveRunnerStatus(events: readonly ConversationEvent[]): ConversationEvent[] {
+  const out: ConversationEvent[] = [];
+  let run: SystemStatusEvent[] = [];
+
+  const flush = () => {
+    if (run.length === 0) return;
+    out.push(run.length === 1 ? run[0] : mergeRunnerGroup(run));
+    run = [];
+  };
+
+  for (const event of events) {
+    if (event.kind === 'system.status' && event.category === 'runner') {
+      run.push(event);
+      continue;
+    }
+    flush();
+    out.push(event);
+  }
+  flush();
+
+  return out;
+}
+
+function mergeRunnerGroup(events: readonly SystemStatusEvent[]): PresentedRunnerGroupEvent {
+  const first = events[0];
+  const last = events[events.length - 1];
+  const worstSeverity = events.reduce<ConversationEventSeverity>((worst, event) => {
+    const severity = event.severity ?? 'info';
+    return RUNNER_SEVERITY_RANK[severity] > RUNNER_SEVERITY_RANK[worst] ? severity : worst;
+  }, 'info');
+  return {
+    ...first,
+    id: `${first.id}:group`,
+    category: 'runner-group',
+    label: 'Runner',
+    explanation: `${events.length} runner updates`,
+    severity: worstSeverity,
+    rawRange: { source: first.rawRange.source, start: first.rawRange.start, end: last.rawRange.end },
+    runnerGroupRows: events.map((event) => ({
+      id: event.id,
+      label: event.label,
+      explanation: event.explanation,
+      severity: event.severity ?? 'info',
+      rawRange: event.rawRange,
+    })),
+  };
 }
 
 export function isPresentedToolBurstEvent(

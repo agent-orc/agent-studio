@@ -4,13 +4,16 @@ import {
   projectConversation,
   type ConversationEvent,
   type SupervisorWaitEvent,
+  type SystemStatusEvent,
   type ToolBurstEvent,
 } from 'coding-agent-chat/core';
 import { sanitizeProjectionLines } from '../conversation-projection';
 import {
   formatCompactTokens,
+  isPresentedRunnerGroupEvent,
   presentActivityEvents,
   stripLegacyCompletionLines,
+  type PresentedRunnerGroupEvent,
   type PresentedToolBurstEvent,
 } from './activity-event-presentation';
 import {
@@ -361,5 +364,70 @@ describe('presentActivityEvents', () => {
       'Implementation completed the turn safely.',
     ]);
     expect(stripLegacyCompletionLines(lines, false)).toEqual(lines);
+  });
+});
+
+// A block of runner status rows repeats the same visual label (RUNNER) four
+// times with a different meaning each time, and puts a trace button on every
+// row even though there are only a handful of facts. The library renders one
+// `<li>` per `system.status` event with no grouping hook, so the fix
+// collapses the run into one event at the projection layer; the compatibility
+// directive (activity-event-presentation.directive.ts) turns
+// `runnerGroupRows` into the nested per-fact disclosure.
+describe('presentActivityEvents - runner status grouping', () => {
+  function runnerStatus(id: string, label: string, start: number): ConversationEvent {
+    return {
+      id, kind: 'system.status', timestamp: `2026-07-11T10:00:0${start}Z`,
+      rawRange: { source: 'AGT-2088', start, end: start },
+      category: 'runner', severity: 'info', label, explanation: `${label} detail`,
+    };
+  }
+
+  it('collapses four consecutive runner rows into one runner-group event', () => {
+    const events = [
+      runnerStatus('r1', 'Runner ready', 1),
+      runnerStatus('r2', 'Runner started', 2),
+      runnerStatus('r3', 'Runner config', 3),
+      runnerStatus('r4', 'Runner finished', 4),
+    ];
+    const result = presentActivityEvents(events, 'AGT-2088', null);
+    expect(result).toHaveLength(1);
+    const group = result[0] as PresentedRunnerGroupEvent;
+    expect(isPresentedRunnerGroupEvent(group)).toBe(true);
+    expect(group.category).toBe('runner-group');
+    expect(group.label).toBe('Runner');
+    expect(group.rawRange).toEqual({ source: 'AGT-2088', start: 1, end: 4 });
+    expect(group.runnerGroupRows.map((row) => row.label)).toEqual([
+      'Runner ready', 'Runner started', 'Runner config', 'Runner finished',
+    ]);
+  });
+
+  it('escalates group severity to the worst individual fact', () => {
+    const events = [
+      runnerStatus('r1', 'Runner ready', 1),
+      { ...runnerStatus('r2', 'Runner stopped', 2), severity: 'error' as const },
+    ];
+    const group = presentActivityEvents(events, 'AGT-2088', null)[0] as PresentedRunnerGroupEvent;
+    expect(group.severity).toBe('error');
+  });
+
+  it('leaves a lone runner fact ungrouped', () => {
+    const result = presentActivityEvents([runnerStatus('r1', 'Runner ready', 1)], 'AGT-2088', null);
+    expect(result).toHaveLength(1);
+    expect(isPresentedRunnerGroupEvent(result[0])).toBe(false);
+    expect((result[0] as SystemStatusEvent).category).toBe('runner');
+  });
+
+  it('does not merge runner rows across an unrelated event, and leaves the other event untouched', () => {
+    const message: ConversationEvent = {
+      id: 'm1', kind: 'message.taskAgent', timestamp: '2026-07-11T10:00:01.5Z',
+      rawRange: { source: 'AGT-2088', start: 2, end: 2 }, actor: 'Agent', body: 'Working on it.',
+    };
+    const events = [runnerStatus('r1', 'Runner ready', 1), message, runnerStatus('r2', 'Runner finished', 3)];
+    const result = presentActivityEvents(events, 'AGT-2088', null);
+    expect(result).toHaveLength(3);
+    expect(result[0]).toMatchObject({ id: 'r1', category: 'runner' });
+    expect(result[1]).toEqual(message);
+    expect(result[2]).toMatchObject({ id: 'r2', category: 'runner' });
   });
 });

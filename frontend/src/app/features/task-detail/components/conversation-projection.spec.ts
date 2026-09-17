@@ -279,6 +279,47 @@ describe('sanitizeProjectionLines', () => {
   });
 });
 
+// AGT-2793: a flood of "[runner-protocol-unknown-frame]" diagnostic lines (the
+// backend's ProtocolNoveltyTelemetry marker) must collapse into one summary
+// row per (cli, adapterVersion, frameType), never one raw block per
+// occurrence, and no "[internal event]" row may render with empty content.
+describe('sanitizeProjectionLines - protocol-novelty unknown-frame diagnostics', () => {
+  const sha = 'a'.repeat(64);
+  const noveltyMarker = (occurrence: number, total: number) =>
+    `[runner-protocol-unknown-frame] ${JSON.stringify({
+      cli: 'claude',
+      adapterVersion: '0.7.0',
+      frameType: 'tool_progress',
+      occurrence,
+      totalUnknownFrames: total,
+      payloadSha256: sha,
+    })}`;
+
+  it('groups four unknown frames of the same kind into one row with the count and known rows unchanged', () => {
+    const out = sanitizeProjectionLines([
+      line('RUNNER FINISHED', 'system'),
+      line(noveltyMarker(1, 4)),
+      line(noveltyMarker(2, 4)),
+      line(noveltyMarker(3, 4)),
+      line(noveltyMarker(4, 4)),
+      line('RUNNER READY', 'system'),
+    ]);
+
+    expect(out).toHaveLength(3);
+    expect(out[0].text).toBe('RUNNER FINISHED');
+    expect(out[1].text).toBe('4 unknown frames of type tool_progress (claude adapter 0.7.0)');
+    expect(isInternalEventLine(out[1])).toBe(true);
+    expect(out[1].internalDetail).toContain(noveltyMarker(1, 4));
+    expect(out[1].internalDetail).toContain(noveltyMarker(4, 4));
+    expect(out[2].text).toBe('RUNNER READY');
+  });
+
+  it('never renders an empty "[internal event]" row', () => {
+    const out = sanitizeProjectionLines([line(''), line(noveltyMarker(1, 1))]);
+    expect(out.every((l) => !isInternalEventLine(l) || (l.internalDetail ?? '').trim().length > 0)).toBe(true);
+  });
+});
+
 describe('renderable-kind whitelist', () => {
   it('accepts every known activity-log kind', () => {
     for (const kind of ['read', 'search', 'command', 'edit', 'task', 'todo', 'error', 'message', 'orchestrator', 'supervisor', 'other']) {
@@ -390,5 +431,88 @@ describe('sanitizeProjectionLines - truncated frames', () => {
   it('leaves an intact Codex frame untouched (same array reference)', () => {
     const input = [line(CODEX_COMMAND_FRAME)];
     expect(sanitizeProjectionLines(input)).toBe(input);
+  });
+});
+
+// AGT-2793, operator report: a `tool_result` envelope printed as raw text in
+// the readable Activity view, truncated mid-object, repeated three times in a
+// row. `isNonRenderableRawLine` already redacts this exact envelope when it
+// arrives as one complete-JSON physical line (see the "stream-json catalog"
+// and "false-positive guard" suites above) - that path was already fixed.
+// The still-open gap is a CLI/driver that pretty-prints the frame
+// (`JSON.stringify(frame, null, 2)`), so the log pipeline splits it into many
+// physical lines and no single one of them is complete JSON.
+describe('sanitizeProjectionLines - pretty-printed multi-line transport frames', () => {
+  const toolResultEnvelope = {
+    type: 'user',
+    message: {
+      role: 'user',
+      content: [
+        {
+          tool_use_id: 'toolu_012ABC',
+          type: 'tool_result',
+          content: 'The file /work/worktrees/AGT-2814/frontend/src/app/foo.ts has been updated successfully.',
+        },
+      ],
+    },
+  };
+
+  function prettyLines(value: unknown, stream = 'stdout'): CliOutputLine[] {
+    return JSON.stringify(value, null, 2)
+      .split('\n')
+      .map((text) => line(text, stream));
+  }
+
+  it('collapses a pretty-printed tool_result envelope split across physical lines into one internal-event marker', () => {
+    const out = sanitizeProjectionLines(prettyLines(toolResultEnvelope));
+    expect(out).toHaveLength(1);
+    expect(out[0].text).toBe(INTERNAL_EVENT_MARKER);
+    expect(out[0].internalDetail).toContain('"tool_result"');
+    expect(out[0].internalDetail).toContain('toolu_012ABC');
+    // The reconstructed detail is valid JSON of the original envelope shape.
+    expect(JSON.parse(out[0].internalDetail as string)).toEqual(toolResultEnvelope);
+  });
+
+  it('folds three repeated pretty-printed envelopes into a single run, not three raw blocks', () => {
+    const lines = [...prettyLines(toolResultEnvelope), ...prettyLines(toolResultEnvelope), ...prettyLines(toolResultEnvelope)];
+    const out = sanitizeProjectionLines(lines);
+    expect(out).toHaveLength(1);
+    expect(out[0].text).toBe(INTERNAL_EVENT_MARKER);
+  });
+
+  it('collapses a pretty-printed frame even when it is the only content (EOF before a trailing line)', () => {
+    const out = sanitizeProjectionLines(prettyLines({ type: 'tool_use', id: 't1', name: 'Read', input: { path: 'a.ts' } }));
+    expect(out).toHaveLength(1);
+    expect(out[0].text).toBe(INTERNAL_EVENT_MARKER);
+  });
+
+  it('does not swallow ordinary prose that merely opens with a lone brace', () => {
+    const lines = [
+      line('{'),
+      line('this is not actually JSON, just a stray brace the agent wrote'),
+      line('and here is more prose after it'),
+    ];
+    const out = sanitizeProjectionLines(lines);
+    expect(out.map((l) => l.text)).toEqual(lines.map((l) => l.text));
+  });
+
+  it('flushes an unclosed buffered brace at end of stream without dropping lines', () => {
+    const lines = [
+      line('{'),
+      line('"type": "user",'),
+      line('"message": {'),
+    ];
+    const out = sanitizeProjectionLines(lines);
+    expect(out.map((l) => l.text)).toEqual(lines.map((l) => l.text));
+  });
+
+  it('known lines around the buffered frame are unaffected', () => {
+    const lines = [
+      line('Reading src/app/foo.ts'),
+      ...prettyLines(toolResultEnvelope),
+      line('Done.'),
+    ];
+    const out = sanitizeProjectionLines(lines);
+    expect(out.map((l) => l.text)).toEqual(['Reading src/app/foo.ts', INTERNAL_EVENT_MARKER, 'Done.']);
   });
 });
