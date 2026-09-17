@@ -10,7 +10,9 @@ import {
 } from '@angular/core';
 import type { ConversationEvent } from 'coding-agent-chat/core';
 import {
+  isPresentedRunnerGroupEvent,
   isPresentedToolBurstEvent,
+  type PresentedRunnerGroupEvent,
   type PresentedToolBurstEvent,
 } from './activity-event-presentation';
 import type { ArtifactGalleryMountController } from './artifact-gallery/artifact-gallery.lazy';
@@ -38,6 +40,7 @@ export class ActivityEventPresentationDirective implements AfterViewChecked, OnD
 
   ngAfterViewChecked(): void {
     this.syncToolBursts();
+    this.syncRunnerGroups();
     void this.syncArtifactBlocks();
   }
 
@@ -57,6 +60,74 @@ export class ActivityEventPresentationDirective implements AfterViewChecked, OnD
       const event = events[index];
       if (event) this.syncChip(chip, event);
     });
+  }
+
+  /**
+   * The library renders every `system.status` row identically: a label chip,
+   * an explanation, and its own "trace" button. A run of consecutive
+   * runner-category facts collapsed into one `runner-group` event upstream
+   * (see {@link groupConsecutiveRunnerStatus} in activity-event-presentation
+   * .ts) still renders as one plain `<li>` from the library's point of view;
+   * this patches that `<li>` into one heading ("Runner") with the per-fact
+   * breakdown nested under a single disclosure, instead of the library
+   * repeating a "RUNNER"-styled row per fact with its own trace button. The
+   * library's own trace button is left in place - its `rawRange` now spans
+   * the whole group, so it stays the one trace affordance for the block.
+   */
+  private syncRunnerGroups(): void {
+    const groups = this.events().filter(isPresentedRunnerGroupEvent);
+    const rows = this.host.nativeElement.querySelectorAll<HTMLElement>(
+      '[data-testid="conversation-system-status"][data-category="runner-group"]',
+    );
+    rows.forEach((row, index) => {
+      const event = groups[index];
+      if (event) this.syncRunnerGroupRow(row, event);
+    });
+  }
+
+  private syncRunnerGroupRow(row: HTMLElement, event: PresentedRunnerGroupEvent): void {
+    // Rebuilding the nested list on every change-detection pass would churn
+    // the DOM for no reason; the merged event id is stable across renders of
+    // the same group, so a dataset guard makes this idempotent.
+    if (row.dataset['runnerGroupSynced'] === event.id) return;
+    row.dataset['runnerGroupSynced'] = event.id;
+
+    const chip = row.querySelector<HTMLElement>('.status-row__chip');
+    if (chip) chip.textContent = 'Runner';
+
+    const text = row.querySelector<HTMLElement>('.status-row__text');
+    if (text) {
+      const count = event.runnerGroupRows.length;
+      text.textContent = `${count} ${count === 1 ? 'update' : 'updates'}`;
+    }
+
+    row.querySelector('[data-testid="runner-group-detail"]')?.remove();
+
+    const doc = row.ownerDocument;
+    const detail = doc.createElement('details');
+    detail.dataset['testid'] = 'runner-group-detail';
+    detail.style.cssText = 'flex-basis:100%;margin-top:4px;';
+
+    const summary = doc.createElement('summary');
+    summary.textContent = `${event.runnerGroupRows.length} runner facts`;
+    summary.style.cssText = 'cursor:pointer;font-size:11px;color:color-mix(in srgb,currentColor 66%,transparent);';
+    detail.append(summary);
+
+    const list = doc.createElement('dl');
+    list.dataset['testid'] = 'runner-group-rows';
+    list.style.cssText =
+      'display:grid;grid-template-columns:max-content 1fr;gap:2px 10px;margin:4px 0 0;font-size:11.5px;';
+    for (const fact of event.runnerGroupRows) {
+      const dt = doc.createElement('dt');
+      dt.textContent = fact.label;
+      dt.style.cssText = 'font-weight:600;white-space:nowrap;';
+      const dd = doc.createElement('dd');
+      dd.textContent = fact.explanation;
+      dd.style.cssText = 'margin:0;color:color-mix(in srgb,currentColor 82%,transparent);';
+      list.append(dt, dd);
+    }
+    detail.append(list);
+    row.append(detail);
   }
 
   private async syncArtifactBlocks(): Promise<void> {

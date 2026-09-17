@@ -54,6 +54,15 @@ public sealed class CliProtocolNoveltyTests
     }
 
     [Fact]
+    public void Claude_tool_progress_heartbeat_is_ignored_not_unknown()
+    {
+        var tracker = new CliProtocolNoveltyTracker("claude");
+        const string raw = "{\"type\":\"tool_progress\",\"toolUseId\":\"toolu_01\",\"occurrence\":1}";
+
+        Assert.False(tracker.TryObserveFrame(raw, out _));
+    }
+
+    [Fact]
     public void CodexTodoListLifecycleIsPartOfTheKnownVersionedVocabulary()
     {
         var tracker = new CliProtocolNoveltyTracker("codex");
