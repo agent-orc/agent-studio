@@ -19,6 +19,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\orchestrator-engine\OrchestratorEngine.csproj" />
+    <ProjectReference Include="..\testsupport\AgentStudio.TestSupport.csproj" />
     <ProjectReference Include="..\task-server\TaskServer.csproj" />
   </ItemGroup>
 

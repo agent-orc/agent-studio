@@ -486,7 +486,10 @@ public sealed class ProjectPreparationTests : IDisposable
         var repository = FindRepositoryRoot();
         var results = Environment.GetEnvironmentVariable("JOB_RESULTS_DIR")
                       ?? Path.Combine(_root, "pilot-results");
-        var cache = Path.Combine(Path.GetTempPath(), "agent-studio-m1-pilot-cache");
+        // AGT-2858: the pilot cache is product-owned, not a temp directory. In
+        // the shared /tmp it had no owner, no bound and no supported reset, grew
+        // to 36 GB, and collected two hand-made "-before-*" operator copies.
+        var cache = ProjectPreparationPaths.ProjectCacheRoot("agent-studio-m1-pilot");
         var subjectSha = await RunGitAsync(repository, "rev-parse", "HEAD");
 
         var first = await ProjectPreparationExecutor.RunAsync(
