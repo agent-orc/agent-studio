@@ -574,6 +574,7 @@ builder.Services.AddSingleton<InfraHaltLog>();
 builder.Services.AddSingleton<CrossSlugInfraCircuitBreaker>();
 builder.Services.AddSingleton<ProviderLimitRegistry>();
 builder.Services.AddSingleton<HumanReviewEscalation>();
+builder.Services.AddSingleton<RunTimeoutContinuationService>();
 builder.Services.AddSingleton<AgentMessageBusStore>();
 builder.Services.AddSingleton<AgentMessageBusBridge>();
 builder.Services.AddSingleton<ICliModelRegistry, CliModelRegistry>();

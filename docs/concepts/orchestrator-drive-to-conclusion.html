@@ -2544,6 +2544,38 @@
             acceptance rail would carry them to <span class="lane">6-completed</span> from there.
           </td>
         </tr>
+        <tr id="case-agt-2861-run-timeout-with-salvage-escalated">
+          <td>2026-09-17</td>
+          <td><code>AGT-2861</code><br><span class="small">a coding run that hits the run timeout with a salvaged worktree escalates instead of continuing</span></td>
+          <td>
+            Two Opus coding runs ended at the 90-minute run timeout with substantial, buildable work in the worktree:
+            <code>AGT-2858</code> (run <code>run_f419c075</code>, 09:25-10:56Z, salvage <code>521fd1e3</code>, about 1,000
+            lines) and <code>AGT-2859</code> (12:05-13:36Z, salvage <code>f0915674</code>, 290 lines). The runner did the
+            right thing in both cases (<code>worktree-salvage-commit-created ... outcome=Unknown</code>,
+            <code>result-transfer-completed</code>, hand-back to the local board). The task server then escalated with
+            <code>orchestrator_escalated: The remote runner ended without a recognized terminal outcome: Timeout</code>
+            and <span class="lane">3-progress</span> &rarr; <span class="lane">5e-escalated</span>. Nothing continued the
+            work.
+          </td>
+          <td>
+            A non-terminal outcome was read as "no delivery", so the completion boundary escalated without looking at the
+            salvage facts it already carried. The escalation text named neither the salvage ref nor its SHA, so the
+            operator had to read the journal for the SHA and hand-write a "finish the salvaged work" prompt for
+            <code>POST /api/tasks/{key}/continue</code>. Both continuation rounds then delivered within 44-62 minutes: the
+            delivery existed all along, it only lacked its finishing round.
+          </td>
+          <td>
+            <span class="pill ok">fixed in dev</span> <code>RunTimeoutSalvageContinuationPolicy</code> decides, from the
+            completion's own facts, that a non-terminal outcome plus a transferred salvage commit earns one automatic
+            continuation round per delivery generation; <code>RunTimeoutContinuationService</code> appends the finishing
+            instruction to <code>prompt.md</code>, saves the matching steer intent, pins a clean CLI context, returns the
+            card to the front of <span class="lane">2-ready</span> under the completing attempt's authority write, and
+            records <code>continuation_round_started reason=run-timeout-with-salvage</code>. A second timeout in the same
+            generation reaches <span class="lane">5e-escalated</span> exactly as before, now with the salvage ref, the
+            salvage SHA, and the spent round count in the escalation summary. The run timeout itself is unchanged.
+            Registered as <code>completion.run-timeout-salvage-continuation</code> in the loop inventory.
+          </td>
+        </tr>
       </tbody>
     </table>
 

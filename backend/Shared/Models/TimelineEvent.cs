@@ -330,6 +330,16 @@ public static class TimelineEventKinds
     /// </summary>
     public const string IntegrationRecoveryQueued = "integration_recovery_queued";
     /// <summary>
+    /// AGT-2861: a remote run ended without a recognized terminal outcome (the
+    /// observed case is a hit run timeout) but its worktree had been salvaged,
+    /// so the platform started one bounded automatic round to finish the
+    /// salvaged delivery instead of parking it. <see cref="TimelineEvent.Details"/>
+    /// carries the salvage ref and SHA, the round number and its maximum, the
+    /// review-attempt epoch the budget is counted in, and the
+    /// <c>run-timeout-with-salvage</c> reason.
+    /// </summary>
+    public const string ContinuationRoundStarted = "continuation_round_started";
+    /// <summary>
     /// The platform-owned acceptance rail accepted, requeued, or boundedly
     /// escalated this card without a session-bound orchestrator tick.
     /// </summary>
