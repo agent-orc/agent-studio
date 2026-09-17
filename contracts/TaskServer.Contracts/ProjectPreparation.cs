@@ -12,6 +12,73 @@ public static class ProjectPreparationPaths
     public const string Definition = ".agent-studio/project.yml";
     public const string Script = ".agent-studio/prepare";
     public const string ManifestFileName = "preparation-manifest.json";
+
+    /// <summary>Operator override for the product-owned cache root.</summary>
+    public const string CacheRootVariable = "AGENT_STUDIO_CACHE_ROOT";
+
+    /// <summary>
+    /// Cache root of a service-managed runner host, owned by the runner service
+    /// account and outside any temp filesystem.
+    /// </summary>
+    public const string ServiceCacheRoot = "/var/lib/agent-runner/cache";
+
+    /// <summary>
+    /// Where a preparation cache lives when no caller hands one in (AGT-2858).
+    /// The temp root is deliberately not a candidate: a cache there has no
+    /// owner, no bound, and is a legitimate target for every <c>/tmp</c> sweep on
+    /// the host - which is how the M1 pilot cache reached 36 GB and then had to
+    /// be deleted by hand.
+    ///
+    /// Resolution order: the operator's <see cref="CacheRootVariable"/>, then the
+    /// service cache root when this host has one, then the per-user application
+    /// data directory (<c>~/.local/share</c>, <c>%LOCALAPPDATA%</c>).
+    /// </summary>
+    public static string DefaultCacheRoot(Func<string, string?>? readEnvironment = null)
+    {
+        readEnvironment ??= Environment.GetEnvironmentVariable;
+        var configured = readEnvironment(CacheRootVariable);
+        if (!string.IsNullOrWhiteSpace(configured)) return Path.GetFullPath(configured.Trim());
+
+        if (!OperatingSystem.IsWindows() && IsWritableDirectory(ServiceCacheRoot))
+            return ServiceCacheRoot;
+
+        var localData = Environment.GetFolderPath(
+            Environment.SpecialFolder.LocalApplicationData,
+            Environment.SpecialFolderOption.Create);
+        return Path.Combine(localData, "agent-studio", "cache");
+    }
+
+    /// <summary>
+    /// The cache root of one project below <see cref="DefaultCacheRoot"/>. The
+    /// project segment keeps one project's eviction from touching another's.
+    /// </summary>
+    public static string ProjectCacheRoot(string projectId, Func<string, string?>? readEnvironment = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(projectId);
+        var safe = new string(projectId
+            .Trim()
+            .Select(character => char.IsLetterOrDigit(character) || character is '-' or '_' or '.'
+                ? character
+                : '-')
+            .ToArray());
+        return Path.Combine(DefaultCacheRoot(readEnvironment), safe);
+    }
+
+    private static bool IsWritableDirectory(string path)
+    {
+        try
+        {
+            if (!Directory.Exists(path)) return false;
+            var probe = Path.Combine(path, ".write-probe-" + Guid.NewGuid().ToString("N"));
+            File.WriteAllText(probe, string.Empty);
+            File.Delete(probe);
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
 }
 
 /// <summary>
@@ -1015,7 +1082,8 @@ public static partial class ProjectPreparationExecutor
     /// a live gate or coding run. Both are bounded far below this by their own
     /// timeouts, so anything older is the residue of a killed process.
     /// </summary>
-    public static readonly TimeSpan RunRootRetention = TimeSpan.FromHours(24);
+    public static readonly TimeSpan RunRootRetention =
+        ProjectPreparationCacheSweep.DefaultRunRootRetention;
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
@@ -1046,7 +1114,7 @@ public static partial class ProjectPreparationExecutor
 
         var started = DateTimeOffset.UtcNow;
         var stopwatch = Stopwatch.StartNew();
-        PruneStaleRunRoots(productCacheRoot);
+        PruneStaleRunRoots(productCacheRoot, log);
         var runRoot = Path.Combine(productCacheRoot, ".runs", Guid.NewGuid().ToString("N"));
         var cacheBindings = BuildCacheBindings(workspace, productCacheRoot, runRoot, read.Definition, log);
         var selectedNodeBin = ResolveNvmNodeBin(read.Definition, workspace);
@@ -1166,6 +1234,16 @@ public static partial class ProjectPreparationExecutor
         var succeeded = failureKind == PreparationFailureKind.None;
         if (succeeded) Publish(cacheBindings, log);
         else DeleteBestEffort(runRoot);
+        // AGT-2858: published entries used to accumulate without any bound. The
+        // sweep runs after publication so the entries this preparation just
+        // restored from or created are the ones it protects.
+        ProjectPreparationCacheSweep.Run(
+            productCacheRoot,
+            PreparationCacheRetentionPolicy.FromEnvironment(),
+            DateTime.UtcNow,
+            cacheBindings.Select(binding => binding.EntryPath).ToArray(),
+            log,
+            RunRootRetention);
         // A failed prepare is unreadable while only its exit code survives. The
         // bounded tail goes into the manifest and, shortened, into the reason
         // that the gate hands to the card's integration failure detail.
@@ -1204,23 +1282,15 @@ public static partial class ProjectPreparationExecutor
     /// release its own. Bounded by age so a run that is still using its folder
     /// is never touched: no preparation consumer outlives
     /// <see cref="RunRootRetention"/>.
+    ///
+    /// AGT-2858: the rule itself now lives in
+    /// <see cref="ProjectPreparationCacheSweep.PruneRunRoots"/> together with the
+    /// rest of the cache retention, so start-of-run and end-of-run reclamation
+    /// cannot drift apart.
     /// </summary>
-    private static void PruneStaleRunRoots(string productCacheRoot)
-    {
-        var runs = Path.Combine(productCacheRoot, ".runs");
-        if (!Directory.Exists(runs)) return;
-        var deadline = DateTime.UtcNow - RunRootRetention;
-        try
-        {
-            foreach (var candidate in Directory.EnumerateDirectories(runs))
-            {
-                if (Directory.GetLastWriteTimeUtc(candidate) > deadline) continue;
-                DeleteBestEffort(candidate);
-            }
-        }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
-    }
+    private static void PruneStaleRunRoots(string productCacheRoot, Action<string>? log)
+        => ProjectPreparationCacheSweep.PruneRunRoots(
+            productCacheRoot, RunRootRetention, DateTime.UtcNow, log);
 
     public static (PreparationFailureKind Kind, string Signature, string Reason) Classify(
         string evidence,
@@ -1304,7 +1374,14 @@ public static partial class ProjectPreparationExecutor
                   && Directory.Exists(content)
                   && ContainsAnyFile(content);
         var invalidEntry = entryExists && !hit;
-        if (hit) CopyDirectory(content, working);
+        if (hit)
+        {
+            CopyDirectory(content, working);
+            // AGT-2858: a hit is a use. Stamping the entry is what makes the
+            // retention sweep's age and LRU rules measure last use rather than
+            // publication date, so a cache that is still being hit never expires.
+            ProjectPreparationCacheSweep.Touch(entry, DateTime.UtcNow);
+        }
         else Directory.CreateDirectory(working);
         log?.Invoke($"project-prepare cache block={block} key={key} state={(invalidEntry ? "incomplete" : hit ? "hit" : "miss")}");
         var relativeInputs = allInputs
@@ -1489,15 +1566,19 @@ public static partial class ProjectPreparationExecutor
             Directory.CreateDirectory(parent);
             var staging = binding.EntryPath + ".staging-" + Guid.NewGuid().ToString("N");
             Directory.CreateDirectory(staging);
-            CopyDirectory(binding.WorkingPath, Path.Combine(staging, "content"));
+            var content = Path.Combine(staging, "content");
+            CopyDirectory(binding.WorkingPath, content);
             File.WriteAllText(Path.Combine(staging, "manifest.json"), JsonSerializer.Serialize(new
             {
-                schemaVersion = 1,
+                schemaVersion = 2,
                 block = binding.Block,
                 key = binding.Key,
                 createdAtUtc = DateTimeOffset.UtcNow,
                 inputs = binding.Inputs,
                 writeOnce = true,
+                // AGT-2858: recorded at publication so the retention sweep can
+                // apply its size bound without walking every cached file tree.
+                sizeBytes = ProjectPreparationCacheSweep.Measure(content),
             }, Json));
             try
             {

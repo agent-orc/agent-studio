@@ -4,6 +4,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
+using AgentStudio.TestSupport;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -50,18 +51,10 @@ public sealed class CrashRecoveryServiceTests : IDisposable
         RunGit(_repoRoot, "commit -q -m seed");
     }
 
-    public void Dispose()
-    {
-        try
-        {
-            foreach (var f in Directory.EnumerateFiles(_tempDir, "*", SearchOption.AllDirectories))
-            {
-                try { File.SetAttributes(f, FileAttributes.Normal); } catch { }
-            }
-            Directory.Delete(_tempDir, recursive: true);
-        }
-        catch { /* best-effort */ }
-    }
+    // AGT-2858: TryDelete already clears the read-only attribute Git puts on
+    // .git/objects and retries a handle Windows has not released yet, so the
+    // fixture no longer has to walk the tree itself.
+    public void Dispose() => TestTempRoot.TryDelete(_tempDir);
 
     [Fact]
     public async Task RecoverAsync_SurvivingCompletionMarker_FinishesProgressToReviewTransition()

@@ -783,6 +783,20 @@ is advertised as unavailable and only blocks cards pinned to that provider.
   `RUNNER_CLI_BIN` at a small wrapper script instead of fighting the space-split
   arg parser.
 
+### Temp and cache hygiene
+
+The host's shared `/tmp` is neither a cache root nor a workspace root. Attempt
+workspaces, the suite temp root of a `dotnet test` run, and the repository
+preparation cache each have an owner, a bound, and one documented reset, and the
+review executor empties its own per-command temp directory once the command's
+process tree is gone. The breakdown of what used to accumulate there, the
+journal lines to look for, and the reset commands are in
+[temp and cache hygiene](../temp-and-cache-hygiene.md) (AGT-2858).
+
+Keep `PrivateTmp=false` on the runner units. Detached workers outlive a daemon
+restart and a namespace-scoped `/tmp` is unmounted underneath them on every
+restart (AGT-2750); the hygiene above is what bounds the shared root instead.
+
 ### Baseline verify result cache
 
 After a candidate verify command fails, the executor runs the same command once
