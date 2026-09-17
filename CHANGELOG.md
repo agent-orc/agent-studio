@@ -12,6 +12,61 @@ release yet.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-17
+
+Operations release, cut on the day of 0.5.0 from what that rollout exposed.
+The pre-develop gate now runs the backend test work package for backend-only
+diffs and only the frontend package for frontend-only diffs, so a Windows-only
+red test no longer reaches develop while frontend cards stop paying for the
+whole backend suite. The update-service restart drill, the board conditional
+read, task-key dedup and review-plane diagnostics tests are stable under suite
+load. The acceptance rail reads the same integration truth as the card and no
+longer refuses integrated cards in a loop. The review executor's torn-down-/tmp
+classifier yields to a real test-run summary, cleans its own temp residue, and
+the pilot preparation cache has a product-owned, bounded location. A task-server
+restart no longer strands cards with a passed review. The activity view renders
+agent events as events, the branch-sweep panel reclaims stale branches, and
+gate-health alerting attributes branch defects to the branch instead of to
+every card.
+
+### Added
+
+- Pre-develop gate work-package matrix: backend-only, frontend-only, mixed and
+  docs-only diffs select the matching test commands; the selection is logged
+  per gate run (AGT-2854).
+- Stale-branch sweep: all-namespace classification, report and
+  operator-confirmed reclamation with a project panel (AGT-2794).
+- Activity view renders Claude tool_progress and agent events as events, with
+  synced CLI docs and a runner-group DOM spec (AGT-2814).
+- Branch-defect attribution and integration-branch gate-health alerting; the
+  three largest components split with lowered baselines; one lint chain
+  (AGT-2819).
+- Automatic continuation after a task-server restart during the pre-develop
+  gate: the un-gated merge is detected and re-verified (AGT-2849).
+- Temp and cache hygiene: test fixtures remove their temp roots, a suite-level
+  guard keeps the temp root from growing, the review worker redirects and
+  cleans its own temp residue, and the pilot preparation cache lives under a
+  bounded, documented product-owned root (AGT-2858).
+
+### Fixed
+
+- `UpdateServiceRestartIdentityDrillTests` no longer fails under gate load
+  (AGT-2855); `BoardConditionalReadTests`, `DuplicateTaskKeyTests` and
+  `V1ReviewPlaneDiagnosticsEndpointTests` share no state with their
+  neighbours any more, including a real race in `TaskJsonFile` /
+  `TaskMutationService` (AGT-2859).
+- The acceptance rail consults the card's integration record and the delivery
+  ancestry instead of a separate "pending" computation, and no longer retries
+  every 30 seconds (AGT-2856).
+- The review executor's `TmpMountTornDown` classifier ignores signature text
+  inside test names and output once a test-run summary exists (AGT-2857,
+  operator hotfix fcdb68b24).
+- A task-server restart no longer exhausts the auto-review post-processing
+  deferrals for cards with a passed review; killed gates whose merge was
+  pushed later complete on the next pass (AGT-2860).
+- The dead `overview-pane/lifecycle-phase.util` re-export shim is gone
+  (AGT-2819).
+
 ## [0.5.0] - 2026-09-17
 
 Operations release. The Windows integration gate re-runs the tests that
