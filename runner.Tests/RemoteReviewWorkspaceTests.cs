@@ -685,6 +685,31 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.DoesNotContain("NewTestFailures", exception.Message);
     }
 
+    /// <summary>
+    /// 17.09.2026, agent-runner-01: three reviews in a row (AGT-2819 twice,
+    /// AGT-2857) were graded <c>ReviewInfra / TmpMountTornDown</c> although
+    /// <c>/tmp</c> was intact and exactly one test had failed. The mkdtemp
+    /// signature came from the display name of a passing theory case
+    /// (<c>AgentOutcomeAnalyzerTests.EnvironmentalTransient_...(reply:
+    /// "System.IO.IOException: mkdtemp(\"/tmp/.dotnet.AbC1"···)</c>). A test
+    /// run that printed its summary ran to the end; its red result is a product
+    /// failure of the named tests, never a broken mount.
+    /// </summary>
+    [Fact]
+    public void A_test_run_summary_outranks_a_tmp_teardown_signature_in_test_content()
+    {
+        var output =
+            "  Passed AgentStudio.Tests.AgentOutcomeAnalyzerTests.EnvironmentalTransient_OnFailedRun" +
+            "(reply: \"System.IO.IOException: mkdtemp(\\\"/tmp/.dotnet.AbC1\"···) [< 1 ms]\n" +
+            "  Failed AgentStudio.Tests.DuplicateTaskKeyTests.Dedup_KeepsOldest [12 ms]\n" +
+            "  Error Message: errno == ENOENT was expected here\n" +
+            "Failed!  - Failed:     1, Passed:  6811, Skipped:    23, Total:  6835, Duration: 19 m - OrchestratorApi.Tests.dll (net10.0)\n";
+
+        Assert.True(RemoteReviewWorkspace.HasTestRunSummary(output));
+        Assert.False(RemoteReviewWorkspace.HasTestRunSummary(
+            "System.IO.IOException: mkdtemp(\"/tmp/.dotnet.AbC123\") == nullptr; errno == ENOENT"));
+    }
+
     [Fact]
     public void Retention_removes_only_expired_inactive_attempt_workspaces()
     {

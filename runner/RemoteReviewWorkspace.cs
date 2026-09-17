@@ -1166,11 +1166,28 @@ public sealed class RemoteReviewWorkspace
     {
         if (process.Success) return false;
         var output = process.StdOut + "\n" + process.StdErr;
+        // A torn-down /tmp leaves no parseable test output. When the test runner
+        // did print its summary, the signature came from test content (a theory
+        // case that quotes an mkdtemp ENOENT message, for example) and the red
+        // result belongs to those tests, not to the mount.
+        if (HasTestRunSummary(output)) return false;
         return output.Contains("MSB1025", StringComparison.Ordinal)
                || output.Contains("SocketException (99)", StringComparison.Ordinal)
                || (output.Contains("mkdtemp(\"/tmp/.dotnet.", StringComparison.Ordinal)
                    && output.Contains("ENOENT", StringComparison.OrdinalIgnoreCase));
     }
+
+    /// <summary>
+    /// The <c>dotnet test</c> console logger prints exactly one of these
+    /// summary lines once the test host finished, whatever the outcome; vstest
+    /// prints <c>Total tests:</c>. Their presence proves the runner ran to the
+    /// end, so an infrastructure signature elsewhere in the output is test
+    /// content, not a broken mount.
+    /// </summary>
+    internal static bool HasTestRunSummary(string output)
+        => output.Contains("Passed!  - Failed:", StringComparison.Ordinal)
+           || output.Contains("Failed!  - Failed:", StringComparison.Ordinal)
+           || output.Contains("Total tests:", StringComparison.Ordinal);
 
     private static string FailureDetail(ProcessResult process)
     {
