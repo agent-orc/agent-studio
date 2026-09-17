@@ -33,6 +33,16 @@ public static class AcceptedIntegrationFailureCodes
     /// <c>ConflictSkipped</c>/<c>Partial</c> (CAC-18).
     /// </summary>
     public const string GateEnvironmentFailure = "gate-environment-failure";
+
+    /// <summary>
+    /// The build/test gate never reached a verdict at all: the process that owned
+    /// the merge disappeared (restart, host timeout, kill) while the gate was
+    /// still running. Like <see cref="GateEnvironmentFailure"/> this says nothing
+    /// about the reviewed change, so the card stays out of
+    /// <c>ConflictSkipped</c>/<c>Partial</c> and the integration is replayed for
+    /// the same delivery SHA without a new review (AGT-2849).
+    /// </summary>
+    public const string GateInterrupted = "gate-interrupted";
 }
 
 /// <summary>
@@ -161,6 +171,14 @@ public static class AcceptedIntegrationFailurePolicy
                     verdictSummary,
                     "The build/test gate failed before verification reached test discovery."),
                 RebaseRecoveryAvailable: false),
+            AcceptedIntegrationFailureCodes.GateInterrupted => new(
+                code,
+                "Integration gate interrupted",
+                FirstNonBlank(
+                    reason,
+                    verdictSummary,
+                    "The integration build gate was interrupted before it reached a verdict."),
+                RebaseRecoveryAvailable: false),
             _ => new(
                 AcceptedIntegrationFailureCodes.IntegrationError,
                 "Integration failed",
@@ -182,6 +200,8 @@ public static class AcceptedIntegrationFailurePolicy
             return AcceptedIntegrationFailureCodes.BuildGateFailed;
         if (string.Equals(verdict, "gate-environment-failure", StringComparison.OrdinalIgnoreCase))
             return AcceptedIntegrationFailureCodes.GateEnvironmentFailure;
+        if (string.Equals(verdict, "gate-interrupted", StringComparison.OrdinalIgnoreCase))
+            return AcceptedIntegrationFailureCodes.GateInterrupted;
         if (string.Equals(verdict, "delivery-gate-failed", StringComparison.OrdinalIgnoreCase))
             return AcceptedIntegrationFailureCodes.DeliveryGateFailed;
         if (string.Equals(verdict, "no-branch", StringComparison.OrdinalIgnoreCase))
@@ -228,6 +248,7 @@ public static class AcceptedIntegrationFailurePolicy
             AcceptedIntegrationFailureCodes.IntegrationError => AcceptedIntegrationFailureCodes.IntegrationError,
             AcceptedIntegrationFailureCodes.IntegrationPushBlocked => AcceptedIntegrationFailureCodes.IntegrationPushBlocked,
             AcceptedIntegrationFailureCodes.GateEnvironmentFailure => AcceptedIntegrationFailureCodes.GateEnvironmentFailure,
+            AcceptedIntegrationFailureCodes.GateInterrupted => AcceptedIntegrationFailureCodes.GateInterrupted,
             _ => null,
         };
     }

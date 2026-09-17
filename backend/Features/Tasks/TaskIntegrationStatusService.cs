@@ -22,12 +22,14 @@ namespace AgentStudio.Tasks;
 /// keeps the badge aligned with delivered work (AGT-2171: the widget showed the
 /// attributed commits on develop while the badge, keying off the branch
 /// <em>tip</em> WIP snapshot, claimed "not integrated"). The signals are collapsed
-/// into the five
+/// into the six
 /// <see cref="IntegrationStatuses"/> states:
 /// <list type="number">
-/// <item>ALL attributed commits are ancestors of develop → <c>integrated</c> (even
-///   when the branch tip still carries further, un-integrated WIP commits the
-///   widget never showed);</item>
+/// <item>ALL attributed commits are ancestors of the PUSHED develop
+///   (<c>origin/develop</c>) → <c>integrated</c> (even when the branch tip still
+///   carries further, un-integrated WIP commits the widget never showed);</item>
+/// <item>ALL attributed commits are in the local develop graph but at least one
+///   is not on <c>origin/develop</c> → <c>merged-locally</c> (AGT-2849);</item>
 /// <item>SOME attributed commits are ancestors → <c>partial</c>, with the missing
 ///   short-SHAs in the detail;</item>
 /// <item>NONE are ancestors → <c>pending</c> (or <c>conflict-skipped</c> when a
@@ -205,12 +207,13 @@ public sealed class TaskIntegrationStatusService
                 "This acceptance explicitly expects no integration.",
                 lastMerge);
         }
-        if (status?.Status == IntegrationStatuses.Integrated
+        if (IntegrationStatuses.IsMerged(status?.Status)
             && lastMerge?.Status != PipelineStepStatus.Pending)
         {
             return new AcceptedIntegrationRecoveryDecision(
                 AcceptedIntegrationRecoveryAction.Finalize,
-                "Git proves that the attributed delivery is integrated; no merge replay is required.",
+                "Git proves that the attributed delivery is merged into the integration branch; "
+                + "no merge replay is required (a missing push is the push backstop's work).",
                 lastMerge);
         }
 
@@ -285,6 +288,10 @@ public sealed class TaskIntegrationStatusService
         var effectiveIntegratedTotal = 0;
         var trulyMissingByRepository = new List<string>();
         var supersessionNotes = new List<string>();
+        // AGT-2849: commits that are in a repository's graph but not reachable
+        // from its pushed integration branch. One such commit anywhere keeps the
+        // aggregate out of "integrated".
+        var unpublished = new List<string>();
         foreach (var group in groups)
         {
             var reach = group.Key is not null && reaches.TryGetValue(group.Key, out var found)
@@ -315,6 +322,14 @@ public sealed class TaskIntegrationStatusService
                         replacement => replacement.SupersededSha,
                         replacement => replacement.ReplacementSha,
                         StringComparer.OrdinalIgnoreCase);
+
+            if (reach is not null)
+            {
+                unpublished.AddRange(memberships
+                    .Where(commit => commit.OnIntegrationBranch
+                                     && !AncestorSetContains(reach.PublishedAncestors, commit.Sha))
+                    .Select(commit => $"{group.Repository} {Short(commit.Sha)}"));
+            }
 
             var integratedCount = memberships.Count(commit => commit.OnIntegrationBranch);
             var releasedCount = memberships.Count(commit => commit.OnReleaseBranch);
@@ -368,11 +383,10 @@ public sealed class TaskIntegrationStatusService
             var detail = supersessionNotes.Count == 0
                 ? "anchor-ancestor"
                 : $"anchor-ancestor ({string.Join("; ", supersessionNotes)})";
-            return Integrated(
-                Short(anchor),
-                projectedBranch,
-                DeliveryRefFor(job),
-                detail) with { Repositories = repositoryEntries };
+            var verdict = unpublished.Count == 0
+                ? Integrated(Short(anchor), projectedBranch, DeliveryRefFor(job), detail)
+                : MergedLocally(projectedBranch, DeliveryRefFor(job), detail, unpublished);
+            return verdict with { Repositories = repositoryEntries };
         }
 
         if (effectiveIntegratedTotal > 0)
@@ -561,10 +575,12 @@ public sealed class TaskIntegrationStatusService
             && !string.IsNullOrWhiteSpace(reviewedResultSha)
             && AncestorSetContains(reach.DevelopAncestors, reviewedResultSha))
         {
-            return Integrated(
-                Short(reviewedResultSha),
+            return IntegratedOrLocal(
+                reach,
+                [reviewedResultSha],
                 branchName,
                 deliveryRef,
+                Short(reviewedResultSha),
                 "reviewed-result-ancestor");
         }
 
@@ -585,7 +601,15 @@ public sealed class TaskIntegrationStatusService
         // ALL attributed commits landed. Attempt history and recorded merge
         // provenance are deliberately irrelevant to this result.
         if (missing.Count == 0)
-            return Integrated(Short(newest), branchName, deliveryRef, "anchor-ancestor");
+        {
+            return IntegratedOrLocal(
+                reach,
+                attributed,
+                branchName,
+                deliveryRef,
+                Short(newest),
+                "anchor-ancestor");
+        }
 
         // A missing commit is not necessarily a hole in the delivery: a later,
         // already-integrated attributed commit of a different generation can
@@ -611,10 +635,12 @@ public sealed class TaskIntegrationStatusService
             var supersessionNote = string.Join(
                 "; ",
                 supersededMissing.Select(sha => $"{Short(sha)} superseded by {Short(supersededBy[sha])}"));
-            return Integrated(
-                Short(newest),
+            return IntegratedOrLocal(
+                reach,
+                attributed.Except(supersededMissing, StringComparer.OrdinalIgnoreCase),
                 branchName,
                 deliveryRef,
+                Short(newest),
                 $"anchor-ancestor ({supersessionNote})");
         }
 
@@ -676,14 +702,20 @@ public sealed class TaskIntegrationStatusService
             // conflict or a partial delivery - the card stays Pending with the
             // gate-environment reason visible on the chip and Evidence tab, and
             // is eligible to be accepted again instead of needing a steer round.
-            if (failure.Code == AcceptedIntegrationFailureCodes.GateEnvironmentFailure)
+            // AGT-2849 joins the same family: a gate that was killed before it
+            // could answer is a host fault, not a verdict on the delivery.
+            if (failure.Code is AcceptedIntegrationFailureCodes.GateEnvironmentFailure
+                or AcceptedIntegrationFailureCodes.GateInterrupted)
             {
+                var prefix = failure.Code == AcceptedIntegrationFailureCodes.GateInterrupted
+                    ? "gate interrupted"
+                    : "gate environment";
                 return new TaskIntegrationStatus
                 {
                     Status = IntegrationStatuses.Pending,
                     DeliveryRef = deliveryRef,
                     IntegrationBranch = branchName,
-                    Detail = $"gate environment: {visibleReason}",
+                    Detail = $"{prefix}: {visibleReason}",
                     Repositories = repositories ?? [],
                     Failure = new TaskIntegrationFailure
                     {
@@ -735,6 +767,45 @@ public sealed class TaskIntegrationStatusService
             Repositories = repositories ?? [],
         };
     }
+
+    /// <summary>
+    /// AGT-2849 - the publication boundary. Ancestry in the repository's graph
+    /// proves the delivery is present; only the pushed <c>origin/&lt;branch&gt;</c>
+    /// proves it is integrated. A merge that lives in a local branch or in the
+    /// Studio-owned integration worktree survives exactly as long as the next
+    /// rollback lets it, and no other machine can see it at all, so it is
+    /// reported as <see cref="IntegrationStatuses.MergedLocally"/> and names the
+    /// commits the remote branch cannot reach.
+    /// </summary>
+    private static TaskIntegrationStatus IntegratedOrLocal(
+        RepoIntegration reach,
+        IEnumerable<string> proving,
+        string branchName,
+        string? deliveryRef,
+        string sha,
+        string detail)
+    {
+        var unpublished = proving
+            .Where(candidate => !AncestorSetContains(reach.PublishedAncestors, candidate))
+            .Select(Short)
+            .ToList();
+        return unpublished.Count == 0
+            ? Integrated(sha, branchName, deliveryRef, detail)
+            : MergedLocally(branchName, deliveryRef, detail, unpublished);
+    }
+
+    private static TaskIntegrationStatus MergedLocally(
+        string branchName,
+        string? deliveryRef,
+        string detail,
+        IReadOnlyList<string> unpublished) => new()
+    {
+        Status = IntegrationStatuses.MergedLocally,
+        DeliveryRef = deliveryRef,
+        IntegrationBranch = branchName,
+        Detail = $"{detail}; merged into {branchName} locally only - "
+                 + $"not reachable from origin/{branchName}: {string.Join(", ", unpublished)}",
+    };
 
     private static TaskIntegrationStatus Integrated(
         string sha,
@@ -1022,11 +1093,30 @@ public sealed class TaskIntegrationStatusService
                 [BoardMergeStatusService.ReleaseBranch, "origin/" + BoardMergeStatusService.ReleaseBranch],
                 out var releaseAncestors);
 
+            // AGT-2849: the union above answers "is the delivery in this
+            // repository's graph". It cannot answer "has the delivery been
+            // published", and a merge that a restart can still roll back is not
+            // an integration. The origin mirror is therefore read on its own.
+            // A repository without that mirror is its own publication, so its
+            // local graph stays authoritative rather than reading as local-only.
+            var hasPublishedBranch = _git.RemoteBranchExists(root, integrationBranch);
+            var publishedAncestors = ancestors;
+            var publishedSucceeded = true;
+            if (hasPublishedBranch)
+            {
+                publishedSucceeded = _git.TryGetAncestorShaSet(
+                    root,
+                    ["origin/" + integrationBranch],
+                    out publishedAncestors);
+            }
+
             return new RepoIntegration(
                 integrationBranch,
                 ancestors,
                 releaseAncestors,
-                succeeded && releaseSucceeded);
+                succeeded && releaseSucceeded && publishedSucceeded,
+                publishedAncestors,
+                hasPublishedBranch);
         });
     }
 
@@ -1040,11 +1130,25 @@ public sealed class TaskIntegrationStatusService
 
     private static string Short(string sha) => sha.Length > 7 ? sha[..7] : sha;
 
+    /// <param name="DevelopAncestors">
+    /// Everything reachable from the local branch or its origin mirror. This is
+    /// "present in the integration graph" and stays the per-commit membership
+    /// evidence the card's repository lines render.
+    /// </param>
+    /// <param name="PublishedAncestors">
+    /// Everything reachable from <c>origin/&lt;branch&gt;</c> alone, or the same
+    /// set as <paramref name="DevelopAncestors"/> in a repository that has no
+    /// origin mirror of the branch. This is what <c>integrated</c> requires
+    /// (AGT-2849).
+    /// </param>
+    /// <param name="HasPublishedBranch">False when the branch exists only locally, which makes the local graph the publication.</param>
     private sealed record RepoIntegration(
         string IntegrationBranch,
         HashSet<string> DevelopAncestors,
         HashSet<string> ReleaseAncestors,
-        bool Succeeded);
+        bool Succeeded,
+        HashSet<string> PublishedAncestors,
+        bool HasPublishedBranch);
 
     private sealed record RepoBranchKey(string Root, string Branch);
     private sealed record RepositoryCommitGroup(

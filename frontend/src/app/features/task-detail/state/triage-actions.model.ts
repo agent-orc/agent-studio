@@ -13,6 +13,7 @@
 import { TaskState } from '../../../models/task.model';
 import type { TaskDeliveryClaimAnswer, TaskInfo } from '../../../models/task.model';
 import type { LandedState } from '../../../features/git';
+import { isMergedIntegrationStatus } from '../../../features/git';
 import { LANE_PRESENTATIONS, laneName } from '../../../models/lane-presentation';
 
 export type TriageActionIntent =
@@ -194,7 +195,11 @@ export type ArchiveIntegrationVerdict =
  */
 export function archiveIntegrationVerdict(info: TaskInfo): ArchiveIntegrationVerdict {
   switch (info.integration?.status) {
-    case 'integrated': return 'integrated';
+    // AGT-2849: an unpublished merge is still a merge, so the archive guard
+    // has its answer here instead of falling through to `unknown` and asking
+    // the server for a containment answer that says the same thing.
+    case 'integrated':
+    case 'merged-locally': return 'integrated';
     case 'no-branch': return 'nothing-to-integrate';
     case 'pending':
     case 'partial':
@@ -283,7 +288,10 @@ export function mergeAcceptViewFor(
   // results-only, or no-op outcome, even when its base is in the git graph.
   const hasTaskCommits = (info.commits?.length ?? 0) > 0 || !!info.commit;
   const mergeSha = shortMergeSha(info.integration?.sha);
-  const landed = info.integration?.status === 'integrated';
+  // AGT-2849: merged-locally is landed for this view. Offering "Merge into
+  // Develop" for a delivery that is already merged would invite a second merge
+  // of work that only needs its push, which the push backstop owns.
+  const landed = isMergedIntegrationStatus(info.integration?.status);
 
   if (!hasTaskCommits) {
     return {

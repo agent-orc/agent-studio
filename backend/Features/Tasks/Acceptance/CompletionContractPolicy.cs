@@ -156,9 +156,18 @@ public static class CompletionContractPolicy
     /// integration branch. Everything else - including
     /// <see cref="ContainmentUnknown"/> and a null - is "not proven", which is
     /// not the same as "not integrated" and never carries that wording.
+    /// <para>
+    /// AGT-2849: containment is the merge question, so
+    /// <see cref="IntegrationStatuses.MergedLocally"/> counts. The merge is
+    /// complete and the card's delivery is in the integration branch graph;
+    /// only the origin push is outstanding, and that is the push backstop's
+    /// work. Refusing completion there would accuse a finished delivery of
+    /// being unintegrated. The badge still says merged-locally until the push
+    /// lands, which is where that distinction belongs.
+    /// </para>
     /// </summary>
     public static bool IsContained(string? containmentStatus)
-        => string.Equals(containmentStatus, IntegrationStatuses.Integrated, StringComparison.Ordinal);
+        => IntegrationStatuses.IsMerged(containmentStatus);
 
     /// <summary>
     /// True when the card has nothing to integrate, so the containment

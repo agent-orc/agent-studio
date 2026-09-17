@@ -4086,7 +4086,13 @@ public class GitService
             : "origin/" + candidate;
     }
 
-    private bool RemoteBranchExists(string repoRoot, string branch)
+    /// <summary>
+    /// True when <c>refs/remotes/origin/&lt;branch&gt;</c> exists. Internal
+    /// because the integration projection needs to tell "this repository has no
+    /// origin mirror of the branch" apart from "the mirror exists and simply does
+    /// not contain the delivery yet" (AGT-2849).
+    /// </summary>
+    internal bool RemoteBranchExists(string repoRoot, string branch)
     {
         if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot)) return false;
         if (!IsLikelyBranchName(branch)) return false;

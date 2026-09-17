@@ -608,13 +608,30 @@ export interface TaskMergeSignal {
   releaseSha: string | null;
 }
 
-/** One of the discrete integration verdicts (AGT-2202; `partial` added AGT-2171 fix). */
+/**
+ * One of the discrete integration verdicts (AGT-2202; `partial` added AGT-2171
+ * fix, `merged-locally` added AGT-2849).
+ */
 export type IntegrationStatusValue =
   | 'integrated'
+  | 'merged-locally'
   | 'partial'
   | 'pending'
   | 'conflict-skipped'
   | 'no-branch';
+
+/**
+ * AGT-2849 - mirrors backend `IntegrationStatuses.IsMerged`. True when the
+ * delivery is in the integration branch graph, whether or not the push has
+ * published it yet. Acceptance-boundary UI asks this question: the merge is
+ * done and re-running it changes nothing, so the card must not offer to merge
+ * again or call the delivery unintegrated. Ask for `'integrated'` itself only
+ * where the claim is that the delivery has landed for everyone; the badge keeps
+ * that distinction visible.
+ */
+export function isMergedIntegrationStatus(status: string | null | undefined): boolean {
+  return status === 'integrated' || status === 'merged-locally';
+}
 
 /**
  * AGT-2202 - the honest, git-derived integration verdict for an accepted card
@@ -628,7 +645,7 @@ export type IntegrationStatusValue =
  * not in an accepted lane.
  */
 export interface TaskIntegrationStatus {
-  /** integrated | pending | conflict-skipped | no-branch. */
+  /** integrated | merged-locally | partial | pending | conflict-skipped | no-branch. */
   status: IntegrationStatusValue;
   /** Actual delivery ref from card truth; null only when no ref is evidenced. */
   deliveryRef: string | null;

@@ -123,11 +123,11 @@ public static class AcceptanceRailPolicy
         if (!AcceptanceIntegrationPolicy.IsIntegrationRequired(task))
             return Ignore("no-code-acceptance");
 
+        // AGT-2849: merged-locally counts here. The merge is done; only the push
+        // is outstanding, and that is the push backstop's work, not a reason to
+        // hold the card in Human Review.
         if (task.State == TaskStates.HumanReview
-            && string.Equals(
-                integration?.Status,
-                IntegrationStatuses.Integrated,
-                StringComparison.Ordinal))
+            && IntegrationStatuses.IsMerged(integration?.Status))
         {
             return new AcceptanceRailDecision(
                 AcceptanceRailAction.Accept,

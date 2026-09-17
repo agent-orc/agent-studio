@@ -247,14 +247,17 @@ public static class GateEnvironmentRetryPolicy
     }
 
     /// <summary>
-    /// CAC-18 keeps a gate environment failure out of <c>conflict-skipped</c>,
-    /// so the card stays Pending and only the typed failure code identifies it.
+    /// The two host-side gate faults this ladder replays. CAC-18 keeps a gate
+    /// environment failure out of <c>conflict-skipped</c>, so the card stays
+    /// Pending and only the typed failure code identifies it; AGT-2849 adds the
+    /// gate that never reached a verdict at all because its process died. Both
+    /// leave the reviewed delivery untouched, so both are replayed against the
+    /// same delivery SHA rather than sent through a new review.
     /// </summary>
     public static bool IsGateEnvironmentFailure(TaskIntegrationStatus? integration)
-        => string.Equals(
-            integration?.Failure?.Code,
-            AcceptedIntegrationFailureCodes.GateEnvironmentFailure,
-            StringComparison.Ordinal);
+        => integration?.Failure?.Code is
+            AcceptedIntegrationFailureCodes.GateEnvironmentFailure
+            or AcceptedIntegrationFailureCodes.GateInterrupted;
 
     /// <summary>
     /// Operator-facing parked reason. Named after the environment failure it

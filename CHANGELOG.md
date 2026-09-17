@@ -29,6 +29,14 @@ level; task list reads answer 304 with trimmed payloads.
 
 ### Added
 
+- A build gate that never reaches a verdict is recorded as an interrupted run.
+  The pre-develop gate writes a durable in-flight record before the merge, and
+  startup recovery rolls the integration branch back to the exact pre-merge tip -
+  the oldest one when several un-gated merges stacked up - or resumes the merge
+  whose verdict for that exact SHA is already durable. Affected cards are
+  integrated again without a new remote review. A branch whose rollback anchor is
+  gone or already published escalates instead of being rewritten (AGT-2849).
+
 - Windows integration gate: one targeted re-run of exactly the failed tests
   on the same build, green re-run keeps the gate green and records the names
   as flaky under the review executor's classification (AGT-2853).
@@ -41,6 +49,19 @@ level; task list reads answer 304 with trimmed payloads.
   the run hierarchy from the pipeline steps (AGT-2811); "Current" marks the
   live run, not the newest one (AGT-2810).
 - ETag/304 for task list and grouped reads with a trimmed payload (AGT-2703).
+
+### Changed
+
+- `integration.status=integrated` now requires the delivery to be reachable from
+  the pushed remote integration branch. A delivery that only a local branch or a
+  worktree ref can see reports the new `merged-locally` status, naming the
+  commits `origin/<branch>` cannot reach. Acceptance and the acceptance rail keep
+  moving such a card, because the origin push is a separate, backstopped step
+  (AGT-2849).
+- The completion contract, the archive guard, and the Human Review accept
+  action read the same merge question, so a delivery awaiting only its push is
+  no longer refused as an unintegrated delivery and is no longer offered a
+  second merge. The badge still names the missing push (AGT-2849).
 
 ### Fixed
 

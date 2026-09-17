@@ -819,8 +819,15 @@ builder.Services.AddSingleton<AcceptanceRailHostedService>();
 // ladder that actually performs that retry lives in its own service. It replays
 // the integration for the unchanged delivery SHA and never starts a review.
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateEnvironmentRetryService>();
+// AGT-2849: a build gate that never reached a verdict left an un-gated merge on
+// the integration branch, and the next delivery merged on top of it. Startup
+// recovery rolls that branch back to the exact pre-merge tip (or resumes the
+// merge when a durable verdict for that exact SHA exists) before the merge gate
+// opens for new work, and hands the affected cards to the ladder above.
+builder.Services.AddSingleton<AgentStudio.Pipeline.InterruptedIntegrationGateRecoveryService>();
 if (!publicDemoExecutionProfile)
 {
+    builder.Services.AddHostedService<AgentStudio.Pipeline.InterruptedIntegrationGateRecoveryHostedService>();
     builder.Services.AddHostedService(sp =>
         sp.GetRequiredService<AgentStudio.Pipeline.AcceptedIntegrationBackstopHostedService>());
     builder.Services.AddHostedService<AgentStudio.Pipeline.IntegrationPushBackstopHostedService>();

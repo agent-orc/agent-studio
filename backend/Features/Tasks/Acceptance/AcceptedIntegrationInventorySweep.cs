@@ -120,7 +120,7 @@ public sealed class AcceptedIntegrationInventorySweep
         {
             "error" => "Error",
             "no-branch" => "NoTaskBranch",
-            _ when step is null && status?.Status != IntegrationStatuses.Integrated => "Null",
+            _ when step is null && !IntegrationStatuses.IsMerged(status?.Status) => "Null",
             _ => null,
         };
         if (finding is null) return null;

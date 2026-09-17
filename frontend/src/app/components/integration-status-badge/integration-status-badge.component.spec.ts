@@ -87,6 +87,26 @@ describe('IntegrationStatusBadgeComponent', () => {
     expect(badge.classList.contains('integration-badge--acute')).toBe(true);
   });
 
+  /**
+   * AGT-2849: a merge only a local ref can see is not an integration. The badge
+   * must not show the green "merged @sha" for it; it carries the amber
+   * accepted-but-not-integrated treatment and says why.
+   */
+  it('renders merged-locally as an acute amber badge that names the missing push', () => {
+    const fixture = render(integration('merged-locally', {
+      detail: 'anchor-ancestor; merged into develop locally only - not reachable from origin/develop: beef123',
+    }));
+    const badge = fixture.nativeElement.querySelector('[data-testid="integration-status-badge"]') as HTMLElement;
+    expect(badge.textContent).toContain('merged locally, not pushed');
+    expect(badge.dataset['kind']).toBe('pending');
+    expect(badge.dataset['integrationStatus']).toBe('merged-locally');
+    expect(badge.classList.contains('integration-badge--acute')).toBe(true);
+    expect(fixture.componentInstance.tooltip()).toContain('not reachable from origin/develop');
+    expect(fixture.componentInstance.ariaLabel()).toBe(
+      'Merged into develop locally but not pushed to origin/develop',
+    );
+  });
+
   it('renders partial as an orange "teilweise integriert" badge with missing SHAs in the tooltip', () => {
     const fixture = render(
       integration('partial', { detail: '1/2 attributed commits integrated; missing: beef123' }),

@@ -179,12 +179,31 @@ public class CompletionContractPolicyTests
 
     [Theory]
     [InlineData(IntegrationStatuses.Integrated, true)]
+    [InlineData(IntegrationStatuses.MergedLocally, true)]
     [InlineData(IntegrationStatuses.Partial, false)]
     [InlineData(IntegrationStatuses.Pending, false)]
     [InlineData(IntegrationStatuses.NoBranch, false)]
     [InlineData(null, false)]
     public void ContainmentIsOnlyPositiveForAProvenAncestor(string? status, bool contained)
         => Assert.Equal(contained, CompletionContractPolicy.IsContained(status));
+
+    /// <summary>
+    /// AGT-2849: an unpublished merge is still a merge. The delivery is in the
+    /// integration branch graph, so the completion contract accepts it on the
+    /// integrated-delivery basis instead of accusing it of being unintegrated.
+    /// The outstanding origin push is the push backstop's work and the
+    /// merged-locally badge is where the card reports it.
+    /// </summary>
+    [Fact]
+    public void AMergedButUnpublishedDeliveryStillSatisfiesTheContract()
+    {
+        var decision = CompletionContractPolicy.Decide(
+            Coding(IntegrationStatuses.MergedLocally));
+
+        Assert.True(decision.Accepted);
+        Assert.Equal(CompletionClaimBases.IntegratedDelivery, decision.Claim!.Basis);
+        Assert.Null(decision.RefusalCode);
+    }
 
     [Theory]
     [InlineData(null, true)]
