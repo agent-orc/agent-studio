@@ -12,6 +12,31 @@ release yet.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-17
+
+Operations release, the third of the day, closing what the 0.6.0 rollout
+showed. The Update Service probes the frontend the way users reach it and
+reports a frontend-only failure as degraded instead of rolling the checkout
+back underneath a running backend. A coding run that hits the run timeout with
+a salvaged worktree gets one automatic finishing round instead of an
+escalation. Review attempts record the release that graded them, adoption
+after a daemon restart names a release mismatch, and the operator can drain
+instead of adopt.
+
+### Added
+
+- Automatic continuation round after a run timeout with a salvage commit,
+  bounded to one per delivery generation; escalations name the salvage ref
+  (AGT-2861).
+- Review attempt provenance: release id and worker binary in the grade and in
+  the adoption log line; drain mode for the review daemon restart (AGT-2863).
+
+### Fixed
+
+- Update Service: the frontend probe tries localhost, 127.0.0.1 and ::1; a
+  frontend-only verification failure after a successful backend restart ends
+  the run as degraded with listener evidence instead of a rollback (AGT-2862).
+
 ### Added
 
 - Review worker release provenance: every review attempt records the agent-host
