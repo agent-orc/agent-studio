@@ -12,6 +12,52 @@ release yet.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-17
+
+Operations release. The Windows integration gate re-runs the tests that
+failed once on the same build and records them as flaky instead of failing
+the merge, takes its budget from the gate-run policy instead of a hard-coded
+30 minutes, and the review executor caches baseline verify results per
+repository, baseline and command. Review command watchdogs no longer kill
+healthy backend test runs, the adaptive review parallelism advisor reads the
+attempt queue it is meant to protect, a degraded result summary no longer
+loses a delivered remote run, and the Update Service can complete an upgrade
+because the runtime identity check reads the intended manifest. The board
+tells the truth about parked and unpickable cards, only reports "delivered"
+with proof, and the token panel marks the live run and shows the reasoning
+level; task list reads answer 304 with trimmed payloads.
+
+### Added
+
+- Windows integration gate: one targeted re-run of exactly the failed tests
+  on the same build, green re-run keeps the gate green and records the names
+  as flaky under the review executor's classification (AGT-2853).
+- Review executor: baseline verify results are cached per repository,
+  baseline SHA and command (AGT-2843).
+- A parked card says why it is parked (AGT-2816); a card that cannot be picked
+  says so where it claims to be queued (AGT-2818); "delivered" requires an
+  integrated delivery or a named deliverable without code (AGT-2817).
+- Token panel on the task Overview shows the reasoning level and separates
+  the run hierarchy from the pipeline steps (AGT-2811); "Current" marks the
+  live run, not the newest one (AGT-2810).
+- ETag/304 for task list and grouped reads with a trimmed payload (AGT-2703).
+
+### Fixed
+
+- The pre-develop merge gate honours the gate-run budget policy (AGT-2846).
+- Review command watchdogs (silence, no-CPU-progress) are carried into the
+  detached review worker and no longer kill healthy backend test runs
+  (AGT-2851).
+- Adaptive review parallelism advisor reads the remote attempt queue instead
+  of the local post-processing queue (AGT-2848).
+- A degraded result summary no longer turns a delivered remote run into a
+  lost run (AGT-2850).
+- Update Service: the runtime identity check reads the intended build
+  manifest so an upgrade can pass (AGT-2847).
+- UpdateServiceRestartIdentityDrillTests isolate their update-service
+  factory state (AGT-2852); GateFlakyRerunBehaviorTests run on Windows
+  (operator fix 651d7267a).
+
 ## [0.4.0] - 2026-09-16
 
 Operations release. The review executor and the integration gate stop
