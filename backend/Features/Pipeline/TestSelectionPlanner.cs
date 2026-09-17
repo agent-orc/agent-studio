@@ -19,7 +19,14 @@ public sealed record TestHubHistoryEntry
 public sealed record TestSelectionCandidate(
     string Id,
     VerifyCommand Command,
-    IReadOnlyList<string> Reasons);
+    IReadOnlyList<string> Reasons)
+{
+    /// <summary>
+    /// Test classes this command is filtered down to, when the diff allowed a
+    /// bounded slice. Empty when the command runs its whole declared scope.
+    /// </summary>
+    public IReadOnlyList<string> TestClasses { get; init; } = [];
+}
 
 public sealed record TestSelectionAdvice(
     IReadOnlyList<string> CandidateIds,
@@ -35,6 +42,12 @@ public sealed record TestSelectionAudit
     public IReadOnlyList<TestSelectionCandidate> Candidates { get; init; } = [];
     public IReadOnlyList<string> SelectedCandidateIds { get; init; } = [];
     public IReadOnlyList<string> SelectedCommands { get; init; } = [];
+
+    /// <summary>
+    /// The test classes the selected commands were filtered down to, so the
+    /// gate log states which classes ran and the candidate reasons state why.
+    /// </summary>
+    public IReadOnlyList<string> SelectedTestClasses { get; init; } = [];
     public IReadOnlyList<string> OmittedTestCommands { get; init; } = [];
     public IReadOnlyList<string> Reasons { get; init; } = [];
     public string Selector { get; init; } = "deterministic";
@@ -203,6 +216,17 @@ public static class TestSelectionPlanner
         if (level == TestExecutionLevels.WorkPackage && selectedTests.Count == 0)
             reasons.Add("no impacted test command could be derived; this coverage gap is explicit");
 
+        // The classes a filtered command was narrowed to are evidence, not a
+        // footnote: an operator greps one gate log to see which classes the
+        // merge result actually ran.
+        var selectedTestClasses = selectedCandidates
+            .SelectMany(candidate => candidate.TestClasses)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToList();
+        if (selectedTestClasses.Count > 0)
+            reasons.Add($"work-package test classes: {string.Join(", ", selectedTestClasses)}");
+
         return new StagedVerifyPlan(commandsForRun, new TestSelectionAudit
         {
             Level = level,
@@ -212,6 +236,7 @@ public static class TestSelectionPlanner
             Candidates = candidates,
             SelectedCandidateIds = selectedCandidates.Select(candidate => candidate.Id).ToList(),
             SelectedCommands = mergedTests.Select(Describe).ToList(),
+            SelectedTestClasses = selectedTestClasses,
             OmittedTestCommands = fullTests
                 .Select(Describe)
                 .Except(mergedTests.Select(Describe), StringComparer.OrdinalIgnoreCase)
@@ -266,10 +291,12 @@ public static class TestSelectionPlanner
         if (frontendWorkPackage is not null)
             Add(map, frontendWorkPackage, frontendWorkPackage.SelectionReason);
 
-        foreach (var candidate in DotNetTestInventory(repositoryPath, verifyPlan, changedFiles))
-            Add(map, candidate.Command, candidate.Impacted
-                ? "diff touches this test project or a referenced production project"
-                : null);
+        foreach (var entry in DotNetTestInventory(repositoryPath, verifyPlan, changedFiles))
+            Add(map, entry.Command, entry.Impacted
+                ? entry.Slice?.Reason
+                    ?? "diff touches this test project or a referenced production project"
+                : null,
+                entry.Slice?.Classes);
 
         foreach (var rule in policy?.ImpactRules ?? [])
         {
@@ -307,56 +334,95 @@ public static class TestSelectionPlanner
             .OrderBy(candidate => candidate.Command.Command, StringComparer.OrdinalIgnoreCase)
             .Select(candidate => new TestSelectionCandidate(
                 StableId(candidate.Command), candidate.Command,
-                candidate.Reasons.Distinct(StringComparer.OrdinalIgnoreCase).ToList()))
+                candidate.Reasons.Distinct(StringComparer.OrdinalIgnoreCase).ToList())
+            {
+                TestClasses = candidate.TestClasses.Distinct(StringComparer.Ordinal).ToList(),
+            })
             .ToList();
     }
 
-    private static IEnumerable<(VerifyCommand Command, bool Impacted)> DotNetTestInventory(
-        string repositoryPath,
-        VerifyPlan verifyPlan,
-        IReadOnlyList<string> changedFiles)
+    private static IEnumerable<(VerifyCommand Command, bool Impacted, DotNetTestSlice? Slice)>
+        DotNetTestInventory(
+            string repositoryPath,
+            VerifyPlan verifyPlan,
+            IReadOnlyList<string> changedFiles)
     {
         if (!Directory.Exists(repositoryPath)) yield break;
         var projects = Directory.EnumerateFiles(repositoryPath, "*.csproj", SearchOption.AllDirectories)
             .Where(path => !IsGeneratedPath(Path.GetRelativePath(repositoryPath, path)))
             .ToList();
         var testProjects = projects.Where(IsTestProject).ToList();
-        var touchedProjects = changedFiles
-            .Select(file => OwningProject(repositoryPath, file, projects))
-            .Where(path => path is not null)
-            .Cast<string>()
+        var ownership = changedFiles
+            .Select(file => (File: file, Project: OwningProject(repositoryPath, file, projects)))
+            .Where(entry => entry.Project is not null)
+            .ToList();
+        var touchedProjects = ownership
+            .Select(entry => entry.Project!)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         foreach (var testProject in testProjects)
         {
             var references = ProjectReferences(testProject);
-            var impacted = touchedProjects.Contains(testProject)
-                || references.Any(touchedProjects.Contains);
+            var referencedProductionTouched = references.Any(touchedProjects.Contains);
+            var ownChangedFiles = ownership
+                .Where(entry => string.Equals(entry.Project, testProject, StringComparison.OrdinalIgnoreCase))
+                .Select(entry => entry.File)
+                .ToList();
+            var impacted = ownChangedFiles.Count > 0 || referencedProductionTouched;
+            // A diff confined to this test project is bounded to the classes it
+            // declares; anything else keeps the whole project, because no
+            // convention maps a production type to its covering test classes.
+            var slice = impacted
+                ? DotNetWorkPackagePlanner.PlanSlice(
+                    repositoryPath, testProject, ownChangedFiles, referencedProductionTouched)
+                : null;
             var relative = NormalizePath(Path.GetRelativePath(repositoryPath, testProject));
             yield return (new VerifyCommand(
                 VerifyEcosystem.DotNet,
                 VerifyCommandKind.Test,
                 "",
-                $"dotnet test \"{relative}\"{DotNetFilterSuffix(verifyPlan)}"), impacted);
+                $"dotnet test \"{relative}\"{DotNetFilterSuffix(verifyPlan, slice?.Classes)}"),
+                impacted,
+                slice);
         }
     }
 
-    private static string DotNetFilterSuffix(VerifyPlan verifyPlan)
+    private static string DotNetFilterSuffix(VerifyPlan verifyPlan, IReadOnlyList<string>? classes)
+    {
+        var (raw, expression) = DotNetFilterExpression(verifyPlan);
+        if (classes is null || classes.Count == 0)
+            return $" --filter {raw}";
+        var classExpression = string.Join(
+            "|", classes.Select(name => $"FullyQualifiedName~{name}"));
+        // VSTest gives `&` and `|` their own meaning, so the composed expression
+        // is quoted as one shell argument and both sides are parenthesized: an
+        // inherited expression may itself be an alternation.
+        return $" --filter \"({expression})&({classExpression})\"";
+    }
+
+    /// <summary>
+    /// The project's declared <c>dotnet test</c> filter as written (so a value
+    /// that was already quoted stays a single shell argument) plus its bare
+    /// expression for composition.
+    /// </summary>
+    private static (string Raw, string Expression) DotNetFilterExpression(VerifyPlan verifyPlan)
     {
         foreach (var command in verifyPlan.Commands.Where(command => command.Kind == VerifyCommandKind.Test))
         {
             if (!command.Command.TrimStart().StartsWith("dotnet test", StringComparison.OrdinalIgnoreCase))
                 continue;
             var match = Regex.Match(command.Command,
-                "(?:^|\\s)(?:--filter|-f)\\s+(?:\\\"[^\\\"]*\\\"|'[^']*'|\\S+)",
+                "(?:^|\\s)(?:--filter|-f)(?:\\s+|=)(?<value>\\\"[^\\\"]*\\\"|'[^']*'|\\S+)",
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-            if (match.Success) return " " + match.Value.Trim();
+            if (!match.Success) continue;
+            var raw = match.Groups["value"].Value.Trim();
+            return (raw, raw.Trim('"', '\''));
         }
         // Repository-wide routine gates exclude machine-bound and Windows-host
         // process/timing families. Preserve an explicit project filter when one
         // exists; otherwise apply the canonical exclusion to every generated
         // work-package test-project command.
-        return " --filter Category!=MachineBound";
+        return ("Category!=MachineBound", "Category!=MachineBound");
     }
 
     private static string? OwningProject(string root, string changedFile, IReadOnlyList<string> projects)
@@ -490,7 +556,11 @@ public static class TestSelectionPlanner
             _ => 0,
         };
 
-    private static void Add(Dictionary<string, CandidateBuilder> map, VerifyCommand command, string? reason = null)
+    private static void Add(
+        Dictionary<string, CandidateBuilder> map,
+        VerifyCommand command,
+        string? reason = null,
+        IReadOnlyList<string>? testClasses = null)
     {
         var key = CommandKey(command.Command, command.WorkingSubdir);
         if (!map.TryGetValue(key, out var candidate))
@@ -499,6 +569,7 @@ public static class TestSelectionPlanner
             map[key] = candidate;
         }
         if (!string.IsNullOrWhiteSpace(reason)) candidate.Reasons.Add(reason);
+        foreach (var name in testClasses ?? []) candidate.TestClasses.Add(name);
     }
 
     private static bool PathMatches(IReadOnlyList<string> changedFiles, IEnumerable<string> prefixes)
@@ -536,5 +607,6 @@ public static class TestSelectionPlanner
     private sealed record CandidateBuilder(VerifyCommand Command)
     {
         public List<string> Reasons { get; } = [];
+        public List<string> TestClasses { get; } = [];
     }
 }
