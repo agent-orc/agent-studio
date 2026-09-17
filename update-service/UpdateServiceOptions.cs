@@ -56,6 +56,15 @@ public sealed class UpdateServiceOptions
     /// Fix for the "frontend left down after a Stable update" incident: the
     /// orchestrator waits for this port to accept connections before the run
     /// is allowed to reach phase=done.
+    ///
+    /// AGT-2862: the value is the IPv4 loopback because that is the address
+    /// the dev server is now told to bind (<c>host: 127.0.0.1</c> in
+    /// <c>frontend/angular.json</c>). The probe does not trust that alone -
+    /// it also tries <c>localhost</c> and <c>[::1]</c> on the same port
+    /// before calling the frontend down, because which family
+    /// <c>ng serve</c> ends up on depends on the host's name resolution.
+    /// Raising <see cref="FrontendWaitSeconds"/> is not a fix for a probe
+    /// that is looking at the wrong address.
     /// </summary>
     public string FrontendUrl { get; set; } = "http://127.0.0.1:4011";
     public int FrontendWaitSeconds { get; set; } = 120;

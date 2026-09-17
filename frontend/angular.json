@@ -91,7 +91,8 @@
         "serve": {
           "builder": "@angular/build:dev-server",
           "options": {
-            "port": 4010
+            "port": 4010,
+            "host": "127.0.0.1"
           },
           "configurations": {
             "production": {

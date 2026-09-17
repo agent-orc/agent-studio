@@ -115,10 +115,10 @@ manifests and the cached latest-approved tag still pass the same comparison.
 
 ## Update Service ordering, mutation boundary, and health wait
 
-Four incidents from the first tagged releases (v0.2.0, 2026-09-13; v0.4.0,
-2026-09-16) changed the Update Service's phase ordering and its identity
-handoff. This section documents the current contract so a future change does
-not reintroduce them.
+Five incidents from the first tagged releases (v0.2.0, 2026-09-13; v0.4.0,
+2026-09-16; v0.6.0, 2026-09-17) changed the Update Service's phase ordering,
+its identity handoff, and who may roll the checkout back. This section
+documents the current contract so a future change does not reintroduce them.
 
 **Stop before restore.** The stack (backend, frontend dev server, and any
 process the checkout owns) is stopped before the locked dependency restore
@@ -133,10 +133,13 @@ holding process (PID and command line where determinable) instead of letting
 `build-manifest.json` is only written into the live Stable checkout after
 restart has cleared health, runtime-identity verification, and the frontend
 port check. The intended manifest is kept in the run folder
-(`intended-build-manifest.json`) until that point. Any failure before the
-manifest is committed automatically reverts the checkout to the pre-run
+(`intended-build-manifest.json`) until that point. A *backend* failure before
+the manifest is committed automatically reverts the checkout to the pre-run
 commit; the manifest file is never touched, so the next preflight is
-unaffected and no manual manifest deletion is needed.
+unaffected and no manual manifest deletion is needed. A frontend-only failure
+after a verified backend does not revert (see "Degraded" below): the checkout
+is the source of a process that is already running, so it stays where the
+restart left it.
 
 **Identity handoff at restart.** The mutation boundary and the runtime
 identity source used to contradict each other. `BuildIdentity` reads
@@ -202,7 +205,64 @@ slow-but-fine run from a stuck one after the fact.
 the orchestrator waits for the frontend dev server's port
 (`FrontendUrl`, default `http://127.0.0.1:4011`) to accept connections before
 the run is allowed to reach `phase=done`. A run that leaves the backend up
-and the frontend down (or vice versa) is reported failed, not done.
+and the frontend down is never reported as `done`.
+
+**One loopback truth.** The frontend probe has to reach the dev server the way
+a user does, and "loopback" is three spellings, not one. `ng serve` binds a
+single address: with no `--host` it binds `localhost`, which resolves to `::1`
+on the Windows Stable host, so a probe pinned to `127.0.0.1` could never
+succeed there. The v0.6.0 rollout failed on exactly that while
+`curl http://localhost:4011/` answered 200 and `netstat` showed
+`TCP [::1]:4011 LISTENING` (run `1027d2e7`, 17.09.2026); the same mismatch had
+already produced the v0.2.0 and v0.5.0 "frontend did not start" reports. The
+rule now has two halves and both are required:
+
+- **Bind explicitly.** The dev server binds the IPv4 loopback:
+  `host: 127.0.0.1` in [`frontend/angular.json`](../../frontend/angular.json)'s
+  `serve` options, so every launcher gets it - `npm start`, a bare `ng serve`,
+  and the outer `start-stable.sh` wrapper that delegates to them. An outer
+  wrapper must not override it with `--host localhost`. `FrontendUrl` and
+  `scripts/update-stable.sh`'s `ATP_STABLE_FRONTEND_URL` name the same
+  address, so the configuration and the bind agree by construction.
+- **Probe all three anyway.** Before the frontend is called down, the probe
+  tries `localhost`, `127.0.0.1` and `[::1]` on the configured port. The bind
+  above is the intent; the probe does not depend on it, because an
+  operator-started `ng serve` or a wrapper that predates this rule can still
+  land on the other family. The same widening applies to
+  `scripts/stable-frontend-boot-probe.mjs`. A non-loopback `FrontendUrl` is
+  left alone - widening it would probe a different machine.
+
+Raising `FrontendWaitSeconds` is not a fix for a probe that is looking at the
+wrong address, and must not be used as one.
+
+**Degraded: backend up, frontend down.** A verification failure after a
+successful backend restart must not roll the checkout back underneath a
+running new backend. Rollback authority belongs to backend failures only:
+
+| Observed after restart | Outcome | Checkout |
+|---|---|---|
+| Backend never healthy | `failed` | reverted to the pre-run commit |
+| Backend healthy, runtime identity is not the candidate | `failed` | reverted to the pre-run commit |
+| Backend healthy at the candidate, frontend down | `degraded` | left on the candidate commit |
+| Backend healthy at the candidate, frontend up | continues to the mutation boundary | candidate |
+
+`degraded` is a terminal phase (`isRunning=false`, history `status=degraded`).
+The run stops before the mutation boundary, so `build-manifest.json` is not
+committed either: the checkout and the installed manifest are exactly what the
+restart left, the next preflight reads that as `upgradeInVerification`, and a
+re-triggered run re-verifies the same candidate once the frontend is back. The
+operator decides whether to restart the frontend or roll back; nothing is
+undone automatically. Reverting here is what the v0.6.0 run did, and it left
+HEAD on v0.5.0 under a v0.6.0 process for an operator to repair by hand.
+
+**Probe evidence in the run log.** Every run that gets as far as the frontend
+check writes `frontend-probe.txt` into its run folder and repeats it in
+`summary.md`, whether the probe passed or failed: the verdict, each origin
+tried with its status or error, and the `netstat`-style listener list for the
+frontend port read at the moment of the verdict. A `degraded` run carries the
+same evidence on the wire as two `verificationFailures` entries
+(`frontend-listening` and `frontend-listeners`), so the operator can see which
+address the frontend is actually on without opening the run folder.
 
 ## Migration
 

@@ -72,22 +72,62 @@ function isStartupConnectionError(error) {
     || /ERR_CONNECTION_REFUSED|ERR_CONNECTION_RESET|ERR_CONNECTION_CLOSED|ECONNREFUSED|socket hang up|Timeout .* exceeded/i.test(message);
 }
 
+// AGT-2862: `ng serve` binds one address family, and which one depends on how
+// the host resolves the name it was given, so a probe pinned to a single
+// loopback spelling reports a running frontend as missing. Every spelling of
+// the configured loopback origin is tried before the boot is called failed;
+// a non-loopback origin is left alone, because widening it would probe a
+// different machine.
+function loopbackProbeTargets(url) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return [url];
+  }
+  const host = parsed.hostname.replace(/^\[|\]$/g, '');
+  const isLoopback = host === 'localhost' || host === '::1' || /^127(\.\d{1,3}){3}$/.test(host);
+  if (!isLoopback) return [url];
+
+  const targets = [];
+  for (const candidate of [host, 'localhost', '127.0.0.1', '::1']) {
+    const next = new URL(url);
+    next.hostname = candidate.includes(':') ? `[${candidate}]` : candidate;
+    const origin = next.toString();
+    if (!targets.includes(origin)) targets.push(origin);
+  }
+  return targets;
+}
+
 async function loadOnceFrontendAcceptsConnections(page, url, deadline) {
+  const targets = loopbackProbeTargets(url);
+  const lastError = new Map();
+
   while (true) {
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) {
-      throw new Error(`Timed out waiting for ${url} to accept a browser navigation.`);
+    for (const target of targets) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        const tried = targets
+          .map(t => `  ${t}: ${lastError.get(t) ?? 'not reached'}`)
+          .join('\n');
+        throw new Error(
+          `Timed out waiting for ${url} to accept a browser navigation. Origins tried:\n${tried}`,
+        );
+      }
+
+      try {
+        return await page.goto(target, {
+          waitUntil: 'domcontentloaded',
+          timeout: Math.min(remaining, 15_000),
+        });
+      } catch (error) {
+        if (!isStartupConnectionError(error)) throw error;
+        lastError.set(target, errorText(error).split('\n')[0]);
+      }
     }
 
-    try {
-      return await page.goto(url, {
-        waitUntil: 'domcontentloaded',
-        timeout: Math.min(remaining, 15_000),
-      });
-    } catch (error) {
-      if (!isStartupConnectionError(error) || Date.now() >= deadline) throw error;
-      await delay(Math.min(250, Math.max(1, deadline - Date.now())));
-    }
+    if (Date.now() >= deadline) continue;
+    await delay(Math.min(250, Math.max(1, deadline - Date.now())));
   }
 }
 

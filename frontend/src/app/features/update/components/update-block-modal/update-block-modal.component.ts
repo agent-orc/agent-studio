@@ -71,6 +71,8 @@ function humanPhase(phase: UpdatePhase | string): string {
       return 'Rolling back';
     case 'done':
       return 'Update verified';
+    case 'degraded':
+      return 'Backend up, frontend down';
     case 'failed':
       return 'Update failed';
     default:

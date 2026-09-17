@@ -8,7 +8,13 @@ namespace AgentTaskboard.UpdateService;
 /// Phase vocabulary (additive across versions; FE must tolerate unknown
 /// strings): idle | preparing | pausing-runners | pulling | building |
 /// restarting | verifying-after-restart | resuming | rolling-back | done |
-/// failed.
+/// degraded | failed.
+///
+/// `degraded` (AGT-2862) is terminal: the backend restarted and verified at
+/// the intended identity, the frontend dev server did not answer, and the
+/// checkout was deliberately left on the candidate so the running backend
+/// keeps its source. The operator decides whether to restart the frontend or
+/// roll back.
 /// </summary>
 public sealed record UpdateStatus(
     string Phase,
@@ -65,7 +71,7 @@ public sealed record UpdateHistoryEntry(
     string RunId,
     DateTime StartedAt,
     DateTime? FinishedAt,
-    string Status,                   // ok | failed | aborted
+    string Status,                   // ok | degraded | failed | aborted
     string HeadBefore,
     string HeadAfter,
     int DurationSeconds,

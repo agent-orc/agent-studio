@@ -131,9 +131,18 @@ public sealed class UpdateStatusStore
     }
 
     /// <summary>
+    /// Phases a run can end on. Everything else implies "in-flight" and flips
+    /// <c>IsRunning=true</c> so the FE block-modal stays mounted across the
+    /// full pipeline. <c>degraded</c> (AGT-2862: backend up, frontend down)
+    /// is terminal like the other two: the run is over and the operator
+    /// decides what happens next, so the modal must come down.
+    /// </summary>
+    private static readonly string[] TerminalPhases = { "idle", "done", "failed", "degraded" };
+
+    /// <summary>
     /// Phase transition. Phases that imply "in-flight" (anything that is not
-    /// idle / done / failed) flip <c>IsRunning=true</c> so the FE block-modal
-    /// stays mounted across the full pipeline.
+    /// terminal, see <see cref="TerminalPhases"/>) flip <c>IsRunning=true</c>
+    /// so the FE block-modal stays mounted across the full pipeline.
     /// </summary>
     public void SetPhase(
         string phase,
@@ -151,7 +160,7 @@ public sealed class UpdateStatusStore
     {
         lock (_lock)
         {
-            var running = phase != "idle" && phase != "done" && phase != "failed";
+            var running = !TerminalPhases.Contains(phase);
             _status = _status with
             {
                 Phase = phase,
@@ -161,7 +170,7 @@ public sealed class UpdateStatusStore
                 StartedAt = startedAt,
                 FinishedAt = finishedAt ?? _status.FinishedAt,
                 IsRunning = running,
-                LastUpdateAt = (phase == "done" || phase == "failed") ? DateTime.UtcNow : _status.LastUpdateAt,
+                LastUpdateAt = (phase != "idle" && TerminalPhases.Contains(phase)) ? DateTime.UtcNow : _status.LastUpdateAt,
                 LastSuccessAt = lastSuccessAt ?? _status.LastSuccessAt,
                 LastRunFinishedAt = lastRunFinishedAt ?? _status.LastRunFinishedAt,
                 LastRunHeadBefore = lastRunHeadBefore ?? _status.LastRunHeadBefore,
