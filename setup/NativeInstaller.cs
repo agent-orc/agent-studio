@@ -685,6 +685,14 @@ internal sealed class NativeInstaller(
             StandardOutput=journal
             StandardError=journal
             NoNewPrivileges=true
+            # AGT-2866: the daemon owns a cgroup v2 subtree below this unit and
+            # gives every detached worker its own cpu.max / cpu.weight / pids.max
+            # envelope there. Only cpu and pids are delegated; the role aggregate
+            # below stays systemd-owned.
+            Delegate=cpu pids
+            # systemd (254+) parks the daemon itself in this subgroup; cgroup v2
+            # refuses to put a process into a cgroup that distributes controllers.
+            DelegateSubgroup=daemon
             # PrivateTmp=true tears the private /tmp mount away from a still-running
             # detached worker on every restart (MSB1025, SocketException (99), NuGet
             # mkdtemp ENOENT). KillMode=process deliberately leaves workers running.

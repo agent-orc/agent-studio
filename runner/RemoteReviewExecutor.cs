@@ -257,7 +257,7 @@ public sealed class RemoteReviewExecutor
                 DurableReviewProcess process;
                 try
                 {
-                    process = DurableReviewProcess.Start(_options, slot);
+                    process = DurableReviewProcess.Start(_options, slot, _log);
                 }
                 catch (Exception exception)
                 {
@@ -395,6 +395,25 @@ public sealed class RemoteReviewExecutor
             ct);
     }
 
+    /// <summary>
+    /// AGT-2866 visibility: what this review worker was allowed to use and what
+    /// it actually used, before the cgroup is released. A review has no
+    /// <c>results/</c> delivery of its own, so the daemon journal is the
+    /// operator-facing surface for it.
+    /// </summary>
+    private void ReportWorkerEnvelope(PersistedReviewSlot slot)
+    {
+        var envelope = WorkerResourceEnvelope.FromOptions(_options);
+        var usage = WorkerCgroup.ReadUsageFor(slot.WorkerDirectory);
+        _log(usage is null
+            ? $"review worker-envelope attempt={slot.Claim.Attempt!.AttemptId} applied=no "
+              + $"{envelope.Describe()}; no per-worker cgroup on this host, so CPU seconds "
+              + "and peak tasks were not measured"
+            : $"review worker-envelope attempt={slot.Claim.Attempt!.AttemptId} applied=yes "
+              + $"{envelope.Describe()} {usage.Describe()}");
+        WorkerCgroup.ReleaseFor(slot.WorkerDirectory);
+    }
+
     private async Task<int> SubmitReportAndCleanupAsync(
         PersistedReviewSlot slot,
         RemoteReviewWorkspace workspace,
@@ -404,6 +423,7 @@ public sealed class RemoteReviewExecutor
         CancellationToken ct)
     {
         var attempt = slot.Claim.Attempt!;
+        ReportWorkerEnvelope(slot);
         if (failureClassification is not null)
         {
             var capabilityLease = _authority.Lease;

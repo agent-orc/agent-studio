@@ -382,6 +382,14 @@ chmod 600 "$env_tmp"
   [[ "$role" != "review" ]] || printf 'RUNNER_REVIEW_WORKDIR=%s/review-work\n' "$service_root"
   printf 'RUNNER_STATE_DIR=%s/state\n' "$service_root"
   printf 'RUNNER_MAX_PARALLELISM=2\n'
+  # AGT-2866: each role declares only the OTHER role's slot count. Its own
+  # count is RUNNER_MAX_PARALLELISM above, so a sanctioned parallelism change
+  # moves the per-worker envelope with it instead of leaving a stale number.
+  if [[ "$role" == "coding" ]]; then
+    printf 'RUNNER_HOST_REVIEW_SLOTS=2\n'
+  else
+    printf 'RUNNER_HOST_CODING_SLOTS=2\n'
+  fi
 } >"$env_tmp"
 
 resource_policy="$(sudo /usr/local/libexec/agent-host-resource-governance \
@@ -419,6 +427,17 @@ SyslogIdentifier=$service_name
 StandardOutput=journal
 StandardError=journal
 $resource_policy
+# AGT-2866: the daemon owns a cgroup v2 subtree below this unit and gives every
+# detached worker its own cpu.max / cpu.weight / pids.max envelope there. Only
+# cpu and pids are delegated; the role aggregate above stays systemd-owned.
+# A delegated subtree is not a mount, so unlike PrivateTmp it cannot be torn
+# away from a worker that KillMode=process deliberately left running.
+Delegate=cpu pids
+# systemd (254+) parks the daemon itself in this subgroup. cgroup v2 refuses to
+# put a process into a cgroup that distributes controllers, and KillMode=process
+# keeps the unit cgroup alive across a restart, so a daemon that stepped aside
+# by hand would make its own replacement unstartable while a worker survived.
+DelegateSubgroup=daemon
 NoNewPrivileges=true
 # PrivateTmp=true tears the unit's private /tmp mount away on every daemon
 # restart, including from underneath a detached coding/review worker that

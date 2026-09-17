@@ -18,10 +18,34 @@ public static class ReviewSlotAdmissionPolicy
         HostTelemetrySample? sample,
         int activeSlots,
         int slotCeiling,
-        double maxLoadPerCore)
+        double maxLoadPerCore,
+        WorkerResourceEnvelope? envelope = null)
     {
-        if (activeSlots >= slotCeiling)
-            return new(false, $"slot ceiling reached ({activeSlots}/{slotCeiling})", null);
+        // AGT-2866: admission and enforcement read one budget. A centrally
+        // recommended ceiling that no longer leaves a full envelope per slot is
+        // clamped here rather than admitted and then throttled by the kernel,
+        // and a host whose declared slot count is already oversubscribed says so
+        // instead of blaming the current load.
+        var effectiveCeiling = envelope is null
+            ? slotCeiling
+            : Math.Min(slotCeiling, WorkerResourceEnvelope.SlotCeilingForCores(envelope.HostCores));
+        if (activeSlots >= effectiveCeiling)
+            return new(
+                false,
+                effectiveCeiling == slotCeiling
+                    ? $"slot ceiling reached ({activeSlots}/{slotCeiling})"
+                    : $"slot ceiling reached ({activeSlots}/{effectiveCeiling}); "
+                      + $"envelope budget clamped the configured ceiling {slotCeiling} "
+                      + $"to what {envelope!.HostCores} cores can still cover",
+                null);
+        if (envelope is not null && envelope.CoresPerSlot < WorkerResourceEnvelope.MinimumCoresPerSlot)
+            return new(
+                false,
+                $"envelope budget exhausted: {envelope.HostCores} cores across {envelope.TotalSlots} "
+                + $"declared slots is {envelope.CoresPerSlot:0.00} cores per slot, below the "
+                + $"{WorkerResourceEnvelope.MinimumCoresPerSlot:0.00} core floor; lower "
+                + "RUNNER_HOST_CODING_SLOTS / RUNNER_HOST_REVIEW_SLOTS",
+                null);
         if (sample?.Load1 is not { } load || sample.CpuCores <= 0)
             return new(false, "current load telemetry is unavailable", null);
 
@@ -36,7 +60,8 @@ public static class ReviewSlotAdmissionPolicy
         }
         return new(
             true,
-            $"load/core {normalized:0.00} is below {maxLoadPerCore:0.00}",
+            $"load/core {normalized:0.00} is below {maxLoadPerCore:0.00}"
+            + (envelope is null ? string.Empty : $"; envelope {envelope.CoresPerSlot:0.00} cores/slot"),
             normalized);
     }
 

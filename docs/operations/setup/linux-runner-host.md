@@ -783,6 +783,130 @@ is advertised as unavailable and only blocks cards pinned to that provider.
   `RUNNER_CLI_BIN` at a small wrapper script instead of fighting the space-split
   arg parser.
 
+### Per-worker resource envelope
+
+A role's `CPUQuota` bounds the whole plane; it cannot stop one run from eating
+that plane. On 17.09.2026 three coding runs on this host, all asked to reproduce
+a flaky test "under contention", started 24, 49 and 104 CPU busy loops and drove
+the one-minute load average to 76, 35 and 41. The runs delivered; an unrelated
+review suite flaked and a promotion gate crawled, and each time an operator had
+to kill the loops by hand. Since AGT-2866 every detached worker, coding and
+review alike, runs inside its own cgroup with its own ceiling.
+
+**Mechanism: cgroup v2 delegation, not a transient scope.** The unit carries
+`Delegate=cpu pids` and `DelegateSubgroup=daemon` (systemd 254 or newer), which
+hands the daemon its own subtree below
+`/sys/fs/cgroup/system.slice/<unit>.service` and parks the daemon itself in a
+`daemon/` leaf. The daemon then creates one `worker-<id>/` per detached worker.
+The leaf is systemd's job, not the daemon's: cgroup v2 forbids one cgroup from
+both holding processes and distributing controllers, and a daemon that stepped
+aside by hand would leave the unit cgroup distributing controllers while
+`KillMode=process` keeps it alive, so systemd could not place the replacement
+main process into it. Verified: that variant fails the restart with
+`Failed to attach to cgroup ...: Device or resource busy` and
+`status=219/CGROUP` for as long as one worker survives. The alternative,
+`systemd-run --scope -p CPUQuota=... -p TasksMax=...`, was rejected for two
+reasons: the service account would need a polkit grant for
+`org.freedesktop.systemd1.manage-units` before it may create a scope at all, and
+a scope is a unit of its own, so every worker would escape the role aggregate
+above it and the review plane would silently lose the ceiling
+[resource governance](../haertung-verteilte-ausfuehrung/target-architecture/resource-governance.md)
+decided for it. The per-worker envelope nests *under* the role envelope instead
+of replacing it.
+
+**Derivation.** One number, read identically by both roles:
+
+| Value | Derivation | 12 cores, 2 coding + 2 review |
+|---|---|---:|
+| cores per slot | `cores / (RUNNER_HOST_CODING_SLOTS + RUNNER_HOST_REVIEW_SLOTS)` | 3.00 |
+| `cpu.max` | cores per slot x `RUNNER_WORKER_CPU_BURST`, at least 1 core, never more than the host | `600000 100000` (600%) |
+| `cpu.weight` | 100 for every worker; the `daemon/` leaf gets 1000 | 100 |
+| `pids.max` | cores per slot x 128, clamped to 192..4096 | 384 |
+
+`RUNNER_HOST_CODING_SLOTS` and `RUNNER_HOST_REVIEW_SLOTS` are host facts, not
+role facts: both roles read both numbers, so a coding worker and a review worker
+on the same machine agree on what one slot is worth. Each role environment file
+declares only the *other* role's count, because this role's own count is its
+`RUNNER_MAX_PARALLELISM`; a sanctioned `config review RUNNER_MAX_PARALLELISM 3`
+therefore moves that role's envelope with it instead of leaving a stale number
+behind. Both default to `2`, and a single-role host sets the other role to `0`.
+When you change one role's parallelism, update the peer role's declaration in
+the same pass, otherwise the two planes disagree about the budget. The burst
+factor is the
+concession to "an idle host behaves as it did": at 2.0 a worker may take twice
+its fair share while its siblings idle, which covers every build, test and lint
+tree measured on this fleet and is still two orders of magnitude below the
+incident. `cpu.weight` is uniform, so no worker of a role can starve a sibling
+or the daemon that renews its lease; priority *between* the coding and review
+planes stays where resource governance put it, on the role units.
+
+**Interaction with `KillMode=process` and `PrivateTmp=false` (AGT-2750).** A
+cgroup is a directory, not a mount, so nothing can be torn out from under a
+worker the way a private `/tmp` was. `Delegate=` is systemd's promise not to
+touch the subtree, the unit cgroup cannot be removed while a surviving worker
+still lives in it, and the worker joins its own cgroup itself and then `exec`s,
+so the pid the daemon persisted is still the worker's pid. A replacement daemon
+reattaches exactly as before and reads the same `cpu.stat`. Worker cgroups of a
+previous generation whose processes are gone are swept at daemon start; one that
+still holds a worker is not empty and is never removed.
+
+**Reading the report.** Every finished run logs one line, in the journal and in
+the run summary shipped with the delivery:
+
+```
+[runner] worker-envelope attempt=<id> applied=yes cores=12 slots=4 coresPerSlot=3.00 \
+  cpuQuota=600% cpuWeight=100 tasksMax=384 cpuSeconds=2000.5 peakTasks=271
+```
+
+`applied=no` means the host could not carry an envelope; the line then names
+what is missing and the run continues uncapped. `cpuSeconds` is what the card
+actually cost, so a run that needed 2,000 CPU seconds of real work is
+distinguishable from one that spun.
+
+```bash
+# What is in force right now for a running worker.
+systemctl show agent-runner.service -p Delegate -p DelegateSubgroup
+cat /sys/fs/cgroup/system.slice/agent-runner.service/worker-*/cpu.max
+cat /sys/fs/cgroup/system.slice/agent-runner.service/worker-*/pids.max
+
+# What the envelope refused.
+journalctl -u agent-runner -g 'worker-envelope|worker cgroup attach failed'
+```
+
+**Troubleshooting.** `... not in a 'daemon' subgroup` means the unit is missing
+`DelegateSubgroup=daemon` (or the host predates systemd 254);
+`... cannot delegate ...` means it is missing `Delegate=cpu pids`. Both are
+fixed by re-running `remote-runner-onboard.sh` for that role followed by
+`systemctl daemon-reload`. `... the cpu and pids controllers are not delegated
+to this subtree` means the lines are present but systemd has not applied them
+yet, which a restart of that role fixes. A card that legitimately
+needs more than its envelope is a slot-count question, not a quota question:
+lower the declared slot counts for that host rather than raising
+`RUNNER_WORKER_CPU_BURST`. `RUNNER_WORKER_ENVELOPE=0` disables the envelope
+entirely and is an incident escape hatch, not a configuration.
+
+**Proving containment on a host.** The runaway case has a real-kernel
+regression test. It needs a delegated cgroup subtree, so an unwrapped
+`dotnet test` skips it with that reason. Run it inside a transient delegated
+scope, or on an agent-host unit that already has `Delegate=cpu pids`:
+
+```bash
+systemd-run --user --scope -p Delegate=yes -- \
+  dotnet test runner.Tests/AgentRunner.Tests.csproj \
+  --filter FullyQualifiedName~WorkerCgroupTests
+```
+
+It starts forty detached loops inside an eight-task envelope and asserts that
+`pids.peak` never leaves the envelope and that the shell reported the refused
+forks.
+
+**Admission reads the same budget.** The review daemon clamps its centrally
+recommended ceiling to the number of slots the host's cores can still carry, and
+refuses a claim when the declared slot counts leave less than one core per slot,
+naming the two variables rather than blaming the current load. Load-aware
+backpressure for an already running worker stays out of scope: the envelope is
+the mechanism, and the silence and no-CPU-progress watchdogs are unchanged.
+
 ### Temp and cache hygiene
 
 The host's shared `/tmp` is neither a cache root nor a workspace root. Attempt
