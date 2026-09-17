@@ -719,7 +719,8 @@ public sealed class MergeIntoDevelopRunner
         if (!gateApplies && changedPaths is not null)
         {
             const string skipReason =
-                "the merge does not touch frontend/ and the project declares no build-profile build commands";
+                "the merge touches neither frontend/ nor managed sources and the project " +
+                "declares no build-profile build commands";
             _logger.LogInformation(
                 "merge-into-develop build gate skipped for project={Project} job={JobId} integration={Integration}: {Reason}",
                 project, jobId, integrationBranch, skipReason);

@@ -165,6 +165,266 @@ public sealed class TestSelectionPlannerTests : IDisposable
         Assert.Empty(result.Audit.SelectedCommands);
     }
 
+    /// <summary>
+    /// AGT-2854 regression: AGT-2853 landed a Windows-only red test through the
+    /// pre-develop gate because a backend-only diff was pinned to build-only. The
+    /// changed test file must produce a filtered command that names the classes
+    /// it declares, so the merge result runs them on the gate host.
+    /// </summary>
+    [Fact]
+    public void PreDevelopWorkPackage_ChangedTestFileSelectsItsOwnTestClasses()
+    {
+        BackendRepository();
+        Write("backend.Tests/GateFlakyRerunTests.cs", """
+            namespace AgentStudio.Tests;
+            public sealed class GateFlakyRerunPolicyTests { }
+            public sealed class GateFlakyRerunBehaviorTests : IDisposable { }
+            public sealed class GateFlakyRerunReceiptsTests : IDisposable { }
+            """);
+        var verify = BackendVerifyPlan();
+        string[] changedFiles = ["backend.Tests/GateFlakyRerunTests.cs"];
+
+        var level = PreDevelopBuildGate.ResolveTestLevel(changedFiles);
+        var result = TestSelectionPlanner.Plan(
+            _root, verify, changedFiles, policy: null, TaskStates.Completed, level);
+
+        Assert.Equal(TestExecutionLevels.WorkPackage, level);
+        var command = Assert.Single(
+            result.Commands,
+            item => item.Command.StartsWith("dotnet test", StringComparison.Ordinal));
+        Assert.Equal(
+            "dotnet test \"backend.Tests/OrchestratorApi.Tests.csproj\" --filter " +
+            "\"(Category!=MachineBound)&(FullyQualifiedName~GateFlakyRerunBehaviorTests" +
+            "|FullyQualifiedName~GateFlakyRerunPolicyTests" +
+            "|FullyQualifiedName~GateFlakyRerunReceiptsTests)\"",
+            command.Command);
+        Assert.Equal(
+            ["GateFlakyRerunBehaviorTests", "GateFlakyRerunPolicyTests", "GateFlakyRerunReceiptsTests"],
+            result.Audit.SelectedTestClasses);
+        Assert.Contains(result.Audit.Reasons, reason =>
+            reason.Contains("work-package test classes", StringComparison.Ordinal)
+            && reason.Contains("GateFlakyRerunBehaviorTests", StringComparison.Ordinal));
+        Assert.Contains(result.Audit.Candidates, candidate =>
+            candidate.TestClasses.Contains("GateFlakyRerunBehaviorTests")
+            && candidate.Reasons.Any(reason =>
+                reason.Contains("selected from the changed files", StringComparison.Ordinal)));
+    }
+
+    /// <summary>
+    /// The composed class filter must not cost the AGT-2853 targeted re-run: its
+    /// own <c>&amp;</c> and <c>|</c> operators are filter syntax, not shell
+    /// structure, so the red command stays targetable.
+    /// </summary>
+    [Fact]
+    public void PreDevelopWorkPackage_ClassFilteredCommandStaysTargetableByTheFlakyRerun()
+    {
+        BackendRepository();
+        Write("backend.Tests/GateFlakyRerunTests.cs", """
+            namespace AgentStudio.Tests;
+            public sealed class GateFlakyRerunBehaviorTests { }
+            """);
+        var verify = BackendVerifyPlan();
+        string[] changedFiles = ["backend.Tests/GateFlakyRerunTests.cs"];
+
+        var result = TestSelectionPlanner.Plan(
+            _root, verify, changedFiles, policy: null,
+            TaskStates.Completed, PreDevelopBuildGate.ResolveTestLevel(changedFiles));
+        var command = Assert.Single(
+            result.Commands,
+            item => item.Command.StartsWith("dotnet test", StringComparison.Ordinal));
+        var decision = GateFlakyRerunPolicy.Decide(
+            VerifyCommandKind.Test,
+            BuildTestGateFailureKind.Code,
+            command.Command,
+            "  Failed AgentStudio.Tests.GateFlakyRerunBehaviorTests.Reruns [1 ms]",
+            TimeSpan.FromMinutes(10));
+
+        Assert.True(decision.ShouldRerun);
+        Assert.DoesNotContain("MachineBound", decision.Command);
+        Assert.Contains(
+            "FullyQualifiedName=AgentStudio.Tests.GateFlakyRerunBehaviorTests.Reruns",
+            decision.Command);
+    }
+
+    [Fact]
+    public void PreDevelopWorkPackage_BackendProductionDiffKeepsTheWholeImpactedTestProject()
+    {
+        BackendRepository();
+        Write("backend.Tests/GateFlakyRerunTests.cs", "public sealed class GateFlakyRerunBehaviorTests { }");
+        var verify = BackendVerifyPlan();
+        string[] changedFiles = ["backend/Features/Pipeline/PreDevelopBuildGate.cs"];
+
+        var result = TestSelectionPlanner.Plan(
+            _root, verify, changedFiles, policy: null,
+            TaskStates.Completed, PreDevelopBuildGate.ResolveTestLevel(changedFiles));
+
+        // No convention maps a production type to its covering test classes, so
+        // the bounded slice must not pretend to cover the project.
+        Assert.Contains(result.Commands, command =>
+            command.Command ==
+            "dotnet test \"backend.Tests/OrchestratorApi.Tests.csproj\" --filter Category!=MachineBound");
+        Assert.Empty(result.Audit.SelectedTestClasses);
+    }
+
+    [Fact]
+    public void PreDevelopWorkPackage_ChangedSharedFixtureKeepsTheWholeTestProject()
+    {
+        BackendRepository();
+        Write("backend.Tests/Fixtures/TempRepository.cs", "internal sealed class TempRepository { }");
+        var verify = BackendVerifyPlan();
+        string[] changedFiles = ["backend.Tests/Fixtures/TempRepository.cs"];
+
+        var result = TestSelectionPlanner.Plan(
+            _root, verify, changedFiles, policy: null,
+            TaskStates.Completed, PreDevelopBuildGate.ResolveTestLevel(changedFiles));
+
+        Assert.Contains(result.Commands, command =>
+            command.Command ==
+            "dotnet test \"backend.Tests/OrchestratorApi.Tests.csproj\" --filter Category!=MachineBound");
+        Assert.Empty(result.Audit.SelectedTestClasses);
+    }
+
+    [Fact]
+    public void PreDevelopWorkPackage_ChangedTestFileWithASharedBaseTypeKeepsTheWholeTestProject()
+    {
+        BackendRepository();
+        Write("backend.Tests/GateFlakyRerunTests.cs", """
+            namespace AgentStudio.Tests;
+            public abstract class GateFixtureBase { }
+            public sealed class GateFlakyRerunBehaviorTests : GateFixtureBase { }
+            """);
+        var verify = BackendVerifyPlan();
+        string[] changedFiles = ["backend.Tests/GateFlakyRerunTests.cs"];
+
+        var result = TestSelectionPlanner.Plan(
+            _root, verify, changedFiles, policy: null,
+            TaskStates.Completed, PreDevelopBuildGate.ResolveTestLevel(changedFiles));
+
+        // A base type can carry tests in other files, so the slice must not
+        // narrow away from the whole project here.
+        Assert.Contains(result.Commands, command =>
+            command.Command ==
+            "dotnet test \"backend.Tests/OrchestratorApi.Tests.csproj\" --filter Category!=MachineBound");
+        Assert.Empty(result.Audit.SelectedTestClasses);
+    }
+
+    [Fact]
+    public void PreDevelopWorkPackage_ChangedTestFileAlsoSelectsItsDirectorySiblings()
+    {
+        BackendRepository();
+        Write("backend.Tests/Projection/AlphaProjectionTests.cs", "public sealed class AlphaProjectionTests { }");
+        Write("backend.Tests/Projection/BetaProjectionTests.cs", "public sealed class BetaProjectionTests { }");
+        Write("backend.Tests/UnrelatedTests.cs", "public sealed class UnrelatedTests { }");
+        var verify = BackendVerifyPlan();
+        string[] changedFiles = ["backend.Tests/Projection/AlphaProjectionTests.cs"];
+
+        var result = TestSelectionPlanner.Plan(
+            _root, verify, changedFiles, policy: null,
+            TaskStates.Completed, PreDevelopBuildGate.ResolveTestLevel(changedFiles));
+
+        Assert.Equal(["AlphaProjectionTests", "BetaProjectionTests"], result.Audit.SelectedTestClasses);
+        Assert.DoesNotContain(result.Commands, command => command.Command.Contains("UnrelatedTests"));
+    }
+
+    [Fact]
+    public void PreDevelopWorkPackage_FrontendOnlyDiffSelectsNoDotNetTestCommand()
+    {
+        BackendRepository();
+        Write("backend.Tests/GateFlakyRerunTests.cs", "public sealed class GateFlakyRerunBehaviorTests { }");
+        Write("frontend/package.json", """
+            { "scripts": { "test:ci": "ng test frontend --watch=false --progress=false" } }
+            """);
+        Write("frontend/src/app/app.spec.ts", "// app barrel collision probe");
+        Write("frontend/src/app/features/board/board.component.ts", "// changed");
+        Write("frontend/src/app/features/board/board.component.spec.ts", "// touched spec");
+        var verify = BackendVerifyPlan();
+        string[] changedFiles = ["frontend/src/app/features/board/board.component.ts"];
+
+        var result = TestSelectionPlanner.Plan(
+            _root, verify, changedFiles, policy: null,
+            TaskStates.Completed, PreDevelopBuildGate.ResolveTestLevel(changedFiles));
+
+        Assert.DoesNotContain(result.Commands, command =>
+            command.Kind == VerifyCommandKind.Test
+            && command.Command.Contains("dotnet test", StringComparison.Ordinal));
+        Assert.Contains(result.Commands, command =>
+            command.Command.Contains("src/app/features/board/*.spec.ts", StringComparison.Ordinal));
+        // The declared frontend suite is replaced by the bounded include slice,
+        // and the lints keep running as non-test commands.
+        Assert.Contains("npm --prefix frontend run test:ci", result.Audit.OmittedTestCommands);
+        Assert.Contains(result.Commands, command =>
+            command.Command == "npm --prefix frontend run lint");
+    }
+
+    [Fact]
+    public void PreDevelopWorkPackage_MixedDiffSelectsBothStacks()
+    {
+        BackendRepository();
+        Write("backend.Tests/GateFlakyRerunTests.cs", "public sealed class GateFlakyRerunBehaviorTests { }");
+        Write("frontend/package.json", """
+            { "scripts": { "test:ci": "ng test frontend --watch=false --progress=false" } }
+            """);
+        Write("frontend/src/app/app.spec.ts", "// app barrel collision probe");
+        Write("frontend/src/app/features/board/board.component.ts", "// changed");
+        Write("frontend/src/app/features/board/board.component.spec.ts", "// touched spec");
+        var verify = BackendVerifyPlan();
+        string[] changedFiles =
+        [
+            "backend.Tests/GateFlakyRerunTests.cs",
+            "frontend/src/app/features/board/board.component.ts",
+        ];
+
+        var result = TestSelectionPlanner.Plan(
+            _root, verify, changedFiles, policy: null,
+            TaskStates.Completed, PreDevelopBuildGate.ResolveTestLevel(changedFiles));
+
+        Assert.Contains(result.Commands, command =>
+            command.Command.Contains("FullyQualifiedName~GateFlakyRerunBehaviorTests", StringComparison.Ordinal));
+        Assert.Contains(result.Commands, command =>
+            command.Command.Contains("src/app/features/board/*.spec.ts", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void PreDevelopBuildOnly_DocsOnlyDiffKeepsTheCompileOnlyStage()
+    {
+        BackendRepository();
+        Write("backend.Tests/GateFlakyRerunTests.cs", "public sealed class GateFlakyRerunBehaviorTests { }");
+        var verify = BackendVerifyPlan();
+        string[] changedFiles = ["docs/system/domains/pipeline.md", "README.md"];
+
+        var level = PreDevelopBuildGate.ResolveTestLevel(changedFiles);
+        var result = TestSelectionPlanner.Plan(
+            _root, verify, changedFiles, policy: null, TaskStates.Completed, level);
+
+        Assert.Equal(TestExecutionLevels.BuildOnly, level);
+        Assert.DoesNotContain(result.Commands, command => command.Kind == VerifyCommandKind.Test);
+        Assert.Equal("build-only", result.Audit.Selector);
+    }
+
+    /// <summary>
+    /// The Studio layout: one production project, one flat test project, and the
+    /// declared project.yml commands the gate derives its filter from.
+    /// </summary>
+    private void BackendRepository()
+    {
+        Write("backend/OrchestratorApi.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\" />");
+        Write("backend.Tests/OrchestratorApi.Tests.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup><IsTestProject>true</IsTestProject></PropertyGroup>
+              <ItemGroup><ProjectReference Include="../backend/OrchestratorApi.csproj" /></ItemGroup>
+            </Project>
+            """);
+    }
+
+    private static VerifyPlan BackendVerifyPlan()
+        => new([
+            new(VerifyEcosystem.Custom, VerifyCommandKind.Build, "", "dotnet build agent-taskboard.sln --no-restore"),
+            new(VerifyEcosystem.Custom, VerifyCommandKind.Test, "",
+                "dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound"),
+            new(VerifyEcosystem.Custom, VerifyCommandKind.Test, "", "npm --prefix frontend run test:ci"),
+            new(VerifyEcosystem.Custom, VerifyCommandKind.Lint, "", "npm --prefix frontend run lint"),
+        ], VerifyPlan.SourceProjectDefinition);
+
     [Theory]
     [InlineData(
         "frontend/src/app/features/project-detail/components/project-git-panel/project-git-panel.component.ts",
@@ -471,12 +731,38 @@ public sealed class PreMainTestGateTests
         Assert.Equal(PostStepMode.Fail, runner.Mode);
     }
 
+    /// <summary>
+    /// AGT-2854: a backend-only delivery used to reach <c>develop</c> with the
+    /// compile-only stage, so a Windows-only red test was never executed before
+    /// the merge. Managed sources now force the same blocking work package the
+    /// frontend already had.
+    /// </summary>
     [Fact]
-    public async Task PreDevelopRunAsync_NonFrontendDiffStaysBuildOnly()
+    public async Task PreDevelopRunAsync_BackendDiffForcesExactBlockingWorkPackage()
     {
         var runner = new CapturingGateRunner();
         var gate = new PreDevelopBuildGate(runner);
-        var changedFiles = new[] { "backend/Features/Pipeline/Worker.cs" };
+        var changedFiles = new[] { "backend.Tests/GateFlakyRerunTests.cs" };
+
+        await gate.RunAsync(
+            new BuildTestGateRequest("/repo", "abc", "develop"),
+            changedFiles,
+            new BuildProfile { BuildCmds = ["build"] },
+            TimeSpan.FromMinutes(1),
+            CancellationToken.None);
+
+        Assert.True(runner.Request!.RequireExactSubject);
+        Assert.Equal(TestExecutionLevels.WorkPackage, runner.Request.RequiredTestLevel);
+        Assert.Equal(changedFiles, runner.ChangedFiles);
+        Assert.Equal(PostStepMode.Fail, runner.Mode);
+    }
+
+    [Fact]
+    public async Task PreDevelopRunAsync_DocsOnlyDiffStaysBuildOnly()
+    {
+        var runner = new CapturingGateRunner();
+        var gate = new PreDevelopBuildGate(runner);
+        var changedFiles = new[] { "docs/system/domains/pipeline.md" };
 
         await gate.RunAsync(
             new BuildTestGateRequest("/repo", "abc", "develop"),
@@ -488,6 +774,38 @@ public sealed class PreMainTestGateTests
         Assert.Equal(TestExecutionLevels.BuildOnly, runner.Request!.RequiredTestLevel);
         Assert.Equal(changedFiles, runner.ChangedFiles);
     }
+
+    /// <summary>
+    /// The documented pre-develop matrix: backend-only, frontend-only, both, and
+    /// neither. Direct matrix test of the pure level policy.
+    /// </summary>
+    [Theory]
+    [InlineData(TestExecutionLevels.WorkPackage, "backend/Features/Pipeline/PreDevelopBuildGate.cs")]
+    [InlineData(TestExecutionLevels.WorkPackage, "backend.Tests/GateFlakyRerunTests.cs")]
+    [InlineData(TestExecutionLevels.WorkPackage, "backend/OrchestratorApi.csproj")]
+    [InlineData(TestExecutionLevels.WorkPackage, "frontend/src/app/app.component.ts")]
+    [InlineData(TestExecutionLevels.WorkPackage,
+        "backend.Tests/GateFlakyRerunTests.cs", "frontend/src/app/app.component.ts")]
+    [InlineData(TestExecutionLevels.BuildOnly, "docs/system/domains/pipeline.md", "README.md")]
+    [InlineData(TestExecutionLevels.BuildOnly, "scripts/release.sh")]
+    public void PreDevelopResolveTestLevel_MatchesTheDocumentedMatrix(
+        string expected,
+        params string[] changedFiles)
+        => Assert.Equal(expected, PreDevelopBuildGate.ResolveTestLevel(changedFiles));
+
+    [Fact]
+    public void PreDevelopResolveTestLevel_UnavailableDiffNeverBecomesBuildOnly()
+        => Assert.Equal(
+            TestExecutionLevels.WorkPackage, PreDevelopBuildGate.ResolveTestLevel(null));
+
+    [Theory]
+    [InlineData(true, "backend/Features/Pipeline/PreDevelopBuildGate.cs")]
+    [InlineData(true, "frontend/src/app/app.component.ts")]
+    [InlineData(false, "docs/system/domains/pipeline.md")]
+    public void PreDevelopAppliesTo_CoversBothWorkPackageStacksWithoutABuildProfile(
+        bool expected,
+        string changedFile)
+        => Assert.Equal(expected, PreDevelopBuildGate.AppliesTo(new BuildProfile(), [changedFile]));
 
     private sealed class CapturingGateRunner : IBuildTestGateRunner
     {

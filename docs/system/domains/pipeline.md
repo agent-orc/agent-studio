@@ -551,14 +551,40 @@ steer the pipeline in this policy version.
   required `full` level can never be bypassed by the no-code-diff optimization.
 - The pre-develop gate derives changed files from the exact merge commit and
   its first parent. A missing diff fails closed and rolls back a merge created
-  by that attempt. Frontend paths force a blocking `work-package` level even
-  when no project build profile exists; non-frontend paths keep `build-only`.
-  Focused Angular includes cover touched source folders and the fixed collision
-  set (`app.spec.ts`, `studio-shell.component.spec.ts`, and
+  by that attempt. Any code path forces a blocking `work-package` level even
+  when no project build profile exists; a diff that touches no code keeps
+  `build-only`. Focused Angular includes cover touched source folders and the
+  fixed collision set (`app.spec.ts`, `studio-shell.component.spec.ts`, and
   `task-detail.spec.ts`). Generated .NET work-package commands preserve an
   explicit test filter or default to `Category!=MachineBound`, keeping
   machine- and Windows-bound process/timing families out of develop admission.
   Only the pre-main promotion boundary may force `full`.
+- The pre-develop level matrix (`PreDevelopBuildGate.ResolveTestLevel`), by what
+  the exact merge diff touches:
+
+  | Merge diff | Level | Test commands the merge result runs |
+  |---|---|---|
+  | Managed sources only (`.cs`, `.csproj`, `.props`, `.targets`, `.sln`, `.slnx`, `.razor`, `.cshtml`, `.resx`) | `work-package` | The impacted .NET test projects, narrowed to the touched test classes where the diff allows it. No frontend suite. |
+  | `frontend/` only | `work-package` | The Angular include slice (touched folders plus the collision set) and the declared lints. No .NET test project. |
+  | Both | `work-package` | Both of the above. |
+  | Neither (docs, scripts, workflow files) | `build-only` | None; the declared test inventory is listed under `OmittedTestCommands`. |
+
+  Before AGT-2854 only `frontend/` reached `work-package`, so a backend-only
+  delivery merged on compile evidence alone while the auto-review gate that was
+  supposed to cover it runs on Linux. AGT-2853 landed a Windows-only red test
+  that way, and the next two Windows gates paid for it.
+- The .NET work package narrows an impacted test project to test classes only
+  when the diff allows it, and says so in the audit. A diff confined to a test
+  project whose changed files declare test classes exclusively yields
+  `dotnet test <project> --filter "(<base>)&(FullyQualifiedName~ClassA|...)"`;
+  the selected names are listed in `TestSelection.SelectedTestClasses` and the
+  reason that produced them sits on the candidate. The slice widens to the
+  changed files' directories when such a directory holds at most 20 files, and
+  records the skip when it holds more (a flat test-project root carries no
+  folder signal). Anything else keeps the whole test project: a changed
+  production file, because no convention maps a production type to its covering
+  test classes, and a changed test file that also declares a non-test top-level
+  type, because that type can carry tests in other files.
 - The build/test step reason always states the effective level, selected count,
   whether the full suite ran, and how many full-suite commands were omitted.
   The task Overview exposes that reason from the passed status icon as well, so
