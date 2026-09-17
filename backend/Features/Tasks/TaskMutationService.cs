@@ -38,7 +38,14 @@ public class TaskMutationService
     // service directly keep compiling; the NullSingleton still serialises.
     private readonly LaneMutexRegistry _laneMutex;
 
-    public TaskMutationService(TaskScannerService scanner, ClientIdentityStore clients, ProjectRegistry projectRegistry, TaskChangeNotifier notifier, ILogger<TaskMutationService> logger, TimelineLog? timeline = null, LaneMutexRegistry? laneMutex = null, GitService? git = null)
+    /// <summary>
+    /// Atomic-write boundary for the two task-key sweeps. Null in
+    /// production, where <c>TaskJsonFile</c> uses its own writer; a test
+    /// passes one in to prove what a sweep does when a write fails.
+    /// </summary>
+    private readonly IAtomicJsonFileWriter? _keyFileWriter;
+
+    public TaskMutationService(TaskScannerService scanner, ClientIdentityStore clients, ProjectRegistry projectRegistry, TaskChangeNotifier notifier, ILogger<TaskMutationService> logger, TimelineLog? timeline = null, LaneMutexRegistry? laneMutex = null, GitService? git = null, IAtomicJsonFileWriter? fileWriter = null)
     {
         _scanner = scanner;
         _clients = clients;
@@ -48,6 +55,7 @@ public class TaskMutationService
         _timeline = timeline;
         _laneMutex = laneMutex ?? LaneMutexRegistry.NullSingleton;
         _git = git;
+        _keyFileWriter = fileWriter;
     }
 
     /// <summary>
@@ -2159,7 +2167,11 @@ public class TaskMutationService
 
             var seq = _projectRegistry.IssueNextTaskKey(project.Id);
             var key = $"{project.ShortCode}-{seq}";
-            TaskJsonFile.UpdateField(job.FolderPath, "key", key, _logger);
+            // Counted only once the key is on disk. The counter is
+            // monotonic and never rolled back, so a failed write simply
+            // leaves the job unkeyed for the next boot to stamp - what it
+            // must never do is report a backfill that did not happen.
+            if (!TaskJsonFile.UpdateField(job.FolderPath, "key", key, _logger, _keyFileWriter)) continue;
             stamped++;
         }
 
@@ -2225,7 +2237,20 @@ public class TaskMutationService
             {
                 var seq = _projectRegistry.IssueNextTaskKey(projectId);
                 var newKey = $"{project.ShortCode}-{seq}";
-                TaskJsonFile.UpdateField(ordered[i].FolderPath, "key", newKey, _logger);
+                // The write is the whole sweep. Counting it before knowing
+                // it landed turns an unwritable task.json into a reported
+                // "resolved" collision while both namesakes still carry the
+                // contested key on disk - the one outcome a duplicate-key
+                // sweep must never produce, and invisible to every caller
+                // because they only ever see the count.
+                if (!TaskJsonFile.UpdateField(
+                        ordered[i].FolderPath, "key", newKey, _logger, _keyFileWriter))
+                {
+                    _logger.LogError(
+                        "task-key-dedup-write-failed project={ProjectId} oldKey={OldKey} newKey={NewKey} jobId={JobId}",
+                        projectId, oldKey, newKey, ordered[i].Id);
+                    continue;
+                }
                 rekeyed++;
                 _logger.LogInformation(
                     "task-key-dedup project={ProjectId} oldKey={OldKey} newKey={NewKey} jobId={JobId} keeper={KeeperId}",

@@ -149,6 +149,50 @@ public class DuplicateTaskKeyTests : IDisposable
         Assert.Equal(0, mutations.DeduplicateTaskKeys());
     }
 
+    /// <summary>
+    /// A re-key the sweep could not write is not a resolved collision.
+    ///
+    /// <para>The whole sweep is the <c>key</c> write; its return value is the
+    /// only thing any caller sees. Boot logs it, the admin endpoint reports
+    /// it, and both treat a non-zero count as "the duplicates are gone". When
+    /// the write itself fails - an unwritable <c>task.json</c>, a folder that
+    /// moved under the sweep, a swap that ran out of retry budget while every
+    /// core was busy - counting it anyway reports exactly the state the sweep
+    /// exists to prevent: two live tasks on one key, declared fixed. The
+    /// failure has to stay visible, so the next sweep retries it and a reader
+    /// of the count is not lied to.</para>
+    /// </summary>
+    [Fact]
+    public void Dedup_WhenTheReKeyWriteFails_IsNotCountedAsResolved()
+    {
+        var writer = new FailingAtomicJsonFileWriter();
+        var (machine, scanner, mutations, _) = Build(writer);
+        machine.EnsureStateFoldersAndMigrate();
+
+        SeedKeyedJob(TaskStates.Ready, "picker", "DEM-5", "2026-05-31T17:39:32Z");
+        SeedKeyedJob(TaskStates.Archive, "completion-loop", "DEM-5", "2026-05-31T17:54:51Z");
+
+        Assert.Equal(0, mutations.DeduplicateTaskKeys());
+        Assert.Equal(1, writer.Attempts);
+
+        // Disk is untouched, so the collision is still there to be found.
+        scanner.InvalidateCache();
+        Assert.Equal("DEM-5", scanner.FindJob("picker", _watchPath)!.Key);
+        Assert.Equal("DEM-5", scanner.FindJob("completion-loop", _watchPath)!.Key);
+    }
+
+    /// <summary>Fails every write the way a full disk or a lost swap does.</summary>
+    private sealed class FailingAtomicJsonFileWriter : IAtomicJsonFileWriter
+    {
+        public int Attempts;
+
+        public void Write(string path, string content)
+        {
+            Attempts++;
+            throw new IOException("write refused by the test writer");
+        }
+    }
+
     [Fact]
     public void Dedup_ThreeWayCollision_ReKeysTwoNamesakes()
     {
@@ -200,7 +244,8 @@ public class DuplicateTaskKeyTests : IDisposable
             $"\"order\":1,\"agent\":\"claude\",\"key\":\"{key}\",\"createdAt\":\"{createdAtIso}\"}}");
     }
 
-    private (TaskStateMachine machine, TaskScannerService scanner, TaskMutationService mutations, ProjectRegistry registry) Build()
+    private (TaskStateMachine machine, TaskScannerService scanner, TaskMutationService mutations, ProjectRegistry registry) Build(
+        IAtomicJsonFileWriter? keyFileWriter = null)
     {
         var config = BuildConfig();
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
@@ -217,7 +262,8 @@ public class DuplicateTaskKeyTests : IDisposable
             new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance),
             NullLogger<TaskMutationService>.Instance,
             timeline: null,
-            laneMutex: laneMutex);
+            laneMutex: laneMutex,
+            fileWriter: keyFileWriter);
         return (machine, scanner, mutations, registry);
     }
 
