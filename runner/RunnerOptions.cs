@@ -175,6 +175,17 @@ public sealed class RunnerOptions
     /// </summary>
     public int DrainTimeoutSeconds { get; init; } = 3600;
 
+    /// <summary>
+    /// AGT-2863: <c>RUNNER_REVIEW_RELEASE_DRAIN</c> / <c>--review-release-drain</c>.
+    /// A replacement review daemon adopts the detached workers of the previous
+    /// release and, by default, claims new work beside them. With this opted in
+    /// the daemon still finishes every adopted attempt but takes no new claim
+    /// until the ones running a superseded build are done, so a worker-side
+    /// hotfix reaches every attempt this daemon grades. Adopted workers are
+    /// never killed for a release mismatch.
+    /// </summary>
+    public bool ReviewReleaseDrain { get; init; }
+
     /// <summary>Hard cap on a single CLI run before the runner gives up and reports a blocked completion.</summary>
     public int RunTimeoutSeconds { get; init; }
 
@@ -427,6 +438,8 @@ public sealed class RunnerOptions
             CommandSilenceWatchdogSeconds = EnvInt("RUNNER_COMMAND_SILENCE_WATCHDOG_SECONDS", 600),
             LoadGateSustainedSeconds = EnvInt("RUNNER_LOAD_GATE_SUSTAINED_SECONDS", 120),
             AllowInsecureHttp = OptIn(Val("allow-insecure-http", "RUNNER_ALLOW_INSECURE_HTTP")),
+            ReviewReleaseDrain = OptIn(
+                Val("review-release-drain", "RUNNER_REVIEW_RELEASE_DRAIN")),
             HealthCheckOnly = healthCheck,
             DrainOnly = drain,
             RestartGuardOnly = restartGuard,

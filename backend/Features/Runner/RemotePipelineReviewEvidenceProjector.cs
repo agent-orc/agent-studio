@@ -55,7 +55,7 @@ public sealed class RemotePipelineReviewEvidenceProjector
                 await ProjectAspectAsync(task, review, command, report, receivedAt, execution.Attempt, ct);
         }
         ProjectToolGate(task, review, report, execution.Attempt);
-        ProjectTimeline(task, review, report, evidenceFile);
+        ProjectTimeline(task, review, report, evidenceFile, receivedAt);
     }
 
     private async Task ProjectAspectAsync(
@@ -184,7 +184,8 @@ public sealed class RemotePipelineReviewEvidenceProjector
         TaskInfo task,
         ReviewAttemptDto review,
         Contract.ReviewReportRequest report,
-        string evidenceFile)
+        string evidenceFile,
+        DateTime receivedAt)
     {
         var existing = _timeline.ReadAll(task.FolderPath)
             .Where(item => string.Equals(item.RunId, review.AttemptId, StringComparison.Ordinal))
@@ -221,6 +222,45 @@ public sealed class RemotePipelineReviewEvidenceProjector
                 Details = details,
             });
         }
+
+        ProjectSupersededWorkerRelease(task, review, report, evidenceFile, receivedAt, existing);
+    }
+
+    /// <summary>
+    /// AGT-2863: name the build that actually graded this attempt when it is not
+    /// the one the reporting daemon runs. A review-daemon restart adopts running
+    /// workers rather than discarding their gate work, so a verdict can come from
+    /// a superseded release. The verdict stands; the card just stops hiding it.
+    /// </summary>
+    private void ProjectSupersededWorkerRelease(
+        TaskInfo task,
+        ReviewAttemptDto review,
+        Contract.ReviewReportRequest report,
+        string evidenceFile,
+        DateTime receivedAt,
+        HashSet<string> existing)
+    {
+        var worker = report.Environment.Worker;
+        if (Contract.ReviewWorkerProvenancePolicy.SupersededNotice(worker) is not { } notice) return;
+        if (!existing.Add($"{TimelineEventKinds.ReviewGradedBySupersededRelease}:")) return;
+
+        _timeline.Append(task.FolderPath, new TimelineEvent
+        {
+            Ts = receivedAt,
+            Kind = TimelineEventKinds.ReviewGradedBySupersededRelease,
+            Actor = TimelineActors.External,
+            Summary = $"Remote review {notice}",
+            RunId = review.AttemptId,
+            PayloadRef = evidenceFile,
+            Details = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["attemptId"] = review.AttemptId,
+                ["workerReleaseId"] = worker!.WorkerReleaseId,
+                ["daemonReleaseId"] = worker.DaemonReleaseId,
+                ["workerBinaryPath"] = worker.WorkerBinaryPath,
+                ["fence"] = report.Fence.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            },
+        });
     }
 
     private static Dictionary<string, string> Details(

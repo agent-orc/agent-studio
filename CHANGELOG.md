@@ -12,6 +12,21 @@ release yet.
 
 ## [Unreleased]
 
+### Added
+
+- Review worker release provenance: every review attempt records the agent-host
+  release and resolved binary path of the detached worker that produced its
+  verdict. The daemon logs `worker-release` / `daemon-release` on adoption and
+  one notice per adopted attempt running a superseded build, the grade file's
+  *Immutable subject proof* block names both releases, and the card carries a
+  `review_graded_by_superseded_release` timeline entry and the release pair on
+  its review projection (AGT-2863).
+- Opt-in review release drain:
+  `agent-runner-deploy --restart-review-drain` drains Review before the
+  unchanged promote step, and `RUNNER_REVIEW_RELEASE_DRAIN=1` makes an already
+  restarted daemon hold claims until its adopted superseded attempts finish.
+  Neither mode ever ends an adopted worker (AGT-2863).
+
 ## [0.6.0] - 2026-09-17
 
 Operations release, cut on the day of 0.5.0 from what that rollout exposed.

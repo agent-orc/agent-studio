@@ -25,7 +25,14 @@ public sealed record PersistedReviewSlot(
     string? LastReportErrorCode = null,
     string? LastReportError = null,
     string? TerminalClassification = null,
-    ReviewReClaimRequest? PendingReClaim = null)
+    ReviewReClaimRequest? PendingReClaim = null,
+    // AGT-2863: which agent-host build is actually executing this attempt. The
+    // launching daemon stamps its own release here, and the worker corroborates
+    // it in review-worker.json, so a replacement daemon of a newer release can
+    // say which binary produced the verdict it reports. Null means the record
+    // predates this provenance and the release is genuinely unknown.
+    string? WorkerReleaseId = null,
+    string? WorkerBinaryPath = null)
 {
     public string AttemptId => Claim.Attempt?.AttemptId
                                ?? throw new InvalidDataException("Persisted review claim has no attempt.");

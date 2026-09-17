@@ -2139,6 +2139,20 @@ export interface ReviewAttempt {
    * baseline of this attempt was executed by the attempt itself.
    */
   baselineReuse?: string | null;
+  /**
+   * The agent-host release of the detached worker that produced this verdict,
+   * and the release of the daemon that reported it (AGT-2863). A review-daemon
+   * restart adopts running workers instead of discarding their gate work, so
+   * the two can differ. Null on a local attempt and on a remote report written
+   * before this provenance existed.
+   */
+  workerReleaseId?: string | null;
+  daemonReleaseId?: string | null;
+  /**
+   * `graded by release <old>, current <new>` when a superseded worker release
+   * produced this verdict; null otherwise. Reporting only - the verdict stands.
+   */
+  workerReleaseSuperseded?: string | null;
 }
 
 /** A blocking aspect on the latest review attempt, with its quoted reason. */

@@ -55,6 +55,10 @@ public sealed class RemoteReviewDaemon
             ct,
             RunnerActiveAttemptReporter.Review(state.LoadAll()));
         var active = new List<(Task<int> Run, string AttemptId, string ResourceNamespace)>();
+        // AGT-2863: adopted attempts whose worker binary is a superseded release.
+        // Reported always; in release-drain mode they also hold claim admission
+        // until they finish. The workers themselves are never touched.
+        var supersededWorkers = new Dictionary<string, string>(StringComparer.Ordinal);
         var drainedToStop = false;
         string? startupControlRequestId = null;
         idleWatchdog.RecordActiveSlots(persistedAtStartup.Count(slot =>
@@ -127,6 +131,7 @@ public sealed class RemoteReviewDaemon
                     _log(
                         $"persisted review accepted attempt={slot.AttemptId} " +
                         $"fence={slot.Claim.Lease!.Fence} verification={continuation.Reason}");
+                    NoteWorkerRelease(slot);
                     active.Add((
                         executor.ReattachAsync(slot, shutdown),
                         slot.AttemptId,
@@ -161,6 +166,24 @@ public sealed class RemoteReviewDaemon
                     scope,
                     ReviewSlotReconciler.MaximumDormantAge));
             }
+        }
+
+        // One line per adopted attempt whose worker is a superseded build. The
+        // attempt always finishes; drain mode only decides whether the daemon
+        // may claim new work beside it.
+        void NoteWorkerRelease(PersistedReviewSlot persisted)
+        {
+            var provenance = DurableReviewProcess.Provenance(
+                DurableReviewProcess.WithWorkerProvenance(persisted));
+            if (ReviewWorkerProvenancePolicy.SupersededNotice(provenance) is not { } notice) return;
+            supersededWorkers[persisted.AttemptId] = provenance.WorkerReleaseId;
+            _log(
+                $"review worker release superseded attempt={persisted.AttemptId} {notice} " +
+                $"worker-binary={provenance.WorkerBinaryPath}; the adopted attempt finishes on its " +
+                "own release" +
+                (_options.ReviewReleaseDrain
+                    ? " and this daemon holds claims until it does (release drain)"
+                    : string.Empty));
         }
 
         async Task HonorControlBeforeClaimsAsync(CancellationToken ct)
@@ -468,11 +491,18 @@ public sealed class RemoteReviewDaemon
                         announcedSlotCeiling = slotCeiling;
                     }
 
-                    var admission = ReviewSlotAdmissionPolicy.Decide(
-                        admissionTelemetry,
-                        active.Count,
-                        slotCeiling,
-                        _options.ClaimMaxLoadPerCore);
+                    var supersededRunning = _options.ReviewReleaseDrain
+                        ? ReviewReleaseDrainPolicy.RunningReleases(
+                            supersededWorkers,
+                            active.Select(slot => slot.AttemptId))
+                        : [];
+                    var admission = supersededRunning.Count > 0
+                        ? ReviewReleaseDrainPolicy.Held(supersededRunning)
+                        : ReviewSlotAdmissionPolicy.Decide(
+                            admissionTelemetry,
+                            active.Count,
+                            slotCeiling,
+                            _options.ClaimMaxLoadPerCore);
                     if (!admission.Admitted)
                     {
                         if (!admissionClosed)

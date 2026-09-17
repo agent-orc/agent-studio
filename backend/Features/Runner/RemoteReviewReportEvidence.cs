@@ -66,6 +66,14 @@ internal static class RemoteReviewReportEvidence
         text.AppendLine($"expectedResultSha: {Yaml(request.Workspace.ExpectedResultSha)}");
         text.AppendLine($"actualHead: {Yaml(request.Workspace.ActualHead)}");
         text.AppendLine($"reportSha256: {Yaml(reportSha256)}");
+        if (request.Environment.Worker is { } workerProvenance)
+        {
+            text.AppendLine($"workerReleaseId: {Yaml(workerProvenance.WorkerReleaseId)}");
+            text.AppendLine($"daemonReleaseId: {Yaml(workerProvenance.DaemonReleaseId)}");
+            if (Contract.ReviewWorkerProvenancePolicy.SupersededNotice(workerProvenance)
+                is { } supersededNotice)
+                text.AppendLine($"workerReleaseSuperseded: {Yaml(supersededNotice)}");
+        }
         var baselineReuse = BaselineReuseCitations(request.Commands);
         if (baselineReuse is not null)
         {
@@ -146,6 +154,17 @@ internal static class RemoteReviewReportEvidence
         text.AppendLine($"- Executor: `{request.ExecutorId}`");
         text.AppendLine($"- Fence: `{request.Fence}`");
         text.AppendLine($"- Authority epoch: `{request.AuthorityEpoch}`");
+        // AGT-2863: a detached review worker outlives the daemon that launched
+        // it, so the executor and the fence alone cannot say which agent-host
+        // build produced this verdict. The worker names itself.
+        if (request.Environment.Worker is { } worker)
+        {
+            text.AppendLine($"- Worker release: `{worker.WorkerReleaseId}`");
+            text.AppendLine($"- Worker binary: `{worker.WorkerBinaryPath}`");
+            text.AppendLine($"- Daemon release: `{worker.DaemonReleaseId}`");
+            if (Contract.ReviewWorkerProvenancePolicy.SupersededNotice(worker) is { } notice)
+                text.AppendLine($"- Release provenance: {notice}");
+        }
         return text.ToString();
     }
 

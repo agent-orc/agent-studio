@@ -219,6 +219,11 @@ static void PrintUsage()
           --force                 Let --restart-guard pass on busy slots.
           --drain-timeout-seconds <n>
                                   Drain wait bound     (RUNNER_DRAIN_TIMEOUT_SECONDS, default 3600)
+          --review-release-drain 1
+                                  Finish adopted reviews that run a superseded
+                                  agent-host release before claiming again; the
+                                  adopted workers are never killed
+                                             (RUNNER_REVIEW_RELEASE_DRAIN)
           --version               Print release version and Git SHA, then exit.
           --server <url>          Task Server base URL       (RUNNER_SERVER_URL)
           --runner-id <id>        Stable runner identity     (RUNNER_ID)

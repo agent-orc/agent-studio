@@ -163,6 +163,104 @@ public sealed class RemoteReviewReportEvidenceTests : IDisposable
         Assert.Null(attempt.BaselineReuse);
     }
 
+    /// <summary>
+    /// AGT-2863: a review-daemon restart adopts running detached workers, so the
+    /// build that graded an attempt can be older than the daemon that reported
+    /// it. Executor and fence cannot tell those apart; the grade file names the
+    /// worker release, its binary, and the reporting daemon's release.
+    /// </summary>
+    [Fact]
+    public async Task Grade_names_the_worker_release_that_actually_produced_the_verdict()
+    {
+        Directory.CreateDirectory(_root);
+        var head = new string('a', 40);
+        var request = Request(head, [Command("verify-2", "candidate", head, null)]) with
+        {
+            Environment = new ReviewEnvironmentDto(
+                "host", "reviewer", "instance", "linux", "x64", "10.0",
+                new Dictionary<string, string>(),
+                new Dictionary<string, string>(),
+                new ReviewWorkerProvenanceDto(
+                    "20260917T1010Z-v0.5.0-tmpguard-fcdb68b24",
+                    "/opt/agent-host/releases/20260917T1010Z-v0.5.0-tmpguard-fcdb68b24/agent-host",
+                    "20260917T1550Z-v0.6.0-551484dca")),
+        };
+
+        var reportFile = await RemoteReviewReportEvidence.WriteAsync(
+            _root, "review_now", "subject-1", request, new string('c', 64),
+            new DateTime(2026, 9, 17, 18, 13, 0, DateTimeKind.Utc), default);
+
+        var report = await File.ReadAllTextAsync(Path.Combine(_root, reportFile));
+        Assert.Contains(
+            "- Worker release: `20260917T1010Z-v0.5.0-tmpguard-fcdb68b24`",
+            report,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "- Worker binary: `/opt/agent-host/releases/20260917T1010Z-v0.5.0-tmpguard-fcdb68b24/agent-host`",
+            report,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "- Daemon release: `20260917T1550Z-v0.6.0-551484dca`",
+            report,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "- Release provenance: graded by release 20260917T1010Z-v0.5.0-tmpguard-fcdb68b24, "
+            + "current 20260917T1550Z-v0.6.0-551484dca",
+            report,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "workerReleaseSuperseded: \"graded by release 20260917T1010Z-v0.5.0-tmpguard-fcdb68b24, "
+            + "current 20260917T1550Z-v0.6.0-551484dca\"",
+            report,
+            StringComparison.Ordinal);
+
+        // Every review surface reads the same projection, so the card cannot
+        // present a superseded grade as one from the current release.
+        var attempt = Assert.Single(
+            AgentStudio.Review.ReviewProjectionReader.Read(Job(_root), [], null).Attempts);
+        Assert.Equal("20260917T1010Z-v0.5.0-tmpguard-fcdb68b24", attempt.WorkerReleaseId);
+        Assert.Equal("20260917T1550Z-v0.6.0-551484dca", attempt.DaemonReleaseId);
+        Assert.Equal(
+            "graded by release 20260917T1010Z-v0.5.0-tmpguard-fcdb68b24, "
+            + "current 20260917T1550Z-v0.6.0-551484dca",
+            attempt.WorkerReleaseSuperseded);
+    }
+
+    [Fact]
+    public async Task Grade_of_a_matching_release_states_the_build_without_a_superseded_notice()
+    {
+        Directory.CreateDirectory(_root);
+        var head = new string('a', 40);
+        var request = Request(head, [Command("verify-2", "candidate", head, null)]) with
+        {
+            Environment = new ReviewEnvironmentDto(
+                "host", "reviewer", "instance", "linux", "x64", "10.0",
+                new Dictionary<string, string>(),
+                new Dictionary<string, string>(),
+                new ReviewWorkerProvenanceDto(
+                    "20260917T1550Z-v0.6.0-551484dca",
+                    "/opt/agent-host/releases/20260917T1550Z-v0.6.0-551484dca/agent-host",
+                    "20260917T1550Z-v0.6.0-551484dca")),
+        };
+
+        var reportFile = await RemoteReviewReportEvidence.WriteAsync(
+            _root, "review_now", "subject-1", request, new string('c', 64),
+            new DateTime(2026, 9, 17, 18, 13, 0, DateTimeKind.Utc), default);
+
+        var report = await File.ReadAllTextAsync(Path.Combine(_root, reportFile));
+        Assert.Contains(
+            "- Worker release: `20260917T1550Z-v0.6.0-551484dca`",
+            report,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("Release provenance:", report, StringComparison.Ordinal);
+        Assert.DoesNotContain("workerReleaseSuperseded:", report, StringComparison.Ordinal);
+
+        var attempt = Assert.Single(
+            AgentStudio.Review.ReviewProjectionReader.Read(Job(_root), [], null).Attempts);
+        Assert.Equal("20260917T1550Z-v0.6.0-551484dca", attempt.WorkerReleaseId);
+        Assert.Null(attempt.WorkerReleaseSuperseded);
+    }
+
     private static ReviewCommandEvidenceDto Command(
         string stepId,
         string workspaceRole,

@@ -60,9 +60,16 @@ public sealed class RemoteReviewExecutor
     public async Task<int> ReattachAsync(PersistedReviewSlot slot, CancellationToken shutdown)
     {
         ValidateClaim(slot.Claim);
+        // AGT-2863: an adopted worker is the previous generation's process, so
+        // the build that grades this attempt can be older than the daemon that
+        // reports it. Name both on the adoption line.
+        slot = DurableReviewProcess.WithWorkerProvenance(slot);
+        var provenance = DurableReviewProcess.Provenance(slot);
         _log(
             $"adopting persisted review attempt={slot.AttemptId} fence={slot.Claim.Lease!.Fence} " +
-            $"pid={slot.ProcessId?.ToString() ?? "result-ready"} phase={slot.Phase}");
+            $"pid={slot.ProcessId?.ToString() ?? "result-ready"} phase={slot.Phase} " +
+            $"worker-release={provenance.WorkerReleaseId} " +
+            $"daemon-release={provenance.DaemonReleaseId}");
         var workspace = new RemoteReviewWorkspace(
             _options,
             slot.Claim.Subject!,
@@ -265,6 +272,8 @@ public sealed class RemoteReviewExecutor
                 {
                     ProcessId = process.ProcessId,
                     ProcessStartedAtUtc = process.ProcessStartedAtUtc,
+                    WorkerReleaseId = process.ReleaseId,
+                    WorkerBinaryPath = process.BinaryPath,
                     Phase = "running",
                 });
                 workerStarted = true;
@@ -448,7 +457,9 @@ public sealed class RemoteReviewExecutor
                     failureClassification,
                     summary,
                     evidence.Workspace,
-                    workspace.EnvironmentEvidence(lease),
+                    workspace.EnvironmentEvidence(
+                        lease,
+                        DurableReviewProcess.Provenance(slot)),
                     evidence.Commands,
                     evidence.Artifacts,
                     evidence.Verdicts,
