@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 
+using AgentStudio.TestSupport;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -31,11 +32,7 @@ public sealed class AgentMessageBusBridgeTests : IDisposable
         _bridge = new AgentMessageBusBridge(_store, config, NullLogger<AgentMessageBusBridge>.Instance);
     }
 
-    public void Dispose()
-    {
-        try { if (Directory.Exists(_workspace)) Directory.Delete(_workspace, recursive: true); }
-        catch { /* best-effort */ }
-    }
+    public void Dispose() => TestTempRoot.TryDelete(_workspace);
 
     [Fact]
     public async Task SeedBuiltInParticipantsAsync_RegistersStandardSet()
@@ -469,9 +466,14 @@ public sealed class AgentMessageBusBridgeTests : IDisposable
         }
     }
 
-    private static TaskInfo NewJobInfo(string id = "job-fixture", string project = "agent-taskboard")
+    /// <summary>
+    /// AGT-2858: the fake job folder is rooted in this fixture's own workspace,
+    /// not in the shared temp root. As a sibling of the temp root it was never
+    /// deleted by anything, and the review host had collected 851 of them.
+    /// </summary>
+    private TaskInfo NewJobInfo(string id = "job-fixture", string project = "agent-taskboard")
     {
-        var folder = Path.Combine(Path.GetTempPath(), "bus-bridge-fake-job-" + Guid.NewGuid().ToString("N"));
+        var folder = Path.Combine(_workspace, "fake-jobs", "bus-bridge-fake-job-" + Guid.NewGuid().ToString("N"));
         return new TaskInfo
         {
             Id = id,

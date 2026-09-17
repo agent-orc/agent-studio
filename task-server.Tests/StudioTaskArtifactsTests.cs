@@ -22,18 +22,24 @@ namespace TaskServer.Tests;
 /// </summary>
 public sealed class StudioTaskArtifactsTests
 {
-    private static async Task<(WebApplicationFactory<Program> Factory, HttpClient Client)> CreateAsync()
+    /// <summary>
+    /// AGT-2858: the data directory is owned by the caller and removed with the
+    /// host. Before that, every test in this file left one
+    /// <c>studio-task-artifacts-*</c> tree behind in the shared temp root.
+    /// </summary>
+    private static async Task<(TempDirectory Data, WebApplicationFactory<Program> Factory, HttpClient Client)> CreateAsync()
     {
-        var dataDirectory = Path.Combine(Path.GetTempPath(), "studio-task-artifacts-" + Guid.NewGuid().ToString("N"));
-        var factory = new StudioTestApiFactory(dataDirectory);
+        var data = new TempDirectory("studio-task-artifacts");
+        var factory = new StudioTestApiFactory(data.Path);
         var client = StudioTestClient.Create(factory);
-        return (factory, client);
+        return (data, factory, client);
     }
 
     [Fact]
     public async Task Attachment_upload_then_download_round_trips_the_exact_bytes()
     {
-        var (factory, client) = await CreateAsync();
+        var (data, factory, client) = await CreateAsync();
+        using (data)
         await using (factory)
         {
             var (_, project, task) = await SeedTaskAsync(client);
@@ -62,7 +68,8 @@ public sealed class StudioTaskArtifactsTests
     [Fact]
     public async Task Task_file_put_then_get_round_trips_exact_content_and_version()
     {
-        var (factory, client) = await CreateAsync();
+        var (data, factory, client) = await CreateAsync();
+        using (data)
         await using (factory)
         {
             var (_, project, task) = await SeedTaskAsync(client);
@@ -88,7 +95,8 @@ public sealed class StudioTaskArtifactsTests
     [Fact]
     public async Task Stale_expected_version_on_file_put_returns_conflict()
     {
-        var (factory, client) = await CreateAsync();
+        var (data, factory, client) = await CreateAsync();
+        using (data)
         await using (factory)
         {
             var (_, project, task) = await SeedTaskAsync(client);
@@ -109,7 +117,8 @@ public sealed class StudioTaskArtifactsTests
     [Fact]
     public async Task File_read_with_scope_code_is_rejected()
     {
-        var (factory, client) = await CreateAsync();
+        var (data, factory, client) = await CreateAsync();
+        using (data)
         await using (factory)
         {
             var (_, project, task) = await SeedTaskAsync(client);
@@ -128,7 +137,8 @@ public sealed class StudioTaskArtifactsTests
     [Fact]
     public async Task File_history_reflects_multiple_versions_in_order()
     {
-        var (factory, client) = await CreateAsync();
+        var (data, factory, client) = await CreateAsync();
+        using (data)
         await using (factory)
         {
             var (_, project, task) = await SeedTaskAsync(client);
@@ -151,7 +161,8 @@ public sealed class StudioTaskArtifactsTests
     [Fact]
     public async Task Task_artifacts_screenshots_and_results_round_trip_real_run_artifact_content()
     {
-        var (factory, client) = await CreateAsync();
+        var (data, factory, client) = await CreateAsync();
+        using (data)
         await using (factory)
         {
             var (_, project, task) = await SeedTaskAsync(client, state: "2-ready");
@@ -193,7 +204,8 @@ public sealed class StudioTaskArtifactsTests
     [Fact]
     public async Task Task_output_summarizes_the_latest_run()
     {
-        var (factory, client) = await CreateAsync();
+        var (data, factory, client) = await CreateAsync();
+        using (data)
         await using (factory)
         {
             var (_, project, task) = await SeedTaskAsync(client, state: "2-ready");

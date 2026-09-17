@@ -19,6 +19,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\retention\AgentStudio.Retention.csproj" />
+    <ProjectReference Include="..\testsupport\AgentStudio.TestSupport.csproj" />
     <ProjectReference Include="..\task-server\TaskServer.csproj" />
   </ItemGroup>
 </Project>

@@ -627,6 +627,7 @@ public sealed class RemoteReviewWorkspace
                             verdicts.ToArray()),
                         ct);
                 }
+                PurgeStepTemp(command.StepId);
             }
         }
         finally
@@ -812,6 +813,26 @@ public sealed class RemoteReviewWorkspace
             if (watchdog is not null) await watchdog.DisposeAsync();
         }
         return new CommandExecution(process, started, DateTime.UtcNow, signal, Stall: stall.ToDiagnostics());
+    }
+
+    /// <summary>
+    /// Empties the attempt temp directory once a plan step is finished
+    /// (AGT-2858). A frozen plan runs preparation, build, several test commands
+    /// and the semantic aspects one after another, and without this they all
+    /// accumulated until the whole attempt workspace was deleted.
+    ///
+    /// The unit is the step, not the process: a flake retry is a second run of
+    /// the same command and must still see whatever its own first run left in
+    /// <c>TMPDIR</c>, exactly as a developer re-running it locally would.
+    /// Bounded to paths below <see cref="AttemptRoot"/> by
+    /// <see cref="ReviewTempResidue.IsInside"/>, so this executor can never
+    /// empty a host-shared or foreign temp directory.
+    /// </summary>
+    private void PurgeStepTemp(string stepId)
+    {
+        var purge = ReviewTempResidue.Purge(TempPath, AttemptRoot);
+        if (!purge.Observed) return;
+        _log($"review-temp-purged step={stepId} removed={purge.Removed} retained={purge.Retained}");
     }
 
     /// <summary>

@@ -61,6 +61,7 @@ unter `app/` und werden nur zusammen mit Code geändert.
 | [git/](git/) | Commit, push, and attribution doctrine. |
 | [workspace-repository-lifecycle.md](workspace-repository-lifecycle.md) | TaskRepository path classification, hourly drift sweep, catch-up push, Git maintenance, size guard, and manual backlog recovery. |
 | [windows-process-spawn-safety.md](windows-process-spawn-safety.md) | Windows console-allocation behavior, mandatory .NET and Node spawn flags, redirected-stream draining, and repository guard tests. |
+| [temp-and-cache-hygiene.md](temp-and-cache-hygiene.md) | Who owns what an agent host writes outside its workspaces: the per-process suite temp root, the review executor's per-command temp purge, the product-owned preparation cache with its age and size bounds, and the supported reset for each (AGT-2858). |
 | [testing/](testing/) | Dedicated test workspace and probe contracts; Windows test baseline and platform gates. |
 | [doku-inventur-2026-07/](doku-inventur-2026-07/README.md) | Per-document July 2026 inventory, sampled code checks, archive decisions, and the Phase 2 structure sketch. |
 | [haertung-verteilte-ausfuehrung/](haertung-verteilte-ausfuehrung/index.html) | Distributed execution hardening, including runner incidents, invariants, and implementation history. |
