@@ -10,6 +10,8 @@ commands:
     - npm --prefix frontend run build
   test:
     - dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound
+    - dotnet test runner.Tests/AgentRunner.Tests.csproj --no-build --filter Category!=MachineBound
+    - dotnet test task-server.Tests/TaskServer.Tests.csproj --no-build --filter Category!=MachineBound
     - npm --prefix frontend run test:ci
   lint:
     - npm --prefix frontend run lint
@@ -18,6 +20,14 @@ testSuites:
     category: routine
     expectedDurationSeconds: 1440
     command: dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound
+  - id: runner-routine
+    category: routine
+    expectedDurationSeconds: 90
+    command: dotnet test runner.Tests/AgentRunner.Tests.csproj --no-build --filter Category!=MachineBound
+  - id: task-server-routine
+    category: routine
+    expectedDurationSeconds: 150
+    command: dotnet test task-server.Tests/TaskServer.Tests.csproj --no-build --filter Category!=MachineBound
   - id: frontend-unit
     category: routine
     expectedDurationSeconds: 180

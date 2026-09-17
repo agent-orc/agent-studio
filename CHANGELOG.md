@@ -12,6 +12,25 @@ release yet.
 
 ## [Unreleased]
 
+### Fixed
+
+- Remote review: deleting a settled review slot record is final. A heartbeat
+  renewal whose persistence was scheduled after the terminal delete used to
+  write the record back, leaving an orphan slot that the next daemon generation
+  adopted and reported a second time (AGT-2864).
+
+### Added
+
+- Review gate coverage: `runner.Tests` and `task-server.Tests` run as
+  deterministic verify commands, so runner and Task Server races are caught in
+  review instead of in the promotion gate (AGT-2864).
+
+### Changed
+
+- `CliProcessReaperTests` runs in a non-parallel collection: it asserts the
+  process-global reap total, which another collection reaping a live workspace
+  could advance mid-test (AGT-2864).
+
 ## [0.7.0] - 2026-09-17
 
 Operations release, the third of the day, closing what the 0.6.0 rollout

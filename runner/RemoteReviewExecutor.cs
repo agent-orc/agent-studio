@@ -23,6 +23,12 @@ public sealed class RemoteReviewExecutor
     private ReviewAuthorityHandle _authority = null!;
 
     private PersistedReviewSlot _slot = null!;
+
+    /// <summary>
+    /// Set once this executor has deleted its own settled slot record. Guarded
+    /// by <see cref="_slotGate"/> together with every persisting write.
+    /// </summary>
+    private bool _slotReaped;
     private long _renewSequence;
 
     /// <summary>
@@ -35,6 +41,14 @@ public sealed class RemoteReviewExecutor
     internal Func<int, TimeSpan>? ReportRetryDelayOverride { get; set; }
     internal Func<int, TimeSpan>? AuthorityRetryDelayOverride { get; set; }
     internal Func<CancellationToken, Task>? BeforeReportSubmissionOverride { get; set; }
+
+    /// <summary>
+    /// Parks a renewal between the Task Server's answer and the durable write
+    /// that answer causes. A busy host does the same thing for free when the
+    /// continuation waits for a thread, and the persisted answer then lands
+    /// wherever the executor has got to meanwhile. Tests only.
+    /// </summary>
+    internal Func<Task>? BeforeAuthorityPersistOverride { get; set; }
 
     public RemoteReviewExecutor(
         RunnerOptions options,
@@ -105,12 +119,11 @@ public sealed class RemoteReviewExecutor
             // in-flight mutation journal, so that stale snapshot must never
             // erase it. Only the explicit authority paths below may set or
             // clear the pending request.
-            _slot = _state.Save(slot with
+            return Write(slot with
             {
                 Claim = _authority.Claim,
                 PendingReClaim = _slot.PendingReClaim,
             });
-            return _slot;
         }
     }
 
@@ -119,7 +132,7 @@ public sealed class RemoteReviewExecutor
     {
         lock (_slotGate)
         {
-            _slot = _state.Save(_slot with
+            Write(_slot with
             {
                 Claim = _authority.Claim,
                 PendingReClaim = clearPendingReClaim ? null : _slot.PendingReClaim,
@@ -131,12 +144,40 @@ public sealed class RemoteReviewExecutor
     {
         lock (_slotGate)
         {
-            _slot = _state.Save(_slot with
+            Write(_slot with
             {
                 Claim = _authority.Claim,
                 PendingReClaim = request,
             });
         }
+    }
+
+    /// <summary>
+    /// The single durable write for this slot. Every writer holds
+    /// <see cref="_slotGate"/>, so a reaped slot is a terminal state: the
+    /// record stays gone and only this executor's in-memory view moves on.
+    /// </summary>
+    private PersistedReviewSlot Write(PersistedReviewSlot slot)
+    {
+        _slot = _slotReaped
+            ? slot with { UpdatedAtUtc = DateTime.UtcNow }
+            : _state.Save(slot);
+        return _slot;
+    }
+
+    /// <summary>
+    /// Reaps the settled slot record. Deleting it is the daemon's
+    /// acknowledgement that this attempt is reported and cleaned up, so the
+    /// deletion has to be final: the heartbeat runs until the executor returns
+    /// and its renewal persists whatever authority it just obtained, which on a
+    /// busy host can be scheduled after the delete. Marking the slot reaped
+    /// under the write gate keeps that late save from resurrecting the record
+    /// as an orphan the next daemon generation would adopt and re-report.
+    /// </summary>
+    private void ReapSlot(PersistedReviewSlot slot)
+    {
+        lock (_slotGate) _slotReaped = true;
+        _state.Delete(slot);
     }
 
     /// <summary>
@@ -623,7 +664,7 @@ public sealed class RemoteReviewExecutor
         }
         if (removed)
         {
-            _state.Delete(slot);
+            ReapSlot(slot);
             _log(
                 $"review slot state deleted attempt={attempt.AttemptId} " +
                 $"terminalOutcome={acceptedReport.Outcome}");
@@ -671,7 +712,7 @@ public sealed class RemoteReviewExecutor
             $"cleanup={(removed ? "removed" : "pending")}");
         if (removed)
         {
-            _state.Delete(slot);
+            ReapSlot(slot);
             _log(
                 $"review slot state deleted attempt={slot.AttemptId} " +
                 $"terminalOutcome={classification}");
@@ -760,6 +801,7 @@ public sealed class RemoteReviewExecutor
                 AuthorityEpoch: lease.AuthorityEpoch),
             ct);
         _authority.Rebind(_authority.Attempt, renewed);
+        if (BeforeAuthorityPersistOverride is not null) await BeforeAuthorityPersistOverride();
         ReviewReClaimRequest? disprovedPendingReClaim;
         lock (_slotGate) disprovedPendingReClaim = _slot.PendingReClaim;
         PersistAuthority(clearPendingReClaim: disprovedPendingReClaim is not null);

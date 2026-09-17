@@ -11,6 +11,7 @@ namespace AgentRunner.Tests;
 /// <see cref="CliOrphanSweep"/> are the two nets - per-attempt reap at cleanup
 /// time, and a host-wide sweep for whatever slips past it.
 /// </summary>
+[Collection(HostProcessReapCollection.Name)]
 public sealed class CliProcessReaperTests : IDisposable
 {
     private readonly string _root = Path.Combine(
