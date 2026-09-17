@@ -685,6 +685,48 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.DoesNotContain("NewTestFailures", exception.Message);
     }
 
+    /// <summary>
+    /// AGT-2857: review attempt <c>review_849e4484f1454ea2bfcc8b4d7be6dd31</c>
+    /// (AGT-2819) was settled as <c>ReviewInfra</c>/<c>TmpMountTornDown</c>
+    /// because a passing theory case quoted the NuGet mkdtemp ENOENT signature
+    /// in its display name, while the one genuinely failed test never reached
+    /// the card and the replacement attempt never fired. The captured verify-3
+    /// excerpt must reach the normal baseline comparison and name the failed
+    /// test.
+    /// </summary>
+    [Fact]
+    public async Task Tmp_signature_inside_a_test_display_name_is_still_a_product_failure()
+    {
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var command = BaselineCommand(
+            "if grep -q subject product.txt; then cat <<'CAPTURED'\n"
+            + ReviewFailureAttributionPolicyTests.CapturedVerifyOutput
+            + "\nCAPTURED\nexit 1; fi; exit 0");
+        var (workspace, _) = Workspace(
+            "attempt-tmp-display-name",
+            subjectSha,
+            [command],
+            24017,
+            resultRef: "refs/heads/task/new-failure",
+            integrationRef: "refs/heads/main");
+
+        await workspace.PrepareAsync(null!, default);
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        Assert.Equal("ProductFailure", evidence.Outcome);
+        var candidate = CandidateVerification(evidence);
+        Assert.Equal(
+            [ReviewFailureAttributionPolicyTests.FailedTestName],
+            candidate.NewFailures);
+        var verdict = Assert.Single(evidence.Verdicts);
+        Assert.Equal("NewTestFailures", verdict.Classification);
+        Assert.Equal("block", verdict.Status);
+        Assert.Contains(
+            ReviewFailureAttributionPolicyTests.FailedTestName,
+            verdict.Summary,
+            StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Retention_removes_only_expired_inactive_attempt_workspaces()
     {

@@ -447,7 +447,7 @@ public sealed class RemoteReviewWorkspace
                         execution.AgentUsage));
                     SaveCaches(candidateCache);
                     throw await InfrastructureFailureAsync(
-                        "TmpMountTornDown",
+                        ReviewFailureAttributionPolicy.TmpMountTornDownClassification,
                         $"Review command '{command.StepId}' failed with a torn-down-/tmp signature " +
                         "(MSB1025, SocketException (99), or a NuGet mkdtemp ENOENT), not a product failure: " +
                         $"{CommandLine(command)}; exit={execution.Process.ExitCode}; " +
@@ -570,7 +570,7 @@ public sealed class RemoteReviewWorkspace
                                 ct));
                             SaveCaches(candidateCache);
                             throw await InfrastructureFailureAsync(
-                                "TmpMountTornDown",
+                                ReviewFailureAttributionPolicy.TmpMountTornDownClassification,
                                 $"Review retry '{command.StepId}' failed with a torn-down-/tmp signature " +
                                 "(MSB1025, SocketException (99), or a NuGet mkdtemp ENOENT), not a product failure; " +
                                 $"exit={execution.Process.ExitCode}; budget={BudgetSummary(command.TimeoutSeconds, execution, command.Model)}.",
@@ -1160,17 +1160,13 @@ public sealed class RemoteReviewWorkspace
     /// <c>&lt;unparsed failure&gt;</c> entry that <see cref="BaselineVerdict"/>
     /// then reports as <c>NewTestFailures</c> - an infrastructure incident
     /// graded as a product regression. Checked before baseline comparison so
-    /// it never reaches test-failure parsing.
+    /// it never reaches test-failure parsing. The decision itself is pure and
+    /// lives in <see cref="ReviewFailureAttributionPolicy"/>, which reads
+    /// process-level evidence only (AGT-2857).
     /// </summary>
     private static bool TmpMountTornDownDuringBuild(ProcessResult process)
-    {
-        if (process.Success) return false;
-        var output = process.StdOut + "\n" + process.StdErr;
-        return output.Contains("MSB1025", StringComparison.Ordinal)
-               || output.Contains("SocketException (99)", StringComparison.Ordinal)
-               || (output.Contains("mkdtemp(\"/tmp/.dotnet.", StringComparison.Ordinal)
-                   && output.Contains("ENOENT", StringComparison.OrdinalIgnoreCase));
-    }
+        => ReviewFailureAttributionPolicy.Attribute(process)
+           == ReviewFailureAttribution.TmpMountTornDown;
 
     private static string FailureDetail(ProcessResult process)
     {

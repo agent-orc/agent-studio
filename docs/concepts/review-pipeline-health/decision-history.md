@@ -2,6 +2,26 @@
 
 Newest first. Every entry: date · decision · reasoning · card/commit reference.
 
+## 2026-09-17: ReviewInfra signatures are process-level evidence, not any substring of the output
+The AGT-2750 signature table (`MSB1025`, `SocketException (99)`, NuGet
+`mkdtemp("/tmp/.dotnet.` `ENOENT`) was matched against the whole verify output.
+Review attempt `review_849e4484f1454ea2bfcc8b4d7be6dd31` (AGT-2819) therefore
+settled as `ReviewInfra`/`TmpMountTornDown` on the display name of a *passing*
+theory case, while the one genuinely failed test in that run never reached the
+card and the AGT-2841 replacement attempt did not fire, because it does not fire
+for this classification. Host `/tmp` was intact. Decision: keep the table, move
+the decision into the pure `runner/ReviewFailureAttributionPolicy.cs`, and let
+it read process-level evidence only. Printed test results, their display names,
+their inline data, and the indented detail below them are test-owned text and
+can never classify a run as infrastructure; a run whose summary counts at least
+one failed test (`Failed: N`) is a product failure whatever else the output
+contains. Infrastructure attribution stays available exactly where it was meant
+to apply, a runner that aborted or never produced a test summary, so the
+original AGT-2750 signatures still classify as `TmpMountTornDown`. The
+classification names are unchanged; other components key on them. ->
+AGT-2857 (this fix), AGT-2750 (the signature table), AGT-2841 (replacement
+scheduling), amends the 2026-09-07 entry below.
+
 ## 2026-09-16: The parallelism advisor was reading a queue that is always empty on a remote-review fleet
 `AdaptiveReviewParallelismAdvisor.Refresh` measured
 `AutoReviewPostProcessingQueue.PendingCount` - the legacy local

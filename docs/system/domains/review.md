@@ -125,6 +125,25 @@ failures and graded as a product regression. On a host without `/proc` the
 sampler returns nothing and the watchdog stays inert rather than guessing a
 kill.
 
+**Failure attribution.** A failed verify command is attributed before it is
+parsed. `runner/ReviewFailureAttributionPolicy.cs` decides whether the output
+carries the torn-down-`/tmp` signature table (`MSB1025`, `SocketException (99)`,
+a NuGet `mkdtemp("/tmp/.dotnet.` `ENOENT`) as process-level evidence, in which
+case the attempt is settled as `ReviewInfra`/`TmpMountTornDown`, or whether the
+command's own test results own the verdict. The policy reads the tool's own
+lines only: a signature quoted inside a printed test result, be it the display
+name, its inline data, or the indented error message and stack trace below it,
+is test-owned text and never classifies the run as infrastructure, and a run
+whose summary counts at least one failed test (`Failed: N`) is a product
+failure whatever else the output contains. Before AGT-2857 the table was
+matched against the whole command output, so one passing theory case named
+`...(reply: "System.IO.IOException: mkdtemp("/tmp/.dotnet.AbC123") == nullptr;
+errno == ENOENT")` hid the single red test of review attempt
+`review_849e4484f1454ea2bfcc8b4d7be6dd31`, kept that failure off the card, and
+suppressed the AGT-2841 replacement attempt. Infrastructure attribution stays
+available exactly where it was meant to apply: a runner that aborted, or one
+that never produced a test summary at all.
+
 `ReviewPlanResourcePolicy` also adds `--logger "console;verbosity=normal"` to
 every review `dotnet test` invocation, so the silence watchdog above has real
 per-test progress lines to reset its clock against through a long quiet suite

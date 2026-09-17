@@ -2473,6 +2473,37 @@
             scaffold when the host recovers.
           </td>
         </tr>
+        <tr id="case-agt-2857-tmp-signature-inside-a-test-name">
+          <td>2026-09-17</td>
+          <td><code>AGT-2857</code><br><span class="small">a passing test name hid a real red test behind an infra verdict</span></td>
+          <td>
+            Review attempt <code>review_849e4484f1454ea2bfcc8b4d7be6dd31</code> for <code>AGT-2819</code>
+            (candidate 14ff5b64) was settled as <code>ReviewInfra</code> / <code>TmpMountTornDown</code>
+            ("failed with a torn-down-/tmp signature ... not a product failure"). The verify-3 log shows one genuinely
+            failed test (<code>DuplicateTaskKeyTests.Dedup_KeepsOldestOnContestedKey_...</code>, expected
+            <code>DEM-6</code>, actual <code>DEM-5</code>) and a <em>passing</em> theory case whose display name quotes
+            the NuGet <code>mkdtemp</code> <code>ENOENT</code> signature. Host <code>/tmp</code> was intact
+            (<code>drwxrwxrwt</code>, <code>PrivateTmp=no</code>).
+          </td>
+          <td>
+            The AGT-2750 signature table was matched against the whole command output, so any test whose display name,
+            inline data, or assertion message quotes <code>MSB1025</code>, <code>SocketException (99)</code>, or the
+            mkdtemp <code>ENOENT</code> string turns a product failure into an infrastructure verdict. The red test was
+            never reported to the card, the AGT-2841 replacement attempt does not fire for this classification, and the
+            operator had to read the raw log.
+          </td>
+          <td>
+            <span class="pill ok">fixed in dev</span> the decision moved into the pure
+            <code>runner/ReviewFailureAttributionPolicy.cs</code>, which reads process-level evidence only. Printed test
+            results (<code>Passed ...</code> / <code>Failed ...</code> / <code>[FAIL]</code> lines, display names, inline
+            data, and the indented detail below them) are excluded from signature matching, and a run whose summary
+            counts at least one failed test (<code>Failed: N</code>) is always a product failure. Infrastructure
+            attribution remains for a runner that aborted or never produced a test summary, so the AGT-2750 signatures
+            still classify as <code>TmpMountTornDown</code>. The captured verify-3 excerpt is a regression test in
+            <code>runner.Tests</code>; the observed attempt would now reach
+            <span class="lane">5-human-review</span> naming the failed test instead of an infra retry.
+          </td>
+        </tr>
       </tbody>
     </table>
 
