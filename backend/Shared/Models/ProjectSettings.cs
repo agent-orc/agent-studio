@@ -134,6 +134,14 @@ public record ProjectSettings
     public int? AutonomyLevel { get; init; }
 
     /// <summary>
+    /// AGT-2794 stale-branch sweep: mode plus per-class retention overrides.
+    /// Null means report-only with the shared policy defaults.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore(
+        Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public BranchSweepSettings? BranchSweep { get; init; }
+
+    /// <summary>
     /// Per-project override for the global wait-on-quota policy. Null inherits
     /// the global CLI/quota setting; true/false explicitly enables/disables it
     /// for this project.
@@ -1052,4 +1060,33 @@ public sealed record TestImpactRule
     public IReadOnlyList<string> PathPrefixes { get; init; } = [];
     public IReadOnlyList<string> TestCommands { get; init; } = [];
     public string? Reason { get; init; }
+}
+
+/// <summary>
+/// Per-project stale-branch sweep configuration (AGT-2794). Absent means
+/// report-only with the shared policy defaults, which is what every project
+/// that existed before the sweep gets: the sweep classifies and reports, and
+/// deletes nothing until an operator switches the mode to <c>reclaim</c>.
+/// The day fields override the corresponding window of the one shared
+/// retention policy; null keeps that policy's default.
+/// </summary>
+public sealed record BranchSweepSettings
+{
+    /// <summary><c>report-only</c> (default) or <c>reclaim</c>.</summary>
+    public string? Mode { get; init; }
+
+    /// <summary>Window for <c>task/*</c>, <c>runner/*</c>, and <c>delivery/*</c> refs.</summary>
+    public int? TaskRetentionDays { get; init; }
+
+    /// <summary>Window for <c>agent-studio/salvage/*</c> refs.</summary>
+    public int? SalvageRetentionDays { get; init; }
+
+    /// <summary>Window for <c>agent-studio/quarantine/*</c> refs.</summary>
+    public int? QuarantineRetentionDays { get; init; }
+
+    /// <summary>
+    /// Window after which an unmerged task, runner, or delivery ref whose card
+    /// is archived or gone may be reclaimed.
+    /// </summary>
+    public int? AbandonedRetentionDays { get; init; }
 }

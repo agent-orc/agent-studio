@@ -290,6 +290,118 @@ export interface GitCleanupResult {
 }
 
 /**
+ * Stale-branch sweep (AGT-2794). The sweep classifies every remote ref of a
+ * project repository through the shared retention policy and reports what it
+ * would (or did) reclaim. Mirrors the backend records in
+ * `backend/Features/Git/BranchSweep/`.
+ */
+export type BranchSweepMode = 'report-only' | 'reclaim';
+
+/** Ref class the sweep groups by. Mirrors backend `BranchSweepClasses`. */
+export type BranchSweepClass =
+  | 'task'
+  | 'runner'
+  | 'delivery'
+  | 'results'
+  | 'salvage'
+  | 'quarantine'
+  | 'protected'
+  | 'unmanaged';
+
+/** One classified remote ref. Mirrors backend `BranchSweepCandidate`. */
+export interface BranchSweepCandidate {
+  ref: string;
+  class: BranchSweepClass;
+  taskKey: string | null;
+  taskState: string | null;
+  tipSha: string;
+  tipShortSha: string;
+  tipCommittedAtUtc: string | null;
+  ageDays: number | null;
+  containedInMain: boolean;
+  containedInDevelop: boolean;
+  referencedByOpenCard: boolean;
+  /** Retention-policy decision name, e.g. `Delete`, `AbandonedRefAged`, `TooYoung`. */
+  decision: string;
+  /** True only when the shared retention policy allows deleting this ref. */
+  eligible: boolean;
+  reason: string;
+}
+
+/** Counts for one ref class. Mirrors backend `BranchSweepClassTotals`. */
+export interface BranchSweepClassTotals {
+  class: BranchSweepClass;
+  total: number;
+  eligible: number;
+  kept: number;
+  deleted: number;
+}
+
+/** One age-histogram column. Mirrors backend `BranchSweepAgeBucket`. */
+export interface BranchSweepAgeBucket {
+  label: string;
+  refs: number;
+}
+
+/** Per-ref outcome of a deletion pass. Mirrors backend `BranchSweepDeletion`. */
+export interface BranchSweepDeletion {
+  ref: string;
+  class: BranchSweepClass;
+  tipSha: string;
+  deleted: boolean;
+  reason: string;
+}
+
+/** Per-class retention windows in days. Mirrors backend `BranchRetentionWindows`. */
+export interface BranchRetentionWindows {
+  taskDays: number;
+  salvageDays: number;
+  quarantineDays: number;
+  abandonedDays: number;
+}
+
+/** One sweep run. Mirrors backend `BranchSweepReport`. */
+export interface BranchSweepReport {
+  project: string;
+  repositoryPath: string | null;
+  mode: BranchSweepMode;
+  startedAtUtc: string;
+  completedAtUtc: string;
+  windows: BranchRetentionWindows;
+  refsBefore: number;
+  refsAfter: number;
+  totals: BranchSweepClassTotals[];
+  ageHistogram: BranchSweepAgeBucket[];
+  candidates: BranchSweepCandidate[];
+  deletions: BranchSweepDeletion[];
+  error: string | null;
+}
+
+/** One ref confirmed for deletion. Mirrors backend `BranchSweepExecutionItem`. */
+export interface BranchSweepExecutionItem {
+  ref: string;
+  tipSha: string;
+}
+
+/** Result of an operator-confirmed execute. Mirrors backend `BranchSweepExecutionResult`. */
+export interface BranchSweepExecutionResult {
+  project: string;
+  isRepo: boolean;
+  deletedCount: number;
+  keptCount: number;
+  actions: BranchSweepDeletion[];
+  error: string | null;
+}
+
+/** Per-project sweep settings. Mirrors backend `BranchSweepSettingsResponse`. */
+export interface BranchSweepSettings {
+  project: string;
+  mode: BranchSweepMode;
+  windows: BranchRetentionWindows;
+  defaults: BranchRetentionWindows;
+}
+
+/**
  * Repository hygiene snapshot. Mirrors backend `GitHygieneStatus`.
  *
  * Used by:
