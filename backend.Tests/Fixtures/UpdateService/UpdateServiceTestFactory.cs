@@ -11,6 +11,7 @@ using IGitProbe = UpdSvc::AgentTaskboard.UpdateService.IGitProbe;
 using BackendProbe = UpdSvc::AgentTaskboard.UpdateService.BackendProbe;
 using IBackendProbe = UpdSvc::AgentTaskboard.UpdateService.IBackendProbe;
 using UpdateStatusStore = UpdSvc::AgentTaskboard.UpdateService.UpdateStatusStore;
+using PeriodicProbeService = UpdSvc::AgentTaskboard.UpdateService.PeriodicProbeService;
 
 namespace AgentStudio.Tests;
 
@@ -102,6 +103,23 @@ public sealed class UpdateServiceTestFactory : WebApplicationFactory<UpdSvc::Pro
 
             services.RemoveAll<UpdateServiceOptions>();
             services.AddSingleton(options);
+
+            // PeriodicProbeService runs git fetch/rev-parse/rev-list against
+            // StableCheckoutDir on its own timer (first tick 2s after boot),
+            // concurrently with whatever the orchestrator under test is doing
+            // to that same working tree (checkout, reset --hard, fetch). Real
+            // runs are long enough that the two always overlap here, and git
+            // has no cross-process locking for most of these commands, so a
+            // racing fetch/rev-parse can transiently fail a checkout the
+            // orchestrator does not check the exit code of, leaving HEAD on
+            // the wrong commit (reproduced under load even on Linux). No test
+            // in this suite asserts on the fields only this background probe
+            // populates (BackendReachable, VersionTopology), so it is removed
+            // here rather than raced against.
+            var periodicProbe = services.FirstOrDefault(d =>
+                d.ServiceType == typeof(Microsoft.Extensions.Hosting.IHostedService)
+                && d.ImplementationType == typeof(PeriodicProbeService));
+            if (periodicProbe is not null) services.Remove(periodicProbe);
 
             services.RemoveAll<IGitProbe>();
             services.AddSingleton<IGitProbe>(sp =>
