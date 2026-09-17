@@ -307,6 +307,43 @@ public sealed class UpdateOrchestrator
             var headAfterPull = _git.HeadShort();
             _store.SetHead(headAfterPull);
 
+            // Terminal transition for the three failure sites between the
+            // restart and the mutation boundary. The checkout revert runs
+            // before "failed" is published, because that phase is what every
+            // observer treats as "the run is over and its side effects are on
+            // disk": the operator view, the next preflight, and the restart
+            // drill all read the checkout the moment they see it. Publishing
+            // the phase first left the revert trailing behind it by one
+            // `git checkout` process spawn (measured 4-7 ms on an idle Linux
+            // host, far wider on a loaded gate host), so a reader could see a
+            // failed run whose checkout was still on the candidate commit
+            // (AGT-2855). The failure sites before the restart already revert
+            // first; this puts the later ones on the same order.
+            //
+            // Auto-rollback stays behind the transition on purpose: it drives
+            // its own observable "rolling-back" phases and writes its own
+            // result artefact, so it is a successor to the failure rather
+            // than part of it, and it restores the checkout itself.
+            //
+            // The head the transition records is the one the revert left
+            // behind, not the candidate the run passed through, for the same
+            // reason: a terminal record has to describe the state a reader
+            // will actually find. It is also what makes the ordering provable
+            // after the fact, because that field is frozen into the snapshot
+            // and the history row at the moment the phase flips.
+            async Task FailAfterRestoringCheckoutAsync(
+                string error,
+                IReadOnlyList<VerificationFailure>? failures,
+                ReleaseManifest? observed)
+            {
+                var headAfter = _options.AutoRollback
+                    ? headAfterPull
+                    : await RollbackCheckoutToAsync(headBefore, ct);
+                FinishFailed(runId, startedAt, headBefore, headAfter, trigger, error, failures,
+                    folder, preSnapshot, intendedRelease, observed, releaseComparison?.Direction.ToString());
+                if (_options.AutoRollback) await RunRollbackAsync(runId, manual: false, ct);
+            }
+
             // PHASE 4 — building. Stop the whole stack (backend, frontend dev
             // server, any process it owns under the checkout) BEFORE the
             // locked restore/npm ci runs. Running `npm ci` while the frontend
@@ -317,8 +354,8 @@ public sealed class UpdateOrchestrator
             folder.WriteOutput("stop-output.txt", stopOut);
             if (stopRc != 0)
             {
-                await RollbackCheckoutToAsync(headBefore, ct);
-                FinishFailed(runId, startedAt, headBefore, headAfterPull, trigger,
+                var headAfterStopFailure = await RollbackCheckoutToAsync(headBefore, ct);
+                FinishFailed(runId, startedAt, headBefore, headAfterStopFailure, trigger,
                     $"stopping the stack before dependency restore failed (rc={stopRc})", null, folder, preSnapshot);
                 return;
             }
@@ -326,8 +363,8 @@ public sealed class UpdateOrchestrator
             var (locked, holder) = await CheckNodeModulesUnlockedAsync(ct);
             if (locked)
             {
-                await RollbackCheckoutToAsync(headBefore, ct);
-                FinishFailed(runId, startedAt, headBefore, headAfterPull, trigger,
+                var headAfterLockFailure = await RollbackCheckoutToAsync(headBefore, ct);
+                FinishFailed(runId, startedAt, headBefore, headAfterLockFailure, trigger,
                     $"frontend/node_modules is still held open by {holder}; refusing to run npm ci", null, folder, preSnapshot);
                 return;
             }
@@ -337,8 +374,8 @@ public sealed class UpdateOrchestrator
             if (buildRan) folder.WriteOutput("dependency-restore-output.txt", buildOut);
             if (buildRc != 0)
             {
-                await RollbackCheckoutToAsync(headBefore, ct);
-                FinishFailed(runId, startedAt, headBefore, headAfterPull, trigger,
+                var headAfterRestoreFailure = await RollbackCheckoutToAsync(headBefore, ct);
+                FinishFailed(runId, startedAt, headBefore, headAfterRestoreFailure, trigger,
                     $"dependency restore failed (rc={buildRc})", null, folder, preSnapshot);
                 return;
             }
@@ -354,8 +391,8 @@ public sealed class UpdateOrchestrator
                 // previous release, and fail its own identity check further
                 // down for a reason that has nothing to do with the build.
                 // Say so here instead.
-                await RollbackCheckoutToAsync(headBefore, ct);
-                FinishFailed(runId, startedAt, headBefore, headAfterPull, trigger,
+                var headAfterHandoffFailure = await RollbackCheckoutToAsync(headBefore, ct);
+                FinishFailed(runId, startedAt, headBefore, headAfterHandoffFailure, trigger,
                     $"run folder is missing {IntendedManifestFileName}; refusing to restart without the identity handoff",
                     null, folder, preSnapshot, intendedRelease, null, releaseComparison?.Direction.ToString());
                 return;
@@ -364,8 +401,8 @@ public sealed class UpdateOrchestrator
             folder.WriteOutput("start-stable-output.txt", DescribeHandoff(identityHandoff) + startOut);
             if (startRc != 0)
             {
-                await RollbackCheckoutToAsync(headBefore, ct);
-                FinishFailed(runId, startedAt, headBefore, headAfterPull, trigger,
+                var headAfterRestartFailure = await RollbackCheckoutToAsync(headBefore, ct);
+                FinishFailed(runId, startedAt, headBefore, headAfterRestartFailure, trigger,
                     $"restart failed (rc={startRc})", null, folder, preSnapshot);
                 return;
             }
@@ -383,14 +420,8 @@ public sealed class UpdateOrchestrator
                 var failure = new VerificationFailure("healthz-stable",
                     $"timeout after {healthWaitBudget.TotalSeconds:F0}s",
                     "/healthz=200");
-                FinishFailed(runId, startedAt, headBefore, headAfterPull, trigger,
-                    "backend did not come back healthy", new[] { failure }, folder, preSnapshot,
-                    intendedRelease, null, releaseComparison?.Direction.ToString());
-
-                if (_options.AutoRollback)
-                    await RunRollbackAsync(runId, manual: false, ct);
-                else
-                    await RollbackCheckoutToAsync(headBefore, ct);
+                await FailAfterRestoringCheckoutAsync(
+                    "backend did not come back healthy", new[] { failure }, null);
                 return;
             }
 
@@ -400,11 +431,9 @@ public sealed class UpdateOrchestrator
                 if (observedRelease is null || !StableReleaseContract.IdentityEquals(observedRelease, intendedRelease))
                 {
                     var failure = new VerificationFailure("runtime-identity", observedRelease?.Tag ?? "missing", intendedRelease.Tag);
-                    FinishFailed(runId, startedAt, headBefore, headAfterPull, trigger,
-                        "runtime identity does not equal intended build manifest", new[] { failure }, folder, preSnapshot,
-                        intendedRelease, observedRelease, releaseComparison?.Direction.ToString());
-                    if (_options.AutoRollback) await RunRollbackAsync(runId, manual: false, ct);
-                    else await RollbackCheckoutToAsync(headBefore, ct);
+                    await FailAfterRestoringCheckoutAsync(
+                        "runtime identity does not equal intended build manifest",
+                        new[] { failure }, observedRelease);
                     return;
                 }
             }
@@ -417,11 +446,9 @@ public sealed class UpdateOrchestrator
             {
                 var failure = new VerificationFailure("frontend-listening",
                     $"timeout after {_options.FrontendWaitSeconds}s", $"{_options.FrontendUrl} reachable");
-                FinishFailed(runId, startedAt, headBefore, headAfterPull, trigger,
-                    "frontend dev server did not come up after restart", new[] { failure }, folder, preSnapshot,
-                    intendedRelease, observedRelease, releaseComparison?.Direction.ToString());
-                if (_options.AutoRollback) await RunRollbackAsync(runId, manual: false, ct);
-                else await RollbackCheckoutToAsync(headBefore, ct);
+                await FailAfterRestoringCheckoutAsync(
+                    "frontend dev server did not come up after restart",
+                    new[] { failure }, observedRelease);
                 return;
             }
 
@@ -1122,15 +1149,23 @@ public sealed class UpdateOrchestrator
     /// happen speculatively to build/restart from the candidate, but any
     /// failure before the mutation boundary must leave the checkout, and the
     /// installed manifest (never touched at this point), exactly as they
-    /// were before the run.
+    /// were before the run. Callers run this before publishing the terminal
+    /// phase, so the status snapshot that first reports "failed" already
+    /// carries the reverted head.
     /// </summary>
-    private async Task RollbackCheckoutToAsync(string sha, CancellationToken ct)
+    /// <returns>
+    /// The head the checkout is left on, so the caller can record it as the
+    /// run's outcome instead of the candidate it passed through.
+    /// </returns>
+    private async Task<string> RollbackCheckoutToAsync(string sha, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(sha)) return;
+        if (string.IsNullOrWhiteSpace(sha)) return _git.HeadShort();
         var current = _git.HeadShort();
-        if (string.Equals(current, sha, StringComparison.OrdinalIgnoreCase)) return;
+        if (string.Equals(current, sha, StringComparison.OrdinalIgnoreCase)) return current;
         await RunProcessAsync("git", new[] { "checkout", "--detach", "--force", sha }, _options.StableCheckoutDir, ct);
-        _store.SetHead(_git.HeadShort());
+        var reverted = _git.HeadShort();
+        _store.SetHead(reverted);
+        return reverted;
     }
 
     /// <summary>
