@@ -41,7 +41,7 @@ public enum PostProcessingCardStatus
 /// <summary>
 /// Outcome of <see cref="ReviewDecisionOrchestrator.ProcessCardAsync"/> for a
 /// single card. <see cref="Reason"/> is a stable, greppable token (e.g.
-/// <c>awaiting-canonical-review-executor</c>) so a blocked card names its cause
+/// <c>awaiting-delivery-integration</c>) so a blocked card names its cause
 /// in <c>lifecycle.json</c> and in the log line, instead of only saying that
 /// something did not happen.
 /// </summary>
@@ -59,8 +59,51 @@ public sealed record PostProcessingCardResult(PostProcessingCardStatus Status, s
         new(PostProcessingCardStatus.Blocked, reason);
 
     /// <summary>
-    /// Reason token used when the card is held by the canonical remote review
-    /// data plane. Shared with the tests so the contract cannot drift silently.
+    /// Reason tokens for the waits in which the card is held by the canonical
+    /// remote review data plane. Shared with the tests so the contract cannot
+    /// drift silently.
+    ///
+    /// <para>
+    /// These used to be one token, <c>awaiting-canonical-review-executor</c>,
+    /// which named the executor even when the executor was registered and busy
+    /// and something else entirely was missing. After the 17.09.2026 restart
+    /// fifteen cards logged that reason while the real states were three
+    /// different ones - no executor registered, a passed review whose delivery
+    /// integration had not started, and a delivery already on the integration
+    /// branch whose lane transition was still pending. The split says which
+    /// (AGT-2860).
+    /// </para>
     /// </summary>
-    public const string AwaitingCanonicalReviewExecutor = "awaiting-canonical-review-executor";
+    public const string AwaitingReviewExecutorRegistration = "awaiting-review-executor-registration";
+
+    /// <summary>An executor is registered; the canonical ReviewAttempt has not settled yet.</summary>
+    public const string AwaitingCanonicalReviewVerdict = "awaiting-canonical-review-verdict";
+
+    /// <summary>The review settled Pass; <c>remote-delivery-integration</c> has not started.</summary>
+    public const string AwaitingDeliveryIntegration = "awaiting-delivery-integration";
+
+    /// <summary>The delivery is on the integration branch; the lane transition out of Auto Review is pending.</summary>
+    public const string AwaitingIntegrationCompletion = "awaiting-integration-completion";
+
+    /// <summary>
+    /// True for every wait whose owner is the canonical remote review data
+    /// plane rather than this queue. Callers that used to compare against the
+    /// single old token ask this instead, so adding a further split does not
+    /// silently drop a card out of the tightened backoff or out of the named
+    /// liveStatus wait.
+    /// </summary>
+    public static bool IsCanonicalReviewWait(string? reason)
+        => reason is AwaitingReviewExecutorRegistration
+            or AwaitingCanonicalReviewVerdict
+            or AwaitingDeliveryIntegration
+            or AwaitingIntegrationCompletion;
+
+    /// <summary>
+    /// True for the two waits that a terminal <c>Pass</c> attempt has already
+    /// earned. They are never exhausted and never terminal: the delivery is
+    /// reviewed, so the only honest states left are "integrate it" and "finish
+    /// the transition", both of which this backend can drive itself.
+    /// </summary>
+    public static bool IsDeliveryResumeWait(string? reason)
+        => reason is AwaitingDeliveryIntegration or AwaitingIntegrationCompletion;
 }

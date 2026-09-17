@@ -81,6 +81,16 @@ public sealed class AutoReviewPostProcessingRecoveryService : BackgroundService
             var scanner = scope.ServiceProvider.GetRequiredService<TaskScannerService>();
             var transitions = scope.ServiceProvider.GetRequiredService<TaskTransitionService>();
             var reviewAttempts = scope.ServiceProvider.GetRequiredService<ReviewAttemptTaskLifecycleService>();
+
+            // AGT-2860: before anything is re-enqueued, finish what the killed
+            // process had already earned. A card whose review passed and whose
+            // integration or lane move died with the request needs the rest of
+            // that sequence, not another post-processing pass - and certainly
+            // not the new review an operator had to create by hand for AGT-2855.
+            var resume = scope.ServiceProvider.GetService<AutoReviewDeliveryResumeService>();
+            if (resume is not null)
+                await resume.RunOnceAsync("startup-recovery", stoppingToken).ConfigureAwait(false);
+
             RunRecoveryScan(scanner, transitions, reviewAttempts, _logger);
         }
         catch (OperationCanceledException __ex)

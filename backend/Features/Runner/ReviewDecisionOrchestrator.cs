@@ -780,13 +780,11 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     /// actor resolves (the canonical review executor, a later run) are
     /// deferrals; only a genuinely unusable card is blocked.
     /// </summary>
-    private static PostProcessingCardResult ClassifySkip(string skipReason) => skipReason switch
-    {
-        PostProcessingCardResult.AwaitingCanonicalReviewExecutor or
-        "no-unresolved-terminal-sentinel" or
-        "fixture-card" => PostProcessingCardResult.Deferred(skipReason),
-        _ => PostProcessingCardResult.Blocked(skipReason),
-    };
+    private static PostProcessingCardResult ClassifySkip(string skipReason) =>
+        PostProcessingCardResult.IsCanonicalReviewWait(skipReason)
+        || skipReason is "no-unresolved-terminal-sentinel" or "fixture-card"
+            ? PostProcessingCardResult.Deferred(skipReason)
+            : PostProcessingCardResult.Blocked(skipReason);
 
     /// <summary>
     /// Dispatches one card's post-processing by signal kind. This mirrors the
@@ -6947,6 +6945,37 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         return string.Join('\n', records.Select(r => $"- {r.CreatedAt:u} [{r.Kind}] {r.Reason}"));
     }
 
+    /// <summary>
+    /// Names what a canonical remote-review card is actually waiting for
+    /// (AGT-2860). The single old token said "executor" for every one of these,
+    /// which was wrong for the two states that matter most after a restart: a
+    /// review that already passed and an integration that already landed. Both
+    /// are resumable by this backend, and <see cref="AutoReviewDeliveryResumeService"/>
+    /// keys off exactly these reasons.
+    /// </summary>
+    private string ClassifyCanonicalReviewWait(TaskInfo info, string authorityKey)
+    {
+        var review = _attemptAuthority!.GetTaskProjection(authorityKey).CurrentReviewAttempt;
+        if (review is null
+            || review.State is AttemptLifecycleState.Pending or AttemptLifecycleState.Leased
+            || !AutoReviewResumePolicy.IsAdmissibleOutcome(review.Outcome))
+        {
+            return PostProcessingCardResult.AwaitingCanonicalReviewVerdict;
+        }
+
+        // Only a record from THIS delivery generation can say that the
+        // integration already returned. Absent or superseded, the honest reading
+        // is that it never started.
+        var settlement = RemoteDeliverySettlementStore.Read(info.FolderPath);
+        if (!RemoteDeliverySettlementStore.MatchesAttempt(settlement, review.AttemptId))
+            return PostProcessingCardResult.AwaitingDeliveryIntegration;
+
+        return settlement!.Stage == RemoteDeliverySettlementStage.IntegrationPending
+               && settlement.ShouldIntegrate
+            ? PostProcessingCardResult.AwaitingDeliveryIntegration
+            : PostProcessingCardResult.AwaitingIntegrationCompletion;
+    }
+
     /// <param name="onSkipped">
     /// Optional probe invoked as <c>(jobId, reason)</c> whenever a card in the
     /// lane is passed over. The workspace sweep ignores it; the per-card path
@@ -6989,10 +7018,12 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     .FirstOrDefault(value => !_attemptAuthority.GetTaskProjection(value!).LegacyTask);
             if (authorityKey is not null)
             {
+                var canonicalWait = ClassifyCanonicalReviewWait(info, authorityKey);
                 _logger.LogDebug(
-                    "ReviewDecisionOrchestrator skipped canonical remote review {TaskKey}; awaiting fenced ReviewAttempt executor.",
-                    authorityKey);
-                onSkipped?.Invoke(info.Id, PostProcessingCardResult.AwaitingCanonicalReviewExecutor);
+                    "ReviewDecisionOrchestrator skipped canonical remote review {TaskKey}; {Reason}.",
+                    authorityKey,
+                    canonicalWait);
+                onSkipped?.Invoke(info.Id, canonicalWait);
                 continue;
             }
 

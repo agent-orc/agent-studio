@@ -210,7 +210,7 @@ public sealed class AutoReviewPostProcessingWorkerTests : IDisposable
         Assert.DoesNotContain("blockingReason", lifecycle);
         Assert.Contains("awaiting-review", lifecycle);
         // The reason is named, not swallowed.
-        Assert.Contains(PostProcessingCardResult.AwaitingCanonicalReviewExecutor, lifecycle);
+        Assert.Contains(PostProcessingCardResult.AwaitingCanonicalReviewVerdict, lifecycle);
     }
 
     [Fact]
@@ -260,7 +260,7 @@ public sealed class AutoReviewPostProcessingWorkerTests : IDisposable
             _workspace, Project, "canonical-reason", _watchPath, CancellationToken.None);
 
         Assert.Equal(PostProcessingCardStatus.Deferred, result.Status);
-        Assert.Equal(PostProcessingCardResult.AwaitingCanonicalReviewExecutor, result.Reason);
+        Assert.Equal(PostProcessingCardResult.AwaitingCanonicalReviewVerdict, result.Reason);
     }
 
     [Fact]
@@ -309,7 +309,7 @@ public sealed class AutoReviewPostProcessingWorkerTests : IDisposable
 
         worker.ApplyOutcome(
             Request("retry-task"),
-            PostProcessingCardResult.Deferred(PostProcessingCardResult.AwaitingCanonicalReviewExecutor),
+            PostProcessingCardResult.Deferred(PostProcessingCardResult.AwaitingCanonicalReviewVerdict),
             CancellationToken.None);
 
         await WaitUntil(() => deps.Queue.PositionOf(Project, "retry-task") != null);
@@ -330,7 +330,7 @@ public sealed class AutoReviewPostProcessingWorkerTests : IDisposable
 
         worker.ApplyOutcome(
             Request("exhausted-task") with { Attempt = AutoReviewPostProcessingWorker.MaxDeferralRetries },
-            PostProcessingCardResult.Deferred(PostProcessingCardResult.AwaitingCanonicalReviewExecutor),
+            PostProcessingCardResult.Deferred(PostProcessingCardResult.AwaitingCanonicalReviewVerdict),
             CancellationToken.None);
 
         await Task.Delay(80);
@@ -395,7 +395,7 @@ public sealed class AutoReviewPostProcessingWorkerTests : IDisposable
             registry);
 
         var availability = worker.ResolveReviewExecutorAvailability(
-            PostProcessingCardResult.AwaitingCanonicalReviewExecutor);
+            PostProcessingCardResult.AwaitingCanonicalReviewVerdict);
         Assert.NotNull(availability);
         Assert.True(availability!.AnyRegistered);
 
@@ -414,7 +414,7 @@ public sealed class AutoReviewPostProcessingWorkerTests : IDisposable
         var worker = BuildWorker(deps, maxParallelism: 1);
 
         var availability = worker.ResolveReviewExecutorAvailability(
-            PostProcessingCardResult.AwaitingCanonicalReviewExecutor);
+            PostProcessingCardResult.AwaitingCanonicalReviewVerdict);
 
         Assert.Null(availability);
     }
@@ -470,7 +470,7 @@ public sealed class AutoReviewPostProcessingWorkerTests : IDisposable
 
         worker.ApplyOutcome(
             Request("named-wait-task"),
-            PostProcessingCardResult.Deferred(PostProcessingCardResult.AwaitingCanonicalReviewExecutor),
+            PostProcessingCardResult.Deferred(PostProcessingCardResult.AwaitingCanonicalReviewVerdict),
             CancellationToken.None);
 
         // The card left `_pending` (PositionOf is null) but the wait is named
@@ -478,7 +478,7 @@ public sealed class AutoReviewPostProcessingWorkerTests : IDisposable
         Assert.Null(deps.Queue.PositionOf(Project, "named-wait-task"));
         var wait = deps.Queue.WaitStateOf(Project, "named-wait-task");
         Assert.NotNull(wait);
-        Assert.Equal(PostProcessingCardResult.AwaitingCanonicalReviewExecutor, wait!.Reason);
+        Assert.Equal(PostProcessingCardResult.AwaitingCanonicalReviewVerdict, wait!.Reason);
         Assert.Contains("agent-runner-01-review", wait.Detail);
     }
 
@@ -495,12 +495,189 @@ public sealed class AutoReviewPostProcessingWorkerTests : IDisposable
 
         worker.ApplyOutcome(
             Request("uncapped-task") with { Attempt = 2 },
-            PostProcessingCardResult.Deferred(PostProcessingCardResult.AwaitingCanonicalReviewExecutor),
+            PostProcessingCardResult.Deferred(PostProcessingCardResult.AwaitingCanonicalReviewVerdict),
             CancellationToken.None);
 
         var wait = deps.Queue.WaitStateOf(Project, "uncapped-task");
         Assert.NotNull(wait);
         Assert.Null(wait!.Detail);
+    }
+
+    [Fact]
+    public async Task ApplyOutcome_DeliveryResumeWait_NeverExhaustsTheDeferralBudget()
+    {
+        // AGT-2860 (c): after the 17.09.2026 restart every card burned its five
+        // deferrals inside five minutes and logged deferral-exhausted. For a
+        // card whose review already passed that is the moment it strands: the
+        // counter is gone, nothing re-drives it, and the operator has to order
+        // a second 45-minute review of an already passed subject. A card with a
+        // terminal Pass attempt must therefore never reach that log line.
+        SeedNoOpReviewJob("passed-task");
+        var entries = new List<string>();
+        var deps = BuildDeps();
+        var worker = new AutoReviewPostProcessingWorker(
+            deps.Queue,
+            deps.Orchestrator,
+            deps.Scanner,
+            deps.Mutations,
+            deps.Configuration,
+            new CollectingLogger<AutoReviewPostProcessingWorker>(entries));
+        worker.DeferralDelayOverride = _ => TimeSpan.FromMilliseconds(10);
+
+        worker.ApplyOutcome(
+            Request("passed-task") with { Attempt = AutoReviewPostProcessingWorker.MaxDeferralRetries },
+            PostProcessingCardResult.Deferred(PostProcessingCardResult.AwaitingDeliveryIntegration),
+            CancellationToken.None);
+
+        await WaitUntil(() => deps.Queue.PositionOf(Project, "passed-task") != null);
+        Assert.DoesNotContain(entries, entry =>
+            entry.Contains("auto-review-postprocessing-deferral-exhausted", StringComparison.Ordinal));
+        // The counter resets rather than terminating the re-drive.
+        Assert.Contains(entries, entry =>
+            entry.Contains("auto-review-postprocessing-deferred", StringComparison.Ordinal)
+            && entry.Contains("attempt=0", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ApplyOutcome_IntegrationCompletionWait_NeverExhaustsTheDeferralBudget()
+    {
+        SeedNoOpReviewJob("completion-task");
+        var entries = new List<string>();
+        var deps = BuildDeps();
+        var worker = new AutoReviewPostProcessingWorker(
+            deps.Queue,
+            deps.Orchestrator,
+            deps.Scanner,
+            deps.Mutations,
+            deps.Configuration,
+            new CollectingLogger<AutoReviewPostProcessingWorker>(entries));
+        worker.DeferralDelayOverride = _ => TimeSpan.FromMilliseconds(10);
+
+        worker.ApplyOutcome(
+            Request("completion-task") with { Attempt = AutoReviewPostProcessingWorker.MaxDeferralRetries + 3 },
+            PostProcessingCardResult.Deferred(PostProcessingCardResult.AwaitingIntegrationCompletion),
+            CancellationToken.None);
+
+        await WaitUntil(() => deps.Queue.PositionOf(Project, "completion-task") != null);
+        Assert.DoesNotContain(entries, entry =>
+            entry.Contains("auto-review-postprocessing-deferral-exhausted", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ApplyOutcome_RegisteredExecutor_ResetsTheBudgetInsteadOfExhaustingIt()
+    {
+        // AGT-2860: the budget counts against a blocking condition nobody is
+        // resolving. A registered executor is that condition observably
+        // satisfied, so the counter resets. The genuinely idle-executor case
+        // keeps its exhaustion - see the test directly above this one.
+        SeedNoOpReviewJob("registered-task");
+        var entries = new List<string>();
+        var deps = BuildDeps();
+        var registry = new V1ReviewExecutorRegistry();
+        registry.Register("agent-runner-01-review", new Contract.RegisterRunnerRequest(
+            "agent-runner-01-review",
+            "review-host",
+            "review-host:1",
+            "1.0.0",
+            Contract.TaskServerProtocol.Current,
+            [Contract.ReviewCapabilities.ReviewExecutor]));
+        var worker = new AutoReviewPostProcessingWorker(
+            deps.Queue,
+            deps.Orchestrator,
+            deps.Scanner,
+            deps.Mutations,
+            deps.Configuration,
+            new CollectingLogger<AutoReviewPostProcessingWorker>(entries),
+            registry);
+        worker.DeferralDelayOverride = _ => TimeSpan.FromMilliseconds(10);
+
+        worker.ApplyOutcome(
+            Request("registered-task") with { Attempt = AutoReviewPostProcessingWorker.MaxDeferralRetries },
+            PostProcessingCardResult.Deferred(PostProcessingCardResult.AwaitingCanonicalReviewVerdict),
+            CancellationToken.None);
+
+        await WaitUntil(() => deps.Queue.PositionOf(Project, "registered-task") != null);
+        Assert.DoesNotContain(entries, entry =>
+            entry.Contains("auto-review-postprocessing-deferral-exhausted", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ApplyOutcome_IdleExecutorWait_StillExhaustsTheDeferralBudget()
+    {
+        // The counter-example that keeps AGT-2842's growing backoff honest: with
+        // no executor registered at all, nothing here is going to resolve, the
+        // budget still ends the re-drive, and the durable lane plus the boot
+        // sweep remain the safety net.
+        SeedNoOpReviewJob("idle-executor-task");
+        var entries = new List<string>();
+        var deps = BuildDeps();
+        var worker = new AutoReviewPostProcessingWorker(
+            deps.Queue,
+            deps.Orchestrator,
+            deps.Scanner,
+            deps.Mutations,
+            deps.Configuration,
+            new CollectingLogger<AutoReviewPostProcessingWorker>(entries),
+            new V1ReviewExecutorRegistry());
+        worker.DeferralDelayOverride = _ => TimeSpan.FromMilliseconds(10);
+
+        worker.ApplyOutcome(
+            Request("idle-executor-task") with { Attempt = AutoReviewPostProcessingWorker.MaxDeferralRetries },
+            PostProcessingCardResult.Deferred(PostProcessingCardResult.AwaitingCanonicalReviewVerdict),
+            CancellationToken.None);
+
+        await Task.Delay(80);
+        Assert.Null(deps.Queue.PositionOf(Project, "idle-executor-task"));
+        Assert.Contains(entries, entry =>
+            entry.Contains("auto-review-postprocessing-deferral-exhausted", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void RefineCanonicalWaitReason_NamesTheMissingRegistrationInsteadOfTheBusyExecutor()
+    {
+        // AGT-2860 (4): the log has to say what is actually missing.
+        Assert.Equal(
+            PostProcessingCardResult.AwaitingReviewExecutorRegistration,
+            AutoReviewPostProcessingWorker.RefineCanonicalWaitReason(
+                PostProcessingCardResult.AwaitingCanonicalReviewVerdict,
+                new V1ReviewExecutorRegistry.ReviewExecutorAvailability(
+                    false, false, "no review executor is registered")));
+
+        Assert.Equal(
+            PostProcessingCardResult.AwaitingCanonicalReviewVerdict,
+            AutoReviewPostProcessingWorker.RefineCanonicalWaitReason(
+                PostProcessingCardResult.AwaitingCanonicalReviewVerdict,
+                new V1ReviewExecutorRegistry.ReviewExecutorAvailability(
+                    true, true, "agent-runner-01-review is registered and active")));
+
+        // A registry that was never wired in proves nothing about registration.
+        Assert.Equal(
+            PostProcessingCardResult.AwaitingCanonicalReviewVerdict,
+            AutoReviewPostProcessingWorker.RefineCanonicalWaitReason(
+                PostProcessingCardResult.AwaitingCanonicalReviewVerdict, null));
+
+        // A delivery wait names the delivery, whatever the registry says.
+        Assert.Equal(
+            PostProcessingCardResult.AwaitingDeliveryIntegration,
+            AutoReviewPostProcessingWorker.RefineCanonicalWaitReason(
+                PostProcessingCardResult.AwaitingDeliveryIntegration,
+                new V1ReviewExecutorRegistry.ReviewExecutorAvailability(
+                    false, false, "no review executor is registered")));
+    }
+
+    private sealed class CollectingLogger<T>(List<string> entries) : ILogger<T>
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            lock (entries) entries.Add(formatter(state, exception));
+        }
     }
 
     /// <summary>Puts a card's lifecycle into the active post-processing state.</summary>
