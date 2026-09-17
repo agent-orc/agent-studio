@@ -1,6 +1,6 @@
 # Review Domain Map
 
-Version: 2026-09-16
+Version: 2026-09-17
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
 
 Use this when a change touches ReviewSubject preparation, aspect prompts,
@@ -379,11 +379,91 @@ incapable of cancelling a running review. Operator procedure and the log lines
 to check live in
 [linux-runner-host.md](../../operations/setup/linux-runner-host.md#which-release-grades-an-adopted-review).
 
+## Terminal slot deletion is final (AGT-2864)
+
+One `RemoteReviewExecutor` drives one review slot, and two writers touch its
+`RUNNER_STATE_DIR/reviews/<attempt>.review-slot.json` record: the execution path
+(phase transitions, the pending re-claim journal) and the heartbeat, which
+persists every renewed lease so a reconciliation pass reads a live expiry.
+
+The heartbeat runs until `RunPersistedAsync` returns, which is after the
+terminal report, the workspace cleanup, the cleanup acknowledgement, and the
+delete of the slot record. A renewal the Task Server has already answered
+persists that answer whenever its continuation is scheduled, and that write
+deliberately has no cancellation check: the answer is authoritative the moment
+it arrives. On a busy host the continuation can be scheduled after the delete,
+and it then wrote the record back. The resurrected slot named the fence of an
+attempt that was already reported and cleaned up, so the next daemon generation
+adopted it, verified authority against a settled attempt, and reported it a
+second time.
+
+`ReapSlot` closes that window. It marks the slot reaped under the same
+`_slotGate` every persisting write holds and then deletes the record; the
+writers go through `Write`, which keeps this executor's in-memory view moving
+but no longer touches the store once the slot is reaped. The order is decided by
+the gate rather than by the thread pool: a renewal that takes the gate first
+writes a record the delete then removes, and one that takes it afterwards writes
+nothing. Nothing else about AGT-2753 adoption changes, because every write
+before the reap behaves exactly as before.
+
+The margin was never large. In `ReviewHandoffAdoptionTests`, which drives this
+scenario with a one second heartbeat, the delete lands 285 ms before the first
+heartbeat tick when the class runs alone, and 131 ms before it inside the full
+parallel `AgentRunner.Tests` run. On a host with a large process table the tick
+moves inside the cleanup window altogether and its write precedes the delete by
+as little as a millisecond, because the pre-delete segment is dominated by
+`/proc` scans in the workspace reaper. From there it is the thread pool, not the
+product, that decides which write reaches the record last; the promotion gate on
+17.09.2026 is where it went the other way.
+`RemoteReviewExecutorTests.Renewal_persisted_after_terminal_cleanup_leaves_the_slot_reaped`
+pins the interleaving without depending on that timing.
+
+## Runner and Task Server gates in the review plan (AGT-2864)
+
+The frozen plan's deterministic gates are derived from
+`.agent-studio/project.yml` `commands.test` by `VerifyCommandPlanner`. The .NET
+part of that list was `backend.Tests` alone, so a delivery under `runner/` or
+`task-server/` was reviewed without its own suite ever running: a runner-side
+race could only surface in the Windows gate or in the develop to main promotion
+gate, which is one full lane after review had already passed it. The review gate
+now runs both suites as well:
+
+| Gate | Command |
+|---|---|
+| verify-4 | `dotnet test runner.Tests/AgentRunner.Tests.csproj --no-build --filter Category!=MachineBound` |
+| verify-5 | `dotnet test task-server.Tests/TaskServer.Tests.csproj --no-build --filter Category!=MachineBound` |
+
+The filter is the one the backend gate already uses, so the machine-bound
+topology and daemon-recovery suites stay off the review host. On a 12 core host
+the two add roughly one and two minutes to a review, measured in the exact form
+`ReviewPlanResourcePolicy` produces (`-maxcpucount:2 -nodeReuse:false
+-p:ParallelizeTestCollections=false --logger console;verbosity=normal`): 691
+runner cases in 62 s, the same wall time as the bare command. xUnit collection
+parallelism therefore stays on for these gates, which is what makes them able to
+see a race like AGT-2864 at all. `-p:` sets an MSBuild property, and none of
+this repository's test projects turn it into an xUnit setting (no
+`xunit.runner.json`, no assembly-level `CollectionBehavior`), so it is inert
+here; the MSBuild CPU cap and the node-reuse switch beside it are not.
+
+Both gates run for every review of this repository, not only for deliveries that
+touch `runner/` or `task-server/`. A review plan is frozen before the attempt is
+claimed and is immutable by contract, and the plan builder has no merge-base
+diff at that point, so the review plane has no path-scoped command selection.
+The diff-scoped selector (`TestSelectionPlanner` with its impact rules) belongs
+to the local build and test gate. Making the review plan path-scoped would mean
+resolving the delivery diff at plan-build time, which is a separate change to
+the plan contract rather than a configuration entry.
+
 ## Key code and tests
 
 - `runner/RemoteReviewWorkspace.cs`: exact checkout, integration-ref fetch,
   merge-base, bounded review material, aspect parsing, executor-side citation
   downgrade, and the per-attempt process environment.
+- `runner/RemoteReviewExecutor.cs` (`Write`, `ReapSlot`): the single durable
+  slot write and the terminal reap that a late heartbeat renewal cannot undo,
+  covered by
+  `runner.Tests/RemoteReviewExecutorTests.cs`
+  (`Renewal_persisted_after_terminal_cleanup_leaves_the_slot_reaped`).
 - `runner/ReviewBaselineResultCache.cs`: baseline result key, bounded lifetime,
   integration-branch pruning, and the atomic per-entry store.
 - `runner/ReviewBuildServerIsolation.cs` and

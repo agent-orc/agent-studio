@@ -226,6 +226,69 @@ public sealed class RemoteReviewExecutorTests : IDisposable
             && line.Contains("terminalOutcome=ProductFailure", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// AGT-2864: deleting the settled slot record is the daemon's
+    /// acknowledgement that an attempt is finished. The heartbeat keeps
+    /// renewing until the executor returns, so a renewal the Task Server has
+    /// already answered can persist that answer after the record was reaped -
+    /// on a loaded host purely because the continuation waited for a thread.
+    /// The late save must not write the record back: a resurrected slot names a
+    /// reported fence and an attempt that no longer exists, and the next daemon
+    /// generation would adopt it and re-report work that is already graded.
+    /// </summary>
+    [Fact]
+    public async Task Renewal_persisted_after_terminal_cleanup_leaves_the_slot_reaped()
+    {
+        var handler = new BlockingCleanupHandler();
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://task-server") };
+        var options = Options(heartbeatSeconds: 1);
+        using var client = new TaskServerClient(
+            http,
+            options.RunnerId,
+            usesDurableTaskServer: true,
+            options: options);
+        var state = new ReviewStateStore(options.StateDir);
+        var slot = await CreateCompletedSlotAsync(state);
+        var renewalParked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var slotReaped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var logs = new List<string>();
+        var executor = new RemoteReviewExecutor(
+            options,
+            client,
+            state,
+            line =>
+            {
+                lock (logs) logs.Add(line);
+                if (line.Contains("review slot state deleted", StringComparison.Ordinal))
+                    slotReaped.TrySetResult();
+            })
+        {
+            // Adoption and any renewal before the terminal phase persist
+            // straight through; the heartbeat renewal that overlaps cleanup is
+            // held until the record is reaped, which is the interleaving the
+            // promotion gate hit by chance.
+            BeforeAuthorityPersistOverride = async () =>
+            {
+                if (!handler.CleanupStarted.Task.IsCompleted) return;
+                renewalParked.TrySetResult();
+                await slotReaped.Task;
+            },
+        };
+
+        var execution = executor.ReattachAsync(slot, CancellationToken.None);
+        await handler.CleanupStarted.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        await renewalParked.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        handler.ReleaseCleanup.TrySetResult();
+
+        Assert.Equal(0, await execution.WaitAsync(TimeSpan.FromSeconds(30)));
+        Assert.True(slotReaped.Task.IsCompletedSuccessfully);
+        Assert.True(handler.Renewals >= 2, $"expected a heartbeat renewal, saw {handler.Renewals}");
+        Assert.Empty(state.LoadAll());
+        Assert.Contains(logs, line =>
+            line.Contains("review slot state deleted", StringComparison.Ordinal)
+            && line.Contains("terminalOutcome=Pass", StringComparison.Ordinal));
+    }
+
     [Theory]
     [InlineData(HttpStatusCode.ServiceUnavailable, "task-not-found", "TaskNotFound")]
     [InlineData(HttpStatusCode.NotFound, "not-found", "TaskNotFound")]
@@ -350,7 +413,7 @@ public sealed class RemoteReviewExecutorTests : IDisposable
         return slot;
     }
 
-    private RunnerOptions Options() => new()
+    private RunnerOptions Options(int heartbeatSeconds = 30) => new()
     {
         ServerUrl = "http://task-server",
         RunnerId = "review-runner",
@@ -365,7 +428,7 @@ public sealed class RemoteReviewExecutorTests : IDisposable
         CliBin = "test",
         CliArgs = "",
         TtlSeconds = 120,
-        HeartbeatSeconds = 30,
+        HeartbeatSeconds = heartbeatSeconds,
     };
 
     private static ReviewClaimResponse Claim()
@@ -464,6 +527,93 @@ public sealed class RemoteReviewExecutorTests : IDisposable
             return new HttpResponseMessage(HttpStatusCode.NotFound)
             {
                 Content = new StringContent("unexpected test request"),
+            };
+        }
+
+        private static async Task<T> ReadAsync<T>(HttpRequestMessage request)
+            => JsonSerializer.Deserialize<T>(
+                   await request.Content!.ReadAsStringAsync(),
+                   Json)
+               ?? throw new InvalidDataException($"Request body was not valid {typeof(T).Name} JSON.");
+
+        private static HttpResponseMessage JsonResponse<T>(T value)
+            => new(HttpStatusCode.OK)
+            {
+                Content = new StringContent(JsonSerializer.Serialize(value, Json)),
+            };
+    }
+
+    /// <summary>
+    /// Accepts the terminal report and then holds the cleanup acknowledgement,
+    /// which keeps the executor inside its terminal phase long enough for the
+    /// heartbeat to renew against the same slot.
+    /// </summary>
+    private sealed class BlockingCleanupHandler : HttpMessageHandler
+    {
+        private int _renewals;
+
+        public TaskCompletionSource CleanupStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleaseCleanup { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int Renewals => Volatile.Read(ref _renewals);
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+
+            if (path.EndsWith("/lease/renew", StringComparison.Ordinal))
+            {
+                var renew = await ReadAsync<ReviewLeaseRenewRequest>(request);
+                Interlocked.Increment(ref _renewals);
+                return JsonResponse(new ReviewLeaseDto(
+                    renew.LeaseId,
+                    "attempt-1",
+                    "subject-1",
+                    renew.ExecutorId,
+                    renew.InstanceId,
+                    "review-host",
+                    renew.Fence,
+                    DateTime.UtcNow,
+                    DateTime.UtcNow.AddSeconds(renew.RequestedTtlSeconds),
+                    "active",
+                    "review-attempt-1-f17",
+                    25000,
+                    23));
+            }
+
+            if (path.EndsWith("/report", StringComparison.Ordinal))
+            {
+                var report = await ReadAsync<ReviewReportRequest>(request);
+                return JsonResponse(new ReviewReportDto(
+                    "report-1",
+                    "attempt-1",
+                    "subject-1",
+                    report.Outcome,
+                    report.FailureClassification,
+                    "accepted",
+                    new string('c', 64),
+                    DateTime.UtcNow,
+                    false,
+                    "5-human-review"));
+            }
+
+            if (path.EndsWith("/cleanup", StringComparison.Ordinal))
+            {
+                CleanupStarted.TrySetResult();
+                await ReleaseCleanup.Task;
+                return JsonResponse(new ReviewCleanupResponse(
+                    "cleaned",
+                    "attempt-1",
+                    DateTime.UtcNow,
+                    false));
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound)
+            {
+                Content = new StringContent($"unexpected test request: {path}"),
             };
         }
 
