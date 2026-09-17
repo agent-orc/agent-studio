@@ -175,6 +175,13 @@
   display: none;
 }
 
+// AGT-2818: the hold block is the reason, not the summary, so it sits under the
+// CURRENT line. It stays visible in dense mode: a card that cannot be picked is
+// exactly the card whose explanation must not be the first thing collapsed.
+.task-live__hold:not(:empty) {
+  margin-block-start: var(--studio-spacing-1);
+}
+
 @keyframes task-live-pulse {
   0% {
     box-shadow: 0 0 0 0 color-mix(in srgb, var(--studio-accent-3) 50%, transparent);

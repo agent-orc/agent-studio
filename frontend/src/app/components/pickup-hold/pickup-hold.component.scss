@@ -1,0 +1,137 @@
+:host {
+  display: block;
+  min-width: 0;
+}
+
+// Status is carried by a background tint, a border and a dot. No left accent
+// bar (style-guide hard rule R1), and both tones read in either theme because
+// every colour is mixed from a semantic token.
+.pickup-hold {
+  display: grid;
+  gap: var(--studio-spacing-1);
+  min-width: 0;
+  padding: var(--studio-spacing-2);
+  border: 1px solid color-mix(in srgb, var(--studio-accent-4) 34%, var(--studio-border));
+  border-radius: var(--studio-card-radius);
+  background: color-mix(in srgb, var(--studio-accent-4) 9%, var(--studio-bg-elevated));
+  color: var(--studio-fg);
+}
+
+.pickup-hold[data-tone='blocked'] {
+  border-color: color-mix(in srgb, var(--studio-warn) 45%, var(--studio-border));
+  background: color-mix(in srgb, var(--studio-warn) 12%, var(--studio-bg-elevated));
+}
+
+.pickup-hold--detail {
+  padding: var(--studio-spacing-3);
+}
+
+// Wraps rather than truncates: "Held: this cannot clear by itself" clipped to
+// "Held: this cannot clea..." on a narrow board column, which is the one part of
+// the block that must never be guessed at.
+.pickup-hold__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--studio-spacing-1) var(--studio-spacing-2);
+  min-width: 0;
+}
+
+.pickup-hold__dot {
+  align-self: center;
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--studio-accent-4);
+}
+
+.pickup-hold[data-tone='blocked'] .pickup-hold__dot {
+  background: var(--studio-warn);
+}
+
+.pickup-hold__headline {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.pickup-hold__mechanism {
+  flex: 0 0 auto;
+  /* stylelint-disable-next-line scale-unlimited/declaration-strict-value -- A 1px optical inset on a 9px pill; the smallest spacing token is 4px and doubles the chip height. */
+  padding: 1px var(--studio-spacing-2);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--studio-fg-dim) 18%, transparent);
+  color: var(--studio-fg-dim);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.pickup-hold__age {
+  flex: 0 0 auto;
+  margin-inline-start: auto;
+  color: var(--studio-fg-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.pickup-hold__reason {
+  margin: 0;
+  min-width: 0;
+  color: var(--studio-fg-muted);
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.pickup-hold--detail .pickup-hold__reason {
+  font-size: 12px;
+}
+
+.pickup-hold__ways-out {
+  display: grid;
+  gap: var(--studio-spacing-1);
+  margin-block-start: var(--studio-spacing-1);
+}
+
+.pickup-hold__ways-out-label {
+  color: var(--studio-fg-muted);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.pickup-hold__list {
+  display: grid;
+  gap: var(--studio-spacing-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pickup-hold__item {
+  display: grid;
+  gap: var(--studio-spacing-1);
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
+  border: 1px solid var(--studio-border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--studio-fg-dim) 6%, transparent);
+}
+
+.pickup-hold__item-label {
+  color: var(--studio-fg);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.pickup-hold__item-detail {
+  color: var(--studio-fg-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}

@@ -54,10 +54,16 @@ export function canOfferRelease(
  * release. `waitingForRelease` already means "terminal but not released", so the
  * lane check is the backend's; a resolved `targetJobId` is required because the
  * release call addresses the target by folder id plus watch path.
+ *
+ * AGT-2818: an archived target is reported as `unsatisfiable` as well, because
+ * no run is left that could release it. That makes the affordance more
+ * important, not less - releasing the target by hand is one of the two ways out
+ * of an archived gate - so the filter deliberately keeps those rows.
  */
 export function releasableWaitsOnTargets(info: TaskInfo): WaitsOnItem[] {
   return (info.waitsOn?.items ?? []).filter(
-    item => item.waitingForRelease === true && !!item.targetJobId,
+    item => (item.waitingForRelease === true || item.unsatisfiable === true)
+      && !!item.targetJobId,
   );
 }
 

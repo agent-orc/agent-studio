@@ -5,6 +5,14 @@
        data-testid="remote-dispatch-rejection"
        role="status">
     <span class="remote-rejection__dot" aria-hidden="true"></span>
-    <span><strong>Runner {{ runnerLabel() }} rejected:</strong> {{ value.reason }}</span>
+    <span class="remote-rejection__body">
+      <span><strong>Runner {{ runnerLabel() }} rejected:</strong> {{ value.reason }}</span>
+      <span class="remote-rejection__meta">
+        <span class="remote-rejection__code" data-testid="remote-dispatch-rejection-code">{{ value.code }}</span>
+        @if (rejectedAtLabel(); as at) {
+          <span data-testid="remote-dispatch-rejection-at">refused {{ at }}</span>
+        }
+      </span>
+    </span>
   </div>
 }

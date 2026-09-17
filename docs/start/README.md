@@ -129,6 +129,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | UI task iteration pipeline and Human Gate hand-off | [contracts/ui-task-pipeline.md](../system/contracts/ui-task-pipeline.md) |
 | Operator decision surface for escalated tasks | [operations/decision-surface/README.md](../operations/decision-surface/README.md) |
 | Parked-card recall (machine-readable blocker, Wiedervorlage sweep, lane aging; AGT-2492) | [concepts/parked-card-recall.md](../concepts/parked-card-recall.md) |
+| Pickup holds (queued-but-unpickable cards, unsatisfiable release gates, dispatch rejections, `GET /api/pickup-holds`; AGT-2818) | [concepts/pickup-hold-visibility.md](../concepts/pickup-hold-visibility.md) |
 | Per-project cycle time by pipeline stage and lane transitions (queue wait, coding, gate, review, integration, human review; transition matrix and bounce causes; `GET /api/projects/{project}/cycle-time`) | [concepts/cycle-time-stage-model.md](../concepts/cycle-time-stage-model.md) |
 | Result view and case templates | [concepts/result-view-and-case-templates.md](../concepts/result-view-and-case-templates.md) |
 | Publishing workflows (publish-target derivation + pending badges; PUB-1) | [concepts/publishing-workflows.md](../concepts/publishing-workflows.md) |

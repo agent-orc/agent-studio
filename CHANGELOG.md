@@ -28,6 +28,22 @@ the models it actually runs, and shows the true integration state of a card.
 
 ### Added
 
+- A card held in a pickup lane now says so where it claims to be queued
+  (AGT-2818). `TaskInfo.pickupHold` is a read-time projection built by the pure
+  `PickupHoldPolicy` from the same facts the runner admission gate consults, and
+  carries the mechanism (dependency gate, dispatch rejection, epic container,
+  crash backoff, pickup policy), the specific reason, when the hold started, how
+  long it has lasted, and the ways out. A `releaseGate` edge pointing at an
+  archived, never released target is now classified `unsatisfiable` rather than
+  "waiting", earns the same once-per-card runner warning a dependency cycle
+  already got, and renders as "this gate can never open" instead of "waits for
+  release". The durable `remoteDispatchRejection` is rendered on the board card
+  as well as the detail header, with its code and instant. `GET /api/pickup-holds`
+  and a boot sweep list every held card across all projects. Everything here is
+  report-only: releasing a validation gate stays an operator decision, so the two
+  resolutions are offered and never taken. See
+  [`docs/concepts/pickup-hold-visibility.md`](docs/concepts/pickup-hold-visibility.md).
+
 - Branch reclamation (AGT-2793) is now wired into the product path instead of
   sitting unreachable: `BranchReclaimTriggerService` fires after a successful
   delivery integration, after a card archives, and (via a new

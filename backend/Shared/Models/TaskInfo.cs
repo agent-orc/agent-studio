@@ -504,6 +504,17 @@ public record TaskInfo
     public RemoteDispatchRejection? RemoteDispatchRejection { get; init; }
 
     /// <summary>
+    /// AGT-2818 - read-time projection of why a card sitting in a pickup lane
+    /// cannot be picked: the mechanism, the specific reason, when it started,
+    /// how long it has been true, and the ways out. Folded on by
+    /// <c>TaskEndpointHelpers.WithRuntime</c> from the same facts the runner
+    /// admission gate consults, so the board and the pickup decision can never
+    /// disagree. Null for every card that is genuinely pickup-eligible and for
+    /// every lane that is not a pickup lane. Never persisted to <c>task.json</c>.
+    /// </summary>
+    public PickupHoldStatus? PickupHold { get; init; }
+
+    /// <summary>
     /// AGT-2069 — read-time spawn-visibility + spawn-contract projection for a
     /// planning task (<c>Mode == planning</c>): which follow-up cards it spawned
     /// (AGT-2028 ledger), whether the operator declared "no follow-up intended",

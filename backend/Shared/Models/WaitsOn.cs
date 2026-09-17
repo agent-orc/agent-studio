@@ -44,6 +44,14 @@ public record WaitsOnStatus
     /// </summary>
     public bool CycleDetected { get; init; }
 
+    /// <summary>
+    /// AGT-2818: true when at least one edge is <see cref="WaitsOnItem.Unsatisfiable"/>,
+    /// i.e. a gate that no run left in the system can open. Like
+    /// <see cref="CycleDetected"/> this is a configuration error rather than a
+    /// wait, and the runner reports it with the same once-per-card warning.
+    /// </summary>
+    public bool UnsatisfiableGate { get; init; }
+
     /// <summary>No dependsOn edges at all - the card renders no dependency chip.</summary>
     public bool IsEmpty => Items.Count == 0;
 }
@@ -84,6 +92,27 @@ public record WaitsOnItem
     /// uses this to say "waiting for release" instead of "waiting for completion".
     /// </summary>
     public bool WaitingForRelease { get; init; }
+
+    /// <summary>
+    /// AGT-2818 - true when this edge can never be fulfilled by anything the
+    /// system will do on its own, so it is a configuration error rather than a
+    /// wait. Today that is exactly the archived release gate: the target has
+    /// come to rest in <c>7-archive</c> without its explicit release flag, and
+    /// no run is left that could set it. "Waiting for release" and "this gate
+    /// can never open" are different sentences, and a card that has sat in a
+    /// pickup lane for a month deserves the second one.
+    ///
+    /// <para>Deliberately additive to <see cref="WaitingForRelease"/> rather
+    /// than exclusive with it: the way out is still an explicit release, so
+    /// every release affordance keyed on that flag has to keep working.</para>
+    /// </summary>
+    public bool Unsatisfiable { get; init; }
+
+    /// <summary>
+    /// One sentence naming why <see cref="Unsatisfiable"/> is set, for the chip
+    /// tooltip and the sweep report. Empty when the edge is satisfiable.
+    /// </summary>
+    public string UnsatisfiableReason { get; init; } = "";
 
     /// <summary>Target task's folder id (for navigation); null when unresolved.</summary>
     public string? TargetJobId { get; init; }
@@ -151,6 +180,7 @@ public static class WaitsOnEvaluator
         var items = new List<WaitsOnItem>();
         var seen = new HashSet<string>(KeyComparer);
         var blocked = false;
+        var unsatisfiableGate = false;
 
         foreach (var dependency in deps)
         {
@@ -167,6 +197,8 @@ public static class WaitsOnEvaluator
             var waitingForRelease = terminal && dependency!.ReleaseGate && !target!.Released;
             var fulfilled = terminal && (!dependency.ReleaseGate || target!.Released);
             if (!fulfilled) blocked = true;
+            var unsatisfiable = waitingForRelease && IsArchivedState(target?.State);
+            if (unsatisfiable) unsatisfiableGate = true;
 
             items.Add(new WaitsOnItem
             {
@@ -176,6 +208,8 @@ public static class WaitsOnEvaluator
                 ReleaseGate = dependency!.ReleaseGate,
                 TargetReleased = target?.Released == true,
                 WaitingForRelease = waitingForRelease,
+                Unsatisfiable = unsatisfiable,
+                UnsatisfiableReason = unsatisfiable ? ArchivedGateReason(key) : "",
                 TargetJobId = target?.Id,
                 TargetTitle = target?.Title,
                 TargetState = target?.State,
@@ -184,8 +218,30 @@ public static class WaitsOnEvaluator
         }
 
         var cycle = SitsOnCycle(self, dependsOnGraph);
-        return new WaitsOnStatus { Items = items, Blocked = blocked, CycleDetected = cycle };
+        return new WaitsOnStatus
+        {
+            Items = items,
+            Blocked = blocked,
+            CycleDetected = cycle,
+            UnsatisfiableGate = unsatisfiableGate,
+        };
     }
+
+    /// <summary>
+    /// True for the terminal lane a card comes to rest in. An archived target
+    /// has no run left that could set its release flag, which is what turns a
+    /// release gate pointing at it from a wait into a configuration error.
+    /// </summary>
+    public static bool IsArchivedState(string? state) =>
+        string.Equals(state, TaskStates.Archive, StringComparison.Ordinal);
+
+    /// <summary>
+    /// The operator-facing sentence for an archived release gate. Kept next to
+    /// the rule so the runner warning, the sweep report, and the card chip all
+    /// say the same thing.
+    /// </summary>
+    public static string ArchivedGateReason(string key) =>
+        $"{key} is archived and was never released, so no run is left that could open this gate.";
 
     /// <summary>
     /// True when <paramref name="start"/> can reach itself through dependsOn

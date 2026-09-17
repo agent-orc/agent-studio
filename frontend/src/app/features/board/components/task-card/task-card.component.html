@@ -215,15 +215,9 @@
       </span>
     }
   </div>
-  @if (displayedExecutionLocation()?.lastRejection; as rejection) {
-    <div class="task-card__cooldown"
-         [attr.data-rejection-code]="rejection.code"
-         data-testid="remote-dispatch-rejection"
-         role="status">
-      <span class="task-card__cooldown-glyph" aria-hidden="true">●</span>
-      <span><strong>Runner {{ rejection.runnerName || rejection.runnerId }} rejected:</strong> {{ rejection.reason }}</span>
-    </div>
-  }
+  <!-- AGT-2818: one rendering of the durable refusal, shared with the detail
+       header, so the card also names the code and when it happened. -->
+  <app-remote-dispatch-rejection [execution]="displayedExecutionLocation()" [compact]="compact()" />
   @if (cooldownBanner(); as cd) {
     <div class="task-card__cooldown"
          data-testid="task-card-cooldown-retry"
