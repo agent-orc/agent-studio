@@ -61,7 +61,13 @@ public sealed class PeriodicProbeService : BackgroundService
                         _store.SetVersionTopology(runtime, _git.ReadVersionTopology(runtime.Commit));
                 }
                 if (_options.RequireReleaseManifest)
-                    _store.SetReleaseComparison(await _releasePreflight.EvaluateAsync(allowDowngrade: false, stoppingToken));
+                    // Bookkeeping only, so the release comparison is refreshed
+                    // without the AGT-2865 precondition probes: replaying the
+                    // board query every ProbeIntervalSeconds would cost the
+                    // running instance more than the freshness is worth. The
+                    // preflight endpoint and the orchestrator evaluate them.
+                    _store.SetReleaseComparison(await _releasePreflight.EvaluateAsync(
+                        allowDowngrade: false, stoppingToken, includeVerificationPreconditions: false));
             }
             catch (OperationCanceledException) { return; }
             catch (Exception ex)

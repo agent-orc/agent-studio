@@ -52,6 +52,7 @@ builder.Services.AddSingleton<IBackendProbe>(sp =>
 });
 
 builder.Services.AddSingleton<UpdateVerifier>();
+builder.Services.AddSingleton<VerificationPreconditionService>();
 builder.Services.AddSingleton<ReleasePreflightService>();
 
 builder.Services.AddSingleton(sp =>

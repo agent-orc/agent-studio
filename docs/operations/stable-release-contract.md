@@ -63,6 +63,49 @@ backend copies the manifest beside the published assembly and exposes the
 same identity from `GET /api/system/about` and `GET /api/system/version`.
 `GET /healthz` remains body-compatible and adds tag and commit response headers.
 
+## Required Stable configuration
+
+The update contract needs one block in the Stable checkout's
+`appsettings.Local.json`. These are the exact keys:
+
+```json
+{
+  "Environment": { "IsDev": false },
+  "TaskRepository": "C:\\Projects\\agent-taskboard-workspace",
+  "UpdateService": {
+    "ProbeEnabled": true
+  }
+}
+```
+
+- `UpdateService:ProbeEnabled` opens the phase-6 `db-touch` sentinel
+  (`POST /api/_internal/probe`), the one verification step that needs a gate at
+  all. Leave the key unset and the sentinel follows the installed update
+  contract: it is open exactly while
+  `<TaskRepository>/.metadata/stable-approved-tag` exists, which is the file
+  candidate approval writes anyway. Set it to `true` on a Stable host that runs
+  the Update Service before that marker exists. Set it to `false` to close the
+  sentinel, which makes every preflight refuse until it is reopened.
+- `Environment:IsDev` stays `false` on Stable. It also opens the sentinel, but
+  it brands the whole UI as dev, so it is not the flag to reach for here.
+- `DevTools:UpdateStableEnabled` is not part of this contract. It still opens
+  the sentinel for backwards compatibility, but its other consumer is the
+  DevTools SSE stream that runs `update-stable.sh` from inside the backend, so
+  it stays off on Stable.
+- `UpdateService:ApprovedTagFile` is optional, and only needed when the
+  approved-tag marker does not live under `TaskRepository`.
+
+`appsettings.Local.json` is loaded with `reloadOnChange`, so a corrected flag
+takes effect on the next request and the preflight can simply be re-read; no
+restart is required.
+
+Until 17.09.2026 the sentinel had no gate of its own and hung off
+`DevTools:UpdateStableEnabled`. A default Stable sets neither that flag nor
+`Environment:IsDev`, so `db-touch` could not pass there under any
+circumstances, and the run found out only after it had stopped the stack,
+restored, rebuilt and restarted (run `0649a4e0`, v0.6.0 to v0.7.0). The failure
+then took the 0.6.0 rollback path underneath an already-running 0.7.0 backend.
+
 ## Stable preflight
 
 The update preflight compares four explicit identities:
@@ -112,6 +155,46 @@ even when the frontend port and backend health endpoint are reachable.
 Offline mode is an explicit updater input (`ReleaseMetadataOffline`), not an
 inference from cache presence or age. It is accepted only when both cached
 manifests and the cached latest-approved tag still pass the same comparison.
+
+### Verification preconditions
+
+Comparing identities is not enough: the preflight also asks whether the
+post-restart verification matrix can succeed at all against the instance that
+is running right now. Every post-restart step declares what it needs, and
+`GET /update/preflight` probes it against the running backend before the update
+is allowed.
+
+| Step | Precondition on the running instance | Refuses the run |
+|---|---|---|
+| `healthz-stable` | `GET /healthz` answers 200 with body `"ok"` | only when the route is gone |
+| `runner-status` | `GET /api/runner/status` answers 200 with a `projects` map | only when the route is gone |
+| `jobs-grouped` | `GET /api/tasks/grouped` answers 200 and parses | only when the route is gone |
+| `clients` | `GET /api/clients` answers 200 with at least one client | only when the route is gone |
+| `cli-quota` | `GET /api/cli/quota` answers 200 | only when the route is gone |
+| `db-touch` | `POST /api/_internal/probe` answers 200 and echoes the sentinel | yes, when the sentinel is gated off |
+| `frontend-listening` | the configured `FrontendUrl` port accepts a connection | never |
+
+A step whose endpoint answers `401`, `403`, or `404` refuses the run:
+the route is absent or closed by configuration, so the restarted process
+reproduces it exactly and there is nothing to be learned by stopping the stack
+first. The refusal is an ordinary preflight error and names the fix, for
+example `db-touch precondition failed: POST /api/_internal/probe -> http=404.
+db-touch needs UpdateService:ProbeEnabled=true in the Stable
+appsettings.Local.json ...`.
+
+Every other unmet precondition is reported and does not refuse: a `5xx`, a
+timeout, an unexpected payload, or a frontend that is currently down. An
+operator updating a backend that is already unwell must not be locked out by
+the breakage the update is meant to repair, phase 6 retries those cases with
+its own budgets (healthz five times, `jobs-grouped` for about 120 s), and a
+frontend-only failure is `degraded` rather than `failed` either way. When the
+running backend does not answer `/healthz` at all, the remaining steps are
+reported as not evaluated rather than guessed at.
+
+The per-step verdicts travel on the preflight response as
+`verificationPreconditions` and are written to
+`<run folder>/verification-preconditions.json`, so a refusal is readable from
+the run folder alone.
 
 ## Update Service ordering, mutation boundary, and health wait
 
@@ -312,6 +395,20 @@ New-Item -ItemType Directory -Force $Metadata | Out-Null
 Copy-Item -Force .\build-manifest.json "$Metadata\stable-candidate-manifest.json"
 Set-Content -NoNewline "$Metadata\stable-approved-tag" "v$Version"
 ```
+
+Before triggering, confirm all of the following:
+
+- The candidate manifest and the approved tag are in place (the block above).
+- No update trigger is already in flight: `/update/status` reports
+  `phase=idle` and `isRunning=false`.
+- The Stable `appsettings.Local.json` carries the block from
+  [Required Stable configuration](#required-stable-configuration), so the
+  `db-touch` sentinel answers. The preflight proves it: `allowed` is `true` and
+  every entry in `verificationPreconditions` reports `ok=true`. A failing
+  `frontend-listening` entry is advisory; a failing `db-touch` entry is the
+  incident from 17.09.2026 and refuses the run until the flag is set.
+- The frontend dev server is up on `FrontendUrl`, otherwise the run ends
+  `degraded` after a verified backend and has to be finished by hand.
 
 Start or leave the Update Service running, inspect the non-mutating preflight,
 then trigger the update. Include `X-Update-Token` when the service is configured

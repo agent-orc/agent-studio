@@ -37,6 +37,15 @@ public sealed class FakeBackendHarness : IAsyncDisposable
     private DateTime _startedAtUtc;
     public bool ProbeReturns503 { get; set; }
     /// <summary>
+    /// When true, <c>/api/_internal/probe</c> answers 404 exactly the way a
+    /// Stable backend with the sentinel gated off does (AGT-2865). This is the
+    /// shape the preflight has to catch before the stack is stopped, and it is
+    /// deliberately distinct from <see cref="ProbeReturns503"/>: a 503 is a
+    /// transient the post-restart matrix may still clear, a 404 is a closed
+    /// gate that no restart can open.
+    /// </summary>
+    public bool ProbeReturns404 { get; set; }
+    /// <summary>
     /// When &gt; 0, the first N calls to <c>/api/_internal/probe</c> return
     /// 503 and subsequent calls return 200. Lets the auto-rollback positive
     /// case fail the forward db-touch then succeed during rollback's
@@ -129,6 +138,8 @@ public sealed class FakeBackendHarness : IAsyncDisposable
         app.MapPost("/api/_internal/probe", async (HttpContext ctx) =>
         {
             var call = System.Threading.Interlocked.Increment(ref ProbeCallCount);
+            if (ProbeReturns404)
+                return Results.NotFound();
             if (ProbeReturns503)
                 return Results.Json(new { error = "probe disabled" }, statusCode: 503);
             if (ProbeFailFirstN > 0 && call <= ProbeFailFirstN)

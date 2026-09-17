@@ -52,11 +52,19 @@ public sealed class UpdateOrchestrator
     /// </summary>
     public const string BuildManifestEnvironmentVariable = "ATP_BUILD_MANIFEST";
 
+    /// <summary>
+    /// Per-run record of what the post-restart verification steps needed from
+    /// the instance that was running when the run started (AGT-2865). Written
+    /// by both pipelines, so a refusal is readable from the run folder alone.
+    /// </summary>
+    public const string VerificationPreconditionsFileName = "verification-preconditions.json";
+
     private readonly UpdateStatusStore _store;
     private readonly IGitProbe _git;
     private readonly IBackendProbe _backend;
     private readonly UpdateVerifier _verifier;
     private readonly ReleasePreflightService _releasePreflight;
+    private readonly VerificationPreconditionService _preconditions;
     private readonly UpdateServiceOptions _options;
     private readonly ILogger<UpdateOrchestrator> _logger;
     private readonly ILoggerFactory _loggerFactory;
@@ -68,6 +76,7 @@ public sealed class UpdateOrchestrator
         IBackendProbe backend,
         UpdateVerifier verifier,
         ReleasePreflightService releasePreflight,
+        VerificationPreconditionService preconditions,
         UpdateServiceOptions options,
         ILogger<UpdateOrchestrator> logger,
         ILoggerFactory loggerFactory)
@@ -77,6 +86,7 @@ public sealed class UpdateOrchestrator
         _backend = backend;
         _verifier = verifier;
         _releasePreflight = releasePreflight;
+        _preconditions = preconditions;
         _options = options;
         _logger = logger;
         _loggerFactory = loggerFactory;
@@ -203,6 +213,8 @@ public sealed class UpdateOrchestrator
                 releaseComparison = release;
                 folder.WriteOutput("release-preflight.json", System.Text.Json.JsonSerializer.Serialize(release,
                     new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase, WriteIndented = true }));
+                if (release.VerificationPreconditions is not null)
+                    folder.WriteOutput(VerificationPreconditionsFileName, SerializeIndented(release.VerificationPreconditions));
                 if (!release.Allowed)
                 {
                     FinishFailed(runId, startedAt, headBefore, headBefore, trigger,
@@ -260,6 +272,25 @@ public sealed class UpdateOrchestrator
                     FinishFailed(runId, startedAt, headBefore, headBefore, trigger,
                         $"release preflight refused: {string.Join("; ", errors)}", null, folder, preSnapshot,
                         intendedRelease, release.Running, release.Direction.ToString());
+                    return;
+                }
+            }
+            else
+            {
+                // AGT-2865: the branch pipeline has no release gate, so the
+                // verification preconditions are evaluated here directly. The
+                // rule is the release path's rule: only a step the running
+                // instance proves cannot pass - its endpoint absent or closed
+                // by configuration - refuses the run, and it refuses before
+                // anything has been stopped.
+                var preconditions = await _preconditions.EvaluateAsync(ct);
+                folder.WriteOutput(VerificationPreconditionsFileName, SerializeIndented(preconditions));
+                var blocking = VerificationPreconditionPolicy.BlockingErrors(preconditions);
+                if (blocking.Count > 0)
+                {
+                    FinishFailed(runId, startedAt, headBefore, headBefore, trigger,
+                        $"verification preconditions refused: {string.Join("; ", blocking)}",
+                        null, folder, preSnapshot);
                     return;
                 }
             }
@@ -1066,6 +1097,15 @@ public sealed class UpdateOrchestrator
             lastRunHeadAfter: headAfter,
             verificationFailures: failures);
     }
+
+    /// <summary>Camel-cased, indented JSON for a run-folder artefact.</summary>
+    private static string SerializeIndented<T>(T value) =>
+        System.Text.Json.JsonSerializer.Serialize(value, new System.Text.Json.JsonSerializerOptions
+        {
+            PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
+            WriteIndented = true,
+            Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() },
+        });
 
     private void FinishFailed(string runId, DateTime startedAt, string headBefore, string headAfter, string trigger,
         string error, IReadOnlyList<VerificationFailure>? failures, RunFolder folder, UpdateRunSnapshot? preSnapshot,
