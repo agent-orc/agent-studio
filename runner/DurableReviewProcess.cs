@@ -73,7 +73,8 @@ internal sealed class DurableReviewProcess
 
     public static DurableReviewProcess Start(
         RunnerOptions options,
-        PersistedReviewSlot slot)
+        PersistedReviewSlot slot,
+        Action<string>? log = null)
     {
         var claim = slot.Claim;
         var spec = BuildSpec(options, claim);
@@ -89,16 +90,23 @@ internal sealed class DurableReviewProcess
                               "dotnet",
                               StringComparison.OrdinalIgnoreCase)
                           || executable.Contains("testhost", StringComparison.OrdinalIgnoreCase);
+        // AGT-2866: a review worker carries the same per-slot envelope as a
+        // coding worker. The shell wrapper execs, so the pid recorded below is
+        // still the worker's pid and the reattachment proofs are unchanged.
+        var launch = WorkerCgroup.Launch(
+            managedHost ? "dotnet" : executable,
+            managedHost
+                ? [typeof(DurableReviewProcess).Assembly.Location, "--detached-review-worker", specPath]
+                : ["--detached-review-worker", specPath],
+            WorkerCgroup.TryPrepare(options, slot.WorkerDirectory, log ?? (_ => { })));
         var start = new ProcessStartInfo
         {
-            FileName = managedHost ? "dotnet" : executable,
+            FileName = launch.FileName,
             UseShellExecute = false,
             CreateNoWindow = true,
             WorkingDirectory = slot.WorkspacePath,
         };
-        if (managedHost) start.ArgumentList.Add(typeof(DurableReviewProcess).Assembly.Location);
-        start.ArgumentList.Add("--detached-review-worker");
-        start.ArgumentList.Add(specPath);
+        foreach (var argument in launch.Arguments) start.ArgumentList.Add(argument);
         var process = Process.Start(start)
                       ?? throw new InvalidOperationException("Failed to start detached review worker.");
         var started = process.StartTime.ToUniversalTime();

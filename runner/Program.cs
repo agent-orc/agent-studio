@@ -257,6 +257,15 @@ static void PrintUsage()
                                                             (RUNNER_TLS_CERTIFICATE_SHA256)
           --ttl <seconds>         Requested lease TTL         (RUNNER_TTL_SECONDS)
           --max-parallelism <n>   Bootstrap/fallback host slots (RUNNER_MAX_PARALLELISM, default 2)
+          RUNNER_HOST_CODING_SLOTS / RUNNER_HOST_REVIEW_SLOTS
+                                  Host slot split both roles read for the
+                                  per-worker resource envelope (default: this
+                                  service's own RUNNER_MAX_PARALLELISM each).
+                                  12 cores across 2+2 slots is 3 cores per slot.
+          RUNNER_WORKER_CPU_BURST How far above its fair share one worker may
+                                  burst on an otherwise idle host (default 2.0)
+          --worker-envelope 0     Start detached workers without a per-worker
+                                  cgroup                  (RUNNER_WORKER_ENVELOPE)
           --poll-seconds <n>      Empty-queue poll delay       (RUNNER_POLL_SECONDS, default 5)
           --server-request-timeout-seconds <n>
                                   Per-request Task Server cap  (RUNNER_SERVER_REQUEST_TIMEOUT_SECONDS, default 60)

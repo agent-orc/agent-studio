@@ -57,6 +57,48 @@ public class RunnerOptionsTests
         Assert.Equal(3, options.IdleWatchdogMinutes);
     }
 
+    /// <summary>
+    /// AGT-2866: both roles must derive the same cores-per-slot budget, so both
+    /// slot counts are host configuration, not per-role configuration. The
+    /// default is this service's own ceiling on both sides, which matches the
+    /// symmetric two-coding-plus-two-review install.
+    /// </summary>
+    [Fact]
+    public void Host_slot_split_defaults_to_this_service_ceiling_on_both_sides()
+    {
+        using var environment = new EnvironmentVariableScope(
+            ("RUNNER_HOST_CODING_SLOTS", null),
+            ("RUNNER_HOST_REVIEW_SLOTS", null),
+            ("RUNNER_WORKER_CPU_BURST", null),
+            ("RUNNER_WORKER_ENVELOPE", null));
+
+        var (options, _, _, _) = RunnerOptions.Parse(["--poll", "--max-parallelism", "2"]);
+
+        Assert.Equal(2, options.HostCodingSlots);
+        Assert.Equal(2, options.HostReviewSlots);
+        Assert.Equal(WorkerResourceEnvelope.DefaultCpuBurst, options.WorkerCpuBurst);
+        Assert.True(options.WorkerEnvelopeEnabled);
+    }
+
+    [Fact]
+    public void Host_slot_split_burst_and_envelope_switch_are_configurable()
+    {
+        using var environment = new EnvironmentVariableScope(
+            ("RUNNER_HOST_CODING_SLOTS", "3"),
+            // A coding-only host declares zero review slots so its workers get
+            // the whole machine's budget instead of reserving half of it.
+            ("RUNNER_HOST_REVIEW_SLOTS", "0"),
+            ("RUNNER_WORKER_CPU_BURST", "1.5"),
+            ("RUNNER_WORKER_ENVELOPE", "0"));
+
+        var (options, _, _, _) = RunnerOptions.Parse(["--poll"]);
+
+        Assert.Equal(3, options.HostCodingSlots);
+        Assert.Equal(0, options.HostReviewSlots);
+        Assert.Equal(1.5, options.WorkerCpuBurst);
+        Assert.False(options.WorkerEnvelopeEnabled);
+    }
+
     [Fact]
     public void Agent_host_environment_aliases_are_accepted()
     {

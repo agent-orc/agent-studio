@@ -310,6 +310,23 @@ state.
   `/etc/agent-host/profile.conf`, and adopts legacy resource drop-ins before the
   managed main unit replaces them. The target contract lives in
   [runner-host resource governance](../../operations/haertung-verteilte-ausfuehrung/target-architecture/resource-governance.md).
+- `runner/WorkerResourceEnvelope.cs` and `runner/WorkerCgroup.cs`: the
+  per-detached-worker CPU and task envelope (AGT-2866). One derived budget,
+  `cores / (RUNNER_HOST_CODING_SLOTS + RUNNER_HOST_REVIEW_SLOTS)`, drives three
+  consumers: the worker's own cgroup v2 leaf below the role unit's delegated
+  subtree (`Delegate=cpu pids` plus `DelegateSubgroup=daemon`; `cpu.max` with
+  burst, uniform `cpu.weight`, `pids.max`), the review
+  daemon's claim admission, and the end-of-run CPU-seconds and peak-tasks line
+  in the journal and the run summary. Delegation, not a `systemd-run --scope`
+  transient unit: a scope needs a polkit grant and would escape the role
+  aggregate. The worker joins its cgroup and then `exec`s, so the persisted pid,
+  start time, and `/proc/<pid>/cwd` reattachment proofs are unchanged, and a
+  delegated subtree is not a mount, so `KillMode=process` survivors cannot lose
+  it the way `PrivateTmp=true` took their `/tmp` (AGT-2750). The daemon never
+  relocates itself into the leaf: a unit cgroup that distributes controllers
+  refuses a new process, so systemd could not attach the replacement main
+  process while a worker survived (`219/CGROUP`). Operator surface:
+  [per-worker resource envelope](../../operations/setup/linux-runner-host.md#per-worker-resource-envelope).
 - `deploy/agent-host/agent-runner-deploy`, its configuration policy, and
   `scripts/harden-agent-runner-host.sh`: the root-owned least-privilege release
   and role-configuration boundary. Release promotion retains its fixed

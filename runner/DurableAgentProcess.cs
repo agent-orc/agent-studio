@@ -101,7 +101,8 @@ internal sealed class DurableAgentProcess
         string? runId = null,
         string? resumeSessionId = null,
         string? cleanContextKey = null,
-        IReadOnlyDictionary<string, string>? environment = null)
+        IReadOnlyDictionary<string, string>? environment = null,
+        Action<string>? log = null)
     {
         Directory.CreateDirectory(workerDirectory);
         var specPath = Path.Combine(workerDirectory, "spec.json");
@@ -122,16 +123,22 @@ internal sealed class DurableAgentProcess
             ?? throw new InvalidOperationException("Cannot resolve the runner executable for detached job launch.");
         var managedHost = string.Equals(Path.GetFileNameWithoutExtension(executable), "dotnet", StringComparison.OrdinalIgnoreCase)
                           || executable.Contains("testhost", StringComparison.OrdinalIgnoreCase);
+        var launch = WorkerCgroup.Launch(
+            managedHost ? "dotnet" : executable,
+            managedHost
+                ? [typeof(DurableAgentProcess).Assembly.Location, "--detached-worker", specPath]
+                : ["--detached-worker", specPath],
+            // AGT-2866: the worker joins its own cgroup and then execs, so this
+            // pid is still the worker's pid and every reattachment proof holds.
+            WorkerCgroup.TryPrepare(options, workerDirectory, log ?? (_ => { })));
         var start = new ProcessStartInfo
         {
-            FileName = managedHost ? "dotnet" : executable,
+            FileName = launch.FileName,
             UseShellExecute = false,
             CreateNoWindow = true,
             WorkingDirectory = spec.WorkingDirectory,
         };
-        if (managedHost) start.ArgumentList.Add(typeof(DurableAgentProcess).Assembly.Location);
-        start.ArgumentList.Add("--detached-worker");
-        start.ArgumentList.Add(specPath);
+        foreach (var argument in launch.Arguments) start.ArgumentList.Add(argument);
         // The daemon needs all provider credentials for capability probes, but
         // a detached worker receives only the credential for its selected CLI.
         // In particular, Codex workers must not inherit Claude's setup token.

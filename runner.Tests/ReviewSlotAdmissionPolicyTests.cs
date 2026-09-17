@@ -77,6 +77,70 @@ public sealed class ReviewSlotAdmissionPolicyTests
         Assert.Contains("load/core", decision.Reason, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// AGT-2866 deliverable 3: admission reads the same budget the per-worker
+    /// cgroup is derived from. A 12-core host with 2 coding and 2 review slots
+    /// offers 3 cores per slot, and admission says so.
+    /// </summary>
+    [Fact]
+    public void Admission_quotes_the_same_slot_budget_the_envelope_is_derived_from()
+    {
+        var decision = ReviewSlotAdmissionPolicy.Decide(
+            Sample(0.5, 12, activeSlots: 1),
+            activeSlots: 1,
+            slotCeiling: 4,
+            maxLoadPerCore: 1.5,
+            WorkerResourceEnvelope.Compute(hostCores: 12, codingSlots: 2, reviewSlots: 2));
+
+        Assert.True(decision.Admitted);
+        Assert.Contains("3.00 cores/slot", decision.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_centrally_raised_ceiling_cannot_exceed_the_cores_that_carry_it()
+    {
+        // Two cores can carry two envelopes, whatever the adaptive advisor
+        // recommends. Active slots are never cancelled by the clamp.
+        var decision = ReviewSlotAdmissionPolicy.Decide(
+            Sample(0.1, 2, activeSlots: 2),
+            activeSlots: 2,
+            slotCeiling: 6,
+            maxLoadPerCore: 1.5,
+            WorkerResourceEnvelope.Compute(hostCores: 2, codingSlots: 1, reviewSlots: 1));
+
+        Assert.False(decision.Admitted);
+        Assert.True(decision.ActiveSlotsContinue);
+        Assert.Contains("envelope budget clamped", decision.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void An_oversubscribed_slot_declaration_is_named_instead_of_blamed_on_load()
+    {
+        var decision = ReviewSlotAdmissionPolicy.Decide(
+            Sample(0.1, 4, activeSlots: 0),
+            activeSlots: 0,
+            slotCeiling: 4,
+            maxLoadPerCore: 1.5,
+            WorkerResourceEnvelope.Compute(hostCores: 4, codingSlots: 4, reviewSlots: 4));
+
+        Assert.False(decision.Admitted);
+        Assert.Contains("envelope budget exhausted", decision.Reason, StringComparison.Ordinal);
+        Assert.Contains("RUNNER_HOST_CODING_SLOTS", decision.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Without_an_envelope_the_pre_agt_2866_decision_is_unchanged()
+    {
+        var decision = ReviewSlotAdmissionPolicy.Decide(
+            Sample(0.5, 12, activeSlots: 1),
+            activeSlots: 1,
+            slotCeiling: 4,
+            maxLoadPerCore: 1.5);
+
+        Assert.True(decision.Admitted);
+        Assert.DoesNotContain("envelope", decision.Reason, StringComparison.Ordinal);
+    }
+
     private static HostTelemetrySample Sample(double? load, int cores, int activeSlots)
         => new(
             DateTime.UtcNow,
