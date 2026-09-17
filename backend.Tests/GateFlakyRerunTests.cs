@@ -199,8 +199,13 @@ public sealed class GateFlakyRerunBehaviorTests : IDisposable
     private readonly string _root = Path.Combine(
         Path.GetTempPath(), "gate-flaky-rerun-" + Guid.NewGuid().ToString("N"));
 
+    // Profile test commands run under bash on every platform (VerifyCommandPlanner
+    // marks them Shell = Bash, on Windows that is Git Bash), so the fake is an sh
+    // script everywhere and every path it sees is spelled with forward slashes:
+    // bash would read the backslashes of a native Windows path as escapes.
     private string FakeDotNet => Path.Combine(_root, "dotnet");
     private string Invocations => Path.Combine(_root, "invocations.txt");
+    private static string ShellPath(string path) => path.Replace('\\', '/');
 
     private const string FlakyTest = "Product.Tests.LaneMutexRegistryConcurrencyTests.ConcurrentMoveAndDelete";
     private const string StubbornTest = "Product.Tests.UpdateServiceRestartIdentityDrillTests.RestartKeepsIdentity";
@@ -271,7 +276,7 @@ public sealed class GateFlakyRerunBehaviorTests : IDisposable
             changedFiles: null,
             new BuildProfile
             {
-                TestCmds = [$"{FakeDotNet} test Product.Tests.csproj --filter Category!=MachineBound"],
+                TestCmds = [$"{ShellPath(FakeDotNet)} test Product.Tests.csproj --filter Category!=MachineBound"],
             },
             PostStepMode.Fail,
             TimeSpan.FromMinutes(2),
@@ -285,10 +290,11 @@ public sealed class GateFlakyRerunBehaviorTests : IDisposable
     /// </summary>
     private void WriteFakeDotNet(string testName, bool failEveryRun)
     {
+        var attempts = ShellPath(Path.Combine(_root, "attempts.txt"));
         File.WriteAllText(FakeDotNet,
             "#!/bin/sh\n" +
-            $"echo \"$@\" >> \"{Invocations}\"\n" +
-            $"attempts=\"{Path.Combine(_root, "attempts.txt")}\"\n" +
+            $"echo \"$@\" >> \"{ShellPath(Invocations)}\"\n" +
+            $"attempts=\"{attempts}\"\n" +
             "count=$(cat \"$attempts\" 2>/dev/null || echo 0)\n" +
             "count=$((count+1))\n" +
             "echo \"$count\" > \"$attempts\"\n" +
@@ -298,9 +304,14 @@ public sealed class GateFlakyRerunBehaviorTests : IDisposable
             "fi\n" +
             "echo \"  Failed " + testName + " [12 ms]\"\n" +
             "exit 1\n");
-        File.SetUnixFileMode(
-            FakeDotNet,
-            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        // Git Bash runs a shebang script without a mode bit; the Unix mode API
+        // throws PlatformNotSupportedException on Windows.
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(
+                FakeDotNet,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
     }
 }
 
