@@ -8,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
+using AgentStudio.TestSupport;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -416,10 +417,7 @@ public class BackendCrashSurfaceTests
             Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "atp-crash-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(Path);
         }
-        public void Dispose()
-        {
-            try { Directory.Delete(Path, recursive: true); } catch { }
-        }
+        public void Dispose() => TestTempRoot.TryDelete(Path);
     }
 
     /// <summary>

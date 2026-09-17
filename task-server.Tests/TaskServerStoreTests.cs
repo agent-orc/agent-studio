@@ -2199,7 +2199,8 @@ internal sealed class ManualTimeProvider(DateTimeOffset utcNow) : TimeProvider
 
 internal sealed class TempDirectory : IDisposable
 {
-    public TempDirectory() => Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "task-server-tests", Guid.NewGuid().ToString("N"));
+    public TempDirectory(string prefix = "task-server-tests")
+        => Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), prefix, Guid.NewGuid().ToString("N"));
     public string Path { get; }
 
     public static async Task RunAsync(Func<TempDirectory, Task> action)
@@ -2236,13 +2237,11 @@ internal sealed class TempDirectory : IDisposable
     public void Dispose()
     {
         if (!Directory.Exists(Path)) return;
-        try
-        {
-            Directory.Delete(Path, recursive: true);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            throw new IOException($"Failed to clean temporary test directory '{Path}'.", exception);
-        }
+        // AGT-2858: TryDelete clears the read-only attribute Git puts on objects
+        // and retries a handle a still-unwinding child process has not released
+        // yet (Windows enforces both, Linux neither). A directory that survives
+        // all of that is a real leak and still fails loudly.
+        if (!AgentStudio.TestSupport.TestTempRoot.TryDelete(Path))
+            throw new IOException($"Failed to clean temporary test directory '{Path}'.");
     }
 }

@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 
+using AgentStudio.TestSupport;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -22,10 +23,9 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
         InitializeGitRepository();
     }
 
-    public void Dispose()
-    {
-        try { Directory.Delete(_workspaceRoot, recursive: true); } catch { /* best-effort */ }
-    }
+    // AGT-2858: this fixture seeds a Git repository, whose read-only objects
+    // defeat a plain recursive delete on Windows.
+    public void Dispose() => TestTempRoot.TryDelete(_workspaceRoot);
 
     [Fact]
     public async Task AutoPickupSpawnFailure_RevertsReady_RemovesLock_AndFreesSlot()
