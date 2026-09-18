@@ -1543,6 +1543,13 @@ export interface TagRegistryEntry {
   label: string;
   color: string;
   description: string;
+  /**
+   * 'area' or 'facet' (AGT-2803). An area tag names the bounded part of the
+   * application an item belongs to and owns a glossary; a facet tag names a
+   * cross-cutting aspect. Optional so a client built against an older backend
+   * keeps deserializing.
+   */
+  kind?: 'area' | 'facet';
 }
 
 export interface TaskOrderItem {

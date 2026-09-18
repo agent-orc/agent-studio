@@ -110,11 +110,16 @@ public class BacklogLaneAndTagsTests : IDisposable
         var (_, _, _) = Build();
         var tags = NewTagRegistry();
         var entries = tags.GetAll();
-        // Seven taxonomy tags plus the orchestrator-moved provenance tag
-        // plus outcome-silent-finish (Codex silent-completion outcome marker).
-        Assert.Equal(9, entries.Count);
+        // AGT-2803: the seed is the classification vocabulary - the ten product
+        // areas, the quality and document facets - plus the curated legacy rows
+        // and the two provenance tags. Ids are unique across all of them.
+        Assert.Equal(entries.Count, entries.Select(t => t.Id).Distinct(StringComparer.OrdinalIgnoreCase).Count());
         foreach (var id in new[] { "ui-ux", "performance", "quality", "architecture", "security", "docs", "observability", "orchestrator-moved", "outcome-silent-finish" })
             Assert.Contains(entries, t => t.Id == id);
+        foreach (var area in AgentStudio.Areas.AreaTaxonomy.ProductDefaults)
+            Assert.Contains(entries, t => t.Id == area.Id && t.Kind == TagKinds.Area);
+        foreach (var (id, _, _) in AgentStudio.Areas.AreaTaxonomy.DocumentFacets)
+            Assert.Contains(entries, t => t.Id == id && t.Kind == TagKinds.Facet);
         // Every seed entry must carry a non-empty description so the UI can
         // surface the "wofür" line on hover and in the registry manager.
         Assert.All(entries, t => Assert.False(string.IsNullOrWhiteSpace(t.Description)));
@@ -129,13 +134,14 @@ public class BacklogLaneAndTagsTests : IDisposable
         // First boot: seed file written with the full default set.
         var first = NewTagRegistry();
         var firstEntries = first.GetAll();
-        Assert.Equal(9, firstEntries.Count);
+        var seedCount = firstEntries.Count;
+        Assert.True(seedCount > 9, "the seed carries the area vocabulary on top of the legacy rows");
 
         // Second boot: re-reading should produce exactly the same rows; no
         // duplicates appended on subsequent loads.
         var second = NewTagRegistry();
         var secondEntries = second.GetAll();
-        Assert.Equal(9, secondEntries.Count);
+        Assert.Equal(seedCount, secondEntries.Count);
         Assert.Equal(
             firstEntries.Select(t => t.Id).OrderBy(s => s, StringComparer.Ordinal).ToArray(),
             secondEntries.Select(t => t.Id).OrderBy(s => s, StringComparer.Ordinal).ToArray());
@@ -152,7 +158,7 @@ public class BacklogLaneAndTagsTests : IDisposable
 
         var third = NewTagRegistry();
         var thirdEntries = third.GetAll();
-        Assert.Equal(9, thirdEntries.Count);
+        Assert.Equal(seedCount, thirdEntries.Count);
         var arch = thirdEntries.Single(t => t.Id == "architecture");
         Assert.Equal("My Custom Arch", arch.Label);
         Assert.Equal("#abcdef", arch.Color);

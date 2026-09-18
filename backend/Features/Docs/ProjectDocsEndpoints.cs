@@ -84,12 +84,19 @@ public static class ProjectDocsEndpoints
         // migration the workbench folders are theme-distributed, e.g. under
         // operations/ and quality/); HTML is returned as data and is never
         // executed by the backend origin.
-        app.MapGet("/api/projects/{projectName}/workbenches", (string projectName, bool? history, ProjectDocsService docs) =>
+        // The optional area / tag parameters filter the list by the
+        // classification vocabulary (AGT-2803); ids are alternatives within one
+        // parameter and a conjunction across the two.
+        app.MapGet("/api/projects/{projectName}/workbenches", (string projectName, bool? history,
+            HttpContext http, ProjectDocsService docs) =>
         {
             var catalogue = docs.GetWikiWorkbenchCatalogue(projectName, history == true);
-            return catalogue == null
-                ? Results.NotFound(new { error = $"Unknown project '{projectName}'" })
-                : Results.Ok(catalogue);
+            if (catalogue == null)
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            var filter = AgentStudio.Areas.TagFilter.FromQuery(http.Request.Query);
+            if (!filter.IsActive) return Results.Ok(catalogue);
+            var items = catalogue.Items.Where(item => filter.Matches(item.Tags)).ToList();
+            return Results.Ok(catalogue with { Count = items.Count, Items = items });
         });
 
         // Shared workspace-wide/project-scoped queue. Project filtering is a
@@ -167,6 +174,20 @@ public static class ProjectDocsEndpoints
                 return WorkbenchLifecycleHttpResult(result);
             });
 
+        // Replace-all write of the Dossier's tags[]. Unknown tag ids are refused
+        // against the project's effective vocabulary (AGT-2803).
+        app.MapPut("/api/projects/{projectName}/workbenches/{id}/tags",
+            (string projectName, string id, SetWorkbenchTagsRequest body,
+                WorkbenchTagService tags, ProjectDocsService docs) =>
+            {
+                var result = tags.Set(projectName, id, body);
+                if (result.Success) docs.InvalidateWikiContent(projectName);
+                return result.Success ? Results.Ok(result)
+                    : result.ErrorCode == "not-found" ? Results.NotFound(result)
+                    : result.ErrorCode is "stale-revision" or "write-failed" ? Results.Conflict(result)
+                    : Results.BadRequest(result);
+            });
+
         app.MapPut("/api/projects/{projectName}/workbenches/{id}/review",
             (string projectName, string id, RecordWorkbenchReviewRequest body,
                 WorkbenchReviewService reviews, ProjectDocsService docs) =>
@@ -187,9 +208,15 @@ public static class ProjectDocsEndpoints
         app.MapGet("/api/projects/{projectName}/wiki/tree", (string projectName, ProjectDocsService docs, HttpContext http) =>
         {
             var res = docs.GetWikiTreeResult(projectName);
-            return res == null
-                ? Results.NotFound(new { error = $"Unknown project '{projectName}'" })
-                : ConditionalOk(http, res.ETag, res.Tree);
+            if (res == null) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            // AGT-2803: the same area / tag vocabulary prunes the navigation
+            // tree. The filter is part of the entity identity, so it is folded
+            // into the ETag instead of being served from an unfiltered one.
+            var filter = AgentStudio.Areas.TagFilter.FromQuery(http.Request.Query);
+            if (!filter.IsActive) return ConditionalOk(http, res.ETag, res.Tree);
+            var tag = res.ETag.Trim('"');
+            var signature = $"\"{tag}-area-{string.Join('.', filter.Areas)}-tag-{string.Join('.', filter.Tags)}\"";
+            return ConditionalOk(http, signature, WikiTreeFilter.Apply(res.Tree, filter));
         });
 
         // Recently-edited wiki pages (page / git author / timestamp), newest

@@ -7,13 +7,20 @@ namespace AgentStudio.Tags;
 /// Workspace-level tag registry. Tags are a flat namespace shared across the
 /// watched projects in one workspace and stored as a single JSON array at
 /// <c>&lt;TaskRepository&gt;/tags.json</c>. On boot the file is merged-by-id
-/// with a curated seed of default tags (ui-ux, performance, quality,
-/// architecture, security, docs, observability) plus the system provenance
-/// tag <c>orchestrator-moved</c>, so a fresh workspace already has the
-/// standard taxonomy. Existing rows are never overwritten: a user's
-/// custom label / colour / description for a seed id wins over the seed.
+/// with the seeded vocabulary: the ten product-default areas, the quality and
+/// document facets, and the curated legacy rows (ui-ux, quality, docs,
+/// observability) plus the system provenance tags, so a fresh workspace
+/// already has the standard taxonomy. Existing rows are never overwritten: a
+/// user's custom label / colour / description for a seed id wins over the seed.
 /// Explicitly deleted seed ids are remembered in a sidecar tombstone file so
 /// later seed merges do not resurrect tags the user removed.
+///
+/// Each row carries a kind (AGT-2803). The kind of an area id is not stored
+/// data: <see cref="AreaTaxonomy.ResolveKind"/> answers it from the area
+/// vocabulary, so a row written before the field existed reads correctly and a
+/// quality domain that shares an id with an area resolves to that one area
+/// instead of splitting the flat namespace. Project-level area additions are
+/// overlaid per project by <see cref="AreaRegistryService"/>.
 /// </summary>
 /// <remarks>
 /// Concurrency: a process-wide lock protects the in-memory cache and the
@@ -26,18 +33,78 @@ public sealed class TagRegistryService
     private const string DeletedSeedsFileName = "tags.deleted-seeds.json";
     private static readonly Regex IdPattern = new("^[a-z0-9-]{1,32}$", RegexOptions.Compiled);
 
-    private static readonly TagRegistryEntry[] Seed =
+    /// <summary>
+    /// Colours for the seeded vocabulary. Ids without an entry fall back to the
+    /// neutral default, so adding an area or a facet never requires a palette
+    /// change.
+    /// </summary>
+    private static readonly Dictionary<string, string> SeedColors = new(StringComparer.Ordinal)
+    {
+        // Areas
+        ["execution-and-runner"] = "#89b4fa",
+        ["delivery-chain"] = "#74c7ec",
+        ["gates-and-review"] = "#b4befe",
+        ["observation"] = "#f9e2af",
+        ["task-and-board-ui"] = "#cba6f7",
+        ["dossiers-and-documentation"] = "#94e2d5",
+        ["websites"] = "#a6e3a1",
+        ["security"] = "#f38ba8",
+        ["retention"] = "#eba0ac",
+        ["token-economy"] = "#fab387",
+        // Facets that existed before the area vocabulary keep their colour.
+        ["architecture"] = "#89b4fa",
+        ["performance"] = "#fab387",
+    };
+
+    /// <summary>
+    /// Curated rows that predate the area vocabulary and are owned by no other
+    /// list. They stay in the seed so an existing workspace keeps its labels,
+    /// colours, and the two system provenance tags.
+    /// </summary>
+    private static readonly TagRegistryEntry[] LegacySeed =
     [
         new() { Id = "ui-ux",         Label = "UI / UX",       Color = "#cba6f7", Description = "Frontend look-and-feel, layout, click paths, visual polish." },
-        new() { Id = "performance",   Label = "Performance",   Color = "#fab387", Description = "Long-task budgets, API latency, polling load, render speed." },
         new() { Id = "quality",       Label = "Quality",       Color = "#a6e3a1", Description = "Tests, regressions, robustness, logging, observability of bugs." },
-        new() { Id = "architecture",  Label = "Architecture",  Color = "#89b4fa", Description = "Load-bearing structure decisions; ADR-worthy changes." },
-        new() { Id = "security",      Label = "Security",      Color = "#f38ba8", Description = "Auth, secrets, data boundaries, sandboxing." },
         new() { Id = "docs",          Label = "Docs",          Color = "#94e2d5", Description = "README / AGENTS / ADR / skill files / lookup index updates." },
         new() { Id = "observability", Label = "Observability", Color = "#f9e2af", Description = "Logs, metrics, drift reports, token aggregates, supervisor signals." },
         new() { Id = "orchestrator-moved", Label = "Orchestrator: moved", Color = "#b4befe", Description = "The orchestrator advanced this task toward Completed (accept-as-done), as opposed to a human accepting it." },
         new() { Id = "outcome-silent-finish", Label = "Outcome: silent finish", Color = "#f9e2af", Description = "Codex stopped after its final tool call without a closing sentinel; the runner detected the silent-completion shape and finalized the run. The work is likely complete but the sign-off is missing - double-check before promoting." }
     ];
+
+    /// <summary>
+    /// The seeded vocabulary: the product-default areas and the facets, both
+    /// projected from <see cref="AreaTaxonomy"/> so the registry never holds a
+    /// second copy of either list, plus the curated legacy rows. An id claimed
+    /// by an area is never seeded a second time as a facet.
+    /// </summary>
+    private static readonly TagRegistryEntry[] Seed = BuildSeed();
+
+    private static TagRegistryEntry[] BuildSeed()
+    {
+        var seed = new List<TagRegistryEntry>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        void Add(string id, string label, string description, string kind, string? color = null)
+        {
+            if (!seen.Add(id)) return;
+            seed.Add(new TagRegistryEntry
+            {
+                Id = id,
+                Label = label,
+                Description = description,
+                Color = color ?? (SeedColors.TryGetValue(id, out var seeded) ? seeded : "#94a3b8"),
+                Kind = kind,
+            });
+        }
+        foreach (var area in AreaTaxonomy.ProductDefaults)
+            Add(area.Id, area.Label, area.Description, TagKinds.Area);
+        foreach (var (id, label, description) in AreaTaxonomy.QualityFacets)
+            Add(id, label, description, TagKinds.Facet);
+        foreach (var (id, label, description) in AreaTaxonomy.DocumentFacets)
+            Add(id, label, description, TagKinds.Facet);
+        foreach (var legacy in LegacySeed)
+            Add(legacy.Id, legacy.Label, legacy.Description, TagKinds.Facet, legacy.Color);
+        return [.. seed];
+    }
 
     private readonly ILogger<TagRegistryService> _logger;
     private readonly IConfiguration _config;
@@ -67,10 +134,12 @@ public sealed class TagRegistryService
     /// throws <see cref="ArgumentException"/> on an invalid id or empty
     /// label.
     /// </summary>
-    public TagRegistryEntry Create(string? id, string label, string? color, string? description)
+    public TagRegistryEntry Create(string? id, string label, string? color, string? description, string? kind = null)
     {
         if (string.IsNullOrWhiteSpace(label))
             throw new ArgumentException("Label is required");
+        if (kind != null && TagKinds.Normalize(kind) == TagKinds.Area)
+            throw new ArgumentException("Area tags are declared in the project areas registry, not through the tag registry.");
 
         var resolvedId = string.IsNullOrWhiteSpace(id)
             ? TaskMutationService.NormalizeTagId(label)
@@ -85,12 +154,16 @@ public sealed class TagRegistryService
             if (_cache!.Any(t => string.Equals(t.Id, resolvedId, StringComparison.OrdinalIgnoreCase)))
                 throw new InvalidOperationException($"Tag '{resolvedId}' already exists");
 
+            if (AreaTaxonomy.IsProductArea(resolvedId))
+                throw new InvalidOperationException($"'{resolvedId}' is an area id and is owned by the areas registry.");
+
             var entry = new TagRegistryEntry
             {
                 Id = resolvedId,
                 Label = label.Trim(),
                 Color = NormalizeColor(color),
-                Description = description?.Trim() ?? string.Empty
+                Description = description?.Trim() ?? string.Empty,
+                Kind = TagKinds.Facet
             };
             _cache!.Add(entry);
             _deletedSeedIds!.Remove(resolvedId);
@@ -102,11 +175,14 @@ public sealed class TagRegistryService
     /// <summary>
     /// Soft-delete: drop the registry entry. Per-job tag arrays are NOT
     /// rewritten; the FE renders unknown ids as a faint ghost chip until
-    /// the user re-tags.
+    /// the user re-tags. Product-default area ids are stable and cannot be
+    /// deleted here - they are owned by the areas registry.
     /// </summary>
     public bool Delete(string id)
     {
         if (string.IsNullOrWhiteSpace(id)) return false;
+        if (AreaTaxonomy.IsProductArea(id))
+            throw new InvalidOperationException($"Area id '{id}' is stable and cannot be deleted from the tag registry.");
         EnsureLoaded();
         lock (_lock)
         {
@@ -289,6 +365,7 @@ public sealed class TagRegistryService
         Id = e.Id,
         Label = e.Label,
         Color = e.Color,
-        Description = e.Description
+        Description = e.Description,
+        Kind = AreaTaxonomy.ResolveKind(e.Id, e.Kind)
     };
 }

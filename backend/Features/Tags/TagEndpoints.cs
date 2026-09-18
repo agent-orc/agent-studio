@@ -20,7 +20,7 @@ public static class TagEndpoints
         {
             try
             {
-                var entry = tags.Create(req.Id, req.Label, req.Color, req.Description);
+                var entry = tags.Create(req.Id, req.Label, req.Color, req.Description, req.Kind);
                 return Results.Ok(entry);
             }
             catch (InvalidOperationException ex)
@@ -35,7 +35,14 @@ public static class TagEndpoints
 
         group.MapDelete("/{id}", (string id, TagRegistryService tags) =>
         {
-            return tags.Delete(id) ? Results.Ok() : Results.NotFound();
+            try
+            {
+                return tags.Delete(id) ? Results.Ok() : Results.NotFound();
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.Conflict(new { error = ex.Message });
+            }
         });
     }
 }

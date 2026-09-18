@@ -43,6 +43,14 @@ public static class WikiProducerTargets
     /// <summary>Project proposals: <c>concepts/proposals/</c> (ProjectProposalService).</summary>
     public const string ProposalsFolder = "concepts/proposals";
 
+    /// <summary>
+    /// Area glossaries: <c>docs/areas/{area-id}/glossary.md</c>, the ubiquitous
+    /// language each area of the classification vocabulary owns, written by
+    /// <c>AreaGlossaryService</c> (AGT-2803). One folder per area, so the
+    /// glossary is a normal wiki page that sits with the area it defines.
+    /// </summary>
+    public const string AreasFolder = "docs/areas";
+
     // ---- Deliberate reference roots (paths the backend reads, not writes) ----
     // Grouped so the guard has one source of truth; each carries its justification.
     private static readonly string[] ReferenceRoots =
@@ -71,6 +79,10 @@ public static class WikiProducerTargets
         // A dynamic path whose segment after docs/ is an interpolation hole
         // (e.g. $"docs/{relPath}") carries no hardcoded location to centralize.
         if (path.StartsWith("docs/{", StringComparison.Ordinal)) return true;
+
+        // Producer write-targets that own a top-level folder of their own.
+        if (path.Equals(AreasFolder, StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith(AreasFolder + "/", StringComparison.OrdinalIgnoreCase)) return true;
 
         foreach (var root in ReferenceRoots)
             if (path.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return true;

@@ -1021,14 +1021,23 @@ public static class TaskCrudEndpoints
         });
 
         // Replace-all: the request's Tags array becomes the new full set on
-        // the job. Empty list clears tags. Unknown ids are accepted (the
-        // registry may evolve out from under a job); ghost rendering is the
-        // FE's responsibility.
-        group.MapPut("/{jobId}/tags", (string jobId, string? project, string? watchPath, SetJobTagsRequest req, TaskMutationService mutations, AgentStudio.Registry.ProjectRegistry projects) =>
+        // the job. Empty list clears tags. AGT-2803: unknown tag ids are refused
+        // at this boundary against the project's effective vocabulary (workspace
+        // registry plus the project's areas). Reads stay lenient - a tag retired
+        // after the write still renders as a ghost chip rather than breaking the
+        // card - and platform stamps keep using the merge-add writer.
+        group.MapPut("/{jobId}/tags", (string jobId, string? project, string? watchPath, SetJobTagsRequest req,
+            TaskMutationService mutations, TaskScannerService scanner,
+            AgentStudio.Areas.AreaRegistryService areas,
+            AgentStudio.Registry.ProjectRegistry projects) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
-            var success = mutations.SetJobTags(jobId, req?.Tags ?? new List<string>(), watchPath);
-            return success ? Results.Ok() : Results.NotFound();
+            var job = scanner.FindJob(jobId, watchPath);
+            if (job == null) return Results.NotFound();
+            var validation = areas.ValidateTags(job.ProjectName, req?.Tags);
+            if (!validation.Ok) return Results.BadRequest(new { error = validation.Error });
+            var success = mutations.SetJobTags(jobId, validation.TagIds, watchPath);
+            return success ? Results.Ok(new { tags = validation.TagIds }) : Results.NotFound();
         });
 
         // F34 / AGT-2029: replace-all write of the structured cross-reference
