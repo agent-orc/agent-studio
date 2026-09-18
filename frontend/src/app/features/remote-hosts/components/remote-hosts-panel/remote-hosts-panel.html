@@ -39,6 +39,15 @@
     <span class="rh__count"><strong>{{ onlineCount() }}</strong> online</span>
     <span class="rh__sep" aria-hidden="true">·</span>
     <span class="rh__count"><strong>{{ roleCount() }}</strong> {{ roleCount() === 1 ? 'role' : 'roles' }}</span>
+    @if (stableReleaseLabel(); as stable) {
+      <span class="rh__sep" aria-hidden="true">·</span>
+      <span class="rh__count" data-testid="remote-hosts-stable-release">{{ stable }}</span>
+    }
+    @if (behindReleaseCount(); as behind) {
+      <span class="rh__behind" data-testid="remote-hosts-release-behind">
+        <strong>{{ behind }}</strong> behind Stable
+      </span>
+    }
     @if (retiredCount()) {
       <button class="rh__retired-filter"
               type="button"
@@ -190,6 +199,7 @@
             [now]="now()"
             [boardActiveSlots]="groupSlots(group)"
             [projectSlots]="projectSlots(group.machine)"
+            [stableRelease]="stableRelease()"
             [expanded]="isExpanded(group.id)"
             (expandedChange)="setExpanded(group.id, $event)"
             (action)="onAction($event)"

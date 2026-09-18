@@ -27,6 +27,18 @@ public static class ManagementEndpoints
             if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
             return Results.Ok(registry.ListCapabilitySnapshots());
         });
+        // AGT-2826: one authoritative comparison for Execution Hosts and for the
+        // operator-feed alarm, so the page can never disagree with the alarm.
+        group.MapGet("/host-releases", async (
+            HttpContext context,
+            AgentStudio.Runner.HostReleaseDriftWatchdog watchdog,
+            IConfiguration configuration,
+            CancellationToken ct) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
+            return Results.Ok(await watchdog.RefreshAsync(ct: ct));
+        });
         group.MapGet("/links", (
             HttpContext context,
             LinkSupervisor links,

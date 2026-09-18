@@ -1,0 +1,26 @@
+<span class="release"
+      [appTooltip]="tooltip()"
+      [appTooltipTestId]="tooltipTestId()"
+      [attr.title]="tooltip()">
+  @if (releaseLabel(); as release) {
+    <code class="release__id">{{ release }}</code>
+    @if (showIdentity()) {
+      @if (releaseId(); as id) {
+        @if (id !== releaseLabel()) {
+          <code class="release__detail" [attr.data-testid]="testIdPrefix() + '-id'">{{ id }}</code>
+        }
+      }
+      @if (commit(); as sha) {
+        <app-copyable-task-key [key]="sha" [label]="sha.slice(0, 7)" variant="reference"
+          ariaLabel="Copy release commit" [testId]="testIdPrefix() + '-commit'" />
+      }
+    }
+    @if (driftLabel(); as drift) {
+      <span class="release__drift"
+            [attr.data-tone]="driftTone()"
+            [attr.data-testid]="driftTestId()">{{ drift }}</span>
+    }
+  } @else {
+    <span class="release__placeholder" title="Not reported">–</span>
+  }
+</span>

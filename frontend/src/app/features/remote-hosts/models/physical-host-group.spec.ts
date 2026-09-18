@@ -37,7 +37,56 @@ describe('groupPhysicalHosts', () => {
     expect(group.id).toBe('runner:legacy-runner');
     expect(group.name).toBe('legacy-runner');
   });
+
+  it('takes the aggregate release identity and warning from the worst-drift role', () => {
+    const current = {
+      ...host('coding', 'coding', 20, '2026-09-15T12:00:00Z'),
+      releaseId: 'stable-release',
+      release: {
+        releaseId: 'stable-release', version: '0.3.0', commit: 'ccccccc3333',
+        builtAt: '2026-09-11T08:00:00Z',
+      },
+      releaseDrift: drift('coding', 'current', null, false),
+    } satisfies RemoteHost;
+    const stale = {
+      ...host('review', 'review', 20, '2026-09-15T11:59:00Z'),
+      releaseId: 'stale-release',
+      release: {
+        releaseId: 'stale-release', version: '0.2.7', commit: 'bbbbbbb2222',
+        builtAt: '2026-08-23T06:00:00Z',
+      },
+      releaseDrift: drift('review', 'behind', 458, true),
+    } satisfies RemoteHost;
+
+    const machine = expectSingle(groupPhysicalHosts([current, stale], false)).machine;
+
+    expect(machine.releaseId).toBe('stale-release');
+    expect(machine.release).toEqual(stale.release);
+    expect(machine.releaseDrift).toBe(stale.releaseDrift);
+  });
 });
+
+function drift(
+  role: 'coding' | 'review',
+  state: 'current' | 'behind',
+  behindByHours: number | null,
+  alarmDue: boolean,
+) {
+  return {
+    runnerId: role,
+    name: role,
+    hostId: 'agent-runner-01',
+    role,
+    release: null,
+    state,
+    behindByHours,
+    behindForHours: behindByHours,
+    alarmDue,
+    reason: state === 'behind' ? 'Older than Stable.' : 'Runs Stable.',
+    lastSeenAt: '2026-09-15T12:00:00Z',
+    heartbeatStale: false,
+  } as const;
+}
 
 function host(
   id: string,
