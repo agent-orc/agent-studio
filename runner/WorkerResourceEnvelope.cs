@@ -70,15 +70,22 @@ public sealed record WorkerResourceEnvelope(
     public const int SupervisorCpuWeight = 1000;
 
     /// <summary>
-    /// Tasks (processes plus threads) granted per core of fair share. A dotnet
-    /// plus node plus shell build and test tree on this fleet peaks in the low
-    /// hundreds; 128 per core puts a 12-core, 4-slot host at 384 per worker,
-    /// which is a few hundred as the card asked and far below the hundreds of
-    /// forked loops the incident produced.
+    /// Tasks granted per core of fair share. <c>pids.max</c> counts threads, not
+    /// only processes, and a worker is a claude CLI plus a .NET test host plus
+    /// MSBuild nodes plus node: the first day of the envelope (18.09.2026, 128
+    /// per core, 307 per worker on a 12-core, 5-slot host) saw peaks of 243,
+    /// 269 and twice the ceiling itself, with 72 and 125 refused thread starts;
+    /// the second time the .NET runtime in the worker aborted with
+    /// <c>PAL_SEHException</c> and the run was lost. The task ceiling is a fork
+    /// bomb fuse, not a throttle: <c>cpu.max</c> is what contains busy loops.
+    /// 512 per core puts a 12-core, 4-slot host at 1536 per worker, several
+    /// times the observed legitimate peak and still far below what a runaway
+    /// fork loop reaches.
     /// </summary>
-    public const int TasksPerCore = 128;
+    public const int TasksPerCore = 512;
 
-    public const int MinimumTasksMax = 192;
+    /// <summary>Never below what one build-and-test tree legitimately needs.</summary>
+    public const int MinimumTasksMax = 1024;
     public const int MaximumTasksMax = 4096;
 
     /// <summary>

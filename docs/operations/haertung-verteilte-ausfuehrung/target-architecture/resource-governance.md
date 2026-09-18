@@ -66,7 +66,7 @@ derived from the host slot split:
 | cores per slot | `cores / (RUNNER_HOST_CODING_SLOTS + RUNNER_HOST_REVIEW_SLOTS)` | 3.00 |
 | `cpu.max` | cores per slot x `RUNNER_WORKER_CPU_BURST` (2.0), at least one core, never more than the host | 600% |
 | `cpu.weight` | 100 per worker, 1000 for the `daemon/` leaf | 100 |
-| `pids.max` | cores per slot x 128, clamped to 192..4096 | 384 |
+| `pids.max` | cores per slot x 512, clamped to 1024..4096 (counts threads; a fork bomb fuse, not a throttle) | 1536 |
 
 The leaf is systemd's job on purpose. A daemon that moved itself out of the unit
 cgroup would leave that cgroup distributing controllers, and `KillMode=process`

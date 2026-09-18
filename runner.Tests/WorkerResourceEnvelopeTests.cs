@@ -25,16 +25,16 @@ public sealed class WorkerResourceEnvelopeTests
         // 24 busy loops do not.
         Assert.Equal(600, envelope.CpuQuotaPercent);
         Assert.Equal("600000 100000", envelope.CpuMax);
-        Assert.Equal(384, envelope.TasksMax);
+        Assert.Equal(1536, envelope.TasksMax);
         Assert.Equal(WorkerResourceEnvelope.WorkerCpuWeight, envelope.CpuWeight);
     }
 
     [Theory]
     // Fewer declared slots mean a bigger share per slot, and the caps follow.
-    [InlineData(12, 1, 1, 1200, 768)]
-    [InlineData(12, 2, 2, 600, 384)]
-    [InlineData(12, 4, 4, 300, 192)]
-    [InlineData(24, 2, 2, 1200, 768)]
+    [InlineData(12, 1, 1, 1200, 3072)]
+    [InlineData(12, 2, 2, 600, 1536)]
+    [InlineData(12, 4, 4, 300, 1024)]
+    [InlineData(24, 2, 2, 1200, 3072)]
     public void Caps_scale_with_the_declared_slot_counts(
         int cores,
         int codingSlots,

@@ -848,7 +848,7 @@ of replacing it.
 | cores per slot | `cores / (RUNNER_HOST_CODING_SLOTS + RUNNER_HOST_REVIEW_SLOTS)` | 3.00 |
 | `cpu.max` | cores per slot x `RUNNER_WORKER_CPU_BURST`, at least 1 core, never more than the host | `600000 100000` (600%) |
 | `cpu.weight` | 100 for every worker; the `daemon/` leaf gets 1000 | 100 |
-| `pids.max` | cores per slot x 128, clamped to 192..4096 | 384 |
+| `pids.max` | cores per slot x 512, clamped to 1024..4096 (counts threads; a fork bomb fuse, not a throttle) | 1536 |
 
 `RUNNER_HOST_CODING_SLOTS` and `RUNNER_HOST_REVIEW_SLOTS` are host facts, not
 role facts: both roles read both numbers, so a coding worker and a review worker
@@ -917,7 +917,7 @@ the run summary shipped with the delivery:
 
 ```
 [runner] worker-envelope attempt=<id> applied=yes cores=12 slots=4 coresPerSlot=3.00 \
-  cpuQuota=600% cpuWeight=100 tasksMax=384 cpuSeconds=2000.5 peakTasks=271 \
+  cpuQuota=600% cpuWeight=100 tasksMax=1536 cpuSeconds=2000.5 peakTasks=271 \
   killedLeftovers=0
 ```
 

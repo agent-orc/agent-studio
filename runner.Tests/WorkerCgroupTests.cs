@@ -64,7 +64,7 @@ public sealed class WorkerCgroupTests : IDisposable
         Assert.Equal(directory, cgroup!.CgroupDirectory);
         Assert.Equal("600000 100000", File.ReadAllText(Path.Combine(directory, "cpu.max")));
         Assert.Equal("100", File.ReadAllText(Path.Combine(directory, "cpu.weight")));
-        Assert.Equal("384", File.ReadAllText(Path.Combine(directory, "pids.max")));
+        Assert.Equal("1536", File.ReadAllText(Path.Combine(directory, "pids.max")));
         // The marker is what lets a replacement daemon report the same worker's
         // usage after a KillMode=process restart.
         Assert.Equal(
@@ -93,11 +93,11 @@ public sealed class WorkerCgroupTests : IDisposable
         Assert.Equal(
             "1200000 100000",
             File.ReadAllText(Path.Combine(delegated, "worker-two-slots", "cpu.max")));
-        Assert.Equal("768", File.ReadAllText(Path.Combine(delegated, "worker-two-slots", "pids.max")));
+        Assert.Equal("3072", File.ReadAllText(Path.Combine(delegated, "worker-two-slots", "pids.max")));
         Assert.Equal(
             "300000 100000",
             File.ReadAllText(Path.Combine(delegated, "worker-eight-slots", "cpu.max")));
-        Assert.Equal("192", File.ReadAllText(Path.Combine(delegated, "worker-eight-slots", "pids.max")));
+        Assert.Equal("1024", File.ReadAllText(Path.Combine(delegated, "worker-eight-slots", "pids.max")));
     }
 
     [Fact]

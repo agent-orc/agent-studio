@@ -14,6 +14,10 @@ release yet.
 
 ### Fixed
 
+- Worker resource envelope: the task ceiling is 512 per core of fair share
+  (minimum 1024) instead of 128. `pids.max` counts threads, and a worker with a
+  .NET test host hit the 307-task ceiling of a 12-core, 5-slot host; the
+  runtime aborted with `PAL_SEHException` and the run was lost.
 - Runner hosts no longer accumulate processes that outlive their run. Detached
   coding and review workers start with `MSBUILDDISABLENODEREUSE=1` and
   `DOTNET_CLI_USE_MSBUILD_SERVER=0` and shut the build servers down on teardown,
