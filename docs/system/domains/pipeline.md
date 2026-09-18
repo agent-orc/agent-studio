@@ -1414,6 +1414,8 @@ producer. Replayed attribution keeps the same generation number. Inherited
 commits remain current expectations, while earlier numbered generations remain
 visible history with the `superseded` rule. A missing current generation commit
 always blocks full integration, even when another commit touches the same files.
+Verified inclusion in a new delivery clears obsolete supersession markers on
+inherited commits, while preserving their original producer and history entry.
 
 For legacy commits without a numbered generation, a conflict-free
 `git merge-tree --write-tree` result equal to the published integration tree

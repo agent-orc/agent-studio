@@ -423,6 +423,27 @@ public class TaskCommitBindingTests : IDisposable
     }
 
     [Fact]
+    public void RemoteGeneration_RequeuedInheritedCommit_RemainsACurrentExpectation()
+    {
+        var (scanner, mutations) = Build();
+        var folder = SeedJobFolder("requeued-inherited", TaskStates.HumanReview, legacyCommit: null);
+        var inherited = MakeCommit("aaaaaaa", "inherited", 1, "2026-09-13T10:00:00Z");
+        var current = MakeCommit("bbbbbbb", "current", 1, "2026-09-18T10:00:00Z");
+        Assert.True(mutations.SetRemoteCommitAttributionOnFolder(folder, "run-1", "runner", inherited.Sha, [inherited]));
+        Assert.True(mutations.SupersedeCurrentDeliveryOnFolder(folder, TaskCommitSupersession.PendingAttempt).Succeeded);
+        Assert.True(mutations.SetRemoteCommitAttributionOnFolder(folder, "run-2", "runner", current.Sha, [inherited, current]));
+
+        var commits = scanner.FindJob("requeued-inherited", _watchPath)!.Commits;
+        var decisions = DeliveryGenerationPolicy.Evaluate(commits, sha => sha == current.Sha, _ => false, _ => false);
+
+        Assert.Equal(CommitIntegrationRules.Missing, decisions[0].IntegrationRule);
+        Assert.False(TaskCommitSupersession.IsSuperseded(commits[0]));
+        Assert.Equal([inherited.Sha, current.Sha], commits.Select(commit => commit.Sha));
+        Assert.Equal("run-1", commits[0].RunAttemptId);
+        Assert.Equal(2, commits[0].DeliveryGeneration);
+    }
+
+    [Fact]
     public void Reconciliation_PersistsEveryRuleByRepositoryWithoutDroppingHistory()
     {
         var (scanner, mutations) = Build();

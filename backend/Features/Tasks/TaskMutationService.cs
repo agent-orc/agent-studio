@@ -426,6 +426,10 @@ public class TaskMutationService
                     DeliveryAttemptId = runAttemptId,
                     DeliveryRef = commit.Branch,
                     IntegrationRule = null,
+                    // Verified membership in this delivery supersedes a prior
+                    // requeue or replay marker; the commit is required again.
+                    SupersededByAttempt = null,
+                    SupersededBySha = null,
                 };
                 continue;
             }

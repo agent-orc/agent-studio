@@ -1076,6 +1076,7 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "MachineBound")]
     public void BuildLookup_LegacyContentEqualCommit_IsIntegratedByContent()
     {
         var repo = SeedDevelopMainRepo();
@@ -1103,6 +1104,7 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
     }
 
     [Theory]
+    [Trait("Category", "MachineBound")]
     [InlineData(false)]
     [InlineData(true)]
     public void BuildLookup_TwoRepositoriesWithLegacySupersession_IntegratesOnlyAfterBothLand(bool numbered)
@@ -1147,6 +1149,7 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "MachineBound")]
     public void BuildLookup_CurrentGenerationMissingCommit_BlocksUntilItLandsAndThenUpdatesDeliveryRef()
     {
         var repo = SeedDevelopMainRepo();
