@@ -448,16 +448,72 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         Assert.Equal(IntegrationStatuses.Integrated, status.Status);
         Assert.DoesNotContain("partial", status.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("superseded", status.Detail, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains(original[..7], status.Detail);
         Assert.Contains(replacement[..7], status.Detail);
+        // The repository line still names the individual commit and what replaced it.
+        var repository = Assert.Single(status.Repositories);
+        Assert.Contains(original[..7], repository.Detail);
+        Assert.Contains(replacement[..7], repository.Detail);
+    }
+
+    /// <summary>
+    /// AGT-2871 - the other half of the generation rule: a round the card
+    /// replaced is history even when nothing covers its content. The card was
+    /// continued and re-delivered, and the re-delivery is what the reviewer
+    /// gated, so the first round is not a hole in the current delivery.
+    /// </summary>
+    [Fact]
+    public void BuildLookup_UncoveredCommitOfAReplacedGeneration_IsSupersededNotPartial()
+    {
+        var repo = SeedDevelopMainRepo();
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "checkout -q -b task/agt-2871-generation");
+        File.WriteAllText(Path.Combine(repo, "round-one.txt"), "round one content");
+        Commit(repo, "wip(runner): salvage before teardown - outcome Done");
+        var roundOne = RunGit(repo, "rev-parse task/agt-2871-generation").Out.Trim();
+
+        RunGit(repo, "checkout -q develop");
+        File.WriteAllText(Path.Combine(repo, "round-three.txt"), "round three content");
+        Commit(repo, "feat: reviewed third generation");
+        var roundThree = RunGit(repo, "rev-parse develop").Out.Trim();
+
+        var svc = BuildService(repo, out var project, out var log);
+        var job = Job(
+            "agt-2871-generation",
+            "AGT-2871",
+            project,
+            repo,
+            log,
+            commits:
+            [
+                Commit(roundOne) with
+                {
+                    FilesChanged = 1,
+                    Files = ["round-one.txt"],
+                },
+                Commit(roundThree) with
+                {
+                    RunAttemptId = "run_3",
+                    Branch = "runner/agent-runner-01/AGT-2871",
+                    FilesChanged = 1,
+                    Files = ["round-three.txt"],
+                },
+            ]);
+
+        var status = svc.BuildLookup([job])[job.TaskKey];
+
+        Assert.Equal(IntegrationStatuses.Integrated, status.Status);
+        Assert.Equal($"integrated via {roundThree[..7]} (generation 2); 1 earlier generation commit superseded",
+            status.Detail);
+        // The ref the operator is pointed at is the generation that was merged.
+        Assert.Equal("runner/agent-runner-01/AGT-2871", status.DeliveryRef);
     }
 
     [Fact]
-    public void BuildLookup_MissingCommitNotCoveredByAnyLaterCommit_StillReportsPartial()
+    public void BuildLookup_MissingCommitOfTheCurrentGenerationNotCoveredByAnyLaterCommit_StillReportsPartial()
     {
-        // Guard rail: a genuinely missing commit whose content is NOT contained
-        // in any later integrated commit must still read as "partial", not be
-        // swallowed into a false "superseded" claim.
+        // Guard rail: a genuinely missing commit of the CURRENT generation whose
+        // content is NOT contained in any later integrated commit must still
+        // read as "partial", not be swallowed into a false "superseded" claim.
         var repo = SeedDevelopMainRepo();
         RunGit(repo, "checkout -q develop");
         RunGit(repo, "checkout -q -b task/agt-partial-2");
@@ -481,7 +537,7 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
             [
                 Commit(notLanded) with
                 {
-                    RunAttemptId = "round-1",
+                    RunAttemptId = "round-2",
                     FilesChanged = 1,
                     Files = ["unrelated.txt"],
                 },
@@ -1165,6 +1221,40 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         RunGit(repo, "checkout -q -b develop");
         RunGit(repo, "checkout -q main");
         return repo;
+    }
+
+    /// <summary>
+    /// AGT-2871 guard rail: a repository whose checkout cannot be read proves
+    /// nothing. Every commit of that repository stays a delivery expectation, so
+    /// an unevaluable card can never read as integrated.
+    /// </summary>
+    [Fact]
+    public void BuildLookup_RepositoryCheckoutUnavailable_IsNotIntegrated()
+    {
+        var repo = SeedDevelopMainRepo();
+        var svc = BuildService(repo, out var project, out var log);
+        var job = Job(
+            "unavailable-repo",
+            "AGT-2871",
+            project,
+            repo,
+            log,
+            commits:
+            [
+                Commit("1111111111111111111111111111111111111111") with
+                {
+                    Repository = "https://github.com/example/never-cloned.git",
+                    FilesChanged = 1,
+                    Files = ["somewhere/else.cs"],
+                },
+            ]);
+
+        var status = svc.BuildLookup([job])[job.TaskKey];
+
+        Assert.True(IntegrationStatuses.IsNotIntegrated(status.Status));
+        var repository = Assert.Single(status.Repositories);
+        Assert.False(repository.OnIntegrationBranch);
+        Assert.Contains("could not be evaluated", repository.Detail);
     }
 
     /// <summary>

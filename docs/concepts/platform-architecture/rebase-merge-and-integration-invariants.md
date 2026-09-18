@@ -47,7 +47,7 @@ Git integration lives in `backend/Features/Git/GitService.cs` and
 |---|---|---|
 | Delivery evidence | Active, non-superseded `commits[]` entries on the task card | `backend/Features/Tasks/TaskMutationService.cs` |
 | Review subject | One fenced result ref plus the expected head SHA | `backend/Features/Pipeline/ReviewSubjectStore.cs` |
-| Integration truth | Every active attributed commit is an ancestor of the configured integration branch | `backend/Features/Tasks/TaskIntegrationStatusService.cs` |
+| Integration truth | Every commit of the card's current delivery generation is an ancestor of the configured integration branch; replaced generations are history, not expectations | `backend/Features/Tasks/DeliveryGenerationPolicy.cs`, `backend/Features/Tasks/TaskIntegrationStatusService.cs` |
 | Promotion truth | `main` advances only to the exact gated candidate SHA | `docs/operations/develop-main-promotion.md`, `backend/Features/Pipeline/MergeIntoDevelopRunner.cs` |
 | Integration record | Append-only classification of one task's integration history | `backend/Shared/Models/TaskIntegrationRecord.cs` |
 

@@ -64,6 +64,25 @@ public record TaskCommitInfo
     /// </summary>
     [JsonPropertyName("supersededByAttempt")]
     public string? SupersededByAttempt { get; init; }
+    /// <summary>
+    /// 1-based delivery generation this commit belongs to, as derived by
+    /// <see cref="AgentStudio.Tasks.DeliveryGenerationPolicy"/>. Persisted for
+    /// audit and for the card UI only: readers always re-derive the value from
+    /// the commit chain, so a stale number can never decide an integration
+    /// verdict. Null on records written before generation awareness existed.
+    /// </summary>
+    [JsonPropertyName("generation")]
+    public int? Generation { get; init; }
+    /// <summary>
+    /// Which rule decided this commit's integration verdict, one of
+    /// <see cref="CommitIntegrationRules"/>. Only
+    /// <see cref="CommitIntegrationRules.ContentEqual"/> is load-bearing on
+    /// read: it is the single verdict that cannot be re-derived without a git
+    /// spawn, so the reconcile pass records it and the hot-path projection
+    /// trusts it. Every other value is descriptive.
+    /// </summary>
+    [JsonPropertyName("integrationRule")]
+    public string? IntegrationRule { get; init; }
     public int FilesChanged { get; init; }
     public List<string> Files { get; init; } = [];
     public DateTime At { get; init; }
@@ -194,6 +213,68 @@ public static class CommitSupersessionStates
     public const string Replaced = "replaced";
 
     public static readonly string[] All = [Current, ReplacementPending, Replaced];
+}
+
+/// <summary>
+/// AGT-2871 - wire values for <see cref="TaskCommitInfo.IntegrationRule"/>: the
+/// single rule that decided one attributed commit's integration verdict. The
+/// board and the audit trail can therefore say WHY a commit counts as landed
+/// instead of only that it does.
+/// </summary>
+public static class CommitIntegrationRules
+{
+    /// <summary>The commit itself is reachable from the integration branch.</summary>
+    public const string Ancestor = "ancestor";
+
+    /// <summary>
+    /// The commit is not reachable, but merging it into the integration branch
+    /// yields the branch's own tree (<c>git merge-tree --write-tree</c>): it
+    /// adds nothing that is not already integrated. The only rule that needs a
+    /// git spawn, and therefore the only one that is persisted to be trusted.
+    /// </summary>
+    public const string ContentEqual = "content-equal";
+
+    /// <summary>The commit belongs to a delivery generation that a later, identified generation replaced.</summary>
+    public const string SupersededGeneration = "superseded-generation";
+
+    /// <summary>
+    /// Legacy record without generation markers: a later attributed commit of
+    /// the same card is integrated and covers every path this commit touched.
+    /// </summary>
+    public const string SupersededContent = "superseded-content";
+
+    /// <summary>
+    /// Legacy record without generation markers: the conservative changed-file
+    /// breadth heuristic of <see cref="AgentStudio.Tasks.SupersededCommitSweepPolicy"/>
+    /// matched a later, integrated commit of a different generation.
+    /// </summary>
+    public const string SupersededBreadth = "superseded-breadth";
+
+    /// <summary>The commit is a current delivery expectation that has not landed.</summary>
+    public const string Missing = "missing";
+
+    public static readonly string[] All =
+        [Ancestor, ContentEqual, SupersededGeneration, SupersededContent, SupersededBreadth, Missing];
+
+    /// <summary>The commit counts towards the card's integrated delivery.</summary>
+    public static bool IsIntegrated(string? rule)
+        => string.Equals(rule, Ancestor, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(rule, ContentEqual, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The commit is readable history that is no longer a delivery expectation.</summary>
+    public static bool IsSuperseded(string? rule)
+        => string.Equals(rule, SupersededGeneration, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(rule, SupersededContent, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(rule, SupersededBreadth, StringComparison.OrdinalIgnoreCase);
+
+    public static string? Normalize(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var candidate = value.Trim();
+        foreach (var rule in All)
+            if (string.Equals(rule, candidate, StringComparison.OrdinalIgnoreCase)) return rule;
+        return null;
+    }
 }
 
 /// <summary>Terminal <see cref="TaskCommitInfo.PushStatus"/> values the completed-push backstop persists.</summary>

@@ -14,6 +14,20 @@ release yet.
 
 ### Fixed
 
+- Integration status counts superseded delivery generations. A card that was
+  continued after a first delivery carries every round's commits in
+  `commits[]`; only the current round is a delivery expectation now, so nine
+  cards whose reviewed delivery was long on `develop` stop reading `pending` or
+  `partial`. Legacy records without generation markers are decided by content
+  instead: a commit whose merge into the integration branch yields the branch's
+  own tree counts as integrated, and one whose every changed path a later
+  integrated commit rewrote counts as superseded. The card records which rule
+  decided each commit, `integration.detail` names the generation that landed
+  and how many earlier ones it replaced, `deliveryRef` points at the ref that
+  merged, and a startup reconcile pass clears the stuck Human Review cards so
+  the acceptance rail completes them without an operator move. A missing commit
+  of the current generation keeps blocking acceptance (AGT-2871).
+
 - Worker resource envelope: the task ceiling is 512 per core of fair share
   (minimum 1024) instead of 128. `pids.max` counts threads, and a worker with a
   .NET test host hit the 307-task ceiling of a 12-core, 5-slot host; the

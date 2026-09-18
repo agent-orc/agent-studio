@@ -4212,6 +4212,39 @@ public class GitService
     }
 
     /// <summary>
+    /// AGT-2871 - true when merging <paramref name="candidate"/> into
+    /// <paramref name="integrationRef"/> would produce the integration ref's own
+    /// tree: the candidate adds nothing that is not already integrated. This is
+    /// the content proof for a superseded delivery generation whose commit was
+    /// never rebased onto the branch, so ancestry alone reads it as missing.
+    ///
+    /// <para>
+    /// Uses <c>git merge-tree --write-tree</c>, which writes the merged tree
+    /// into the object database without touching any worktree or ref. A
+    /// conflicting merge exits non-zero and is not content equality: the
+    /// candidate and the branch disagree about the same paths.
+    /// </para>
+    /// </summary>
+    public bool MergeAddsNothing(string repoRoot, string integrationRef, string candidate)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot)) return false;
+        if (!IsLikelyBranchName(integrationRef) || !IsLikelyBranchName(candidate)) return false;
+
+        var (treeOut, _, treeCode) = RunGitArgs(
+            repoRoot, "rev-parse", "--verify", "--quiet", integrationRef + "^{tree}");
+        var integrationTree = treeOut.Trim();
+        if (treeCode != 0 || integrationTree.Length == 0) return false;
+
+        var (mergeOut, _, mergeCode) = RunGitArgs(
+            repoRoot, "merge-tree", "--write-tree", integrationRef, candidate);
+        if (mergeCode != 0) return false;
+        var mergedTree = mergeOut.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .FirstOrDefault()?.Trim();
+        return !string.IsNullOrEmpty(mergedTree)
+               && string.Equals(mergedTree, integrationTree, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
     /// The merge-base (fork point) SHA of two refs, or null when either ref is
     /// missing / they share no history. ASS-1724 uses this to capture a task
     /// branch's <c>base</c> - the commit <c>task/&lt;id&gt;</c> was cut from off the

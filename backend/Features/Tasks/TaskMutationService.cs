@@ -655,6 +655,45 @@ public class TaskMutationService
     }
 
     /// <summary>
+    /// AGT-2871 - records the delivery generation and the rule that decided one
+    /// commit's integration verdict. Purely additive: no attributed commit is
+    /// rewritten or dropped, and the projection re-derives every rule except
+    /// <see cref="CommitIntegrationRules.ContentEqual"/>, which is the only one
+    /// that cannot be recomputed without a git spawn.
+    /// </summary>
+    public CommitIntegrationEvidenceWriteResult MarkCommitIntegrationEvidenceOnFolder(
+        string folderPath,
+        IReadOnlyDictionary<string, CommitIntegrationEvidence> evidence)
+    {
+        if (!Directory.Exists(folderPath)) return new CommitIntegrationEvidenceWriteResult(false, 0);
+        if (evidence.Count == 0) return new CommitIntegrationEvidenceWriteResult(true, 0);
+        var persisted = ReadPersistedCommitChain(folderPath);
+        if (persisted is null) return new CommitIntegrationEvidenceWriteResult(false, 0);
+
+        var changed = 0;
+        var updated = persisted.Select(commit =>
+        {
+            if (!evidence.TryGetValue(commit.Sha, out var decided)) return commit;
+            // A commit that simply has not landed carries no rule: "undecided"
+            // is the honest record, and it keeps a card whose other repository
+            // was not evaluated from being stamped "missing" here.
+            var rule = decided.IsMissing
+                ? commit.IntegrationRule
+                : CommitIntegrationRules.Normalize(decided.Rule) ?? commit.IntegrationRule;
+            if (commit.Generation == decided.Generation
+                && string.Equals(commit.IntegrationRule, rule, StringComparison.Ordinal))
+            {
+                return commit;
+            }
+            changed++;
+            return commit with { Generation = decided.Generation, IntegrationRule = rule };
+        }).ToList();
+        if (changed == 0) return new CommitIntegrationEvidenceWriteResult(true, 0);
+        var written = WriteCommitState(folderPath, updated);
+        return new CommitIntegrationEvidenceWriteResult(written, written ? changed : 0);
+    }
+
+    /// <summary>
     /// Persists completed-push backstop bookkeeping (<see cref="CommitPushOutcome"/>)
     /// for a subset of a task's commits, keyed by SHA. Every history entry not
     /// named in <paramref name="outcomes"/> is left untouched.
@@ -2297,6 +2336,9 @@ public class TaskMutationService
 public sealed record IntegrationRecordWriteResult(bool Succeeded, bool Appended);
 
 public sealed record CommitSupersessionWriteResult(bool Succeeded, int MarkedCommits);
+
+/// <summary>AGT-2871 - outcome of one generation/rule evidence write.</summary>
+public sealed record CommitIntegrationEvidenceWriteResult(bool Succeeded, int MarkedCommits);
 
 public sealed record CommitMetadataBackfillResult(
     int RepairedTasks,

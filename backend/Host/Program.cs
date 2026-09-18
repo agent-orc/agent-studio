@@ -416,6 +416,7 @@ builder.Services.AddSingleton<ProjectGitGraphService>();
 builder.Services.AddSingleton<TaskIntegrationStatusService>();
 builder.Services.AddSingleton<TaskIntegrationRecoveryService>();
 builder.Services.AddSingleton<SupersededCommitSweep>();
+builder.Services.AddSingleton<IntegrationGenerationReconcileSweep>();
 builder.Services.AddSingleton<RemoteTokenReceiptService>();
 builder.Services.AddSingleton<RemoteCompletionAttributionSweep>();
 builder.Services.AddSingleton<TaskListGitProjectionCache>();
@@ -1261,6 +1262,21 @@ try
 catch (Exception ex)
 {
     crashRecorder.Record("SupersededCommitSweep", ex);
+}
+
+// AGT-2871: re-evaluate Human Review cards the integration projection still
+// reads as pending/partial. A card whose superseded delivery generation was
+// never rebased needs one `git merge-tree --write-tree` per commit to prove it
+// adds nothing; this pass pays that once and records the verdict on the card so
+// the board never has to. The acceptance rail then completes the card on its
+// own next interval, without an operator move.
+try
+{
+    app.Services.GetRequiredService<IntegrationGenerationReconcileSweep>().Run();
+}
+catch (Exception ex)
+{
+    crashRecorder.Record("IntegrationGenerationReconcileSweep", ex);
 }
 
 // AGT-2818: announce every card currently held in a pickup lane, so the backlog

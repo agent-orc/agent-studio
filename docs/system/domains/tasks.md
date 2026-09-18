@@ -315,6 +315,14 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   and integration status use only entries without that marker. The temporary
   value `next-attempt` is replaced by the next fenced `runAttemptId` when its
   remote attribution lands.
+- Every `commits[]` entry also carries the delivery generation it belongs to
+  (`generation`) and the rule that decided its integration verdict
+  (`integrationRule`, one of `ancestor`, `content-equal`,
+  `superseded-generation`, `superseded-content`, `superseded-breadth`). Both are
+  additive audit state: readers re-derive every rule except `content-equal`,
+  which is the only verdict that cannot be recomputed without a git spawn and is
+  therefore trusted from disk. A commit that has not landed carries no rule at
+  all, so "not decided" is never written as "missing".
 - A platform-owned mechanical rebase retains each original `commits[]` entry,
   marks it with `supersededBySha`, and appends its replacement object with the
   same producer attribution. Both SHA and attempt supersession remove a
@@ -327,6 +335,14 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   changed-file overlap, no more than three omitted paths, and comparable total
   breadth. Cases outside those bounds remain untouched and are listed in the
   durable sweep report for manual review.
+- Startup runs `IntegrationGenerationReconcileSweep` over the cards in
+  `5-human-review` whose integration verdict is still `pending` or `partial`.
+  For that bounded population only, it pays one
+  `git merge-tree --write-tree` per non-ancestor commit, records
+  `content-equal` where the merge yields the integration branch's own tree, and
+  leaves everything else undecided. The acceptance rail then completes the
+  reconciled cards on its next interval without an operator move. Re-running the
+  pass is a no-op once the population is empty.
 - Startup also runs the bounded `remote-completion-attribution-v1` repair over
   recent delivered and archived remote subjects. It accepts only a verified
   immutable result ref plus an exact subject or provenance base, passes the
@@ -402,15 +418,34 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   result proves integration; attributed SHAs from superseded review epochs
   remain history and do not force a permanent `partial` card state.
 - A missing attributed commit is not automatically a hole in the delivery
-  either: `ClassifyRepositories`/`ClassifyWithRepo` also recognize *implicit*
-  supersession at read time, reusing the same conservative breadth heuristic
-  (≥90% changed-file overlap, ≤3 omissions, comparable breadth, a different
-  delivery generation) as the one-time `SupersededCommitSweep` migration, but
-  for any attributed commit, not only a `wip(runner): salvage before teardown`
-  fence. A missing commit whose content is fully covered by a later,
-  integrated commit reads as `superseded by <sha>` in the detail instead of
-  contributing to `partial`; no explicit `supersededBySha`/`supersededByAttempt`
-  marker is required (AGT-2838).
+  either. `ClassifyRepositories`/`ClassifyWithRepo` both delegate to the pure
+  `DeliveryGenerationPolicy`, which splits `commits[]` into the current delivery
+  generation and the generations the card replaced, and decides each commit by
+  exactly one rule (AGT-2871):
+  1. `ancestor` - reachable from the integration branch.
+  2. `content-equal` - merging it into the branch yields the branch's own tree,
+     recorded by the reconcile pass because the board may not spawn git.
+  3. `superseded-generation` - the commit belongs to a generation a later,
+     *identified* generation replaced. `integration.status` is then computed
+     from the current generation only.
+  4. `superseded-content` - legacy record without generation markers whose every
+     changed path is covered by a later, integrated commit of a different
+     generation.
+  5. `superseded-breadth` - the conservative ≥90% changed-file overlap heuristic
+     of the one-time `SupersededCommitSweep` migration, as the last fallback
+     (AGT-2838).
+  6. `missing` - a current delivery expectation that has not landed. Only this
+     class contributes to `partial` and blocks acceptance.
+  A generation is identified by `runAttemptId`, failing that by `resultSha`. The
+  delivery branch is deliberately not an identity: the canonical
+  `runner/<host>/<KEY>` ref is reused across rounds. An unmarked legacy commit is
+  its own generation, and rule 3 fires only when the *current* generation is
+  identified, so a wholly legacy card is decided by the content rules alone.
+- An integrated card whose `commits[]` spans several generations says so:
+  `integration.detail` reads
+  `integrated via <sha> (generation N); K earlier generation commits superseded`,
+  and `integration.deliveryRef` is the delivery branch of the generation that
+  actually merged, not the first round's result envelope.
 - `MergeIntoDevelopRunner` requests an immediate `GitStateIndexService` refresh
   and an immediate `AcceptanceRailHostedService` pass right after a successful
   integration push, instead of only after the debounced watcher or the rail's
