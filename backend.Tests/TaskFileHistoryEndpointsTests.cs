@@ -1,4 +1,7 @@
 using System.Diagnostics;
+using Microsoft.Extensions.Logging;
+using Microsoft.AspNetCore.TestHost;
+using System.Net;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
@@ -68,7 +71,7 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
         var secondSha = RunGitCapture(_workspaceRoot, "rev-parse", "HEAD").Trim();
 
         using var factory = CreateFactory();
-        using var client = factory.CreateClient();
+        using var client = CreateClient(factory);
         var watchPath = Uri.EscapeDataString(_workspaceProjectRoot);
         using var historyResponse = await client.GetAsync($"/api/tasks/ASS-853/files/code-review.md/history?watchPath={watchPath}");
         historyResponse.EnsureSuccessStatusCode();
@@ -97,7 +100,7 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
         File.WriteAllText(Path.Combine(job, "exploration.html"), "<button>switch</button>", Encoding.UTF8);
 
         using var factory = CreateFactory();
-        using var client = factory.CreateClient();
+        using var client = CreateClient(factory);
         var watchPath = Uri.EscapeDataString(_workspaceProjectRoot);
         using var response = await client.GetAsync($"/api/tasks/ASS-HTML/files/exploration.html?watchPath={watchPath}");
 
@@ -116,7 +119,7 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
         File.WriteAllBytes(Path.Combine(nested, "evidence.bin"), [0, 1, 2, 255]);
 
         using var factory = CreateFactory();
-        using var client = factory.CreateClient();
+        using var client = CreateClient(factory);
         var watchPath = Uri.EscapeDataString(_workspaceProjectRoot);
         using var html = await client.GetAsync(
             $"/api/tasks/ASS-RESULT-HTML/results/reports/concept%20report.html?watchPath={watchPath}");
@@ -146,7 +149,7 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
             image.SaveAsPng(source);
 
         using var factory = CreateFactory();
-        using var client = factory.CreateClient();
+        using var client = CreateClient(factory);
         var watchPath = Uri.EscapeDataString(_workspaceProjectRoot);
         using var response = await client.GetAsync(
             $"/api/tasks/ASS-THUMBNAIL/thumbnail?path=gallery%2Fevidence.png&width=320&watchPath={watchPath}");
@@ -182,7 +185,7 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
         var secondSha = RunGitCapture(_codeRoot, "rev-parse", "HEAD").Trim();
 
         using var factory = CreateFactory();
-        using var client = factory.CreateClient();
+        using var client = CreateClient(factory);
         var watchPath = Uri.EscapeDataString(_workspaceProjectRoot);
         using var historyResponse = await client.GetAsync($"/api/tasks/ASS-900/files/src/app.cs/history?watchPath={watchPath}&scope=code");
         historyResponse.EnsureSuccessStatusCode();
@@ -198,6 +201,39 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
         using var contentResponse = await client.GetAsync($"/api/tasks/ASS-900/files/src/app.cs?watchPath={watchPath}&scope=code&at={firstSha}");
         contentResponse.EnsureSuccessStatusCode();
         Assert.Equal("class App { }\n", await contentResponse.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task CodeFileHistory_WhenTheGitBudgetIsSpent_ReportsItInsteadOfLettingTheClientAbort()
+    {
+        // The loaded-host case made deterministic: instead of waiting for a slow
+        // host to push the lookup past the client's deadline, the server starts
+        // with no budget at all. What matters is the shape of the outcome - a
+        // real HTTP response naming the server's own limit, arriving well inside
+        // ClientTimeout, rather than the aborted request this test used to fail
+        // on (AGT-2867).
+        WriteJob("ASS-901");
+        WriteFile(_codeRoot, "src/app.cs", "class App { }\n");
+        RunGit(_codeRoot, "add", "-A");
+        RunGit(_codeRoot, "commit", "-q", "-m", "feat: add app");
+
+        using var factory = CreateFactory(gitCallBudget: TimeSpan.Zero);
+        using var client = CreateClient(factory);
+        var watchPath = Uri.EscapeDataString(_workspaceProjectRoot);
+
+        var started = Stopwatch.StartNew();
+        using var response = await client.GetAsync(
+            $"/api/tasks/ASS-901/files/src/app.cs/history?watchPath={watchPath}&scope=code");
+        started.Stop();
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains(
+            TaskFileHistoryService.GitBudgetExhausted,
+            await response.Content.ReadAsStringAsync(),
+            StringComparison.Ordinal);
+        Assert.True(
+            started.Elapsed < ClientTimeout,
+            $"The server answered in {started.Elapsed}, which must stay inside the client deadline {ClientTimeout}.");
     }
 
     [Fact]
@@ -219,7 +255,7 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
             TaskStates.HumanReview,
             new DateTime(2026, 9, 11, 8, 21, 0, DateTimeKind.Utc));
 
-        using var client = factory.CreateClient();
+        using var client = CreateClient(factory);
         var watchPath = Uri.EscapeDataString(_workspaceProjectRoot);
         using var listResponse = await client.GetAsync(
             $"/api/tasks/ASS-RESULT-HISTORY/result-history?watchPath={watchPath}");
@@ -286,7 +322,7 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
             .GetWorkspaceResultHistory(id, _workspaceProjectRoot);
         Assert.True(rawHistory.Success, rawHistory.Error);
         Assert.Equal(2, rawHistory.Value?.Count);
-        using var client = factory.CreateClient();
+        using var client = CreateClient(factory);
         var watchPath = Uri.EscapeDataString(_workspaceProjectRoot);
         using var listResponse = await client.GetAsync(
             $"/api/tasks/{id}/result-history?watchPath={watchPath}");
@@ -328,7 +364,7 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
         Directory.CreateDirectory(Path.Combine(_workspaceProjectRoot, TaskStates.AutoReview));
 
         using var factory = CreateFactory();
-        using var client = factory.CreateClient();
+        using var client = CreateClient(factory);
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
         var watchPath = Uri.EscapeDataString(_workspaceProjectRoot);
         using var response = await client.PostAsJsonAsync(
@@ -341,12 +377,42 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
         Assert.Equal(original, File.ReadAllBytes(destination));
     }
 
-    private WebApplicationFactory<Program> CreateFactory()
+    /// <summary>
+    /// The deadline every client in this class gets, stated instead of inherited
+    /// from <see cref="HttpClient"/>'s 100-second default.
+    ///
+    /// <para>It has one job: stay above
+    /// <see cref="GitCallBudgetPolicy.DefaultTotalBudget"/> so the two clocks are
+    /// ordered. A loaded host then always produces a real response carrying the
+    /// server's own git failure, instead of the client aborting mid-request and
+    /// the assertions below failing on a <see cref="TaskCanceledException"/> that
+    /// says nothing about the endpoint (AGT-2867).
+    /// <see cref="GitCallBudgetPolicyTests"/> guards the ordering.</para>
+    /// </summary>
+    internal static readonly TimeSpan ClientTimeout = TimeSpan.FromMinutes(2);
+
+    private HttpClient CreateClient(WebApplicationFactory<Program> factory)
+    {
+        var client = factory.CreateClient();
+        client.Timeout = ClientTimeout;
+        return client;
+    }
+
+    private WebApplicationFactory<Program> CreateFactory(TimeSpan? gitCallBudget = null)
     {
         return new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {
                 builder.UseEnvironment("Test");
+                if (gitCallBudget is { } budget)
+                {
+                    builder.ConfigureTestServices(services =>
+                        services.AddSingleton(sp => new TaskFileHistoryService(
+                            sp.GetRequiredService<TaskScannerService>(),
+                            sp.GetRequiredService<GitService>(),
+                            sp.GetRequiredService<ILogger<TaskFileHistoryService>>(),
+                            budget)));
+                }
                 builder.ConfigureAppConfiguration((_, cfg) =>
                 {
                     cfg.AddInMemoryCollection(new Dictionary<string, string?>
