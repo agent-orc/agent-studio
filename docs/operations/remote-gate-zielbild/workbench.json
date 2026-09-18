@@ -1,35 +1,62 @@
 {
   "schemaVersion": 1,
   "id": "remote-gate-zielbild",
-  "title": "Remote Gate Target Architecture",
-  "summary": "Decision Dossier for replacing the fast but out-of-band SSH gate bridge with a first-class Tranche 0 execution contract. It compares claimable gate steps, the Review Plane, and capability-only dispatch; recommends a bounded GateAttempt protocol with capability-based admission; and defines the implementation-to-AGT-2262 teardown chain. [Curation 2026-08-18 (AGT-2671): DONE CHECK - design not yet approved by operator sight review and zero implementation of this target model exists (re-verified against develop 2026-08-24: the only Gate* types in the backend are the unrelated build-test gate's MachineGateLease in BuildTestGateRunner.cs and BuildTestGateSubject in ReviewDecisionOrchestrator.cs; no remote-gate GateSubject/GateAttempt/GateLease entity exists). AGT-2262 stays parked per its own eight-item cutover acceptance list. Stays active. DOC TRANSFER - GateSubject/GateAttempt/GateLease target model extracted to docs/concepts/platform-architecture/remote-gate.md.]",
+  "title": "Remote Gate and Integration Target Architecture",
+  "summary": "AGT-2881 extends AGT-W18 from remote gate execution to remote candidate construction, verification, merge and push, with Studio as observer. Operator direction dated 2026-09-18; D1-D14 remain open technical decisions. Includes source-verified develop evidence, fenced publication recovery, Windows coverage, rollout and a staged architecture-page update. Historical AGT-W59 consolidation is preserved in reviewHistory.",
   "entrypoint": "index.html",
-  "status": "active",
+  "status": "decision-pending",
   "phase": "decision-ready",
-  "updatedAt": "2026-08-18T12:00:00Z",
+  "updatedAt": "2026-09-18T12:00:00Z",
   "sourceTaskKeys": [
-    "AGT-2369"
+    "AGT-2369",
+    "AGT-2881"
   ],
   "implementationTasks": [
     {
-      "title": "Move build/test gates to claimable Task Server gate steps",
-      "promptMarkdown": "Implement the approved GateAttempt target from the Remote Gate Target Architecture Dossier. Add the bounded Task Server GateSubject/GateAttempt/lease/report lifecycle, capability-based Agent Host gate claims, exact-SHA materialization, typed timeout and infrastructure retry behavior, central visibility, and Orchestrator Engine dispatch. Migrate post-build-test-gate to the new path and prove throughput and restart/failure parity. Do not tear down the SSH bridge in this card; keep AGT-2262 blocked until the cutover acceptance conditions are met."
+      "title": "Persist integration authority and fenced publication",
+      "promptMarkdown": "After approval of D7-D8, implement durable IntegrationSubject/IntegrationAttempt, per-project ref-mutation lease and operation-scoped idempotency. Enforce fence, attempt epoch, owner and expected old/new refs at the Git publication boundary with protected branches and isolated credentials. Reject stale writers after lease takeover; replay identical requests and reject conflicting digests. Prove expiry, restart, soft-drain epoch and old-writer races. No Studio canonical-ref writer remains for the canary project."
+    },
+    {
+      "title": "Execute remote integration candidates and reconcile publication",
+      "promptMarkdown": "Implement the approved IntegrationAttempt state machine in a remote executor: exact source fetch, mechanical merge/rebase, clean candidate retention, gate dispatch, non-force publication and durable intent/outbox reconciliation. On lost push acknowledgement verify remote refs and ancestry against the exact recorded intent before completing. Prove red-gate no-publication, ref movement, crash before/after push, evidence loss and cleanup failure. Require the authority slice; do not add arbitrary workflow execution."
+    },
+    {
+      "title": "Share exact candidate verification between Review and Integration",
+      "promptMarkdown": "Extend the review subject/receipt contract to bind repository, result generation, integration pre-tip, candidate SHA, tested tree, ordered parents, plan/profile and environment digests and complete required command outcomes. Publish the exact reviewed candidate or re-verify remotely. Preserve AGT-2839 missing-proof fail-closed cases and reject Linux evidence for required Windows checks. Prove moved-tip, changed-tree, replay, dirty workspace and incomplete-report cases."
+    },
+    {
+      "title": "Provide a Windows gate executor and coverage policy",
+      "promptMarkdown": "Provision and integrate a first-class os:windows gate capability with bounded slots and durable reports against the exact candidate. Define a versioned Windows-sensitive suite, including the GateFlakyRerunBehaviorTests and SetupContractTests defect classes, with conservative selection for unknown diffs. Prove Linux passes with Windows failure, no Windows host, host loss and reused Linux evidence. Record queue/runtime and upkeep cost before rollout."
+    },
+    {
+      "title": "Move integration recovery and operator requests to the remote authority",
+      "promptMarkdown": "Implement D11-D12 requests and durable recovery scheduling with AGT-2875 conflict evidence: base/result/candidate SHAs, path list, operation, typed reason, attempt and recovery count. Limit automatic recovery to one round per operator epoch and require renewed review after content changes. Studio projects server evidence and sends idempotent accept/continue/stop/release requests without a checkout. Prove recovery and integration continue with Studio off."
+    },
+    {
+      "title": "Unify promotion and Batch Gate publication authority",
+      "promptMarkdown": "Adapt operator merges, release commits and the existing promotion train to D7 project publication authority. Preserve exact-SHA main promotion and atomic main/tag publication. Specify and test Batch Gate coordinator lease to IntegrationAttempt handoff, fixed acquisition order, member-generation validation and no temporary-ref promotion. Batch implementation is optional for first cutover; every enabled publisher must use the shared authority."
+    },
+    {
+      "title": "Run remote integration shadow and cutover acceptance",
+      "promptMarkdown": "After approved D1-D14 and AGT-2737 authority readiness, compare N=20 consecutive cards for one project on a credential-restricted shadow ref against local integration. Record bases, results, trees, parent order, policy and outcomes; repeat incomparable pairs and resolve every discrepancy. Exercise the documented failure matrix, workstation-off test and explicit fallback. Attach signed authority transfer, durability and performance evidence; do not count shadow publication as canonical integration."
+    },
+    {
+      "title": "Retire local integration execution and reconcile architecture pages",
+      "promptMarkdown": "After remote default acceptance, remove the local BuildTestGateRunner integration path, percent-TEMP gate workspaces, local integration budgets and local merge/push ownership. Audit AGT-2262 against the already absent SSH symbols before removing remaining compatibility. Publish the staged remote-gate.md update into docs/concepts/platform-architecture/remote-gate.md, reconcile AGT-W59 and add navigation in a separately authorised documentation change. Preserve existing links, evidence and portable verification rules; prove Studio requires no repository checkout."
     }
   ],
   "relatedTaskKeys": [
     "AGT-2229",
-    "AGT-2262"
+    "AGT-2262",
+    "AGT-2736",
+    "AGT-2737",
+    "AGT-2824",
+    "AGT-2839",
+    "AGT-2854",
+    "AGT-2872",
+    "AGT-2875"
   ],
   "key": "AGT-W18",
-  "review": {
-    "verdict": "superseded",
-    "supersededBy": [
-      "AGT-W59"
-    ],
-    "reviewedAt": "2026-09-14T00:00:00Z",
-    "reviewedBy": "AGT-2801",
-    "note": "Consolidated into the Gates theme Dossier docs/operations/gates (AGT-W59) on 2026-09-14 per AGT-W55 D1 and D2; content preserved there, this Dossier stays readable as History."
-  },
   "reviewHistory": [
     {
       "verdict": "current",
