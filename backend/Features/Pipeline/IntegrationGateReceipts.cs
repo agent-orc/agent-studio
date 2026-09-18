@@ -78,6 +78,8 @@ public static class IntegrationGateReceipts
                 {
                     ExpectedSha = recordedExpected,
                     TestedSha = recordedTested == "n/a" ? null : recordedTested,
+                    FailureKind = Enum.TryParse<BuildTestGateFailureKind>(HeaderValue(verdictLine, "failureKind="), out var kind)
+                        ? kind : BuildTestGateFailureKind.None,
                 };
             }
             catch (Exception ex)
@@ -87,6 +89,31 @@ public static class IntegrationGateReceipts
         }
 
         return null;
+    }
+
+    /// <summary>Only the latest environment failure may offer a candidate for a fresh gate.</summary>
+    internal static string? ReadEnvironmentCandidate(string jobFolderPath, string prefix)
+    {
+        var dir = Path.Combine(jobFolderPath, "post-steps");
+        if (!Directory.Exists(dir)) return null;
+        var path = Directory.GetFiles(dir, $"{prefix}-*.log").OrderByDescending(EvidenceIndex).FirstOrDefault();
+        if (path is null) return null;
+        try
+        {
+            using var reader = new StreamReader(path);
+            var verdict = reader.ReadLine() ?? "";
+            var shaLine = reader.ReadLine() ?? "";
+            var sha = HeaderValue(shaLine, "expectedSha=");
+            return HeaderValue(verdict, "failureKind=") == nameof(BuildTestGateFailureKind.Environment)
+                   && HeaderValue(verdict, "verdict=") == nameof(BuildTestGateVerdict.Fail)
+                   && ReviewSubjectStore.IsValidResultSha(sha)
+                   && sha == HeaderValue(shaLine, "testedSha=") ? sha : null;
+        }
+        catch (IOException ex)
+        {
+            SilentCatch.Note(ex, "IntegrationGateReceipts: candidate receipt unavailable");
+            return null;
+        }
     }
 
     private static int EvidenceIndex(string path)
@@ -105,6 +132,22 @@ public static class IntegrationGateReceipts
         start += key.Length;
         var end = line.IndexOf(' ', start);
         return end < 0 ? line[start..] : line[start..end];
+    }
+
+    internal static string SlowTestReport(BuildTestGateResult result)
+    {
+        var originalBudget = result.Processes.Select(p => p.OriginalBudgetMs).FirstOrDefault(value => value > 0);
+        if (result.ViolatedBudget is null && (originalBudget == 0 || result.DurationMs < originalBudget * .8))
+            return string.Empty;
+        var slowest = result.Processes.SelectMany(p => p.SlowTests.Select(test => new
+            {
+                p.Command, test.Name, test.DurationMs, test.Source,
+            }))
+            .OrderByDescending(test => test.DurationMs).Take(10).ToArray();
+        return "--- slowest-tests.json (top 10 completed tests/collections; partial on cutoff) ---\n"
+               + System.Text.Json.JsonSerializer.Serialize(slowest,
+                   new System.Text.Json.JsonSerializerOptions { WriteIndented = true }) + "\n"
+               + (slowest.Length == 0 ? "No completed test timings were reported before cutoff.\n" : "");
     }
 
     /// <summary>
@@ -157,7 +200,7 @@ public static class IntegrationGateReceipts
             ? "reviewReuse=not-evaluated"
             : $"reviewReuse={reuse.Token} attempt={reuse.ReviewAttemptId ?? "none"} reason={reuse.Reason}";
         var body =
-            $"verdict={result.Verdict} exit={result.ExitCode?.ToString() ?? "n/a"} durationMs={result.DurationMs}\n" +
+            $"verdict={result.Verdict} exit={result.ExitCode?.ToString() ?? "n/a"} durationMs={result.DurationMs} failureKind={result.FailureKind}\n" +
             $"expectedSha={result.ExpectedSha ?? "n/a"} testedSha={result.TestedSha ?? "n/a"}\n" +
             $"reason={result.Reason}\n" +
             reuseLine + "\n" +
@@ -169,6 +212,13 @@ public static class IntegrationGateReceipts
             dependencyCache + "\n" +
             "--- test-selection.json ---\n" +
             selection + "\n" +
+            "--- resource-evidence.json ---\n" +
+            System.Text.Json.JsonSerializer.Serialize(result.Processes.Select(process => new
+            {
+                process.Command, process.Phase, process.Resources, process.OriginalBudgetMs,
+                process.BudgetExtension, process.ViolatedBudget, process.FailedTestsObserved,
+            }), new System.Text.Json.JsonSerializerOptions { WriteIndented = true }) + "\n" +
+            SlowTestReport(result) +
             "--- last-300-lines ---\n" +
             result.Output;
         File.WriteAllText(

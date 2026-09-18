@@ -96,6 +96,8 @@ public static class AcceptedIntegrationFailurePolicy
         var classified = RunFailureClassifier.Classify(new RunFailureEvidence
         {
             Text = reason ?? verdictSummary ?? string.Empty,
+            ParsedTestFailures = code == AcceptedIntegrationFailureCodes.BuildGateFailed
+                && reason?.Contains("failed tests were observed before cutoff", StringComparison.Ordinal) == true ? 1 : 0,
         });
 
         AcceptedIntegrationFailure failure = code switch
@@ -169,7 +171,7 @@ public static class AcceptedIntegrationFailurePolicy
                 FirstNonBlank(
                     reason,
                     verdictSummary,
-                    "The build/test gate failed before verification reached test discovery."),
+                    "The gate host or run budget prevented verification from completing."),
                 RebaseRecoveryAvailable: false),
             AcceptedIntegrationFailureCodes.GateInterrupted => new(
                 code,

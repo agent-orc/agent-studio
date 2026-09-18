@@ -101,14 +101,18 @@ the acceptance rail only reacts to `conflict-skipped`, which CAC-18 deliberately
 keeps this failure out of. The only operator path left was `/move 4-auto-review`,
 a complete new remote review of a delivery whose review had already passed.
 
+AGT-2872 includes gate-run budget overruns without red tests in this same ladder.
+The one contention allowance and slow-test evidence are documented in
+[build/test gate recovery](../operations/testing/build-test-gate-flaky-rerun.md#budget-overruns-and-contention-agt-2872).
+
 `GateEnvironmentRetryService`
 (`backend/Features/Pipeline/GateEnvironmentRetry/`) closes that gap.
 
 - **Eligibility.** `GateEnvironmentRetryPolicy` is a pure matrix. A card
-  qualifies when it sits in `5-human-review` or `5e-escalated`, expects a code
+  qualifies when it sits in `4-auto-review`, `5-human-review`, or `5e-escalated`, expects a code
   delivery, has no acceptance integration already in flight (`phase` is not
   `integrating`), carries integration failure code `gate-environment-failure`,
-  and the **latest settled review** for exactly the delivery SHA in
+  and the **latest review** for exactly the delivery SHA in
   `review-subject.json` ended in `Pass`. Latest, not any: a delivery can be
   re-reviewed without changing, and an older `Pass` that a later
   `ProductFailure` overturned is not a green light. Any other failure code
@@ -117,7 +121,8 @@ a complete new remote review of a delivery whose review had already passed.
   backstop.
 - **Ladder.** Rungs of 5, 15, and 45 minutes. The first rung measures from the
   recorded gate failure, every later rung from the replay that produced the
-  current failure. Configure with `GateEnvironmentRetry:BackoffMinutes`,
+  current completed failure (or its retry receipt if later). An unfinished review
+  prevents replay. Configure with `GateEnvironmentRetry:BackoffMinutes`,
   `GateEnvironmentRetry:SweepIntervalSeconds`, and `GateEnvironmentRetry:Enabled`.
 - **No new review.** A rung replays `MergeIntoDevelopRunner` against the
   unchanged delivery SHA and nothing else. It never creates a review attempt, so

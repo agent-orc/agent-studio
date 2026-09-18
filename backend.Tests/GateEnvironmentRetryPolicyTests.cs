@@ -97,11 +97,9 @@ public sealed class GateEnvironmentRetryPolicyTests
     [Theory]
     [InlineData(TaskStates.Completed)]
     [InlineData(TaskStates.Archive)]
-    [InlineData(TaskStates.AutoReview)]
     public void Decide_OutsideTheDeliveredReviewLanes_IsIgnored(string state)
     {
         // Completed and Archive belong to the accepted-integration backstop;
-        // Auto Review is still being reviewed.
         var decision = Decide(state: state, now: Failed.AddHours(1));
 
         Assert.Equal(GateEnvironmentRetryAction.Ignore, decision.Action);
@@ -228,6 +226,27 @@ public sealed class GateEnvironmentRetryPolicyTests
         Assert.Equal(
             [TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(15), TimeSpan.FromMinutes(45)],
             options.Backoff);
+    }
+
+    [Fact]
+    public void Passed_review_parked_in_auto_review_uses_the_existing_ladder()
+    {
+        Assert.Equal(GateEnvironmentRetryAction.Wait, Decide(state: TaskStates.AutoReview).Action);
+        Assert.Equal(GateEnvironmentRetryAction.Retry,
+            Decide(state: TaskStates.AutoReview, now: Failed.AddMinutes(5)).Action);
+        Assert.Equal(GateEnvironmentRetryAction.Park,
+            Decide(state: TaskStates.AutoReview, attemptsSpent: 3, now: Failed.AddDays(1)).Action);
+        Assert.Equal(GateEnvironmentRetryAction.Ignore,
+            Decide(state: TaskStates.AutoReview, reviewPassed: false, now: Failed.AddDays(1)).Action);
+    }
+
+    [Fact]
+    public void Long_retry_waits_from_its_failure_instead_of_immediately_spending_the_next_rung()
+    {
+        var finished = Failed.AddHours(1);
+        var decision = Decide(attemptsSpent: 1, lastAttemptAt: Failed, failedAt: finished, now: finished);
+        Assert.Equal(GateEnvironmentRetryAction.Wait, decision.Action);
+        Assert.Equal(TimeSpan.FromMinutes(15), decision.Wait);
     }
 
     private static GateEnvironmentRetryDecision Decide(

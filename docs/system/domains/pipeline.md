@@ -670,15 +670,21 @@ steer the pipeline in this policy version.
   retries the gate on its next pass instead of returning the card to an
   operator or spending a rebase-recovery steer round - a toolchain crash is
   never a product failure and the delivery cannot fix it (CAC-18).
+- AGT-2872: a gate-run budget cutoff without failed tests also projects as
+  `GateEnvironmentFailure`. Red test evidence wins over timeout classification.
+  Verification records process-tree CPU, wall time, and host saturation; sustained
+  external contention can earn one bounded extension. Runs at 80% of the original
+  budget or overrun record the ten slowest reported tests/collections. See the
+  [measurement thresholds and evidence contract](../../operations/testing/build-test-gate-flaky-rerun.md#budget-overruns-and-contention-agt-2872).
 - That accepted-integration sweep only re-drives cards in `6-completed` /
   `7-archive`, and the acceptance rail only reacts to `conflict-skipped`, which
   CAC-18 deliberately excludes this failure from. A delivery that failed its
   merge gate before Human Review therefore had nobody to honour the "will be
   retried" promise. `GateEnvironmentRetryService` owns that case (AGT-2824):
-  for a card in `5-human-review` / `5e-escalated` whose integration failure code
+  for a card in `4-auto-review` / `5-human-review` / `5e-escalated` whose integration failure code
   is `gate-environment-failure`, it replays **only the integration** of the
   unchanged delivery SHA on a bounded ladder of 5, 15, and 45 minutes. It never
-  creates a review attempt: it first checks that the latest settled review in
+  creates a review attempt: it first checks that the latest review in
   attempt authority for exactly that delivery SHA ended in `Pass`, and reuses
   it. See
   [task integration and merge workflow](../../concepts/task-integration-and-merge-workflow.md#gate-environment-retry-agt-2824)

@@ -741,6 +741,22 @@ public sealed class MergeIntoDevelopRunner
                 null);
         }
 
+        // Reuse the previous candidate only after normal synchronization and
+        // merge validation prove both ordered parents and tree are unchanged.
+        // The gate still runs again; no failed verdict is reused.
+        var previousCandidate = IntegrationGateReceipts.ReadEnvironmentCandidate(
+            jobFolderPath, IntegrationGateJournal.PreDevelopBuildGateStep);
+        if (result.Outcome.IsFreshMerge() && previousCandidate is not null
+            && _git.HaveSameMergeInputs(repoRoot, gatedSha, previousCandidate))
+        {
+            var restored = _git.ResetIntegrationBranch(repoRoot, integrationBranch, previousCandidate);
+            if (restored.Success)
+            {
+                gatedSha = previousCandidate;
+                result = result with { MergedSha = previousCandidate };
+            }
+        }
+
         // The remote-delivery merge may create the configured local integration
         // branch from origin. In that case there was no local tip to capture
         // before the merge. The first parent of the new --no-ff merge commit is
@@ -919,7 +935,7 @@ public sealed class MergeIntoDevelopRunner
             ? $"The build gate blocked the merge into {integrationBranch}: {gate.Reason}. " +
               (outcome == MergeIntoIntegrationOutcome.GateEnvironmentFailure
                   ? $"{integrationBranch} was rolled back to {Short(preMergeTip!)} and nothing was pushed; " +
-                    "gate environment: the build/test gate failed before verification could run and will be retried."
+                    "GateEnvironment: the gate host or run budget prevented verification from completing; the same reviewed delivery will be retried without a new review."
                   : $"{integrationBranch} was rolled back to {Short(preMergeTip!)} and nothing was pushed; " +
                     "start a steer round so the delivery builds on top of the current integration branch.")
             : $"The build gate blocked the merge into {integrationBranch}: {gate.Reason}. " +
