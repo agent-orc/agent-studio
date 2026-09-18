@@ -253,6 +253,20 @@ read_process_environment_value() {
     | awk -F= -v key="$variable" '$1 == key { print substr($0, index($0, "=") + 1) }'
 }
 
+active_unit_main_pid() {
+  local unit="$1"
+  local unit_state
+  local active_state
+  local main_pid
+
+  unit_state="$(systemctl show --property=ActiveState --property=MainPID "$unit" 2>/dev/null)" \
+    || return 1
+  active_state="$(awk -F= '$1 == "ActiveState" { print $2 }' <<<"$unit_state")"
+  main_pid="$(awk -F= '$1 == "MainPID" { print $2 }' <<<"$unit_state")"
+  [[ "$active_state" == "active" && "$main_pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  printf '%s\n' "$main_pid"
+}
+
 # Prove the requested value against the environment of the process systemd
 # currently owns. A new MainPID can be visible before an ExecStart wrapper has
 # re-execed the daemon, and an immediate service-manager retry can replace that
@@ -265,34 +279,22 @@ wait_for_unit_effective_environment_value() {
   local expected_value="$4"
   local timeout_seconds="${5:-$effective_environment_wait_seconds}"
   local deadline=$((SECONDS + timeout_seconds))
-  local unit_state
-  local confirmed_unit_state
-  local active_state
-  local confirmed_active_state
   local observed_main_pid
   local confirmed_main_pid
   local process_value
   local observed_mismatch=0
 
   while true; do
-    if unit_state="$(systemctl show --property=ActiveState --property=MainPID "$unit" 2>/dev/null)"; then
-      active_state="$(awk -F= '$1 == "ActiveState" { print $2 }' <<<"$unit_state")"
-      observed_main_pid="$(awk -F= '$1 == "MainPID" { print $2 }' <<<"$unit_state")"
-      if [[ "$active_state" == "active" \
-          && "$observed_main_pid" =~ ^[1-9][0-9]*$ \
-          && "$observed_main_pid" != "$previous_main_pid" ]]; then
-        if process_value="$(read_process_environment_value "$observed_main_pid" "$variable")" \
-            && confirmed_unit_state="$(systemctl show --property=ActiveState --property=MainPID "$unit" 2>/dev/null)"; then
-          confirmed_active_state="$(awk -F= '$1 == "ActiveState" { print $2 }' <<<"$confirmed_unit_state")"
-          confirmed_main_pid="$(awk -F= '$1 == "MainPID" { print $2 }' <<<"$confirmed_unit_state")"
-          if [[ "$confirmed_active_state" == "active" \
-              && "$confirmed_main_pid" == "$observed_main_pid" ]]; then
-            if [[ "$process_value" == "$expected_value" ]]; then
-              printf '%s\n' "$observed_main_pid"
-              return 0
-            fi
-            observed_mismatch=1
+    if observed_main_pid="$(active_unit_main_pid "$unit")" \
+        && [[ "$observed_main_pid" != "$previous_main_pid" ]]; then
+      if process_value="$(read_process_environment_value "$observed_main_pid" "$variable")" \
+          && confirmed_main_pid="$(active_unit_main_pid "$unit")"; then
+        if [[ "$confirmed_main_pid" == "$observed_main_pid" ]]; then
+          if [[ "$process_value" == "$expected_value" ]]; then
+            printf '%s\n' "$observed_main_pid"
+            return 0
           fi
+          observed_mismatch=1
         fi
       fi
     fi
