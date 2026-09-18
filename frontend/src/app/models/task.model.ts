@@ -25,6 +25,7 @@ export const TaskState = {
 
 /** Union of the canonical lane-key string literals. */
 export type TaskStateKey = (typeof TaskState)[keyof typeof TaskState];
+export const isTerminalTaskState = (state: string): boolean => state === TaskState.Completed || state === TaskState.Archive;
 
 /** All canonical lane keys, in board order. */
 export const ALL_TASK_STATES: readonly TaskStateKey[] = Object.values(TaskState);
@@ -991,6 +992,7 @@ export interface PendingIntent {
   prompt: string;
   savedAt: string;
   savedReason: string;
+  author?: string | null;
   savedAgainstActiveJobId: string | null;
 }
 

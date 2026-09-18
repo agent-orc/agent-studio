@@ -5,6 +5,33 @@ namespace AgentRunner.Tests;
 
 public sealed class RemoteCompletionProtocolTests
 {
+    [Fact]
+    public void Claimed_follow_up_keeps_task_context_and_is_present_exactly_once()
+    {
+        const string taskPrompt = "# Original task\n\nKeep the regression focused.";
+        const string followUpPrompt = "Also preserve the operator stop path.";
+        var followUp = new AgentStudio.TaskServer.Contracts.FollowUpDeliveryDto(
+            followUpPrompt,
+            "steer",
+            AgentStudio.TaskServer.Contracts.FollowUpPromptDigest.Compute(followUpPrompt),
+            DateTime.UtcNow,
+            "remote-execution",
+            "human:owner");
+
+        var composed = RemoteRunPrompt.ApplyClaimedFollowUp(taskPrompt, followUp);
+        var alreadyRecorded = RemoteRunPrompt.ApplyClaimedFollowUp(
+            taskPrompt + "\n\n" + followUpPrompt,
+            followUp);
+
+        Assert.Contains(taskPrompt, composed, StringComparison.Ordinal);
+        Assert.Contains(followUpPrompt, composed, StringComparison.Ordinal);
+        Assert.Equal(1, CountOccurrences(composed, followUpPrompt));
+        Assert.Equal(1, CountOccurrences(alreadyRecorded, followUpPrompt));
+    }
+
+    private static int CountOccurrences(string value, string part)
+        => (value.Length - value.Replace(part, string.Empty, StringComparison.Ordinal).Length) / part.Length;
+
     private const string ValidBaseSha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     private const string ValidResultSha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     private const string ValidManifestDigest =

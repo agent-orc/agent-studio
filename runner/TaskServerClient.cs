@@ -728,7 +728,8 @@ public sealed class TaskServerClient : IDisposable
             DefaultBranch: _options?.BaseBranch,
             RunId: claim.Run.RunId,
             LeaseInstanceId: RunnerInstanceId,
-            ReconciliationActions: FromContract(claim.ReconciliationActions));
+            ReconciliationActions: FromContract(claim.ReconciliationActions),
+            RunSpec: claim.FollowUp is null ? null : new RunSpecDto(FollowUp: claim.FollowUp));
     }
 
     private void AdoptRuntimeCapacity(Contract.RuntimeCapacitySettingsDto? capacity)
@@ -1108,7 +1109,8 @@ public sealed class TaskServerClient : IDisposable
                 req.LeaseId,
                 req.FencingToken,
                 req.RequestedTtlSeconds ?? 120,
-                ToContract(req.Inventory)),
+                ToContract(req.Inventory),
+                req.StartedPromptSha256),
             ct);
         if (response?.Lease is not null)
         {

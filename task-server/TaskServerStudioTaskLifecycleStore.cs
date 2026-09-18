@@ -34,6 +34,9 @@ public sealed partial class TaskServerStore
                  WHERE task_id = $id;
                 """, ct, transaction,
                 ("$state", request.TargetState), ("$updated", Iso(now)), ("$id", existing.TaskId));
+            if (request.TargetState is StudioTaskLanes.Completed or StudioTaskLanes.Archive)
+                await SupersedePendingFollowUpAsync(
+                    connection, transaction, existing.TaskId, actorId, ct);
             await AuditAsync(connection, transaction, actorId, "task.moved", "task", existing.TaskId,
                 JsonSerializer.Serialize(new { from = existing.State, to = request.TargetState, request.Reason }), ct);
             result = new MoveTaskResponse(
@@ -121,8 +124,24 @@ public sealed partial class TaskServerStore
             await ExecuteAsync(connection, """
                 UPDATE tasks SET state = $state, rank = $rank, version = version + 1, updated_at = $updated
                  WHERE id = $id;
+                INSERT INTO pending_follow_ups(
+                    task_id, state, prompt, mode, prompt_sha256, saved_at,
+                    saved_reason, author, run_id)
+                VALUES ($id, 'queued', $prompt, $mode, $hash, $updated,
+                        'operator-continue', $author, NULL)
+                ON CONFLICT(task_id) DO UPDATE SET
+                    state = excluded.state,
+                    prompt = excluded.prompt,
+                    mode = excluded.mode,
+                    prompt_sha256 = excluded.prompt_sha256,
+                    saved_at = excluded.saved_at,
+                    saved_reason = excluded.saved_reason,
+                    author = excluded.author,
+                    run_id = NULL;
                 """, ct, transaction,
-                ("$state", StudioTaskLanes.Ready), ("$rank", rank), ("$updated", Iso(now)), ("$id", existing.TaskId));
+                ("$state", StudioTaskLanes.Ready), ("$rank", rank), ("$updated", Iso(now)), ("$id", existing.TaskId),
+                ("$prompt", request.Prompt), ("$mode", string.IsNullOrWhiteSpace(request.Mode) ? "continue" : request.Mode),
+                ("$hash", FollowUpPromptDigest.Compute(request.Prompt)), ("$author", actorId));
             await AuditAsync(connection, transaction, actorId, "task.continue-requested", "task", existing.TaskId,
                 JsonSerializer.Serialize(new { request.Model, request.CliType, request.ThinkingLevel, request.Mode }), ct);
             result = new TaskLifecycleResponse(
@@ -139,6 +158,59 @@ public sealed partial class TaskServerStore
             actorId,
             ct);
         return result;
+    }
+
+    private static async Task<FollowUpDeliveryDto?> ReadPendingFollowUpAsync(
+        SqliteConnection connection,
+        SqliteTransaction? transaction,
+        string taskId,
+        CancellationToken ct)
+    {
+        await using var command = Command(connection, """
+            SELECT prompt, mode, prompt_sha256, saved_at, saved_reason, author
+              FROM pending_follow_ups
+             WHERE task_id = $task;
+            """, transaction, ("$task", taskId));
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct)) return null;
+        return new FollowUpDeliveryDto(
+            reader.GetString(0),
+            reader.GetString(1),
+            reader.GetString(2),
+            Parse(reader.GetString(3)),
+            reader.GetString(4),
+            reader.IsDBNull(5) ? null : reader.GetString(5));
+    }
+
+    private async Task SupersedePendingFollowUpAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string taskId,
+        string actorId,
+        CancellationToken ct)
+    {
+        var followUp = await ReadPendingFollowUpAsync(connection, transaction, taskId, ct);
+        if (followUp is null) return;
+        await ExecuteAsync(connection,
+            "DELETE FROM pending_follow_ups WHERE task_id = $task;",
+            ct, transaction, ("$task", taskId));
+        await AuditAsync(
+            connection,
+            transaction,
+            actorId,
+            "follow-up.superseded",
+            "task",
+            taskId,
+            JsonSerializer.Serialize(new
+            {
+                state = "superseded-by-completion",
+                followUp.Mode,
+                followUp.Author,
+                followUp.SavedAt,
+                followUp.SavedReason,
+                followUp.PromptSha256,
+            }),
+            ct);
     }
 
     public async Task<TaskLifecycleResponse> StopTaskAsync(

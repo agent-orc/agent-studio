@@ -94,8 +94,18 @@ function fixtureGrouped(): Record<string, unknown[]> {
     escalated,
     humanReview,
     review: autoReview,
-    completed: [jobInfo({ id: 'fx-done-1', title: 'Wrapped up', state: '6-completed' })],
-    archive: [jobInfo({ id: 'fx-arch-1', title: 'Old work', state: '7-archive' })]
+    completed: [jobInfo({ id: 'fx-done-1', title: 'Wrapped up', state: '6-completed',
+      pendingIntent: {
+        version: 1, mode: 'continue', prompt: 'Stale completed follow-up',
+        savedAt: '2026-05-05T08:40:00Z', savedReason: 'remote-execution', savedAgainstActiveJobId: null
+      }
+    })],
+    archive: [jobInfo({ id: 'fx-arch-1', title: 'Old work', state: '7-archive',
+      pendingIntent: {
+        version: 1, mode: 'steer', prompt: 'Stale archived follow-up',
+        savedAt: '2026-05-05T08:40:00Z', savedReason: 'remote-execution', savedAgainstActiveJobId: null
+      }
+    })]
   };
 }
 
@@ -136,7 +146,7 @@ async function installBoardMocks(page: Page): Promise<void> {
   await page.route('**/api/tasks', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(allJobs) });
   });
-  await page.route('**/api/tasks/grouped', async (route) => {
+  await page.route('**/api/tasks/grouped**', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(grouped) });
   });
   await page.route('**/api/tasks/archive**', async (route) => {
@@ -233,10 +243,28 @@ test.describe('Kanban lane grouping and collapse', () => {
     await page.screenshot({ path: 'test-results/kanban-board-expanded.png', fullPage: true });
   });
 
+  test('shows queued follow-up only on non-terminal cards', async ({ page }) => {
+    await page.goto('/');
+    await expect(boardSurface(page)).toBeVisible({ timeout: 10_000 });
+
+    const queuedCard = page.getByTestId('lane-2-ready').locator('app-job-card').filter({ hasText: 'Pending follow-up' });
+    const completedCard = page.getByTestId('lane-6-completed').locator('app-job-card').filter({ hasText: 'Wrapped up' });
+    const archivedCard = page.getByTestId('lane-7-archive').locator('app-job-card').filter({ hasText: 'Old work' });
+
+    await expect(queuedCard.getByTestId('task-card-pending')).toBeVisible();
+    await expect(completedCard.getByTestId('task-card-pending')).toHaveCount(0);
+    await expect(archivedCard.getByTestId('task-card-pending')).toHaveCount(0);
+
+    const proofPath = process.env['JOB_RESULTS_DIR']
+      ? `${process.env['JOB_RESULTS_DIR']}/pending-follow-up-terminal-lanes.png`
+      : 'test-results/pending-follow-up-terminal-lanes.png';
+    await page.screenshot({ path: proofPath, fullPage: true });
+  });
+
   test('Escalated is hidden at zero, appears live with work, and remains a drag target', async ({ page }) => {
     let grouped = { ...fixtureGrouped(), escalated: [] as Record<string, unknown>[] };
-    await page.unroute('**/api/tasks/grouped');
-    await page.route('**/api/tasks/grouped', async (route) => {
+    await page.unroute('**/api/tasks/grouped**');
+    await page.route('**/api/tasks/grouped**', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',

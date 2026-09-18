@@ -1367,12 +1367,18 @@ supervisor advisory naming the card and the reason. A run whose CLI already
 exited is skipped: the agent has seen the follow-up, and the trailing
 post-processing lane move must not resurrect it.
 
-**Consumption is provable.** When a run consumes a saved intent, the file is
-renamed to `pending-intent.consumed.json` and kept, and a `follow_up_consumed`
-row records the run id. Only the run that stashed an intent may roll it back on
-spawn failure, so a later unrelated failure cannot replay a follow-up an agent
-already acted on. The card detail shows an unconsumed intent as one quiet line,
-"Follow-up waits for the next run."
+**Consumption is provable.** Local pickup and remote claim atomically rename a
+saved intent to `pending-intent.consumed.json`. The stash stays replayable until
+the runner acknowledges the exact prompt hash after the worker starts. A
+matching acknowledgement deletes the stash and writes a `follow_up_consumed`
+timeline receipt with run id, mode, author, save time, and source. Spawn or
+claim failure, pre-start worker loss, and lease recovery restore the canonical
+file. A new operator follow-up wins over an older stash. Entering Completed or
+Archive removes either form and records `follow_up_superseded` with state
+`superseded-by-completion`. Startup reconciliation applies the same history
+conversion to legacy files whose newest run started after the intent was saved,
+while leaving genuinely newer queued intents alone. Board and detail badges
+render only the canonical queued form and never render in terminal lanes.
 
 **`started` is honest.** A run that had to change lanes is watched for
 `Runner:FollowUpStartWindowMs` (1200 ms; `0` disables). If a preserved

@@ -1325,6 +1325,18 @@ catch (Exception ex)
     crashRecorder.Record("ResultDocumentBackfill", ex);
 }
 
+// Reconcile the historical remote-claim bug before runner pickup begins. The
+// mutation service converts proven-delivered or terminal intents into timeline
+// receipts and leaves genuinely newer queued follow-ups untouched.
+try
+{
+    app.Services.GetRequiredService<TaskTransitionService>().ReconcilePendingIntents();
+}
+catch (Exception ex)
+{
+    crashRecorder.Record("PendingIntentReconciliation", ex);
+}
+
 // ADR-0020: run the crash-recovery sweep BEFORE the first runner tick. Any
 // surviving completion-marker.json finishes its 3-progress -> 4-review move
 // here, and any orphan working-tree changes are queued for operator
