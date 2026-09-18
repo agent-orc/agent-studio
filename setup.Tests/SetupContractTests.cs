@@ -119,7 +119,11 @@ public sealed class SetupContractTests
         ]);
 
         Assert.Equal(SetupMode.AgentHost, options.Mode);
-        Assert.Equal("/secure/join.token", options.JoinTokenFile);
+        // The parser normalises the path with Path.GetFullPath, so the expected value
+        // must be normalised the same way: on Windows "/secure/join.token" becomes
+        // "C:\secure\join.token" (17.09.: the Windows pre-develop gate ran setup.Tests
+        // for the first time and was red on this line).
+        Assert.Equal(Path.GetFullPath("/secure/join.token"), options.JoinTokenFile);
         Assert.Throws<ArgumentException>(() =>
             SetupOptions.Parse(["--join-token", "aosj1.secret"]));
     }
