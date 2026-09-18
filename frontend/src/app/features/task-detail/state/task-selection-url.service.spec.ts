@@ -8,6 +8,7 @@ import type { RegistryWorkspaceListItem, TaskDetail, TaskInfo } from '../../../m
 import { TaskService } from '../../../services/task.service';
 import { ProjectLookupService } from '../../../services/project-lookup.service';
 import { TaskSelectionService } from './task-selection.service';
+import { LanePagerService } from './lane-pager.service';
 
 describe('TaskSelectionService · stable task URLs', () => {
   let selection: TaskSelectionService;
@@ -103,6 +104,46 @@ describe('TaskSelectionService · stable task URLs', () => {
     expect(selection.selected()).toBeNull();
     expect(selection.browserRouteCleared()).toBe(1);
     expect(location.search).toBe('?view=board');
+  });
+
+  it('pushes an advance and restores its prior task, lane anchor, and pager position on popstate', () => {
+    const nextInfo = {
+      ...info,
+      id: 'next-task',
+      key: 'AGT-2125',
+      displayKey: 'AGT-2125',
+      taskKey: 'C:\\private\\project::next-task',
+      order: 2,
+    } as TaskInfo;
+    const pager = TestBed.inject(LanePagerService);
+    pager.capture(info.state, [info, nextInfo], info.taskKey);
+    selection.selected.set(detail);
+    selection.triageLaneState = info.state;
+    selection.syncTaskUrl(info, 'replace');
+    const firstUrl = `${location.pathname}${location.search}${location.hash}`;
+    const firstState = structuredClone(history.state);
+    const push = vi.spyOn(history, 'pushState');
+
+    expect(selection.advanceAfterMutation(info.taskKey)).toBe(true);
+    expect(push).toHaveBeenCalled();
+    expect(location.hash).toBe('#/tasks/AGT-2125');
+    http.expectOne(req => req.url.endsWith('/api/tasks/AGT-2125'))
+      .flush({ info: nextInfo } as TaskDetail);
+    expect(pager.position()).toBe(1);
+    expect(pager.total()).toBe(1);
+
+    history.replaceState(firstState, '', firstUrl);
+    window.dispatchEvent(new PopStateEvent('popstate', { state: firstState }));
+    const archivedInfo = { ...info, state: '7-archive' } as TaskInfo;
+    http.expectOne(req => req.url.endsWith('/api/tasks/AGT-2124'))
+      .flush({ info: archivedInfo } as TaskDetail);
+
+    expect(selection.selected()?.info).toMatchObject({ key: 'AGT-2124', state: '7-archive' });
+    expect(selection.triageLaneState).toBe('5-human-review');
+    expect(pager.position()).toBe(1);
+    expect(pager.total()).toBe(2);
+    expect(selection.isBrowserHistorySelection(info.taskKey)).toBe(true);
+    expect(selection.consumeTaskTabReplacement(info.taskKey)).toBe(true);
   });
 
   it('publishes the board snapshot before the detail request resolves', () => {

@@ -101,18 +101,29 @@ route map, and visual ownership diagram are in
 
 `StudioTabStateService.open` accepts an explicit reuse policy. `new` opens or
 focuses the requested editor target. `replace-current` retargets the active tab
-only when it belongs to the Wiki/Dossier document family; if the active tab is
-another kind, the target opens as a new tab. Task cards, diffs, boards, and
-other non-document destinations therefore keep their own established tab
-kinds even when a Wiki page links to them.
+when both targets belong to the Wiki/Dossier document family or are task tabs;
+if the active tab is another kind, the target opens as a new tab. Ordinary task
+opens from the board, search, or links continue to use `new`. Only in-place task
+navigation, including triage advance and Back/Forward restoration, requests
+`replace-current`. If that task is already open elsewhere, its existing tab is
+focused instead of creating a duplicate.
+Diffs, boards, and other non-document destinations keep their established tab
+kinds when a Wiki page links to them.
 
 | Caller | Target kind | Reuse policy |
 |---|---|---|
 | Global search | Task, Dossier, Wiki, Git, or diff | `new` |
+| Task triage advance or browser Back/Forward within task history | Task | `replace-current` |
 | Project Hub URL hydration | Wiki page or Dossier | `new` on cold entry; browser back/forward traverses the active document tab |
 | Wiki tree, folder view, linked elements, rendered Markdown, and rendered HTML | Wiki page or folder | `replace-current` |
 | Dossier viewer HTML link to a Wiki page | Wiki page | `replace-current` |
 | Middle click, Ctrl/Cmd+click, or `Open in new tab` | Wiki page, folder, or Dossier-family target | `new` |
+
+User-triggered task advances push the next stable task route into browser
+history. Each entry carries its lane-pager snapshot, so Back and Forward
+restore both the task and its captured lane position even when the task has
+since moved to a terminal lane. Pipeline-driven changes replace the current
+route instead and do not add review-history entries.
 
 Each Wiki/Dossier tab owns a history stack containing its current target and up
 to 49 earlier or forward targets. Normal link navigation truncates that tab's

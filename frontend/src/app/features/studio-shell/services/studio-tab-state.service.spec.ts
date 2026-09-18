@@ -138,6 +138,45 @@ describe('StudioTabStateService', () => {
     expect(svc.activeKey()).toBe('task:demo|x');
   });
 
+  describe('task tab reuse', () => {
+    it('replaces the active task tab when navigation requests replace-current', () => {
+      svc.closeAll();
+      svc.open({ kind: 'task', taskKey: 'watch::task-a' });
+
+      svc.open({ kind: 'task', taskKey: 'watch::task-b' }, 'replace-current');
+
+      expect(svc.tabs()).toEqual([{ kind: 'task', taskKey: 'watch::task-b' }]);
+      expect(svc.activeKey()).toBe('task:watch::task-b');
+    });
+
+    it('focuses a task already open elsewhere without duplicating it', () => {
+      svc.closeAll();
+      svc.open({ kind: 'task', taskKey: 'watch::task-b' });
+      svc.open({ kind: 'task', taskKey: 'watch::task-a' });
+
+      svc.open({ kind: 'task', taskKey: 'watch::task-b' }, 'replace-current');
+
+      expect(svc.tabs().map(studioTabKey)).toEqual([
+        'task:watch::task-b',
+        'task:watch::task-a',
+      ]);
+      expect(svc.activeKey()).toBe('task:watch::task-b');
+    });
+
+    it('keeps ordinary board-style opens on the new-or-focus policy', () => {
+      svc.closeAll();
+      svc.open({ kind: 'task', taskKey: 'watch::task-a' });
+      svc.open({ kind: 'task', taskKey: 'watch::task-b' });
+      svc.open({ kind: 'task', taskKey: 'watch::task-a' });
+
+      expect(svc.tabs().map(studioTabKey)).toEqual([
+        'task:watch::task-a',
+        'task:watch::task-b',
+      ]);
+      expect(svc.activeKey()).toBe('task:watch::task-a');
+    });
+  });
+
   describe('Deck and Wiki tab identity', () => {
     it('reuses one Wiki tab and walks its own page history', () => {
       svc.closeAll();
