@@ -214,7 +214,11 @@ internal static class CarWorkerExecution
             var info = await finished.Task;
             var exitCode = info.ExitCode ?? 125;
             return (
-                new ProcessResult(exitCode, stdout.ToString(), stderr.ToString()),
+                new ProcessResult(
+                    exitCode,
+                    stdout.ToString(),
+                    stderr.ToString(),
+                    ProcessTermination.SignalFromWaitExitCode(exitCode)),
                 false,
                 LaunchFailed: Volatile.Read(ref processStarted) == 0 || info.ProcessId <= 0);
         }
