@@ -17,6 +17,36 @@ internal sealed record WorkerResourceUsage(double CpuSeconds, int PeakTasks)
 internal sealed record WorkerLaunch(string FileName, IReadOnlyList<string> Arguments);
 
 /// <summary>
+/// Why a worker may have died, read from the counters of its own cgroup
+/// (AGT-2870). <c>pids.events max</c> counts the forks the kernel refused, which
+/// is the difference between "the agent stopped" and "the agent was stopped by
+/// its own task ceiling"; <c>memory.events</c> carries the same evidence for
+/// memory pressure on hosts that delegate the controller.
+/// </summary>
+public sealed record WorkerCgroupPressure(
+    int TasksMax,
+    int PeakTasks,
+    long ForksRefused,
+    long MemoryHigh,
+    long MemoryMax,
+    long OomKills)
+{
+    /// <summary>The counter is unavailable on this host or kernel.</summary>
+    public const int Unknown = -1;
+
+    /// <summary>True when the kernel refused at least one fork inside this worker.</summary>
+    public bool HitTaskCeiling => ForksRefused > 0;
+
+    public string Describe() => string.Create(
+        CultureInfo.InvariantCulture,
+        $"pidsMax={Format(TasksMax)} pidsPeak={Format(PeakTasks)} pidsEventsMax={Format(ForksRefused)} " +
+        $"memoryEventsHigh={Format(MemoryHigh)} memoryEventsMax={Format(MemoryMax)} memoryEventsOomKill={Format(OomKills)}");
+
+    private static string Format(long value)
+        => value == Unknown ? "unknown" : value.ToString(CultureInfo.InvariantCulture);
+}
+
+/// <summary>
 /// Per-worker cgroup v2 envelope (AGT-2866).
 ///
 /// <para><b>Mechanism.</b> The cgroup v2 API directly, inside the role unit's own
@@ -315,6 +345,40 @@ internal sealed class WorkerCgroup
         return directory is null ? null : ReadUsage(directory);
     }
 
+    /// <summary>
+    /// The pressure counters of the worker in this directory, or null when it ran
+    /// without an envelope. Like <see cref="ReadUsageFor"/> this has to be read
+    /// before <see cref="ReleaseFor"/> removes the cgroup.
+    /// </summary>
+    internal static WorkerCgroupPressure? ReadPressureFor(string workerDirectory)
+    {
+        var directory = ReadMarker(workerDirectory);
+        return directory is null ? null : ReadPressure(directory);
+    }
+
+    internal static WorkerCgroupPressure? ReadPressure(string cgroupDirectory)
+    {
+        try
+        {
+            if (!Directory.Exists(cgroupDirectory)) return null;
+            var memory = ReadEventCounters(
+                Path.Combine(cgroupDirectory, "memory.events"),
+                ["high", "max", "oom_kill"]);
+            return new WorkerCgroupPressure(
+                (int)ReadCounter(Path.Combine(cgroupDirectory, "pids.max")),
+                ReadTaskPeak(cgroupDirectory),
+                ReadEventCounters(Path.Combine(cgroupDirectory, "pids.events"), ["max"])[0],
+                memory[0],
+                memory[1],
+                memory[2]);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return null;
+        }
+    }
+
     internal static WorkerResourceUsage? ReadUsage(string cgroupDirectory)
     {
         try
@@ -357,11 +421,18 @@ internal sealed class WorkerCgroup
     /// visible in the journal instead of only in a cgroup listing days
     /// later.</para>
     /// </summary>
-    internal static int ReleaseFor(string workerDirectory)
+    internal static int ReleaseFor(string workerDirectory, Action<string>? log = null)
     {
         var directory = ReadMarker(workerDirectory);
         if (directory is null) return 0;
-        var killed = KillResidents(directory);
+        // AGT-2870: the path comes from a file on disk, so it is input, not a
+        // constant. Writing cgroup.kill one level up would take the daemon and
+        // every sibling worker with it, so a marker that does not name a
+        // worker-* directory below this daemon's delegated root is refused.
+        if (!ProcessSignalGuard.MayEmptyCgroup(
+                directory, _delegationRoot, $"worker-cgroup-release worker={NameFor(workerDirectory)}", log))
+            return 0;
+        var killed = KillResidents(directory, log);
         TryRemove(directory);
         return killed;
     }
@@ -372,7 +443,7 @@ internal sealed class WorkerCgroup
     /// subtree atomically, which is the only variant a forking leftover cannot
     /// escape; older kernels fall back to a signal per pid.
     /// </summary>
-    internal static int KillResidents(string cgroupDirectory)
+    internal static int KillResidents(string cgroupDirectory, Action<string>? log = null)
     {
         var procs = Path.Combine(cgroupDirectory, "cgroup.procs");
         var residents = ReadResidentPids(procs);
@@ -380,7 +451,7 @@ internal sealed class WorkerCgroup
 
         var killSwitch = Path.Combine(cgroupDirectory, "cgroup.kill");
         if (!TryWriteValue(killSwitch, "1"))
-            foreach (var pid in residents) TryKill(pid);
+            foreach (var pid in residents) TryKill(pid, cgroupDirectory, log);
 
         // The kernel reaps asynchronously, and rmdir below refuses while the
         // cgroup is still populated. A short bounded wait keeps the directory
@@ -440,6 +511,51 @@ internal sealed class WorkerCgroup
                 return peak;
         }
         return WorkerResourceUsage.UnknownTasks;
+    }
+
+    /// <summary>
+    /// One numeric cgroup knob. The literal <c>max</c> (no limit configured) and
+    /// a missing file are both reported as unknown rather than as a number.
+    /// </summary>
+    private static long ReadCounter(string path)
+    {
+        if (!File.Exists(path)) return WorkerCgroupPressure.Unknown;
+        return long.TryParse(
+            File.ReadAllText(path).Trim(),
+            NumberStyles.Integer,
+            CultureInfo.InvariantCulture,
+            out var value)
+            ? value
+            : WorkerCgroupPressure.Unknown;
+    }
+
+    /// <summary>
+    /// Selected rows of a cgroup <c>*.events</c> file ("&lt;key&gt; &lt;count&gt;" per
+    /// line), in the order the keys were requested. A key the kernel does not
+    /// publish stays unknown, which is not the same as zero.
+    /// </summary>
+    private static long[] ReadEventCounters(string path, IReadOnlyList<string> keys)
+    {
+        var counters = new long[keys.Count];
+        Array.Fill(counters, WorkerCgroupPressure.Unknown);
+        if (!File.Exists(path)) return counters;
+        foreach (var line in File.ReadAllLines(path))
+        {
+            var separator = line.IndexOf(' ');
+            if (separator <= 0) continue;
+            var key = line[..separator];
+            var index = -1;
+            for (var candidate = 0; candidate < keys.Count; candidate++)
+                if (string.Equals(keys[candidate], key, StringComparison.Ordinal)) index = candidate;
+            if (index < 0) continue;
+            if (long.TryParse(
+                    line[(separator + 1)..].Trim(),
+                    NumberStyles.Integer,
+                    CultureInfo.InvariantCulture,
+                    out var value))
+                counters[index] = value;
+        }
+        return counters;
     }
 
     private static string? ReadMarker(string workerDirectory)
@@ -522,23 +638,16 @@ internal sealed class WorkerCgroup
         }
     }
 
-    private static void TryKill(int pid)
-    {
-        try
-        {
-            using var process = System.Diagnostics.Process.GetProcessById(pid);
-            process.Kill(entireProcessTree: false);
-        }
-        catch (Exception exception) when (
-            exception is ArgumentException
-                or InvalidOperationException
-                or System.ComponentModel.Win32Exception
-                or NotSupportedException)
-        {
-            // Already gone, or not ours to kill. The next generation's startup
-            // sweep sees whatever survives.
-        }
-    }
+    /// <summary>
+    /// The fallback for kernels without <c>cgroup.kill</c>: one signal per listed
+    /// member. Already gone, or not ours to kill, is not an error - the next
+    /// generation's startup sweep sees whatever survives. AGT-2870 routes it
+    /// through the shared guard so a truncated or malformed <c>cgroup.procs</c>
+    /// line cannot become a broadcast pid.
+    /// </summary>
+    private static void TryKill(int pid, string cgroupDirectory, Action<string>? log)
+        => ProcessSignalGuard.TryKillSingle(
+            pid, $"worker-cgroup-resident cgroup={Path.GetFileName(cgroupDirectory)}", log: log);
 
     private static void TryWrite(string path, string value)
     {

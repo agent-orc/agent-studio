@@ -22,6 +22,8 @@ public sealed class GitWorkspace
     private readonly string _workBranch;
     private readonly string? _sourceRunAttemptId;
     private readonly long? _fencingToken;
+    private readonly string? _continuationBaseRef;
+    private readonly string? _continuationBaseSha;
     private string? _preparedIntegrationBranch;
     private string? _startedHead;
     private readonly string? _restoredBaseSha;
@@ -40,7 +42,9 @@ public sealed class GitWorkspace
         bool isProjectClone = false,
         string? restoredBaseSha = null,
         string? sourceRunAttemptId = null,
-        long? fencingToken = null)
+        long? fencingToken = null,
+        string? continuationBaseRef = null,
+        string? continuationBaseSha = null)
     {
         _options = options;
         _log = log;
@@ -68,6 +72,18 @@ public sealed class GitWorkspace
             ? null
             : sourceRunAttemptId.Trim();
         _fencingToken = fencingToken;
+        // A continuation round is only continuing something when it knows both
+        // halves of the pair; half a reference would silently start the round on
+        // the integration branch and lose the rescued work again.
+        var continuationBranch = string.IsNullOrWhiteSpace(continuationBaseRef)
+            ? null
+            : ToBranchName(continuationBaseRef);
+        var continuationSha = string.IsNullOrWhiteSpace(continuationBaseSha)
+            ? null
+            : continuationBaseSha.Trim();
+        var continuationComplete = continuationBranch is not null && continuationSha is not null;
+        _continuationBaseRef = continuationComplete ? continuationBranch : null;
+        _continuationBaseSha = continuationComplete ? continuationSha : null;
     }
 
     public string ProjectCachePath => CachePathForProject(_options.WorkDir, _projectId);
@@ -164,14 +180,22 @@ public sealed class GitWorkspace
                 _log($"branch '{requested}' not found on origin; falling back to base branch '{branch}'");
 
             await TryGit(["branch", "-D", _workBranch], SharedRepoPath, ct);
-            var authoritativeBase = await FetchRemoteBranchHeadAsync(branch, ct)
+            // AGT-2870: a continuation round starts on the salvage its previous
+            // round left behind, so the rescued work is in the checkout before
+            // the agent reads its finishing instruction. The integration branch
+            // resolved above stays the rebase target.
+            var continuation = await ResolveContinuationBaseAsync(ct);
+            if (continuation is not null) branch = continuation.Branch;
+            var authoritativeBase = continuation?.CommitSha
+                ?? await FetchRemoteBranchHeadAsync(branch, ct)
                 ?? throw new InvalidOperationException($"Authoritative pickup branch 'origin/{branch}' disappeared during preparation.");
             await UpdateStableCheckoutAsync(requestedBase, ct);
             _log($"worktree-authoritative-base branch=refs/heads/{branch} sha={authoritativeBase} path={RepoPath}");
             _log($"git worktree add {RepoPath} on {_workBranch} from refs/heads/{branch} at {ShortSha(authoritativeBase)}");
             await Git(["worktree", "add", "-B", _workBranch, RepoPath, authoritativeBase], SharedRepoPath, ct);
 
-            _startedFromSalvage = string.Equals(branch, _workBranch, StringComparison.Ordinal);
+            _startedFromSalvage = continuation is not null
+                || string.Equals(branch, _workBranch, StringComparison.Ordinal);
             _startedHead = (await Git(["rev-parse", "HEAD"], RepoPath, ct)).StdOut.Trim();
             WriteWorktreeLease(_startedHead);
             _log($"task worktree ready on '{_workBranch}' at {ShortSha(_startedHead)}");
@@ -180,6 +204,48 @@ public sealed class GitWorkspace
         finally
         {
             GitMetadataGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// The continuation base this claim was given, resolved against origin, or
+    /// null when the claim named none. A ref that disappeared or moved is
+    /// reported and skipped rather than failing the round: the card's prompt
+    /// still names the salvage, and a round on the integration branch is a
+    /// worse outcome than no round at all only if it is silent.
+    /// </summary>
+    private async Task<SalvageContinuationBase?> ResolveContinuationBaseAsync(CancellationToken ct)
+    {
+        if (_continuationBaseRef is null || _continuationBaseSha is null) return null;
+        try
+        {
+            var head = await FetchRemoteBranchHeadAsync(_continuationBaseRef, ct);
+            if (head is null)
+            {
+                _log(
+                    $"worktree-continuation-base-missing ref=refs/heads/{_continuationBaseRef} " +
+                    $"expectedSha={_continuationBaseSha}; starting from the integration branch");
+                return null;
+            }
+            if (!string.Equals(head, _continuationBaseSha, StringComparison.OrdinalIgnoreCase))
+            {
+                _log(
+                    $"worktree-continuation-base-moved ref=refs/heads/{_continuationBaseRef} " +
+                    $"expectedSha={_continuationBaseSha} observedSha={head}; " +
+                    "starting from the integration branch");
+                return null;
+            }
+            _log(
+                $"worktree-continuation-base ref=refs/heads/{_continuationBaseRef} " +
+                $"sha={head} path={RepoPath}");
+            return new SalvageContinuationBase(_continuationBaseRef, head);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log(
+                $"worktree-continuation-base-unreadable ref=refs/heads/{_continuationBaseRef} " +
+                $"error={OneLine(ex.Message)}; starting from the integration branch");
+            return null;
         }
     }
 
@@ -1162,6 +1228,9 @@ public sealed record ProjectDeliveryPreflightResult(
     string FetchUrl,
     string PushUrl,
     string Detail);
+
+/// <summary>The exact commit a continuation round starts its worktree from.</summary>
+public sealed record SalvageContinuationBase(string Branch, string CommitSha);
 
 public sealed record WorktreeTeardownResult(
     bool SecuredWork,

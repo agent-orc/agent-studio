@@ -474,6 +474,15 @@ public static class TimelineEventKinds
     public const string FollowUpConsumed = "follow_up_consumed";
 
     /// <summary>
+    /// AGT-2870: an operator asked a remotely executed run to stop. The request
+    /// is recorded here when it is accepted, not when the run ends; the owning
+    /// runner reports the matching finish itself.
+    /// <see cref="TimelineEvent.Details"/> carry the stop reason and the runner
+    /// that holds the attempt.
+    /// </summary>
+    public const string RemoteStopRequested = "remote_stop_requested";
+
+    /// <summary>
     /// A Global Orchestrator Watcher case (orchestrator-waechter dossier §10)
     /// recurred against a card that already has an open Watcher proposal, so
     /// W2 appended a comment here instead of drafting a second card. Details

@@ -88,39 +88,35 @@ public static class WorktreeProcessReaper
         => string.Equals(candidate, root, StringComparison.Ordinal)
            || candidate.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal);
 
+    /// <summary>
+    /// Signal the reaped processes, group by group where a group exists.
+    ///
+    /// <para>AGT-2870: <c>kill(-pgid, ...)</c> is a broadcast whenever the pgid is
+    /// below 2, so the group targets go through
+    /// <see cref="ProcessSignalPolicy.ForProcessGroup"/> instead of the old
+    /// <c>group &gt; 0</c> check, which still admitted pgid 1 and turned the
+    /// call into <c>kill(-1, ...)</c>. Whatever the group pass refuses or does
+    /// not cover is signalled per pid, under the same pid floor.</para>
+    /// </summary>
     private static void Signal(IReadOnlyList<WorktreeProcess> victims, int signal)
     {
-        var ownGroup = getpgid(Environment.ProcessId);
-        var groups = victims
+        var signalledGroups = victims
             .Select(v => v.ProcessGroupId)
-            .Where(group => group > 0 && group != ownGroup)
             .Distinct()
-            .ToArray();
-        foreach (var group in groups)
-            _ = kill(-group, signal);
+            .Where(group => ProcessSignalGuard.TrySignalProcessGroup(
+                group, signal, $"worktree-reap-group signal={signal}"))
+            .ToHashSet();
 
-        foreach (var victim in victims.Where(v =>
-                     v.ProcessGroupId <= 0 || v.ProcessGroupId == ownGroup))
+        foreach (var victim in victims.Where(v => !signalledGroups.Contains(v.ProcessGroupId)))
         {
-            try
+            if (signal == SigKill)
             {
-                using var process = Process.GetProcessById(victim.Pid);
-                if (signal == SigKill && !process.HasExited)
-                    process.Kill(entireProcessTree: true);
-                else
-                    _ = kill(victim.Pid, signal);
+                ProcessSignalGuard.TryKillTree(victim.Pid, $"worktree-reap pid={victim.Pid}");
+                continue;
             }
-            catch (Exception ex) when (ex is ArgumentException
-                                       or InvalidOperationException
-                                       or System.ComponentModel.Win32Exception)
-            {
-                // The process already exited between the /proc snapshot and kill.
-            }
+            ProcessSignalGuard.TrySignal(victim.Pid, signal, $"worktree-reap pid={victim.Pid}");
         }
     }
-
-    [DllImport("libc", SetLastError = true)]
-    private static extern int kill(int pid, int signal);
 
     [DllImport("libc", SetLastError = true)]
     private static extern int getpgid(int pid);

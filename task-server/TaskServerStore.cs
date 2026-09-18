@@ -1469,8 +1469,19 @@ public sealed partial class TaskServerStore
                 """, ct, transaction, ("$run", runId), ("$outcome", request.Outcome),
                 ("$now", Iso(UtcNow)), ("$task", lease.TaskId));
             released = lease with { Status = "released" };
+            // AGT-2870: a release that follows a lost worker names the salvage
+            // ref its work was published under. Recording it on the audit row
+            // keeps the recovery source readable for that attempt even though
+            // the durable plane does not open continuation rounds itself.
             await AuditAsync(connection, transaction, actorId, "lease.released", "run", runId,
-                JsonSerializer.Serialize(new { request.Fence, request.Outcome }), ct);
+                JsonSerializer.Serialize(new
+                {
+                    request.Fence,
+                    request.Outcome,
+                    salvageRef = request.Salvage?.Branch,
+                    salvageCommitSha = request.Salvage?.CommitSha,
+                    salvageDetail = request.Salvage?.Detail,
+                }), ct);
         }, ct);
         return new LeaseResponse("released", released);
     }

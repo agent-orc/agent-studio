@@ -318,19 +318,21 @@ internal sealed class DurableReviewProcess
         }
     }
 
-    public void Kill()
-    {
-        try
-        {
-            using var process = Process.GetProcessById(ProcessId);
-            if (!process.HasExited) process.Kill(entireProcessTree: true);
-        }
-        catch
-        {
-            // Authority loss is already the canonical outcome. Reaping is best
-            // effort here and the persisted loss record stays available.
-        }
-    }
+    /// <summary>
+    /// End this review worker's process tree. Authority loss is already the
+    /// canonical outcome, so reaping is best effort and a refusal is not fatal.
+    ///
+    /// <para>AGT-2870: like its coding counterpart, <see cref="Attach"/> yields
+    /// <c>-1</c> for a slot without a recorded identity, and <c>-1</c> means
+    /// "every process of this uid" to <c>kill</c>. The guard refuses that pid and
+    /// verifies the recorded start time before any signal is sent.</para>
+    /// </summary>
+    public void Kill(Action<string>? log = null)
+        => ProcessSignalGuard.TryKillTree(
+            ProcessId,
+            $"review-worker-kill worker={Path.GetFileName(_directory)}",
+            ProcessStartedAtUtc,
+            log);
 
     private static DetachedReviewSpec BuildSpec(
         RunnerOptions options,

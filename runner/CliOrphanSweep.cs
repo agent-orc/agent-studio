@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 
 namespace AgentRunner;
 
@@ -162,27 +163,15 @@ public static class CliOrphanSweep
 
     private static bool TryReap(int pid, string reason, Action<string> log)
     {
-        Process process;
-        try { process = Process.GetProcessById(pid); }
-        catch (ArgumentException) { return false; }
-
-        using (process)
-        {
-            var age = AgeOf(Path.Combine("/proc", pid.ToString()), DateTime.UtcNow);
-            try
-            {
-                if (!process.HasExited) process.Kill(entireProcessTree: true);
-            }
-            catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception)
-            {
-                log($"cli-orphan-sweep-kill-failed pid={pid}: {exception.Message}");
-                return false;
-            }
-            log(
-                $"cli-process-reaped pid={pid} " +
-                $"age={(age is { } value ? value.TotalSeconds.ToString("F0") : "unknown")}s " +
-                $"attempt=orphan reason=\"{reason}\"");
-            return true;
-        }
+        var age = AgeOf(Path.Combine("/proc", pid.ToString(CultureInfo.InvariantCulture)), DateTime.UtcNow);
+        // AGT-2870: the pid was parsed out of /proc, so it goes through the
+        // shared guard, which refuses the broadcast pids and this daemon itself.
+        if (!ProcessSignalGuard.TryKillTree(pid, $"cli-orphan-sweep pid={pid}", log: log))
+            return false;
+        log(
+            $"cli-process-reaped pid={pid} " +
+            $"age={(age is { } value ? value.TotalSeconds.ToString("F0", CultureInfo.InvariantCulture) : "unknown")}s " +
+            $"attempt=orphan reason=\"{reason}\"");
+        return true;
     }
 }

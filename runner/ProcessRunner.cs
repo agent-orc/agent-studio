@@ -137,10 +137,16 @@ public static class ProcessRunner
         {
             try
             {
+                // AGT-2870: the process group is this child's own, because the
+                // caller asked for an isolated one, but kill(-pgid) is a
+                // broadcast for any pgid below 2 and Process.Id is 0 for a
+                // start that failed. The guard refuses both; the runtime's
+                // descendant-tree kill below still runs.
                 if (!process.HasExited)
-                    _ = kill(-process.Id, SigKill);
+                    ProcessSignalGuard.TrySignalProcessGroup(
+                        process.Id, SigKill, "process-runner-group");
             }
-            catch
+            catch (InvalidOperationException)
             {
                 // Fall through to the runtime's descendant-tree kill.
             }
