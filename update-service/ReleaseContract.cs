@@ -43,10 +43,10 @@ public sealed record ReleaseComparison(
     ReleaseManifest? Candidate,
     string? LatestApprovedTag,
     bool Offline,
-    // Populated by ReleasePreflightService (not by the pure Compare below,
-    // which has no access to run history) when Errors contains the
-    // running/installed divergence message, so the refusal names the run
-    // that caused it instead of leaving the operator to guess.
+    // Populated by ReleasePreflightService with operator-facing context for
+    // either a running/installed divergence refusal or the normal
+    // UpgradeInVerification window. It may include matching run history; the
+    // pure Compare below performs no operator-facing enrichment.
     string? DivergenceExplanation = null,
     // True while a backend already reports the candidate identity and the
     // checkout root still carries the previous manifest. That is the normal
