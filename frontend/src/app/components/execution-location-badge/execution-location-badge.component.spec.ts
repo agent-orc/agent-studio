@@ -19,7 +19,7 @@ function execution(state: TaskExecutionState, overrides: Partial<TaskExecutionLo
     sessionId: 'safe-session',
     branch: 'task/AGT-2158',
     worktreePath: '/worktrees/AGT-2158',
-    connectionState: state === 'remote-disconnected' ? 'disconnected' : 'connected',
+    connectionState: state === 'remote-disconnected' || state === 'remote-stale' ? 'disconnected' : 'connected',
     leaseState: remote ? 'active' : 'local-process',
     trustReason: 'A fenced runtime claim owns this execution.',
     ...overrides,
@@ -38,6 +38,7 @@ describe('ExecutionLocationBadgeComponent', () => {
     ['local-running', 'Local'],
     ['remote-running', 'Host · agent-runner-01'],
     ['remote-disconnected', 'Host · agent-runner-01'],
+    ['remote-stale', 'Host · agent-runner-01'],
     ['queued-remote', 'Host · agent-runner-01'],
     ['recovering', 'Recovering'],
   ] as const) {
@@ -69,6 +70,21 @@ describe('ExecutionLocationBadgeComponent', () => {
     expect(tooltip).toContain('Branch: task/AGT-2158');
     expect(tooltip).toContain('Worktree: /worktrees/AGT-2158');
     expect(tooltip).toContain('Trusted because: A fenced runtime claim owns this execution.');
+  });
+
+  // AGT-2869: a run nobody is driving must read as acute and must say what the
+  // last runner event was, so an operator can tell it from a live host.
+  it('marks a stale remote run acute and names its last runner event', () => {
+    const fixture = TestBed.createComponent(ExecutionLocationBadgeComponent);
+    fixture.componentRef.setInput('execution', execution('remote-stale', {
+      lastRunnerEvent: 'Last runner event 2026-09-18 05:17:53Z; no fenced authority is driving this run.',
+    }));
+    fixture.detectChanges();
+    const badge = fixture.nativeElement.querySelector('[data-testid="execution-location-badge"]') as HTMLElement;
+    expect(badge.classList.contains('execution-location--acute')).toBe(true);
+    const tooltip = fixture.componentInstance.tooltip();
+    expect(tooltip).toContain('Host stale - nothing is driving this run');
+    expect(tooltip).toContain('Last runner event: Last runner event 2026-09-18 05:17:53Z');
   });
 
   it('keeps historical disconnected attribution quiet', () => {

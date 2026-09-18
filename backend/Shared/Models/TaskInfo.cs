@@ -627,6 +627,13 @@ public static class TaskExecutionStates
     public const string LocalRunning = "local-running";
     public const string RemoteRunning = "remote-running";
     public const string RemoteDisconnected = "remote-disconnected";
+    /// <summary>
+    /// AGT-2869: a remote run no authority covers any more - its heartbeat is
+    /// older than the lease it was renewing, or no lease is held and no activity
+    /// is arriving. Distinct from <see cref="RemoteDisconnected"/> (lease still
+    /// valid, link blipped) so an operator can tell a phantom from a live run.
+    /// </summary>
+    public const string RemoteStale = "remote-stale";
     public const string QueuedRemote = "queued-remote";
     public const string Recovering = "recovering";
     public const string NoActiveExecution = "no-active-execution";
@@ -657,6 +664,11 @@ public record TaskExecutionLocation
     /// active, local, historical, and later lane generations.
     /// </summary>
     public RemoteDispatchRejection? LastRejection { get; init; }
+    /// <summary>
+    /// AGT-2869: the last runner event the server can name, shown next to a
+    /// disconnected or stale remote run. Null while the run is live.
+    /// </summary>
+    public string? LastRunnerEvent { get; init; }
 }
 
 /// <summary>Durable reason why a remote runner did not claim an offered task.</summary>

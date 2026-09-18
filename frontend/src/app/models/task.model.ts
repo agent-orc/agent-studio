@@ -796,6 +796,12 @@ export type TaskExecutionState =
   | 'local-running'
   | 'remote-running'
   | 'remote-disconnected'
+  /**
+   * No authority covers this remote run any more: its heartbeat is older than
+   * the lease it was renewing, or no lease is held and no activity arrives.
+   * Distinct from `remote-disconnected`, where the lease is still valid.
+   */
+  | 'remote-stale'
   | 'queued-remote'
   | 'recovering'
   | 'no-active-execution';
@@ -828,6 +834,8 @@ export interface TaskExecutionLocation {
   historical?: boolean;
   /** Latest remote Runner refusal during the task's current Ready-lane stay. */
   lastRejection?: RemoteDispatchRejection | null;
+  /** Last runner event the server can name, shown for a disconnected or stale remote run. */
+  lastRunnerEvent?: string | null;
 }
 
 /**
