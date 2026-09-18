@@ -1,6 +1,6 @@
 # Runner Domain Map
 
-Version: 2026-09-15
+Version: 2026-09-18
 Status: System-of-record map for runner-side changes.
 
 Use this when a change touches task pickup, active execution, post-run outcome
@@ -36,6 +36,13 @@ state.
 
 - `backend/Services/TaskRunnerService.cs`: project runner ownership and public
   start, stop, continue, and mode surface.
+- `runner/FinalizationRetryPolicy.cs`, `runner/CodingFinalizationReconciler.cs`,
+  and `backend/Shared/Runner/RemoteRunStalenessPolicy.cs`: the pure decisions
+  behind "a delivery the Task Server refused while restarting is retried from
+  the persisted slot" and "a run nobody is driving is not shown as running"
+  (AGT-2869). The reconciler runs on the ordinary daemon poll loop and re-uses
+  the startup reconciliation step; the staleness policy is the single source of
+  the `remote-running` / `remote-disconnected` / `remote-stale` distinction.
 - `runner/TaskServerConnectivityMonitor.cs`, `DaemonIdleWatchdog.cs`,
   `RemoteRunnerDaemon.cs`, and `RemoteReviewDaemon.cs`: host-side Task Server
   route and loop liveness. Poll failures use bounded backoff and transition
@@ -802,6 +809,36 @@ state.
   lease, and lease instance instead of receiving a false unknown-attempt or
   Superseded response.
 
+- A Task Server restart during a worker's finalization is retried in place, not
+  deferred to the next daemon restart (AGT-2869). When the result transfer,
+  completion recording, or hand-back fails with a transport fault (connection
+  refused or reset, `ResponseEnded`, an HTTP timeout, 5xx), the Coding slot stays
+  persisted in phase `finalizing` with its retry bookkeeping and the delivery it
+  already secured, the worktree and the durable worker result are retained, and
+  the lease is not released. The running daemon's poll loop then probes
+  `/api/system/about` and re-drives the very same attempt through the startup
+  reconciliation step (`RemoteTaskRunner.ReattachAsync`), with a 15 s / 30 s /
+  60 s backoff that then stays at 60 s. Retries never stop: outliving the run
+  timeout only adds a `coding-finalization-late` journal line, because the
+  result is already on disk and must reach the server eventually. The steps are
+  the idempotent ones - the artifact and completion idempotency keys are derived
+  from the attempt id and the content, a re-drive reuses the persisted teardown
+  instead of pushing a second delivery, and a durable-plane attempt already
+  settled by `DurableHandoffRecovery` is released rather than replayed. The
+  journal carries one `coding-finalization-deferred` line per failure with its
+  reason, one `coding-slot-reconciliation scope=poll ... outcome=redriven` line
+  per retry, and the final completion names `finalizationRetries=<n>`. A daemon
+  that dies mid-retry is still recovered by startup reconciliation, unchanged.
+- A remote run nobody is driving is projected as `remote-stale`, not
+  `remote-running` (AGT-2869). `RemoteRunStalenessPolicy` is the single verdict:
+  a heartbeat inside a valid lease is `remote-running`, a quiet heartbeat under
+  a still-valid lease is `remote-disconnected`, and a heartbeat older than the
+  lease it was renewing - or an ownerless remote-routed Progress card whose
+  job-folder replay has stopped - is `remote-stale`. The projection also carries
+  `lastRunnerEvent`, so an operator and the acceptance rail can tell a phantom
+  run from a live one instead of reading "Host running" for a card with no
+  heartbeat.
+
 - A failed lease renewal consumes the last server-issued authority window. The
   default requested window is 15 minutes, with a durable stop-before boundary
   one renewal interval before expiry. The standalone Runner persists that
@@ -1199,9 +1236,11 @@ owner. This makes configured-vs-actual mismatches explicit during recovery or
 operator intervention.
 
 The projection distinguishes `local-running`, `remote-running`,
-`remote-disconnected`, `queued-remote`, `recovering`, and
+`remote-disconnected`, `remote-stale`, `queued-remote`, `recovering`, and
 `no-active-execution`. Remote leases retain their last accepted heartbeat, so a
-missed heartbeat becomes acute only after the stale window. A renewed lease
+missed heartbeat becomes acute only after the stale window; once the heartbeat
+is older than the lease it was renewing, the run is `remote-stale` and carries
+`lastRunnerEvent`, the last event the server can honestly name. A renewed lease
 returns to healthy without a page reload through the normal task push/poll path.
 Run-start session events capture the execution projection so finished run
 history keeps its stable runner-id attribution with `historical: true` and renders
