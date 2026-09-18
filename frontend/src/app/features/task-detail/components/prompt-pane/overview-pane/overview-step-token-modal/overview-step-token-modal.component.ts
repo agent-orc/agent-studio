@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
 import { TooltipDirective } from 'coding-agent-chat/shared';
+import { formatTokens } from '../../../../../../services/format.util';
 import { DialogComponent } from '../../../../../../components/dialog/dialog.component';
 import {
   formatTokenCostDisplay,
@@ -9,7 +10,6 @@ import type { PipelineRowVm, TokenBreakdownRowVm } from '../pipeline-row.vm';
 import {
   formatAbsoluteTime,
   formatStepDuration,
-  formatTokens,
   liveStepDurationMs,
   stepKindLabel,
 } from '../overview-pane-formatters';

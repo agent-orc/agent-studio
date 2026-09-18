@@ -1,5 +1,6 @@
 @if (runCount() > 0) {
   <section class="ptu" data-testid="pipeline-token-usage">
+    @if (showTaskTotal()) {
     <div class="ptu__level ptu__level--sum"
          [class.ptu__level--open]="summaryOpen()"
          data-testid="pipeline-token-usage-total">
@@ -7,12 +8,12 @@
               class="ptu__row ptu__row--sum"
               data-testid="pipeline-token-usage-total-toggle"
               [attr.aria-expanded]="summaryOpen()"
-              [cacTooltip]="totalTooltip(taskTotal().totalTokens, taskTotal().costUsd, taskTotal().anyModelUnknown, 'The whole task across every model and run', taskTotal().unpricedRuns, taskTotal().pricingGaps, taskTotal().missingTokenRuns)"
+              [cacTooltip]="'This total includes every model and every pipeline step across all ' + runCount() + ' runs of this task.'"
               (click)="toggleSummary()">
         <app-disclosure-marker class="ptu__disclosure" [open]="summaryOpen()" [size]="10" />
         <span class="ptu__marker-slot" aria-hidden="true"></span>
         <span class="ptu__head-label">
-          <span class="ptu__sum-title">Tokens across all runs</span>
+          <span class="ptu__sum-title">All runs · task total</span>
         </span>
         <span class="ptu__scope">every model · {{ runCount() }} run{{ runCount() === 1 ? '' : 's' }}</span>
         <span class="ptu__timing" aria-hidden="true"></span>
@@ -64,6 +65,7 @@
         </div>
       }
     </div>
+    }
 
     <h3 class="ptu__title">
       Tokens by run

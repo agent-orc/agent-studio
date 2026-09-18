@@ -69,14 +69,6 @@ export function stepStatusLabel(status: PipelineDisplayStatus): string {
  */
 export const laneLabel = laneName;
 
-export function formatTokens(value: number): string {
-  if (value <= 0) return '—';
-  if (value < 1000) return String(value);
-  const scale = value < 1_000_000 ? 1000 : 1_000_000;
-  const suffix = value < 1_000_000 ? 'k' : 'm';
-  return `${(value / scale).toFixed(1).replace(/\.0$/, '')}${suffix}`;
-}
-
 export function formatDuration(seconds: number): string {
   if (seconds < 60) return `${Math.round(seconds)}s`;
   const min = Math.floor(seconds / 60);

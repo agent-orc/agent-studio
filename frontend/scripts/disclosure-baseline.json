@@ -13,6 +13,7 @@
     "src/app/features/project-detail/components/project-branch-sweep/project-branch-sweep.component.html",
     "src/app/features/project-detail/components/workbench-overview/workbench-overview.component.html",
     "src/app/features/task-detail/components/prompt-pane/agent-work-detail/agent-work-detail.component.html",
+    "src/app/features/task-detail/components/prompt-pane/overview-pane/overview-pane.component.html",
     "src/app/features/task-detail/components/prompt-pane/pipeline-token-usage/pipeline-token-usage.component.html",
     "src/app/features/task-detail/components/protocol-pane/previous-results-control/previous-results-control.component.html",
     "src/app/features/task-detail/components/protocol-pane/protocol-verdict-banner/protocol-verdict-banner.component.html"
@@ -171,10 +172,6 @@
       "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
     },
     "src/app/features/task-detail/components/prompt-pane/files-pane/files-pane.component.html": {
-      "kind": "staged-adoption",
-      "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
-    },
-    "src/app/features/task-detail/components/prompt-pane/overview-pane/overview-pane.component.html": {
       "kind": "staged-adoption",
       "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
     },

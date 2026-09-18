@@ -254,7 +254,7 @@ describe('buildResultDocument', () => {
     );
     expect(doc.metrics.find((x) => x.id === 'duration')?.value).toBe('4m');
     const tokens = doc.metrics.find((x) => x.id === 'tokens');
-    expect(tokens?.value).toBe('1.50M tokens');
+    expect(tokens?.value).toBe('1.5M tokens');
     expect(tokens?.tooltip).toContain('Estimated cost: $1.25');
     expect(tokens?.tooltip).toContain('historical list prices');
     expect(doc.metrics.find((x) => x.id === 'commits')?.value).toBe('2 commits');

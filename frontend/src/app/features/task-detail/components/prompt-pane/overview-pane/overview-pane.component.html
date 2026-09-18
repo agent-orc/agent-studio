@@ -234,9 +234,9 @@
                     [attr.aria-label]="groupAriaLabel(group)"
                     data-testid="overview-pipeline-phase"
                     (click)="toggleGroup(group)">
-              <span class="ov-pl-phase__marker"
-                    data-testid="overview-pipeline-phase-marker"
-                    aria-hidden="true">{{ isGroupCollapsed(group) ? '+' : '−' }}</span>
+              <app-disclosure-marker class="ov-pl-phase__marker" data-testid="overview-pipeline-phase-marker"
+                                     [open]="!isGroupCollapsed(group)"
+                                     [size]="10" />
               <span class="ov-pl-phase__label">{{ group.label }}</span>
               <span class="ov-pl-phase__info"
                     aria-hidden="true"
@@ -445,7 +445,10 @@
 
       @if (pipelineTotal(); as total) {
         <div class="ov-pl-total" data-testid="overview-pipeline-total">
-          <span class="ov-pl-total__label">Task total <span class="ov-dim">SUM</span></span>
+          <span class="ov-pl-total__label" data-testid="overview-pipeline-total-label" [cacTooltip]="pipelineTotalScopeTooltip()">
+            <span>This run · pipeline total</span>
+            <span class="ov-pl-total__scope">{{ pipelineTotalScope() }}</span>
+          </span>
           <span class="ov-pl-total__tokens ov-value--mono ov-value--strong"
                 data-testid="overview-pipeline-total-tokens"
                 [cacTooltip]="total.tokenTooltip">
@@ -466,8 +469,8 @@
     </section>
   }
 
-  <app-pipeline-token-usage
-    [summary]="pipelinePoll.pipeline()?.tokensByModel ?? null" />
+  <app-pipeline-token-usage [summary]="pipelinePoll.pipeline()?.tokensByModel ?? null"
+    [showTaskTotal]="showAllRunsTaskTotal()" />
 
   @if (selectedTokenRow(); as tokenRow) {
     <app-overview-step-token-modal
@@ -478,9 +481,6 @@
       (closeRequest)="closeStepTokenModal()" />
   }
 
-  <!-- Agent Work block (replaces the raw SESSION row).
-       Aggregates session-events.jsonl + tool-calls.jsonl for a meaningful
-       at-a-glance "what did the agent actually do" view. -->
   @if (hasAgentWork()) {
     <app-overview-agent-work [job]="job()" />
   }

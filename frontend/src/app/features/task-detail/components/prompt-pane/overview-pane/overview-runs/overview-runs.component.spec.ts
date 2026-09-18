@@ -58,7 +58,7 @@ describe('OverviewRunsComponent', () => {
     const rows = all(fixture, 'overview-run-row');
 
     expect(all(fixture, 'overview-run-tokens')).toHaveLength(1);
-    expect(testText(rows[0], 'overview-run-tokens')).toBe('1.3k tokens');
+    expect(testText(rows[0], 'overview-run-tokens')).toBe('1k tokens');
     expect(rows[1].querySelector('[data-testid="overview-run-tokens"]')).toBeNull();
   });
 

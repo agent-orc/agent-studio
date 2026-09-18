@@ -1,6 +1,7 @@
 import type { StructuredTooltip } from 'coding-agent-chat/shared';
 import type { PipelineCostSummary, PipelineStepCost } from '../../../../task-pipeline';
 import { buildTokenCostTooltip } from '../../../../tokens';
+import { formatTokens } from '../../../../../services/format.util';
 
 export function formatPipelineCost(usd: number): string {
   if (usd <= 0) return '$0.00';
@@ -15,14 +16,6 @@ export function formatPipelineAggregateCost(usd: number, anyModelUnknown: boolea
   return `${formatPipelineCost(usd)} partial`;
 }
 
-export function formatPipelineTokens(tokens: number): string {
-  if (tokens <= 0) return '—';
-  if (tokens < 1000) return String(tokens);
-  const scale = tokens < 1_000_000 ? 1000 : 1_000_000;
-  const suffix = tokens < 1_000_000 ? 'k' : 'm';
-  return `${(tokens / scale).toFixed(1).replace(/\.0$/, '')}${suffix}`;
-}
-
 export function buildPipelineStepTokenTooltip(
   label: string,
   cost: PipelineStepCost | null,
@@ -32,11 +25,11 @@ export function buildPipelineStepTokenTooltip(
   const context = [
     ...(source ? [`Source: ${source}`] : []),
     `Model: ${cost.model ?? 'unknown'}`,
-    `Input: ${formatPipelineTokens(cost.inputTokens)}`,
-    `Output: ${formatPipelineTokens(cost.outputTokens)}`,
-    `Cache read: ${formatPipelineTokens(cost.cacheReadTokens)}`,
-    `Cache creation: ${formatPipelineTokens(cost.cacheCreationTokens)}`,
-    `Total: ${formatPipelineTokens(cost.totalTokens)}`,
+    `Input: ${formatTokens(cost.inputTokens)}`,
+    `Output: ${formatTokens(cost.outputTokens)}`,
+    `Cache read: ${formatTokens(cost.cacheReadTokens)}`,
+    `Cache creation: ${formatTokens(cost.cacheCreationTokens)}`,
+    `Total: ${formatTokens(cost.totalTokens)}`,
   ];
   if (cost.modelKnown) {
     context.push(
@@ -91,12 +84,12 @@ export function buildPipelineTotalTokenTooltip(
 ): StructuredTooltip | null {
   if (cost.totalTokens <= 0) return null;
   const context = [
-    'Source: SUM of pipeline steps',
-    `Input: ${formatPipelineTokens(cost.totalInputTokens)}`,
-    `Output: ${formatPipelineTokens(cost.totalOutputTokens)}`,
-    `Cache read: ${formatPipelineTokens(cost.totalCacheReadTokens)}`,
-    `Cache creation: ${formatPipelineTokens(cost.totalCacheCreationTokens)}`,
-    `Total: ${formatPipelineTokens(cost.totalTokens)}`,
+    'Source: pipeline steps in this run',
+    `Input: ${formatTokens(cost.totalInputTokens)}`,
+    `Output: ${formatTokens(cost.totalOutputTokens)}`,
+    `Cache read: ${formatTokens(cost.totalCacheReadTokens)}`,
+    `Cache creation: ${formatTokens(cost.totalCacheCreationTokens)}`,
+    `Total: ${formatTokens(cost.totalTokens)}`,
     '',
     `Input API price: ${formatPipelineCost(cost.totalInputCostUsd)}`,
     `Output API price: ${formatPipelineCost(cost.totalOutputCostUsd)}`,
@@ -107,7 +100,7 @@ export function buildPipelineTotalTokenTooltip(
     context.push('One or more steps used a model with no price data; the estimate covers only priced usage.');
   }
   return {
-    title: 'Task total tokens (SUM)',
+    title: 'Pipeline total tokens',
     body: buildTokenCostTooltip({
       costUsd: cost.totalCostUsd,
       priceKnown: !cost.anyModelUnknown,
@@ -133,7 +126,7 @@ export function buildPipelineTotalCostTooltip(
     context.push('One or more steps used a model with no price data; the estimate covers only priced usage.');
   }
   return {
-    title: 'Task total cost',
+    title: 'Pipeline total cost',
     body: buildTokenCostTooltip({
       costUsd: cost.totalCostUsd,
       priceKnown: !cost.anyModelUnknown,

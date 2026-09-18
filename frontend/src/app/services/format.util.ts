@@ -13,8 +13,9 @@ import { laneName } from '../models/lane-presentation';
 export function formatTokens(n: number): string {
   if (!n) return '0';
   if (n < 1000) return String(n);
-  if (n < 1_000_000) return (n / 1000).toFixed(1) + 'k';
-  return (n / 1_000_000).toFixed(2) + 'M';
+  if (n < 1_000_000) return `${Math.round(n / 1000)}k`;
+  const millions = (n / 1_000_000).toFixed(2).replace(/0$/, '');
+  return `${millions}M`;
 }
 
 export function formatRateWindow(window: string | null): string {

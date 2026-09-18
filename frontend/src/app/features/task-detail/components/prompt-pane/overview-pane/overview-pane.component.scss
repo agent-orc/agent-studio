@@ -3,28 +3,15 @@
 :host { display: block; }
 
 .overview {
-  // Density overrides scoped to the meta panel. The sections (Status,
-  // Agent, Tokens, Agent Work, Runs) are read together as a
-  // scannable label/value list; the compact defaults were still leaving
-  // ~26px per row, which scrolled out useful sections before the bottom of
-  // the panel. Tightening at the local-token level lets every `.ov-row`
-  // inherit the smaller values without reaching into the global tokens.
   --studio-section-gap: 6px;
   --studio-row-gap: 2px;
   --studio-row-pad-block: 1px;
   --studio-row-min-h: 16px;
 
-  // Single source of truth for the label column. STATUS, AGENT, and the
-  // token rows all read it through `.ov-row`'s grid template, so their
-  // values share one second-column edge by construction.
   --ov-label-col: 100px;
   --ov-pipeline-status-col: 16px;
+  --ov-expander-col: 16px;
   --ov-pipeline-kind-col: 26px;
-  // The step name is the row's primary information and owns twice the flexible
-  // space of metadata. Both tracks must be allowed to contract all the way to
-  // zero so a split detail pane cannot force the grid wider than its container.
-  // The visible label ellipsizes while its complete explanation stays in the
-  // existing tooltip.
   --ov-pipeline-name-col: minmax(0, 2fr);
   --ov-pipeline-meta-col: minmax(0, 1fr);
   --ov-pipeline-time-col: 96px;
@@ -32,12 +19,8 @@
   --ov-pipeline-cost-col: 11rem;
   --ov-pipeline-step-indent: var(--studio-spacing-3);
 
-  // Single source of truth for the per-step / header grid. Header and step
-  // rows are separate grids; sharing this one template (not redefining tracks
-  // per row) is what keeps the columns aligned. Container queries below drop
-  // trailing tracks from this list on narrow panes.
   --ov-pl-grid-cols:
-    var(--ov-pipeline-status-col)
+    var(--ov-expander-col)
     var(--ov-pipeline-kind-col)
     var(--ov-pipeline-name-col)
     var(--ov-pipeline-meta-col)
@@ -321,7 +304,7 @@
   -webkit-appearance: none;
   position: relative;
   display: grid;
-  grid-template-columns: 14px minmax(64px, max-content) 16px minmax(24px, 1fr) max-content;
+  grid-template-columns: var(--ov-expander-col) minmax(64px, max-content) 16px minmax(24px, 1fr) max-content;
   align-items: center;
   gap: var(--studio-spacing-2);
   width: 100%;
@@ -352,12 +335,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 14px;
-    height: 14px;
-    font-size: 12px;
-    font-weight: 700;
-    line-height: 1;
-    color: color-mix(in srgb, var(--ov-pl-phase-accent) 60%, var(--studio-fg-muted));
+    justify-self: center;
   }
 
   &__label {
@@ -898,7 +876,7 @@
   .ov-pl-total,
   .ov-agent-work__row {
     --ov-pl-grid-cols:
-      var(--ov-pipeline-status-col)
+      var(--ov-expander-col)
       var(--ov-pipeline-kind-col)
       var(--ov-pipeline-name-col)
       var(--ov-pipeline-meta-col)
@@ -921,7 +899,7 @@
 
 @container ov-pipeline (max-width: 460px) {
   .ov-pl-phase {
-    grid-template-columns: 14px minmax(0, max-content) 16px minmax(0, 1fr);
+    grid-template-columns: var(--ov-expander-col) minmax(0, max-content) 16px minmax(0, 1fr);
     align-items: center;
   }
 
@@ -937,7 +915,7 @@
   .ov-agent-work__row {
     --ov-pipeline-time-col: 52px;
     --ov-pl-grid-cols:
-      var(--ov-pipeline-status-col)
+      var(--ov-expander-col)
       var(--ov-pipeline-kind-col)
       minmax(0, 3fr)
       minmax(0, 2fr)
@@ -989,6 +967,16 @@
     text-transform: uppercase;
     letter-spacing: 0.04em;
     color: var(--studio-fg-strong);
+  }
+
+  &__scope {
+    display: block;
+    margin-top: var(--studio-spacing-1);
+    color: var(--studio-fg-muted);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0;
+    text-transform: none;
   }
 
   &__tokens {

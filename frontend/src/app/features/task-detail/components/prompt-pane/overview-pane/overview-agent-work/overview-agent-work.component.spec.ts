@@ -81,7 +81,10 @@ describe('OverviewAgentWorkComponent', () => {
     const fixture = await build(baseJob(), summary());
     const host = fixture.nativeElement as HTMLElement;
 
-    expect(host.querySelector('[data-testid="agent-work-calls"]')?.textContent).toContain('3 calls');
+    expect(host.querySelector('[data-testid="agent-work-calls"]')?.textContent).toContain('3 sessions');
+    expect(host.textContent).toContain('First start');
+    expect(host.textContent).toContain('Last activity');
+    expect(host.textContent).not.toContain(' - ');
     expect(host.querySelector('[data-testid="agent-work-tools"]')?.textContent).toContain('Read');
   });
 

@@ -18,6 +18,7 @@ import type {
 import { ClientService } from '../../../../../services/client.service';
 import { CliModelSelectorComponent } from '../../../../../components/cli-model-selector';
 import { StudioIconComponent } from '../../../../../components/studio-icon/studio-icon.component';
+import { DisclosureMarkerComponent } from '../../../../../components/disclosure-marker/disclosure-marker.component';
 import { RegressionRadarComponent } from '../../../../regression-radar';
 import type { PipelineStepResultHeader } from '../pipeline-step-result/pipeline-step-result.component';
 import { ReferencesSectionComponent } from '../../references-section/references-section.component';
@@ -32,7 +33,7 @@ import {
   steeringInfoFromEvent,
   type SteeringInfo,
 } from '../../../../../components/steering-detail';
-import { cliTypeLabel } from '../../../../../services/format.util';
+import { cliTypeLabel, formatTokens } from '../../../../../services/format.util';
 import { TaskService } from '../../../../../services/task.service';
 import {
   CostBreakdownTriggerDirective,
@@ -61,7 +62,6 @@ import {
   formatDuration,
   formatRelativeTime,
   formatStepDuration,
-  formatTokens,
   liveStepDurationMs,
   historicalStepStatusIcon,
   laneLabel,
@@ -102,7 +102,7 @@ import {
   selector: 'app-overview-pane',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, CliModelSelectorComponent, RegressionRadarComponent, ReferencesSectionComponent, TooltipDirective, CompletionLoopIndicatorComponent, PipelineRunHistoryComponent, PipelineTokenUsageComponent, PipelineStepDetailsComponent, PipelineStepToggleComponent, PostStepControlsComponent, StudioIconComponent, CostBreakdownTriggerDirective, PipelineHistoryNoticeComponent, OverviewRunsComponent, OverviewTitleBlockComponent, OverviewStepTokenModalComponent, OverviewAgentWorkComponent],
+  imports: [FormsModule, CliModelSelectorComponent, RegressionRadarComponent, ReferencesSectionComponent, TooltipDirective, CompletionLoopIndicatorComponent, PipelineRunHistoryComponent, PipelineTokenUsageComponent, PipelineStepDetailsComponent, PipelineStepToggleComponent, PostStepControlsComponent, StudioIconComponent, DisclosureMarkerComponent, CostBreakdownTriggerDirective, PipelineHistoryNoticeComponent, OverviewRunsComponent, OverviewTitleBlockComponent, OverviewStepTokenModalComponent, OverviewAgentWorkComponent],
   templateUrl: './overview-pane.component.html',
   styleUrl: './overview-pane.component.scss',
 })
@@ -182,10 +182,6 @@ export class OverviewPaneComponent {
     OverviewPaneComponent.PIPELINE_CONFIGURABLE_STATES.has(this.job().state),
   );
 
-  /** Effective CLI + model the Agent block renders. The override wins when
-   *  the parent provides one (optimistic state from the picker commit) so
-   *  the badge updates without a network round-trip; otherwise we fall
-   *  back to the canonical `job()` value. */
   readonly effectiveCliType = computed<CliType | null>(() => {
     const override = this.cliTypeOverride();
     return override !== undefined ? (override as CliType | null) : this.job().cliType;
@@ -199,16 +195,22 @@ export class OverviewPaneComponent {
     return override !== undefined ? override : (this.job().thinkingLevel ?? null);
   });
   readonly agentConfigReadOnly = computed(() => this.job().state === TaskState.Completed || this.job().state === TaskState.Archive);
-  /**
-   * Derived from `logs/session-events.jsonl` + `logs/tool-calls.jsonl`.
-   * Drives the Agent Work block that replaced the raw SESSION row.
-   */
   readonly agentWork = this.agentWorkPoll.summary;
 
   readonly hasAgentWork = computed(() => {
     const s = this.agentWork();
-    return s != null && (s.calls > 0 || s.toolCalls > 0);
+    return s != null && (s.toolCalls > 0 || s.recovered);
   });
+
+  pipelineTotalScope(): string { return `Run #${this.pipelineAttempt()} incl. pre/post/review steps`; }
+  pipelineTotalScopeTooltip(): string { return `This total includes the core agent run and every pre, post, and review step in Run #${this.pipelineAttempt()} only.`; }
+
+  showAllRunsTaskTotal(): boolean {
+    const pipeline = this.pipelineTotal();
+    const task = this.pipelinePoll.pipeline()?.tokensByModel;
+    if (pipeline == null || task == null || task.runs.length !== 1) return true;
+    return pipeline.totalTokens !== task.totalTokens || Math.abs(pipeline.totalCostUsd - task.totalCostUsd) > 0.000000001;
+  }
 
   readonly owner = computed(() => {
     const ownerId = this.job().ownerClientId;
@@ -238,7 +240,6 @@ export class OverviewPaneComponent {
     return total;
   });
 
-  /** Recorded run count, from the run-timeline. 0 before the first run. */
   readonly runCount = computed<number>(() => this.timeline()?.runCount ?? 0);
 
   /**
@@ -749,7 +750,7 @@ export class OverviewPaneComponent {
 
   /** Task-total tokens + cost across all recorded steps. */
   readonly pipelineTotal = computed<PipelineTotalVm | null>(() => {
-    if (!this.selectedPipelineIsCurrent()) return null;
+    if (this.selectedPipelineExecution() == null || !this.selectedPipelineIsCurrent()) return null;
     const c = this.pipelinePoll.pipeline()?.cost ?? null;
     if (c == null) return null;
     return {
@@ -771,7 +772,6 @@ export class OverviewPaneComponent {
     };
   });
 
-  /** True once at least one step has a recorded execution. */
   readonly hasPipelineExecution = computed(() => this.pipelinePoll.hasExecution());
 
   /**

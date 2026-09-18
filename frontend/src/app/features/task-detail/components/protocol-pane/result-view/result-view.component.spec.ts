@@ -138,7 +138,7 @@ describe('ResultViewComponent', () => {
     expect(el.querySelector('[data-testid="result-metric-verdict"]')).toBeNull();
     expect(el.querySelector('[data-testid="result-metric-grade"]')?.textContent).toContain('Grade A');
     expect(el.querySelector('[data-testid="result-metric-duration"]')?.textContent).toContain('4m');
-    expect(el.querySelector('[data-testid="result-metric-tokens"]')?.textContent).toContain('12.0k tokens');
+    expect(el.querySelector('[data-testid="result-metric-tokens"]')?.textContent).toContain('12k tokens');
     expect(el.querySelector('[data-testid="result-case-dot"]')).not.toBeNull();
   });
 

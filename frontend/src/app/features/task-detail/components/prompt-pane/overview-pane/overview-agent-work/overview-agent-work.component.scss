@@ -110,13 +110,28 @@
   }
 
   &__timing {
-    grid-column: 5;
+    grid-column: 5 / -1;
     display: grid;
-    grid-template-columns: 38px 52px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     align-items: baseline;
     justify-content: flex-end;
     gap: var(--studio-spacing-1);
     min-width: 0;
+  }
+
+  &__time-fact {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  &__time-label {
+    color: var(--studio-fg-muted);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-align: right;
+    text-transform: uppercase;
   }
 
   &__started,
@@ -127,18 +142,6 @@
     text-align: right;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  &__tokens {
-    grid-column: 6;
-    color: var(--studio-fg-muted);
-    text-align: right;
-  }
-
-  &__cost {
-    grid-column: 7;
-    color: var(--studio-fg-muted);
-    text-align: right;
   }
 
   &__row--tools &__label { grid-column: 3; }
