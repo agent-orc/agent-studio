@@ -84,6 +84,12 @@ public sealed class ExecutionOutcomeAdapterTests
             ExecutionRecoveryAction.StartFreshAttemptFromSalvage
         },
         {
+            "process signal with misleading quota output",
+            Coding(ExitCode: 143, Signal: 15, StdErr: "usage limit reached; resets at 2026-09-19T12:40:00Z"),
+            ExecutionOutcomeKind.CliCrash,
+            ExecutionRecoveryAction.StartFreshAttemptFromSalvage
+        },
+        {
             "lost transport after publish",
             Coding(
                 TransportState: ExecutionTransportState.Lost,

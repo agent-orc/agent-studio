@@ -8,6 +8,19 @@ namespace AgentRunner.Tests;
 public sealed class RunnerCapabilityProbeTests
 {
     [Fact]
+    public void Allowed_warning_event_is_authenticated_provider_evidence()
+    {
+        const string eventLine =
+            "{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed_warning\"," +
+            "\"rateLimitType\":\"seven_day\",\"utilization\":0.84,\"resetsAt\":1790000000}}";
+
+        var evidence = ProviderAccessClassifier.Classify(0, eventLine, null);
+
+        Assert.Equal(ProviderAccessEvidenceKind.Authenticated, evidence.Kind);
+        Assert.Null(evidence.LimitedUntil);
+    }
+
+    [Fact]
     public async Task Capability_snapshot_reports_cli_version_and_resolved_install_path()
     {
         if (!OperatingSystem.IsLinux()) return;
