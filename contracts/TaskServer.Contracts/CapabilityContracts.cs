@@ -61,7 +61,8 @@ public sealed record CapabilityAdvertisementRequest(
     int FreshForSeconds,
     long Generation,
     IReadOnlyList<AdvertisedCapabilityDto> Capabilities,
-    HostTelemetrySnapshotDto? Telemetry = null);
+    HostTelemetrySnapshotDto? Telemetry = null,
+    RunnerReleaseIdentityDto? Release = null);
 
 public sealed record HostTelemetrySnapshotDto(
     DateTime ObservedAt,
@@ -205,7 +206,8 @@ public sealed record RunnerCapabilitySnapshotDto(
     DateTime? RestartedAt = null,
     int ReviewsLost = 0,
     IReadOnlyList<InstalledCliDto>? InstalledClis = null,
-    HostCliUpdateDto? CliUpdate = null);
+    HostCliUpdateDto? CliUpdate = null,
+    RunnerReleaseIdentityDto? Release = null);
 
 public static class InstalledCliProjection
 {

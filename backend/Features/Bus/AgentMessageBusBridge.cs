@@ -23,9 +23,10 @@ namespace AgentStudio.Bus;
 /// typed message back to the underlying evidence.
 /// </para>
 /// <para>
-/// All bridge calls are best-effort. Workspace not configured? Append fails?
+/// Most bridge calls are best-effort. Workspace not configured? Append fails?
 /// We log and move on - the bus is observability, not authority. The producers
 /// are unaware of any bus failure and their canonical writes are unaffected.
+/// Host release alarms propagate failures to their retry-owning watchdog.
 /// </para>
 /// </remarks>
 public sealed class AgentMessageBusBridge
@@ -627,6 +628,44 @@ public sealed class AgentMessageBusBridge
             payload: new { host, provider, actor, outcome },
             tags: new[] { "provider-sign-in", $"provider:{provider}", $"outcome:{outcome}" });
         return EmitAsync(msg, ct);
+    }
+
+    /// <summary>
+    /// Emits one operator-feed alarm for an execution host whose agent-host
+    /// release has been older than the Stable release for longer than the grace
+    /// window (AGT-2826). The caller de-duplicates, so one drift is one event.
+    /// </summary>
+    public Task EmitHostReleaseDriftAsync(
+        string hostId,
+        string runnerId,
+        string role,
+        string releaseId,
+        string stableVersion,
+        double behindHours,
+        string reason,
+        CancellationToken ct = default)
+    {
+        var age = behindHours >= 48
+            ? $"{Math.Round(behindHours / 24)} days"
+            : $"{Math.Round(behindHours)} hours";
+        var msg = NewMessage(
+            participantId: ParticipantRuntime,
+            role: "system",
+            kind: "error",
+            severity: "Warn",
+            project: null,
+            jobId: null,
+            topic: "host_release_drift",
+            summary: TruncateSummary(
+                $"{hostId} ({role}) runs release {releaseId}, {age} behind Stable {stableVersion}."),
+            body: reason,
+            payload: new { hostId, runnerId, role, releaseId, stableVersion, behindHours },
+            tags: new[] { "host-release-drift", $"host:{hostId}", $"runner:{runnerId}" });
+        // This producer retries failed alarms, so it must observe append failures.
+        var workspace = Workspace();
+        if (string.IsNullOrWhiteSpace(workspace))
+            throw new InvalidOperationException("Host release alarm requires TaskRepository.");
+        return _store.AppendAsync(workspace, msg, ct);
     }
 
     /// <summary>Emits one typed runner-link transition for the operator feed.</summary>
