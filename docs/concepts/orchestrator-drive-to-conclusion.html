@@ -2640,6 +2640,28 @@
              Run history names the refusal and continuation, and Execution Hosts counts refusals per model per UTC day.
            </td>
          </tr>
+        <tr id="case-agt-2873-operator-stop-false-provider-limit">
+          <td>2026-09-18</td>
+          <td><code>AGT-2873</code><br><span class="small">operator-terminated CLI falsely held Claude claims as rate-limited</span></td>
+          <td>
+            An operator stopped a duplicate Claude process for AGT-2870 with SIGTERM. Its retained output was classified
+            as provider-limit evidence, and the daemon advertised <code>provider-auth:claude=limited</code> for fourteen
+            minutes even though another Claude run on the same host was streaming normally. The card remained in
+            <span class="lane">2-ready</span> behind a capability-mismatch hold until the runner service was restarted.
+          </td>
+          <td>
+            Provider access classification ran without the process signal, accepted quota-warning text and limit phrases
+            without an explicit reset, and retained the verdict only in daemon memory. The advertisement omitted the
+            source run and evidence excerpt, and a retry did not request a fresh provider-auth probe.
+          </td>
+          <td>
+            <span class="pill ok">fixed in dev</span> Signal and operator stops contribute no provider-limit evidence;
+            allowed quota events remain authenticated; a limit requires an explicit refusal with a parseable reset.
+            Advertisements and transition logs carry the reset, scrubbed run ID, and bounded excerpt. Expired limits force
+            a probe, retry responses request the named provider-auth probe, and a concurrently active same-provider run
+            downgrades conflicting evidence to a claimable degraded state.
+          </td>
+        </tr>
       </tbody>
     </table>
 
