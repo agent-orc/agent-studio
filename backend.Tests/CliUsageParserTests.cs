@@ -42,6 +42,7 @@ public class CliUsageParserTests
         Assert.Equal(350, usage.Output);
         Assert.Equal(65000, usage.CacheRead);
         Assert.Equal(4000, usage.CacheWrite);
+        Assert.False(usage.InputIncludesCached);
         Assert.NotNull(usage.ContextWindow);
         Assert.Equal(200_000, usage.ContextWindow!.TotalSize);
         Assert.Equal(66200, usage.ContextWindow.Used);
@@ -62,7 +63,7 @@ public class CliUsageParserTests
     }
 
     [Fact]
-    public void CodexParser_OnlyMatchesTurnCompleted()
+    public void CodexParser_NormalizesRealTurnCompletedAndPricesAtDatedSolRate()
     {
         var parser = new CodexUsageParser();
 
@@ -72,24 +73,32 @@ public class CliUsageParserTests
         var turnCompleted = JsonDocument.Parse("""
         {
           "type": "turn.completed",
-          "model": "gpt-5-codex",
+          "model": "gpt-5.6-sol",
           "usage": {
-            "input_tokens": 9000,
-            "cached_input_tokens": 7200,
-            "output_tokens": 800,
-            "reasoning_output_tokens": 240
+            "input_tokens": 14983295,
+            "cached_input_tokens": 14786304,
+            "output_tokens": 24305,
+            "reasoning_output_tokens": 12000
           }
         }
         """).RootElement;
 
-        Assert.True(parser.TryParse(turnCompleted, modelHint: null, Registry, out var usage));
-        Assert.Equal("gpt-5-codex", usage.Model);
-        Assert.Equal(9000, usage.Input);
-        Assert.Equal(7200, usage.CacheRead);
-        Assert.Equal(800, usage.Output);
-        Assert.Equal(240, usage.ReasoningOutput);
+        Assert.True(parser.TryParse(turnCompleted, modelHint: null, new FixedRegistry(272_000), out var usage));
+        Assert.Equal("gpt-5.6-sol", usage.Model);
+        Assert.Equal(196991, usage.Input);
+        Assert.Equal(14786304, usage.CacheRead);
+        Assert.Equal(24305, usage.Output);
+        Assert.Equal(12000, usage.ReasoningOutput);
+        Assert.True(usage.InputIncludesCached);
         Assert.Equal(272_000, usage.ContextWindow!.TotalSize);
-        Assert.Equal(16200, usage.ContextWindow.Used);
+        Assert.Equal(14983295, usage.ContextWindow.Used);
+        Assert.Equal(14983295, usage.ContextUsed);
+
+        var cost = TokenPricing.Estimate(
+            usage.Model, usage.Input, usage.Output, usage.CacheRead, usage.CacheWrite,
+            new DateTime(2026, 9, 18, 12, 0, 0, DateTimeKind.Utc));
+        Assert.True(cost.ModelKnown);
+        Assert.Equal(7.19m, decimal.Round(cost.Total, 2));
     }
 
     [Fact]
@@ -114,5 +123,10 @@ public class CliUsageParserTests
         Assert.Equal(200_000, Registry.TotalContextSize("claude-sonnet-4-6-20260301"));
         Assert.Null(Registry.TotalContextSize("nonexistent-model"));
         Assert.Null(Registry.TotalContextSize(null));
+    }
+
+    private sealed class FixedRegistry(long total) : ICliModelRegistry
+    {
+        public long? TotalContextSize(string? modelId) => total;
     }
 }

@@ -387,6 +387,22 @@ public sealed class PipelineExecutionLog
         return normalized;
     }
 
+    public PipelineExecutionRecord? ReadForMigration(string jobFolderPath) => TryRead(jobFolderPath);
+
+    /// <summary>
+    /// Atomically replaces a record produced by a versioned telemetry repair.
+    /// This is not a pipeline transition and deliberately bypasses attempt
+    /// fencing while retaining the log's lock and write/cache ownership.
+    /// </summary>
+    public bool ReplaceForMigration(string jobFolderPath, PipelineExecutionRecord record)
+    {
+        var lockObj = _locks.GetOrAdd(NormalizeKey(jobFolderPath), _ => new object());
+        lock (lockObj)
+        {
+            return WriteAtomic(jobFolderPath, record);
+        }
+    }
+
     /// <summary>
     /// Returns a terminal step from the current, still-open pipeline attempt.
     /// This is the restart checkpoint used by aspect and post-step executors:
@@ -507,7 +523,7 @@ public sealed class PipelineExecutionLog
         }
     }
 
-    private void WriteAtomic(string jobFolderPath, PipelineExecutionRecord record)
+    private bool WriteAtomic(string jobFolderPath, PipelineExecutionRecord record)
     {
         try
         {
@@ -528,10 +544,13 @@ public sealed class PipelineExecutionLog
             {
                 File.Move(tmp, path);
             }
+            _readCache.TryRemove(NormalizeKey(jobFolderPath), out _);
+            return true;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "PipelineExecutionLog: failed to persist record for {Folder}", jobFolderPath);
+            return false;
         }
     }
 

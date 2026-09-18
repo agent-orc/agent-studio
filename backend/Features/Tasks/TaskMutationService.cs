@@ -504,6 +504,26 @@ public class TaskMutationService
     }
 
     /// <summary>
+    /// Replaces the durable token receipt during a versioned history repair.
+    /// The caller must provide a fully recomputed summary; this method keeps
+    /// task.json mutation and cache-generation ownership in one place.
+    /// </summary>
+    public bool ReplaceTokenSummaryForMigration(string folderPath, TaskTokenSummary summary)
+    {
+        if (!Directory.Exists(folderPath)) return false;
+        try
+        {
+            TaskJsonFile.UpdateFieldOrThrow(folderPath, "tokenSummary", summary);
+            return Updated();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to replace migrated token receipt in {Folder}", folderPath);
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Extends the attributed commit chain after a conflict-free platform rebase.
     /// Each historical SHA remains visible and points at its exact replacement;
     /// the replacement inherits producer attribution because no new agent attempt

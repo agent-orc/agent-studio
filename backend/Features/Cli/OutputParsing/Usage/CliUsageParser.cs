@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Cli;
 
@@ -20,7 +21,8 @@ public sealed record ParsedTurnUsage(
     long CacheRead,
     long CacheWrite,
     long? ReasoningOutput,
-    AgentMessageContextWindow? ContextWindow)
+    AgentMessageContextWindow? ContextWindow,
+    bool InputIncludesCached = false)
 {
     /// <summary>Sum of all tokens that occupied the context this turn.</summary>
     public long ContextUsed => Input + CacheRead;
@@ -32,7 +34,8 @@ public sealed record ParsedTurnUsage(
         CacheWrite: CacheWrite == 0 ? null : CacheWrite,
         Model: Model,
         Dollars: null,
-        ContextWindow: ContextWindow);
+        ContextWindow: ContextWindow,
+        InputIncludesCached: InputIncludesCached);
 }
 
 /// <summary>
@@ -132,8 +135,9 @@ public sealed class ClaudeUsageParser : ICliUsageParser
 
 /// <summary>
 /// Codex's usage extractor for <c>turn.completed</c> frames in
-/// <c>codex exec --json</c> output. Codex separates cached input tokens and
-/// reasoning output tokens, both of which we surface.
+/// <c>codex exec --json</c> output. OpenAI's <c>input_tokens</c> includes
+/// <c>cached_input_tokens</c>; the parser stores only uncached input alongside
+/// the cache-read dimension so downstream pricing never counts cache hits twice.
 /// </summary>
 public sealed class CodexUsageParser : ICliUsageParser
 {
@@ -153,28 +157,30 @@ public sealed class CodexUsageParser : ICliUsageParser
         var declaredModel = frame.TryGetProperty("model", out var md) ? md.GetString() : null;
         var model = declaredModel ?? modelHint;
 
-        var input     = GetLong(u, "input_tokens");
-        var cached    = GetLong(u, "cached_input_tokens");
+        var normalized = ProviderUsageNormalization.OpenAi(
+            GetLong(u, "input_tokens"),
+            GetLong(u, "cached_input_tokens"));
         var output    = GetLong(u, "output_tokens");
         var reasoning = GetLong(u, "reasoning_output_tokens");
 
-        var contextWindow = BuildContextWindow(model, input, cached, modelRegistry);
+        var contextWindow = BuildContextWindow(model, normalized.ContextInputTokens, modelRegistry);
 
         usage = new ParsedTurnUsage(
             Model: model,
-            Input: input,
+            Input: normalized.InputTokens,
             Output: output,
-            CacheRead: cached,
+            CacheRead: normalized.CacheReadTokens,
             CacheWrite: 0,
             ReasoningOutput: reasoning,
-            ContextWindow: contextWindow);
+            ContextWindow: contextWindow,
+            InputIncludesCached: normalized.InputIncludesCached);
         return true;
     }
 
-    private static AgentMessageContextWindow? BuildContextWindow(string? model, long input, long cached, ICliModelRegistry registry)
+    private static AgentMessageContextWindow? BuildContextWindow(string? model, long contextInput, ICliModelRegistry registry)
     {
         var total = registry.TotalContextSize(model);
-        var used = input + cached;
+        var used = contextInput;
         if (total is null && used == 0) return null;
         return new AgentMessageContextWindow(
             TotalSize: total,

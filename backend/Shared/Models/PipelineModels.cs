@@ -250,6 +250,10 @@ public sealed record PipelineStepExecution
     public long OutputTokens { get; init; }
     public long CacheReadTokens { get; init; }
     public long CacheCreationTokens { get; init; }
+    /// <summary>Provider input-counter semantics captured at parse time. Null on legacy rows.</summary>
+    public bool? InputIncludesCached { get; init; }
+    /// <summary>Stable marker for a historical normalization applied after capture.</summary>
+    public string? UsageNormalization { get; init; }
     /// <summary>Physical placement reported by the executor, for example local or remote.</summary>
     public string? ExecutionLocation { get; init; }
     /// <summary>Runner host that executed the step when placement is remote.</summary>

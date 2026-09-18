@@ -61,6 +61,10 @@ public record TaskTokenCall
     public long OutputTokens { get; init; }
     public long CacheReadTokens { get; init; }
     public long CacheCreationTokens { get; init; }
+    /// <summary>Provider input-counter semantics captured at parse time. Null on legacy rows.</summary>
+    public bool? InputIncludesCached { get; init; }
+    /// <summary>Stable marker for a historical normalization applied after capture.</summary>
+    public string? UsageNormalization { get; init; }
     /// <summary>Historical list-price estimate at <see cref="Ts"/>.</summary>
     public decimal EstimatedApiCostUsd { get; init; }
     /// <summary>Whether the price catalog resolved the model at <see cref="Ts"/>.</summary>

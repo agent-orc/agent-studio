@@ -117,6 +117,24 @@ public class BusAggregationCacheTests : IDisposable
         Assert.Equal(0, agg.Totals.Input);
     }
 
+    [Fact]
+    public async Task LegacyOpenAiRow_IsNormalizedBeforeProjectAggregation()
+    {
+        var store = new AgentMessageBusStore();
+        var cache = new BusAggregationCache(store);
+        store.OnAppended = cache.OnAppended;
+
+        await store.AppendAsync(_workspace, TokenMsg(
+            "01HX0000000000000000000030", "p", "agent:codex",
+            "gpt-5.6-sol", input: 100, output: 5, cacheRead: 80));
+
+        var aggregate = cache.Aggregate(_workspace, "p", since: null, until: null);
+
+        Assert.Equal(20, aggregate.Totals.Input);
+        Assert.Equal(80, aggregate.Totals.CacheRead);
+        Assert.Equal(105, aggregate.Totals.Input + aggregate.Totals.CacheRead + aggregate.Totals.Output);
+    }
+
     private static AgentMessage TokenMsg(
         string id, string project, string participantId, string model,
         long input, long output, long cacheRead = 0, DateTime? createdAt = null)

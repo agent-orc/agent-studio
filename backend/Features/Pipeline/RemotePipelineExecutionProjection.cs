@@ -243,6 +243,9 @@ internal static class RemotePipelineExecutionProjection
             OutputTokens = calls.Sum(call => call.OutputTokens),
             CacheReadTokens = calls.Sum(call => call.CacheReadTokens),
             CacheCreationTokens = calls.Sum(call => call.CacheCreationTokens),
+            InputIncludesCached = calls.Select(call => call.InputIncludesCached).Distinct().Count() == 1
+                ? calls[0].InputIncludesCached
+                : null,
             TokenUsageSource = $"Remote token ledger · {calls.Count} call{(calls.Count == 1 ? "" : "s")}",
         };
     }

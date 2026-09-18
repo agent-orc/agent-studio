@@ -192,7 +192,7 @@ public sealed class BusAggregationCache
         public void ApplyLocked(AgentMessage m)
         {
             if (!_seenIds.Add(m.Id)) return; // already counted
-            var t = m.Tokens!;
+            var t = StoredUsageNormalization.Normalize(m.Tokens!);
             _totalMessages++;
             _totals.Add(t);
 

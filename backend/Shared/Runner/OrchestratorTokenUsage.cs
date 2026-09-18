@@ -15,6 +15,13 @@ public record OrchestratorTokenUsage
     public int CacheReadTokens { get; init; }
     public int CacheCreationTokens { get; init; }
     /// <summary>
+    /// True when the provider's raw input counter included cached tokens,
+    /// false when input and cache-read were reported separately, and null for
+    /// legacy rows that predate provider-semantics provenance.
+    /// </summary>
+    public bool? InputIncludesCached { get; init; }
+    public string? UsageNormalization { get; init; }
+    /// <summary>
     /// Effective reasoning / thinking level of the call, when the caller knows
     /// it (AGT-2811). Null keeps legacy rows readable as "level unknown".
     /// </summary>

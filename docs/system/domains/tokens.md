@@ -28,6 +28,56 @@
 > for token calls whose latest route-admission boundary carried a better Token
 > Economy benchmark candidate.
 
+## Provider input and cache semantics
+
+The canonical stored dimensions always mean:
+
+- `input` / `inputTokens`: uncached input, priced at the normal input rate.
+- `cacheRead` / `cacheReadTokens`: cached input, priced at the cache-read rate.
+- `inputIncludesCached`: provenance for the provider's raw counter, not a
+  change to the canonical stored dimensions. `true` means the provider's raw
+  input value included the cached subset; `false` means it reported uncached
+  input separately; absent/null means the row predates this contract.
+- `usageNormalization`: present only on a historical row repaired after
+  capture. `openai-input-includes-cached-v1` is the first marker.
+
+| CLI/provider frame | Raw semantics | Boundary mapping | Context used |
+|---|---|---|---|
+| Codex / OpenAI `turn.completed.usage` | `input_tokens` includes `cached_input_tokens`; cached is a subset. | `input = max(0, input_tokens - cached_input_tokens)`, `cacheRead = cached_input_tokens`, `inputIncludesCached = true`. | Raw `input_tokens`, equivalently normalized `input + cacheRead`. |
+| Claude `result.usage` | `input_tokens` excludes `cache_read_input_tokens`; the fields are separate. | Values pass through unchanged with `inputIncludesCached = false`. | `input_tokens + cache_read_input_tokens`. |
+| Gemini CLI `result.stats` | Current `StreamStats` reports `input_tokens` plus its explicit breakdown `cached` and `input` (uncached), with `output_tokens`, totals, and per-model rows. | Studio's deprecated Gemini adapter currently renders these stats into the completion message but has no registered `ICliUsageParser`, so it does not persist or price a canonical usage record. `GeminiEventAdapterTests.ResultSuccess_EmitsTurnCompleted_WithUsageStats` pins the emitted shape, including both `cached` and uncached `input`. | Not recorded until a canonical Gemini usage parser is introduced. |
+
+The arithmetic lives in
+`contracts/TaskServer.Contracts/ProviderUsageNormalization.cs` so the backend
+parser, remote project-chat runner, and remote review runner cannot diverge.
+Every pricing, receipt, ledger, export, and context-window consumer receives
+the normalized record rather than provider-native counters.
+
+## OpenAI historical repair (2026-09-18)
+
+`OpenAiUsageHistoryRepair` is a one-time startup migration with completion
+report `.metadata/migrations/openai-usage-input-v1.json`. It examines only
+OpenAI-model rows with legacy/unknown semantics and applies the repair only
+when `inputTokens >= cacheReadTokens > 0`. Corrected
+`task.json.tokenSummary.Entries` and current/previous
+`pipeline-execution.json` steps receive both `inputIncludesCached: true` and
+the `openai-input-includes-cached-v1` marker, then their costs and containing
+task summary totals are rebuilt at each entry's historical timestamp. The
+workspace aggregate cache is invalidated so project and workspace totals
+rebuild from corrected records.
+
+Rows for other providers are never candidates. OpenAI rows with cache reads
+that do not fit the safe pattern remain byte-for-byte unchanged and are listed
+in the report with their source and token counts. The report also records
+corrected task-entry and pipeline-step counts, failures, and before/after
+list-price totals. Re-running the pure repair or restarting after the report
+exists is a no-op.
+
+Historical Agent Message Bus JSONL remains append-only. Its read boundary
+applies the same safe normalization to legacy OpenAI rows before both the
+canonical token readers and `BusAggregationCache` fold them. This keeps bus
+history aligned with repaired task receipts without rewriting evidence logs.
+
 ## Why this document exists
 
 Five backend services compute token-spend aggregations independently, each
@@ -276,9 +326,10 @@ split. CLI pages are extendable by adding another page key and model mapping.
   `Dollars` field on the bus response.
 - **CLI quota** (`/api/cli/quota`). Different source (subscription window),
   different cadence, different consumer.
-- **Rewriting historical bus files or task receipts.** The hybrid reader keeps
-  both immutable sources in place and merges them at read time. No destructive
-  backfill is needed.
+- **Rewriting historical bus files.** Bus JSONL remains immutable. The read
+  boundary normalizes only the proven legacy OpenAI shape described above.
+  Task receipts and pipeline records are repaired once because they are the
+  durable mutable cost ledgers used by card and pipeline views.
 
 ## Reference — file paths
 

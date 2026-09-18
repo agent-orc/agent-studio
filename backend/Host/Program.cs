@@ -418,6 +418,7 @@ builder.Services.AddSingleton<TaskIntegrationRecoveryService>();
 builder.Services.AddSingleton<SupersededCommitSweep>();
 builder.Services.AddSingleton<RemoteTokenReceiptService>();
 builder.Services.AddSingleton<RemoteCompletionAttributionSweep>();
+builder.Services.AddSingleton<AgentStudio.Tokens.OpenAiUsageHistoryRepair>();
 builder.Services.AddSingleton<TaskListGitProjectionCache>();
 builder.Services.AddSingleton<OperatorReviewRequeueService>();
 // PUB-1: read-only publish-target derivation (repo facts -> Hub badges + task
@@ -1297,6 +1298,17 @@ try
 catch (Exception ex)
 {
     crashRecorder.Record("RemoteCompletionAttributionSweep", ex);
+}
+
+// One-time normalization and re-pricing for historical Codex/OpenAI usage
+// written while cached_input_tokens was incorrectly added to input_tokens.
+try
+{
+    app.Services.GetRequiredService<AgentStudio.Tokens.OpenAiUsageHistoryRepair>().RunOnce();
+}
+catch (Exception ex)
+{
+    crashRecorder.Record("OpenAiUsageHistoryRepair", ex);
 }
 
 // Cap legacy durable CLI logs after the one-time full-history wiki read

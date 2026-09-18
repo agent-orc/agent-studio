@@ -614,7 +614,8 @@ public class OrchestratorRunner
                     InputTokens          = TryGetInt(u, "input_tokens"),
                     OutputTokens         = TryGetInt(u, "output_tokens"),
                     CacheReadTokens      = TryGetInt(u, "cache_read_input_tokens"),
-                    CacheCreationTokens  = TryGetInt(u, "cache_creation_input_tokens")
+                    CacheCreationTokens  = TryGetInt(u, "cache_creation_input_tokens"),
+                    InputIncludesCached  = false,
                 };
             }
 
@@ -669,7 +670,8 @@ public class OrchestratorRunner
                 CacheRead: result.TokenUsage.CacheReadTokens,
                 CacheWrite: result.TokenUsage.CacheCreationTokens,
                 ReasoningOutput: null,
-                ContextWindow: BuildContextWindow(result.TokenUsage, _modelRegistry));
+                ContextWindow: BuildContextWindow(result.TokenUsage, _modelRegistry),
+                InputIncludesCached: result.TokenUsage.InputIncludesCached ?? false);
         }
 
         return result with { Latency = latency, ParsedUsage = parsed };
